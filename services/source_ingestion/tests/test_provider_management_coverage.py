@@ -1202,3 +1202,294 @@ def test_tdcc_and_taifex_emit_all_declared_pit_fields() -> None:
     assert rfc3339_pattern.match(opt_records[0].metadata["event_time"])
     assert rfc3339_pattern.match(opt_records[0].metadata["available_time"])
     assert rfc3339_pattern.match(opt_records[0].metadata["ingest_time"])
+
+
+def test_taifex_unsupported_dataset_fails_closed():
+    """Verify that unsupported TAIFEX datasets are strictly rejected rather than defaulted."""
+    adapter = TaifexDerivativesChipAdapter()
+    sample_payload = [{"Date": "2026-08-21", "Contract": "TX", "ParticipantGroup": "foreign_investors"}]
+
+    with pytest.raises(SourceEvidenceError, match="unsupported TAIFEX dataset"):
+        adapter.fetch_payload(dataset="unsupported_taifex_dataset")
+
+    with pytest.raises(SourceEvidenceError, match="unsupported TAIFEX dataset"):
+        adapter.records_from_payload(sample_payload, dataset="unsupported_taifex_dataset")
+
+    with pytest.raises(SourceEvidenceError, match="unsupported TAIFEX dataset"):
+        adapter.normalized_rows_from_payload(sample_payload, dataset="unsupported_taifex_dataset")
+
+
+def test_invalid_rfc3339_pit_fails_closed_across_providers():
+    """Verify that invalid RFC3339 timestamps (e.g. malformed or invalid calendar dates) fail closed."""
+    # TDCC with invalid available_time
+    tdcc_adapter = TdccShareholdingDistributionAdapter()
+    invalid_tdcc_raw = [
+        {"Date": "2026-08-21", "Code": "2330", "available_time": "not-rfc3339", "HoldLevel": 15, "HoldingRange": "1,000,001以上", "PeopleCount": 1500, "Shares": 20000000000, "Percentage": 77.12}
+    ]
+    with pytest.raises(SourceEvidenceError, match="must be a valid RFC3339 timestamp"):
+        tdcc_adapter.records_from_payload(invalid_tdcc_raw)
+
+    invalid_tdcc_date = [
+        {"Date": "2026-02-31", "Code": "2330", "HoldLevel": 15, "HoldingRange": "1,000,001以上", "PeopleCount": 1500, "Shares": 20000000000, "Percentage": 77.12}
+    ]
+    with pytest.raises(SourceEvidenceError, match="valid RFC3339 timestamp"):
+        tdcc_adapter.records_from_payload(invalid_tdcc_date)
+
+    # TAIFEX with invalid available_time
+    taifex_adapter = TaifexDerivativesChipAdapter()
+    invalid_taifex_raw = [
+        {"Date": "2026-08-21", "Contract": "TX", "available_time": "not-rfc3339", "ParticipantGroup": "foreign_investors", "LongVolume": 1000}
+    ]
+    with pytest.raises(SourceEvidenceError, match="must be a valid RFC3339 timestamp"):
+        taifex_adapter.records_from_payload(invalid_taifex_raw, dataset="taifex_futures_chip")
+
+    # Social with invalid available_time
+    social_adapter = AdmittedSocialMediaAdapter()
+    invalid_social_raw = {
+        "messages": [
+            {"id": 12345, "body": "test AAPL bullish", "available_time": "invalid-time", "user": {"id": 101}}
+        ]
+    }
+    with pytest.raises(SourceEvidenceError, match="must be a valid RFC3339 timestamp"):
+        social_adapter.records_from_payload(invalid_social_raw)
+
+    # Alpha DB with invalid available_time
+    alpha_adapter = ExternalAlphaDbAdapter()
+    invalid_alpha_raw = {
+        "signals": [
+            {"entity_id": "AAPL", "available_time": "bad-date-time", "rsi": 65.4}
+        ]
+    }
+    with pytest.raises(SourceEvidenceError, match="must be a valid RFC3339 timestamp"):
+        alpha_adapter.records_from_payload(invalid_alpha_raw)
+
+
+def test_custom_env_secret_ref_resolution(monkeypatch):
+    """Verify that configured env secret refs (e.g. env://MY_VAR) are correctly resolved."""
+    monkeypatch.setenv("CUSTOM_STOCKTWITS_TOKEN", "st_secret_token_123")
+    monkeypatch.setenv("CUSTOM_FMP_TOKEN", "fmp_secret_token_456")
+
+    social_adapter = AdmittedSocialMediaAdapter(secret_ref_id="env://CUSTOM_STOCKTWITS_TOKEN")
+    assert social_adapter.resolve_api_key() == "st_secret_token_123"
+
+    alpha_adapter = ExternalAlphaDbAdapter(secret_ref_id="env://CUSTOM_FMP_TOKEN")
+    assert alpha_adapter.resolve_api_key() == "fmp_secret_token_456"
+
+
+def test_management_materialization_config_reconciliation_end_to_end(tmp_path):
+    """Verify SD-SRCM-05 §7.1 config reconciliation end-to-end through management command engine."""
+    from services.source_ingestion.configured import JsonlConfiguredConnectorStore, JsonlConnectorScheduleStore
+    from services.source_ingestion.source_management_store import JsonlSourceManagementStore
+    from services.source_ingestion.source_management_commands import SourceCommandEngine
+    from services.source_ingestion.source_management_models import (
+        SourceManagementCommand,
+        CommandType,
+        DesiredLifecycleState,
+    )
+    from services.source_ingestion.provider_adapters import execute_provider_owned_adapter
+
+    mg_store = JsonlSourceManagementStore(tmp_path / "mgmt")
+    conn_store = JsonlConfiguredConnectorStore(tmp_path / "conn")
+    sched_store = JsonlConnectorScheduleStore(tmp_path / "sched")
+
+    engine = SourceCommandEngine(
+        store=mg_store,
+        connector_store=conn_store,
+        schedule_config_store=sched_store,
+    )
+
+    # 1. TDCC reconciliation test
+    cmd_tdcc = SourceManagementCommand(
+        command_id="cmd-tdcc-1",
+        idempotency_key="idem-tdcc-1",
+        command_type=CommandType.CREATE,
+        expected_revision=None,
+        actor={"actor_type": "operator", "actor_id": "op-1", "roles": ["operator"]},
+        source_instance_id="tdcc-configured-inst",
+        reason="Register TDCC source",
+        parameters={
+            "definition_id": "tw-tdcc-shareholding-distribution",
+            "connector_id": "tw-tdcc-shareholding-distribution",
+            "schedule": {"cadence": "0 19 * * 5"},
+            "connector_config": {
+                "public": {
+                    "symbols": ["2330", "2317"],
+                    "source_dataset": "TDCC_OD_1-5",
+                    "max_records": 50,
+                }
+            },
+            "limits": {"max_records": 50, "max_bytes": 5242880, "timeout_seconds": 20},
+        },
+    )
+    receipt_tdcc = engine.execute_command(cmd_tdcc)
+    assert receipt_tdcc.status.value == "succeeded"
+
+    cfg_tdcc = conn_store.get_config("tw-tdcc-shareholding-distribution")
+    assert cfg_tdcc is not None
+    conn_tdcc = cfg_tdcc.connector
+    fetch_tdcc = cfg_tdcc.fetch
+    assert fetch_tdcc["adapter_config"]["symbols"] == ["2330", "2317"]
+    assert fetch_tdcc["adapter_config"]["source_dataset"] == "TDCC_OD_1-5"
+    assert fetch_tdcc["request"]["symbols"] == ["2330", "2317"]
+
+    # Execute TDCC with payload and verify filtering by reconciled symbols
+    tdcc_payload = [
+        {"Date": "2026-08-21", "Code": "2330", "HoldLevel": 15, "HoldingRange": "1,000,001以上", "PeopleCount": 1500, "Shares": 20000000000, "Percentage": 77.12},
+        {"Date": "2026-08-21", "Code": "2454", "HoldLevel": 15, "HoldingRange": "1,000,001以上", "PeopleCount": 500, "Shares": 5000000000, "Percentage": 55.0},
+    ]
+    records_tdcc = execute_provider_owned_adapter(
+        connector=conn_tdcc,
+        fetch={**fetch_tdcc, "request": {**fetch_tdcc["request"], "payload": tdcc_payload}},
+        trace_id="trace-tdcc",
+    )
+    assert len(records_tdcc) == 1
+    assert "2330" in records_tdcc[0].title
+
+    # 2. TAIFEX reconciliation test
+    cmd_taifex = SourceManagementCommand(
+        command_id="cmd-taifex-1",
+        idempotency_key="idem-taifex-1",
+        command_type=CommandType.CREATE,
+        expected_revision=None,
+        actor={"actor_type": "operator", "actor_id": "op-1", "roles": ["operator"]},
+        source_instance_id="taifex-configured-inst",
+        reason="Register TAIFEX source",
+        parameters={
+            "definition_id": "tw-taifex-futures-options-chip",
+            "connector_id": "tw-taifex-futures-options-chip",
+            "schedule": {"cadence": "0 16 * * 1-5"},
+            "connector_config": {
+                "public": {
+                    "dataset": "taifex_options_chip",
+                    "contracts": ["TXO"],
+                    "max_records": 25,
+                }
+            },
+            "limits": {"max_records": 25, "max_bytes": 2097152, "timeout_seconds": 20},
+        },
+    )
+    receipt_taifex = engine.execute_command(cmd_taifex)
+    assert receipt_taifex.status.value == "succeeded"
+
+    cfg_taifex = conn_store.get_config("tw-taifex-futures-options-chip")
+    assert cfg_taifex is not None
+    conn_taifex = cfg_taifex.connector
+    fetch_taifex = cfg_taifex.fetch
+    assert fetch_taifex["adapter_config"]["dataset"] == "taifex_options_chip"
+    assert fetch_taifex["adapter_config"]["contracts"] == ["TXO"]
+    assert fetch_taifex["request"]["dataset"] == "taifex_options_chip"
+
+    taifex_payload = [
+        {"Date": "2026-08-21", "Contract": "TXO", "CallVolume": 500, "PutVolume": 600, "CallOpenInterest": 2000, "PutOpenInterest": 2200, "PutCallRatio": 110.0},
+        {"Date": "2026-08-21", "Contract": "TEO", "CallVolume": 50, "PutVolume": 60, "CallOpenInterest": 200, "PutOpenInterest": 220, "PutCallRatio": 100.0},
+    ]
+    records_taifex = execute_provider_owned_adapter(
+        connector=conn_taifex,
+        fetch={**fetch_taifex, "request": {**fetch_taifex["request"], "payload": taifex_payload}},
+        trace_id="trace-taifex",
+    )
+    assert len(records_taifex) == 1
+    assert "TXO" in records_taifex[0].title
+
+    # 3. Social reconciliation test
+    cmd_social = SourceManagementCommand(
+        command_id="cmd-social-1",
+        idempotency_key="idem-social-1",
+        command_type=CommandType.CREATE,
+        expected_revision=None,
+        actor={"actor_type": "operator", "actor_id": "op-1", "roles": ["operator"]},
+        source_instance_id="social-configured-inst",
+        reason="Register Social source",
+        parameters={
+            "definition_id": "social-admitted-market-discussion",
+            "connector_id": "social-admitted-market-discussion",
+            "schedule": {"cadence": "0 * * * *"},
+            "connector_config": {
+                "secret_ref_id": "env://CUSTOM_STOCKTWITS_KEY",
+                "public": {
+                    "platform": "stocktwits",
+                    "symbols": ["AAPL"],
+                    "max_records": 10,
+                }
+            },
+            "limits": {"max_records": 10, "max_bytes": 2097152, "timeout_seconds": 20},
+        },
+    )
+    receipt_social = engine.execute_command(cmd_social)
+    assert receipt_social.status.value == "succeeded"
+
+    cfg_social = conn_store.get_config("social-admitted-market-discussion")
+    assert cfg_social is not None
+    conn_social = cfg_social.connector
+    fetch_social = cfg_social.fetch
+    assert fetch_social["adapter_config"]["secret_ref_id"] == "env://CUSTOM_STOCKTWITS_KEY"
+    assert fetch_social["adapter_config"]["symbols"] == ["AAPL"]
+
+    social_payload = {
+        "messages": [
+            {"id": 1001, "body": "bullish on AAPL!", "symbols": [{"symbol": "AAPL"}], "user": {"id": 1}},
+            {"id": 1002, "body": "bearish on TSLA!", "symbols": [{"symbol": "TSLA"}], "user": {"id": 2}},
+        ]
+    }
+    records_social = execute_provider_owned_adapter(
+        connector=conn_social,
+        fetch={**fetch_social, "request": {**fetch_social["request"], "payload": social_payload}},
+        trace_id="trace-social",
+    )
+    assert len(records_social) == 1
+    assert records_social[0].metadata["post_id"] == "1001"
+
+    # 4. Alpha DB reconciliation test
+    cmd_alpha = SourceManagementCommand(
+        command_id="cmd-alpha-1",
+        idempotency_key="idem-alpha-1",
+        command_type=CommandType.CREATE,
+        expected_revision=None,
+        actor={"actor_type": "operator", "actor_id": "op-1", "roles": ["operator"]},
+        source_instance_id="alpha-configured-inst",
+        reason="Register Alpha DB source",
+        parameters={
+            "definition_id": "alpha-db-vendor-signals",
+            "connector_id": "alpha-db-vendor-signals",
+            "schedule": {"cadence": "0 0 * * *"},
+            "connector_config": {
+                "secret_ref_id": "env://CUSTOM_ALPHA_KEY",
+                "public": {
+                    "alpha_vendor_id": "fmp-alpha-factors",
+                    "signal_id": "technical_sma_20d",
+                    "signal_version": "v2",
+                    "field_schema_version": "v2",
+                    "universe": ["US_MEGA"],
+                    "max_records": 15,
+                }
+            },
+            "limits": {"max_records": 15, "max_bytes": 4194304, "timeout_seconds": 25},
+        },
+    )
+    receipt_alpha = engine.execute_command(cmd_alpha)
+    assert receipt_alpha.status.value == "succeeded"
+
+    cfg_alpha = conn_store.get_config("alpha-db-vendor-signals")
+    assert cfg_alpha is not None
+    conn_alpha = cfg_alpha.connector
+    fetch_alpha = cfg_alpha.fetch
+    assert fetch_alpha["adapter_config"]["secret_ref_id"] == "env://CUSTOM_ALPHA_KEY"
+    assert fetch_alpha["adapter_config"]["signal_id"] == "technical_sma_20d"
+    assert fetch_alpha["adapter_config"]["universe"] == ["US_MEGA"]
+
+    alpha_payload = {
+        "signals": [
+            {"entity_id": "AAPL", "sma": 180.5},
+            {"entity_id": "MSFT", "sma": 420.0},
+        ]
+    }
+    records_alpha = execute_provider_owned_adapter(
+        connector=conn_alpha,
+        fetch={**fetch_alpha, "request": {**fetch_alpha["request"], "payload": alpha_payload}},
+        trace_id="trace-alpha",
+    )
+    assert len(records_alpha) == 2
+    assert records_alpha[0].metadata["signal_id"] == "technical_sma_20d"
+    assert records_alpha[0].metadata["universe"] == ["US_MEGA"]
+
+

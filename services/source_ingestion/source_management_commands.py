@@ -1240,13 +1240,17 @@ class SourceCommandEngine:
             else ConnectorStatus.DISABLED
         )
 
+        secret_ref = desired.connector_config.get("secret_ref_id") or (desired.connector_config.get("public") or {}).get("secret_ref_id")
+        public_config = dict(desired.connector_config.get("public") or {})
+        max_records = int(desired.limits.get("max_records") or public_config.get("max_records") or 100)
+
         connector = SourceConnector(
             connector_id=instance.connector_id,
             source_type=SourceType(instance.source_kind if instance.source_kind in [s.value for s in SourceType] else "market").value,
             provider=instance.provider,
             license_scope=instance.license_scope,
-            auth_type=AuthType.NONE.value if not desired.connector_config.get("secret_ref_id") else AuthType.API_KEY.value,
-            secret_ref_id=desired.connector_config.get("secret_ref_id"),
+            auth_type=AuthType.NONE.value if not secret_ref else AuthType.API_KEY.value,
+            secret_ref_id=secret_ref,
             supported_modes=[ConnectorMode.BATCH.value],
             status=status.value,
             metadata={
@@ -1258,12 +1262,26 @@ class SourceCommandEngine:
 
         defn = get_connector_definition(desired.definition_id)
         adapter_token = defn.adapter_token if defn else desired.definition_id
+
+        adapter_config = {
+            **public_config,
+            "max_records": max_records,
+        }
+        if secret_ref:
+            adapter_config["secret_ref_id"] = secret_ref
+
+        fetch_request = {
+            **public_config,
+        }
+        if secret_ref:
+            fetch_request["secret_ref_id"] = secret_ref
+
         fetch_config = {
             "mode": "provider_owned_adapter",
             "adapter": adapter_token,
-            "adapter_config": dict(desired.connector_config.get("public") or {}),
-            "request": {},
-            "max_records": int(desired.limits.get("max_records") or 100),
+            "adapter_config": adapter_config,
+            "request": fetch_request,
+            "max_records": max_records,
         }
 
         self.connector_store.upsert_config(connector, fetch_config)

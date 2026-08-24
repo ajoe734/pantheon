@@ -61,17 +61,42 @@ def _read_bounded_response(response: Any, max_bytes: int = 2097152, chunk_size: 
     return b"".join(chunks)
 
 
-def _to_rfc3339(val: Any) -> str:
+def _validate_or_convert_rfc3339(val: Any, name: str = "available_time") -> str:
     s = _text(val)
     if not s:
         return _utc_now()
     if re.match(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$", s):
-        return s
+        try:
+            iso_str = s.replace("Z", "+00:00")
+            datetime.fromisoformat(iso_str)
+            return s
+        except Exception as err:
+            raise SourceEvidenceError(
+                f"{name} must be a valid RFC3339 timestamp with valid calendar date/time; got: {val!r}"
+            ) from err
     if re.match(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$", s):
-        return s.replace(" ", "T") + "Z"
+        iso_str = s.replace(" ", "T") + "+00:00"
+        try:
+            datetime.fromisoformat(iso_str)
+            return s.replace(" ", "T") + "Z"
+        except Exception as err:
+            raise SourceEvidenceError(
+                f"{name} must be a valid RFC3339 timestamp with valid calendar date/time; got: {val!r}"
+            ) from err
     if re.match(r"^\d{4}-\d{2}-\d{2}$", s):
-        return s + "T00:00:00Z"
-    return s
+        iso_str = s + "T00:00:00+00:00"
+        try:
+            datetime.fromisoformat(iso_str)
+            return s + "T00:00:00Z"
+        except Exception as err:
+            raise SourceEvidenceError(
+                f"{name} must be a valid RFC3339 timestamp with valid calendar date/time; got: {val!r}"
+            ) from err
+    raise SourceEvidenceError(f"{name} must be a valid RFC3339 timestamp; got: {val!r}")
+
+
+def _to_rfc3339(val: Any) -> str:
+    return _validate_or_convert_rfc3339(val, name="timestamp")
 
 
 def _utc_now() -> str:
@@ -106,12 +131,19 @@ class AdmittedSocialMediaAdapter(SourceConnectorProvider):
     """Governed social market-discussion adapter with trust and tombstone policies."""
 
     connector_id: str = SOCIAL_ADMITTED_CONNECTOR_ID
+    platform: str = "stocktwits"
+    symbols: Sequence[str] | None = None
     secret_ref_id: str = "env://STOCKTWITS_API_KEY"
     max_records: int = 100
     source_metadata: SourceMetadata | Mapping[str, Any] | None = None
     connector_metadata: Mapping[str, Any] = field(default_factory=dict)
 
     def resolve_api_key(self) -> str | None:
+        if self.secret_ref_id and self.secret_ref_id.startswith("env://"):
+            var_name = self.secret_ref_id[len("env://"):].strip()
+            val = os.getenv(var_name, "").strip()
+            if val:
+                return val
         return os.getenv("STOCKTWITS_API_KEY") or os.getenv("STOCKTWITS_ACCESS_TOKEN")
 
     def connector(self) -> SourceConnector:
@@ -177,12 +209,15 @@ class AdmittedSocialMediaAdapter(SourceConnectorProvider):
             "mode": "provider_owned_adapter",
             "adapter": "AdmittedSocialMediaAdapter.records_from_payload",
             "adapter_config": {
+                "platform": self.platform,
+                "symbols": list(self.symbols) if self.symbols else None,
                 "max_records": self.max_records,
                 "secret_ref_id": self.secret_ref_id,
             },
             "request": {
-                "platform": "stocktwits",
-                "symbols": ["2330", "AAPL"],
+                "platform": self.platform,
+                "symbols": list(self.symbols) if self.symbols else ["AAPL"],
+                "secret_ref_id": self.secret_ref_id,
             },
             "next_watermark": None,
             "max_records": self.max_records,
@@ -220,14 +255,23 @@ class AdmittedSocialMediaAdapter(SourceConnectorProvider):
         payload: Mapping[str, Any] | Sequence[Mapping[str, Any]],
         *,
         platform: str = "stocktwits",
+        symbols: Sequence[str] | None = None,
+        max_records: int | None = None,
         trace_id: str = "",
     ) -> tuple[SourceRecord, ...]:
         admitted_platform = _validate_admitted_platform(platform)
-        normalized_rows = self.normalized_rows_from_payload(payload, platform=admitted_platform)
+        resolved_symbols = symbols if symbols is not None else self.symbols
+        limit = max_records or self.max_records
+        normalized_rows = self.normalized_rows_from_payload(
+            payload,
+            platform=admitted_platform,
+            symbols=resolved_symbols,
+            max_records=limit,
+        )
         connector_instance = self.connector()
         records: list[SourceRecord] = []
 
-        for row in normalized_rows[: self.max_records]:
+        for row in normalized_rows[:limit]:
             post_id = str(row["post_id"])
             event_time = str(row["event_time"])
             available_time = str(row["available_time"])
@@ -279,8 +323,13 @@ class AdmittedSocialMediaAdapter(SourceConnectorProvider):
         payload: Mapping[str, Any] | Sequence[Mapping[str, Any]],
         *,
         platform: str = "stocktwits",
+        symbols: Sequence[str] | None = None,
+        max_records: int | None = None,
     ) -> tuple[dict[str, Any], ...]:
         admitted_platform = _validate_admitted_platform(platform)
+        resolved_symbols = symbols if symbols is not None else self.symbols
+        target_symbols = {str(s).strip().upper() for s in (resolved_symbols or ())} if resolved_symbols else None
+        limit = max_records or self.max_records
         raw_items: list[Mapping[str, Any]] = []
         if isinstance(payload, Mapping):
             for key in ("items", "messages", "posts", "data", "results"):
@@ -296,7 +345,12 @@ class AdmittedSocialMediaAdapter(SourceConnectorProvider):
         for raw in raw_items:
             norm = self._normalize_item(raw, platform=admitted_platform)
             if norm is not None:
+                if target_symbols and norm.get("symbols"):
+                    if not any(sym in target_symbols for sym in norm["symbols"]):
+                        continue
                 results.append(norm)
+                if limit and len(results) >= limit:
+                    break
 
         return tuple(results)
 

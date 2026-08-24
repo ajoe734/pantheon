@@ -58,6 +58,8 @@ class ProviderAdapterSpec:
     def build(self, connector: SourceConnector, adapter_config: Mapping[str, Any]) -> Any:
         kwargs = {key: adapter_config[key] for key in self.config_keys if key in adapter_config}
         kwargs["connector_id"] = connector.connector_id
+        if "secret_ref_id" in self.config_keys and "secret_ref_id" not in kwargs and connector.secret_ref_id:
+            kwargs["secret_ref_id"] = connector.secret_ref_id
         return self.adapter_cls(**kwargs)
 
 
@@ -95,11 +97,12 @@ def execute_provider_owned_adapter(
     adapter_config = _mapping(fetch.get("adapter_config"))
     adapter = spec.build(connector, adapter_config)
     request = {
+        **_mapping(fetch.get("adapter_config")),
         **_mapping(fetch.get("request")),
         **_mapping(job_parameters),
     }
     records = spec.handler(adapter, request, trace_id)
-    max_records = int(fetch.get("max_records") or 100)
+    max_records = int(fetch.get("max_records") or request.get("max_records") or 100)
     if max_records < 1:
         raise SourceEvidenceError("fetch.max_records must be > 0 for provider_owned_adapter")
     return tuple(_attach_run_metadata(record, token=token, request=request) for record in records[:max_records])
@@ -640,18 +643,22 @@ def _tdcc(
     trace_id: str,
 ) -> tuple[SourceRecord, ...]:
     payload = request.get("payload") or request.get("rows") or request.get("data")
-    symbols = request.get("symbols") or ([request.get("symbol")] if request.get("symbol") else None)
-    max_records = request.get("max_records")
+    symbols = request.get("symbols") or ([request.get("symbol")] if request.get("symbol") else None) or getattr(adapter, "symbols", None)
+    if isinstance(symbols, str):
+        symbols = [s.strip() for s in symbols.split(",") if s.strip()]
+    source_dataset = str(request.get("source_dataset") or getattr(adapter, "source_dataset", "TDCC_OD_1-5"))
+    max_records = request.get("max_records") or getattr(adapter, "max_records", 100)
+    timeout_seconds = float(request.get("timeout_seconds") or 45.0)
     if payload in (None, ""):
         payload = adapter.fetch_payload(
-            source_dataset=str(request.get("source_dataset") or "TDCC_OD_1-5"),
+            source_dataset=source_dataset,
             symbols=symbols,
             max_records=max_records,
-            timeout_seconds=float(request.get("timeout_seconds") or 20.0),
+            timeout_seconds=timeout_seconds,
         )
     return adapter.records_from_payload(
         payload,
-        source_dataset=str(request.get("source_dataset") or "TDCC_OD_1-5"),
+        source_dataset=source_dataset,
         api_endpoint=request.get("api_endpoint"),
         trade_date=request.get("trade_date") or request.get("date") or request.get("run_date"),
         available_time=request.get("available_time"),
@@ -667,23 +674,29 @@ def _taifex(
     request: Mapping[str, Any],
     trace_id: str,
 ) -> tuple[SourceRecord, ...]:
-    dataset = str(request.get("dataset") or "taifex_futures_chip")
+    dataset = str(request.get("dataset") or getattr(adapter, "dataset", "taifex_futures_chip"))
+    contracts = request.get("contracts") or ([request.get("contract")] if request.get("contract") else None) or getattr(adapter, "contracts", None)
+    if isinstance(contracts, str):
+        contracts = [c.strip() for c in contracts.split(",") if c.strip()]
+    source_dataset = str(request.get("source_dataset") or dataset)
     payload = request.get("payload") or request.get("rows") or request.get("data")
-    max_records = request.get("max_records")
+    max_records = request.get("max_records") or getattr(adapter, "max_records", 100)
+    timeout_seconds = float(request.get("timeout_seconds") or 20.0)
     if payload in (None, ""):
         payload = adapter.fetch_payload(
             dataset=dataset,
             max_records=max_records,
-            timeout_seconds=float(request.get("timeout_seconds") or 20.0),
+            timeout_seconds=timeout_seconds,
         )
     return adapter.records_from_payload(
         payload,
         dataset=dataset,
-        source_dataset=request.get("source_dataset"),
+        source_dataset=source_dataset,
         api_endpoint=request.get("api_endpoint"),
         trade_date=request.get("trade_date") or request.get("date") or request.get("run_date"),
         available_time=request.get("available_time"),
         universe_tier=str(request.get("universe_tier") or "core_universe"),
+        contracts=contracts,
         max_records=max_records,
         trace_id=trace_id,
     )
@@ -695,15 +708,23 @@ def _social(
     trace_id: str,
 ) -> tuple[SourceRecord, ...]:
     payload = request.get("payload") or request.get("items") or request.get("posts") or request.get("messages")
+    platform = str(request.get("platform") or getattr(adapter, "platform", "stocktwits"))
+    symbols = request.get("symbols") or ([request.get("symbol")] if request.get("symbol") else None) or getattr(adapter, "symbols", None)
+    if isinstance(symbols, str):
+        symbols = [s.strip() for s in symbols.split(",") if s.strip()]
+    max_records = request.get("max_records") or getattr(adapter, "max_records", 100)
+    timeout_seconds = float(request.get("timeout_seconds") or 15.0)
     if payload in (None, ""):
-        symbol = _single_symbol(request) or "AAPL"
+        symbol = _single_symbol(request) or (symbols[0] if symbols else "AAPL")
         payload = adapter.fetch_payload(
             symbol=symbol,
-            timeout_seconds=float(request.get("timeout_seconds") or 15.0),
+            timeout_seconds=timeout_seconds,
         )
     return adapter.records_from_payload(
         payload,
-        platform=str(request.get("platform") or "stocktwits"),
+        platform=platform,
+        symbols=symbols,
+        max_records=max_records,
         trace_id=trace_id,
     )
 
@@ -714,21 +735,30 @@ def _alpha_db(
     trace_id: str,
 ) -> tuple[SourceRecord, ...]:
     payload = request.get("payload") or request.get("signals") or request.get("factors") or request.get("records")
-    signal_id = str(request.get("signal_id") or "technical_rsi_14d")
-    alpha_vendor_id = str(request.get("alpha_vendor_id") or "fmp-alpha-factors")
+    signal_id = str(request.get("signal_id") or getattr(adapter, "signal_id", "technical_rsi_14d"))
+    alpha_vendor_id = str(request.get("alpha_vendor_id") or getattr(adapter, "alpha_vendor_id", "fmp-alpha-factors"))
+    signal_version = str(request.get("signal_version") or getattr(adapter, "signal_version", "v1"))
+    field_schema_version = str(request.get("field_schema_version") or getattr(adapter, "field_schema_version", "v1"))
+    universe = request.get("universe") or getattr(adapter, "universe", None) or ["US_EQUITY"]
+    if isinstance(universe, str):
+        universe = [u.strip() for u in universe.split(",") if u.strip()]
+    max_records = request.get("max_records") or getattr(adapter, "max_records", 100)
+    timeout_seconds = float(request.get("timeout_seconds") or 15.0)
     if payload in (None, ""):
-        entity_id = _single_symbol(request) or str(request.get("entity_id") or "AAPL")
+        entity_id = _single_symbol(request) or str(request.get("entity_id") or (universe[0] if universe and universe[0] not in ("US_EQUITY", "TW_EQUITY") else "AAPL"))
         payload = adapter.fetch_payload(
             entity_id=entity_id,
             signal_id=signal_id,
-            timeout_seconds=float(request.get("timeout_seconds") or 15.0),
+            timeout_seconds=timeout_seconds,
         )
     return adapter.records_from_payload(
         payload,
         alpha_vendor_id=alpha_vendor_id,
         signal_id=signal_id,
-        signal_version=str(request.get("signal_version") or "v1"),
-        field_schema_version=str(request.get("field_schema_version") or "v1"),
+        signal_version=signal_version,
+        field_schema_version=field_schema_version,
+        universe=universe,
+        max_records=max_records,
         trace_id=trace_id,
     )
 
@@ -770,13 +800,13 @@ ALLOWED_PROVIDER_ADAPTERS: dict[str, ProviderAdapterSpec] = {
         token="TdccShareholdingDistributionAdapter.records_from_payload",
         adapter_cls=TdccShareholdingDistributionAdapter,
         handler=_tdcc,
-        config_keys=("max_records",),
+        config_keys=("max_records", "symbols", "source_dataset"),
     ),
     "TaifexDerivativesChipAdapter.records_from_payload": ProviderAdapterSpec(
         token="TaifexDerivativesChipAdapter.records_from_payload",
         adapter_cls=TaifexDerivativesChipAdapter,
         handler=_taifex,
-        config_keys=("max_records",),
+        config_keys=("max_records", "dataset", "contracts"),
     ),
     "FinMindTaiwanDatasetAdapter.records_from_data_payload": ProviderAdapterSpec(
         token="FinMindTaiwanDatasetAdapter.records_from_data_payload",
@@ -884,12 +914,12 @@ ALLOWED_PROVIDER_ADAPTERS: dict[str, ProviderAdapterSpec] = {
         token="AdmittedSocialMediaAdapter.records_from_payload",
         adapter_cls=AdmittedSocialMediaAdapter,
         handler=_social,
-        config_keys=("max_records",),
+        config_keys=("max_records", "platform", "symbols", "secret_ref_id"),
     ),
     "ExternalAlphaDbAdapter.records_from_payload": ProviderAdapterSpec(
         token="ExternalAlphaDbAdapter.records_from_payload",
         adapter_cls=ExternalAlphaDbAdapter,
         handler=_alpha_db,
-        config_keys=("secret_ref_id", "max_records"),
+        config_keys=("secret_ref_id", "max_records", "alpha_vendor_id", "signal_id", "signal_version", "field_schema_version", "universe"),
     ),
 }

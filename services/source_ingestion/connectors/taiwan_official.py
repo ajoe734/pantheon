@@ -28,6 +28,7 @@ from .base import (
     RateLimitPolicy,
     SourceConnector,
     SourceConnectorProvider,
+    SourceEvidenceError,
     SourceMetadata,
     SourceRecord,
 )
@@ -218,20 +219,47 @@ def _read_bounded_response(response: Any, max_bytes: int = 10485760, chunk_size:
 def _taifex_endpoint(dataset: str) -> str:
     if dataset == "taifex_options_chip":
         return f"{TAIFEX_OPENAPI_BASE_URL}/PutCallRatio"
-    return f"{TAIFEX_OPENAPI_BASE_URL}/MarketDataOfMajorInstitutionalTradersDetailsOfFuturesContractsBytheDate"
+    if dataset == "taifex_futures_chip":
+        return f"{TAIFEX_OPENAPI_BASE_URL}/MarketDataOfMajorInstitutionalTradersDetailsOfFuturesContractsBytheDate"
+    raise SourceEvidenceError(f"unsupported TAIFEX dataset: {dataset}")
 
 
-def _to_rfc3339(val: Any) -> str:
+def _validate_or_convert_rfc3339(val: Any, name: str = "available_time") -> str:
     s = _text(val)
     if not s:
         return _utc_now()
     if re.match(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$", s):
-        return s
+        try:
+            iso_str = s.replace("Z", "+00:00")
+            datetime.fromisoformat(iso_str)
+            return s
+        except Exception as err:
+            raise SourceEvidenceError(
+                f"{name} must be a valid RFC3339 timestamp with valid calendar date/time; got: {val!r}"
+            ) from err
     if re.match(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$", s):
-        return s.replace(" ", "T") + "Z"
+        iso_str = s.replace(" ", "T") + "+00:00"
+        try:
+            datetime.fromisoformat(iso_str)
+            return s.replace(" ", "T") + "Z"
+        except Exception as err:
+            raise SourceEvidenceError(
+                f"{name} must be a valid RFC3339 timestamp with valid calendar date/time; got: {val!r}"
+            ) from err
     if re.match(r"^\d{4}-\d{2}-\d{2}$", s):
-        return s + "T00:00:00Z"
-    return s
+        iso_str = s + "T00:00:00+00:00"
+        try:
+            datetime.fromisoformat(iso_str)
+            return s + "T00:00:00Z"
+        except Exception as err:
+            raise SourceEvidenceError(
+                f"{name} must be a valid RFC3339 timestamp with valid calendar date/time; got: {val!r}"
+            ) from err
+    raise SourceEvidenceError(f"{name} must be a valid RFC3339 timestamp; got: {val!r}")
+
+
+def _to_rfc3339(val: Any) -> str:
+    return _validate_or_convert_rfc3339(val, name="timestamp")
 
 
 def _utc_now() -> str:
@@ -842,6 +870,8 @@ class TdccShareholdingDistributionAdapter(SourceConnectorProvider):
     """TDCC official weekly shareholding distribution adapter (SD-SRCM-05 §7.2)."""
 
     connector_id: str = TDCC_SHAREHOLDING_CONNECTOR_ID
+    symbols: Sequence[str] | None = None
+    source_dataset: str = "TDCC_OD_1-5"
     max_records: int = 100
     source_metadata: SourceMetadata | Mapping[str, Any] | None = None
     connector_metadata: Mapping[str, Any] = field(default_factory=dict)
@@ -896,11 +926,14 @@ class TdccShareholdingDistributionAdapter(SourceConnectorProvider):
             "mode": "provider_owned_adapter",
             "adapter": "TdccShareholdingDistributionAdapter.records_from_payload",
             "adapter_config": {
+                "symbols": list(self.symbols) if self.symbols else None,
+                "source_dataset": self.source_dataset,
                 "max_records": self.max_records,
             },
             "request": {
                 "dataset": "tdcc_shareholding_distribution",
-                "symbols": ["2330"],
+                "symbols": list(self.symbols) if self.symbols else ["2330"],
+                "source_dataset": self.source_dataset,
             },
             "next_watermark": None,
             "max_records": self.max_records,
@@ -909,13 +942,14 @@ class TdccShareholdingDistributionAdapter(SourceConnectorProvider):
     def fetch_payload(
         self,
         *,
-        source_dataset: str = "TDCC_OD_1-5",
+        source_dataset: str | None = None,
         symbols: Sequence[str] | None = None,
         max_records: int | None = None,
-        timeout_seconds: float = 20.0,
+        timeout_seconds: float = 45.0,
     ) -> Any:
         """Fetch live open data payload from TDCC open data endpoint."""
-        clean_id = source_dataset.replace("TDCC_OD_", "")
+        resolved_ds = str(source_dataset or self.source_dataset or "TDCC_OD_1-5")
+        clean_id = resolved_ds.replace("TDCC_OD_", "")
         url = f"{TDCC_SMART_BASE_URL}/getOD.ashx?id={clean_id}"
         request = urllib.request.Request(
             url,
@@ -932,7 +966,8 @@ class TdccShareholdingDistributionAdapter(SourceConnectorProvider):
             raw_bytes = _read_bounded_response(response, max_bytes=5242880)
             text = raw_bytes.decode("utf-8-sig")
             reader = csv.DictReader(io.StringIO(text))
-            target_symbols = {str(s).strip().upper() for s in (symbols or ())} if symbols else None
+            resolved_symbols = symbols if symbols is not None else self.symbols
+            target_symbols = {str(s).strip().upper() for s in (resolved_symbols or ())} if resolved_symbols else None
             limit = max_records or self.max_records
             rows: list[dict[str, Any]] = []
             for r in reader:
@@ -965,7 +1000,7 @@ class TdccShareholdingDistributionAdapter(SourceConnectorProvider):
         self,
         payload: Mapping[str, Any] | Sequence[Mapping[str, Any]],
         *,
-        source_dataset: str = "TDCC_OD_1-5",
+        source_dataset: str | None = None,
         api_endpoint: str | None = None,
         trade_date: str | None = None,
         available_time: str | None = None,
@@ -976,15 +1011,17 @@ class TdccShareholdingDistributionAdapter(SourceConnectorProvider):
         correction_reason: str = "",
         trace_id: str = "",
     ) -> tuple[SourceRecord, ...]:
-        clean_id = source_dataset.replace("TDCC_OD_", "")
+        resolved_ds = str(source_dataset or self.source_dataset or "TDCC_OD_1-5")
+        clean_id = resolved_ds.replace("TDCC_OD_", "")
         resolved_endpoint = api_endpoint or f"{TDCC_SMART_BASE_URL}/getOD.ashx?id={clean_id}"
+        resolved_symbols = symbols if symbols is not None else self.symbols
         normalized_rows = self.normalized_rows_from_payload(
             payload,
-            source_dataset=source_dataset,
+            source_dataset=resolved_ds,
             api_endpoint=resolved_endpoint,
             trade_date=trade_date,
             available_time=available_time,
-            symbols=symbols,
+            symbols=resolved_symbols,
             max_records=max_records or self.max_records,
             is_correction=is_correction,
             correction_reason=correction_reason,
@@ -1008,14 +1045,14 @@ class TdccShareholdingDistributionAdapter(SourceConnectorProvider):
                         "source_class": "taiwan_chip",
                         "provider": "TDCC",
                         "dataset": "tdcc_shareholding_distribution",
-                        "source_dataset": source_dataset,
+                        "source_dataset": resolved_ds,
                         "venue": row["venue"],
                         "symbol": row.get("symbol"),
                         "symbol_canonical": row.get("symbol_canonical"),
                         "date": row.get("date"),
                         "event_time": row.get("event_time") or (f"{row['date']}T00:00:00Z" if row.get("date") else _utc_now()),
-                        "available_time": row.get("available_time") or _to_rfc3339(available_time or (f"{row['date']}T19:00:00Z" if row.get("date") else _utc_now())),
-                        "ingest_time": row.get("ingest_time") or _to_rfc3339(_utc_now()),
+                        "available_time": row.get("available_time") or _validate_or_convert_rfc3339(available_time or (f"{row['date']}T19:00:00Z" if row.get("date") else _utc_now())),
+                        "ingest_time": row.get("ingest_time") or _validate_or_convert_rfc3339(_utc_now()),
                         "api_endpoint": resolved_endpoint,
                         "cadence": "weekly_after_tdcc_publication",
                         "universe_tier": _tier_name(universe_tier),
@@ -1047,9 +1084,11 @@ class TdccShareholdingDistributionAdapter(SourceConnectorProvider):
         correction_reason: str = "",
     ) -> tuple[dict[str, Any], ...]:
         rows = _rows_from_payload(payload)
-        target_symbols = {str(s).strip().upper() for s in (symbols or ())} if symbols else None
+        resolved_symbols = symbols if symbols is not None else self.symbols
+        target_symbols = {str(s).strip().upper() for s in (resolved_symbols or ())} if resolved_symbols else None
         limit = max_records or self.max_records
-        clean_id = source_dataset.replace("TDCC_OD_", "")
+        resolved_ds = str(source_dataset or self.source_dataset or "TDCC_OD_1-5")
+        clean_id = resolved_ds.replace("TDCC_OD_", "")
         resolved_endpoint = api_endpoint or f"{TDCC_SMART_BASE_URL}/getOD.ashx?id={clean_id}"
         results: list[dict[str, Any]] = []
         for raw in rows:
@@ -1068,9 +1107,11 @@ class TdccShareholdingDistributionAdapter(SourceConnectorProvider):
             venue = _text(_first(raw, "venue", "Venue"), "TWSE")
             row_is_correction = bool(is_correction or _first(raw, "is_correction", "is_restated", "更正註記"))
 
-            event_time_rfc = f"{date}T00:00:00Z"
-            avail_time_rfc = _to_rfc3339(available_time or f"{date}T19:00:00Z")
-            ingest_time_rfc = _to_rfc3339(_utc_now())
+            event_time_raw = _first(raw, "event_time", "EventTime") or f"{date}T00:00:00Z"
+            avail_time_raw = _first(raw, "available_time", "AvailableTime") or available_time or f"{date}T19:00:00Z"
+            event_time_rfc = _validate_or_convert_rfc3339(event_time_raw, name="event_time")
+            avail_time_rfc = _validate_or_convert_rfc3339(avail_time_raw, name="available_time")
+            ingest_time_rfc = _validate_or_convert_rfc3339(_first(raw, "ingest_time", "IngestTime") or _utc_now(), name="ingest_time")
 
             results.append({
                 "dataset": "tdcc_shareholding_distribution",
@@ -1087,7 +1128,7 @@ class TdccShareholdingDistributionAdapter(SourceConnectorProvider):
                 "people_count": people_count,
                 "shares": shares,
                 "percentage": percentage,
-                "source_dataset": source_dataset,
+                "source_dataset": resolved_ds,
                 "api_endpoint": resolved_endpoint,
                 "is_correction": row_is_correction,
                 "correction_reason": correction_reason or ("TDCC weekly correction" if row_is_correction else ""),
@@ -1122,11 +1163,47 @@ class TdccShareholdingDistributionAdapter(SourceConnectorProvider):
         )
 
 
+_TAIFEX_CONTRACT_ALIASES: dict[str, str] = {
+    "TX": "TX",
+    "TXF": "TX",
+    "臺股期貨": "TX",
+    "MTX": "MTX",
+    "小型臺指期貨": "MTX",
+    "TE": "TE",
+    "電子期貨": "TE",
+    "TF": "TF",
+    "金融期貨": "TF",
+    "TXO": "TXO",
+    "臺指選擇權": "TXO",
+    "TEO": "TEO",
+    "電子選擇權": "TEO",
+    "TFO": "TFO",
+    "金融選擇權": "TFO",
+}
+
+
+def _matches_taifex_contract(raw_contract: str, target_contracts: Sequence[str] | None) -> bool:
+    if not target_contracts:
+        return True
+    raw_clean = raw_contract.strip()
+    raw_upper = raw_clean.upper()
+    canonical_upper = _TAIFEX_CONTRACT_ALIASES.get(raw_clean, _TAIFEX_CONTRACT_ALIASES.get(raw_upper, raw_upper)).upper()
+    for t in target_contracts:
+        t_clean = str(t).strip()
+        t_upper = t_clean.upper()
+        t_canon = _TAIFEX_CONTRACT_ALIASES.get(t_clean, _TAIFEX_CONTRACT_ALIASES.get(t_upper, t_upper)).upper()
+        if raw_upper == t_upper or canonical_upper == t_canon or raw_clean == t_clean:
+            return True
+    return False
+
+
 @dataclass(frozen=True)
 class TaifexDerivativesChipAdapter(SourceConnectorProvider):
     """TAIFEX official daily futures and options chip-context adapter (SD-SRCM-05 §7.3)."""
 
     connector_id: str = TAIFEX_DERIVATIVES_CONNECTOR_ID
+    dataset: str = "taifex_futures_chip"
+    contracts: Sequence[str] | None = None
     max_records: int = 100
     source_metadata: SourceMetadata | Mapping[str, Any] | None = None
     connector_metadata: Mapping[str, Any] = field(default_factory=dict)
@@ -1180,11 +1257,13 @@ class TaifexDerivativesChipAdapter(SourceConnectorProvider):
             "mode": "provider_owned_adapter",
             "adapter": "TaifexDerivativesChipAdapter.records_from_payload",
             "adapter_config": {
+                "dataset": self.dataset,
+                "contracts": list(self.contracts) if self.contracts else None,
                 "max_records": self.max_records,
             },
             "request": {
-                "dataset": "taifex_futures_chip",
-                "contracts": ["TX", "MTX"],
+                "dataset": self.dataset,
+                "contracts": list(self.contracts) if self.contracts else ["TX", "MTX"],
             },
             "next_watermark": None,
             "max_records": self.max_records,
@@ -1192,13 +1271,16 @@ class TaifexDerivativesChipAdapter(SourceConnectorProvider):
 
     def fetch_payload(
         self,
-        dataset: str = "taifex_futures_chip",
+        dataset: str | None = None,
         *,
         max_records: int | None = None,
         timeout_seconds: float = 20.0,
     ) -> Any:
         """Fetch live open data payload from TAIFEX OpenAPI endpoint."""
-        url = _taifex_endpoint(dataset)
+        resolved_ds = str(dataset or self.dataset or "taifex_futures_chip")
+        if resolved_ds not in ("taifex_futures_chip", "taifex_options_chip"):
+            raise SourceEvidenceError(f"unsupported TAIFEX dataset: {resolved_ds}")
+        url = _taifex_endpoint(resolved_ds)
         request = urllib.request.Request(
             url,
             headers={
@@ -1255,53 +1337,59 @@ class TaifexDerivativesChipAdapter(SourceConnectorProvider):
         self,
         payload: Mapping[str, Any] | Sequence[Mapping[str, Any]],
         *,
-        dataset: str = "taifex_futures_chip",
+        dataset: str | None = None,
         source_dataset: str | None = None,
         api_endpoint: str | None = None,
         trade_date: str | None = None,
         available_time: str | None = None,
         universe_tier: str = "core_universe",
+        contracts: Sequence[str] | None = None,
         max_records: int | None = None,
         trace_id: str = "",
     ) -> tuple[SourceRecord, ...]:
-        resolved_endpoint = api_endpoint or _taifex_endpoint(dataset)
+        resolved_ds = str(dataset or self.dataset or "taifex_futures_chip")
+        if resolved_ds not in ("taifex_futures_chip", "taifex_options_chip"):
+            raise SourceEvidenceError(f"unsupported TAIFEX dataset: {resolved_ds}")
+        resolved_endpoint = api_endpoint or _taifex_endpoint(resolved_ds)
+        resolved_contracts = contracts if contracts is not None else self.contracts
         normalized_rows = self.normalized_rows_from_payload(
             payload,
-            dataset=dataset,
-            source_dataset=source_dataset or dataset,
+            dataset=resolved_ds,
+            source_dataset=source_dataset or resolved_ds,
             api_endpoint=resolved_endpoint,
             trade_date=trade_date,
             available_time=available_time,
+            contracts=resolved_contracts,
             max_records=max_records or self.max_records,
         )
         records: list[SourceRecord] = []
         limit = max_records or self.max_records
-        schema_hash = TAIFEX_OPTIONS_CHIP_SCHEMA_HASH if dataset == "taifex_options_chip" else TAIFEX_FUTURES_CHIP_SCHEMA_HASH
+        schema_hash = TAIFEX_OPTIONS_CHIP_SCHEMA_HASH if resolved_ds == "taifex_options_chip" else TAIFEX_FUTURES_CHIP_SCHEMA_HASH
         for row in normalized_rows[:limit]:
-            row_hash = _stable_hash({"dataset": dataset, "row": row})
+            row_hash = _stable_hash({"dataset": resolved_ds, "row": row})
             contract = _text(row.get("contract"), "MARKET")
             group = _text(row.get("participant_group"), "ALL")
             as_of_date = _text(row.get("date"), row_hash)
-            content_ref = f"tw-taifex://{dataset}/{contract}/{as_of_date}/{group}/{row_hash}"
+            content_ref = f"tw-taifex://{resolved_ds}/{contract}/{as_of_date}/{group}/{row_hash}"
             records.append(
                 SourceRecord(
-                    source_id=f"tw-taifex:{dataset}:{contract}:{group}:{row_hash}",
+                    source_id=f"tw-taifex:{resolved_ds}:{contract}:{group}:{row_hash}",
                     connector_id=self.connector_id,
                     source_type="market",
-                    title=f"TAIFEX {dataset} {contract} {group} {as_of_date}".strip(),
+                    title=f"TAIFEX {resolved_ds} {contract} {group} {as_of_date}".strip(),
                     content_ref=content_ref,
                     metadata={
                         "source_class": "taiwan_chip",
                         "provider": "TAIFEX",
-                        "dataset": dataset,
-                        "source_dataset": source_dataset or dataset,
+                        "dataset": resolved_ds,
+                        "source_dataset": source_dataset or resolved_ds,
                         "venue": "TAIFEX",
                         "contract": contract,
                         "participant_group": group,
                         "date": row.get("date"),
-                        "event_time": row.get("event_time") or (f"{row['date']}T00:00:00Z" if row.get("date") else _utc_now()),
-                        "available_time": row.get("available_time") or _to_rfc3339(available_time or (f"{row['date']}T16:30:00Z" if row.get("date") else _utc_now())),
-                        "ingest_time": row.get("ingest_time") or _to_rfc3339(_utc_now()),
+                        "event_time": row.get("event_time"),
+                        "available_time": row.get("available_time"),
+                        "ingest_time": row.get("ingest_time"),
                         "api_endpoint": resolved_endpoint,
                         "cadence": "daily_after_taifex_publication",
                         "universe_tier": _tier_name(universe_tier),
@@ -1323,16 +1411,21 @@ class TaifexDerivativesChipAdapter(SourceConnectorProvider):
         self,
         payload: Mapping[str, Any] | Sequence[Mapping[str, Any]],
         *,
-        dataset: str = "taifex_futures_chip",
-        source_dataset: str = "taifex_futures_chip",
+        dataset: str | None = None,
+        source_dataset: str | None = None,
         api_endpoint: str = "",
         trade_date: str | None = None,
         available_time: str | None = None,
+        contracts: Sequence[str] | None = None,
         max_records: int | None = None,
     ) -> tuple[dict[str, Any], ...]:
+        resolved_ds = str(dataset or self.dataset or "taifex_futures_chip")
+        if resolved_ds not in ("taifex_futures_chip", "taifex_options_chip"):
+            raise SourceEvidenceError(f"unsupported TAIFEX dataset: {resolved_ds}")
         rows = _rows_from_payload(payload)
         limit = max_records or self.max_records
-        resolved_endpoint = api_endpoint or _taifex_endpoint(dataset)
+        resolved_endpoint = api_endpoint or _taifex_endpoint(resolved_ds)
+        resolved_contracts = contracts if contracts is not None else self.contracts
         results: list[dict[str, Any]] = []
         for raw in rows:
             if limit is not None and len(results) >= limit:
@@ -1344,11 +1437,17 @@ class TaifexDerivativesChipAdapter(SourceConnectorProvider):
             roll_day = self.is_contract_roll_day(date) if re.match(r"^\d{4}-\d{2}-\d{2}$", date) else False
             front_month = self.resolve_front_month_contract(date) if re.match(r"^\d{4}-\d{2}-\d{2}$", date) else ""
 
-            event_time_rfc = f"{date}T00:00:00Z"
-            avail_time_rfc = _to_rfc3339(available_time or f"{date}T16:30:00Z")
-            ingest_time_rfc = _to_rfc3339(_utc_now())
+            event_time_raw = _first(raw, "event_time", "EventTime") or f"{date}T00:00:00Z"
+            avail_time_raw = _first(raw, "available_time", "AvailableTime") or available_time or f"{date}T16:30:00Z"
+            event_time_rfc = _validate_or_convert_rfc3339(event_time_raw, name="event_time")
+            avail_time_rfc = _validate_or_convert_rfc3339(avail_time_raw, name="available_time")
+            ingest_time_rfc = _validate_or_convert_rfc3339(_first(raw, "ingest_time", "IngestTime") or _utc_now(), name="ingest_time")
 
-            if dataset == "taifex_options_chip":
+            if resolved_ds == "taifex_options_chip":
+                raw_contract = _text(_first(raw, "Contract", "契約名稱", "商品代號", "ContractCode"), "TXO")
+                if not _matches_taifex_contract(raw_contract, resolved_contracts):
+                    continue
+                contract = _TAIFEX_CONTRACT_ALIASES.get(raw_contract, raw_contract)
                 call_volume = _int(_first(raw, "買權成交量", "CallVolume", "call_volume")) or 0
                 put_volume = _int(_first(raw, "賣權成交量", "PutVolume", "put_volume")) or 0
                 call_oi = _int(_first(raw, "買權未平倉量", "CallOpenInterest", "CallOI", "call_open_interest")) or 0
@@ -1363,7 +1462,7 @@ class TaifexDerivativesChipAdapter(SourceConnectorProvider):
                     "event_time": event_time_rfc,
                     "available_time": avail_time_rfc,
                     "ingest_time": ingest_time_rfc,
-                    "contract": _text(_first(raw, "Contract", "契約名稱", "商品代號", "ContractCode"), "TXO"),
+                    "contract": contract,
                     "market": "TW",
                     "venue": "TAIFEX",
                     "call_volume": call_volume,
@@ -1373,12 +1472,15 @@ class TaifexDerivativesChipAdapter(SourceConnectorProvider):
                     "put_call_ratio": pc_ratio or 0.0,
                     "contract_roll_day": roll_day,
                     "front_month_contract": front_month,
-                    "source_dataset": source_dataset,
+                    "source_dataset": source_dataset or resolved_ds,
                     "api_endpoint": resolved_endpoint,
                     "raw_row": dict(raw),
                 })
             else:
-                contract = _text(_first(raw, "Contract", "契約名稱", "商品代號", "contract", "ContractCode"), "TX")
+                raw_contract = _text(_first(raw, "Contract", "契約名稱", "商品代號", "contract", "ContractCode"), "TX")
+                if not _matches_taifex_contract(raw_contract, resolved_contracts):
+                    continue
+                contract = _TAIFEX_CONTRACT_ALIASES.get(raw_contract, raw_contract)
                 participant = _text(_first(raw, "身分別", "身份別", "ParticipantGroup", "participant_group", "Identity", "Item"), "foreign_investors")
                 long_vol = _int(_first(raw, "多方交易口數", "LongVolume", "buy_volume", "買進口數", "TradingVolume(Long)")) or 0
                 short_vol = _int(_first(raw, "空方交易口數", "ShortVolume", "sell_volume", "賣出口數", "TradingVolume(Short)")) or 0
@@ -1399,9 +1501,9 @@ class TaifexDerivativesChipAdapter(SourceConnectorProvider):
                     "available_time": avail_time_rfc,
                     "ingest_time": ingest_time_rfc,
                     "contract": contract,
+                    "participant_group": participant,
                     "market": "TW",
                     "venue": "TAIFEX",
-                    "participant_group": participant,
                     "long_volume": long_vol,
                     "short_volume": short_vol,
                     "net_volume": net_vol,
@@ -1410,7 +1512,7 @@ class TaifexDerivativesChipAdapter(SourceConnectorProvider):
                     "net_open_interest": net_oi,
                     "contract_roll_day": roll_day,
                     "front_month_contract": front_month,
-                    "source_dataset": source_dataset,
+                    "source_dataset": source_dataset or resolved_ds,
                     "api_endpoint": resolved_endpoint,
                     "raw_row": dict(raw),
                 })
