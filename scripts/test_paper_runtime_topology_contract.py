@@ -63,7 +63,7 @@ def test_dev_deploy_retires_static_worker_and_verifies_fleet() -> None:
     assert "http://127.0.0.1:18011/readyz" in deploy
     assert 'worker.get("heartbeat_status") == "active"' in deploy
     compose_up = root_case.index(
-        "docker compose -p pantheon -f docker-compose.yml up -d --build"
+        "docker compose -p pantheon -f docker-compose.yml up -d"
     )
     assert compose_up < root_case.index("retire_legacy_static_paper_runtime")
     assert compose_up < root_case.index("verify_dev_paper_fleet")

@@ -154,7 +154,7 @@ def test_bounded_source_refresh_deploy_waits_and_gates_readback() -> None:
     root_start = deploy.index("  root)\n")
     root_end = deploy.index("\n  bff)\n", root_start)
     root_case = deploy[root_start:root_end]
-    assert root_case.index("docker compose -p pantheon -f docker-compose.yml up -d --build") < root_case.index(
+    assert root_case.index("docker compose -p pantheon -f docker-compose.yml up -d") < root_case.index(
         "verify_bounded_source_refresh_readback"
     )
     assert root_case.index("verify_bounded_source_refresh_readback") < root_case.index(

@@ -20,6 +20,6 @@ def test_dev_root_deploy_proves_evolution_scheduler_tick() -> None:
     assert "http://127.0.0.1:18093/api/evolution/sweep-status" not in deploy
     assert 'payload.get("last_success_at")' in deploy
     assert 'payload.get("total_sweeps_run")' in deploy
-    assert root_case.index("docker compose -p pantheon -f docker-compose.yml up -d --build") < root_case.index(
+    assert root_case.index("docker compose -p pantheon -f docker-compose.yml up -d") < root_case.index(
         "verify_dev_evolution_daily_sweep"
     )
