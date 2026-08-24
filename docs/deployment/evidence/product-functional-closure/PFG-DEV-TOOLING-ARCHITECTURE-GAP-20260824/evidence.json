@@ -1,0 +1,61 @@
+{
+  "schema_version": "pantheon.product_functional_closure.task_review.v1",
+  "task": {
+    "id": "PFG-DEV-TOOLING-ARCHITECTURE-GAP-20260824",
+    "title": "Record and design the development-tooling architecture corrections",
+    "owner": "Antigravity",
+    "reviewer": "Codex2",
+    "status": "review_pending",
+    "repository": "ajoe734/pantheon",
+    "base_branch": "dev",
+    "task_branch": "task/PFG-DEV-TOOLING-ARCHITECTURE-GAP-20260824",
+    "review_file": "docs/deployment/evidence/product-functional-closure/PFG-DEV-TOOLING-ARCHITECTURE-GAP-20260824/evidence.json",
+    "evidence_cut_at": "2026-08-24"
+  },
+  "scope": {
+    "owned_layer": "Development tooling architecture gap analysis and design specification for supervisor, V2 TaskStore, auto-workers, and probe harnesses",
+    "not_changing": [
+      "Product runtime business services, BFF routes, and data ingestion engines",
+      "Live broker authorization, capital pathways, and order execution",
+      "Security program definitions and external credential handling"
+    ],
+    "changed_files": [
+      "docs/operations/development-tooling-architecture-gaps-2026-08-24.md",
+      "docs/deployment/evidence/product-functional-closure/PFG-DEV-TOOLING-ARCHITECTURE-GAP-20260824/README.md",
+      "docs/deployment/evidence/product-functional-closure/PFG-DEV-TOOLING-ARCHITECTURE-GAP-20260824/evidence.json"
+    ],
+    "composes_with": [
+      ".orchestrator/rewrite/task_state_store.py",
+      ".orchestrator/rewrite/dispatch_admission.py",
+      ".orchestrator/rewrite/task_machine.py",
+      ".orchestrator/supervisor.py",
+      "scripts/ai_status.py"
+    ]
+  },
+  "gap_architecture_designs": {
+    "immutable_task_correction": "Append-only TaskAmendedEvent in TaskStore journal preserves full event history while enabling effective task spec corrections under governed amendment authority.",
+    "dependency_aware_reopen": "DAG dependency recalculation on reopen combined with structured RootEvidenceHandoff contracts.",
+    "artifact_ownership_overlap": "Explicit artifacts_manifest (owned_write_paths, referenced_read_paths) with supervisor path-overlap mutual exclusion gating extending existing artifact_conflict_guard.",
+    "cross_repo_sidecars": "First-class target_repo, task_nature, parent_task_id, and subphase fields integrated with multi_repo_registry.py.",
+    "exact_head_rejection_recovery": "Pure lifecycle supersede exit for closed/merged PR heads and deterministic waiting_for cleanup on state transitions.",
+    "probe_contract_alignment_and_isolation": "Route-scoped contract validators with canonical field aliasing (camelCase/snake_case) and bounded per-surface timeouts with independent failure isolation."
+  },
+  "validation": {
+    "environment": "task worktree; document and contract validation only; product runtime and capital authority untouched",
+    "commands": [
+      {
+        "command": "git diff --check origin/dev...HEAD",
+        "result": "clean (exit 0)"
+      },
+      {
+        "command": "PYTHONPATH=.orchestrator:. python3 -m unittest discover -s .orchestrator -p test_explain_dispatch.py",
+        "result": "7 passed"
+      }
+    ]
+  },
+  "review": {
+    "status": "pending_independent_review",
+    "reviewer_instruction": "Review the exact PR head and this committed manifest. Bind this exact path in the governed approve command; do not treat local mocks or an unmerged task branch as evidence.",
+    "owner_claim": "Owner evidence ready for independent review; this file makes no approval claim."
+  }
+}
