@@ -17,7 +17,7 @@
     "not_changing": [
       "Live capital action (remains fail-closed / disabled)",
       "Source Ingestion polling (remains reconcile-only / manual-pull only)",
-      "Frontend workflow source (execute-plans paired release SHA 5447d2a09b5c83a4f9ee2d405f57c642913e0055 remains active and unchanged)",
+      "Frontend workflow source (execute-plans paired release SHA cc4007f7f78a31c73548ce85457af17a45a4c4b9 active with read-only profile)",
       "Staging/production strict auth posture (remains strict with dev-login disabled)"
     ],
     "changed_files": [
@@ -36,10 +36,14 @@
     "auth_profile": "strict",
     "workflow": "Pantheon Nonprod Deploy",
     "workflow_file": ".github/workflows/nonprod-deploy.yml",
-    "workflow_run_id": "32678402206",
-    "workflow_run_url": "https://github.com/ajoe734/pantheon/actions/runs/32678402206",
+    "workflow_run_id": "32679566250",
+    "workflow_run_url": "https://github.com/ajoe734/pantheon/actions/runs/32679566250",
     "deployed_backend_sha": "40de8fcb1c69fad0bf5e54d4c0bd6e508c9162e0",
-    "paired_frontend_sha": "5447d2a09b5c83a4f9ee2d405f57c642913e0055",
+    "paired_frontend_sha": "cc4007f7f78a31c73548ce85457af17a45a4c4b9",
+    "paired_frontend_gate_run_id": "32679780054",
+    "paired_frontend_gate_run_url": "https://github.com/ajoe734/execute-plans/actions/runs/32679780054",
+    "paired_frontend_deploy_run_id": "32680429819",
+    "paired_frontend_deploy_run_url": "https://github.com/ajoe734/execute-plans/actions/runs/32680429819",
     "proof_flags": {
       "ppl_alloc_009_dev_proof_enabled": false,
       "run_evolution_dispatch_probe": false,
@@ -47,16 +51,57 @@
     },
     "lease": {
       "resource": "pantheon-dev-environment",
-      "mode": "deployment"
+      "mode": "deployment",
+      "status": "released"
     }
   },
   "hosted_readback": {
-    "status": "pending_deployment_completion",
+    "status": "verified_accepted",
     "bff_health_endpoint": "https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io/healthz",
+    "bff_health_readback": {
+      "status": "ok",
+      "service": "operator-bff",
+      "version": "0.2.0"
+    },
     "bff_version_endpoint": "https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io/bff/version",
+    "bff_version_readback": {
+      "service": "operator-bff",
+      "version": "0.2.0",
+      "source_commit_sha": "40de8fcb1c69fad0bf5e54d4c0bd6e508c9162e0",
+      "commit": "40de8fcb1c69fad0bf5e54d4c0bd6e508c9162e0",
+      "source_commit_known": true,
+      "environment": "dev",
+      "config_posture": {
+        "auth_stub": false,
+        "auth_mode": "strict",
+        "dev_login_enabled": true,
+        "mfa_required": true,
+        "assistant_kernel_enabled": true,
+        "trade_journey_reader_backend": "json",
+        "trade_journey_projection_schema": "trade_journey_projection"
+      }
+    },
     "frontend_deployment_endpoint": "https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io/deployment.json",
+    "frontend_deployment_readback": {
+      "schemaVersion": 1,
+      "app": "execute-plans",
+      "environment": "pantheon-dev-fe",
+      "deploymentState": "accepted",
+      "profile": "read-only",
+      "backend_sha": "40de8fcb1c69fad0bf5e54d4c0bd6e508c9162e0",
+      "frontend_sha": "cc4007f7f78a31c73548ce85457af17a45a4c4b9",
+      "bff_source_commit_sha": "40de8fcb1c69fad0bf5e54d4c0bd6e508c9162e0",
+      "integration_gate_run_id": "32679780054",
+      "buildMode": {
+        "VITE_BFF_MODE": "live",
+        "VITE_BFF_FALLBACK": "strict",
+        "VITE_BFF_REAL_WRITES": "false",
+        "VITE_BFF_ALLOW_DEV_STUB_WRITES": "false",
+        "VITE_BFF_EMBEDDED_BEARER_TOKEN": "false"
+      }
+    },
     "expected_backend_sha": "40de8fcb1c69fad0bf5e54d4c0bd6e508c9162e0",
-    "expected_frontend_sha": "5447d2a09b5c83a4f9ee2d405f57c642913e0055",
+    "expected_frontend_sha": "cc4007f7f78a31c73548ce85457af17a45a4c4b9",
     "expected_login_ttl_seconds": 1800,
     "source_ingestion_posture": "reconcile_only (MAX_TICKS=0)",
     "live_capital_posture": "fail-closed / disabled"
@@ -65,8 +110,20 @@
     "environment": "checkout-scoped .venv-pantheon; nonprod deployment executed under shared lease",
     "commands": [
       {
-        "command": "gh workflow run nonprod-deploy.yml --ref dev -f environment=dev -f component=bff -f ref=40de8fcb1c69fad0bf5e54d4c0bd6e508c9162e0 -f frontend_sha=5447d2a09b5c83a4f9ee2d405f57c642913e0055 -f dev_auth_profile=strict -f ppl_alloc_009_dev_proof_enabled=false -f run_evolution_dispatch_probe=false -f run_loop_prod_tel_002_probe=false",
-        "result": "Dispatched workflow run 32678402206"
+        "command": "gh workflow run nonprod-deploy.yml --ref dev -f environment=dev -f component=bff -f ref=40de8fcb1c69fad0bf5e54d4c0bd6e508c9162e0 -f frontend_sha=cc4007f7f78a31c73548ce85457af17a45a4c4b9 -f dev_auth_profile=strict -f ppl_alloc_009_dev_proof_enabled=false -f run_evolution_dispatch_probe=false -f run_loop_prod_tel_002_probe=false",
+        "result": "Dispatched and completed workflow run 32679566250 (success)"
+      },
+      {
+        "command": "/tmp/pantheon-worker-worktrees/pantheon/pfg-dev-bff-ttl-promotion-20260824/.venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/test_bff_session_auth_me_contract.py services/control-plane/bff/test_bff_oidc_staging_env_contract.py tests/integration/test_product_functional_compose_contract.py",
+        "result": "53 passed"
+      },
+      {
+        "command": "curl -k -s https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io/bff/version",
+        "result": "200 OK: source_commit_sha=40de8fcb1c69fad0bf5e54d4c0bd6e508c9162e0, auth_mode=strict, dev_login_enabled=true"
+      },
+      {
+        "command": "curl -k -s https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io/deployment.json",
+        "result": "200 OK: deploymentState=accepted, bffSourceCommitSha=40de8fcb1c69fad0bf5e54d4c0bd6e508c9162e0, frontendSha=cc4007f7f78a31c73548ce85457af17a45a4c4b9"
       }
     ]
   },
