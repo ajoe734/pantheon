@@ -1363,6 +1363,7 @@ jobs:
           lease_token="${PANTHEON_ENVIRONMENT_LEASE_TOKEN}"
           unset PANTHEON_ENVIRONMENT_LEASE_TOKEN
           controller="${GITHUB_WORKSPACE}/.lease-controller"
+          [[ -f "${controller}/scripts/dev_environment_lease.py" && ! -L "${controller}/scripts/dev_environment_lease.py" ]]
           [[ -f "${controller}/scripts/run_with_dev_environment_lease.sh" && ! -L "${controller}/scripts/run_with_dev_environment_lease.sh" ]]
           printf '%s  %s\n' \
             52276793f99162fc7ca307a1370addd8d99478208ebf7beb67eab23b97b83048 "${controller}/scripts/dev_environment_lease.py" \
@@ -1387,6 +1388,154 @@ jobs:
             echo "Hosted BFF is already at baseline ${current_bff}; skipping rollback deploy and verifying baseline pair"
           else
             echo "Dev deploy or smoke failed; rolling back BFF to baseline ${PANTHEON_ROLLBACK_BACKEND_SHA} (current=${current_bff:-unknown})"
+
+            rollback_lease_dir="$(mktemp -d "${RUNNER_TEMP}/pantheon-dev-rollback-lease-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-XXXXXX")"
+            chmod 0700 "${rollback_lease_dir}"
+            rollback_state_file="${rollback_lease_dir}/state.json"
+            rollback_acquisition_file="${rollback_lease_dir}/acquisition.json"
+            rollback_pid_file="${rollback_lease_dir}/heartbeat.pid"
+            rollback_identity_file="${rollback_lease_dir}/heartbeat-identity.json"
+            rollback_failure_file="${rollback_lease_dir}/heartbeat-failure.json"
+            rollback_shutdown_file="${rollback_lease_dir}/heartbeat-stop.json"
+            rollback_heartbeat_log="${rollback_lease_dir}/heartbeat.log"
+            rollback_heartbeat_pid=""
+            rollback_deploy_succeeded=false
+
+            rollback_heartbeat_stopped() {
+              local state
+              [[ -n "${rollback_heartbeat_pid}" ]] || return 0
+              state="$(ps -o stat= -p "${rollback_heartbeat_pid}" 2>/dev/null | tr -d '[:space:]')"
+              case "${state}" in ""|Z*|X*|x*) return 0 ;; esac
+              return 1
+            }
+
+            stop_rollback_heartbeat() {
+              rollback_heartbeat_stopped && return 0
+              python3 "${controller}/scripts/dev_environment_lease.py" verify-heartbeat-identity \
+                --identity-file "${rollback_identity_file}" \
+                --pid "${rollback_heartbeat_pid}" \
+                --expected-cli "${controller}/scripts/dev_environment_lease.py" \
+                --state-file "${rollback_state_file}" >/dev/null || return 1
+              kill -TERM "${rollback_heartbeat_pid}" 2>/dev/null || {
+                rollback_heartbeat_stopped && return 0
+                return 1
+              }
+              kill -CONT "${rollback_heartbeat_pid}" 2>/dev/null || true
+              for _ in $(seq 1 40); do
+                rollback_heartbeat_stopped && return 0
+                sleep 0.25
+              done
+              return 1
+            }
+
+            cleanup_rollback_lease() {
+              local status=$?
+              trap - EXIT INT TERM
+              if [[ -n "${rollback_heartbeat_pid}" ]]; then
+                if ! stop_rollback_heartbeat; then
+                  echo "[dev-deploy-compensation] rollback heartbeat identity could not be stopped safely" >&2
+                  status=75
+                fi
+              fi
+              if [[ "${rollback_deploy_succeeded}" == "true" ]]; then
+                [[ ! -e "${rollback_failure_file}" ]] || status=75
+                [[ -s "${rollback_shutdown_file}" ]] || status=75
+                if [[ "${status}" -eq 0 ]]; then
+                  PANTHEON_ENVIRONMENT_LEASE_TOKEN="${lease_token}" \
+                    python3 "${controller}/scripts/dev_environment_lease.py" verify \
+                      --repository ajoe734/execute-plans \
+                      --branch environment-coordination \
+                      --path .pantheon/environment-leases/pantheon-dev-environment.json \
+                      --resource pantheon-dev-environment \
+                      --state-file "${rollback_state_file}" \
+                      --max-heartbeat-age-seconds 120 >/dev/null || status=75
+                fi
+                if [[ "${status}" -eq 0 ]]; then
+                  PANTHEON_ENVIRONMENT_LEASE_TOKEN="${lease_token}" \
+                    python3 "${controller}/scripts/dev_environment_lease.py" release \
+                      --repository ajoe734/execute-plans \
+                      --branch environment-coordination \
+                      --path .pantheon/environment-leases/pantheon-dev-environment.json \
+                      --resource pantheon-dev-environment \
+                      --state-file "${rollback_state_file}" >/dev/null || status=75
+                fi
+              else
+                echo "[dev-deploy-compensation] rollback incomplete; lease remains quarantined until TTL" >&2
+              fi
+              exit "${status}"
+            }
+
+            trap cleanup_rollback_lease EXIT INT TERM
+
+            PANTHEON_ENVIRONMENT_LEASE_TOKEN="${lease_token}" \
+              python3 "${controller}/scripts/dev_environment_lease.py" acquire \
+                --repository ajoe734/execute-plans \
+                --branch environment-coordination \
+                --path .pantheon/environment-leases/pantheon-dev-environment.json \
+                --resource pantheon-dev-environment \
+                --mode deployment \
+                --owner "pantheon:${GITHUB_REPOSITORY}:${GITHUB_RUN_ID}:${GITHUB_RUN_ATTEMPT}:rollback" \
+                --ttl-seconds 300 \
+                --wait-seconds 7200 \
+                --poll-seconds 5 \
+                --state-file "${rollback_state_file}" \
+                --expected-backend-sha "${PANTHEON_ROLLBACK_BACKEND_SHA}" \
+                --run-url "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+                --json-out "${rollback_acquisition_file}"
+
+            exec {token_fd}<<<"${lease_token}"
+            env -i \
+              PATH="${PATH}" HOME="${HOME}" LANG=C.UTF-8 \
+              PYTHONNOUSERSITE=1 PYTHONSAFEPATH=1 PYTHONSTARTUP= PYTHONINSPECT= \
+              python3 "${controller}/scripts/dev_environment_lease.py" heartbeat-loop \
+                --repository ajoe734/execute-plans \
+                --branch environment-coordination \
+                --path .pantheon/environment-leases/pantheon-dev-environment.json \
+                --resource pantheon-dev-environment \
+                --state-file "${rollback_state_file}" \
+                --ttl-seconds 300 \
+                --interval-seconds 60 \
+                --failure-json-out "${rollback_failure_file}" \
+                --shutdown-json-out "${rollback_shutdown_file}" \
+                --identity-json-out "${rollback_identity_file}" \
+                --token-stdin \
+                <&"${token_fd}" >"${rollback_heartbeat_log}" 2>&1 &
+            rollback_heartbeat_pid=$!
+            exec {token_fd}<&-
+            printf '%s\n' "${rollback_heartbeat_pid}" > "${rollback_pid_file}"
+
+            for _ in $(seq 1 100); do
+              [[ -s "${rollback_identity_file}" ]] && break
+              kill -0 "${rollback_heartbeat_pid}" 2>/dev/null || {
+                sed -n '1,200p' "${rollback_heartbeat_log}" >&2 || true
+                exit 75
+              }
+              sleep 0.1
+            done
+            [[ -s "${rollback_identity_file}" ]]
+            python3 "${controller}/scripts/dev_environment_lease.py" verify-heartbeat-identity \
+              --identity-file "${rollback_identity_file}" \
+              --pid "${rollback_heartbeat_pid}" \
+              --expected-cli "${controller}/scripts/dev_environment_lease.py" \
+              --state-file "${rollback_state_file}" >/dev/null
+            PANTHEON_ENVIRONMENT_LEASE_TOKEN="${lease_token}" \
+              python3 "${controller}/scripts/dev_environment_lease.py" verify \
+                --repository ajoe734/execute-plans \
+                --branch environment-coordination \
+                --path .pantheon/environment-leases/pantheon-dev-environment.json \
+                --resource pantheon-dev-environment \
+                --state-file "${rollback_state_file}" \
+                --max-heartbeat-age-seconds 120 >/dev/null
+
+            export TARGET_ENV=dev
+            export PANTHEON_DEV_ENVIRONMENT_LEASE_STATE_FILE="${rollback_state_file}"
+            export PANTHEON_DEV_ENVIRONMENT_LEASE_HEARTBEAT_PID_FILE="${rollback_pid_file}"
+            export PANTHEON_DEV_ENVIRONMENT_LEASE_HEARTBEAT_IDENTITY_FILE="${rollback_identity_file}"
+            export PANTHEON_DEV_ENVIRONMENT_LEASE_FAILURE_FILE="${rollback_failure_file}"
+            export PANTHEON_DEV_ENVIRONMENT_LEASE_HEARTBEAT_LOG="${rollback_heartbeat_log}"
+            export PANTHEON_DEV_ENVIRONMENT_LEASE_MAX_HEARTBEAT_AGE_SECONDS=120
+            export PANTHEON_DEV_ENVIRONMENT_LEASE_VERIFY_INTERVAL_SECONDS=30
+
             PANTHEON_ENVIRONMENT_LEASE_TOKEN="${lease_token}" \
             PANTHEON_DEV_ROLLBACK_BACKEND_SHA="${PANTHEON_ROLLBACK_BACKEND_SHA}" \
               "${GITHUB_WORKSPACE}/.lease-controller/scripts/run_with_dev_environment_lease.sh" \
@@ -1397,6 +1546,8 @@ jobs:
                 --rollback-sha "${PANTHEON_ROLLBACK_BACKEND_SHA}" \
                 --project-id "${GCP_DEPLOY_PROJECT_ID}" \
                 --deadline-seconds "${DEV_DEPLOY_DEADLINE_SECONDS}"
+
+            rollback_deploy_succeeded=true
           fi
           actual_bff="$(curl -fsS "${DEV_BFF_URL}/bff/version" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("source_commit_sha") or "")')"
           [[ "${actual_bff}" == "${PANTHEON_ROLLBACK_BACKEND_SHA}" ]]

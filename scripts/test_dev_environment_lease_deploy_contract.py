@@ -292,7 +292,8 @@ def test_token_steps_use_a_fixed_sanitized_path_and_clear_shell_git_injection() 
     pythoninspect_shell_values = re.findall(r"\bPYTHONINSPECT=([^\s\\]*)", dev)
     assert len(pythoninspect_yaml_values) >= 7
     assert set(pythoninspect_yaml_values) == {'""'}
-    assert pythoninspect_shell_values == [""]
+    assert len(pythoninspect_shell_values) >= 1
+    assert set(pythoninspect_shell_values) == {""}
     assert dev.count('LD_PRELOAD: ""') >= 7
     assert dev.count('GIT_CONFIG_COUNT: "0"') >= 7
     assert dev.count('GIT_CONFIG_PARAMETERS: ""') >= 7
@@ -1446,6 +1447,12 @@ def _validate_deploy_compensation_step(step: str) -> None:
     assert 'current_bff="$(curl -fsS "${DEV_BFF_URL}/bff/version"' in step
     assert 'if [[ -n "${current_bff}" && "${current_bff}" == "${PANTHEON_ROLLBACK_BACKEND_SHA}" ]]; then' in step
     assert "skipping rollback deploy and verifying baseline pair" in step
+    assert 'python3 "${controller}/scripts/dev_environment_lease.py" acquire' in step
+    assert 'python3 "${controller}/scripts/dev_environment_lease.py" heartbeat-loop' in step
+    assert 'python3 "${controller}/scripts/dev_environment_lease.py" verify-heartbeat-identity' in step
+    assert 'python3 "${controller}/scripts/dev_environment_lease.py" verify' in step
+    assert 'python3 "${controller}/scripts/dev_environment_lease.py" release' in step
+    assert '"${GITHUB_WORKSPACE}/.lease-controller/scripts/run_with_dev_environment_lease.sh"' in step
 
 
 def test_dev_deploy_compensation_exports_full_governed_bff_environment() -> None:
@@ -1462,6 +1469,122 @@ def _extract_deploy_compensation_run_script() -> str:
     return step[start:]
 
 
+FAKE_DEV_ENVIRONMENT_LEASE_CLI = r'''#!/usr/bin/env python3
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+import signal
+import sys
+import time
+import uuid
+from pathlib import Path
+
+TOKEN_ENV = "PANTHEON_ENVIRONMENT_LEASE_TOKEN"
+
+
+def option(name: str) -> str:
+    index = sys.argv.index(name)
+    return sys.argv[index + 1]
+
+
+def start_ticks(pid: int) -> int:
+    try:
+        raw = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8")
+        return int(raw[raw.rfind(")") + 1 :].strip().split()[19])
+    except Exception:
+        return 0
+
+
+if len(sys.argv) < 2:
+    sys.exit(1)
+
+command = sys.argv[1]
+
+if command == "acquire":
+    state_file = Path(option("--state-file"))
+    json_out = Path(option("--json-out"))
+    expected_sha = option("--expected-backend-sha")
+    owner = option("--owner")
+    lease_id = str(uuid.uuid4())
+    state = {
+        "schemaVersion": 1,
+        "repository": option("--repository") if "--repository" in sys.argv else "ajoe734/execute-plans",
+        "branch": option("--branch") if "--branch" in sys.argv else "environment-coordination",
+        "path": option("--path") if "--path" in sys.argv else ".pantheon/environment-leases/pantheon-dev-environment.json",
+        "resource": option("--resource") if "--resource" in sys.argv else "pantheon-dev-environment",
+        "mode": option("--mode") if "--mode" in sys.argv else "deployment",
+        "leaseId": lease_id,
+        "owner": owner,
+        "expectedBackendSha": expected_sha,
+        "acquiredAt": "2026-08-24T00:00:00Z",
+        "expiresAt": "2026-08-24T00:05:00Z",
+    }
+    state_file.write_text(json.dumps(state) + "\n", encoding="utf-8")
+    json_out.write_text(json.dumps(state) + "\n", encoding="utf-8")
+    print(json.dumps(state))
+    sys.exit(0)
+
+if command == "heartbeat-loop":
+    state_file = str(Path(option("--state-file")).resolve())
+    identity_file = Path(option("--identity-json-out"))
+    shutdown_file = Path(option("--shutdown-json-out")) if "--shutdown-json-out" in sys.argv else None
+    failure_file = Path(option("--failure-json-out")) if "--failure-json-out" in sys.argv else None
+    pid = os.getpid()
+    cmdline = Path(f"/proc/{pid}/cmdline").read_bytes()
+    identity_file.write_text(
+        json.dumps(
+            {
+                "schemaVersion": 1,
+                "status": "running",
+                "pid": pid,
+                "startTicks": start_ticks(pid),
+                "cmdlineSha256": hashlib.sha256(cmdline).hexdigest(),
+                "expectedCli": str(Path(__file__).resolve()),
+                "stateFile": state_file,
+                "recordedAt": "2026-08-24T00:00:00Z",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    def handle_term(*_args):
+        if shutdown_file:
+            shutdown_file.write_text(json.dumps({"schemaVersion": 1, "status": "stopped"}) + "\n", encoding="utf-8")
+        sys.exit(0)
+    signal.signal(signal.SIGTERM, handle_term)
+    signal.signal(signal.SIGINT, handle_term)
+    while True:
+        time.sleep(1)
+
+if command == "verify-heartbeat-identity":
+    identity = json.loads(Path(option("--identity-file")).read_text(encoding="utf-8"))
+    pid = int(option("--pid"))
+    expected_cli = str(Path(option("--expected-cli")).resolve())
+    state_file = str(Path(option("--state-file")).resolve())
+    cmdline = Path(f"/proc/{pid}/cmdline").read_bytes()
+    assert identity["pid"] == pid
+    assert identity["cmdlineSha256"] == hashlib.sha256(cmdline).hexdigest()
+    assert identity["expectedCli"] == expected_cli
+    assert identity["stateFile"] == state_file
+    print('{"status":"verified"}')
+    sys.exit(0)
+
+if command == "verify":
+    state_path = Path(option("--state-file"))
+    assert state_path.exists()
+    print('{"status":"verified"}')
+    sys.exit(0)
+
+if command == "release":
+    print('{"status":"released"}')
+    sys.exit(0)
+
+sys.exit(f"unsupported fake CLI command: {command}")
+'''
+
+
 def _setup_mock_compensation_environment(
     tmp_path: Path,
     initial_bff_sha: str,
@@ -1474,7 +1597,9 @@ def _setup_mock_compensation_environment(
 
     controller_scripts = tmp_path / ".lease-controller" / "scripts"
     controller_scripts.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(ROOT / "scripts" / "dev_environment_lease.py", controller_scripts / "dev_environment_lease.py")
+    fake_cli = controller_scripts / "dev_environment_lease.py"
+    fake_cli.write_text(FAKE_DEV_ENVIRONMENT_LEASE_CLI, encoding="utf-8")
+    fake_cli.chmod(0o755)
     shutil.copy2(ROOT / "scripts" / "run_with_dev_environment_lease.sh", controller_scripts / "run_with_dev_environment_lease.sh")
 
     agora_scripts = tmp_path / ".agora-gate-controller" / "scripts"
@@ -1562,28 +1687,139 @@ def _setup_mock_compensation_environment(
     )
     mock_curl.chmod(0o755)
 
+    mock_sha256sum = bin_dir / "sha256sum"
+    mock_sha256sum.write_text(
+        "#!/usr/bin/env bash\n"
+        "if [[ \"$*\" == *\"--check\"* ]]; then\n"
+        "  exit 0\n"
+        "fi\n"
+        "exec /usr/bin/sha256sum \"$@\"\n",
+        encoding="utf-8",
+    )
+    mock_sha256sum.chmod(0o755)
+
+    # Simulate preceding failure state from candidate deploy/paper_bootstrap/smoke
+    initial_lease_dir = tmp_path / "initial_lease"
+    initial_lease_dir.mkdir(parents=True, exist_ok=True)
+    initial_state_file = initial_lease_dir / "state.json"
+    initial_state_file.write_text(
+        json.dumps({
+            "schemaVersion": 1,
+            "resource": "pantheon-dev-environment",
+            "mode": "deployment",
+            "owner": "pantheon:ajoe734/pantheon:12345:1",
+            "leaseId": "00000000-0000-0000-0000-000000000001",
+            "expectedBackendSha": initial_bff_sha,
+        }) + "\n",
+        encoding="utf-8",
+    )
+    initial_pid_file = initial_lease_dir / "heartbeat.pid"
+    initial_pid_file.write_text("99999999\n", encoding="utf-8")
+    initial_identity_file = initial_lease_dir / "heartbeat-identity.json"
+    initial_identity_file.write_text(
+        json.dumps({
+            "schemaVersion": 1,
+            "status": "stopped",
+            "pid": 99999999,
+        }) + "\n",
+        encoding="utf-8",
+    )
+    initial_failure_file = initial_lease_dir / "heartbeat-failure.json"
+    initial_failure_file.write_text(
+        json.dumps({
+            "schemaVersion": 1,
+            "status": "guarded_command_failed",
+            "exitStatus": 1,
+            "detectedAt": "2026-08-24T00:00:00Z",
+        }) + "\n",
+        encoding="utf-8",
+    )
+    initial_heartbeat_log = initial_lease_dir / "heartbeat.log"
+    initial_heartbeat_log.write_text("Heartbeat stopped for quarantine\n", encoding="utf-8")
+
+    runner_temp = tmp_path / "runner_temp"
+    runner_temp.mkdir(parents=True, exist_ok=True)
+
     step_summary = tmp_path / "step_summary.md"
     env = {
         **os.environ,
         "PATH": f"{bin_dir}:{os.environ.get('PATH', '')}",
+        "TARGET_ENV": "dev",
         "GITHUB_WORKSPACE": str(tmp_path),
         "GITHUB_STEP_SUMMARY": str(step_summary),
+        "RUNNER_TEMP": str(runner_temp),
+        "GITHUB_RUN_ID": "12345",
+        "GITHUB_RUN_ATTEMPT": "1",
+        "GITHUB_REPOSITORY": "ajoe734/pantheon",
+        "GITHUB_SERVER_URL": "https://github.com",
         "DEV_AUTH_PROFILE": "strict",
         "DEV_BFF_URL": "https://pantheon-lupin-dev-bff.mock",
         "DEV_FE_URL": "https://pantheon-lupin-dev-fe.mock",
         "PANTHEON_ROLLBACK_BACKEND_SHA": rollback_bff_sha,
         "PANTHEON_ROLLBACK_FRONTEND_SHA": rollback_fe_sha,
+        "PANTHEON_DEV_ROLLBACK_BACKEND_SHA": rollback_bff_sha,
         "GCP_DEPLOY_PROJECT_ID": "pantheon-lupin-dev-20260719",
         "DEV_DEPLOY_DEADLINE_SECONDS": "1200",
         "PANTHEON_ENVIRONMENT_LEASE_TOKEN": "mock-token",
+        "PANTHEON_DEV_ENVIRONMENT_LEASE_STATE_FILE": str(initial_state_file),
+        "PANTHEON_DEV_ENVIRONMENT_LEASE_HEARTBEAT_PID_FILE": str(initial_pid_file),
+        "PANTHEON_DEV_ENVIRONMENT_LEASE_HEARTBEAT_IDENTITY_FILE": str(initial_identity_file),
+        "PANTHEON_DEV_ENVIRONMENT_LEASE_FAILURE_FILE": str(initial_failure_file),
+        "PANTHEON_DEV_ENVIRONMENT_LEASE_HEARTBEAT_LOG": str(initial_heartbeat_log),
+        "DEV_BFF_JWT_SECRET": "secret",
+        "DEV_BFF_JWT_ISSUER": "pantheon-dev",
+        "DEV_BFF_JWT_AUDIENCE": "bff-operators",
+        "DEV_BFF_JWKS_URI": "https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com",
+        "DEV_BFF_OIDC_DISCOVERY_URL": "https://discovery.mock",
+        "DEV_BFF_OIDC_ISSUER": "https://securetoken.google.com/pantheon-lupin-dev-20260719",
+        "DEV_BFF_OIDC_AUDIENCE": "pantheon-lupin-dev-20260719",
+        "DEV_BFF_OIDC_CLIENT_ID": "mock-oidc-client-id",
+        "DEV_BFF_OIDC_CLIENT_SECRET": "mock-oidc-client-secret",
+        "DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_ID": "pantheon-dev-viewer-v1",
+        "DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_SECRET": "secret",
+        "DEV_BFF_DEV_LOGIN_APPROVER_CLIENT_ID": "pantheon-dev-approver-v1",
+        "DEV_BFF_DEV_LOGIN_APPROVER_CLIENT_SECRET": "secret",
+        "DEV_BFF_DEV_LOGIN_RISK_OWNER_CLIENT_ID": "pantheon-dev-risk-owner-v1",
+        "DEV_BFF_DEV_LOGIN_RISK_OWNER_CLIENT_SECRET": "secret",
+        "DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_ID": "pantheon-dev-operator-a-v1",
+        "DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_SECRET": "secret",
+        "DEV_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_ID": "pantheon-dev-operator-b-v1",
+        "DEV_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_SECRET": "secret",
+        "DEV_BFF_MFA_REQUIRED": "true",
+        "DEV_BFF_MFA_CLAIMS": "amr,acr,mfa,mfa_verified,firebase.sign_in_second_factor",
+        "DEV_BFF_MFA_VALUES": "true,1,yes,mfa,otp,totp,webauthn",
+        "DEV_BFF_REQUIRE_EMAIL_VERIFIED": "true",
+        "DEV_BFF_DEV_LOGIN_OPERATOR_MFA_VERIFIED": "false",
+        "DEV_BFF_DEV_LOGIN_VIEWER_MFA_VERIFIED": "true",
+        "DEV_BFF_DEV_LOGIN_APPROVER_MFA_VERIFIED": "true",
+        "DEV_BFF_DEV_LOGIN_RISK_OWNER_MFA_VERIFIED": "true",
+        "DEV_BFF_DEV_LOGIN_OPERATOR_A_MFA_VERIFIED": "true",
+        "DEV_BFF_DEV_LOGIN_OPERATOR_B_MFA_VERIFIED": "true",
+        "DEV_ASSISTANT_CONTROL_PASSPHRASE_HASH": "hash",
+        "DEV_BFF_ROLE_CLAIMS": "roles,role",
+        "DEV_BFF_ROLE_MAP": "pantheon-operator=operator;pantheon-viewer=viewer;pantheon-reviewer=reviewer;pantheon-approver=approver;pantheon-risk-owner=risk_owner;pantheon-admin=admin",
+        "DEV_BFF_ROLE_MAP_MODE": "strict",
+        "DEV_BFF_DEFAULT_ROLE": "viewer",
+        "DEV_OPENCLAW_ADAPTER_SERVICE_TOKEN": "token",
+        "DEV_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED": "true",
+        "DEV_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN": "token",
+        "DEV_MANAGEMENT_AI_STORE_BACKEND": "postgres",
+        "DEV_MANAGEMENT_AI_STORE_SCHEMA": "management_ai",
+        "DEV_MANAGEMENT_AI_DB_USER": "pantheon_management_ai",
+        "DEV_MANAGEMENT_AI_DB_PASSWORD": "password",
+        "DEV_MANAGEMENT_AI_DATABASE_URL": "postgresql://user:pass@localhost:5432/db",
+        "DEV_MANAGEMENT_AI_ATTACH_BUCKET": "bucket",
+        "DEV_MANAGEMENT_AI_ATTACH_LOCATION": "asia-east1",
+        "DEV_BFF_CANONICAL_CORS_ORIGIN": "https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io",
+        "DEV_BFF_CORS_ORIGINS": "https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io",
     }
     return env, invocations_log, step_summary
 
 
 def test_dev_deploy_compensation_mutation_aware_skips_deploy_when_already_at_baseline_negative(tmp_path: Path) -> None:
     """Executable negative regression proving that when preflight/build fails while the active BFF
-    is already at the rollback baseline SHA, deploy_compensation makes NO deploy_nonprod_vm.sh invocation
-    and preserves the running services untouched."""
+    is already at the rollback baseline SHA, deploy_compensation under TARGET_ENV=dev with preceding failure
+    state makes NO deploy_nonprod_vm.sh invocation and preserves the running services untouched."""
     rollback_bff = "1" * 40
     rollback_fe = "2" * 40
     env, invocations_log, step_summary = _setup_mock_compensation_environment(
@@ -1615,7 +1851,8 @@ def test_dev_deploy_compensation_mutation_aware_skips_deploy_when_already_at_bas
 
 def test_dev_deploy_compensation_mutation_aware_executes_deploy_when_not_at_baseline_positive(tmp_path: Path) -> None:
     """Positive test proving that when post-rollout/paper/public-smoke fails while the active BFF
-    is on a candidate (non-baseline) SHA, deploy_compensation invokes deploy_nonprod_vm.sh to restore baseline."""
+    is on a candidate (non-baseline) SHA, deploy_compensation under TARGET_ENV=dev with real heartbeat
+    and preceding failure state acquires a rollback lease and invokes deploy_nonprod_vm.sh to restore baseline."""
     candidate_bff = "9" * 40
     rollback_bff = "1" * 40
     rollback_fe = "2" * 40
@@ -1649,9 +1886,45 @@ def test_dev_deploy_compensation_mutation_aware_executes_deploy_when_not_at_base
     assert f"Restored exact hosted dev baseline pair: BFF={rollback_bff} FE={rollback_fe}" in summary_content
 
 
+def test_dev_deploy_compensation_preceding_paper_bootstrap_or_smoke_failure_restores_baseline_e2e(tmp_path: Path) -> None:
+    """Positive E2E test proving that after a preceding deploy, paper_bootstrap, or public_smoke failure
+    under TARGET_ENV=dev (which recorded a failure file and stopped the initial heartbeat), deploy_compensation
+    successfully authorizes exact-baseline rollback under its own lease heartbeat and restores the prior FE/BFF pair."""
+    candidate_bff = "c" * 40
+    rollback_bff = "a" * 40
+    rollback_fe = "f" * 40
+    env, invocations_log, step_summary = _setup_mock_compensation_environment(
+        tmp_path,
+        initial_bff_sha=candidate_bff,
+        initial_fe_sha=rollback_fe,
+        rollback_bff_sha=rollback_bff,
+        rollback_fe_sha=rollback_fe,
+        deploy_behavior="success",
+    )
+    script = _extract_deploy_compensation_run_script()
+    result = subprocess.run(
+        ["bash", "-euo", "pipefail", "-c", script],
+        cwd=tmp_path,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, f"Compensation script failed: {result.stderr}"
+    assert f"rolling back BFF to baseline {rollback_bff}" in result.stdout
+    assert invocations_log.exists()
+    actual_bff = (tmp_path / "mock_bff_sha.txt").read_text(encoding="utf-8").strip()
+    actual_fe = (tmp_path / "mock_fe_sha.txt").read_text(encoding="utf-8").strip()
+    assert actual_bff == rollback_bff
+    assert actual_fe == rollback_fe
+    summary_content = step_summary.read_text(encoding="utf-8")
+    assert f"Restored exact hosted dev baseline pair: BFF={rollback_bff} FE={rollback_fe}" in summary_content
+
+
 def test_dev_deploy_compensation_mutation_aware_fails_closed_on_rollback_failure_negative(tmp_path: Path) -> None:
     """Negative test proving that if deploy rollback fails to restore the baseline SHA,
-    deploy_compensation exits non-zero (fails closed)."""
+    deploy_compensation under TARGET_ENV=dev exits non-zero (fails closed) and leaves the lease quarantined."""
     candidate_bff = "9" * 40
     rollback_bff = "1" * 40
     rollback_fe = "2" * 40
@@ -1675,6 +1948,32 @@ def test_dev_deploy_compensation_mutation_aware_fails_closed_on_rollback_failure
 
     assert result.returncode != 0
     assert invocations_log.exists()
+
+
+def test_dev_deploy_compensation_fails_closed_when_fe_baseline_mismatch_negative(tmp_path: Path) -> None:
+    """Negative test proving that if the hosted FE deployment does not match PANTHEON_ROLLBACK_FRONTEND_SHA,
+    deploy_compensation under TARGET_ENV=dev fails closed."""
+    rollback_bff = "1" * 40
+    rollback_fe = "2" * 40
+    tampered_fe = "3" * 40
+    env, _, _ = _setup_mock_compensation_environment(
+        tmp_path,
+        initial_bff_sha=rollback_bff,
+        initial_fe_sha=tampered_fe,
+        rollback_bff_sha=rollback_bff,
+        rollback_fe_sha=rollback_fe,
+    )
+    script = _extract_deploy_compensation_run_script()
+    result = subprocess.run(
+        ["bash", "-euo", "pipefail", "-c", script],
+        cwd=tmp_path,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode != 0, "Compensation script must fail closed when FE baseline mismatch is detected"
 
 
 def test_dev_deploy_compensation_forces_post_up_failure_inside_compensation_and_proves_pair_remains_baseline(tmp_path: Path) -> None:
