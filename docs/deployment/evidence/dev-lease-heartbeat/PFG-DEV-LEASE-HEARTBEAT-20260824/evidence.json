@@ -1,0 +1,75 @@
+{
+  "schema_version": "pantheon.dev-lease-heartbeat-evidence.v1",
+  "task": {
+    "id": "PFG-DEV-LEASE-HEARTBEAT-20260824",
+    "title": "Repair dev deploy lease heartbeat persistence and startup retry",
+    "owner": "Antigravity",
+    "reviewer": "Antigravity2",
+    "status": "review",
+    "base_branch": "dev",
+    "task_branch": "task/PFG-DEV-LEASE-HEARTBEAT-20260824",
+    "head_binding": "The reviewer must bind this committed manifest to the exact final PR head in the canonical approve command."
+  },
+  "scope": {
+    "owned": [
+      ".github/workflows/nonprod-deploy.yml",
+      "scripts/deploy_nonprod_vm.sh",
+      "scripts/dev_environment_lease.py",
+      "scripts/test_dev_environment_lease.py",
+      "scripts/test_dev_environment_lease_guard.py",
+      "scripts/test_dev_environment_lease_deploy_contract.py",
+      "scripts/test_wait_for_bff_lifecycle_readiness.py",
+      "docs/deployment/evidence/dev-lease-heartbeat/PFG-DEV-LEASE-HEARTBEAT-20260824/README.md",
+      "docs/deployment/evidence/dev-lease-heartbeat/PFG-DEV-LEASE-HEARTBEAT-20260824/evidence.json"
+    ],
+    "not_changing": [
+      "services/source_ingestion (maintained as reconcile-only, zero egress)",
+      "ProjectionStore schema or database migrations"
+    ],
+    "composes_with": [
+      "PFG-LIFECYCLE-READINESS-HEARTBEAT-20260824",
+      "PFG-CANDIDATE-AUTO-BINDING-20260824"
+    ]
+  },
+  "contracts": {
+    "heartbeat_loop_persistence": "heartbeat_loop ignores SIGHUP and retries transient network/GitHub errors when the lease remains unexpired.",
+    "step_lifecycle_disown": "nonprod-deploy.yml disowns heartbeat background processes upon launch so runner subshell exit does not terminate them.",
+    "bounded_readiness_startup": "deploy_nonprod_vm.sh relies directly on wait_for_exact_bff_lifecycle_readiness for post-up gates, allowing transient connection resets to converge within the bounded window without premature rollback."
+  },
+  "acceptance_evidence": {
+    "lease_and_guard_tests": {
+      "command": "python3 -m pytest -q scripts/test_dev_environment_lease.py scripts/test_dev_environment_lease_guard.py",
+      "result": "pass; 32 passed, 19 subtests passed"
+    },
+    "contract_and_readiness_tests": {
+      "command": "python3 -m pytest -q scripts/test_dev_environment_lease_deploy_contract.py scripts/test_wait_for_bff_lifecycle_readiness.py",
+      "result": "pass; 243 passed"
+    }
+  },
+  "validation": [
+    {
+      "command": "python3 -m pytest -q scripts/test_dev_environment_lease.py scripts/test_dev_environment_lease_guard.py scripts/test_dev_environment_lease_deploy_contract.py scripts/test_wait_for_bff_lifecycle_readiness.py",
+      "result": "pass; 275 passed, 19 subtests passed"
+    },
+    {
+      "command": "python3 -m py_compile scripts/dev_environment_lease.py scripts/test_dev_environment_lease.py scripts/test_dev_environment_lease_guard.py scripts/test_dev_environment_lease_deploy_contract.py scripts/test_wait_for_bff_lifecycle_readiness.py && git diff --check origin/dev",
+      "result": "pass; no syntax errors, zero trailing whitespace or formatting errors"
+    }
+  ],
+  "review": {
+    "status": "ready_for_independent_review",
+    "reviewer": "Antigravity2",
+    "required_checks": [
+      "verify heartbeat_loop SIGHUP handling and transient error retry logic",
+      "verify nonprod-deploy.yml disown addition",
+      "verify deploy_nonprod_vm.sh post-up readiness gate sequence",
+      "verify regression tests in scripts/test_dev_environment_lease.py and scripts/test_dev_environment_lease_guard.py",
+      "verify git diff --check origin/dev is clean",
+      "bind this manifest path (docs/deployment/evidence/dev-lease-heartbeat/PFG-DEV-LEASE-HEARTBEAT-20260824/evidence.json) in the governed approve command"
+    ]
+  },
+  "integrity": {
+    "algorithm": "sha256",
+    "self_hash_omitted": true
+  }
+}

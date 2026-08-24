@@ -703,6 +703,7 @@ jobs:
               --token-stdin \
               <&"${token_fd}" >"${LEASE_HEARTBEAT_LOG}" 2>&1 &
           heartbeat_pid=$!
+          disown "${heartbeat_pid}" 2>/dev/null || true
           exec {token_fd}<&-
           printf '%s\n' "${heartbeat_pid}" > "${LEASE_PID_FILE}"
 
@@ -1583,6 +1584,7 @@ jobs:
                 --token-stdin \
                 <&"${token_fd}" >"${rollback_heartbeat_log}" 2>&1 &
             rollback_heartbeat_pid=$!
+            disown "${rollback_heartbeat_pid}" 2>/dev/null || true
             exec {token_fd}<&-
             printf '%s\n' "${rollback_heartbeat_pid}" > "${rollback_pid_file}"
 
