@@ -700,12 +700,22 @@ def _lifecycle_projector_dependency() -> Dict[str, Any]:
         "PANTHEON_BFF_TRADE_JOURNEY_READER_BACKEND", "json"
     ).strip().lower()
     if reader_backend == "postgres":
+        writer_backend = (
+            os.getenv("LIFECYCLE_PROJECTOR_WRITER_BACKEND", "disabled")
+            .strip()
+            .lower()
+            or "disabled"
+        )
         reader = read_store.trade_journey_projection_reader()
         tenant_id = os.getenv("PANTHEON_BFF_HEALTH_TENANT_ID", "default").strip()
         environment = os.getenv(
             "PANTHEON_BFF_TRADE_JOURNEY_HEALTH_ENVIRONMENT", "paper"
         ).strip()
         reasons: List[str] = []
+        if writer_backend != "postgres":
+            reasons.append(
+                f"writer_backend_mismatch:{writer_backend or 'missing'}!=postgres"
+            )
         controller: Dict[str, Any] = {}
         try:
             if reader is None:
@@ -790,7 +800,7 @@ def _lifecycle_projector_dependency() -> Dict[str, Any]:
             "ready": ready,
             "status": "ready" if ready else "degraded",
             "worker_status": "ready" if ready else "error",
-            "writer_backend": os.getenv("LIFECYCLE_PROJECTOR_WRITER_BACKEND", "postgres").strip().lower() or "postgres",
+            "writer_backend": writer_backend,
             "reader_backend": "postgres",
             "tenant_scope": tenant_id,
             "environment_scope": environment,

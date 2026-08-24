@@ -35,7 +35,7 @@
   "contracts": {
     "relational_writer": "LIFECYCLE_PROJECTOR_WRITER_BACKEND=postgres activates RelationalLifecycleProjector with ProjectionStore DML DSN, atomic batch transactions, contiguous checkpoints, and zero JSON generation or temp file writes.",
     "relational_reader": "PANTHEON_BFF_TRADE_JOURNEY_READER_BACKEND=postgres in BFF serves list, detail, stages, loop runs, attention, SLO metrics/incidents, and historical replay exclusively from PostgreSQL with zero JSON fallback.",
-    "readiness": "BFF _lifecycle_projector_dependency reports authoritative postgres writer/reader status, controller scope, exact deployment SHA, and fails closed for backlog, quarantine, or stale poll.",
+    "readiness": "BFF _lifecycle_projector_dependency reports authoritative postgres writer/reader status, controller scope, exact deployment SHA, and fails closed when writer_backend!=postgres, or for unready/stale/backlog/quarantine conditions.",
     "backfill_watermark_invariant": "_backfill derives and passes source_high_watermark from input records, ensuring checkpoint <= source_high_watermark invariant holds and backlog reaches 0 when complete.",
     "fail_closed": "Missing DSN when postgres backend is selected raises RuntimeError immediately rather than falling back silently."
   },
@@ -76,7 +76,7 @@
     "required_checks": [
       "verify relational postgres writer activation in lifecycle_projector.py",
       "verify relational postgres reader activation across all BFF read endpoints in trade_journeys.py with zero JSON fallback",
-      "verify BFF readiness check in main.py reflects postgres backend and fails closed on unready/stale/backlog conditions",
+      "verify BFF readiness check in main.py reflects postgres backend and fails closed when writer_backend!=postgres, or on unready/stale/backlog conditions",
       "verify _backfill derives and passes source_high_watermark from input and satisfies watermark invariant",
       "verify tests pass using provisioned interpreter .venv-pantheon/bin/python3",
       "bind this manifest path (docs/deployment/evidence/lifecycle-projector/PFG-LIFECYCLE-POSTGRES-ACTIVATION-20260824/evidence.json) to the exact final PR head in the governed approve command"
