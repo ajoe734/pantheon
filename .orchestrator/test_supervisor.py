@@ -982,6 +982,32 @@ class CrossRepositoryWorkerWorkspaceTests(unittest.TestCase):
             self.assertFalse(ok)
             self.assertIn("ambiguous multi-repository target_repo", str(error))
 
+            # Unrecognized target_repo
+            unknown_task = task_fixture("UNKNOWN-TASK")
+            unknown_task["target_repo"] = "bogus-repository-xyz"
+            unknown_task["artifacts"] = ["src/App.tsx"]
+            unknown_request = supervisor.DeliveryRequest(
+                agent_id="codex",
+                provider="codex",
+                delivery_mode="codex",
+                message="wake",
+                task_id=str(unknown_task["id"]),
+                reason=supervisor.REASON_OWNED_READY,
+                context_files=[],
+                target_files=list(unknown_task["artifacts"]),
+                metadata={"task": unknown_task, "task_generation": 1},
+            )
+            ok, error = supervisor.prepare_worker_workspace(
+                config,
+                state,
+                unknown_request,
+                queue_event_id="evt-unknown",
+                target_agent="Codex",
+                worker_base_snapshots={},
+            )
+            self.assertFalse(ok)
+            self.assertIn("unrecognized target_repo", str(error))
+
 
 class RuntimeConfigurationContractTests(unittest.TestCase):
     def test_repo_config_uses_one_capacity_and_account_schema(self) -> None:

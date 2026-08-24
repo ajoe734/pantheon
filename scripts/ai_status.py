@@ -86,7 +86,6 @@ from multi_repo_registry import (
     repository_slug,
     resolve_repository,
     task_artifact_repository_ids,
-    task_primary_repository_id,
     task_target_repository_id,
     validate_task_repository_scope,
 )
@@ -6837,6 +6836,13 @@ def resolve_handoff_delivery_binding(
     """
 
     task_id = str(task.get("id") or "").strip()
+    try:
+        repository_id = validate_task_repository_scope(config, dict(task))
+    except (ValueError, RuntimeError) as exc:
+        raise SystemExit(
+            f"Handoff requires valid repository scope for {task_id or '?'}: {exc}"
+        ) from exc
+
     explicit_pr = bool(os.environ.get("REVIEW_PR", "").strip())
     explicit_head = bool(os.environ.get("REVIEW_HEAD_SHA", "").strip())
     if explicit_pr != explicit_head:
@@ -6871,7 +6877,6 @@ def resolve_handoff_delivery_binding(
             "source_ref/github metadata is not a reviewable delivery identity."
         )
 
-    repository_id = task_primary_repository_id(config, dict(task))
     repository_slug_value = repository_slug(config, repository_id)
     if repository_slug_value:
         discovered = _discover_open_pull_request_for_branch(

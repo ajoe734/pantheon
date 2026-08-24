@@ -4508,6 +4508,105 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
                 ambiguous_task, {}, {"pr": "627", "head_sha": "a" * 40}
             )
 
+    def test_validate_handoff_pr_delivery_binding_rejects_unrecognized_repo(self) -> None:
+        unknown_task = {
+            "id": "UNKNOWN-TASK",
+            "target_repo": "invalid_unknown_repo",
+            "artifacts": ["src/App.tsx"],
+        }
+        with self.assertRaisesRegex(SystemExit, "unrecognized target_repo"):
+            ai_status.validate_handoff_pr_delivery_binding(
+                unknown_task, {}, {"pr": "627", "head_sha": "a" * 40}
+            )
+
+    def test_resolve_handoff_delivery_binding_rejects_conflicting_ambiguous_and_unknown_target_repo(self) -> None:
+        conflicting_task = {
+            "id": "CONFLICT-TASK",
+            "target_repo": "pantheon",
+            "artifacts": ["execute-plans/src/App.tsx"],
+        }
+        with self.assertRaisesRegex(SystemExit, "conflicting repository scope"):
+            ai_status.resolve_handoff_delivery_binding(conflicting_task, {})
+
+        ambiguous_task = {
+            "id": "AMBIGUOUS-TASK",
+            "target_repo": "pantheon+execute-plans",
+            "artifacts": ["src/App.tsx"],
+        }
+        with self.assertRaisesRegex(SystemExit, "ambiguous multi-repository target_repo"):
+            ai_status.resolve_handoff_delivery_binding(ambiguous_task, {})
+
+        unknown_task = {
+            "id": "UNKNOWN-TASK",
+            "target_repo": "invalid_unknown_repo",
+            "artifacts": ["src/App.tsx"],
+        }
+        with self.assertRaisesRegex(SystemExit, "unrecognized target_repo"):
+            ai_status.resolve_handoff_delivery_binding(unknown_task, {})
+
+    def test_resolve_handoff_delivery_binding_artifact_contract_fallback_success(self) -> None:
+        pantheon_task = {
+            "id": "DOCS-001",
+            "artifacts": ["docs/review.md"],
+            "acceptance": ["Document updated"],
+        }
+        binding = ai_status.resolve_handoff_delivery_binding(pantheon_task, {})
+        self.assertEqual(binding["kind"], "artifact_contract")
+        self.assertEqual(binding["artifacts"], ["docs/review.md"])
+        self.assertEqual(binding["acceptance"], ["Document updated"])
+        self.assertIn("contract_sha256", binding)
+
+        fe_sidecar_task = {
+            "id": "FE-DOCS-001",
+            "target_repo": "execute-plans",
+            "artifacts": ["support/sidecars/evidence.json"],
+            "acceptance": ["Sidecar evidence verified"],
+        }
+        binding_fe = ai_status.resolve_handoff_delivery_binding(fe_sidecar_task, {})
+        self.assertEqual(binding_fe["kind"], "artifact_contract")
+        self.assertEqual(binding_fe["artifacts"], ["support/sidecars/evidence.json"])
+
+    def test_command_handoff_rejects_conflicting_ambiguous_and_unknown_target_repo(self) -> None:
+        self.state["tasks"][0]["status"] = "in_progress"
+        self.state["tasks"][0]["owner"] = "Codex"
+        self.state["tasks"][0]["reviewer"] = "Claude"
+
+        # Conflicting scope
+        self.state["tasks"][0]["target_repo"] = "pantheon"
+        self.state["tasks"][0]["artifacts"] = ["execute-plans/src/App.tsx"]
+        with (
+            mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False),
+            self.assertRaisesRegex(SystemExit, "conflicting repository scope"),
+        ):
+            ai_status.command_handoff(
+                self.state,
+                ["REG-002", "Claude", "Conflicting repo handoff should fail"],
+            )
+
+        # Ambiguous scope
+        self.state["tasks"][0]["target_repo"] = "pantheon+execute-plans"
+        self.state["tasks"][0]["artifacts"] = ["src/App.tsx"]
+        with (
+            mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False),
+            self.assertRaisesRegex(SystemExit, "ambiguous multi-repository target_repo"),
+        ):
+            ai_status.command_handoff(
+                self.state,
+                ["REG-002", "Claude", "Ambiguous repo handoff should fail"],
+            )
+
+        # Unknown scope
+        self.state["tasks"][0]["target_repo"] = "bogus_unknown_repo"
+        self.state["tasks"][0]["artifacts"] = ["src/App.tsx"]
+        with (
+            mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False),
+            self.assertRaisesRegex(SystemExit, "unrecognized target_repo"),
+        ):
+            ai_status.command_handoff(
+                self.state,
+                ["REG-002", "Claude", "Unknown repo handoff should fail"],
+            )
+
     def test_reviewer_reopen_creates_handoff_back_to_owner(self) -> None:
         self.state["tasks"][0]["status"] = "review"
         self.state["tasks"][0]["failure_streak"] = 2
