@@ -476,4 +476,3 @@ def iter_local_repositories(config: dict[str, Any]) -> list[dict[str, Any]]:
         if isinstance(local_path, Path):
             items.append(resolved)
     return items
-
