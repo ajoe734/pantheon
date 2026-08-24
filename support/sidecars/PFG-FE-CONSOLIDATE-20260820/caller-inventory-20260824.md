@@ -35,7 +35,7 @@ Every candidate is evaluated against strict caller-traceability rules defined in
 | 1 | `src/agora/pages/trading-room/TradingRoomPage.tsx:CandidateReviewDrawer` (inline) | Agora Trading Room | Page-local inline drawer updating React state | 0 active callers (verified deleted) | `replace_then_delete` | `src/agora/components/CandidateReviewDrawer.tsx` |
 | 2 | `src/agora/components/CandidateReviewDrawer.tsx` | Agora Review | Canonical BFF-wired A2 score decomposition drawer | 3 code files (1 prod page + 2 test files), 2 evidence docs | `retain` | Canonical implementation |
 | 3 | `src/agora/pages/trading-room/TradingRoomPage.tsx:STRATEGY_LENSES` | Agora Trading Room | Fixed `lens-A..E` candidate pool identity & static counts | 0 callers (verified replaced) | `replace_then_delete` | Dynamic workspace/pool recipes (`workshops.ts`, `candidatePool.ts`) |
-| 4 | `src/lib/bff-v1/management.ts:safeAdapt` | Management BFF-v1 | Catches adapter errors on 200 responses and falls back to seed (rethrows under strict-live) | 24 call sites in `management.ts`, 1 test suite, 8 audit/doc files | `delete` | Typed error envelopes / `withStrictLiveOrMock` |
+| 4 | `src/lib/bff-v1/management.ts:safeAdapt` | Management BFF-v1 | Catches adapter errors on 200 responses and falls back to seed (rethrows under strict-live) | 24 call sites in `management.ts`, 1 test suite, 8 audit/doc files | `replace_then_delete` | Typed error envelopes / `withStrictLiveOrMock` across 24 adapter call sites |
 | 5 | `src/management/pages/studios/FormulaStudio.tsx:triggerBacktest` | Management Studios | Synthetic in-memory job runner with 5s timeout & fake event | 0 callers (verified retired) | `replace_then_delete` | Governed backtest runner API (`bff.jobs.list()`) / `NonProductionActionButton` |
 | 6 | `src/management/components/detail/ActivityMonitor.tsx:seed` | Management Detail | Hardcoded synthetic events with fake pulsing "live" badge | 3 prod detail pages + 1 test file (component callers, seed generator deleted) | `delete` | Canonical audit/SSE feed (`/bff/audit`, `/bff/sse/events`) |
 | 7 | `src/management/pages/phase2/PostmortemLibrary.tsx:SEED` | Management Oversight | Static 3-row mock postmortem array | 1 page component + 1 route re-export + 2 App.tsx routes + 2 nav manifests + 2 link helpers + 1 test + 3 i18n locales + 2 bff-v1 path/types + 1 script + 1 evidence doc | `replace_then_delete` | Canonical BFF postmortem/incident adapter (`bff.incidents.list()`) |
@@ -43,7 +43,7 @@ Every candidate is evaluated against strict caller-traceability rules defined in
 | 9 | `src/lib/bff/` vs `src/lib/bff-v1/` Overlap | BFF Client Layer | Duplicate legacy client & mutation overlays coexisting with `bff-v1` | 176 import sites across 147 files | `replace_then_delete` | Canonical `src/lib/bff-v1/` adapters |
 | 10 | `src/lib/bff-v1/runActionSafe.ts` | Management Mutations | Toast-aware mutation wrapper with idempotency headers | 29 files (11 prod pages, 5 lib files, 5 tests, 2 scripts, 6 docs/evidence) | `retain` | Canonical implementation |
 | 11 | `src/management/components/NonProductionActionButton.tsx` | UI Safety Guard | Honestly disabled action button with tooltip explanation | 69 literal JSX sites across 28 files (68 sites in 27 prod UI files + 1 in test file), 28 import files | `retain` | Canonical implementation |
-| 12 | `src/management/components/agent/uiActionRegistry.ts` | Management AI | Allowlisted UI action registry with 7 contract types | 5 files (1 component, 3 test suites, 1 evidence doc) | `retain` | Canonical implementation |
+| 12 | `src/management/components/agent/uiActionRegistry.ts` | Management AI | Allowlisted UI action registry with 7 contract types | 4 files (1 component, 2 test suites, 1 evidence doc) | `retain` | Canonical implementation |
 
 ---
 
@@ -167,9 +167,9 @@ Every candidate is evaluated against strict caller-traceability rules defined in
   "runtime_or_deploy_refs": [
     "Management console live reads under VITE_BFF_MODE=live with VITE_BFF_FALLBACK=strict"
   ],
-  "replacement": "withStrictLiveOrMock with typed degradation envelopes, optionalAdapt, or explicit error boundaries",
-  "replacement_proof": "src/lib/bff-v1/__tests__/strictLiveReadOffline.test.ts (2 tests passing), src/lib/bff-v1/__tests__/management.test.ts (34 tests passing)",
-  "disposition": "delete",
+  "replacement": "withStrictLiveOrMock with typed degradation envelopes, optionalAdapt, or explicit error boundaries across 24 management.ts adapter call sites",
+  "replacement_proof": "src/lib/bff-v1/__tests__/strictLiveReadOffline.test.ts (2 tests passing), src/lib/bff-v1/__tests__/management.test.ts (34 tests passing) proving strict-live contract mismatch propagation and envelope handling without silent seed masking",
+  "disposition": "replace_then_delete",
   "validation": [
     "npm --prefix /home/lupin/code/execute-plans test -- --run src/lib/bff-v1/__tests__/strictLiveReadOffline.test.ts",
     "npm --prefix /home/lupin/code/execute-plans test -- --run src/lib/bff-v1/__tests__/management.test.ts",
@@ -578,9 +578,8 @@ Every candidate is evaluated against strict caller-traceability rules defined in
   "path_or_symbol": "src/management/components/agent/uiActionRegistry.ts:AVAILABLE_UI_ACTIONS",
   "behavior": "Allowlisted UI action registry for Management AI assistant with 7 contract kinds (navigate, openDrawer, selectEntity, setFilter, focusPanel, refreshCurrentView, runBffAction). Validates incoming actions before high-risk confirmation or execution.",
   "callers": [
-    "src/management/components/agent/uiActionRegistry.ts:45, 60, 63, 130 (registry definition and helpers)",
-    "src/management/components/agent/AgentPanelBody.tsx:47, 790 (imports and maps AVAILABLE_UI_ACTIONS for assistant NL execution)",
-    "src/management/components/agent/uiActionRegistry.test.ts:3, 20, 22, 34, 47 (allowlist and schema tests)",
+    "src/management/components/agent/uiActionRegistry.ts:36, 50, 67, 120 (registry definition and helpers)",
+    "src/management/components/agent/AgentPanelBody.tsx:47, 726 (imports and maps AVAILABLE_UI_ACTIONS for assistant NL execution)",
     "src/management/components/agent/useAgentPanel.test.ts:3 (panel state normalization tests)",
     "src/management/pages/capabilitiesProductionTruth.test.ts (production truth tests)",
     "docs/deployment/evidence/PFG-MGMT-AI-FE-ACTIONS-20260820/evidence.json:17"
@@ -593,7 +592,6 @@ Every candidate is evaluated against strict caller-traceability rules defined in
   "disposition": "retain",
   "validation": [
     "npm --prefix /home/lupin/code/execute-plans test -- --run src/management/components/agent/useAgentPanel.test.ts",
-    "npm --prefix /home/lupin/code/execute-plans test -- --run src/management/components/agent/uiActionRegistry.test.ts",
     "npm --prefix /home/lupin/code/execute-plans test -- --run src/management/pages/capabilitiesProductionTruth.test.ts"
   ]
 }
@@ -612,7 +610,7 @@ Every candidate is evaluated against strict caller-traceability rules defined in
 |                                                    CandidateReviewDrawer.tsx      |
 |                                                    (Adoption verified)            |
 |                                                                                   |
-|  TradingRoomPage (fixed lens-A..E) -------------[replace_then_delete]-->       |
+|  TradingRoomPage (fixed lens-A..E) -------------[replace_then_delete]-->          |
 |                                                    Dynamic Workshop/Pool Recipes  |
 |                                                    (Replaced in TradingRoomPage)  |
 +-----------------------------------------------------------------------------------+
@@ -620,11 +618,11 @@ Every candidate is evaluated against strict caller-traceability rules defined in
 +-----------------------------------------------------------------------------------+
 |                            MANAGEMENT CONSOLE SUBSYSTEM                           |
 |                                                                                   |
-|  safeAdapt (silent seed fallback) --------------[delete from live]---------->    |
+|  safeAdapt (24 call sites in management.ts) --[replace_then_delete]-->            |
 |                                                    withStrictLiveOrMock / Error   |
-|                                                    (Rethrows under strict-live)   |
+|                                                    (Migrate 24 sites -> delete)   |
 |                                                                                   |
-|  FormulaStudio (synthetic backtest runner) -----[replace_then_delete]-->       |
+|  FormulaStudio (synthetic backtest runner) -----[replace_then_delete]-->          |
 |                                                    Governed Jobs API / Disabled   |
 |                                                    (NonProductionActionButton)    |
 |                                                                                   |
@@ -632,7 +630,7 @@ Every candidate is evaluated against strict caller-traceability rules defined in
 |                                                    Canonical Audit/SSE Feeds      |
 |                                                    (realtime.on subscriptions)    |
 |                                                                                   |
-|  PostmortemLibrary (static SEED array) ---------[replace_then_delete]-->       |
+|  PostmortemLibrary (static SEED array) ---------[replace_then_delete]-->          |
 |                                                    Canonical /bff/incidents       |
 |                                                    (bff.incidents.list())         |
 +-----------------------------------------------------------------------------------+
@@ -648,8 +646,9 @@ Every candidate is evaluated against strict caller-traceability rules defined in
 |                                                                                   |
 |  NonProductionActionButton (69 JSX in 28 files)-[retain safety guard]----->       |
 |                                                    Honest Disabled Actions        |
+|                                                    (68 prod + 1 test JSX sites)   |
 |                                                                                   |
-|  uiActionRegistry (5 files, 12 refs) -----------[retain allowlist]---------->     |
+|  uiActionRegistry (4 files, 6 refs) ------------[retain allowlist]---------->     |
 |                                                    Management AI Operations       |
 |                                                    (7 declared action kinds)      |
 |                                                                                   |
@@ -668,7 +667,7 @@ Every candidate is evaluated against strict caller-traceability rules defined in
 
 2. **Parent Task Execution Sequence:**
    - **Step 1 (Agora):** Adopt `src/agora/components/CandidateReviewDrawer.tsx` in `TradingRoomPage.tsx`; remove inline drawer; replace hardcoded lens candidate pools with dynamic workshop recipes; rerun Agora tests.
-   - **Step 2 (Management Live Hygiene):** Remove `safeAdapt` silent seed fallback in strict-live; remove static `seed` events and fake "live" badge in `ActivityMonitor.tsx`; wire `PostmortemLibrary.tsx` to canonical incident API; rerun Management tests.
+   - **Step 2 (Management Live Hygiene):** Migrate 24 `safeAdapt` call sites in `management.ts` to `withStrictLiveOrMock` / typed error envelopes, then delete `safeAdapt` helper; remove static `seed` events and fake "live" badge in `ActivityMonitor.tsx`; wire `PostmortemLibrary.tsx` to canonical incident API; rerun Management tests.
    - **Step 3 (Adapter Convergence):** Migrate remaining `src/lib/bff/` callers to `src/lib/bff-v1/`; verify tree-shaking isolates `src/mocks/seed.ts` from strict-live production build bundle.
    - **Step 4 (Validation):** Execute full browser E2E test suites in both Agora and Management Console.
 
@@ -682,8 +681,7 @@ Focused validation performed in `execute-plans` pinned to `0eec7659c9503ba3799ed
 - `src/management/components/NonProductionActionButton.test.tsx` (1 test passed)
 - `src/management/pages/capabilitiesProductionTruth.test.ts` (3 tests passed)
 - `src/management/components/agent/useAgentPanel.test.ts` (3 tests passed)
-- `src/management/components/agent/uiActionRegistry.test.ts` (7 tests passed)
 - `src/lib/bff-v1/__tests__/writes.test.ts` (19 tests passed)
 - `src/lib/bff-v1/__tests__/strictLiveReadOffline.test.ts` (2 tests passed)
 - `src/lib/bff-v1/__tests__/management.test.ts` (34 tests passed)
-- Total: **172 passed / 172 tests** across 9 test suites.
+- Total: **165 passed / 165 tests** across 8 test suites.
