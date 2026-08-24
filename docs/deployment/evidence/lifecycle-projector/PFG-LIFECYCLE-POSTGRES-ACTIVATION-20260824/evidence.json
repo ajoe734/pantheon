@@ -36,7 +36,7 @@
   },
   "contracts": {
     "relational_writer": "LIFECYCLE_PROJECTOR_WRITER_BACKEND=postgres activates RelationalLifecycleProjector with ProjectionStore DML DSN, atomic batch transactions, contiguous checkpoints, and zero JSON generation or temp file writes.",
-    "relational_reader": "PANTHEON_BFF_TRADE_JOURNEY_READER_BACKEND=postgres in BFF serves list, detail, stages, loop runs, attention, SLO metrics/incidents, and historical replay exclusively from PostgreSQL with zero JSON fallback, evaluating complete bounded collections across all (>200) journeys and deriving stage timing from timeline events.",
+    "relational_reader": "PANTHEON_BFF_TRADE_JOURNEY_READER_BACKEND=postgres in BFF serves events SSE cursor, governed actions, list, detail, stages, loop runs, attention, SLO metrics/incidents, and historical replay exclusively from PostgreSQL with zero JSON fallback, evaluating complete bounded collections across all (>200) journeys and deriving stage timing from timeline events.",
     "readiness": "BFF _lifecycle_projector_dependency reports authoritative postgres writer/reader status, controller scope, exact deployment SHA; derives writer_backend=postgres from live relational controller freshness when LIFECYCLE_PROJECTOR_WRITER_BACKEND is unset in BFF compose environment; and fails closed when writer_backend!=postgres, or for unready/stale/backlog/quarantine conditions.",
     "backfill_watermark_invariant": "_backfill derives and passes source_high_watermark from input records, ensuring checkpoint <= source_high_watermark invariant holds and backlog reaches 0 when complete.",
     "fail_closed": "Missing DSN when postgres backend is selected raises RuntimeError immediately rather than falling back silently."
@@ -44,13 +44,13 @@
   "validation": [
     {
       "command": "TEST_DATABASE_URL=postgresql://pantheon_app:pantheon_app@localhost:15432/pantheon .venv-pantheon/bin/python3 -m pytest -q services/trade_journey/ services/control-plane/bff/test_trade_journey_contract.py services/control-plane/bff/test_lifecycle_projector_readiness.py services/control-plane/bff/test_tj_e2e_005_trade_journeys_read_api.py",
-      "result": "pass; 292 passed, 1 skipped",
-      "coverage": "full trade_journey suite with live postgres integration covering ProjectionStore contiguous checkpoints, incremental materializer, lifecycle projector, BFF postgres reader endpoints, and >200 journey attention/SLO regression tests"
+      "result": "pass; 294 passed, 1 skipped",
+      "coverage": "full trade_journey suite with live postgres integration covering ProjectionStore contiguous checkpoints, incremental materializer, lifecycle projector, BFF postgres reader endpoints (including SSE events cursor and governed actions in postgres mode), and >200 journey attention/SLO regression tests"
     },
     {
       "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/test_trade_journey_contract.py services/control-plane/bff/test_lifecycle_projector_readiness.py services/control-plane/bff/test_tj_e2e_005_trade_journeys_read_api.py",
-      "result": "pass; 51 passed",
-      "coverage": "BFF relational reader endpoints, postgres readiness dependencies, >200 journeys attention/SLO tests, and trade journey contract validation"
+      "result": "pass; 53 passed",
+      "coverage": "BFF relational reader endpoints, postgres readiness dependencies, >200 journeys attention/SLO tests, events cursor, governed actions, and trade journey contract validation"
     },
     {
       "command": ".venv-pantheon/bin/python3 -m pytest -q services/trade_journey/test_lifecycle_projector.py",
@@ -68,7 +68,7 @@
       "coverage": "live PostgreSQL database transaction, backfill, continuous polling, zero backlog, live mode acceptance, and BFF readback"
     },
     {
-      "command": "python3 -m py_compile services/trade_journey/lifecycle_projector.py services/trade_journey/projection_store.py services/control-plane/bff/trade_journeys.py services/control-plane/bff/trade_journey_projection_store.py services/control-plane/bff/main.py && git diff --check origin/dev...HEAD",
+      "command": "python3 -m py_compile services/trade_journey/lifecycle_projector.py services/trade_journey/projection_store.py services/control-plane/bff/trade_journeys.py services/control-plane/bff/trade_journey_projection_store.py services/control-plane/bff/main.py services/control-plane/bff/test_tj_e2e_005_trade_journeys_read_api.py && git diff --check origin/dev...HEAD",
       "result": "pass"
     }
   ],

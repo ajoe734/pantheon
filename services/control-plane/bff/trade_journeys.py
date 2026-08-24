@@ -1027,8 +1027,34 @@ def create_trade_journeys_router(
             return _err(400, "VALIDATION_FAILED", f"environment must be one of {sorted(_ALLOWED_ENVIRONMENTS)}")
         if environment == "live" and request.action in _LIVE_ACTIONS and os.getenv("PANTHEON_TRADE_JOURNEY_LIVE_ACTIONS", "false").lower() != "true":
             return _err(403, "LIVE_ACTION_DISABLED", "Live-capital journey actions are feature-flagged off")
-        materializer = get_event_store().materializer()
-        projection = materializer.get(journey_id, tenant_id=tenant_id, environment=environment) if materializer and _tenant_allowed(identity, tenant_id) else None
+        reader = get_projection_reader()
+        if reader is not None:
+            try:
+                projection = (
+                    reader.get_journey(
+                        tenant_id=tenant_id,
+                        environment=environment,
+                        journey_id=journey_id,
+                    )
+                    if _tenant_allowed(identity, tenant_id)
+                    else None
+                )
+            except ProjectionReadUnavailable:
+                return _err(
+                    503,
+                    "DEPENDENCY_UNAVAILABLE",
+                    "Trade journey projection store unavailable",
+                    retryable=True,
+                )
+        else:
+            materializer = get_event_store().materializer()
+            projection = (
+                materializer.get(
+                    journey_id, tenant_id=tenant_id, environment=environment
+                )
+                if materializer and _tenant_allowed(identity, tenant_id)
+                else None
+            )
         if projection is None:
             return _err(404, "RESOURCE_NOT_FOUND", "Trade journey not found")
         if request.expected_revision != projection.snapshot.get("revision"):
@@ -1096,16 +1122,30 @@ def create_trade_journeys_router(
             return _err(400, "VALIDATION_FAILED", f"environment must be one of {sorted(_ALLOWED_ENVIRONMENTS)}")
         if not _tenant_allowed(identity, tenant_id):
             return _err(403, "FORBIDDEN", "Cross-tenant access denied")
-        materializer = get_event_store().materializer()
-        if materializer is None:
-            return _err(503, "DEPENDENCY_UNAVAILABLE", "Trade journey materializer unavailable", retryable=True)
         try:
             cursor = int(last_event_id or 0)
             if cursor < 0:
                 raise ValueError
         except ValueError:
             return _err(400, "VALIDATION_FAILED", "Last-Event-ID must be a non-negative integer")
-        revision = materializer.revision
+
+        reader = get_projection_reader()
+        if reader is not None:
+            try:
+                controller = reader.controller_freshness(
+                    tenant_id=tenant_id,
+                    environment=environment,
+                )
+            except ProjectionReadUnavailable:
+                return _err(503, "DEPENDENCY_UNAVAILABLE", "Trade journey projection store unavailable", retryable=True)
+            if controller is None:
+                return _err(503, "DEPENDENCY_UNAVAILABLE", "Trade journey controller unavailable", retryable=True)
+            revision = int(controller.get("generation") or 0)
+        else:
+            materializer = get_event_store().materializer()
+            if materializer is None:
+                return _err(503, "DEPENDENCY_UNAVAILABLE", "Trade journey materializer unavailable", retryable=True)
+            revision = materializer.revision
 
         async def stream():
             event = "snapshot_refetch_required" if cursor and cursor != revision - 1 else "journeys_changed"

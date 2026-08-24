@@ -25,10 +25,14 @@ from trade_journey_projection_store import (  # noqa: E402
     InvalidPageToken,
     PageTokenCodec,
     ProjectionPage,
+    ProjectionReadUnavailable,
     TradeJourneyProjectionStore,
 )
 from fastapi.testclient import TestClient  # noqa: E402
-from services.trade_journey.materializer import JourneyMaterializer  # noqa: E402
+from services.trade_journey.materializer import (  # noqa: E402
+    JourneyMaterializer,
+    JourneyProjection,
+)
 
 
 OPERATOR_HEADERS = {"Authorization": "Bearer op-tj-005:operator,reviewer"}
@@ -1445,3 +1449,130 @@ def test_lifecycle_proj_bff_postgres_attention_and_slo_with_over_200_journeys() 
     assert "identifier_conflict" in metrics_payload["diagnostics_counts"]
     assert "signal_generation" in metrics_payload["stage_latency_ms"]
     assert metrics_payload["stage_latency_ms"]["signal_generation"]["sample_count"] == 250
+
+
+def test_events_sse_in_postgres_reader_mode() -> None:
+    """Verify GET /bff/management/trade-journeys/events reads revision from projection reader without JSON fallback."""
+    class FakeReader:
+        def __init__(self, *, controller=None, unavailable=False):
+            self._controller = controller
+            self._unavailable = unavailable
+
+        def controller_freshness(self, *, tenant_id: str, environment: str):
+            if self._unavailable:
+                raise ProjectionReadUnavailable("Postgres connection dropped")
+            return self._controller
+
+    # 1. Normal SSE stream in postgres reader mode with generation=42
+    reader = FakeReader(controller={
+        "controller_id": "canonical-lifecycle-projector",
+        "generation": 42,
+        "checkpoint": 100,
+        "mode": "live",
+        "status": "ready",
+        "accepted_live": True,
+    })
+    client, _ = _direct_client(_BASE_EVENTS, projection_reader=reader)
+    resp = client.get(
+        "/bff/management/trade-journeys/events?tenant_id=tenant-a&environment=paper",
+        headers={"Authorization": "Bearer scoped:viewer:tenant-a"},
+    )
+    assert resp.status_code == 200
+    assert resp.headers["content-type"].startswith("text/event-stream")
+    assert "id: 42" in resp.text
+    assert "event: journeys_changed" in resp.text
+    assert '"revision":42' in resp.text
+
+    # Reconnect gap cursor
+    gap_resp = client.get(
+        "/bff/management/trade-journeys/events?tenant_id=tenant-a&environment=paper",
+        headers={"Authorization": "Bearer scoped:viewer:tenant-a", "Last-Event-ID": "10"},
+    )
+    assert gap_resp.status_code == 200
+    assert "event: snapshot_refetch_required" in gap_resp.text
+    assert '"gap":true' in gap_resp.text
+
+    # 2. Unavailable reader returns 503 DEPENDENCY_UNAVAILABLE
+    unavail_reader = FakeReader(unavailable=True)
+    unavail_client, _ = _direct_client(_BASE_EVENTS, projection_reader=unavail_reader)
+    err_resp = unavail_client.get(
+        "/bff/management/trade-journeys/events?tenant_id=tenant-a&environment=paper",
+        headers={"Authorization": "Bearer scoped:viewer:tenant-a"},
+    )
+    assert err_resp.status_code == 503
+    assert err_resp.json()["error"]["code"] == "DEPENDENCY_UNAVAILABLE"
+
+    # 3. Missing controller row returns 503 DEPENDENCY_UNAVAILABLE
+    none_reader = FakeReader(controller=None)
+    none_client, _ = _direct_client(_BASE_EVENTS, projection_reader=none_reader)
+    none_resp = none_client.get(
+        "/bff/management/trade-journeys/events?tenant_id=tenant-a&environment=paper",
+        headers={"Authorization": "Bearer scoped:viewer:tenant-a"},
+    )
+    assert none_resp.status_code == 503
+    assert none_resp.json()["error"]["code"] == "DEPENDENCY_UNAVAILABLE"
+
+
+def test_action_dispatch_in_postgres_reader_mode() -> None:
+    """Verify POST /bff/management/trade-journeys/{id}/actions reads journey from projection reader without JSON fallback."""
+    class FakeActionReader:
+        def __init__(self, *, journey=None, unavailable=False):
+            self._journey = journey
+            self._unavailable = unavailable
+
+        def get_journey(self, *, tenant_id: str, environment: str, journey_id: str):
+            if self._unavailable:
+                raise ProjectionReadUnavailable("Postgres connection dropped")
+            return self._journey
+
+    snapshot = {
+        "journey_id": "tj-action-test",
+        "tenant_id": "tenant-a",
+        "environment": "paper",
+        "persona_id": "persona-1",
+        "strategy_id": "strat-1",
+        "stage": "order_submission",
+        "status": "running",
+        "revision": 7,
+    }
+    proj = JourneyProjection(
+        journey_id="tj-action-test",
+        tenant_id="tenant-a",
+        environment="paper",
+        snapshot=snapshot,
+        timeline=[],
+        graph_edges=[],
+        diagnostics=[],
+    )
+
+    reader = FakeActionReader(journey=proj)
+    client, _ = _direct_client(_BASE_EVENTS, projection_reader=reader)
+
+    # 1. Action matches expected revision 7
+    action_resp = client.post(
+        "/bff/management/trade-journeys/tj-action-test/actions?tenant_id=tenant-a&environment=paper",
+        headers={"Authorization": "Bearer scoped:operator:tenant-a", "Idempotency-Key": "idem-action-pg-01"},
+        json={"action": "pause", "reason": "test operator pause", "expected_revision": 7, "confirm_token": "tok1"},
+    )
+    assert action_resp.status_code in (200, 502)
+
+    # 2. Stale revision (expected_revision=6 vs current revision=7) returns 409
+    stale_resp = client.post(
+        "/bff/management/trade-journeys/tj-action-test/actions?tenant_id=tenant-a&environment=paper",
+        headers={"Authorization": "Bearer scoped:operator:tenant-a", "Idempotency-Key": "idem-action-pg-02"},
+        json={"action": "pause", "reason": "test operator pause", "expected_revision": 6, "confirm_token": "tok1"},
+    )
+    assert stale_resp.status_code == 409
+    assert stale_resp.json()["error"]["code"] == "STALE_JOURNEY_REVISION"
+
+    # 3. Unavailable projection reader returns 503
+    unavail_reader = FakeActionReader(unavailable=True)
+    unavail_client, _ = _direct_client(_BASE_EVENTS, projection_reader=unavail_reader)
+    unavail_resp = unavail_client.post(
+        "/bff/management/trade-journeys/tj-action-test/actions?tenant_id=tenant-a&environment=paper",
+        headers={"Authorization": "Bearer scoped:operator:tenant-a", "Idempotency-Key": "idem-action-pg-03"},
+        json={"action": "pause", "reason": "test operator pause", "expected_revision": 7, "confirm_token": "tok1"},
+    )
+    assert unavail_resp.status_code == 503
+    assert unavail_resp.json()["error"]["code"] == "DEPENDENCY_UNAVAILABLE"
+
