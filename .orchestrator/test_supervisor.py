@@ -28,6 +28,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
 import supervisor
 import runtime_state
+from adapters.base import DeliveryResult
 
 
 _OLD_ENV: dict[str, str] = {}
@@ -1811,6 +1812,204 @@ class DurableQueueContractTests(unittest.TestCase):
         record = state["queue"]["events"]["evt-1"]
         self.assertEqual(record["status"], "completed")
         self.assertEqual(record["skip_reason"], "stale_dispatch_event")
+
+    def test_spawn_boundary_rejects_stale_assignment_snapshots(self) -> None:
+        stale_assignments = {
+            "generation": {**self.task, "generation": 2},
+            "owner": {**self.task, "owner": "Codex2"},
+            "reviewer": {**self.task, "reviewer": "Human/Ops"},
+        }
+        for changed_field, stale_task in stale_assignments.items():
+            with (
+                self.subTest(changed_field=changed_field),
+                tempfile.TemporaryDirectory() as tmpdir,
+            ):
+                root = Path(tmpdir)
+                (root / ".orchestrator").mkdir()
+                config = config_fixture(root)
+                state = with_healthy_delivery_health(
+                    config, runtime_state.default_state()
+                )
+                event = supervisor.build_dispatch_event(
+                    self.task,
+                    "Codex",
+                    supervisor.REASON_OWNED_IN_PROGRESS,
+                    {"TASK-1": self.task},
+                )
+                event.update(
+                    {
+                        "event_id": "evt-spawn-boundary",
+                        "event_key": event["key"],
+                        "target_agent": "codex",
+                        "target_display_name": "Codex",
+                        "delivery_endpoint_id": "codex",
+                        "message": "wake",
+                    }
+                )
+                with_queue_intents(state, event)
+                runtime_state.save_runtime_state(config, state)
+                adapter = mock.Mock()
+
+                with (
+                    mock.patch.object(
+                        supervisor,
+                        "load_status",
+                        side_effect=[
+                            {"tasks": [self.task]},
+                            {"tasks": [self.task]},
+                            {"tasks": [stale_task]},
+                        ],
+                    ),
+                    mock.patch.object(
+                        supervisor, "build_adapter", return_value=adapter
+                    ),
+                    mock.patch.object(
+                        supervisor,
+                        "prepare_worker_workspace",
+                        return_value=(True, None),
+                    ),
+                    mock.patch.object(
+                        supervisor,
+                        "check_worker_tree_clean",
+                        return_value=(True, None),
+                    ),
+                    mock.patch.object(
+                        supervisor,
+                        "evaluate_queued_delivery_admission",
+                        return_value=mock.Mock(eligible=True),
+                    ),
+                    mock.patch.object(
+                        supervisor, "status_command_runtime_env", return_value={}
+                    ),
+                    mock.patch.object(
+                        supervisor,
+                        "status_command_runtime_record_from_env",
+                        return_value={},
+                    ),
+                    mock.patch.object(supervisor, "write_activity_log"),
+                ):
+                    self.assertTrue(
+                        supervisor._run_reserved_runtime_phase(
+                            config,
+                            "process_queue",
+                            lambda scratch: supervisor.process_queue(config, scratch),
+                        )
+                    )
+
+                adapter.deliver.assert_not_called()
+                final_state = runtime_state.load_runtime_state(config)
+                record = final_state["queue"]["events"]["evt-spawn-boundary"]
+                self.assertEqual(record["status"], "completed", record)
+                self.assertEqual(
+                    record["skip_reason"],
+                    "task_generation_changed_before_launch",
+                )
+                self.assertEqual(record["attempt_count"], 0)
+                self.assertEqual(final_state["workers"], {})
+                self.assertNotIn(
+                    "process_queue",
+                    final_state["supervisor"]["runtime_phase_reservations"],
+                )
+
+    def test_spawn_boundary_launches_only_the_current_assignment(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / ".orchestrator").mkdir()
+            config = config_fixture(root)
+            state = with_healthy_delivery_health(
+                config, runtime_state.default_state()
+            )
+            event = supervisor.build_dispatch_event(
+                self.task,
+                "Codex",
+                supervisor.REASON_OWNED_IN_PROGRESS,
+                {"TASK-1": self.task},
+            )
+            event.update(
+                {
+                    "event_id": "evt-current-assignment",
+                    "event_key": event["key"],
+                    "target_agent": "codex",
+                    "target_display_name": "Codex",
+                    "delivery_endpoint_id": "codex",
+                    "message": "wake",
+                }
+            )
+            with_queue_intents(state, event)
+            runtime_state.save_runtime_state(config, state)
+            adapter = mock.Mock()
+            adapter.deliver.return_value = DeliveryResult(
+                ok=True,
+                adapter="test",
+                mode="codex",
+                target="codex",
+                auto_delivered=True,
+                manual_confirmation_required=False,
+                run_id="run-current-assignment",
+            )
+
+            with (
+                mock.patch.object(
+                    supervisor,
+                    "load_status",
+                    side_effect=[
+                        {"tasks": [self.task]},
+                        {"tasks": [self.task]},
+                        {"tasks": [self.task]},
+                        {"tasks": [self.task]},
+                    ],
+                ),
+                mock.patch.object(
+                    supervisor, "build_adapter", return_value=adapter
+                ),
+                mock.patch.object(
+                    supervisor,
+                    "prepare_worker_workspace",
+                    return_value=(True, None),
+                ),
+                mock.patch.object(
+                    supervisor,
+                    "check_worker_tree_clean",
+                    return_value=(True, None),
+                ),
+                mock.patch.object(
+                    supervisor,
+                    "evaluate_queued_delivery_admission",
+                    return_value=mock.Mock(eligible=True),
+                ),
+                mock.patch.object(
+                    supervisor, "status_command_runtime_env", return_value={}
+                ),
+                mock.patch.object(
+                    supervisor,
+                    "status_command_runtime_record_from_env",
+                    return_value={},
+                ),
+                mock.patch.object(
+                    supervisor, "sync_dispatched_task_status", return_value=True
+                ),
+                mock.patch.object(supervisor, "write_activity_log"),
+            ):
+                self.assertTrue(
+                    supervisor._run_reserved_runtime_phase(
+                        config,
+                        "process_queue",
+                        lambda scratch: supervisor.process_queue(config, scratch),
+                    )
+                )
+
+            adapter.deliver.assert_called_once()
+            final_state = runtime_state.load_runtime_state(config)
+            record = final_state["queue"]["events"]["evt-current-assignment"]
+            self.assertEqual(record["status"], "started")
+            self.assertEqual(record["attempt_count"], 1)
+            worker = final_state["workers"]["run-current-assignment"]
+            self.assertEqual(worker["agent_id"], "codex")
+            self.assertEqual(worker["task_generation"], 1)
+            self.assertNotIn(
+                "process_queue",
+                final_state["supervisor"]["runtime_phase_reservations"],
+            )
 
     def test_nonplanner_queue_reason_is_never_launched(self) -> None:
         legacy_event = {**self.event, "reason": "github_retry"}

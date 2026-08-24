@@ -269,7 +269,7 @@ jobs:
           curl --fail-with-body --silent --show-error \
             --retry 3 --retry-all-errors --connect-timeout 10 --max-time 30 \
             "${DEV_FE_URL%/}/deployment.json" > "${deployment_json}"
-          read -r previous previous_frontend < <(
+          read -r previous previous_frontend deployment_state < <(
             python3 - "${deployment_json}" "${DEV_BFF_URL}" <<'PY'
           import json
           import re
@@ -279,42 +279,112 @@ jobs:
           expected_bff_url = sys.argv[2].rstrip("/")
           sha = re.compile(r"^[0-9a-f]{40}$")
 
-          def exact_sha(*values):
+          def exact_sha(*values, label="release identity"):
               if not values or any(not isinstance(value, str) or not sha.fullmatch(value) for value in values):
-                  raise SystemExit("accepted frontend deployment manifest lacks an exact release identity")
+                  raise SystemExit(f"frontend deployment manifest lacks an exact {label}")
               if len(set(values)) != 1:
-                  raise SystemExit("accepted frontend deployment manifest has conflicting release identities")
+                  raise SystemExit(f"frontend deployment manifest has conflicting {label} values")
               return values[0]
 
+          schema_version = manifest.get("schemaVersion")
+          app = manifest.get("app")
+          repository = manifest.get("repository")
+          source_branch = manifest.get("sourceBranch")
+          deployment_state = manifest.get("deploymentState")
+          bff_commit_evidence = manifest.get("bffCommitEvidence")
+
           if (
-              manifest.get("schemaVersion") != 1
-              or manifest.get("app") != "execute-plans"
-              or manifest.get("repository") != "ajoe734/execute-plans"
-              or manifest.get("sourceBranch") != "dev"
-              or manifest.get("deploymentState") != "accepted"
-              or manifest.get("bffCommitEvidence") is not True
+              schema_version != 1
+              or app != "execute-plans"
+              or repository != "ajoe734/execute-plans"
+              or source_branch != "dev"
+              or bff_commit_evidence is not True
+              or deployment_state not in ("accepted", "standby")
           ):
-              raise SystemExit("frontend deployment manifest is not an accepted Pantheon dev release")
+              raise SystemExit("frontend deployment manifest is not an accepted or verified standby Pantheon dev release")
+
           bff = manifest.get("bff") or {}
           if not isinstance(bff, dict) or bff.get("baseUrl", "").rstrip("/") != expected_bff_url:
               raise SystemExit("frontend deployment manifest is not bound to the expected BFF endpoint")
+
           frontend = manifest.get("frontend") or {}
           if not isinstance(frontend, dict):
               raise SystemExit("frontend deployment manifest has no frontend release identity")
+
           backend_sha = exact_sha(
               manifest.get("bffCommit"),
               manifest.get("bffSourceCommitSha"),
               bff.get("sourceCommitSha"),
+              label="backend release identity",
           )
           frontend_sha = exact_sha(
               manifest.get("commit"),
               manifest.get("frontendSha"),
               frontend.get("commitSha"),
+              label="frontend release identity",
           )
-          print(backend_sha, frontend_sha)
+
+          if deployment_state == "standby":
+              profile = manifest.get("profile")
+              deployment_profile = manifest.get("deploymentProfile")
+              if profile != "read-only" or deployment_profile != "read-only":
+                  raise SystemExit("standby frontend deployment manifest must use read-only profile")
+
+              build_mode = manifest.get("buildMode")
+              if not isinstance(build_mode, dict):
+                  raise SystemExit("standby frontend deployment manifest has invalid buildMode")
+
+              if (
+                  build_mode.get("VITE_BFF_MODE") != "live"
+                  or build_mode.get("VITE_BFF_FALLBACK") != "strict"
+                  or str(build_mode.get("VITE_BFF_REAL_WRITES", "")).lower() != "false"
+                  or str(build_mode.get("VITE_BFF_ALLOW_DEV_STUB_WRITES", "")).lower() != "false"
+                  or str(build_mode.get("VITE_BFF_EMBEDDED_BEARER_TOKEN", "")).lower() != "false"
+              ):
+                  raise SystemExit("standby frontend deployment manifest must use strict live read-only build mode")
+
+              release_admission = manifest.get("releaseAdmission")
+              if not isinstance(release_admission, dict):
+                  raise SystemExit("standby frontend deployment manifest lacks releaseAdmission")
+
+              adm_backend = release_admission.get("backend") or {}
+              adm_frontend = release_admission.get("frontend") or {}
+              if (
+                  release_admission.get("schemaVersion") != "pantheon.dev-release-candidate-admission.v1"
+                  or release_admission.get("compatibilityStatus") != "compatible"
+                  or not isinstance(adm_backend, dict)
+                  or adm_backend.get("repository") != "ajoe734/pantheon"
+                  or adm_backend.get("branch") != "dev"
+                  or adm_backend.get("commitSha") != backend_sha
+                  or not isinstance(adm_frontend, dict)
+                  or adm_frontend.get("repository") != "ajoe734/execute-plans"
+                  or adm_frontend.get("branch") != "dev"
+                  or adm_frontend.get("commitSha") != frontend_sha
+              ):
+                  raise SystemExit("standby frontend deployment manifest has invalid or mismatched releaseAdmission")
+
+              agora = manifest.get("agoraCompatibility")
+              if not isinstance(agora, dict):
+                  raise SystemExit("standby frontend deployment manifest lacks agoraCompatibility")
+
+              agora_backend = agora.get("backend") or {}
+              agora_frontend = agora.get("frontend") or {}
+              if (
+                  agora.get("schema_version") != "pantheon.agora.compatibility-gate-evidence.v1"
+                  or agora.get("compatibility_status") not in ("accepted", "compatible")
+                  or not isinstance(agora_backend, dict)
+                  or agora_backend.get("repo") != "ajoe734/pantheon"
+                  or agora_backend.get("runtime_commit") != backend_sha
+                  or not isinstance(agora_frontend, dict)
+                  or agora_frontend.get("repo") != "ajoe734/execute-plans"
+                  or agora_frontend.get("runtime_commit") != frontend_sha
+              ):
+                  raise SystemExit("standby frontend deployment manifest has invalid or mismatched agoraCompatibility")
+
+          print(backend_sha, frontend_sha, deployment_state)
           PY
           )
-          baseline_source="accepted_frontend_pair_manifest"
+          baseline_source="${deployment_state}_frontend_pair_manifest"
           observed_previous=""
           if curl --fail-with-body --silent --show-error \
             --retry 3 --retry-all-errors --connect-timeout 10 --max-time 30 \
@@ -324,7 +394,7 @@ jobs:
                 "${version_json}"
             )"
             if [[ "${observed_previous}" == "${previous}" ]]; then
-              baseline_source="accepted_frontend_pair_manifest+live_bff_match"
+              baseline_source="${deployment_state}_frontend_pair_manifest+live_bff_match"
             else
               [[ "${observed_previous}" =~ ^[0-9a-f]{40}$ ]] || {
                 echo "Hosted BFF drift identity is not an exact commit SHA." >&2
@@ -335,11 +405,11 @@ jobs:
                   echo "Hosted BFF drift identity is not contained in Pantheon dev." >&2
                   exit 1
                 }
-              echo "Hosted BFF differs from the accepted frontend pair; retaining the accepted pair as rollback authority." >&2
-              baseline_source="accepted_frontend_pair_manifest+live_bff_drift_recovery"
+              echo "Hosted BFF differs from the ${deployment_state} frontend pair; retaining the ${deployment_state} pair as rollback authority." >&2
+              baseline_source="${deployment_state}_frontend_pair_manifest+live_bff_drift_recovery"
             fi
           else
-            echo "Hosted BFF version endpoint is unavailable; recovering from the accepted frontend pair manifest." >&2
+            echo "Hosted BFF version endpoint is unavailable; recovering from the ${deployment_state} frontend pair manifest." >&2
           fi
           git -C .agora-gate-controller merge-base --is-ancestor \
             "${previous}" refs/remotes/origin/dev || {
