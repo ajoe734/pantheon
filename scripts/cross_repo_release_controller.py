@@ -32,6 +32,7 @@ GATE_WORKFLOW = "pantheon-integration-gate.yml"
 DEPLOY_WORKFLOW = "pantheon-dev-fe-deploy.yml"
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 DIGEST_RE = re.compile(r"^[0-9a-f]{64}$")
+PAIR_ID_RE = re.compile(r"^[0-9a-zA-Z._:-]{1,256}$")
 RUN_ID_RE = re.compile(r"^[1-9][0-9]*$")
 PROOF_PROFILES = ("write-proof", "read-only", "operator-live")
 PROOF_STATES = (
@@ -67,6 +68,13 @@ def exact_digest(value: str, label: str) -> str:
     return normalized
 
 
+def exact_pair_id(value: str, label: str = "pair ID") -> str:
+    normalized = str(value or "").strip()
+    if not PAIR_ID_RE.fullmatch(normalized):
+        raise ControllerError(f"{label} must be a valid pair identifier")
+    return normalized
+
+
 def exact_run_id(value: str, label: str) -> str:
     normalized = str(value or "").strip()
     if not RUN_ID_RE.fullmatch(normalized):
@@ -84,11 +92,17 @@ def canonical_json_sha256(payload: dict[str, Any]) -> str:
     return hashlib.sha256(encoded + b"\n").hexdigest()
 
 
-def derive_pair_id(pantheon_sha: str, execute_plans_sha: str) -> str:
-    return canonical_json_sha256({
-        "execute_plans_sha": exact_sha(execute_plans_sha, "frontend SHA"),
-        "pantheon_sha": exact_sha(pantheon_sha, "backend SHA"),
-    })
+def derive_pair_id(
+    pantheon_sha: str | None = None,
+    execute_plans_sha: str | None = None,
+    *,
+    manifest: dict[str, Any] | None = None,
+) -> str | None:
+    if manifest:
+        raw = manifest.get("pairId") or manifest.get("pair_id")
+        if raw:
+            return exact_pair_id(raw, "served pair ID")
+    return None
 
 
 def create_candidate_record(
@@ -104,13 +118,7 @@ def create_candidate_record(
 ) -> dict[str, Any]:
     pantheon_sha = exact_sha(pantheon_sha, "backend SHA")
     execute_plans_sha = exact_sha(execute_plans_sha, "frontend SHA")
-    canonical_pair = derive_pair_id(pantheon_sha, execute_plans_sha)
-    if pair_id is not None:
-        supplied_pair = exact_digest(pair_id, "pair ID")
-        if supplied_pair != canonical_pair:
-            raise ControllerError(
-                f"supplied pair ID {supplied_pair} does not match canonically derived pair ID {canonical_pair}"
-            )
+    norm_pair = exact_pair_id(pair_id, "pair ID") if pair_id is not None else None
 
     if profile not in PROOF_PROFILES:
         raise ControllerError(f"invalid profile: {profile}")
@@ -124,20 +132,22 @@ def create_candidate_record(
     if candidate_id:
         cid = exact_digest(candidate_id, "candidate ID")
     else:
-        cid = canonical_json_sha256({
+        cid_payload: dict[str, Any] = {
             "execute_plans_sha": execute_plans_sha,
             "expires_at": expires_at,
-            "pair_id": canonical_pair,
             "pantheon_sha": pantheon_sha,
             "profile": profile,
             "source_mode": source_mode,
-        })
+        }
+        if norm_pair is not None:
+            cid_payload["pair_id"] = norm_pair
+        cid = canonical_json_sha256(cid_payload)
 
     return {
         "candidate_id": cid,
         "pantheon_sha": pantheon_sha,
         "execute_plans_sha": execute_plans_sha,
-        "pair_id": canonical_pair,
+        "pair_id": norm_pair,
         "profile": profile,
         "expires_at": expires_at,
         "source_mode": source_mode,
@@ -175,8 +185,8 @@ def validate_candidate_override(
                 f"stale task pair or child inputs cannot override parent candidate: "
                 f"backend SHA {norm_bff} != parent {parent_candidate['pantheon_sha']}"
             )
-    if pair_id is not None:
-        norm_pair = exact_digest(pair_id, "child pair ID")
+    if pair_id is not None and parent_candidate.get("pair_id") is not None:
+        norm_pair = exact_pair_id(pair_id, "child pair ID")
         if norm_pair != parent_candidate["pair_id"]:
             raise ControllerError(
                 f"stale task pair or child inputs cannot override parent candidate: "
@@ -248,9 +258,24 @@ def verify_served_identity(
             raise ControllerError(
                 f"served identity mismatch fails closed: FE served {observed_fe_sha} != candidate {expected_candidate['execute_plans_sha']}"
             )
+
+        manifest_bff_sha_raw = (
+            fe_data.get("bffCommit")
+            or fe_data.get("bffSourceCommitSha")
+            or (fe_data.get("bff") or {}).get("sourceCommitSha")
+        )
+        if manifest_bff_sha_raw:
+            observed_manifest_bff_sha = exact_sha(manifest_bff_sha_raw, "served frontend manifest BFF commit SHA")
+            if observed_manifest_bff_sha != expected_candidate["pantheon_sha"]:
+                raise ControllerError(
+                    f"served identity mismatch fails closed: FE manifest BFF {observed_manifest_bff_sha} != candidate {expected_candidate['pantheon_sha']}"
+                )
+
         raw_pair_id = fe_data.get("pairId") or fe_data.get("pair_id") or ""
-        observed_pair_id = exact_digest(raw_pair_id, "served pair ID")
-        if observed_pair_id != expected_candidate["pair_id"]:
+        if not raw_pair_id:
+            raise ControllerError("served deployment manifest lacks pair ID")
+        observed_pair_id = exact_pair_id(raw_pair_id, "served pair ID")
+        if expected_candidate.get("pair_id") is not None and observed_pair_id != expected_candidate["pair_id"]:
             raise ControllerError(
                 f"served identity mismatch fails closed: served pair ID {observed_pair_id} != candidate {expected_candidate['pair_id']}"
             )
@@ -303,8 +328,8 @@ def restore_read_only_profile(
             or served_manifest.get("pair_id")
         )
         if raw_pair_id:
-            pair_id = exact_digest(raw_pair_id, "served pair ID")
-            if pair_id != restored["pair_id"]:
+            pair_id = exact_pair_id(raw_pair_id, "served pair ID")
+            if restored.get("pair_id") is not None and pair_id != restored["pair_id"]:
                 raise ControllerError(
                     f"read-only restoration verification mismatch: served pair ID {pair_id} != candidate {restored['pair_id']}"
                 )
@@ -338,7 +363,8 @@ def emit_github_outputs(candidate: dict[str, Any]) -> None:
         return
     with open(output_path, "a", encoding="utf-8") as fh:
         fh.write(f"candidate_id={candidate['candidate_id']}\n")
-        fh.write(f"pair_id={candidate['pair_id']}\n")
+        if candidate.get("pair_id") is not None:
+            fh.write(f"pair_id={candidate['pair_id']}\n")
         fh.write(f"pantheon_sha={candidate['pantheon_sha']}\n")
         fh.write(f"execute_plans_sha={candidate['execute_plans_sha']}\n")
         fh.write(f"profile={candidate['profile']}\n")
@@ -564,8 +590,10 @@ def coordinate_release(
         },
     )
 
-    served_verification: dict[str, Any] | None = None
-    served_manifest: dict[str, Any] | None = None
+    pre_dispatch_verification: dict[str, Any] | None = None
+    post_switch_verification: dict[str, Any] | None = None
+    gate_run: dict[str, Any] | None = None
+    deploy_run: dict[str, Any] | None = None
     started_at = utc_now()
     try:
         if candidate_out:
@@ -575,15 +603,14 @@ def coordinate_release(
 
         emit_github_outputs(candidate)
 
-        # 1. Identity verification BEFORE any child dispatch, inside restoration protection
-        served_verification = verify_served_identity(
+        # 1. Identity verification BEFORE any child dispatch: verify served BFF is live and matching
+        pre_dispatch_verification = verify_served_identity(
             bff_base_url=bff_base_url,
             expected_candidate=candidate,
-            fe_base_url=fe_base_url,
+            fe_base_url=None,  # Pre-dispatch: frontend is still on predecessor; do not assert new candidate yet
             fetch_fn=fetch_fn,
         )
         state_machine.transition("IDENTITY_VERIFIED")
-        served_manifest = served_verification.get("served_manifest")
 
         gate_title = f"Release candidate {release_candidate_id}"
 
@@ -608,6 +635,7 @@ def coordinate_release(
             poll_seconds=poll_seconds,
             sleep=sleep,
         )
+        gate_run = gate
         gate_run_id = str(validate_run(
             gate,
             ExpectedRun(GATE_WORKFLOW, gate_title, frontend_sha),
@@ -637,9 +665,33 @@ def coordinate_release(
             poll_seconds=poll_seconds,
             sleep=sleep,
         )
+        deploy_run = deploy
+
+        # 2. Post-switch verification: verify served FE, BFF, and pair identity after atomic deploy switch
+        if fe_base_url:
+            post_switch_verification = verify_served_identity(
+                bff_base_url=bff_base_url,
+                expected_candidate=candidate,
+                fe_base_url=fe_base_url,
+                fetch_fn=fetch_fn,
+            )
+            if post_switch_verification.get("observed_pair_id"):
+                candidate["pair_id"] = post_switch_verification["observed_pair_id"]
     finally:
         # Restore read-only profile across success, failure, cancellation, expiry, probe error
-        candidate = restore_read_only_profile(candidate, served_manifest=served_manifest)
+        # Refetch the served manifest for restoration verification
+        refetched_manifest = None
+        if fe_base_url:
+            try:
+                refetched_manifest = (fetch_fn or fetch_url_json)(f"{fe_base_url.rstrip('/')}/deployment.json")
+            except Exception:
+                refetched_manifest = None
+
+        if sys.exc_info()[0] is None and post_switch_verification is not None and refetched_manifest is not None:
+            candidate = restore_read_only_profile(candidate, served_manifest=refetched_manifest)
+        else:
+            candidate = restore_read_only_profile(candidate)
+
         state_machine.transition("READ_ONLY_RESTORED")
         if candidate_out:
             cand_path = Path(candidate_out)
@@ -651,7 +703,8 @@ def coordinate_release(
         "schema_version": "pantheon.cross-repo-release-controller-evidence.v1",
         "release_candidate_id": release_candidate_id,
         "candidate": candidate,
-        "served_verification": served_verification,
+        "pre_dispatch_verification": pre_dispatch_verification,
+        "served_verification": post_switch_verification or pre_dispatch_verification,
         "proof_state": state_machine.state,
         "proof_history": state_machine.history,
         "compatibility_manifest_sha256": compatibility_manifest_sha256,
@@ -672,14 +725,14 @@ def coordinate_release(
             "commit": frontend_sha,
         },
         "integration_gate": {
-            "run_id": str(gate["id"]),
-            "url": gate.get("html_url"),
-            "conclusion": gate.get("conclusion"),
+            "run_id": str(gate_run["id"]) if gate_run else None,
+            "url": gate_run.get("html_url") if gate_run else None,
+            "conclusion": gate_run.get("conclusion") if gate_run else None,
         },
         "frontend_deploy": {
-            "run_id": str(deploy["id"]),
-            "url": deploy.get("html_url"),
-            "conclusion": deploy.get("conclusion"),
+            "run_id": str(deploy_run["id"]) if deploy_run else None,
+            "url": deploy_run.get("html_url") if deploy_run else None,
+            "conclusion": deploy_run.get("conclusion") if deploy_run else None,
         },
         "started_at": started_at,
         "completed_at": utc_now(),

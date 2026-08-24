@@ -115,6 +115,11 @@ class FakeClient:
         )
 
 
+PREV_FRONTEND_SHA = "2" * 40
+PREV_PAIR_ID = "prev-pair-identity-12345"
+SERVED_PAIR_ID = "execute-plans-canonical-pair-67890"
+
+
 def _default_fetch_fn(url: str) -> dict[str, Any]:
     if "version" in url:
         return {"source_commit_sha": BACKEND_SHA}
@@ -122,7 +127,7 @@ def _default_fetch_fn(url: str) -> dict[str, Any]:
         return {
             "frontendSha": FRONTEND_SHA,
             "bffCommit": BACKEND_SHA,
-            "pairId": derive_pair_id(BACKEND_SHA, FRONTEND_SHA),
+            "pairId": SERVED_PAIR_ID,
         }
     return {}
 
@@ -187,11 +192,45 @@ def test_coordinates_exact_gate_then_exact_deploy_on_dev() -> None:
     assert evidence["outcome"] == "accepted"
     assert evidence["proof_state"] == "READ_ONLY_RESTORED"
     assert evidence["candidate"]["profile"] == "read-only"
-    assert evidence["candidate"]["pair_id"] == derive_pair_id(BACKEND_SHA, FRONTEND_SHA)
+    assert evidence["candidate"]["pair_id"] == SERVED_PAIR_ID
     assert evidence["served_verification"]["status"] == "verified"
     assert evidence["served_verification"]["observed_bff_sha"] == BACKEND_SHA
     assert evidence["served_verification"]["observed_fe_sha"] == FRONTEND_SHA
-    assert evidence["served_verification"]["observed_pair_id"] == derive_pair_id(BACKEND_SHA, FRONTEND_SHA)
+    assert evidence["served_verification"]["observed_pair_id"] == SERVED_PAIR_ID
+
+
+def test_predecessor_to_candidate_switching_and_served_binding() -> None:
+    client = FakeClient()
+    switched = False
+
+    def dynamic_fetcher(url: str) -> dict[str, Any]:
+        nonlocal switched
+        if "version" in url:
+            return {"source_commit_sha": BACKEND_SHA}
+        if "deployment.json" in url:
+            # Check if deploy has been dispatched yet
+            if any(w == DEPLOY_WORKFLOW for w, _ in client.dispatches):
+                switched = True
+                return {
+                    "frontendSha": FRONTEND_SHA,
+                    "bffCommit": BACKEND_SHA,
+                    "pairId": SERVED_PAIR_ID,
+                }
+            # Pre-dispatch: still on predecessor!
+            return {
+                "frontendSha": PREV_FRONTEND_SHA,
+                "bffCommit": BACKEND_SHA,
+                "pairId": PREV_PAIR_ID,
+            }
+        return {}
+
+    evidence = _coordinate(client, fetch_fn=dynamic_fetcher)
+    assert switched is True
+    assert evidence["candidate"]["pair_id"] == SERVED_PAIR_ID
+    assert evidence["candidate"]["execute_plans_sha"] == FRONTEND_SHA
+    assert evidence["served_verification"]["observed_fe_sha"] == FRONTEND_SHA
+    assert evidence["served_verification"]["observed_pair_id"] == SERVED_PAIR_ID
+    assert evidence["outcome"] == "accepted"
 
 
 def test_gate_failure_stops_before_frontend_deploy(tmp_path: Path) -> None:
@@ -238,48 +277,52 @@ def test_invalid_or_branch_like_identity_is_rejected(
     assert client.dispatches == []
 
 
-def test_arbitrary_pair_id_rejected_in_create_candidate_record() -> None:
-    canonical_pair = derive_pair_id(BACKEND_SHA, FRONTEND_SHA)
-
-    # Valid matching pair ID is accepted
+def test_canonical_pair_id_handling_in_create_candidate_record() -> None:
+    # String pair ID (slug, digest, etc.) accepted
     record = create_candidate_record(
         pantheon_sha=BACKEND_SHA,
         execute_plans_sha=FRONTEND_SHA,
-        pair_id=canonical_pair,
+        pair_id="l12-mfc-r4-hosted-closeout-20260814-exact-pair",
     )
-    assert record["pair_id"] == canonical_pair
+    assert record["pair_id"] == "l12-mfc-r4-hosted-closeout-20260814-exact-pair"
 
-    # Arbitrary 64-hex pair ID is rejected immediately
-    arbitrary_pair = "f" * 64
-    with pytest.raises(ControllerError, match="does not match canonically derived pair ID"):
+    # None pair ID accepted (to be bound post-switch)
+    record_none = create_candidate_record(
+        pantheon_sha=BACKEND_SHA,
+        execute_plans_sha=FRONTEND_SHA,
+    )
+    assert record_none["pair_id"] is None
+
+    # Derive from manifest helper
+    manifest = {"pairId": "execute-plans-pair-xyz"}
+    assert derive_pair_id(manifest=manifest) == "execute-plans-pair-xyz"
+    assert derive_pair_id() is None
+
+    # Invalid pair ID (e.g. invalid chars or empty) rejected
+    with pytest.raises(ControllerError, match="must be a valid pair identifier"):
         create_candidate_record(
             pantheon_sha=BACKEND_SHA,
             execute_plans_sha=FRONTEND_SHA,
-            pair_id=arbitrary_pair,
+            pair_id="",
         )
 
 
 def test_stale_override_rejection_in_coordinate_release_execution_path() -> None:
     client = FakeClient()
 
-    # Mismatched pair_id in coordinate_release fails closed before any dispatch
-    with pytest.raises(ControllerError, match="does not match canonically derived pair ID"):
-        _coordinate(client, pair_id="f" * 64)
+    # Invalid pair_id in coordinate_release fails closed before any dispatch
+    with pytest.raises(ControllerError, match="must be a valid pair identifier"):
+        _coordinate(client, pair_id="invalid pair with spaces!")
     assert client.dispatches == []
 
 
-def test_served_bff_mismatch_fails_closed_and_restores_read_only(tmp_path: Path) -> None:
+def test_pre_dispatch_bff_mismatch_fails_closed_and_restores_read_only(tmp_path: Path) -> None:
     client = FakeClient()
     candidate_out = tmp_path / "candidate_bff_mismatch.json"
 
     def fake_bff_mismatch(url: str) -> dict[str, Any]:
         if "version" in url:
             return {"source_commit_sha": "9" * 40}
-        if "deployment.json" in url:
-            return {
-                "frontendSha": FRONTEND_SHA,
-                "pairId": derive_pair_id(BACKEND_SHA, FRONTEND_SHA),
-            }
         return {}
 
     with pytest.raises(ControllerError, match="served identity mismatch fails closed: BFF served"):
@@ -294,17 +337,19 @@ def test_served_bff_mismatch_fails_closed_and_restores_read_only(tmp_path: Path)
     assert data["profile"] == "read-only"
 
 
-def test_served_fe_mismatch_fails_closed_and_restores_read_only(tmp_path: Path) -> None:
+def test_post_switch_fe_mismatch_fails_closed_and_restores_read_only(tmp_path: Path) -> None:
     client = FakeClient()
     candidate_out = tmp_path / "candidate_fe_mismatch.json"
 
+    # FE never switches to candidate (still on predecessor after deploy)
     def fake_fe_mismatch(url: str) -> dict[str, Any]:
         if "version" in url:
             return {"source_commit_sha": BACKEND_SHA}
         if "deployment.json" in url:
             return {
-                "frontendSha": "9" * 40,
-                "pairId": derive_pair_id(BACKEND_SHA, FRONTEND_SHA),
+                "frontendSha": PREV_FRONTEND_SHA,
+                "bffCommit": BACKEND_SHA,
+                "pairId": PREV_PAIR_ID,
             }
         return {}
 
@@ -315,12 +360,12 @@ def test_served_fe_mismatch_fails_closed_and_restores_read_only(tmp_path: Path) 
             candidate_out=candidate_out,
             candidate_profile="write-proof",
         )
-    assert client.dispatches == []
+    assert [workflow for workflow, _ in client.dispatches] == [GATE_WORKFLOW, DEPLOY_WORKFLOW]
     data = json.loads(candidate_out.read_text(encoding="utf-8"))
     assert data["profile"] == "read-only"
 
 
-def test_served_pair_mismatch_fails_closed_and_restores_read_only(tmp_path: Path) -> None:
+def test_post_switch_pair_mismatch_fails_closed_and_restores_read_only(tmp_path: Path) -> None:
     client = FakeClient()
     candidate_out = tmp_path / "candidate_pair_mismatch.json"
 
@@ -330,23 +375,25 @@ def test_served_pair_mismatch_fails_closed_and_restores_read_only(tmp_path: Path
         if "deployment.json" in url:
             return {
                 "frontendSha": FRONTEND_SHA,
-                "pairId": "9" * 64,
+                "bffCommit": BACKEND_SHA,
+                "pairId": "conflicting-pair-identity",
             }
         return {}
 
     with pytest.raises(ControllerError, match="served identity mismatch fails closed: served pair ID"):
         _coordinate(
             client,
+            pair_id="expected-pair-identity",
             fetch_fn=fake_pair_mismatch,
             candidate_out=candidate_out,
             candidate_profile="write-proof",
         )
-    assert client.dispatches == []
+    assert [workflow for workflow, _ in client.dispatches] == [GATE_WORKFLOW, DEPLOY_WORKFLOW]
     data = json.loads(candidate_out.read_text(encoding="utf-8"))
     assert data["profile"] == "read-only"
 
 
-def test_served_missing_pair_fails_closed_and_restores_read_only(tmp_path: Path) -> None:
+def test_post_switch_missing_pair_fails_closed_and_restores_read_only(tmp_path: Path) -> None:
     client = FakeClient()
     candidate_out = tmp_path / "candidate_missing_pair.json"
 
@@ -356,23 +403,24 @@ def test_served_missing_pair_fails_closed_and_restores_read_only(tmp_path: Path)
         if "deployment.json" in url:
             return {
                 "frontendSha": FRONTEND_SHA,
+                "bffCommit": BACKEND_SHA,
                 # Missing pairId and pair_id
             }
         return {}
 
-    with pytest.raises(ControllerError, match="served pair ID must be one exact lowercase SHA-256 digest"):
+    with pytest.raises(ControllerError, match="served deployment manifest lacks pair ID"):
         _coordinate(
             client,
             fetch_fn=fake_missing_pair,
             candidate_out=candidate_out,
             candidate_profile="write-proof",
         )
-    assert client.dispatches == []
+    assert [workflow for workflow, _ in client.dispatches] == [GATE_WORKFLOW, DEPLOY_WORKFLOW]
     data = json.loads(candidate_out.read_text(encoding="utf-8"))
     assert data["profile"] == "read-only"
 
 
-def test_served_missing_fe_sha_fails_closed_and_restores_read_only(tmp_path: Path) -> None:
+def test_post_switch_missing_fe_sha_fails_closed_and_restores_read_only(tmp_path: Path) -> None:
     client = FakeClient()
     candidate_out = tmp_path / "candidate_missing_fe.json"
 
@@ -381,7 +429,7 @@ def test_served_missing_fe_sha_fails_closed_and_restores_read_only(tmp_path: Pat
             return {"source_commit_sha": BACKEND_SHA}
         if "deployment.json" in url:
             return {
-                "pairId": derive_pair_id(BACKEND_SHA, FRONTEND_SHA),
+                "pairId": SERVED_PAIR_ID,
                 # Missing frontendSha
             }
         return {}
@@ -393,7 +441,7 @@ def test_served_missing_fe_sha_fails_closed_and_restores_read_only(tmp_path: Pat
             candidate_out=candidate_out,
             candidate_profile="write-proof",
         )
-    assert client.dispatches == []
+    assert [workflow for workflow, _ in client.dispatches] == [GATE_WORKFLOW, DEPLOY_WORKFLOW]
     data = json.loads(candidate_out.read_text(encoding="utf-8"))
     assert data["profile"] == "read-only"
 
@@ -443,6 +491,35 @@ def test_gate_timeout_restores_read_only(tmp_path: Path) -> None:
 
     data = json.loads(candidate_out.read_text(encoding="utf-8"))
     assert data["profile"] == "read-only"
+
+
+def test_cancellation_and_expiry_restoration(tmp_path: Path) -> None:
+    client = FakeClient(timeout_workflow=GATE_WORKFLOW)
+    candidate_out = tmp_path / "candidate_cancel.json"
+
+    def predecessor_fetcher(url: str) -> dict[str, Any]:
+        if "version" in url:
+            return {"source_commit_sha": BACKEND_SHA}
+        if "deployment.json" in url:
+            return {
+                "frontendSha": PREV_FRONTEND_SHA,
+                "bffCommit": BACKEND_SHA,
+                "pairId": PREV_PAIR_ID,
+            }
+        return {}
+
+    with pytest.raises(ControllerError, match="timed out discovering"):
+        _coordinate(
+            client,
+            candidate_out=candidate_out,
+            candidate_profile="write-proof",
+            fetch_fn=predecessor_fetcher,
+            gate_timeout_seconds=1,
+        )
+
+    data = json.loads(candidate_out.read_text(encoding="utf-8"))
+    assert data["profile"] == "read-only"
+    assert "restored_at" in data
 
 
 def test_adversarial_monkeypatch_served_verification_raises() -> None:
@@ -599,23 +676,16 @@ def test_compensation_step_provides_every_var_the_script_requires() -> None:
 
 
 def test_candidate_derives_exact_current_fe_bff_pair_and_pair_id() -> None:
-    pair_id = derive_pair_id(BACKEND_SHA, FRONTEND_SHA)
-    assert len(pair_id) == 64
-    assert re.fullmatch(r"^[0-9a-f]{64}$", pair_id)
-
-    # Deterministic derivation
-    assert derive_pair_id(BACKEND_SHA, FRONTEND_SHA) == pair_id
-    assert derive_pair_id(BACKEND_SHA, "2" * 40) != pair_id
-
     candidate = create_candidate_record(
         pantheon_sha=BACKEND_SHA,
         execute_plans_sha=FRONTEND_SHA,
+        pair_id="l12-mfc-r4-hosted-closeout-20260814-exact-pair",
         profile="write-proof",
         source_mode="reconcile-only",
     )
     assert candidate["pantheon_sha"] == BACKEND_SHA
     assert candidate["execute_plans_sha"] == FRONTEND_SHA
-    assert candidate["pair_id"] == pair_id
+    assert candidate["pair_id"] == "l12-mfc-r4-hosted-closeout-20260814-exact-pair"
     assert candidate["profile"] == "write-proof"
     assert candidate["source_mode"] == "reconcile-only"
     assert "expires_at" in candidate
@@ -623,7 +693,7 @@ def test_candidate_derives_exact_current_fe_bff_pair_and_pair_id() -> None:
 
 
 def test_stale_task_pair_or_child_inputs_cannot_override_candidate() -> None:
-    canonical_pair = derive_pair_id(BACKEND_SHA, FRONTEND_SHA)
+    canonical_pair = "canonical-pair-identity-12345"
     candidate = create_candidate_record(
         pantheon_sha=BACKEND_SHA,
         execute_plans_sha=FRONTEND_SHA,
@@ -652,7 +722,7 @@ def test_stale_task_pair_or_child_inputs_cannot_override_candidate() -> None:
 
     # Stale / mismatched pair ID fails closed
     with pytest.raises(ControllerError, match="stale task pair or child inputs cannot override parent candidate"):
-        validate_candidate_override(candidate, {"pair_id": "0" * 64})
+        validate_candidate_override(candidate, {"pair_id": "mismatched-pair-identity"})
 
     # Stale / mismatched candidate ID fails closed
     with pytest.raises(ControllerError, match="stale task pair or child inputs cannot override parent candidate"):
@@ -671,7 +741,7 @@ def test_no_operator_prompt_or_proof_window_ack_required() -> None:
 
 
 def test_served_mismatch_fails_closed() -> None:
-    canonical_pair = derive_pair_id(BACKEND_SHA, FRONTEND_SHA)
+    canonical_pair = "canonical-pair-identity-12345"
     candidate = create_candidate_record(
         pantheon_sha=BACKEND_SHA,
         execute_plans_sha=FRONTEND_SHA,
@@ -731,7 +801,7 @@ def test_served_mismatch_fails_closed() -> None:
 
 
 def test_read_only_restored_on_success_failure_cancellation_expiry() -> None:
-    canonical_pair = derive_pair_id(BACKEND_SHA, FRONTEND_SHA)
+    canonical_pair = "canonical-pair-identity-12345"
     candidate = create_candidate_record(
         pantheon_sha=BACKEND_SHA,
         execute_plans_sha=FRONTEND_SHA,
@@ -780,7 +850,7 @@ def test_read_only_restored_on_success_failure_cancellation_expiry() -> None:
     bad_pair_manifest = {
         "frontendSha": FRONTEND_SHA,
         "bffCommit": BACKEND_SHA,
-        "pairId": "9" * 64,
+        "pairId": "conflicting-pair-identity",
     }
     with pytest.raises(ControllerError, match="read-only restoration verification mismatch: served pair ID"):
         restore_read_only_profile(candidate, served_manifest=bad_pair_manifest)
