@@ -1,0 +1,192 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://pantheon/source-canary-result/v1",
+  "title": "Pantheon SourceCanaryResult",
+  "description": "Bounded activation and readback verification evidence for data source instances.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "canary_id",
+    "source_instance_id",
+    "definition_id",
+    "definition_deployment_sha",
+    "limits",
+    "allowed_hosts",
+    "status",
+    "stages",
+    "row_count",
+    "rejected_count",
+    "license_scope",
+    "entitlement_tags",
+    "started_at",
+    "completed_at"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "enum": [
+        "source_canary_result.v1"
+      ]
+    },
+    "canary_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "source_instance_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "definition_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "definition_deployment_sha": {
+      "type": "string",
+      "minLength": 1
+    },
+    "limits": {
+      "type": "object",
+      "required": [
+        "max_records",
+        "max_bytes",
+        "timeout_seconds"
+      ],
+      "properties": {
+        "max_records": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "max_bytes": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "timeout_seconds": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "allowed_hosts": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "passed",
+        "partial",
+        "failed"
+      ]
+    },
+    "stages": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "stage_name",
+          "status",
+          "started_at",
+          "completed_at"
+        ],
+        "properties": {
+          "stage_name": {
+            "type": "string",
+            "enum": [
+              "definition_resolved",
+              "credential_ready",
+              "egress_policy_admitted",
+              "provider_read",
+              "source_normalized",
+              "evidence_persisted",
+              "search_refreshed",
+              "governed_search_readback",
+              "completed"
+            ]
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "passed",
+              "failed",
+              "skipped"
+            ]
+          },
+          "started_at": {
+            "type": "string"
+          },
+          "completed_at": {
+            "type": "string"
+          },
+          "details": {
+            "type": "object"
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "additionalProperties": true
+      }
+    },
+    "ingest_run_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "watermark": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "row_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "rejected_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "evidence_bundle_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "search_snapshot_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "query_readback_ref": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "license_scope": {
+      "type": "string"
+    },
+    "entitlement_tags": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "started_at": {
+      "type": "string"
+    },
+    "completed_at": {
+      "type": "string"
+    }
+  },
+  "additionalProperties": false
+}
