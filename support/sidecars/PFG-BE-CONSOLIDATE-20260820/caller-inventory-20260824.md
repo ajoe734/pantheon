@@ -1,8 +1,11 @@
 # PFG backend consolidation caller inventory — 2026-08-24
 
-Task: `PFG-BE-CONSOLIDATE-20260820-SIDECAR-CALLER-INVENTORY`  
-Parent: `PFG-BE-CONSOLIDATE-20260820`  
-Audited baseline: `8ca38337dee63d8759967ff5d670eaf24b4f983b` (`origin/dev`)  
+Task: `PFG-BE-CONSOLIDATE-20260820-SIDECAR-CALLER-INVENTORY`
+
+Parent: `PFG-BE-CONSOLIDATE-20260820`
+
+Audited baseline: `8ca38337dee63d8759967ff5d670eaf24b4f983b` (`origin/dev`)
+
 Inventory owner: `Codex`
 
 ## Boundary and decision rule
