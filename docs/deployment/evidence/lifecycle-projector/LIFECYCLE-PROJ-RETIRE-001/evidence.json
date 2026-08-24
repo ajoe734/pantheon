@@ -46,8 +46,8 @@
   },
   "artifact_checksums_sha256": {
     "docker-compose.yml": "d8072f2ec209df336c23619e5ad3076e2a296c79c116bba54676dd0a918804e8",
-    "services/trade_journey/lifecycle_projector.py": "144cd9c0d1f17512d9e9b1017e50475b9332f605e33f266d2a28360e5dd47509",
-    "services/trade_journey/test_lifecycle_projector.py": "0607ccd6293ecba8aaa08c9dd5fede73da92df6ee075e3896dcddb4515de8a46",
+    "services/trade_journey/lifecycle_projector.py": "1b2e9469a1ad549447b930c2b576090ada5319600ac4817b519b0f9fc23f769b",
+    "services/trade_journey/test_lifecycle_projector.py": "e304c8687fed206ddf94068e308ef0da5030fd12a3d7af811b4e499a0365430e",
     "services/trade_journey/test_lifecycle_projector_compose.py": "3362726e4598c335299edce8c6f3711eff0bd5f54af52b4ef616ad7e9f5428b5",
     "services/trade_journey/test_canonical_paper_lifecycle_integration.py": "b3d909ba714aec7878764654b604c4e5734c1cadbdd6ac7880bdbe1c4f23b572",
     "services/control-plane/bff/trade_journey_projection_store.py": "f3bc491b413b9f3249ca8c20acfb202e5ae0adba890145e8b56e7597d648ad7a",
@@ -172,12 +172,12 @@
     },
     "lifecycle_projector_gate": {
       "command": ".venv-pantheon/bin/python3 -m pytest -q services/trade_journey/test_lifecycle_projector.py",
-      "result": "34 passed in 4.90s",
+      "result": "16 passed, 1 skipped in 1.72s",
       "coverage": "Relational projector worker runs in shadow mode, maintains monotonic cursor in trade_journey_controller_state, restarts cleanly from last checkpoint with zero dependency on JSON generators."
     },
     "compose_gate": {
       "command": ".venv-pantheon/bin/python3 -m pytest -q services/trade_journey/test_lifecycle_projector_compose.py && docker compose config --quiet",
-      "result": "7 passed; docker compose config valid",
+      "result": "8 passed; docker compose config valid",
       "coverage": "Compose defaults set operator-bff to postgres reader and scheduler to shadow writer; legacy JSON variables and mount dependencies pruned."
     },
     "retirement_safety_gate": {
@@ -260,9 +260,9 @@
     ]
   },
   "local_validation_summary": {
-    "services_trade_journey": "14 passed, 1 skipped in 1.35s",
+    "services_trade_journey": "16 passed, 1 skipped in 1.72s",
     "services_control_plane_bff_readiness": "4 passed in 5.36s",
-    "services_trade_journey_compose": "7 passed in 1.50s",
+    "services_trade_journey_compose": "8 passed in 7.00s",
     "scripts_test_lifecycle_projector_legacy_retire": "56 passed in 4.53s",
     "services_trade_journey_hosted_probe": "20 passed in 2.98s",
     "services_control_plane_bff_tj_e2e_005": "35 passed in 13.46s",

@@ -219,6 +219,10 @@ def _utc_now() -> str:
 
 
 def _parse_iso(value: Any) -> datetime:
+    if isinstance(value, datetime):
+        if value.tzinfo is None:
+            raise InvalidLifecycleEvent(f"invalid timezone-aware timestamp: {value!r}")
+        return value.astimezone(timezone.utc)
     try:
         parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
     except (TypeError, ValueError) as exc:
@@ -667,8 +671,12 @@ class RelationalLifecycleProjector:
         for field in ("event_id", "event_type", "created_at"):
             row_value = _clean(row.get(field))
             event_value = _clean(event.get(field))
-            if row_value is not None and event_value is not None and str(row_value) != str(event_value):
-                raise InvalidLifecycleEvent(f"source row/payload {field} mismatch")
+            if row_value is not None and event_value is not None:
+                if field == "created_at":
+                    if _parse_iso(row_value) != _parse_iso(event_value):
+                        raise InvalidLifecycleEvent(f"source row/payload {field} mismatch")
+                elif str(row_value) != str(event_value):
+                    raise InvalidLifecycleEvent(f"source row/payload {field} mismatch")
             if event_value is None and row_value is not None:
                 event[field] = row_value
             if _clean(event.get(field)) is None:

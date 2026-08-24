@@ -740,3 +740,57 @@ def test_healthcheck_reports_relational_health(monkeypatch, capsys):
     assert data["writer_backend"] == "shadow"
     assert data["ready"] is True
     assert data["controller"]["deployment_sha"] == "relational-health-sha"
+
+
+def test_source_event_normalizes_datetime_row_and_iso_z_payload():
+    from services.trade_journey.lifecycle_projector import InvalidLifecycleEvent
+
+    row = {
+        "event_id": "evt-001",
+        "event_type": "signal_generation",
+        "created_at": datetime(2026, 8, 24, 12, 0, 0, tzinfo=timezone.utc),
+        "payload": {
+            "event_id": "evt-001",
+            "event_type": "signal_generation",
+            "created_at": "2026-08-24T12:00:00Z",
+        },
+    }
+    event = LifecycleProjector._source_event(row)
+    assert event["event_id"] == "evt-001"
+    assert event["created_at"] == "2026-08-24T12:00:00Z"
+
+    # Mismatch in actual timestamp should still raise
+    mismatch_row = {
+        "event_id": "evt-001",
+        "event_type": "signal_generation",
+        "created_at": datetime(2026, 8, 24, 12, 0, 0, tzinfo=timezone.utc),
+        "payload": {
+            "event_id": "evt-001",
+            "event_type": "signal_generation",
+            "created_at": "2026-08-24T12:00:01Z",
+        },
+    }
+    with pytest.raises(InvalidLifecycleEvent, match="source row/payload created_at mismatch"):
+        LifecycleProjector._source_event(mismatch_row)
+
+
+def test_relational_projector_accepts_postgres_datetime_created_at_with_z_payload():
+    store = _RecordingRelationalStore()
+    projector = RelationalLifecycleProjector(store, deployment_sha="relational-test", clock=lambda: NOW)
+    rows = lifecycle_rows()
+    # Modify first row to have PostgreSQL-style datetime object for row created_at and Z string in payload
+    first_row = dict(rows[0])
+    first_row["created_at"] = datetime(2026, 7, 15, 0, 0, 1, tzinfo=timezone.utc)
+    first_row["payload"] = dict(first_row["payload"])
+    first_row["payload"]["created_at"] = "2026-07-15T00:00:01Z"
+
+    result = projector.project_records([first_row], mode="live", source_high_watermark=1)
+    assert result.checkpoint == 1
+    assert result.accepted == 1
+    assert result.quarantined == 0
+    assert len(store.mutations) == 1
+    mutation = store.mutations[-1]
+    assert len(mutation.quarantines) == 0
+    assert len(mutation.receipts) == 1
+    assert mutation.receipts[0].disposition == "applied"
+
