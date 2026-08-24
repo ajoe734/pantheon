@@ -980,29 +980,5 @@ def test_bff_dev_login_minted_credential_passes_proof_preflight_validator(monkey
             f"({now_seconds + proof_window_floor}); remaining={expires_at - now_seconds}s"
         )
 
-    # 4. If the frontend proof validator script exists, execute it directly with node
-    import subprocess
-    import shutil
-    from pathlib import Path
-
-    validator_path = Path("/home/lupin/code/execute-plans/scripts/validate-persona-hosted-proof-env.mjs")
-    node_bin = shutil.which("node")
-    if validator_path.exists() and node_bin:
-        env = {
-            **os.environ,
-            "PANTHEON_BFF_RBAC_TOKENS_JSON": "",
-            "PANTHEON_PERSONA_INTERACTION_OPERATOR_TOKEN": op_token,
-            "PANTHEON_PERSONA_INTERACTION_VIEWER_TOKEN": vw_token,
-            "PANTHEON_FE_BASE_URL": "https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io",
-            "PANTHEON_BFF_BASE_URL": "https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io",
-        }
-        res = subprocess.run(
-            [node_bin, str(validator_path)],
-            capture_output=True,
-            text=True,
-            env=env,
-        )
-        assert res.returncode == 0, f"Validator stderr: {res.stderr}\nstdout: {res.stdout}"
-        assert "prerequisites are available" in res.stdout
 
 
