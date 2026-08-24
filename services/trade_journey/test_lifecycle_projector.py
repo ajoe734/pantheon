@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 from datetime import datetime, timezone
 import json
 import os
@@ -540,6 +541,31 @@ def test_missing_identity_is_quarantined_and_cursor_progresses(tmp_path):
     assert projector.checkpoint == 1
     assert projector.controller["status"] == "degraded"
     assert projector.controller["accepted_live"] is False
+
+
+def test_malformed_source_envelope_is_quarantined_and_later_rows_project(tmp_path):
+    rows = lifecycle_rows()
+    malformed = copy.deepcopy(rows[0])
+    malformed["payload"]["created_at"] = "2026-07-14T00:00:00Z"
+
+    projector = _projector(tmp_path)
+    result = projector.project_records(
+        [malformed, rows[1]], mode="live", source_high_watermark=2
+    )
+
+    assert result.accepted == 1
+    assert result.quarantined == 1
+    assert projector.checkpoint == 2
+    assert projector.controller["status"] == "degraded"
+    assert projector.controller["accepted_live"] is False
+    assert projector.state["quarantine"][-1]["ingested_seq"] == 1
+    assert "created_at mismatch" in projector.state["quarantine"][-1]["reason"]
+
+    projected_ids = {
+        event["event_id"]
+        for event in _current_json(tmp_path, "trade_journey_events.json")["events"]
+    }
+    assert any(event_id.startswith(rows[1]["event_id"]) for event_id in projected_ids)
 
 
 def test_historic_live_evidence_never_overrides_current_quarantine_or_backlog(tmp_path):

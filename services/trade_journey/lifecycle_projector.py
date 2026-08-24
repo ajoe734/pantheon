@@ -949,7 +949,33 @@ class LifecycleProjector:
             if mode in {"live", "recovery"} and sequence <= 0:
                 raise InvalidLifecycleEvent("committed source row requires positive ingested_seq")
             max_seen = max(max_seen, sequence)
-            event = self._source_event(row)
+            # Source-envelope validation is part of the per-row admission
+            # boundary.  A committed row can be malformed (for example, a
+            # legacy writer may have populated the SQL ``created_at`` default
+            # instead of the payload timestamp), but one such row must not
+            # stop the monotonic cursor at that sequence forever.  Preserve
+            # the row in the bounded quarantine ring and continue admitting
+            # later committed rows in this batch.
+            try:
+                event = self._source_event(row)
+            except InvalidLifecycleEvent as exc:
+                quarantined += 1
+                payload = row.get("payload")
+                payload_map = payload if isinstance(payload, Mapping) else {}
+                candidate.setdefault("quarantine", []).append(
+                    {
+                        "event_id": _clean(row.get("event_id"))
+                        or _clean(payload_map.get("event_id")),
+                        "ingested_seq": sequence,
+                        "event_type": _clean(row.get("event_type"))
+                        or _clean(payload_map.get("event_type")),
+                        "reason": str(exc),
+                        "quarantined_at": now,
+                        "source_mode": mode,
+                    }
+                )
+                candidate["quarantine"] = candidate["quarantine"][-1000:]
+                continue
             if event["event_type"] not in LIFECYCLE_EVENT_TYPES:
                 ignored += 1
                 continue
