@@ -1,0 +1,66 @@
+{
+  "schema_version": "pantheon.product_functional_closure.task_review.v1",
+  "task": {
+    "id": "OPS-PHASED-ROOT-DEPLOY-CLOSURE-20260824",
+    "title": "Phase dev root deployment around persistent runtime closure",
+    "owner": "Antigravity2",
+    "reviewer": "Codex",
+    "status": "review_pending",
+    "repository": "ajoe734/pantheon",
+    "base_branch": "dev",
+    "task_branch": "task/OPS-PHASED-ROOT-DEPLOY-CLOSURE-20260824",
+    "review_file": "docs/deployment/evidence/product-functional-closure/OPS-PHASED-ROOT-DEPLOY-CLOSURE-20260824/evidence.json"
+  },
+  "scope": {
+    "owned_layer": "Phased dev root deployment isolating persistent runtime from bounded verification, candidate image build before active runtime mutation, and deploy contract tests",
+    "not_changing": [
+      "No secondary scheduler, watchdog, or retry queues",
+      "Source Ingestion reconcile-only default posture with no continuous external provider pull",
+      "Release admission isolation: failed phase preserves unswitched public frontend and BFF pair"
+    ],
+    "changed_files": [
+      "scripts/deploy_nonprod_vm.sh",
+      "scripts/test_dev_environment_lease_deploy_contract.py",
+      "scripts/test_evolution_daily_sweep_deploy_contract.py",
+      "scripts/test_source_ingest_deploy_diagnostics_contract.py",
+      "docs/deployment/evidence/product-functional-closure/OPS-PHASED-ROOT-DEPLOY-CLOSURE-20260824/README.md",
+      "docs/deployment/evidence/product-functional-closure/OPS-PHASED-ROOT-DEPLOY-CLOSURE-20260824/evidence.json"
+    ],
+    "composes_with": [
+      "docker-compose.yml",
+      ".github/workflows/nonprod-deploy.yml",
+      "scripts/validate_loop_worker_manifest_matrix.py"
+    ]
+  },
+  "behavioral_proof": {
+    "persistent_runtime_profile_isolation": "Dev root deployment activates only openclaw compose profile for persistent runtime; keeps dormant smokes (experiments, finrl, qlib, rllib, ray-tune, trl under dormant-smoke) and one-off smokes (activation-ready-smoke, openclaw-activation-ready-e2e, smoke, source-search-bounded) out of default root deploy",
+    "build_before_mutate": "Candidate images are built and validated (docker compose config and docker compose build) prior to container recreation/rollout (docker compose up -d)",
+    "source_ingest_reconcile_only": "Source ingestion controller defaults to reconcile_only mode with unless-stopped restart policy, no second scheduler, and no continuous external pull",
+    "phase_failure_preserves_release_pair": "Any phase failure stops deployment, causes bff_fe_pair_verified=false, and prevents coordinate-dev-release from admitting or switching frontend/BFF release pair"
+  },
+  "validation": {
+    "commands": [
+      {
+        "command": "bash -n scripts/deploy_nonprod_vm.sh",
+        "result": "passed"
+      },
+      {
+        "command": "docker compose config --quiet",
+        "result": "passed"
+      },
+      {
+        "command": "pytest -v scripts/test_dev_environment_lease_deploy_contract.py",
+        "result": "80 passed"
+      },
+      {
+        "command": "pytest -v scripts/test_deploy_nonprod_*.py scripts/test_evolution_daily_sweep_deploy_contract.py scripts/test_ppl_alloc_009_deploy_proof_gate.py scripts/test_source_ingest_deploy_diagnostics_contract.py scripts/test_check_shared_deploy_workflow_disabled.py scripts/test_validate_loop_worker_manifest_matrix.py",
+        "result": "156 passed"
+      }
+    ]
+  },
+  "review": {
+    "status": "pending_independent_review",
+    "reviewer_instruction": "Bind this already-committed manifest with AI_NAME=Codex REVIEW_FILE=docs/deployment/evidence/product-functional-closure/OPS-PHASED-ROOT-DEPLOY-CLOSURE-20260824/evidence.json through the governed approve command only after independently checking the exact PR head.",
+    "owner_claim": "Owner evidence ready for independent review; this file makes no approval claim."
+  }
+}

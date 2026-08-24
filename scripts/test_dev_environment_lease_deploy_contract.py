@@ -930,3 +930,103 @@ def test_rollback_baseline_script_rejects_tampered_top_level_identities(
     mutate_fn(manifest)
     with pytest.raises(RuntimeError, match=expected_err_pattern):
         _run_rollback_baseline_python_script(manifest, tmp_path=tmp_path)
+
+
+def test_dev_root_deploy_profiles_isolate_persistent_runtime_and_exclude_dormant_smokes() -> None:
+    """Dev root deployment must activate only persistent runtime profiles and exclude
+    dormant smoke and optional integration profiles from default rollout."""
+    deploy_script = DEPLOY.read_text(encoding="utf-8")
+
+    assert 'PANTHEON_DEV_COMPOSE_PROFILES="${PANTHEON_DEV_COMPOSE_PROFILES:-openclaw}"' in deploy_script
+    for dormant_or_smoke_profile in (
+        "dormant-smoke",
+        "activation-ready-smoke",
+        "smoke",
+        "source-search-bounded",
+        "openclaw-activation-ready-e2e",
+    ):
+        assert f'PANTHEON_DEV_COMPOSE_PROFILES:-{dormant_or_smoke_profile}' not in deploy_script
+
+    assert "REQUIRED_LOOP_WORKERS=(" in deploy_script
+    assert "source-ingest" in deploy_script
+    assert "strategy-distillation-worker" in deploy_script
+    assert "paper-fleet-reconciler" in deploy_script
+    assert "evolution-daily-sweep-scheduler" in deploy_script
+    assert "operator-bff" in deploy_script
+    assert "FORBIDDEN_DUPLICATE_WORKERS=(\n  pantheon-paper-runtime\n)" in deploy_script
+
+
+def test_dev_root_deploy_builds_candidate_before_mutating_active_runtime() -> None:
+    """Dev root and BFF deploys must validate config and build images before mutating
+    or recreating running containers."""
+    deploy_script = DEPLOY.read_text(encoding="utf-8")
+
+    root_section = deploy_script.split("case \"${PANTHEON_DEPLOY_COMPONENT}\" in", 1)[1].split("root)", 1)[1].split(";;", 1)[0]
+    config_idx = root_section.index("docker compose -p pantheon -f docker-compose.yml config --quiet")
+    build_idx = root_section.index("docker compose -p pantheon -f docker-compose.yml build")
+    up_idx = root_section.index("docker compose -p pantheon -f docker-compose.yml up -d")
+    projector_recreate_idx = root_section.index("docker compose -p pantheon -f docker-compose.yml up -d --force-recreate --no-deps loop-run-projector-scheduler")
+
+    assert config_idx < build_idx < up_idx < projector_recreate_idx
+
+    bff_section = deploy_script.split("case \"${PANTHEON_DEPLOY_COMPONENT}\" in", 1)[1].split("\n  bff)", 1)[1].split(";;", 1)[0]
+    bff_build_idx = bff_section.index("docker compose -p pantheon -f docker-compose.yml build operator-bff loop-run-projector-scheduler")
+    bff_up_idx = bff_section.index("docker compose -p pantheon -f docker-compose.yml up -d --force-recreate --no-deps operator-bff loop-run-projector-scheduler")
+    assert bff_build_idx < bff_up_idx
+
+
+def test_dev_root_source_ingestion_controller_mode_defaults_to_reconcile_only() -> None:
+    """Source ingestion controller must default to reconcile_only with unless-stopped
+    restart policy and no continuous external provider pull."""
+    deploy_script = DEPLOY.read_text(encoding="utf-8")
+    compose_yaml = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+
+    assert 'SOURCE_INGEST_CONTROLLER_MODE: ${SOURCE_INGEST_CONTROLLER_MODE:-reconcile_only}' in compose_yaml
+    assert 'SOURCE_INGEST_CONTROLLER_MAX_TICKS: ${SOURCE_INGEST_CONTROLLER_MAX_TICKS:-0}' in compose_yaml
+    assert 'restart: "${SOURCE_INGEST_CONTROLLER_RESTART_POLICY:-unless-stopped}"' in compose_yaml
+
+    assert 'SOURCE_REFRESH_CONTROLLER_MODE="reconcile_only"' in deploy_script
+    assert 'SOURCE_REFRESH_TRUTH_LEVEL="scheduled_tick"' in deploy_script
+    assert 'SOURCE_REFRESH_MAX_TICKS="0"' in deploy_script
+    assert 'SOURCE_REFRESH_RESTART_POLICY="unless-stopped"' in deploy_script
+
+
+def test_dev_root_phase_failure_prevents_release_admission_and_switch() -> None:
+    """Any phase failure during deployment must result in bff_fe_pair_verified=false and
+    prevent coordinate-dev-release from admitting or switching the release candidate."""
+    workflow = _workflow()
+    dev_job = _job(workflow, "deploy-dev", "coordinate-dev-release")
+    coordinate_job = _job(workflow, "coordinate-dev-release", "deploy-staging-live")
+
+    assert (
+        "bff_fe_pair_verified: ${{ steps.deploy.outcome == 'success' "
+        "&& steps.public_smoke.outcome == 'success' }}"
+    ) in dev_job
+    assert (
+        "if: ${{ !cancelled() && needs.deploy-dev.outputs.bff_fe_pair_verified "
+        "== 'true' }}"
+    ) in coordinate_job
+
+    deploy_script = DEPLOY.read_text(encoding="utf-8")
+    root_section = deploy_script.split("case \"${PANTHEON_DEPLOY_COMPONENT}\" in", 1)[1].split("root)", 1)[1].split(";;", 1)[0]
+    assert "docker compose -p pantheon -f docker-compose.yml build \\\n      || { dump_dev_root_failure_diagnostics; exit 1; }" in root_section
+    assert "docker compose -p pantheon -f docker-compose.yml up -d \\\n      || { dump_dev_root_failure_diagnostics; exit 1; }" in root_section
+
+
+def test_validate_required_loop_workers_logic() -> None:
+    """validate_required_loop_workers passes for complete worker sets and rejects missing
+    or duplicate legacy workers."""
+    deploy_script = DEPLOY.read_text(encoding="utf-8")
+    array_lines = deploy_script.split("REQUIRED_LOOP_WORKERS=(", 1)[1].split(")", 1)[0].splitlines()
+    required = [line.split("#")[0].strip() for line in array_lines if line.split("#")[0].strip()]
+
+    assert len(required) == 27
+    assert "source-ingest" in required
+    assert "operator-bff" in required
+    assert "paper-fleet-reconciler" in required
+
+    # Verify duplicate worker detection logic
+    forbidden_lines = deploy_script.split("FORBIDDEN_DUPLICATE_WORKERS=(", 1)[1].split(")", 1)[0].splitlines()
+    forbidden = [line.split("#")[0].strip() for line in forbidden_lines if line.split("#")[0].strip()]
+    assert "pantheon-paper-runtime" in forbidden
+

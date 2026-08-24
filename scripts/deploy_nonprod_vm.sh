@@ -2257,39 +2257,17 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     # the compose default (`unknown`) and make the exact-SHA readiness gate
     # impossible to satisfy.
     export GIT_SHA="${PANTHEON_DEPLOY_SHA}"
-    # Dev deploys activate every default-safe compose profile. Each selected
-    # profile is either a long-running daemon, an init container, or a one-shot
-    # smoke whose Dockerfile + smoke script have been verified to build and pass
-    # locally with stub backends (no real-money / no real-broker side effects).
-    # The legacy static-paper-runtime profile is intentionally excluded because
-    # paper-fleet-reconciler owns binding-scoped workers in the root stack.
+    # Dev deploys activate the required persistent root compose profile: openclaw.
+    # Dormant smoke profiles (e.g. dormant-smoke for MLflow/FinRL/RLlib/Ray-Tune/Qlib/TRL/experiments),
+    # one-off smoke profiles (activation-ready-smoke, openclaw-activation-ready-e2e, smoke, source-search-bounded),
+    # and optional integrations are kept out of the default persistent root deploy to prevent
+    # deployment timeouts and host memory exhaustion.
     #
-    # Profile inventory (alphabetical):
-    #   activation-ready-smoke       oss-activation-ready-smoke-matrix
-    #   dormant-smoke                experiments/finrl/qlib/rllib/ray-tune/trl
-    #   openclaw                     openclaw-gateway + openclaw-data-init
-    #   openclaw-activation-ready-e2e  openclaw-activation-ready-e2e
-    #   smoke                        smoke-stack (depends on full service set)
-    #   source-ingest-scheduler      source-ingest-scheduler
-    #                                + source-ingest-agora-projector
-    #   source-search-bounded        source-search-bounded-smoke
+    # Required loop workers are default-on in docker-compose.yml, and validate_required_loop_workers
+    # enforces that the persistent stack contains all required twelve-loop workers.
     #
-    # Every remaining profile above is a smoke or an optional integration.
-    # Required loop workers are no longer profile-gated: they are default-on
-    # in docker-compose.yml so the manifest, not this profile list, is the
-    # single source of truth for which loops are running. That inversion is
-    # what validate_required_loop_workers below enforces.
-    #
-    # Operators can narrow scope via PANTHEON_DEV_COMPOSE_PROFILES.
-    #
-    # source-ingest-scheduler is the one required worker still gated, and it
-    # stays gated deliberately. It ticks every 60s against third-party
-    # providers (Yahoo, CoinGecko, TWSE/TPEx, MOPS, FinMind, SEC/FRED/FINRA,
-    # stooq); left always-on it is continuous crawling from one cloud egress
-    # IP. Add it explicitly for a bounded run. source-ingest-agora-projector
-    # shares that profile because it must project only after the bounded
-    # refresh completes.
-    PANTHEON_DEV_COMPOSE_PROFILES="${PANTHEON_DEV_COMPOSE_PROFILES:-activation-ready-smoke,dormant-smoke,openclaw,openclaw-activation-ready-e2e,smoke,source-search-bounded}"
+    # Operators can supply explicit profiles via PANTHEON_DEV_COMPOSE_PROFILES when running bounded verifications.
+    PANTHEON_DEV_COMPOSE_PROFILES="${PANTHEON_DEV_COMPOSE_PROFILES:-openclaw}"
     validate_source_refresh_profile
     validate_required_loop_workers
     source_refresh_deploy_started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -2301,6 +2279,13 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
       LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS="${PANTHEON_DEV_LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS}" \
       docker compose -p pantheon -f docker-compose.yml config --quiet
     prune_dev_docker_storage_for_build
+    # Phase 2: Build candidate images before mutating the active runtime.
+    COMPOSE_BAKE=false \
+    COMPOSE_PROFILES="${PANTHEON_DEV_COMPOSE_PROFILES}" \
+    BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+      docker compose -p pantheon -f docker-compose.yml build \
+      || { dump_dev_root_failure_diagnostics; exit 1; }
+    # Phase 3: Rollout persistent root runtime.
     COMPOSE_BAKE=false \
     COMPOSE_PROFILES="${PANTHEON_DEV_COMPOSE_PROFILES}" \
     BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
@@ -2379,7 +2364,7 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN="${PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN}" \
     PANTHEON_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED="${PANTHEON_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED}" \
     PANTHEON_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN="${PANTHEON_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN}" \
-      docker compose -p pantheon -f docker-compose.yml up -d --build \
+      docker compose -p pantheon -f docker-compose.yml up -d \
       || { dump_dev_root_failure_diagnostics; exit 1; }
     # `up -d --build` only recreates a container Compose judges to need it.
     # The legacy lifecycle projector runs with `restart: no` (deliberate
@@ -2436,6 +2421,13 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     # pressure that a full root-stack rebuild causes on the dev VM.
     snapshot_remote_state pantheon docker-compose.yml
     prepare_deploy_worktree
+    # Phase 2: Build candidate operator-bff and loop-run-projector-scheduler images.
+    COMPOSE_BAKE=false \
+    COMPOSE_PROFILES="" \
+    BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+      docker compose -p pantheon -f docker-compose.yml build operator-bff loop-run-projector-scheduler \
+      || { dump_dev_root_failure_diagnostics; exit 1; }
+    # Phase 3: Recreate operator-bff and loop-run-projector-scheduler.
     COMPOSE_BAKE=false \
     COMPOSE_PROFILES="" \
     GIT_SHA="${PANTHEON_DEPLOY_SHA}" \
@@ -2509,7 +2501,7 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     MANAGEMENT_AI_DATABASE_URL="${MANAGEMENT_AI_DATABASE_URL}" \
     PANTHEON_MGMT_AI_ATTACH_BUCKET="${PANTHEON_MGMT_AI_ATTACH_BUCKET}" \
     PANTHEON_MGMT_AI_ATTACH_LOCATION="${PANTHEON_MGMT_AI_ATTACH_LOCATION:-asia-east1}" \
-      docker compose -p pantheon -f docker-compose.yml up -d --build --force-recreate --no-deps operator-bff loop-run-projector-scheduler \
+      docker compose -p pantheon -f docker-compose.yml up -d --force-recreate --no-deps operator-bff loop-run-projector-scheduler \
       || { dump_dev_root_failure_diagnostics; exit 1; }
     curl_with_retry http://127.0.0.1:18001/health \
       || { dump_dev_root_failure_diagnostics; exit 1; }
