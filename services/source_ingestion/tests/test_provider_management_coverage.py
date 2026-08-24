@@ -67,6 +67,110 @@ def _load_schema(relative_path: str) -> dict[str, Any]:
         return json.load(f)
 
 
+def _sample_payload_for_adapter(adapter_token: str, dataset: str | None = None) -> list[dict[str, Any]]:
+    """Return a minimal valid raw payload for adapter normalized schema verification."""
+    if "TaifexDerivativesChipAdapter" in adapter_token:
+        if dataset == "taifex_options_chip":
+            return [{
+                "Date": "2026-08-24",
+                "Contract": "TXO",
+                "CallVolume": 1000,
+                "PutVolume": 1200,
+                "CallOpenInterest": 5000,
+                "PutOpenInterest": 6000,
+                "PutCallRatio": 120.0,
+            }]
+        return [{
+            "Date": "2026-08-24",
+            "Contract": "TX",
+            "ParticipantGroup": "foreign_investors",
+            "LongVolume": 15000,
+            "ShortVolume": 12000,
+            "NetVolume": 3000,
+            "LongOpenInterest": 45000,
+            "ShortOpenInterest": 50000,
+            "NetOpenInterest": -5000,
+        }]
+    if "TdccShareholdingDistributionAdapter" in adapter_token:
+        return [{
+            "Date": "2026-08-21",
+            "Code": "2330",
+            "HoldLevel": 15,
+            "HoldingRange": "1,000,001以上",
+            "PeopleCount": 1500,
+            "Shares": 20000000000,
+            "Percentage": 77.12,
+        }]
+    if "AdmittedSocialMediaAdapter" in adapter_token:
+        return [{
+            "id": 12345,
+            "body": "$2330 bullish report",
+            "created_at": "2026-08-24T12:00:00Z",
+            "symbols": ["2330"],
+            "user": {"id": 999},
+        }]
+    if "ExternalAlphaDbAdapter" in adapter_token:
+        return [{
+            "symbol": "AAPL",
+            "date": "2026-08-24 16:00:00",
+            "rsi": 58.2,
+        }]
+    return []
+
+
+def validate_catalog_template_adapter_normalized_schema(tmpl: dict[str, Any]) -> None:
+    """Reconcile template expected_fields with provider adapter normalized output (SD-SRCM-05 §7.1)."""
+    fetch = tmpl.get("fetch") or {}
+    adapter_token = fetch.get("adapter")
+    expected_fields_decl = fetch.get("expected_fields")
+    if not expected_fields_decl or not adapter_token:
+        return
+
+    connector_id = tmpl.get("connector_id")
+    defn = _DEFINITIONS_BY_ID.get(connector_id) if connector_id else None
+
+    # Map dataset -> list of expected field names
+    dataset_expected_map: dict[str, list[str]] = {}
+    if isinstance(expected_fields_decl, dict):
+        dataset_expected_map = expected_fields_decl
+    elif isinstance(expected_fields_decl, (list, tuple)):
+        ds_name = fetch.get("dataset") or (defn.datasets[0] if defn and defn.datasets else "default")
+        dataset_expected_map = {ds_name: list(expected_fields_decl)}
+
+    for dataset_name, expected_fields in dataset_expected_map.items():
+        if defn and defn.datasets:
+            assert dataset_name in defn.datasets, (
+                f"Template {tmpl['template_id']} declares expected_fields for dataset '{dataset_name}' "
+                f"which is not in definition datasets: {defn.datasets}"
+            )
+
+        # Normalize sample payload and verify every expected field is present in normalized row
+        sample_payload = _sample_payload_for_adapter(adapter_token, dataset_name)
+        if not sample_payload:
+            continue
+
+        if "TaifexDerivativesChipAdapter" in adapter_token:
+            adapter = TaifexDerivativesChipAdapter()
+            rows = adapter.normalized_rows_from_payload(sample_payload, dataset=dataset_name)
+            assert len(rows) > 0, f"No normalized rows returned for {dataset_name}"
+            row = rows[0]
+            for field_name in expected_fields:
+                assert field_name in row, (
+                    f"Template {tmpl['template_id']} dataset '{dataset_name}' declares expected_field '{field_name}' "
+                    f"missing from normalized row keys: {sorted(row.keys())}"
+                )
+        elif "TdccShareholdingDistributionAdapter" in adapter_token:
+            adapter = TdccShareholdingDistributionAdapter()
+            rows = adapter.normalized_rows_from_payload(sample_payload)
+            assert len(rows) > 0
+            row = rows[0]
+            for field_name in expected_fields:
+                assert field_name in row, (
+                    f"Template {tmpl['template_id']} declares expected_field '{field_name}' "
+                    f"missing from TDCC normalized row keys: {sorted(row.keys())}"
+                )
+
+
 def test_catalog_templates_join_connector_definitions_and_allowed_adapters() -> None:
     """Every candidate/supported catalog template must map to a definition and allowlisted adapter."""
     entries_by_id = {entry.data_source_id: entry for entry in initial_financial_data_source_entries()}
@@ -112,6 +216,9 @@ def test_catalog_templates_join_connector_definitions_and_allowed_adapters() -> 
                 assert resolved_adapter == resolved_canonical, (
                     f"Template {template_id} adapter {adapter_token} does not match definition {canonical_adapter}"
                 )
+
+        # 5. Reconcile declared expected_fields with provider adapter normalized schema (SD §7.1)
+        validate_catalog_template_adapter_normalized_schema(tmpl)
 
 
 def test_disabled_templates_require_non_empty_disabled_reason() -> None:
@@ -851,4 +958,78 @@ def test_taifex_futures_normalization_bounds_and_roll_day() -> None:
     assert adapter.is_contract_roll_day("invalid-date") is False
 
 
+def test_catalog_template_adapter_normalized_schema_reconciliation() -> None:
+    """Verify SD-SRCM-05 §7.1 reconciliation across all templates declaring expected_fields."""
+    templates = initial_financial_data_source_config_templates()
+    templates_with_expected_fields = [
+        tmpl for tmpl in templates
+        if (tmpl.get("fetch") or {}).get("expected_fields")
+    ]
+    assert len(templates_with_expected_fields) >= 2
 
+    for tmpl in templates_with_expected_fields:
+        validate_catalog_template_adapter_normalized_schema(tmpl)
+
+
+def test_normalized_schema_reconciliation_fails_on_mismatches() -> None:
+    """Verify that catalog/template/adapter normalized schema mismatches fail reconciliation (SD-SRCM-05 §7.1)."""
+    # 1. TAIFEX futures mismatch: declaring legacy volume / open_interest (instead of long/short/net fields)
+    corrupted_futures_tmpl = {
+        "template_id": "template-corrupted-taifex-futures",
+        "connector_id": "tw-taifex-futures-options-chip",
+        "fetch": {
+            "mode": "provider_owned_adapter",
+            "adapter": "TaifexDerivativesChipAdapter.records_from_payload",
+            "datasets": ["taifex_futures_chip"],
+            "expected_fields": {
+                "taifex_futures_chip": ["contract", "date", "participant_group", "volume", "open_interest"],
+            },
+        },
+    }
+    with pytest.raises(AssertionError, match="missing from normalized row keys"):
+        validate_catalog_template_adapter_normalized_schema(corrupted_futures_tmpl)
+
+    # 2. TAIFEX options mismatch: declaring participant_group (which options rows do not produce)
+    corrupted_options_tmpl = {
+        "template_id": "template-corrupted-taifex-options",
+        "connector_id": "tw-taifex-futures-options-chip",
+        "fetch": {
+            "mode": "provider_owned_adapter",
+            "adapter": "TaifexDerivativesChipAdapter.records_from_payload",
+            "datasets": ["taifex_options_chip"],
+            "expected_fields": {
+                "taifex_options_chip": ["contract", "date", "participant_group", "call_volume", "put_volume"],
+            },
+        },
+    }
+    with pytest.raises(AssertionError, match="missing from normalized row keys"):
+        validate_catalog_template_adapter_normalized_schema(corrupted_options_tmpl)
+
+    # 3. TDCC mismatch: declaring non-existent field
+    corrupted_tdcc_tmpl = {
+        "template_id": "template-corrupted-tdcc",
+        "connector_id": "tw-tdcc-shareholding-distribution",
+        "fetch": {
+            "mode": "provider_owned_adapter",
+            "adapter": "TdccShareholdingDistributionAdapter.records_from_payload",
+            "dataset": "tdcc_shareholding_distribution",
+            "expected_fields": ["holder_level", "people_count", "shares", "non_existent_field_xyz"],
+        },
+    }
+    with pytest.raises(AssertionError, match="missing from TDCC normalized row keys"):
+        validate_catalog_template_adapter_normalized_schema(corrupted_tdcc_tmpl)
+
+    # 4. Unknown dataset declaration in template expected_fields
+    corrupted_dataset_tmpl = {
+        "template_id": "template-corrupted-unknown-ds",
+        "connector_id": "tw-taifex-futures-options-chip",
+        "fetch": {
+            "mode": "provider_owned_adapter",
+            "adapter": "TaifexDerivativesChipAdapter.records_from_payload",
+            "expected_fields": {
+                "unknown_derivatives_dataset": ["contract", "date"],
+            },
+        },
+    }
+    with pytest.raises(AssertionError, match="not in definition datasets"):
+        validate_catalog_template_adapter_normalized_schema(corrupted_dataset_tmpl)
