@@ -1135,10 +1135,10 @@ def create_trade_journeys_router(
         reader = get_projection_reader()
         if reader is not None:
             try:
-                page_result = reader.page_journeys(
+                projections = reader.get_all_projections(
                     tenant_id=tenant_id,
                     environment=environment,
-                    page_size=200,
+                    include_stages=False,
                 )
             except ProjectionReadUnavailable:
                 return _unavailable_list_envelope(
@@ -1147,7 +1147,7 @@ def create_trade_journeys_router(
             now = _parse_iso(snapshot_at) or datetime.now(timezone.utc)
             items = [
                 _mask_live_sensitive(item, identity, projection.environment)
-                for projection in page_result.items
+                for projection in projections
                 if (item := _attention_item(projection, now=now)) is not None
             ]
             items.sort(key=lambda item: ({"critical": 0, "high": 1, "medium": 2}[item["severity"]], -item["age_seconds"]))
@@ -1283,7 +1283,13 @@ def create_trade_journeys_router(
         reader = get_projection_reader()
         if reader is not None:
             try:
-                metrics = reader.metrics(tenant_id=tenant_id, environment=environment)
+                now = _parse_iso(snapshot_at) or datetime.now(timezone.utc)
+                projections = reader.get_all_projections(
+                    tenant_id=tenant_id,
+                    environment=environment,
+                    include_stages=True,
+                )
+                metrics = _metrics(projections, now=now)
                 data = {"id": "trade-journey-metrics", "tenant_id": tenant_id, "environment": environment, **metrics}
                 read_state = "formal" if metrics["total_journeys"] else "partial"
                 return {"data": data, "meta": _projection_reader_meta(snapshot_at, read_state, reader, tenant_id=tenant_id, environment=environment)}
@@ -1329,10 +1335,10 @@ def create_trade_journeys_router(
         reader = get_projection_reader()
         if reader is not None:
             try:
-                page_result = reader.page_journeys(
+                projections = reader.get_all_projections(
                     tenant_id=tenant_id,
                     environment=environment,
-                    page_size=200,
+                    include_stages=True,
                 )
                 controller = reader.controller_freshness(
                     tenant_id=tenant_id,
@@ -1340,7 +1346,6 @@ def create_trade_journeys_router(
                 ) or {}
             except ProjectionReadUnavailable:
                 return _unavailable_envelope(snapshot_at, entity_id="trade-journey-slo")
-            projections = page_result.items
             now = _parse_iso(snapshot_at) or datetime.now(timezone.utc)
             targets = load_slo_targets(environment)
             metrics = compute_data_quality_metrics(

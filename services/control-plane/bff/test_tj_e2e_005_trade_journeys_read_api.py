@@ -1265,3 +1265,183 @@ def test_lifecycle_proj_bff_postgres_page_query_is_scoped_and_bounded() -> None:
     assert "tenant_id=%s AND environment=%s AND status=%s" in count_sql
     assert " LIMIT " not in count_sql
     assert count_params == ("tenant-a", "paper", "open")
+
+
+def test_lifecycle_proj_bff_postgres_attention_and_slo_with_over_200_journeys() -> None:
+    """Regression test: Postgres reader must evaluate all journeys (>200) for attention and SLO."""
+    journey_columns = [
+        "tenant_id", "environment", "journey_id", "status", "stage_coverage",
+        "is_terminal", "first_occurred_at", "last_occurred_at",
+        "current_identity_summary", "evidence_summary", "diagnostic_summary",
+        "loop_run_id", "projection_revision", "created_at", "updated_at",
+    ]
+    stage_columns = [
+        "source_event_id", "stage_name", "stage_status", "stage_ordinal",
+        "source_ingested_seq", "event_sequence", "occurred_at", "recorded_at",
+        "contract_fields", "evidence_references", "journey_id",
+    ]
+
+    total_journeys = 250
+    journey_rows = []
+    stage_rows = []
+
+    for i in range(1, total_journeys + 1):
+        jid = f"tj-{i}"
+        if i == 205:
+            # Stalled journey > 200
+            status = "active"
+            updated = "2026-08-01T00:00:00Z"
+            diag = {}
+        elif i == 250:
+            # Journey > 200 with diagnostic
+            status = "active"
+            updated = "2026-08-24T12:00:00Z"
+            diag = {"diagnostics": [{"code": "identifier_conflict", "identifier_type": "signal_id", "values": ["s1", "s2"]}]}
+        else:
+            status = "completed"
+            updated = "2026-08-24T12:00:00Z"
+            diag = {}
+
+        stage_coverage = {
+            "signal_generation": {"status": "completed", "updated_at": updated},
+            "order_submission": {"status": "completed", "updated_at": updated},
+            "broker_acknowledgement": {"status": "completed", "updated_at": updated},
+        }
+
+        journey_rows.append((
+            "tenant-a", "paper", jid, status, json.dumps(stage_coverage), status == "completed",
+            "2026-08-01T00:00:00Z", updated, json.dumps({"identifiers": {"signal_id": f"sig-{i}"}}),
+            {}, json.dumps(diag), "", 1, "2026-08-01T00:00:00Z", updated,
+        ))
+
+        # Each journey has stage timing records
+        stage_rows.append((
+            f"evt-{i}-sig", "signal_generation", "completed", 1, i, 1,
+            "2026-08-01T00:00:00.000000Z", "2026-08-01T00:00:00.050000Z",  # 50ms latency
+            json.dumps({"signal_id": f"sig-{i}"}), json.dumps([]), jid,
+        ))
+        stage_rows.append((
+            f"evt-{i}-sub", "order_submission", "completed", 4, i, 2,
+            "2026-08-01T00:00:00.000000Z", "2026-08-01T00:00:00.120000Z",  # 120ms latency
+            json.dumps({"order_id": f"ord-{i}"}), json.dumps([]), jid,
+        ))
+
+    class Cursor:
+        def __init__(self):
+            self.description = []
+            self.rows = []
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def execute(self, sql, params):
+            if "FROM trade_journey_projection.journey_stages" in sql:
+                self.description = [(name,) for name in stage_columns]
+                if "journey_id IN (" in sql:
+                    # Filter stages by journey IDs in in_placeholders
+                    jids = set(params[2:])
+                    self.rows = [r for r in stage_rows if r[-1] in jids]
+                else:
+                    self.rows = stage_rows
+            elif "COUNT(*) AS total" in sql:
+                self.description = [("total",)]
+                self.rows = [(total_journeys,)]
+            elif "FROM trade_journey_projection.controller" in sql:
+                self.description = [
+                    ("controller_id",), ("tenant_scope",), ("environment_scope",),
+                    ("checkpoint_seq",), ("source_high_watermark",), ("backlog_count",),
+                    ("projection_revision",), ("deployment_sha",), ("mode",), ("status",),
+                    ("accepted_live",), ("last_poll_at",), ("last_success_at",),
+                    ("last_live_success_at",), ("last_failure_at",), ("last_error_message",),
+                    ("unresolved_quarantine_count",), ("updated_at",),
+                ]
+                self.rows = [(
+                    "canonical-lifecycle-projector", "tenant-a", "paper",
+                    250, 250, 0, 5, "sha-test", "live", "ready", True,
+                    "2026-08-24T12:00:00Z", "2026-08-24T12:00:00Z", "2026-08-24T12:00:00Z",
+                    None, None, 0, "2026-08-24T12:00:00Z",
+                )]
+            else:
+                self.description = [(name,) for name in journey_columns]
+                if "LIMIT" in sql:
+                    limit = params[-1]
+                    self.rows = journey_rows[:limit]
+                else:
+                    self.rows = journey_rows
+
+        def fetchall(self):
+            return self.rows
+
+    class Connection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def cursor(self):
+            return Cursor()
+
+    reader = TradeJourneyProjectionStore(
+        "postgresql://unit",
+        token_secret="reader-token-secret-is-long-enough",
+        connect=lambda dsn: Connection(),
+    )
+
+    client, _ = _direct_client(_BASE_EVENTS, projection_reader=reader)
+    client = TestClient(client.app)
+
+    # 1. Test /bff/management/trade-journeys/attention evaluates all 250 journeys
+    attention_resp = client.get(
+        "/bff/management/trade-journeys/attention?tenant_id=tenant-a&environment=paper",
+        headers={"Authorization": "Bearer scoped:viewer:tenant-a"},
+    )
+    assert attention_resp.status_code == 200, attention_resp.text
+    att_payload = attention_resp.json()
+    att_items = att_payload["data"]["items"]
+    att_jids = {item["journey_id"] for item in att_items}
+    # Both journeys > 200 must be in attention output
+    assert "tj-205" in att_jids
+    assert "tj-250" in att_jids
+    assert att_payload["page_info"]["total"] == len(att_items)
+    assert att_payload["page_info"]["has_more"] is False
+
+    # 2. Test /bff/management/trade-journeys/slo evaluates all 250 journeys and computes stage timing
+    slo_resp = client.get(
+        "/bff/management/trade-journeys/slo?tenant_id=tenant-a&environment=paper",
+        headers={"Authorization": "Bearer scoped:viewer:tenant-a"},
+    )
+    assert slo_resp.status_code == 200, slo_resp.text
+    slo_payload = slo_resp.json()
+    metrics = slo_payload["data"]["metrics"]
+    assert metrics["total_journeys"] == 250
+    # Stage latency must be computed from timeline events
+    stage_latency = metrics["stage_latency_ms"]
+    assert "signal_generation" in stage_latency
+    assert stage_latency["signal_generation"]["sample_count"] == 250
+    assert abs(stage_latency["signal_generation"]["p50_ms"] - 50.0) < 1.0
+    assert "order_submission" in stage_latency
+    assert stage_latency["order_submission"]["sample_count"] == 250
+    assert abs(stage_latency["order_submission"]["p50_ms"] - 120.0) < 1.0
+    assert metrics["late_event_lag_p95_ms"] is not None
+
+    # Verify incidents are detected from journeys > 200
+    incident_jids = {inc.get("journey_id") for inc in slo_payload["data"]["incidents"] if inc.get("journey_id")}
+    assert "tj-205" in incident_jids
+    assert "tj-250" in incident_jids
+
+    # 3. Test /bff/management/trade-journeys/metrics aggregates across all 250 journeys
+    metrics_resp = client.get(
+        "/bff/management/trade-journeys/metrics?tenant_id=tenant-a&environment=paper",
+        headers={"Authorization": "Bearer scoped:viewer:tenant-a"},
+    )
+    assert metrics_resp.status_code == 200, metrics_resp.text
+    metrics_payload = metrics_resp.json()["data"]
+    assert metrics_payload["total_journeys"] == 250
+    assert metrics_payload["stalled_count"] >= 1
+    assert "identifier_conflict" in metrics_payload["diagnostics_counts"]
+    assert "signal_generation" in metrics_payload["stage_latency_ms"]
+    assert metrics_payload["stage_latency_ms"]["signal_generation"]["sample_count"] == 250
