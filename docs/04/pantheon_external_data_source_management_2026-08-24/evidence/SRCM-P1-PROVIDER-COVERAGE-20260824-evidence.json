@@ -47,7 +47,7 @@
         "definition_id": "tw-twse-tpex-official-market",
         "adapter_token": "TaiwanOfficialMarketDatasetAdapter.records_from_payload",
         "adapter_version": "1.0.0",
-        "deployment_sha": "f2747782a064d915b9d3479c5d8d0c4d74b62616"
+        "deployment_sha": "a8104671790320ac645e887c0527d8ce7c013ca9"
       },
       "license_and_entitlements": {
         "license_scope": "official_reference",
@@ -112,7 +112,7 @@
       },
       "environment": {
         "environment_name": "worker_test_harness",
-        "runtime_sha": "f2747782a064d915b9d3479c5d8d0c4d74b62616",
+        "runtime_sha": "a8104671790320ac645e887c0527d8ce7c013ca9",
         "timestamp": "2026-08-24T18:00:00Z"
       }
     },
@@ -122,7 +122,7 @@
         "definition_id": "tw-tdcc-shareholding-distribution",
         "adapter_token": "TdccShareholdingDistributionAdapter.records_from_payload",
         "adapter_version": "1.0.0",
-        "deployment_sha": "f2747782a064d915b9d3479c5d8d0c4d74b62616"
+        "deployment_sha": "a8104671790320ac645e887c0527d8ce7c013ca9"
       },
       "license_and_entitlements": {
         "license_scope": "official_reference",
@@ -187,7 +187,7 @@
       },
       "environment": {
         "environment_name": "worker_test_harness",
-        "runtime_sha": "f2747782a064d915b9d3479c5d8d0c4d74b62616",
+        "runtime_sha": "a8104671790320ac645e887c0527d8ce7c013ca9",
         "timestamp": "2026-08-24T18:00:00Z"
       }
     },
@@ -197,7 +197,7 @@
         "definition_id": "tw-taifex-futures-options-chip",
         "adapter_token": "TaifexDerivativesChipAdapter.records_from_payload",
         "adapter_version": "1.0.0",
-        "deployment_sha": "f2747782a064d915b9d3479c5d8d0c4d74b62616"
+        "deployment_sha": "a8104671790320ac645e887c0527d8ce7c013ca9"
       },
       "license_and_entitlements": {
         "license_scope": "official_reference",
@@ -261,7 +261,7 @@
       },
       "environment": {
         "environment_name": "worker_test_harness",
-        "runtime_sha": "f2747782a064d915b9d3479c5d8d0c4d74b62616",
+        "runtime_sha": "a8104671790320ac645e887c0527d8ce7c013ca9",
         "timestamp": "2026-08-24T18:00:00Z"
       }
     },
@@ -271,7 +271,7 @@
         "definition_id": "social-admitted-market-discussion",
         "adapter_token": "AdmittedSocialMediaAdapter.records_from_payload",
         "adapter_version": "1.0.0",
-        "deployment_sha": "f2747782a064d915b9d3479c5d8d0c4d74b62616"
+        "deployment_sha": "a8104671790320ac645e887c0527d8ce7c013ca9"
       },
       "license_and_entitlements": {
         "license_scope": "community_admitted",
@@ -339,7 +339,7 @@
       },
       "environment": {
         "environment_name": "worker_test_harness",
-        "runtime_sha": "f2747782a064d915b9d3479c5d8d0c4d74b62616",
+        "runtime_sha": "a8104671790320ac645e887c0527d8ce7c013ca9",
         "timestamp": "2026-08-24T18:00:00Z"
       }
     },
@@ -349,7 +349,7 @@
         "definition_id": "alpha-db-vendor-signals",
         "adapter_token": "ExternalAlphaDbAdapter.records_from_payload",
         "adapter_version": "1.0.0",
-        "deployment_sha": "f2747782a064d915b9d3479c5d8d0c4d74b62616"
+        "deployment_sha": "a8104671790320ac645e887c0527d8ce7c013ca9"
       },
       "license_and_entitlements": {
         "license_scope": "vendor",
@@ -415,14 +415,14 @@
       },
       "environment": {
         "environment_name": "worker_test_harness",
-        "runtime_sha": "f2747782a064d915b9d3479c5d8d0c4d74b62616",
+        "runtime_sha": "a8104671790320ac645e887c0527d8ce7c013ca9",
         "timestamp": "2026-08-24T18:25:00Z"
       }
     }
   ],
   "validation": {
-    "focused_unit_tests_passing": 40,
-    "full_ingestion_suite_passing": 820,
+    "focused_unit_tests_passing": 42,
+    "full_ingestion_suite_passing": 822,
     "validation_commands": [
       "pytest services/source_ingestion/tests/test_provider_management_coverage.py services/source_ingestion/tests/test_taiwan_official_connectors.py services/source_ingestion/tests/test_financial_source_catalog.py services/source_ingestion/tests/test_external_source_connectors.py",
       "pytest services/source_ingestion/tests/"
