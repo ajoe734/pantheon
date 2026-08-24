@@ -816,5 +816,3 @@ def test_run_worker_startup_fails_immediately_without_psycopg_driver(monkeypatch
     monkeypatch.setitem(sys.modules, "psycopg", None)
     with pytest.raises(RuntimeError, match="psycopg is required for ProjectionStore"):
         asyncio.run(lifecycle_projector_module.run_worker())
-
-

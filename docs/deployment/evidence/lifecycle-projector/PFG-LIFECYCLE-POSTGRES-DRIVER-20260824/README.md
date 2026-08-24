@@ -14,3 +14,7 @@ This directory contains the review evidence manifest for adding the missing `psy
      - `test_relational_projector_fails_closed_without_psycopg_driver`: proves `_configured_relational_projector()` fails closed when `psycopg` is missing.
      - `test_projector_runtime_requirements_declares_psycopg_driver`: asserts `services/telemetry/requirements.txt` contains `psycopg`.
      - `test_run_worker_startup_fails_immediately_without_psycopg_driver`: proves `run_worker()` fails immediately when `psycopg` is not importable.
+4. **Acceptance Evidence**:
+   - `docker compose build loop-run-projector-scheduler` builds cleanly and runtime import check `python -c "import psycopg; print('psycopg import OK:', psycopg.__version__)"` passes with `psycopg import OK: 3.3.4`.
+   - Projector healthcheck against live PostgreSQL returns exit 0 with `ready: true`, `status: ready`, and `backlog: 0`.
+   - BFF readiness `/readyz` against live PostgreSQL returns `HTTP 200 OK` with `ready: true`, `writer_backend: postgres`, and `reader_backend: postgres`.

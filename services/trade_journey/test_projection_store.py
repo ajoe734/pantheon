@@ -1380,4 +1380,3 @@ def test_projection_store_default_connect_binds_psycopg() -> None:
         connect=None,
     )
     assert store._connect is psycopg.connect
-
