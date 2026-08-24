@@ -581,3 +581,52 @@ def test_guard_rejects_unsafe_heartbeat_states_and_cli_override() -> None:
     ) == 1
     assert quarantine.count('kill -CONT "${heartbeat_pid}"') == 1
     assert 'kill -CONT "${heartbeat_pid}"' not in quarantine[kill_index:]
+
+
+def test_heartbeat_survives_subshell_step_exit_and_sighup() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        paths = prepare_fixture(root)
+
+        # Launch heartbeat via a subshell step that disowns and exits, simulating GHA step lifecycle
+        step_script = f"""
+        python3 "{paths['cli']}" heartbeat-loop \
+            --state-file "{paths['state']}" \
+            --identity-json-out "{paths['heartbeat_identity']}" &
+        pid=$!
+        disown "$pid" 2>/dev/null || true
+        printf '%s\\n' "$pid" > "{paths['heartbeat_pid']}"
+        """
+        subshell = subprocess.run(
+            ["bash", "-c", step_script],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        wait_for_file(paths["heartbeat_identity"])
+        heartbeat_pid = int(paths["heartbeat_pid"].read_text(encoding="utf-8").strip())
+
+        try:
+            # Send SIGHUP to the detached heartbeat process; it must ignore it and stay alive
+            if hasattr(signal, "SIGHUP"):
+                os.kill(heartbeat_pid, signal.SIGHUP)
+            time.sleep(0.1)
+
+            # Guarded command execution in the subsequent step must succeed under this heartbeat
+            completed = subprocess.run(
+                ["bash", str(paths["guard"]), "echo", "deploy-step-ok"],
+                cwd=REPO_ROOT,
+                env=guard_environment(paths),
+                text=True,
+                capture_output=True,
+                timeout=10,
+                check=False,
+            )
+            assert completed.returncode == 0, completed.stderr
+            assert "deploy-step-ok" in completed.stdout
+        finally:
+            try:
+                os.kill(heartbeat_pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
