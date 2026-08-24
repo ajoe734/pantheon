@@ -6,6 +6,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -452,6 +453,11 @@ def test_dev_deploy_job_has_explicit_timeout_and_command_deadline() -> None:
     job_timeout_minutes = int(match.group(1))
     job_timeout_seconds = job_timeout_minutes * 60
 
+    # Initial lease acquisition wait time
+    initial_wait_match = re.search(r"id:\s*lease[\s\S]*?--wait-seconds\s+(\d+)", dev)
+    assert initial_wait_match is not None, "Initial lease acquire step must specify --wait-seconds"
+    initial_lease_wait_seconds = int(initial_wait_match.group(1))
+
     assert "DEV_DEPLOY_DEADLINE_SECONDS:" in dev
     assert '--deadline-seconds "${DEV_DEPLOY_DEADLINE_SECONDS}"' in dev
 
@@ -462,6 +468,11 @@ def test_dev_deploy_job_has_explicit_timeout_and_command_deadline() -> None:
     assert deadline_match is not None, "DEV_DEPLOY_DEADLINE_SECONDS default must be explicit"
     initial_deadline_seconds = int(deadline_match.group(1))
 
+    # Root paper baseline bootstrap timeout
+    bootstrap_match = re.search(r"id:\s*paper_bootstrap[\s\S]*?--timeout-seconds\s+(\d+)", dev)
+    assert bootstrap_match is not None, "paper_bootstrap step must specify --timeout-seconds"
+    paper_bootstrap_timeout_seconds = int(bootstrap_match.group(1))
+
     # Quarantined lease TTL wait
     ttl_match = re.search(r"--ttl-seconds\s+(\d+)", dev)
     assert ttl_match is not None, "Lease acquire step must specify --ttl-seconds"
@@ -470,18 +481,33 @@ def test_dev_deploy_job_has_explicit_timeout_and_command_deadline() -> None:
     # Rollback compensation deploy deadline (from compensation step)
     rollback_deadline_seconds = initial_deadline_seconds
 
+    # Rollback compensation lease acquire wait
+    rollback_wait_match = re.search(r"id:\s*deploy_compensation[\s\S]*?--wait-seconds\s+(\d+)", dev)
+    assert rollback_wait_match is not None, "deploy_compensation step must specify --wait-seconds"
+    rollback_lease_wait_seconds = int(rollback_wait_match.group(1))
+    assert rollback_lease_wait_seconds >= lease_ttl_seconds, "rollback wait must at least accommodate lease TTL wait"
+
     min_required_compensation_budget = (
-        initial_deadline_seconds + lease_ttl_seconds + rollback_deadline_seconds
+        initial_lease_wait_seconds
+        + initial_deadline_seconds
+        + paper_bootstrap_timeout_seconds
+        + lease_ttl_seconds
+        + rollback_deadline_seconds
     )
 
     assert job_timeout_seconds >= min_required_compensation_budget, (
-        f"deploy-dev job timeout ({job_timeout_seconds}s) must accommodate initial deploy deadline ({initial_deadline_seconds}s) "
+        f"deploy-dev job timeout ({job_timeout_seconds}s) must accommodate initial lease wait ({initial_lease_wait_seconds}s) "
+        f"+ initial deploy deadline ({initial_deadline_seconds}s) + paper bootstrap timeout ({paper_bootstrap_timeout_seconds}s) "
         f"+ quarantined lease TTL wait ({lease_ttl_seconds}s) + rollback compensation deadline ({rollback_deadline_seconds}s) = {min_required_compensation_budget}s"
     )
     assert job_timeout_seconds > min_required_compensation_budget, (
         f"deploy-dev job timeout ({job_timeout_seconds}s) must provide headroom above {min_required_compensation_budget}s "
-        f"for setup, image builds, paper bootstrap, and smokes"
+        f"for setup, image builds, public smoke, and post-rollback verification"
     )
+    assert job_timeout_seconds - min_required_compensation_budget >= 480, (
+        f"deploy-dev job timeout headroom ({job_timeout_seconds - min_required_compensation_budget}s) must be at least 480s"
+    )
+    assert "stop_predecessor_heartbeat" in dev, "deploy_compensation must define and invoke stop_predecessor_heartbeat"
 
 
 @pytest.mark.parametrize(
@@ -1630,6 +1656,14 @@ sys.exit(f"unsupported fake CLI command: {command}")
 '''
 
 
+def _start_ticks(pid: int) -> int:
+    try:
+        raw = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8")
+        return int(raw[raw.rfind(")") + 1 :].strip().split()[19])
+    except Exception:
+        return 0
+
+
 def _setup_mock_compensation_environment(
     tmp_path: Path,
     initial_bff_sha: str,
@@ -1637,6 +1671,7 @@ def _setup_mock_compensation_environment(
     rollback_bff_sha: str,
     rollback_fe_sha: str,
     deploy_behavior: str = "success",
+    predecessor_heartbeat_state: str = "quarantined",
 ) -> tuple[dict[str, str], Path, Path]:
     import shutil
 
@@ -1759,28 +1794,48 @@ def _setup_mock_compensation_environment(
         encoding="utf-8",
     )
     initial_pid_file = initial_lease_dir / "heartbeat.pid"
-    initial_pid_file.write_text("99999999\n", encoding="utf-8")
     initial_identity_file = initial_lease_dir / "heartbeat-identity.json"
-    initial_identity_file.write_text(
-        json.dumps({
-            "schemaVersion": 1,
-            "status": "stopped",
-            "pid": 99999999,
-        }) + "\n",
-        encoding="utf-8",
-    )
     initial_failure_file = initial_lease_dir / "heartbeat-failure.json"
-    initial_failure_file.write_text(
-        json.dumps({
-            "schemaVersion": 1,
-            "status": "guarded_command_failed",
-            "exitStatus": 1,
-            "detectedAt": "2026-08-24T00:00:00Z",
-        }) + "\n",
-        encoding="utf-8",
-    )
     initial_heartbeat_log = initial_lease_dir / "heartbeat.log"
-    initial_heartbeat_log.write_text("Heartbeat stopped for quarantine\n", encoding="utf-8")
+
+    if predecessor_heartbeat_state == "active":
+        proc = subprocess.Popen([sys.executable, "-c", "import time, signal, sys; signal.signal(signal.SIGTERM, lambda *_: sys.exit(0)); time.sleep(300)"])
+        initial_pid_file.write_text(f"{proc.pid}\n", encoding="utf-8")
+        cmdline = Path(f"/proc/{proc.pid}/cmdline").read_bytes() if Path(f"/proc/{proc.pid}/cmdline").exists() else b""
+        initial_identity_file.write_text(
+            json.dumps({
+                "schemaVersion": 1,
+                "status": "running",
+                "pid": proc.pid,
+                "startTicks": _start_ticks(proc.pid),
+                "cmdlineSha256": hashlib.sha256(cmdline).hexdigest(),
+                "expectedCli": str(fake_cli.resolve()),
+                "stateFile": str(initial_state_file.resolve()),
+                "recordedAt": "2026-08-24T00:00:00Z",
+            }) + "\n",
+            encoding="utf-8",
+        )
+        initial_heartbeat_log.write_text(f"Heartbeat actively renewing (pid={proc.pid})\n", encoding="utf-8")
+    else:
+        initial_pid_file.write_text("99999999\n", encoding="utf-8")
+        initial_identity_file.write_text(
+            json.dumps({
+                "schemaVersion": 1,
+                "status": "stopped",
+                "pid": 99999999,
+            }) + "\n",
+            encoding="utf-8",
+        )
+        initial_failure_file.write_text(
+            json.dumps({
+                "schemaVersion": 1,
+                "status": "guarded_command_failed",
+                "exitStatus": 1,
+                "detectedAt": "2026-08-24T00:00:00Z",
+            }) + "\n",
+            encoding="utf-8",
+        )
+        initial_heartbeat_log.write_text("Heartbeat stopped for quarantine\n", encoding="utf-8")
 
     mock_remote_lease_file = tmp_path / "mock_remote_lease.json"
     mock_remote_lease_file.write_text(
@@ -1953,9 +2008,9 @@ def test_dev_deploy_compensation_mutation_aware_executes_deploy_when_not_at_base
     assert f"Restored exact hosted dev baseline pair: BFF={rollback_bff} FE={rollback_fe}" in summary_content
 
 
-def test_dev_deploy_compensation_preceding_paper_bootstrap_or_smoke_failure_restores_baseline_e2e(tmp_path: Path) -> None:
+def test_dev_deploy_compensation_quarantined_predecessor_heartbeat_restores_baseline_e2e(tmp_path: Path) -> None:
     """Positive E2E test proving that after a preceding deploy, paper_bootstrap, or public_smoke failure
-    under TARGET_ENV=dev (which recorded a failure file and stopped the initial heartbeat), deploy_compensation
+    under TARGET_ENV=dev where the predecessor heartbeat is already quarantined/stopped, deploy_compensation
     successfully authorizes exact-baseline rollback under its own lease heartbeat and restores the prior FE/BFF pair."""
     candidate_bff = "c" * 40
     rollback_bff = "a" * 40
@@ -1967,6 +2022,7 @@ def test_dev_deploy_compensation_preceding_paper_bootstrap_or_smoke_failure_rest
         rollback_bff_sha=rollback_bff,
         rollback_fe_sha=rollback_fe,
         deploy_behavior="success",
+        predecessor_heartbeat_state="quarantined",
     )
     script = _extract_deploy_compensation_run_script()
     result = subprocess.run(
@@ -1980,6 +2036,60 @@ def test_dev_deploy_compensation_preceding_paper_bootstrap_or_smoke_failure_rest
 
     assert result.returncode == 0, f"Compensation script failed: {result.stderr}"
     assert f"rolling back BFF to baseline {rollback_bff}" in result.stdout
+    assert invocations_log.exists()
+    actual_bff = (tmp_path / "mock_bff_sha.txt").read_text(encoding="utf-8").strip()
+    actual_fe = (tmp_path / "mock_fe_sha.txt").read_text(encoding="utf-8").strip()
+    assert actual_bff == rollback_bff
+    assert actual_fe == rollback_fe
+    summary_content = step_summary.read_text(encoding="utf-8")
+    assert f"Restored exact hosted dev baseline pair: BFF={rollback_bff} FE={rollback_fe}" in summary_content
+    lease_events = (tmp_path / "lease_events.log").read_text(encoding="utf-8")
+    assert "CONTENTION: active lease owned by pantheon:ajoe734/pantheon:12345:1" in lease_events
+    assert "ACQUIRED: owner=pantheon:ajoe734/pantheon:12345:1:rollback" in lease_events
+    assert "RELEASED" in lease_events
+
+
+def test_dev_deploy_compensation_active_predecessor_heartbeat_stopped_and_recovered_e2e(tmp_path: Path) -> None:
+    """Positive E2E test proving that when an optional hosted probe fails before public_smoke
+    while the predecessor heartbeat is STILL ACTIVE and renewing in the background, deploy_compensation
+    safely stops the predecessor heartbeat process before acquiring the rollback lease, executes rollback deploy,
+    and restores the exact baseline FE/BFF pair without hanging or exceeding the job timeout budget."""
+    candidate_bff = "c" * 40
+    rollback_bff = "a" * 40
+    rollback_fe = "f" * 40
+    env, invocations_log, step_summary = _setup_mock_compensation_environment(
+        tmp_path,
+        initial_bff_sha=candidate_bff,
+        initial_fe_sha=rollback_fe,
+        rollback_bff_sha=rollback_bff,
+        rollback_fe_sha=rollback_fe,
+        deploy_behavior="success",
+        predecessor_heartbeat_state="active",
+    )
+    initial_pid = int((tmp_path / "initial_lease" / "heartbeat.pid").read_text(encoding="utf-8").strip())
+    # Verify predecessor process is alive before compensation runs
+    assert Path(f"/proc/{initial_pid}").exists()
+
+    script = _extract_deploy_compensation_run_script()
+    result = subprocess.run(
+        ["bash", "-euo", "pipefail", "-c", script],
+        cwd=tmp_path,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, f"Compensation script failed: {result.stderr}"
+    assert f"Stopping active predecessor heartbeat (pid={initial_pid})" in result.stdout
+    assert f"rolling back BFF to baseline {rollback_bff}" in result.stdout
+
+    # Verify the predecessor heartbeat process was stopped cleanly
+    time.sleep(0.1)
+    reaped_pid, exit_status = os.waitpid(initial_pid, os.WNOHANG)
+    assert reaped_pid == initial_pid, f"Predecessor process {initial_pid} must be terminated"
+    assert not Path(f"/proc/{initial_pid}").exists()
+
     assert invocations_log.exists()
     actual_bff = (tmp_path / "mock_bff_sha.txt").read_text(encoding="utf-8").strip()
     actual_fe = (tmp_path / "mock_fe_sha.txt").read_text(encoding="utf-8").strip()

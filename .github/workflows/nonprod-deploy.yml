@@ -83,7 +83,7 @@ jobs:
     name: Deploy dev under shared environment lease
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.environment == 'dev' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 90
     environment: dev
     outputs:
       backend_sha: ${{ steps.target.outputs.sha }}
@@ -622,7 +622,7 @@ jobs:
             --mode deployment \
             --owner "pantheon:${GITHUB_REPOSITORY}:${GITHUB_RUN_ID}:${GITHUB_RUN_ATTEMPT}" \
             --ttl-seconds 300 \
-            --wait-seconds 7200 \
+            --wait-seconds 1800 \
             --poll-seconds 5 \
             --state-file "${state_file}" \
             --expected-backend-sha "${TARGET_SHA}" \
@@ -1467,6 +1467,51 @@ jobs:
 
             trap cleanup_rollback_lease EXIT INT TERM
 
+            stop_predecessor_heartbeat() {
+              local pid_file="${PANTHEON_DEV_ENVIRONMENT_LEASE_HEARTBEAT_PID_FILE:-}"
+              local identity_file="${PANTHEON_DEV_ENVIRONMENT_LEASE_HEARTBEAT_IDENTITY_FILE:-}"
+              local state_file="${PANTHEON_DEV_ENVIRONMENT_LEASE_STATE_FILE:-}"
+              [[ -n "${pid_file}" && -s "${pid_file}" ]] || return 0
+              local pred_pid
+              pred_pid="$(tr -d '[:space:]' < "${pid_file}")"
+              [[ "${pred_pid}" =~ ^[1-9][0-9]*$ ]] || return 0
+
+              kill -0 "${pred_pid}" 2>/dev/null || return 0
+
+              local state
+              state="$(ps -o stat= -p "${pred_pid}" 2>/dev/null | tr -d '[:space:]' || true)"
+              case "${state}" in ""|Z*|X*|x*) return 0 ;; esac
+
+              echo "[dev-deploy-compensation] Stopping active predecessor heartbeat (pid=${pred_pid}) before rollback lease acquisition..."
+              if [[ -n "${identity_file}" && -f "${identity_file}" && -n "${state_file}" && -f "${state_file}" ]]; then
+                python3 "${controller}/scripts/dev_environment_lease.py" verify-heartbeat-identity \
+                  --identity-file "${identity_file}" \
+                  --pid "${pred_pid}" \
+                  --expected-cli "${controller}/scripts/dev_environment_lease.py" \
+                  --state-file "${state_file}" >/dev/null || true
+              fi
+
+              kill -TERM "${pred_pid}" 2>/dev/null || true
+              kill -CONT "${pred_pid}" 2>/dev/null || true
+              for _ in $(seq 1 40); do
+                kill -0 "${pred_pid}" 2>/dev/null || return 0
+                state="$(ps -o stat= -p "${pred_pid}" 2>/dev/null | tr -d '[:space:]' || true)"
+                case "${state}" in ""|Z*|X*|x*) return 0 ;; esac
+                sleep 0.25
+              done
+
+              kill -KILL "${pred_pid}" 2>/dev/null || true
+              for _ in $(seq 1 20); do
+                kill -0 "${pred_pid}" 2>/dev/null || return 0
+                state="$(ps -o stat= -p "${pred_pid}" 2>/dev/null | tr -d '[:space:]' || true)"
+                case "${state}" in ""|Z*|X*|x*) return 0 ;; esac
+                sleep 0.25
+              done
+              return 0
+            }
+
+            stop_predecessor_heartbeat
+
             PANTHEON_ENVIRONMENT_LEASE_TOKEN="${lease_token}" \
               python3 "${controller}/scripts/dev_environment_lease.py" acquire \
                 --repository ajoe734/execute-plans \
@@ -1476,7 +1521,7 @@ jobs:
                 --mode deployment \
                 --owner "pantheon:${GITHUB_REPOSITORY}:${GITHUB_RUN_ID}:${GITHUB_RUN_ATTEMPT}:rollback" \
                 --ttl-seconds 300 \
-                --wait-seconds 7200 \
+                --wait-seconds 1800 \
                 --poll-seconds 5 \
                 --state-file "${rollback_state_file}" \
                 --expected-backend-sha "${PANTHEON_ROLLBACK_BACKEND_SHA}" \
