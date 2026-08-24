@@ -12903,12 +12903,16 @@ def _ew04_inspiration_projection_from_lineage_edges(artifact_id: str) -> Optiona
         strategy_id = str(edge.get("strategy_id") or "").strip()
         if strategy_id:
             strategy_tags.add(strategy_id)
+        raw_influence = edge.get("influence_weight")
+        influence_weight = float(raw_influence) if raw_influence is not None else None
+        influence_state = str(edge.get("influence_state") or ("confirmed_influence" if influence_weight is not None else "influence_unknown"))
         inspiration_edges.append(
             {
                 "lineage_edge_id": edge.get("id"),
                 "source_artifact_id": source_artifact_id,
                 "relationship_type": relationship_type,
-                "influence_weight": 1.0,
+                "influence_weight": influence_weight,
+                "influence_state": influence_state,
             }
         )
     return {
