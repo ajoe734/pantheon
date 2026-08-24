@@ -2,7 +2,7 @@
 
 **Document ID:** `OPS-DEV-TOOLING-ARCH-GAP-20260824`
 **Document Tier:** L3 Supporting Design & Operational Architecture Record (under `AI_COLLABORATION_GUIDE.md` § 1 / `CANONICAL_DOCUMENT_MAP.md`)
-**Target Domain:** Development Tooling Control Plane (`.orchestrator/`, `scripts/`, `ai-task-archive/`, V2 TaskStore)
+**Target Domain:** Development Tooling Control Plane (`.orchestrator/`, `scripts/`, `ai-task-archive/`, V2 TaskStore, dev test/probe tooling)
 **Boundary Classification:** Development Tooling only. Product Runtime (`services/`, BFF, Ingestion) and Capital Pathways remain untouched.
 **Conflict Rule:** In case of conflict, canonical L0/L1 documents (`AI_COLLABORATION_GUIDE.md`, `TARGET_ARCHITECTURE.md`, `DOCUMENT_AUTHORITY_AND_RECORD_BOUNDARY.md`) take precedence. This document provides gap analysis and architectural designs for future development tooling implementation tasks.
 
@@ -17,6 +17,7 @@ During the functional closure sprint (2026-08-20 to 2026-08-24), execution acros
 3. **Artifact Write Overlap & Live Dispatch Exclusion:** While `scripts/ai_status.py` provides static catalog/assignment-time `artifact_conflict_guard` and `enforce_artifact_conflict_admission()`, supervisor execution admission (`dispatch_admission.py`) checks quota and endpoint availability but lacks live write-scope mutual exclusion across concurrently leased tasks, resulting in worktree index contention on shared files.
 4. **Cross-Repository Routing & Parent/Sidecar DAG Scheduling:** While `multi_repo_registry.py` and `target_repo` resolve repository paths and enforce integration targets (`dev`), the development control plane lacks first-class parent-child task primitives (`parent_task_id`, `task_nature=sidecar`, `subphase`) and automatic subphase dependency gating, forcing auxiliary tasks (caller inventories, contract verifications) into disconnected top-level tasks.
 5. **Exact-Head Review Rejection Recovery & Stale State Stranding:** Review rejection paths failed closed when PRs were already merged or closed, and task state transitions frequently left stale `waiting_for` markers, skewing fleet dispatch metrics.
+6. **Hosted Probe Contract Misalignment & Surface Isolation Gaps:** Generic hosted test probes asserted strict camelCase-only schemas (`sessionId`, `traceId`, `providerStatus`) against BFF endpoints emitting canonical snake_case equivalents (adapted by `execute-plans`), while monolithic probe runs serially timed out on unrelated `health/v5` surfaces, blocking task closure due to un-isolated verification noise.
 
 This document records the exact failure modes observed in live operations, isolates their root causes, and specifies an implementation-ready design for each area.
 
@@ -32,6 +33,8 @@ This document records the exact failure modes observed in live operations, isola
 | [GAP 2] DAG Reopen Propagation     | [GAP 4] Native Parent-Sidecar      | [GAP 5] Automated       |
 |         & Root Evidence Handoff    |         Subphase DAG Scheduling    |         waiting_for GC  |
 +------------------------------------+------------------------------------+-------------------------+
+| [GAP 6] Route-Scoped Contract Validators with Aliasing & Bounded Per-Surface Isolation    |
++-------------------------------------------------------------------------------------------+
 ```
 
 ---
@@ -48,6 +51,7 @@ The architectural findings in this document are grounded in concrete operational
 | **Root Deploy Reopen Livelock** (`OPS-PHASED-ROOT-DEPLOY-CLOSURE-20260824`, `OPS-SUPERVISOR-REOPEN-REDISPATCH-20260824`) | Reviewer rejected PR head across 10+ cycles. Supervisor deduplication (`seen_event_keys`) treated reopened in-progress tasks as unchanged, blocking owner redispatch under `unchanged_cooldown`. | Dispatch identity signature lacked bounded review-reopen revision tracking. |
 | **Premature Merge Rejection Defect** (`docs/04/pantheon_twelve_loop_gap_2026-07-26`, PRs #4212, #4213, #4214) | PRs merged before review; when reviewers attempted rejection, `reopen` failed closed because the GitHub PR was no longer open. | GitHub review bridge lacked a pure-lifecycle rejection path for merged/closed heads. |
 | **Stale `waiting_for` Stranding** (`PPL-ALLOC-007`, `TJ-E2E-012`) | Tasks reassigned from `Human/Ops` to `Claude` retained `waiting_for: Human/Ops` or `waiting_for: Antigravity` in `ai-status.json` even after moving to `in_progress`. | State transitions in `task_machine.py` and `ai_status.py` did not uniformly purge blocker metadata upon reactivation. |
+| **Hosted Management NL Probe & Merge 2216879f** (`PFG-MGMT-OPENCLAW-HOSTED-REPAIR-20260824`) | On merge `2216879f`, `POST /bff/management/nl/ask` returned 202/completed in 2128ms, but generic probe failed asserting camelCase-only (`sessionId`, `traceId`, `providerStatus`, `controlMode`, `uiActions`, `session.ttlSeconds`) against deployed snake_case. Probe then serially timed out on unrelated `health/v5`. | Monolithic probe scripts lacked route-scoped contract validators with alias normalization and bounded per-surface timeouts. |
 
 ---
 
@@ -332,9 +336,56 @@ This sanitizer runs automatically during every state transition (`start`, `progr
 
 ---
 
-## 8. Verification & Validation Framework
+## 8. Gap 6: Hosted Probe Contract Alignment & Surface-Isolated Validation
 
-### 8.1 Current Task Verification
+### 8.1 Current Behavior & Failure Mode
+During verification on merge commit `2216879f`, hosted test probes exposed two significant verification flaws:
+1. **Contract Casing Misalignment:** The generic hosted probe required camelCase fields (`data.sessionId`, `data.traceId`, `data.providerStatus`, `data.controlMode`, `data.uiActions`, `data.session.ttlSeconds`), while the live deployed BFF emitted canonical snake_case keys (`session_id`, `trace_id`, `provider_status`, `control_mode`, `ui_actions`, `session.ttl_seconds`). The frontend adapter (`execute-plans/src/managementAi.ts`) intentionally supports both formats, but the monolithic test probe failed closed on valid BFF responses.
+2. **Serial Multi-Surface Timeout Cascades:** The probe execution executed serially across multiple disparate endpoints (`health/v5`, `management/nl/ask`, `telemetry`). When an unrelated read surface experienced latency or timed out, the entire probe failed, blocking task delivery even though the target subsystem was fully healthy.
+
+### 8.2 Architectural Design: Route-Scoped Validators & Surface-Isolated Probing
+
+```
+                      Hosted Test Probe Architecture
+                                     |
+              +----------------------+----------------------+
+              |                                             |
+              v                                             v
+  [Management NL Probe]                             [Health/V5 Probe]
+  - Timeout: 5000ms (isolated)                      - Timeout: 3000ms (isolated)
+  - Schema: Route-Scoped Alias Normalizer            - Surface: Diagnostic only
+  - Accepts: camelCase OR snake_case               - Failure does NOT cascade to NL
+```
+
+#### 1. Route-Scoped Contract Normalization in Test Harnesses
+Probe tooling must implement explicit canonical alias mapping rather than hardcoding strict single-case keys:
+```python
+MANAGEMENT_NL_RESPONSE_ALIASES = {
+    "session_id": ("session_id", "sessionId"),
+    "trace_id": ("trace_id", "traceId"),
+    "provider_status": ("provider_status", "providerStatus"),
+    "control_mode": ("control_mode", "controlMode"),
+    "ui_actions": ("ui_actions", "uiActions"),
+    "ttl_seconds": ("ttl_seconds", "ttlSeconds"),
+}
+
+def extract_canonical_field(data: dict[str, Any], field_key: str) -> Any:
+    aliases = MANAGEMENT_NL_RESPONSE_ALIASES.get(field_key, (field_key,))
+    for alias in aliases:
+        if alias in data:
+            return data[alias]
+    return None
+```
+
+#### 2. Surface-Isolated Timeouts & Non-Cascading Probes
+1. **Per-Surface Bounded Timeouts:** Every endpoint probed in CI/CD or dev-deploy verification must have an explicit timeout (e.g. 5s for synchronous routes, 10s for LLM-backed routes) executed concurrently or with independent error catchers.
+2. **Subsystem Isolation:** A timeout or degradation in unrelated diagnostic surfaces (e.g. `health/v5`) must be reported as a warning or isolated metric and must not block acceptance gates for an unrelated subsystem (e.g. Management NL).
+
+---
+
+## 9. Verification & Validation Framework
+
+### 9.1 Current Task Verification
 For this architecture record task (`PFG-DEV-TOOLING-ARCHITECTURE-GAP-20260824`), verification validates document cleanliness, lack of trailing whitespace, boundary compliance, and regression safety across existing supervisor tests:
 
 ```bash
@@ -345,7 +396,7 @@ git diff --check origin/dev...HEAD
 PYTHONPATH=.orchestrator:. python3 -m unittest discover -s .orchestrator -p test_explain_dispatch.py
 ```
 
-### 8.2 Planned Tooling Acceptance Test Matrix (To be implemented in downstream tooling implementation tasks)
+### 9.2 Planned Tooling Acceptance Test Matrix (To be implemented in downstream tooling implementation tasks)
 The test matrix below defines the planned acceptance suites to be constructed when implementing the corresponding tooling features in future engineering tasks:
 
 ```
@@ -370,11 +421,14 @@ The test matrix below defines the planned acceptance suites to be constructed wh
 | state_sanitization.py| - Verify review rejection supersede exit on closed/merged PRs  |
 |                      | - Multi-repo target resolution (pantheon vs execute-plans)     |
 +----------------------+----------------------------------------------------------------+
+| test_probe_contract_ | - Verify route-scoped alias normalizer on camelCase/snake_case |
+| isolation.py         | - Verify surface-isolated timeouts and non-cascading errors    |
++----------------------+----------------------------------------------------------------+
 ```
 
 ---
 
-## 9. Migration & Rollout Strategy
+## 10. Migration & Rollout Strategy
 
 1. **Phase 1: TaskStore & Lifecycle Invariants (Non-Breaking)**
    - Add `TaskAmendedEvent` type definition and replay parsing in `task_state_store.py`.
@@ -389,9 +443,13 @@ The test matrix below defines the planned acceptance suites to be constructed wh
    - Activate typed `parent_task_id`, `task_nature`, and `subphase` resolution in supervisor planning.
    - Migrate legacy sidecar briefs to structured parent-child task records.
 
+4. **Phase 4: Probe Tooling Modernization**
+   - Implement route-scoped contract aliasing in test/probe scripts.
+   - Introduce per-surface bounded timeouts and independent failure isolation in hosted verification scripts.
+
 ---
 
-## 10. Document Authority & Boundaries
+## 11. Document Authority & Boundaries
 
 - **Authority:** This document is an L3 operational architecture record under `AI_COLLABORATION_GUIDE.md` § 1 and `CANONICAL_DOCUMENT_MAP.md`.
 - **Product Safety Guarantee:** This document specifies changes strictly within the Development Tooling Control Plane (`.orchestrator/`, `scripts/`, `ai-task-archive/`). It does not modify product business services, BFF routes, data source ingestion engines, or execution/trading broker runtimes.

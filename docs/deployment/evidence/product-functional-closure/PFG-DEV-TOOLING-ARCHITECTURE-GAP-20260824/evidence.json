@@ -13,7 +13,7 @@
     "evidence_cut_at": "2026-08-24"
   },
   "scope": {
-    "owned_layer": "Development tooling architecture gap analysis and design specification for supervisor, V2 TaskStore, and auto-workers",
+    "owned_layer": "Development tooling architecture gap analysis and design specification for supervisor, V2 TaskStore, auto-workers, and probe harnesses",
     "not_changing": [
       "Product runtime business services, BFF routes, and data ingestion engines",
       "Live broker authorization, capital pathways, and order execution",
@@ -37,7 +37,8 @@
     "dependency_aware_reopen": "DAG dependency recalculation on reopen combined with structured RootEvidenceHandoff contracts.",
     "artifact_ownership_overlap": "Explicit artifacts_manifest (owned_write_paths, referenced_read_paths) with supervisor path-overlap mutual exclusion gating extending existing artifact_conflict_guard.",
     "cross_repo_sidecars": "First-class target_repo, task_nature, parent_task_id, and subphase fields integrated with multi_repo_registry.py.",
-    "exact_head_rejection_recovery": "Pure lifecycle supersede exit for closed/merged PR heads and deterministic waiting_for cleanup on state transitions."
+    "exact_head_rejection_recovery": "Pure lifecycle supersede exit for closed/merged PR heads and deterministic waiting_for cleanup on state transitions.",
+    "probe_contract_alignment_and_isolation": "Route-scoped contract validators with canonical field aliasing (camelCase/snake_case) and bounded per-surface timeouts with independent failure isolation."
   },
   "validation": {
     "environment": "task worktree; document and contract validation only; product runtime and capital authority untouched",

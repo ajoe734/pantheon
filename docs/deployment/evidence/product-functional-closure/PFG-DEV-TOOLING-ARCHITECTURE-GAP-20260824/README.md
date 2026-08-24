@@ -2,7 +2,7 @@
 
 ## Overview
 
-This task records and designs the development-tooling architecture corrections for the Pantheon supervisor, V2 TaskStore, and auto-worker fleet, addressing live friction observed during the 2026-08-20 to 2026-08-24 functional closure sprint.
+This task records and designs the development-tooling architecture corrections for the Pantheon supervisor, V2 TaskStore, auto-worker fleet, and probe harnesses, addressing live friction observed during the 2026-08-20 to 2026-08-24 functional closure sprint.
 
 ## Deliverables
 
@@ -24,6 +24,8 @@ This task records and designs the development-tooling architecture corrections f
    - Native `target_repo`, `task_nature`, `parent_task_id`, and `subphase` schema support in TaskStore, integrated with `multi_repo_registry.py`.
 5. **Exact-Head Review Rejection Recovery & `waiting_for` Cleanup**:
    - Pure-lifecycle `supersede` exit for closed/merged PR heads, exact-head SHA reject tagging, and deterministic `waiting_for` purging on all non-blocked state transitions.
+6. **Hosted Probe Contract Alignment & Surface-Isolated Validation**:
+   - Route-scoped validators supporting canonical field aliases (camelCase and snake_case) and bounded per-surface timeouts with independent failure isolation.
 
 ## Verification
 
