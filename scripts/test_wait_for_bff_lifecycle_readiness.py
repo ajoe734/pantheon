@@ -160,6 +160,41 @@ def test_http_200_checkpoint_behind_retained_high_is_not_ready() -> None:
     assert observation is None
 
 
+def test_http_200_exact_deployment_before_first_projector_publish_is_retryable() -> None:
+    starting = payload(ready=True)
+    starting["dependencies"]["lifecycle_projector"]["freshness"] = {}
+    state, observation = classify_readiness(
+        200,
+        starting,
+        expected_deployment_sha=SHA,
+    )
+    assert state == "unavailable"
+    assert observation is None
+
+
+def test_http_200_startup_snapshot_can_converge_to_ready() -> None:
+    fake = FakeTime()
+    starting = payload(ready=True)
+    starting["dependencies"]["lifecycle_projector"]["freshness"]["stale"] = True
+    _, fetch = sequence_fetch(
+        [
+            (200, starting),
+            (200, payload(ready=True)),
+        ]
+    )
+    wait_for_readiness(
+        fetch,
+        expected_deployment_sha=SHA,
+        initial_timeout_seconds=3,
+        recovery_extension_seconds=4,
+        stalled_timeout_seconds=2,
+        poll_interval_seconds=1,
+        monotonic=fake.monotonic,
+        sleep=fake.sleep,
+    )
+    assert fake.value == 2
+
+
 def test_uses_bounded_extension_for_trusted_recovery() -> None:
     fake = FakeTime()
     _, fetch = sequence_fetch(

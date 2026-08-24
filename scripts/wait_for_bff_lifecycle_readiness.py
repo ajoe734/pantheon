@@ -87,9 +87,11 @@ def classify_readiness(
         not isinstance(freshness, dict)
         or freshness.get("stale") is not False
     ):
-        if status != 200:
-            return "unavailable", None
-        raise ReadinessError("lifecycle projector freshness is stale or absent")
+        # A freshly restarted BFF can answer HTTP 200 before the projector has
+        # published its first post-startup snapshot.  Treat that short-lived
+        # state as retryable regardless of HTTP status; it is not readiness
+        # evidence and must not grant the recovery extension on its own.
+        return "unavailable", None
 
     if status == 200 and payload.get("ready") is True:
         for dependency in ("runtime_manager", "governance", "deployment"):
