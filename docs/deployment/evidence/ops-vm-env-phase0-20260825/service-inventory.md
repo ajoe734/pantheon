@@ -26,17 +26,17 @@
 | `capital` | `services/capital/Dockerfile` | `${CAPITAL_PORT:-18092}:8092` | `postgres` | Stateless service; single replica in base VM |
 | `deployment` | `services/deployment/Dockerfile` | `${DEPLOYMENT_PORT:-18095}:8095` | `governance` | Stateless service; single replica in base VM |
 | `governance` | `services/governance/Dockerfile` | `${GOVERNANCE_PORT:-18082}:8082` | `postgres, minio, nats` | Stateless service; single replica in base VM |
-| `incidents` | `services/incidents/Dockerfile` | `${INCIDENTS_PORT:-18090}:8090` | `runtime-manager, telemetry, postgres, nats` | Stateless service; single replica in base VM |
+| `incidents` | `services/incidents/Dockerfile` | `${INCIDENTS_PORT:-18090}:8090` | `runtime-manager, telemetry, postgres, nats` (base) / `telemetry, postgres, nats` (control) | Stateless service; single replica in base VM |
 | `lineage-read` | `services/lineage-read/Dockerfile` | `${LINEAGE_READ_PORT:-18094}:8094` | `None` | Stateless service; single replica in base VM |
 | `minio` | `minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e` | `${MINIO_API_PORT:-19000}:9000, ${MINIO_CONSOLE_PORT:-19001}:9001` | `None` | Stateful singleton data/message backend |
 | `minio-init` | `minio/mc:RELEASE.2024-01-16T16-06-34Z` | `Internal only` | `minio` | One-shot initialization container (exits 0) |
 | `nats` | `nats:2.11-alpine` | `${NATS_PORT:-14222}:4222, ${NATS_MONITOR_PORT:-18222}:8222` | `None` | Stateful singleton data/message backend |
-| `operator-bff` | `services/control-plane/bff/Dockerfile` | `${OPERATOR_BFF_PORT:-${BFF_PORT:-18001}}:8001` | `registry, consultation-svc, source-ingest, search-svc, training-session-svc, policy-learning-svc, research-orchestrator-svc, research-worker-gateway-svc, memory, openclaw-gateway-adapter, paper-fleet-reconciler, governance, runtime-manager, deployment, capital, evolution, incidents, postmortems, telemetry, loop-run-projector-scheduler, lineage-read, postgres, nats` | Request-facing API; blue/green candidate during deploy |
+| `operator-bff` | `services/control-plane/bff/Dockerfile` | `${OPERATOR_BFF_PORT:-${BFF_PORT:-18001}}:8001` | `registry, consultation-svc, source-ingest, search-svc, training-session-svc, policy-learning-svc, research-orchestrator-svc, research-worker-gateway-svc, memory, openclaw-gateway-adapter, paper-fleet-reconciler, governance, runtime-manager, deployment, capital, evolution, incidents, postmortems, telemetry, loop-run-projector-scheduler, lineage-read, postgres, nats` (base) / `telemetry, governance, deployment, capital, incidents, postmortems, registry, postgres, nats` (control) / `registry, consultation-svc, source-ingest, search-svc, training-session-svc, policy-learning-svc, research-orchestrator-svc, reconciliation-drift-svc, research-worker-gateway-svc, openclaw-gateway-adapter` (staging-full) | Request-facing API; blue/green candidate during deploy |
 | `postgres` | `postgres:16-alpine` | `${POSTGRES_PORT:-15432}:5432` | `None` | Stateful singleton data/message backend |
 | `postmortems` | `services/postmortems/Dockerfile` | `${POSTMORTEMS_PORT:-18091}:8091` | `incidents, postgres, minio` | Stateless service; single replica in base VM |
-| `reconciliation-drift-svc` | `services/reconciliation-drift/Dockerfile` | `${RECONCILIATION_DRIFT_PORT:-18102}:8102` | `telemetry, lineage-read, runtime-manager, postgres, incidents` | Stateless service; single replica in base VM |
+| `reconciliation-drift-svc` | `services/reconciliation-drift/Dockerfile` | `${RECONCILIATION_DRIFT_PORT:-18102}:8102` | `telemetry, lineage-read, runtime-manager, postgres, incidents` (base) / `telemetry, lineage-read, postgres` (control) / `telemetry, lineage-read, postgres, evolution` (staging-full) | Stateless service; single replica in base VM |
 | `registry` | `services/registry/Dockerfile` | `${REGISTRY_PORT:-18087}:8087` | `postgres, minio, nats` | Stateless service; single replica in base VM |
-| `telemetry` | `services/telemetry/Dockerfile` | `${TELEMETRY_PORT:-18083}:8083` | `runtime-manager, postgres, nats` | Stateless service; single replica in base VM |
+| `telemetry` | `services/telemetry/Dockerfile` | `${TELEMETRY_PORT:-18083}:8083` | `runtime-manager, postgres, nats` (base) / `postgres, nats` (control) | Stateless service; single replica in base VM |
 
 ## Profile: `WORKERS` (17 Services)
 
@@ -65,9 +65,9 @@
 | Service | Dockerfile / Image | Ports | Depends On | Singleton / Lifecycle Note |
 |---|---|---|---|---|
 | `evaluation` | `services/evaluation/Dockerfile` | `${EVALUATION_PORT:-18084}:8084` | `postgres, minio, nats` | Stateless service; single replica in base VM |
-| `evolution` | `services/evolution/Dockerfile` | `${EVOLUTION_PORT:-18093}:8093` | `runtime-manager, governance` | Stateless service; single replica in base VM |
+| `evolution` | `services/evolution/Dockerfile` | `${EVOLUTION_PORT:-18093}:8093` | `runtime-manager, governance` (base) / `incidents, postgres` (control) | Stateless service; single replica in base VM |
 | `experiments-dormant-smoke` | `services/registry/experiments/Dockerfile` | `Internal only` | `None` | Dormant / on-demand verification container |
-| `feedback` | `services/control-plane/feedback/Dockerfile` | `${FEEDBACK_PORT:-18085}:8085` | `None` | Stateless service; single replica in base VM |
+| `feedback` | `services/control-plane/feedback/Dockerfile` | `${FEEDBACK_PORT:-18085}:8085` | `None` (base) / `postgres, minio, nats` (control) | Stateless service; single replica in base VM |
 | `finrl-dormant-smoke` | `Dockerfile` | `Internal only` | `None` | Dormant / on-demand verification container |
 | `lifecycle-projector-capacity-benchmark` | `services/telemetry/Dockerfile` | `Internal only` | `postgres, telemetry` | Dormant / on-demand verification container |
 | `memory` | `services/memory/Dockerfile` | `${MEMORY_PORT:-18086}:8086` | `postgres, minio, nats` | Stateless service; single replica in base VM |
@@ -110,7 +110,6 @@
 | `broker-adapter` | `services/execution/lean_runtime/Dockerfile` | `${BROKER_ADAPTER_PORT:-28097}:8097` | `runtime-manager` | **Execution Sidecar (`docker-compose.exec.yml`)**: Mock/sandbox broker adapter for staging/prod execution plane (VM-2). Strict Singleton per active execution plane. |
 | `exchange-adapter` | `services/execution/lean_runtime/Dockerfile` | `${EXCHANGE_ADAPTER_PORT:-28098}:8098` | `runtime-manager` | **Execution Sidecar (`docker-compose.exec.yml`)**: Mock/sandbox exchange adapter for market connectivity on staging/prod execution plane (VM-2). Strict Singleton per active execution plane. |
 | `pantheon-lean-live` | `services/execution/lean_runtime/Dockerfile` | `${LEAN_LIVE_PORT:-28111}:8011` | `runtime-manager, broker-adapter, exchange-adapter` | **Live Execution Runtime (`docker-compose.exec.yml`, profile `live`)**: Live LEAN runtime with real capital binding. Requires 4 secret keys (`BROKER_API_KEY`, `BROKER_API_SECRET`, `EXCHANGE_API_KEY`, `EXCHANGE_API_SECRET`). Strict Isolation & Singleton: Gated by promotion gate and operator approval; only runnable under live profile on dedicated execution plane (VM-2). |
-| `pantheon-paper-runtime` | `services/execution/lean_runtime/Dockerfile` | `${PAPER_RUNTIME_PORT:-18010}:8010` / `${LEAN_PAPER_PORT:-28110}:8010` | `signal-store, runtime-manager, telemetry, source-ingest, operator-bff` | Execution paper runtime; disabled live broker on dev |
+| `pantheon-paper-runtime` | `services/execution/lean_runtime/Dockerfile` | `${PAPER_RUNTIME_PORT:-18010}:8010` / `${LEAN_PAPER_PORT:-28110}:8010` | `signal-store, runtime-manager, telemetry, source-ingest, operator-bff` (base) / `signal-store, runtime-manager, broker-adapter, exchange-adapter` (exec) | Execution paper runtime; disabled live broker on dev |
 | `runtime-manager` | `services/runtime-manager/Dockerfile` | `${RUNTIME_MANAGER_PORT:-${RUNTIME_PORT:-18081}}:8081` / `${RUNTIME_MANAGER_PORT:-28081}:8081` | `consultation-svc` (dev) / `None` (exec stack) | Execution lifecycle & binding enforcement. Single active runtime manager instance. |
 | `signal-store` | `redis:7-alpine` | `${SIGNAL_STORE_PORT:-26379}:6379` | `None` | Stateful singleton data/message backend (Redis) |
-

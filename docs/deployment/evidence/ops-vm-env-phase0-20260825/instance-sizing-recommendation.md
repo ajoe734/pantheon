@@ -67,7 +67,7 @@ The instantaneous Dev baseline measured **209.47% Core CPU** (equivalent to ~2.0
 2. **On `e2-standard-4` (4 vCPUs, 16.0 GiB RAM = 400% capacity):**
    - Accommodates full 209.47% steady load + 100% green BFF cutover load ($309.47\% / 400\% = 77.37\%$ peak utilization).
    - Provides **$22.63\%$ CPU headroom at extreme peak** and **$> 45\%$ CPU headroom under standard operating conditions**.
-   - Provides **$73.7\% - 74.5\%$ memory headroom** ($4.21\text{ GiB peak} / 16.0\text{ GiB capacity}$).
+   - Provides **$74.5\%$ memory headroom at measured peak ($73.7\%$ at upper bound peak $4.21\text{ GiB}$)** ($1 - 4.09\text{ GiB} / 16.0\text{ GiB}$ to $1 - 4.21\text{ GiB} / 16.0\text{ GiB}$).
    - **Recommended** for unconstrained production Control VM workloads.
 
 ---
@@ -76,10 +76,10 @@ The instantaneous Dev baseline measured **209.47% Core CPU** (equivalent to ~2.0
 
 ### 3.1 Prod Control VM (Primary Target)
 - **Baseline Minimal (Tuned Intervals):** `e2-standard-2` (2 vCPUs, 8,192 MiB / 8.0 GiB RAM).
-  - **Memory Headroom:** $\mathbf{48.9\%}$ (upper bound: $\mathbf{47.3\%}$), exceeding $\ge 30\%$.
+  - **Memory Headroom:** $\mathbf{48.9\%}$ at measured peak (at upper bound peak: $\mathbf{47.3\%}$), exceeding $\ge 30\%$.
   - **Prerequisite:** Drift sweep frequency bounded to $\ge 30\text{s}$ to avoid CPU contention.
 - **Recommended Production Target (Unconstrained Headroom):** `e2-standard-4` (4 vCPUs, 16,384 MiB / 16.0 GiB RAM).
-  - **Memory Headroom:** $\mathbf{73.7\%}$ (upper bound: $\mathbf{74.5\%}$).
+  - **Memory Headroom:** $\mathbf{74.5\%}$ at measured peak (at upper bound peak: $\mathbf{73.7\%}$).
   - **CPU Headroom:** $> 22.6\%$ at peak blue/green cutover, $> 45\%$ steady-state.
   - **Persistent Disk:** 50 GiB Standard Persistent Disk / Balanced SSD (Postgres data volume on separate disk).
   - **Cost Profile:** ~\$97.60 / month (asia-east1).

@@ -16,7 +16,7 @@
       "criterion": "Capture timestamped redacted Dev CPU memory disk startup and deployment-duration measurements from pantheon-lupin-dev",
       "artifact": "docs/deployment/evidence/ops-vm-env-phase0-20260825/measurements-baseline.json",
       "status": "COMPLETED",
-      "summary": "Captured host CPU (12 vCPUs), memory (47.04 GiB total, 30.31 GiB available [32.55 GB decimal]), disk (241.13 GiB, 88% utilized), uptime (420.2h), startup duration (35.06s system boot, 12.5s core stack sourced from container readiness logs), 50 container stats (11.04 GiB total), Caddy memory (26.0 MiB), and historical deployment durations (BFF rebuild: 2m05s / 125s benchmark, run 27357842338: 10m50s / 650s workflow duration and 10m17s / 617s job duration, paired dev deploy run 32679566250: 22m32s total workflow, 18m48s switch job)."
+      "summary": "Captured host CPU (12 vCPUs), memory (47.04 GiB total, 30.31 GiB available [32.55 GB decimal]), disk (241.13 GiB, 88% utilized), uptime (420.2h), startup duration (35.06s system boot, observable container creation-to-start latencies of 8.5s - 15.5s), 50 container stats (11.04 GiB total), Caddy memory (26.0 MiB), and historical deployment durations (BFF rebuild: 2m05s / 125s benchmark, run 27357842338: 10m50s / 650s workflow duration and 10m17s / 617s job duration, paired dev deploy run 32679566250: 22m32s total workflow, 18m48s switch job)."
     },
     "capability_gap_matrix": {
       "criterion": "Publish a FE/BFF migration worker-ownership and backup/restore capability gap matrix",
@@ -28,7 +28,7 @@
       "criterion": "Recommend an instance size from measured core peak with at least 30 percent memory headroom",
       "artifact": "docs/deployment/evidence/ops-vm-env-phase0-20260825/instance-sizing-recommendation.md",
       "status": "COMPLETED",
-      "summary": "Core peak calculated at 4.09 - 4.21 GiB / 4,184.58 - 4,314.68 MiB (steady 2.26 GiB + green candidate 0.85-0.98 GiB + OS/Caddy/buffers 0.98 GiB). Reconciles 209.47% steady CPU + 100% green BFF peak. Sizing recommended as e2-standard-2 (2 vCPU, 8.0 GiB RAM, 48.9% memory headroom with bounded drift intervals) or e2-standard-4 (4 vCPU, 16.0 GiB RAM, 73.7% memory headroom, >22.6% peak cutover CPU headroom for unconstrained production workloads)."
+      "summary": "Core peak calculated at 4.09 - 4.21 GiB / 4,184.58 - 4,314.68 MiB (steady 2.26 GiB + green candidate 0.85-0.98 GiB + OS/Caddy/buffers 0.98 GiB). Reconciles 209.47% steady CPU + 100% green BFF peak. Sizing recommended as e2-standard-2 (2 vCPU, 8.0 GiB RAM, 48.9% memory headroom with bounded drift intervals) or e2-standard-4 (4 vCPU, 16.0 GiB RAM, 74.5% memory headroom [73.7% at upper bound peak], >22.6% peak cutover CPU headroom for unconstrained production workloads)."
     },
     "production_gates": {
       "criterion": "Record operator-approved or explicitly pending production RPO RTO real-capital scope and on-call owner without inference",

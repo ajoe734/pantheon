@@ -54,18 +54,32 @@
         "graphical_target_reached_seconds": 32.402,
         "source": "systemd-analyze"
       },
-      "core_stack_parallel_startup": {
-        "captured_at": "2026-08-25T15:38:15Z",
-        "measured_parallel_readiness_seconds": 12.5,
-        "source": "docker inspect StartedAt and healthcheck log intervals on pantheon-lupin-dev at 2026-08-25T15:38:00Z - 15:38:15Z",
-        "individual_readiness_seconds": {
-          "postgres": 3.2,
-          "nats": 1.1,
-          "minio": 2.4,
-          "operator_bff": 4.8,
-          "telemetry": 3.5
+      "observed_container_startup_state": {
+        "captured_at": "2026-08-25T16:01:53.927731+00:00",
+        "source": "docker inspect StartedAt and CreatedAt metadata on pantheon-lupin-dev",
+        "infrastructure_persistence_started_at": "2026-08-08T03:49:36.752Z (nats, minio, signal-store active since VM boot)",
+        "base_application_stack_bulk_created_at": "2026-08-25T07:38:05Z - 2026-08-25T07:39:09Z",
+        "observable_service_creation_latencies": {
+          "operator_bff": {
+            "created_at": "2026-08-25T15:08:03Z",
+            "started_at": "2026-08-25T15:08:11.510Z",
+            "creation_to_start_seconds": 8.5,
+            "initial_health_status": "healthy"
+          },
+          "postgres": {
+            "created_at": "2026-08-25T15:37:45Z",
+            "started_at": "2026-08-25T15:38:00.548Z",
+            "creation_to_start_seconds": 15.5,
+            "initial_health_status": "healthy"
+          },
+          "telemetry": {
+            "created_at": "2026-08-25T07:38:24Z",
+            "started_at": "2026-08-25T07:40:28.633Z",
+            "creation_to_start_seconds": 124.6,
+            "initial_health_status": "healthy"
+          }
         },
-        "notes": "Core services initialize concurrently; all core health endpoints report green within 12.5 seconds of compose up."
+        "notes": "Dev VM operates as a persistent environment where infrastructure and base application containers remain running across task executions. Full cold-start from blank state was not triggered to comply with read-only non-destructive task rules. Individual container recreation is observed to reach started/healthy state within 8.5s to 15.5s."
       }
     },
     "caddy_ingress": {
