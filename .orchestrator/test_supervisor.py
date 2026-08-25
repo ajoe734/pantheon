@@ -4602,6 +4602,41 @@ class WorkerLeaseApprovalWaitProgressTests(unittest.TestCase):
             supervisor.worker_lease_progress_is_fresh(self.config, worker, self.now)
         )
 
+    def test_deferred_lease_termination_preserves_observation_contract(self) -> None:
+        """A failed termination probe must not crash the poll driver.
+
+        ``poll_workers`` reads ``observation["alive"]`` before it checks the
+        stage's stop flag.  The deferred-termination branch therefore has to
+        return the same liveness field as the normal observation path.
+        """
+        worker = {"pid": 1234, "status": "running", "process_activity_snapshot": {}}
+        state = {"queue": {"events": {}}}
+        poll_counts = {
+            "marker_updates": 0,
+            "commit_progress_updates": 0,
+            "lease_refreshes": 0,
+            "expired_lease_workers_failed": 0,
+        }
+        with (
+            mock.patch.object(supervisor, "update_worker_runtime_markers", return_value=False),
+            mock.patch.object(supervisor, "update_from_log", return_value=False),
+            mock.patch.object(supervisor, "pid_is_alive", return_value=True),
+            mock.patch.object(supervisor, "worker_process_activity_snapshot", return_value={}),
+            mock.patch.object(supervisor, "worker_lease_can_renew", return_value=False),
+            mock.patch.object(supervisor, "worker_lease_is_expired", return_value=True),
+            mock.patch.object(supervisor, "terminate_worker_pid", return_value=False),
+        ):
+            outcome = supervisor.poll_worker_observation_stage(
+                self.config,
+                state,
+                worker,
+                now=self.now,
+                active_worker_statuses={"running"},
+                poll_counts=poll_counts,
+            )
+
+        self.assertEqual(outcome, {"changed": False, "alive": True, "stop": True})
+
 
 class ProviderStreamLifecycleTests(unittest.TestCase):
     def test_antigravity_stream_progress_and_result_are_normalized_once(self) -> None:

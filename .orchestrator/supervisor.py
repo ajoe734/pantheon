@@ -9796,7 +9796,11 @@ def poll_worker_observation_stage(
         if not terminate_worker_pid(worker.get("pid")):
             # Deferred termination is confirmed after runtime admission. Keep
             # the worker nonterminal until a later cycle observes it gone.
-            return {"changed": changed, "stop": True}
+            # Preserve the observation contract even on this early return.
+            # The poll driver reads ``alive`` before honoring ``stop``; omitting
+            # it turns a normal deferred-termination observation into a
+            # supervisor-wide KeyError and skips worker reconciliation.
+            return {"changed": changed, "alive": alive, "stop": True}
         worker["status"] = "failed"
         # Classify the expired signal before recording this failure event:
         # last_event_at is a fallback work-progress timestamp, so advancing it
