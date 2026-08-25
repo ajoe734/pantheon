@@ -11,6 +11,7 @@ import os
 import subprocess
 import sys
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from uuid import uuid4
@@ -20,6 +21,7 @@ import pytest
 from services.trade_journey.lifecycle_projector import STABLE_IDENTITY_FIELDS
 from services.trade_journey.materializer import IDENTIFIER_FIELDS
 from services.trade_journey.projection_store import (
+    DEFAULT_PROJECTION_TIMEOUT_SECONDS,
     BatchProjectionMutation,
     ConflictingDuplicateException,
     ConcurrentReceiptClaimException,
@@ -1380,3 +1382,148 @@ def test_projection_store_default_connect_binds_psycopg() -> None:
         connect=None,
     )
     assert store._connect is psycopg.connect
+
+
+def test_projection_store_timeout_configuration_and_validation() -> None:
+    dsn = "postgresql://pantheon_app:pantheon_app@localhost:5432/pantheon"
+    # Default timeouts
+    store = ProjectionStore(dsn, connect=lambda *a, **kw: None)
+    assert store.connect_timeout_seconds == DEFAULT_PROJECTION_TIMEOUT_SECONDS
+    assert store.statement_timeout_seconds == DEFAULT_PROJECTION_TIMEOUT_SECONDS
+    assert store.lock_timeout_seconds == DEFAULT_PROJECTION_TIMEOUT_SECONDS
+
+    # Base timeout setting all 3
+    store = ProjectionStore(dsn, timeout_seconds=5.0, connect=lambda *a, **kw: None)
+    assert store.connect_timeout_seconds == 5.0
+    assert store.statement_timeout_seconds == 5.0
+    assert store.lock_timeout_seconds == 5.0
+
+    # Specific overrides
+    store = ProjectionStore(
+        dsn,
+        timeout_seconds=5.0,
+        connect_timeout_seconds=2.0,
+        statement_timeout_seconds=3.0,
+        lock_timeout_seconds=4.0,
+        connect=lambda *a, **kw: None,
+    )
+    assert store.connect_timeout_seconds == 2.0
+    assert store.statement_timeout_seconds == 3.0
+    assert store.lock_timeout_seconds == 4.0
+
+    # Validation errors
+    for invalid in (0, -1, -0.5, True, False, "invalid", float("nan"), float("inf")):
+        with pytest.raises(ValueError):
+            ProjectionStore(dsn, timeout_seconds=invalid, connect=lambda *a, **kw: None)
+        with pytest.raises(ValueError):
+            ProjectionStore(dsn, connect_timeout_seconds=invalid, connect=lambda *a, **kw: None)
+        with pytest.raises(ValueError):
+            ProjectionStore(dsn, statement_timeout_seconds=invalid, connect=lambda *a, **kw: None)
+        with pytest.raises(ValueError):
+            ProjectionStore(dsn, lock_timeout_seconds=invalid, connect=lambda *a, **kw: None)
+
+
+def test_projection_store_statement_timeout_cancels_long_query(postgres_dsn: str) -> None:
+    import psycopg
+
+    schema_name = f"test_proj_{uuid4().hex[:8]}"
+    store = ProjectionStore(
+        postgres_dsn,
+        schema=schema_name,
+        statement_timeout_seconds=0.2,
+        bootstrap=True,
+    )
+
+    # Executing a query exceeding statement timeout must raise QueryCanceled in < 1s
+    start_time = time.monotonic()
+    with pytest.raises(psycopg.errors.QueryCanceled):
+        with store._connect_db() as conn, conn.cursor() as cur:
+            cur.execute("SELECT pg_sleep(2.0)")
+    elapsed = time.monotonic() - start_time
+    assert elapsed < 1.5, f"statement timeout took too long: {elapsed}s"
+
+    with psycopg.connect(postgres_dsn) as conn, conn.cursor() as cur:
+        cur.execute(f"DROP SCHEMA IF EXISTS {schema_name} CASCADE")
+
+
+def test_projection_store_lock_timeout_cancels_blocked_lock(postgres_dsn: str) -> None:
+    import psycopg
+
+    schema_name = f"test_proj_{uuid4().hex[:8]}"
+    store = ProjectionStore(
+        postgres_dsn,
+        schema=schema_name,
+        lock_timeout_seconds=0.2,
+        bootstrap=True,
+    )
+
+    # Thread 1 holds exclusive lock on controller row FOR UPDATE
+    lock_acquired = threading.Event()
+    release_lock = threading.Event()
+
+    def hold_row_lock():
+        with psycopg.connect(postgres_dsn) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"INSERT INTO {schema_name}.controller (controller_id, tenant_scope, environment_scope, checkpoint_seq, source_high_watermark, backlog_count, projection_revision, deployment_sha, mode, status, accepted_live) VALUES ('ctrl-block', 't-1', 'paper', 0, 0, 0, 0, 'sha1', 'live', 'ready', true)"
+                )
+            conn.commit()
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"SELECT * FROM {schema_name}.controller WHERE controller_id='ctrl-block' FOR UPDATE"
+                )
+                lock_acquired.set()
+                release_lock.wait(timeout=5.0)
+            conn.commit()
+
+    t = threading.Thread(target=hold_row_lock)
+    t.start()
+    assert lock_acquired.wait(timeout=5.0)
+
+    now = datetime.now(timezone.utc)
+    mutation = BatchProjectionMutation(
+        receipts=[
+            EventReceiptRow(
+                "evt-1", 1, "fp-1", "t-1", "paper", "j-1", "", "opened", now, "applied", 1
+            )
+        ],
+        journeys=[
+            JourneyRow(
+                "t-1", "paper", "j-1", "open", {"opened": True}, False, now, now, 1, 1
+            )
+        ],
+        source_high_watermark=1,
+    )
+
+    # Thread 2 tries to execute batch transaction for ctrl-block; should hit lock_timeout and raise LockNotAvailable / QueryCanceled
+    start_time = time.monotonic()
+    with pytest.raises((psycopg.errors.LockNotAvailable, psycopg.errors.QueryCanceled)):
+        store.execute_batch_transaction("ctrl-block", "t-1", "paper", mutation)
+    elapsed = time.monotonic() - start_time
+    assert elapsed < 1.5, f"lock timeout took too long: {elapsed}s"
+
+    release_lock.set()
+    t.join()
+
+    with psycopg.connect(postgres_dsn) as conn, conn.cursor() as cur:
+        cur.execute(f"DROP SCHEMA IF EXISTS {schema_name} CASCADE")
+
+
+def test_projection_store_connect_fallback_sets_timeouts_on_custom_connector(postgres_dsn: str) -> None:
+    import psycopg
+
+    def custom_connector(dsn):
+        # Only accepts dsn, raising TypeError if kwargs passed
+        return psycopg.connect(dsn)
+
+    store = ProjectionStore(
+        postgres_dsn,
+        connect=custom_connector,
+        statement_timeout_seconds=2.5,
+        lock_timeout_seconds=1.5,
+    )
+    with store._connect_db() as conn, conn.cursor() as cur:
+        cur.execute("SHOW statement_timeout")
+        assert cur.fetchone()[0] == "2500ms"
+        cur.execute("SHOW lock_timeout")
+        assert cur.fetchone()[0] == "1500ms"

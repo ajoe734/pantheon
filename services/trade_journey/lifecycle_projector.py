@@ -49,6 +49,7 @@ PROJECTION_MODES = frozenset({"live", "recovery", "backfill", "replay"})
 DEFAULT_CHANNEL = "pantheon_lifecycle_events"
 DEFAULT_SOURCE_STARTUP_TIMEOUT_SECONDS = 10.0
 DEFAULT_SOURCE_TIMEOUT_SECONDS = 10.0
+DEFAULT_PROJECTION_TIMEOUT_SECONDS = 10.0
 RELATIONAL_WRITER_BACKEND_ENV = "LIFECYCLE_PROJECTOR_WRITER_BACKEND"
 RELATIONAL_WRITER_DSN_ENV = "LIFECYCLE_PROJECTOR_PROJECTION_DSN"
 RELATIONAL_WRITER_SCHEMA_ENV = "LIFECYCLE_PROJECTOR_PROJECTION_SCHEMA"
@@ -1423,10 +1424,55 @@ def _configured_relational_projector() -> RelationalLifecycleProjector:
         raise RuntimeError(
             f"{RELATIONAL_WRITER_DSN_ENV} or TELEMETRY_DB_DSN is required for relational writing"
         )
+    source_timeout_raw = (
+        os.getenv("LIFECYCLE_PROJECTOR_PROJECTION_TIMEOUT_SECONDS")
+        or os.getenv("LIFECYCLE_PROJECTOR_DB_TIMEOUT_SECONDS")
+        or os.getenv("LIFECYCLE_PROJECTOR_SOURCE_TIMEOUT_SECONDS")
+        or ""
+    )
+    projection_timeout = _validate_source_timeout(
+        source_timeout_raw,
+        name="LIFECYCLE_PROJECTOR_PROJECTION_TIMEOUT_SECONDS",
+        default=DEFAULT_PROJECTION_TIMEOUT_SECONDS,
+    )
+    connect_timeout_raw = os.getenv("LIFECYCLE_PROJECTOR_PROJECTION_CONNECT_TIMEOUT_SECONDS", "")
+    connect_timeout = (
+        _validate_source_timeout(
+            connect_timeout_raw,
+            name="LIFECYCLE_PROJECTOR_PROJECTION_CONNECT_TIMEOUT_SECONDS",
+            default=projection_timeout,
+        )
+        if connect_timeout_raw.strip()
+        else projection_timeout
+    )
+    statement_timeout_raw = os.getenv("LIFECYCLE_PROJECTOR_PROJECTION_STATEMENT_TIMEOUT_SECONDS", "")
+    statement_timeout = (
+        _validate_source_timeout(
+            statement_timeout_raw,
+            name="LIFECYCLE_PROJECTOR_PROJECTION_STATEMENT_TIMEOUT_SECONDS",
+            default=projection_timeout,
+        )
+        if statement_timeout_raw.strip()
+        else projection_timeout
+    )
+    lock_timeout_raw = os.getenv("LIFECYCLE_PROJECTOR_PROJECTION_LOCK_TIMEOUT_SECONDS", "")
+    lock_timeout = (
+        _validate_source_timeout(
+            lock_timeout_raw,
+            name="LIFECYCLE_PROJECTOR_PROJECTION_LOCK_TIMEOUT_SECONDS",
+            default=projection_timeout,
+        )
+        if lock_timeout_raw.strip()
+        else projection_timeout
+    )
     store = ProjectionStore(
         dsn,
         schema=os.getenv(RELATIONAL_WRITER_SCHEMA_ENV, RELATIONAL_WRITER_DEFAULT_SCHEMA),
         bootstrap=False,
+        timeout_seconds=projection_timeout,
+        connect_timeout_seconds=connect_timeout,
+        statement_timeout_seconds=statement_timeout,
+        lock_timeout_seconds=lock_timeout,
     )
     return RelationalLifecycleProjector(
         store,

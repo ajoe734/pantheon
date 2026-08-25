@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import math
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -18,11 +19,39 @@ from typing import Any, Callable, Mapping, Optional
 logger = logging.getLogger(__name__)
 
 DEFAULT_PROJECTION_SCHEMA = "trade_journey_projection"
+DEFAULT_PROJECTION_TIMEOUT_SECONDS = 10.0
+DEFAULT_PROJECTION_CONNECT_TIMEOUT_SECONDS = 10.0
+DEFAULT_PROJECTION_STATEMENT_TIMEOUT_SECONDS = 10.0
+DEFAULT_PROJECTION_LOCK_TIMEOUT_SECONDS = 10.0
 INITIAL_MIGRATION_PATH = (
     Path(__file__).resolve().parent
     / "migrations"
     / "001_create_trade_journey_projection_schema.sql"
 )
+
+
+def _validate_timeout(
+    value: Any,
+    *,
+    name: str = "timeout_seconds",
+    default: float = DEFAULT_PROJECTION_TIMEOUT_SECONDS,
+) -> float:
+    if value is None:
+        return float(default)
+    if isinstance(value, str):
+        stripped = value.strip()
+        if not stripped:
+            return float(default)
+        value = stripped
+    if isinstance(value, bool):
+        raise ValueError(f"{name} must be a finite positive number (got {value!r})")
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{name} must be a finite positive number (got {value!r})") from exc
+    if not math.isfinite(parsed) or parsed <= 0.0:
+        raise ValueError(f"{name} must be a finite positive number (got {value!r})")
+    return parsed
 
 
 def controller_advisory_lock_id(
@@ -220,6 +249,10 @@ class ProjectionStore:
         schema: str = DEFAULT_PROJECTION_SCHEMA,
         connect: Optional[Callable[..., Any]] = None,
         bootstrap: bool = False,
+        timeout_seconds: float | None = None,
+        connect_timeout_seconds: float | None = None,
+        statement_timeout_seconds: float | None = None,
+        lock_timeout_seconds: float | None = None,
     ) -> None:
         if not dsn:
             raise ValueError("Postgres DSN is required for ProjectionStore")
@@ -227,6 +260,30 @@ class ProjectionStore:
             raise ValueError("Invalid schema name for ProjectionStore")
         self.dsn = dsn
         self.schema = schema
+        base_timeout = (
+            _validate_timeout(
+                timeout_seconds,
+                name="timeout_seconds",
+                default=DEFAULT_PROJECTION_TIMEOUT_SECONDS,
+            )
+            if timeout_seconds is not None
+            else DEFAULT_PROJECTION_TIMEOUT_SECONDS
+        )
+        self.connect_timeout_seconds = _validate_timeout(
+            connect_timeout_seconds,
+            name="connect_timeout_seconds",
+            default=base_timeout,
+        )
+        self.statement_timeout_seconds = _validate_timeout(
+            statement_timeout_seconds,
+            name="statement_timeout_seconds",
+            default=base_timeout,
+        )
+        self.lock_timeout_seconds = _validate_timeout(
+            lock_timeout_seconds,
+            name="lock_timeout_seconds",
+            default=base_timeout,
+        )
         if connect is None:
             try:
                 import psycopg  # type: ignore[import]
@@ -237,12 +294,31 @@ class ProjectionStore:
         if bootstrap:
             self.bootstrap_schema()
 
+    def _connect_db(self) -> Any:
+        statement_timeout_ms = int(math.ceil(self.statement_timeout_seconds * 1000.0))
+        lock_timeout_ms = int(math.ceil(self.lock_timeout_seconds * 1000.0))
+        connect_timeout_s = int(math.ceil(self.connect_timeout_seconds))
+        options = f"-c statement_timeout={statement_timeout_ms} -c lock_timeout={lock_timeout_ms}"
+        try:
+            return self._connect(
+                self.dsn,
+                connect_timeout=connect_timeout_s,
+                options=options,
+            )
+        except TypeError:
+            conn = self._connect(self.dsn)
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"SET statement_timeout = {statement_timeout_ms}; SET lock_timeout = {lock_timeout_ms};"
+                )
+            return conn
+
     def bootstrap_schema(self) -> None:
         """Apply the versioned migration explicitly with migration credentials."""
 
         sql = INITIAL_MIGRATION_PATH.read_text(encoding="utf-8")
         sql = sql.replace(DEFAULT_PROJECTION_SCHEMA, self.schema)
-        with self._connect(self.dsn) as conn, conn.cursor() as cur:
+        with self._connect_db() as conn, conn.cursor() as cur:
             cur.execute(sql)
 
     def get_controller_state(
@@ -258,7 +334,7 @@ class ProjectionStore:
         FROM {self.schema}.controller
         WHERE controller_id=%s AND tenant_scope=%s AND environment_scope=%s
         """
-        with self._connect(self.dsn) as conn, conn.cursor() as cur:
+        with self._connect_db() as conn, conn.cursor() as cur:
             cur.execute(sql, (controller_id, tenant_scope, environment_scope))
             row = cur.fetchone()
             if not row:
@@ -334,7 +410,7 @@ class ProjectionStore:
             environment_scope,
         )
 
-        with self._connect(self.dsn) as conn, conn.cursor() as cur:
+        with self._connect_db() as conn, conn.cursor() as cur:
             # Stable lock order prevents an accidental concurrent shadow start
             # from racing the baseline adoption.
             lock_ids = sorted(
@@ -504,7 +580,7 @@ class ProjectionStore:
         SELECT journey_id FROM {self.schema}.identity_links
         WHERE tenant_id=%s AND environment=%s AND identifier_type=%s AND identifier_value=%s
         """
-        with self._connect(self.dsn) as conn, conn.cursor() as cur:
+        with self._connect_db() as conn, conn.cursor() as cur:
             cur.execute(sql, (tenant_id, environment, identifier_type, identifier_value))
             row = cur.fetchone()
             return row[0] if row else None
@@ -532,7 +608,7 @@ class ProjectionStore:
         WHERE event_id = ANY(%s)
         ORDER BY event_id
         """
-        with self._connect(self.dsn) as conn, conn.cursor() as cur:
+        with self._connect_db() as conn, conn.cursor() as cur:
             cur.execute(sql, (list(requested),))
             return {str(row[0]): EventReceiptRow(*row) for row in cur.fetchall()}
 
@@ -598,7 +674,7 @@ class ProjectionStore:
                  stage.event_sequence, stage.stage_ordinal, stage.occurred_at,
                  stage.source_ingested_seq, stage.source_event_id
         """
-        with self._connect(self.dsn) as conn, conn.cursor() as cur:
+        with self._connect_db() as conn, conn.cursor() as cur:
             cur.execute(sql, (list(tenant_ids), list(environments), list(journey_ids)))
             rows = cur.fetchall()
         for row in rows:
@@ -739,7 +815,7 @@ class ProjectionStore:
             controller_id, tenant_scope, environment_scope
         )
 
-        with self._connect(self.dsn) as conn:
+        with self._connect_db() as conn:
             with conn.cursor() as cur:
                 # 1. Non-blocking advisory lock
                 cur.execute("SELECT pg_try_advisory_xact_lock(%s)", (lock_id,))

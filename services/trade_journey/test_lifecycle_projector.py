@@ -1315,3 +1315,126 @@ def test_run_worker_rejects_invalid_timeout_env_vars(
 
     with pytest.raises(ValueError, match=f"{expected_name} must be a finite positive number"):
         asyncio.run(lifecycle_projector_module.run_worker())
+
+
+def test_configured_relational_projector_binds_projection_timeouts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("TELEMETRY_DB_DSN", "postgresql://pantheon_app:pantheon_app@localhost:5432/pantheon")
+    monkeypatch.setenv("LIFECYCLE_PROJECTOR_PROJECTION_TIMEOUT_SECONDS", "8.0")
+    monkeypatch.setenv("LIFECYCLE_PROJECTOR_PROJECTION_CONNECT_TIMEOUT_SECONDS", "3.5")
+    monkeypatch.setenv("LIFECYCLE_PROJECTOR_PROJECTION_STATEMENT_TIMEOUT_SECONDS", "4.5")
+    monkeypatch.setenv("LIFECYCLE_PROJECTOR_PROJECTION_LOCK_TIMEOUT_SECONDS", "2.5")
+
+    captured_kwargs: dict[str, object] = {}
+
+    def mock_store_init(self, *args, **kwargs):
+        captured_kwargs.update(kwargs)
+        self.dsn = args[0] if args else kwargs.get("dsn", "")
+        self.schema = kwargs.get("schema", "trade_journey_projection")
+        self.connect_timeout_seconds = kwargs.get("connect_timeout_seconds", 10.0)
+        self.statement_timeout_seconds = kwargs.get("statement_timeout_seconds", 10.0)
+        self.lock_timeout_seconds = kwargs.get("lock_timeout_seconds", 10.0)
+        self._connect = lambda *a, **kw: None
+
+    monkeypatch.setattr(ProjectionStore, "__init__", mock_store_init)
+    monkeypatch.setattr(
+        ProjectionStore,
+        "get_controller_state",
+        lambda *a, **kw: None,
+    )
+
+    projector = lifecycle_projector_module._configured_relational_projector()
+    assert captured_kwargs["timeout_seconds"] == 8.0
+    assert captured_kwargs["connect_timeout_seconds"] == 3.5
+    assert captured_kwargs["statement_timeout_seconds"] == 4.5
+    assert captured_kwargs["lock_timeout_seconds"] == 2.5
+    assert projector.store.connect_timeout_seconds == 3.5
+    assert projector.store.statement_timeout_seconds == 4.5
+    assert projector.store.lock_timeout_seconds == 2.5
+
+
+def test_run_worker_recovers_after_projection_store_timeout_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = _RecordingRelationalStore()
+    projector = RelationalLifecycleProjector(
+        store, deployment_sha="timeout-recovery-sha", clock=lambda: NOW
+    )
+
+    class StubSource:
+        async def verify_read_contract(self) -> None:
+            return None
+
+        async def high_watermark(self) -> int:
+            return 1
+
+        async def start_listener(self) -> None:
+            return None
+
+        async def fetch_after(self, checkpoint: int, *, limit: int) -> list[dict]:
+            if checkpoint >= 1:
+                return []
+            return lifecycle_rows()[:1]
+
+        async def wait(self, timeout: float) -> None:
+            return None
+
+        async def close(self) -> None:
+            return None
+
+    call_count = 0
+    orig_project_records = projector.project_records
+
+    def failing_project_records(*args, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            raise TimeoutError("canceling statement due to statement timeout (10.0s)")
+        return orig_project_records(*args, **kwargs)
+
+    monkeypatch.setattr(projector, "project_records", failing_project_records)
+    monkeypatch.setattr(
+        lifecycle_projector_module,
+        "_configured_relational_projector",
+        lambda: projector,
+    )
+    monkeypatch.setattr(
+        lifecycle_projector_module,
+        "PostgresLifecycleSource",
+        lambda *args, **kwargs: StubSource(),
+    )
+    monkeypatch.setenv("TELEMETRY_DB_DSN", "postgresql://unit")
+    monkeypatch.setenv("LIFECYCLE_PROJECTOR_MAX_TICKS", "3")
+    monkeypatch.setenv("GIT_SHA", "timeout-recovery-sha")
+
+    assert asyncio.run(lifecycle_projector_module.run_worker()) == 0
+    assert call_count == 2
+    ctrl = projector.controller
+    assert ctrl["checkpoint"] == 1
+    assert ctrl["status"] == "ready"
+    assert ctrl["accepted_live"] is True
+    assert ctrl["last_error"] is None
+
+
+@pytest.mark.parametrize(
+    ("env_var", "invalid_value"),
+    [
+        ("LIFECYCLE_PROJECTOR_PROJECTION_TIMEOUT_SECONDS", "inf"),
+        ("LIFECYCLE_PROJECTOR_PROJECTION_TIMEOUT_SECONDS", "0"),
+        ("LIFECYCLE_PROJECTOR_PROJECTION_TIMEOUT_SECONDS", "-1.0"),
+        ("LIFECYCLE_PROJECTOR_PROJECTION_CONNECT_TIMEOUT_SECONDS", "nan"),
+        ("LIFECYCLE_PROJECTOR_PROJECTION_STATEMENT_TIMEOUT_SECONDS", "0"),
+        ("LIFECYCLE_PROJECTOR_PROJECTION_LOCK_TIMEOUT_SECONDS", "-5"),
+    ],
+)
+def test_configured_relational_projector_rejects_invalid_timeout_env_vars(
+    monkeypatch: pytest.MonkeyPatch,
+    env_var: str,
+    invalid_value: str,
+) -> None:
+    monkeypatch.setenv("TELEMETRY_DB_DSN", "postgresql://unit")
+    monkeypatch.setenv(env_var, invalid_value)
+
+    with pytest.raises(ValueError, match="must be a finite positive number"):
+        lifecycle_projector_module._configured_relational_projector()
