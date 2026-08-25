@@ -71,6 +71,9 @@ def test_nonprod_deploy_prunes_dev_docker_storage_before_root_build() -> None:
     deploy = _read("scripts/deploy_nonprod_vm.sh")
 
     assert "PANTHEON_DEV_DOCKER_PRUNE" in deploy
+    assert 'PANTHEON_DEV_DOCKER_PRUNE="${PANTHEON_DEV_DOCKER_PRUNE:-false}"' in deploy
+    assert 'PANTHEON_DEV_DOCKER_PRUNE=$(shell_quote "${PANTHEON_DEV_DOCKER_PRUNE:-false}")' in deploy
+    assert 'PANTHEON_DEV_DOCKER_PRUNE:-false' in deploy
     assert "run_bounded_docker_prune()" in deploy
     assert 'timeout --signal=TERM --kill-after=10s' in deploy
     assert "PANTHEON_DEV_DOCKER_PRUNE_TIMEOUT_SECONDS" in deploy
