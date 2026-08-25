@@ -105,9 +105,20 @@ def classify_readiness(
                 )
         if (
             projector.get("ready") is not True
-            or projector.get("status") != "ok"
+            # The BFF readiness contract names the accepted projector state
+            # ``ready``.  Older probe fixtures used ``ok`` here, so accept
+            # both spellings while keeping the explicit ready boolean gate.
+            or projector.get("status") not in {"ok", "ready"}
             or projector.get("worker_status") != "ready"
-            or projector.get("controller_status") != "ready"
+            or (
+                projector.get("controller_status")
+                or (
+                    (projector.get("controller") or {}).get("status")
+                    if isinstance(projector.get("controller"), dict)
+                    else None
+                )
+            )
+            != "ready"
             or projector.get("mode") != "live"
             or projector.get("accepted_live") is not True
             or list(projector.get("reasons") or [])
