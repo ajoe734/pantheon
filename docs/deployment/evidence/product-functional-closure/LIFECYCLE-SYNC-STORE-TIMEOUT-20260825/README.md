@@ -32,10 +32,16 @@ This task bounds all synchronous `ProjectionStore` database operations with conf
    - `test_projection_store_blocked_connect_timeout_on_fallback`: proves deterministic timeout failure (< 0.5s) on blocked custom connector taking only dsn.
    - `test_projection_store_blocked_connect_timeout_on_kwargs_connector`: proves deterministic timeout failure (< 0.5s) on blocked custom connector taking kwargs.
    - `test_projection_store_internal_type_error_not_swallowed_or_retried`: proves internal `TypeError` is not swallowed or retried.
+   - `test_projection_store_internal_type_error_ambiguous_text_single_attempt`: proves ambiguous internal `TypeError` containing 'takes' or 'positional argument' executes exactly one attempt without fallback retry.
+   - `test_projection_store_internal_type_error_nested_callee_single_attempt`: proves internal `TypeError` from nested callee is not treated as signature mismatch.
+   - `test_projection_store_blocked_connect_does_not_hang_process_exit`: proves daemon worker thread does not block Python interpreter shutdown or require process timeout kill.
+   - `test_projection_store_late_connection_is_closed_after_timeout`: proves late connection returned by slow connector after timeout deadline is closed without resource leak.
    - `test_projection_store_blocked_connect_error_propagation_on_fallback`: proves error propagation on fallback custom connectors.
    - `test_projection_store_statement_timeout_cancels_long_query`: proves PostgreSQL statement cancellation via `QueryCanceled` within configured deadline.
    - `test_projection_store_lock_timeout_cancels_blocked_lock`: proves blocked row/advisory locks cancel via `LockNotAvailable` / `QueryCanceled` within configured deadline.
    - `test_projection_store_connect_fallback_sets_timeouts_on_custom_connector`: proves fallback session timeout configuration on custom connectors.
    - `test_configured_relational_projector_binds_projection_timeouts`: proves environment variable threading to `ProjectionStore`.
-   - `test_run_worker_recovers_after_projection_store_timeout_failure`: proves intermediate failure mutation records degraded/failed status and error message without premature checkpoint advancement, followed by recovery and steady-state live poll transitions.
+   - `test_run_worker_recovers_after_startup_projector_timeout_failure`: proves worker startup timeout error is caught, logged, and recovered on subsequent tick without crashing worker loop.
+   - `test_run_worker_recovers_after_blocked_store_batch_timeout`: proves batch projection timeout causes durable failure mutation without premature checkpoint advancement, followed by recovery and steady-state live poll transitions.
+   - `test_run_worker_recovers_after_projection_store_timeout_failure`: proves projector recovery after statement timeout failure.
    - `test_configured_relational_projector_rejects_invalid_timeout_env_vars`: proves validation of invalid environment variable values.

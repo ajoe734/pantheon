@@ -1360,6 +1360,145 @@ def test_configured_relational_projector_binds_projection_timeouts(
     assert projector.store.lock_timeout_seconds == 2.5
 
 
+def test_run_worker_recovers_after_startup_projector_timeout_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = _RecordingRelationalStore()
+    projector = RelationalLifecycleProjector(
+        store, deployment_sha="startup-timeout-sha", clock=lambda: NOW
+    )
+
+    class StubSource:
+        async def verify_read_contract(self) -> None:
+            return None
+
+        async def high_watermark(self) -> int:
+            return 1
+
+        async def start_listener(self) -> None:
+            return None
+
+        async def fetch_after(self, checkpoint: int, *, limit: int) -> list[dict]:
+            if checkpoint >= 1:
+                return []
+            return lifecycle_rows()[:1]
+
+        async def wait(self, timeout: float) -> None:
+            return None
+
+        async def close(self) -> None:
+            return None
+
+    startup_attempts = 0
+
+    def mock_configured_projector():
+        nonlocal startup_attempts
+        startup_attempts += 1
+        if startup_attempts == 1:
+            raise TimeoutError("ProjectionStore connection to database timed out after 10.0s")
+        return projector
+
+    monkeypatch.setattr(
+        lifecycle_projector_module,
+        "_configured_relational_projector",
+        mock_configured_projector,
+    )
+    monkeypatch.setattr(
+        lifecycle_projector_module,
+        "PostgresLifecycleSource",
+        lambda *args, **kwargs: StubSource(),
+    )
+    monkeypatch.setenv("TELEMETRY_DB_DSN", "postgresql://unit")
+    monkeypatch.setenv("LIFECYCLE_PROJECTOR_MAX_TICKS", "3")
+    monkeypatch.setenv("GIT_SHA", "startup-timeout-sha")
+
+    assert asyncio.run(lifecycle_projector_module.run_worker()) == 0
+    assert startup_attempts == 2
+    assert projector.checkpoint == 1
+    assert projector.controller["status"] == "ready"
+    assert projector.controller["accepted_live"] is True
+
+
+def test_run_worker_recovers_after_blocked_store_batch_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = _RecordingRelationalStore()
+    projector = RelationalLifecycleProjector(
+        store, deployment_sha="batch-timeout-sha", clock=lambda: NOW
+    )
+
+    class StubSource:
+        async def verify_read_contract(self) -> None:
+            return None
+
+        async def high_watermark(self) -> int:
+            return 1
+
+        async def start_listener(self) -> None:
+            return None
+
+        async def fetch_after(self, checkpoint: int, *, limit: int) -> list[dict]:
+            if checkpoint >= 1:
+                return []
+            return lifecycle_rows()[:1]
+
+        async def wait(self, timeout: float) -> None:
+            return None
+
+        async def close(self) -> None:
+            return None
+
+    orig_exec_batch = store.execute_batch_transaction
+    batch_call_count = 0
+
+    def mock_execute_batch_transaction(controller_id, tenant_scope, environment_scope, mutation):
+        nonlocal batch_call_count
+        if mutation.receipts:
+            batch_call_count += 1
+            if batch_call_count == 1:
+                raise TimeoutError("ProjectionStore connection to database timed out after 10.0s")
+        return orig_exec_batch(controller_id, tenant_scope, environment_scope, mutation)
+
+    monkeypatch.setattr(store, "execute_batch_transaction", mock_execute_batch_transaction)
+    monkeypatch.setattr(
+        lifecycle_projector_module,
+        "_configured_relational_projector",
+        lambda: projector,
+    )
+    monkeypatch.setattr(
+        lifecycle_projector_module,
+        "PostgresLifecycleSource",
+        lambda *args, **kwargs: StubSource(),
+    )
+    monkeypatch.setenv("TELEMETRY_DB_DSN", "postgresql://unit")
+    monkeypatch.setenv("LIFECYCLE_PROJECTOR_MAX_TICKS", "3")
+    monkeypatch.setenv("GIT_SHA", "batch-timeout-sha")
+
+    assert asyncio.run(lifecycle_projector_module.run_worker()) == 0
+    assert batch_call_count == 2
+
+    assert len(store.mutations) == 3
+    failure_mutation = store.mutations[0]
+    assert failure_mutation.status == "failed"
+    assert failure_mutation.accepted_live is False
+    assert (
+        "TimeoutError: ProjectionStore connection to database timed out after 10.0s"
+        in failure_mutation.error_message
+    )
+
+    recovery_mutation = store.mutations[1]
+    assert recovery_mutation.status == "recovering"
+    assert recovery_mutation.mode == "recovery"
+    assert len(recovery_mutation.receipts) == 1
+
+    poll_mutation = store.mutations[2]
+    assert poll_mutation.status == "ready"
+    assert poll_mutation.mode == "live"
+    assert poll_mutation.accepted_live is True
+    assert projector.checkpoint == 1
+    assert projector.controller["status"] == "ready"
+
+
 def test_run_worker_recovers_after_projection_store_timeout_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

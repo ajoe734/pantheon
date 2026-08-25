@@ -1427,11 +1427,15 @@ def test_projection_store_statement_timeout_cancels_long_query(postgres_dsn: str
     import psycopg
 
     schema_name = f"test_proj_{uuid4().hex[:8]}"
+    bootstrap_store = ProjectionStore(
+        postgres_dsn,
+        schema=schema_name,
+        bootstrap=True,
+    )
     store = ProjectionStore(
         postgres_dsn,
         schema=schema_name,
         statement_timeout_seconds=0.2,
-        bootstrap=True,
     )
 
     # Executing a query exceeding statement timeout must raise QueryCanceled in < 1s
@@ -1450,11 +1454,15 @@ def test_projection_store_lock_timeout_cancels_blocked_lock(postgres_dsn: str) -
     import psycopg
 
     schema_name = f"test_proj_{uuid4().hex[:8]}"
+    bootstrap_store = ProjectionStore(
+        postgres_dsn,
+        schema=schema_name,
+        bootstrap=True,
+    )
     store = ProjectionStore(
         postgres_dsn,
         schema=schema_name,
         lock_timeout_seconds=0.2,
-        bootstrap=True,
     )
 
     # Thread 1 holds exclusive lock on controller row FOR UPDATE
@@ -1582,6 +1590,103 @@ def test_projection_store_internal_type_error_not_swallowed_or_retried() -> None
     with pytest.raises(TypeError, match="internal TypeError: unsupported operand type"):
         store._connect_db()
     assert attempt_count == 1, "buggy connector should not have been retried"
+
+
+def test_projection_store_internal_type_error_ambiguous_text_single_attempt() -> None:
+    attempt_count = 0
+
+    def buggy_connector(dsn, **kwargs):
+        nonlocal attempt_count
+        attempt_count += 1
+        # Ambiguous message containing 'takes' and 'positional argument'
+        raise TypeError("calculation takes too long with positional argument values")
+
+    store = ProjectionStore(
+        "postgresql://unit/pantheon",
+        connect=buggy_connector,
+        connect_timeout_seconds=1.0,
+    )
+    with pytest.raises(TypeError, match="calculation takes too long"):
+        store._connect_db()
+    assert attempt_count == 1, "connector with internal TypeError should have exactly 1 attempt"
+
+
+def test_projection_store_internal_type_error_nested_callee_single_attempt() -> None:
+    attempt_count = 0
+
+    def inner_helper(x):
+        raise TypeError(f"takes 0 positional arguments but 1 was given in {x}")
+
+    def buggy_connector(dsn, **kwargs):
+        nonlocal attempt_count
+        attempt_count += 1
+        return inner_helper("calc")
+
+    store = ProjectionStore(
+        "postgresql://unit/pantheon",
+        connect=buggy_connector,
+        connect_timeout_seconds=1.0,
+    )
+    with pytest.raises(TypeError, match="takes 0 positional arguments"):
+        store._connect_db()
+    assert attempt_count == 1, "nested callee TypeError should have exactly 1 attempt"
+
+
+def test_projection_store_blocked_connect_does_not_hang_process_exit() -> None:
+    script = """
+import sys
+import time
+from services.trade_journey.projection_store import ProjectionStore
+
+def blocked_connect(dsn, **kwargs):
+    time.sleep(60.0)
+    return None
+
+store = ProjectionStore(
+    "postgresql://unit/pantheon",
+    connect=blocked_connect,
+    connect_timeout_seconds=0.05,
+)
+try:
+    store._connect_db()
+except TimeoutError:
+    sys.exit(0)
+sys.exit(1)
+"""
+    start_time = time.monotonic()
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        capture_output=True,
+        text=True,
+        timeout=3.0,
+    )
+    elapsed = time.monotonic() - start_time
+    assert result.returncode == 0
+    assert elapsed < 2.0, f"process exit took too long: {elapsed}s"
+
+
+def test_projection_store_late_connection_is_closed_after_timeout() -> None:
+    closed_event = threading.Event()
+
+    class FakeConn:
+        def close(self):
+            closed_event.set()
+
+    def slow_connect(dsn, **kwargs):
+        time.sleep(0.15)
+        return FakeConn()
+
+    store = ProjectionStore(
+        "postgresql://unit/pantheon",
+        connect=slow_connect,
+        connect_timeout_seconds=0.05,
+    )
+    start_time = time.monotonic()
+    with pytest.raises(TimeoutError, match="timed out after 0.05s"):
+        store._connect_db()
+    elapsed = time.monotonic() - start_time
+    assert elapsed < 0.2
+    assert closed_event.wait(timeout=1.0), "late connection was not closed"
 
 
 def test_projection_store_connect_timeout_fails_within_deadline() -> None:

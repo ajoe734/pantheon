@@ -13,6 +13,7 @@ import inspect
 import json
 import logging
 import math
+import threading
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -65,6 +66,29 @@ def _can_accept_kwargs(func: Any) -> bool:
         return "connect_timeout" in sig.parameters and "options" in sig.parameters
     except (ValueError, TypeError):
         return True
+
+
+def _is_signature_mismatch_error(exc: TypeError, func: Any) -> bool:
+    tb = exc.__traceback__
+    if tb is not None and tb.tb_next is not None:
+        # The exception was raised inside the Python function body, not by argument binding
+        return False
+    msg = str(exc)
+    name = getattr(func, "__name__", "")
+    patterns = (
+        "unexpected keyword argument",
+        "invalid keyword argument",
+        "takes no keyword arguments",
+        "takes at most",
+        "takes no arguments",
+    )
+    if any(p in msg for p in patterns):
+        return True
+    if name and f"{name}() takes" in msg:
+        return True
+    if "positional argument" in msg and "takes" in msg:
+        return True
+    return False
 
 
 def controller_advisory_lock_id(
@@ -313,44 +337,60 @@ class ProjectionStore:
         connect_timeout_s = max(1, int(math.ceil(self.connect_timeout_seconds)))
         options = f"-c statement_timeout={statement_timeout_ms} -c lock_timeout={lock_timeout_ms}"
 
-        def _do_connect() -> Any:
-            can_kwargs = _can_accept_kwargs(self._connect)
-            if can_kwargs:
-                try:
-                    return self._connect(
-                        self.dsn,
-                        connect_timeout=connect_timeout_s,
-                        options=options,
-                    )
-                except TypeError as exc:
-                    msg = str(exc)
-                    if (
-                        "unexpected keyword argument" not in msg
-                        and "takes" not in msg
-                        and "positional argument" not in msg
-                    ):
-                        raise
+        result: list[Any] = []
+        error: list[BaseException] = []
+        done = threading.Event()
+        timed_out = threading.Event()
 
-            conn = self._connect(self.dsn)
-            with conn.cursor() as cur:
-                cur.execute(
-                    f"SET statement_timeout = {statement_timeout_ms}; SET lock_timeout = {lock_timeout_ms};"
-                )
-            return conn
-
-        executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
-        try:
-            future = executor.submit(_do_connect)
+        def _worker() -> None:
+            conn = None
             try:
-                return future.result(timeout=self.connect_timeout_seconds)
-            except TimeoutError as exc:
-                if not future.done():
-                    raise TimeoutError(
-                        f"ProjectionStore connection to database timed out after {self.connect_timeout_seconds}s"
-                    ) from exc
-                raise
-        finally:
-            executor.shutdown(wait=False, cancel_futures=True)
+                can_kwargs = _can_accept_kwargs(self._connect)
+                if can_kwargs:
+                    try:
+                        conn = self._connect(
+                            self.dsn,
+                            connect_timeout=connect_timeout_s,
+                            options=options,
+                        )
+                    except TypeError as exc:
+                        if not _is_signature_mismatch_error(exc, self._connect):
+                            raise
+                        conn = None
+
+                if conn is None:
+                    conn = self._connect(self.dsn)
+                    with conn.cursor() as cur:
+                        cur.execute(
+                            f"SET statement_timeout = {statement_timeout_ms}; SET lock_timeout = {lock_timeout_ms};"
+                        )
+
+                if timed_out.is_set():
+                    try:
+                        conn.close()
+                    except Exception:
+                        pass
+                    return
+
+                result.append(conn)
+            except BaseException as exc:
+                if not timed_out.is_set():
+                    error.append(exc)
+            finally:
+                done.set()
+
+        t = threading.Thread(target=_worker, daemon=True, name="projection-store-connect")
+        t.start()
+
+        if not done.wait(timeout=self.connect_timeout_seconds):
+            timed_out.set()
+            raise TimeoutError(
+                f"ProjectionStore connection to database timed out after {self.connect_timeout_seconds}s"
+            )
+
+        if error:
+            raise error[0]
+        return result[0]
 
     def bootstrap_schema(self) -> None:
         """Apply the versioned migration explicitly with migration credentials."""

@@ -1390,6 +1390,14 @@ class PostgresLifecycleSource:
 
 
 def _record_worker_failure(projector: Any, error: BaseException) -> bool:
+    if projector is None:
+        print(
+            "lifecycle projector startup failed; retaining worker for retry: "
+            f"{type(error).__name__}: {error}",
+            file=sys.stderr,
+            flush=True,
+        )
+        return False
     error_message = f"{type(error).__name__}: {error}"
     try:
         projector.record_source_failure(error_message)
@@ -1484,7 +1492,6 @@ async def run_worker() -> int:
     dsn = os.getenv("TELEMETRY_DB_DSN", "").strip()
     if not dsn:
         raise RuntimeError("TELEMETRY_DB_DSN is required")
-    projector = _configured_relational_projector()
     source_timeout_raw = (
         os.getenv("LIFECYCLE_PROJECTOR_SOURCE_TIMEOUT_SECONDS")
         or os.getenv("LIFECYCLE_PROJECTOR_DB_TIMEOUT_SECONDS")
@@ -1513,10 +1520,13 @@ async def run_worker() -> int:
     tick = 0
     recovery_target = 0
     source_ready = False
+    projector: RelationalLifecycleProjector | None = None
     try:
         while True:
             tick += 1
             try:
+                if projector is None:
+                    projector = _configured_relational_projector()
                 if not source_ready:
                     await source.verify_read_contract()
                     recovery_target = await source.high_watermark()
@@ -1535,6 +1545,8 @@ async def run_worker() -> int:
                     )
                 if projector.checkpoint >= recovery_target:
                     recovery_target = projector.checkpoint
+            except (RuntimeError, ValueError):
+                raise
             except Exception as exc:  # noqa: BLE001 - durable controller records failure
                 _record_worker_failure(projector, exc)
                 if not source_ready:

@@ -48,6 +48,7 @@
     "workflow_file": ".github/workflows/nonprod-deploy.yml",
     "workflow_run_id": "32794526552",
     "workflow_run_url": "https://github.com/ajoe734/pantheon/actions/runs/32794526552",
+    "dispatched_dev_sha": "209fcc7f50bd6c206d1ced62124163a82ca85e18",
     "deployed_backend_sha": "40de8fcb1c69fad0bf5e54d4c0bd6e508c9162e0",
     "paired_frontend_sha": "cc4007f7f78a31c73548ce85457af17a45a4c4b9",
     "paired_frontend_gate_run_id": "32679780054",
@@ -154,13 +155,13 @@
     "expected_frontend_sha": "cc4007f7f78a31c73548ce85457af17a45a4c4b9",
     "source_ingestion_posture": "reconcile_only (MAX_TICKS=0)",
     "live_capital_posture": "fail-closed / disabled",
-    "rollback_evidence": "Workflow run 32794526552 proved automatic compensation to verified baseline SHA 40de8fcb1c69fad0bf5e54d4c0bd6e508c9162e0 with read-only standby profile preserved and live capital strictly disabled."
+    "rollback_evidence": "Workflow run 32794526552 (dev@209fcc7f50bd6c206d1ced62124163a82ca85e18) proved automatic compensation to verified baseline SHA 40de8fcb1c69fad0bf5e54d4c0bd6e508c9162e0 with read-only standby profile preserved and live capital strictly disabled."
   },
   "validation": [
     {
       "command": "TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:15432/pantheon .venv-pantheon/bin/python3 -m pytest -q services/trade_journey/test_projection_store.py services/trade_journey/test_lifecycle_projector.py",
-      "result": "pass; 104 passed, 1 skipped",
-      "coverage": "ProjectionStore timeout configuration, connect timeout failure within deadline, connect timeout option forwarding, statement timeout cancellation via QueryCanceled, lock timeout cancellation via LockNotAvailable, custom connector fallback, relational projector timeout environment variable binding, deterministic blocked fallback connect timeout proofs, strict TypeError propagation, and worker timeout recovery with durable failure mutation and no premature checkpoint advance"
+      "result": "pass; 110 passed, 1 skipped",
+      "coverage": "ProjectionStore timeout configuration, connect timeout failure within deadline, connect timeout option forwarding, statement timeout cancellation via QueryCanceled, lock timeout cancellation via LockNotAvailable, custom connector fallback, relational projector timeout environment variable binding, deterministic blocked fallback connect timeout proofs, daemon thread non-blocking process termination, late connection cleanup, strict TypeError propagation with single attempt on ambiguous messages or nested callees, worker startup projector timeout recovery, and worker timeout recovery with durable failure mutation and no premature checkpoint advance"
     },
     {
       "command": "TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:15432/pantheon .venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/test_lifecycle_projector_readiness.py services/control-plane/bff/test_trade_journey_contract.py services/control-plane/bff/test_tj_e2e_005_trade_journeys_read_api.py",
