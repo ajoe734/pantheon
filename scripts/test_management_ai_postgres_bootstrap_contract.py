@@ -71,10 +71,15 @@ def test_nonprod_deploy_prunes_dev_docker_storage_before_root_build() -> None:
     deploy = _read("scripts/deploy_nonprod_vm.sh")
 
     assert "PANTHEON_DEV_DOCKER_PRUNE" in deploy
+    assert "run_bounded_docker_prune()" in deploy
+    assert 'timeout --signal=TERM --kill-after=10s' in deploy
+    assert "PANTHEON_DEV_DOCKER_PRUNE_TIMEOUT_SECONDS" in deploy
     assert "prune_dev_docker_storage_for_build" in deploy
     assert '[[ "${PANTHEON_DEPLOY_ENV}" != "dev" || "${PANTHEON_DEPLOY_COMPONENT}" != "root" ]]' in deploy
     assert "docker builder prune -af" in deploy
     assert "docker image prune -af" in deploy
+    assert 'run_bounded_docker_prune "builder cache" docker builder prune -af' in deploy
+    assert 'run_bounded_docker_prune "unused images" docker image prune -af' in deploy
     assert "docker system df" in deploy
     assert (
         deploy.index("    prune_dev_docker_storage_for_build")

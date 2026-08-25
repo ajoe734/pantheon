@@ -2274,6 +2274,30 @@ docker_storage_diagnostics() {
   docker system df || true
 }
 
+run_bounded_docker_prune() {
+  local label="$1"
+  shift
+  local timeout_seconds="${PANTHEON_DEV_DOCKER_PRUNE_TIMEOUT_SECONDS:-45}"
+
+  if ! [[ "${timeout_seconds}" =~ ^[0-9]+$ ]] || (( timeout_seconds < 1 || timeout_seconds > 120 )); then
+    info "warning: invalid PANTHEON_DEV_DOCKER_PRUNE_TIMEOUT_SECONDS=${timeout_seconds}; skipping ${label}"
+    return 0
+  fi
+  if ! command -v timeout >/dev/null 2>&1; then
+    info "warning: timeout utility unavailable; skipping ${label}"
+    return 0
+  fi
+
+  info "running bounded Docker maintenance: ${label} (timeout=${timeout_seconds}s)"
+  if timeout --signal=TERM --kill-after=10s "${timeout_seconds}s" "$@"; then
+    return 0
+  fi
+
+  local status=$?
+  info "warning: ${label} exited with status ${status}; continuing deployment"
+  return 0
+}
+
 prune_dev_docker_storage_for_build() {
   if [[ "${PANTHEON_DEPLOY_ENV}" != "dev" || "${PANTHEON_DEPLOY_COMPONENT}" != "root" ]]; then
     return
@@ -2287,10 +2311,10 @@ prune_dev_docker_storage_for_build() {
 
   docker_storage_diagnostics "before prune"
   info "pruning dev Docker build cache and unused containers/images before root build"
-  docker builder prune -af || true
-  docker container prune -f || true
-  docker image prune -af || true
-  docker system prune -f || true
+  run_bounded_docker_prune "builder cache" docker builder prune -af
+  run_bounded_docker_prune "stopped containers" docker container prune -f
+  run_bounded_docker_prune "unused images" docker image prune -af
+  run_bounded_docker_prune "system cache" docker system prune -f
   docker_storage_diagnostics "after prune"
 }
 
