@@ -2766,3 +2766,154 @@ exit 0
     assert f"BUILD git_sha={baseline_sha} services=operator-bff loop-run-projector-scheduler" in logs[0]
     assert f"UP has_build_flag=false service=operator-bff image_sha={baseline_sha}" in logs[1]
     assert f"UP has_build_flag=false service=loop-run-projector-scheduler image_sha={baseline_sha}" in logs[2]
+
+
+def test_dev_root_deploy_stale_compose_replacement_cleanup_defined_and_invoked() -> None:
+    """Dev deploy script must define cleanup_stale_compose_replacement_containers and invoke it
+    before root compose rollout and bff recreate, filtering to non-running containers with
+    com.docker.compose.project=pantheon and hash-prefixed pantheon names."""
+    deploy_script = DEPLOY.read_text(encoding="utf-8")
+
+    assert "cleanup_stale_compose_replacement_containers() {" in deploy_script
+    assert 'docker ps -a --filter "label=com.docker.compose.project=pantheon"' in deploy_script
+    assert '"${cstate}" == "running"' in deploy_script
+    assert '"${cstatus}" =~ ^Up' in deploy_script
+    assert '"${clean_name}" =~ ^[0-9a-fA-F]+[-_]pantheon' in deploy_script
+    assert "docker rm -f" in deploy_script
+
+    root_section = deploy_script.split('case "${PANTHEON_DEPLOY_COMPONENT}" in', 1)[1].split("root)", 1)[1].split(";;", 1)[0]
+    cleanup_idx = root_section.index("cleanup_stale_compose_replacement_containers")
+    up_idx = root_section.index("docker compose -p pantheon -f docker-compose.yml up -d")
+    assert cleanup_idx < up_idx, "cleanup_stale_compose_replacement_containers must run before root compose up rollout"
+
+    bff_section = deploy_script.split('case "${PANTHEON_DEPLOY_COMPONENT}" in', 1)[1].split("\n  bff)", 1)[1].split(";;", 1)[0]
+    bff_cleanup_idx = bff_section.index("cleanup_stale_compose_replacement_containers")
+    bff_up_idx = bff_section.index("docker compose -p pantheon -f docker-compose.yml up -d")
+    assert bff_cleanup_idx < bff_up_idx, "cleanup_stale_compose_replacement_containers must run before bff compose up recreate"
+
+
+def test_cleanup_stale_compose_replacement_containers_executable_positive_and_negative(tmp_path: Path) -> None:
+    """Executable test proving cleanup_stale_compose_replacement_containers removes only non-running
+    containers with com.docker.compose.project=pantheon and hash-prefixed pantheon names, while
+    leaving running containers, non-hash containers, and other project containers intact."""
+    deploy_script = DEPLOY.read_text(encoding="utf-8")
+    func_start = deploy_script.index("cleanup_stale_compose_replacement_containers() {")
+    func_end = deploy_script.index("\nrollback_dev_bff_on_failure() {", func_start)
+    func_def = deploy_script[func_start:func_end]
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    rm_log = tmp_path / "removed_containers.log"
+
+    # Mock docker script
+    mock_docker = bin_dir / "docker"
+    mock_docker.write_text(
+        f"""#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ "$1" == "ps" ]]; then
+  # Check if filter specifies project=pantheon
+  has_pantheon_label=false
+  for arg in "$@"; do
+    if [[ "$arg" == "label=com.docker.compose.project=pantheon" ]]; then
+      has_pantheon_label=true
+    fi
+  done
+
+  # Output mock container table: ID <TAB> Names <TAB> State <TAB> Status
+  if [[ "$has_pantheon_label" == "true" ]]; then
+    printf "%s\\t%s\\t%s\\t%s\\n" "cid_stale_1" "1234567890ab_pantheon-operator-bff-1" "exited" "Exited (0) 5 minutes ago"
+    printf "%s\\t%s\\t%s\\t%s\\n" "cid_stale_2" "/d20e73e97086_pantheon_postgres_1" "dead" "Dead"
+    printf "%s\\t%s\\t%s\\t%s\\n" "cid_stale_3" "499602d2da88_pantheon-paper-runtime" "created" "Created"
+    printf "%s\\t%s\\t%s\\t%s\\n" "cid_stale_4" "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef_pantheon-minio-1" "exited" "Exited (1)"
+    printf "%s\\t%s\\t%s\\t%s\\n" "cid_running_rep" "abcdef123456_pantheon-operator-bff-1" "running" "Up 2 hours"
+    printf "%s\\t%s\\t%s\\t%s\\n" "cid_running_rep_up" "abcdef123456_pantheon_postgres_1" "unknown" "Up 10 minutes"
+    printf "%s\\t%s\\t%s\\t%s\\n" "cid_normal_stopped" "pantheon-postgres-1" "exited" "Exited (0)"
+    printf "%s\\t%s\\t%s\\t%s\\n" "cid_normal_stopped_slash" "/pantheon-operator-bff-1" "created" "Created"
+    printf "%s\\t%s\\t%s\\t%s\\n" "cid_normal_running" "pantheon-operator-bff-1" "running" "Up 1 hour"
+  else
+    # Non-filtered or other project queries
+    printf "%s\\t%s\\t%s\\t%s\\n" "cid_other_proj" "1234567890ab_otherproject-worker-1" "exited" "Exited (0)"
+  fi
+elif [[ "$1" == "rm" ]]; then
+  shift
+  while [[ $# -gt 0 && "$1" =~ ^- ]]; do
+    shift
+  done
+  for cid in "$@"; do
+    echo "$cid" >> "{rm_log}"
+  done
+fi
+exit 0
+""",
+        encoding="utf-8",
+    )
+    mock_docker.chmod(0o755)
+
+    test_snippet = f"""
+    export PATH="{bin_dir}:$PATH"
+    info() {{ echo "$*"; }}
+
+    {func_def}
+
+    cleanup_stale_compose_replacement_containers
+    """
+    result = subprocess.run(
+        ["bash", "-euo", "pipefail", "-c", test_snippet],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+
+    assert "cleaned up 4 stale Compose replacement container(s)" in result.stdout
+    assert "removing stale Compose replacement container: 1234567890ab_pantheon-operator-bff-1" in result.stdout
+    assert "removing stale Compose replacement container: d20e73e97086_pantheon_postgres_1" in result.stdout
+    assert "removing stale Compose replacement container: 499602d2da88_pantheon-paper-runtime" in result.stdout
+    assert "removing stale Compose replacement container: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef_pantheon-minio-1" in result.stdout
+
+    assert rm_log.exists()
+    removed = rm_log.read_text(encoding="utf-8").strip().splitlines()
+    assert sorted(removed) == ["cid_stale_1", "cid_stale_2", "cid_stale_3", "cid_stale_4"]
+
+    # Negative assertions:
+    assert "cid_running_rep" not in removed
+    assert "cid_running_rep_up" not in removed
+    assert "cid_normal_stopped" not in removed
+    assert "cid_normal_stopped_slash" not in removed
+    assert "cid_normal_running" not in removed
+    assert "cid_other_proj" not in removed
+
+
+def test_cleanup_stale_compose_replacement_containers_handles_empty_and_missing_docker(tmp_path: Path) -> None:
+    """cleanup_stale_compose_replacement_containers must exit cleanly when no containers exist or docker is missing."""
+    deploy_script = DEPLOY.read_text(encoding="utf-8")
+    func_start = deploy_script.index("cleanup_stale_compose_replacement_containers() {")
+    func_end = deploy_script.index("\nrollback_dev_bff_on_failure() {", func_start)
+    func_def = deploy_script[func_start:func_end]
+
+    # Case 1: Docker outputs empty list
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    mock_docker = bin_dir / "docker"
+    mock_docker.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+    mock_docker.chmod(0o755)
+
+    test_empty = f"""
+    export PATH="{bin_dir}:$PATH"
+    info() {{ echo "$*"; }}
+    {func_def}
+    cleanup_stale_compose_replacement_containers
+    """
+    res1 = subprocess.run(["bash", "-euo", "pipefail", "-c", test_empty], capture_output=True, text=True, check=True)
+    assert "cleaned up" not in res1.stdout
+
+    # Case 2: Docker command not in PATH
+    test_no_docker = f"""
+    export PATH="/tmp/nonexistent_path"
+    info() {{ echo "$*"; }}
+    {func_def}
+    cleanup_stale_compose_replacement_containers
+    """
+    res2 = subprocess.run(["bash", "-euo", "pipefail", "-c", test_no_docker], capture_output=True, text=True, check=True)
+    assert "docker command unavailable" in res2.stdout
+

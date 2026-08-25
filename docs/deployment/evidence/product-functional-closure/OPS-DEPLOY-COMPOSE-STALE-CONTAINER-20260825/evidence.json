@@ -1,0 +1,62 @@
+{
+  "schema_version": "pantheon.product_functional_closure.task_review.v1",
+  "task": {
+    "id": "OPS-DEPLOY-COMPOSE-STALE-CONTAINER-20260825",
+    "title": "Repair stale Compose replacement-container conflicts in dev root deployment",
+    "owner": "Antigravity",
+    "reviewer": "Codex2",
+    "status": "review_pending",
+    "repository": "ajoe734/pantheon",
+    "base_branch": "dev",
+    "task_branch": "task/OPS-DEPLOY-COMPOSE-STALE-CONTAINER-20260825",
+    "review_file": "docs/deployment/evidence/product-functional-closure/OPS-DEPLOY-COMPOSE-STALE-CONTAINER-20260825/evidence.json"
+  },
+  "scope": {
+    "owned_layer": "Narrow stale Compose replacement-container detection and cleanup before dev root and bff compose rollout, preventing container recreation name conflicts without broad prune",
+    "not_changing": [
+      "Never removes running containers (checked via state != running and status != Up*)",
+      "Never removes containers belonging to other projects (filtered strictly to com.docker.compose.project=pantheon)",
+      "Never removes normal stopped pantheon containers lacking hash replacement prefixes",
+      "Source Ingestion reconcile-only default posture with no continuous external provider pull",
+      "Release admission and rollback behavior remain fail-closed with no live-capital writes"
+    ],
+    "changed_files": [
+      "scripts/deploy_nonprod_vm.sh",
+      "scripts/test_dev_environment_lease_deploy_contract.py",
+      "docs/deployment/evidence/product-functional-closure/OPS-DEPLOY-COMPOSE-STALE-CONTAINER-20260825/README.md",
+      "docs/deployment/evidence/product-functional-closure/OPS-DEPLOY-COMPOSE-STALE-CONTAINER-20260825/evidence.json"
+    ],
+    "composes_with": [
+      "docker-compose.yml",
+      ".github/workflows/nonprod-deploy.yml",
+      "scripts/test_dev_environment_lease_deploy_contract.py"
+    ]
+  },
+  "behavioral_proof": {
+    "stale_replacement_container_detection": "Detects only non-running containers (state != running and status not starting with Up) with label com.docker.compose.project=pantheon whose names match hex hash prefixes followed by _pantheon or -pantheon (e.g. 1234567890ab_pantheon-operator-bff-1, d20e73e97086_pantheon_postgres_1).",
+    "running_and_other_project_protection": "Running containers, normal stopped pantheon containers (e.g. pantheon-postgres-1), other project containers, and unlabelled containers are completely untouched.",
+    "invoked_before_rollout": "cleanup_stale_compose_replacement_containers is called in Phase 3 prior to docker compose up rollout in dev root deployment and bff recreation.",
+    "contract_tests": "Executable positive tests verify removal of stale replacement containers across exited, dead, and created states; executable negative tests verify running replacement containers, normal stopped containers, running normal containers, and other project containers are preserved intact."
+  },
+  "validation": {
+    "commands": [
+      {
+        "command": "bash -n scripts/deploy_nonprod_vm.sh",
+        "result": "passed"
+      },
+      {
+        "command": "docker compose config --quiet",
+        "result": "passed"
+      },
+      {
+        "command": "pytest -v scripts/test_dev_environment_lease_deploy_contract.py",
+        "result": "209 passed"
+      }
+    ]
+  },
+  "review": {
+    "status": "pending_independent_review",
+    "reviewer_instruction": "Bind this already-committed manifest with AI_NAME=Codex2 REVIEW_FILE=docs/deployment/evidence/product-functional-closure/OPS-DEPLOY-COMPOSE-STALE-CONTAINER-20260825/evidence.json through the governed approve command only after independently checking the exact PR head.",
+    "owner_claim": "Owner evidence ready for independent review; this file makes no approval claim."
+  }
+}

@@ -2318,6 +2318,46 @@ prune_dev_docker_storage_for_build() {
   docker_storage_diagnostics "after prune"
 }
 
+cleanup_stale_compose_replacement_containers() {
+  if ! command -v docker >/dev/null 2>&1; then
+    info "docker command unavailable; skipping stale replacement container cleanup"
+    return 0
+  fi
+
+  info "checking for stale Compose replacement containers (project=pantheon)"
+  local raw_list
+  raw_list="$(docker ps -a --filter "label=com.docker.compose.project=pantheon" --format '{{.ID}}\t{{.Names}}\t{{.State}}\t{{.Status}}' 2>/dev/null || true)"
+
+  if [[ -z "${raw_list}" ]]; then
+    return 0
+  fi
+
+  local count=0
+  while IFS=$'\t' read -r cid cname cstate cstatus; do
+    [[ -z "${cid}" ]] && continue
+    local clean_name="${cname#/}"
+
+    # Never touch running containers
+    if [[ "${cstate}" == "running" || "${cstatus}" =~ ^Up([[:space:]]|$) ]]; then
+      continue
+    fi
+
+    # Detect only non-running containers with hash-prefixed pantheon names (e.g. 1234567890ab_pantheon-..., d20e73e97086_pantheon_postgres_1)
+    if [[ "${clean_name}" =~ ^[0-9a-fA-F]+[-_]pantheon ]]; then
+      info "removing stale Compose replacement container: ${clean_name} (id=${cid}, state=${cstate:-unknown})"
+      if docker rm -f "${cid}" >/dev/null 2>&1; then
+        count=$((count + 1))
+      else
+        info "warning: failed to remove stale container ${clean_name} (id=${cid})"
+      fi
+    fi
+  done <<< "${raw_list}"
+
+  if (( count > 0 )); then
+    info "cleaned up ${count} stale Compose replacement container(s)"
+  fi
+}
+
 rollback_dev_bff_on_failure() {
   local failed_stage="$1"
   local rollback_sha="${PANTHEON_DEV_ROLLBACK_BACKEND_SHA:-${DEV_PRE_DEPLOY_BFF_SHA:-}}"
@@ -2469,6 +2509,7 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     DEV_PRE_DEPLOY_BFF_SHA="$(curl -fsS http://127.0.0.1:18001/bff/version 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin).get("source_commit_sha") or "")' 2>/dev/null || true)"
     PANTHEON_DEV_ROLLBACK_BACKEND_SHA="${PANTHEON_DEV_ROLLBACK_BACKEND_SHA:-${DEV_PRE_DEPLOY_BFF_SHA:-}}"
     # Phase 3: Rollout persistent root runtime.
+    cleanup_stale_compose_replacement_containers
     COMPOSE_BAKE=false \
     COMPOSE_PROFILES="${PANTHEON_DEV_COMPOSE_PROFILES}" \
     BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
@@ -2616,6 +2657,7 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     DEV_PRE_DEPLOY_BFF_SHA="$(curl -fsS http://127.0.0.1:18001/bff/version 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin).get("source_commit_sha") or "")' 2>/dev/null || true)"
     PANTHEON_DEV_ROLLBACK_BACKEND_SHA="${PANTHEON_DEV_ROLLBACK_BACKEND_SHA:-${DEV_PRE_DEPLOY_BFF_SHA:-}}"
     # Phase 3: Recreate operator-bff and loop-run-projector-scheduler.
+    cleanup_stale_compose_replacement_containers
     COMPOSE_BAKE=false \
     COMPOSE_PROFILES="" \
     GIT_SHA="${PANTHEON_DEPLOY_SHA}" \
