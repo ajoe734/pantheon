@@ -638,6 +638,17 @@ def test_rejected_frontend_transaction_restores_and_proves_exact_pair() -> None:
     assert "previous_frontend_sha" in controller_job
     assert "release-compensation.json" in controller_job
     assert "exit 75" in controller_job
+    rollback_transport = controller_job[
+        controller_job.index("- name: Prepare pinned direct SSH transport for rollback") :
+        controller_job.index("- name: Compensate rejected release to exact hosted baseline")
+    ]
+    assert "steps.frontend_release.outcome != 'success'" in rollback_transport
+    assert "DEV_DEPLOY_SSH_PRIVATE_KEY" in rollback_transport
+    assert "DEV_DEPLOY_SSH_KNOWN_HOSTS" in rollback_transport
+    assert 'transport="${GITHUB_WORKSPACE}/.target/scripts/dev_vm_ssh.sh"' in rollback_transport
+    assert '"${transport}" prepare "${credentials_dir}"' in rollback_transport
+    assert "! -L \"${key_file}\"" in rollback_transport
+    assert "! -L \"${known_hosts_file}\"" in rollback_transport
 
     assert "--component bff" in COMPENSATION_SCRIPT
     assert "PANTHEON_ROLLBACK_BACKEND_SHA" in COMPENSATION_SCRIPT
