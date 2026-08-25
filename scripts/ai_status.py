@@ -157,6 +157,18 @@ DEV_BRIDGE_BATCH_SCHEMA_VERSION = 1
 DEV_BRIDGE_BATCH_MAX_TASKS = 64
 DEV_BRIDGE_BATCH_MATERIALIZE_COMMAND = "dev-bridge-materialize-batch"
 DEV_BRIDGE_BATCH_READBACK_COMMAND = "dev-bridge-materialize-readback"
+# These lanes are executable development work and must not wait for a hosted
+# operator-live/write-proof window. The packet remains Ed25519-signed and is
+# still subject to canonical task/dependency/readback checks. Security,
+# hosted, and live packets retain the one-shot MFA authorization requirement.
+DEV_BRIDGE_FUNCTIONAL_WORK_CLASSES = frozenset(
+    {"functional", "paper", "read_only", "ci", "reconcile_only"}
+)
+DEV_BRIDGE_WORK_CLASSES = DEV_BRIDGE_FUNCTIONAL_WORK_CLASSES | {
+    "security",
+    "hosted",
+    "live",
+}
 DEV_BRIDGE_BATCH_ACTOR = "assistant.dev.source"
 GLOBAL_STATUS_LOCK_ORDER = (
     "runtime_admission",
@@ -8983,26 +8995,43 @@ def verify_signed_dev_bridge_packet(
     digest = hashlib.sha256(canonical).hexdigest()
     if packet.get("packet_id") != batch.get("packet_id") or digest != batch.get("packet_digest"):
         raise SystemExit("Dev bridge signed packet identity binding failed")
-    source = packet.get("actor")
-    authorization = packet.get("operator_authorization")
-    if not isinstance(source, Mapping) or not isinstance(authorization, Mapping):
-        raise SystemExit("Dev bridge source and operator authorization must be separate")
-    if authorization.get("capability") != "assistant.canonical.mutate":
-        raise SystemExit("Dev bridge operator capability is invalid")
-    if authorization.get("mfa_verified") is not True:
-        raise SystemExit("Dev bridge operator authorization requires MFA")
-    operator_id = str(authorization.get("operator_id") or "").strip()
-    activation_id = str(authorization.get("control_activation_id") or "").strip()
-    nonce = str(authorization.get("nonce") or "").strip()
-    if not operator_id or not activation_id or not nonce:
-        raise SystemExit("Dev bridge operator authorization binding is incomplete")
-    issued = _parse_utc_timestamp(authorization.get("issued_at"))
-    expires = _parse_utc_timestamp(authorization.get("expires_at"))
     now = datetime.now(timezone.utc)
-    if issued is None or expires is None or expires <= issued:
-        raise SystemExit("Dev bridge operator authorization lifetime is invalid")
-    if (expires - issued).total_seconds() > 300 or now < issued:
-        raise SystemExit("Dev bridge operator authorization is not yet valid")
+    source = packet.get("actor")
+    if not isinstance(source, Mapping):
+        raise SystemExit("Dev bridge packet actor is required")
+    work_class = str(
+        packet.get("work_class") or packet.get("workClass") or "security"
+    ).strip().lower()
+    if work_class not in DEV_BRIDGE_WORK_CLASSES:
+        raise SystemExit(f"Dev bridge work class is invalid: {work_class!r}")
+    requires_operator_authorization = (
+        work_class not in DEV_BRIDGE_FUNCTIONAL_WORK_CLASSES
+    )
+    authorization = packet.get("operator_authorization")
+    operator_id = ""
+    nonce = ""
+    if requires_operator_authorization:
+        if not isinstance(authorization, Mapping):
+            raise SystemExit(
+                "Dev bridge source and operator authorization must be separate"
+            )
+        if authorization.get("capability") != "assistant.canonical.mutate":
+            raise SystemExit("Dev bridge operator capability is invalid")
+        if authorization.get("mfa_verified") is not True:
+            raise SystemExit("Dev bridge operator authorization requires MFA")
+        operator_id = str(authorization.get("operator_id") or "").strip()
+        activation_id = str(
+            authorization.get("control_activation_id") or ""
+        ).strip()
+        nonce = str(authorization.get("nonce") or "").strip()
+        if not operator_id or not activation_id or not nonce:
+            raise SystemExit("Dev bridge operator authorization binding is incomplete")
+        issued = _parse_utc_timestamp(authorization.get("issued_at"))
+        expires = _parse_utc_timestamp(authorization.get("expires_at"))
+        if issued is None or expires is None or expires <= issued:
+            raise SystemExit("Dev bridge operator authorization lifetime is invalid")
+        if (expires - issued).total_seconds() > 300 or now < issued:
+            raise SystemExit("Dev bridge operator authorization is not yet valid")
     # Expiry bounds admission at the authenticated BFF boundary.  The signed
     # packet is the durable receipt; a queued packet may drain later without
     # turning supervisor wall-clock latency into an authorization failure.
@@ -9018,7 +9047,7 @@ def verify_signed_dev_bridge_packet(
                 raise SystemExit(
                     f"Dev bridge signed packet task {index} {field} binding failed"
                 )
-    if state is not None:
+    if state is not None and requires_operator_authorization:
         try:
             consumed = dev_bridge_replay_ledger(state)
         except ValueError as exc:

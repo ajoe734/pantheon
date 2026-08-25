@@ -1479,7 +1479,15 @@ class DevBridgeMaterializeBatchTests(unittest.TestCase):
             },
         }
 
-    def _payload_path(self, rows: list[dict[str, Any]], *, packet_id: str, packet_digest: str) -> Path:
+    def _payload_path(
+        self,
+        rows: list[dict[str, Any]],
+        *,
+        packet_id: str,
+        packet_digest: str,
+        work_class: str = "security",
+        include_authorization: bool = True,
+    ) -> Path:
         now = datetime.now(timezone.utc)
         signed_packet = {
             "version": "pantheon.assistant.dev-task.v1",
@@ -1487,15 +1495,7 @@ class DevBridgeMaterializeBatchTests(unittest.TestCase):
             "intent": "governed_supervisor_architecture_cutover",
             "emitted_at": now.isoformat().replace("+00:00", "Z"),
             "actor": {"id": "management-ai", "roles": ["source"], "capabilities": ["assistant.dev.source"]},
-            "operator_authorization": {
-                "operator_id": "op-test",
-                "control_activation_id": "activation-test",
-                "capability": "assistant.canonical.mutate",
-                "mfa_verified": True,
-                "issued_at": now.isoformat().replace("+00:00", "Z"),
-                "expires_at": (now + timedelta(minutes=5)).isoformat().replace("+00:00", "Z"),
-                "nonce": packet_id + "-nonce",
-            },
+            "work_class": work_class,
             "mode": "kernel_debug",
             "source_conversation_id": "conversation-20260811",
             "source_turn_ids": ["turn-1"],
@@ -1505,6 +1505,16 @@ class DevBridgeMaterializeBatchTests(unittest.TestCase):
             "audit_conversation_href": None,
             "signature": None,
         }
+        if include_authorization:
+            signed_packet["operator_authorization"] = {
+                "operator_id": "op-test",
+                "control_activation_id": "activation-test",
+                "capability": "assistant.canonical.mutate",
+                "mfa_verified": True,
+                "issued_at": now.isoformat().replace("+00:00", "Z"),
+                "expires_at": (now + timedelta(minutes=5)).isoformat().replace("+00:00", "Z"),
+                "nonce": packet_id + "-nonce",
+            }
         body = deepcopy(signed_packet)
         body.pop("signature")
         canonical = json.dumps(body, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode()
@@ -1518,6 +1528,10 @@ class DevBridgeMaterializeBatchTests(unittest.TestCase):
         }
         for row in rows:
             row["task_metadata"]["dev_bridge"]["packet_digest"] = packet_digest
+            row["task_metadata"]["dev_bridge"]["work_class"] = work_class
+            row["task_metadata"]["dev_bridge"]["operator_authorization_required"] = (
+                work_class not in {"functional", "paper", "read_only", "ci", "reconcile_only"}
+            )
         payload = self._test_root / "batch.json"
         payload.write_text(
             json.dumps(
@@ -1581,6 +1595,39 @@ class DevBridgeMaterializeBatchTests(unittest.TestCase):
 
         self.assertNotIn("consumed_canonical_mutation_assertions", state)
         self.assertEqual(len(state["consumed_dev_bridge_packets"]), 1)
+
+    def test_functional_packet_does_not_require_operator_authorization(self) -> None:
+        packet_id = "pkt-functional-without-auth-20260825T000000Z"
+        row = self._task_row("FUNCTIONAL-WITHOUT-AUTH", packet_id=packet_id)
+        payload = self._payload_path(
+            [row],
+            packet_id=packet_id,
+            packet_digest="unused",
+            work_class="functional",
+            include_authorization=False,
+        )
+
+        self.assertEqual(self._run_main(payload), 0)
+        task = ai_status.get_task(ai_status.load_state(), "FUNCTIONAL-WITHOUT-AUTH")
+        self.assertEqual(task["dev_bridge"]["work_class"], "functional")
+        self.assertFalse(task["dev_bridge"]["operator_authorization_required"])
+
+    def test_security_packet_without_operator_authorization_remains_blocked(self) -> None:
+        packet_id = "pkt-security-without-auth-20260825T000000Z"
+        row = self._task_row("SECURITY-WITHOUT-AUTH", packet_id=packet_id)
+        payload = self._payload_path(
+            [row],
+            packet_id=packet_id,
+            packet_digest="unused",
+            work_class="security",
+            include_authorization=False,
+        )
+
+        with self.assertRaisesRegex(
+            SystemExit, "source and operator authorization must be separate"
+        ):
+            self._run_main(payload)
+        self.assertEqual(len(load_events(self.journal)), 1)
 
     def test_batch_commits_every_task_in_exactly_one_journal_event(self) -> None:
         packet_id = "pkt-batch-ok-20260811T000000Z"
