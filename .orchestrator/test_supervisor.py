@@ -5013,5 +5013,323 @@ class ExecutionResourceAdmissionTests(unittest.TestCase):
         )
 
 
+    def test_evaluate_queued_delivery_admission_deterministic_oldest_wins_multiple_pending(self) -> None:
+        hosted_1 = task_fixture(
+            "HOSTED-1",
+            status="todo",
+            owner="Codex",
+            execution_resources=["pantheon-dev"],
+        )
+        hosted_2 = task_fixture(
+            "HOSTED-2",
+            status="todo",
+            owner="Codex2",
+            execution_resources=["pantheon-dev"],
+        )
+        task_map = {"HOSTED-1": hosted_1, "HOSTED-2": hosted_2}
+        event_1 = {
+            "event_id": "evt-hosted-1",
+            "created_at": "2026-08-25T10:00:00Z",
+            "task_id": "HOSTED-1",
+            "target_agent": "Codex",
+            "delivery_endpoint_id": "codex",
+            "reason": "owned_ready",
+        }
+        event_2 = {
+            "event_id": "evt-hosted-2",
+            "created_at": "2026-08-25T10:05:00Z",
+            "task_id": "HOSTED-2",
+            "target_agent": "Codex2",
+            "delivery_endpoint_id": "codex2",
+            "reason": "owned_ready",
+        }
+        queue_events = [event_2, event_1]  # Even if presented in arbitrary order
+
+        # Oldest event (event_1) is eligible
+        decision_1 = supervisor.evaluate_queued_delivery_admission(
+            self.config,
+            self.state,
+            event_1,
+            task_map,
+            queue_events,
+        )
+        self.assertIsNotNone(decision_1)
+        self.assertTrue(decision_1.eligible)
+        self.assertIsNone(decision_1.reason)
+
+        # Newer event (event_2) is blocked by the pending oldest claim
+        decision_2 = supervisor.evaluate_queued_delivery_admission(
+            self.config,
+            self.state,
+            event_2,
+            task_map,
+            queue_events,
+        )
+        self.assertIsNotNone(decision_2)
+        self.assertFalse(decision_2.eligible)
+        self.assertEqual(
+            decision_2.reason,
+            supervisor.rewrite_dispatch_admission.DispatchBlockReason.RESOURCE_CAPACITY_REACHED,
+        )
+
+    def test_process_queue_launches_oldest_pending_event_and_admits_next_after_completion(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / ".orchestrator").mkdir()
+            config = config_fixture(root)
+            hosted_1 = task_fixture(
+                "HOSTED-1",
+                status="todo",
+                owner="Codex",
+                execution_resources=["pantheon-dev"],
+            )
+            hosted_2 = task_fixture(
+                "HOSTED-2",
+                status="todo",
+                owner="Codex2",
+                execution_resources=["pantheon-dev"],
+            )
+            status = {"tasks": [hosted_1, hosted_2]}
+            event_1 = {
+                "event_id": "evt-hosted-1",
+                "created_at": "2026-08-25T10:00:00Z",
+                "task_id": "HOSTED-1",
+                "task_generation": 1,
+                "target_agent": "codex",
+                "delivery_endpoint_id": "codex",
+                "reason": "owned_ready_dispatch",
+                "message": "Start HOSTED-1",
+            }
+            event_2 = {
+                "event_id": "evt-hosted-2",
+                "created_at": "2026-08-25T10:05:00Z",
+                "task_id": "HOSTED-2",
+                "task_generation": 1,
+                "target_agent": "codex2",
+                "delivery_endpoint_id": "codex2",
+                "reason": "owned_ready_dispatch",
+                "message": "Start HOSTED-2",
+            }
+            runtime_state.store_queue_event(self.state, event_2)
+            runtime_state.store_queue_event(self.state, event_1)
+
+            with mock.patch.object(supervisor, "load_status", return_value=status), \
+                 mock.patch.object(supervisor, "prepare_worker_workspace", return_value=(True, None)), \
+                 mock.patch.object(
+                     supervisor,
+                     "start_worker_for_request",
+                     side_effect=lambda cfg, st, request, **kwargs: (
+                         True,
+                         f"run-{request.task_id.lower()}",
+                         {"auto_delivered": True},
+                     ),
+                 ), \
+                 mock.patch.object(supervisor, "sync_dispatched_task_status", return_value=True), \
+                 mock.patch.object(supervisor, "write_activity_log"):
+                # First tick launches the oldest event (HOSTED-1)
+                changed = supervisor.process_queue(config, self.state)
+                self.assertTrue(changed)
+                record_1 = self.state["queue"]["events"]["evt-hosted-1"]
+                record_2 = self.state["queue"]["events"]["evt-hosted-2"]
+                self.assertEqual(record_1["status"], "started")
+                self.assertEqual(record_2["status"], "queued")
+
+                # Simulate worker running for HOSTED-1
+                self.state["workers"]["run-hosted-1"] = {
+                    "run_id": "run-hosted-1",
+                    "task_id": "HOSTED-1",
+                    "queue_event_id": "evt-hosted-1",
+                    "agent_id": "codex",
+                    "status": "running",
+                }
+
+                # Next tick: HOSTED-2 is evaluated and marked pending due to active pantheon-dev resource
+                changed = supervisor.process_queue(config, self.state)
+                self.assertTrue(changed)
+                record_2 = self.state["queue"]["events"]["evt-hosted-2"]
+                self.assertEqual(record_2["status"], "pending")
+                self.assertEqual(record_2["last_wait_reason"], "resource_capacity_reached")
+                self.assertIsNone(record_2.get("run_id"))
+
+                # Simulate HOSTED-1 worker completing and queue event marked completed
+                self.state["workers"]["run-hosted-1"]["status"] = "completed"
+                record_1["status"] = "completed"
+
+                # Next tick: HOSTED-2 is now eligible and launches
+                changed = supervisor.process_queue(config, self.state)
+                self.assertTrue(changed)
+                record_2 = self.state["queue"]["events"]["evt-hosted-2"]
+                self.assertEqual(record_2["status"], "started")
+
+    def test_task_execution_resources_strict_validation_and_rejections(self) -> None:
+        # Missing field / None task defaults to []
+        self.assertEqual(supervisor.task_execution_resources(None), [])
+        self.assertEqual(supervisor.task_execution_resources({}), [])
+        self.assertEqual(supervisor.task_execution_resources({"id": "TASK-1"}), [])
+        self.assertEqual(supervisor.task_execution_resources({"id": "TASK-1", "execution_resources": []}), [])
+
+        # Explicit None (null) is malformed and must fail closed
+        with self.assertRaisesRegex(ValueError, "must be a list, got null"):
+            supervisor.task_execution_resources({"id": "TASK-1", "execution_resources": None})
+
+        # Valid allowlisted list
+        self.assertEqual(
+            supervisor.task_execution_resources({"id": "TASK-1", "execution_resources": ["pantheon-dev"]}),
+            ["pantheon-dev"],
+        )
+
+        # Raw string must fail closed
+        with self.assertRaisesRegex(ValueError, "must be a list"):
+            supervisor.task_execution_resources({"id": "TASK-1", "execution_resources": "pantheon-dev"})
+
+        # Duplicates must fail closed
+        with self.assertRaisesRegex(ValueError, "duplicate resource"):
+            supervisor.task_execution_resources({
+                "id": "TASK-1",
+                "execution_resources": ["pantheon-dev", "pantheon-dev"],
+            })
+
+        # Non-string elements must fail closed
+        with self.assertRaisesRegex(ValueError, "elements must be strings"):
+            supervisor.task_execution_resources({"id": "TASK-1", "execution_resources": [123]})
+
+        # Empty or whitespace string elements must fail closed
+        with self.assertRaisesRegex(ValueError, "cannot be empty"):
+            supervisor.task_execution_resources({"id": "TASK-1", "execution_resources": [""]})
+        with self.assertRaisesRegex(ValueError, "cannot be empty"):
+            supervisor.task_execution_resources({"id": "TASK-1", "execution_resources": ["   "]})
+
+        # Unknown/unallowlisted resources must fail closed
+        with self.assertRaisesRegex(ValueError, "unallowlisted resource"):
+            supervisor.task_execution_resources({"id": "TASK-1", "execution_resources": ["unknown-res"]})
+
+        # Non-list container types must fail closed
+        with self.assertRaisesRegex(ValueError, "must be a list"):
+            supervisor.task_execution_resources({"id": "TASK-1", "execution_resources": {"pantheon-dev": 1}})
+        with self.assertRaisesRegex(ValueError, "must be a list"):
+            supervisor.task_execution_resources({"id": "TASK-1", "execution_resources": 1})
+
+    def test_validate_execution_resource_limits_rejections(self) -> None:
+        # Default when None or empty
+        self.assertEqual(supervisor.validate_execution_resource_limits(None), {"pantheon-dev": 1})
+        self.assertEqual(supervisor.validate_execution_resource_limits({}), {"pantheon-dev": 1})
+        self.assertEqual(
+            supervisor.validate_execution_resource_limits({"pantheon-dev": 1}),
+            {"pantheon-dev": 1},
+        )
+
+        # Rejection of bool
+        with self.assertRaisesRegex(ValueError, "boolean True is not allowed"):
+            supervisor.validate_execution_resource_limits({"pantheon-dev": True})
+        with self.assertRaisesRegex(ValueError, "boolean False is not allowed"):
+            supervisor.validate_execution_resource_limits({"pantheon-dev": False})
+
+        # Rejection of string values
+        with self.assertRaisesRegex(ValueError, "expected int, got str"):
+            supervisor.validate_execution_resource_limits({"pantheon-dev": "1"})
+
+        # Rejection of zero or negative
+        with self.assertRaisesRegex(ValueError, "value must be 1, got 0"):
+            supervisor.validate_execution_resource_limits({"pantheon-dev": 0})
+        with self.assertRaisesRegex(ValueError, "value must be 1, got -1"):
+            supervisor.validate_execution_resource_limits({"pantheon-dev": -1})
+
+        # Rejection of values > 1
+        with self.assertRaisesRegex(ValueError, "value must be 1, got 2"):
+            supervisor.validate_execution_resource_limits({"pantheon-dev": 2})
+
+        # Rejection of unknown keys
+        with self.assertRaisesRegex(ValueError, "Unknown execution resource limit key"):
+            supervisor.validate_execution_resource_limits({"custom-res": 1})
+        with self.assertRaisesRegex(ValueError, "Unknown execution resource limit key"):
+            supervisor.validate_execution_resource_limits({"PANTHEON-DEV": 1, "unknown": 1})
+
+        # Rejection of non-dict types
+        with self.assertRaisesRegex(ValueError, "must be a dict or null"):
+            supervisor.validate_execution_resource_limits("invalid")
+        with self.assertRaisesRegex(ValueError, "must be a dict or null"):
+            supervisor.validate_execution_resource_limits([1])
+
+    def test_reserve_dispatch_plan_re_evaluates_admission_rejects_post_plan_human_ops_hold(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / ".orchestrator").mkdir()
+            config = config_fixture(root)
+            hosted_task = task_fixture(
+                "HOSTED-HOLD-1",
+                status="todo",
+                owner="Codex",
+                execution_resources=["pantheon-dev"],
+            )
+            initial_status = {"tasks": [copy.deepcopy(hosted_task)]}
+
+            # Planning phase produces 1 event
+            with mock.patch.object(supervisor, "load_status", return_value=initial_status):
+                plan = supervisor.build_dispatch_plan(
+                    config,
+                    self.state,
+                    initial_status,
+                    supervisor.queue_events(self.state),
+                    live_total=0,
+                )
+            self.assertEqual(len(plan["events"]), 1)
+
+            # TOCTOU: Before reservation, Human/Ops places a hold on canonical task
+            held_task = copy.deepcopy(hosted_task)
+            held_task["waiting_for"] = "Human/Ops"
+            held_status = {"tasks": [held_task]}
+
+            with (
+                mock.patch.object(supervisor, "load_status", return_value=held_status),
+                mock.patch.object(
+                    supervisor,
+                    "_queue_delivery_event_locked",
+                    side_effect=AssertionError("Held task must not be queued"),
+                ),
+            ):
+                supervisor.reserve_dispatch_plan(config, self.state, plan)
+
+            # Proves zero queue event, zero pending slot, zero pantheon-dev claim
+            self.assertEqual(supervisor.queue_events(self.state), [])
+            self.assertNotIn(plan["events"][0]["key"], self.state.get("seen_event_keys", {}))
+            self.assertEqual(
+                supervisor.queued_execution_resource_counts(
+                    config, self.state, task_map={"HOSTED-HOLD-1": held_task}
+                ),
+                {},
+            )
+
+    def test_queued_execution_resource_counts_releases_stale_task_state(self) -> None:
+        hosted_1 = task_fixture(
+            "HOSTED-STALE-1",
+            status="todo",
+            owner="Codex",
+            execution_resources=["pantheon-dev"],
+        )
+        task_map = {"HOSTED-STALE-1": hosted_1}
+        event = {
+            "event_id": "evt-hosted-stale-1",
+            "task_id": "HOSTED-STALE-1",
+            "task_generation": 1,
+            "target_agent": "Codex",
+            "delivery_endpoint_id": "codex",
+            "reason": "owned_ready_dispatch",
+        }
+        # Initially pending queue event claims resource
+        counts = supervisor.queued_execution_resource_counts(
+            self.config, self.state, [event], task_map
+        )
+        self.assertEqual(counts, {"pantheon-dev": 1})
+
+        # When task transitions to terminal/done, event becomes stale and resource is released
+        hosted_1_done = copy.deepcopy(hosted_1)
+        hosted_1_done["status"] = "done"
+        stale_map = {"HOSTED-STALE-1": hosted_1_done}
+        counts_stale = supervisor.queued_execution_resource_counts(
+            self.config, self.state, [event], stale_map
+        )
+        self.assertEqual(counts_stale, {})
+
+
 if __name__ == "__main__":
     unittest.main()

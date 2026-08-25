@@ -114,6 +114,49 @@ class TestDevTaskPacketModel(unittest.TestCase):
         )
         self.assertEqual(task.depends_on, [])
 
+    def test_bridge_task_execution_resources_defaults_empty(self):
+        task = BridgeTask(
+            id="T1", title="t", owner="Codex", reviewer="Claude"
+        )
+        self.assertEqual(task.execution_resources, [])
+
+    def test_bridge_task_execution_resources_valid(self):
+        task = BridgeTask(
+            id="T1",
+            title="t",
+            owner="Codex",
+            reviewer="Claude",
+            execution_resources=["pantheon-dev"],
+        )
+        self.assertEqual(task.execution_resources, ["pantheon-dev"])
+
+    def test_bridge_task_execution_resources_rejections(self):
+        from pydantic import ValidationError
+
+        # Explicit None / null
+        with self.assertRaises(ValidationError):
+            BridgeTask(id="T1", title="t", owner="Codex", reviewer="Claude", execution_resources=None)
+
+        # Non-list
+        with self.assertRaises(ValidationError):
+            BridgeTask(id="T1", title="t", owner="Codex", reviewer="Claude", execution_resources="pantheon-dev")
+
+        # Non-string element
+        with self.assertRaises(ValidationError):
+            BridgeTask(id="T1", title="t", owner="Codex", reviewer="Claude", execution_resources=[123])
+
+        # Empty string element
+        with self.assertRaises(ValidationError):
+            BridgeTask(id="T1", title="t", owner="Codex", reviewer="Claude", execution_resources=[""])
+
+        # Unallowlisted
+        with self.assertRaises(ValidationError):
+            BridgeTask(id="T1", title="t", owner="Codex", reviewer="Claude", execution_resources=["bad-resource"])
+
+        # Duplicate
+        with self.assertRaises(ValidationError):
+            BridgeTask(id="T1", title="t", owner="Codex", reviewer="Claude", execution_resources=["pantheon-dev", "pantheon-dev"])
+
     def test_packet_serialises_round_trip(self):
         pkt = _make_packet()
         data = pkt.model_dump(by_alias=False, mode="json")

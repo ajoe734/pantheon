@@ -73,6 +73,8 @@ from dispatch_policy import (
     is_execution_dispatch_reason,
     normalized_status_set,
     ready_dispatch_settings,
+    task_execution_resources,
+    validate_execution_resource_limits,
 )
 from multi_repo_registry import (
     artifact_repository_id,
@@ -1212,20 +1214,12 @@ def queued_account_counts(
         counts[group_id] = counts.get(group_id, 0) + 1
     return counts
 
-
-def task_execution_resources(task: Mapping[str, Any] | None) -> list[str]:
-    if not isinstance(task, Mapping):
-        return []
-    raw = task.get("execution_resources")
-    if isinstance(raw, list):
-        return [
-            str(item).strip().lower()
-            for item in raw
-            if isinstance(item, str) and str(item).strip()
-        ]
-    if isinstance(raw, str) and raw.strip():
-        return [raw.strip().lower()]
-    return []
+def queue_event_sort_key(event: Mapping[str, Any]) -> tuple[str, str]:
+    if not isinstance(event, Mapping):
+        return ("", "")
+    created_at = str(event.get("created_at") or event.get("queued_at") or "").strip()
+    event_id = str(event.get("event_id") or "").strip()
+    return (created_at, event_id)
 
 
 def active_execution_resource_counts(
@@ -1533,16 +1527,8 @@ def build_delivery_admission_snapshot(
         key: int(active_res.get(key, 0)) + int(pending_res.get(key, 0))
         for key in set(active_res) | set(pending_res)
     }
-    default_resource_limits = {"pantheon-dev": 1}
-    if resource_limits is not None:
-        limits = dict(resource_limits)
-    else:
-        configured_limits = settings.get("execution_resource_limits")
-        limits = (
-            dict(configured_limits)
-            if isinstance(configured_limits, Mapping)
-            else default_resource_limits
-        )
+    raw_limits = resource_limits if resource_limits is not None else settings.get("execution_resource_limits")
+    limits = validate_execution_resource_limits(raw_limits)
     return rewrite_dispatch_admission.AdmissionSnapshot(
         now=datetime.now(timezone.utc),
         endpoint_health=_admission_health_records(health, "endpoints"),
@@ -3938,7 +3924,7 @@ def process_queue(
     changed = False
     task_map = task_index_from_status(config, load_status(config))
     active_statuses = {str(value) for value in ready_dispatch_settings(config).get("active_worker_statuses", [])}
-    for event in queue_events(state):
+    for event in sorted(queue_events(state), key=queue_event_sort_key):
         event_id = event.get("event_id")
         if not event_id:
             continue
@@ -12982,10 +12968,12 @@ def evaluate_queued_delivery_admission(
     event_id = str(event.get("event_id") or "")
     if task is None or not endpoint_id or not target_agent:
         return None
+    current_key = queue_event_sort_key(event)
     other_events = [
         candidate
         for candidate in queue_events
         if str(candidate.get("event_id") or "") != event_id
+        and queue_event_sort_key(candidate) < current_key
     ]
     delivery_state = deepcopy(state)
     queue_records = ((delivery_state.get("queue") or {}).get("events") or {})
@@ -13424,7 +13412,7 @@ def reserve_dispatch_plan(
         if isinstance(configured_resource_limits, Mapping)
         else {"pantheon-dev": 1}
     )
-    max_global = ready_dispatch_max_concurrent_workers(config)
+    resolver = task_resolver_for_config(config, task_map)
     active_worker_count = sum(
         1
         for worker in (state.get("workers") or {}).values()
@@ -13459,24 +13447,32 @@ def reserve_dispatch_plan(
         ):
             continue
         task_obj = task_map.get(task_id) if task_map else None
-        req_resources = task_execution_resources(task_obj) if task_obj else []
-        if any(
-            active_resources.get(res, 0) + pending_resources.get(res, 0)
-            >= resource_limits.get(res, 1)
-            for res in req_resources
-        ):
+        if not task_obj:
             continue
-        pending_only = len(pending_task_ids - active_task_ids)
-        if max_global is not None and live_total + pending_only >= max_global:
-            break
+        endpoint_id = str(event.get("delivery_endpoint_id") or "").strip() or None
+        admission = evaluate_task_delivery_admission(
+            config,
+            state,
+            task_obj,
+            target_agent,
+            resolver,
+            active_task_ids=active_task_ids,
+            pending_task_ids=pending_task_ids,
+            agent_loads=agent_loads,
+            active_account_loads=active_accounts,
+            pending_account_loads=pending_accounts,
+            active_resource_loads=active_resources,
+            pending_resource_loads=pending_resources,
+            resource_limits=resource_limits,
+            live_total=live_total,
+            requested_endpoint_id=endpoint_id,
+        )
+        if not admission.eligible:
+            continue
+        req_resources = task_execution_resources(task_obj)
         account = agent_account_id(config, agent_id)
-        account_limit = account_concurrency_limit(config, agent_id, settings)
-        account_used = active_accounts.get(account, 0) + pending_accounts.get(account, 0)
-        if account_limit is not None and account_used >= account_limit:
-            continue
-        capacity = agent_dispatch_capacity(config, agent_id, settings)
-        if len(agent_loads.get(target_agent, [])) >= capacity:
-            continue
+        event["delivery_endpoint_id"] = admission.endpoint_id
+        event["provider"] = admission.provider_id
         if not event.get("context_files"):
             event["context_files"] = worker_execution_context_files(task_id)
         if not _queue_delivery_event_locked(config, state, event):
