@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import sys
@@ -47,6 +48,7 @@ PROJECTION_MODES = frozenset({"live", "recovery", "backfill", "replay"})
 
 DEFAULT_CHANNEL = "pantheon_lifecycle_events"
 DEFAULT_SOURCE_STARTUP_TIMEOUT_SECONDS = 10.0
+DEFAULT_SOURCE_TIMEOUT_SECONDS = 10.0
 RELATIONAL_WRITER_BACKEND_ENV = "LIFECYCLE_PROJECTOR_WRITER_BACKEND"
 RELATIONAL_WRITER_DSN_ENV = "LIFECYCLE_PROJECTOR_PROJECTION_DSN"
 RELATIONAL_WRITER_SCHEMA_ENV = "LIFECYCLE_PROJECTOR_PROJECTION_SCHEMA"
@@ -1096,6 +1098,30 @@ class RelationalLifecycleProjector:
 LifecycleProjector = RelationalLifecycleProjector
 
 
+def _validate_source_timeout(
+    value: Any,
+    *,
+    name: str = "timeout_seconds",
+    default: float = DEFAULT_SOURCE_TIMEOUT_SECONDS,
+) -> float:
+    if value is None:
+        return float(default)
+    if isinstance(value, str):
+        stripped = value.strip()
+        if not stripped:
+            return float(default)
+        value = stripped
+    if isinstance(value, bool):
+        raise ValueError(f"{name} must be a finite positive number (got {value!r})")
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{name} must be a finite positive number (got {value!r})") from exc
+    if not math.isfinite(parsed) or parsed <= 0.0:
+        raise ValueError(f"{name} must be a finite positive number (got {value!r})")
+    return parsed
+
+
 class PostgresLifecycleSource:
     """Read the retained lifecycle source window and receive wakeups.
 
@@ -1111,10 +1137,22 @@ class PostgresLifecycleSource:
         *,
         channel: str = DEFAULT_CHANNEL,
         include_non_lifecycle: bool = False,
+        timeout_seconds: float | None = None,
+        startup_timeout_seconds: float | None = None,
     ) -> None:
         self.dsn = dsn
         self.channel = channel
         self.include_non_lifecycle = bool(include_non_lifecycle)
+        self.timeout_seconds = _validate_source_timeout(
+            timeout_seconds,
+            name="timeout_seconds",
+            default=DEFAULT_SOURCE_TIMEOUT_SECONDS,
+        )
+        self.startup_timeout_seconds = _validate_source_timeout(
+            startup_timeout_seconds,
+            name="startup_timeout_seconds",
+            default=DEFAULT_SOURCE_STARTUP_TIMEOUT_SECONDS,
+        )
         self._listener: Any = None
         self._wake = asyncio.Event()
 
@@ -1122,31 +1160,40 @@ class PostgresLifecycleSource:
         import asyncpg  # type: ignore[import]
 
         loop = asyncio.get_running_loop()
-        deadline = loop.time() + DEFAULT_SOURCE_STARTUP_TIMEOUT_SECONDS
+        timeout = self.startup_timeout_seconds
+        deadline = loop.time() + timeout
         conn: Any | None = None
 
         def remaining() -> float:
             return max(0.0, deadline - loop.time())
 
         try:
-            conn = await asyncio.wait_for(asyncpg.connect(self.dsn), timeout=remaining())
+            connect_timeout = remaining()
+            if connect_timeout <= 0:
+                raise TimeoutError("telemetry startup read-contract connect deadline exhausted")
+            conn = await asyncio.wait_for(asyncpg.connect(self.dsn), timeout=connect_timeout)
+            query_timeout = remaining()
+            if query_timeout <= 0:
+                raise TimeoutError("telemetry startup read-contract query deadline exhausted")
             await asyncio.wait_for(
                 conn.fetchrow(
                     "SELECT ingested_seq, ingested_at FROM telemetry_events LIMIT 1"
                 ),
-                timeout=remaining(),
+                timeout=query_timeout,
             )
         finally:
             if conn is not None:
                 close_timeout = remaining()
                 if close_timeout <= 0:
                     self._terminate_connection(conn)
-                    raise TimeoutError("telemetry startup read-contract deadline exhausted before close")
-                try:
-                    await asyncio.wait_for(conn.close(), timeout=close_timeout)
-                except BaseException:
-                    self._terminate_connection(conn)
-                    raise
+                    if sys.exc_info()[0] is None:
+                        raise TimeoutError("telemetry startup read-contract deadline exhausted before close")
+                else:
+                    try:
+                        await asyncio.wait_for(conn.close(), timeout=close_timeout)
+                    except BaseException:
+                        self._terminate_connection(conn)
+                        raise
 
     @staticmethod
     def _terminate_connection(conn: Any) -> None:
@@ -1160,51 +1207,109 @@ class PostgresLifecycleSource:
     async def high_watermark(self) -> int:
         import asyncpg  # type: ignore[import]
 
-        conn = await asyncpg.connect(self.dsn)
+        loop = asyncio.get_running_loop()
+        timeout = self.timeout_seconds
+        deadline = loop.time() + timeout
+        conn: Any | None = None
+
+        def remaining() -> float:
+            return max(0.0, deadline - loop.time())
+
         try:
+            connect_timeout = remaining()
+            if connect_timeout <= 0:
+                raise TimeoutError(f"lifecycle source high_watermark connect deadline exhausted ({timeout}s)")
+            conn = await asyncio.wait_for(asyncpg.connect(self.dsn), timeout=connect_timeout)
+            query_timeout = remaining()
+            if query_timeout <= 0:
+                raise TimeoutError(f"lifecycle source high_watermark query deadline exhausted ({timeout}s)")
             if self.include_non_lifecycle:
-                return int(
-                    await conn.fetchval(
+                val = await asyncio.wait_for(
+                    conn.fetchval(
                         "SELECT COALESCE(MAX(ingested_seq), 0) FROM telemetry_events"
-                    )
-                    or 0
+                    ),
+                    timeout=query_timeout,
                 )
-            return int(
-                await conn.fetchval(
-                    "SELECT COALESCE(MAX(ingested_seq), 0) FROM telemetry_events "
-                    "WHERE event_type = ANY($1::text[])",
-                    list(LIFECYCLE_EVENT_TYPE_QUERY),
+            else:
+                val = await asyncio.wait_for(
+                    conn.fetchval(
+                        "SELECT COALESCE(MAX(ingested_seq), 0) FROM telemetry_events "
+                        "WHERE event_type = ANY($1::text[])",
+                        list(LIFECYCLE_EVENT_TYPE_QUERY),
+                    ),
+                    timeout=query_timeout,
                 )
-                or 0
-            )
+            return int(val or 0)
         finally:
-            await conn.close()
+            if conn is not None:
+                close_timeout = remaining()
+                if close_timeout <= 0:
+                    self._terminate_connection(conn)
+                    if sys.exc_info()[0] is None:
+                        raise TimeoutError(f"lifecycle source high_watermark deadline exhausted before close ({timeout}s)")
+                else:
+                    try:
+                        await asyncio.wait_for(conn.close(), timeout=close_timeout)
+                    except BaseException:
+                        self._terminate_connection(conn)
+                        raise
 
     async def fetch_after(self, checkpoint: int, *, limit: int) -> list[dict[str, Any]]:
         import asyncpg  # type: ignore[import]
 
-        conn = await asyncpg.connect(self.dsn)
+        loop = asyncio.get_running_loop()
+        timeout = self.timeout_seconds
+        deadline = loop.time() + timeout
+        conn: Any | None = None
+
+        def remaining() -> float:
+            return max(0.0, deadline - loop.time())
+
         try:
+            connect_timeout = remaining()
+            if connect_timeout <= 0:
+                raise TimeoutError(f"lifecycle source fetch_after connect deadline exhausted ({timeout}s)")
+            conn = await asyncio.wait_for(asyncpg.connect(self.dsn), timeout=connect_timeout)
+            query_timeout = remaining()
+            if query_timeout <= 0:
+                raise TimeoutError(f"lifecycle source fetch_after query deadline exhausted ({timeout}s)")
             if self.include_non_lifecycle:
-                rows = await conn.fetch(
-                    "SELECT ingested_seq, ingested_at, event_id, event_type, created_at, payload "
-                    "FROM telemetry_events WHERE ingested_seq > $1 "
-                    "ORDER BY ingested_seq ASC LIMIT $2",
-                    int(checkpoint),
-                    int(limit),
+                rows = await asyncio.wait_for(
+                    conn.fetch(
+                        "SELECT ingested_seq, ingested_at, event_id, event_type, created_at, payload "
+                        "FROM telemetry_events WHERE ingested_seq > $1 "
+                        "ORDER BY ingested_seq ASC LIMIT $2",
+                        int(checkpoint),
+                        int(limit),
+                    ),
+                    timeout=query_timeout,
                 )
             else:
-                rows = await conn.fetch(
-                    "SELECT ingested_seq, ingested_at, event_id, event_type, created_at, payload "
-                    "FROM telemetry_events WHERE ingested_seq > $1 "
-                    "AND event_type = ANY($2::text[]) "
-                    "ORDER BY ingested_seq ASC LIMIT $3",
-                    int(checkpoint),
-                    list(LIFECYCLE_EVENT_TYPE_QUERY),
-                    int(limit),
+                rows = await asyncio.wait_for(
+                    conn.fetch(
+                        "SELECT ingested_seq, ingested_at, event_id, event_type, created_at, payload "
+                        "FROM telemetry_events WHERE ingested_seq > $1 "
+                        "AND event_type = ANY($2::text[]) "
+                        "ORDER BY ingested_seq ASC LIMIT $3",
+                        int(checkpoint),
+                        list(LIFECYCLE_EVENT_TYPE_QUERY),
+                        int(limit),
+                    ),
+                    timeout=query_timeout,
                 )
         finally:
-            await conn.close()
+            if conn is not None:
+                close_timeout = remaining()
+                if close_timeout <= 0:
+                    self._terminate_connection(conn)
+                    if sys.exc_info()[0] is None:
+                        raise TimeoutError(f"lifecycle source fetch_after deadline exhausted before close ({timeout}s)")
+                else:
+                    try:
+                        await asyncio.wait_for(conn.close(), timeout=close_timeout)
+                    except BaseException:
+                        self._terminate_connection(conn)
+                        raise
         result: list[dict[str, Any]] = []
         for row in rows:
             payload = row["payload"]
@@ -1227,12 +1332,43 @@ class PostgresLifecycleSource:
 
         if self._listener is not None:
             return
-        self._listener = await asyncpg.connect(self.dsn)
+        loop = asyncio.get_running_loop()
+        timeout = self.timeout_seconds
+        deadline = loop.time() + timeout
+        conn: Any | None = None
 
-        def _notified(*_: Any) -> None:
-            self._wake.set()
+        def remaining() -> float:
+            return max(0.0, deadline - loop.time())
 
-        await self._listener.add_listener(self.channel, _notified)
+        try:
+            connect_timeout = remaining()
+            if connect_timeout <= 0:
+                raise TimeoutError(f"lifecycle source start_listener connect deadline exhausted ({timeout}s)")
+            conn = await asyncio.wait_for(asyncpg.connect(self.dsn), timeout=connect_timeout)
+            listen_timeout = remaining()
+            if listen_timeout <= 0:
+                raise TimeoutError(f"lifecycle source start_listener deadline exhausted ({timeout}s)")
+
+            def _notified(*_: Any) -> None:
+                self._wake.set()
+
+            await asyncio.wait_for(
+                conn.add_listener(self.channel, _notified),
+                timeout=listen_timeout,
+            )
+            self._listener = conn
+            conn = None
+        finally:
+            if conn is not None:
+                close_timeout = remaining()
+                if close_timeout <= 0:
+                    self._terminate_connection(conn)
+                else:
+                    try:
+                        await asyncio.wait_for(conn.close(), timeout=close_timeout)
+                    except BaseException:
+                        self._terminate_connection(conn)
+                        raise
 
     async def wait(self, timeout: float) -> None:
         try:
@@ -1243,8 +1379,13 @@ class PostgresLifecycleSource:
 
     async def close(self) -> None:
         if self._listener is not None:
-            await self._listener.close()
+            listener = self._listener
             self._listener = None
+            timeout = self.timeout_seconds
+            try:
+                await asyncio.wait_for(listener.close(), timeout=timeout)
+            except BaseException:
+                self._terminate_connection(listener)
 
 
 def _record_worker_failure(projector: Any, error: BaseException) -> bool:
@@ -1298,7 +1439,28 @@ async def run_worker() -> int:
     if not dsn:
         raise RuntimeError("TELEMETRY_DB_DSN is required")
     projector = _configured_relational_projector()
-    source = PostgresLifecycleSource(dsn, include_non_lifecycle=True)
+    source_timeout_raw = (
+        os.getenv("LIFECYCLE_PROJECTOR_SOURCE_TIMEOUT_SECONDS")
+        or os.getenv("LIFECYCLE_PROJECTOR_DB_TIMEOUT_SECONDS")
+        or ""
+    )
+    source_timeout = _validate_source_timeout(
+        source_timeout_raw,
+        name="LIFECYCLE_PROJECTOR_SOURCE_TIMEOUT_SECONDS",
+        default=DEFAULT_SOURCE_TIMEOUT_SECONDS,
+    )
+    startup_timeout_raw = os.getenv("LIFECYCLE_PROJECTOR_STARTUP_TIMEOUT_SECONDS", "")
+    startup_timeout = _validate_source_timeout(
+        startup_timeout_raw,
+        name="LIFECYCLE_PROJECTOR_STARTUP_TIMEOUT_SECONDS",
+        default=DEFAULT_SOURCE_STARTUP_TIMEOUT_SECONDS,
+    )
+    source = PostgresLifecycleSource(
+        dsn,
+        include_non_lifecycle=True,
+        timeout_seconds=source_timeout,
+        startup_timeout_seconds=startup_timeout,
+    )
     interval = max(0.1, float(os.getenv("LIFECYCLE_PROJECTOR_POLL_SECONDS", "1")))
     batch_size = max(1, int(os.getenv("LIFECYCLE_PROJECTOR_BATCH_SIZE", "500")))
     max_ticks = max(0, int(os.getenv("LIFECYCLE_PROJECTOR_MAX_TICKS", "0")))
