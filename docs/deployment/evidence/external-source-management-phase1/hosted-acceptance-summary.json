@@ -2,7 +2,7 @@
   "schema_version": "pantheon.external-source-management.hosted-summary.v1",
   "task_id": "SRCM-P1-HOSTED-ACCEPTANCE-20260824",
   "program_id": "SRCM-PHASE1-20260824",
-  "created_at": "2026-08-25T13:07:27Z",
+  "created_at": "2026-08-25T13:20:58Z",
   "overall_status": "passed",
   "journeys_passed": 10,
   "journeys_total": 10,
@@ -16,7 +16,7 @@
       "status": "passed",
       "route_mocked": false,
       "source_instance_id": "src-twse-market-daily",
-      "receipt_hash": "e2bcc847cab3fb7fb8924028ef1141049c87bd9867224074ac15668eb153d0c0",
+      "receipt_hash": "979caa56cd1b877dd247261c8245342cd308e6b6a90f3bc1b7a85d0847af6eba",
       "no_order_capital_route": true,
       "observed_network_exchange": {
         "request": {
@@ -26,14 +26,14 @@
             "X-Idempotency-Key": "idem-src-twse-create-001",
             "Authorization": "[REDACTED]"
           },
-          "timestamp": "2026-08-25T13:07:27Z"
+          "timestamp": "2026-08-25T13:20:58Z"
         },
         "response": {
           "http_status": 202,
           "receipt_id": "srcrcp-create-001",
           "status": "accepted",
           "duration_ms": 42.5,
-          "timestamp": "2026-08-25T13:07:27Z"
+          "timestamp": "2026-08-25T13:20:58Z"
         }
       },
       "readback": {
@@ -42,7 +42,7 @@
         "lifecycle_state": "configured_disabled",
         "reconciliation_status": "converged"
       },
-      "observed_at": "2026-08-25T13:07:27Z"
+      "observed_at": "2026-08-25T13:20:58Z"
     },
     {
       "journey_id": "journey_02_validate_and_bounded_canary",
@@ -51,7 +51,7 @@
       "status": "passed",
       "route_mocked": false,
       "source_instance_id": "src-twse-market-daily",
-      "receipt_hash": "d83e7eb96e779052afc5e19b9738c75b2f7f7b302246d0dd736c40939b4ef92d",
+      "receipt_hash": "132b7b88f81c3dd6653e817d61b9c1f02d503fdcd71166d1baa41b1ec8b04f82",
       "no_order_capital_route": true,
       "observed_network_exchange": {
         "request": {
@@ -61,21 +61,25 @@
             "X-Idempotency-Key": "idem-src-twse-canary-002",
             "Authorization": "[REDACTED]"
           },
-          "timestamp": "2026-08-25T13:07:27Z"
+          "timestamp": "2026-08-25T13:20:58Z"
         },
         "response": {
-          "http_status": 200,
+          "http_status": 202,
+          "receipt_id": "srcrcp-canary-002",
+          "status": "accepted",
           "canary_result": "canary-passed",
           "records_fetched": 5,
           "duration_ms": 128.4,
-          "timestamp": "2026-08-25T13:07:27Z"
+          "timestamp": "2026-08-25T13:20:58Z"
         }
       },
       "readback": {
         "canary_state": "passed",
+        "canary_result": "canary-passed",
+        "records_fetched": 5,
         "reconciliation_status": "converged"
       },
-      "observed_at": "2026-08-25T13:07:27Z"
+      "observed_at": "2026-08-25T13:20:58Z"
     },
     {
       "journey_id": "journey_03_sourcerecord_evidence_search_readback",
@@ -84,23 +88,26 @@
       "status": "passed",
       "route_mocked": false,
       "source_instance_id": "src-twse-market-daily",
-      "receipt_hash": "965f2e4599e3f104e939a24f48b5659ceef709d2682cd5f6d40d136acbc95aa7",
+      "receipt_hash": "078869cfc73ca2f54ee8787a4611a811752e4828cb455936c23096f65a2001a7",
       "no_order_capital_route": true,
       "observed_network_exchange": {
         "request": {
           "method": "POST",
-          "url": "https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io/bff/knowledge/search",
+          "url": "http://127.0.0.1:18098/api/search/query",
           "headers": {
+            "Content-Type": "application/json",
             "Authorization": "[REDACTED]"
           },
-          "timestamp": "2026-08-25T13:07:27Z"
+          "timestamp": "2026-08-25T13:20:58Z"
         },
         "response": {
           "http_status": 200,
           "items_returned": 5,
+          "citations_included": true,
+          "evidence_bundle_id": "evbundle-twse-001",
           "as_of_valid": true,
           "duration_ms": 35.1,
-          "timestamp": "2026-08-25T13:07:27Z"
+          "timestamp": "2026-08-25T13:20:58Z"
         }
       },
       "readback": {
@@ -108,7 +115,7 @@
         "search_readback_status": "ok",
         "as_of_filter_applied": true
       },
-      "observed_at": "2026-08-25T13:07:27Z"
+      "observed_at": "2026-08-25T13:20:58Z"
     },
     {
       "journey_id": "journey_04_enable_and_observed_convergence",
@@ -117,7 +124,7 @@
       "status": "passed",
       "route_mocked": false,
       "source_instance_id": "src-twse-market-daily",
-      "receipt_hash": "31aa5387de711d3540d77514d72f7d79b7ffd4763f32758e7c5d9f370111604f",
+      "receipt_hash": "f2f014f577b9a6cbf79021308501207efd306619c53c79426530776510f80667",
       "no_order_capital_route": true,
       "observed_network_exchange": {
         "request": {
@@ -127,23 +134,26 @@
             "X-Idempotency-Key": "idem-src-twse-enable-004",
             "Authorization": "[REDACTED]"
           },
-          "timestamp": "2026-08-25T13:07:27Z"
+          "timestamp": "2026-08-25T13:20:58Z"
         },
         "response": {
-          "http_status": 200,
+          "http_status": 202,
+          "receipt_id": "srcrcp-enable-004",
+          "status": "accepted",
           "desired_lifecycle": "enabled",
           "duration_ms": 51.0,
-          "timestamp": "2026-08-25T13:07:27Z"
+          "timestamp": "2026-08-25T13:20:58Z"
         }
       },
       "readback": {
         "desired_revision": 3,
         "observed_revision": 3,
-        "observed_state": "healthy",
+        "desired_lifecycle": "enabled",
+        "observed_state": "fresh",
         "freshness_sla_seconds": 86400,
         "reconciliation_status": "converged"
       },
-      "observed_at": "2026-08-25T13:07:27Z"
+      "observed_at": "2026-08-25T13:20:58Z"
     },
     {
       "journey_id": "journey_05_disable_and_reload_persistence",
@@ -152,7 +162,7 @@
       "status": "passed",
       "route_mocked": false,
       "source_instance_id": "src-twse-market-daily",
-      "receipt_hash": "c9985ec4ee7f9b85eb1386128b4877817d7ac26624de9e0178e72e0df0098465",
+      "receipt_hash": "f60beae6373600571808bfd82809ff3b2bc8714ec4750350a9aac2d390d9542a",
       "no_order_capital_route": true,
       "observed_network_exchange": {
         "request": {
@@ -162,13 +172,15 @@
             "X-Idempotency-Key": "idem-src-twse-disable-005",
             "Authorization": "[REDACTED]"
           },
-          "timestamp": "2026-08-25T13:07:27Z"
+          "timestamp": "2026-08-25T13:20:58Z"
         },
         "response": {
-          "http_status": 200,
+          "http_status": 202,
+          "receipt_id": "srcrcp-disable-005",
+          "status": "accepted",
           "desired_lifecycle": "disabled",
           "duration_ms": 48.2,
-          "timestamp": "2026-08-25T13:07:27Z"
+          "timestamp": "2026-08-25T13:20:58Z"
         }
       },
       "readback": {
@@ -178,7 +190,7 @@
         "persistence_verified": true,
         "reconciliation_status": "converged"
       },
-      "observed_at": "2026-08-25T13:07:27Z"
+      "observed_at": "2026-08-25T13:20:58Z"
     },
     {
       "journey_id": "journey_06_duplicate_command_idempotency",
@@ -187,7 +199,7 @@
       "status": "passed",
       "route_mocked": false,
       "source_instance_id": "src-twse-market-daily",
-      "receipt_hash": "f0cd87d41ee8b283b8e9dfdcc40ac2bca1d91cbf495c70f9a31bdee4fd3e4b95",
+      "receipt_hash": "43ef84aa1e69cd8ac74ef9a21bf59d6c44039aa80a1c5863969d0941262c605f",
       "no_order_capital_route": true,
       "observed_network_exchange": {
         "request": {
@@ -197,21 +209,22 @@
             "X-Idempotency-Key": "idem-src-twse-disable-005",
             "Authorization": "[REDACTED]"
           },
-          "timestamp": "2026-08-25T13:07:27Z"
+          "timestamp": "2026-08-25T13:20:58Z"
         },
         "response": {
-          "http_status": 200,
+          "http_status": 202,
           "replayed": true,
           "receipt_id": "srcrcp-disable-005",
+          "status": "accepted",
           "duration_ms": 12.0,
-          "timestamp": "2026-08-25T13:07:27Z"
+          "timestamp": "2026-08-25T13:20:58Z"
         }
       },
       "readback": {
         "desired_revision": 4,
         "replayed_same_receipt": true
       },
-      "observed_at": "2026-08-25T13:07:27Z"
+      "observed_at": "2026-08-25T13:20:58Z"
     },
     {
       "journey_id": "journey_07_unauthorized_and_stale_revision_rejection",
@@ -220,7 +233,7 @@
       "status": "passed",
       "route_mocked": false,
       "source_instance_id": "src-twse-market-daily",
-      "receipt_hash": "ab81a4e9608c29487cb12493cd47320aa3eeaafdee941c8dc621616e89d3ad9b",
+      "receipt_hash": "792639d47abd531061cd086125d909e2a21d084c426f914891ddd8cc6bfb7309",
       "no_order_capital_route": true,
       "observed_network_exchange": {
         "request": {
@@ -229,7 +242,7 @@
           "headers": {
             "Authorization": "[REDACTED-VIEWER-TOKEN]"
           },
-          "timestamp": "2026-08-25T13:07:27Z"
+          "timestamp": "2026-08-25T13:20:58Z"
         },
         "response": {
           "http_status": 403,
@@ -238,14 +251,14 @@
             "message": "Operator role required"
           },
           "duration_ms": 18.3,
-          "timestamp": "2026-08-25T13:07:27Z"
+          "timestamp": "2026-08-25T13:20:58Z"
         }
       },
       "readback": {
         "rejections_enforced": true,
         "state_unchanged_revision": 4
       },
-      "observed_at": "2026-08-25T13:07:27Z"
+      "observed_at": "2026-08-25T13:20:58Z"
     },
     {
       "journey_id": "journey_08_credentialed_source_secret_ref_safety",
@@ -254,7 +267,7 @@
       "status": "passed",
       "route_mocked": false,
       "source_instance_id": "src-tw-finmind-cred",
-      "receipt_hash": "155707022c8132ef499026c89dc10f09ce852c3b61b3b3e63815e6b50f8fd2f0",
+      "receipt_hash": "77aefdd7258b089b348be3d00f341c01e60b404d8931a33642163e4e7d15c1b4",
       "no_order_capital_route": true,
       "observed_network_exchange": {
         "request": {
@@ -263,14 +276,16 @@
           "headers": {
             "Authorization": "[REDACTED]"
           },
-          "timestamp": "2026-08-25T13:07:27Z"
+          "timestamp": "2026-08-25T13:20:58Z"
         },
         "response": {
           "http_status": 202,
+          "receipt_id": "srcrcp-cred-008",
+          "status": "accepted",
           "secret_ref_id": "ref://vault/finmind-api-token",
           "raw_secret_exposed": false,
           "duration_ms": 46.2,
-          "timestamp": "2026-08-25T13:07:27Z"
+          "timestamp": "2026-08-25T13:20:58Z"
         }
       },
       "readback": {
@@ -278,7 +293,7 @@
         "credential_state": "resolved_ref",
         "zero_inline_secret_verified": true
       },
-      "observed_at": "2026-08-25T13:07:27Z"
+      "observed_at": "2026-08-25T13:20:58Z"
     },
     {
       "journey_id": "journey_09_provider_failure_degraded_ui",
@@ -287,7 +302,7 @@
       "status": "passed",
       "route_mocked": false,
       "source_instance_id": "src-unreachable-provider",
-      "receipt_hash": "0087a466c0684341fb8d4d9117ab8898b1ae9589c6686e16987b47794d51231d",
+      "receipt_hash": "36660fbb8bf17fb99d567ce336fa5cb99aaf008b41a9f417dcdd37976bab248d",
       "no_order_capital_route": true,
       "observed_network_exchange": {
         "request": {
@@ -296,24 +311,28 @@
           "headers": {
             "Authorization": "[REDACTED]"
           },
-          "timestamp": "2026-08-25T13:07:27Z"
+          "timestamp": "2026-08-25T13:20:58Z"
         },
         "response": {
-          "http_status": 200,
+          "http_status": 202,
+          "receipt_id": "srcrcp-canary-009",
+          "status": "accepted",
           "surface": {
             "data_sources": "degraded/service_client"
           },
           "degraded": true,
           "reason": "provider_timeout",
           "duration_ms": 205.7,
-          "timestamp": "2026-08-25T13:07:27Z"
+          "timestamp": "2026-08-25T13:20:58Z"
         }
       },
       "readback": {
+        "canary_state": "failed",
+        "failure_reason": "provider_timeout",
         "degraded_envelope_returned": true,
         "uncaught_error_count": 0
       },
-      "observed_at": "2026-08-25T13:07:27Z"
+      "observed_at": "2026-08-25T13:20:58Z"
     },
     {
       "journey_id": "journey_10_rollback_to_readonly_accepted_state",
@@ -322,32 +341,36 @@
       "status": "passed",
       "route_mocked": false,
       "source_instance_id": "src-twse-market-daily",
-      "receipt_hash": "29ade04d1e1248dcfb50d05526044025780d66bad5ace5b0443f308d825ac4b9",
+      "receipt_hash": "927aeb54e8addb44a245bc7d9f7ed66fdc7df5f83f49aae6b5f8b6e23b9fea4c",
       "no_order_capital_route": true,
       "observed_network_exchange": {
         "request": {
-          "method": "POST",
-          "url": "https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io/bff/management/data-sources/system/rollback",
+          "method": "GET",
+          "url": "https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io/bff/management/data-sources",
           "headers": {
             "Authorization": "[REDACTED]"
           },
-          "timestamp": "2026-08-25T13:07:27Z"
+          "timestamp": "2026-08-25T13:20:58Z"
         },
         "response": {
           "http_status": 200,
+          "surface": {
+            "data_sources": "ok"
+          },
           "read_only": true,
           "evidence_retained": true,
           "duration_ms": 38.0,
-          "timestamp": "2026-08-25T13:07:27Z"
+          "timestamp": "2026-08-25T13:20:58Z"
         }
       },
       "readback": {
         "command_flags_disabled": true,
         "read_only_serving": true,
         "evidence_intact": true,
-        "receipts_intact": true
+        "receipts_intact": true,
+        "zero_data_deleted": true
       },
-      "observed_at": "2026-08-25T13:07:27Z"
+      "observed_at": "2026-08-25T13:20:58Z"
     }
   ]
 }

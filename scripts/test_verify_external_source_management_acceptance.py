@@ -15,6 +15,7 @@ from scripts.verify_external_source_management_acceptance import (
     main,
     EXPECTED_BFF_SHA,
     EXPECTED_FE_SHA,
+    EXPECTED_SOURCE_DEFINITIONS_SHA,
     HOSTED_JOURNEY_IDS,
     NEGATIVE_CONTROL_KEYS,
     MIGRATION_REQUIREMENT_KEYS,
@@ -35,6 +36,8 @@ def _make_mock_transport(
     bff_sha: str = EXPECTED_BFF_SHA,
     bff_auth_mode: str = "strict",
     bff_auth_stub: bool = False,
+    source_defs_status: int = 200,
+    source_defs_sha: str = EXPECTED_SOURCE_DEFINITIONS_SHA,
     unauth_status: int = 401,
     dev_login_bad_status: int = 401,
 ) -> Any:
@@ -71,6 +74,21 @@ def _make_mock_transport(
                     "dev_login_enabled": True,
                 },
             }
+        elif "/api/source-ingest/management/connector-definitions" in url or "/bff/management/data-sources/catalog" in url:
+            if source_defs_status != 200:
+                return source_defs_status, {"error": "defs_error"}
+            return 200, {
+                "definitions": [
+                    {
+                        "definition_id": "tw_official_market_daily",
+                        "adapter_token": "tw_official",
+                        "adapter_version": "1.0.0",
+                        "provider": "TWSE",
+                        "deployment_sha": source_defs_sha,
+                        "fingerprint": "a" * 64,
+                    }
+                ]
+            }
         elif "/bff/management/data-sources" in url:
             return unauth_status, {
                 "error": {"code": "AUTH_REQUIRED", "message": "Unauthorized: missing Bearer token"},
@@ -95,11 +113,13 @@ def test_verify_full_success_run_offline(tmp_path: Path) -> None:
     assert result.program_id == "SRCM-PHASE1-20260824"
     assert result.exact_pair["backend_sha"] == EXPECTED_BFF_SHA
     assert result.exact_pair["frontend_sha"] == EXPECTED_FE_SHA
+    assert result.exact_pair["source_definitions_sha"] == EXPECTED_SOURCE_DEFINITIONS_SHA
     assert result.journeys["passed_count"] == len(HOSTED_JOURNEY_IDS)
     assert result.negative_controls["status"] == "passed"
     assert result.migration_rollout["status"] == "passed"
+    assert result.browser_evidence["status"] == "passed"
     assert result.openclaw_boundary["openclaw_phase2_excluded"] is True
-    assert len(result.artifact_checksums) >= 6
+    assert len(result.artifact_checksums) >= 7
 
 
 def test_verify_full_success_run_live_mock(tmp_path: Path) -> None:
@@ -114,6 +134,7 @@ def test_verify_full_success_run_live_mock(tmp_path: Path) -> None:
     assert result.passed is True
     assert result.exact_pair["backend_sha"] == EXPECTED_BFF_SHA
     assert result.exact_pair["frontend_sha"] == EXPECTED_FE_SHA
+    assert result.exact_pair["source_definitions_sha"] == EXPECTED_SOURCE_DEFINITIONS_SHA
     assert result.journeys["passed_count"] == len(HOSTED_JOURNEY_IDS)
 
 
@@ -167,6 +188,19 @@ def test_live_verify_bff_sha_mismatch_fails(tmp_path: Path) -> None:
     with pytest.raises(SourceManagementAcceptanceError) as exc_info:
         verifier.run()
     assert exc_info.value.code == "live.bff_sha_mismatch"
+
+
+def test_live_verify_source_def_sha_mismatch_fails(tmp_path: Path) -> None:
+    bundle_dir = _setup_valid_bundle(tmp_path)
+    config = AcceptanceConfig(evidence_dir=bundle_dir, offline_only=False)
+    verifier = ExternalSourceManagementHostedAcceptanceVerifier(
+        config,
+        transport=_make_mock_transport(source_defs_sha="3333333333333333333333333333333333333333"),
+    )
+
+    with pytest.raises(SourceManagementAcceptanceError) as exc_info:
+        verifier.run()
+    assert exc_info.value.code == "live.source_def_sha_mismatch"
 
 
 def test_live_verify_unsafe_fe_write_defaults_fails(tmp_path: Path) -> None:
@@ -228,6 +262,97 @@ def test_verify_missing_file(tmp_path: Path) -> None:
     with pytest.raises(SourceManagementAcceptanceError) as exc_info:
         verifier.run()
     assert exc_info.value.code == "evidence.missing_file"
+
+
+def test_verify_receipt_hash_tamper_fails_closed(tmp_path: Path) -> None:
+    bundle_dir = _setup_valid_bundle(tmp_path)
+    receipts_file = bundle_dir / "journey-receipts.json"
+    with receipts_file.open("r", encoding="utf-8") as f:
+        data = json.load(f)
+    # Tamper with the resulting revision without updating receipt_hash
+    data["receipts"][0]["resulting_revision"] = 999
+    with receipts_file.open("w", encoding="utf-8") as f:
+        json.dump(data, f)
+
+    config = AcceptanceConfig(evidence_dir=bundle_dir, offline_only=True)
+    verifier = ExternalSourceManagementHostedAcceptanceVerifier(config)
+
+    with pytest.raises(SourceManagementAcceptanceError) as exc_info:
+        verifier.run()
+    assert exc_info.value.code == "journeys.receipt_hash_mismatch"
+
+
+def test_verify_network_exchange_removed_fails_closed(tmp_path: Path) -> None:
+    bundle_dir = _setup_valid_bundle(tmp_path)
+    receipts_file = bundle_dir / "journey-receipts.json"
+    with receipts_file.open("r", encoding="utf-8") as f:
+        data = json.load(f)
+    del data["receipts"][0]["observed_network_exchange"]
+    with receipts_file.open("w", encoding="utf-8") as f:
+        json.dump(data, f)
+
+    config = AcceptanceConfig(evidence_dir=bundle_dir, offline_only=True)
+    verifier = ExternalSourceManagementHostedAcceptanceVerifier(config)
+
+    with pytest.raises(SourceManagementAcceptanceError) as exc_info:
+        verifier.run()
+    assert exc_info.value.code in ("journeys.missing_network_exchange", "journeys.receipt_hash_mismatch")
+
+
+def test_verify_disproven_route_fails_closed(tmp_path: Path) -> None:
+    bundle_dir = _setup_valid_bundle(tmp_path)
+    receipts_file = bundle_dir / "journey-receipts.json"
+    with receipts_file.open("r", encoding="utf-8") as f:
+        data = json.load(f)
+    # Inject disproven route into journey 03 URL
+    data["receipts"][2]["observed_network_exchange"]["request"]["url"] = "http://127.0.0.1:8001/bff/knowledge/search"
+    # Recompute receipt hash so it passes hash check but fails disproven route check
+    from scripts.verify_external_source_management_acceptance import _calculate_receipt_hash
+    data["receipts"][2]["receipt_hash"] = _calculate_receipt_hash(data["receipts"][2])
+    # Also update summary so cross-file matches
+    summary_file = bundle_dir / "hosted-acceptance-summary.json"
+    with summary_file.open("r", encoding="utf-8") as f:
+        sdata = json.load(f)
+    sdata["journeys"][2]["receipt_hash"] = data["receipts"][2]["receipt_hash"]
+    sdata["journeys"][2]["observed_network_exchange"] = data["receipts"][2]["observed_network_exchange"]
+    with summary_file.open("w", encoding="utf-8") as f:
+        json.dump(sdata, f)
+    with receipts_file.open("w", encoding="utf-8") as f:
+        json.dump(data, f)
+
+    config = AcceptanceConfig(evidence_dir=bundle_dir, offline_only=True)
+    verifier = ExternalSourceManagementHostedAcceptanceVerifier(config)
+
+    with pytest.raises(SourceManagementAcceptanceError) as exc_info:
+        verifier.run()
+    assert exc_info.value.code == "journeys.disproven_route"
+
+
+def test_verify_action_status_not_202_fails_closed(tmp_path: Path) -> None:
+    bundle_dir = _setup_valid_bundle(tmp_path)
+    receipts_file = bundle_dir / "journey-receipts.json"
+    with receipts_file.open("r", encoding="utf-8") as f:
+        data = json.load(f)
+    # Change status of action journey 01 from 202 to 200
+    data["receipts"][0]["observed_network_exchange"]["response"]["http_status"] = 200
+    from scripts.verify_external_source_management_acceptance import _calculate_receipt_hash
+    data["receipts"][0]["receipt_hash"] = _calculate_receipt_hash(data["receipts"][0])
+    summary_file = bundle_dir / "hosted-acceptance-summary.json"
+    with summary_file.open("r", encoding="utf-8") as f:
+        sdata = json.load(f)
+    sdata["journeys"][0]["receipt_hash"] = data["receipts"][0]["receipt_hash"]
+    sdata["journeys"][0]["observed_network_exchange"] = data["receipts"][0]["observed_network_exchange"]
+    with summary_file.open("w", encoding="utf-8") as f:
+        json.dump(sdata, f)
+    with receipts_file.open("w", encoding="utf-8") as f:
+        json.dump(data, f)
+
+    config = AcceptanceConfig(evidence_dir=bundle_dir, offline_only=True)
+    verifier = ExternalSourceManagementHostedAcceptanceVerifier(config)
+
+    with pytest.raises(SourceManagementAcceptanceError) as exc_info:
+        verifier.run()
+    assert exc_info.value.code == "journeys.invalid_http_status"
 
 
 def test_verify_invalid_backend_sha(tmp_path: Path) -> None:
@@ -389,6 +514,14 @@ def test_verify_raw_secret_leak_fails_closed(tmp_path: Path) -> None:
     with receipts_file.open("r", encoding="utf-8") as f:
         data = json.load(f)
     data["receipts"][0]["leaked_api_key"] = "sk-live-raw-secret-1234567890"
+    from scripts.verify_external_source_management_acceptance import _calculate_receipt_hash
+    data["receipts"][0]["receipt_hash"] = _calculate_receipt_hash(data["receipts"][0])
+    summary_file = bundle_dir / "hosted-acceptance-summary.json"
+    with summary_file.open("r", encoding="utf-8") as f:
+        sdata = json.load(f)
+    sdata["journeys"][0]["receipt_hash"] = data["receipts"][0]["receipt_hash"]
+    with summary_file.open("w", encoding="utf-8") as f:
+        json.dump(sdata, f)
     with receipts_file.open("w", encoding="utf-8") as f:
         json.dump(data, f)
 
@@ -398,6 +531,23 @@ def test_verify_raw_secret_leak_fails_closed(tmp_path: Path) -> None:
     with pytest.raises(SourceManagementAcceptanceError) as exc_info:
         verifier.run()
     assert exc_info.value.code == "security.raw_secret_leak"
+
+
+def test_verify_browser_evidence_missing_journey(tmp_path: Path) -> None:
+    bundle_dir = _setup_valid_bundle(tmp_path)
+    browser_file = bundle_dir / "browser-evidence.json"
+    with browser_file.open("r", encoding="utf-8") as f:
+        data = json.load(f)
+    data["browser_journeys"] = [b for b in data["browser_journeys"] if b["journey_id"] != "journey_01_public_source_create_disabled"]
+    with browser_file.open("w", encoding="utf-8") as f:
+        json.dump(data, f)
+
+    config = AcceptanceConfig(evidence_dir=bundle_dir, offline_only=True)
+    verifier = ExternalSourceManagementHostedAcceptanceVerifier(config)
+
+    with pytest.raises(SourceManagementAcceptanceError) as exc_info:
+        verifier.run()
+    assert exc_info.value.code == "browser_evidence.missing_journey"
 
 
 def test_cli_main_success_and_output(tmp_path: Path) -> None:
