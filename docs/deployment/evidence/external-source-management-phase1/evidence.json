@@ -1,0 +1,33 @@
+{
+  "schema_version": "pantheon.external-source-management.evidence-manifest.v1",
+  "task_id": "SRCM-P1-HOSTED-ACCEPTANCE-20260824",
+  "program_id": "SRCM-PHASE1-20260824",
+  "created_at": "2026-08-25T12:46:18Z",
+  "status": "passed",
+  "acceptance_criteria_fulfilled": [
+    "Complete all SD-SRCM-08 migration rollout rollback and hosted acceptance requirements",
+    "Import only real configured instances idempotently and reject or redact inline secrets",
+    "Keep normal rollback read-only without enabling deleting or losing evidence",
+    "Prove exact FE BFF and source deployment identities before browser acceptance",
+    "Run create-disabled validate bounded-canary enable disable reload idempotency and degraded journeys without route mocks",
+    "Pass unauthorized stale-revision secret-exposure egress no-order and provider-failure negatives",
+    "Store redacted network receipts screenshots checksums and rollback evidence",
+    "Update active current docs and retain legacy frontend references as historical only",
+    "Keep OpenClaw development explicitly phase 2 and outside product write authority",
+    "Merge the exact reviewed head to Pantheon dev only after all evidence passes"
+  ],
+  "exact_pair": {
+    "backend_sha": "40de8fcb1c69fad0bf5e54d4c0bd6e508c9162e0",
+    "frontend_sha": "5447d2a09b5c83a4f9ee2d405f57c642913e0055",
+    "source_definitions_sha": "40de8fcb1c69fad0bf5e54d4c0bd6e508c9162e0",
+    "bff_url": "https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io",
+    "fe_url": "https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io"
+  },
+  "artifacts": {
+    "deployment": "deployment.json",
+    "hosted_summary": "hosted-acceptance-summary.json",
+    "journey_receipts": "journey-receipts.json",
+    "negative_controls": "negative-controls.json",
+    "migration_rollout": "migration-rollout-rollback.json"
+  }
+}
