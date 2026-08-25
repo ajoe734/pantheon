@@ -380,7 +380,7 @@ def _agora_record(
     }
 
 
-def _run_sidecar_cycle(svc, scheduler) -> dict[str, Any]:
+def _run_sidecar_cycle(svc, scheduler, dataset_refs: list[dict[str, Any]] | None = None) -> dict[str, Any]:
     """Run the sidecar's start-up recovery, tick, and claim cycle."""
 
     api_url = render_compose_environment(SCHEDULER_SERVICE)["POLICY_LEARNING_API_URL"]
@@ -394,6 +394,11 @@ def _run_sidecar_cycle(svc, scheduler) -> dict[str, Any]:
             api_url=api_url,
             tick_id="tick-default-compose",
             eval_type="imitation",
+            dataset_refs=dataset_refs
+            or [
+                {"id": "dsv-compose-1", "dataset_version_id": "dsv-compose-1"},
+                {"id": "dsv-compose-2", "dataset_version_id": "dsv-compose-2"},
+            ],
             tenant_id=tenant_id,
         )
         cycle = scheduler.run_claim_cycle(
@@ -527,7 +532,7 @@ def test_default_compose_environment_authenticates_the_whole_sidecar_loop() -> N
         assert exchange["status"] < 400, exchange
 
     assert result["recovery"]["tenant_id"] == result["tenant_id"]
-    assert result["tick"]["dataset_source"] == "agora_dataset_version"
+    assert result["tick"]["dataset_source"] == "explicit_refs"
     assert result["tick"]["dataset_mode"] == "product"
     assert result["tick"]["seed_fallback_used"] is False
     assert result["tick"]["candidate_count"] == 2
@@ -686,10 +691,17 @@ def test_default_compose_environment_trains_on_real_tenant_scoped_agora_rows() -
                 # JSON volume, on the compose default.
                 assert svc.store.authority_resolution["candidate_authority"] == "postgres"
 
-                result = _run_sidecar_cycle(svc, scheduler)
+                result = _run_sidecar_cycle(
+                    svc,
+                    scheduler,
+                    dataset_refs=[
+                        {"id": "dsv-0", "dataset_version_id": "dsv-0"},
+                        {"id": "dsv-1", "dataset_version_id": "dsv-1"},
+                    ],
+                )
 
                 assert result["tenant_id"] == compose_tenant
-                assert result["tick"]["dataset_source"] == "agora_dataset_version"
+                assert result["tick"]["dataset_source"] == "explicit_refs"
                 assert result["tick"]["seed_fallback_used"] is False
                 assert result["tick"]["candidate_count"] == 2
                 assert result["cycle"]["processed_count"] == 2

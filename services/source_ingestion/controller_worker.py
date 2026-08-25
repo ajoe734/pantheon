@@ -26,7 +26,6 @@ from .controller_state import (
     utc_now,
 )
 from .controller_auth import load_controller_token
-from .scheduler_worker import run_tick as run_schedule_tick
 
 
 DEFAULT_DESIRED_STATE_PATH = Path(__file__).with_name("default_desired_state.json")
@@ -105,6 +104,29 @@ def _request_json(
     if not isinstance(parsed, dict):
         raise ControllerTickError("http_contract", f"expected JSON object from {url}")
     return parsed
+
+
+def run_schedule_tick(
+    *,
+    api_url: str,
+    max_concurrency: int,
+    timeout_seconds: float = 30.0,
+    force_connector_ids: Sequence[str] | None = None,
+    exclusive_connector_ids: Sequence[str] | None = None,
+    controller_token: str | None = None,
+) -> dict[str, Any]:
+    payload = {
+        "max_concurrency": max_concurrency,
+        "force_connector_ids": sorted(set(force_connector_ids or ())),
+        "exclusive_connector_ids": sorted(set(exclusive_connector_ids or ())),
+    }
+    return _request_json(
+        api_url.rstrip("/") + "/api/source-ingest/run-scheduled",
+        method="POST",
+        payload=payload,
+        bearer_token=controller_token,
+        timeout_seconds=timeout_seconds,
+    )
 
 
 def _load_bearer_token() -> str | None:

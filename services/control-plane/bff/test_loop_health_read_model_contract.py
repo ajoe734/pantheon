@@ -397,7 +397,6 @@ def test_loop_health_archive_completion_cannot_create_controller_liveness(monkey
     source_loop = next(
         loop for loop in registry["loops"] if loop["loop_id"] == "source_ingestion"
     )
-    source_loop["maturity"]["current"] = "proven-live"
     source_loop["controller_contract"].update(
         {
             "status": "proven_live",
@@ -408,8 +407,6 @@ def test_loop_health_archive_completion_cannot_create_controller_liveness(monkey
             "liveness_metric": "last_heartbeat_at",
         }
     )
-    source_loop["evidence_profile"]["reconciled_live_proof"]["status"] = "present"
-    source_loop["evidence_profile"]["proven_live_evidence"]["status"] = "present"
     monkeypatch.setattr(loop_inventory_model, "_load_registry", lambda: registry)
     current_heartbeat = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     loop_health_store = {
@@ -461,7 +458,6 @@ def test_loop_health_rejects_conflicting_or_archive_only_runtime_provenance(
     source_loop = next(
         loop for loop in registry["loops"] if loop["loop_id"] == "source_ingestion"
     )
-    source_loop["maturity"]["current"] = "proven-live"
     source_loop["controller_contract"].update(
         {
             "status": "proven_live",
@@ -472,8 +468,6 @@ def test_loop_health_rejects_conflicting_or_archive_only_runtime_provenance(
             "liveness_metric": "last_heartbeat_at",
         }
     )
-    source_loop["evidence_profile"]["reconciled_live_proof"]["status"] = "present"
-    source_loop["evidence_profile"]["proven_live_evidence"]["status"] = "present"
     monkeypatch.setattr(loop_inventory_model, "_load_registry", lambda: registry)
     current_heartbeat = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     archive_ref = "ai-task-archive/tasks/LOOP-AUTO-BFF-004.json"
@@ -559,7 +553,6 @@ def test_loop_health_cannot_combine_lower_live_truth_with_higher_registry_claim(
     source_loop = next(
         loop for loop in registry["loops"] if loop["loop_id"] == "source_ingestion"
     )
-    source_loop["maturity"]["current"] = "proven-live"
     source_loop["controller_contract"].update(
         {
             "status": "proven_live",
@@ -570,8 +563,6 @@ def test_loop_health_cannot_combine_lower_live_truth_with_higher_registry_claim(
             "liveness_metric": "last_heartbeat_at",
         }
     )
-    source_loop["evidence_profile"]["reconciled_live_proof"]["status"] = "present"
-    source_loop["evidence_profile"]["proven_live_evidence"]["status"] = "present"
     monkeypatch.setattr(loop_inventory_model, "_load_registry", lambda: registry)
     current_heartbeat = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     loop_health_store = {
@@ -617,7 +608,6 @@ def test_loop_health_accepts_current_controller_runtime_only_when_catalog_admits
     bff_loop = next(
         loop for loop in registry["loops"] if loop["loop_id"] == "bff_health_monitoring"
     )
-    bff_loop["maturity"]["current"] = "reconciled"
     bff_loop["controller_contract"].update(
         {
             "status": "implemented",
@@ -628,7 +618,6 @@ def test_loop_health_accepts_current_controller_runtime_only_when_catalog_admits
             "liveness_metric": "last_heartbeat_at",
         }
     )
-    bff_loop["evidence_profile"]["reconciled_live_proof"]["status"] = "present"
     monkeypatch.setattr(loop_inventory_model, "_load_registry", lambda: registry)
     current_heartbeat = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     loop_health_store = {
@@ -700,7 +689,6 @@ def test_loop_health_rejects_runtime_record_from_wrong_controller_identity(
     bff_loop = next(
         loop for loop in registry["loops"] if loop["loop_id"] == "bff_health_monitoring"
     )
-    bff_loop["maturity"]["current"] = "reconciled"
     bff_loop["controller_contract"].update(
         {
             "status": "implemented",
@@ -711,7 +699,6 @@ def test_loop_health_rejects_runtime_record_from_wrong_controller_identity(
             "liveness_metric": "last_heartbeat_at",
         }
     )
-    bff_loop["evidence_profile"]["reconciled_live_proof"]["status"] = "present"
     monkeypatch.setattr(loop_inventory_model, "_load_registry", lambda: registry)
     current_heartbeat = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     loop_health_store = {
