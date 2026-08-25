@@ -42,6 +42,16 @@ the only development-task ingress paths.
 Development-tooling success means that tasks can be stored and dispatched. It
 does not mean that the product has been built, deployed, or accepted.
 
+Worker task context follows the same source/runtime boundary. A task brief
+already tracked by a task branch is read-only dispatch input; the supervisor
+does not refresh it from mutable canonical status during owner or reviewer
+startup. When no tracked brief exists, the supervisor writes fallback context
+only under the Git-ignored `.orchestrator/worker-runtime/task-context/` tree and
+passes that effective path in the worker prompt. Cross-repository workers
+receive equivalent Pantheon context through absolute or inline bindings rather
+than files written into the delivery repository. Generated context is runtime
+state, never task evidence or an approval ledger.
+
 ## 2. Product runtime
 
 Product runtime serves the user-facing and business behavior of Pantheon.
