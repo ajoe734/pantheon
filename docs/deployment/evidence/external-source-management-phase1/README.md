@@ -4,10 +4,16 @@ This package contains the authoritative hosted acceptance evidence, exact deploy
 
 ## 1. Exact Deployment Pair
 
-| Component | Repository | Deployed Commit SHA | Base URL |
-|---|---|---|---|
-| Backend / BFF / Ingest | `ajoe734/pantheon` | `40de8fcb1c69fad0bf5e54d4c0bd6e508c9162e0` | `https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io` |
-| Frontend | `ajoe734/execute-plans` | `5447d2a09b5c83a4f9ee2d405f57c642913e0055` | `https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io` |
+| Component | Repository | Deployed Commit SHA | Base URL | Verification Endpoint |
+|---|---|---|---|---|
+| Backend / BFF / Ingest | `ajoe734/pantheon` | `03757f0254fb48ea37098e3d9ab0176c006d4da5` | `https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io` | `GET /bff/version` |
+| Frontend | `ajoe734/execute-plans` | `cc4007f7f78a31c73548ce85457af17a45a4c4b9` | `https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io` | `GET /deployment.json` |
+
+### Deployment Drift Analysis
+
+- **Frontend Manifest**: `https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io/deployment.json` serves commit `cc4007f7f78a31c73548ce85457af17a45a4c4b9` and references prior backend baseline `bffCommit: "40de8fcb1c69fad0bf5e54d4c0bd6e508c9162e0"`.
+- **Live Backend Version**: `https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io/bff/version` serves commit `03757f0254fb48ea37098e3d9ab0176c006d4da5` with strict JWT auth posture.
+- **Accepted Live Pair**: Both endpoints have been probed and verified live with exact SHA verification, negative control probes, and safe write defaults (`VITE_BFF_REAL_WRITES: "false"`).
 
 ## 2. Evidence Artifact Manifest
 

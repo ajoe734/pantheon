@@ -33,4 +33,3 @@ discovery.
   for the canonical Phase-1 source inventory, connector definitions, durable
   source-management commands/store, governed search, reviewed memory writeback,
   and hosted acceptance (`SRCM-PHASE1-20260824`, SD-SRCM-01 ~ SD-SRCM-08).
-
