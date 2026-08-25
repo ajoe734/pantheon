@@ -167,6 +167,8 @@ LOCAL_HUMAN_OPS_ENV = "PANTHEON_LOCAL_HUMAN_OPS"
 LOCAL_HUMAN_OPS_ACTIONS = frozenset(
     {
         "assign",
+        "milestone",
+        "dependency-track",
         "reopen",
         "note",
         "reconcile_merged_done",
@@ -483,6 +485,8 @@ def status_command_metadata() -> dict[str, Any] | None:
 
 TASK_ID_COMMAND_ARG_INDEX: dict[str, int] = {
     "assign": 0,
+    "milestone": 0,
+    "dependency-track": 0,
     "start": 0,
     "progress": 0,
     "note": 0,
