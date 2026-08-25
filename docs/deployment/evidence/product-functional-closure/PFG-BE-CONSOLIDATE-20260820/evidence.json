@@ -1,0 +1,64 @@
+{
+  "schema_version": "pantheon.product_functional_closure.be_consolidate_evidence.v1",
+  "task": {
+    "id": "PFG-BE-CONSOLIDATE-20260820",
+    "title": "Retire replacement-proven backend duplicate owners and dead production paths",
+    "owner": "Antigravity2",
+    "reviewer": "Codex",
+    "repository": "ajoe734/pantheon",
+    "base_branch": "dev",
+    "task_branch": "task/PFG-BE-CONSOLIDATE-20260820",
+    "review_file": "docs/deployment/evidence/product-functional-closure/PFG-BE-CONSOLIDATE-20260820/evidence.json",
+    "evidence_status": "owner_validation_passed_pending_independent_reviewer"
+  },
+  "scope": {
+    "owned_layer": [
+      "services/source_ingestion/scheduler_worker.py: removed obsolete legacy recurring HTTP worker and its dedicated unit test (services/source_ingestion/tests/test_scheduler_worker.py) with negative caller proof; integrated run_schedule_tick directly into controller_worker.py without external scheduler dependency.",
+      "services/policy-learning/agora_dataset_authority.py: audited Agora dataset authority; confirmed exact-ref version registration/lookup is retained for durable handoff admission and candidate resolution, while automatic scheduled direct DB discovery is retired in favor of durable Agora handoff intake cycle (agora_handoff_drainer.py).",
+      "services/policy-learning/candidate_experiment_handoff.py: confirmed active HTTP-only Policy Learning to Research candidate handoff is retained.",
+      "services/execution/lean_runtime/: audited dynamic fleet reconciler, signal producer, runtime bootstrap, and BoundedPaperStrategy smoke fixture; verified all are retained with no duplicate runtime created.",
+      "docs/deployment/loop-catalog.registry.json: audited loop catalog; retained stable specification, ownership, and controller contracts for BFF /bff/v5/loop-inventory while confirming static runtime maturity claims are superseded by current live controller records.",
+      "docs/deployment/evidence/product-functional-closure/PFG-BE-CONSOLIDATE-20260820/: published code disposition, validation evidence, and consolidation audit."
+    ],
+    "canonical_owner_and_store": {
+      "source_ingestion_owner": "services/source_ingestion/controller_worker.py",
+      "source_ingestion_cli": "scripts/source_ingest_scheduler_once.py",
+      "policy_learning_drainer": "services/policy-learning/agora_handoff_drainer.py",
+      "policy_learning_handoff": "services/policy-learning/candidate_experiment_handoff.py",
+      "paper_fleet_owner": "services/execution/runtime-manager/paper_fleet_reconciler.py",
+      "loop_inventory_owner": "services/control-plane/bff/loop_inventory.py"
+    },
+    "not_changing": [
+      "Live broker or live capital authority",
+      "Automatic repair tasks",
+      "Task-state tooling or TaskStore mechanism",
+      "Useful test fixtures and explicit smoke profiles"
+    ]
+  },
+  "acceptance_verification": {
+    "criterion_1_caller_profile_audit": "Caller and profile audit classifies every candidate backend path as keep, consolidate, retire-after-proof, or delete with negative-caller evidence recorded in code-disposition.json and caller-inventory-20260824.md.",
+    "criterion_2_duplicate_owner_removal": "Obsolete source ingestion scheduler_worker.py and its dedicated unit test deleted; automatic direct Agora dataset discovery in the scheduled path verified retired in favor of durable Agora handoff drainer; static loop runtime claims confirmed bypassed by live controller records.",
+    "criterion_3_manual_and_smoke_fixtures_retained": "Explicit manual Source one-shot CLI (scripts/source_ingest_scheduler_once.py) and BoundedPaperStrategy smoke fixture verified retained as non-production entry points.",
+    "criterion_4_post_deletion_journey_pass": "All affected unit and integration test suites pass after deletion; 845 source ingestion tests, 74 cross-service contract tests, and baseline suites pass with zero regressions."
+  },
+  "validation": {
+    "commands": [
+      "git rm services/source_ingestion/scheduler_worker.py services/source_ingestion/tests/test_scheduler_worker.py",
+      "python3 -m py_compile services/source_ingestion/controller_worker.py scripts/source_ingest_scheduler_once.py services/policy-learning/agora_dataset_authority.py services/policy-learning/candidate_experiment_handoff.py services/control-plane/bff/loop_inventory.py",
+      "pytest -q services/source_ingestion/",
+      "pytest -q scripts/tests/test_source_ingest_scheduler_once.py services/source_ingestion/tests/test_controller_worker_manual_once.py services/policy-learning/tests/test_current_agora_handoff_cutover.py services/policy-learning/tests/test_agora_handoff_drainer.py services/policy-learning/tests/test_current_imitation_entrypoint.py tests/test_loop_catalog_registry.py services/control-plane/bff/test_loop_inventory_read_model_contract.py scripts/test_paper_runtime_topology_contract.py tests/integration/test_product_functional_compose_contract.py",
+      "git diff --check"
+    ],
+    "results": [
+      "Deleted obsolete scheduler_worker.py and its dedicated unit test with negative caller proof.",
+      "py_compile succeeded with zero errors across all audited backend files.",
+      "845 passed across services/source_ingestion/ test suite.",
+      "74 passed across cross-service consolidation validation test suites.",
+      "git diff --check passed with zero formatting or whitespace errors."
+    ]
+  },
+  "review_decision": {
+    "decision": "owner_validation_passed_pending_independent_reviewer",
+    "reviewer_action_required": "Codex must independently inspect this committed evidence manifest, code-disposition.json, and exact PR head, rerun the focused test suite, and bind canonical approval with this review_file before merge."
+  }
+}

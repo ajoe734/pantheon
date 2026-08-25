@@ -1,0 +1,66 @@
+{
+  "schema_version": "pantheon.product_functional_closure.code_disposition.v1",
+  "program_id": "pantheon-product-functional-closure-20260820",
+  "task_id": "PFG-BE-CONSOLIDATE-20260820",
+  "canonical_owner": "services/source_ingestion/controller_worker.py (Source Ingestion), services/execution/runtime-manager/paper_fleet_reconciler.py (Paper Execution), services/policy-learning/agora_handoff_drainer.py & candidate_experiment_handoff.py (Policy Learning), services/control-plane/bff/loop_inventory.py (Loop Health Truth)",
+  "stores_and_queues": [
+    "services/source_ingestion/controller_state.py:ControllerStateStore",
+    "services/execution/lean_runtime/pending_signal_store.py:PendingSignalStore",
+    "services/policy-learning/agora_dataset_authority.py:AgoraDatasetAuthority (exact-ref)",
+    "services/control-plane/bff/loop_inventory.py:LoopInventory & LoopHealth"
+  ],
+  "production_callers": [
+    "scripts/source_ingest_scheduler_once.py -> services/source_ingestion/controller_worker.py",
+    "services/policy-learning/scheduler_worker.py -> services/policy-learning/agora_handoff_drainer.py",
+    "services/execution/runtime-manager/paper_fleet_reconciler.py -> services/execution/lean_runtime/paper_runtime.py",
+    "services/control-plane/bff/main.py -> services/control-plane/bff/loop_inventory.py"
+  ],
+  "duplicate_paths": [
+    "services/source_ingestion/scheduler_worker.py (legacy recurring HTTP worker, superseded by controller_worker.py)",
+    "services/policy-learning direct DB scanner in scheduled loop (superseded by agora_handoff_drainer.py)",
+    "static loop catalog maturity/task claims in loop-catalog.registry.json (superseded by live controller records)"
+  ],
+  "retired_after_proof": [
+    "services/source_ingestion/scheduler_worker.py and services/source_ingestion/tests/test_scheduler_worker.py deleted with negative caller proof",
+    "automatic direct Agora dataset discovery in scheduled path retired in favor of durable Agora handoff intake cycle",
+    "static loop catalog runtime maturity/evidence claims retired from live BFF loop-inventory/loop-health responses"
+  ],
+  "retained_with_reason": [
+    {
+      "component": "scripts/source_ingest_scheduler_once.py",
+      "disposition": "keep",
+      "reason": "Canonical bounded manual one-shot CLI entrypoint; delegates to controller_worker.py."
+    },
+    {
+      "component": "services/policy-learning/agora_dataset_authority.py",
+      "disposition": "keep",
+      "reason": "Retained for exact-ref DatasetVersion registration and lookup in candidate resolution and durable handoff admission."
+    },
+    {
+      "component": "services/policy-learning/candidate_experiment_handoff.py",
+      "disposition": "keep",
+      "reason": "Active HTTP-only Policy Learning to Research candidate handoff."
+    },
+    {
+      "component": "services/execution/lean_runtime/",
+      "disposition": "keep",
+      "reason": "Dynamic fleet, signal producer, runtime bootstrap, and BoundedPaperStrategy smoke fixture."
+    },
+    {
+      "component": "docs/deployment/loop-catalog.registry.json",
+      "disposition": "keep",
+      "reason": "Stable specification, ownership, and controller contract registry read by BFF /bff/v5/loop-inventory."
+    },
+    {
+      "component": "docker-compose.yml::source-ingest-agora-projector",
+      "disposition": "defer",
+      "reason": "Deferred until deploy_nonprod_vm.sh bounded source refresh script removes dependency."
+    },
+    {
+      "component": "docker-compose.exec.yml::pantheon-paper-runtime",
+      "disposition": "defer",
+      "reason": "Deferred until split EXEC topology validation is unified with root dynamic fleet reconciler."
+    }
+  ],
+  "new_parallel_owner_created": false
+}
