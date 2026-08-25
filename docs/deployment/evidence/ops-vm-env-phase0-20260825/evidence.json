@@ -16,7 +16,7 @@
       "criterion": "Capture timestamped redacted Dev CPU memory disk startup and deployment-duration measurements from pantheon-lupin-dev",
       "artifact": "docs/deployment/evidence/ops-vm-env-phase0-20260825/measurements-baseline.json",
       "status": "COMPLETED",
-      "summary": "Captured host CPU (12 vCPUs), memory (47.04 GiB total, 30.48 GiB available), disk (242 GiB, 88% utilized), uptime (420.2h), 50 container stats, Caddy memory (26.0 MiB), and historical deployment durations (BFF: ~2m, Root: ~9m)."
+      "summary": "Captured host CPU (12 vCPUs), memory (47.04 GiB total, 32.55 GiB available), disk (241.13 GiB, 88% utilized), uptime (420.2h), startup duration (35.06s system boot, ~12.5s core stack), 50 container stats (11.04 GiB total), Caddy memory (26.0 MiB), and historical deployment durations (BFF rebuild: ~2m05s, root stack: ~10m17s, paired dev deploy run 32679566250: 22m32s total workflow, 18m48s switch job)."
     },
     "capability_gap_matrix": {
       "criterion": "Publish a FE/BFF migration worker-ownership and backup/restore capability gap matrix",
@@ -28,7 +28,7 @@
       "criterion": "Recommend an instance size from measured core peak with at least 30 percent memory headroom",
       "artifact": "docs/deployment/evidence/ops-vm-env-phase0-20260825/instance-sizing-recommendation.md",
       "status": "COMPLETED",
-      "summary": "Core peak calculated at 4.15 GiB (steady 2.10 GiB + green candidate 0.98 GiB + OS/Caddy 0.98 GiB). Sizing recommended as e2-standard-2 (2 vCPU, 8 GiB RAM) providing 49.3% memory headroom, exceeding >=30% requirement."
+      "summary": "Core peak calculated at 4.18 - 4.31 GiB (steady 2.26 GiB + green candidate 0.85-0.98 GiB + OS/Caddy/buffers 0.98 GiB). Sizing recommended as e2-standard-2 (2 vCPU, 8.0 GiB RAM) providing 47.3% - 48.9% memory headroom, exceeding >=30% requirement."
     },
     "production_gates": {
       "criterion": "Record operator-approved or explicitly pending production RPO RTO real-capital scope and on-call owner without inference",
@@ -54,17 +54,17 @@
     "project": "pantheon-lupin-dev-20260719",
     "zone": "asia-east1-b",
     "total_containers_running": 50,
-    "total_container_memory_mib": 11207.72,
-    "total_container_memory_gib": 10.95,
-    "core_profile_memory_mib": 2152.89,
-    "core_profile_memory_gib": 2.1,
-    "workers_profile_memory_mib": 6840.15,
-    "workers_profile_memory_gib": 6.68,
-    "management_ai_profile_memory_mib": 1440.1,
-    "management_ai_profile_memory_gib": 1.41,
-    "research_profile_memory_mib": 677.85,
+    "total_container_memory_mib": 11303.08,
+    "total_container_memory_gib": 11.04,
+    "core_profile_memory_mib": 2314.68,
+    "core_profile_memory_gib": 2.26,
+    "workers_profile_memory_mib": 6866.49,
+    "workers_profile_memory_gib": 6.71,
+    "management_ai_profile_memory_mib": 1348.64,
+    "management_ai_profile_memory_gib": 1.32,
+    "research_profile_memory_mib": 677.92,
     "research_profile_memory_gib": 0.66,
-    "execution_profile_memory_mib": 96.73,
+    "execution_profile_memory_mib": 95.35,
     "execution_profile_memory_gib": 0.09
   },
   "instance_sizing_recommendations": {
@@ -72,8 +72,8 @@
       "machine_type": "e2-standard-2",
       "vcpus": 2,
       "memory_gib": 8.0,
-      "core_peak_gib": 4.15,
-      "memory_headroom_pct": 49.3
+      "core_peak_gib": 4.18,
+      "memory_headroom_pct": 48.9
     },
     "prod_execution_vm": {
       "machine_type": "e2-standard-2",

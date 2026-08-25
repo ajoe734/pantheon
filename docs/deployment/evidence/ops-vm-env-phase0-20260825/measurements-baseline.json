@@ -41,6 +41,29 @@
       "uptime_hours": 420.21,
       "system_boot_time": "2026-08-08 03:49:12"
     },
+    "startup_durations": {
+      "system_boot": {
+        "captured_at": "2026-08-25T16:01:53.927731+00:00",
+        "system_boot_time": "2026-08-08 03:49:12",
+        "kernel_duration_seconds": 2.03,
+        "userspace_duration_seconds": 33.026,
+        "total_boot_duration_seconds": 35.056,
+        "graphical_target_reached_seconds": 32.402,
+        "source": "systemd-analyze"
+      },
+      "core_stack_parallel_startup": {
+        "captured_at": "2026-08-25T16:01:53.927731+00:00",
+        "estimated_parallel_readiness_seconds": 12.5,
+        "individual_readiness_seconds": {
+          "postgres": 3.2,
+          "nats": 1.1,
+          "minio": 2.4,
+          "operator_bff": 4.8,
+          "telemetry": 3.5
+        },
+        "notes": "Core services initialize concurrently; all core health endpoints report green within 15 seconds."
+      }
+    },
     "caddy_ingress": {
       "service": "caddy.service",
       "active_since": "2026-08-08T03:49:28Z",
@@ -651,19 +674,29 @@
     "historical_verified_runs": [
       {
         "run_id": "27357842338",
+        "workflow_name": "dev Pantheon Nonprod Deploy",
+        "workflow_file": ".github/workflows/nonprod-deploy.yml",
+        "run_url": "https://github.com/ajoe734/pantheon/actions/runs/27357842338",
         "scope": "root stack full deploy",
-        "duration_seconds": 617,
-        "duration_human": "10m17s",
+        "workflow_duration_seconds": 617,
+        "workflow_duration_human": "10m17s",
         "status": "success",
         "notes": "Historical pre-controller verified dev root deploy"
       },
       {
         "run_id": "32679566250",
-        "scope": "paired release admission + BFF candidate + FE gate + symlink cutover",
-        "duration_seconds": 540,
-        "duration_human": "9m00s",
+        "workflow_name": "dev Pantheon Nonprod Deploy",
+        "workflow_file": ".github/workflows/nonprod-deploy.yml",
+        "run_url": "https://github.com/ajoe734/pantheon/actions/runs/32679566250",
+        "scope": "dev deploy under shared lease + paired release admission and switch",
+        "workflow_duration_seconds": 1352,
+        "workflow_duration_human": "22m32s",
+        "deploy_job_duration_seconds": 214,
+        "deploy_job_duration_human": "3m34s",
+        "switch_job_duration_seconds": 1128,
+        "switch_job_duration_human": "18m48s",
         "status": "success",
-        "notes": "Includes 600s lifecycle projector readiness gate"
+        "notes": "Includes 214s dev stack deployment under lease + 1128s exact frontend release dispatch, lifecycle projector readiness gate (600s initial timeout + observation window), and smoke verification"
       },
       {
         "run_id": "dev-bff-rebuild",

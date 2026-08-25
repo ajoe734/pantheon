@@ -582,9 +582,9 @@ Dev 是否夜間關機由 supervisor/worker 是否需要 24 小時運作決定�
 交付與基線成果（詳見 [`docs/deployment/evidence/ops-vm-env-phase0-20260825/`](evidence/ops-vm-env-phase0-20260825/README.md)）：
 
 - `core`（14 服務）、`workers`（17 服務）、`research`（24 服務）、`management-ai`（8 服務）、`execution`（4 服務）完整盤點與 singleton 邊界：[`service-inventory.md`](evidence/ops-vm-env-phase0-20260825/service-inventory.md)。
-- Dev 現況 CPU（12 vCPU）、memory（47.04 GiB 總量、30.48 GiB 可用、50 container 使用 10.95 GiB）、disk（242 GiB 88% 使用率）、uptime（420h+）與部署耗時基線：[`measurements-baseline.json`](evidence/ops-vm-env-phase0-20260825/measurements-baseline.json)。
+- Dev 現況 CPU（12 vCPU）、memory（47.04 GiB 總量、32.55 GiB 可用、50 container 使用 11.04 GiB / 11,303.08 MiB）、disk（241.13 GiB 88% 使用率）、uptime（420h+）、開機/啟動耗時與部署耗時基線：[`measurements-baseline.json`](evidence/ops-vm-env-phase0-20260825/measurements-baseline.json)。
 - FE/BFF 配對發布、DB expand/contract migration、worker singleton lifecycle 與 backup/restore 四大領域能力差距矩陣：[`capability-gap-matrix.md`](evidence/ops-vm-env-phase0-20260825/capability-gap-matrix.md)。
-- 依 `core` 峰值（4.15 GiB，含切換期候選 BFF）加 $\ge 30\%$ 餘裕之 instance sizing 建議（Prod Control 建議 `e2-standard-2`，提供 49.3% 記憶體餘裕）：[`instance-sizing-recommendation.md`](evidence/ops-vm-env-phase0-20260825/instance-sizing-recommendation.md)。
+- 依 `core` 峰值（4.18 - 4.31 GiB，含切換期候選 BFF 與主機 OS/Caddy 緩衝）加 $\ge 30\%$ 餘裕之 instance sizing 建議（Prod Control 建議 `e2-standard-2`，提供 48.9% 記憶體餘裕）：[`instance-sizing-recommendation.md`](evidence/ops-vm-env-phase0-20260825/instance-sizing-recommendation.md)。
 - Production RPO（<1h）、RTO（<30m）、real-capital scope（Phase 4）與 on-call owner 決策明確標記為待營運批准：[`production-gates.md`](evidence/ops-vm-env-phase0-20260825/production-gates.md)。
 
 完成條件：能以量測結果選 instance size，不以完整 service 數量推測（已由 `OPS-VM-ENV-PHASE0-20260825` 完成實測基線）。
