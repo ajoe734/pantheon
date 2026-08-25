@@ -700,10 +700,10 @@
         "workflow_duration_human": "10m50s",
         "job_duration_seconds": 617,
         "job_duration_human": "10m17s",
-        "deploy_step_duration_seconds": 574,
-        "deploy_step_duration_human": "9m34s",
+        "deploy_step_duration_seconds": 581,
+        "deploy_step_duration_human": "9m41s",
         "status": "success",
-        "notes": "Historical pre-controller verified dev root deploy (createdAt: 2026-06-11T15:25:00Z, updatedAt: 2026-06-11T15:35:50Z, job started: 2026-06-11T15:25:07Z, job completed: 2026-06-11T15:35:24Z)"
+        "notes": "Historical pre-controller verified dev root deploy (createdAt: 2026-06-11T15:25:00Z, updatedAt: 2026-06-11T15:35:50Z, job started: 2026-06-11T15:25:07Z, job completed: 2026-06-11T15:35:24Z, 'Deploy requested VM stack' step: 2026-06-11T15:25:39Z to 2026-06-11T15:35:20Z = 581s / 9m41s)"
       },
       {
         "run_id": "32679566250",
