@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import sys
@@ -1097,6 +1098,30 @@ class RelationalLifecycleProjector:
 LifecycleProjector = RelationalLifecycleProjector
 
 
+def _validate_source_timeout(
+    value: Any,
+    *,
+    name: str = "timeout_seconds",
+    default: float = DEFAULT_SOURCE_TIMEOUT_SECONDS,
+) -> float:
+    if value is None:
+        return float(default)
+    if isinstance(value, str):
+        stripped = value.strip()
+        if not stripped:
+            return float(default)
+        value = stripped
+    if isinstance(value, bool):
+        raise ValueError(f"{name} must be a finite positive number (got {value!r})")
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{name} must be a finite positive number (got {value!r})") from exc
+    if not math.isfinite(parsed) or parsed <= 0.0:
+        raise ValueError(f"{name} must be a finite positive number (got {value!r})")
+    return parsed
+
+
 class PostgresLifecycleSource:
     """Read the retained lifecycle source window and receive wakeups.
 
@@ -1118,15 +1143,15 @@ class PostgresLifecycleSource:
         self.dsn = dsn
         self.channel = channel
         self.include_non_lifecycle = bool(include_non_lifecycle)
-        self.timeout_seconds = (
-            float(timeout_seconds)
-            if timeout_seconds is not None
-            else DEFAULT_SOURCE_TIMEOUT_SECONDS
+        self.timeout_seconds = _validate_source_timeout(
+            timeout_seconds,
+            name="timeout_seconds",
+            default=DEFAULT_SOURCE_TIMEOUT_SECONDS,
         )
-        self.startup_timeout_seconds = (
-            float(startup_timeout_seconds)
-            if startup_timeout_seconds is not None
-            else DEFAULT_SOURCE_STARTUP_TIMEOUT_SECONDS
+        self.startup_timeout_seconds = _validate_source_timeout(
+            startup_timeout_seconds,
+            name="startup_timeout_seconds",
+            default=DEFAULT_SOURCE_STARTUP_TIMEOUT_SECONDS,
         )
         self._listener: Any = None
         self._wake = asyncio.Event()
@@ -1135,11 +1160,7 @@ class PostgresLifecycleSource:
         import asyncpg  # type: ignore[import]
 
         loop = asyncio.get_running_loop()
-        timeout = (
-            self.startup_timeout_seconds
-            if self.startup_timeout_seconds is not None
-            else DEFAULT_SOURCE_STARTUP_TIMEOUT_SECONDS
-        )
+        timeout = self.startup_timeout_seconds
         deadline = loop.time() + timeout
         conn: Any | None = None
 
@@ -1187,11 +1208,7 @@ class PostgresLifecycleSource:
         import asyncpg  # type: ignore[import]
 
         loop = asyncio.get_running_loop()
-        timeout = (
-            self.timeout_seconds
-            if self.timeout_seconds is not None
-            else DEFAULT_SOURCE_TIMEOUT_SECONDS
-        )
+        timeout = self.timeout_seconds
         deadline = loop.time() + timeout
         conn: Any | None = None
 
@@ -1241,11 +1258,7 @@ class PostgresLifecycleSource:
         import asyncpg  # type: ignore[import]
 
         loop = asyncio.get_running_loop()
-        timeout = (
-            self.timeout_seconds
-            if self.timeout_seconds is not None
-            else DEFAULT_SOURCE_TIMEOUT_SECONDS
-        )
+        timeout = self.timeout_seconds
         deadline = loop.time() + timeout
         conn: Any | None = None
 
@@ -1320,11 +1333,7 @@ class PostgresLifecycleSource:
         if self._listener is not None:
             return
         loop = asyncio.get_running_loop()
-        timeout = (
-            self.timeout_seconds
-            if self.timeout_seconds is not None
-            else DEFAULT_SOURCE_TIMEOUT_SECONDS
-        )
+        timeout = self.timeout_seconds
         deadline = loop.time() + timeout
         conn: Any | None = None
 
@@ -1372,11 +1381,7 @@ class PostgresLifecycleSource:
         if self._listener is not None:
             listener = self._listener
             self._listener = None
-            timeout = (
-                self.timeout_seconds
-                if self.timeout_seconds is not None
-                else DEFAULT_SOURCE_TIMEOUT_SECONDS
-            )
+            timeout = self.timeout_seconds
             try:
                 await asyncio.wait_for(listener.close(), timeout=timeout)
             except BaseException:
@@ -1434,13 +1439,22 @@ async def run_worker() -> int:
     if not dsn:
         raise RuntimeError("TELEMETRY_DB_DSN is required")
     projector = _configured_relational_projector()
-    source_timeout_str = os.getenv(
-        "LIFECYCLE_PROJECTOR_SOURCE_TIMEOUT_SECONDS",
-        os.getenv("LIFECYCLE_PROJECTOR_DB_TIMEOUT_SECONDS", ""),
-    ).strip()
-    source_timeout = float(source_timeout_str) if source_timeout_str else DEFAULT_SOURCE_TIMEOUT_SECONDS
-    startup_timeout_str = os.getenv("LIFECYCLE_PROJECTOR_STARTUP_TIMEOUT_SECONDS", "").strip()
-    startup_timeout = float(startup_timeout_str) if startup_timeout_str else DEFAULT_SOURCE_STARTUP_TIMEOUT_SECONDS
+    source_timeout_raw = (
+        os.getenv("LIFECYCLE_PROJECTOR_SOURCE_TIMEOUT_SECONDS")
+        or os.getenv("LIFECYCLE_PROJECTOR_DB_TIMEOUT_SECONDS")
+        or ""
+    )
+    source_timeout = _validate_source_timeout(
+        source_timeout_raw,
+        name="LIFECYCLE_PROJECTOR_SOURCE_TIMEOUT_SECONDS",
+        default=DEFAULT_SOURCE_TIMEOUT_SECONDS,
+    )
+    startup_timeout_raw = os.getenv("LIFECYCLE_PROJECTOR_STARTUP_TIMEOUT_SECONDS", "")
+    startup_timeout = _validate_source_timeout(
+        startup_timeout_raw,
+        name="LIFECYCLE_PROJECTOR_STARTUP_TIMEOUT_SECONDS",
+        default=DEFAULT_SOURCE_STARTUP_TIMEOUT_SECONDS,
+    )
     source = PostgresLifecycleSource(
         dsn,
         include_non_lifecycle=True,

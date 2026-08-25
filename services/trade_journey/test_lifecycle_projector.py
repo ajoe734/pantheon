@@ -1223,3 +1223,95 @@ def test_run_worker_env_var_threads_source_timeout(monkeypatch: pytest.MonkeyPat
     assert asyncio.run(lifecycle_projector_module.run_worker()) == 0
     assert captured_kwargs["timeout_seconds"] == 7.5
     assert captured_kwargs["startup_timeout_seconds"] == 12.5
+
+
+@pytest.mark.parametrize(
+    "invalid_timeout",
+    [
+        float("inf"),
+        float("-inf"),
+        float("nan"),
+        0,
+        0.0,
+        -1.0,
+        -10,
+        "inf",
+        "-inf",
+        "+inf",
+        "nan",
+        "NaN",
+        "0",
+        "-5.0",
+        True,
+        False,
+        "invalid",
+    ],
+)
+def test_postgres_lifecycle_source_rejects_non_finite_and_non_positive_timeouts(
+    invalid_timeout: object,
+) -> None:
+    with pytest.raises(ValueError, match="timeout_seconds must be a finite positive number"):
+        PostgresLifecycleSource("postgresql://unit", timeout_seconds=invalid_timeout)  # type: ignore[arg-type]
+
+    with pytest.raises(ValueError, match="startup_timeout_seconds must be a finite positive number"):
+        PostgresLifecycleSource("postgresql://unit", startup_timeout_seconds=invalid_timeout)  # type: ignore[arg-type]
+
+
+def test_postgres_lifecycle_source_accepts_valid_timeouts() -> None:
+    source = PostgresLifecycleSource("postgresql://unit")
+    assert source.timeout_seconds == 10.0
+    assert source.startup_timeout_seconds == 10.0
+
+    source_custom = PostgresLifecycleSource(
+        "postgresql://unit",
+        timeout_seconds=5.5,
+        startup_timeout_seconds=15.0,
+    )
+    assert source_custom.timeout_seconds == 5.5
+    assert source_custom.startup_timeout_seconds == 15.0
+
+    source_str = PostgresLifecycleSource(
+        "postgresql://unit",
+        timeout_seconds="3.2",  # type: ignore[arg-type]
+        startup_timeout_seconds="8.1",  # type: ignore[arg-type]
+    )
+    assert source_str.timeout_seconds == 3.2
+    assert source_str.startup_timeout_seconds == 8.1
+
+
+@pytest.mark.parametrize(
+    ("env_var", "invalid_value", "expected_name"),
+    [
+        ("LIFECYCLE_PROJECTOR_SOURCE_TIMEOUT_SECONDS", "inf", "LIFECYCLE_PROJECTOR_SOURCE_TIMEOUT_SECONDS"),
+        ("LIFECYCLE_PROJECTOR_SOURCE_TIMEOUT_SECONDS", "-inf", "LIFECYCLE_PROJECTOR_SOURCE_TIMEOUT_SECONDS"),
+        ("LIFECYCLE_PROJECTOR_SOURCE_TIMEOUT_SECONDS", "nan", "LIFECYCLE_PROJECTOR_SOURCE_TIMEOUT_SECONDS"),
+        ("LIFECYCLE_PROJECTOR_SOURCE_TIMEOUT_SECONDS", "0", "LIFECYCLE_PROJECTOR_SOURCE_TIMEOUT_SECONDS"),
+        ("LIFECYCLE_PROJECTOR_SOURCE_TIMEOUT_SECONDS", "-5.0", "LIFECYCLE_PROJECTOR_SOURCE_TIMEOUT_SECONDS"),
+        ("LIFECYCLE_PROJECTOR_DB_TIMEOUT_SECONDS", "inf", "LIFECYCLE_PROJECTOR_SOURCE_TIMEOUT_SECONDS"),
+        ("LIFECYCLE_PROJECTOR_DB_TIMEOUT_SECONDS", "nan", "LIFECYCLE_PROJECTOR_SOURCE_TIMEOUT_SECONDS"),
+        ("LIFECYCLE_PROJECTOR_DB_TIMEOUT_SECONDS", "0", "LIFECYCLE_PROJECTOR_SOURCE_TIMEOUT_SECONDS"),
+        ("LIFECYCLE_PROJECTOR_DB_TIMEOUT_SECONDS", "-1", "LIFECYCLE_PROJECTOR_SOURCE_TIMEOUT_SECONDS"),
+        ("LIFECYCLE_PROJECTOR_STARTUP_TIMEOUT_SECONDS", "inf", "LIFECYCLE_PROJECTOR_STARTUP_TIMEOUT_SECONDS"),
+        ("LIFECYCLE_PROJECTOR_STARTUP_TIMEOUT_SECONDS", "-inf", "LIFECYCLE_PROJECTOR_STARTUP_TIMEOUT_SECONDS"),
+        ("LIFECYCLE_PROJECTOR_STARTUP_TIMEOUT_SECONDS", "nan", "LIFECYCLE_PROJECTOR_STARTUP_TIMEOUT_SECONDS"),
+        ("LIFECYCLE_PROJECTOR_STARTUP_TIMEOUT_SECONDS", "0", "LIFECYCLE_PROJECTOR_STARTUP_TIMEOUT_SECONDS"),
+        ("LIFECYCLE_PROJECTOR_STARTUP_TIMEOUT_SECONDS", "-10", "LIFECYCLE_PROJECTOR_STARTUP_TIMEOUT_SECONDS"),
+    ],
+)
+def test_run_worker_rejects_invalid_timeout_env_vars(
+    monkeypatch: pytest.MonkeyPatch,
+    env_var: str,
+    invalid_value: str,
+    expected_name: str,
+) -> None:
+    fake_projector = _FakeRelationalProjector()
+    monkeypatch.setattr(
+        lifecycle_projector_module,
+        "_configured_relational_projector",
+        lambda: fake_projector,
+    )
+    monkeypatch.setenv("TELEMETRY_DB_DSN", "postgresql://unit")
+    monkeypatch.setenv(env_var, invalid_value)
+
+    with pytest.raises(ValueError, match=f"{expected_name} must be a finite positive number"):
+        asyncio.run(lifecycle_projector_module.run_worker())

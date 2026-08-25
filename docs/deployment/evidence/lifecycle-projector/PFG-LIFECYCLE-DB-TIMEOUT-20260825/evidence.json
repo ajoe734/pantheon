@@ -30,14 +30,14 @@
   },
   "contracts": {
     "bounded_timeouts": "Every PostgresLifecycleSource asyncpg connect, high_watermark, fetch_after, start_listener, and close operation is bounded by a finite configurable timeout.",
-    "configurable_timeout": "PostgresLifecycleSource accepts timeout_seconds and startup_timeout_seconds (defaulting to 10.0s), and run_worker threads LIFECYCLE_PROJECTOR_SOURCE_TIMEOUT_SECONDS and LIFECYCLE_PROJECTOR_STARTUP_TIMEOUT_SECONDS from the environment.",
+    "configurable_timeout": "PostgresLifecycleSource accepts timeout_seconds and startup_timeout_seconds (defaulting to 10.0s), and run_worker threads LIFECYCLE_PROJECTOR_SOURCE_TIMEOUT_SECONDS and LIFECYCLE_PROJECTOR_STARTUP_TIMEOUT_SECONDS from the environment with strict finite positive validation.",
     "safe_termination": "When any operation deadline or close deadline is exhausted, the connection is terminated safely to prevent hanging socket leaks.",
     "degraded_health_and_loop_recovery": "Transient source timeouts record degraded controller health (accepted_live=False, status='failed', last_error='TimeoutError: ...') without crashing the worker process, and loop recovers to status='ready' and accepted_live=True once database connectivity is restored."
   },
   "acceptance_evidence": {
     "unit_and_regression_tests": {
       "command": "PANTHEON_PY=\"$(python3 scripts/dev/provision_python_distribution.py --print-python)\" \"$PANTHEON_PY\" -m pytest -q services/trade_journey/test_lifecycle_projector.py",
-      "result": "pass; 33 passed, 1 skipped",
+      "result": "pass; 65 passed, 1 skipped",
       "tests": [
         "test_postgres_lifecycle_source_high_watermark_connect_timeout",
         "test_postgres_lifecycle_source_high_watermark_query_timeout",
@@ -48,18 +48,21 @@
         "test_postgres_lifecycle_source_start_listener_and_close_timeout",
         "test_postgres_lifecycle_source_close_listener_bounded_timeout",
         "test_run_worker_recovers_after_source_timeout_failure",
-        "test_run_worker_env_var_threads_source_timeout"
+        "test_run_worker_env_var_threads_source_timeout",
+        "test_postgres_lifecycle_source_rejects_non_finite_and_non_positive_timeouts",
+        "test_postgres_lifecycle_source_accepts_valid_timeouts",
+        "test_run_worker_rejects_invalid_timeout_env_vars"
       ]
     },
     "trade_journey_full_suite": {
       "command": "PANTHEON_PY=\"$(python3 scripts/dev/provision_python_distribution.py --print-python)\" \"$PANTHEON_PY\" -m pytest -q services/trade_journey",
-      "result": "pass; 198 passed, 36 skipped"
+      "result": "pass; 230 passed, 36 skipped"
     }
   },
   "validation": [
     {
       "command": "PANTHEON_PY=\"$(python3 scripts/dev/provision_python_distribution.py --print-python)\" \"$PANTHEON_PY\" -m pytest -q services/trade_journey/test_lifecycle_projector.py services/trade_journey/test_lifecycle_projector_compose.py services/control-plane/bff/test_lifecycle_projector_readiness.py",
-      "result": "pass; 45 passed, 1 skipped"
+      "result": "pass; 77 passed, 1 skipped"
     },
     {
       "command": "python3 -m py_compile services/trade_journey/lifecycle_projector.py services/trade_journey/test_lifecycle_projector.py && git diff --check origin/dev",
