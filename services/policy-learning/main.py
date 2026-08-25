@@ -614,31 +614,6 @@ class DatasetResolutionError(RuntimeError):
         self.detail = detail
 
 
-def discover_eligible_datasets(
-    *,
-    tenant_id: str = "",
-    user_id: str = "",
-    limit: Optional[int] = None,
-) -> List[Dict[str, Any]]:
-    """Discover tenant-scoped learning-eligible Agora DatasetVersions.
-
-    Discovery is independent of ``POLICY_LEARNING_STORE_BACKEND``: the Agora
-    dataset authority is a separate owner with its own connection settings, so
-    the default JSON candidate store still sees real data.
-
-    Raises:
-        AgoraAuthorityUnavailable: the authority is unresolvable or unreachable.
-            Callers must degrade; there is no seed substitution here.
-    """
-
-    versions = dataset_authority().list_dataset_versions(
-        tenant_id=tenant_id,
-        user_id=user_id,
-        limit=limit,
-    )
-    return [version.to_dataset_ref() for version in versions]
-
-
 # Non-product development fixture.  Only reachable when
 # POLICY_LEARNING_DATASET_MODE=seed is set explicitly; the product path never
 # reads it, and anything derived from it is stamped seed_fallback_used=true.
@@ -917,10 +892,8 @@ def shadow_eval_tick(
     be used to schedule work, or to probe for datasets, in someone else's
     scope.
 
-    With no explicit ``dataset_refs`` the tick discovers tenant-scoped Agora
-    DatasetVersions through the dataset authority.  If that authority cannot
-    answer, the tick fails closed with HTTP 503 and a truthful degradation
-    record; it never falls back to seed data in product mode.
+    Evaluations require explicit ``dataset_refs``. Durable Agora dataset intake
+    arrives via the `/agora-handoff` intake consumer.
 
     Produces gated ShadowImitationCandidate records in proposed state.
     Production training and artifact mutation remain fail-closed until a
@@ -934,26 +907,6 @@ def shadow_eval_tick(
 
     dataset_refs = list(body.dataset_refs)
     dataset_source = "explicit_refs"
-    if not dataset_refs:
-        dataset_source = "agora_dataset_version" if _product_mode() else "seed_mode"
-        try:
-            dataset_refs = discover_eligible_datasets(
-                tenant_id=tenant_id,
-                user_id=user_id,
-                limit=body.max_datasets,
-            )
-        except AgoraAuthorityUnavailable as exc:
-            degradation = _degradation(
-                exc.reason,
-                exc.detail,
-                timestamp,
-                tick_id=tick_id,
-                eval_type=eval_type,
-                tenant_id=tenant_id,
-                candidate_count=0,
-                production_training="fail_closed",
-            )
-            raise HTTPException(status_code=503, detail=degradation)
 
     if body.max_datasets is not None and len(dataset_refs) > body.max_datasets:
         dataset_refs = dataset_refs[: body.max_datasets]

@@ -11,8 +11,6 @@
     "created_at",
     "source_documents",
     "catalog_decisions",
-    "maturity_levels",
-    "truth_levels",
     "loops",
     "composite_overlays"
   ],
@@ -43,20 +41,6 @@
     },
     "catalog_decisions": {
       "$ref": "#/definitions/CatalogDecisions"
-    },
-    "maturity_levels": {
-      "type": "array",
-      "minItems": 5,
-      "items": {
-        "$ref": "#/definitions/MaturityLevelDefinition"
-      }
-    },
-    "truth_levels": {
-      "type": "array",
-      "minItems": 5,
-      "items": {
-        "$ref": "#/definitions/TruthLevelDefinition"
-      }
     },
     "loops": {
       "type": "array",
@@ -203,41 +187,11 @@
     }
   },
   "definitions": {
-    "MaturityLevel": {
-      "type": "string",
-      "enum": [
-        "manual",
-        "api-only",
-        "scheduled",
-        "reconciled",
-        "proven-live"
-      ]
-    },
-    "TruthLevel": {
-      "type": "string",
-      "enum": [
-        "seed_fixture",
-        "registry_metadata",
-        "scheduled_tick",
-        "reconciled_live_proof",
-        "proven_live_evidence"
-      ]
-    },
     "LoopClassification": {
       "type": "string",
       "enum": [
         "canonical",
         "composite_overlay"
-      ]
-    },
-    "EvidenceStatus": {
-      "type": "string",
-      "enum": [
-        "missing",
-        "planned",
-        "present",
-        "historical",
-        "not_applicable"
       ]
     },
     "CanonicalLoopCatalogEntry": {
@@ -308,55 +262,6 @@
         }
       }
     },
-    "MaturityLevelDefinition": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "level",
-        "rank",
-        "meaning",
-        "closure_evidence"
-      ],
-      "properties": {
-        "level": {
-          "$ref": "#/definitions/MaturityLevel"
-        },
-        "rank": {
-          "type": "integer",
-          "minimum": 0
-        },
-        "meaning": {
-          "type": "string",
-          "minLength": 1
-        },
-        "closure_evidence": {
-          "type": "string",
-          "minLength": 1
-        }
-      }
-    },
-    "TruthLevelDefinition": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "level",
-        "rank",
-        "meaning"
-      ],
-      "properties": {
-        "level": {
-          "$ref": "#/definitions/TruthLevel"
-        },
-        "rank": {
-          "type": "integer",
-          "minimum": 0
-        },
-        "meaning": {
-          "type": "string",
-          "minLength": 1
-        }
-      }
-    },
     "LoopCatalogEntry": {
       "type": "object",
       "additionalProperties": false,
@@ -369,10 +274,7 @@
         "trigger_model",
         "desired_state",
         "actual_state",
-        "maturity",
-        "controller_contract",
-        "evidence_profile",
-        "execution_tasks"
+        "controller_contract"
       ],
       "properties": {
         "loop_id": {
@@ -410,21 +312,8 @@
         "actual_state": {
           "$ref": "#/definitions/StateProbe"
         },
-        "maturity": {
-          "$ref": "#/definitions/MaturityState"
-        },
         "controller_contract": {
           "$ref": "#/definitions/ControllerContract"
-        },
-        "evidence_profile": {
-          "$ref": "#/definitions/EvidenceProfile"
-        },
-        "execution_tasks": {
-          "type": "array",
-          "minItems": 1,
-          "items": {
-            "$ref": "#/definitions/ExecutionTaskRef"
-          }
         },
         "notes": {
           "type": "array",
@@ -479,153 +368,6 @@
               "required": [
                 "composed_of"
               ]
-            }
-          }
-        },
-        {
-          "if": {
-            "properties": {
-              "maturity": {
-                "properties": {
-                  "current": {
-                    "const": "reconciled"
-                  }
-                },
-                "required": [
-                  "current"
-                ]
-              }
-            },
-            "required": [
-              "maturity"
-            ]
-          },
-          "then": {
-            "properties": {
-              "controller_contract": {
-                "properties": {
-                  "status": {
-                    "enum": [
-                      "implemented",
-                      "proven_live"
-                    ]
-                  },
-                  "controller_name": {
-                    "type": "string",
-                    "minLength": 1
-                  },
-                  "desired_state_query": {
-                    "type": "string",
-                    "minLength": 1
-                  },
-                  "actual_state_query": {
-                    "type": "string",
-                    "minLength": 1
-                  },
-                  "restart_behavior": {
-                    "type": "string",
-                    "minLength": 1
-                  },
-                  "liveness_metric": {
-                    "type": "string",
-                    "minLength": 1
-                  }
-                },
-                "required": [
-                  "status",
-                  "controller_name",
-                  "desired_state_query",
-                  "actual_state_query",
-                  "restart_behavior",
-                  "liveness_metric"
-                ]
-              },
-              "evidence_profile": {
-                "properties": {
-                  "reconciled_live_proof": {
-                    "properties": {
-                      "status": {
-                        "const": "present"
-                      }
-                    },
-                    "required": [
-                      "status"
-                    ]
-                  }
-                }
-              }
-            }
-          }
-        },
-        {
-          "if": {
-            "properties": {
-              "maturity": {
-                "properties": {
-                  "current": {
-                    "const": "proven-live"
-                  }
-                },
-                "required": [
-                  "current"
-                ]
-              }
-            },
-            "required": [
-              "maturity"
-            ]
-          },
-          "then": {
-            "properties": {
-              "controller_contract": {
-                "properties": {
-                  "status": {
-                    "const": "proven_live"
-                  },
-                  "controller_name": {
-                    "type": "string",
-                    "minLength": 1
-                  },
-                  "desired_state_query": {
-                    "type": "string",
-                    "minLength": 1
-                  },
-                  "actual_state_query": {
-                    "type": "string",
-                    "minLength": 1
-                  },
-                  "restart_behavior": {
-                    "type": "string",
-                    "minLength": 1
-                  },
-                  "liveness_metric": {
-                    "type": "string",
-                    "minLength": 1
-                  }
-                },
-                "required": [
-                  "status",
-                  "controller_name",
-                  "desired_state_query",
-                  "actual_state_query",
-                  "restart_behavior",
-                  "liveness_metric"
-                ]
-              },
-              "evidence_profile": {
-                "properties": {
-                  "proven_live_evidence": {
-                    "properties": {
-                      "status": {
-                        "const": "present"
-                      }
-                    },
-                    "required": [
-                      "status"
-                    ]
-                  }
-                }
-              }
             }
           }
         }
@@ -758,36 +500,6 @@
         }
       }
     },
-    "MaturityState": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "current",
-        "target",
-        "rationale"
-      ],
-      "properties": {
-        "current": {
-          "$ref": "#/definitions/MaturityLevel"
-        },
-        "target": {
-          "$ref": "#/definitions/MaturityLevel"
-        },
-        "later_goal": {
-          "$ref": "#/definitions/MaturityLevel"
-        },
-        "intermediate": {
-          "type": "array",
-          "items": {
-            "$ref": "#/definitions/MaturityLevel"
-          }
-        },
-        "rationale": {
-          "type": "string",
-          "minLength": 1
-        }
-      }
-    },
     "ControllerContract": {
       "type": "object",
       "additionalProperties": false,
@@ -858,84 +570,6 @@
           "type": [
             "string",
             "null"
-          ]
-        }
-      }
-    },
-    "EvidenceProfile": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "seed_fixture",
-        "registry_metadata",
-        "scheduled_tick",
-        "reconciled_live_proof",
-        "proven_live_evidence"
-      ],
-      "properties": {
-        "seed_fixture": {
-          "$ref": "#/definitions/EvidenceLevelRecord"
-        },
-        "registry_metadata": {
-          "$ref": "#/definitions/EvidenceLevelRecord"
-        },
-        "scheduled_tick": {
-          "$ref": "#/definitions/EvidenceLevelRecord"
-        },
-        "reconciled_live_proof": {
-          "$ref": "#/definitions/EvidenceLevelRecord"
-        },
-        "proven_live_evidence": {
-          "$ref": "#/definitions/EvidenceLevelRecord"
-        }
-      }
-    },
-    "EvidenceLevelRecord": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "status",
-        "refs",
-        "note"
-      ],
-      "properties": {
-        "status": {
-          "$ref": "#/definitions/EvidenceStatus"
-        },
-        "refs": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        },
-        "note": {
-          "type": "string",
-          "minLength": 1
-        }
-      }
-    },
-    "ExecutionTaskRef": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "task_id",
-        "role"
-      ],
-      "properties": {
-        "task_id": {
-          "type": "string",
-          "pattern": "^(LOOP-AUTO|LOOP-PROD)(?:-[A-Z0-9]+)*-[0-9]{3}$"
-        },
-        "role": {
-          "type": "string",
-          "enum": [
-            "foundation",
-            "desired_state",
-            "controller",
-            "scheduler",
-            "truth_projection",
-            "evidence",
-            "guardrail"
           ]
         }
       }

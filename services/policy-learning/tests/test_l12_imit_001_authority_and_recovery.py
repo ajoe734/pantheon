@@ -305,7 +305,11 @@ def test_candidate_reads_are_invisible_across_tenants() -> None:
         client_b = authorized_client(svc.app, "tenant-b")
 
         created_a = client_a.post(
-            "/api/policy-learning/shadow-eval-tick", json={"tick_id": "tick-a"}
+            "/api/policy-learning/shadow-eval-tick",
+            json={
+                "tick_id": "tick-a",
+                "dataset_refs": [{"id": "dsv-a", "dataset_version_id": "dsv-a", "tenant_id": "tenant-a"}],
+            },
         ).json()
         client_a.post("/api/policy-learning/worker/process", json={"worker_id": "worker-a"})
         candidate_id = created_a["candidate_ids"][0]
@@ -363,7 +367,10 @@ def test_a_verified_jwt_without_tenant_authority_is_refused() -> None:
         ):
             ok = client.post(
                 "/api/policy-learning/shadow-eval-tick",
-                json={"tick_id": "tick-jwt"},
+                json={
+                    "tick_id": "tick-jwt",
+                    "dataset_refs": [{"id": "dsv-1", "dataset_version_id": "dsv-1"}],
+                },
                 headers={"Authorization": f"Bearer {scoped}", "X-Tenant-Id": "tenant-a"},
             )
             assert ok.status_code == 201
@@ -617,7 +624,14 @@ def test_concurrent_cross_tenant_ticks_and_claims_stay_isolated() -> None:
             client = clients[tenant]
             barrier.wait()
             tick = client.post(
-                "/api/policy-learning/shadow-eval-tick", json={"tick_id": f"tick-{tenant}"}
+                "/api/policy-learning/shadow-eval-tick",
+                json={
+                    "tick_id": f"tick-{tenant}",
+                    "dataset_refs": [
+                        {"id": f"dsv-{tenant[7:]}{n}", "dataset_version_id": f"dsv-{tenant[7:]}{n}", "tenant_id": tenant}
+                        for n in range(6)
+                    ],
+                },
             ).json()
             claimed = client.post(
                 "/api/policy-learning/worker/claim",
@@ -663,8 +677,22 @@ def test_one_tenants_restart_does_not_recover_another_tenants_orphans() -> None:
         )
         client_a = authorized_client(svc.app, "tenant-a")
         client_b = authorized_client(svc.app, "tenant-b")
-        client_a.post("/api/policy-learning/shadow-eval-tick", json={"tick_id": "tick-a"})
-        client_b.post("/api/policy-learning/shadow-eval-tick", json={"tick_id": "tick-b"})
+        client_a.post(
+            "/api/policy-learning/shadow-eval-tick",
+            json={
+                "tick_id": "tick-a",
+                "tenant_id": "tenant-a",
+                "dataset_refs": [{"id": "dsv-a", "dataset_version_id": "dsv-a", "tenant_id": "tenant-a"}],
+            },
+        )
+        client_b.post(
+            "/api/policy-learning/shadow-eval-tick",
+            json={
+                "tick_id": "tick-b",
+                "tenant_id": "tenant-b",
+                "dataset_refs": [{"id": "dsv-b", "dataset_version_id": "dsv-b", "tenant_id": "tenant-b"}],
+            },
+        )
 
         # Both tenants' workers claim, then both die, leaving expired leases.
         for client, tenant in ((client_a, "tenant-a"), (client_b, "tenant-b")):
@@ -717,7 +745,11 @@ def test_concurrent_duplicate_ticks_create_exactly_one_candidate_each() -> None:
             client = authorized_client(svc.app, "tenant-a")
             barrier.wait()
             body = client.post(
-                "/api/policy-learning/shadow-eval-tick", json={"tick_id": "tick-race"}
+                "/api/policy-learning/shadow-eval-tick",
+                json={
+                    "tick_id": "tick-race",
+                    "dataset_refs": [{"id": f"dsv-{n}", "dataset_version_id": f"dsv-{n}"} for n in range(4)],
+                },
             ).json()
             with lock:
                 created.append(body["candidate_ids"])
@@ -740,7 +772,11 @@ def test_replay_is_refused_while_a_worker_still_holds_the_lease() -> None:
         _install_authority(svc, [_agora_record("dsv-1", order=1)])
         client = authorized_client(svc.app, "tenant-a")
         tick = client.post(
-            "/api/policy-learning/shadow-eval-tick", json={"tick_id": "tick-lease"}
+            "/api/policy-learning/shadow-eval-tick",
+            json={
+                "tick_id": "tick-lease",
+                "dataset_refs": [{"id": "dsv-1", "dataset_version_id": "dsv-1"}],
+            },
         ).json()
         candidate_id = tick["candidate_ids"][0]
 
@@ -777,7 +813,11 @@ def test_replay_of_a_degraded_candidate_reruns_it_after_the_authority_returns() 
         _install_authority(svc, records)
         client = authorized_client(svc.app, "tenant-a")
         candidate_id = client.post(
-            "/api/policy-learning/shadow-eval-tick", json={"tick_id": "tick-degrade"}
+            "/api/policy-learning/shadow-eval-tick",
+            json={
+                "tick_id": "tick-degrade",
+                "dataset_refs": [{"id": "dsv-1", "dataset_version_id": "dsv-1"}],
+            },
         ).json()["candidate_ids"][0]
 
         svc.DATASET_AUTHORITY = authority_module.AgoraDatasetAuthority(backend="", dsn="")
@@ -803,7 +843,16 @@ def test_a_corrupt_backlog_is_an_outage_not_an_empty_backlog() -> None:
         svc = _load_service_module(data_dir)
         _install_authority(svc, [_agora_record("dsv-1", order=1), _agora_record("dsv-2", order=2)])
         client = authorized_client(svc.app, "tenant-a")
-        client.post("/api/policy-learning/shadow-eval-tick", json={"tick_id": "tick-corrupt"})
+        client.post(
+            "/api/policy-learning/shadow-eval-tick",
+            json={
+                "tick_id": "tick-corrupt",
+                "dataset_refs": [
+                    {"id": "dsv-1", "dataset_version_id": "dsv-1"},
+                    {"id": "dsv-2", "dataset_version_id": "dsv-2"},
+                ],
+            },
+        )
 
         backlog_path = Path(svc.store.candidates_path)
         healthy = backlog_path.read_text(encoding="utf-8")
@@ -828,7 +877,11 @@ def test_a_corrupt_backlog_is_an_outage_not_an_empty_backlog() -> None:
 
         # A tick must not overwrite the damaged file with a fresh backlog.
         ticked = client.post(
-            "/api/policy-learning/shadow-eval-tick", json={"tick_id": "tick-after-corrupt"}
+            "/api/policy-learning/shadow-eval-tick",
+            json={
+                "tick_id": "tick-after-corrupt",
+                "dataset_refs": [{"id": "dsv-1", "dataset_version_id": "dsv-1"}],
+            },
         )
         assert ticked.status_code == 503
         assert backlog_path.read_text(encoding="utf-8") == healthy[: len(healthy) // 2]
