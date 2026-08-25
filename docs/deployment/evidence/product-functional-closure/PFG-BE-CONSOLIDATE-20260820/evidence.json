@@ -19,7 +19,7 @@
       "services/policy-learning/candidate_experiment_handoff.py: confirmed active HTTP-only Policy Learning to Research candidate handoff is retained.",
       "services/execution/lean_runtime/: audited dynamic fleet reconciler, signal producer, runtime bootstrap, and BoundedPaperStrategy smoke fixture; verified all are retained with no duplicate runtime created.",
       "docs/deployment/loop-catalog.registry.json: removed static loop runtime/task claims (maturity_levels, truth_levels, maturity, evidence_profile, execution_tasks) and updated schema/tests/consumer (services/control-plane/bff/test_current_twelve_owner_truth.py) to retain and validate only stable spec/owner/controller fields.",
-      "docs/deployment/evidence/product-functional-closure/PFG-BE-CONSOLIDATE-20260820/: published code disposition with lifecycle outbox reader defer reason, validation evidence, and consolidation audit."
+      "docs/deployment/evidence/product-functional-closure/PFG-BE-CONSOLIDATE-20260820/: published code disposition with concrete lifecycle projection and BFF JSON reader deferral reasons (checkpoint-bounded fetch with retained full JSON generation, awaiting PFG-LIFECYCLE-POSTGRES-ACTIVATION-20260824 relational activation proof and LIFECYCLE-PROJ-RETIRE-001 JSON reader retirement), validation evidence, and consolidation audit."
     ],
     "canonical_owner_and_store": {
       "source_ingestion_owner": "services/source_ingestion/controller_worker.py",
@@ -37,7 +37,7 @@
     ]
   },
   "acceptance_verification": {
-    "criterion_1_caller_profile_audit": "Caller and profile audit classifies every candidate backend path as keep, consolidate, retire-after-proof, or delete with negative-caller evidence recorded in code-disposition.json and caller-inventory-20260824.md, including explicit defer entry for lifecycle/Management JSON full-scan reader.",
+    "criterion_1_caller_profile_audit": "Caller and profile audit classifies every candidate backend path as keep, consolidate, retire-after-proof, or delete with negative-caller evidence recorded in code-disposition.json and caller-inventory-20260824.md, including explicit defer entry for lifecycle projector and BFF JSON trade-journey/loop-run readers (checkpoint-bounded fetch with retained full JSON generation, pending relational activation and JSON reader retirement).",
     "criterion_2_duplicate_owner_removal": "Obsolete source ingestion scheduler_worker.py deleted; automatic no-ref Agora dataset discovery branch in policy-learning main.py removed in favor of explicit dataset_refs and durable Agora handoff intake; static loop catalog runtime claims removed from loop-catalog.registry.json and schema.",
     "criterion_3_manual_and_smoke_fixtures_retained": "Explicit manual Source one-shot CLI (scripts/source_ingest_scheduler_once.py), exact-ref Agora dataset authority, and BoundedPaperStrategy smoke fixture verified retained as non-production entry points.",
     "criterion_4_post_deletion_journey_pass": "All affected unit and integration test suites pass after deletion: 845 source ingestion tests, 129 policy learning tests, 104 cross-service consolidation & BFF contract tests, and baseline suites pass with zero regressions."
@@ -55,7 +55,7 @@
       "Deleted obsolete scheduler_worker.py and its dedicated unit test with negative caller proof.",
       "Removed no-ref automatic Agora dataset discovery branch from services/policy-learning/main.py and updated tests.",
       "Removed static runtime claims (maturity, evidence_profile, execution_tasks) from docs/deployment/loop-catalog.registry.json and schema.",
-      "Added lifecycle full-scan reader defer entry to code-disposition.json.",
+      "Recorded concrete lifecycle projection deferral entry in code-disposition.json naming checkpoint-bounded fetch, retained full JSON generation, and the PFG-LIFECYCLE-POSTGRES-ACTIVATION-20260824 / LIFECYCLE-PROJ-RETIRE-001 ownership and proof gap.",
       "py_compile succeeded with zero errors across all audited backend files.",
       "845 passed across services/source_ingestion/ test suite.",
       "129 passed, 5 skipped across services/policy-learning/ test suite.",

@@ -15,7 +15,7 @@
     "registry_artifact": "docs/deployment/loop-catalog.registry.json",
     "read_model_followup_task": "LOOP-AUTO-001",
     "guardrail_followup_task": "LOOP-AUTO-002",
-    "rationale": "Wave 0 publishes a static JSON registry first so every later read model, guardrail, and controller can consume the same loop ids and maturity vocabulary without waiting for a new service owner."
+    "rationale": "Publishes a static JSON registry so every read model, guardrail, and controller can consume the same stable loop specifications, identities, ownership, and controller contracts without static runtime maturity claims."
   },
   "loops": [
     {

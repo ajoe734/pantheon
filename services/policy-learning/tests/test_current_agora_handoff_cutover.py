@@ -4,14 +4,15 @@
 policy-learning worker -- there was no separate container for
 ``agora_handoff_drainer.py`` -- so the drainer's claim/ack cycle was dead code
 in production even though it had its own unit coverage
-(``test_agora_handoff_drainer.py``).  Every real scheduled tick instead went
-through ``run_tick`` -> ``/api/policy-learning/shadow-eval-tick``, which
-discovers work by scanning ``agora.agora_dataset_records`` directly through
-``AgoraDatasetAuthority``.
+(``test_agora_handoff_drainer.py``).  Every real scheduled tick previously went
+through ``run_tick`` -> ``/api/policy-learning/shadow-eval-tick``.
+Automatic database discovery (formerly ``discover_eligible_datasets``) has been
+retired and deleted, while ``/api/policy-learning/shadow-eval-tick`` remains for
+explicit-ref manual evaluation ticks.
 
 This module proves the cutover: ``scheduler_worker.main()`` now drives the
-durable handoff drain/ack cycle instead of the scanner-backed discovery tick,
-so the direct database scanner has zero production callers, a handoff is
+durable handoff drain/ack cycle instead of manual tick routes,
+so the retired database discovery has zero production callers, a handoff is
 claimed and acknowledged exactly once even across scheduled windows and ack
 retries, and the resulting candidate keeps the same handoff and dataset
 identity throughout.
@@ -217,29 +218,27 @@ def _main_function_source() -> str:
 
 
 def test_direct_scanner_has_zero_scheduled_production_callers() -> None:
-    """The scheduled loop no longer reaches the DB-scan discovery route.
+    """The scheduled loop drives durable handoff intake, not manual tick routes.
 
-    ``run_tick`` posts to ``/api/policy-learning/shadow-eval-tick``, which is
-    the only production caller of ``discover_eligible_datasets`` (the direct
-    Agora database scanner). It must stay defined -- other tests and the
-    compose end-to-end proof call it directly -- but the scheduled ``main()``
-    loop must not call it anymore.
+    Automatic dataset discovery (formerly ``discover_eligible_datasets``) has
+    been removed from ``/api/policy-learning/shadow-eval-tick``. ``run_tick``
+    remains available for explicit-ref manual evaluation, but the scheduled
+    ``main()`` loop solely drives the durable Agora handoff intake cycle.
     """
 
     scheduler = _load_scheduler_module()
-    assert hasattr(scheduler, "run_tick"), "run_tick must remain available for direct/manual use"
+    assert hasattr(scheduler, "run_tick"), "run_tick must remain available for explicit-ref manual use"
 
     main_source = _main_function_source()
     assert "run_tick(" not in main_source, (
-        "scheduler_worker.main() must not call the DB-scan discovery tick; "
+        "scheduler_worker.main() must not call run_tick; "
         "the durable Agora handoff is the sole scheduled production intake"
     )
     assert "run_intake_cycle(" in main_source, (
         "scheduler_worker.main() must drive the durable handoff intake cycle"
     )
 
-    # Only ``main()`` needs to change; the scanner-backed route itself must
-    # keep existing so a human/manual trigger is still possible.
+    # run_tick and window_tick_id remain available for explicit-ref manual triggers.
     full_source = (SERVICE_DIR / "scheduler_worker.py").read_text(encoding="utf-8")
     assert "def run_tick(" in full_source
     assert "def window_tick_id(" in full_source

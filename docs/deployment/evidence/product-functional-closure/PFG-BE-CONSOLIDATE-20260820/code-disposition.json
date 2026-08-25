@@ -52,9 +52,9 @@
       "reason": "Stable specification, ownership, and controller contract registry read by BFF /bff/v5/loop-inventory."
     },
     {
-      "component": "services/execution/lifecycle_outbox_reader (Management JSON full-scan reader)",
+      "component": "services/trade_journey/lifecycle_projector.py::LifecycleProjector and BFF JSON trade-journey/loop-run readers",
       "disposition": "defer",
-      "reason": "Deferred until bounded cursor/ack store migration is deployed across lifecycle workers."
+      "reason": "Source telemetry fetch is checkpoint-bounded, but retained aggregate state and full generation JSON rewriting remain deferred until PFG-LIFECYCLE-POSTGRES-ACTIVATION-20260824 completes relational backfill/cutover/restart/readback proof and LIFECYCLE-PROJ-RETIRE-001 executes JSON reader retirement."
     },
     {
       "component": "docker-compose.yml::source-ingest-agora-projector",
