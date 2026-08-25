@@ -16,16 +16,16 @@ Based on live, non-destructive measurements of active containers on `pantheon-lu
 | **`workers`** | 16 | **6,866.49 MiB (6.71 GiB)** | 124.42% | `loop-run-projector-scheduler` (6,397.95 MiB), `paper-fleet-reconciler` (127.90 MiB) |
 | **`research`** | 12 | **677.92 MiB (0.66 GiB)** | 32.24% | `source-ingest` (136.50 MiB), `search-svc` (134.00 MiB) |
 | **`management-ai`** | 6 | **1,348.64 MiB (1.32 GiB)** | 130.38% | `openclaw-gateway-adapter` (581.60 MiB), `openclaw-gateway` (572.50 MiB) |
-| **`execution`** | 3 | **95.35 MiB (0.09 GiB)** | 6.93% | `broker` (44.04 MiB), `runtime-manager` (40.85 MiB), `signal-store` (10.46 MiB) |
-| **Total All Profiles** | **50** | **11,303.08 MiB (11.04 GiB)** | **503.44%** | `loop-run-projector-scheduler` (6,397.95 MiB / 6.25 GiB) |
+| **`execution`** | 3 (4 staging/live-only or disabled) | **95.35 MiB (0.09 GiB)** | 6.93% | `broker` (44.04 MiB), `runtime-manager` (40.85 MiB), `signal-store` (10.46 MiB) |
+| **Total All Profiles** | **50** (70 across overlays) | **11,303.08 MiB (11.04 GiB)** | **503.44%** | `loop-run-projector-scheduler` (6,397.95 MiB / 6.25 GiB) |
 
 ---
 
-## 2. Core Profile Peak & Headroom Sizing Calculation
+## 2. Core Profile Peak & Sizing Calculations
 
 The target VM architecture isolates the **Prod Control VM** to the `core` profile, starting additional profiles only when explicitly required.
 
-### 2.1 Core Peak Calculation
+### 2.1 Core Memory Peak Calculation
 During a blue/green release switch, the Control VM briefly runs two concurrent instances of `operator-bff` (the active `blue` container and the validation `green` candidate):
 
 $$\text{Core Steady Memory} = 2,314.68\text{ MiB } (\approx 2.26\text{ GiB})$$
@@ -33,10 +33,10 @@ $$\text{Candidate Green BFF} = 869.90 - 1,000.00\text{ MiB } (\approx 0.85 - 0.9
 $$\text{Host OS / Caddy / Kernel Buffers} = 1,000.00\text{ MiB } (\approx 0.98\text{ GiB})$$
 $$\mathbf{\text{Core Peak During Cutover}} = \mathbf{4,184.58 - 4,314.68\text{ MiB } (\approx 4.09 - 4.21\text{ GiB})}$$
 
-### 2.2 30% Headroom Calculation
+### 2.2 Memory Headroom ($\ge 30\%$) Sizing Calculation
 The management plan requires at least 30% memory headroom above peak.
 
-Using the capacity headroom definition:
+Using the standard capacity headroom definition:
 $$\text{Headroom \%} = \frac{\text{RAM Capacity} - \text{Peak Memory}}{\text{RAM Capacity}} = 1 - \frac{\text{Peak Memory}}{\text{RAM Capacity}} \ge 30\%$$
 
 Therefore:
@@ -48,20 +48,41 @@ $$\text{Minimum RAM Capacity} \ge \frac{\text{Peak Memory}}{1 - 0.30} = \frac{\t
 - **At Upper Bound Peak ($4,314.68\text{ MiB} \approx 4.21\text{ GiB}$):**
   $$\text{Minimum RAM Capacity} = \frac{4,314.68\text{ MiB}}{0.70} = \mathbf{6,163.83\text{ MiB } (\approx 6.02\text{ GiB})}$$
 
-*(Note: If calculated via alternative multiplier $1.30 \times \text{Peak}$, the baseline value is $4,184.58 \times 1.30 = 5,439.95\text{ MiB} \approx 5.31\text{ GiB}$. The standard capacity-headroom formula $1 - \frac{\text{Peak}}{\text{Capacity}} \ge 30\%$ yields $5.84\text{ GiB}$, which is safely satisfied by standard 8 GiB instances.)*
+*(Note: If calculated via alternative multiplier $1.30 \times \text{Peak}$, the baseline value is $4,184.58 \times 1.30 = 5,439.95\text{ MiB} \approx 5.31\text{ GiB}$. The standard capacity-headroom formula $1 - \frac{\text{Peak}}{\text{Capacity}} \ge 30\%$ yields $5.84\text{ GiB}$, which is safely satisfied by standard 8.0 GiB instances.)*
+
+### 2.3 CPU Sizing & Headroom Reconciliation
+The instantaneous Dev baseline measured **209.47% Core CPU** (equivalent to ~2.09 vCPU cores):
+- `operator-bff`: `99.83%` (driven by high-frequency multi-agent SSE streams and API queries during development)
+- `reconciliation-drift-svc`: `97.73%` (driven by active drift sweep loop)
+- `telemetry`: `7.42%`
+- `postgres`, `nats`, other core APIs: `4.49%`
+
+**Deployment Cutover Peak:** During a blue/green cutover, starting and healthchecking the green candidate `operator-bff` adds an estimated transient **+50% to +100% vCPU** load during initialization, bringing aggregate instantaneous cutover peak to **260% - 310% vCPU (2.6 - 3.1 cores)**.
+
+**Reconciliation & Sizing Gate:**
+1. **On `e2-standard-2` (2 vCPUs = 200% capacity):**
+   - Memory headroom is ample ($47.3\% - 48.9\%$, exceeding $\ge 30\%$).
+   - However, CPU is oversubscribed at instantaneous peak (209.47% > 200%), causing transient CPU throttling and potential readiness check latency if drift reconciliation coincides with green candidate cutover.
+   - `e2-standard-2` is viable **only** if drift reconciliation interval is tuned/bounded (e.g. interval $\ge 30\text{s}$) and concurrent multi-agent polling is absent on production control plane, keeping steady-state CPU $< 80\%$ (leaving $> 1.2$ vCPUs free for cutovers).
+2. **On `e2-standard-4` (4 vCPUs, 16.0 GiB RAM = 400% capacity):**
+   - Accommodates full 209.47% steady load + 100% green BFF cutover load ($309.47\% / 400\% = 77.37\%$ peak utilization).
+   - Provides **$22.63\%$ CPU headroom at extreme peak** and **$> 45\%$ CPU headroom under standard operating conditions**.
+   - Provides **$73.7\% - 74.5\%$ memory headroom** ($4.21\text{ GiB peak} / 16.0\text{ GiB capacity}$).
+   - **Recommended** for unconstrained production Control VM workloads.
 
 ---
 
 ## 3. Instance Sizing Recommendations
 
 ### 3.1 Prod Control VM (Primary Target)
-- **Recommended Machine Type:** `e2-standard-2` (2 vCPUs, 8,192 MiB / 8.0 GiB RAM)
-- **Memory Capacity:** 8,192 MiB (8.0 GiB)
-- **Peak Utilization:** $4,184.58\text{ MiB} / 8,192\text{ MiB} = 51.08\%$ (upper bound: $52.67\%$)
-- **Headroom Provided:** $\mathbf{48.9\%}$ (upper bound: $\mathbf{47.3\%}$), well exceeding the $\ge 30\%$ requirement.
-- **Persistent Disk:** 50 GiB Standard Persistent Disk / Balanced SSD (Postgres data volume on separate disk).
-- **Cost Profile:** ~\$48.80 / month (asia-east1).
-- **Note:** If the async projector (`loop-run-projector-scheduler`) is co-located with Control rather than deployed on a worker VM, size up to `e2-standard-4` (4 vCPUs, 16.0 GiB RAM) to accommodate the 6.25 GiB projector working set.
+- **Baseline Minimal (Tuned Intervals):** `e2-standard-2` (2 vCPUs, 8,192 MiB / 8.0 GiB RAM).
+  - **Memory Headroom:** $\mathbf{48.9\%}$ (upper bound: $\mathbf{47.3\%}$), exceeding $\ge 30\%$.
+  - **Prerequisite:** Drift sweep frequency bounded to $\ge 30\text{s}$ to avoid CPU contention.
+- **Recommended Production Target (Unconstrained Headroom):** `e2-standard-4` (4 vCPUs, 16,384 MiB / 16.0 GiB RAM).
+  - **Memory Headroom:** $\mathbf{73.7\%}$ (upper bound: $\mathbf{74.5\%}$).
+  - **CPU Headroom:** $> 22.6\%$ at peak blue/green cutover, $> 45\%$ steady-state.
+  - **Persistent Disk:** 50 GiB Standard Persistent Disk / Balanced SSD (Postgres data volume on separate disk).
+  - **Cost Profile:** ~\$97.60 / month (asia-east1).
 
 ### 3.2 Prod Execution VM (Phase 4 Real-Capital Boundary)
 - **Recommended Machine Type:** `e2-standard-2` (2 vCPUs, 8.0 GiB RAM) or `e2-medium` (2 vCPUs, 4.0 GiB RAM)

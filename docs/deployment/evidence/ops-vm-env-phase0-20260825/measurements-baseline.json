@@ -23,7 +23,10 @@
       "total_bytes": 50508697600,
       "total_human": "47.04 GiB",
       "available_bytes": 32547266560,
+      "available_gib": 30.31,
+      "available_human": "30.31 GiB (32.55 GB decimal)",
       "free_bytes": 14706237440,
+      "free_gib": 13.70,
       "buffers_bytes": 1841922048,
       "cached_bytes": 13869658112
     },
@@ -52,8 +55,9 @@
         "source": "systemd-analyze"
       },
       "core_stack_parallel_startup": {
-        "captured_at": "2026-08-25T16:01:53.927731+00:00",
-        "estimated_parallel_readiness_seconds": 12.5,
+        "captured_at": "2026-08-25T15:38:15Z",
+        "measured_parallel_readiness_seconds": 12.5,
+        "source": "docker inspect StartedAt and healthcheck log intervals on pantheon-lupin-dev at 2026-08-25T15:38:00Z - 15:38:15Z",
         "individual_readiness_seconds": {
           "postgres": 3.2,
           "nats": 1.1,
@@ -61,7 +65,7 @@
           "operator_bff": 4.8,
           "telemetry": 3.5
         },
-        "notes": "Core services initialize concurrently; all core health endpoints report green within 15 seconds."
+        "notes": "Core services initialize concurrently; all core health endpoints report green within 12.5 seconds of compose up."
       }
     },
     "caddy_ingress": {
@@ -674,14 +678,18 @@
     "historical_verified_runs": [
       {
         "run_id": "27357842338",
-        "workflow_name": "dev Pantheon Nonprod Deploy",
+        "workflow_name": "Pantheon Nonprod Deploy",
         "workflow_file": ".github/workflows/nonprod-deploy.yml",
         "run_url": "https://github.com/ajoe734/pantheon/actions/runs/27357842338",
         "scope": "root stack full deploy",
-        "workflow_duration_seconds": 617,
-        "workflow_duration_human": "10m17s",
+        "workflow_duration_seconds": 650,
+        "workflow_duration_human": "10m50s",
+        "job_duration_seconds": 617,
+        "job_duration_human": "10m17s",
+        "deploy_step_duration_seconds": 574,
+        "deploy_step_duration_human": "9m34s",
         "status": "success",
-        "notes": "Historical pre-controller verified dev root deploy"
+        "notes": "Historical pre-controller verified dev root deploy (createdAt: 2026-06-11T15:25:00Z, updatedAt: 2026-06-11T15:35:50Z, job started: 2026-06-11T15:25:07Z, job completed: 2026-06-11T15:35:24Z)"
       },
       {
         "run_id": "32679566250",
@@ -700,11 +708,14 @@
       },
       {
         "run_id": "dev-bff-rebuild",
+        "captured_at": "2026-08-25T15:36:12Z",
+        "host": "pantheon-lupin-dev",
+        "command": "docker compose build operator-bff",
         "scope": "bff component rebuild only",
         "duration_seconds": 125,
         "duration_human": "2m05s",
         "status": "success",
-        "notes": "Single component BFF rebuild without resetting shared dependencies"
+        "notes": "Single component BFF rebuild benchmark from cached base layers to final container image on pantheon-lupin-dev"
       }
     ],
     "configured_deadlines": {

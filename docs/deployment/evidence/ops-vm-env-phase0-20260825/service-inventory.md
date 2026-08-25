@@ -8,13 +8,14 @@
 
 ## Summary by Profile
 
-| Profile | Total Services in Dev Compose | Running on Dev VM | Primary Role | Singleton / Ownership Constraint |
+| Profile | Total Services across Overlays | Running on Dev VM | Primary Role | Singleton / Ownership Constraint |
 |---|---|---|---|---|
 | `core` | 14 | 13 (1 init exited) | Core state, message bus, control plane APIs, BFF, ingress | Postgres / NATS / MinIO are shared singleton backends; BFF is single replica on host |
 | `workers` | 17 | 16 (1 on-demand) | Background schedulers, queue consumers, drift listeners | **Strict Singleton**: exactly one active owner per consumer/scheduler to prevent duplicate event writes |
 | `research` | 24 | 12 (12 dormant/smokes) | Ingest, search index, training sessions, evaluation, RL/LLM smoke tests | Research APIs are stateless; dormant smoke containers run on-demand only |
 | `management-ai` | 8 | 6 (2 init/test) | OpenClaw gateway, adapter, consultation, persona, web-channel | Product runtime diagnostics only; no repository or deployment authority |
-| `execution` | 4 | 3 (1 legacy disabled) | Runtime manager, broker adapter, signal store, execution loop | **Strict Isolation**: paper/sandbox only on Dev; real-capital execution isolated to Prod Execution VM |
+| `execution` | 7 | 3 (4 staging/live-only or disabled) | Runtime manager, broker/exchange adapters, signal store, execution loop | **Strict Isolation**: paper/sandbox only on Dev; real-capital execution isolated to Prod Execution VM |
+| **Total Unique Services** | **70** | **50** | **Full Platform Baseline** | **Defined across all Compose overlays** |
 
 ---
 
@@ -101,11 +102,15 @@
 | `router` | `Dockerfile` | `${ROUTER_PORT:-18003}:8001` | `persona, operator-bff, governance` | Product runtime diagnostics; read-only access |
 | `web-channel` | `services/channels/web/Dockerfile` | `${WEB_CHANNEL_PORT:-18105}:8000` | `router` | Product runtime diagnostics; read-only access |
 
-## Profile: `EXECUTION` (4 Services)
+## Profile: `EXECUTION` (7 Services)
 
 | Service | Dockerfile / Image | Ports | Depends On | Singleton / Lifecycle Note |
 |---|---|---|---|---|
-| `broker` | `services/broker/Dockerfile` | `${BROKER_PORT:-18106}:8102` | `None` | Execution boundary; disabled live broker on dev |
-| `pantheon-paper-runtime` | `services/execution/lean_runtime/Dockerfile` | `${PAPER_RUNTIME_PORT:-18010}:8010` | `signal-store, runtime-manager, telemetry, source-ingest, operator-bff` | Execution boundary; disabled live broker on dev |
-| `runtime-manager` | `services/runtime-manager/Dockerfile` | `${RUNTIME_MANAGER_PORT:-${RUNTIME_PORT:-18081}}:8081` | `consultation-svc` | Execution boundary; disabled live broker on dev |
-| `signal-store` | `redis:7-alpine` | `Internal only` | `None` | Stateful singleton data/message backend |
+| `broker` | `services/broker/Dockerfile` | `${BROKER_PORT:-18106}:8102` | `None` | Execution boundary; disabled live broker on dev (`PANTHEON_LIVE_BROKER_ENABLED=false`) |
+| `broker-adapter` | `services/execution/lean_runtime/Dockerfile` | `${BROKER_ADAPTER_PORT:-28097}:8097` | `runtime-manager` | **Execution Sidecar (`docker-compose.exec.yml`)**: Mock/sandbox broker adapter for staging/prod execution plane (VM-2). Strict Singleton per active execution plane. |
+| `exchange-adapter` | `services/execution/lean_runtime/Dockerfile` | `${EXCHANGE_ADAPTER_PORT:-28098}:8098` | `runtime-manager` | **Execution Sidecar (`docker-compose.exec.yml`)**: Mock/sandbox exchange adapter for market connectivity on staging/prod execution plane (VM-2). Strict Singleton per active execution plane. |
+| `pantheon-lean-live` | `services/execution/lean_runtime/Dockerfile` | `${LEAN_LIVE_PORT:-28111}:8011` | `runtime-manager, broker-adapter, exchange-adapter` | **Live Execution Runtime (`docker-compose.exec.yml`, profile `live`)**: Live LEAN runtime with real capital binding. Requires 4 secret keys (`BROKER_API_KEY`, `BROKER_API_SECRET`, `EXCHANGE_API_KEY`, `EXCHANGE_API_SECRET`). Strict Isolation & Singleton: Gated by promotion gate and operator approval; only runnable under live profile on dedicated execution plane (VM-2). |
+| `pantheon-paper-runtime` | `services/execution/lean_runtime/Dockerfile` | `${PAPER_RUNTIME_PORT:-18010}:8010` / `${LEAN_PAPER_PORT:-28110}:8010` | `signal-store, runtime-manager, telemetry, source-ingest, operator-bff` | Execution paper runtime; disabled live broker on dev |
+| `runtime-manager` | `services/runtime-manager/Dockerfile` | `${RUNTIME_MANAGER_PORT:-${RUNTIME_PORT:-18081}}:8081` / `${RUNTIME_MANAGER_PORT:-28081}:8081` | `consultation-svc` (dev) / `None` (exec stack) | Execution lifecycle & binding enforcement. Single active runtime manager instance. |
+| `signal-store` | `redis:7-alpine` | `${SIGNAL_STORE_PORT:-26379}:6379` | `None` | Stateful singleton data/message backend (Redis) |
+
