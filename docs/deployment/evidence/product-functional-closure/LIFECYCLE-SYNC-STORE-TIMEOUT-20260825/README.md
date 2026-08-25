@@ -11,6 +11,7 @@ This task bounds all synchronous `ProjectionStore` database operations with conf
    - Added validation via `_validate_timeout` enforcing finite, positive numeric values and rejecting non-finite, boolean, non-positive, or non-numeric inputs.
    - Implemented `_connect_db()` helper configuring PostgreSQL `connect_timeout` and session options `-c statement_timeout=... -c lock_timeout=...` at connection initialization, with automatic fallback to session `SET` queries for custom connectors lacking keyword argument support.
    - Bounded the entire connection attempt (including custom connectors, slow callables, and fallbacks) using a dedicated worker thread with `connect_timeout_seconds` deadline enforcement, while avoiding broad `TypeError` swallow/retry by strictly retrying only on keyword argument signature mismatches.
+   - Ensured all pre-return opened connections are cleanly closed on session `SET` setup failure or timeout error without socket leaks.
    - Routed all internal database operations (`bootstrap_schema`, `get_controller_state`, `adopt_legacy_baseline`, `resolve_identity`, `get_receipts`, `load_journey_stage_events_bulk`, `execute_batch_transaction`) through `_connect_db()`.
 
 2. **Environment Variable Configuration (`services/trade_journey/lifecycle_projector.py`)**:
@@ -21,8 +22,9 @@ This task bounds all synchronous `ProjectionStore` database operations with conf
    - Synchronous statement/lock/connect timeouts raise database exceptions that are caught by `run_worker()`, which invokes `_record_worker_failure` to record failure/degraded status to the durable controller without hanging or crashing the worker loop or advancing checkpoints prematurely.
 
 4. **Governed Dev Promotion & Hosted Readback**:
-   - Governed nonprod deploy workflow run `32794526552` verified automatic compensation and rollback to accepted baseline backend SHA `40de8fcb1c69fad0bf5e54d4c0bd6e508c9162e0` paired with frontend SHA `cc4007f7f78a31c73548ce85457af17a45a4c4b9`.
-   - Hosted endpoints verified via live readback (`/healthz`, `/bff/version`, `/deployment.json`).
+   - Governed nonprod deploy workflow run `32794526552` (dispatched for dev SHA `209fcc7f50bd6c206d1ced62124163a82ca85e18`) recorded `conclusion=failure` at step `bff_lifecycle_readiness`.
+   - Verified automatic rollback and compensation to the accepted baseline backend SHA `40de8fcb1c69fad0bf5e54d4c0bd6e508c9162e0` paired with frontend SHA `cc4007f7f78a31c73548ce85457af17a45a4c4b9`.
+   - Hosted endpoints verified via live readback (`/healthz`, `/bff/version`, `/deployment.json`) reflecting the verified rollback baseline in degraded read-only posture (`status: verified_rollback_baseline`).
    - Source Ingestion strictly verified as reconcile-only (`MAX_TICKS=0`) and live capital actions strictly disabled (`VITE_BFF_REAL_WRITES=false`).
 
 5. **Test Coverage**:
@@ -37,6 +39,7 @@ This task bounds all synchronous `ProjectionStore` database operations with conf
    - `test_projection_store_blocked_connect_does_not_hang_process_exit`: proves daemon worker thread does not block Python interpreter shutdown or require process timeout kill.
    - `test_projection_store_late_connection_is_closed_after_timeout`: proves late connection returned by slow connector after timeout deadline is closed without resource leak.
    - `test_projection_store_blocked_connect_error_propagation_on_fallback`: proves error propagation on fallback custom connectors.
+   - `test_projection_store_connect_fallback_closes_connection_on_setup_error`: proves connection is immediately closed on setup failure during session SET statement_timeout/lock_timeout without socket leak.
    - `test_projection_store_statement_timeout_cancels_long_query`: proves PostgreSQL statement cancellation via `QueryCanceled` within configured deadline.
    - `test_projection_store_lock_timeout_cancels_blocked_lock`: proves blocked row/advisory locks cancel via `LockNotAvailable` / `QueryCanceled` within configured deadline.
    - `test_projection_store_connect_fallback_sets_timeouts_on_custom_connector`: proves fallback session timeout configuration on custom connectors.
@@ -45,3 +48,4 @@ This task bounds all synchronous `ProjectionStore` database operations with conf
    - `test_run_worker_recovers_after_blocked_store_batch_timeout`: proves batch projection timeout causes durable failure mutation without premature checkpoint advancement, followed by recovery and steady-state live poll transitions.
    - `test_run_worker_recovers_after_projection_store_timeout_failure`: proves projector recovery after statement timeout failure.
    - `test_configured_relational_projector_rejects_invalid_timeout_env_vars`: proves validation of invalid environment variable values.
+

@@ -1740,3 +1740,40 @@ def test_projection_store_blocked_connect_error_propagation_on_fallback() -> Non
     )
     with pytest.raises(OSError, match="network unreachable"):
         store.get_controller_state("ctrl-1", "default", "paper")
+
+
+def test_projection_store_connect_fallback_closes_connection_on_setup_error() -> None:
+    close_called = False
+
+    class FailingCursor:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc_val, exc_tb):
+            return False
+
+        def execute(self, query):
+            raise RuntimeError("session SET statement_timeout failed")
+
+    class FakeConn:
+        def cursor(self):
+            return FailingCursor()
+
+        def close(self):
+            nonlocal close_called
+            close_called = True
+
+    def custom_connect(dsn):
+        # Positional-only connector to trigger fallback path
+        return FakeConn()
+
+    store = ProjectionStore(
+        "postgresql://unit/pantheon",
+        connect=custom_connect,
+        connect_timeout_seconds=1.0,
+    )
+    with pytest.raises(RuntimeError, match="session SET statement_timeout failed"):
+        store._connect_db()
+
+    assert close_called is True, "connection was not closed when session SET setup failed"
+

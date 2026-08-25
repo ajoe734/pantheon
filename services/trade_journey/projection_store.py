@@ -366,14 +366,20 @@ class ProjectionStore:
                         )
 
                 if timed_out.is_set():
-                    try:
-                        conn.close()
-                    except Exception:
-                        pass
+                    if conn is not None:
+                        try:
+                            conn.close()
+                        except Exception:
+                            pass
                     return
 
                 result.append(conn)
             except BaseException as exc:
+                if conn is not None:
+                    try:
+                        conn.close()
+                    except Exception:
+                        pass
                 if not timed_out.is_set():
                     error.append(exc)
             finally:
@@ -384,6 +390,11 @@ class ProjectionStore:
 
         if not done.wait(timeout=self.connect_timeout_seconds):
             timed_out.set()
+            if result:
+                try:
+                    result[0].close()
+                except Exception:
+                    pass
             raise TimeoutError(
                 f"ProjectionStore connection to database timed out after {self.connect_timeout_seconds}s"
             )
