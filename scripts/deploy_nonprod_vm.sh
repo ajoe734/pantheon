@@ -110,7 +110,7 @@ DEV_MANAGEMENT_AI_DB_NAME="${DEV_MANAGEMENT_AI_DB_NAME:-pantheon}"
 DEV_MANAGEMENT_AI_DATABASE_URL="${DEV_MANAGEMENT_AI_DATABASE_URL:-}"
 DEV_MANAGEMENT_AI_ATTACH_BUCKET="${DEV_MANAGEMENT_AI_ATTACH_BUCKET:-}"
 DEV_MANAGEMENT_AI_ATTACH_LOCATION="${DEV_MANAGEMENT_AI_ATTACH_LOCATION:-asia-east1}"
-PANTHEON_DEV_DOCKER_PRUNE="${PANTHEON_DEV_DOCKER_PRUNE:-true}"
+PANTHEON_DEV_DOCKER_PRUNE="${PANTHEON_DEV_DOCKER_PRUNE:-false}"
 PANTHEON_DEV_POSTGRES_TELEMETRY_PRUNE="${PANTHEON_DEV_POSTGRES_TELEMETRY_PRUNE:-true}"
 DEV_COMPOSE_PROFILES="${PANTHEON_DEV_COMPOSE_PROFILES:-}"
 SOURCE_REFRESH_EGRESS_MODE="${PANTHEON_EXTERNAL_EGRESS:-deny}"
@@ -658,7 +658,7 @@ ssh_bash() {
   command_prefix+=" PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN=$(shell_quote "${PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN:-}")"
   command_prefix+=" PANTHEON_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED=$(shell_quote "${PANTHEON_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED:-}")"
   command_prefix+=" PANTHEON_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN=$(shell_quote "${PANTHEON_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN:-}")"
-  command_prefix+=" PANTHEON_DEV_DOCKER_PRUNE=$(shell_quote "${PANTHEON_DEV_DOCKER_PRUNE:-true}")"
+  command_prefix+=" PANTHEON_DEV_DOCKER_PRUNE=$(shell_quote "${PANTHEON_DEV_DOCKER_PRUNE:-false}")"
   command_prefix+=" PANTHEON_DEV_POSTGRES_TELEMETRY_PRUNE=$(shell_quote "${PANTHEON_DEV_POSTGRES_TELEMETRY_PRUNE:-true}")"
   command_prefix+=" PANTHEON_DEV_COMPOSE_PROFILES=$(shell_quote "${DEV_COMPOSE_PROFILES}")"
   command_prefix+=" PANTHEON_EXTERNAL_EGRESS=$(shell_quote "${SOURCE_REFRESH_EGRESS_MODE}")"
@@ -2274,12 +2274,36 @@ docker_storage_diagnostics() {
   docker system df || true
 }
 
+run_bounded_docker_prune() {
+  local label="$1"
+  shift
+  local timeout_seconds="${PANTHEON_DEV_DOCKER_PRUNE_TIMEOUT_SECONDS:-45}"
+
+  if ! [[ "${timeout_seconds}" =~ ^[0-9]+$ ]] || (( timeout_seconds < 1 || timeout_seconds > 120 )); then
+    info "warning: invalid PANTHEON_DEV_DOCKER_PRUNE_TIMEOUT_SECONDS=${timeout_seconds}; skipping ${label}"
+    return 0
+  fi
+  if ! command -v timeout >/dev/null 2>&1; then
+    info "warning: timeout utility unavailable; skipping ${label}"
+    return 0
+  fi
+
+  info "running bounded Docker maintenance: ${label} (timeout=${timeout_seconds}s)"
+  if timeout --signal=TERM --kill-after=10s "${timeout_seconds}s" "$@"; then
+    return 0
+  fi
+
+  local status=$?
+  info "warning: ${label} exited with status ${status}; continuing deployment"
+  return 0
+}
+
 prune_dev_docker_storage_for_build() {
   if [[ "${PANTHEON_DEPLOY_ENV}" != "dev" || "${PANTHEON_DEPLOY_COMPONENT}" != "root" ]]; then
     return
   fi
 
-  if [[ "${PANTHEON_DEV_DOCKER_PRUNE:-true}" != "true" ]]; then
+  if [[ "${PANTHEON_DEV_DOCKER_PRUNE:-false}" != "true" ]]; then
     info "dev Docker prune disabled before root build"
     docker_storage_diagnostics "before build"
     return
@@ -2287,11 +2311,51 @@ prune_dev_docker_storage_for_build() {
 
   docker_storage_diagnostics "before prune"
   info "pruning dev Docker build cache and unused containers/images before root build"
-  docker builder prune -af || true
-  docker container prune -f || true
-  docker image prune -af || true
-  docker system prune -f || true
+  run_bounded_docker_prune "builder cache" docker builder prune -af
+  run_bounded_docker_prune "stopped containers" docker container prune -f
+  run_bounded_docker_prune "unused images" docker image prune -af
+  run_bounded_docker_prune "system cache" docker system prune -f
   docker_storage_diagnostics "after prune"
+}
+
+cleanup_stale_compose_replacement_containers() {
+  if ! command -v docker >/dev/null 2>&1; then
+    info "docker command unavailable; skipping stale replacement container cleanup"
+    return 0
+  fi
+
+  info "checking for stale Compose replacement containers (project=pantheon)"
+  local raw_list
+  raw_list="$(docker ps -a --filter "label=com.docker.compose.project=pantheon" --format '{{.ID}}\t{{.Names}}\t{{.State}}\t{{.Status}}' 2>/dev/null || true)"
+
+  if [[ -z "${raw_list}" ]]; then
+    return 0
+  fi
+
+  local count=0
+  while IFS=$'\t' read -r cid cname cstate cstatus; do
+    [[ -z "${cid}" ]] && continue
+    local clean_name="${cname#/}"
+
+    # Never touch running or restarting containers
+    if [[ "${cstate}" == "running" || "${cstate}" == "restarting" || "${cstatus}" =~ ^Up([[:space:]]|$) || "${cstatus}" =~ ^Restarting([[:space:]]|$) ]]; then
+      continue
+    fi
+
+    # Detect only non-running containers with hash-prefixed pantheon names (e.g. 1234567890ab_pantheon-..., d20e73e97086_pantheon_postgres_1)
+    if [[ "${clean_name}" =~ ^[0-9a-fA-F]+[-_]pantheon ]]; then
+      info "removing stale Compose replacement container: ${clean_name} (id=${cid}, state=${cstate:-unknown})"
+      if docker rm -f "${cid}" >/dev/null 2>&1; then
+        count=$((count + 1))
+      else
+        info "warning: failed to remove stale container ${clean_name} (id=${cid})"
+      fi
+    fi
+  done <<< "${raw_list}"
+
+  if (( count > 0 )); then
+    info "cleaned up ${count} stale Compose replacement container(s)"
+  fi
 }
 
 rollback_dev_bff_on_failure() {
@@ -2445,6 +2509,7 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     DEV_PRE_DEPLOY_BFF_SHA="$(curl -fsS http://127.0.0.1:18001/bff/version 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin).get("source_commit_sha") or "")' 2>/dev/null || true)"
     PANTHEON_DEV_ROLLBACK_BACKEND_SHA="${PANTHEON_DEV_ROLLBACK_BACKEND_SHA:-${DEV_PRE_DEPLOY_BFF_SHA:-}}"
     # Phase 3: Rollout persistent root runtime.
+    cleanup_stale_compose_replacement_containers
     COMPOSE_BAKE=false \
     COMPOSE_PROFILES="${PANTHEON_DEV_COMPOSE_PROFILES}" \
     BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
@@ -2592,6 +2657,7 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     DEV_PRE_DEPLOY_BFF_SHA="$(curl -fsS http://127.0.0.1:18001/bff/version 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin).get("source_commit_sha") or "")' 2>/dev/null || true)"
     PANTHEON_DEV_ROLLBACK_BACKEND_SHA="${PANTHEON_DEV_ROLLBACK_BACKEND_SHA:-${DEV_PRE_DEPLOY_BFF_SHA:-}}"
     # Phase 3: Recreate operator-bff and loop-run-projector-scheduler.
+    cleanup_stale_compose_replacement_containers
     COMPOSE_BAKE=false \
     COMPOSE_PROFILES="" \
     GIT_SHA="${PANTHEON_DEPLOY_SHA}" \
