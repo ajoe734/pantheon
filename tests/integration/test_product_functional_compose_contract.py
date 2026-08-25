@@ -180,5 +180,3 @@ def test_postgres_container_shared_memory_floor_is_at_least_256m() -> None:
     assert shm_size_str in ("256m", "256mb", "512m", "512mb", "1g", "1gb"), (
         f"postgres shm_size must be at least 256m, got: {postgres['shm_size']}"
     )
-
-

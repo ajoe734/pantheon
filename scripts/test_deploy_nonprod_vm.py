@@ -264,5 +264,3 @@ def test_postgres_db_behavior_vacuum_succeeds_without_enospc() -> None:
             await conn.close()
 
     asyncio.run(_test())
-
-

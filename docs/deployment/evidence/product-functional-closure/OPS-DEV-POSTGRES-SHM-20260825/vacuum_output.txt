@@ -2,17 +2,17 @@
 Container: /pantheon-postgres-1 | ShmSize: 268435456 bytes | Image: postgres:16-alpine
 
 === 2. PostgreSQL Version and Shared Memory Configuration ===
-version                                          
+version
 ------------------------------------------------------------------------------------------
  PostgreSQL 16.14 on x86_64-pc-linux-musl, compiled by gcc (Alpine 15.2.0) 15.2.0, 64-bit
 (1 row)
 
- shared_buffers 
+ shared_buffers
 ----------------
  128MB
 (1 row)
 
- max_locks_per_transaction 
+ max_locks_per_transaction
 ---------------------------
  64
 (1 row)
