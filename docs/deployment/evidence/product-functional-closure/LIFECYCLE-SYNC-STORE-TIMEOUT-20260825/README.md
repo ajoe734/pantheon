@@ -40,6 +40,7 @@ This task bounds all synchronous `ProjectionStore` database operations with conf
    - `test_projection_store_blocked_connect_does_not_hang_process_exit`: proves daemon worker thread does not block Python interpreter shutdown or require process timeout kill.
    - `test_projection_store_late_connection_is_closed_after_timeout`: proves late connection returned by slow connector after timeout deadline is closed without resource leak.
    - `test_projection_store_connect_timeout_result_publication_race_closes_connection`: proves late connection returned after caller timeout decision is closed atomically without leak.
+   - `test_projection_store_connect_timeout_publication_race_controlled_interleaving`: proves deterministic controlled interleaving where connection success is published between wait timeout and caller lock acquisition while connection close blocks, asserting caller timeout deadline is strictly preserved and close finishes cleanly in background.
    - `test_projection_store_fallback_cursor_timeout_race_closes_connection`: proves connection created during fallback session setup is closed atomically if timeout occurs during query execution.
    - `test_projection_store_blocked_connect_error_propagation_on_fallback`: proves error propagation on fallback custom connectors.
    - `test_projection_store_connect_fallback_closes_connection_on_setup_error`: proves connection is immediately closed on setup failure during session SET statement_timeout/lock_timeout without socket leak.
@@ -51,4 +52,3 @@ This task bounds all synchronous `ProjectionStore` database operations with conf
    - `test_run_worker_recovers_after_blocked_store_batch_timeout`: proves batch projection timeout causes durable failure mutation without premature checkpoint advancement, followed by recovery and steady-state live poll transitions.
    - `test_run_worker_recovers_after_projection_store_timeout_failure`: proves projector recovery after statement timeout failure.
    - `test_configured_relational_projector_rejects_invalid_timeout_env_vars`: proves validation of invalid environment variable values.
-

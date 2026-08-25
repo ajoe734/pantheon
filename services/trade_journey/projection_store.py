@@ -57,6 +57,13 @@ def _validate_timeout(
     return parsed
 
 
+def _safe_close_conn(conn: Any) -> None:
+    try:
+        conn.close()
+    except Exception:
+        pass
+
+
 def _can_accept_kwargs(func: Any) -> bool:
     try:
         sig = inspect.signature(func)
@@ -376,16 +383,10 @@ class ProjectionStore:
                         return
 
                 if conn is not None:
-                    try:
-                        conn.close()
-                    except Exception:
-                        pass
+                    _safe_close_conn(conn)
             except BaseException as exc:
                 if conn is not None:
-                    try:
-                        conn.close()
-                    except Exception:
-                        pass
+                    _safe_close_conn(conn)
                 with lock:
                     if outcome["status"] == "pending":
                         outcome["status"] = "error"
@@ -406,10 +407,12 @@ class ProjectionStore:
                     conn_to_close = outcome["conn"]
                     outcome["conn"] = None
             if conn_to_close is not None:
-                try:
-                    conn_to_close.close()
-                except Exception:
-                    pass
+                threading.Thread(
+                    target=_safe_close_conn,
+                    args=(conn_to_close,),
+                    daemon=True,
+                    name="projection-store-conn-cleanup",
+                ).start()
             raise TimeoutError(
                 f"ProjectionStore connection to database timed out after {self.connect_timeout_seconds}s"
             )

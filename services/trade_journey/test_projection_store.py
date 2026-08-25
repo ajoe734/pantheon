@@ -1862,3 +1862,41 @@ def test_projection_store_fallback_cursor_timeout_race_closes_connection() -> No
     assert closed_event.wait(timeout=1.0), "fallback connection leaked after timeout race"
 
 
+def test_projection_store_connect_timeout_publication_race_controlled_interleaving() -> None:
+    closed_event = threading.Event()
+    worker_started_close = threading.Event()
+    unblock_close = threading.Event()
+
+    class BlockingCloseConn:
+        def __init__(self):
+            self.closed = False
+
+        def close(self):
+            worker_started_close.set()
+            unblock_close.wait(timeout=2.0)
+            self.closed = True
+            closed_event.set()
+
+    def racing_connect(dsn, **kwargs):
+        # Sleep longer than connect_timeout_seconds so done.wait() times out,
+        # publishing success to outcome dict right as caller wakes from wait
+        time.sleep(0.03)
+        return BlockingCloseConn()
+
+    store = ProjectionStore(
+        "postgresql://unit/pantheon",
+        connect=racing_connect,
+        connect_timeout_seconds=0.01,
+    )
+    start_time = time.monotonic()
+    with pytest.raises(TimeoutError, match="timed out after 0.01s"):
+        store._connect_db()
+    elapsed = time.monotonic() - start_time
+    assert elapsed < 0.1, f"caller was blocked on close: elapsed={elapsed:.3f}s"
+
+    # Prove that background cleanup is actively executing close()
+    assert worker_started_close.wait(timeout=1.0), "background cleanup did not invoke close()"
+
+    # Unblock close() and verify clean completion
+    unblock_close.set()
+    assert closed_event.wait(timeout=1.0), "connection close was not completed"
