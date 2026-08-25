@@ -1,0 +1,42 @@
+=== 1. Live Container ShmSize Inspection ===
+Container: /pantheon-postgres-1 | ShmSize: 268435456 bytes | Image: postgres:16-alpine
+
+=== 2. PostgreSQL Version and Shared Memory Configuration ===
+version
+------------------------------------------------------------------------------------------
+ PostgreSQL 16.14 on x86_64-pc-linux-musl, compiled by gcc (Alpine 15.2.0) 15.2.0, 64-bit
+(1 row)
+
+ shared_buffers
+----------------
+ 128MB
+(1 row)
+
+ max_locks_per_transaction
+---------------------------
+ 64
+(1 row)
+
+=== 3. Live Database VACUUM ANALYZE ===
+VACUUM
+
+=== 4. Bounded Table Creation for Maintenance Test ===
+CREATE TABLE
+INSERT 0 10000
+NOTICE:  relation "_test_shm_vacuum_verify" already exists, skipping
+
+=== 5. Bounded VACUUM FULL Execution on Allocated Table ===
+VACUUM
+INFO:  vacuuming "public._test_shm_vacuum_verify"
+INFO:  "public._test_shm_vacuum_verify": found 0 removable, 10000 nonremovable row versions in 1429 pages
+DETAIL:  0 dead row versions cannot be removed yet.
+CPU: user: 0.01 s, system: 0.02 s, elapsed: 0.04 s.
+
+=== 6. Cleanup Maintenance Test Table ===
+DROP TABLE
+
+=== 7. Live Database Standard VACUUM ===
+VACUUM
+
+=== 8. Verification Outcome ===
+All VACUUM, VACUUM ANALYZE, and VACUUM FULL operations completed successfully with exit code 0 and zero ENOSPC shared memory allocation errors.

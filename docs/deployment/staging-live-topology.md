@@ -1,6 +1,6 @@
 # Staging-Live Topology
 
-Status date: 2026-07-19
+Status date: 2026-08-25
 
 For the current VS Code / LLM agent workflow, also read:
 
@@ -16,6 +16,11 @@ staging-live inventory below is retained as the last known topology, but those
 VMs and endpoints are not current reachable deployment targets. Staging-live
 requires a separately authorized project replacement; do not route dev back to
 the suspended project as a workaround.
+
+The replacement direction is the release-scoped ephemeral VM design in
+[`vm-dev-staging-prod-management-plan.md`](vm-dev-staging-prod-management-plan.md).
+That document is a target plan, not evidence that the replacement staging or
+production environments have already been provisioned.
 
 | VM | Zone | Public endpoint | Internal endpoint carried by repo vars | Role |
 | --- | --- | --- | --- | --- |

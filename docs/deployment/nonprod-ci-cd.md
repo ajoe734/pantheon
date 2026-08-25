@@ -1,9 +1,16 @@
 # Nonprod CI/CD
 
-Status date: 2026-08-22
+Status date: 2026-08-25
 
 This is the repo-local CI/CD operating record for Pantheon dev and
 staging-live.
+
+The approved low-resource target plan for replacing unavailable staging,
+adding production, and retaining VM/Compose as the primary runtime is
+[`vm-dev-staging-prod-management-plan.md`](vm-dev-staging-prod-management-plan.md).
+This file remains the current-state operating truth until each target-plan
+phase has been implemented and accepted; the target plan must not be read as
+proof that staging or production resources already exist.
 
 The current implementation keeps the VM/Compose non-prod topology in the
 Pantheon Lupin GCP projects and uses GitHub Actions for pinned VM deployment:
