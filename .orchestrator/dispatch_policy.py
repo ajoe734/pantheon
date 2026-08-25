@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Mapping
 
 REASON_REVIEW_READY = "review_ready_dispatch"
 REASON_OWNED_FINALIZE = "owned_finalize_dispatch"
@@ -48,6 +48,106 @@ DEFAULT_MAX_CONCURRENT_WORKERS: int | None = None
 DEFAULT_WORKER_OS_DUPLICATE_GUARD = True
 DEFAULT_MAX_CONCURRENT_PER_ACCOUNT: dict[str, int] = {}
 DEFAULT_MAX_ACTIVE_WORKERS_PER_TASK = 1
+DEFAULT_EXECUTION_RESOURCE_LIMITS: dict[str, int] = {"pantheon-dev": 1}
+ALLOWLISTED_EXECUTION_RESOURCES: frozenset[str] = frozenset({"pantheon-dev"})
+KNOWN_EXECUTION_RESOURCES: frozenset[str] = ALLOWLISTED_EXECUTION_RESOURCES
+
+
+def normalize_execution_resources(
+    raw: Any,
+    *,
+    task_id: str | None = None,
+) -> list[str]:
+    """Strictly validate and normalize an execution_resources list.
+
+    Only allowlisted resources ('pantheon-dev') are accepted.
+    Rejects explicit null (None), non-list, non-string elements, empty strings,
+    unallowlisted resource names, and duplicate resources.
+    Returns a normalized list of lowercased, stripped strings.
+    """
+    prefix = f"Task {task_id} " if task_id else "task "
+    if raw is None:
+        raise ValueError(f"{prefix}execution_resources must be a list, got null")
+    if not isinstance(raw, list):
+        raise ValueError(
+            f"{prefix}execution_resources must be a list, got {type(raw).__name__}: {raw!r}"
+        )
+    res: list[str] = []
+    for item in raw:
+        if not isinstance(item, str):
+            raise ValueError(
+                f"{prefix}execution_resources elements must be strings, got {type(item).__name__}: {item!r}"
+            )
+        val = item.strip().lower()
+        if not val:
+            raise ValueError(f"{prefix}execution_resources element cannot be empty")
+        if val not in ALLOWLISTED_EXECUTION_RESOURCES:
+            raise ValueError(
+                f"{prefix}execution_resources contains an unallowlisted resource: {item!r}; "
+                f"allowlisted execution resources: {', '.join(sorted(ALLOWLISTED_EXECUTION_RESOURCES))}"
+            )
+        if val in res:
+            raise ValueError(f"{prefix}execution_resources contains duplicate resource: {item!r}")
+        res.append(val)
+    return res
+
+
+def task_execution_resources(task: Mapping[str, Any] | None) -> list[str]:
+    """Extract and strictly normalize execution_resources from a task mapping.
+
+    Preserves omitted => [] (when task is None or 'execution_resources' not in task),
+    while explicit null, empty strings, duplicates, or unallowlisted values fail closed.
+    """
+    if not task:
+        return []
+    if "execution_resources" not in task:
+        return []
+    task_id = str(task.get("id") or "").strip() or None
+    return normalize_execution_resources(task["execution_resources"], task_id=task_id)
+
+
+def validate_execution_resource_limits(
+    raw_limits: Any,
+) -> dict[str, int]:
+    """Validate execution resource limits strictly.
+
+    Only 'pantheon-dev' is known, and only integer 1 is valid.
+    Rejects bool, string, zero/negative, >1, and unknown keys.
+    Missing config (None) or empty dict defaults to {'pantheon-dev': 1}.
+    """
+    if raw_limits is None:
+        return dict(DEFAULT_EXECUTION_RESOURCE_LIMITS)
+    if not isinstance(raw_limits, Mapping):
+        raise ValueError(
+            f"execution_resource_limits must be a dict or null, got {type(raw_limits).__name__}: {raw_limits!r}"
+        )
+    if not raw_limits:
+        return dict(DEFAULT_EXECUTION_RESOURCE_LIMITS)
+    normalized: dict[str, int] = {}
+    for key, val in raw_limits.items():
+        if not isinstance(key, str):
+            raise ValueError(
+                f"execution_resource_limits key must be a string, got {type(key).__name__}: {key!r}"
+            )
+        k = key.strip().lower()
+        if k not in KNOWN_EXECUTION_RESOURCES:
+            raise ValueError(
+                f"Unknown execution resource limit key: {key!r}; known resources: {', '.join(sorted(KNOWN_EXECUTION_RESOURCES))}"
+            )
+        if isinstance(val, bool):
+            raise ValueError(
+                f"Invalid execution resource limit for {key!r}: boolean {val!r} is not allowed"
+            )
+        if not isinstance(val, int):
+            raise ValueError(
+                f"Invalid execution resource limit for {key!r}: expected int, got {type(val).__name__} ({val!r})"
+            )
+        if val != 1:
+            raise ValueError(
+                f"Invalid execution resource limit for {key!r}: value must be 1, got {val}"
+            )
+        normalized[k] = val
+    return normalized
 
 
 def dispatch_reason_priority(reason: str | None) -> int | None:
@@ -82,4 +182,7 @@ def ready_dispatch_settings(config: dict[str, Any]) -> dict[str, Any]:
     if "max_concurrent_per_account" not in settings:
         settings["max_concurrent_per_account"] = dict(DEFAULT_MAX_CONCURRENT_PER_ACCOUNT)
     settings.setdefault("max_active_workers_per_task", DEFAULT_MAX_ACTIVE_WORKERS_PER_TASK)
+    settings["execution_resource_limits"] = validate_execution_resource_limits(
+        settings.get("execution_resource_limits")
+    )
     return settings
