@@ -1936,6 +1936,25 @@ jobs:
         if: ${{ steps.frontend_release.outcome != 'success' }}
         uses: google-github-actions/setup-gcloud@e427ad8a34f8676edf47cf7d7925499adf3eb74f
 
+      - name: Prepare pinned direct SSH transport for rollback
+        if: ${{ steps.frontend_release.outcome != 'success' }}
+        env:
+          DEV_DEPLOY_SSH_PRIVATE_KEY: ${{ secrets.DEV_DEPLOY_SSH_PRIVATE_KEY }}
+          DEV_DEPLOY_SSH_KNOWN_HOSTS: ${{ vars.DEV_DEPLOY_SSH_KNOWN_HOSTS }}
+          DEV_DEPLOY_SSH_HOST: ${{ vars.DEV_DEPLOY_SSH_HOST || '35.201.204.12' }}
+        shell: /bin/bash --noprofile --norc -euo pipefail {0}
+        run: |
+          credentials_dir="${RUNNER_TEMP}/pantheon-dev-ssh-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          transport="${GITHUB_WORKSPACE}/.target/scripts/dev_vm_ssh.sh"
+          [[ -f "${transport}" && ! -L "${transport}" ]]
+          "${transport}" prepare "${credentials_dir}" >/dev/null
+          key_file="${credentials_dir}/deploy_key"
+          known_hosts_file="${credentials_dir}/known_hosts"
+          [[ -f "${key_file}" && ! -L "${key_file}" ]]
+          [[ -f "${known_hosts_file}" && ! -L "${known_hosts_file}" ]]
+          [[ "$(stat -c '%a' "${key_file}")" == "600" ]]
+          [[ "$(stat -c '%a' "${known_hosts_file}")" == "600" ]]
+
       - name: Compensate rejected release to exact hosted baseline
         id: compensation
         if: ${{ steps.frontend_release.outcome != 'success' }}
