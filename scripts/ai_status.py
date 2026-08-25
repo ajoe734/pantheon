@@ -40,7 +40,6 @@ STATUS_COMMAND_BASE_REF_ENV = "PANTHEON_COMMAND_BASE_REF"
 TASK_STATE_STORE_MODE_ENV = "PANTHEON_TASK_STATE_STORE_MODE"
 TASK_STATE_EVENT_LOG_ENV = "PANTHEON_TASK_STATE_EVENT_LOG"
 STATUS_OUTBOX_VISIBILITY_ENABLED_ENV = "PANTHEON_STATUS_OUTBOX_VISIBILITY_ENABLED"
-ALLOWLISTED_EXECUTION_RESOURCES = {"pantheon-dev"}
 AUTO_WORKER_ENV_MARKERS = (
     "ORCH_RUN_ID",
     "PANTHEON_WORKTREE_ROOT",
@@ -64,6 +63,11 @@ ORCHESTRATOR_DIR = ROOT / ".orchestrator"
 if str(ORCHESTRATOR_DIR) not in sys.path:
     sys.path.insert(0, str(ORCHESTRATOR_DIR))
 
+from dispatch_policy import (
+    ALLOWLISTED_EXECUTION_RESOURCES,
+    normalize_execution_resources,
+    task_execution_resources,
+)
 import task_archive as task_archive_module
 from task_archive import (
     ARCHIVE_TASKS_DIR,
@@ -5112,33 +5116,12 @@ def _bridge_assignment_from_metadata(
             for key, value in dependency_tracks.items()
         }
     if "execution_resources" in spec:
-        execution_resources = spec.get("execution_resources")
-        if execution_resources is None or not isinstance(execution_resources, list) or any(
-            not isinstance(item, str) for item in execution_resources
-        ):
-            raise SystemExit(
-                "Bridge assignment task_spec.execution_resources must be a string list"
+        try:
+            normalized_spec["execution_resources"] = normalize_execution_resources(
+                spec.get("execution_resources")
             )
-        if any(not str(item).strip() for item in execution_resources):
-            raise SystemExit(
-                "Bridge assignment task_spec.execution_resources contains an empty string element"
-            )
-        normalized_resources = [
-            str(item).strip().lower()
-            for item in execution_resources
-        ]
-        if any(
-            item not in ALLOWLISTED_EXECUTION_RESOURCES
-            for item in normalized_resources
-        ):
-            raise SystemExit(
-                "Bridge assignment task_spec.execution_resources contains an unallowlisted resource"
-            )
-        if len(normalized_resources) != len(set(normalized_resources)):
-            raise SystemExit(
-                "Bridge assignment task_spec.execution_resources contains duplicate resources"
-            )
-        normalized_spec["execution_resources"] = normalized_resources
+        except ValueError as err:
+            raise SystemExit(f"Bridge assignment task_spec.{err}")
     for field in ("phase", "summary"):
         value = spec.get(field)
         if value is not None and not isinstance(value, str):
@@ -5389,7 +5372,11 @@ def command_assign(state: dict[str, Any], args: list[str]) -> bool | None:
         phase = spec.get("phase") or "Unassigned"
         depends_on = list(spec.get("depends_on") or [])
         dependency_tracks = dict(spec.get("dependency_tracks") or {})
-        execution_resources = list(spec.get("execution_resources") or [])
+        raw_res = spec.get("execution_resources")
+        try:
+            execution_resources = normalize_execution_resources(raw_res) if raw_res is not None else []
+        except ValueError as err:
+            raise SystemExit(str(err))
         artifacts = list(spec.get("artifacts") or [])
         acceptance = list(spec.get("acceptance") or [])
     else:
@@ -5405,14 +5392,16 @@ def command_assign(state: dict[str, Any], args: list[str]) -> bool | None:
                 raise SystemExit("TASK_EXECUTION_RESOURCES_JSON must be a valid JSON list")
             if parsed is None or not isinstance(parsed, list) or any(not isinstance(x, str) for x in parsed):
                 raise SystemExit("TASK_EXECUTION_RESOURCES_JSON must be a string list")
-            if any(not str(x).strip() for x in parsed):
-                raise SystemExit("Task execution resources: empty string element")
-            execution_resources = [str(x).strip().lower() for x in parsed]
+            try:
+                execution_resources = normalize_execution_resources(parsed)
+            except ValueError as err:
+                raise SystemExit(f"Task execution resources: {err}")
         elif raw_resources_csv is not None and raw_resources_csv.strip():
             raw_parts = [x.strip() for x in raw_resources_csv.split(",")]
-            if any(not x for x in raw_parts):
-                raise SystemExit("Task execution resources: empty string element")
-            execution_resources = [x.lower() for x in raw_parts]
+            try:
+                execution_resources = normalize_execution_resources(raw_parts)
+            except ValueError as err:
+                raise SystemExit(f"Task execution resources: {err}")
         else:
             execution_resources = []
         artifacts = parse_csv_env("TASK_ARTIFACTS")
@@ -5432,24 +5421,6 @@ def command_assign(state: dict[str, Any], args: list[str]) -> bool | None:
         str(key): str(value).strip().lower()
         for key, value in dependency_tracks.items()
     }
-    if any(
-        not isinstance(res, str)
-        or res.strip().lower() not in ALLOWLISTED_EXECUTION_RESOURCES
-        for res in execution_resources
-    ):
-        raise SystemExit(
-            "Task execution resources must use allowlisted execution resources: "
-            + ", ".join(sorted(ALLOWLISTED_EXECUTION_RESOURCES))
-        )
-    normalized_resources = [
-        str(res).strip().lower()
-        for res in execution_resources
-    ]
-    if len(normalized_resources) != len(set(normalized_resources)):
-        raise SystemExit(
-            f"Task execution resources contains duplicate resource: {execution_resources!r}"
-        )
-    execution_resources = normalized_resources
 
     task = get_task(state, task_id)
     if task is not None and parse_bool_env("TASK_ASSIGN_CREATE_ONLY") is True:
@@ -5916,36 +5887,10 @@ def command_execution_resource(state: dict[str, Any], args: list[str]) -> None:
             "execution resources can only be revised in pre-dispatch states todo or blocked"
         )
     timestamp = iso_now()
-    if "execution_resources" not in task:
-        current_resources: list[str] = []
-    else:
-        raw_resources = task["execution_resources"]
-        if raw_resources is None:
-            raise SystemExit(
-                f"Task {task_id} has malformed execution_resources: expected list, got null"
-            )
-        if not isinstance(raw_resources, list):
-            raise SystemExit(
-                f"Task {task_id} has malformed execution_resources: expected list, got {type(raw_resources).__name__}"
-            )
-        if any(not isinstance(r, str) for r in raw_resources):
-            raise SystemExit(
-                f"Task {task_id} has malformed execution_resources: all elements must be strings"
-            )
-        if any(not r.strip() for r in raw_resources):
-            raise SystemExit(
-                f"Task {task_id} has malformed execution_resources: empty string element"
-            )
-        if any(r.strip().lower() not in ALLOWLISTED_EXECUTION_RESOURCES for r in raw_resources):
-            raise SystemExit(
-                f"Task {task_id} has unallowlisted execution_resources: {raw_resources!r}"
-            )
-        normalized_existing = [r.strip().lower() for r in raw_resources]
-        if len(normalized_existing) != len(set(normalized_existing)):
-            raise SystemExit(
-                f"Task {task_id} has duplicate execution_resources: {raw_resources!r}"
-            )
-        current_resources = normalized_existing
+    try:
+        current_resources = task_execution_resources(task)
+    except ValueError as err:
+        raise SystemExit(str(err))
 
     if action == "add":
         if resource in current_resources:

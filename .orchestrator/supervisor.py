@@ -64,6 +64,7 @@ from common import (
     worker_runtime_paths,
 )
 from dispatch_policy import (
+    ALLOWLISTED_EXECUTION_RESOURCES,
     DISPATCH_STATUS_ACTIONS,
     REASON_OWNED_FINALIZE,
     REASON_OWNED_IN_PROGRESS,
@@ -71,8 +72,10 @@ from dispatch_policy import (
     REASON_REVIEW_READY,
     dispatch_reason_priority,
     is_execution_dispatch_reason,
+    normalize_execution_resources,
     normalized_status_set,
     ready_dispatch_settings,
+    task_execution_resources,
     validate_execution_resource_limits,
 )
 from multi_repo_registry import (
@@ -1212,42 +1215,6 @@ def queued_account_counts(
             continue
         counts[group_id] = counts.get(group_id, 0) + 1
     return counts
-
-
-ALLOWLISTED_EXECUTION_RESOURCES = frozenset({"pantheon-dev"})
-
-
-def task_execution_resources(task: Mapping[str, Any] | None) -> list[str]:
-    if not isinstance(task, Mapping):
-        return []
-    if "execution_resources" not in task:
-        return []
-    raw = task["execution_resources"]
-    if not isinstance(raw, list):
-        raise ValueError(
-            f"task.execution_resources must be a list, got {type(raw).__name__}: {raw!r}"
-        )
-    result: list[str] = []
-    for item in raw:
-        if not isinstance(item, str):
-            raise ValueError(
-                f"task.execution_resources elements must be str, got {type(item).__name__}: {item!r}"
-            )
-        val = item.strip().lower()
-        if not val:
-            raise ValueError("task.execution_resources element cannot be empty")
-        if val not in ALLOWLISTED_EXECUTION_RESOURCES:
-            raise ValueError(
-                f"task.execution_resources contains unknown/unallowlisted resource: {item!r}; "
-                f"allowlisted: {', '.join(sorted(ALLOWLISTED_EXECUTION_RESOURCES))}"
-            )
-        if val in result:
-            raise ValueError(
-                f"task.execution_resources contains duplicate resource: {item!r}"
-            )
-        result.append(val)
-    return result
-
 
 def queue_event_sort_key(event: Mapping[str, Any]) -> tuple[str, str]:
     if not isinstance(event, Mapping):
@@ -13448,7 +13415,6 @@ def reserve_dispatch_plan(
         else {"pantheon-dev": 1}
     )
     resolver = task_resolver_for_config(config, task_map)
-    max_global = ready_dispatch_max_concurrent_workers(config)
     active_worker_count = sum(
         1
         for worker in (state.get("workers") or {}).values()
@@ -13506,9 +13472,6 @@ def reserve_dispatch_plan(
         if not admission.eligible:
             continue
         req_resources = task_execution_resources(task_obj)
-        pending_only = len(pending_task_ids - active_task_ids)
-        if max_global is not None and live_total + pending_only >= max_global:
-            break
         account = agent_account_id(config, agent_id)
         event["delivery_endpoint_id"] = admission.endpoint_id
         event["provider"] = admission.provider_id

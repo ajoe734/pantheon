@@ -20,7 +20,16 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 # dispatcher remains the concurrency authority; this bound also prevents one
 # signed packet from monopolising a supervisor tick indefinitely.
 MAX_TASKS_PER_PACKET = 16
-ALLOWLISTED_EXECUTION_RESOURCES = frozenset({"pantheon-dev"})
+try:
+    from ..dispatch_policy import (
+        ALLOWLISTED_EXECUTION_RESOURCES,
+        normalize_execution_resources,
+    )
+except (ImportError, ValueError):
+    from dispatch_policy import (
+        ALLOWLISTED_EXECUTION_RESOURCES,
+        normalize_execution_resources,
+    )
 
 
 class BridgeBaseModel(BaseModel):
@@ -68,32 +77,7 @@ class BridgeTask(BridgeBaseModel):
     @field_validator("execution_resources", mode="before")
     @classmethod
     def validate_execution_resources(cls, v: Any) -> List[str]:
-        if v is None:
-            raise ValueError("task.execution_resources must be a list, got null")
-        if not isinstance(v, list):
-            raise ValueError(
-                f"task.execution_resources must be a list, got {type(v).__name__}"
-            )
-        res: List[str] = []
-        for item in v:
-            if not isinstance(item, str):
-                raise ValueError(
-                    f"task.execution_resources elements must be str, got {type(item).__name__}"
-                )
-            val = item.strip().lower()
-            if not val:
-                raise ValueError("task.execution_resources element cannot be empty")
-            if val not in ALLOWLISTED_EXECUTION_RESOURCES:
-                raise ValueError(
-                    f"task.execution_resources contains unknown/unallowlisted resource: {item!r}; "
-                    f"allowlisted: {', '.join(sorted(ALLOWLISTED_EXECUTION_RESOURCES))}"
-                )
-            if val in res:
-                raise ValueError(
-                    f"task.execution_resources contains duplicate resource: {item!r}"
-                )
-            res.append(val)
-        return res
+        return normalize_execution_resources(v)
 
 
 class BridgeConstraints(BridgeBaseModel):

@@ -2035,6 +2035,7 @@ class StatusRootRoutingTests(unittest.TestCase):
             "scripts/human-ops-status.sh",
             "scripts/loop_done_guardrail.py",
             ".orchestrator/common.py",
+            ".orchestrator/dispatch_policy.py",
             ".orchestrator/runtime_state.py",
             ".orchestrator/task_archive.py",
             ".orchestrator/multi_repo_registry.py",

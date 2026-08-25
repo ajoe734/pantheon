@@ -49,7 +49,57 @@ DEFAULT_WORKER_OS_DUPLICATE_GUARD = True
 DEFAULT_MAX_CONCURRENT_PER_ACCOUNT: dict[str, int] = {}
 DEFAULT_MAX_ACTIVE_WORKERS_PER_TASK = 1
 DEFAULT_EXECUTION_RESOURCE_LIMITS: dict[str, int] = {"pantheon-dev": 1}
-KNOWN_EXECUTION_RESOURCES: frozenset[str] = frozenset({"pantheon-dev"})
+ALLOWLISTED_EXECUTION_RESOURCES: frozenset[str] = frozenset({"pantheon-dev"})
+KNOWN_EXECUTION_RESOURCES: frozenset[str] = ALLOWLISTED_EXECUTION_RESOURCES
+
+
+def normalize_execution_resources(
+    raw: Any,
+    *,
+    task_id: str | None = None,
+) -> list[str]:
+    """Strictly validate and normalize an execution_resources list.
+
+    Only allowlisted resources ('pantheon-dev') are accepted.
+    Rejects explicit null (None), non-list, non-string elements, empty strings,
+    unallowlisted resource names, and duplicate resources.
+    Returns a normalized list of lowercased, stripped strings.
+    """
+    prefix = f"Task {task_id} has " if task_id else "task.execution_resources "
+    if raw is None:
+        raise ValueError(f"{prefix}must be a list, got NoneType: None (expected list, got null)")
+    if not isinstance(raw, list):
+        raise ValueError(f"{prefix}must be a list (expected list), got {type(raw).__name__}: {raw!r}")
+    res: list[str] = []
+    for item in raw:
+        if not isinstance(item, str):
+            raise ValueError(f"{prefix}elements must be str (all elements must be strings), got {type(item).__name__}: {item!r}")
+        val = item.strip().lower()
+        if not val:
+            raise ValueError(f"{prefix}element cannot be empty (empty string element)")
+        if val not in ALLOWLISTED_EXECUTION_RESOURCES:
+            raise ValueError(
+                f"{prefix}contains an unallowlisted resource (unallowlisted execution_resources, unknown/unallowlisted resource): {item!r}; "
+                f"allowlisted execution resources: {', '.join(sorted(ALLOWLISTED_EXECUTION_RESOURCES))}"
+            )
+        if val in res:
+            raise ValueError(f"{prefix}contains duplicate resources (duplicate execution_resources, duplicate resource): {item!r}")
+        res.append(val)
+    return res
+
+
+def task_execution_resources(task: Mapping[str, Any] | None) -> list[str]:
+    """Extract and strictly normalize execution_resources from a task mapping.
+
+    Preserves omitted => [] (when task is None or 'execution_resources' not in task),
+    while explicit null, empty strings, duplicates, or unallowlisted values fail closed.
+    """
+    if not task:
+        return []
+    if "execution_resources" not in task:
+        return []
+    task_id = str(task.get("id") or "").strip() or None
+    return normalize_execution_resources(task["execution_resources"], task_id=task_id)
 
 
 def validate_execution_resource_limits(

@@ -7,6 +7,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from dispatch_policy import (
+    ALLOWLISTED_EXECUTION_RESOURCES,
     DEFAULT_ACTIVE_WORKER_STATUSES,
     REASON_OWNED_FINALIZE,
     REASON_OWNED_IN_PROGRESS,
@@ -14,8 +15,10 @@ from dispatch_policy import (
     REASON_REVIEW_READY,
     dispatch_reason_priority,
     is_execution_dispatch_reason,
+    normalize_execution_resources,
     normalized_status_set,
     ready_dispatch_settings,
+    task_execution_resources,
 )
 
 
@@ -119,3 +122,73 @@ def test_ready_dispatch_settings_execution_resource_limits() -> None:
 
     with pytest.raises(ValueError, match="Unknown execution resource limit key"):
         ready_dispatch_settings({"ready_dispatcher": {"execution_resource_limits": {"custom-res": 1}}})
+
+
+def test_normalize_execution_resources_valid_and_normalization() -> None:
+    assert ALLOWLISTED_EXECUTION_RESOURCES == frozenset({"pantheon-dev"})
+    assert normalize_execution_resources([]) == []
+    assert normalize_execution_resources(["pantheon-dev"]) == ["pantheon-dev"]
+    assert normalize_execution_resources(["  PANTHEON-DEV  "]) == ["pantheon-dev"]
+
+
+def test_normalize_execution_resources_rejections() -> None:
+    # Explicit null
+    with pytest.raises(ValueError, match="expected list, got null"):
+        normalize_execution_resources(None)
+    with pytest.raises(ValueError, match="must be a list, got NoneType"):
+        normalize_execution_resources(None)
+
+    # Non-list
+    with pytest.raises(ValueError, match="must be a list"):
+        normalize_execution_resources("pantheon-dev")
+    with pytest.raises(ValueError, match="must be a list"):
+        normalize_execution_resources(123)
+    with pytest.raises(ValueError, match="must be a list"):
+        normalize_execution_resources({"pantheon-dev": 1})
+
+    # Non-string element
+    with pytest.raises(ValueError, match="elements must be str"):
+        normalize_execution_resources([123])
+    with pytest.raises(ValueError, match="all elements must be strings"):
+        normalize_execution_resources([None])
+
+    # Empty / whitespace string element
+    with pytest.raises(ValueError, match="cannot be empty"):
+        normalize_execution_resources([""])
+    with pytest.raises(ValueError, match="empty string element"):
+        normalize_execution_resources(["   "])
+
+    # Unallowlisted resource
+    with pytest.raises(ValueError, match="unallowlisted"):
+        normalize_execution_resources(["unknown-res"])
+    with pytest.raises(ValueError, match="allowlisted execution resources"):
+        normalize_execution_resources(["vm-staging"])
+
+    # Duplicate resource
+    with pytest.raises(ValueError, match="duplicate"):
+        normalize_execution_resources(["pantheon-dev", "pantheon-dev"])
+    with pytest.raises(ValueError, match="duplicate"):
+        normalize_execution_resources(["pantheon-dev", "  PANTHEON-DEV "])
+
+
+def test_task_execution_resources_cases() -> None:
+    # Omitted => []
+    assert task_execution_resources(None) == []
+    assert task_execution_resources({}) == []
+    assert task_execution_resources({"id": "TASK-1"}) == []
+    assert task_execution_resources({"id": "TASK-1", "execution_resources": []}) == []
+
+    # Valid
+    assert task_execution_resources({"id": "TASK-1", "execution_resources": ["pantheon-dev"]}) == ["pantheon-dev"]
+
+    # Fails closed on explicit null / malformed / unallowlisted
+    with pytest.raises(ValueError, match="expected list, got null"):
+        task_execution_resources({"id": "TASK-1", "execution_resources": None})
+    with pytest.raises(ValueError, match="elements must be str"):
+        task_execution_resources({"id": "TASK-1", "execution_resources": [123]})
+    with pytest.raises(ValueError, match="cannot be empty"):
+        task_execution_resources({"id": "TASK-1", "execution_resources": [""]})
+    with pytest.raises(ValueError, match="unallowlisted"):
+        task_execution_resources({"id": "TASK-1", "execution_resources": ["bad"]})
+    with pytest.raises(ValueError, match="duplicate"):
+        task_execution_resources({"id": "TASK-1", "execution_resources": ["pantheon-dev", "pantheon-dev"]})

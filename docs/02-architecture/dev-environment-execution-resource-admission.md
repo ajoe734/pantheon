@@ -69,8 +69,8 @@ When authoring or migrating tasks within Portfolio Foundry Governance (PFG) and 
 
 | Task Type | Execution Resources | Concurrency Posture | Example Tasks |
 |:---|:---|:---|:---|
-| **Hosted Deploy / Verification** | `["pantheon-dev"]` | Serial (Capacity 1) | BFF deployment, hosted smoke tests, hosted frontend bundle deployment, dev database migration |
-| **Functional / Worktree** | `[]` (None) | Parallel (Max lanes) | Domain logic, algorithm implementation, unit tests, linting, doc generation |
+| **Hosted Deploy / Verification** | `["pantheon-dev"]` | Serial (Capacity 1) | `PFG-MGMT-JOURNEY-E2E-20260820` (Management AI live journey E2E), `PFG-AGORA-JOURNEY-E2E-20260820` (Agora live journey E2E), `PFG-HOSTED-ACCEPT-20260820` (Final hosted acceptance / exact-candidate proof), SRCM hosted acceptance (`SA-SRCM-08`) |
+| **Functional / Worktree** | `[]` (None) | Parallel (Max lanes) | Domain logic, algorithm implementation, unit tests, linting, doc generation (`PFG-LIFECYCLE-POSTGRES-ACTIVATION-20260824`, `PFG-CANDIDATE-AUTO-BINDING-20260824`, `SA-SRCM-01`..`07`) |
 
 ### 3.2 Authoring Tasks in Task Packets
 
