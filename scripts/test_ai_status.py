@@ -7772,12 +7772,13 @@ class SidecarTaskTests(unittest.TestCase):
 
     def test_execution_resource_command_rejects_malformed_existing_execution_resources(self) -> None:
         malformed_cases = [
-            ("TASK-MAL-STR", "pantheon-dev", "expected list or null"),
+            ("TASK-MAL-NULL", None, "expected list, got null"),
+            ("TASK-MAL-STR", "pantheon-dev", "expected list"),
             ("TASK-MAL-NON-STR", [123], "all elements must be strings"),
             ("TASK-MAL-EMPTY-STR", [""], "empty string element"),
             ("TASK-MAL-UNALLOW", ["bad-resource"], "unallowlisted execution_resources"),
             ("TASK-MAL-DUP", ["pantheon-dev", "pantheon-dev"], "duplicate execution_resources"),
-            ("TASK-MAL-DICT", {"pantheon-dev": 1}, "expected list or null"),
+            ("TASK-MAL-DICT", {"pantheon-dev": 1}, "expected list"),
         ]
         for task_id, malformed_val, error_regex in malformed_cases:
             task = {
@@ -7797,6 +7798,29 @@ class SidecarTaskTests(unittest.TestCase):
                         self.state,
                         [task_id, "add", "pantheon-dev", "Migration attempt on malformed task"],
                     )
+
+    def test_execution_resource_command_success_when_field_absent(self) -> None:
+        task = {
+            "id": "TASK-RES-ABSENT",
+            "title": "Absent execution_resources test",
+            "status": "todo",
+            "owner": "Codex",
+            "reviewer": "Claude",
+            "last_update": "2026-08-25T10:00:00Z",
+        }
+        self.state["tasks"].append(task)
+        self.assertNotIn("execution_resources", task)
+
+        env = {"AI_NAME": "Human/Ops"}
+        with mock.patch.dict(os.environ, env, clear=False):
+            ai_status.command_execution_resource(
+                self.state,
+                ["TASK-RES-ABSENT", "add", "pantheon-dev", "Add resource when field absent"],
+            )
+
+        updated = ai_status.get_task(self.state, "TASK-RES-ABSENT")
+        self.assertIsNotNone(updated)
+        self.assertEqual(updated["execution_resources"], ["pantheon-dev"])
 
     def test_execution_resource_command_alias_removed(self) -> None:
         # Confirm that execution_resource (with underscore) is no longer a recognized command

@@ -5894,10 +5894,18 @@ def command_execution_resource(state: dict[str, Any], args: list[str]) -> None:
             "cannot revise execution resources"
         )
     timestamp = iso_now()
-    raw_resources = task.get("execution_resources")
-    if raw_resources is None:
+    if "execution_resources" not in task:
         current_resources: list[str] = []
-    elif isinstance(raw_resources, list):
+    else:
+        raw_resources = task["execution_resources"]
+        if raw_resources is None:
+            raise SystemExit(
+                f"Task {task_id} has malformed execution_resources: expected list, got null"
+            )
+        if not isinstance(raw_resources, list):
+            raise SystemExit(
+                f"Task {task_id} has malformed execution_resources: expected list, got {type(raw_resources).__name__}"
+            )
         if any(not isinstance(r, str) for r in raw_resources):
             raise SystemExit(
                 f"Task {task_id} has malformed execution_resources: all elements must be strings"
@@ -5916,10 +5924,6 @@ def command_execution_resource(state: dict[str, Any], args: list[str]) -> None:
                 f"Task {task_id} has duplicate execution_resources: {raw_resources!r}"
             )
         current_resources = normalized_existing
-    else:
-        raise SystemExit(
-            f"Task {task_id} has malformed execution_resources: expected list or null, got {type(raw_resources).__name__}"
-        )
 
     if action == "add":
         if resource in current_resources:
