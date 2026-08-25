@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, Mapping, Optional, Tuple
 
 import pytest
 
@@ -13,6 +13,8 @@ from scripts.verify_external_source_management_acceptance import (
     SourceManagementAcceptanceError,
     generate_canonical_evidence_bundle,
     main,
+    EXPECTED_BFF_SHA,
+    EXPECTED_FE_SHA,
     HOSTED_JOURNEY_IDS,
     NEGATIVE_CONTROL_KEYS,
     MIGRATION_REQUIREMENT_KEYS,
@@ -24,7 +26,65 @@ def _setup_valid_bundle(tmp_path: Path) -> Path:
     return tmp_path
 
 
-def test_verify_full_success_run(tmp_path: Path) -> None:
+def _make_mock_transport(
+    *,
+    fe_status: int = 200,
+    fe_sha: str = EXPECTED_FE_SHA,
+    fe_real_writes: str = "false",
+    bff_status: int = 200,
+    bff_sha: str = EXPECTED_BFF_SHA,
+    bff_auth_mode: str = "strict",
+    bff_auth_stub: bool = False,
+    unauth_status: int = 401,
+    dev_login_bad_status: int = 401,
+) -> Any:
+    def transport(
+        url: str,
+        method: str = "GET",
+        headers: Optional[Mapping[str, str]] = None,
+        body: Optional[bytes] = None,
+        timeout_seconds: float = 15.0,
+    ) -> Tuple[int, Mapping[str, Any]]:
+        if "deployment.json" in url:
+            if fe_status != 200:
+                return fe_status, {"error": "fe_error"}
+            return 200, {
+                "commit": fe_sha,
+                "frontendSha": fe_sha,
+                "bffCommit": "40de8fcb1c69fad0bf5e54d4c0bd6e508c9162e0",
+                "buildMode": {
+                    "VITE_BFF_MODE": "live",
+                    "VITE_BFF_FALLBACK": "strict",
+                    "VITE_BFF_REAL_WRITES": fe_real_writes,
+                },
+            }
+        elif "/bff/version" in url:
+            if bff_status != 200:
+                return bff_status, {"error": "bff_error"}
+            return 200, {
+                "source_commit_sha": bff_sha,
+                "commit": bff_sha,
+                "environment": "dev",
+                "config_posture": {
+                    "auth_mode": bff_auth_mode,
+                    "auth_stub": bff_auth_stub,
+                    "dev_login_enabled": True,
+                },
+            }
+        elif "/bff/management/data-sources" in url:
+            return unauth_status, {
+                "error": {"code": "AUTH_REQUIRED", "message": "Unauthorized: missing Bearer token"},
+            }
+        elif "/bff/auth/dev-login" in url:
+            return dev_login_bad_status, {
+                "error": {"code": "AUTH_REQUIRED", "message": "Invalid dev login client credentials"},
+            }
+        return 200, {"status": "ok"}
+
+    return transport
+
+
+def test_verify_full_success_run_offline(tmp_path: Path) -> None:
     bundle_dir = _setup_valid_bundle(tmp_path)
     config = AcceptanceConfig(evidence_dir=bundle_dir, offline_only=True)
     verifier = ExternalSourceManagementHostedAcceptanceVerifier(config)
@@ -33,8 +93,8 @@ def test_verify_full_success_run(tmp_path: Path) -> None:
     assert result.passed is True
     assert result.task_id == "SRCM-P1-HOSTED-ACCEPTANCE-20260824"
     assert result.program_id == "SRCM-PHASE1-20260824"
-    assert result.exact_pair["backend_sha"] == "40de8fcb1c69fad0bf5e54d4c0bd6e508c9162e0"
-    assert result.exact_pair["frontend_sha"] == "5447d2a09b5c83a4f9ee2d405f57c642913e0055"
+    assert result.exact_pair["backend_sha"] == EXPECTED_BFF_SHA
+    assert result.exact_pair["frontend_sha"] == EXPECTED_FE_SHA
     assert result.journeys["passed_count"] == len(HOSTED_JOURNEY_IDS)
     assert result.negative_controls["status"] == "passed"
     assert result.migration_rollout["status"] == "passed"
@@ -42,9 +102,115 @@ def test_verify_full_success_run(tmp_path: Path) -> None:
     assert len(result.artifact_checksums) >= 6
 
 
+def test_verify_full_success_run_live_mock(tmp_path: Path) -> None:
+    bundle_dir = _setup_valid_bundle(tmp_path)
+    config = AcceptanceConfig(evidence_dir=bundle_dir, offline_only=False)
+    verifier = ExternalSourceManagementHostedAcceptanceVerifier(
+        config,
+        transport=_make_mock_transport(),
+    )
+    result = verifier.run()
+
+    assert result.passed is True
+    assert result.exact_pair["backend_sha"] == EXPECTED_BFF_SHA
+    assert result.exact_pair["frontend_sha"] == EXPECTED_FE_SHA
+    assert result.journeys["passed_count"] == len(HOSTED_JOURNEY_IDS)
+
+
+def test_live_verify_fe_unreachable_fails(tmp_path: Path) -> None:
+    bundle_dir = _setup_valid_bundle(tmp_path)
+    config = AcceptanceConfig(evidence_dir=bundle_dir, offline_only=False)
+    verifier = ExternalSourceManagementHostedAcceptanceVerifier(
+        config,
+        transport=_make_mock_transport(fe_status=500),
+    )
+
+    with pytest.raises(SourceManagementAcceptanceError) as exc_info:
+        verifier.run()
+    assert exc_info.value.code == "live.fe_unreachable"
+
+
+def test_live_verify_bff_unreachable_fails(tmp_path: Path) -> None:
+    bundle_dir = _setup_valid_bundle(tmp_path)
+    config = AcceptanceConfig(evidence_dir=bundle_dir, offline_only=False)
+    verifier = ExternalSourceManagementHostedAcceptanceVerifier(
+        config,
+        transport=_make_mock_transport(bff_status=503),
+    )
+
+    with pytest.raises(SourceManagementAcceptanceError) as exc_info:
+        verifier.run()
+    assert exc_info.value.code == "live.bff_unreachable"
+
+
+def test_live_verify_fe_sha_mismatch_fails(tmp_path: Path) -> None:
+    bundle_dir = _setup_valid_bundle(tmp_path)
+    config = AcceptanceConfig(evidence_dir=bundle_dir, offline_only=False)
+    verifier = ExternalSourceManagementHostedAcceptanceVerifier(
+        config,
+        transport=_make_mock_transport(fe_sha="1111111111111111111111111111111111111111"),
+    )
+
+    with pytest.raises(SourceManagementAcceptanceError) as exc_info:
+        verifier.run()
+    assert exc_info.value.code == "live.fe_sha_mismatch"
+
+
+def test_live_verify_bff_sha_mismatch_fails(tmp_path: Path) -> None:
+    bundle_dir = _setup_valid_bundle(tmp_path)
+    config = AcceptanceConfig(evidence_dir=bundle_dir, offline_only=False)
+    verifier = ExternalSourceManagementHostedAcceptanceVerifier(
+        config,
+        transport=_make_mock_transport(bff_sha="2222222222222222222222222222222222222222"),
+    )
+
+    with pytest.raises(SourceManagementAcceptanceError) as exc_info:
+        verifier.run()
+    assert exc_info.value.code == "live.bff_sha_mismatch"
+
+
+def test_live_verify_unsafe_fe_write_defaults_fails(tmp_path: Path) -> None:
+    bundle_dir = _setup_valid_bundle(tmp_path)
+    config = AcceptanceConfig(evidence_dir=bundle_dir, offline_only=False)
+    verifier = ExternalSourceManagementHostedAcceptanceVerifier(
+        config,
+        transport=_make_mock_transport(fe_real_writes="true"),
+    )
+
+    with pytest.raises(SourceManagementAcceptanceError) as exc_info:
+        verifier.run()
+    assert exc_info.value.code == "live.unsafe_fe_write_defaults"
+
+
+def test_live_verify_insecure_bff_auth_posture_fails(tmp_path: Path) -> None:
+    bundle_dir = _setup_valid_bundle(tmp_path)
+    config = AcceptanceConfig(evidence_dir=bundle_dir, offline_only=False)
+    verifier = ExternalSourceManagementHostedAcceptanceVerifier(
+        config,
+        transport=_make_mock_transport(bff_auth_stub=True),
+    )
+
+    with pytest.raises(SourceManagementAcceptanceError) as exc_info:
+        verifier.run()
+    assert exc_info.value.code == "live.insecure_bff_auth_posture"
+
+
+def test_live_verify_negative_control_fails(tmp_path: Path) -> None:
+    bundle_dir = _setup_valid_bundle(tmp_path)
+    config = AcceptanceConfig(evidence_dir=bundle_dir, offline_only=False)
+    verifier = ExternalSourceManagementHostedAcceptanceVerifier(
+        config,
+        transport=_make_mock_transport(unauth_status=200),
+    )
+
+    with pytest.raises(SourceManagementAcceptanceError) as exc_info:
+        verifier.run()
+    assert exc_info.value.code == "live.negative_control_failed"
+
+
 def test_verify_missing_directory(tmp_path: Path) -> None:
     non_existent = tmp_path / "does_not_exist"
-    config = AcceptanceConfig(evidence_dir=non_existent)
+    config = AcceptanceConfig(evidence_dir=non_existent, offline_only=True)
     verifier = ExternalSourceManagementHostedAcceptanceVerifier(config)
 
     with pytest.raises(SourceManagementAcceptanceError) as exc_info:
@@ -56,7 +222,7 @@ def test_verify_missing_file(tmp_path: Path) -> None:
     bundle_dir = _setup_valid_bundle(tmp_path)
     (bundle_dir / "journey-receipts.json").unlink()
 
-    config = AcceptanceConfig(evidence_dir=bundle_dir)
+    config = AcceptanceConfig(evidence_dir=bundle_dir, offline_only=True)
     verifier = ExternalSourceManagementHostedAcceptanceVerifier(config)
 
     with pytest.raises(SourceManagementAcceptanceError) as exc_info:
@@ -73,7 +239,7 @@ def test_verify_invalid_backend_sha(tmp_path: Path) -> None:
     with deploy_file.open("w", encoding="utf-8") as f:
         json.dump(data, f)
 
-    config = AcceptanceConfig(evidence_dir=bundle_dir)
+    config = AcceptanceConfig(evidence_dir=bundle_dir, offline_only=True)
     verifier = ExternalSourceManagementHostedAcceptanceVerifier(config)
 
     with pytest.raises(SourceManagementAcceptanceError) as exc_info:
@@ -90,7 +256,7 @@ def test_verify_invalid_frontend_sha(tmp_path: Path) -> None:
     with deploy_file.open("w", encoding="utf-8") as f:
         json.dump(data, f)
 
-    config = AcceptanceConfig(evidence_dir=bundle_dir)
+    config = AcceptanceConfig(evidence_dir=bundle_dir, offline_only=True)
     verifier = ExternalSourceManagementHostedAcceptanceVerifier(config)
 
     with pytest.raises(SourceManagementAcceptanceError) as exc_info:
@@ -107,7 +273,7 @@ def test_verify_invalid_store_backend(tmp_path: Path) -> None:
     with deploy_file.open("w", encoding="utf-8") as f:
         json.dump(data, f)
 
-    config = AcceptanceConfig(evidence_dir=bundle_dir)
+    config = AcceptanceConfig(evidence_dir=bundle_dir, offline_only=True)
     verifier = ExternalSourceManagementHostedAcceptanceVerifier(config)
 
     with pytest.raises(SourceManagementAcceptanceError) as exc_info:
@@ -124,7 +290,7 @@ def test_verify_journey_missing(tmp_path: Path) -> None:
     with summary_file.open("w", encoding="utf-8") as f:
         json.dump(data, f)
 
-    config = AcceptanceConfig(evidence_dir=bundle_dir)
+    config = AcceptanceConfig(evidence_dir=bundle_dir, offline_only=True)
     verifier = ExternalSourceManagementHostedAcceptanceVerifier(config)
 
     with pytest.raises(SourceManagementAcceptanceError) as exc_info:
@@ -141,7 +307,7 @@ def test_verify_journey_failed(tmp_path: Path) -> None:
     with summary_file.open("w", encoding="utf-8") as f:
         json.dump(data, f)
 
-    config = AcceptanceConfig(evidence_dir=bundle_dir)
+    config = AcceptanceConfig(evidence_dir=bundle_dir, offline_only=True)
     verifier = ExternalSourceManagementHostedAcceptanceVerifier(config)
 
     with pytest.raises(SourceManagementAcceptanceError) as exc_info:
@@ -158,12 +324,29 @@ def test_verify_journey_route_mocked_rejected(tmp_path: Path) -> None:
     with summary_file.open("w", encoding="utf-8") as f:
         json.dump(data, f)
 
-    config = AcceptanceConfig(evidence_dir=bundle_dir)
+    config = AcceptanceConfig(evidence_dir=bundle_dir, offline_only=True)
     verifier = ExternalSourceManagementHostedAcceptanceVerifier(config)
 
     with pytest.raises(SourceManagementAcceptanceError) as exc_info:
         verifier.run()
     assert exc_info.value.code == "journeys.route_mocked"
+
+
+def test_verify_journey_no_order_assertion_missing(tmp_path: Path) -> None:
+    bundle_dir = _setup_valid_bundle(tmp_path)
+    summary_file = bundle_dir / "hosted-acceptance-summary.json"
+    with summary_file.open("r", encoding="utf-8") as f:
+        data = json.load(f)
+    data["journeys"][0]["no_order_capital_route"] = False
+    with summary_file.open("w", encoding="utf-8") as f:
+        json.dump(data, f)
+
+    config = AcceptanceConfig(evidence_dir=bundle_dir, offline_only=True)
+    verifier = ExternalSourceManagementHostedAcceptanceVerifier(config)
+
+    with pytest.raises(SourceManagementAcceptanceError) as exc_info:
+        verifier.run()
+    assert exc_info.value.code == "journeys.no_order_assertion_missing"
 
 
 def test_verify_negative_controls_missing(tmp_path: Path) -> None:
@@ -175,7 +358,7 @@ def test_verify_negative_controls_missing(tmp_path: Path) -> None:
     with neg_file.open("w", encoding="utf-8") as f:
         json.dump(data, f)
 
-    config = AcceptanceConfig(evidence_dir=bundle_dir)
+    config = AcceptanceConfig(evidence_dir=bundle_dir, offline_only=True)
     verifier = ExternalSourceManagementHostedAcceptanceVerifier(config)
 
     with pytest.raises(SourceManagementAcceptanceError) as exc_info:
@@ -192,7 +375,7 @@ def test_verify_migration_requirement_failed(tmp_path: Path) -> None:
     with mig_file.open("w", encoding="utf-8") as f:
         json.dump(data, f)
 
-    config = AcceptanceConfig(evidence_dir=bundle_dir)
+    config = AcceptanceConfig(evidence_dir=bundle_dir, offline_only=True)
     verifier = ExternalSourceManagementHostedAcceptanceVerifier(config)
 
     with pytest.raises(SourceManagementAcceptanceError) as exc_info:
@@ -209,7 +392,7 @@ def test_verify_raw_secret_leak_fails_closed(tmp_path: Path) -> None:
     with receipts_file.open("w", encoding="utf-8") as f:
         json.dump(data, f)
 
-    config = AcceptanceConfig(evidence_dir=bundle_dir)
+    config = AcceptanceConfig(evidence_dir=bundle_dir, offline_only=True)
     verifier = ExternalSourceManagementHostedAcceptanceVerifier(config)
 
     with pytest.raises(SourceManagementAcceptanceError) as exc_info:
@@ -220,7 +403,7 @@ def test_verify_raw_secret_leak_fails_closed(tmp_path: Path) -> None:
 def test_cli_main_success_and_output(tmp_path: Path) -> None:
     bundle_dir = _setup_valid_bundle(tmp_path)
     out_file = tmp_path / "out.json"
-    code = main(["--evidence-dir", str(bundle_dir), "--output", str(out_file)])
+    code = main(["--evidence-dir", str(bundle_dir), "--offline-only", "--output", str(out_file)])
     assert code == 0
     assert out_file.is_file()
     with out_file.open("r", encoding="utf-8") as f:
@@ -231,5 +414,5 @@ def test_cli_main_success_and_output(tmp_path: Path) -> None:
 def test_cli_main_failure(tmp_path: Path) -> None:
     empty_dir = tmp_path / "empty"
     empty_dir.mkdir()
-    code = main(["--evidence-dir", str(empty_dir)])
+    code = main(["--evidence-dir", str(empty_dir), "--offline-only"])
     assert code == 1

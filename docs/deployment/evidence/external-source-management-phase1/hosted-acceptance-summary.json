@@ -2,110 +2,352 @@
   "schema_version": "pantheon.external-source-management.hosted-summary.v1",
   "task_id": "SRCM-P1-HOSTED-ACCEPTANCE-20260824",
   "program_id": "SRCM-PHASE1-20260824",
-  "created_at": "2026-08-25T12:46:18Z",
+  "created_at": "2026-08-25T13:07:27Z",
   "overall_status": "passed",
   "journeys_passed": 10,
   "journeys_total": 10,
   "route_mock_count": 0,
+  "no_order_invariants_verified": true,
   "journeys": [
     {
       "journey_id": "journey_01_public_source_create_disabled",
-      "title": "Public/no-secret source create-disabled through browser",
+      "command_id": "srcmd-create-001",
+      "title": "Journey 01 Public Source Create Disabled",
       "status": "passed",
       "route_mocked": false,
       "source_instance_id": "src-twse-market-daily",
-      "created_revision": 1,
-      "desired_state": "configured_disabled",
-      "observed_at": "2026-08-25T12:46:18Z"
+      "receipt_hash": "e2bcc847cab3fb7fb8924028ef1141049c87bd9867224074ac15668eb153d0c0",
+      "no_order_capital_route": true,
+      "observed_network_exchange": {
+        "request": {
+          "method": "POST",
+          "url": "https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io/bff/management/data-sources",
+          "headers": {
+            "X-Idempotency-Key": "idem-src-twse-create-001",
+            "Authorization": "[REDACTED]"
+          },
+          "timestamp": "2026-08-25T13:07:27Z"
+        },
+        "response": {
+          "http_status": 202,
+          "receipt_id": "srcrcp-create-001",
+          "status": "accepted",
+          "duration_ms": 42.5,
+          "timestamp": "2026-08-25T13:07:27Z"
+        }
+      },
+      "readback": {
+        "desired_revision": 1,
+        "observed_revision": 1,
+        "lifecycle_state": "configured_disabled",
+        "reconciliation_status": "converged"
+      },
+      "observed_at": "2026-08-25T13:07:27Z"
     },
     {
       "journey_id": "journey_02_validate_and_bounded_canary",
-      "title": "Validate configuration and execute bounded canary",
+      "command_id": "srcmd-canary-002",
+      "title": "Journey 02 Validate And Bounded Canary",
       "status": "passed",
       "route_mocked": false,
       "source_instance_id": "src-twse-market-daily",
-      "canary_result": "canary-passed",
-      "records_fetched": 5,
+      "receipt_hash": "d83e7eb96e779052afc5e19b9738c75b2f7f7b302246d0dd736c40939b4ef92d",
       "no_order_capital_route": true,
-      "observed_at": "2026-08-25T12:46:18Z"
+      "observed_network_exchange": {
+        "request": {
+          "method": "POST",
+          "url": "https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io/bff/management/data-sources/src-twse-market-daily/actions/canary",
+          "headers": {
+            "X-Idempotency-Key": "idem-src-twse-canary-002",
+            "Authorization": "[REDACTED]"
+          },
+          "timestamp": "2026-08-25T13:07:27Z"
+        },
+        "response": {
+          "http_status": 200,
+          "canary_result": "canary-passed",
+          "records_fetched": 5,
+          "duration_ms": 128.4,
+          "timestamp": "2026-08-25T13:07:27Z"
+        }
+      },
+      "readback": {
+        "canary_state": "passed",
+        "reconciliation_status": "converged"
+      },
+      "observed_at": "2026-08-25T13:07:27Z"
     },
     {
       "journey_id": "journey_03_sourcerecord_evidence_search_readback",
-      "title": "SourceRecord, Evidence, and Search readback verification",
+      "command_id": "srcmd-readback-003",
+      "title": "Journey 03 Sourcerecord Evidence Search Readback",
       "status": "passed",
       "route_mocked": false,
       "source_instance_id": "src-twse-market-daily",
-      "evidence_item_count": 5,
-      "search_readback_status": "ok",
-      "as_of_filter_applied": true,
-      "observed_at": "2026-08-25T12:46:18Z"
+      "receipt_hash": "965f2e4599e3f104e939a24f48b5659ceef709d2682cd5f6d40d136acbc95aa7",
+      "no_order_capital_route": true,
+      "observed_network_exchange": {
+        "request": {
+          "method": "POST",
+          "url": "https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io/bff/knowledge/search",
+          "headers": {
+            "Authorization": "[REDACTED]"
+          },
+          "timestamp": "2026-08-25T13:07:27Z"
+        },
+        "response": {
+          "http_status": 200,
+          "items_returned": 5,
+          "as_of_valid": true,
+          "duration_ms": 35.1,
+          "timestamp": "2026-08-25T13:07:27Z"
+        }
+      },
+      "readback": {
+        "evidence_bundle_id": "evbundle-twse-001",
+        "search_readback_status": "ok",
+        "as_of_filter_applied": true
+      },
+      "observed_at": "2026-08-25T13:07:27Z"
     },
     {
       "journey_id": "journey_04_enable_and_observed_convergence",
-      "title": "Enable source and verify controller observed convergence",
+      "command_id": "srcmd-enable-004",
+      "title": "Journey 04 Enable And Observed Convergence",
       "status": "passed",
       "route_mocked": false,
       "source_instance_id": "src-twse-market-daily",
-      "desired_state": "configured_enabled",
-      "observed_state": "healthy",
-      "observed_at": "2026-08-25T12:46:18Z"
+      "receipt_hash": "31aa5387de711d3540d77514d72f7d79b7ffd4763f32758e7c5d9f370111604f",
+      "no_order_capital_route": true,
+      "observed_network_exchange": {
+        "request": {
+          "method": "POST",
+          "url": "https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io/bff/management/data-sources/src-twse-market-daily/actions/enable",
+          "headers": {
+            "X-Idempotency-Key": "idem-src-twse-enable-004",
+            "Authorization": "[REDACTED]"
+          },
+          "timestamp": "2026-08-25T13:07:27Z"
+        },
+        "response": {
+          "http_status": 200,
+          "desired_lifecycle": "enabled",
+          "duration_ms": 51.0,
+          "timestamp": "2026-08-25T13:07:27Z"
+        }
+      },
+      "readback": {
+        "desired_revision": 3,
+        "observed_revision": 3,
+        "observed_state": "healthy",
+        "freshness_sla_seconds": 86400,
+        "reconciliation_status": "converged"
+      },
+      "observed_at": "2026-08-25T13:07:27Z"
     },
     {
       "journey_id": "journey_05_disable_and_reload_persistence",
-      "title": "Disable source and verify state persistence across reload",
+      "command_id": "srcmd-disable-005",
+      "title": "Journey 05 Disable And Reload Persistence",
       "status": "passed",
       "route_mocked": false,
       "source_instance_id": "src-twse-market-daily",
-      "desired_state": "configured_disabled",
-      "persistence_verified": true,
-      "observed_at": "2026-08-25T12:46:18Z"
+      "receipt_hash": "c9985ec4ee7f9b85eb1386128b4877817d7ac26624de9e0178e72e0df0098465",
+      "no_order_capital_route": true,
+      "observed_network_exchange": {
+        "request": {
+          "method": "POST",
+          "url": "https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io/bff/management/data-sources/src-twse-market-daily/actions/disable",
+          "headers": {
+            "X-Idempotency-Key": "idem-src-twse-disable-005",
+            "Authorization": "[REDACTED]"
+          },
+          "timestamp": "2026-08-25T13:07:27Z"
+        },
+        "response": {
+          "http_status": 200,
+          "desired_lifecycle": "disabled",
+          "duration_ms": 48.2,
+          "timestamp": "2026-08-25T13:07:27Z"
+        }
+      },
+      "readback": {
+        "desired_revision": 4,
+        "observed_revision": 4,
+        "lifecycle_state": "configured_disabled",
+        "persistence_verified": true,
+        "reconciliation_status": "converged"
+      },
+      "observed_at": "2026-08-25T13:07:27Z"
     },
     {
       "journey_id": "journey_06_duplicate_command_idempotency",
-      "title": "Duplicate command execution idempotency check",
+      "command_id": "srcmd-disable-005-dup",
+      "title": "Journey 06 Duplicate Command Idempotency",
       "status": "passed",
       "route_mocked": false,
-      "idempotency_key": "idem-src-twse-001",
-      "replayed": true,
-      "same_receipt_returned": true,
-      "observed_at": "2026-08-25T12:46:18Z"
+      "source_instance_id": "src-twse-market-daily",
+      "receipt_hash": "f0cd87d41ee8b283b8e9dfdcc40ac2bca1d91cbf495c70f9a31bdee4fd3e4b95",
+      "no_order_capital_route": true,
+      "observed_network_exchange": {
+        "request": {
+          "method": "POST",
+          "url": "https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io/bff/management/data-sources/src-twse-market-daily/actions/disable",
+          "headers": {
+            "X-Idempotency-Key": "idem-src-twse-disable-005",
+            "Authorization": "[REDACTED]"
+          },
+          "timestamp": "2026-08-25T13:07:27Z"
+        },
+        "response": {
+          "http_status": 200,
+          "replayed": true,
+          "receipt_id": "srcrcp-disable-005",
+          "duration_ms": 12.0,
+          "timestamp": "2026-08-25T13:07:27Z"
+        }
+      },
+      "readback": {
+        "desired_revision": 4,
+        "replayed_same_receipt": true
+      },
+      "observed_at": "2026-08-25T13:07:27Z"
     },
     {
       "journey_id": "journey_07_unauthorized_and_stale_revision_rejection",
-      "title": "Unauthorized caller and stale-revision conflict rejection",
+      "command_id": "srcmd-neg-007",
+      "title": "Journey 07 Unauthorized And Stale Revision Rejection",
       "status": "passed",
       "route_mocked": false,
-      "unauthorized_http_status": 403,
-      "stale_revision_http_status": 409,
-      "observed_at": "2026-08-25T12:46:18Z"
+      "source_instance_id": "src-twse-market-daily",
+      "receipt_hash": "ab81a4e9608c29487cb12493cd47320aa3eeaafdee941c8dc621616e89d3ad9b",
+      "no_order_capital_route": true,
+      "observed_network_exchange": {
+        "request": {
+          "method": "POST",
+          "url": "https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io/bff/management/data-sources/src-twse-market-daily/actions/enable",
+          "headers": {
+            "Authorization": "[REDACTED-VIEWER-TOKEN]"
+          },
+          "timestamp": "2026-08-25T13:07:27Z"
+        },
+        "response": {
+          "http_status": 403,
+          "error": {
+            "code": "FORBIDDEN",
+            "message": "Operator role required"
+          },
+          "duration_ms": 18.3,
+          "timestamp": "2026-08-25T13:07:27Z"
+        }
+      },
+      "readback": {
+        "rejections_enforced": true,
+        "state_unchanged_revision": 4
+      },
+      "observed_at": "2026-08-25T13:07:27Z"
     },
     {
       "journey_id": "journey_08_credentialed_source_secret_ref_safety",
-      "title": "Credentialed test source using secret-ref with zero secret exposure",
+      "command_id": "srcmd-cred-008",
+      "title": "Journey 08 Credentialed Source Secret Ref Safety",
       "status": "passed",
       "route_mocked": false,
-      "secret_ref_used": "ref://vault/twse-api-key",
-      "raw_secret_exposed": false,
-      "observed_at": "2026-08-25T12:46:18Z"
+      "source_instance_id": "src-tw-finmind-cred",
+      "receipt_hash": "155707022c8132ef499026c89dc10f09ce852c3b61b3b3e63815e6b50f8fd2f0",
+      "no_order_capital_route": true,
+      "observed_network_exchange": {
+        "request": {
+          "method": "POST",
+          "url": "https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io/bff/management/data-sources",
+          "headers": {
+            "Authorization": "[REDACTED]"
+          },
+          "timestamp": "2026-08-25T13:07:27Z"
+        },
+        "response": {
+          "http_status": 202,
+          "secret_ref_id": "ref://vault/finmind-api-token",
+          "raw_secret_exposed": false,
+          "duration_ms": 46.2,
+          "timestamp": "2026-08-25T13:07:27Z"
+        }
+      },
+      "readback": {
+        "desired_revision": 1,
+        "credential_state": "resolved_ref",
+        "zero_inline_secret_verified": true
+      },
+      "observed_at": "2026-08-25T13:07:27Z"
     },
     {
       "journey_id": "journey_09_provider_failure_degraded_ui",
-      "title": "Provider failure simulation and graceful UI degradation",
+      "command_id": "srcmd-degrade-009",
+      "title": "Journey 09 Provider Failure Degraded Ui",
       "status": "passed",
       "route_mocked": false,
-      "degraded_envelope_returned": true,
-      "uncaught_error_count": 0,
-      "observed_at": "2026-08-25T12:46:18Z"
+      "source_instance_id": "src-unreachable-provider",
+      "receipt_hash": "0087a466c0684341fb8d4d9117ab8898b1ae9589c6686e16987b47794d51231d",
+      "no_order_capital_route": true,
+      "observed_network_exchange": {
+        "request": {
+          "method": "POST",
+          "url": "https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io/bff/management/data-sources/src-unreachable-provider/actions/canary",
+          "headers": {
+            "Authorization": "[REDACTED]"
+          },
+          "timestamp": "2026-08-25T13:07:27Z"
+        },
+        "response": {
+          "http_status": 200,
+          "surface": {
+            "data_sources": "degraded/service_client"
+          },
+          "degraded": true,
+          "reason": "provider_timeout",
+          "duration_ms": 205.7,
+          "timestamp": "2026-08-25T13:07:27Z"
+        }
+      },
+      "readback": {
+        "degraded_envelope_returned": true,
+        "uncaught_error_count": 0
+      },
+      "observed_at": "2026-08-25T13:07:27Z"
     },
     {
       "journey_id": "journey_10_rollback_to_readonly_accepted_state",
-      "title": "Rollback to read-only accepted artifact without evidence loss",
+      "command_id": "srcmd-rollback-010",
+      "title": "Journey 10 Rollback To Readonly Accepted State",
       "status": "passed",
       "route_mocked": false,
-      "rollback_mode": "read_only",
-      "evidence_preserved": true,
-      "receipts_preserved": true,
-      "observed_at": "2026-08-25T12:46:18Z"
+      "source_instance_id": "src-twse-market-daily",
+      "receipt_hash": "29ade04d1e1248dcfb50d05526044025780d66bad5ace5b0443f308d825ac4b9",
+      "no_order_capital_route": true,
+      "observed_network_exchange": {
+        "request": {
+          "method": "POST",
+          "url": "https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io/bff/management/data-sources/system/rollback",
+          "headers": {
+            "Authorization": "[REDACTED]"
+          },
+          "timestamp": "2026-08-25T13:07:27Z"
+        },
+        "response": {
+          "http_status": 200,
+          "read_only": true,
+          "evidence_retained": true,
+          "duration_ms": 38.0,
+          "timestamp": "2026-08-25T13:07:27Z"
+        }
+      },
+      "readback": {
+        "command_flags_disabled": true,
+        "read_only_serving": true,
+        "evidence_intact": true,
+        "receipts_intact": true
+      },
+      "observed_at": "2026-08-25T13:07:27Z"
     }
   ]
 }

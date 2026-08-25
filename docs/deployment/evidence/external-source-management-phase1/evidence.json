@@ -2,7 +2,7 @@
   "schema_version": "pantheon.external-source-management.evidence-manifest.v1",
   "task_id": "SRCM-P1-HOSTED-ACCEPTANCE-20260824",
   "program_id": "SRCM-PHASE1-20260824",
-  "created_at": "2026-08-25T12:46:18Z",
+  "created_at": "2026-08-25T13:07:27Z",
   "status": "passed",
   "acceptance_criteria_fulfilled": [
     "Complete all SD-SRCM-08 migration rollout rollback and hosted acceptance requirements",
@@ -17,9 +17,11 @@
     "Merge the exact reviewed head to Pantheon dev only after all evidence passes"
   ],
   "exact_pair": {
-    "backend_sha": "40de8fcb1c69fad0bf5e54d4c0bd6e508c9162e0",
-    "frontend_sha": "5447d2a09b5c83a4f9ee2d405f57c642913e0055",
-    "source_definitions_sha": "40de8fcb1c69fad0bf5e54d4c0bd6e508c9162e0",
+    "backend_sha": "03757f0254fb48ea37098e3d9ab0176c006d4da5",
+    "frontend_sha": "cc4007f7f78a31c73548ce85457af17a45a4c4b9",
+    "source_definitions_sha": "03757f0254fb48ea37098e3d9ab0176c006d4da5",
+    "fe_manifest_bff_sha": "40de8fcb1c69fad0bf5e54d4c0bd6e508c9162e0",
+    "drift_status": "fe_manifest_precedes_live_bff",
     "bff_url": "https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io",
     "fe_url": "https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io"
   },

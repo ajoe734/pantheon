@@ -70,4 +70,3 @@ Pantheon checkout.
 
 - **Hosted Acceptance Evidence Package**: [`docs/deployment/evidence/external-source-management-phase1/`](../../deployment/evidence/external-source-management-phase1/)
 - **Verification Script**: `python3 scripts/verify_external_source_management_acceptance.py`
-

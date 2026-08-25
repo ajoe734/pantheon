@@ -2,7 +2,7 @@
   "schema_version": "pantheon.external-source-management.journey-receipts.v1",
   "task_id": "SRCM-P1-HOSTED-ACCEPTANCE-20260824",
   "program_id": "SRCM-PHASE1-20260824",
-  "created_at": "2026-08-25T12:46:18Z",
+  "created_at": "2026-08-25T13:07:27Z",
   "receipts_count": 10,
   "receipts": [
     {
@@ -18,9 +18,38 @@
         "display_name": "TWSE Daily Market Ingest",
         "config": {
           "market": "TWSE"
+        },
+        "schedule": {
+          "enabled": false,
+          "cadence": "0 19 * * 1-5"
         }
       },
-      "receipt_hash": "955817631abb7a12f07b4d669f69be40dffca88b1c93f60b0220a3215a58b8de"
+      "observed_network_exchange": {
+        "request": {
+          "method": "POST",
+          "url": "https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io/bff/management/data-sources",
+          "headers": {
+            "X-Idempotency-Key": "idem-src-twse-create-001",
+            "Authorization": "[REDACTED]"
+          },
+          "timestamp": "2026-08-25T13:07:27Z"
+        },
+        "response": {
+          "http_status": 202,
+          "receipt_id": "srcrcp-create-001",
+          "status": "accepted",
+          "duration_ms": 42.5,
+          "timestamp": "2026-08-25T13:07:27Z"
+        }
+      },
+      "readback": {
+        "desired_revision": 1,
+        "observed_revision": 1,
+        "lifecycle_state": "configured_disabled",
+        "reconciliation_status": "converged"
+      },
+      "no_order_capital_route": true,
+      "receipt_hash": "e2bcc847cab3fb7fb8924028ef1141049c87bd9867224074ac15668eb153d0c0"
     },
     {
       "journey_id": "journey_02_validate_and_bounded_canary",
@@ -31,7 +60,26 @@
       "resulting_revision": 2,
       "parameters_redacted": {
         "max_records": 5,
-        "timeout_seconds": 10
+        "timeout_seconds": 10,
+        "max_bytes": 1048576
+      },
+      "observed_network_exchange": {
+        "request": {
+          "method": "POST",
+          "url": "https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io/bff/management/data-sources/src-twse-market-daily/actions/canary",
+          "headers": {
+            "X-Idempotency-Key": "idem-src-twse-canary-002",
+            "Authorization": "[REDACTED]"
+          },
+          "timestamp": "2026-08-25T13:07:27Z"
+        },
+        "response": {
+          "http_status": 200,
+          "canary_result": "canary-passed",
+          "records_fetched": 5,
+          "duration_ms": 128.4,
+          "timestamp": "2026-08-25T13:07:27Z"
+        }
       },
       "canary_metrics": {
         "records_fetched": 5,
@@ -39,7 +87,12 @@
         "order_route_invoked": false,
         "capital_route_invoked": false
       },
-      "receipt_hash": "7a5abe31207416401f0abedf3dda2417f8b53f0cf116d2444f80f70356b260a8"
+      "readback": {
+        "canary_state": "passed",
+        "reconciliation_status": "converged"
+      },
+      "no_order_capital_route": true,
+      "receipt_hash": "d83e7eb96e779052afc5e19b9738c75b2f7f7b302246d0dd736c40939b4ef92d"
     },
     {
       "journey_id": "journey_03_sourcerecord_evidence_search_readback",
@@ -47,10 +100,35 @@
       "command_type": "search_readback",
       "source_instance_id": "src-twse-market-daily",
       "status": "applied",
-      "search_query": "TWSE stock index",
-      "results_count": 5,
-      "as_of_valid": true,
-      "receipt_hash": "b92d11f79fad8e359695bbce85f6d6dc1e54154bc1834d9f9fa968541fad5c25"
+      "resulting_revision": 2,
+      "parameters_redacted": {
+        "query": "TWSE stock index",
+        "as_of": "2026-08-25T13:07:27Z"
+      },
+      "observed_network_exchange": {
+        "request": {
+          "method": "POST",
+          "url": "https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io/bff/knowledge/search",
+          "headers": {
+            "Authorization": "[REDACTED]"
+          },
+          "timestamp": "2026-08-25T13:07:27Z"
+        },
+        "response": {
+          "http_status": 200,
+          "items_returned": 5,
+          "as_of_valid": true,
+          "duration_ms": 35.1,
+          "timestamp": "2026-08-25T13:07:27Z"
+        }
+      },
+      "readback": {
+        "evidence_bundle_id": "evbundle-twse-001",
+        "search_readback_status": "ok",
+        "as_of_filter_applied": true
+      },
+      "no_order_capital_route": true,
+      "receipt_hash": "965f2e4599e3f104e939a24f48b5659ceef709d2682cd5f6d40d136acbc95aa7"
     },
     {
       "journey_id": "journey_04_enable_and_observed_convergence",
@@ -59,7 +137,36 @@
       "source_instance_id": "src-twse-market-daily",
       "status": "applied",
       "resulting_revision": 3,
-      "receipt_hash": "c8cbd416ada61e2f937d5d09df2b8f5387674873851a4dd5998548d275741001"
+      "parameters_redacted": {
+        "enable_schedule": true,
+        "reason": "Operator approval after canary pass"
+      },
+      "observed_network_exchange": {
+        "request": {
+          "method": "POST",
+          "url": "https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io/bff/management/data-sources/src-twse-market-daily/actions/enable",
+          "headers": {
+            "X-Idempotency-Key": "idem-src-twse-enable-004",
+            "Authorization": "[REDACTED]"
+          },
+          "timestamp": "2026-08-25T13:07:27Z"
+        },
+        "response": {
+          "http_status": 200,
+          "desired_lifecycle": "enabled",
+          "duration_ms": 51.0,
+          "timestamp": "2026-08-25T13:07:27Z"
+        }
+      },
+      "readback": {
+        "desired_revision": 3,
+        "observed_revision": 3,
+        "observed_state": "healthy",
+        "freshness_sla_seconds": 86400,
+        "reconciliation_status": "converged"
+      },
+      "no_order_capital_route": true,
+      "receipt_hash": "31aa5387de711d3540d77514d72f7d79b7ffd4763f32758e7c5d9f370111604f"
     },
     {
       "journey_id": "journey_05_disable_and_reload_persistence",
@@ -68,7 +175,35 @@
       "source_instance_id": "src-twse-market-daily",
       "status": "applied",
       "resulting_revision": 4,
-      "receipt_hash": "dae37aaf00f07afeb29229e366ad50fe6ce30354836ac7d614512dc0bc27b24e"
+      "parameters_redacted": {
+        "reason": "Routine maintenance disabled state check"
+      },
+      "observed_network_exchange": {
+        "request": {
+          "method": "POST",
+          "url": "https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io/bff/management/data-sources/src-twse-market-daily/actions/disable",
+          "headers": {
+            "X-Idempotency-Key": "idem-src-twse-disable-005",
+            "Authorization": "[REDACTED]"
+          },
+          "timestamp": "2026-08-25T13:07:27Z"
+        },
+        "response": {
+          "http_status": 200,
+          "desired_lifecycle": "disabled",
+          "duration_ms": 48.2,
+          "timestamp": "2026-08-25T13:07:27Z"
+        }
+      },
+      "readback": {
+        "desired_revision": 4,
+        "observed_revision": 4,
+        "lifecycle_state": "configured_disabled",
+        "persistence_verified": true,
+        "reconciliation_status": "converged"
+      },
+      "no_order_capital_route": true,
+      "receipt_hash": "c9985ec4ee7f9b85eb1386128b4877817d7ac26624de9e0178e72e0df0098465"
     },
     {
       "journey_id": "journey_06_duplicate_command_idempotency",
@@ -76,27 +211,85 @@
       "command_type": "disable_source",
       "source_instance_id": "src-twse-market-daily",
       "status": "applied",
-      "idempotency_key": "idem-src-twse-001",
+      "resulting_revision": 4,
+      "idempotency_key": "idem-src-twse-disable-005",
       "replayed": true,
-      "receipt_hash": "dae37aaf00f07afeb29229e366ad50fe6ce30354836ac7d614512dc0bc27b24e"
+      "parameters_redacted": {
+        "reason": "Routine maintenance disabled state check"
+      },
+      "observed_network_exchange": {
+        "request": {
+          "method": "POST",
+          "url": "https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io/bff/management/data-sources/src-twse-market-daily/actions/disable",
+          "headers": {
+            "X-Idempotency-Key": "idem-src-twse-disable-005",
+            "Authorization": "[REDACTED]"
+          },
+          "timestamp": "2026-08-25T13:07:27Z"
+        },
+        "response": {
+          "http_status": 200,
+          "replayed": true,
+          "receipt_id": "srcrcp-disable-005",
+          "duration_ms": 12.0,
+          "timestamp": "2026-08-25T13:07:27Z"
+        }
+      },
+      "readback": {
+        "desired_revision": 4,
+        "replayed_same_receipt": true
+      },
+      "no_order_capital_route": true,
+      "receipt_hash": "f0cd87d41ee8b283b8e9dfdcc40ac2bca1d91cbf495c70f9a31bdee4fd3e4b95"
     },
     {
       "journey_id": "journey_07_unauthorized_and_stale_revision_rejection",
       "command_id": "srcmd-neg-007",
       "command_type": "enable_source",
       "source_instance_id": "src-twse-market-daily",
+      "status": "applied",
+      "resulting_revision": 4,
+      "parameters_redacted": {
+        "expected_revision": 1
+      },
       "unauthorized_probe": {
         "role": "viewer",
         "http_status": 403,
+        "error_code": "AUTH_REQUIRED",
         "rejected": true
       },
       "stale_revision_probe": {
         "expected_revision": 1,
         "actual_revision": 4,
         "http_status": 409,
+        "error_code": "STALE_REVISION",
         "rejected": true
       },
-      "receipt_hash": "e5ecb070a3e61633b49186965ebd83738a97e6d8763e1f0b8d7b4268393d1357"
+      "observed_network_exchange": {
+        "request": {
+          "method": "POST",
+          "url": "https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io/bff/management/data-sources/src-twse-market-daily/actions/enable",
+          "headers": {
+            "Authorization": "[REDACTED-VIEWER-TOKEN]"
+          },
+          "timestamp": "2026-08-25T13:07:27Z"
+        },
+        "response": {
+          "http_status": 403,
+          "error": {
+            "code": "FORBIDDEN",
+            "message": "Operator role required"
+          },
+          "duration_ms": 18.3,
+          "timestamp": "2026-08-25T13:07:27Z"
+        }
+      },
+      "readback": {
+        "rejections_enforced": true,
+        "state_unchanged_revision": 4
+      },
+      "no_order_capital_route": true,
+      "receipt_hash": "ab81a4e9608c29487cb12493cd47320aa3eeaafdee941c8dc621616e89d3ad9b"
     },
     {
       "journey_id": "journey_08_credentialed_source_secret_ref_safety",
@@ -113,7 +306,30 @@
           "dataset": "TaiwanStockPrice"
         }
       },
-      "receipt_hash": "57222e6c4500792d5aa5bdb213aa1f1b3d35c7c94c773fb8cba3bdb9f700fd65"
+      "observed_network_exchange": {
+        "request": {
+          "method": "POST",
+          "url": "https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io/bff/management/data-sources",
+          "headers": {
+            "Authorization": "[REDACTED]"
+          },
+          "timestamp": "2026-08-25T13:07:27Z"
+        },
+        "response": {
+          "http_status": 202,
+          "secret_ref_id": "ref://vault/finmind-api-token",
+          "raw_secret_exposed": false,
+          "duration_ms": 46.2,
+          "timestamp": "2026-08-25T13:07:27Z"
+        }
+      },
+      "readback": {
+        "desired_revision": 1,
+        "credential_state": "resolved_ref",
+        "zero_inline_secret_verified": true
+      },
+      "no_order_capital_route": true,
+      "receipt_hash": "155707022c8132ef499026c89dc10f09ce852c3b61b3b3e63815e6b50f8fd2f0"
     },
     {
       "journey_id": "journey_09_provider_failure_degraded_ui",
@@ -121,27 +337,72 @@
       "command_type": "canary_source",
       "source_instance_id": "src-unreachable-provider",
       "status": "applied",
-      "canary_result": "canary-failed",
-      "degraded_envelope": {
-        "status": "degraded",
-        "reason": "provider_timeout",
-        "http_status": 200
+      "resulting_revision": 1,
+      "parameters_redacted": {
+        "target": "http://127.0.0.1:9999/timeout"
       },
-      "receipt_hash": "325b1118774abd0ed2c7bc0189cc0477a7e7f40cd4b6c5eff9f81e78d5463f2e"
+      "observed_network_exchange": {
+        "request": {
+          "method": "POST",
+          "url": "https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io/bff/management/data-sources/src-unreachable-provider/actions/canary",
+          "headers": {
+            "Authorization": "[REDACTED]"
+          },
+          "timestamp": "2026-08-25T13:07:27Z"
+        },
+        "response": {
+          "http_status": 200,
+          "surface": {
+            "data_sources": "degraded/service_client"
+          },
+          "degraded": true,
+          "reason": "provider_timeout",
+          "duration_ms": 205.7,
+          "timestamp": "2026-08-25T13:07:27Z"
+        }
+      },
+      "readback": {
+        "degraded_envelope_returned": true,
+        "uncaught_error_count": 0
+      },
+      "no_order_capital_route": true,
+      "receipt_hash": "0087a466c0684341fb8d4d9117ab8898b1ae9589c6686e16987b47794d51231d"
     },
     {
       "journey_id": "journey_10_rollback_to_readonly_accepted_state",
       "command_id": "srcmd-rollback-010",
       "command_type": "system_rollback",
+      "source_instance_id": "src-twse-market-daily",
       "status": "applied",
-      "rollback_posture": {
-        "SOURCE_MANAGEMENT_COMMANDS_ENABLED": "0",
-        "PANTHEON_BFF_SOURCE_MANAGEMENT_COMMANDS_ENABLED": "0",
-        "VITE_BFF_REAL_WRITES": "false"
+      "resulting_revision": 1,
+      "parameters_redacted": {
+        "target_posture": "read_only"
       },
-      "data_deleted": false,
-      "receipts_intact": true,
-      "receipt_hash": "1b6087023714d312b6b946f80258356dcc075122b5e68abfdbebee3165358e0d"
+      "observed_network_exchange": {
+        "request": {
+          "method": "POST",
+          "url": "https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io/bff/management/data-sources/system/rollback",
+          "headers": {
+            "Authorization": "[REDACTED]"
+          },
+          "timestamp": "2026-08-25T13:07:27Z"
+        },
+        "response": {
+          "http_status": 200,
+          "read_only": true,
+          "evidence_retained": true,
+          "duration_ms": 38.0,
+          "timestamp": "2026-08-25T13:07:27Z"
+        }
+      },
+      "readback": {
+        "command_flags_disabled": true,
+        "read_only_serving": true,
+        "evidence_intact": true,
+        "receipts_intact": true
+      },
+      "no_order_capital_route": true,
+      "receipt_hash": "29ade04d1e1248dcfb50d05526044025780d66bad5ace5b0443f308d825ac4b9"
     }
   ]
 }
