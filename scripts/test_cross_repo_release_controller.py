@@ -653,6 +653,13 @@ def test_rejected_frontend_transaction_restores_and_proves_exact_pair() -> None:
     assert "--component bff" in COMPENSATION_SCRIPT
     assert "PANTHEON_ROLLBACK_BACKEND_SHA" in COMPENSATION_SCRIPT
     assert "PANTHEON_ROLLBACK_FRONTEND_SHA" in COMPENSATION_SCRIPT
+    # The deploy script's post-up rollback must retain the exact baseline
+    # requested by this compensation attempt. Without this env handoff, a
+    # failed baseline readiness check falls back to the rejected candidate.
+    assert (
+        'PANTHEON_DEV_ROLLBACK_BACKEND_SHA="${PANTHEON_ROLLBACK_BACKEND_SHA}" \\\nPANTHEON_ENVIRONMENT_LEASE_TOKEN="${lease_token}"'
+        in COMPENSATION_SCRIPT
+    )
     assert "${DEV_BFF_URL%/}/bff/version" in COMPENSATION_SCRIPT
     assert "${DEV_FE_URL%/}/deployment.json" in COMPENSATION_SCRIPT
     assert "pantheon.cross-repo-release-compensation.v1" in COMPENSATION_SCRIPT
