@@ -22,7 +22,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 MAX_TASKS_PER_PACKET = 16
 try:
     from ..dispatch_policy import normalize_execution_resources
-except (ImportError, ValueError):
+except ImportError:
     from dispatch_policy import normalize_execution_resources
 
 
