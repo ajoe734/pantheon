@@ -1,0 +1,88 @@
+{
+  "schema_version": "pantheon.lifecycle-db-timeout-evidence.v1",
+  "task": {
+    "id": "PFG-LIFECYCLE-DB-TIMEOUT-20260825",
+    "title": "Bound lifecycle projector Postgres operations and add timeout regression tests",
+    "owner": "Antigravity",
+    "reviewer": "Codex",
+    "status": "review",
+    "base_branch": "dev",
+    "task_branch": "task/PFG-LIFECYCLE-DB-TIMEOUT-20260825",
+    "head_binding": "The reviewer must bind this committed manifest to the exact final PR head in the canonical approve command."
+  },
+  "scope": {
+    "owned": [
+      "services/trade_journey/lifecycle_projector.py",
+      "services/trade_journey/test_lifecycle_projector.py",
+      "docs/deployment/evidence/lifecycle-projector/PFG-LIFECYCLE-DB-TIMEOUT-20260825/README.md",
+      "docs/deployment/evidence/lifecycle-projector/PFG-LIFECYCLE-DB-TIMEOUT-20260825/evidence.json"
+    ],
+    "not_changing": [
+      "Source Ingestion pull mode or continuous scheduling",
+      "Live capital or broker execution authority",
+      "BFF endpoints or projection schema tables"
+    ],
+    "composes_with": [
+      "PFG-LIFECYCLE-POSTGRES-ACTIVATION-20260824",
+      "PFG-LIFECYCLE-POSTGRES-DRIVER-20260824",
+      "PFG-LIFECYCLE-READINESS-HEARTBEAT-20260824"
+    ]
+  },
+  "contracts": {
+    "bounded_timeouts": "Every PostgresLifecycleSource asyncpg connect, high_watermark, fetch_after, start_listener, and close operation is bounded by a finite configurable timeout.",
+    "configurable_timeout": "PostgresLifecycleSource accepts timeout_seconds and startup_timeout_seconds (defaulting to 10.0s), and run_worker threads LIFECYCLE_PROJECTOR_SOURCE_TIMEOUT_SECONDS and LIFECYCLE_PROJECTOR_STARTUP_TIMEOUT_SECONDS from the environment with strict finite positive validation.",
+    "safe_termination": "When any operation deadline or close deadline is exhausted, the connection is terminated safely to prevent hanging socket leaks.",
+    "degraded_health_and_loop_recovery": "Transient source timeouts record degraded controller health (accepted_live=False, status='failed', last_error='TimeoutError: ...') without crashing the worker process, and loop recovers to status='ready' and accepted_live=True once database connectivity is restored."
+  },
+  "acceptance_evidence": {
+    "unit_and_regression_tests": {
+      "command": "PANTHEON_PY=\"$(python3 scripts/dev/provision_python_distribution.py --print-python)\" \"$PANTHEON_PY\" -m pytest -q services/trade_journey/test_lifecycle_projector.py",
+      "result": "pass; 65 passed, 1 skipped",
+      "tests": [
+        "test_postgres_lifecycle_source_high_watermark_connect_timeout",
+        "test_postgres_lifecycle_source_high_watermark_query_timeout",
+        "test_postgres_lifecycle_source_high_watermark_close_timeout",
+        "test_postgres_lifecycle_source_fetch_after_connect_timeout",
+        "test_postgres_lifecycle_source_fetch_after_query_timeout",
+        "test_postgres_lifecycle_source_fetch_after_close_timeout",
+        "test_postgres_lifecycle_source_start_listener_and_close_timeout",
+        "test_postgres_lifecycle_source_close_listener_bounded_timeout",
+        "test_run_worker_recovers_after_source_timeout_failure",
+        "test_run_worker_env_var_threads_source_timeout",
+        "test_postgres_lifecycle_source_rejects_non_finite_and_non_positive_timeouts",
+        "test_postgres_lifecycle_source_accepts_valid_timeouts",
+        "test_run_worker_rejects_invalid_timeout_env_vars"
+      ]
+    },
+    "trade_journey_full_suite": {
+      "command": "PANTHEON_PY=\"$(python3 scripts/dev/provision_python_distribution.py --print-python)\" \"$PANTHEON_PY\" -m pytest -q services/trade_journey",
+      "result": "pass; 230 passed, 36 skipped"
+    }
+  },
+  "validation": [
+    {
+      "command": "PANTHEON_PY=\"$(python3 scripts/dev/provision_python_distribution.py --print-python)\" \"$PANTHEON_PY\" -m pytest -q services/trade_journey/test_lifecycle_projector.py services/trade_journey/test_lifecycle_projector_compose.py services/control-plane/bff/test_lifecycle_projector_readiness.py",
+      "result": "pass; 77 passed, 1 skipped"
+    },
+    {
+      "command": "python3 -m py_compile services/trade_journey/lifecycle_projector.py services/trade_journey/test_lifecycle_projector.py && git diff --check origin/dev",
+      "result": "pass; no syntax errors, zero trailing whitespace or formatting errors"
+    }
+  ],
+  "review": {
+    "status": "ready_for_independent_review",
+    "reviewer": "Codex",
+    "required_checks": [
+      "verify bounded timeout in PostgresLifecycleSource (high_watermark, fetch_after, start_listener, verify_read_contract, close)",
+      "verify configurable timeouts and env var threading in run_worker",
+      "verify regression tests in services/trade_journey/test_lifecycle_projector.py pass",
+      "verify transient timeout error recording and recovery in run_worker",
+      "verify git diff --check origin/dev passes cleanly",
+      "bind this manifest path (docs/deployment/evidence/lifecycle-projector/PFG-LIFECYCLE-DB-TIMEOUT-20260825/evidence.json) to the exact final PR head in the governed approve command"
+    ]
+  },
+  "integrity": {
+    "algorithm": "sha256",
+    "self_hash_omitted": true
+  }
+}
