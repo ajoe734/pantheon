@@ -1862,26 +1862,86 @@ def test_projection_store_fallback_cursor_timeout_race_closes_connection() -> No
     assert closed_event.wait(timeout=1.0), "fallback connection leaked after timeout race"
 
 
-def test_projection_store_connect_timeout_publication_race_controlled_interleaving() -> None:
-    closed_event = threading.Event()
-    worker_started_close = threading.Event()
+def test_projection_store_connect_timeout_publication_race_controlled_interleaving(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    caller_ident = threading.get_ident()
+    caller_timed_out = threading.Event()
+    caller_entered_lock = threading.Event()
+    worker_published_success = threading.Event()
+
+    real_lock_factory = threading.Lock
+    real_event_factory = threading.Event
+
+    class ControlledEvent:
+        def __init__(self) -> None:
+            self._real = real_event_factory()
+
+        def wait(self, timeout: Any = None) -> bool:
+            res = self._real.wait(timeout=timeout)
+            if not res and threading.get_ident() == caller_ident:
+                caller_timed_out.set()
+            return res
+
+        def set(self) -> None:
+            self._real.set()
+
+        def is_set(self) -> bool:
+            return self._real.is_set()
+
+        def clear(self) -> None:
+            self._real.clear()
+
+    class ControlledLock:
+        def __init__(self) -> None:
+            self._real = real_lock_factory()
+
+        def acquire(self, blocking: bool = True, timeout: float = -1) -> bool:
+            current_ident = threading.get_ident()
+            if current_ident == caller_ident and caller_timed_out.is_set():
+                caller_entered_lock.set()
+                assert worker_published_success.wait(timeout=5.0), (
+                    "worker did not publish success in time"
+                )
+            return self._real.acquire(blocking, timeout)
+
+        def release(self) -> None:
+            current_ident = threading.get_ident()
+            self._real.release()
+            if current_ident != caller_ident and caller_timed_out.is_set():
+                worker_published_success.set()
+
+        def __enter__(self) -> bool:
+            return self.acquire()
+
+        def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
+            self.release()
+
+    monkeypatch.setattr("services.trade_journey.projection_store.threading.Lock", ControlledLock)
+    monkeypatch.setattr("services.trade_journey.projection_store.threading.Event", ControlledEvent)
+
+    close_started = threading.Event()
     unblock_close = threading.Event()
+    close_finished = threading.Event()
+    close_thread_names: list[str] = []
 
     class BlockingCloseConn:
-        def __init__(self):
+        def __init__(self) -> None:
             self.closed = False
 
-        def close(self):
-            worker_started_close.set()
+        def close(self) -> None:
+            close_thread_names.append(threading.current_thread().name)
+            close_started.set()
             unblock_close.wait(timeout=2.0)
             self.closed = True
-            closed_event.set()
+            close_finished.set()
 
-    def racing_connect(dsn, **kwargs):
-        # Sleep longer than connect_timeout_seconds so done.wait() times out,
-        # publishing success to outcome dict right as caller wakes from wait
-        time.sleep(0.03)
-        return BlockingCloseConn()
+    conn_instance = BlockingCloseConn()
+
+    def racing_connect(dsn: str, **kwargs: Any) -> BlockingCloseConn:
+        # Wait for caller to complete done.wait(timeout=0.01) and enter lock acquisition
+        assert caller_entered_lock.wait(timeout=5.0), "caller did not enter lock"
+        return conn_instance
 
     store = ProjectionStore(
         "postgresql://unit/pantheon",
@@ -1892,11 +1952,15 @@ def test_projection_store_connect_timeout_publication_race_controlled_interleavi
     with pytest.raises(TimeoutError, match="timed out after 0.01s"):
         store._connect_db()
     elapsed = time.monotonic() - start_time
-    assert elapsed < 0.1, f"caller was blocked on close: elapsed={elapsed:.3f}s"
+    assert elapsed < 0.2, f"caller was blocked on close: elapsed={elapsed:.3f}s"
 
-    # Prove that background cleanup is actively executing close()
-    assert worker_started_close.wait(timeout=1.0), "background cleanup did not invoke close()"
+    # Prove that background cleanup is actively executing close() on the dedicated cleanup thread
+    assert close_started.wait(timeout=1.0), "background cleanup did not invoke close()"
+    assert close_thread_names == ["projection-store-conn-cleanup"], (
+        f"close executed on unexpected thread: {close_thread_names}"
+    )
 
     # Unblock close() and verify clean completion
     unblock_close.set()
-    assert closed_event.wait(timeout=1.0), "connection close was not completed"
+    assert close_finished.wait(timeout=1.0), "connection close was not completed"
+    assert conn_instance.closed is True
