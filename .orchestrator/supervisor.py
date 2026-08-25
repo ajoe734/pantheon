@@ -2562,12 +2562,9 @@ def _create_worker_worktree(
 
 
 # Orchestrator-managed per-task scratch that a worker routinely dirties inside its
-# own worktree (the task brief gets annotated, the review artifact rewritten). The
-# supervisor regenerates these on dispatch, so a reused worktree whose ONLY dirt is
-# here is safe to restore-and-reuse. Blocking dispatch on this churn is what jams
-# the whole fleet once worktrees are reused (every tick re-blocks, nothing runs).
+# own worktree. Tracked task briefs are deliberately absent: they are task source,
+# not regenerable runtime state, and dispatch must never restore or overwrite them.
 _REUSABLE_DIRTY_PREFIXES = (
-    ".orchestrator/task-briefs/",
     ".orchestrator/reviews/",
 )
 
@@ -2809,7 +2806,7 @@ def worker_worktree_base_relation(worktree_path: Path, base_sha: str) -> str:
 def _task_brief_context_candidates(task_id: str | None, rel_context_path: str) -> list[str]:
     normalized = rel_context_path.replace("\\", "/").strip()
     candidates = [normalized]
-    if ".orchestrator/task-briefs/" in normalized and task_id:
+    if normalized.startswith(".orchestrator/task-briefs/") and task_id:
         hyphen_slug = _task_id_slug(task_id)
         underscore_slug = hyphen_slug.replace("-", "_")
         for slug in (underscore_slug, hyphen_slug, normalize_agent_id(task_id)):
@@ -2822,6 +2819,45 @@ def _task_brief_context_candidates(task_id: str | None, rel_context_path: str) -
             seen.add(candidate)
             ordered.append(candidate)
     return ordered
+
+
+def _tracked_worker_context_path(
+    workspace_path: Path,
+    candidates: list[str],
+) -> str | None:
+    """Resolve a branch-owned context file without mutating its bytes."""
+
+    for candidate in candidates:
+        proc = subprocess.run(
+            ["git", "ls-files", "--error-unmatch", "--", candidate],
+            cwd=workspace_path,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if proc.returncode == 0 and (workspace_path / candidate).is_file():
+            return candidate
+    return None
+
+
+def _generated_worker_task_brief_path(task_id: str | None) -> str:
+    return (
+        ".orchestrator/worker-runtime/task-context/"
+        f"{_task_id_slug(task_id)}.md"
+    )
+
+
+def _replace_request_context_path(
+    request: DeliveryRequest,
+    source_path: str,
+    destination_path: str,
+) -> None:
+    if source_path == destination_path:
+        return
+    request.message = request.message.replace(
+        f"- {source_path}",
+        f"- {destination_path}",
+    )
 
 
 def _generated_worker_task_brief(
@@ -2888,33 +2924,45 @@ def materialize_worker_context_files(
     request: DeliveryRequest,
     workspace_path: Path,
 ) -> list[str]:
-    """Copy generated task briefs into isolated worktrees before worker launch."""
+    """Bind task-brief context without changing tracked task source.
+
+    A brief already tracked by the task branch is immutable dispatch input. If
+    the branch has no brief, the fallback is copied or generated under the
+    existing ignored worker-runtime tree and the wake-up prompt is rewritten to
+    that effective path.
+    """
     if not request.context_files:
         return []
     status_root = config_path(config, "status_file").parents[0].resolve()
     materialized: list[str] = []
+    generated: list[str] = []
+    effective_context_files: list[str] = []
     for rel_context_path in request.context_files:
         rel_value = str(rel_context_path or "").strip().replace("\\", "/")
-        if not rel_value or Path(rel_value).is_absolute():
+        if not rel_value:
             continue
-        if ".orchestrator/task-briefs/" not in rel_value:
+        if Path(rel_value).is_absolute():
+            effective_context_files.append(rel_value)
             continue
-        destination = workspace_path / rel_value
+        if not rel_value.startswith(".orchestrator/task-briefs/"):
+            effective_context_files.append(rel_value)
+            continue
+
+        candidates = _task_brief_context_candidates(request.task_id, rel_value)
+        tracked_context = _tracked_worker_context_path(workspace_path, candidates)
+        if tracked_context is not None:
+            effective_context_files.append(tracked_context)
+            materialized.append(tracked_context)
+            _replace_request_context_path(request, rel_value, tracked_context)
+            continue
+
+        generated_context = _generated_worker_task_brief_path(request.task_id)
+        destination = workspace_path / generated_context
         destination.parent.mkdir(parents=True, exist_ok=True)
         if request.reason == "owned_finalize_dispatch":
-            if destination.exists():
-                # The branch already has the task-scoped context it was reviewed
-                # against. Rewriting it from the live `review_approved` row would
-                # manufacture a generated diff after approval, inviting an owner
-                # to commit a redundant closeout record that moves the exact head.
-                # Canonical status remains available through the governed `show`
-                # command; preserve the reviewed branch bytes here.
-                materialized.append(rel_value)
-                continue
-            # A fresh finalize worktree still needs the task context, but must
-            # not receive a branch-local transcription of the just-recorded
-            # approval. Render a stable closeout brief that directs the owner
-            # to governed state instead of copying status/next into git.
+            # A fresh finalize worktree still needs task context, but the
+            # ignored fallback must not transcribe the just-recorded approval.
+            # Canonical status remains available through governed `show`.
             destination.write_text(
                 _generated_worker_task_brief(
                     config,
@@ -2923,22 +2971,33 @@ def materialize_worker_context_files(
                 ),
                 encoding="utf-8",
             )
-            materialized.append(rel_value)
-            continue
-        copied = False
-        for candidate in _task_brief_context_candidates(request.task_id, rel_value):
-            source = status_root / candidate
-            if not source.exists() or not source.is_file():
-                continue
-            shutil.copy2(source, destination)
-            copied = True
-            break
-        if not copied:
-            destination.write_text(_generated_worker_task_brief(config, request.task_id), encoding="utf-8")
-        materialized.append(rel_value)
+        else:
+            copied = False
+            for candidate in candidates:
+                source = status_root / candidate
+                if not source.exists() or not source.is_file():
+                    continue
+                shutil.copy2(source, destination)
+                copied = True
+                break
+            if not copied:
+                destination.write_text(
+                    _generated_worker_task_brief(config, request.task_id),
+                    encoding="utf-8",
+                )
+        effective_context_files.append(generated_context)
+        materialized.append(generated_context)
+        generated.append(generated_context)
+        _replace_request_context_path(request, rel_value, generated_context)
+
+    request.context_files = list(dict.fromkeys(effective_context_files))
     if materialized:
-        request.metadata["materialized_context_files"] = materialized
-    return materialized
+        request.metadata["materialized_context_files"] = list(
+            dict.fromkeys(materialized)
+        )
+    if generated:
+        request.metadata["generated_context_files"] = list(dict.fromkeys(generated))
+    return list(dict.fromkeys(materialized))
 
 
 def bind_external_worker_context(
