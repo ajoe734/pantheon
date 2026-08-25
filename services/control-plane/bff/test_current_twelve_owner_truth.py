@@ -205,9 +205,9 @@ class TestTwelveOwnerCatalogContract:
                 assert contract["restart_behavior"] is None, f"{loop_id} restart_behavior must be null"
                 assert contract["liveness_metric"] is None, f"{loop_id} liveness_metric must be null"
 
-            # Maturity bounds
-            assert loop["maturity"]["current"] in {"api-only", "manual", "scheduled"}, (
-                f"{loop_id} maturity ceiling exceeded: {loop['maturity']['current']}"
+            # Static contract status ceiling (proven_live requires live runtime projection, not static catalog)
+            assert loop["controller_contract"]["status"] in {"not_implemented", "implemented"}, (
+                f"{loop_id} controller_contract status ceiling exceeded: {loop['controller_contract']['status']}"
             )
 
     def test_composite_overlay_is_isolated_from_canonical_loops(self) -> None:

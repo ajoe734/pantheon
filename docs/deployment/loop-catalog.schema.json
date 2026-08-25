@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://github.com/ajoe734/pantheon/docs/deployment/loop-catalog.schema.json",
   "title": "Pantheon Loop Catalog",
-  "description": "Static machine-readable catalog for Pantheon loop desired state, actual state, ownership, maturity, target maturity, and evidence truth level.",
+  "description": "Static machine-readable catalog for Pantheon loop desired state, actual state, ownership, and controller contract.",
   "type": "object",
   "additionalProperties": false,
   "required": [

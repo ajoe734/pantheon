@@ -27,9 +27,23 @@ This task performs the backend disposition closeout across Source Ingestion, Pap
 
 4. **Loop Health Truth**:
    - Retained `docs/deployment/loop-catalog.registry.json` for stable loop specification, ownership, and controller contracts.
-   - Verified that `services/control-plane/bff/loop_inventory.py` derives live runtime maturity solely from current qualified controller records.
+   - Retired static maturity/truth claims and execution task references from `docs/deployment/loop-catalog.registry.json` and `loop-catalog.schema.json`.
+   - Verified that `services/control-plane/bff/loop_inventory.py` and `/bff/v5/loop-health` derive live runtime maturity solely from current qualified controller records.
+   - Migrated `services/control-plane/bff/test_current_twelve_owner_truth.py` to the stable owner/controller contract and runtime projection.
 
 ## Validation Results
 
 - `pytest -q services/source_ingestion/`: 845 passed, 2 skipped
-- Consolidation suite: 74 passed across `test_source_ingest_scheduler_once.py`, `test_controller_worker_manual_once.py`, `test_current_agora_handoff_cutover.py`, `test_agora_handoff_drainer.py`, `test_current_imitation_entrypoint.py`, `test_loop_catalog_registry.py`, `test_loop_inventory_read_model_contract.py`, `test_paper_runtime_topology_contract.py`, and `test_product_functional_compose_contract.py`.
+- `pytest -q services/policy-learning/tests/`: 129 passed, 5 skipped
+- Focused consolidation suite: 104 passed across:
+  - `scripts/tests/test_source_ingest_scheduler_once.py`
+  - `services/source_ingestion/tests/test_controller_worker_manual_once.py`
+  - `services/policy-learning/tests/test_current_agora_handoff_cutover.py`
+  - `services/policy-learning/tests/test_agora_handoff_drainer.py`
+  - `services/policy-learning/tests/test_current_imitation_entrypoint.py`
+  - `tests/test_loop_catalog_registry.py`
+  - `services/control-plane/bff/test_loop_inventory_read_model_contract.py`
+  - `services/control-plane/bff/test_loop_health_read_model_contract.py`
+  - `services/control-plane/bff/test_current_twelve_owner_truth.py`
+  - `scripts/test_paper_runtime_topology_contract.py`
+  - `tests/integration/test_product_functional_compose_contract.py`
