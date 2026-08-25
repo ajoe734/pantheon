@@ -2337,8 +2337,8 @@ cleanup_stale_compose_replacement_containers() {
     [[ -z "${cid}" ]] && continue
     local clean_name="${cname#/}"
 
-    # Never touch running containers
-    if [[ "${cstate}" == "running" || "${cstatus}" =~ ^Up([[:space:]]|$) ]]; then
+    # Never touch running or restarting containers
+    if [[ "${cstate}" == "running" || "${cstate}" == "restarting" || "${cstatus}" =~ ^Up([[:space:]]|$) || "${cstatus}" =~ ^Restarting([[:space:]]|$) ]]; then
       continue
     fi
 

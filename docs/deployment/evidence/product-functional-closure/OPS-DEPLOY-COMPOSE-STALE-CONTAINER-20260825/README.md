@@ -8,10 +8,10 @@ This task repairs stale Compose replacement-container conflicts during dev root 
 
 1. **Narrow Stale Replacement Container Cleanup**:
    - `cleanup_stale_compose_replacement_containers` in `scripts/deploy_nonprod_vm.sh` queries Docker for containers with label `com.docker.compose.project=pantheon`.
-   - Filters out all running containers (`state == running` or `status =~ ^Up`).
+   - Filters out all running and restarting containers (`state == running`, `state == restarting`, `status =~ ^Up`, `status =~ ^Restarting`).
    - Identifies non-running containers whose names match the hash-prefixed pattern `^[0-9a-fA-F]+[-_]pantheon`.
    - Removes only those stale replacement containers (`docker rm -f`) and logs the action.
-   - Preserves running containers, normal stopped pantheon containers without hash prefixes, other project containers, and unlabelled containers.
+   - Preserves running containers, restarting containers, normal stopped pantheon containers without hash prefixes, other project containers, and unlabelled containers.
 
 2. **Invoked Before Compose Rollout**:
    - Invoked at the beginning of Phase 3 in `root` deployment before `docker compose -p pantheon -f docker-compose.yml up -d`.
@@ -19,7 +19,7 @@ This task repairs stale Compose replacement-container conflicts during dev root 
 
 3. **Executable Positive and Negative Contract Verification**:
    - Contract test `test_dev_root_deploy_stale_compose_replacement_cleanup_defined_and_invoked` verifies the function is defined and invoked before `compose up` in `root` and `bff`.
-   - Executable contract test `test_cleanup_stale_compose_replacement_containers_executable_positive_and_negative` proves removal of stale replacement containers across exited, dead, and created states, while verifying that running replacement containers, normal stopped pantheon containers, running normal containers, and other project containers are never removed.
+   - Executable contract test `test_cleanup_stale_compose_replacement_containers_executable_positive_and_negative` proves removal of stale replacement containers across exited, dead, and created states, while verifying that running replacement containers, restarting containers, normal stopped pantheon containers, running normal containers, and other project containers are never removed.
    - `test_cleanup_stale_compose_replacement_containers_handles_empty_and_missing_docker` proves graceful exit when no containers exist or when docker is unavailable.
 
 ## Verification

@@ -2777,7 +2777,9 @@ def test_dev_root_deploy_stale_compose_replacement_cleanup_defined_and_invoked()
     assert "cleanup_stale_compose_replacement_containers() {" in deploy_script
     assert 'docker ps -a --filter "label=com.docker.compose.project=pantheon"' in deploy_script
     assert '"${cstate}" == "running"' in deploy_script
+    assert '"${cstate}" == "restarting"' in deploy_script
     assert '"${cstatus}" =~ ^Up' in deploy_script
+    assert '"${cstatus}" =~ ^Restarting' in deploy_script
     assert '"${clean_name}" =~ ^[0-9a-fA-F]+[-_]pantheon' in deploy_script
     assert "docker rm -f" in deploy_script
 
@@ -2795,7 +2797,7 @@ def test_dev_root_deploy_stale_compose_replacement_cleanup_defined_and_invoked()
 def test_cleanup_stale_compose_replacement_containers_executable_positive_and_negative(tmp_path: Path) -> None:
     """Executable test proving cleanup_stale_compose_replacement_containers removes only non-running
     containers with com.docker.compose.project=pantheon and hash-prefixed pantheon names, while
-    leaving running containers, non-hash containers, and other project containers intact."""
+    leaving running containers, restarting containers, non-hash containers, and other project containers intact."""
     deploy_script = DEPLOY.read_text(encoding="utf-8")
     func_start = deploy_script.index("cleanup_stale_compose_replacement_containers() {")
     func_end = deploy_script.index("\nrollback_dev_bff_on_failure() {", func_start)
@@ -2828,6 +2830,8 @@ if [[ "$1" == "ps" ]]; then
     printf "%s\\t%s\\t%s\\t%s\\n" "cid_stale_4" "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef_pantheon-minio-1" "exited" "Exited (1)"
     printf "%s\\t%s\\t%s\\t%s\\n" "cid_running_rep" "abcdef123456_pantheon-operator-bff-1" "running" "Up 2 hours"
     printf "%s\\t%s\\t%s\\t%s\\n" "cid_running_rep_up" "abcdef123456_pantheon_postgres_1" "unknown" "Up 10 minutes"
+    printf "%s\\t%s\\t%s\\t%s\\n" "cid_restarting_rep" "fedcba987654_pantheon-operator-bff-1" "restarting" "Restarting (1) 5 seconds ago"
+    printf "%s\\t%s\\t%s\\t%s\\n" "cid_restarting_rep_status" "987654fedcba_pantheon_postgres_1" "unknown" "Restarting (127) 2 seconds ago"
     printf "%s\\t%s\\t%s\\t%s\\n" "cid_normal_stopped" "pantheon-postgres-1" "exited" "Exited (0)"
     printf "%s\\t%s\\t%s\\t%s\\n" "cid_normal_stopped_slash" "/pantheon-operator-bff-1" "created" "Created"
     printf "%s\\t%s\\t%s\\t%s\\n" "cid_normal_running" "pantheon-operator-bff-1" "running" "Up 1 hour"
@@ -2878,6 +2882,8 @@ exit 0
     # Negative assertions:
     assert "cid_running_rep" not in removed
     assert "cid_running_rep_up" not in removed
+    assert "cid_restarting_rep" not in removed
+    assert "cid_restarting_rep_status" not in removed
     assert "cid_normal_stopped" not in removed
     assert "cid_normal_stopped_slash" not in removed
     assert "cid_normal_running" not in removed
@@ -2916,4 +2922,3 @@ def test_cleanup_stale_compose_replacement_containers_handles_empty_and_missing_
     """
     res2 = subprocess.run(["bash", "-euo", "pipefail", "-c", test_no_docker], capture_output=True, text=True, check=True)
     assert "docker command unavailable" in res2.stdout
-
