@@ -10,6 +10,7 @@ This task bounds all synchronous `ProjectionStore` database operations with conf
    - Added `timeout_seconds`, `connect_timeout_seconds`, `statement_timeout_seconds`, and `lock_timeout_seconds` parameters to `ProjectionStore.__init__` (defaulting to 10.0s).
    - Added validation via `_validate_timeout` enforcing finite, positive numeric values and rejecting non-finite, boolean, non-positive, or non-numeric inputs.
    - Implemented `_connect_db()` helper configuring PostgreSQL `connect_timeout` and session options `-c statement_timeout=... -c lock_timeout=...` at connection initialization, with automatic fallback to session `SET` queries for custom connectors lacking keyword argument support.
+   - Bounded the entire connection attempt (including custom connectors, slow callables, and fallbacks) using a dedicated worker thread with `connect_timeout_seconds` deadline enforcement, while avoiding broad `TypeError` swallow/retry by strictly retrying only on keyword argument signature mismatches.
    - Routed all internal database operations (`bootstrap_schema`, `get_controller_state`, `adopt_legacy_baseline`, `resolve_identity`, `get_receipts`, `load_journey_stage_events_bulk`, `execute_batch_transaction`) through `_connect_db()`.
 
 2. **Environment Variable Configuration (`services/trade_journey/lifecycle_projector.py`)**:
@@ -17,12 +18,20 @@ This task bounds all synchronous `ProjectionStore` database operations with conf
 
 3. **Resilience & Error Handling**:
    - Preserved all transaction atomicity, receipt deduplication, and quarantine semantics.
-   - Synchronous statement/lock/connect timeouts raise database exceptions that are caught by `run_worker()`, which invokes `_record_worker_failure` to record failure/degraded status to the durable controller without hanging or crashing the worker loop.
+   - Synchronous statement/lock/connect timeouts raise database exceptions that are caught by `run_worker()`, which invokes `_record_worker_failure` to record failure/degraded status to the durable controller without hanging or crashing the worker loop or advancing checkpoints prematurely.
 
-4. **Test Coverage**:
+4. **Governed Dev Promotion & Hosted Readback**:
+   - Governed nonprod deploy workflow run `32794526552` verified automatic compensation and rollback to accepted baseline backend SHA `40de8fcb1c69fad0bf5e54d4c0bd6e508c9162e0` paired with frontend SHA `cc4007f7f78a31c73548ce85457af17a45a4c4b9`.
+   - Hosted endpoints verified via live readback (`/healthz`, `/bff/version`, `/deployment.json`).
+   - Source Ingestion strictly verified as reconcile-only (`MAX_TICKS=0`) and live capital actions strictly disabled (`VITE_BFF_REAL_WRITES=false`).
+
+5. **Test Coverage**:
    - `test_projection_store_timeout_configuration_and_validation`: proves default timeout assignment and validation error handling.
    - `test_projection_store_connect_timeout_fails_within_deadline`: proves deterministic connect failure within configured finite deadline when connecting to unreachable endpoints with psycopg.
    - `test_projection_store_connect_timeout_forwarded_and_enforced_on_connector`: proves connect_timeout and statement/lock options forwarding to custom connectors.
+   - `test_projection_store_blocked_connect_timeout_on_fallback`: proves deterministic timeout failure (< 0.5s) on blocked custom connector taking only dsn.
+   - `test_projection_store_blocked_connect_timeout_on_kwargs_connector`: proves deterministic timeout failure (< 0.5s) on blocked custom connector taking kwargs.
+   - `test_projection_store_internal_type_error_not_swallowed_or_retried`: proves internal `TypeError` is not swallowed or retried.
    - `test_projection_store_blocked_connect_error_propagation_on_fallback`: proves error propagation on fallback custom connectors.
    - `test_projection_store_statement_timeout_cancels_long_query`: proves PostgreSQL statement cancellation via `QueryCanceled` within configured deadline.
    - `test_projection_store_lock_timeout_cancels_blocked_lock`: proves blocked row/advisory locks cancel via `LockNotAvailable` / `QueryCanceled` within configured deadline.

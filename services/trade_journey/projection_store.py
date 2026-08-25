@@ -7,7 +7,9 @@ typed persistence interfaces, advisory locking, and atomic batch projection tran
 
 from __future__ import annotations
 
+import concurrent.futures
 import hashlib
+import inspect
 import json
 import logging
 import math
@@ -52,6 +54,17 @@ def _validate_timeout(
     if not math.isfinite(parsed) or parsed <= 0.0:
         raise ValueError(f"{name} must be a finite positive number (got {value!r})")
     return parsed
+
+
+def _can_accept_kwargs(func: Any) -> bool:
+    try:
+        sig = inspect.signature(func)
+        for param in sig.parameters.values():
+            if param.kind == inspect.Parameter.VAR_KEYWORD:
+                return True
+        return "connect_timeout" in sig.parameters and "options" in sig.parameters
+    except (ValueError, TypeError):
+        return True
 
 
 def controller_advisory_lock_id(
@@ -299,19 +312,45 @@ class ProjectionStore:
         lock_timeout_ms = int(math.ceil(self.lock_timeout_seconds * 1000.0))
         connect_timeout_s = max(1, int(math.ceil(self.connect_timeout_seconds)))
         options = f"-c statement_timeout={statement_timeout_ms} -c lock_timeout={lock_timeout_ms}"
-        try:
-            return self._connect(
-                self.dsn,
-                connect_timeout=connect_timeout_s,
-                options=options,
-            )
-        except TypeError:
+
+        def _do_connect() -> Any:
+            can_kwargs = _can_accept_kwargs(self._connect)
+            if can_kwargs:
+                try:
+                    return self._connect(
+                        self.dsn,
+                        connect_timeout=connect_timeout_s,
+                        options=options,
+                    )
+                except TypeError as exc:
+                    msg = str(exc)
+                    if (
+                        "unexpected keyword argument" not in msg
+                        and "takes" not in msg
+                        and "positional argument" not in msg
+                    ):
+                        raise
+
             conn = self._connect(self.dsn)
             with conn.cursor() as cur:
                 cur.execute(
                     f"SET statement_timeout = {statement_timeout_ms}; SET lock_timeout = {lock_timeout_ms};"
                 )
             return conn
+
+        executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+        try:
+            future = executor.submit(_do_connect)
+            try:
+                return future.result(timeout=self.connect_timeout_seconds)
+            except TimeoutError as exc:
+                if not future.done():
+                    raise TimeoutError(
+                        f"ProjectionStore connection to database timed out after {self.connect_timeout_seconds}s"
+                    ) from exc
+                raise
+        finally:
+            executor.shutdown(wait=False, cancel_futures=True)
 
     def bootstrap_schema(self) -> None:
         """Apply the versioned migration explicitly with migration credentials."""

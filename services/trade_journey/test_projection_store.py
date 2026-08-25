@@ -1529,6 +1529,61 @@ def test_projection_store_connect_fallback_sets_timeouts_on_custom_connector(pos
         assert cur.fetchone()[0] == "1500ms"
 
 
+def test_projection_store_blocked_connect_timeout_on_fallback() -> None:
+    def blocked_custom_connector(dsn):
+        time.sleep(2.0)
+        return None
+
+    store = ProjectionStore(
+        "postgresql://unit/pantheon",
+        connect=blocked_custom_connector,
+        connect_timeout_seconds=0.1,
+    )
+    start_time = time.monotonic()
+    with pytest.raises(TimeoutError, match="timed out after 0.1s"):
+        store._connect_db()
+    elapsed = time.monotonic() - start_time
+    assert elapsed < 0.5, f"blocked fallback connector took too long: {elapsed}s"
+    assert elapsed >= 0.08, f"blocked fallback connector did not wait for timeout: {elapsed}s"
+
+
+def test_projection_store_blocked_connect_timeout_on_kwargs_connector() -> None:
+    def blocked_kwargs_connector(dsn, **kwargs):
+        time.sleep(2.0)
+        return None
+
+    store = ProjectionStore(
+        "postgresql://unit/pantheon",
+        connect=blocked_kwargs_connector,
+        connect_timeout_seconds=0.1,
+    )
+    start_time = time.monotonic()
+    with pytest.raises(TimeoutError, match="timed out after 0.1s"):
+        store._connect_db()
+    elapsed = time.monotonic() - start_time
+    assert elapsed < 0.5, f"blocked kwargs connector took too long: {elapsed}s"
+    assert elapsed >= 0.08, f"blocked kwargs connector did not wait for timeout: {elapsed}s"
+
+
+def test_projection_store_internal_type_error_not_swallowed_or_retried() -> None:
+    attempt_count = 0
+
+    def buggy_connector(dsn, **kwargs):
+        nonlocal attempt_count
+        attempt_count += 1
+        # Raises TypeError from internal computation, not keyword argument mismatch
+        raise TypeError("internal TypeError: unsupported operand type for +: 'int' and 'str'")
+
+    store = ProjectionStore(
+        "postgresql://unit/pantheon",
+        connect=buggy_connector,
+        connect_timeout_seconds=1.0,
+    )
+    with pytest.raises(TypeError, match="internal TypeError: unsupported operand type"):
+        store._connect_db()
+    assert attempt_count == 1, "buggy connector should not have been retried"
+
+
 def test_projection_store_connect_timeout_fails_within_deadline() -> None:
     import psycopg
 
@@ -1539,7 +1594,7 @@ def test_projection_store_connect_timeout_fails_within_deadline() -> None:
         connect_timeout_seconds=1.0,
     )
     start_time = time.monotonic()
-    with pytest.raises((psycopg.OperationalError, psycopg.errors.ConnectionTimeout)):
+    with pytest.raises((psycopg.OperationalError, psycopg.errors.ConnectionTimeout, TimeoutError)):
         store._connect_db()
     elapsed = time.monotonic() - start_time
     assert elapsed < 3.0, f"connect timeout took too long: {elapsed}s"
