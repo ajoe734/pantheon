@@ -49,6 +49,7 @@ PROJECTION_MODES = frozenset({"live", "recovery", "backfill", "replay"})
 DEFAULT_CHANNEL = "pantheon_lifecycle_events"
 DEFAULT_SOURCE_STARTUP_TIMEOUT_SECONDS = 10.0
 DEFAULT_SOURCE_TIMEOUT_SECONDS = 10.0
+DEFAULT_PROJECTION_TIMEOUT_SECONDS = 10.0
 RELATIONAL_WRITER_BACKEND_ENV = "LIFECYCLE_PROJECTOR_WRITER_BACKEND"
 RELATIONAL_WRITER_DSN_ENV = "LIFECYCLE_PROJECTOR_PROJECTION_DSN"
 RELATIONAL_WRITER_SCHEMA_ENV = "LIFECYCLE_PROJECTOR_PROJECTION_SCHEMA"
@@ -1389,6 +1390,14 @@ class PostgresLifecycleSource:
 
 
 def _record_worker_failure(projector: Any, error: BaseException) -> bool:
+    if projector is None:
+        print(
+            "lifecycle projector startup failed; retaining worker for retry: "
+            f"{type(error).__name__}: {error}",
+            file=sys.stderr,
+            flush=True,
+        )
+        return False
     error_message = f"{type(error).__name__}: {error}"
     try:
         projector.record_source_failure(error_message)
@@ -1423,10 +1432,55 @@ def _configured_relational_projector() -> RelationalLifecycleProjector:
         raise RuntimeError(
             f"{RELATIONAL_WRITER_DSN_ENV} or TELEMETRY_DB_DSN is required for relational writing"
         )
+    source_timeout_raw = (
+        os.getenv("LIFECYCLE_PROJECTOR_PROJECTION_TIMEOUT_SECONDS")
+        or os.getenv("LIFECYCLE_PROJECTOR_DB_TIMEOUT_SECONDS")
+        or os.getenv("LIFECYCLE_PROJECTOR_SOURCE_TIMEOUT_SECONDS")
+        or ""
+    )
+    projection_timeout = _validate_source_timeout(
+        source_timeout_raw,
+        name="LIFECYCLE_PROJECTOR_PROJECTION_TIMEOUT_SECONDS",
+        default=DEFAULT_PROJECTION_TIMEOUT_SECONDS,
+    )
+    connect_timeout_raw = os.getenv("LIFECYCLE_PROJECTOR_PROJECTION_CONNECT_TIMEOUT_SECONDS", "")
+    connect_timeout = (
+        _validate_source_timeout(
+            connect_timeout_raw,
+            name="LIFECYCLE_PROJECTOR_PROJECTION_CONNECT_TIMEOUT_SECONDS",
+            default=projection_timeout,
+        )
+        if connect_timeout_raw.strip()
+        else projection_timeout
+    )
+    statement_timeout_raw = os.getenv("LIFECYCLE_PROJECTOR_PROJECTION_STATEMENT_TIMEOUT_SECONDS", "")
+    statement_timeout = (
+        _validate_source_timeout(
+            statement_timeout_raw,
+            name="LIFECYCLE_PROJECTOR_PROJECTION_STATEMENT_TIMEOUT_SECONDS",
+            default=projection_timeout,
+        )
+        if statement_timeout_raw.strip()
+        else projection_timeout
+    )
+    lock_timeout_raw = os.getenv("LIFECYCLE_PROJECTOR_PROJECTION_LOCK_TIMEOUT_SECONDS", "")
+    lock_timeout = (
+        _validate_source_timeout(
+            lock_timeout_raw,
+            name="LIFECYCLE_PROJECTOR_PROJECTION_LOCK_TIMEOUT_SECONDS",
+            default=projection_timeout,
+        )
+        if lock_timeout_raw.strip()
+        else projection_timeout
+    )
     store = ProjectionStore(
         dsn,
         schema=os.getenv(RELATIONAL_WRITER_SCHEMA_ENV, RELATIONAL_WRITER_DEFAULT_SCHEMA),
         bootstrap=False,
+        timeout_seconds=projection_timeout,
+        connect_timeout_seconds=connect_timeout,
+        statement_timeout_seconds=statement_timeout,
+        lock_timeout_seconds=lock_timeout,
     )
     return RelationalLifecycleProjector(
         store,
@@ -1438,7 +1492,6 @@ async def run_worker() -> int:
     dsn = os.getenv("TELEMETRY_DB_DSN", "").strip()
     if not dsn:
         raise RuntimeError("TELEMETRY_DB_DSN is required")
-    projector = _configured_relational_projector()
     source_timeout_raw = (
         os.getenv("LIFECYCLE_PROJECTOR_SOURCE_TIMEOUT_SECONDS")
         or os.getenv("LIFECYCLE_PROJECTOR_DB_TIMEOUT_SECONDS")
@@ -1467,10 +1520,13 @@ async def run_worker() -> int:
     tick = 0
     recovery_target = 0
     source_ready = False
+    projector: RelationalLifecycleProjector | None = None
     try:
         while True:
             tick += 1
             try:
+                if projector is None:
+                    projector = _configured_relational_projector()
                 if not source_ready:
                     await source.verify_read_contract()
                     recovery_target = await source.high_watermark()
@@ -1489,6 +1545,8 @@ async def run_worker() -> int:
                     )
                 if projector.checkpoint >= recovery_target:
                     recovery_target = projector.checkpoint
+            except (RuntimeError, ValueError):
+                raise
             except Exception as exc:  # noqa: BLE001 - durable controller records failure
                 _record_worker_failure(projector, exc)
                 if not source_ready:

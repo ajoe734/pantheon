@@ -7,9 +7,13 @@ typed persistence interfaces, advisory locking, and atomic batch projection tran
 
 from __future__ import annotations
 
+import concurrent.futures
 import hashlib
+import inspect
 import json
 import logging
+import math
+import threading
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -18,11 +22,80 @@ from typing import Any, Callable, Mapping, Optional
 logger = logging.getLogger(__name__)
 
 DEFAULT_PROJECTION_SCHEMA = "trade_journey_projection"
+DEFAULT_PROJECTION_TIMEOUT_SECONDS = 10.0
+DEFAULT_PROJECTION_CONNECT_TIMEOUT_SECONDS = 10.0
+DEFAULT_PROJECTION_STATEMENT_TIMEOUT_SECONDS = 10.0
+DEFAULT_PROJECTION_LOCK_TIMEOUT_SECONDS = 10.0
 INITIAL_MIGRATION_PATH = (
     Path(__file__).resolve().parent
     / "migrations"
     / "001_create_trade_journey_projection_schema.sql"
 )
+
+
+def _validate_timeout(
+    value: Any,
+    *,
+    name: str = "timeout_seconds",
+    default: float = DEFAULT_PROJECTION_TIMEOUT_SECONDS,
+) -> float:
+    if value is None:
+        return float(default)
+    if isinstance(value, str):
+        stripped = value.strip()
+        if not stripped:
+            return float(default)
+        value = stripped
+    if isinstance(value, bool):
+        raise ValueError(f"{name} must be a finite positive number (got {value!r})")
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{name} must be a finite positive number (got {value!r})") from exc
+    if not math.isfinite(parsed) or parsed <= 0.0:
+        raise ValueError(f"{name} must be a finite positive number (got {value!r})")
+    return parsed
+
+
+def _safe_close_conn(conn: Any) -> None:
+    try:
+        conn.close()
+    except Exception:
+        pass
+
+
+def _can_accept_kwargs(func: Any) -> bool:
+    try:
+        sig = inspect.signature(func)
+        for param in sig.parameters.values():
+            if param.kind == inspect.Parameter.VAR_KEYWORD:
+                return True
+        return "connect_timeout" in sig.parameters and "options" in sig.parameters
+    except (ValueError, TypeError):
+        return True
+
+
+def _is_signature_mismatch_error(exc: TypeError, func: Any) -> bool:
+    tb = exc.__traceback__
+    if tb is not None and tb.tb_next is not None:
+        # The exception was raised inside the Python function body, not by argument binding
+        return False
+    msg = str(exc)
+    name = getattr(func, "__name__", "")
+    patterns = (
+        "unexpected keyword argument",
+        "invalid keyword argument",
+        "takes no keyword arguments",
+        "takes at most",
+        "takes no arguments",
+    )
+    if any(p in msg for p in patterns):
+        return True
+    if name and f"{name}() takes" in msg:
+        return True
+    if "positional argument" in msg and "takes" in msg:
+        return True
+    return False
 
 
 def controller_advisory_lock_id(
@@ -220,6 +293,10 @@ class ProjectionStore:
         schema: str = DEFAULT_PROJECTION_SCHEMA,
         connect: Optional[Callable[..., Any]] = None,
         bootstrap: bool = False,
+        timeout_seconds: float | None = None,
+        connect_timeout_seconds: float | None = None,
+        statement_timeout_seconds: float | None = None,
+        lock_timeout_seconds: float | None = None,
     ) -> None:
         if not dsn:
             raise ValueError("Postgres DSN is required for ProjectionStore")
@@ -227,6 +304,30 @@ class ProjectionStore:
             raise ValueError("Invalid schema name for ProjectionStore")
         self.dsn = dsn
         self.schema = schema
+        base_timeout = (
+            _validate_timeout(
+                timeout_seconds,
+                name="timeout_seconds",
+                default=DEFAULT_PROJECTION_TIMEOUT_SECONDS,
+            )
+            if timeout_seconds is not None
+            else DEFAULT_PROJECTION_TIMEOUT_SECONDS
+        )
+        self.connect_timeout_seconds = _validate_timeout(
+            connect_timeout_seconds,
+            name="connect_timeout_seconds",
+            default=base_timeout,
+        )
+        self.statement_timeout_seconds = _validate_timeout(
+            statement_timeout_seconds,
+            name="statement_timeout_seconds",
+            default=base_timeout,
+        )
+        self.lock_timeout_seconds = _validate_timeout(
+            lock_timeout_seconds,
+            name="lock_timeout_seconds",
+            default=base_timeout,
+        )
         if connect is None:
             try:
                 import psycopg  # type: ignore[import]
@@ -237,12 +338,100 @@ class ProjectionStore:
         if bootstrap:
             self.bootstrap_schema()
 
+    def _connect_db(self) -> Any:
+        statement_timeout_ms = int(math.ceil(self.statement_timeout_seconds * 1000.0))
+        lock_timeout_ms = int(math.ceil(self.lock_timeout_seconds * 1000.0))
+        connect_timeout_s = max(1, int(math.ceil(self.connect_timeout_seconds)))
+        options = f"-c statement_timeout={statement_timeout_ms} -c lock_timeout={lock_timeout_ms}"
+
+        lock = threading.Lock()
+        outcome: dict[str, Any] = {
+            "status": "pending",
+            "conn": None,
+            "error": None,
+        }
+        done = threading.Event()
+
+        def _worker() -> None:
+            conn = None
+            try:
+                can_kwargs = _can_accept_kwargs(self._connect)
+                if can_kwargs:
+                    try:
+                        conn = self._connect(
+                            self.dsn,
+                            connect_timeout=connect_timeout_s,
+                            options=options,
+                        )
+                    except TypeError as exc:
+                        if not _is_signature_mismatch_error(exc, self._connect):
+                            raise
+                        conn = None
+
+                if conn is None:
+                    conn = self._connect(self.dsn)
+                    with conn.cursor() as cur:
+                        cur.execute(
+                            f"SET statement_timeout = {statement_timeout_ms}; SET lock_timeout = {lock_timeout_ms};"
+                        )
+
+                with lock:
+                    if outcome["status"] == "pending":
+                        outcome["status"] = "success"
+                        outcome["conn"] = conn
+                        done.set()
+                        return
+
+                if conn is not None:
+                    _safe_close_conn(conn)
+            except BaseException as exc:
+                if conn is not None:
+                    _safe_close_conn(conn)
+                with lock:
+                    if outcome["status"] == "pending":
+                        outcome["status"] = "error"
+                        outcome["error"] = exc
+            finally:
+                done.set()
+
+        t = threading.Thread(target=_worker, daemon=True, name="projection-store-connect")
+        t.start()
+
+        if not done.wait(timeout=self.connect_timeout_seconds):
+            conn_to_close = None
+            with lock:
+                if outcome["status"] == "pending":
+                    outcome["status"] = "timed_out"
+                elif outcome["status"] == "success":
+                    outcome["status"] = "timed_out"
+                    conn_to_close = outcome["conn"]
+                    outcome["conn"] = None
+            if conn_to_close is not None:
+                threading.Thread(
+                    target=_safe_close_conn,
+                    args=(conn_to_close,),
+                    daemon=True,
+                    name="projection-store-conn-cleanup",
+                ).start()
+            raise TimeoutError(
+                f"ProjectionStore connection to database timed out after {self.connect_timeout_seconds}s"
+            )
+
+        with lock:
+            if outcome["status"] == "error":
+                raise outcome["error"]
+            if outcome["status"] == "success":
+                return outcome["conn"]
+            raise TimeoutError(
+                f"ProjectionStore connection to database timed out after {self.connect_timeout_seconds}s"
+            )
+
     def bootstrap_schema(self) -> None:
         """Apply the versioned migration explicitly with migration credentials."""
 
         sql = INITIAL_MIGRATION_PATH.read_text(encoding="utf-8")
         sql = sql.replace(DEFAULT_PROJECTION_SCHEMA, self.schema)
-        with self._connect(self.dsn) as conn, conn.cursor() as cur:
+        with self._connect_db() as conn, conn.cursor() as cur:
             cur.execute(sql)
 
     def get_controller_state(
@@ -258,7 +447,7 @@ class ProjectionStore:
         FROM {self.schema}.controller
         WHERE controller_id=%s AND tenant_scope=%s AND environment_scope=%s
         """
-        with self._connect(self.dsn) as conn, conn.cursor() as cur:
+        with self._connect_db() as conn, conn.cursor() as cur:
             cur.execute(sql, (controller_id, tenant_scope, environment_scope))
             row = cur.fetchone()
             if not row:
@@ -334,7 +523,7 @@ class ProjectionStore:
             environment_scope,
         )
 
-        with self._connect(self.dsn) as conn, conn.cursor() as cur:
+        with self._connect_db() as conn, conn.cursor() as cur:
             # Stable lock order prevents an accidental concurrent shadow start
             # from racing the baseline adoption.
             lock_ids = sorted(
@@ -504,7 +693,7 @@ class ProjectionStore:
         SELECT journey_id FROM {self.schema}.identity_links
         WHERE tenant_id=%s AND environment=%s AND identifier_type=%s AND identifier_value=%s
         """
-        with self._connect(self.dsn) as conn, conn.cursor() as cur:
+        with self._connect_db() as conn, conn.cursor() as cur:
             cur.execute(sql, (tenant_id, environment, identifier_type, identifier_value))
             row = cur.fetchone()
             return row[0] if row else None
@@ -532,7 +721,7 @@ class ProjectionStore:
         WHERE event_id = ANY(%s)
         ORDER BY event_id
         """
-        with self._connect(self.dsn) as conn, conn.cursor() as cur:
+        with self._connect_db() as conn, conn.cursor() as cur:
             cur.execute(sql, (list(requested),))
             return {str(row[0]): EventReceiptRow(*row) for row in cur.fetchall()}
 
@@ -598,7 +787,7 @@ class ProjectionStore:
                  stage.event_sequence, stage.stage_ordinal, stage.occurred_at,
                  stage.source_ingested_seq, stage.source_event_id
         """
-        with self._connect(self.dsn) as conn, conn.cursor() as cur:
+        with self._connect_db() as conn, conn.cursor() as cur:
             cur.execute(sql, (list(tenant_ids), list(environments), list(journey_ids)))
             rows = cur.fetchall()
         for row in rows:
@@ -739,7 +928,7 @@ class ProjectionStore:
             controller_id, tenant_scope, environment_scope
         )
 
-        with self._connect(self.dsn) as conn:
+        with self._connect_db() as conn:
             with conn.cursor() as cur:
                 # 1. Non-blocking advisory lock
                 cur.execute("SELECT pg_try_advisory_xact_lock(%s)", (lock_id,))
