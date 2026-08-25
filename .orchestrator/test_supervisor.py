@@ -1307,6 +1307,44 @@ class SharedPlannerContractTests(unittest.TestCase):
             "task_not_dispatchable",
         )
 
+    def test_functional_completion_track_releases_dependency_without_terminal_closeout(self) -> None:
+        dependency = task_fixture("DEP", status="blocked")
+        dependency["completion_tracks"] = {
+            "functional": {
+                "status": "done",
+                "evidence": ["e2e/paper-functional.json"],
+            }
+        }
+        task = task_fixture(depends_on=["DEP"])
+        task["dependency_tracks"] = {"DEP": "functional"}
+        status = {"tasks": [task, dependency]}
+
+        decision = planner_decision(self.config, task, status=status)
+
+        self.assertTrue(decision["eligible"])
+        self.assertEqual(decision["reason"], supervisor.REASON_OWNED_READY)
+
+    def test_functional_dependency_does_not_infer_success_from_terminal_status(self) -> None:
+        dependency = task_fixture("DEP", status="done")
+        task = task_fixture(depends_on=["DEP"])
+        task["dependency_tracks"] = {"DEP": "functional"}
+        status = {"tasks": [task, dependency]}
+
+        decision = planner_decision(self.config, task, status=status)
+
+        self.assertFalse(decision["eligible"])
+        self.assertEqual(decision["first_blocking_gate"], "task_not_dispatchable")
+
+    def test_invalid_dependency_track_fails_closed(self) -> None:
+        dependency = task_fixture("DEP", status="done")
+        task = task_fixture(depends_on=["DEP"])
+        task["dependency_tracks"] = {"DEP": "operator-live"}
+        status = {"tasks": [task, dependency]}
+
+        decision = planner_decision(self.config, task, status=status)
+
+        self.assertFalse(decision["eligible"])
+
     def test_planner_consumes_terminal_facts_from_authoritative_projection(self) -> None:
         task = task_fixture(
             "CHILD",

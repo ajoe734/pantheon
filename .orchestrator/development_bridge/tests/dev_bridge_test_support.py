@@ -28,6 +28,7 @@ if command == "dev-bridge-materialize-batch":
             "reviewer": spec["reviewer"],
             "phase": spec["phase"],
             "depends_on": spec["depends_on"],
+            "dependency_tracks": spec.get("dependency_tracks", {}),
             "artifacts": spec["artifacts"],
             "acceptance": spec["acceptance"],
             "summary_zh": spec["summary"],

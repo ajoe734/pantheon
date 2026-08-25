@@ -33,6 +33,7 @@ ARCHIVE_VERSION = 1
 TERMINAL_STATUS_DONE = "done"
 TERMINAL_OUTCOME_COMPLETED = "completed"
 TERMINAL_OUTCOME_SUPERSEDED = "superseded"
+COMPLETION_TRACKS = frozenset({"functional", "hosted"})
 DEFAULT_RECENT_LIMIT = 20
 ARCHIVE_CORRECTION_VERSION = 1
 STATUS_ARCHIVE_OUTBOX_SCHEMA_VERSION = 2
@@ -180,6 +181,59 @@ def is_terminal_task(task: dict[str, Any] | None) -> bool:
 
 def task_satisfies_dependency(task: dict[str, Any] | None) -> bool:
     return is_terminal_task(task) and terminal_outcome_for(task) != TERMINAL_OUTCOME_SUPERSEDED
+
+
+def dependency_track_for(task: Mapping[str, Any] | None, dependency_id: str) -> str | None:
+    """Return the explicit dependency track, preserving terminal compatibility.
+
+    Existing tasks keep their string ``depends_on`` semantics.  A task may opt
+    one dependency into a named completion track through ``dependency_tracks``;
+    invalid values fail closed instead of silently becoming terminal gates.
+    """
+
+    if not isinstance(task, Mapping):
+        return "terminal"
+    tracks = task.get("dependency_tracks")
+    if not isinstance(tracks, Mapping) or dependency_id not in tracks:
+        return "terminal"
+    value = str(tracks.get(dependency_id) or "").strip().lower()
+    return value if value in COMPLETION_TRACKS else None
+
+
+def completion_track_status(task: Mapping[str, Any] | None, track: str) -> str:
+    """Read one non-terminal completion track without inferring success."""
+
+    if track not in COMPLETION_TRACKS:
+        return "invalid"
+    tracks = task.get("completion_tracks") if isinstance(task, Mapping) else None
+    record = tracks.get(track) if isinstance(tracks, Mapping) else None
+    if not isinstance(record, Mapping):
+        return "pending"
+    status = str(record.get("status") or "pending").strip().lower()
+    return status or "pending"
+
+
+def dependency_satisfied_for(
+    consumer_task: Mapping[str, Any] | None,
+    dependency_id: str,
+    resolver: Any,
+    done_statuses: set[str] | None = None,
+) -> bool:
+    """Evaluate a dependency using the consumer's explicit completion track."""
+
+    track = dependency_track_for(consumer_task, dependency_id)
+    if track is None:
+        return False
+    dependency = resolver.get(dependency_id)
+    if dependency is None:
+        return False
+    if track == "terminal":
+        allowed = done_statuses or {TERMINAL_STATUS_DONE}
+        return (
+            task_status(dependency) in allowed
+            and task_satisfies_dependency(dependency)
+        )
+    return completion_track_status(dependency, track) == TERMINAL_STATUS_DONE
 
 
 def archive_task_path(task_id: str | None) -> Path:

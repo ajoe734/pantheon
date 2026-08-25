@@ -682,6 +682,7 @@ def _task_spec(task: BridgeTask) -> Dict[str, object]:
         "reviewer": task.reviewer,
         "phase": task.phase,
         "depends_on": list(task.depends_on),
+        "dependency_tracks": dict(task.dependency_tracks),
         "artifacts": list(task.artifacts),
         "acceptance": list(task.acceptance),
         "summary": task.summary,
