@@ -98,7 +98,12 @@ from runtime_state import (
     runtime_state_update,
     save_runtime_state,
 )
-from task_archive import TaskResolver
+from task_archive import (
+    TaskResolver,
+    completion_track_status,
+    dependency_satisfied_for,
+    dependency_track_for,
+)
 from watch_events import (
     _queue_delivery_event_locked,
     trim_seen_events,
@@ -11977,8 +11982,7 @@ def _task_resolver(task_lookup: TaskResolver | dict[str, dict[str, Any]]) -> Tas
 def dependencies_satisfied(task: dict[str, Any], task_lookup: TaskResolver | dict[str, dict[str, Any]], done_statuses: set[str]) -> bool:
     resolver = _task_resolver(task_lookup)
     for dep_id in task.get("depends_on", []) or []:
-        dep_status = resolver.dependency_status(dep_id)
-        if dep_status not in done_statuses or not resolver.dependency_satisfied(dep_id):
+        if not dependency_satisfied_for(task, str(dep_id), resolver, done_statuses):
             return False
     return True
 
@@ -11987,8 +11991,15 @@ def task_dependency_signature(task: dict[str, Any], task_lookup: TaskResolver | 
     resolver = _task_resolver(task_lookup)
     parts: list[str] = []
     for dep_id in task.get("depends_on", []) or []:
-        dep_status = resolver.dependency_status(dep_id)
-        parts.append(f"{dep_id}:{dep_status}")
+        dependency_id = str(dep_id)
+        track = dependency_track_for(task, dependency_id) or "invalid"
+        dependency = resolver.get(dependency_id)
+        status = (
+            completion_track_status(dependency, track)
+            if track in {"functional", "hosted"}
+            else resolver.dependency_status(dependency_id)
+        )
+        parts.append(f"{dependency_id}[{track}]:{status}")
     return "|".join(parts)
 
 
@@ -12665,8 +12676,22 @@ def build_dispatch_event(
         "dependency_truth": [
             {
                 "task_id": dependency_id,
-                "status": resolver.dependency_status(dependency_id),
-                "satisfied": resolver.dependency_satisfied(dependency_id),
+                "status": (
+                    completion_track_status(
+                        resolver.get(dependency_id),
+                        dependency_track_for(task, dependency_id) or "invalid",
+                    )
+                    if dependency_track_for(task, dependency_id)
+                    in {"functional", "hosted"}
+                    else resolver.dependency_status(dependency_id)
+                ),
+                "satisfied": dependency_satisfied_for(task, dependency_id, resolver),
+                **(
+                    {"track": dependency_track_for(task, dependency_id)}
+                    if dependency_track_for(task, dependency_id)
+                    not in {None, "terminal"}
+                    else {}
+                ),
             }
             for dependency_id in dependencies
         ],

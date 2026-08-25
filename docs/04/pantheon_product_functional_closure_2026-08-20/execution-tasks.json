@@ -794,6 +794,9 @@
         "PFG-AGORA-JOURNEY-E2E-20260820",
         "PFG-MGMT-JOURNEY-E2E-20260820"
       ],
+      "dependency_tracks": {
+        "PFG-AGORA-JOURNEY-E2E-20260820": "functional"
+      },
       "artifacts": [
         "services/source_ingestion/scheduler_worker.py",
         "scripts/source_ingest_scheduler_once.py",
@@ -826,6 +829,9 @@
       "owner": "Codex",
       "reviewer": "Antigravity2",
       "depends_on": ["PFG-AGORA-JOURNEY-E2E-20260820", "PFG-MGMT-JOURNEY-E2E-20260820"],
+      "dependency_tracks": {
+        "PFG-AGORA-JOURNEY-E2E-20260820": "functional"
+      },
       "artifacts": [
         "execute-plans:src/agora/pages/trading-room/TradingRoomPage.tsx",
         "execute-plans:src/agora/components/CandidateReviewDrawer.tsx",
@@ -864,6 +870,9 @@
         "PFG-BE-CONSOLIDATE-20260820",
         "PFG-FE-CONSOLIDATE-20260820"
       ],
+      "dependency_tracks": {
+        "PFG-AGORA-JOURNEY-E2E-20260820": "hosted"
+      },
       "artifacts": [
         "scripts/verify_product_functional_closure.py",
         "scripts/test_verify_product_functional_closure.py",
