@@ -120,6 +120,11 @@ class DevTaskPacket(BridgeBaseModel):
     operator_authorization: Optional[BridgeOperatorAuthorization] = Field(
         default=None, alias="operatorAuthorization"
     )
+    # Functional/paper/read-only work is deliberately independent from the
+    # hosted/live operator authorization window. Privileged lanes retain the
+    # existing one-shot operator authorization requirement; this explicit
+    # class keeps that distinction in the signed packet.
+    work_class: str = Field(default="security", alias="workClass")
     mode: str
 
     source_conversation_id: str = Field(alias="sourceConversationId")
