@@ -2847,6 +2847,46 @@ def _generated_worker_task_brief_path(task_id: str | None) -> str:
     )
 
 
+_GENERATED_WORKER_TASK_BRIEF_MARKER = (
+    "Generated in the worker workspace because the supervisor root did not "
+    "have a task brief file."
+)
+
+
+def _remove_legacy_generated_task_briefs(
+    workspace_path: Path,
+    candidates: list[str],
+) -> list[str]:
+    """Remove only untracked fallback files left by the old dispatch path."""
+
+    removed: list[str] = []
+    for candidate in candidates:
+        path = workspace_path / candidate
+        if not path.is_file():
+            continue
+        tracked = subprocess.run(
+            ["git", "ls-files", "--error-unmatch", "--", candidate],
+            cwd=workspace_path,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if tracked.returncode == 0:
+            continue
+        try:
+            content = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeError):
+            continue
+        if _GENERATED_WORKER_TASK_BRIEF_MARKER not in content:
+            continue
+        try:
+            path.unlink()
+        except OSError:
+            continue
+        removed.append(candidate)
+    return removed
+
+
 def _replace_request_context_path(
     request: DeliveryRequest,
     source_path: str,
@@ -2872,7 +2912,7 @@ def _generated_worker_task_brief(
             [
                 f"# Task Brief: {task_id or 'unknown-task'}",
                 "",
-                "Generated in the worker workspace because the supervisor root did not have a task brief file.",
+                _GENERATED_WORKER_TASK_BRIEF_MARKER,
                 "",
                 "## Coordination Root",
                 "- Auto workers inherit `PANTHEON_STATUS_ROOT`, `PANTHEON_COMMAND_ROOT`, and `PANTHEON_COMMAND_RUNTIME_SHA` from the supervisor.",
@@ -2903,7 +2943,7 @@ def _generated_worker_task_brief(
         [
             f"# Task Brief: {task.get('id') or task_id}",
             "",
-            "Generated in the worker workspace because the supervisor root did not have a task brief file.",
+            _GENERATED_WORKER_TASK_BRIEF_MARKER,
             "",
             "## Task",
             *task_lines,
@@ -2956,6 +2996,14 @@ def materialize_worker_context_files(
             _replace_request_context_path(request, rel_value, tracked_context)
             continue
 
+        removed_legacy = _remove_legacy_generated_task_briefs(
+            workspace_path,
+            candidates,
+        )
+        if removed_legacy:
+            request.metadata["removed_legacy_generated_context_files"] = (
+                removed_legacy
+            )
         generated_context = _generated_worker_task_brief_path(request.task_id)
         destination = workspace_path / generated_context
         destination.parent.mkdir(parents=True, exist_ok=True)

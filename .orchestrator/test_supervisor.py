@@ -931,6 +931,23 @@ class PantheonWorkerTaskBriefHygieneTests(unittest.TestCase):
             )
             self.assertEqual(self._git(workspace, "status", "--porcelain"), "")
 
+            legacy_brief = workspace / self.BRIEF_PATH
+            legacy_brief.parent.mkdir(parents=True, exist_ok=True)
+            legacy_brief.write_text(
+                "# Legacy generated context\n\n"
+                f"{supervisor._GENERATED_WORKER_TASK_BRIEF_MARKER}\n",
+                encoding="utf-8",
+            )
+            self.assertIn(
+                f"?? {self.BRIEF_PATH}",
+                self._git(
+                    workspace,
+                    "status",
+                    "--porcelain",
+                    "--untracked-files=all",
+                ),
+            )
+
             task["status"] = "review"
             task["next"] = "review the exact task head"
             reviewer_request = self._prepare(
@@ -945,6 +962,29 @@ class PantheonWorkerTaskBriefHygieneTests(unittest.TestCase):
             generated_text = generated_file.read_text(encoding="utf-8")
             self.assertIn("Status: review", generated_text)
             self.assertIn("review the exact task head", generated_text)
+            self.assertFalse(legacy_brief.exists())
+            self.assertEqual(
+                reviewer_request.metadata[
+                    "removed_legacy_generated_context_files"
+                ],
+                [self.BRIEF_PATH],
+            )
+            self.assertEqual(self._git(workspace, "status", "--porcelain"), "")
+
+            task["status"] = "review_approved"
+            task["next"] = "dynamic approval text must stay out of task source"
+            finalize_request = self._prepare(
+                config,
+                state,
+                task,
+                agent_id="codex",
+                reason=supervisor.REASON_OWNED_FINALIZE,
+                queue_event_id="evt-finalize-missing",
+            )
+            self.assertEqual(finalize_request.context_files, [generated_path])
+            finalize_text = generated_file.read_text(encoding="utf-8")
+            self.assertIn("query the governed `ai-status.sh show`", finalize_text)
+            self.assertNotIn("dynamic approval text", finalize_text)
             self.assertEqual(self._git(workspace, "status", "--porcelain"), "")
 
             with (
