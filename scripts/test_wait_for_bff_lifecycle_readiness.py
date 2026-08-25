@@ -101,6 +101,23 @@ def test_accepts_exact_ready_payload() -> None:
     assert observation is None
 
 
+def test_accepts_canonical_bff_ready_status_and_nested_controller() -> None:
+    canonical = payload(ready=True)
+    projector = canonical["dependencies"]["lifecycle_projector"]
+    projector["status"] = "ready"
+    projector["controller"] = {"status": "ready"}
+    del projector["controller_status"]
+
+    state, observation = classify_readiness(
+        200,
+        canonical,
+        expected_deployment_sha=SHA,
+    )
+
+    assert state == "ready"
+    assert observation is None
+
+
 def test_requires_two_consecutive_consistent_ready_samples() -> None:
     fake = FakeTime()
     inconsistent = payload(ready=True, checkpoint=9, source=10)
