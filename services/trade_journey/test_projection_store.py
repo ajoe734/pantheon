@@ -1527,3 +1527,56 @@ def test_projection_store_connect_fallback_sets_timeouts_on_custom_connector(pos
         assert cur.fetchone()[0] == "2500ms"
         cur.execute("SHOW lock_timeout")
         assert cur.fetchone()[0] == "1500ms"
+
+
+def test_projection_store_connect_timeout_fails_within_deadline() -> None:
+    import psycopg
+
+    # Non-routable TEST-NET-1 IP address to simulate blocked/unreachable PostgreSQL connect
+    unreachable_dsn = "postgresql://pantheon_app:pantheon_app@192.0.2.1:5432/pantheon"
+    store = ProjectionStore(
+        unreachable_dsn,
+        connect_timeout_seconds=1.0,
+    )
+    start_time = time.monotonic()
+    with pytest.raises((psycopg.OperationalError, psycopg.errors.ConnectionTimeout)):
+        store._connect_db()
+    elapsed = time.monotonic() - start_time
+    assert elapsed < 3.0, f"connect timeout took too long: {elapsed}s"
+
+
+def test_projection_store_connect_timeout_forwarded_and_enforced_on_connector() -> None:
+    captured_kwargs: dict[str, Any] = {}
+
+    def custom_connect(dsn, **kwargs):
+        captured_kwargs.update(kwargs)
+        raise TimeoutError("connection attempt timed out after deadline")
+
+    store = ProjectionStore(
+        "postgresql://unit/pantheon",
+        connect=custom_connect,
+        connect_timeout_seconds=2.4,
+        statement_timeout_seconds=4.0,
+        lock_timeout_seconds=3.0,
+    )
+    start_time = time.monotonic()
+    with pytest.raises(TimeoutError, match="connection attempt timed out after deadline"):
+        store._connect_db()
+    elapsed = time.monotonic() - start_time
+    assert elapsed < 1.0
+    assert captured_kwargs["connect_timeout"] == 3
+    assert "-c statement_timeout=4000" in captured_kwargs["options"]
+    assert "-c lock_timeout=3000" in captured_kwargs["options"]
+
+
+def test_projection_store_blocked_connect_error_propagation_on_fallback() -> None:
+    def failing_connect(dsn):
+        raise OSError("failed to connect to host: network unreachable")
+
+    store = ProjectionStore(
+        "postgresql://unit/pantheon",
+        connect=failing_connect,
+        connect_timeout_seconds=1.0,
+    )
+    with pytest.raises(OSError, match="network unreachable"):
+        store.get_controller_state("ctrl-1", "default", "paper")

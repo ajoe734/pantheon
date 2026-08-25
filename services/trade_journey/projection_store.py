@@ -297,7 +297,7 @@ class ProjectionStore:
     def _connect_db(self) -> Any:
         statement_timeout_ms = int(math.ceil(self.statement_timeout_seconds * 1000.0))
         lock_timeout_ms = int(math.ceil(self.lock_timeout_seconds * 1000.0))
-        connect_timeout_s = int(math.ceil(self.connect_timeout_seconds))
+        connect_timeout_s = max(1, int(math.ceil(self.connect_timeout_seconds)))
         options = f"-c statement_timeout={statement_timeout_ms} -c lock_timeout={lock_timeout_ms}"
         try:
             return self._connect(

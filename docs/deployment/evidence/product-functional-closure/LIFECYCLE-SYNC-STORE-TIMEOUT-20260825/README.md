@@ -21,9 +21,12 @@ This task bounds all synchronous `ProjectionStore` database operations with conf
 
 4. **Test Coverage**:
    - `test_projection_store_timeout_configuration_and_validation`: proves default timeout assignment and validation error handling.
+   - `test_projection_store_connect_timeout_fails_within_deadline`: proves deterministic connect failure within configured finite deadline when connecting to unreachable endpoints with psycopg.
+   - `test_projection_store_connect_timeout_forwarded_and_enforced_on_connector`: proves connect_timeout and statement/lock options forwarding to custom connectors.
+   - `test_projection_store_blocked_connect_error_propagation_on_fallback`: proves error propagation on fallback custom connectors.
    - `test_projection_store_statement_timeout_cancels_long_query`: proves PostgreSQL statement cancellation via `QueryCanceled` within configured deadline.
    - `test_projection_store_lock_timeout_cancels_blocked_lock`: proves blocked row/advisory locks cancel via `LockNotAvailable` / `QueryCanceled` within configured deadline.
    - `test_projection_store_connect_fallback_sets_timeouts_on_custom_connector`: proves fallback session timeout configuration on custom connectors.
    - `test_configured_relational_projector_binds_projection_timeouts`: proves environment variable threading to `ProjectionStore`.
-   - `test_run_worker_recovers_after_projection_store_timeout_failure`: proves worker records error and recovers on subsequent ticks.
+   - `test_run_worker_recovers_after_projection_store_timeout_failure`: proves intermediate failure mutation records degraded/failed status and error message without premature checkpoint advancement, followed by recovery and steady-state live poll transitions.
    - `test_configured_relational_projector_rejects_invalid_timeout_env_vars`: proves validation of invalid environment variable values.

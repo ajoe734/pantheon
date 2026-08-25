@@ -213,6 +213,7 @@ class _RecordingRelationalStore:
             mode=mutation.mode,
             status=mutation.status,
             accepted_live=mutation.accepted_live,
+            last_error_message=getattr(mutation, "error_message", "") or "",
             unresolved_quarantine_count=len(mutation.quarantines),
         )
         return self.controller
@@ -360,16 +361,21 @@ def test_relational_projector_postgres_restart_duplicate_and_contiguous_receipts
     """Exercise the active worker composition against a real transaction store."""
 
     schema = f"test_relational_worker_{uuid.uuid4().hex[:8]}"
+    ctrl_id = f"test_ctrl_{uuid.uuid4().hex[:8]}"
     store = ProjectionStore(relational_postgres_dsn, schema=schema, bootstrap=True)
     try:
         rows = lifecycle_rows()
-        first = RelationalLifecycleProjector(store, deployment_sha="relational-pg")
+        first = RelationalLifecycleProjector(
+            store, deployment_sha="relational-pg", controller_id=ctrl_id
+        )
         result = first.project_records(rows[:2], mode="live", source_high_watermark=2)
         assert result.checkpoint == 2
         assert result.accepted == 2
         assert not (tmp_path / "controller_state.json").exists()
 
-        restarted = RelationalLifecycleProjector(store, deployment_sha="relational-pg")
+        restarted = RelationalLifecycleProjector(
+            store, deployment_sha="relational-pg", controller_id=ctrl_id
+        )
         result = restarted.project_records(rows[2:3], mode="live", source_high_watermark=3)
         assert result.checkpoint == 3
         assert result.accepted == 1
@@ -1410,6 +1416,38 @@ def test_run_worker_recovers_after_projection_store_timeout_failure(
 
     assert asyncio.run(lifecycle_projector_module.run_worker()) == 0
     assert call_count == 2
+
+    # Verify exact durable mutations recorded across failure and recovery
+    assert len(store.mutations) == 3
+
+    # Tick 1: ProjectionStore timeout failure causes durable degraded/failed controller mutation
+    # without advancing the checkpoint prematurely.
+    failure_mutation = store.mutations[0]
+    assert failure_mutation.status == "failed"
+    assert failure_mutation.accepted_live is False
+    assert (
+        "TimeoutError: canceling statement due to statement timeout (10.0s)"
+        in failure_mutation.error_message
+    )
+    assert failure_mutation.receipts == []
+    assert failure_mutation.journeys == []
+
+    # Tick 2: Recovery tick successfully projects batch and advances checkpoint
+    recovery_mutation = store.mutations[1]
+    assert recovery_mutation.status == "recovering"
+    assert recovery_mutation.mode == "recovery"
+    assert recovery_mutation.error_message == ""
+    assert len(recovery_mutation.receipts) == 1
+    assert recovery_mutation.receipts[0].ingested_seq == 1
+
+    # Tick 3: Steady-state poll transitions to live and ready status
+    poll_mutation = store.mutations[2]
+    assert poll_mutation.status == "ready"
+    assert poll_mutation.mode == "live"
+    assert poll_mutation.accepted_live is True
+    assert poll_mutation.error_message == ""
+
+    # Final projector controller reflects successful recovery
     ctrl = projector.controller
     assert ctrl["checkpoint"] == 1
     assert ctrl["status"] == "ready"

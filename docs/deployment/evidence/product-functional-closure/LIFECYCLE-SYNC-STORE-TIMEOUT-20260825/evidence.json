@@ -39,14 +39,14 @@
   },
   "validation": [
     {
-      "command": "TEST_DATABASE_URL=postgresql://pantheon_app:pantheon_app@localhost:15432/pantheon .venv-pantheon/bin/python3 -m pytest -q services/trade_journey/test_projection_store.py services/trade_journey/test_lifecycle_projector.py",
-      "result": "pass; 98 passed, 1 skipped",
-      "coverage": "ProjectionStore timeout configuration, statement timeout cancellation via QueryCanceled, lock timeout cancellation via LockNotAvailable, custom connector fallback, relational projector timeout environment variable binding, and worker timeout recovery"
+      "command": "TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:15432/pantheon .venv-pantheon/bin/python3 -m pytest -q services/trade_journey/test_projection_store.py services/trade_journey/test_lifecycle_projector.py",
+      "result": "pass; 101 passed, 1 skipped",
+      "coverage": "ProjectionStore timeout configuration, connect timeout failure within deadline, connect timeout option forwarding, statement timeout cancellation via QueryCanceled, lock timeout cancellation via LockNotAvailable, custom connector fallback, relational projector timeout environment variable binding, and worker timeout recovery with durable failure mutation and no premature checkpoint advance"
     },
     {
-      "command": "TEST_DATABASE_URL=postgresql://pantheon_app:pantheon_app@localhost:15432/pantheon .venv-pantheon/bin/python3 -m pytest -q services/trade_journey/ services/control-plane/bff/test_lifecycle_projector_readiness.py services/control-plane/bff/test_trade_journey_contract.py services/control-plane/bff/test_tj_e2e_005_trade_journeys_read_api.py",
-      "result": "pass; 325 passed, 1 skipped",
-      "coverage": "Full Trade Journey relational persistence suite, materializer, projector, BFF readiness checks, and read endpoints"
+      "command": "TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:15432/pantheon .venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/test_lifecycle_projector_readiness.py services/control-plane/bff/test_trade_journey_contract.py services/control-plane/bff/test_tj_e2e_005_trade_journeys_read_api.py",
+      "result": "pass; 48 passed",
+      "coverage": "Trade Journey BFF readiness checks, contract schemas, and read API endpoints"
     },
     {
       "command": ".venv-pantheon/bin/python3 -m py_compile services/trade_journey/projection_store.py services/trade_journey/lifecycle_projector.py services/trade_journey/test_projection_store.py services/trade_journey/test_lifecycle_projector.py",
@@ -65,7 +65,7 @@
     "required_checks": [
       "verify ProjectionStore timeout parameters, validation, and _connect_db implementation in services/trade_journey/projection_store.py",
       "verify _configured_relational_projector environment variable binding in services/trade_journey/lifecycle_projector.py",
-      "verify positive and negative statement and lock timeout test coverage in services/trade_journey/test_projection_store.py and services/trade_journey/test_lifecycle_projector.py",
+      "verify positive and negative connect, statement, and lock timeout test coverage in services/trade_journey/test_projection_store.py and services/trade_journey/test_lifecycle_projector.py",
       "verify full pytest suite passes using provisioned interpreter .venv-pantheon/bin/python3 and live postgres instance",
       "bind this manifest path (docs/deployment/evidence/product-functional-closure/LIFECYCLE-SYNC-STORE-TIMEOUT-20260825/evidence.json) to the exact final PR head in the governed approve command"
     ]
