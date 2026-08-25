@@ -73,6 +73,7 @@ from dispatch_policy import (
     is_execution_dispatch_reason,
     normalized_status_set,
     ready_dispatch_settings,
+    validate_execution_resource_limits,
 )
 from multi_repo_registry import (
     artifact_repository_id,
@@ -1213,19 +1214,47 @@ def queued_account_counts(
     return counts
 
 
+ALLOWLISTED_EXECUTION_RESOURCES = frozenset({"pantheon-dev"})
+
+
 def task_execution_resources(task: Mapping[str, Any] | None) -> list[str]:
     if not isinstance(task, Mapping):
         return []
-    raw = task.get("execution_resources")
-    if isinstance(raw, list):
-        return [
-            str(item).strip().lower()
-            for item in raw
-            if isinstance(item, str) and str(item).strip()
-        ]
-    if isinstance(raw, str) and raw.strip():
-        return [raw.strip().lower()]
-    return []
+    if "execution_resources" not in task or task.get("execution_resources") is None:
+        return []
+    raw = task["execution_resources"]
+    if not isinstance(raw, list):
+        raise ValueError(
+            f"task.execution_resources must be a list, got {type(raw).__name__}: {raw!r}"
+        )
+    result: list[str] = []
+    for item in raw:
+        if not isinstance(item, str):
+            raise ValueError(
+                f"task.execution_resources elements must be str, got {type(item).__name__}: {item!r}"
+            )
+        val = item.strip().lower()
+        if not val:
+            raise ValueError("task.execution_resources element cannot be empty")
+        if val not in ALLOWLISTED_EXECUTION_RESOURCES:
+            raise ValueError(
+                f"task.execution_resources contains unknown/unallowlisted resource: {item!r}; "
+                f"allowlisted: {', '.join(sorted(ALLOWLISTED_EXECUTION_RESOURCES))}"
+            )
+        if val in result:
+            raise ValueError(
+                f"task.execution_resources contains duplicate resource: {item!r}"
+            )
+        result.append(val)
+    return result
+
+
+def queue_event_sort_key(event: Mapping[str, Any]) -> tuple[str, str]:
+    if not isinstance(event, Mapping):
+        return ("", "")
+    created_at = str(event.get("created_at") or event.get("queued_at") or "").strip()
+    event_id = str(event.get("event_id") or "").strip()
+    return (created_at, event_id)
 
 
 def active_execution_resource_counts(
@@ -1533,16 +1562,8 @@ def build_delivery_admission_snapshot(
         key: int(active_res.get(key, 0)) + int(pending_res.get(key, 0))
         for key in set(active_res) | set(pending_res)
     }
-    default_resource_limits = {"pantheon-dev": 1}
-    if resource_limits is not None:
-        limits = dict(resource_limits)
-    else:
-        configured_limits = settings.get("execution_resource_limits")
-        limits = (
-            dict(configured_limits)
-            if isinstance(configured_limits, Mapping)
-            else default_resource_limits
-        )
+    raw_limits = resource_limits if resource_limits is not None else settings.get("execution_resource_limits")
+    limits = validate_execution_resource_limits(raw_limits)
     return rewrite_dispatch_admission.AdmissionSnapshot(
         now=datetime.now(timezone.utc),
         endpoint_health=_admission_health_records(health, "endpoints"),
@@ -3938,7 +3959,7 @@ def process_queue(
     changed = False
     task_map = task_index_from_status(config, load_status(config))
     active_statuses = {str(value) for value in ready_dispatch_settings(config).get("active_worker_statuses", [])}
-    for event in queue_events(state):
+    for event in sorted(queue_events(state), key=queue_event_sort_key):
         event_id = event.get("event_id")
         if not event_id:
             continue
@@ -12982,10 +13003,12 @@ def evaluate_queued_delivery_admission(
     event_id = str(event.get("event_id") or "")
     if task is None or not endpoint_id or not target_agent:
         return None
+    current_key = queue_event_sort_key(event)
     other_events = [
         candidate
         for candidate in queue_events
         if str(candidate.get("event_id") or "") != event_id
+        and queue_event_sort_key(candidate) < current_key
     ]
     delivery_state = deepcopy(state)
     queue_records = ((delivery_state.get("queue") or {}).get("events") or {})

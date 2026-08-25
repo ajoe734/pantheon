@@ -7583,6 +7583,249 @@ class SidecarTaskTests(unittest.TestCase):
             with self.assertRaisesRegex(SystemExit, "must be a string list"):
                 ai_status.command_assign(self.state, ["HOSTED-DEV-004", "Codex", "Claude"])
 
+    def test_execution_resource_command_adds_and_removes_resource_on_todo_task(self) -> None:
+        task = {
+            "id": "TASK-RES-001",
+            "title": "Hosted resource test",
+            "status": "todo",
+            "owner": "Codex",
+            "reviewer": "Claude",
+            "execution_resources": [],
+            "last_update": "2026-08-25T10:00:00Z",
+        }
+        self.state["tasks"].append(task)
+
+        env = {"AI_NAME": "Human/Ops"}
+        with mock.patch.dict(os.environ, env, clear=False):
+            ai_status.command_execution_resource(
+                self.state,
+                ["TASK-RES-001", "add", "pantheon-dev", "Admit shared dev environment"],
+            )
+
+        updated = ai_status.get_task(self.state, "TASK-RES-001")
+        self.assertIsNotNone(updated)
+        self.assertEqual(updated["execution_resources"], ["pantheon-dev"])
+        self.assertEqual(updated["next"], "Admit shared dev environment")
+        self.assertEqual(
+            updated["contract_revision"],
+            {
+                "kind": "execution_resource",
+                "action": "add",
+                "resource": "pantheon-dev",
+                "previous": [],
+                "current": ["pantheon-dev"],
+                "reason": "Admit shared dev environment",
+                "updated_at": updated["last_update"],
+                "updated_by": "Human/Ops",
+            },
+        )
+
+        lines = self._test_log_file.read_text(encoding="utf-8").splitlines()
+        events = [json.loads(line) for line in lines if line.strip()]
+        rev_events = [e for e in events if e.get("type") == "execution_resource_revised"]
+        self.assertEqual(len(rev_events), 1)
+        self.assertEqual(rev_events[0]["task_id"], "TASK-RES-001")
+        self.assertEqual(rev_events[0]["action"], "add")
+        self.assertEqual(rev_events[0]["resource"], "pantheon-dev")
+
+        # Now remove resource
+        with mock.patch.dict(os.environ, env, clear=False):
+            ai_status.command_execution_resource(
+                self.state,
+                ["TASK-RES-001", "remove", "pantheon-dev", "Release shared dev environment claim"],
+            )
+
+        removed = ai_status.get_task(self.state, "TASK-RES-001")
+        self.assertIsNotNone(removed)
+        self.assertEqual(removed["execution_resources"], [])
+        self.assertEqual(removed["contract_revision"]["action"], "remove")
+        self.assertEqual(removed["contract_revision"]["previous"], ["pantheon-dev"])
+        self.assertEqual(removed["contract_revision"]["current"], [])
+
+    def test_execution_resource_command_works_on_blocked_task(self) -> None:
+        task = {
+            "id": "TASK-RES-BLOCKED",
+            "title": "Blocked task resource revision",
+            "status": "blocked",
+            "owner": "Codex",
+            "reviewer": "Claude",
+            "waiting_for": "External",
+            "execution_resources": [],
+            "last_update": "2026-08-25T10:00:00Z",
+        }
+        self.state["tasks"].append(task)
+
+        env = {"AI_NAME": "Human/Ops"}
+        with mock.patch.dict(os.environ, env, clear=False):
+            ai_status.command_execution_resource(
+                self.state,
+                ["TASK-RES-BLOCKED", "add", "pantheon-dev", "Admit dev resource while blocked"],
+            )
+
+        updated = ai_status.get_task(self.state, "TASK-RES-BLOCKED")
+        self.assertEqual(updated["execution_resources"], ["pantheon-dev"])
+
+    def test_execution_resource_command_rejects_non_human_ops(self) -> None:
+        task = {
+            "id": "TASK-RES-NON-HUMAN",
+            "title": "Non human actor test",
+            "status": "todo",
+            "owner": "Codex",
+            "reviewer": "Claude",
+            "last_update": "2026-08-25T10:00:00Z",
+        }
+        self.state["tasks"].append(task)
+
+        env = {"AI_NAME": "Codex"}
+        with mock.patch.dict(os.environ, env, clear=False):
+            with self.assertRaisesRegex(SystemExit, "Only Human/Ops can revise execution resources"):
+                ai_status.command_execution_resource(
+                    self.state,
+                    ["TASK-RES-NON-HUMAN", "add", "pantheon-dev", "Codex attempt"],
+                )
+
+    def test_execution_resource_command_rejects_active_task_lifecycle(self) -> None:
+        for active_status in ("in_progress", "review", "review_approved"):
+            task_id = f"TASK-RES-ACTIVE-{active_status.upper()}"
+            task = {
+                "id": task_id,
+                "title": f"Active task in {active_status}",
+                "status": active_status,
+                "owner": "Codex",
+                "reviewer": "Claude",
+                "last_update": "2026-08-25T10:00:00Z",
+            }
+            self.state["tasks"].append(task)
+            env = {"AI_NAME": "Human/Ops"}
+            with mock.patch.dict(os.environ, env, clear=False):
+                with self.assertRaisesRegex(SystemExit, "is active in lifecycle state"):
+                    ai_status.command_execution_resource(
+                        self.state,
+                        [task_id, "add", "pantheon-dev", "Active task revision attempt"],
+                    )
+
+    def test_execution_resource_command_rejects_terminal_task_lifecycle(self) -> None:
+        for term_status in ("done", "superseded"):
+            task_id = f"TASK-RES-TERM-{term_status.upper()}"
+            task = {
+                "id": task_id,
+                "title": f"Terminal task in {term_status}",
+                "status": term_status,
+                "owner": "Codex",
+                "reviewer": "Claude",
+                "last_update": "2026-08-25T10:00:00Z",
+            }
+            self.state["tasks"].append(task)
+            env = {"AI_NAME": "Human/Ops"}
+            with mock.patch.dict(os.environ, env, clear=False):
+                with self.assertRaisesRegex(SystemExit, "is terminal in lifecycle state"):
+                    ai_status.command_execution_resource(
+                        self.state,
+                        [task_id, "add", "pantheon-dev", "Terminal task revision attempt"],
+                    )
+
+    def test_execution_resource_command_rejects_unallowlisted_resource(self) -> None:
+        task = {
+            "id": "TASK-RES-UNALLOWLISTED",
+            "title": "Unallowlisted resource test",
+            "status": "todo",
+            "owner": "Codex",
+            "reviewer": "Claude",
+            "last_update": "2026-08-25T10:00:00Z",
+        }
+        self.state["tasks"].append(task)
+        env = {"AI_NAME": "Human/Ops"}
+        with mock.patch.dict(os.environ, env, clear=False):
+            with self.assertRaisesRegex(SystemExit, "allowlisted execution resources"):
+                ai_status.command_execution_resource(
+                    self.state,
+                    ["TASK-RES-UNALLOWLISTED", "add", "unallowlisted-vm", "Invalid resource"],
+                )
+
+    def test_execution_resource_command_rejects_invalid_action_and_unknown_task(self) -> None:
+        task = {
+            "id": "TASK-RES-INVALID",
+            "title": "Invalid action test",
+            "status": "todo",
+            "owner": "Codex",
+            "reviewer": "Claude",
+            "last_update": "2026-08-25T10:00:00Z",
+        }
+        self.state["tasks"].append(task)
+        env = {"AI_NAME": "Human/Ops"}
+        with mock.patch.dict(os.environ, env, clear=False):
+            with self.assertRaisesRegex(SystemExit, "Action must be add or remove"):
+                ai_status.command_execution_resource(
+                    self.state,
+                    ["TASK-RES-INVALID", "modify", "pantheon-dev", "Invalid action"],
+                )
+            with self.assertRaisesRegex(SystemExit, "Unknown task: UNKNOWN-TASK-ID"):
+                ai_status.command_execution_resource(
+                    self.state,
+                    ["UNKNOWN-TASK-ID", "add", "pantheon-dev", "Unknown task"],
+                )
+            with self.assertRaisesRegex(SystemExit, "Usage: execution-resource"):
+                ai_status.command_execution_resource(
+                    self.state,
+                    ["TASK-RES-INVALID", "add"],
+                )
+
+    def test_execution_resource_command_rejects_malformed_existing_execution_resources(self) -> None:
+        malformed_cases = [
+            ("TASK-MAL-STR", "pantheon-dev", "expected list or null"),
+            ("TASK-MAL-NON-STR", [123], "all elements must be strings"),
+            ("TASK-MAL-EMPTY-STR", [""], "empty string element"),
+            ("TASK-MAL-UNALLOW", ["bad-resource"], "unallowlisted execution_resources"),
+            ("TASK-MAL-DUP", ["pantheon-dev", "pantheon-dev"], "duplicate execution_resources"),
+            ("TASK-MAL-DICT", {"pantheon-dev": 1}, "expected list or null"),
+        ]
+        for task_id, malformed_val, error_regex in malformed_cases:
+            task = {
+                "id": task_id,
+                "title": f"Malformed test for {task_id}",
+                "status": "todo",
+                "owner": "Codex",
+                "reviewer": "Claude",
+                "execution_resources": malformed_val,
+                "last_update": "2026-08-25T10:00:00Z",
+            }
+            self.state["tasks"].append(task)
+            env = {"AI_NAME": "Human/Ops"}
+            with mock.patch.dict(os.environ, env, clear=False):
+                with self.assertRaisesRegex(SystemExit, error_regex):
+                    ai_status.command_execution_resource(
+                        self.state,
+                        [task_id, "add", "pantheon-dev", "Migration attempt on malformed task"],
+                    )
+
+    def test_execution_resource_command_alias_removed(self) -> None:
+        # Confirm that execution_resource (with underscore) is no longer a recognized command
+        with (
+            mock.patch.object(ai_status, "validate_status_command_runtime_binding"),
+            mock.patch.object(ai_status, "validate_status_root_binding"),
+            mock.patch.object(ai_status, "load_state", return_value=self.state),
+            self.assertRaisesRegex(SystemExit, "Unknown command: execution_resource"),
+        ):
+            ai_status.main(["ai_status.py", "execution_resource", "TASK-001", "add", "pantheon-dev", "reason"])
+
+    def test_command_show_reads_back_execution_resources(self) -> None:
+        task = {
+            "id": "TASK-SHOW-RES",
+            "title": "Show execution resource test",
+            "status": "todo",
+            "owner": "Codex",
+            "reviewer": "Claude",
+            "execution_resources": ["pantheon-dev"],
+            "last_update": "2026-08-25T10:00:00Z",
+        }
+        self.state["tasks"].append(task)
+        buf = io.StringIO()
+        with mock.patch("sys.stdout", buf):
+            ai_status.command_show(self.state, ["TASK-SHOW-RES"])
+        payload = json.loads(buf.getvalue())
+        self.assertEqual(payload["source"], "active")
+        self.assertEqual(payload["task"]["execution_resources"], ["pantheon-dev"])
+
     def test_assign_preserves_antigravity_runtime_agent_names(self) -> None:
         ai_status.command_assign(self.state, ["APP-002-SIDECAR-REVIEW", "Antigravity2", "Claude"])
 

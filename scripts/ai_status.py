@@ -170,6 +170,7 @@ LOCAL_HUMAN_OPS_ACTIONS = frozenset(
         "assign",
         "milestone",
         "dependency-track",
+        "execution-resource",
         "reopen",
         "note",
         "reconcile_merged_done",
@@ -488,6 +489,7 @@ TASK_ID_COMMAND_ARG_INDEX: dict[str, int] = {
     "assign": 0,
     "milestone": 0,
     "dependency-track": 0,
+    "execution-resource": 0,
     "start": 0,
     "progress": 0,
     "note": 0,
@@ -5850,6 +5852,112 @@ def command_dependency_track(state: dict[str, Any], args: list[str]) -> None:
     )
 
 
+def command_execution_resource(state: dict[str, Any], args: list[str]) -> None:
+    """Apply one audited execution-resource contract revision to a non-active task."""
+
+    if len(args) < 4:
+        raise SystemExit(
+            "Usage: execution-resource <task-id> <add|remove> "
+            "<resource> <reason>"
+        )
+    task_id, action, resource, reason = (
+        args[0],
+        args[1].strip().lower(),
+        args[2].strip().lower(),
+        args[3],
+    )
+    if current_actor() != "Human/Ops":
+        raise SystemExit("Only Human/Ops can revise execution resources")
+    if action not in {"add", "remove"}:
+        raise SystemExit("Action must be add or remove")
+    if not resource or resource not in ALLOWLISTED_EXECUTION_RESOURCES:
+        raise SystemExit(
+            "Task execution resources must use allowlisted execution resources: "
+            + ", ".join(sorted(ALLOWLISTED_EXECUTION_RESOURCES))
+        )
+    task = get_task(state, task_id)
+    if task is None:
+        raise SystemExit(f"Unknown task: {task_id}")
+    status = str(task.get("status") or "").lower()
+    if status in {
+        "in_progress",
+        "review",
+        "review_approved",
+    }:
+        raise SystemExit(
+            f"Task {task_id} is active in lifecycle state {task.get('status')}; "
+            "revise execution resources before dispatch"
+        )
+    if status in {"done", "superseded"} or has_terminal_fact(state, task_id):
+        raise SystemExit(
+            f"Task {task_id} is terminal in lifecycle state {task.get('status')}; "
+            "cannot revise execution resources"
+        )
+    timestamp = iso_now()
+    raw_resources = task.get("execution_resources")
+    if raw_resources is None:
+        current_resources: list[str] = []
+    elif isinstance(raw_resources, list):
+        if any(not isinstance(r, str) for r in raw_resources):
+            raise SystemExit(
+                f"Task {task_id} has malformed execution_resources: all elements must be strings"
+            )
+        if any(not r.strip() for r in raw_resources):
+            raise SystemExit(
+                f"Task {task_id} has malformed execution_resources: empty string element"
+            )
+        if any(r.strip().lower() not in ALLOWLISTED_EXECUTION_RESOURCES for r in raw_resources):
+            raise SystemExit(
+                f"Task {task_id} has unallowlisted execution_resources: {raw_resources!r}"
+            )
+        normalized_existing = [r.strip().lower() for r in raw_resources]
+        if len(normalized_existing) != len(set(normalized_existing)):
+            raise SystemExit(
+                f"Task {task_id} has duplicate execution_resources: {raw_resources!r}"
+            )
+        current_resources = normalized_existing
+    else:
+        raise SystemExit(
+            f"Task {task_id} has malformed execution_resources: expected list or null, got {type(raw_resources).__name__}"
+        )
+
+    if action == "add":
+        if resource in current_resources:
+            normalized_resources = list(current_resources)
+        else:
+            normalized_resources = current_resources + [resource]
+    else:
+        normalized_resources = [r for r in current_resources if r != resource]
+
+    task["execution_resources"] = normalized_resources
+    task["contract_revision"] = {
+        "kind": "execution_resource",
+        "action": action,
+        "resource": resource,
+        "previous": current_resources,
+        "current": normalized_resources,
+        "reason": reason,
+        "updated_at": timestamp,
+        "updated_by": "Human/Ops",
+    }
+    task["last_update"] = timestamp
+    task["next"] = reason
+    append_log(
+        {
+            "ts": timestamp,
+            "agent": "Human/Ops",
+            "type": "execution_resource_revised",
+            "task_id": task_id,
+            "action": action,
+            "resource": resource,
+            "previous": current_resources,
+            "current": normalized_resources,
+            "message": reason,
+            **local_human_ops_audit_fields(),
+        }
+    )
+
+
 def command_reopen(state: dict[str, Any], args: list[str]) -> None:
     if len(args) < 2:
         raise SystemExit("Usage: reopen <task-id> <message>")
@@ -9228,6 +9336,7 @@ def main(argv: list[str]) -> int:
         "note": command_note,
         "milestone": command_milestone,
         "dependency-track": command_dependency_track,
+        "execution-resource": command_execution_resource,
         "reopen": command_reopen,
         "handoff": command_handoff,
         "blocker": command_blocker,
