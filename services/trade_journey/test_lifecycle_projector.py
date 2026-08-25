@@ -936,3 +936,290 @@ def test_run_worker_catchup_transitions_from_recovery_to_live_ready(monkeypatch:
     assert ctrl["mode"] == "live"
     assert ctrl["status"] == "ready"
     assert ctrl["accepted_live"] is True
+
+
+def test_postgres_lifecycle_source_high_watermark_connect_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def connect(dsn: str) -> None:
+        await asyncio.Event().wait()
+
+    monkeypatch.setitem(sys.modules, "asyncpg", types.SimpleNamespace(connect=connect))
+    source = PostgresLifecycleSource("postgresql://unit", timeout_seconds=0.01)
+
+    with pytest.raises(TimeoutError):
+        asyncio.run(source.high_watermark())
+
+
+def test_postgres_lifecycle_source_high_watermark_query_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[str] = []
+
+    class Connection:
+        async def fetchval(self, *args: object, **kwargs: object) -> None:
+            calls.append("fetchval")
+            await asyncio.Event().wait()
+
+        async def close(self) -> None:
+            calls.append("close")
+
+        def terminate(self) -> None:
+            calls.append("terminate")
+
+    async def connect(dsn: str) -> Connection:
+        calls.append("connect")
+        return Connection()
+
+    monkeypatch.setitem(sys.modules, "asyncpg", types.SimpleNamespace(connect=connect))
+    source = PostgresLifecycleSource("postgresql://unit", timeout_seconds=0.01)
+
+    with pytest.raises(TimeoutError):
+        asyncio.run(source.high_watermark())
+
+    assert "connect" in calls
+    assert "fetchval" in calls
+    assert "close" in calls or "terminate" in calls
+
+
+def test_postgres_lifecycle_source_high_watermark_close_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[str] = []
+
+    class Connection:
+        async def fetchval(self, *args: object, **kwargs: object) -> int:
+            calls.append("fetchval")
+            return 10
+
+        async def close(self) -> None:
+            calls.append("close")
+            await asyncio.Event().wait()
+
+        def terminate(self) -> None:
+            calls.append("terminate")
+
+    async def connect(dsn: str) -> Connection:
+        calls.append("connect")
+        return Connection()
+
+    monkeypatch.setitem(sys.modules, "asyncpg", types.SimpleNamespace(connect=connect))
+    source = PostgresLifecycleSource("postgresql://unit", timeout_seconds=0.01)
+
+    with pytest.raises(TimeoutError):
+        asyncio.run(source.high_watermark())
+
+    assert calls == ["connect", "fetchval", "close", "terminate"]
+
+
+def test_postgres_lifecycle_source_fetch_after_connect_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def connect(dsn: str) -> None:
+        await asyncio.Event().wait()
+
+    monkeypatch.setitem(sys.modules, "asyncpg", types.SimpleNamespace(connect=connect))
+    source = PostgresLifecycleSource("postgresql://unit", timeout_seconds=0.01)
+
+    with pytest.raises(TimeoutError):
+        asyncio.run(source.fetch_after(0, limit=10))
+
+
+def test_postgres_lifecycle_source_fetch_after_query_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[str] = []
+
+    class Connection:
+        async def fetch(self, *args: object, **kwargs: object) -> list[dict]:
+            calls.append("fetch")
+            await asyncio.Event().wait()
+
+        async def close(self) -> None:
+            calls.append("close")
+
+        def terminate(self) -> None:
+            calls.append("terminate")
+
+    async def connect(dsn: str) -> Connection:
+        calls.append("connect")
+        return Connection()
+
+    monkeypatch.setitem(sys.modules, "asyncpg", types.SimpleNamespace(connect=connect))
+    source = PostgresLifecycleSource("postgresql://unit", timeout_seconds=0.01)
+
+    with pytest.raises(TimeoutError):
+        asyncio.run(source.fetch_after(0, limit=10))
+
+    assert "connect" in calls
+    assert "fetch" in calls
+    assert "close" in calls or "terminate" in calls
+
+
+def test_postgres_lifecycle_source_fetch_after_close_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[str] = []
+
+    class Connection:
+        async def fetch(self, *args: object, **kwargs: object) -> list[dict]:
+            calls.append("fetch")
+            return []
+
+        async def close(self) -> None:
+            calls.append("close")
+            await asyncio.Event().wait()
+
+        def terminate(self) -> None:
+            calls.append("terminate")
+
+    async def connect(dsn: str) -> Connection:
+        calls.append("connect")
+        return Connection()
+
+    monkeypatch.setitem(sys.modules, "asyncpg", types.SimpleNamespace(connect=connect))
+    source = PostgresLifecycleSource("postgresql://unit", timeout_seconds=0.01)
+
+    with pytest.raises(TimeoutError):
+        asyncio.run(source.fetch_after(0, limit=10))
+
+    assert calls == ["connect", "fetch", "close", "terminate"]
+
+
+def test_postgres_lifecycle_source_start_listener_and_close_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[str] = []
+
+    class Connection:
+        async def add_listener(self, *args: object, **kwargs: object) -> None:
+            calls.append("add_listener")
+            await asyncio.Event().wait()
+
+        async def close(self) -> None:
+            calls.append("close")
+            await asyncio.Event().wait()
+
+        def terminate(self) -> None:
+            calls.append("terminate")
+
+    async def connect(dsn: str) -> Connection:
+        calls.append("connect")
+        return Connection()
+
+    monkeypatch.setitem(sys.modules, "asyncpg", types.SimpleNamespace(connect=connect))
+    source = PostgresLifecycleSource("postgresql://unit", timeout_seconds=0.01)
+
+    with pytest.raises(TimeoutError):
+        asyncio.run(source.start_listener())
+
+    assert "connect" in calls
+    assert "add_listener" in calls
+    assert "close" in calls or "terminate" in calls
+
+
+def test_postgres_lifecycle_source_close_listener_bounded_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[str] = []
+
+    class Connection:
+        async def close(self) -> None:
+            calls.append("close")
+            await asyncio.Event().wait()
+
+        def terminate(self) -> None:
+            calls.append("terminate")
+
+    source = PostgresLifecycleSource("postgresql://unit", timeout_seconds=0.01)
+    source._listener = Connection()
+
+    asyncio.run(source.close())
+    assert calls == ["close", "terminate"]
+    assert source._listener is None
+
+
+def test_run_worker_recovers_after_source_timeout_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    store = _RecordingRelationalStore()
+    projector = RelationalLifecycleProjector(
+        store, deployment_sha="timeout-recovery-sha", clock=lambda: NOW
+    )
+
+    class RecoveringSource:
+        def __init__(self) -> None:
+            self.tick = 0
+
+        async def verify_read_contract(self) -> None:
+            return None
+
+        async def high_watermark(self) -> int:
+            self.tick += 1
+            if self.tick == 1:
+                raise TimeoutError("lifecycle source high_watermark connect deadline exhausted (10.0s)")
+            return 0
+
+        async def start_listener(self) -> None:
+            return None
+
+        async def fetch_after(self, checkpoint: int, *, limit: int) -> list[dict]:
+            return []
+
+        async def wait(self, timeout: float) -> None:
+            return None
+
+        async def close(self) -> None:
+            return None
+
+    monkeypatch.setattr(
+        lifecycle_projector_module,
+        "_configured_relational_projector",
+        lambda: projector,
+    )
+    monkeypatch.setattr(
+        lifecycle_projector_module,
+        "PostgresLifecycleSource",
+        lambda *args, **kwargs: RecoveringSource(),
+    )
+    monkeypatch.setenv("TELEMETRY_DB_DSN", "postgresql://unit")
+    monkeypatch.setenv("LIFECYCLE_PROJECTOR_MAX_TICKS", "2")
+    monkeypatch.setenv("GIT_SHA", "timeout-recovery-sha")
+
+    assert asyncio.run(lifecycle_projector_module.run_worker()) == 0
+    ctrl = projector.controller
+    assert ctrl["checkpoint"] == 0
+    assert ctrl["source_high_watermark"] == 0
+    assert ctrl["backlog"] == 0
+    assert ctrl["mode"] == "live"
+    assert ctrl["status"] == "ready"
+    assert ctrl["accepted_live"] is True
+    assert ctrl["last_error"] is None
+
+
+def test_run_worker_env_var_threads_source_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured_kwargs: dict[str, object] = {}
+
+    class DummySource:
+        def __init__(self, dsn: str, **kwargs: object) -> None:
+            captured_kwargs.update(kwargs)
+
+        async def verify_read_contract(self) -> None:
+            return None
+
+        async def high_watermark(self) -> int:
+            return 0
+
+        async def start_listener(self) -> None:
+            return None
+
+        async def fetch_after(self, checkpoint: int, *, limit: int) -> list[dict]:
+            return []
+
+        async def wait(self, timeout: float) -> None:
+            return None
+
+        async def close(self) -> None:
+            return None
+
+    fake_projector = _FakeRelationalProjector()
+    monkeypatch.setattr(
+        lifecycle_projector_module,
+        "_configured_relational_projector",
+        lambda: fake_projector,
+    )
+    monkeypatch.setattr(
+        lifecycle_projector_module,
+        "PostgresLifecycleSource",
+        DummySource,
+    )
+    monkeypatch.setenv("TELEMETRY_DB_DSN", "postgresql://unit")
+    monkeypatch.setenv("LIFECYCLE_PROJECTOR_SOURCE_TIMEOUT_SECONDS", "7.5")
+    monkeypatch.setenv("LIFECYCLE_PROJECTOR_STARTUP_TIMEOUT_SECONDS", "12.5")
+    monkeypatch.setenv("LIFECYCLE_PROJECTOR_MAX_TICKS", "1")
+
+    assert asyncio.run(lifecycle_projector_module.run_worker()) == 0
+    assert captured_kwargs["timeout_seconds"] == 7.5
+    assert captured_kwargs["startup_timeout_seconds"] == 12.5
