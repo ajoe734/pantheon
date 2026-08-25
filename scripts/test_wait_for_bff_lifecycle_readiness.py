@@ -11,6 +11,7 @@ from scripts.wait_for_bff_lifecycle_readiness import (
     classify_readiness,
     confirm_exact_target,
     endpoint_url,
+    exact_deployment_evidence,
     wait_for_readiness,
 )
 
@@ -107,6 +108,8 @@ def test_accepts_canonical_bff_ready_status_and_nested_controller() -> None:
     projector["status"] = "ready"
     projector["controller"] = {"status": "ready"}
     del projector["controller_status"]
+    projector["freshness_age_seconds"] = 1.0
+    del projector["freshness"]
 
     state, observation = classify_readiness(
         200,
@@ -116,6 +119,49 @@ def test_accepts_canonical_bff_ready_status_and_nested_controller() -> None:
 
     assert state == "ready"
     assert observation is None
+
+
+def test_rejects_canonical_stale_freshness_age() -> None:
+    canonical = payload(ready=True)
+    projector = canonical["dependencies"]["lifecycle_projector"]
+    projector["status"] = "ready"
+    projector["controller"] = {"status": "ready"}
+    del projector["controller_status"]
+    projector["freshness_age_seconds"] = 301.0
+    del projector["freshness"]
+
+    state, observation = classify_readiness(
+        200,
+        canonical,
+        expected_deployment_sha=SHA,
+    )
+
+    assert state == "unavailable"
+    assert observation is None
+
+
+def test_exact_evidence_accepts_canonical_freshness_age() -> None:
+    canonical = payload(ready=True)
+    projector = canonical["dependencies"]["lifecycle_projector"]
+    projector["freshness_age_seconds"] = 1.0
+    del projector["freshness"]
+
+    assert exact_deployment_evidence(
+        canonical,
+        expected_deployment_sha=SHA,
+    ) == "exact"
+
+
+def test_exact_evidence_rejects_expired_canonical_freshness_age() -> None:
+    canonical = payload(ready=True)
+    projector = canonical["dependencies"]["lifecycle_projector"]
+    projector["freshness_age_seconds"] = 301.0
+    del projector["freshness"]
+
+    assert exact_deployment_evidence(
+        canonical,
+        expected_deployment_sha=SHA,
+    ) == "contradicted"
 
 
 def test_requires_two_consecutive_consistent_ready_samples() -> None:
