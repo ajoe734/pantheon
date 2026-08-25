@@ -5113,16 +5113,19 @@ def _bridge_assignment_from_metadata(
         }
     if "execution_resources" in spec:
         execution_resources = spec.get("execution_resources")
-        if not isinstance(execution_resources, list) or any(
+        if execution_resources is None or not isinstance(execution_resources, list) or any(
             not isinstance(item, str) for item in execution_resources
         ):
             raise SystemExit(
                 "Bridge assignment task_spec.execution_resources must be a string list"
             )
+        if any(not str(item).strip() for item in execution_resources):
+            raise SystemExit(
+                "Bridge assignment task_spec.execution_resources contains an empty string element"
+            )
         normalized_resources = [
             str(item).strip().lower()
             for item in execution_resources
-            if str(item).strip()
         ]
         if any(
             item not in ALLOWLISTED_EXECUTION_RESOURCES
@@ -5130,6 +5133,10 @@ def _bridge_assignment_from_metadata(
         ):
             raise SystemExit(
                 "Bridge assignment task_spec.execution_resources contains an unallowlisted resource"
+            )
+        if len(normalized_resources) != len(set(normalized_resources)):
+            raise SystemExit(
+                "Bridge assignment task_spec.execution_resources contains duplicate resources"
             )
         normalized_spec["execution_resources"] = normalized_resources
     for field in ("phase", "summary"):
@@ -5389,19 +5396,25 @@ def command_assign(state: dict[str, Any], args: list[str]) -> bool | None:
         phase = os.environ.get("TASK_PHASE", "Unassigned")
         depends_on = parse_csv_env("TASK_DEPENDS_ON")
         dependency_tracks = parse_json_env("TASK_DEPENDENCY_TRACKS_JSON")
-        raw_resources = os.environ.get("TASK_EXECUTION_RESOURCES_JSON", "").strip()
-        if raw_resources:
+        raw_resources_json = os.environ.get("TASK_EXECUTION_RESOURCES_JSON")
+        raw_resources_csv = os.environ.get("TASK_EXECUTION_RESOURCES")
+        if raw_resources_json is not None and raw_resources_json.strip():
             try:
-                parsed = json.loads(raw_resources)
+                parsed = json.loads(raw_resources_json)
             except Exception:
                 raise SystemExit("TASK_EXECUTION_RESOURCES_JSON must be a valid JSON list")
-            if not isinstance(parsed, list) or any(not isinstance(x, str) for x in parsed):
+            if parsed is None or not isinstance(parsed, list) or any(not isinstance(x, str) for x in parsed):
                 raise SystemExit("TASK_EXECUTION_RESOURCES_JSON must be a string list")
-            execution_resources = [str(x).strip().lower() for x in parsed if str(x).strip()]
+            if any(not str(x).strip() for x in parsed):
+                raise SystemExit("Task execution resources: empty string element")
+            execution_resources = [str(x).strip().lower() for x in parsed]
+        elif raw_resources_csv is not None and raw_resources_csv.strip():
+            raw_parts = [x.strip() for x in raw_resources_csv.split(",")]
+            if any(not x for x in raw_parts):
+                raise SystemExit("Task execution resources: empty string element")
+            execution_resources = [x.lower() for x in raw_parts]
         else:
-            execution_resources = [
-                x.lower() for x in parse_csv_env("TASK_EXECUTION_RESOURCES") if x
-            ]
+            execution_resources = []
         artifacts = parse_csv_env("TASK_ARTIFACTS")
         acceptance = parse_csv_env("TASK_ACCEPTANCE")
     if any(
@@ -5428,11 +5441,15 @@ def command_assign(state: dict[str, Any], args: list[str]) -> bool | None:
             "Task execution resources must use allowlisted execution resources: "
             + ", ".join(sorted(ALLOWLISTED_EXECUTION_RESOURCES))
         )
-    execution_resources = [
+    normalized_resources = [
         str(res).strip().lower()
         for res in execution_resources
-        if str(res).strip()
     ]
+    if len(normalized_resources) != len(set(normalized_resources)):
+        raise SystemExit(
+            f"Task execution resources contains duplicate resource: {execution_resources!r}"
+        )
+    execution_resources = normalized_resources
 
     task = get_task(state, task_id)
     if task is not None and parse_bool_env("TASK_ASSIGN_CREATE_ONLY") is True:
@@ -5879,6 +5896,11 @@ def command_execution_resource(state: dict[str, Any], args: list[str]) -> None:
     if task is None:
         raise SystemExit(f"Unknown task: {task_id}")
     status = str(task.get("status") or "").lower()
+    if has_terminal_fact(state, task_id) or status in {"done", "superseded"}:
+        raise SystemExit(
+            f"Task {task_id} is terminal in lifecycle state {task.get('status')}; "
+            "cannot revise execution resources"
+        )
     if status in {
         "in_progress",
         "review",
@@ -5888,10 +5910,10 @@ def command_execution_resource(state: dict[str, Any], args: list[str]) -> None:
             f"Task {task_id} is active in lifecycle state {task.get('status')}; "
             "revise execution resources before dispatch"
         )
-    if status in {"done", "superseded"} or has_terminal_fact(state, task_id):
+    if status not in {"todo", "blocked"}:
         raise SystemExit(
-            f"Task {task_id} is terminal in lifecycle state {task.get('status')}; "
-            "cannot revise execution resources"
+            f"Task {task_id} is in non-pre-dispatch lifecycle state {task.get('status')!r}; "
+            "execution resources can only be revised in pre-dispatch states todo or blocked"
         )
     timestamp = iso_now()
     if "execution_resources" not in task:

@@ -7583,6 +7583,92 @@ class SidecarTaskTests(unittest.TestCase):
             with self.assertRaisesRegex(SystemExit, "must be a string list"):
                 ai_status.command_assign(self.state, ["HOSTED-DEV-004", "Codex", "Claude"])
 
+        # JSON null
+        env_null = {
+            "AI_NAME": "Codex",
+            "TASK_TITLE": "Deploy with null resource json",
+            "TASK_EXECUTION_RESOURCES_JSON": "null",
+        }
+        with mock.patch.dict(os.environ, env_null, clear=False):
+            with self.assertRaisesRegex(SystemExit, "must be a string list"):
+                ai_status.command_assign(self.state, ["HOSTED-DEV-004-NULL", "Codex", "Claude"])
+
+    def test_assign_rejects_duplicate_execution_resources(self) -> None:
+        # Duplicate in CSV
+        env_csv = {
+            "AI_NAME": "Codex",
+            "TASK_TITLE": "Deploy with duplicate resource csv",
+            "TASK_EXECUTION_RESOURCES": "pantheon-dev,pantheon-dev",
+        }
+        with mock.patch.dict(os.environ, env_csv, clear=False):
+            with self.assertRaisesRegex(SystemExit, "contains duplicate resource"):
+                ai_status.command_assign(self.state, ["HOSTED-DEV-DUP-1", "Codex", "Claude"])
+
+        # Duplicate in JSON
+        env_json = {
+            "AI_NAME": "Codex",
+            "TASK_TITLE": "Deploy with duplicate resource json",
+            "TASK_EXECUTION_RESOURCES_JSON": json.dumps(["pantheon-dev", "pantheon-dev"]),
+        }
+        with mock.patch.dict(os.environ, env_json, clear=False):
+            with self.assertRaisesRegex(SystemExit, "contains duplicate resource"):
+                ai_status.command_assign(self.state, ["HOSTED-DEV-DUP-2", "Codex", "Claude"])
+
+    def test_assign_rejects_empty_string_execution_resources(self) -> None:
+        # Empty string element in CSV
+        env_csv = {
+            "AI_NAME": "Codex",
+            "TASK_TITLE": "Deploy with empty resource csv",
+            "TASK_EXECUTION_RESOURCES": "pantheon-dev,",
+        }
+        with mock.patch.dict(os.environ, env_csv, clear=False):
+            with self.assertRaisesRegex(SystemExit, "empty string element"):
+                ai_status.command_assign(self.state, ["HOSTED-DEV-EMPTY-1", "Codex", "Claude"])
+
+        # Empty string element in JSON
+        env_json = {
+            "AI_NAME": "Codex",
+            "TASK_TITLE": "Deploy with empty resource json",
+            "TASK_EXECUTION_RESOURCES_JSON": json.dumps(["pantheon-dev", ""]),
+        }
+        with mock.patch.dict(os.environ, env_json, clear=False):
+            with self.assertRaisesRegex(SystemExit, "empty string element"):
+                ai_status.command_assign(self.state, ["HOSTED-DEV-EMPTY-2", "Codex", "Claude"])
+
+    def test_bridge_metadata_validation_rejects_duplicate_execution_resources(self) -> None:
+        task_spec = {
+            "id": "TASK-DUP-RES",
+            "owner": "Codex",
+            "reviewer": "Claude",
+            "title": "Bridge Task with duplicate resources",
+            "depends_on": [],
+            "artifacts": [],
+            "acceptance": [],
+            "execution_resources": ["pantheon-dev", "pantheon-dev"],
+        }
+        encoded = json.dumps(task_spec, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
+        task_spec_hash = hashlib.sha256(encoded).hexdigest()
+        metadata = {
+            "dev_bridge": {
+                "packet_id": "pkt-test-dup",
+                "packet_digest": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+                "conversation_id": "conv123",
+                "source_turn_ids": ["turn1"],
+                "documents": [{"path": "docs/test.md"}],
+                "task_spec_hash": task_spec_hash,
+                "task_spec": task_spec,
+            }
+        }
+        with self.assertRaisesRegex(SystemExit, "contains duplicate resources"):
+            ai_status._bridge_assignment_from_metadata(
+                metadata,
+                task_id="TASK-DUP-RES",
+                owner="Codex",
+                reviewer="Claude",
+                title="Bridge Task with duplicate resources",
+            )
+
+
     def test_execution_resource_command_adds_and_removes_resource_on_todo_task(self) -> None:
         task = {
             "id": "TASK-RES-001",
@@ -7723,6 +7809,27 @@ class SidecarTaskTests(unittest.TestCase):
                         self.state,
                         [task_id, "add", "pantheon-dev", "Terminal task revision attempt"],
                     )
+
+    def test_execution_resource_command_rejects_non_pre_dispatch_unknown_lifecycle_states(self) -> None:
+        for unknown_status in ("draft", "paused", "unknown", ""):
+            task_id = f"TASK-RES-UNK-{unknown_status or 'EMPTY'}"
+            task = {
+                "id": task_id,
+                "title": f"Unknown status task in {unknown_status!r}",
+                "status": unknown_status,
+                "owner": "Codex",
+                "reviewer": "Claude",
+                "last_update": "2026-08-25T10:00:00Z",
+            }
+            self.state["tasks"].append(task)
+            env = {"AI_NAME": "Human/Ops"}
+            with mock.patch.dict(os.environ, env, clear=False):
+                with self.assertRaisesRegex(SystemExit, "non-pre-dispatch lifecycle state"):
+                    ai_status.command_execution_resource(
+                        self.state,
+                        [task_id, "add", "pantheon-dev", "Unknown state revision attempt"],
+                    )
+
 
     def test_execution_resource_command_rejects_unallowlisted_resource(self) -> None:
         task = {

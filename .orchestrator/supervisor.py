@@ -13447,6 +13447,7 @@ def reserve_dispatch_plan(
         if isinstance(configured_resource_limits, Mapping)
         else {"pantheon-dev": 1}
     )
+    resolver = task_resolver_for_config(config, task_map)
     max_global = ready_dispatch_max_concurrent_workers(config)
     active_worker_count = sum(
         1
@@ -13482,24 +13483,35 @@ def reserve_dispatch_plan(
         ):
             continue
         task_obj = task_map.get(task_id) if task_map else None
-        req_resources = task_execution_resources(task_obj) if task_obj else []
-        if any(
-            active_resources.get(res, 0) + pending_resources.get(res, 0)
-            >= resource_limits.get(res, 1)
-            for res in req_resources
-        ):
+        if not task_obj:
             continue
+        endpoint_id = str(event.get("delivery_endpoint_id") or "").strip() or None
+        admission = evaluate_task_delivery_admission(
+            config,
+            state,
+            task_obj,
+            target_agent,
+            resolver,
+            active_task_ids=active_task_ids,
+            pending_task_ids=pending_task_ids,
+            agent_loads=agent_loads,
+            active_account_loads=active_accounts,
+            pending_account_loads=pending_accounts,
+            active_resource_loads=active_resources,
+            pending_resource_loads=pending_resources,
+            resource_limits=resource_limits,
+            live_total=live_total,
+            requested_endpoint_id=endpoint_id,
+        )
+        if not admission.eligible:
+            continue
+        req_resources = task_execution_resources(task_obj)
         pending_only = len(pending_task_ids - active_task_ids)
         if max_global is not None and live_total + pending_only >= max_global:
             break
         account = agent_account_id(config, agent_id)
-        account_limit = account_concurrency_limit(config, agent_id, settings)
-        account_used = active_accounts.get(account, 0) + pending_accounts.get(account, 0)
-        if account_limit is not None and account_used >= account_limit:
-            continue
-        capacity = agent_dispatch_capacity(config, agent_id, settings)
-        if len(agent_loads.get(target_agent, [])) >= capacity:
-            continue
+        event["delivery_endpoint_id"] = admission.endpoint_id
+        event["provider"] = admission.provider_id
         if not event.get("context_files"):
             event["context_files"] = worker_execution_context_files(task_id)
         if not _queue_delivery_event_locked(config, state, event):

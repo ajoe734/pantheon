@@ -119,4 +119,3 @@ def test_ready_dispatch_settings_execution_resource_limits() -> None:
 
     with pytest.raises(ValueError, match="Unknown execution resource limit key"):
         ready_dispatch_settings({"ready_dispatcher": {"execution_resource_limits": {"custom-res": 1}}})
-

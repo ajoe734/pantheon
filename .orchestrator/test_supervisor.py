@@ -5250,8 +5250,86 @@ class ExecutionResourceAdmissionTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "must be a dict or null"):
             supervisor.validate_execution_resource_limits([1])
 
+    def test_reserve_dispatch_plan_re_evaluates_admission_rejects_post_plan_human_ops_hold(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / ".orchestrator").mkdir()
+            config = config_fixture(root)
+            hosted_task = task_fixture(
+                "HOSTED-HOLD-1",
+                status="todo",
+                owner="Codex",
+                execution_resources=["pantheon-dev"],
+            )
+            initial_status = {"tasks": [copy.deepcopy(hosted_task)]}
+
+            # Planning phase produces 1 event
+            with mock.patch.object(supervisor, "load_status", return_value=initial_status):
+                plan = supervisor.build_dispatch_plan(
+                    config,
+                    self.state,
+                    initial_status,
+                    supervisor.queue_events(self.state),
+                    live_total=0,
+                )
+            self.assertEqual(len(plan["events"]), 1)
+
+            # TOCTOU: Before reservation, Human/Ops places a hold on canonical task
+            held_task = copy.deepcopy(hosted_task)
+            held_task["waiting_for"] = "Human/Ops"
+            held_status = {"tasks": [held_task]}
+
+            with (
+                mock.patch.object(supervisor, "load_status", return_value=held_status),
+                mock.patch.object(
+                    supervisor,
+                    "_queue_delivery_event_locked",
+                    side_effect=AssertionError("Held task must not be queued"),
+                ),
+            ):
+                supervisor.reserve_dispatch_plan(config, self.state, plan)
+
+            # Proves zero queue event, zero pending slot, zero pantheon-dev claim
+            self.assertEqual(supervisor.queue_events(self.state), [])
+            self.assertNotIn(plan["events"][0]["key"], self.state.get("seen_event_keys", {}))
+            self.assertEqual(
+                supervisor.queued_execution_resource_counts(
+                    config, self.state, task_map={"HOSTED-HOLD-1": held_task}
+                ),
+                {},
+            )
+
+    def test_queued_execution_resource_counts_releases_stale_task_state(self) -> None:
+        hosted_1 = task_fixture(
+            "HOSTED-STALE-1",
+            status="todo",
+            owner="Codex",
+            execution_resources=["pantheon-dev"],
+        )
+        task_map = {"HOSTED-STALE-1": hosted_1}
+        event = {
+            "event_id": "evt-hosted-stale-1",
+            "task_id": "HOSTED-STALE-1",
+            "task_generation": 1,
+            "target_agent": "Codex",
+            "delivery_endpoint_id": "codex",
+            "reason": "owned_ready_dispatch",
+        }
+        # Initially pending queue event claims resource
+        counts = supervisor.queued_execution_resource_counts(
+            self.config, self.state, [event], task_map
+        )
+        self.assertEqual(counts, {"pantheon-dev": 1})
+
+        # When task transitions to terminal/done, event becomes stale and resource is released
+        hosted_1_done = copy.deepcopy(hosted_1)
+        hosted_1_done["status"] = "done"
+        stale_map = {"HOSTED-STALE-1": hosted_1_done}
+        counts_stale = supervisor.queued_execution_resource_counts(
+            self.config, self.state, [event], stale_map
+        )
+        self.assertEqual(counts_stale, {})
+
 
 if __name__ == "__main__":
     unittest.main()
-
-
