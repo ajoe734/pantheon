@@ -1,7 +1,5 @@
-"""Tests for the fail-closed external source management hosted acceptance verifier (SD-SRCM-08)."""
-from __future__ import annotations
-
 import json
+import shutil
 from pathlib import Path
 from typing import Any, Dict, Mapping, Optional, Tuple
 
@@ -11,11 +9,12 @@ from scripts.verify_external_source_management_acceptance import (
     AcceptanceConfig,
     ExternalSourceManagementHostedAcceptanceVerifier,
     SourceManagementAcceptanceError,
-    generate_canonical_evidence_bundle,
     main,
+    DEFAULT_EVIDENCE_DIR,
     EXPECTED_BFF_SHA,
     EXPECTED_FE_SHA,
     EXPECTED_SOURCE_DEFINITIONS_SHA,
+    UNSUPPORTED_READONLY_FE_BASELINE,
     HOSTED_JOURNEY_IDS,
     NEGATIVE_CONTROL_KEYS,
     MIGRATION_REQUIREMENT_KEYS,
@@ -23,14 +22,18 @@ from scripts.verify_external_source_management_acceptance import (
 
 
 def _setup_valid_bundle(tmp_path: Path) -> Path:
-    generate_canonical_evidence_bundle(tmp_path)
-    return tmp_path
+    target_dir = tmp_path / "evidence"
+    if target_dir.exists():
+        shutil.rmtree(target_dir)
+    shutil.copytree(DEFAULT_EVIDENCE_DIR, target_dir)
+    return target_dir
 
 
 def _make_mock_transport(
     *,
     fe_status: int = 200,
     fe_sha: str = EXPECTED_FE_SHA,
+    fe_manifest_bff_sha: str = EXPECTED_BFF_SHA,
     fe_real_writes: str = "false",
     bff_status: int = 200,
     bff_sha: str = EXPECTED_BFF_SHA,
@@ -54,7 +57,7 @@ def _make_mock_transport(
             return 200, {
                 "commit": fe_sha,
                 "frontendSha": fe_sha,
-                "bffCommit": "40de8fcb1c69fad0bf5e54d4c0bd6e508c9162e0",
+                "bffCommit": fe_manifest_bff_sha,
                 "buildMode": {
                     "VITE_BFF_MODE": "live",
                     "VITE_BFF_FALLBACK": "strict",
@@ -566,3 +569,106 @@ def test_cli_main_failure(tmp_path: Path) -> None:
     empty_dir.mkdir()
     code = main(["--evidence-dir", str(empty_dir), "--offline-only"])
     assert code == 1
+
+
+def test_live_verify_exact_pair_drift_fails(tmp_path: Path) -> None:
+    bundle_dir = _setup_valid_bundle(tmp_path)
+    config = AcceptanceConfig(evidence_dir=bundle_dir, offline_only=False)
+    verifier = ExternalSourceManagementHostedAcceptanceVerifier(
+        config,
+        transport=_make_mock_transport(fe_manifest_bff_sha="40de8fcb1c69fad0bf5e54d4c0bd6e508c9162e0"),
+    )
+
+    with pytest.raises(SourceManagementAcceptanceError) as exc_info:
+        verifier.run()
+    assert exc_info.value.code == "live.exact_pair_drift"
+
+
+def test_live_verify_fe_unsupported_baseline_fails(tmp_path: Path) -> None:
+    bundle_dir = _setup_valid_bundle(tmp_path)
+    config = AcceptanceConfig(evidence_dir=bundle_dir, offline_only=False)
+    verifier = ExternalSourceManagementHostedAcceptanceVerifier(
+        config,
+        transport=_make_mock_transport(fe_sha=UNSUPPORTED_READONLY_FE_BASELINE),
+    )
+
+    with pytest.raises(SourceManagementAcceptanceError) as exc_info:
+        verifier.run()
+    assert exc_info.value.code == "live.fe_unsupported_baseline"
+
+
+def test_identity_fe_manifest_bff_drift_fails(tmp_path: Path) -> None:
+    bundle_dir = _setup_valid_bundle(tmp_path)
+    deploy_file = bundle_dir / "deployment.json"
+    with deploy_file.open("r", encoding="utf-8") as f:
+        data = json.load(f)
+    data["exact_pair"]["fe_manifest_bff_sha"] = "40de8fcb1c69fad0bf5e54d4c0bd6e508c9162e0"
+    with deploy_file.open("w", encoding="utf-8") as f:
+        json.dump(data, f)
+
+    config = AcceptanceConfig(evidence_dir=bundle_dir, offline_only=True)
+    verifier = ExternalSourceManagementHostedAcceptanceVerifier(config)
+
+    with pytest.raises(SourceManagementAcceptanceError) as exc_info:
+        verifier.run()
+    assert exc_info.value.code == "identity.fe_manifest_bff_drift"
+
+
+def test_browser_evidence_missing_screenshot_file_fails(tmp_path: Path) -> None:
+    bundle_dir = _setup_valid_bundle(tmp_path)
+    # Remove one screenshot file
+    (bundle_dir / "screenshots" / "journey_01_public_source_create_disabled.png").unlink()
+
+    config = AcceptanceConfig(evidence_dir=bundle_dir, offline_only=True)
+    verifier = ExternalSourceManagementHostedAcceptanceVerifier(config)
+
+    with pytest.raises(SourceManagementAcceptanceError) as exc_info:
+        verifier.run()
+    assert exc_info.value.code == "browser_evidence.missing_screenshot_file"
+
+
+def test_browser_evidence_invalid_png_file_fails(tmp_path: Path) -> None:
+    bundle_dir = _setup_valid_bundle(tmp_path)
+    # Write invalid bytes to screenshot file
+    (bundle_dir / "screenshots" / "journey_01_public_source_create_disabled.png").write_bytes(b"not a png image")
+
+    config = AcceptanceConfig(evidence_dir=bundle_dir, offline_only=True)
+    verifier = ExternalSourceManagementHostedAcceptanceVerifier(config)
+
+    with pytest.raises(SourceManagementAcceptanceError) as exc_info:
+        verifier.run()
+    assert exc_info.value.code == "browser_evidence.invalid_png_file"
+
+
+def test_browser_evidence_screenshot_sha_mismatch_fails(tmp_path: Path) -> None:
+    bundle_dir = _setup_valid_bundle(tmp_path)
+    browser_file = bundle_dir / "browser-evidence.json"
+    with browser_file.open("r", encoding="utf-8") as f:
+        data = json.load(f)
+    data["browser_journeys"][0]["screenshot_sha256"] = "0" * 64
+    with browser_file.open("w", encoding="utf-8") as f:
+        json.dump(data, f)
+
+    config = AcceptanceConfig(evidence_dir=bundle_dir, offline_only=True)
+    verifier = ExternalSourceManagementHostedAcceptanceVerifier(config)
+
+    with pytest.raises(SourceManagementAcceptanceError) as exc_info:
+        verifier.run()
+    assert exc_info.value.code == "browser_evidence.screenshot_sha_mismatch"
+
+
+def test_browser_evidence_missing_har_entry_fails(tmp_path: Path) -> None:
+    bundle_dir = _setup_valid_bundle(tmp_path)
+    browser_file = bundle_dir / "browser-evidence.json"
+    with browser_file.open("r", encoding="utf-8") as f:
+        data = json.load(f)
+    data["browser_journeys"][0]["har_summary"]["entries_count"] = 0
+    with browser_file.open("w", encoding="utf-8") as f:
+        json.dump(data, f)
+
+    config = AcceptanceConfig(evidence_dir=bundle_dir, offline_only=True)
+    verifier = ExternalSourceManagementHostedAcceptanceVerifier(config)
+
+    with pytest.raises(SourceManagementAcceptanceError) as exc_info:
+        verifier.run()
+    assert exc_info.value.code == "browser_evidence.missing_har_entry"

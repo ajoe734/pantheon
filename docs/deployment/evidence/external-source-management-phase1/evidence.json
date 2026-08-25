@@ -18,17 +18,18 @@
   ],
   "exact_pair": {
     "backend_sha": "03757f0254fb48ea37098e3d9ab0176c006d4da5",
-    "frontend_sha": "cc4007f7f78a31c73548ce85457af17a45a4c4b9",
+    "frontend_sha": "88a4dafbccd0f497638e6d555a157eab010fc03a",
     "source_definitions_sha": "40de8fcb1c69fad0bf5e54d4c0bd6e508c9162e0",
-    "fe_manifest_bff_sha": "40de8fcb1c69fad0bf5e54d4c0bd6e508c9162e0",
-    "drift_status": "fe_manifest_precedes_live_bff",
+    "fe_manifest_bff_sha": "03757f0254fb48ea37098e3d9ab0176c006d4da5",
+    "candidate_status": "candidate_write_enabled_pair_prepared",
     "bff_url": "https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io",
-    "fe_url": "https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io"
+    "fe_url": "https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io",
+    "environment": "dev"
   },
   "artifacts": {
     "deployment": {
       "path": "deployment.json",
-      "sha256": "60a7a699e5c5d3079c8efa708ac562cbbbc57cfe0557eb5a7dc4d0e885609a51"
+      "sha256": "eca2aeb72628f848dc5a6e9491d551ffc506d279b67d54b7fa24bf59a0afb88d"
     },
     "hosted_summary": {
       "path": "hosted-acceptance-summary.json",
@@ -40,7 +41,7 @@
     },
     "browser_evidence": {
       "path": "browser-evidence.json",
-      "sha256": "75f23863f2fb65f8558f5aac6acc74c83b928e9e26daaf45fc9ee0fda3bcec55"
+      "sha256": "9d992708d1bc55df79e2c1e4e0e699bf652e9fafa1999beda2334d66251844ea"
     },
     "negative_controls": {
       "path": "negative-controls.json",

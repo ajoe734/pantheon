@@ -46,9 +46,10 @@ DEFAULT_DEV_FE_URL = "https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io"
 DEFAULT_SOURCE_INGEST_URL = "http://127.0.0.1:18097"
 
 EXPECTED_BFF_SHA = "03757f0254fb48ea37098e3d9ab0176c006d4da5"
-EXPECTED_FE_SHA = "cc4007f7f78a31c73548ce85457af17a45a4c4b9"
+EXPECTED_FE_SHA = "88a4dafbccd0f497638e6d555a157eab010fc03a"
 EXPECTED_SOURCE_DEFINITIONS_SHA = "40de8fcb1c69fad0bf5e54d4c0bd6e508c9162e0"
-FE_MANIFEST_BFF_SHA = "40de8fcb1c69fad0bf5e54d4c0bd6e508c9162e0"
+FE_MANIFEST_BFF_SHA = "03757f0254fb48ea37098e3d9ab0176c006d4da5"
+UNSUPPORTED_READONLY_FE_BASELINE = "cc4007f7f78a31c73548ce85457af17a45a4c4b9"
 
 SHA40_RE = re.compile(r"^[0-9a-f]{40}$")
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
@@ -414,6 +415,13 @@ class ExternalSourceManagementHostedAcceptanceVerifier:
                 f"Live FE returned invalid commit SHA: {live_fe_sha}",
             )
 
+        if live_fe_sha == UNSUPPORTED_READONLY_FE_BASELINE:
+            raise SourceManagementAcceptanceError(
+                "live.fe_unsupported_baseline",
+                f"Deployed FE {live_fe_sha} is a legacy read-only list/refresh page lacking data source management controls. "
+                f"Exact write-enabled candidate (PR #636 / 88a4dafb) required for hosted acceptance.",
+            )
+
         if self.config.strict_pair and self.config.expected_fe_sha:
             if live_fe_sha != self.config.expected_fe_sha:
                 raise SourceManagementAcceptanceError(
@@ -450,6 +458,15 @@ class ExternalSourceManagementHostedAcceptanceVerifier:
                 raise SourceManagementAcceptanceError(
                     "live.bff_sha_mismatch",
                     f"Live BFF commit {live_bff_sha} does not match expected {self.config.expected_bff_sha}",
+                )
+
+        fe_manifest_bff = str(fe_body.get("bffCommit") or fe_body.get("bffSourceCommitSha") or "")
+        if self.config.strict_pair and fe_manifest_bff:
+            if fe_manifest_bff != live_bff_sha:
+                raise SourceManagementAcceptanceError(
+                    "live.exact_pair_drift",
+                    f"FE manifest bffCommit ({fe_manifest_bff}) does not match live BFF ({live_bff_sha}). "
+                    f"SD-SRCM-08 requires exact pair identity without drift.",
                 )
 
         config_posture = _mapping(bff_body.get("config_posture") or {}, "bff_body.config_posture")
@@ -513,13 +530,11 @@ class ExternalSourceManagementHostedAcceptanceVerifier:
                 f"Invalid dev-login POST returned HTTP {status}, expected 401",
             )
 
-        fe_manifest_bff = str(fe_body.get("bffCommit") or fe_body.get("bffSourceCommitSha") or "")
-
         return {
             "frontend_sha": live_fe_sha,
             "backend_sha": live_bff_sha,
             "source_definitions_sha": live_source_def_sha,
-            "fe_manifest_bff_sha": fe_manifest_bff,
+            "fe_manifest_bff_sha": fe_manifest_bff or live_bff_sha,
             "fe_url": fe_url,
             "bff_version_url": bff_version_url,
             "source_defs_url": source_defs_url,
@@ -572,12 +587,19 @@ class ExternalSourceManagementHostedAcceptanceVerifier:
                     f"Evidence source_definitions_sha {source_sha} does not match live source definitions {live_data['source_definitions_sha']}",
                 )
 
-        drift_status = str(exact_pair.get("drift_status") or "fe_manifest_precedes_live_bff")
+        fe_manifest_bff = str(exact_pair.get("fe_manifest_bff_sha") or "")
+        if fe_manifest_bff and fe_manifest_bff != backend_sha:
+            raise SourceManagementAcceptanceError(
+                "identity.fe_manifest_bff_drift",
+                f"Evidence fe_manifest_bff_sha ({fe_manifest_bff}) does not match backend_sha ({backend_sha}). Exact pair required.",
+            )
+
+        drift_status = str(exact_pair.get("drift_status") or "none")
         return {
             "backend_sha": backend_sha,
             "frontend_sha": frontend_sha,
             "source_definitions_sha": source_sha,
-            "fe_manifest_bff_sha": str(exact_pair.get("fe_manifest_bff_sha") or FE_MANIFEST_BFF_SHA),
+            "fe_manifest_bff_sha": fe_manifest_bff or backend_sha,
             "drift_status": drift_status,
             "bff_url": str(exact_pair.get("bff_url") or self.config.dev_bff_url),
             "fe_url": str(exact_pair.get("fe_url") or self.config.dev_fe_url),
@@ -796,6 +818,7 @@ class ExternalSourceManagementHostedAcceptanceVerifier:
 
         journeys_browser = _list_of_mappings(data.get("browser_journeys") or [], "browser_evidence.browser_journeys")
         browser_dict = {str(b.get("journey_id")): b for b in journeys_browser}
+        evidence_dir = self.config.evidence_dir
 
         for j_id in HOSTED_JOURNEY_IDS:
             if j_id not in browser_dict:
@@ -820,11 +843,48 @@ class ExternalSourceManagementHostedAcceptanceVerifier:
                     "browser_evidence.missing_dom_checkpoint",
                     f"Browser evidence for {j_id} missing rendered DOM element check",
                 )
+            screenshot_rel = str(b_entry.get("screenshot_artifact") or "")
+            if not screenshot_rel:
+                raise SourceManagementAcceptanceError(
+                    "browser_evidence.missing_screenshot_artifact",
+                    f"Browser evidence for {j_id} missing screenshot_artifact path",
+                )
+            screenshot_path = evidence_dir / screenshot_rel
+            if not screenshot_path.is_file():
+                raise SourceManagementAcceptanceError(
+                    "browser_evidence.missing_screenshot_file",
+                    f"Screenshot file does not exist on disk for {j_id}: {screenshot_path}",
+                )
+            with screenshot_path.open("rb") as sf:
+                header = sf.read(8)
+                if not header.startswith(b"\x89PNG\r\n\x1a\n"):
+                    raise SourceManagementAcceptanceError(
+                        "browser_evidence.invalid_png_file",
+                        f"Screenshot file for {j_id} is not a valid PNG image",
+                    )
+            file_sha = _sha256_file(screenshot_path)
             screenshot_sha = str(b_entry.get("screenshot_sha256") or "")
             if not SHA256_RE.match(screenshot_sha):
                 raise SourceManagementAcceptanceError(
                     "browser_evidence.invalid_screenshot_sha",
                     f"Browser evidence for {j_id} contains invalid screenshot SHA256",
+                )
+            if file_sha != screenshot_sha:
+                raise SourceManagementAcceptanceError(
+                    "browser_evidence.screenshot_sha_mismatch",
+                    f"Screenshot SHA mismatch for {j_id}: file has {file_sha} vs recorded {screenshot_sha}",
+                )
+
+            har_summary = _mapping(b_entry.get("har_summary") or {}, f"{j_id}.har_summary")
+            if int(har_summary.get("entries_count") or 0) <= 0:
+                raise SourceManagementAcceptanceError(
+                    "browser_evidence.missing_har_entry",
+                    f"Browser evidence for {j_id} must have entries_count >= 1 in har_summary",
+                )
+            if not har_summary.get("request_url") or not har_summary.get("request_method"):
+                raise SourceManagementAcceptanceError(
+                    "browser_evidence.invalid_har_summary",
+                    f"Browser evidence for {j_id} har_summary missing request_url or request_method",
                 )
 
         return {
@@ -832,6 +892,7 @@ class ExternalSourceManagementHostedAcceptanceVerifier:
             "total_journeys_covered": len(HOSTED_JOURNEY_IDS),
             "no_route_mocks_verified": True,
             "dom_checkpoints_verified": True,
+            "screenshots_verified": True,
         }
 
     def _verify_negative_controls(self, evidence_files: Dict[str, Path]) -> Dict[str, Any]:
@@ -944,727 +1005,6 @@ class ExternalSourceManagementHostedAcceptanceVerifier:
         return checksums
 
 
-def generate_canonical_evidence_bundle(
-    output_dir: Path,
-    *,
-    backend_sha: str = EXPECTED_BFF_SHA,
-    frontend_sha: str = EXPECTED_FE_SHA,
-    source_definitions_sha: str = EXPECTED_SOURCE_DEFINITIONS_SHA,
-    fe_manifest_bff_sha: str = FE_MANIFEST_BFF_SHA,
-    bff_url: str = DEFAULT_DEV_BFF_URL,
-    fe_url: str = DEFAULT_DEV_FE_URL,
-) -> None:
-    """Materializes the canonical phase-1 hosted acceptance evidence bundle (SD-SRCM-08)."""
-    output_dir.mkdir(parents=True, exist_ok=True)
-    now = _utc_now()
-
-    # 1. deployment.json
-    deployment_payload = {
-        "schema_version": "pantheon.external-source-management.deployment.v1",
-        "task_id": TASK_ID,
-        "program_id": PROGRAM_ID,
-        "created_at": now,
-        "exact_pair": {
-            "backend_sha": backend_sha,
-            "frontend_sha": frontend_sha,
-            "source_definitions_sha": source_definitions_sha,
-            "fe_manifest_bff_sha": fe_manifest_bff_sha,
-            "drift_status": "fe_manifest_precedes_live_bff",
-            "drift_details": f"Frontend deployment.json records bffCommit={fe_manifest_bff_sha} from initial candidate baseline; live BFF runs {backend_sha} on dev VM. Verified ancestry: {fe_manifest_bff_sha} is ancestor of {backend_sha}.",
-            "bff_url": bff_url,
-            "fe_url": fe_url,
-            "environment": "dev",
-        },
-        "feature_posture": {
-            "SOURCE_MANAGEMENT_STORE_BACKEND": "postgres",
-            "SOURCE_MANAGEMENT_COMMANDS_ENABLED": "0",
-            "PANTHEON_BFF_SOURCE_MANAGEMENT_COMMANDS_ENABLED": "0",
-            "VITE_BFF_REAL_WRITES": "false",
-            "PANTHEON_EXTERNAL_EGRESS": "deny",
-            "rollback_read_only_default": True,
-        },
-        "target_repositories": {
-            "backend": "ajoe734/pantheon",
-            "frontend": "ajoe734/execute-plans",
-        },
-    }
-    with (output_dir / "deployment.json").open("w", encoding="utf-8") as f:
-        json.dump(deployment_payload, f, indent=2)
-
-    # 2. journey-receipts.json
-    receipt_items_raw = [
-        {
-            "journey_id": "journey_01_public_source_create_disabled",
-            "command_id": "srcmd-create-001",
-            "command_type": "create_source",
-            "source_instance_id": "src-twse-market-daily",
-            "status": "applied",
-            "resulting_revision": 1,
-            "parameters_redacted": {
-                "connector_definition_id": "tw_official_market_daily",
-                "source_kind": "market",
-                "display_name": "TWSE Daily Market Ingest",
-                "config": {"market": "TWSE"},
-                "schedule": {"enabled": False, "cadence": "0 19 * * 1-5"},
-            },
-            "observed_network_exchange": {
-                "request": {
-                    "method": "POST",
-                    "url": f"{bff_url}/bff/management/data-sources",
-                    "headers": {"X-Idempotency-Key": "idem-src-twse-create-001", "Authorization": "[REDACTED]"},
-                    "timestamp": now,
-                },
-                "response": {
-                    "http_status": 202,
-                    "receipt_id": "srcrcp-create-001",
-                    "status": "accepted",
-                    "duration_ms": 42.5,
-                    "timestamp": now,
-                },
-            },
-            "readback": {
-                "desired_revision": 1,
-                "observed_revision": 1,
-                "lifecycle_state": "configured_disabled",
-                "reconciliation_status": "converged",
-            },
-            "no_order_capital_route": True,
-        },
-        {
-            "journey_id": "journey_02_validate_and_bounded_canary",
-            "command_id": "srcmd-canary-002",
-            "command_type": "canary_source",
-            "source_instance_id": "src-twse-market-daily",
-            "status": "applied",
-            "resulting_revision": 2,
-            "parameters_redacted": {"max_records": 5, "timeout_seconds": 10, "max_bytes": 1048576},
-            "observed_network_exchange": {
-                "request": {
-                    "method": "POST",
-                    "url": f"{bff_url}/bff/management/data-sources/src-twse-market-daily/actions/canary",
-                    "headers": {"X-Idempotency-Key": "idem-src-twse-canary-002", "Authorization": "[REDACTED]"},
-                    "timestamp": now,
-                },
-                "response": {
-                    "http_status": 202,
-                    "receipt_id": "srcrcp-canary-002",
-                    "status": "accepted",
-                    "canary_result": "canary-passed",
-                    "records_fetched": 5,
-                    "duration_ms": 128.4,
-                    "timestamp": now,
-                },
-            },
-            "canary_metrics": {
-                "records_fetched": 5,
-                "bytes_processed": 1024,
-                "order_route_invoked": False,
-                "capital_route_invoked": False,
-            },
-            "readback": {
-                "canary_state": "passed",
-                "canary_result": "canary-passed",
-                "records_fetched": 5,
-                "reconciliation_status": "converged",
-            },
-            "no_order_capital_route": True,
-        },
-        {
-            "journey_id": "journey_03_sourcerecord_evidence_search_readback",
-            "command_id": "srcmd-readback-003",
-            "command_type": "search_readback",
-            "source_instance_id": "src-twse-market-daily",
-            "status": "applied",
-            "resulting_revision": 2,
-            "parameters_redacted": {"query": "TWSE stock index", "as_of": now},
-            "observed_network_exchange": {
-                "request": {
-                    "method": "POST",
-                    "url": "http://127.0.0.1:18098/api/search/query",
-                    "headers": {"Content-Type": "application/json", "Authorization": "[REDACTED]"},
-                    "timestamp": now,
-                },
-                "response": {
-                    "http_status": 200,
-                    "items_returned": 5,
-                    "citations_included": True,
-                    "evidence_bundle_id": "evbundle-twse-001",
-                    "as_of_valid": True,
-                    "duration_ms": 35.1,
-                    "timestamp": now,
-                },
-            },
-            "readback": {
-                "evidence_bundle_id": "evbundle-twse-001",
-                "search_readback_status": "ok",
-                "as_of_filter_applied": True,
-            },
-            "no_order_capital_route": True,
-        },
-        {
-            "journey_id": "journey_04_enable_and_observed_convergence",
-            "command_id": "srcmd-enable-004",
-            "command_type": "enable_source",
-            "source_instance_id": "src-twse-market-daily",
-            "status": "applied",
-            "resulting_revision": 3,
-            "parameters_redacted": {"enable_schedule": True, "reason": "Operator approval after canary pass"},
-            "observed_network_exchange": {
-                "request": {
-                    "method": "POST",
-                    "url": f"{bff_url}/bff/management/data-sources/src-twse-market-daily/actions/enable",
-                    "headers": {"X-Idempotency-Key": "idem-src-twse-enable-004", "Authorization": "[REDACTED]"},
-                    "timestamp": now,
-                },
-                "response": {
-                    "http_status": 202,
-                    "receipt_id": "srcrcp-enable-004",
-                    "status": "accepted",
-                    "desired_lifecycle": "enabled",
-                    "duration_ms": 51.0,
-                    "timestamp": now,
-                },
-            },
-            "readback": {
-                "desired_revision": 3,
-                "observed_revision": 3,
-                "desired_lifecycle": "enabled",
-                "observed_state": "fresh",
-                "freshness_sla_seconds": 86400,
-                "reconciliation_status": "converged",
-            },
-            "no_order_capital_route": True,
-        },
-        {
-            "journey_id": "journey_05_disable_and_reload_persistence",
-            "command_id": "srcmd-disable-005",
-            "command_type": "disable_source",
-            "source_instance_id": "src-twse-market-daily",
-            "status": "applied",
-            "resulting_revision": 4,
-            "parameters_redacted": {"reason": "Routine maintenance disabled state check"},
-            "observed_network_exchange": {
-                "request": {
-                    "method": "POST",
-                    "url": f"{bff_url}/bff/management/data-sources/src-twse-market-daily/actions/disable",
-                    "headers": {"X-Idempotency-Key": "idem-src-twse-disable-005", "Authorization": "[REDACTED]"},
-                    "timestamp": now,
-                },
-                "response": {
-                    "http_status": 202,
-                    "receipt_id": "srcrcp-disable-005",
-                    "status": "accepted",
-                    "desired_lifecycle": "disabled",
-                    "duration_ms": 48.2,
-                    "timestamp": now,
-                },
-            },
-            "readback": {
-                "desired_revision": 4,
-                "observed_revision": 4,
-                "lifecycle_state": "configured_disabled",
-                "persistence_verified": True,
-                "reconciliation_status": "converged",
-            },
-            "no_order_capital_route": True,
-        },
-        {
-            "journey_id": "journey_06_duplicate_command_idempotency",
-            "command_id": "srcmd-disable-005-dup",
-            "command_type": "disable_source",
-            "source_instance_id": "src-twse-market-daily",
-            "status": "applied",
-            "resulting_revision": 4,
-            "idempotency_key": "idem-src-twse-disable-005",
-            "replayed": True,
-            "parameters_redacted": {"reason": "Routine maintenance disabled state check"},
-            "observed_network_exchange": {
-                "request": {
-                    "method": "POST",
-                    "url": f"{bff_url}/bff/management/data-sources/src-twse-market-daily/actions/disable",
-                    "headers": {"X-Idempotency-Key": "idem-src-twse-disable-005", "Authorization": "[REDACTED]"},
-                    "timestamp": now,
-                },
-                "response": {
-                    "http_status": 202,
-                    "replayed": True,
-                    "receipt_id": "srcrcp-disable-005",
-                    "status": "accepted",
-                    "duration_ms": 12.0,
-                    "timestamp": now,
-                },
-            },
-            "readback": {
-                "desired_revision": 4,
-                "replayed_same_receipt": True,
-            },
-            "no_order_capital_route": True,
-        },
-        {
-            "journey_id": "journey_07_unauthorized_and_stale_revision_rejection",
-            "command_id": "srcmd-neg-007",
-            "command_type": "enable_source",
-            "source_instance_id": "src-twse-market-daily",
-            "status": "applied",
-            "resulting_revision": 4,
-            "parameters_redacted": {"expected_revision": 1},
-            "unauthorized_probe": {
-                "role": "viewer",
-                "http_status": 403,
-                "error_code": "FORBIDDEN",
-                "rejected": True,
-            },
-            "stale_revision_probe": {
-                "expected_revision": 1,
-                "actual_revision": 4,
-                "http_status": 409,
-                "error_code": "STALE_REVISION",
-                "rejected": True,
-            },
-            "observed_network_exchange": {
-                "request": {
-                    "method": "POST",
-                    "url": f"{bff_url}/bff/management/data-sources/src-twse-market-daily/actions/enable",
-                    "headers": {"Authorization": "[REDACTED-VIEWER-TOKEN]"},
-                    "timestamp": now,
-                },
-                "response": {
-                    "http_status": 403,
-                    "error": {"code": "FORBIDDEN", "message": "Operator role required"},
-                    "duration_ms": 18.3,
-                    "timestamp": now,
-                },
-            },
-            "readback": {
-                "rejections_enforced": True,
-                "state_unchanged_revision": 4,
-            },
-            "no_order_capital_route": True,
-        },
-        {
-            "journey_id": "journey_08_credentialed_source_secret_ref_safety",
-            "command_id": "srcmd-cred-008",
-            "command_type": "create_source",
-            "source_instance_id": "src-tw-finmind-cred",
-            "status": "applied",
-            "resulting_revision": 1,
-            "parameters_redacted": {
-                "connector_definition_id": "tw_finmind_dataset",
-                "source_kind": "market",
-                "secret_ref_id": "ref://vault/finmind-api-token",
-                "public_config": {"dataset": "TaiwanStockPrice"},
-            },
-            "observed_network_exchange": {
-                "request": {
-                    "method": "POST",
-                    "url": f"{bff_url}/bff/management/data-sources",
-                    "headers": {"Authorization": "[REDACTED]"},
-                    "timestamp": now,
-                },
-                "response": {
-                    "http_status": 202,
-                    "receipt_id": "srcrcp-cred-008",
-                    "status": "accepted",
-                    "secret_ref_id": "ref://vault/finmind-api-token",
-                    "raw_secret_exposed": False,
-                    "duration_ms": 46.2,
-                    "timestamp": now,
-                },
-            },
-            "readback": {
-                "desired_revision": 1,
-                "credential_state": "resolved_ref",
-                "zero_inline_secret_verified": True,
-            },
-            "no_order_capital_route": True,
-        },
-        {
-            "journey_id": "journey_09_provider_failure_degraded_ui",
-            "command_id": "srcmd-degrade-009",
-            "command_type": "canary_source",
-            "source_instance_id": "src-unreachable-provider",
-            "status": "applied",
-            "resulting_revision": 1,
-            "parameters_redacted": {"target": "http://127.0.0.1:9999/timeout"},
-            "observed_network_exchange": {
-                "request": {
-                    "method": "POST",
-                    "url": f"{bff_url}/bff/management/data-sources/src-unreachable-provider/actions/canary",
-                    "headers": {"Authorization": "[REDACTED]"},
-                    "timestamp": now,
-                },
-                "response": {
-                    "http_status": 202,
-                    "receipt_id": "srcrcp-canary-009",
-                    "status": "accepted",
-                    "surface": {"data_sources": "degraded/service_client"},
-                    "degraded": True,
-                    "reason": "provider_timeout",
-                    "duration_ms": 205.7,
-                    "timestamp": now,
-                },
-            },
-            "readback": {
-                "canary_state": "failed",
-                "failure_reason": "provider_timeout",
-                "degraded_envelope_returned": True,
-                "uncaught_error_count": 0,
-            },
-            "no_order_capital_route": True,
-        },
-        {
-            "journey_id": "journey_10_rollback_to_readonly_accepted_state",
-            "command_id": "srcmd-rollback-010",
-            "command_type": "rollback_probe",
-            "source_instance_id": "src-twse-market-daily",
-            "status": "applied",
-            "resulting_revision": 1,
-            "parameters_redacted": {"target_posture": "read_only"},
-            "observed_network_exchange": {
-                "request": {
-                    "method": "GET",
-                    "url": f"{bff_url}/bff/management/data-sources",
-                    "headers": {"Authorization": "[REDACTED]"},
-                    "timestamp": now,
-                },
-                "response": {
-                    "http_status": 200,
-                    "surface": {"data_sources": "ok"},
-                    "read_only": True,
-                    "evidence_retained": True,
-                    "duration_ms": 38.0,
-                    "timestamp": now,
-                },
-            },
-            "readback": {
-                "command_flags_disabled": True,
-                "read_only_serving": True,
-                "evidence_intact": True,
-                "receipts_intact": True,
-                "zero_data_deleted": True,
-            },
-            "no_order_capital_route": True,
-        },
-    ]
-
-    # Compute real SHA256 hashes for each receipt
-    receipts_list = []
-    for r in receipt_items_raw:
-        item = dict(r)
-        item["receipt_hash"] = _calculate_receipt_hash(item)
-        receipts_list.append(item)
-
-    receipts_payload = {
-        "schema_version": "pantheon.external-source-management.journey-receipts.v1",
-        "task_id": TASK_ID,
-        "program_id": PROGRAM_ID,
-        "created_at": now,
-        "receipts_count": len(receipts_list),
-        "receipts": receipts_list,
-    }
-    with (output_dir / "journey-receipts.json").open("w", encoding="utf-8") as f:
-        json.dump(receipts_payload, f, indent=2)
-
-    # 3. hosted-acceptance-summary.json
-    journeys_summary = []
-    for r in receipts_list:
-        journeys_summary.append({
-            "journey_id": r["journey_id"],
-            "command_id": r["command_id"],
-            "title": r["journey_id"].replace("_", " ").title(),
-            "status": "passed",
-            "route_mocked": False,
-            "source_instance_id": r["source_instance_id"],
-            "receipt_hash": r["receipt_hash"],
-            "no_order_capital_route": True,
-            "observed_network_exchange": r["observed_network_exchange"],
-            "readback": r["readback"],
-            "observed_at": now,
-        })
-
-    summary_payload = {
-        "schema_version": "pantheon.external-source-management.hosted-summary.v1",
-        "task_id": TASK_ID,
-        "program_id": PROGRAM_ID,
-        "created_at": now,
-        "overall_status": "passed",
-        "journeys_passed": len(journeys_summary),
-        "journeys_total": len(HOSTED_JOURNEY_IDS),
-        "route_mock_count": 0,
-        "no_order_invariants_verified": True,
-        "journeys": journeys_summary,
-    }
-    with (output_dir / "hosted-acceptance-summary.json").open("w", encoding="utf-8") as f:
-        json.dump(summary_payload, f, indent=2)
-
-    # 4. browser-evidence.json (Browser execution, DOM checkpoints, screenshot checksum bindings)
-    browser_journeys = []
-    for r in receipts_list:
-        j_id = r["journey_id"]
-        browser_journeys.append({
-            "journey_id": j_id,
-            "command_id": r["command_id"],
-            "status": "passed",
-            "route_mocked": False,
-            "dom_checkpoint": {
-                "rendered_element": f"[data-testid='{j_id}-panel']",
-                "ui_state": "converged",
-                "modal_state": "closed" if j_id != "journey_01_public_source_create_disabled" else "created_dismissed",
-            },
-            "screenshot_artifact": f"screenshots/{j_id}.png",
-            "screenshot_sha256": _sha256_bytes(f"screenshot-{j_id}-{now}".encode("utf-8")),
-            "har_summary": {
-                "entries_count": 1,
-                "request_method": r["observed_network_exchange"]["request"]["method"],
-                "request_url": r["observed_network_exchange"]["request"]["url"],
-                "response_status": r["observed_network_exchange"]["response"]["http_status"],
-            },
-            "executed_at": now,
-        })
-
-    browser_payload = {
-        "schema_version": "pantheon.external-source-management.browser-evidence.v1",
-        "task_id": TASK_ID,
-        "program_id": PROGRAM_ID,
-        "created_at": now,
-        "browser_journeys_count": len(browser_journeys),
-        "browser_journeys": browser_journeys,
-    }
-    with (output_dir / "browser-evidence.json").open("w", encoding="utf-8") as f:
-        json.dump(browser_payload, f, indent=2)
-
-    # 5. negative-controls.json
-    neg_controls_payload = {
-        "schema_version": "pantheon.external-source-management.negative-controls.v1",
-        "task_id": TASK_ID,
-        "program_id": PROGRAM_ID,
-        "created_at": now,
-        "negative_controls": {
-            "unauthorized_mutation_rejected": {
-                "status": "passed",
-                "tested_roles": ["viewer", "researcher", "persona"],
-                "http_status": 403,
-                "detail": "Operator or Admin role required for data source management mutations",
-                "observed_probe": {
-                    "method": "POST",
-                    "path": "/bff/management/data-sources",
-                    "caller_role": "viewer",
-                    "returned_status": 403,
-                    "returned_code": "FORBIDDEN",
-                },
-            },
-            "stale_revision_rejected": {
-                "status": "passed",
-                "http_status": 409,
-                "detail": "STALE_REVISION: expected revision 1, current is 4",
-                "observed_probe": {
-                    "method": "POST",
-                    "path": "/bff/management/data-sources/src-twse-market-daily/actions/enable",
-                    "expected_revision": 1,
-                    "actual_revision": 4,
-                    "returned_status": 409,
-                    "returned_code": "STALE_REVISION",
-                },
-            },
-            "inline_secret_exposure_rejected": {
-                "status": "passed",
-                "rejection_detail": "Raw secret material detected: inline secrets are strictly forbidden; use secret_ref_id",
-                "response_redaction_verified": True,
-                "observed_probe": {
-                    "inline_secret_sample": "[REDACTED]",
-                    "rejected_at_admission": True,
-                    "vault_ref_required": True,
-                },
-            },
-            "external_egress_allowlist_enforced": {
-                "status": "passed",
-                "default_posture": "deny",
-                "unlisted_hosts_blocked": True,
-                "observed_probe": {
-                    "unlisted_target": "https://malicious-external-target.com",
-                    "blocked_by_policy": True,
-                },
-            },
-            "no_order_capital_authority_enforced": {
-                "status": "passed",
-                "test_connectors_isolated": True,
-                "order_placement_routes_absent": True,
-                "capital_allocation_routes_absent": True,
-                "observed_probe": {
-                    "source_management_routes_examined": 12,
-                    "order_placing_capabilities_found": 0,
-                    "capital_altering_capabilities_found": 0,
-                },
-            },
-            "provider_failure_degradation_handled": {
-                "status": "passed",
-                "graceful_envelope_verified": True,
-                "uncaught_500_count": 0,
-                "observed_probe": {
-                    "simulation": "upstream_504_gateway_timeout",
-                    "bff_returned_envelope": "degraded",
-                    "http_status": 202,
-                },
-            },
-            "openclaw_phase2_boundary_enforced": {
-                "status": "passed",
-                "governed_search_client_only": True,
-                "product_bff_write_routes_absent": True,
-                "observed_probe": {
-                    "openclaw_routes_checked": ["POST /bff/management/nl/ask"],
-                    "source_write_authority_permitted": False,
-                },
-            },
-        },
-    }
-    with (output_dir / "negative-controls.json").open("w", encoding="utf-8") as f:
-        json.dump(neg_controls_payload, f, indent=2)
-
-    # 6. migration-rollout-rollback.json
-    migration_payload = {
-        "schema_version": "pantheon.external-source-management.migration.v1",
-        "task_id": TASK_ID,
-        "program_id": PROGRAM_ID,
-        "created_at": now,
-        "requirements": {
-            "idempotent_table_creation": {
-                "status": "passed",
-                "tables": [
-                    "data_source_instances",
-                    "source_desired_states",
-                    "source_command_receipts",
-                    "source_canary_results",
-                    "source_observed_snapshots",
-                    "source_connector_definitions",
-                ],
-                "ddl_executed_safely": True,
-            },
-            "configured_instances_imported_disabled": {
-                "status": "passed",
-                "imported_state": "configured_disabled",
-                "imported_instances_count": 8,
-                "imported_instance_ids": [
-                    "ds-twse-market-primary",
-                    "ds-tpex-market-primary",
-                    "ds-taifex-futures-daily",
-                    "ds-tdcc-shareholding-weekly",
-                    "ds-fred-macro-rates",
-                    "ds-coingecko-crypto-spot",
-                    "ds-finmind-taiwan-market",
-                    "ds-cnyes-news-stream",
-                ],
-            },
-            "catalog_only_entries_skipped": {
-                "status": "passed",
-                "skipped_count": 14,
-                "skipped_catalog_ids": [
-                    "tw_market_twse_official",
-                    "tw_market_tpex_official",
-                    "tw_futures_taifex",
-                    "tw_central_bank_rates",
-                    "tw_tdcc_shareholding",
-                    "tw_finmind_taiwan_stock",
-                    "us_sec_edgar_filings",
-                    "us_fred_macroeconomic",
-                    "us_nyse_nasdaq_market",
-                    "us_fmp_financial_modeling",
-                    "us_yfinance_dataset",
-                    "crypto_binance_spot_klines",
-                    "crypto_coingecko_public",
-                    "news_cnyes_financial_rss",
-                ],
-                "verified": True,
-            },
-            "inline_secrets_redacted_or_rejected": {
-                "status": "passed",
-                "redactions_count": 0,
-                "rejections_count": 1,
-                "zero_secret_leak_verified": True,
-            },
-            "legacy_projection_snapshots_captured": {
-                "status": "passed",
-                "source": "legacy_projection",
-                "snapshots_captured": 8,
-                "watermark_preserved": True,
-            },
-            "parity_with_v1_data_sources": {
-                "status": "passed",
-                "v1_endpoint": "/bff/management/data-sources",
-                "v2_endpoint": "/bff/management/data-sources",
-                "parity_verified": True,
-            },
-            "rollback_preserves_evidence_and_receipts": {
-                "status": "passed",
-                "evidence_intact": True,
-                "receipts_intact": True,
-                "zero_data_deleted": True,
-            },
-            "rollback_leaves_sources_disabled_and_readonly": {
-                "status": "passed",
-                "command_flags_disabled": True,
-                "read_only_serving": True,
-                "posture": {
-                    "SOURCE_MANAGEMENT_COMMANDS_ENABLED": "0",
-                    "PANTHEON_BFF_SOURCE_MANAGEMENT_COMMANDS_ENABLED": "0",
-                    "VITE_BFF_REAL_WRITES": "false",
-                },
-            },
-        },
-    }
-    with (output_dir / "migration-rollout-rollback.json").open("w", encoding="utf-8") as f:
-        json.dump(migration_payload, f, indent=2)
-
-    # 7. evidence.json (Canonical root manifest)
-    artifact_files = {
-        "deployment": "deployment.json",
-        "hosted_summary": "hosted-acceptance-summary.json",
-        "journey_receipts": "journey-receipts.json",
-        "browser_evidence": "browser-evidence.json",
-        "negative_controls": "negative-controls.json",
-        "migration_rollout": "migration-rollout-rollback.json",
-    }
-    artifact_checksums_dict = {}
-    for name, rel_path in artifact_files.items():
-        artifact_checksums_dict[name] = {
-            "path": rel_path,
-            "sha256": _sha256_file(output_dir / rel_path),
-        }
-
-    evidence_manifest = {
-        "schema_version": "pantheon.external-source-management.evidence-manifest.v1",
-        "task_id": TASK_ID,
-        "program_id": PROGRAM_ID,
-        "created_at": now,
-        "status": "passed",
-        "acceptance_criteria_fulfilled": [
-            "Complete all SD-SRCM-08 migration rollout rollback and hosted acceptance requirements",
-            "Import only real configured instances idempotently and reject or redact inline secrets",
-            "Keep normal rollback read-only without enabling deleting or losing evidence",
-            "Prove exact FE BFF and source deployment identities before browser acceptance",
-            "Run create-disabled validate bounded-canary enable disable reload idempotency and degraded journeys without route mocks",
-            "Pass unauthorized stale-revision secret-exposure egress no-order and provider-failure negatives",
-            "Store redacted network receipts screenshots checksums and rollback evidence",
-            "Update active current docs and retain legacy frontend references as historical only",
-            "Keep OpenClaw development explicitly phase 2 and outside product write authority",
-            "Merge the exact reviewed head to Pantheon dev only after all evidence passes",
-        ],
-        "exact_pair": {
-            "backend_sha": backend_sha,
-            "frontend_sha": frontend_sha,
-            "source_definitions_sha": source_definitions_sha,
-            "fe_manifest_bff_sha": fe_manifest_bff_sha,
-            "drift_status": "fe_manifest_precedes_live_bff",
-            "bff_url": bff_url,
-            "fe_url": fe_url,
-        },
-        "artifacts": artifact_checksums_dict,
-    }
-    with (output_dir / "evidence.json").open("w", encoding="utf-8") as f:
-        json.dump(evidence_manifest, f, indent=2)
-
-    logger.info("Canonical evidence bundle generated in %s", output_dir)
-
-
 def main(argv: Optional[Sequence[str]] = None) -> int:
     parser = argparse.ArgumentParser(description="Verify External Source Management Phase 1 Hosted Acceptance (SD-SRCM-08)")
     parser.add_argument("--evidence-dir", type=Path, default=DEFAULT_EVIDENCE_DIR, help="Path to evidence directory")
@@ -1676,22 +1016,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     parser.add_argument("--source-ingest-url", type=str, default=DEFAULT_SOURCE_INGEST_URL, help="Source Ingest URL")
     parser.add_argument("--token", type=str, default="op-dev:admin:mfa", help="Operator JWT/token")
     parser.add_argument("--offline-only", action="store_true", help="Verify offline evidence artifacts only")
-    parser.add_argument("--generate-evidence", action="store_true", help="Generate canonical evidence bundle")
     parser.add_argument("--output", type=Path, default=None, help="Optional output path for verification result JSON")
     args = parser.parse_args(argv)
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
-
-    if args.generate_evidence:
-        generate_canonical_evidence_bundle(
-            args.evidence_dir,
-            backend_sha=args.expected_bff_sha,
-            frontend_sha=args.expected_fe_sha,
-            source_definitions_sha=args.expected_source_definitions_sha,
-            fe_manifest_bff_sha=FE_MANIFEST_BFF_SHA,
-            bff_url=args.bff_url,
-            fe_url=args.fe_url,
-        )
 
     config = AcceptanceConfig(
         evidence_dir=args.evidence_dir,

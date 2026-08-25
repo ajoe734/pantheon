@@ -686,8 +686,9 @@ python3 -m pytest services/knowledge/evidence services/search/tests/test_governe
    - `fresh`: 觀察水位在 declared SLA 內
    - `live`: 當前環境經 exact FE/BFF/source 部署驗證通過
 
-6. **Hosted Acceptance**:
-   - 透過 `scripts/verify_external_source_management_acceptance.py` 驗證 10 個 hosted journeys、負向安全控制、migration idempotency、read-only rollback 與 zero secret leak。
+6. **Hosted Acceptance Status**:
+   - `scripts/verify_external_source_management_acceptance.py` 嚴格把關 10 個 hosted journeys、負向安全控制、exact-pair identity drift rejection、migration idempotency、read-only rollback 與 zero secret leak。
+   - Live dev acceptance 要求 dev host 部署對齊的 write-enabled candidate (execute-plans PR #636 / `88a4dafb`) 與 BFF (`03757f02`)，在 stale baseline 或 identity drift 時 fail-closed。
    - OpenClaw 維持 Phase 2，不具備 product write 權限。
 
 ---

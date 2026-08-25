@@ -29,7 +29,7 @@ OpenClaw 不得直接持有 vendor token，也不得直接任意上網抓資料�
 
 ## 2. Repo ownership & Phase-1 Canonical Correction
 
-> **2026-08-24 Canonical Update**: Phase-1 External Data Source Management (`SRCM-PHASE1-20260824`, SD-SRCM-01 ~ SD-SRCM-08) is fully implemented and hosted-accepted in Pantheon. Active Management UI lives in `execute-plans` under `/management/data-sources`.
+> **2026-08-24 Canonical Update**: Phase-1 External Data Source Management (`SRCM-PHASE1-20260824`, SD-SRCM-01 ~ SD-SRCM-07) is implemented in Pantheon. SD-SRCM-08 Hosted Acceptance verifier is hardened and fail-closed, awaiting matching write-enabled FE candidate deployment on the dev host. Active Management UI lives in `execute-plans` under `/management/data-sources`.
 
 | Repo | Ownership | Status |
 |---|---|---|
