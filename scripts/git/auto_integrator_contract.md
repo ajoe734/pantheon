@@ -48,9 +48,10 @@ or unblock task
   next push (the PR #4227 shape).
 - Two open PRs claiming the same task branch fail closed instead of resolving
   to the first row.
-- If the open PR is already gone because GitHub merged it before the status
-  row moved to `done`, the integrator may verify the merged PR's merge commit
-  is already in `origin/dev` and run the normal owner `done` reconciliation.
+- If the open PR is already gone because GitHub merged it, the integrator
+  verifies the merged PR's merge commit is already in `origin/dev` and reports
+  `already_merged`, leaving the task in `review_approved` for owner closeout
+  without opening spurious unblock tasks or mutating task status to `done`.
 - The integrator never resolves conflicts and never bypasses branch protection.
 - Blockers create an `INTEGRATION-UNBLOCK-*` task instead of leaving the parent
   stranded.
@@ -59,11 +60,11 @@ or unblock task
 
 For each eligible task, capped by `max_tasks_per_run`:
 
-1. Read the task row from `ai-status.json`.
+1. Read the task row from canonical `ai-status.json` (`PANTHEON_STATUS_ROOT` or `--status-file`).
 2. Find the open PR for `task/<TASK-ID>` into `dev`.
 3. If no open PR exists, check for a merged PR from the same head/base whose
-   merge commit is already in `origin/dev`; if found, reconcile the task to
-   `done` and stop.
+   merge commit is already in `origin/dev`; if found, report `already_merged`
+   and leave the task in `review_approved` for owner finalization.
 4. If no open or already-merged PR exists, create a missing-PR unblock task.
 5. Evaluate the review-before-merge gate against this exact PR head. Any
    pending auto-merge request on a gated PR is revoked here, before the CI and
@@ -89,8 +90,9 @@ For each eligible task, capped by `max_tasks_per_run`:
 13. If no push was needed and the PR is still mergeable, run `gh pr merge`,
     with `--match-head-commit <approved-oid>` for a gated task so a concurrent
     finalize cannot slip a different head into the merge.
-14. After merge, run `scripts/ai_status.py done` as the task owner so the normal
-    delivery gate archives the task.
+14. After merge, leave the task in `review_approved` for supervisor
+    `owned_finalize_dispatch`. The integrator never mutates canonical task
+    state to `done`.
 
 ## Configuration
 
