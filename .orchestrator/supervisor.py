@@ -12676,8 +12676,22 @@ def build_dispatch_event(
         "dependency_truth": [
             {
                 "task_id": dependency_id,
-                "status": resolver.dependency_status(dependency_id),
-                "satisfied": resolver.dependency_satisfied(dependency_id),
+                "status": (
+                    completion_track_status(
+                        resolver.get(dependency_id),
+                        dependency_track_for(task, dependency_id) or "invalid",
+                    )
+                    if dependency_track_for(task, dependency_id)
+                    in {"functional", "hosted"}
+                    else resolver.dependency_status(dependency_id)
+                ),
+                "satisfied": dependency_satisfied_for(task, dependency_id, resolver),
+                **(
+                    {"track": dependency_track_for(task, dependency_id)}
+                    if dependency_track_for(task, dependency_id)
+                    not in {None, "terminal"}
+                    else {}
+                ),
             }
             for dependency_id in dependencies
         ],

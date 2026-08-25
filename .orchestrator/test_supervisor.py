@@ -343,6 +343,32 @@ class V2StartupCacheTests(unittest.TestCase):
             [{"task_id": "DEP", "status": "done", "satisfied": True}],
         )
 
+    def test_dispatch_payload_projects_explicit_completion_track_truth(self) -> None:
+        task = task_fixture(depends_on=["DEP"])
+        task["dependency_tracks"] = {"DEP": "functional"}
+        dependency = task_fixture(task_id="DEP", status="blocked")
+        dependency["completion_tracks"] = {
+            "functional": {"status": "done"},
+            "hosted": {"status": "external_wait"},
+        }
+
+        event = supervisor.build_dispatch_event(
+            task,
+            "Codex",
+            supervisor.REASON_OWNED_READY,
+            {"TASK-1": task, "DEP": dependency},
+        )
+
+        self.assertEqual(
+            event["task"]["dependency_truth"],
+            [{
+                "task_id": "DEP",
+                "track": "functional",
+                "status": "done",
+                "satisfied": True,
+            }],
+        )
+
     def test_build_dispatch_event_preserves_target_repo_and_metadata(self) -> None:
         task = task_fixture(task_id="FE-TASK-001")
         task["target_repo"] = "execute-plans"
