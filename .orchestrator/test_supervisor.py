@@ -681,6 +681,330 @@ def planner_decision(
     )
 
 
+class PantheonWorkerTaskBriefHygieneTests(unittest.TestCase):
+    TASK_ID = "SUP-BRIEF-HYGIENE-TEST"
+    BRIEF_PATH = ".orchestrator/task-briefs/sup_brief_hygiene_test.md"
+
+    @staticmethod
+    def _git(cwd: Path, *args: str) -> str:
+        proc = subprocess.run(
+            ["git", *args],
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        return proc.stdout.strip()
+
+    def _fixture(
+        self,
+        root: Path,
+        *,
+        tracked_brief: str | None,
+    ) -> tuple[dict[str, object], dict[str, object], Path, Path]:
+        status_root = root / "status"
+        source_root = root / "pantheon"
+        status_root.mkdir()
+        source_root.mkdir()
+        self._git(source_root, "init", "-b", "dev")
+        self._git(source_root, "config", "user.name", "Test")
+        self._git(source_root, "config", "user.email", "test@example.com")
+        (source_root / ".gitignore").write_text(
+            ".orchestrator/worker-runtime/\n",
+            encoding="utf-8",
+        )
+        (source_root / "AI_COLLABORATION_GUIDE.md").write_text(
+            "worker instructions\n",
+            encoding="utf-8",
+        )
+        if tracked_brief is not None:
+            brief = source_root / self.BRIEF_PATH
+            brief.parent.mkdir(parents=True)
+            brief.write_text(tracked_brief, encoding="utf-8")
+        self._git(source_root, "add", ".gitignore", "AI_COLLABORATION_GUIDE.md")
+        if tracked_brief is not None:
+            self._git(source_root, "add", self.BRIEF_PATH)
+        self._git(source_root, "commit", "-m", "initial")
+        head = self._git(source_root, "rev-parse", "HEAD")
+        self._git(
+            source_root,
+            "remote",
+            "add",
+            "origin",
+            "https://github.com/ajoe734/pantheon.git",
+        )
+        self._git(source_root, "update-ref", "refs/remotes/origin/dev", head)
+
+        config = config_fixture(status_root)
+        config.update(
+            {
+                "branch_workflow": {
+                    "task_branch_prefix": "task/",
+                    "dev_branch": "dev",
+                },
+                "worker_worktrees": {
+                    "enabled": True,
+                    "root": str(root / "worker-worktrees"),
+                    "base_ref": "origin/dev",
+                    "reuse_existing": True,
+                    "execution_reasons": [
+                        supervisor.REASON_OWNED_READY,
+                        supervisor.REASON_REVIEW_READY,
+                    ],
+                },
+                "worker_worktree_cleanup": {
+                    "enabled": True,
+                    "cleanup_inactive_leases": True,
+                    "archive_dirty_worktrees": True,
+                    "force_remove_archived_dirty": True,
+                    "archive_root": str(root / "worktree-archive"),
+                    "max_removals_per_tick": 10,
+                },
+                "coordination": {
+                    "repositories": {
+                        "pantheon": {
+                            "local_path": str(source_root),
+                        }
+                    }
+                },
+            }
+        )
+        task = task_fixture(self.TASK_ID)
+        task.update(
+            {
+                "title": "Keep task briefs clean",
+                "summary_zh": "brief hygiene",
+                "next": "owner implementation",
+                "artifacts": [".orchestrator/supervisor.py"],
+            }
+        )
+        return config, task, status_root, source_root
+
+    @staticmethod
+    def _request(
+        task: dict[str, object],
+        *,
+        agent_id: str,
+        reason: str,
+    ) -> supervisor.DeliveryRequest:
+        return supervisor.DeliveryRequest(
+            agent_id=agent_id,
+            provider=agent_id,
+            delivery_mode="codex",
+            message=(
+                "read task context\n"
+                f"- {PantheonWorkerTaskBriefHygieneTests.BRIEF_PATH}\n"
+            ),
+            task_id=str(task["id"]),
+            reason=reason,
+            context_files=[PantheonWorkerTaskBriefHygieneTests.BRIEF_PATH],
+            target_files=list(task["artifacts"]),
+            metadata={"task": task, "task_generation": 1},
+        )
+
+    def _prepare(
+        self,
+        config: dict[str, object],
+        state: dict[str, object],
+        task: dict[str, object],
+        *,
+        agent_id: str,
+        reason: str,
+        queue_event_id: str,
+    ) -> supervisor.DeliveryRequest:
+        request = self._request(task, agent_id=agent_id, reason=reason)
+        with (
+            mock.patch.object(
+                supervisor,
+                "_fetch_worker_base_ref",
+                return_value=(True, None),
+            ),
+            mock.patch.object(supervisor, "write_activity_log"),
+            mock.patch.object(
+                supervisor,
+                "load_status",
+                return_value={"tasks": [task]},
+            ),
+        ):
+            ok, error = supervisor.prepare_worker_workspace(
+                config,
+                state,
+                request,
+                queue_event_id=queue_event_id,
+                target_agent=agent_id,
+            )
+        self.assertTrue(ok, error)
+        return request
+
+    def test_tracked_brief_is_read_only_for_owner_and_reviewer_dispatch(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            reviewed_bytes = "reviewed branch task brief\n"
+            config, task, status_root, _source_root = self._fixture(
+                root,
+                tracked_brief=reviewed_bytes,
+            )
+            status_brief = status_root / self.BRIEF_PATH
+            status_brief.parent.mkdir(parents=True)
+            status_brief.write_text(
+                "live owner status and next text\n",
+                encoding="utf-8",
+            )
+            state: dict[str, object] = {"worker_worktrees": {"leases": {}}}
+
+            owner_request = self._prepare(
+                config,
+                state,
+                task,
+                agent_id="codex",
+                reason=supervisor.REASON_OWNED_READY,
+                queue_event_id="evt-owner",
+            )
+            workspace = Path(str(owner_request.metadata["workspace_path"]))
+            self.assertEqual(
+                (workspace / self.BRIEF_PATH).read_text(encoding="utf-8"),
+                reviewed_bytes,
+            )
+            self.assertEqual(self._git(workspace, "status", "--porcelain"), "")
+
+            task["status"] = "review"
+            task["next"] = "dynamic reviewer status and next text"
+            status_brief.write_text(
+                "dynamic reviewer status and next text\n",
+                encoding="utf-8",
+            )
+            reviewer_request = self._prepare(
+                config,
+                state,
+                task,
+                agent_id="codex2",
+                reason=supervisor.REASON_REVIEW_READY,
+                queue_event_id="evt-reviewer",
+            )
+
+            self.assertEqual(
+                reviewer_request.context_files,
+                [self.BRIEF_PATH],
+            )
+            self.assertEqual(
+                (workspace / self.BRIEF_PATH).read_text(encoding="utf-8"),
+                reviewed_bytes,
+            )
+            self.assertNotIn("dynamic reviewer", reviewer_request.message)
+            self.assertEqual(self._git(workspace, "status", "--porcelain"), "")
+            self.assertEqual(
+                supervisor._classify_worktree_dirt(f" M {self.BRIEF_PATH}")[0],
+                "real",
+            )
+
+    def test_missing_brief_uses_ignored_context_across_repeated_review_dispatch(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config, task, _status_root, _source_root = self._fixture(
+                root,
+                tracked_brief=None,
+            )
+            state: dict[str, object] = {"worker_worktrees": {"leases": {}}}
+
+            owner_request = self._prepare(
+                config,
+                state,
+                task,
+                agent_id="codex",
+                reason=supervisor.REASON_OWNED_READY,
+                queue_event_id="evt-owner-missing",
+            )
+            workspace = Path(str(owner_request.metadata["workspace_path"]))
+            generated_path = (
+                ".orchestrator/worker-runtime/task-context/"
+                "sup-brief-hygiene-test.md"
+            )
+            generated_file = workspace / generated_path
+            self.assertEqual(owner_request.context_files, [generated_path])
+            self.assertIn(f"- {generated_path}", owner_request.message)
+            self.assertNotIn(f"- {self.BRIEF_PATH}", owner_request.message)
+            self.assertTrue(generated_file.is_file())
+            self.assertIn("Status: todo", generated_file.read_text(encoding="utf-8"))
+            self.assertEqual(
+                self._git(workspace, "check-ignore", generated_path),
+                generated_path,
+            )
+            self.assertEqual(self._git(workspace, "status", "--porcelain"), "")
+
+            legacy_brief = workspace / self.BRIEF_PATH
+            legacy_brief.parent.mkdir(parents=True, exist_ok=True)
+            legacy_brief.write_text(
+                "# Legacy generated context\n\n"
+                f"{supervisor._GENERATED_WORKER_TASK_BRIEF_MARKER}\n",
+                encoding="utf-8",
+            )
+            self.assertIn(
+                f"?? {self.BRIEF_PATH}",
+                self._git(
+                    workspace,
+                    "status",
+                    "--porcelain",
+                    "--untracked-files=all",
+                ),
+            )
+
+            task["status"] = "review"
+            task["next"] = "review the exact task head"
+            reviewer_request = self._prepare(
+                config,
+                state,
+                task,
+                agent_id="codex2",
+                reason=supervisor.REASON_REVIEW_READY,
+                queue_event_id="evt-reviewer-missing",
+            )
+            self.assertEqual(reviewer_request.context_files, [generated_path])
+            generated_text = generated_file.read_text(encoding="utf-8")
+            self.assertIn("Status: review", generated_text)
+            self.assertIn("review the exact task head", generated_text)
+            self.assertFalse(legacy_brief.exists())
+            self.assertEqual(
+                reviewer_request.metadata[
+                    "removed_legacy_generated_context_files"
+                ],
+                [self.BRIEF_PATH],
+            )
+            self.assertEqual(self._git(workspace, "status", "--porcelain"), "")
+
+            task["status"] = "review_approved"
+            task["next"] = "dynamic approval text must stay out of task source"
+            finalize_request = self._prepare(
+                config,
+                state,
+                task,
+                agent_id="codex",
+                reason=supervisor.REASON_OWNED_FINALIZE,
+                queue_event_id="evt-finalize-missing",
+            )
+            self.assertEqual(finalize_request.context_files, [generated_path])
+            finalize_text = generated_file.read_text(encoding="utf-8")
+            self.assertIn("query the governed `ai-status.sh show`", finalize_text)
+            self.assertNotIn("dynamic approval text", finalize_text)
+            self.assertEqual(self._git(workspace, "status", "--porcelain"), "")
+
+            with (
+                mock.patch.object(supervisor, "write_activity_log"),
+                mock.patch.object(
+                    supervisor,
+                    "_scan_process_paths_in_root",
+                    return_value=set(),
+                ),
+            ):
+                self.assertTrue(
+                    supervisor.cleanup_inactive_worker_worktrees(config, state)
+                )
+            self.assertFalse(workspace.exists())
+            self.assertNotIn(
+                self.TASK_ID,
+                state["worker_worktrees"]["leases"],
+            )
+
+
 class CrossRepositoryWorkerWorkspaceTests(unittest.TestCase):
     @staticmethod
     def _git(cwd: Path, *args: str) -> str:
