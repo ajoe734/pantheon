@@ -133,9 +133,7 @@ def test_normalize_execution_resources_valid_and_normalization() -> None:
 
 def test_normalize_execution_resources_rejections() -> None:
     # Explicit null
-    with pytest.raises(ValueError, match="expected list, got null"):
-        normalize_execution_resources(None)
-    with pytest.raises(ValueError, match="must be a list, got NoneType"):
+    with pytest.raises(ValueError, match="must be a list, got null"):
         normalize_execution_resources(None)
 
     # Non-list
@@ -147,27 +145,27 @@ def test_normalize_execution_resources_rejections() -> None:
         normalize_execution_resources({"pantheon-dev": 1})
 
     # Non-string element
-    with pytest.raises(ValueError, match="elements must be str"):
+    with pytest.raises(ValueError, match="elements must be strings"):
         normalize_execution_resources([123])
-    with pytest.raises(ValueError, match="all elements must be strings"):
+    with pytest.raises(ValueError, match="elements must be strings"):
         normalize_execution_resources([None])
 
     # Empty / whitespace string element
     with pytest.raises(ValueError, match="cannot be empty"):
         normalize_execution_resources([""])
-    with pytest.raises(ValueError, match="empty string element"):
+    with pytest.raises(ValueError, match="cannot be empty"):
         normalize_execution_resources(["   "])
 
     # Unallowlisted resource
-    with pytest.raises(ValueError, match="unallowlisted"):
+    with pytest.raises(ValueError, match="unallowlisted resource"):
         normalize_execution_resources(["unknown-res"])
     with pytest.raises(ValueError, match="allowlisted execution resources"):
         normalize_execution_resources(["vm-staging"])
 
     # Duplicate resource
-    with pytest.raises(ValueError, match="duplicate"):
+    with pytest.raises(ValueError, match="duplicate resource"):
         normalize_execution_resources(["pantheon-dev", "pantheon-dev"])
-    with pytest.raises(ValueError, match="duplicate"):
+    with pytest.raises(ValueError, match="duplicate resource"):
         normalize_execution_resources(["pantheon-dev", "  PANTHEON-DEV "])
 
 
@@ -182,13 +180,13 @@ def test_task_execution_resources_cases() -> None:
     assert task_execution_resources({"id": "TASK-1", "execution_resources": ["pantheon-dev"]}) == ["pantheon-dev"]
 
     # Fails closed on explicit null / malformed / unallowlisted
-    with pytest.raises(ValueError, match="expected list, got null"):
+    with pytest.raises(ValueError, match="must be a list, got null"):
         task_execution_resources({"id": "TASK-1", "execution_resources": None})
-    with pytest.raises(ValueError, match="elements must be str"):
+    with pytest.raises(ValueError, match="elements must be strings"):
         task_execution_resources({"id": "TASK-1", "execution_resources": [123]})
     with pytest.raises(ValueError, match="cannot be empty"):
         task_execution_resources({"id": "TASK-1", "execution_resources": [""]})
-    with pytest.raises(ValueError, match="unallowlisted"):
+    with pytest.raises(ValueError, match="unallowlisted resource"):
         task_execution_resources({"id": "TASK-1", "execution_resources": ["bad"]})
-    with pytest.raises(ValueError, match="duplicate"):
+    with pytest.raises(ValueError, match="duplicate resource"):
         task_execution_resources({"id": "TASK-1", "execution_resources": ["pantheon-dev", "pantheon-dev"]})

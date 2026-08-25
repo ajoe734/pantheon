@@ -64,7 +64,6 @@ from common import (
     worker_runtime_paths,
 )
 from dispatch_policy import (
-    ALLOWLISTED_EXECUTION_RESOURCES,
     DISPATCH_STATUS_ACTIONS,
     REASON_OWNED_FINALIZE,
     REASON_OWNED_IN_PROGRESS,
@@ -72,7 +71,6 @@ from dispatch_policy import (
     REASON_REVIEW_READY,
     dispatch_reason_priority,
     is_execution_dispatch_reason,
-    normalize_execution_resources,
     normalized_status_set,
     ready_dispatch_settings,
     task_execution_resources,

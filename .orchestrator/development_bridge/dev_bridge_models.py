@@ -21,15 +21,9 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 # signed packet from monopolising a supervisor tick indefinitely.
 MAX_TASKS_PER_PACKET = 16
 try:
-    from ..dispatch_policy import (
-        ALLOWLISTED_EXECUTION_RESOURCES,
-        normalize_execution_resources,
-    )
+    from ..dispatch_policy import normalize_execution_resources
 except (ImportError, ValueError):
-    from dispatch_policy import (
-        ALLOWLISTED_EXECUTION_RESOURCES,
-        normalize_execution_resources,
-    )
+    from dispatch_policy import normalize_execution_resources
 
 
 class BridgeBaseModel(BaseModel):

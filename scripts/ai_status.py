@@ -5121,7 +5121,7 @@ def _bridge_assignment_from_metadata(
                 spec.get("execution_resources")
             )
         except ValueError as err:
-            raise SystemExit(f"Bridge assignment task_spec.{err}")
+            raise SystemExit(f"Bridge assignment task_spec: {err}")
     for field in ("phase", "summary"):
         value = spec.get(field)
         if value is not None and not isinstance(value, str):
@@ -5372,11 +5372,7 @@ def command_assign(state: dict[str, Any], args: list[str]) -> bool | None:
         phase = spec.get("phase") or "Unassigned"
         depends_on = list(spec.get("depends_on") or [])
         dependency_tracks = dict(spec.get("dependency_tracks") or {})
-        raw_res = spec.get("execution_resources")
-        try:
-            execution_resources = normalize_execution_resources(raw_res) if raw_res is not None else []
-        except ValueError as err:
-            raise SystemExit(str(err))
+        execution_resources = list(spec.get("execution_resources") or [])
         artifacts = list(spec.get("artifacts") or [])
         acceptance = list(spec.get("acceptance") or [])
     else:
@@ -5385,18 +5381,16 @@ def command_assign(state: dict[str, Any], args: list[str]) -> bool | None:
         dependency_tracks = parse_json_env("TASK_DEPENDENCY_TRACKS_JSON")
         raw_resources_json = os.environ.get("TASK_EXECUTION_RESOURCES_JSON")
         raw_resources_csv = os.environ.get("TASK_EXECUTION_RESOURCES")
-        if raw_resources_json is not None and raw_resources_json.strip():
+        if raw_resources_json is not None:
             try:
                 parsed = json.loads(raw_resources_json)
             except Exception:
                 raise SystemExit("TASK_EXECUTION_RESOURCES_JSON must be a valid JSON list")
-            if parsed is None or not isinstance(parsed, list) or any(not isinstance(x, str) for x in parsed):
-                raise SystemExit("TASK_EXECUTION_RESOURCES_JSON must be a string list")
             try:
                 execution_resources = normalize_execution_resources(parsed)
             except ValueError as err:
                 raise SystemExit(f"Task execution resources: {err}")
-        elif raw_resources_csv is not None and raw_resources_csv.strip():
+        elif raw_resources_csv is not None:
             raw_parts = [x.strip() for x in raw_resources_csv.split(",")]
             try:
                 execution_resources = normalize_execution_resources(raw_parts)

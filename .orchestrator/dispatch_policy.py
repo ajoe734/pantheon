@@ -65,25 +65,29 @@ def normalize_execution_resources(
     unallowlisted resource names, and duplicate resources.
     Returns a normalized list of lowercased, stripped strings.
     """
-    prefix = f"Task {task_id} has " if task_id else "task.execution_resources "
+    prefix = f"Task {task_id} " if task_id else "task "
     if raw is None:
-        raise ValueError(f"{prefix}must be a list, got NoneType: None (expected list, got null)")
+        raise ValueError(f"{prefix}execution_resources must be a list, got null")
     if not isinstance(raw, list):
-        raise ValueError(f"{prefix}must be a list (expected list), got {type(raw).__name__}: {raw!r}")
+        raise ValueError(
+            f"{prefix}execution_resources must be a list, got {type(raw).__name__}: {raw!r}"
+        )
     res: list[str] = []
     for item in raw:
         if not isinstance(item, str):
-            raise ValueError(f"{prefix}elements must be str (all elements must be strings), got {type(item).__name__}: {item!r}")
+            raise ValueError(
+                f"{prefix}execution_resources elements must be strings, got {type(item).__name__}: {item!r}"
+            )
         val = item.strip().lower()
         if not val:
-            raise ValueError(f"{prefix}element cannot be empty (empty string element)")
+            raise ValueError(f"{prefix}execution_resources element cannot be empty")
         if val not in ALLOWLISTED_EXECUTION_RESOURCES:
             raise ValueError(
-                f"{prefix}contains an unallowlisted resource (unallowlisted execution_resources, unknown/unallowlisted resource): {item!r}; "
+                f"{prefix}execution_resources contains an unallowlisted resource: {item!r}; "
                 f"allowlisted execution resources: {', '.join(sorted(ALLOWLISTED_EXECUTION_RESOURCES))}"
             )
         if val in res:
-            raise ValueError(f"{prefix}contains duplicate resources (duplicate execution_resources, duplicate resource): {item!r}")
+            raise ValueError(f"{prefix}execution_resources contains duplicate resource: {item!r}")
         res.append(val)
     return res
 

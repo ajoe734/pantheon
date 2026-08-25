@@ -5169,7 +5169,7 @@ class ExecutionResourceAdmissionTests(unittest.TestCase):
         self.assertEqual(supervisor.task_execution_resources({"id": "TASK-1", "execution_resources": []}), [])
 
         # Explicit None (null) is malformed and must fail closed
-        with self.assertRaisesRegex(ValueError, "must be a list, got NoneType: None"):
+        with self.assertRaisesRegex(ValueError, "must be a list, got null"):
             supervisor.task_execution_resources({"id": "TASK-1", "execution_resources": None})
 
         # Valid allowlisted list
@@ -5190,7 +5190,7 @@ class ExecutionResourceAdmissionTests(unittest.TestCase):
             })
 
         # Non-string elements must fail closed
-        with self.assertRaisesRegex(ValueError, "elements must be str"):
+        with self.assertRaisesRegex(ValueError, "elements must be strings"):
             supervisor.task_execution_resources({"id": "TASK-1", "execution_resources": [123]})
 
         # Empty or whitespace string elements must fail closed
@@ -5200,7 +5200,7 @@ class ExecutionResourceAdmissionTests(unittest.TestCase):
             supervisor.task_execution_resources({"id": "TASK-1", "execution_resources": ["   "]})
 
         # Unknown/unallowlisted resources must fail closed
-        with self.assertRaisesRegex(ValueError, "unknown/unallowlisted resource"):
+        with self.assertRaisesRegex(ValueError, "unallowlisted resource"):
             supervisor.task_execution_resources({"id": "TASK-1", "execution_resources": ["unknown-res"]})
 
         # Non-list container types must fail closed

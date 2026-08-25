@@ -7564,6 +7564,46 @@ class SidecarTaskTests(unittest.TestCase):
         self.assertIsNotNone(task)
         self.assertEqual(task["execution_resources"], ["pantheon-dev"])
 
+    def test_assign_execution_resources_absent_defaults_empty(self) -> None:
+        # ABSENT []: When neither TASK_EXECUTION_RESOURCES nor TASK_EXECUTION_RESOURCES_JSON is set
+        env = {
+            "AI_NAME": "Codex",
+            "TASK_TITLE": "Deploy with absent execution resources",
+        }
+        filtered_env = {
+            k: v for k, v in os.environ.items()
+            if k not in {"TASK_EXECUTION_RESOURCES", "TASK_EXECUTION_RESOURCES_JSON"}
+        }
+        filtered_env.update(env)
+        with mock.patch.dict(os.environ, filtered_env, clear=True):
+            ai_status.command_assign(self.state, ["HOSTED-DEV-ABSENT", "Codex", "Claude"])
+
+        task = ai_status.get_task(self.state, "HOSTED-DEV-ABSENT")
+        self.assertIsNotNone(task)
+        self.assertEqual(task["execution_resources"], [])
+
+    def test_assign_rejects_explicit_empty_json_string(self) -> None:
+        # JSON_EMPTY: TASK_EXECUTION_RESOURCES_JSON='' must be rejected, not treated as omitted => []
+        env = {
+            "AI_NAME": "Codex",
+            "TASK_TITLE": "Deploy with empty JSON execution resources",
+            "TASK_EXECUTION_RESOURCES_JSON": "",
+        }
+        with mock.patch.dict(os.environ, env, clear=False):
+            with self.assertRaisesRegex(SystemExit, "TASK_EXECUTION_RESOURCES_JSON must be a valid JSON list"):
+                ai_status.command_assign(self.state, ["HOSTED-DEV-JSON-EMPTY", "Codex", "Claude"])
+
+    def test_assign_rejects_explicit_empty_csv_string(self) -> None:
+        # CSV_EMPTY: TASK_EXECUTION_RESOURCES='' must be rejected, not treated as omitted => []
+        env = {
+            "AI_NAME": "Codex",
+            "TASK_TITLE": "Deploy with empty CSV execution resources",
+            "TASK_EXECUTION_RESOURCES": "",
+        }
+        with mock.patch.dict(os.environ, env, clear=False):
+            with self.assertRaisesRegex(SystemExit, "cannot be empty"):
+                ai_status.command_assign(self.state, ["HOSTED-DEV-CSV-EMPTY", "Codex", "Claude"])
+
     def test_assign_rejects_unallowlisted_execution_resources(self) -> None:
         env = {
             "AI_NAME": "Codex",
@@ -7571,7 +7611,7 @@ class SidecarTaskTests(unittest.TestCase):
             "TASK_EXECUTION_RESOURCES": "forbidden-cluster",
         }
         with mock.patch.dict(os.environ, env, clear=False):
-            with self.assertRaisesRegex(SystemExit, "allowlisted execution resources"):
+            with self.assertRaisesRegex(SystemExit, "unallowlisted resource"):
                 ai_status.command_assign(self.state, ["HOSTED-DEV-003", "Codex", "Claude"])
 
     def test_assign_rejects_invalid_execution_resources_json(self) -> None:
@@ -7581,7 +7621,7 @@ class SidecarTaskTests(unittest.TestCase):
             "TASK_EXECUTION_RESOURCES_JSON": json.dumps({"not": "a list"}),
         }
         with mock.patch.dict(os.environ, env, clear=False):
-            with self.assertRaisesRegex(SystemExit, "must be a string list"):
+            with self.assertRaisesRegex(SystemExit, "must be a list"):
                 ai_status.command_assign(self.state, ["HOSTED-DEV-004", "Codex", "Claude"])
 
         # JSON null
@@ -7591,7 +7631,7 @@ class SidecarTaskTests(unittest.TestCase):
             "TASK_EXECUTION_RESOURCES_JSON": "null",
         }
         with mock.patch.dict(os.environ, env_null, clear=False):
-            with self.assertRaisesRegex(SystemExit, "must be a string list"):
+            with self.assertRaisesRegex(SystemExit, "must be a list, got null"):
                 ai_status.command_assign(self.state, ["HOSTED-DEV-004-NULL", "Codex", "Claude"])
 
     def test_assign_rejects_duplicate_execution_resources(self) -> None:
@@ -7602,7 +7642,7 @@ class SidecarTaskTests(unittest.TestCase):
             "TASK_EXECUTION_RESOURCES": "pantheon-dev,pantheon-dev",
         }
         with mock.patch.dict(os.environ, env_csv, clear=False):
-            with self.assertRaisesRegex(SystemExit, "contains duplicate resource"):
+            with self.assertRaisesRegex(SystemExit, "duplicate resource"):
                 ai_status.command_assign(self.state, ["HOSTED-DEV-DUP-1", "Codex", "Claude"])
 
         # Duplicate in JSON
@@ -7612,7 +7652,7 @@ class SidecarTaskTests(unittest.TestCase):
             "TASK_EXECUTION_RESOURCES_JSON": json.dumps(["pantheon-dev", "pantheon-dev"]),
         }
         with mock.patch.dict(os.environ, env_json, clear=False):
-            with self.assertRaisesRegex(SystemExit, "contains duplicate resource"):
+            with self.assertRaisesRegex(SystemExit, "duplicate resource"):
                 ai_status.command_assign(self.state, ["HOSTED-DEV-DUP-2", "Codex", "Claude"])
 
     def test_assign_rejects_empty_string_execution_resources(self) -> None:
@@ -7623,7 +7663,7 @@ class SidecarTaskTests(unittest.TestCase):
             "TASK_EXECUTION_RESOURCES": "pantheon-dev,",
         }
         with mock.patch.dict(os.environ, env_csv, clear=False):
-            with self.assertRaisesRegex(SystemExit, "empty string element"):
+            with self.assertRaisesRegex(SystemExit, "cannot be empty"):
                 ai_status.command_assign(self.state, ["HOSTED-DEV-EMPTY-1", "Codex", "Claude"])
 
         # Empty string element in JSON
@@ -7633,7 +7673,7 @@ class SidecarTaskTests(unittest.TestCase):
             "TASK_EXECUTION_RESOURCES_JSON": json.dumps(["pantheon-dev", ""]),
         }
         with mock.patch.dict(os.environ, env_json, clear=False):
-            with self.assertRaisesRegex(SystemExit, "empty string element"):
+            with self.assertRaisesRegex(SystemExit, "cannot be empty"):
                 ai_status.command_assign(self.state, ["HOSTED-DEV-EMPTY-2", "Codex", "Claude"])
 
     def test_bridge_metadata_validation_rejects_duplicate_execution_resources(self) -> None:
@@ -7660,7 +7700,7 @@ class SidecarTaskTests(unittest.TestCase):
                 "task_spec": task_spec,
             }
         }
-        with self.assertRaisesRegex(SystemExit, "contains duplicate resources"):
+        with self.assertRaisesRegex(SystemExit, "duplicate resource"):
             ai_status._bridge_assignment_from_metadata(
                 metadata,
                 task_id="TASK-DUP-RES",
@@ -7880,13 +7920,13 @@ class SidecarTaskTests(unittest.TestCase):
 
     def test_execution_resource_command_rejects_malformed_existing_execution_resources(self) -> None:
         malformed_cases = [
-            ("TASK-MAL-NULL", None, "expected list, got null"),
-            ("TASK-MAL-STR", "pantheon-dev", "expected list"),
-            ("TASK-MAL-NON-STR", [123], "all elements must be strings"),
-            ("TASK-MAL-EMPTY-STR", [""], "empty string element"),
-            ("TASK-MAL-UNALLOW", ["bad-resource"], "unallowlisted execution_resources"),
-            ("TASK-MAL-DUP", ["pantheon-dev", "pantheon-dev"], "duplicate execution_resources"),
-            ("TASK-MAL-DICT", {"pantheon-dev": 1}, "expected list"),
+            ("TASK-MAL-NULL", None, "must be a list, got null"),
+            ("TASK-MAL-STR", "pantheon-dev", "must be a list"),
+            ("TASK-MAL-NON-STR", [123], "elements must be strings"),
+            ("TASK-MAL-EMPTY-STR", [""], "cannot be empty"),
+            ("TASK-MAL-UNALLOW", ["bad-resource"], "unallowlisted resource"),
+            ("TASK-MAL-DUP", ["pantheon-dev", "pantheon-dev"], "duplicate resource"),
+            ("TASK-MAL-DICT", {"pantheon-dev": 1}, "must be a list"),
         ]
         for task_id, malformed_val, error_regex in malformed_cases:
             task = {

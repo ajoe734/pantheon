@@ -69,10 +69,21 @@ When authoring or migrating tasks within Portfolio Foundry Governance (PFG) and 
 
 | Task Type | Execution Resources | Concurrency Posture | Example Tasks |
 |:---|:---|:---|:---|
-| **Hosted Deploy / Verification** | `["pantheon-dev"]` | Serial (Capacity 1) | `PFG-MGMT-JOURNEY-E2E-20260820` (Management AI live journey E2E), `PFG-AGORA-JOURNEY-E2E-20260820` (Agora live journey E2E), `PFG-HOSTED-ACCEPT-20260820` (Final hosted acceptance / exact-candidate proof), SRCM hosted acceptance (`SA-SRCM-08`) |
-| **Functional / Worktree** | `[]` (None) | Parallel (Max lanes) | Domain logic, algorithm implementation, unit tests, linting, doc generation (`PFG-LIFECYCLE-POSTGRES-ACTIVATION-20260824`, `PFG-CANDIDATE-AUTO-BINDING-20260824`, `SA-SRCM-01`..`07`) |
+| **Hosted Deploy / Verification** | `["pantheon-dev"]` | Serial (Capacity 1) | `SRCM-P1-HOSTED-ACCEPTANCE-20260824` (Source Repository & External Data Source Management Phase 1 hosted acceptance, VM migration, and Execute Plans management verification per `SD-SRCM-08`), `PFG-HOSTED-ACCEPT-20260820` (archived PFG hosted acceptance reference) |
+| **Functional / Worktree** | `[]` (None) | Parallel (Max lanes) | Domain logic, schema contracts, adapters, unit tests, linting, doc generation (`SRCM-P1-CONTRACTS-20260824`, `SRCM-P1-SOURCE-COMMANDS-20260824`, `SRCM-P1-BFF-FACADE-20260824`, `SRCM-P1-PROVIDER-COVERAGE-20260824`, `SRCM-P1-SEARCH-ALPHA-20260824`, `SRCM-P1-MEMORY-WRITEBACK-20260824`, `PFG-LIFECYCLE-POSTGRES-ACTIVATION-20260824`) |
 
-### 3.2 Authoring Tasks in Task Packets
+### 3.2 Current SRCM Phase 1 Next Eligible Migration Point
+
+In the active Source Repository & External Data Source Management Phase 1 initiative (`docs/04/pantheon_external_data_source_management_2026-08-24/`):
+- **Pure Worktree Tasks** (`SRCM-P1-CONTRACTS-20260824` through `SRCM-P1-MEMORY-WRITEBACK-20260824`): Declare no execution resources (`execution_resources: []` or omitted). They run concurrently across worker worktrees without contending for the dev VM.
+- **Next Eligible Migration Point** (`SRCM-P1-HOSTED-ACCEPTANCE-20260824`): When dispatched/assigned as the final Phase 1 hosted acceptance and deployment task (`SD-SRCM-08`), it declares:
+  ```yaml
+  execution_resources:
+    - pantheon-dev
+  ```
+  This ensures `SRCM-P1-HOSTED-ACCEPTANCE-20260824` acquires exclusive capacity-1 admission before launching a worker to perform Postgres table bootstrap (`scripts/db_migrate.sh`), dev BFF service restart, and Execute Plans management UI hosted smoke verification on `pantheon-lupin-dev`.
+
+### 3.3 Authoring Tasks in Task Packets
 
 When generating development task packets via the assistant dev bridge (`.orchestrator/development_bridge/`):
 - For tasks touching hosted services or requiring VM deployment, include:
@@ -81,7 +92,7 @@ When generating development task packets via the assistant dev bridge (`.orchest
   ```
 - For functional and sidecar tasks, omit `execution_resources` or specify `[]`.
 
-### 3.3 Manual Task Assignment via CLI
+### 3.4 Manual Task Assignment via CLI
 
 When assigning tasks via `$PANTHEON_COMMAND_ROOT/scripts/human-ops-status.sh`:
 - Use `TASK_EXECUTION_RESOURCES="pantheon-dev"` or `TASK_EXECUTION_RESOURCES_JSON='["pantheon-dev"]'`:
@@ -90,7 +101,7 @@ When assigning tasks via `$PANTHEON_COMMAND_ROOT/scripts/human-ops-status.sh`:
     "$PANTHEON_COMMAND_ROOT/scripts/human-ops-status.sh" assign TASK-HOSTED-001 Codex Claude "Deploy BFF to dev"
   ```
 
-### 3.4 Revising Execution Resources via CLI
+### 3.5 Revising Execution Resources via CLI
 
 When adding or removing execution resources on existing pre-dispatch non-active tasks (`todo`, `blocked`):
 ```bash
@@ -101,6 +112,6 @@ When adding or removing execution resources on existing pre-dispatch non-active 
 - Validates allowlisted resources (`{"pantheon-dev"}`).
 - Records an audited `execution_resource_revised` event in `ai-activity-log.jsonl` and updates `contract_revision` on the canonical task row.
 
-### 3.5 Product & Capital Safety
+### 3.6 Product & Capital Safety
 
 Resource admission affects only development tooling dispatch concurrency. It does not modify product runtime behavior, trading APIs, or capital management boundaries.
