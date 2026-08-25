@@ -40,7 +40,6 @@ STATUS_COMMAND_BASE_REF_ENV = "PANTHEON_COMMAND_BASE_REF"
 TASK_STATE_STORE_MODE_ENV = "PANTHEON_TASK_STATE_STORE_MODE"
 TASK_STATE_EVENT_LOG_ENV = "PANTHEON_TASK_STATE_EVENT_LOG"
 STATUS_OUTBOX_VISIBILITY_ENABLED_ENV = "PANTHEON_STATUS_OUTBOX_VISIBILITY_ENABLED"
-ALLOWLISTED_EXECUTION_RESOURCES = {"pantheon-dev"}
 AUTO_WORKER_ENV_MARKERS = (
     "ORCH_RUN_ID",
     "PANTHEON_WORKTREE_ROOT",
@@ -64,6 +63,11 @@ ORCHESTRATOR_DIR = ROOT / ".orchestrator"
 if str(ORCHESTRATOR_DIR) not in sys.path:
     sys.path.insert(0, str(ORCHESTRATOR_DIR))
 
+from dispatch_policy import (
+    ALLOWLISTED_EXECUTION_RESOURCES,
+    normalize_execution_resources,
+    task_execution_resources,
+)
 import task_archive as task_archive_module
 from task_archive import (
     ARCHIVE_TASKS_DIR,
@@ -170,6 +174,7 @@ LOCAL_HUMAN_OPS_ACTIONS = frozenset(
         "assign",
         "milestone",
         "dependency-track",
+        "execution-resource",
         "reopen",
         "note",
         "reconcile_merged_done",
@@ -488,6 +493,7 @@ TASK_ID_COMMAND_ARG_INDEX: dict[str, int] = {
     "assign": 0,
     "milestone": 0,
     "dependency-track": 0,
+    "execution-resource": 0,
     "start": 0,
     "progress": 0,
     "note": 0,
@@ -5110,26 +5116,12 @@ def _bridge_assignment_from_metadata(
             for key, value in dependency_tracks.items()
         }
     if "execution_resources" in spec:
-        execution_resources = spec.get("execution_resources")
-        if not isinstance(execution_resources, list) or any(
-            not isinstance(item, str) for item in execution_resources
-        ):
-            raise SystemExit(
-                "Bridge assignment task_spec.execution_resources must be a string list"
+        try:
+            normalized_spec["execution_resources"] = normalize_execution_resources(
+                spec.get("execution_resources")
             )
-        normalized_resources = [
-            str(item).strip().lower()
-            for item in execution_resources
-            if str(item).strip()
-        ]
-        if any(
-            item not in ALLOWLISTED_EXECUTION_RESOURCES
-            for item in normalized_resources
-        ):
-            raise SystemExit(
-                "Bridge assignment task_spec.execution_resources contains an unallowlisted resource"
-            )
-        normalized_spec["execution_resources"] = normalized_resources
+        except ValueError as err:
+            raise SystemExit(f"Bridge assignment task_spec: {err}")
     for field in ("phase", "summary"):
         value = spec.get(field)
         if value is not None and not isinstance(value, str):
@@ -5387,19 +5379,25 @@ def command_assign(state: dict[str, Any], args: list[str]) -> bool | None:
         phase = os.environ.get("TASK_PHASE", "Unassigned")
         depends_on = parse_csv_env("TASK_DEPENDS_ON")
         dependency_tracks = parse_json_env("TASK_DEPENDENCY_TRACKS_JSON")
-        raw_resources = os.environ.get("TASK_EXECUTION_RESOURCES_JSON", "").strip()
-        if raw_resources:
+        raw_resources_json = os.environ.get("TASK_EXECUTION_RESOURCES_JSON")
+        raw_resources_csv = os.environ.get("TASK_EXECUTION_RESOURCES")
+        if raw_resources_json is not None:
             try:
-                parsed = json.loads(raw_resources)
+                parsed = json.loads(raw_resources_json)
             except Exception:
                 raise SystemExit("TASK_EXECUTION_RESOURCES_JSON must be a valid JSON list")
-            if not isinstance(parsed, list) or any(not isinstance(x, str) for x in parsed):
-                raise SystemExit("TASK_EXECUTION_RESOURCES_JSON must be a string list")
-            execution_resources = [str(x).strip().lower() for x in parsed if str(x).strip()]
+            try:
+                execution_resources = normalize_execution_resources(parsed)
+            except ValueError as err:
+                raise SystemExit(f"Task execution resources: {err}")
+        elif raw_resources_csv is not None:
+            raw_parts = [x.strip() for x in raw_resources_csv.split(",")]
+            try:
+                execution_resources = normalize_execution_resources(raw_parts)
+            except ValueError as err:
+                raise SystemExit(f"Task execution resources: {err}")
         else:
-            execution_resources = [
-                x.lower() for x in parse_csv_env("TASK_EXECUTION_RESOURCES") if x
-            ]
+            execution_resources = []
         artifacts = parse_csv_env("TASK_ARTIFACTS")
         acceptance = parse_csv_env("TASK_ACCEPTANCE")
     if any(
@@ -5417,20 +5415,6 @@ def command_assign(state: dict[str, Any], args: list[str]) -> bool | None:
         str(key): str(value).strip().lower()
         for key, value in dependency_tracks.items()
     }
-    if any(
-        not isinstance(res, str)
-        or res.strip().lower() not in ALLOWLISTED_EXECUTION_RESOURCES
-        for res in execution_resources
-    ):
-        raise SystemExit(
-            "Task execution resources must use allowlisted execution resources: "
-            + ", ".join(sorted(ALLOWLISTED_EXECUTION_RESOURCES))
-        )
-    execution_resources = [
-        str(res).strip().lower()
-        for res in execution_resources
-        if str(res).strip()
-    ]
 
     task = get_task(state, task_id)
     if task is not None and parse_bool_env("TASK_ASSIGN_CREATE_ONLY") is True:
@@ -5844,6 +5828,95 @@ def command_dependency_track(state: dict[str, Any], args: list[str]) -> None:
             "dependency_id": dependency_id,
             "previous": previous,
             "track": track,
+            "message": reason,
+            **local_human_ops_audit_fields(),
+        }
+    )
+
+
+def command_execution_resource(state: dict[str, Any], args: list[str]) -> None:
+    """Apply one audited execution-resource contract revision to a non-active task."""
+
+    if len(args) < 4:
+        raise SystemExit(
+            "Usage: execution-resource <task-id> <add|remove> "
+            "<resource> <reason>"
+        )
+    task_id, action, resource, reason = (
+        args[0],
+        args[1].strip().lower(),
+        args[2].strip().lower(),
+        args[3],
+    )
+    if current_actor() != "Human/Ops":
+        raise SystemExit("Only Human/Ops can revise execution resources")
+    if action not in {"add", "remove"}:
+        raise SystemExit("Action must be add or remove")
+    if not resource or resource not in ALLOWLISTED_EXECUTION_RESOURCES:
+        raise SystemExit(
+            "Task execution resources must use allowlisted execution resources: "
+            + ", ".join(sorted(ALLOWLISTED_EXECUTION_RESOURCES))
+        )
+    task = get_task(state, task_id)
+    if task is None:
+        raise SystemExit(f"Unknown task: {task_id}")
+    status = str(task.get("status") or "").lower()
+    if has_terminal_fact(state, task_id) or status in {"done", "superseded"}:
+        raise SystemExit(
+            f"Task {task_id} is terminal in lifecycle state {task.get('status')}; "
+            "cannot revise execution resources"
+        )
+    if status in {
+        "in_progress",
+        "review",
+        "review_approved",
+    }:
+        raise SystemExit(
+            f"Task {task_id} is active in lifecycle state {task.get('status')}; "
+            "revise execution resources before dispatch"
+        )
+    if status not in {"todo", "blocked"}:
+        raise SystemExit(
+            f"Task {task_id} is in non-pre-dispatch lifecycle state {task.get('status')!r}; "
+            "execution resources can only be revised in pre-dispatch states todo or blocked"
+        )
+    timestamp = iso_now()
+    try:
+        current_resources = task_execution_resources(task)
+    except ValueError as err:
+        raise SystemExit(str(err))
+
+    if action == "add":
+        if resource in current_resources:
+            normalized_resources = list(current_resources)
+        else:
+            normalized_resources = current_resources + [resource]
+    else:
+        normalized_resources = [r for r in current_resources if r != resource]
+
+    task["execution_resources"] = normalized_resources
+    task["contract_revision"] = {
+        "kind": "execution_resource",
+        "action": action,
+        "resource": resource,
+        "previous": current_resources,
+        "current": normalized_resources,
+        "reason": reason,
+        "updated_at": timestamp,
+        "updated_by": "Human/Ops",
+    }
+    task["last_update"] = timestamp
+    task["next"] = reason
+    append_log(
+        {
+            "ts": timestamp,
+            "agent": "Human/Ops",
+            "type": "execution_resource_revised",
+            "task_id": task_id,
+            "action": action,
+            "resource": resource,
+            "previous": current_resources,
+            "current": normalized_resources,
             "message": reason,
             **local_human_ops_audit_fields(),
         }
@@ -9228,6 +9301,7 @@ def main(argv: list[str]) -> int:
         "note": command_note,
         "milestone": command_milestone,
         "dependency-track": command_dependency_track,
+        "execution-resource": command_execution_resource,
         "reopen": command_reopen,
         "handoff": command_handoff,
         "blocker": command_blocker,

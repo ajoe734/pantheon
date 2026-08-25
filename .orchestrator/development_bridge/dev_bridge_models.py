@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 # Sixteen tasks keep the worst-case governed assign + per-task authoritative
@@ -20,6 +20,10 @@ from pydantic import BaseModel, ConfigDict, Field
 # dispatcher remains the concurrency authority; this bound also prevents one
 # signed packet from monopolising a supervisor tick indefinitely.
 MAX_TASKS_PER_PACKET = 16
+try:
+    from ..dispatch_policy import normalize_execution_resources
+except ImportError:
+    from dispatch_policy import normalize_execution_resources
 
 
 class BridgeBaseModel(BaseModel):
@@ -63,6 +67,11 @@ class BridgeTask(BridgeBaseModel):
     artifacts: List[str] = Field(default_factory=list)
     acceptance: List[str] = Field(default_factory=list)
     summary: Optional[str] = None
+
+    @field_validator("execution_resources", mode="before")
+    @classmethod
+    def validate_execution_resources(cls, v: Any) -> List[str]:
+        return normalize_execution_resources(v)
 
 
 class BridgeConstraints(BridgeBaseModel):
