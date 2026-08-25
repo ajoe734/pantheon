@@ -66,6 +66,7 @@ if str(ORCHESTRATOR_DIR) not in sys.path:
 import task_archive as task_archive_module
 from task_archive import (
     ARCHIVE_TASKS_DIR,
+    dependency_satisfied_for,
     DEFAULT_RECENT_LIMIT as DEFAULT_ARCHIVE_RECENT_LIMIT,
     TaskResolver,
     archive_display_path,
@@ -3450,8 +3451,12 @@ def task_metadata_from_env() -> dict[str, Any]:
     return metadata
 
 
-def dependency_is_satisfied(resolver: TaskResolver, dep_id: str) -> bool:
-    return resolver.dependency_satisfied(dep_id)
+def dependency_is_satisfied(
+    resolver: TaskResolver,
+    dep_id: str,
+    consumer_task: Mapping[str, Any] | None = None,
+) -> bool:
+    return dependency_satisfied_for(consumer_task, dep_id, resolver)
 
 
 def ensure_review_finalize_handoff(
@@ -3564,7 +3569,10 @@ def recompute_agents(state: dict[str, Any]) -> None:
         ready = [
             task
             for task in queued
-            if all(dependency_is_satisfied(resolver, dep_id) for dep_id in task.get("depends_on", []))
+            if all(
+                dependency_is_satisfied(resolver, dep_id, task)
+                for dep_id in task.get("depends_on", [])
+            )
         ]
         waiting = [task for task in queued if task not in ready]
 
@@ -4601,7 +4609,10 @@ def build_dashboard_bundle(
             done += 1
     for task in state.get("tasks", []):
         status = str(task.get("status") or "").lower()
-        if status == "todo" and all(dependency_is_satisfied(resolver, dep_id) for dep_id in task.get("depends_on", [])):
+        if status == "todo" and all(
+            dependency_is_satisfied(resolver, dep_id, task)
+            for dep_id in task.get("depends_on", [])
+        ):
             dependency_ready += 1
             if any(worker.get("bucket") in {"running", "pending"} for worker in live_workers_by_task.get(str(task.get("id") or ""), [])):
                 continue
@@ -5070,6 +5081,29 @@ def _bridge_assignment_from_metadata(
         if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
             raise SystemExit(f"Bridge assignment task_spec.{field} must be a string list")
         normalized_spec[field] = list(value)
+    if "dependency_tracks" in spec:
+        dependency_tracks = spec.get("dependency_tracks")
+        if not isinstance(dependency_tracks, dict):
+            raise SystemExit(
+                "Bridge assignment task_spec.dependency_tracks must be an object"
+            )
+        if any(
+            not isinstance(key, str)
+            or not isinstance(value, str)
+            or value.strip().lower() not in {"functional", "hosted"}
+            for key, value in dependency_tracks.items()
+        ):
+            raise SystemExit(
+                "Bridge assignment task_spec.dependency_tracks contains an invalid track"
+            )
+        if any(key not in normalized_spec["depends_on"] for key in dependency_tracks):
+            raise SystemExit(
+                "Bridge assignment task_spec.dependency_tracks references an undeclared dependency"
+            )
+        normalized_spec["dependency_tracks"] = {
+            str(key): str(value).strip().lower()
+            for key, value in dependency_tracks.items()
+        }
     for field in ("phase", "summary"):
         value = spec.get(field)
         if value is not None and not isinstance(value, str):
@@ -5319,13 +5353,30 @@ def command_assign(state: dict[str, Any], args: list[str]) -> bool | None:
         summary_zh = spec.get("summary")
         phase = spec.get("phase") or "Unassigned"
         depends_on = list(spec.get("depends_on") or [])
+        dependency_tracks = dict(spec.get("dependency_tracks") or {})
         artifacts = list(spec.get("artifacts") or [])
         acceptance = list(spec.get("acceptance") or [])
     else:
         phase = os.environ.get("TASK_PHASE", "Unassigned")
         depends_on = parse_csv_env("TASK_DEPENDS_ON")
+        dependency_tracks = parse_json_env("TASK_DEPENDENCY_TRACKS_JSON")
         artifacts = parse_csv_env("TASK_ARTIFACTS")
         acceptance = parse_csv_env("TASK_ACCEPTANCE")
+    if any(
+        not isinstance(key, str)
+        or not isinstance(value, str)
+        or value.strip().lower() not in {"functional", "hosted"}
+        or key not in depends_on
+        for key, value in dependency_tracks.items()
+    ):
+        raise SystemExit(
+            "Task dependency tracks must reference declared dependencies and use "
+            "functional or hosted"
+        )
+    dependency_tracks = {
+        str(key): str(value).strip().lower()
+        for key, value in dependency_tracks.items()
+    }
 
     task = get_task(state, task_id)
     if task is not None and parse_bool_env("TASK_ASSIGN_CREATE_ONLY") is True:
@@ -5419,6 +5470,7 @@ def command_assign(state: dict[str, Any], args: list[str]) -> bool | None:
             "reviewer": reviewer,
             "status": "todo",
             "depends_on": depends_on,
+            "dependency_tracks": dependency_tracks,
             "artifacts": artifacts,
             "acceptance": acceptance,
             "next": assignment_next or "Assignment created",
@@ -5596,6 +5648,148 @@ def command_note(state: dict[str, Any], args: list[str]) -> None:
             "type": "note",
             "task_id": task_id,
             "message": message,
+            **local_human_ops_audit_fields(),
+        }
+    )
+
+
+def command_milestone(state: dict[str, Any], args: list[str]) -> None:
+    """Record a functional or hosted completion track without closing the task.
+
+    A task can remain ``blocked`` on an external hosted proof while its
+    independently verified functional track is complete.  Downstream tasks
+    opt into that track through ``dependency_tracks``; ordinary ``depends_on``
+    entries remain terminal dependencies for backward compatibility.
+    """
+
+    if len(args) < 4:
+        raise SystemExit(
+            "Usage: milestone <task-id> <functional|hosted> "
+            "<pending|in_progress|done|external_wait> <message>"
+        )
+    task_id, track, status, message = (
+        args[0],
+        args[1].strip().lower(),
+        args[2].strip().lower(),
+        args[3],
+    )
+    if track not in {"functional", "hosted"}:
+        raise SystemExit("Milestone track must be functional or hosted")
+    if status not in {"pending", "in_progress", "done", "external_wait"}:
+        raise SystemExit("Milestone status is invalid")
+    actor = current_actor()
+    task = get_task(state, task_id)
+    if task is None:
+        raise SystemExit(f"Unknown task: {task_id}")
+    if actor not in {
+        canonical_agent_name(task.get("owner")),
+        canonical_agent_name(task.get("reviewer")),
+        "Human/Ops",
+    }:
+        raise SystemExit(
+            f"Only the owner ({task.get('owner')}), reviewer ({task.get('reviewer')}), "
+            f"or Human/Ops can update {track} for {task_id}"
+        )
+    evidence = parse_delimited_env("TASK_MILESTONE_EVIDENCE")
+    if status == "done" and not evidence:
+        raise SystemExit(
+            "A done milestone requires TASK_MILESTONE_EVIDENCE with one or more "
+            "repo-relative evidence paths or run references"
+        )
+    timestamp = iso_now()
+    tracks = task.setdefault("completion_tracks", {})
+    if not isinstance(tracks, dict):
+        raise SystemExit(f"Task {task_id} completion_tracks is invalid")
+    record = tracks.setdefault(track, {})
+    if not isinstance(record, dict):
+        raise SystemExit(f"Task {task_id} completion track {track} is invalid")
+    record.update(
+        {
+            "status": status,
+            "message": message,
+            "updated_at": timestamp,
+            "updated_by": actor,
+        }
+    )
+    if evidence:
+        record["evidence"] = evidence
+    task["last_update"] = timestamp
+    task["next"] = message
+    append_log(
+        {
+            "ts": timestamp,
+            "agent": actor,
+            "type": "completion_milestone",
+            "task_id": task_id,
+            "track": track,
+            "status": status,
+            "message": message,
+            **local_human_ops_audit_fields(),
+        }
+    )
+
+
+def command_dependency_track(state: dict[str, Any], args: list[str]) -> None:
+    """Apply one audited dependency-track contract revision to an active task."""
+
+    if len(args) < 4:
+        raise SystemExit(
+            "Usage: dependency-track <task-id> <dependency-id> "
+            "<functional|hosted> <reason>"
+        )
+    task_id, dependency_id, track, reason = (
+        args[0],
+        args[1],
+        args[2].strip().lower(),
+        args[3],
+    )
+    if current_actor() != "Human/Ops":
+        raise SystemExit("Only Human/Ops can revise dependency tracks")
+    if track not in {"functional", "hosted"}:
+        raise SystemExit("Dependency track must be functional or hosted")
+    task = get_task(state, task_id)
+    if task is None:
+        raise SystemExit(f"Unknown task: {task_id}")
+    if dependency_id not in list(task.get("depends_on") or []):
+        raise SystemExit(
+            f"Dependency {dependency_id} is not declared by task {task_id}"
+        )
+    if str(task.get("status") or "").lower() in {
+        "in_progress",
+        "review",
+        "review_approved",
+    }:
+        raise SystemExit(
+            f"Task {task_id} is active in lifecycle state {task.get('status')}; "
+            "revise dependency tracks before dispatch"
+        )
+    timestamp = iso_now()
+    tracks = task.setdefault("dependency_tracks", {})
+    if not isinstance(tracks, dict):
+        raise SystemExit(f"Task {task_id} dependency_tracks is invalid")
+    previous = tracks.get(dependency_id)
+    tracks[dependency_id] = track
+    task["contract_revision"] = {
+        "kind": "dependency_track",
+        "dependency_id": dependency_id,
+        "previous": previous,
+        "current": track,
+        "reason": reason,
+        "updated_at": timestamp,
+        "updated_by": "Human/Ops",
+    }
+    task["last_update"] = timestamp
+    task["next"] = reason
+    append_log(
+        {
+            "ts": timestamp,
+            "agent": "Human/Ops",
+            "type": "dependency_track_revised",
+            "task_id": task_id,
+            "dependency_id": dependency_id,
+            "previous": previous,
+            "track": track,
+            "message": reason,
             **local_human_ops_audit_fields(),
         }
     )
@@ -8873,6 +9067,7 @@ def read_dev_bridge_materialized_batch(
         "title": "title",
         "phase": "phase",
         "depends_on": "depends_on",
+        "dependency_tracks": "dependency_tracks",
         "artifacts": "artifacts",
         "acceptance": "acceptance",
         "summary": "summary_zh",
@@ -8900,6 +9095,12 @@ def read_dev_bridge_materialized_batch(
         for spec_field, task_field in immutable_fields.items():
             expected = signed_spec.get(spec_field)
             observed = task.get(task_field)
+            # ``dependency_tracks`` was added after the bridge packet schema
+            # shipped.  Old signed packets legitimately omit it while
+            # materialization stores the canonical empty map; normalize that
+            # compatibility case without weakening explicit values.
+            if spec_field == "dependency_tracks" and spec_field not in signed_spec:
+                expected = {}
             if spec_field in {"depends_on", "artifacts", "acceptance"}:
                 expected = list(expected or [])
                 observed = list(observed or []) if isinstance(observed, list) else observed
@@ -8966,6 +9167,8 @@ def main(argv: list[str]) -> int:
         "start": command_start,
         "progress": command_progress,
         "note": command_note,
+        "milestone": command_milestone,
+        "dependency-track": command_dependency_track,
         "reopen": command_reopen,
         "handoff": command_handoff,
         "blocker": command_blocker,

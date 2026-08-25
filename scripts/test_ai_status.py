@@ -2737,6 +2737,41 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
     def tearDown(self) -> None:
         _teardown_test_isolation(self)
 
+    def test_functional_milestone_can_close_without_closing_task(self) -> None:
+        with (
+            mock.patch.dict(
+                os.environ,
+                {
+                    "AI_NAME": "Codex",
+                    "TASK_MILESTONE_EVIDENCE": "e2e/paper.json||run-123",
+                },
+                clear=False,
+            ),
+            mock.patch.object(ai_status, "append_log"),
+        ):
+            ai_status.command_milestone(
+                self.state,
+                ["REG-002", "functional", "done", "Paper functional proof complete"],
+            )
+
+        task = ai_status.get_task(self.state, "REG-002")
+        self.assertEqual(task["status"], "review")
+        self.assertEqual(task["completion_tracks"]["functional"]["status"], "done")
+        self.assertEqual(
+            task["completion_tracks"]["functional"]["evidence"],
+            ["e2e/paper.json", "run-123"],
+        )
+
+    def test_done_milestone_requires_evidence(self) -> None:
+        with (
+            mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False),
+            self.assertRaisesRegex(SystemExit, "requires TASK_MILESTONE_EVIDENCE"),
+        ):
+            ai_status.command_milestone(
+                self.state,
+                ["REG-002", "functional", "done", "Missing proof"],
+            )
+
     def test_review_evidence_file_committed_uses_exact_head_get_query(self) -> None:
         review_file = "docs/deployment/evidence/task/evidence.json"
         head_sha = "a" * 40

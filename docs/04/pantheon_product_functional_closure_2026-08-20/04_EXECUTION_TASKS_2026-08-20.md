@@ -95,6 +95,41 @@ Open PR reuse：
 8. Supervisor可根據live auth/quota做governed reassignment，但owner與reviewer不可相同，且應
    優先跨provider family review。
 
+## 3A. Functional-first completion tracks
+
+The W4 journey tasks expose two independent completion tracks. A task may
+remain `blocked` or `in_progress` for a hosted proof while its `functional`
+track is already complete. Downstream tasks opt into a track with the
+machine-readable `dependency_tracks` map; an ordinary dependency remains a
+terminal dependency for backward compatibility.
+
+- `functional`: worktree-local paper/replay tests, component tests, and code
+  review evidence. It never acquires the shared dev environment lease.
+- `hosted`: one exact FE/BFF pair on the Pantheon-owned dev host. It is run by
+  the final hosted controller only.
+- `operator-live/write-proof`: an external evidence item recorded under the
+  hosted track. Missing credentials produce `external_wait`; they do not
+  block a functional dependency and never justify enabling capital writes.
+
+Workers record a track through the governed command:
+
+```bash
+TASK_MILESTONE_EVIDENCE='path/to/evidence||run-url-or-id' \
+  scripts/ai-status.sh milestone <task-id> functional done 'local paper proof complete'
+```
+
+Human/Ops changes a dependency's track only through the audited command below;
+task IDs and artifact ownership stay unchanged:
+
+```bash
+scripts/human-ops-status.sh dependency-track \
+  <task-id> <dependency-id> functional 'release independent functional lane'
+```
+
+The supervisor remains the only dispatcher. This is a completion projection,
+not a second queue or a bypass around review, artifact conflict, or hosted
+promotion gates.
+
 ## 4. Materialization contract
 
 - Program ID：`pantheon-product-functional-closure-20260820`

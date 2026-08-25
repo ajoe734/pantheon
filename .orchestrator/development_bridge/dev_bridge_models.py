@@ -52,6 +52,10 @@ class BridgeTask(BridgeBaseModel):
     reviewer: str
     phase: Optional[str] = None
     depends_on: List[str] = Field(default_factory=list, alias="dependsOn")
+    dependency_tracks: Dict[str, str] = Field(
+        default_factory=dict,
+        alias="dependencyTracks",
+    )
     artifacts: List[str] = Field(default_factory=list)
     acceptance: List[str] = Field(default_factory=list)
     summary: Optional[str] = None
