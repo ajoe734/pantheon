@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import io
 import json
+import os
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from typing import Any, Mapping, Sequence
@@ -195,12 +198,12 @@ def completed(command: Sequence[str], stdout: str = "", returncode: int = 0):
 APPROVED_HEAD = "a" * 40
 
 
-def green_pr(number: int = 44) -> dict[str, Any]:
+def green_pr(number: int = 44, *, task_id: str = "ABC-001") -> dict[str, Any]:
     return {
         "number": number,
         "title": "Task PR",
         "url": f"https://github.example/pr/{number}",
-        "headRefName": "task/ABC-001",
+        "headRefName": f"task/{task_id}",
         "headRefOid": APPROVED_HEAD,
         "baseRefName": "dev",
         "isDraft": False,
@@ -273,6 +276,195 @@ class CandidateSelectionTests(unittest.TestCase):
 
         self.assertEqual([candidate.task_id for candidate in candidates], ["ABC-001"])
         self.assertEqual(candidates[0].branch, "task/ABC-001")
+
+    def test_default_discovery_binds_to_canonical_status_root_over_local_worktree(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            canonical_root = tmp_path / "coordination-root"
+            canonical_root.mkdir()
+            canonical_status = canonical_root / "ai-status.json"
+            canonical_status.write_text(
+                json.dumps(
+                    {
+                        "tasks": [
+                            {
+                                "id": "CANONICAL-001",
+                                "title": "Canonical task",
+                                "status": "review_approved",
+                                "owner": "Codex",
+                                "reviewer": "Claude",
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            canonical_audit = canonical_root / "ai-activity-log.jsonl"
+            canonical_audit.write_text(
+                json.dumps(
+                    {
+                        "ts": "2026-06-12T00:45:00Z",
+                        "agent": "Claude",
+                        "type": "review_approved",
+                        "task_id": "CANONICAL-001",
+                        "message": "Independent review approved.",
+                        "review_binding": {
+                            "pr": 101,
+                            "head_sha": APPROVED_HEAD,
+                            "head_branch": "task/CANONICAL-001",
+                            "base": "dev",
+                        },
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            worktree_root = tmp_path / "worktree"
+            worktree_root.mkdir()
+            worktree_status = worktree_root / "ai-status.json"
+            worktree_status.write_text(
+                json.dumps(
+                    {
+                        "tasks": [
+                            {
+                                "id": "STALE-001",
+                                "title": "Stale local task",
+                                "status": "todo",
+                                "owner": "Codex",
+                                "reviewer": "Claude",
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            with mock.patch.dict(os.environ, {"PANTHEON_STATUS_ROOT": str(canonical_root)}):
+                with mock.patch.object(auto_integrator, "ROOT", worktree_root):
+                    runner = FakeRunner(pr=green_pr(number=101, task_id="CANONICAL-001"))
+                    with mock.patch.object(auto_integrator, "CommandRunner", return_value=runner):
+                        buf = io.StringIO()
+                        with mock.patch("sys.stdout", buf):
+                            exit_code = auto_integrator.main(["--json", "--no-lock"])
+                        self.assertEqual(exit_code, 0)
+                        output = json.loads(buf.getvalue())
+                        self.assertEqual(output["candidate_count"], 1)
+                        self.assertEqual(output["results"][0]["task_id"], "CANONICAL-001")
+                        self.assertEqual(output["results"][0]["action"], "would_merge")
+
+    def test_explicit_status_file_overrides_canonical_status_root(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            canonical_root = tmp_path / "coordination-root"
+            canonical_root.mkdir()
+            canonical_status = canonical_root / "ai-status.json"
+            canonical_status.write_text(
+                json.dumps(
+                    {
+                        "tasks": [
+                            {
+                                "id": "CANONICAL-001",
+                                "title": "Canonical task",
+                                "status": "review_approved",
+                                "owner": "Codex",
+                                "reviewer": "Claude",
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            explicit_dir = tmp_path / "explicit"
+            explicit_dir.mkdir()
+            explicit_status = explicit_dir / "explicit-status.json"
+            explicit_status.write_text(
+                json.dumps(
+                    {
+                        "tasks": [
+                            {
+                                "id": "EXPLICIT-001",
+                                "title": "Explicit test task",
+                                "status": "review_approved",
+                                "owner": "Codex",
+                                "reviewer": "Claude",
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            explicit_audit = explicit_dir / "ai-activity-log.jsonl"
+            explicit_audit.write_text(
+                json.dumps(
+                    {
+                        "ts": "2026-06-12T00:45:00Z",
+                        "agent": "Claude",
+                        "type": "review_approved",
+                        "task_id": "EXPLICIT-001",
+                        "message": "Independent review approved.",
+                        "review_binding": {
+                            "pr": 102,
+                            "head_sha": APPROVED_HEAD,
+                            "head_branch": "task/EXPLICIT-001",
+                            "base": "dev",
+                        },
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            with mock.patch.dict(os.environ, {"PANTHEON_STATUS_ROOT": str(canonical_root)}):
+                runner = FakeRunner(pr=green_pr(number=102, task_id="EXPLICIT-001"))
+                with mock.patch.object(auto_integrator, "CommandRunner", return_value=runner):
+                    buf = io.StringIO()
+                    with mock.patch("sys.stdout", buf):
+                        exit_code = auto_integrator.main(
+                            ["--status-file", str(explicit_status), "--json", "--no-lock"]
+                        )
+                    self.assertEqual(exit_code, 0)
+                    output = json.loads(buf.getvalue())
+                    self.assertEqual(output["candidate_count"], 1)
+                    self.assertEqual(output["results"][0]["task_id"], "EXPLICIT-001")
+                    self.assertEqual(output["results"][0]["action"], "would_merge")
+
+    def test_stale_local_worktree_status_without_canonical_root_has_no_candidates(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            worktree_root = tmp_path / "worktree"
+            worktree_root.mkdir()
+            worktree_status = worktree_root / "ai-status.json"
+            worktree_status.write_text(
+                json.dumps(
+                    {
+                        "tasks": [
+                            {
+                                "id": "LOCAL-001",
+                                "title": "Local task",
+                                "status": "todo",
+                                "owner": "Codex",
+                                "reviewer": "Claude",
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            env = dict(os.environ)
+            env.pop("PANTHEON_STATUS_ROOT", None)
+            with mock.patch.dict(os.environ, env, clear=True):
+                with mock.patch.object(auto_integrator, "ROOT", worktree_root):
+                    runner = FakeRunner(pr=green_pr(number=103))
+                    with mock.patch.object(auto_integrator, "CommandRunner", return_value=runner):
+                        buf = io.StringIO()
+                        with mock.patch("sys.stdout", buf):
+                            exit_code = auto_integrator.main(["--json", "--no-lock"])
+                        self.assertEqual(exit_code, 0)
+                        output = json.loads(buf.getvalue())
+                        self.assertEqual(output["candidate_count"], 0)
 
 
 class CheckSummaryTests(unittest.TestCase):
@@ -660,10 +852,9 @@ class IntegrationPlanTests(unittest.TestCase):
         self.assertFalse(any(command[:3] == ["gh", "pr", "merge"] for command in runner.commands))
 
     def test_execute_merges_when_gh_pr_merge_lands_synchronously(self) -> None:
-        """SUP-MERGE-QUEUE-AWARE-INTEGRATOR-20260804: the common case today
-        (no merge queue) -- `gh pr merge` completes immediately, the
-        post-merge re-check already sees MERGED, and reconcile_done still
-        fires in the same pass exactly as before this change."""
+        """After merging an exact approved head, the integrator leaves the task
+        review_approved for supervisor owned_finalize dispatch and never calls
+        owner-only done without a lease."""
 
         candidate = auto_integrator.TaskCandidate(
             task_id="ABC-001",
@@ -683,16 +874,19 @@ class IntegrationPlanTests(unittest.TestCase):
         )
 
         self.assertEqual(result.action, "merged")
+        self.assertIn("left ABC-001 in review_approved for owner finalization", result.detail)
         self.assertTrue(any(command[:3] == ["gh", "pr", "merge"] for command in runner.commands))
-        self.assertTrue(
+        self.assertFalse(
             any("scripts/ai_status.py" in " ".join(command) and "done" in command for command in runner.commands)
         )
+        self.assertFalse(
+            any("scripts/ai_status.py" in " ".join(command) and "assign" in command for command in runner.commands)
+        )
 
-    def test_execute_defers_reconcile_when_merge_has_not_landed_yet(self) -> None:
+    def test_execute_defers_merge_when_merge_has_not_landed_yet(self) -> None:
         """A branch that requires a merge queue does not merge synchronously
         -- `gh pr merge` enqueues the request instead (see `gh pr merge
-        --help`). The integrator must not call reconcile_done (mark the task
-        `done`) for a merge that has not actually happened."""
+        --help`). The integrator must not treat the merge as complete."""
 
         candidate = auto_integrator.TaskCandidate(
             task_id="ABC-001",
@@ -721,7 +915,7 @@ class IntegrationPlanTests(unittest.TestCase):
             any("scripts/ai_status.py" in " ".join(command) and "done" in command for command in runner.commands)
         )
 
-    def test_execute_reconciles_already_merged_pr_without_unblock(self) -> None:
+    def test_execute_already_merged_pr_leaves_task_for_owner_finalization_without_unblock_or_done(self) -> None:
         candidate = auto_integrator.TaskCandidate(
             task_id="ABC-001",
             title="Ready",
@@ -739,12 +933,68 @@ class IntegrationPlanTests(unittest.TestCase):
             gate=approved_gate(pr_number=55),
         )
 
-        self.assertEqual(result.action, "reconciled_done")
+        self.assertEqual(result.action, "already_merged")
         self.assertEqual(result.pr_number, 55)
-        self.assertTrue(any("scripts/ai_status.py" in " ".join(command) and "done" in command for command in runner.commands))
+        self.assertIn("left ABC-001 in review_approved for owner finalization", result.detail)
+        self.assertFalse(any("scripts/ai_status.py" in " ".join(command) and "done" in command for command in runner.commands))
         self.assertFalse(any("scripts/ai_status.py" in " ".join(command) and "assign" in command for command in runner.commands))
         self.assertFalse(any(command[:3] == ["gh", "pr", "merge"] for command in runner.commands))
         self.assertIn(["git", "merge-base", "--is-ancestor", "merge123", "origin/dev"], runner.commands)
+
+    def test_dry_run_already_merged_pr(self) -> None:
+        candidate = auto_integrator.TaskCandidate(
+            task_id="ABC-001",
+            title="Ready",
+            owner="Codex",
+            reviewer="Claude",
+            branch="task/ABC-001",
+        )
+        runner = FakeRunner(pr=None, merged_pr=merged_pr())
+
+        result = auto_integrator.integrate_candidate(
+            candidate,
+            auto_integrator.Settings(),
+            runner,
+            execute=False,
+            gate=approved_gate(pr_number=55),
+        )
+
+        self.assertEqual(result.action, "already_merged")
+        self.assertTrue(result.dry_run)
+        self.assertIn("left ABC-001 in review_approved for owner finalization", result.detail)
+        self.assertFalse(any(command[:3] == ["gh", "pr", "merge"] for command in runner.commands))
+
+    def test_already_merged_reruns_are_idempotent_and_do_not_create_unblock_tasks(self) -> None:
+        candidate = auto_integrator.TaskCandidate(
+            task_id="ABC-001",
+            title="Ready",
+            owner="Codex",
+            reviewer="Claude",
+            branch="task/ABC-001",
+        )
+        runner = FakeRunner(pr=None, merged_pr=merged_pr())
+        gate = approved_gate(pr_number=55)
+
+        first_result = auto_integrator.integrate_candidate(
+            candidate,
+            auto_integrator.Settings(),
+            runner,
+            execute=True,
+            gate=gate,
+        )
+        self.assertEqual(first_result.action, "already_merged")
+        self.assertIsNone(first_result.unblock_task_id)
+
+        second_result = auto_integrator.integrate_candidate(
+            candidate,
+            auto_integrator.Settings(),
+            runner,
+            execute=True,
+            gate=gate,
+        )
+        self.assertEqual(second_result.action, "already_merged")
+        self.assertIsNone(second_result.unblock_task_id)
+        self.assertFalse(any("scripts/ai_status.py" in " ".join(cmd) and "assign" in cmd for cmd in runner.commands))
 
     def test_missing_pr_still_opens_unblock_when_no_open_or_merged_pr(self) -> None:
         candidate = auto_integrator.TaskCandidate(

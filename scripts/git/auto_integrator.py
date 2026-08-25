@@ -390,7 +390,11 @@ def load_json(path: Path, default: Any) -> Any:
     return json.loads(text)
 
 
-def load_settings(path: Path = DEFAULT_CONFIG) -> Settings:
+def load_settings(path: Path | None = None, *, status_root: Path | None = None) -> Settings:
+    if path is None:
+        root = review_gate.resolve_status_root(status_root)
+        status_config = root / ".orchestrator" / "config.json"
+        path = status_config if status_config.exists() else DEFAULT_CONFIG
     config = load_json(path, {})
     if not isinstance(config, dict):
         config = {}
@@ -406,7 +410,11 @@ def load_settings(path: Path = DEFAULT_CONFIG) -> Settings:
     raw_lock = str(auto.get("lock_file") or DEFAULT_LOCK)
     lock_path = Path(raw_lock)
     if not lock_path.is_absolute():
-        lock_path = ROOT / lock_path
+        root = review_gate.resolve_status_root(status_root)
+        if (root / ".orchestrator").exists():
+            lock_path = root / lock_path
+        else:
+            lock_path = ROOT / lock_path
     smoke = auto.get("smoke_commands") or ()
     if isinstance(smoke, str):
         smoke_commands = (smoke,)
@@ -1037,27 +1045,6 @@ def has_auto_merge_request(pr: Mapping[str, Any]) -> bool:
     return pr.get("autoMergeRequest") is not None
 
 
-def reconcile_done(
-    candidate: TaskCandidate,
-    pr: Mapping[str, Any],
-    runner: CommandRunner,
-    *,
-    root: Path,
-    execute: bool,
-) -> None:
-    if not execute:
-        return
-    number = pr_number(pr)
-    message = f"Auto-integrator merged PR #{number} into dev; task branch is integrated."
-    env = os.environ.copy()
-    env["AI_NAME"] = candidate.owner
-    runner.run(
-        [sys.executable, "scripts/ai_status.py", "done", candidate.task_id, message],
-        cwd=root,
-        env=env,
-    )
-
-
 def unblock_task_id(task_id: str, reason: str) -> str:
     safe_reason = "".join(ch if ch.isalnum() else "-" for ch in reason.upper()).strip("-")
     return f"INTEGRATION-UNBLOCK-{task_id}-{safe_reason}"[:96]
@@ -1197,8 +1184,8 @@ def integrate_candidate(
                 )
                 return IntegrationResult(candidate.task_id, "blocked", detail, number, url, unblock, not execute, runner.commands[:])
             if not execute:
-                detail = f"Dry-run: PR #{number} is already merged into {settings.dev_branch}; would reconcile {candidate.task_id} to done."
-                return IntegrationResult(candidate.task_id, "would_reconcile_done", detail, number, url, dry_run=True, commands=runner.commands[:])
+                detail = f"Dry-run: PR #{number} is already merged into {settings.dev_branch}; left {candidate.task_id} in review_approved for owner finalization."
+                return IntegrationResult(candidate.task_id, "already_merged", detail, number, url, dry_run=True, commands=runner.commands[:])
             try:
                 gate.publish_task_brief_carry_forward(
                     candidate,
@@ -1209,11 +1196,10 @@ def integrate_candidate(
                     decision=merged_decision,
                 )
             except AutoIntegratorError as exc:
-                detail = f"Merged PR #{number} has a gate-approved carry-forward but {exc}; refusing reconciliation."
+                detail = f"Merged PR #{number} has a gate-approved carry-forward but {exc}; refusing integration."
                 return IntegrationResult(candidate.task_id, "blocked", detail, number, url, dry_run=False, commands=runner.commands[:])
-            reconcile_done(candidate, merged_pr, runner, root=root, execute=True)
-            detail = f"Reconciled {candidate.task_id} to done after PR #{number} was already merged into {settings.dev_branch}."
-            return IntegrationResult(candidate.task_id, "reconciled_done", detail, number, url, dry_run=False, commands=runner.commands[:])
+            detail = f"PR #{number} is already merged into {settings.dev_branch}; left {candidate.task_id} in review_approved for owner finalization."
+            return IntegrationResult(candidate.task_id, "already_merged", detail, number, url, dry_run=False, commands=runner.commands[:])
 
         detail = f"No open or merged PR found for {candidate.branch} -> {settings.dev_branch}."
         unblock = open_unblock_task(candidate, "missing-pr", detail, settings, runner, root=root, execute=execute) if open_unblock else None
@@ -1525,19 +1511,19 @@ def integrate_candidate(
         # queue) and simply has not landed within this process's lifetime.
         # The next auto-integrator pass finds this PR through the existing
         # "already merged" fallback above (fetch_pr_for_task(..., state=
-        # "merged")) once GitHub actually reports it MERGED, and reconciles
-        # it there -- no new resumption logic needed, that path already
-        # re-validates the merge commit and the gate decision independently.
+        # "merged")) once GitHub actually reports it MERGED.
         detail = f"PR #{number}'s merge was requested but has not landed yet (queued or pending); will re-check next pass."
         return IntegrationResult(candidate.task_id, "queued_for_merge", detail, number, url, dry_run=False, commands=runner.commands[:])
-    reconcile_done(candidate, post_merge_pr, runner, root=root, execute=True)
     if gated:
         detail = (
             f"Merged the reviewer-approved head {decision.head_oid} of PR #{number} into "
-            f"{settings.dev_branch} and reconciled {candidate.task_id} to done."
+            f"{settings.dev_branch}; left {candidate.task_id} in review_approved for owner finalization."
         )
     else:
-        detail = f"Merged PR #{number} into {settings.dev_branch} and reconciled {candidate.task_id} to done."
+        detail = (
+            f"Merged PR #{number} into {settings.dev_branch}; "
+            f"left {candidate.task_id} in review_approved for owner finalization."
+        )
     detail += ignored_diagnostic_note(checks)
     return IntegrationResult(candidate.task_id, "merged", detail, number, url, dry_run=False, commands=runner.commands[:])
 
@@ -1546,8 +1532,18 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Safely integrate review_approved task PRs into dev.")
     parser.add_argument("--execute", action="store_true", help="Mutate git/GitHub/task state. Default is dry-run.")
     parser.add_argument("--task-id", help="Limit to one task id.")
-    parser.add_argument("--status-file", type=Path, default=DEFAULT_STATUS)
-    parser.add_argument("--config-file", type=Path, default=DEFAULT_CONFIG)
+    parser.add_argument(
+        "--status-file",
+        type=Path,
+        default=None,
+        help="Explicit status file. Defaults to ai-status.json under PANTHEON_STATUS_ROOT or repository root.",
+    )
+    parser.add_argument(
+        "--config-file",
+        type=Path,
+        default=None,
+        help="Explicit config file. Defaults to .orchestrator/config.json under PANTHEON_STATUS_ROOT or repository root.",
+    )
     parser.add_argument("--max-tasks", type=int, help="Override max tasks per run.")
     parser.add_argument("--smoke-command", action="append", default=[], help="Extra or replacement smoke command.")
     parser.add_argument("--skip-smoke", action="store_true", help="Do not run configured smoke commands.")
@@ -1559,10 +1555,23 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    settings = load_settings(args.config_file)
+    if args.status_file is not None:
+        status_file = args.status_file.resolve()
+        status_root = status_file.parent
+    else:
+        status_root = review_gate.resolve_status_root()
+        status_file = status_root / "ai-status.json"
+
+    if args.config_file is not None:
+        config_path = args.config_file.resolve()
+    else:
+        status_config = status_root / ".orchestrator" / "config.json"
+        config_path = status_config if status_config.exists() else DEFAULT_CONFIG
+
+    settings = load_settings(config_path, status_root=status_root)
     if args.max_tasks is not None:
         settings = Settings(**{**settings.__dict__, "max_tasks_per_run": args.max_tasks})
-    state = load_json(args.status_file, {})
+    state = load_json(status_file, {})
     candidates = review_approved_candidates(
         state,
         task_branch_prefix=settings.task_branch_prefix,
@@ -1574,7 +1583,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     smoke_commands = tuple() if args.skip_smoke else tuple(args.smoke_command) or settings.smoke_commands
     # The review gate reads canonical state from the same root that supplied
     # the candidates, so status file and audit can never disagree by binding.
-    gate = ReviewGate(status_root=args.status_file.resolve().parent, state=state)
+    gate = ReviewGate(status_root=status_root, state=state)
     results: list[IntegrationResult] = []
     with lock_file(settings.lock_path, enabled=not args.no_lock):
         for candidate in candidates:
