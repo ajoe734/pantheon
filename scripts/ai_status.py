@@ -9095,6 +9095,12 @@ def read_dev_bridge_materialized_batch(
         for spec_field, task_field in immutable_fields.items():
             expected = signed_spec.get(spec_field)
             observed = task.get(task_field)
+            # ``dependency_tracks`` was added after the bridge packet schema
+            # shipped.  Old signed packets legitimately omit it while
+            # materialization stores the canonical empty map; normalize that
+            # compatibility case without weakening explicit values.
+            if spec_field == "dependency_tracks" and spec_field not in signed_spec:
+                expected = {}
             if spec_field in {"depends_on", "artifacts", "acceptance"}:
                 expected = list(expected or [])
                 observed = list(observed or []) if isinstance(observed, list) else observed
