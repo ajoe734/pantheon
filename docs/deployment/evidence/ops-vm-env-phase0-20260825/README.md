@@ -23,7 +23,7 @@ This directory contains the Phase 0 baseline measurements and operational analys
 2. **[`service-inventory.md`](service-inventory.md)**
    - Complete inventory of all 70 Compose services defined across `docker-compose.yml` (67 services), `docker-compose.control.yml` (21 services), `docker-compose.exec.yml` (6 services), and `docker-compose.staging-full.yml` (15 services).
    - Categorized by profile: `core` (14 services), `workers` (17 services), `research` (24 services), `management-ai` (8 services), `execution` (7 services, including exec overlay sidecars `broker-adapter`, `exchange-adapter`, and `pantheon-lean-live`).
-   - Details image/build context, exposed ports, dependency chain, and singleton ownership constraints.
+   - Details image/build context, exposed ports, rendered effective overlay dependency chains (including `operator-bff` in `staging-full`), and singleton ownership constraints.
 
 3. **[`capability-gap-matrix.md`](capability-gap-matrix.md)**
    - Detailed gap analysis across 4 critical domains: FE/BFF paired release admission, DB migration expand/contract, Worker singleton lifecycle & fencing, and Backup / disaster recovery.
@@ -42,7 +42,7 @@ This directory contains the Phase 0 baseline measurements and operational analys
 
 5. **[`production-gates.md`](production-gates.md)**
    - Formally records operator-approved vs explicitly pending gates without inference.
-   - RPO (< 1h), RTO (< 30m), Real-Capital Scope (Phase 4), and On-Call Owner are explicitly recorded as **PENDING OPERATOR APPROVAL**.
+   - RPO (< 1h), RTO (< 30m), Real-Capital Scope (distinguishing active Dev false, suspended historical staging-live true, future ephemeral Staging target false/sandbox, and Phase 4 Prod Execution gate), and On-Call Owner are explicitly recorded as **PENDING OPERATOR APPROVAL**.
    - Broker secret execution boundary isolation and 30-minute observation window recorded as approved design contracts per VM Plan §12.1 & §16 (Phase 4), while runtime storage mechanism selection (Secret Manager vs machine-local protected env) remains pending operator decision.
    - Read-only compliance certification.
 
@@ -61,4 +61,4 @@ This directory contains the Phase 0 baseline measurements and operational analys
 | **Prod Execution Machine Type** | N/A (Dev co-located) | `e2-standard-2` or `e2-medium` (isolated VPC) |
 | **Ephemeral Staging Lifetime** | N/A (Staging unavailable) | Release duration + 2-hour failure TTL |
 | **Production RPO / RTO** | Not measured | PENDING OPERATOR APPROVAL (< 1h RPO, < 30m RTO recommended) |
-| **Real-Capital Execution** | Disabled (`PANTHEON_LIVE_BROKER_ENABLED=false`) | Phase 4 Gate (requires dedicated VM + operator authorization) |
+| **Real-Capital Execution** | Active Dev: false (`PANTHEON_LIVE_BROKER_ENABLED=false`); Historical Staging-Live: true (suspended); Ephemeral Staging target: false (Phase 2) | Phase 4 Gate (requires dedicated Prod Execution VM + operator authorization) |

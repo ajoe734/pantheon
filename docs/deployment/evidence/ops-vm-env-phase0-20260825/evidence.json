@@ -10,7 +10,7 @@
       "criterion": "Inventory every Compose service under core workers research management-ai or execution with dependency and singleton ownership notes",
       "artifact": "docs/deployment/evidence/ops-vm-env-phase0-20260825/service-inventory.md",
       "status": "COMPLETED",
-      "summary": "Full inventory of 70 unique services across all Compose overlays: core (14), workers (17), research (24), management-ai (8), execution (7, including exec overlay broker-adapter, exchange-adapter, and pantheon-lean-live), with dependency trees and singleton ownership rules."
+      "summary": "Full inventory of 70 unique services across all Compose overlays: core (14), workers (17), research (24), management-ai (8), execution (7, including exec overlay broker-adapter, exchange-adapter, and pantheon-lean-live), with rendered effective overlay dependency trees (including operator-bff in staging-full) and singleton ownership rules."
     },
     "dev_measurements": {
       "criterion": "Capture timestamped redacted Dev CPU memory disk startup and deployment-duration measurements from pantheon-lupin-dev",
@@ -34,13 +34,13 @@
       "criterion": "Record operator-approved or explicitly pending production RPO RTO real-capital scope and on-call owner without inference",
       "artifact": "docs/deployment/evidence/ops-vm-env-phase0-20260825/production-gates.md",
       "status": "COMPLETED",
-      "summary": "Explicitly recorded RPO (<1h target), RTO (<30m target), Real-Capital Scope (Phase 4 gate), and On-Call Owner as PENDING OPERATOR APPROVAL without unverified LLM inference."
+      "summary": "Explicitly recorded RPO (<1h target), RTO (<30m target), Real-Capital Scope (distinguishing active Dev false, suspended historical staging-live true, future ephemeral Staging target false/sandbox, and Phase 4 Prod Execution gate), and On-Call Owner as PENDING OPERATOR APPROVAL without unverified LLM inference."
     },
     "read_only_safety": {
       "criterion": "Use only read-only inspection and do not provision Staging or Prod or alter broker capital secret or runtime state",
       "artifact": "docs/deployment/evidence/ops-vm-env-phase0-20260825/production-gates.md#3-read-only-compliance-certification",
       "status": "COMPLETED",
-      "summary": "Zero staging/prod infrastructure provisioned; zero broker/capital/secret mutations; 100% read-only inspection."
+      "summary": "Zero staging/prod infrastructure provisioned; zero broker/capital/secret mutations (active Dev live broker remained false, historical staging unaccessed/suspended); 100% read-only inspection."
     },
     "independent_review": {
       "criterion": "Commit task-scoped evidence and receive independent exact-head review before merge to dev",
