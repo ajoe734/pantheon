@@ -8,7 +8,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from dispatch_policy import (
     DEFAULT_ACTIVE_WORKER_STATUSES,
-    DEFAULT_ORPHANED_QUEUE_EVENT_GRACE_SECONDS,
     REASON_OWNED_FINALIZE,
     REASON_OWNED_IN_PROGRESS,
     REASON_OWNED_READY,
@@ -60,8 +59,8 @@ def test_ready_dispatch_settings_current_defaults() -> None:
     assert settings["worker_terminal_statuses"] == ["review", "done", "review_approved"]
     assert settings["active_worker_statuses"] == DEFAULT_ACTIVE_WORKER_STATUSES
     assert settings["max_dispatches_per_tick"] == 4
-    assert settings["orphaned_queue_event_grace_seconds"] == DEFAULT_ORPHANED_QUEUE_EVENT_GRACE_SECONDS
     assert settings["max_concurrent_per_account"] == {}
+    assert settings["execution_resource_limits"] == {"pantheon-dev": 1}
     for retired in (
         "disabled_agents",
         "max_tasks_per_agent",
@@ -95,3 +94,29 @@ def test_ready_dispatch_settings_preserves_only_supplied_current_values() -> Non
 
 def test_normalized_status_set_is_case_normalized() -> None:
     assert normalized_status_set(["Review", "DONE"], ["todo"]) == {"review", "done"}
+
+
+def test_ready_dispatch_settings_execution_resource_limits() -> None:
+    # Default is {'pantheon-dev': 1}
+    assert ready_dispatch_settings({})["execution_resource_limits"] == {"pantheon-dev": 1}
+    assert ready_dispatch_settings({"ready_dispatcher": {}})["execution_resource_limits"] == {"pantheon-dev": 1}
+    assert ready_dispatch_settings({
+        "ready_dispatcher": {"execution_resource_limits": {"pantheon-dev": 1}}
+    })["execution_resource_limits"] == {"pantheon-dev": 1}
+
+    # Rejection cases
+    with pytest.raises(ValueError, match="boolean True is not allowed"):
+        ready_dispatch_settings({"ready_dispatcher": {"execution_resource_limits": {"pantheon-dev": True}}})
+
+    with pytest.raises(ValueError, match="expected int, got str"):
+        ready_dispatch_settings({"ready_dispatcher": {"execution_resource_limits": {"pantheon-dev": "1"}}})
+
+    with pytest.raises(ValueError, match="value must be 1, got 0"):
+        ready_dispatch_settings({"ready_dispatcher": {"execution_resource_limits": {"pantheon-dev": 0}}})
+
+    with pytest.raises(ValueError, match="value must be 1, got 2"):
+        ready_dispatch_settings({"ready_dispatcher": {"execution_resource_limits": {"pantheon-dev": 2}}})
+
+    with pytest.raises(ValueError, match="Unknown execution resource limit key"):
+        ready_dispatch_settings({"ready_dispatcher": {"execution_resource_limits": {"custom-res": 1}}})
+

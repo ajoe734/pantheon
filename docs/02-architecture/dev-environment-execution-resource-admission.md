@@ -55,6 +55,10 @@ To prevent race conditions and scheduler drift, the exact same pure admission pr
 
 If a hosted execution requires human operator authentication, session tokens, or external credentials that are absent, the task is kept in pre-dispatch `external_wait` or `Human/Ops` hold (`waiting_for`), consuming zero worker slots and zero resource claims until released.
 
+### 2.6 Deterministic Oldest-Wins Queue Recovery
+
+When multiple pending delivery events targeting `pantheon-dev` exist in the supervisor queue (e.g. across restart, recovery, or prior crash), queue revalidation evaluates capacity against strictly older pending events (`created_at`, `event_id`). Exactly one oldest pending event is eligible to launch while newer events remain blocked until the held resource is released.
+
 ---
 
 ## 3. Migration Guidance: PFG and SRCM Hosted Tasks
@@ -79,13 +83,24 @@ When generating development task packets via the assistant dev bridge (`.orchest
 
 ### 3.3 Manual Task Assignment via CLI
 
-When assigning tasks via `scripts/ai-status.sh` or `scripts/ai_status.py`:
+When assigning tasks via `scripts/human-ops-status.sh`:
 - Use `TASK_EXECUTION_RESOURCES="pantheon-dev"` or `TASK_EXECUTION_RESOURCES_JSON='["pantheon-dev"]'`:
   ```bash
-  AI_NAME=Human/Ops TASK_EXECUTION_RESOURCES="pantheon-dev" \
-    $PANTHEON_COMMAND_ROOT/scripts/ai-status.sh assign TASK-HOSTED-001 Codex Claude "Deploy BFF to dev"
+  TASK_EXECUTION_RESOURCES="pantheon-dev" \
+    ./scripts/human-ops-status.sh assign TASK-HOSTED-001 Codex Claude "Deploy BFF to dev"
   ```
 
-### 3.4 Product & Capital Safety
+### 3.4 Revising Execution Resources via CLI
+
+When adding or removing execution resources on existing pre-dispatch non-active tasks (`todo`, `blocked`):
+```bash
+./scripts/human-ops-status.sh execution-resource TASK-001 add pantheon-dev "Admit hosted deployment resource"
+```
+- Requires `Human/Ops` authority (enforced automatically by `scripts/human-ops-status.sh`).
+- Operates on pre-dispatch non-active tasks (`todo`, `blocked`); rejects active lifecycle states (`in_progress`, `review`, `review_approved`) and terminal states (`done`, `superseded`).
+- Validates allowlisted resources (`{"pantheon-dev"}`).
+- Records an audited `execution_resource_revised` event in `ai-activity-log.jsonl` and updates `contract_revision` on the canonical task row.
+
+### 3.5 Product & Capital Safety
 
 Resource admission affects only development tooling dispatch concurrency. It does not modify product runtime behavior, trading APIs, or capital management boundaries.
