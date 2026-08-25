@@ -556,8 +556,9 @@ def task_fixture(
     owner: str = "Codex",
     reviewer: str = "Codex2",
     depends_on: list[str] | None = None,
+    execution_resources: list[str] | None = None,
 ) -> dict[str, object]:
-    return {
+    result = {
         "id": task_id,
         "generation": 1,
         "status": status,
@@ -566,6 +567,9 @@ def task_fixture(
         "depends_on": list(depends_on or []),
         "last_update": "2026-08-11T00:00:00Z",
     }
+    if execution_resources is not None:
+        result["execution_resources"] = list(execution_resources)
+    return result
 
 
 def provider_report_fixture(*, ready: bool = True, checked_at: str | None = None) -> dict[str, object]:
@@ -4780,6 +4784,234 @@ class ProviderStreamLifecycleTests(unittest.TestCase):
                 config, worker, task, activity_events=[event]
             )
         )
+
+
+class ExecutionResourceAdmissionTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.config = config_fixture()
+        self.state = runtime_state.default_state()
+        self.state["delivery_health"] = healthy_delivery_health(self.config)
+
+    def test_dispatch_ready_tasks_admits_single_pantheon_dev_task(self) -> None:
+        task = task_fixture(
+            "HOSTED-1",
+            status="todo",
+            owner="Codex",
+            execution_resources=["pantheon-dev"],
+        )
+        status = {"tasks": [task]}
+        dispatched: list[dict[str, Any]] = []
+
+        def capture(_config: dict[str, Any], event: dict[str, Any]) -> bool:
+            dispatched.append(event)
+            return True
+
+        changed = supervisor.dispatch_ready_tasks(
+            self.config,
+            self.state,
+            status_snapshot=status,
+            event_sink=capture,
+            live_total_snapshot=0,
+        )
+        self.assertTrue(changed)
+        self.assertEqual(len(dispatched), 1)
+        self.assertEqual(dispatched[0]["task_id"], "HOSTED-1")
+        self.assertEqual(dispatched[0]["target_agent"], "Codex")
+
+    def test_dispatch_ready_tasks_blocks_second_pantheon_dev_task_when_active(self) -> None:
+        hosted_1 = task_fixture(
+            "HOSTED-1",
+            status="todo",
+            owner="Codex",
+            execution_resources=["pantheon-dev"],
+        )
+        hosted_2 = task_fixture(
+            "HOSTED-2",
+            status="todo",
+            owner="Codex2",
+            execution_resources=["pantheon-dev"],
+        )
+        worktree_task = task_fixture(
+            "WORKTREE-1",
+            status="todo",
+            owner="Codex2",
+        )
+        self.state["workers"]["run-hosted-1"] = {
+            "task_id": "HOSTED-1",
+            "agent_id": "codex",
+            "status": "running",
+        }
+        status = {"tasks": [hosted_1, hosted_2, worktree_task]}
+        dispatched: list[dict[str, Any]] = []
+
+        def capture(_config: dict[str, Any], event: dict[str, Any]) -> bool:
+            dispatched.append(event)
+            return True
+
+        changed = supervisor.dispatch_ready_tasks(
+            self.config,
+            self.state,
+            status_snapshot=status,
+            event_sink=capture,
+            live_total_snapshot=1,
+        )
+        self.assertTrue(changed)
+        # HOSTED-2 blocked due to pantheon-dev capacity 1, WORKTREE-1 dispatched in parallel
+        self.assertEqual(len(dispatched), 1)
+        self.assertEqual(dispatched[0]["task_id"], "WORKTREE-1")
+        self.assertEqual(dispatched[0]["target_agent"], "Codex2")
+
+    def test_dispatch_ready_tasks_blocks_second_pantheon_dev_task_when_queued(self) -> None:
+        hosted_1 = task_fixture(
+            "HOSTED-1",
+            status="todo",
+            owner="Codex",
+            execution_resources=["pantheon-dev"],
+        )
+        hosted_2 = task_fixture(
+            "HOSTED-2",
+            status="todo",
+            owner="Codex2",
+            execution_resources=["pantheon-dev"],
+        )
+        worktree_task = task_fixture(
+            "WORKTREE-1",
+            status="todo",
+            owner="Codex2",
+        )
+        status = {"tasks": [hosted_1, hosted_2, worktree_task]}
+        dispatched: list[dict[str, Any]] = []
+
+        def capture(_config: dict[str, Any], event: dict[str, Any]) -> bool:
+            dispatched.append(event)
+            return True
+
+        changed = supervisor.dispatch_ready_tasks(
+            self.config,
+            self.state,
+            status_snapshot=status,
+            event_sink=capture,
+            live_total_snapshot=0,
+        )
+        self.assertTrue(changed)
+        dispatched_ids = {item["task_id"] for item in dispatched}
+        self.assertIn("HOSTED-1", dispatched_ids)
+        self.assertNotIn("HOSTED-2", dispatched_ids)
+        self.assertIn("WORKTREE-1", dispatched_ids)
+
+    def test_evaluate_queued_delivery_admission_rejects_when_resource_active(self) -> None:
+        hosted_1 = task_fixture(
+            "HOSTED-1",
+            status="todo",
+            owner="Codex",
+            execution_resources=["pantheon-dev"],
+        )
+        hosted_2 = task_fixture(
+            "HOSTED-2",
+            status="todo",
+            owner="Codex2",
+            execution_resources=["pantheon-dev"],
+        )
+        task_map = {"HOSTED-1": hosted_1, "HOSTED-2": hosted_2}
+        event_2 = {
+            "event_id": "evt-hosted-2",
+            "task_id": "HOSTED-2",
+            "target_agent": "Codex2",
+            "delivery_endpoint_id": "codex2",
+            "reason": "owned_ready",
+        }
+        self.state["workers"]["run-hosted-1"] = {
+            "task_id": "HOSTED-1",
+            "agent_id": "codex",
+            "status": "running",
+        }
+        decision = supervisor.evaluate_queued_delivery_admission(
+            self.config,
+            self.state,
+            event_2,
+            task_map,
+            [event_2],
+        )
+        self.assertIsNotNone(decision)
+        self.assertFalse(decision.eligible)
+        self.assertEqual(
+            decision.reason,
+            supervisor.rewrite_dispatch_admission.DispatchBlockReason.RESOURCE_CAPACITY_REACHED,
+        )
+
+    def test_resource_released_after_worker_completes(self) -> None:
+        hosted_1 = task_fixture(
+            "HOSTED-1",
+            status="todo",
+            owner="Codex",
+            execution_resources=["pantheon-dev"],
+        )
+        task_map = {"HOSTED-1": hosted_1}
+        self.state["workers"]["run-hosted-1"] = {
+            "task_id": "HOSTED-1",
+            "agent_id": "codex",
+            "status": "completed",
+        }
+        active_statuses = {"starting", "running", "waiting_approval"}
+        counts = supervisor.active_execution_resource_counts(
+            self.state, task_map, active_statuses
+        )
+        self.assertEqual(counts, {})
+
+    def test_resource_released_after_queue_event_fails(self) -> None:
+        hosted_1 = task_fixture(
+            "HOSTED-1",
+            status="todo",
+            owner="Codex",
+            execution_resources=["pantheon-dev"],
+        )
+        task_map = {"HOSTED-1": hosted_1}
+        event = {
+            "event_id": "evt-hosted-1",
+            "task_id": "HOSTED-1",
+            "target_agent": "Codex",
+            "delivery_endpoint_id": "codex",
+            "reason": "owned_ready",
+        }
+        self.state["queue"]["events"]["evt-hosted-1"] = {"status": "failed"}
+        counts = supervisor.queued_execution_resource_counts(
+            self.config, self.state, [event], task_map
+        )
+        self.assertEqual(counts, {})
+
+    def test_explain_dispatch_shows_resource_capacity_reached(self) -> None:
+        hosted_1 = task_fixture(
+            "HOSTED-1",
+            status="todo",
+            owner="Codex",
+            execution_resources=["pantheon-dev"],
+        )
+        hosted_2 = task_fixture(
+            "HOSTED-2",
+            status="todo",
+            owner="Codex2",
+            execution_resources=["pantheon-dev"],
+        )
+        self.state["workers"]["run-hosted-1"] = {
+            "task_id": "HOSTED-1",
+            "agent_id": "codex",
+            "status": "running",
+        }
+        status = {"tasks": [hosted_1, hosted_2]}
+        explanation = supervisor.explain_dispatch_for_task(
+            self.config,
+            self.state,
+            "HOSTED-2",
+            status=status,
+            live_total=1,
+        )
+        codex2_trace = explanation["agents"]["Codex2"]
+        self.assertTrue(codex2_trace["blocked"])
+        self.assertEqual(
+            codex2_trace["first_blocking_gate"],
+            "resource_capacity_reached",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

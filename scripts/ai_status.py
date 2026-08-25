@@ -40,6 +40,7 @@ STATUS_COMMAND_BASE_REF_ENV = "PANTHEON_COMMAND_BASE_REF"
 TASK_STATE_STORE_MODE_ENV = "PANTHEON_TASK_STATE_STORE_MODE"
 TASK_STATE_EVENT_LOG_ENV = "PANTHEON_TASK_STATE_EVENT_LOG"
 STATUS_OUTBOX_VISIBILITY_ENABLED_ENV = "PANTHEON_STATUS_OUTBOX_VISIBILITY_ENABLED"
+ALLOWLISTED_EXECUTION_RESOURCES = {"pantheon-dev"}
 AUTO_WORKER_ENV_MARKERS = (
     "ORCH_RUN_ID",
     "PANTHEON_WORKTREE_ROOT",
@@ -5108,6 +5109,27 @@ def _bridge_assignment_from_metadata(
             str(key): str(value).strip().lower()
             for key, value in dependency_tracks.items()
         }
+    if "execution_resources" in spec:
+        execution_resources = spec.get("execution_resources")
+        if not isinstance(execution_resources, list) or any(
+            not isinstance(item, str) for item in execution_resources
+        ):
+            raise SystemExit(
+                "Bridge assignment task_spec.execution_resources must be a string list"
+            )
+        normalized_resources = [
+            str(item).strip().lower()
+            for item in execution_resources
+            if str(item).strip()
+        ]
+        if any(
+            item not in ALLOWLISTED_EXECUTION_RESOURCES
+            for item in normalized_resources
+        ):
+            raise SystemExit(
+                "Bridge assignment task_spec.execution_resources contains an unallowlisted resource"
+            )
+        normalized_spec["execution_resources"] = normalized_resources
     for field in ("phase", "summary"):
         value = spec.get(field)
         if value is not None and not isinstance(value, str):
@@ -5358,12 +5380,26 @@ def command_assign(state: dict[str, Any], args: list[str]) -> bool | None:
         phase = spec.get("phase") or "Unassigned"
         depends_on = list(spec.get("depends_on") or [])
         dependency_tracks = dict(spec.get("dependency_tracks") or {})
+        execution_resources = list(spec.get("execution_resources") or [])
         artifacts = list(spec.get("artifacts") or [])
         acceptance = list(spec.get("acceptance") or [])
     else:
         phase = os.environ.get("TASK_PHASE", "Unassigned")
         depends_on = parse_csv_env("TASK_DEPENDS_ON")
         dependency_tracks = parse_json_env("TASK_DEPENDENCY_TRACKS_JSON")
+        raw_resources = os.environ.get("TASK_EXECUTION_RESOURCES_JSON", "").strip()
+        if raw_resources:
+            try:
+                parsed = json.loads(raw_resources)
+            except Exception:
+                raise SystemExit("TASK_EXECUTION_RESOURCES_JSON must be a valid JSON list")
+            if not isinstance(parsed, list) or any(not isinstance(x, str) for x in parsed):
+                raise SystemExit("TASK_EXECUTION_RESOURCES_JSON must be a string list")
+            execution_resources = [str(x).strip().lower() for x in parsed if str(x).strip()]
+        else:
+            execution_resources = [
+                x.lower() for x in parse_csv_env("TASK_EXECUTION_RESOURCES") if x
+            ]
         artifacts = parse_csv_env("TASK_ARTIFACTS")
         acceptance = parse_csv_env("TASK_ACCEPTANCE")
     if any(
@@ -5381,6 +5417,20 @@ def command_assign(state: dict[str, Any], args: list[str]) -> bool | None:
         str(key): str(value).strip().lower()
         for key, value in dependency_tracks.items()
     }
+    if any(
+        not isinstance(res, str)
+        or res.strip().lower() not in ALLOWLISTED_EXECUTION_RESOURCES
+        for res in execution_resources
+    ):
+        raise SystemExit(
+            "Task execution resources must use allowlisted execution resources: "
+            + ", ".join(sorted(ALLOWLISTED_EXECUTION_RESOURCES))
+        )
+    execution_resources = [
+        str(res).strip().lower()
+        for res in execution_resources
+        if str(res).strip()
+    ]
 
     task = get_task(state, task_id)
     if task is not None and parse_bool_env("TASK_ASSIGN_CREATE_ONLY") is True:
@@ -5475,6 +5525,7 @@ def command_assign(state: dict[str, Any], args: list[str]) -> bool | None:
             "status": "todo",
             "depends_on": depends_on,
             "dependency_tracks": dependency_tracks,
+            "execution_resources": execution_resources,
             "artifacts": artifacts,
             "acceptance": acceptance,
             "next": assignment_next or "Assignment created",
@@ -9072,6 +9123,7 @@ def read_dev_bridge_materialized_batch(
         "phase": "phase",
         "depends_on": "depends_on",
         "dependency_tracks": "dependency_tracks",
+        "execution_resources": "execution_resources",
         "artifacts": "artifacts",
         "acceptance": "acceptance",
         "summary": "summary_zh",
@@ -9099,13 +9151,16 @@ def read_dev_bridge_materialized_batch(
         for spec_field, task_field in immutable_fields.items():
             expected = signed_spec.get(spec_field)
             observed = task.get(task_field)
-            # ``dependency_tracks`` was added after the bridge packet schema
-            # shipped.  Old signed packets legitimately omit it while
-            # materialization stores the canonical empty map; normalize that
-            # compatibility case without weakening explicit values.
+            # ``dependency_tracks`` and ``execution_resources`` were added after
+            # the bridge packet schema shipped.  Old signed packets legitimately
+            # omit them while materialization stores the canonical empty map /
+            # list; normalize those compatibility cases without weakening explicit
+            # values.
             if spec_field == "dependency_tracks" and spec_field not in signed_spec:
                 expected = {}
-            if spec_field in {"depends_on", "artifacts", "acceptance"}:
+            if spec_field == "execution_resources" and spec_field not in signed_spec:
+                expected = []
+            if spec_field in {"depends_on", "artifacts", "acceptance", "execution_resources"}:
                 expected = list(expected or [])
                 observed = list(observed or []) if isinstance(observed, list) else observed
             if observed != expected:
