@@ -56,6 +56,10 @@ class BridgeTask(BridgeBaseModel):
         default_factory=dict,
         alias="dependencyTracks",
     )
+    execution_resources: List[str] = Field(
+        default_factory=list,
+        alias="executionResources",
+    )
     artifacts: List[str] = Field(default_factory=list)
     acceptance: List[str] = Field(default_factory=list)
     summary: Optional[str] = None
