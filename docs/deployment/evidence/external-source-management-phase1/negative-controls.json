@@ -1,0 +1,49 @@
+{
+  "schema_version": "pantheon.external-source-management.negative-controls.v1",
+  "task_id": "SRCM-P1-HOSTED-ACCEPTANCE-20260824",
+  "program_id": "SRCM-PHASE1-20260824",
+  "created_at": "2026-08-25T12:46:18Z",
+  "negative_controls": {
+    "unauthorized_mutation_rejected": {
+      "status": "passed",
+      "tested_roles": [
+        "viewer",
+        "researcher",
+        "persona"
+      ],
+      "http_status": 403,
+      "detail": "Operator or Admin role required for data source management mutations"
+    },
+    "stale_revision_rejected": {
+      "status": "passed",
+      "http_status": 409,
+      "detail": "STALE_REVISION: expected revision 1, current is 4"
+    },
+    "inline_secret_exposure_rejected": {
+      "status": "passed",
+      "rejection_detail": "Raw secret material detected: inline secrets are strictly forbidden; use secret_ref_id",
+      "response_redaction_verified": true
+    },
+    "external_egress_allowlist_enforced": {
+      "status": "passed",
+      "default_posture": "deny",
+      "unlisted_hosts_blocked": true
+    },
+    "no_order_capital_authority_enforced": {
+      "status": "passed",
+      "test_connectors_isolated": true,
+      "order_placement_routes_absent": true,
+      "capital_allocation_routes_absent": true
+    },
+    "provider_failure_degradation_handled": {
+      "status": "passed",
+      "graceful_envelope_verified": true,
+      "uncaught_500_count": 0
+    },
+    "openclaw_phase2_boundary_enforced": {
+      "status": "passed",
+      "governed_search_client_only": true,
+      "product_bff_write_routes_absent": true
+    }
+  }
+}
