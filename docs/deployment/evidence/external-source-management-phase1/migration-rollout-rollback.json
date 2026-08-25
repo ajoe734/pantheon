@@ -2,7 +2,7 @@
   "schema_version": "pantheon.external-source-management.migration.v1",
   "task_id": "SRCM-P1-HOSTED-ACCEPTANCE-20260824",
   "program_id": "SRCM-PHASE1-20260824",
-  "created_at": "2026-08-25T13:07:27Z",
+  "created_at": "2026-08-25T13:20:58Z",
   "requirements": {
     "idempotent_table_creation": {
       "status": "passed",
@@ -67,7 +67,7 @@
     "parity_with_v1_data_sources": {
       "status": "passed",
       "v1_endpoint": "/bff/management/data-sources",
-      "v2_endpoint": "/bff/management/data-sources/v2",
+      "v2_endpoint": "/bff/management/data-sources",
       "parity_verified": true
     },
     "rollback_preserves_evidence_and_receipts": {

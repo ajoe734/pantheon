@@ -2,7 +2,7 @@
   "schema_version": "pantheon.external-source-management.negative-controls.v1",
   "task_id": "SRCM-P1-HOSTED-ACCEPTANCE-20260824",
   "program_id": "SRCM-PHASE1-20260824",
-  "created_at": "2026-08-25T13:07:27Z",
+  "created_at": "2026-08-25T13:20:58Z",
   "negative_controls": {
     "unauthorized_mutation_rejected": {
       "status": "passed",
@@ -71,7 +71,7 @@
       "observed_probe": {
         "simulation": "upstream_504_gateway_timeout",
         "bff_returned_envelope": "degraded",
-        "http_status": 200
+        "http_status": 202
       }
     },
     "openclaw_phase2_boundary_enforced": {

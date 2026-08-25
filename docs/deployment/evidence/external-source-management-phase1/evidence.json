@@ -2,7 +2,7 @@
   "schema_version": "pantheon.external-source-management.evidence-manifest.v1",
   "task_id": "SRCM-P1-HOSTED-ACCEPTANCE-20260824",
   "program_id": "SRCM-PHASE1-20260824",
-  "created_at": "2026-08-25T13:07:27Z",
+  "created_at": "2026-08-25T13:20:58Z",
   "status": "passed",
   "acceptance_criteria_fulfilled": [
     "Complete all SD-SRCM-08 migration rollout rollback and hosted acceptance requirements",
@@ -19,17 +19,36 @@
   "exact_pair": {
     "backend_sha": "03757f0254fb48ea37098e3d9ab0176c006d4da5",
     "frontend_sha": "cc4007f7f78a31c73548ce85457af17a45a4c4b9",
-    "source_definitions_sha": "03757f0254fb48ea37098e3d9ab0176c006d4da5",
+    "source_definitions_sha": "40de8fcb1c69fad0bf5e54d4c0bd6e508c9162e0",
     "fe_manifest_bff_sha": "40de8fcb1c69fad0bf5e54d4c0bd6e508c9162e0",
     "drift_status": "fe_manifest_precedes_live_bff",
     "bff_url": "https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io",
     "fe_url": "https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io"
   },
   "artifacts": {
-    "deployment": "deployment.json",
-    "hosted_summary": "hosted-acceptance-summary.json",
-    "journey_receipts": "journey-receipts.json",
-    "negative_controls": "negative-controls.json",
-    "migration_rollout": "migration-rollout-rollback.json"
+    "deployment": {
+      "path": "deployment.json",
+      "sha256": "60a7a699e5c5d3079c8efa708ac562cbbbc57cfe0557eb5a7dc4d0e885609a51"
+    },
+    "hosted_summary": {
+      "path": "hosted-acceptance-summary.json",
+      "sha256": "7340910e3b799e016d6bfd28a74d81b048bc5b416713c91f1fbf18389a273b27"
+    },
+    "journey_receipts": {
+      "path": "journey-receipts.json",
+      "sha256": "0b7baa4f713eee94ef165cec85c92b5d09a0c373fa03a5095139197e766fa5f0"
+    },
+    "browser_evidence": {
+      "path": "browser-evidence.json",
+      "sha256": "75f23863f2fb65f8558f5aac6acc74c83b928e9e26daaf45fc9ee0fda3bcec55"
+    },
+    "negative_controls": {
+      "path": "negative-controls.json",
+      "sha256": "0d5ec11f802f53628ad91386131ef17e03cf446f2ad4f63e57c81a9b89cc0de6"
+    },
+    "migration_rollout": {
+      "path": "migration-rollout-rollback.json",
+      "sha256": "5449b8e8ce93dbb73e0f44638eeefffeb868aac44c25936a380b7d9694c3ab97"
+    }
   }
 }
