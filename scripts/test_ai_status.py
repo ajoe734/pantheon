@@ -1416,8 +1416,9 @@ class DevBridgeMaterializeBatchTests(unittest.TestCase):
         owner: str = "Codex",
         reviewer: str = "Antigravity",
         depends_on: list[str] | None = None,
+        execution_resources: list[str] | None = None,
     ) -> dict[str, Any]:
-        return {
+        spec = {
             "id": task_id,
             "title": f"Title for {task_id}",
             "owner": owner,
@@ -1428,6 +1429,9 @@ class DevBridgeMaterializeBatchTests(unittest.TestCase):
             "acceptance": ["Do the thing"],
             "summary": f"Summary for {task_id}",
         }
+        if execution_resources is not None:
+            spec["execution_resources"] = list(execution_resources)
+        return spec
 
     def _task_row(
         self,
@@ -1438,12 +1442,14 @@ class DevBridgeMaterializeBatchTests(unittest.TestCase):
         owner: str = "Codex",
         reviewer: str = "Antigravity",
         depends_on: list[str] | None = None,
+        execution_resources: list[str] | None = None,
     ) -> dict[str, Any]:
         spec = self._task_spec(
             task_id,
             owner=owner,
             reviewer=reviewer,
             depends_on=depends_on,
+            execution_resources=execution_resources,
         )
         spec_hash = hashlib.sha256(
             json.dumps(spec, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
@@ -1923,6 +1929,67 @@ class DevBridgeMaterializeBatchTests(unittest.TestCase):
         self.assertEqual(task["owner"], "Codex2")
         self.assertEqual(task["reviewer"], "Claude")
         self.assertEqual(task["generation"], 2)
+
+    def test_batch_materializes_and_reads_back_with_execution_resources(self) -> None:
+        packet_id = "pkt-exec-res-20260825T000000Z"
+        digest = hashlib.sha256(packet_id.encode("utf-8")).hexdigest()
+        rows = [
+            self._task_row(
+                "BATCH-RES-ONE",
+                packet_id=packet_id,
+                packet_digest=digest,
+                execution_resources=["pantheon-dev"],
+            )
+        ]
+        payload = self._payload_path(rows, packet_id=packet_id, packet_digest=digest)
+
+        result = self._run_main(payload)
+        self.assertEqual(result, 0)
+
+        readback = self._run_readback(payload)
+        self.assertEqual(readback["status"], "verified")
+        self.assertEqual(readback["packetId"], packet_id)
+        self.assertEqual(len(readback["tasks"]), 1)
+        self.assertEqual(readback["tasks"][0]["taskId"], "BATCH-RES-ONE")
+
+        events = load_events(self.journal)
+        committed_task = events[1]["state"]["tasks"][-1]
+        self.assertEqual(committed_task["execution_resources"], ["pantheon-dev"])
+
+    def test_bridge_assignment_rejects_unallowlisted_execution_resources(self) -> None:
+        digest = hashlib.sha256(b"dummy-packet").hexdigest()
+        spec = {
+            "id": "INVALID-RES-TASK",
+            "title": "Invalid resource task",
+            "owner": "Codex",
+            "reviewer": "Claude",
+            "execution_resources": ["forbidden-resource"],
+            "depends_on": [],
+            "artifacts": [],
+            "acceptance": [],
+        }
+        spec_hash = hashlib.sha256(
+            json.dumps(spec, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
+        ).hexdigest()
+        metadata = {
+            "dev_bridge": {
+                "packet_id": "pkt-invalid-res-20260825",
+                "packet_digest": digest,
+                "task_spec_hash": spec_hash,
+                "task_spec": spec,
+                "conversation_id": "conv-1",
+                "source_turn_ids": [],
+                "documents": [],
+            }
+        }
+        with self.assertRaisesRegex(SystemExit, "contains an unallowlisted resource"):
+            ai_status._bridge_assignment_from_metadata(
+                metadata,
+                task_id="INVALID-RES-TASK",
+                owner="Codex",
+                reviewer="Claude",
+                title="Invalid resource task",
+            )
 
 
 class StatusRootRoutingTests(unittest.TestCase):
@@ -7469,6 +7536,52 @@ class SidecarTaskTests(unittest.TestCase):
         self.assertFalse(task["mutates_canonical"])
         self.assertEqual(task["auto_created_by"], "supervisor-underutilization")
         self.assertEqual(task["depends_on"], ["PER-001"])
+
+    def test_assign_supports_allowlisted_execution_resources_from_env(self) -> None:
+        env = {
+            "AI_NAME": "Codex",
+            "TASK_TITLE": "Deploy to pantheon-dev",
+            "TASK_EXECUTION_RESOURCES": "pantheon-dev",
+        }
+        with mock.patch.dict(os.environ, env, clear=False):
+            ai_status.command_assign(self.state, ["HOSTED-DEV-001", "Codex", "Claude"])
+
+        task = ai_status.get_task(self.state, "HOSTED-DEV-001")
+        self.assertIsNotNone(task)
+        self.assertEqual(task["execution_resources"], ["pantheon-dev"])
+
+    def test_assign_supports_execution_resources_json_from_env(self) -> None:
+        env = {
+            "AI_NAME": "Codex",
+            "TASK_TITLE": "Deploy to pantheon-dev JSON",
+            "TASK_EXECUTION_RESOURCES_JSON": json.dumps(["pantheon-dev"]),
+        }
+        with mock.patch.dict(os.environ, env, clear=False):
+            ai_status.command_assign(self.state, ["HOSTED-DEV-002", "Codex", "Claude"])
+
+        task = ai_status.get_task(self.state, "HOSTED-DEV-002")
+        self.assertIsNotNone(task)
+        self.assertEqual(task["execution_resources"], ["pantheon-dev"])
+
+    def test_assign_rejects_unallowlisted_execution_resources(self) -> None:
+        env = {
+            "AI_NAME": "Codex",
+            "TASK_TITLE": "Deploy with forbidden resource",
+            "TASK_EXECUTION_RESOURCES": "forbidden-cluster",
+        }
+        with mock.patch.dict(os.environ, env, clear=False):
+            with self.assertRaisesRegex(SystemExit, "allowlisted execution resources"):
+                ai_status.command_assign(self.state, ["HOSTED-DEV-003", "Codex", "Claude"])
+
+    def test_assign_rejects_invalid_execution_resources_json(self) -> None:
+        env = {
+            "AI_NAME": "Codex",
+            "TASK_TITLE": "Deploy with invalid resource json",
+            "TASK_EXECUTION_RESOURCES_JSON": json.dumps({"not": "a list"}),
+        }
+        with mock.patch.dict(os.environ, env, clear=False):
+            with self.assertRaisesRegex(SystemExit, "must be a string list"):
+                ai_status.command_assign(self.state, ["HOSTED-DEV-004", "Codex", "Claude"])
 
     def test_assign_preserves_antigravity_runtime_agent_names(self) -> None:
         ai_status.command_assign(self.state, ["APP-002-SIDECAR-REVIEW", "Antigravity2", "Claude"])
