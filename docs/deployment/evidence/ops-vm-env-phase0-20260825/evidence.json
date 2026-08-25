@@ -16,7 +16,7 @@
       "criterion": "Capture timestamped redacted Dev CPU memory disk startup and deployment-duration measurements from pantheon-lupin-dev",
       "artifact": "docs/deployment/evidence/ops-vm-env-phase0-20260825/measurements-baseline.json",
       "status": "COMPLETED",
-      "summary": "Captured host CPU (12 vCPUs), memory (47.04 GiB total, 30.31 GiB available [32.55 GB decimal]), disk (241.13 GiB, 88% utilized), uptime (420.2h), startup duration (35.06s system boot, observable container creation-to-start latencies of 8.5s - 15.5s), 50 container stats (11.04 GiB total), Caddy memory (26.0 MiB), and historical deployment durations (BFF rebuild: 2m05s / 125s benchmark, run 27357842338: 10m50s / 650s workflow duration and 10m17s / 617s job duration, paired dev deploy run 32679566250: 22m32s total workflow, 18m48s switch job)."
+      "summary": "Captured host CPU (12 vCPUs), memory (47.04 GiB total, 30.31 GiB available [32.55 GB decimal]), disk (241.13 GiB, 88% utilized), uptime (420.2h), startup duration (35.06s system boot, observable container creation-to-start process latencies of 8.5s - 124.6s [e.g. 8.5s for operator-bff, 15.5s for postgres, 124.6s for telemetry during bulk stack startup] with current health confirmed healthy), 50 container stats (11.04 GiB total), Caddy memory (26.0 MiB), and historical deployment durations from verified GitHub Actions CI/CD runs (root stack run 27357842338: 10m50s / 650s workflow duration and 10m17s / 617s job duration; paired dev deploy run 32679566250: 22m32s total workflow, 18m48s switch job)."
     },
     "capability_gap_matrix": {
       "criterion": "Publish a FE/BFF migration worker-ownership and backup/restore capability gap matrix",
@@ -101,6 +101,7 @@
     "real_capital_scope": "PENDING_OPERATOR_APPROVAL_PHASE_4",
     "on_call_owner": "PENDING_OPERATOR_APPOINTMENT",
     "broker_secret_boundary": "APPROVED_DESIGN_CONTRACT",
+    "broker_secret_storage_mechanism": "PENDING_OPERATOR_APPROVAL",
     "observation_window": "APPROVED_DESIGN_CONTRACT"
   },
   "non_goals_compliance": {

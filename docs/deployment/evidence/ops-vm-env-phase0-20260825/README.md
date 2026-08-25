@@ -18,7 +18,7 @@ This directory contains the Phase 0 baseline measurements and operational analys
 ## 2. Artifact Index
 
 1. **[`measurements-baseline.json`](measurements-baseline.json)**
-   - Timestamped, redacted machine-readable metrics for host CPU (12 vCPUs), memory (47.04 GiB total, 30.31 GiB available [32.55 GB decimal]), disk (241.13 GiB, 88% utilized), uptime (420.2h), startup duration (35.06s system boot, observable container creation-to-start latencies of 8.5s - 15.5s), Caddy ingress memory (26.0 MiB), per-profile container memory/CPU breakdown (50 containers, 11.04 GiB total), and historical deployment durations (BFF rebuild: 2m05s / 125s benchmark, root stack run 27357842338: 10m50s / 650s workflow duration and 10m17s / 617s job duration, paired dev deploy run 32679566250: 22m32s total workflow, 18m48s switch job).
+   - Timestamped, redacted machine-readable metrics for host CPU (12 vCPUs), memory (47.04 GiB total, 30.31 GiB available [32.55 GB decimal]), disk (241.13 GiB, 88% utilized), uptime (420.2h), startup duration (35.06s system boot, observable container creation-to-start process latencies of 8.5s - 124.6s [e.g. 8.5s for operator-bff, 15.5s for postgres, 124.6s for telemetry during bulk stack startup] with current health confirmed healthy), Caddy ingress memory (26.0 MiB), per-profile container memory/CPU breakdown (50 containers, 11.04 GiB total), and historical deployment durations from verified GitHub Actions CI/CD runs (root stack run 27357842338: 10m50s / 650s workflow duration and 10m17s / 617s job duration; paired dev deploy run 32679566250: 22m32s total workflow, 18m48s switch job).
 
 2. **[`service-inventory.md`](service-inventory.md)**
    - Complete inventory of all 70 Compose services defined across `docker-compose.yml` (67 services), `docker-compose.control.yml` (21 services), `docker-compose.exec.yml` (6 services), and `docker-compose.staging-full.yml` (15 services).
@@ -43,7 +43,7 @@ This directory contains the Phase 0 baseline measurements and operational analys
 5. **[`production-gates.md`](production-gates.md)**
    - Formally records operator-approved vs explicitly pending gates without inference.
    - RPO (< 1h), RTO (< 30m), Real-Capital Scope (Phase 4), and On-Call Owner are explicitly recorded as **PENDING OPERATOR APPROVAL**.
-   - Broker secret isolation and 30-minute observation window recorded as approved design contracts.
+   - Broker secret execution boundary isolation and 30-minute observation window recorded as approved design contracts per VM Plan §12.1 & §16 (Phase 4), while runtime storage mechanism selection (Secret Manager vs machine-local protected env) remains pending operator decision.
    - Read-only compliance certification.
 
 6. **[`evidence.json`](evidence.json)**

@@ -56,7 +56,7 @@
       },
       "observed_container_startup_state": {
         "captured_at": "2026-08-25T16:01:53.927731+00:00",
-        "source": "docker inspect StartedAt and CreatedAt metadata on pantheon-lupin-dev",
+        "source": "docker inspect StartedAt, CreatedAt, and Health metadata on pantheon-lupin-dev",
         "infrastructure_persistence_started_at": "2026-08-08T03:49:36.752Z (nats, minio, signal-store active since VM boot)",
         "base_application_stack_bulk_created_at": "2026-08-25T07:38:05Z - 2026-08-25T07:39:09Z",
         "observable_service_creation_latencies": {
@@ -64,22 +64,22 @@
             "created_at": "2026-08-25T15:08:03Z",
             "started_at": "2026-08-25T15:08:11.510Z",
             "creation_to_start_seconds": 8.5,
-            "initial_health_status": "healthy"
+            "health_status_at_capture": "healthy"
           },
           "postgres": {
             "created_at": "2026-08-25T15:37:45Z",
             "started_at": "2026-08-25T15:38:00.548Z",
             "creation_to_start_seconds": 15.5,
-            "initial_health_status": "healthy"
+            "health_status_at_capture": "healthy"
           },
           "telemetry": {
             "created_at": "2026-08-25T07:38:24Z",
             "started_at": "2026-08-25T07:40:28.633Z",
             "creation_to_start_seconds": 124.6,
-            "initial_health_status": "healthy"
+            "health_status_at_capture": "healthy"
           }
         },
-        "notes": "Dev VM operates as a persistent environment where infrastructure and base application containers remain running across task executions. Full cold-start from blank state was not triggered to comply with read-only non-destructive task rules. Individual container recreation is observed to reach started/healthy state within 8.5s to 15.5s."
+        "notes": "Dev VM operates as a persistent environment where infrastructure and base application containers remain running across task executions. Full cold-start from blank state was not triggered to comply with read-only non-destructive task rules. Observable container creation-to-start process latencies span 8.5s to 124.6s (e.g. 8.5s for operator_bff, 15.5s for postgres, and 124.6s during bulk initial stack startup for telemetry). Note that Docker inspect timestamps reflect container creation to process start duration and present health status, not initial health transition duration."
       }
     },
     "caddy_ingress": {
@@ -719,17 +719,6 @@
         "switch_job_duration_human": "18m48s",
         "status": "success",
         "notes": "Includes 214s dev stack deployment under lease + 1128s exact frontend release dispatch, lifecycle projector readiness gate (600s initial timeout + observation window), and smoke verification"
-      },
-      {
-        "run_id": "dev-bff-rebuild",
-        "captured_at": "2026-08-25T15:36:12Z",
-        "host": "pantheon-lupin-dev",
-        "command": "docker compose build operator-bff",
-        "scope": "bff component rebuild only",
-        "duration_seconds": 125,
-        "duration_human": "2m05s",
-        "status": "success",
-        "notes": "Single component BFF rebuild benchmark from cached base layers to final container image on pantheon-lupin-dev"
       }
     ],
     "configured_deadlines": {
