@@ -11,6 +11,7 @@ This task bounds all synchronous `ProjectionStore` database operations with conf
    - Added validation via `_validate_timeout` enforcing finite, positive numeric values and rejecting non-finite, boolean, non-positive, or non-numeric inputs.
    - Implemented `_connect_db()` helper configuring PostgreSQL `connect_timeout` and session options `-c statement_timeout=... -c lock_timeout=...` at connection initialization, with automatic fallback to session `SET` queries for custom connectors lacking keyword argument support.
    - Bounded the entire connection attempt (including custom connectors, slow callables, and fallbacks) using a dedicated worker thread with `connect_timeout_seconds` deadline enforcement, while avoiding broad `TypeError` swallow/retry by strictly retrying only on keyword argument signature mismatches.
+   - Coordinated timeout decision, result publication, and late-connection ownership atomically under a mutex lock, guaranteeing that late connections returned during or after timeout races are cleanly closed without socket leaks.
    - Ensured all pre-return opened connections are cleanly closed on session `SET` setup failure or timeout error without socket leaks.
    - Routed all internal database operations (`bootstrap_schema`, `get_controller_state`, `adopt_legacy_baseline`, `resolve_identity`, `get_receipts`, `load_journey_stage_events_bulk`, `execute_batch_transaction`) through `_connect_db()`.
 
@@ -38,6 +39,8 @@ This task bounds all synchronous `ProjectionStore` database operations with conf
    - `test_projection_store_internal_type_error_nested_callee_single_attempt`: proves internal `TypeError` from nested callee is not treated as signature mismatch.
    - `test_projection_store_blocked_connect_does_not_hang_process_exit`: proves daemon worker thread does not block Python interpreter shutdown or require process timeout kill.
    - `test_projection_store_late_connection_is_closed_after_timeout`: proves late connection returned by slow connector after timeout deadline is closed without resource leak.
+   - `test_projection_store_connect_timeout_result_publication_race_closes_connection`: proves late connection returned after caller timeout decision is closed atomically without leak.
+   - `test_projection_store_fallback_cursor_timeout_race_closes_connection`: proves connection created during fallback session setup is closed atomically if timeout occurs during query execution.
    - `test_projection_store_blocked_connect_error_propagation_on_fallback`: proves error propagation on fallback custom connectors.
    - `test_projection_store_connect_fallback_closes_connection_on_setup_error`: proves connection is immediately closed on setup failure during session SET statement_timeout/lock_timeout without socket leak.
    - `test_projection_store_statement_timeout_cancels_long_query`: proves PostgreSQL statement cancellation via `QueryCanceled` within configured deadline.

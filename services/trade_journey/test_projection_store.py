@@ -1777,3 +1777,88 @@ def test_projection_store_connect_fallback_closes_connection_on_setup_error() ->
 
     assert close_called is True, "connection was not closed when session SET setup failed"
 
+
+def test_projection_store_connect_timeout_result_publication_race_closes_connection() -> None:
+    closed_event = threading.Event()
+    conn_created = threading.Event()
+    release_worker = threading.Event()
+
+    class FakeConn:
+        def __init__(self):
+            self.closed = False
+
+        def close(self):
+            self.closed = True
+            closed_event.set()
+
+    def racing_connect(dsn, **kwargs):
+        conn = FakeConn()
+        conn_created.set()
+        # Wait until the caller is past its deadline / caller has timed out
+        release_worker.wait(timeout=2.0)
+        return conn
+
+    store = ProjectionStore(
+        "postgresql://unit/pantheon",
+        connect=racing_connect,
+        connect_timeout_seconds=0.05,
+    )
+    start_time = time.monotonic()
+    with pytest.raises(TimeoutError, match="timed out after 0.05s"):
+        store._connect_db()
+    elapsed = time.monotonic() - start_time
+    assert elapsed < 0.5
+
+    # Release the worker after caller has timed out; worker should observe timed_out status atomically and close conn
+    release_worker.set()
+
+    assert closed_event.wait(timeout=1.0), "late connection leaked after timeout/result race"
+
+
+def test_projection_store_fallback_cursor_timeout_race_closes_connection() -> None:
+    closed_event = threading.Event()
+    cursor_executing = threading.Event()
+    release_cursor = threading.Event()
+
+    class ControlledCursor:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc_val, exc_tb):
+            return False
+
+        def execute(self, query):
+            cursor_executing.set()
+            release_cursor.wait(timeout=2.0)
+
+    class ControlledConn:
+        def __init__(self):
+            self.closed = False
+
+        def cursor(self):
+            return ControlledCursor()
+
+        def close(self):
+            self.closed = True
+            closed_event.set()
+
+    def positional_connect(dsn):
+        return ControlledConn()
+
+    store = ProjectionStore(
+        "postgresql://unit/pantheon",
+        connect=positional_connect,
+        connect_timeout_seconds=0.05,
+    )
+    start_time = time.monotonic()
+    with pytest.raises(TimeoutError, match="timed out after 0.05s"):
+        store._connect_db()
+    elapsed = time.monotonic() - start_time
+    assert elapsed < 0.5
+
+    # Release the cursor inside the worker after caller has timed out
+    release_cursor.set()
+
+    assert closed_event.wait(timeout=1.0), "fallback connection leaked after timeout race"
+
+

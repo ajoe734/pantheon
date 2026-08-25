@@ -337,10 +337,13 @@ class ProjectionStore:
         connect_timeout_s = max(1, int(math.ceil(self.connect_timeout_seconds)))
         options = f"-c statement_timeout={statement_timeout_ms} -c lock_timeout={lock_timeout_ms}"
 
-        result: list[Any] = []
-        error: list[BaseException] = []
+        lock = threading.Lock()
+        outcome: dict[str, Any] = {
+            "status": "pending",
+            "conn": None,
+            "error": None,
+        }
         done = threading.Event()
-        timed_out = threading.Event()
 
         def _worker() -> None:
             conn = None
@@ -365,23 +368,28 @@ class ProjectionStore:
                             f"SET statement_timeout = {statement_timeout_ms}; SET lock_timeout = {lock_timeout_ms};"
                         )
 
-                if timed_out.is_set():
-                    if conn is not None:
-                        try:
-                            conn.close()
-                        except Exception:
-                            pass
-                    return
+                with lock:
+                    if outcome["status"] == "pending":
+                        outcome["status"] = "success"
+                        outcome["conn"] = conn
+                        done.set()
+                        return
 
-                result.append(conn)
+                if conn is not None:
+                    try:
+                        conn.close()
+                    except Exception:
+                        pass
             except BaseException as exc:
                 if conn is not None:
                     try:
                         conn.close()
                     except Exception:
                         pass
-                if not timed_out.is_set():
-                    error.append(exc)
+                with lock:
+                    if outcome["status"] == "pending":
+                        outcome["status"] = "error"
+                        outcome["error"] = exc
             finally:
                 done.set()
 
@@ -389,19 +397,31 @@ class ProjectionStore:
         t.start()
 
         if not done.wait(timeout=self.connect_timeout_seconds):
-            timed_out.set()
-            if result:
+            conn_to_close = None
+            with lock:
+                if outcome["status"] == "pending":
+                    outcome["status"] = "timed_out"
+                elif outcome["status"] == "success":
+                    outcome["status"] = "timed_out"
+                    conn_to_close = outcome["conn"]
+                    outcome["conn"] = None
+            if conn_to_close is not None:
                 try:
-                    result[0].close()
+                    conn_to_close.close()
                 except Exception:
                     pass
             raise TimeoutError(
                 f"ProjectionStore connection to database timed out after {self.connect_timeout_seconds}s"
             )
 
-        if error:
-            raise error[0]
-        return result[0]
+        with lock:
+            if outcome["status"] == "error":
+                raise outcome["error"]
+            if outcome["status"] == "success":
+                return outcome["conn"]
+            raise TimeoutError(
+                f"ProjectionStore connection to database timed out after {self.connect_timeout_seconds}s"
+            )
 
     def bootstrap_schema(self) -> None:
         """Apply the versioned migration explicitly with migration credentials."""
