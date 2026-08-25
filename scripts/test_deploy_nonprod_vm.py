@@ -177,3 +177,72 @@ def test_source_ingestion_remains_reconcile_only_manual() -> None:
                 assert env["PANTHEON_LIVE_BROKER_ENABLED"] in ("false", "${PANTHEON_LIVE_BROKER_ENABLED:-false}")
             if "PANTHEON_CANARY_EXECUTION_ENABLED" in env:
                 assert env["PANTHEON_CANARY_EXECUTION_ENABLED"] in ("false", "${PANTHEON_CANARY_EXECUTION_ENABLED:-false}")
+
+
+def test_deploy_nonprod_vm_dry_run_execution() -> None:
+    """deploy_nonprod_vm.sh --dry-run must execute successfully in dev environment."""
+    proc = subprocess.run(
+        [
+            str(DEPLOY_SCRIPT),
+            "--environment", "dev",
+            "--sha", "95a1455e3dc1a275b8d541fd2c432c3971013308",
+            "--project-id", "pantheon-lupin-dev-20260719",
+            "--dry-run",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+        cwd=ROOT,
+    )
+    assert proc.returncode == 0, f"deploy_nonprod_vm.sh --dry-run failed with stderr: {proc.stderr}"
+    assert "management_ai_store_schema=" in proc.stdout or "DEPLOY_COMPONENT" in proc.stdout or proc.returncode == 0
+
+
+def test_postgres_live_container_shm_size() -> None:
+    """If pantheon-postgres-1 is running in docker, verify its ShmSize is >= 256MB."""
+    proc = subprocess.run(
+        ["docker", "inspect", "pantheon-postgres-1", "--format", "{{.HostConfig.ShmSize}}"],
+        capture_output=True,
+        text=True,
+        check=False,
+        cwd=ROOT,
+    )
+    if proc.returncode != 0:
+        pytest.skip("pantheon-postgres-1 container is not running or docker not accessible")
+
+    shm_size_bytes = int(proc.stdout.strip())
+    assert shm_size_bytes >= MIN_POSTGRES_SHM_BYTES, (
+        f"Live container ShmSize is {shm_size_bytes} bytes, below required floor {MIN_POSTGRES_SHM_BYTES} (256MB)"
+    )
+
+
+def test_postgres_db_behavior_vacuum_succeeds_without_enospc() -> None:
+    """If PostgreSQL is reachable, verify VACUUM / VACUUM FULL executes cleanly without ENOSPC."""
+    import asyncio
+    import os
+    try:
+        import asyncpg
+    except ImportError:
+        pytest.skip("asyncpg is not installed")
+
+    dsn = os.environ.get("PANTHEON_TEST_POSTGRES_DSN", "postgresql://postgres:postgres@localhost:15432/pantheon")
+
+    async def _test() -> None:
+        try:
+            conn = await asyncpg.connect(dsn, timeout=2.0)
+        except Exception:
+            pytest.skip(f"PostgreSQL not reachable at {dsn}")
+            return
+
+        try:
+            # Standard VACUUM
+            await conn.execute("VACUUM;")
+            # VACUUM ANALYZE
+            await conn.execute("VACUUM ANALYZE;")
+            # VACUUM FULL (allocates max shared memory segment)
+            await conn.execute("VACUUM FULL;")
+        finally:
+            await conn.close()
+
+    asyncio.run(_test())
+

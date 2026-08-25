@@ -168,3 +168,17 @@ def test_dev_login_ttl_contract_supports_bounded_proof_window() -> None:
         "${PANTHEON_BFF_DEV_LOGIN_TTL_SECONDS:-1800}"
     )
 
+
+def test_postgres_container_shared_memory_floor_is_at_least_256m() -> None:
+    services = _compose()["services"]
+    postgres = services.get("postgres")
+    assert postgres is not None, "postgres service must exist in docker-compose.yml"
+    assert "shm_size" in postgres, (
+        "postgres service must declare shm_size (container default 64MB fails VACUUM with ENOSPC)"
+    )
+    shm_size_str = str(postgres["shm_size"]).strip().lower()
+    assert shm_size_str in ("256m", "256mb", "512m", "512mb", "1g", "1gb"), (
+        f"postgres shm_size must be at least 256m, got: {postgres['shm_size']}"
+    )
+
+

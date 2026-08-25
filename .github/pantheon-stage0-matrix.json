@@ -15,7 +15,8 @@
       "python3 services/execution/runtime-manager/smoke_test_runtime_binding.py",
       "python3 services/telemetry/smoke_test_ingest.py",
       "python3 -m unittest discover -s services/telemetry/lineage_read -p 'test_*.py'",
-      "python3 services/control-plane/bff/smoke_test.py"
+      "python3 services/control-plane/bff/smoke_test.py",
+      "python3 -m pytest -q scripts/test_deploy_nonprod_vm.py"
     ]
   },
   "global_paths": [
@@ -23,6 +24,7 @@
     ".github/workflows/stage-0-ci.yml",
     "scripts/ci_stage0.py",
     "scripts/test_ci_stage0.py",
+    "scripts/test_deploy_nonprod_vm.py",
     "docker-compose.yml",
     "docker-compose.remote-dev.yml",
     "Pantheon_GCP_GitHub_Docker_正式部署與環境設計_v2.md"
