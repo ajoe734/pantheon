@@ -1,0 +1,198 @@
+{
+  "schema_version": "pantheon.product_functional_closure.task_review.v1",
+  "task": {
+    "id": "LIFECYCLE-SYNC-STORE-TIMEOUT-20260825",
+    "title": "Bound synchronous lifecycle projection-store operations",
+    "owner": "Antigravity",
+    "reviewer": "Codex",
+    "status": "ready_for_independent_review",
+    "repository": "ajoe734/pantheon",
+    "base_branch": "dev",
+    "task_branch": "task/LIFECYCLE-SYNC-STORE-TIMEOUT-20260825",
+    "review_file": "docs/deployment/evidence/product-functional-closure/LIFECYCLE-SYNC-STORE-TIMEOUT-20260825/evidence.json",
+    "evidence_cut_at": "2026-08-25"
+  },
+  "scope": {
+    "owned_layer": "ProjectionStore synchronous connect, statement, and lock timeout bounds with thread-level deadline enforcement, atomic timeout decision and result publication with guaranteed late-connection cleanup, custom connector fallback timeout handling with strict TypeError propagation, and lifecycle worker failure recording.",
+    "not_changing": [
+      "Live capital actions (remain fail-closed / disabled)",
+      "Source Ingestion polling (remains reconcile-only / manual-pull only, MAX_TICKS=0)",
+      "Quarantine and receipt claiming relational semantics",
+      "Public telemetry schema and event contracts"
+    ],
+    "changed_files": [
+      "services/trade_journey/projection_store.py",
+      "services/trade_journey/lifecycle_projector.py",
+      "services/trade_journey/test_projection_store.py",
+      "services/trade_journey/test_lifecycle_projector.py",
+      "docs/deployment/evidence/product-functional-closure/LIFECYCLE-SYNC-STORE-TIMEOUT-20260825/README.md",
+      "docs/deployment/evidence/product-functional-closure/LIFECYCLE-SYNC-STORE-TIMEOUT-20260825/evidence.json"
+    ],
+    "composes_with": [
+      "PFG-LIFECYCLE-POSTGRES-DRIVER-20260824",
+      "PFG-LIFECYCLE-POSTGRES-ACTIVATION-20260824",
+      "PFG-DEV-BFF-TTL-PROMOTION-20260824",
+      "Pantheon Nonprod Deploy CI/CD workflow (.github/workflows/nonprod-deploy.yml)"
+    ]
+  },
+  "contracts": {
+    "synchronous_store_bounds": "ProjectionStore implements finite positive connect_timeout_seconds, statement_timeout_seconds, and lock_timeout_seconds (defaulting to 10.0s), configuring PostgreSQL libpq connect_timeout and session options statement_timeout and lock_timeout at connection initialization, strictly bounding all connect attempts (including custom connectors and fallbacks) using a dedicated worker thread with timeout deadline, making timeout decision and result publication atomic under mutex lock with asynchronous background connection cleanup to guarantee late connections are closed without socket leaks and without delaying the caller-side timeout deadline, and avoiding broad TypeError retries by only falling back on keyword argument mismatches.",
+    "timeout_configuration": "_configured_relational_projector binds environment variables LIFECYCLE_PROJECTOR_PROJECTION_TIMEOUT_SECONDS, LIFECYCLE_PROJECTOR_PROJECTION_CONNECT_TIMEOUT_SECONDS, LIFECYCLE_PROJECTOR_PROJECTION_STATEMENT_TIMEOUT_SECONDS, and LIFECYCLE_PROJECTOR_PROJECTION_LOCK_TIMEOUT_SECONDS (with fallback to LIFECYCLE_PROJECTOR_DB_TIMEOUT_SECONDS or 10.0s), rejecting non-finite, non-positive, or boolean inputs.",
+    "worker_resilience": "Lifecycle worker catches synchronous query/lock/connect timeouts during startup and batch execution, publishing failure/degraded status to the durable controller via _record_worker_failure without process hanging, premature checkpoint advance, or deadlock."
+  },
+  "deployment": {
+    "environment": "dev",
+    "component": "bff",
+    "auth_profile": "strict",
+    "workflow": "Pantheon Nonprod Deploy",
+    "workflow_file": ".github/workflows/nonprod-deploy.yml",
+    "workflow_run_id": "32794526552",
+    "workflow_run_url": "https://github.com/ajoe734/pantheon/actions/runs/32794526552",
+    "workflow_conclusion": "failure",
+    "failed_step": "bff_lifecycle_readiness",
+    "dispatched_dev_sha": "209fcc7f50bd6c206d1ced62124163a82ca85e18",
+    "deployed_backend_sha": "40de8fcb1c69fad0bf5e54d4c0bd6e508c9162e0",
+    "paired_frontend_sha": "cc4007f7f78a31c73548ce85457af17a45a4c4b9",
+    "paired_frontend_gate_run_id": "32679780054",
+    "paired_frontend_gate_run_url": "https://github.com/ajoe734/execute-plans/actions/runs/32679780054",
+    "proof_flags": {
+      "ppl_alloc_009_dev_proof_enabled": false,
+      "run_evolution_dispatch_probe": false,
+      "run_loop_prod_tel_002_probe": false
+    },
+    "lease": {
+      "resource": "pantheon-dev-environment",
+      "mode": "deployment",
+      "status": "released"
+    }
+  },
+  "hosted_readback": {
+    "status": "verified_rollback_baseline",
+    "bff_health_endpoint": "https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io/healthz",
+    "bff_health_readback": {
+      "status": "degraded",
+      "service": "operator-bff",
+      "timestamp": "2026-08-25T01:50:22Z",
+      "live": true,
+      "ready": false,
+      "dependencies": {
+        "runtime_manager": {
+          "status": "ok",
+          "url": "http://runtime-manager:8081"
+        },
+        "governance": {
+          "status": "ok",
+          "url": "http://governance:8082"
+        },
+        "deployment": {
+          "status": "ok",
+          "url": "http://deployment:8095"
+        },
+        "lifecycle_projector": {
+          "state_path": "/data/bff/lifecycle-projection/health_state.json",
+          "bundle_root": "/data/bff/lifecycle-projection",
+          "worker_status": "stale",
+          "controller_status": "degraded",
+          "mode": "live",
+          "accepted_live": true,
+          "checkpoint": 7100730,
+          "source_high_watermark": 0,
+          "backlog": 0,
+          "deployment_sha": "40de8fcb1c69fad0bf5e54d4c0bd6e508c9162e0",
+          "status": "degraded",
+          "ready": false
+        }
+      },
+      "metrics": {
+        "service_up": 1
+      },
+      "details": {
+        "version": "0.2.0",
+        "data_dir": "/data/bff"
+      }
+    },
+    "bff_version_endpoint": "https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io/bff/version",
+    "bff_version_readback": {
+      "service": "operator-bff",
+      "version": "0.2.0",
+      "source_commit_sha": "40de8fcb1c69fad0bf5e54d4c0bd6e508c9162e0",
+      "commit": "40de8fcb1c69fad0bf5e54d4c0bd6e508c9162e0",
+      "source_commit_known": true,
+      "environment": "dev",
+      "config_posture": {
+        "auth_stub": false,
+        "auth_mode": "strict",
+        "dev_login_enabled": true,
+        "mfa_required": true,
+        "assistant_kernel_enabled": true,
+        "trade_journey_reader_backend": "json",
+        "trade_journey_projection_schema": "trade_journey_projection"
+      }
+    },
+    "frontend_deployment_endpoint": "https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io/deployment.json",
+    "frontend_deployment_readback": {
+      "schemaVersion": 1,
+      "app": "execute-plans",
+      "environment": "pantheon-dev-fe",
+      "repository": "ajoe734/execute-plans",
+      "profile": "read-only",
+      "pairId": "0d36e1dd5beb48a21dc5c9f7467c3ab85f86f246d20568a58a2fb534208aafa4",
+      "commit": "cc4007f7f78a31c73548ce85457af17a45a4c4b9",
+      "sourceBranch": "dev",
+      "frontendSha": "cc4007f7f78a31c73548ce85457af17a45a4c4b9",
+      "bffCommit": "40de8fcb1c69fad0bf5e54d4c0bd6e508c9162e0",
+      "bffSourceCommitSha": "40de8fcb1c69fad0bf5e54d4c0bd6e508c9162e0",
+      "bffCommitEvidence": true,
+      "buildMode": {
+        "VITE_BFF_MODE": "live",
+        "VITE_BFF_FALLBACK": "strict",
+        "VITE_BFF_REAL_WRITES": "false",
+        "VITE_BFF_ALLOW_DEV_STUB_WRITES": "false",
+        "VITE_BFF_EMBEDDED_BEARER_TOKEN": "false"
+      },
+      "deploymentProfile": "read-only",
+      "deploymentState": "standby"
+    },
+    "expected_backend_sha": "40de8fcb1c69fad0bf5e54d4c0bd6e508c9162e0",
+    "expected_frontend_sha": "cc4007f7f78a31c73548ce85457af17a45a4c4b9",
+    "source_ingestion_posture": "reconcile_only (MAX_TICKS=0)",
+    "live_capital_posture": "fail-closed / disabled",
+    "rollback_evidence": "Workflow run 32794526552 (dev@209fcc7f50bd6c206d1ced62124163a82ca85e18) recorded conclusion=failure at step bff_lifecycle_readiness and proved verified automatic rollback/compensation to baseline backend SHA 40de8fcb1c69fad0bf5e54d4c0bd6e508c9162e0 with degraded read-only standby profile preserved and live capital strictly disabled."
+  },
+  "validation": [
+    {
+      "command": "TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:15432/pantheon .venv-pantheon/bin/python3 -m pytest -q services/trade_journey/test_projection_store.py services/trade_journey/test_lifecycle_projector.py",
+      "result": "pass; 114 passed, 1 skipped",
+      "coverage": "ProjectionStore timeout configuration, connect timeout failure within deadline, connect timeout option forwarding, statement timeout cancellation via QueryCanceled, lock timeout cancellation via LockNotAvailable, custom connector fallback, connection cleanup on session SET setup failure, relational projector timeout environment variable binding, deterministic blocked fallback connect timeout proofs, daemon thread non-blocking process termination, late connection cleanup, atomic timeout decision and result publication race closing with asynchronous background connection close, controlled interleaving timeout and publication race proving bounded caller deadline under blocking close, strict TypeError propagation with single attempt on ambiguous messages or nested callees, worker startup projector timeout recovery, and worker timeout recovery with durable failure mutation and no premature checkpoint advance"
+    },
+    {
+      "command": "TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:15432/pantheon .venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/test_lifecycle_projector_readiness.py services/control-plane/bff/test_trade_journey_contract.py services/control-plane/bff/test_tj_e2e_005_trade_journeys_read_api.py",
+      "result": "pass; 48 passed",
+      "coverage": "Trade Journey BFF readiness checks, contract schemas, and read API endpoints"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m py_compile services/trade_journey/projection_store.py services/trade_journey/lifecycle_projector.py services/trade_journey/test_projection_store.py services/trade_journey/test_lifecycle_projector.py",
+      "result": "pass; exit code 0"
+    },
+    {
+      "command": "curl -k -s https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io/bff/version",
+      "result": "200 OK: source_commit_sha=40de8fcb1c69fad0bf5e54d4c0bd6e508c9162e0, auth_mode=strict, dev_login_enabled=true"
+    },
+    {
+      "command": "curl -k -s https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io/deployment.json",
+      "result": "200 OK: deploymentState=standby, profile=read-only, bffCommit=40de8fcb1c69fad0bf5e54d4c0bd6e508c9162e0, frontendSha=cc4007f7f78a31c73548ce85457af17a45a4c4b9"
+    }
+  ],
+  "validation_environment": {
+    "interpreter_provisioning": "scripts/dev/provision_python_distribution.py (.venv-pantheon)",
+    "python_version": "Python 3.12 (via <main worktree>/.venv)",
+    "psycopg_version": "3.3.4",
+    "note": "Auto-worker environments must run scripts/dev/provision_python_distribution.py before executing pytest suites."
+  },
+  "review": {
+    "status": "ready_for_independent_review",
+    "reviewer": "Codex",
+    "reviewer_instruction": "Bind this already-committed manifest with AI_NAME=Codex REVIEW_FILE=docs/deployment/evidence/product-functional-closure/LIFECYCLE-SYNC-STORE-TIMEOUT-20260825/evidence.json through the governed approve command only after independently verifying the exact PR head and deterministic timeout proofs.",
+    "owner_claim": "Owner evidence is ready for independent review; this file makes no approval claim."
+  }
+}
