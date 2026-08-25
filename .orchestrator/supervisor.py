@@ -1220,7 +1220,7 @@ ALLOWLISTED_EXECUTION_RESOURCES = frozenset({"pantheon-dev"})
 def task_execution_resources(task: Mapping[str, Any] | None) -> list[str]:
     if not isinstance(task, Mapping):
         return []
-    if "execution_resources" not in task or task.get("execution_resources") is None:
+    if "execution_resources" not in task:
         return []
     raw = task["execution_resources"]
     if not isinstance(raw, list):

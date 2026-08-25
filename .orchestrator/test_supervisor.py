@@ -5162,12 +5162,15 @@ class ExecutionResourceAdmissionTests(unittest.TestCase):
                 self.assertEqual(record_2["status"], "started")
 
     def test_task_execution_resources_strict_validation_and_rejections(self) -> None:
-        # Missing field / None defaults to []
+        # Missing field / None task defaults to []
         self.assertEqual(supervisor.task_execution_resources(None), [])
         self.assertEqual(supervisor.task_execution_resources({}), [])
         self.assertEqual(supervisor.task_execution_resources({"id": "TASK-1"}), [])
-        self.assertEqual(supervisor.task_execution_resources({"id": "TASK-1", "execution_resources": None}), [])
         self.assertEqual(supervisor.task_execution_resources({"id": "TASK-1", "execution_resources": []}), [])
+
+        # Explicit None (null) is malformed and must fail closed
+        with self.assertRaisesRegex(ValueError, "must be a list, got NoneType: None"):
+            supervisor.task_execution_resources({"id": "TASK-1", "execution_resources": None})
 
         # Valid allowlisted list
         self.assertEqual(

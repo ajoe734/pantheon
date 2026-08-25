@@ -83,20 +83,20 @@ When generating development task packets via the assistant dev bridge (`.orchest
 
 ### 3.3 Manual Task Assignment via CLI
 
-When assigning tasks via `scripts/human-ops-status.sh`:
+When assigning tasks via `$PANTHEON_COMMAND_ROOT/scripts/human-ops-status.sh`:
 - Use `TASK_EXECUTION_RESOURCES="pantheon-dev"` or `TASK_EXECUTION_RESOURCES_JSON='["pantheon-dev"]'`:
   ```bash
   TASK_EXECUTION_RESOURCES="pantheon-dev" \
-    ./scripts/human-ops-status.sh assign TASK-HOSTED-001 Codex Claude "Deploy BFF to dev"
+    "$PANTHEON_COMMAND_ROOT/scripts/human-ops-status.sh" assign TASK-HOSTED-001 Codex Claude "Deploy BFF to dev"
   ```
 
 ### 3.4 Revising Execution Resources via CLI
 
 When adding or removing execution resources on existing pre-dispatch non-active tasks (`todo`, `blocked`):
 ```bash
-./scripts/human-ops-status.sh execution-resource TASK-001 add pantheon-dev "Admit hosted deployment resource"
+"$PANTHEON_COMMAND_ROOT/scripts/human-ops-status.sh" execution-resource TASK-001 add pantheon-dev "Admit hosted deployment resource"
 ```
-- Requires `Human/Ops` authority (enforced automatically by `scripts/human-ops-status.sh`).
+- Requires `Human/Ops` authority (enforced automatically by `$PANTHEON_COMMAND_ROOT/scripts/human-ops-status.sh`).
 - Operates on pre-dispatch non-active tasks (`todo`, `blocked`); rejects active lifecycle states (`in_progress`, `review`, `review_approved`) and terminal states (`done`, `superseded`).
 - Validates allowlisted resources (`{"pantheon-dev"}`).
 - Records an audited `execution_resource_revised` event in `ai-activity-log.jsonl` and updates `contract_revision` on the canonical task row.
