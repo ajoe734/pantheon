@@ -1,0 +1,107 @@
+{
+  "task_id": "OPS-VM-ENV-PHASE0-20260825",
+  "phase": "VM environment management Phase 0 inventory and measurement",
+  "owner": "Antigravity",
+  "reviewer": "Codex",
+  "title": "Measure VM environment Phase 0 baseline",
+  "completed_at": "2026-08-25T16:05:00Z",
+  "acceptance_mapping": {
+    "compose_inventory": {
+      "criterion": "Inventory every Compose service under core workers research management-ai or execution with dependency and singleton ownership notes",
+      "artifact": "docs/deployment/evidence/ops-vm-env-phase0-20260825/service-inventory.md",
+      "status": "COMPLETED",
+      "summary": "Full inventory of 67 services in docker-compose.yml across 5 profiles: core (14), workers (17), research (24), management-ai (8), execution (4), with dependency trees and singleton ownership rules."
+    },
+    "dev_measurements": {
+      "criterion": "Capture timestamped redacted Dev CPU memory disk startup and deployment-duration measurements from pantheon-lupin-dev",
+      "artifact": "docs/deployment/evidence/ops-vm-env-phase0-20260825/measurements-baseline.json",
+      "status": "COMPLETED",
+      "summary": "Captured host CPU (12 vCPUs), memory (47.04 GiB total, 30.48 GiB available), disk (242 GiB, 88% utilized), uptime (420.2h), 50 container stats, Caddy memory (26.0 MiB), and historical deployment durations (BFF: ~2m, Root: ~9m)."
+    },
+    "capability_gap_matrix": {
+      "criterion": "Publish a FE/BFF migration worker-ownership and backup/restore capability gap matrix",
+      "artifact": "docs/deployment/evidence/ops-vm-env-phase0-20260825/capability-gap-matrix.md",
+      "status": "COMPLETED",
+      "summary": "Gap matrix published evaluating FE/BFF paired release admission, expand/contract database migration, worker singleton lifecycle/fencing, and pre-deploy snapshot/restore capabilities against target phases."
+    },
+    "instance_sizing_recommendation": {
+      "criterion": "Recommend an instance size from measured core peak with at least 30 percent memory headroom",
+      "artifact": "docs/deployment/evidence/ops-vm-env-phase0-20260825/instance-sizing-recommendation.md",
+      "status": "COMPLETED",
+      "summary": "Core peak calculated at 4.15 GiB (steady 2.10 GiB + green candidate 0.98 GiB + OS/Caddy 0.98 GiB). Sizing recommended as e2-standard-2 (2 vCPU, 8 GiB RAM) providing 49.3% memory headroom, exceeding >=30% requirement."
+    },
+    "production_gates": {
+      "criterion": "Record operator-approved or explicitly pending production RPO RTO real-capital scope and on-call owner without inference",
+      "artifact": "docs/deployment/evidence/ops-vm-env-phase0-20260825/production-gates.md",
+      "status": "COMPLETED",
+      "summary": "Explicitly recorded RPO (<1h target), RTO (<30m target), Real-Capital Scope (Phase 4 gate), and On-Call Owner as PENDING OPERATOR APPROVAL without unverified LLM inference."
+    },
+    "read_only_safety": {
+      "criterion": "Use only read-only inspection and do not provision Staging or Prod or alter broker capital secret or runtime state",
+      "artifact": "docs/deployment/evidence/ops-vm-env-phase0-20260825/production-gates.md#3-read-only-compliance-certification",
+      "status": "COMPLETED",
+      "summary": "Zero staging/prod infrastructure provisioned; zero broker/capital/secret mutations; 100% read-only inspection."
+    },
+    "independent_review": {
+      "criterion": "Commit task-scoped evidence and receive independent exact-head review before merge to dev",
+      "artifact": "docs/deployment/evidence/ops-vm-env-phase0-20260825/evidence.json",
+      "status": "READY_FOR_REVIEW",
+      "summary": "Committed on task branch task/OPS-VM-ENV-PHASE0-20260825; review requested from Codex."
+    }
+  },
+  "measured_baseline_summary": {
+    "host": "pantheon-lupin-dev",
+    "project": "pantheon-lupin-dev-20260719",
+    "zone": "asia-east1-b",
+    "total_containers_running": 50,
+    "total_container_memory_mib": 11207.72,
+    "total_container_memory_gib": 10.95,
+    "core_profile_memory_mib": 2152.89,
+    "core_profile_memory_gib": 2.1,
+    "workers_profile_memory_mib": 6840.15,
+    "workers_profile_memory_gib": 6.68,
+    "management_ai_profile_memory_mib": 1440.1,
+    "management_ai_profile_memory_gib": 1.41,
+    "research_profile_memory_mib": 677.85,
+    "research_profile_memory_gib": 0.66,
+    "execution_profile_memory_mib": 96.73,
+    "execution_profile_memory_gib": 0.09
+  },
+  "instance_sizing_recommendations": {
+    "prod_control_vm": {
+      "machine_type": "e2-standard-2",
+      "vcpus": 2,
+      "memory_gib": 8.0,
+      "core_peak_gib": 4.15,
+      "memory_headroom_pct": 49.3
+    },
+    "prod_execution_vm": {
+      "machine_type": "e2-standard-2",
+      "vcpus": 2,
+      "memory_gib": 8.0,
+      "working_set_gib": 0.25,
+      "memory_headroom_pct": 96.8
+    },
+    "ephemeral_staging_vm": {
+      "machine_type": "e2-standard-2",
+      "vcpus": 2,
+      "memory_gib": 8.0,
+      "debug_ttl_hours": 2
+    }
+  },
+  "production_gates_summary": {
+    "rpo": "PENDING_OPERATOR_APPROVAL",
+    "rto": "PENDING_OPERATOR_APPROVAL",
+    "real_capital_scope": "PENDING_OPERATOR_APPROVAL_PHASE_4",
+    "on_call_owner": "PENDING_OPERATOR_APPOINTMENT",
+    "broker_secret_boundary": "APPROVED_DESIGN_CONTRACT",
+    "observation_window": "APPROVED_DESIGN_CONTRACT"
+  },
+  "non_goals_compliance": {
+    "no_staging_provisioned": true,
+    "no_production_provisioned": true,
+    "no_capital_action": true,
+    "no_broker_secret_mutation": true,
+    "no_compose_profile_mutation": true
+  }
+}

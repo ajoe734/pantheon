@@ -1,0 +1,684 @@
+{
+  "measurement_metadata": {
+    "schema_version": 1,
+    "captured_at": "2026-08-25T16:01:53.927731+00:00",
+    "environment": "dev",
+    "gcp_project": "pantheon-lupin-dev-20260719",
+    "zone": "asia-east1-b",
+    "host_instance": "pantheon-lupin-dev",
+    "redacted_fields": [
+      "credentials",
+      "passwords",
+      "tokens",
+      "env_secrets"
+    ]
+  },
+  "host_metrics": {
+    "cpu": {
+      "vcpus": 12,
+      "model_name": "AMD EPYC 7B12",
+      "load_average": "8.63 8.42 8.77 15/2498 804"
+    },
+    "memory": {
+      "total_bytes": 50508697600,
+      "total_human": "47.04 GiB",
+      "available_bytes": 32547266560,
+      "free_bytes": 14706237440,
+      "buffers_bytes": 1841922048,
+      "cached_bytes": 13869658112
+    },
+    "disk": {
+      "mount_point": "/",
+      "total_bytes": 258906374144,
+      "total_gib": 241.13,
+      "used_bytes": 226914398208,
+      "used_gib": 211.33,
+      "available_bytes": 31975198720,
+      "available_gib": 29.78,
+      "use_percentage": "88%"
+    },
+    "uptime": {
+      "uptime_hours": 420.21,
+      "system_boot_time": "2026-08-08 03:49:12"
+    },
+    "caddy_ingress": {
+      "service": "caddy.service",
+      "active_since": "2026-08-08T03:49:28Z",
+      "memory_usage_mib": 26.0,
+      "memory_peak_mib": 110.4
+    }
+  },
+  "profiles_summary": {
+    "core": {
+      "container_count": 13,
+      "total_memory_bytes": 2427117888,
+      "total_memory_mib": 2314.68,
+      "total_cpu_percentage": 209.47,
+      "services": [
+        {
+          "container_name": "pantheon-postgres-1",
+          "service_name": "postgres",
+          "cpu_percentage": 1.83,
+          "memory_used_bytes": 206988902,
+          "memory_used_mib": 197.4,
+          "memory_limit_raw": "47.04GiB",
+          "memory_percentage": 0.41,
+          "net_io": "16.7MB / 79MB",
+          "block_io": "458MB / 9.68GB"
+        },
+        {
+          "container_name": "pantheon-operator-bff-1",
+          "service_name": "operator-bff",
+          "cpu_percentage": 99.83,
+          "memory_used_bytes": 912156262,
+          "memory_used_mib": 869.9,
+          "memory_limit_raw": "47.04GiB",
+          "memory_percentage": 1.81,
+          "net_io": "70.8MB / 2.95MB",
+          "block_io": "4.18GB / 905MB"
+        },
+        {
+          "container_name": "pantheon-reconciliation-drift-svc-1",
+          "service_name": "reconciliation-drift-svc",
+          "cpu_percentage": 97.73,
+          "memory_used_bytes": 356830412,
+          "memory_used_mib": 340.3,
+          "memory_limit_raw": "47.04GiB",
+          "memory_percentage": 0.71,
+          "net_io": "1.17GB / 21.1MB",
+          "block_io": "439MB / 6.48GB"
+        },
+        {
+          "container_name": "pantheon-postmortems-1",
+          "service_name": "postmortems",
+          "cpu_percentage": 0.22,
+          "memory_used_bytes": 43494932,
+          "memory_used_mib": 41.48,
+          "memory_limit_raw": "47.04GiB",
+          "memory_percentage": 0.09,
+          "net_io": "446kB / 881kB",
+          "block_io": "516kB / 0B"
+        },
+        {
+          "container_name": "pantheon-incidents-1",
+          "service_name": "incidents",
+          "cpu_percentage": 0.22,
+          "memory_used_bytes": 45308968,
+          "memory_used_mib": 43.21,
+          "memory_limit_raw": "47.04GiB",
+          "memory_percentage": 0.09,
+          "net_io": "1.52MB / 509MB",
+          "block_io": "8.59MB / 0B"
+        },
+        {
+          "container_name": "pantheon-telemetry-1",
+          "service_name": "telemetry",
+          "cpu_percentage": 7.42,
+          "memory_used_bytes": 485385830,
+          "memory_used_mib": 462.9,
+          "memory_limit_raw": "47.04GiB",
+          "memory_percentage": 0.96,
+          "net_io": "695MB / 776MB",
+          "block_io": "174MB / 17.9GB"
+        },
+        {
+          "container_name": "pantheon-deployment-1",
+          "service_name": "deployment",
+          "cpu_percentage": 0.72,
+          "memory_used_bytes": 43977277,
+          "memory_used_mib": 41.94,
+          "memory_limit_raw": "47.04GiB",
+          "memory_percentage": 0.09,
+          "net_io": "3.25MB / 2.48MB",
+          "block_io": "9.45MB / 371MB"
+        },
+        {
+          "container_name": "pantheon-capital-1",
+          "service_name": "capital",
+          "cpu_percentage": 0.18,
+          "memory_used_bytes": 46022000,
+          "memory_used_mib": 43.89,
+          "memory_limit_raw": "47.04GiB",
+          "memory_percentage": 0.09,
+          "net_io": "453kB / 943kB",
+          "block_io": "8.6MB / 0B"
+        },
+        {
+          "container_name": "pantheon-lineage-read-1",
+          "service_name": "lineage-read",
+          "cpu_percentage": 0.19,
+          "memory_used_bytes": 40904949,
+          "memory_used_mib": 39.01,
+          "memory_limit_raw": "47.04GiB",
+          "memory_percentage": 0.08,
+          "net_io": "453kB / 571kB",
+          "block_io": "8.48MB / 0B"
+        },
+        {
+          "container_name": "pantheon-governance-1",
+          "service_name": "governance",
+          "cpu_percentage": 0.22,
+          "memory_used_bytes": 39604715,
+          "memory_used_mib": 37.77,
+          "memory_limit_raw": "47.04GiB",
+          "memory_percentage": 0.08,
+          "net_io": "450kB / 1.1MB",
+          "block_io": "111kB / 0B"
+        },
+        {
+          "container_name": "pantheon-registry-1",
+          "service_name": "registry",
+          "cpu_percentage": 0.2,
+          "memory_used_bytes": 40642805,
+          "memory_used_mib": 38.76,
+          "memory_limit_raw": "47.04GiB",
+          "memory_percentage": 0.08,
+          "net_io": "450kB / 453kB",
+          "block_io": "9.99MB / 0B"
+        },
+        {
+          "container_name": "pantheon-nats-1",
+          "service_name": "nats",
+          "cpu_percentage": 0.67,
+          "memory_used_bytes": 71282196,
+          "memory_used_mib": 67.98,
+          "memory_limit_raw": "47.04GiB",
+          "memory_percentage": 0.14,
+          "net_io": "4.43GB / 4.45GB",
+          "block_io": "555MB / 8.95GB"
+        },
+        {
+          "container_name": "pantheon-minio-1",
+          "service_name": "minio",
+          "cpu_percentage": 0.04,
+          "memory_used_bytes": 94518640,
+          "memory_used_mib": 90.14,
+          "memory_limit_raw": "47.04GiB",
+          "memory_percentage": 0.19,
+          "net_io": "2.15MB / 123kB",
+          "block_io": "5.5GB / 1.89GB"
+        }
+      ]
+    },
+    "workers": {
+      "container_count": 16,
+      "total_memory_bytes": 7200038710,
+      "total_memory_mib": 6866.49,
+      "total_cpu_percentage": 124.42,
+      "services": [
+        {
+          "container_name": "pantheon-loop-run-projector-scheduler-1",
+          "service_name": "loop-run-projector-scheduler",
+          "cpu_percentage": 92.53,
+          "memory_used_bytes": 6708738916,
+          "memory_used_mib": 6397.95,
+          "memory_limit_raw": "16GiB",
+          "memory_percentage": 39.05,
+          "net_io": "561kB / 219kB",
+          "block_io": "3.17GB / 99.3GB"
+        },
+        {
+          "container_name": "pantheon-policy-learning-shadow-eval-scheduler-1",
+          "service_name": "policy-learning-shadow-eval-scheduler",
+          "cpu_percentage": 0.0,
+          "memory_used_bytes": 20248002,
+          "memory_used_mib": 19.31,
+          "memory_limit_raw": "47.04GiB",
+          "memory_percentage": 0.04,
+          "net_io": "93kB / 17.9kB",
+          "block_io": "168kB / 41kB"
+        },
+        {
+          "container_name": "pantheon-reconciliation-drift-consumer-1",
+          "service_name": "reconciliation-drift-consumer",
+          "cpu_percentage": 0.0,
+          "memory_used_bytes": 23613931,
+          "memory_used_mib": 22.52,
+          "memory_limit_raw": "47.04GiB",
+          "memory_percentage": 0.05,
+          "net_io": "413kB / 365kB",
+          "block_io": "3.41MB / 61.4MB"
+        },
+        {
+          "container_name": "pantheon-reconciliation-drift-scheduler-1",
+          "service_name": "reconciliation-drift-scheduler",
+          "cpu_percentage": 14.7,
+          "memory_used_bytes": 29873930,
+          "memory_used_mib": 28.49,
+          "memory_limit_raw": "47.04GiB",
+          "memory_percentage": 0.06,
+          "net_io": "429kB / 313kB",
+          "block_io": "32.8kB / 406kB"
+        },
+        {
+          "container_name": "pantheon-reconciliation-drift-incident-listener-1",
+          "service_name": "reconciliation-drift-incident-listener",
+          "cpu_percentage": 0.39,
+          "memory_used_bytes": 23236444,
+          "memory_used_mib": 22.16,
+          "memory_limit_raw": "47.04GiB",
+          "memory_percentage": 0.05,
+          "net_io": "528MB / 1.17GB",
+          "block_io": "958kB / 4.3GB"
+        },
+        {
+          "container_name": "pantheon-evolution-threshold-sweep-producer-1",
+          "service_name": "evolution-threshold-sweep-producer",
+          "cpu_percentage": 0.0,
+          "memory_used_bytes": 16808673,
+          "memory_used_mib": 16.03,
+          "memory_limit_raw": "47.04GiB",
+          "memory_percentage": 0.03,
+          "net_io": "78.2kB / 855B",
+          "block_io": "73.7kB / 8.19kB"
+        },
+        {
+          "container_name": "pantheon-evolution-dispatch-worker-1",
+          "service_name": "evolution-dispatch-worker",
+          "cpu_percentage": 0.0,
+          "memory_used_bytes": 18664652,
+          "memory_used_mib": 17.8,
+          "memory_limit_raw": "47.04GiB",
+          "memory_percentage": 0.04,
+          "net_io": "78.2kB / 126B",
+          "block_io": "352kB / 4.12MB"
+        },
+        {
+          "container_name": "pantheon-evolution-daily-sweep-scheduler-1",
+          "service_name": "evolution-daily-sweep-scheduler",
+          "cpu_percentage": 0.0,
+          "memory_used_bytes": 16074670,
+          "memory_used_mib": 15.33,
+          "memory_limit_raw": "47.04GiB",
+          "memory_percentage": 0.03,
+          "net_io": "82.4kB / 1.02kB",
+          "block_io": "16.4kB / 8.19kB"
+        },
+        {
+          "container_name": "pantheon-paper-fleet-reconciler-1",
+          "service_name": "paper-fleet-reconciler",
+          "cpu_percentage": 7.57,
+          "memory_used_bytes": 134112870,
+          "memory_used_mib": 127.9,
+          "memory_limit_raw": "47.04GiB",
+          "memory_percentage": 0.27,
+          "net_io": "12.4GB / 429MB",
+          "block_io": "13.8MB / 9.43MB"
+        },
+        {
+          "container_name": "pantheon-paper-signal-producer-1",
+          "service_name": "paper-signal-producer",
+          "cpu_percentage": 0.0,
+          "memory_used_bytes": 22544384,
+          "memory_used_mib": 21.5,
+          "memory_limit_raw": "47.04GiB",
+          "memory_percentage": 0.04,
+          "net_io": "7.57MB / 1.15MB",
+          "block_io": "1.96MB / 7.97MB"
+        },
+        {
+          "container_name": "pantheon-deployment-outbox-consumer-1",
+          "service_name": "deployment-outbox-consumer",
+          "cpu_percentage": 0.19,
+          "memory_used_bytes": 27158118,
+          "memory_used_mib": 25.9,
+          "memory_limit_raw": "47.04GiB",
+          "memory_percentage": 0.05,
+          "net_io": "1.84MB / 2.79MB",
+          "block_io": "2.65MB / 16.2MB"
+        },
+        {
+          "container_name": "pantheon-alpha-replication-worker-1",
+          "service_name": "alpha-replication-worker",
+          "cpu_percentage": 4.68,
+          "memory_used_bytes": 22533898,
+          "memory_used_mib": 21.49,
+          "memory_limit_raw": "47.04GiB",
+          "memory_percentage": 0.04,
+          "net_io": "81.1kB / 126B",
+          "block_io": "705kB / 6.81MB"
+        },
+        {
+          "container_name": "pantheon-training-session-preview-worker-1",
+          "service_name": "training-session-preview-worker",
+          "cpu_percentage": 0.0,
+          "memory_used_bytes": 19922944,
+          "memory_used_mib": 19.0,
+          "memory_limit_raw": "47.04GiB",
+          "memory_percentage": 0.04,
+          "net_io": "663kB / 1.05MB",
+          "block_io": "49.2kB / 4.11MB"
+        },
+        {
+          "container_name": "pantheon-search-index-scheduler-1",
+          "service_name": "search-index-scheduler",
+          "cpu_percentage": 0.0,
+          "memory_used_bytes": 21695037,
+          "memory_used_mib": 20.69,
+          "memory_limit_raw": "47.04GiB",
+          "memory_percentage": 0.04,
+          "net_io": "2.84MB / 169kB",
+          "block_io": "238kB / 0B"
+        },
+        {
+          "container_name": "pantheon-source-ingest-scheduler-1",
+          "service_name": "source-ingest-scheduler",
+          "cpu_percentage": 0.0,
+          "memory_used_bytes": 59810775,
+          "memory_used_mib": 57.04,
+          "memory_limit_raw": "47.04GiB",
+          "memory_percentage": 0.12,
+          "net_io": "4.02GB / 215MB",
+          "block_io": "2.28MB / 140MB"
+        },
+        {
+          "container_name": "pantheon-strategy-distillation-worker-1",
+          "service_name": "strategy-distillation-worker",
+          "cpu_percentage": 4.36,
+          "memory_used_bytes": 35001466,
+          "memory_used_mib": 33.38,
+          "memory_limit_raw": "47.04GiB",
+          "memory_percentage": 0.07,
+          "net_io": "21.2MB / 12MB",
+          "block_io": "688kB / 10.4MB"
+        }
+      ]
+    },
+    "research": {
+      "container_count": 12,
+      "total_memory_bytes": 710850637,
+      "total_memory_mib": 677.92,
+      "total_cpu_percentage": 32.24,
+      "services": [
+        {
+          "container_name": "pantheon-evolution-1",
+          "service_name": "evolution",
+          "cpu_percentage": 0.19,
+          "memory_used_bytes": 44302336,
+          "memory_used_mib": 42.25,
+          "memory_limit_raw": "47.04GiB",
+          "memory_percentage": 0.09,
+          "net_io": "452kB / 918kB",
+          "block_io": "3.12MB / 0B"
+        },
+        {
+          "container_name": "pantheon-research-worker-gateway-svc-1",
+          "service_name": "research-worker-gateway-svc",
+          "cpu_percentage": 0.19,
+          "memory_used_bytes": 41125150,
+          "memory_used_mib": 39.22,
+          "memory_limit_raw": "47.04GiB",
+          "memory_percentage": 0.08,
+          "net_io": "461kB / 957kB",
+          "block_io": "8.34MB / 0B"
+        },
+        {
+          "container_name": "pantheon-training-session-svc-1",
+          "service_name": "training-session-svc",
+          "cpu_percentage": 30.07,
+          "memory_used_bytes": 49062871,
+          "memory_used_mib": 46.79,
+          "memory_limit_raw": "47.04GiB",
+          "memory_percentage": 0.1,
+          "net_io": "1.51MB / 1.61MB",
+          "block_io": "11.6MB / 0B"
+        },
+        {
+          "container_name": "pantheon-search-svc-1",
+          "service_name": "search-svc",
+          "cpu_percentage": 0.24,
+          "memory_used_bytes": 140509184,
+          "memory_used_mib": 134.0,
+          "memory_limit_raw": "47.04GiB",
+          "memory_percentage": 0.28,
+          "net_io": "852MB / 10.5MB",
+          "block_io": "126MB / 1.26GB"
+        },
+        {
+          "container_name": "pantheon-memory-1",
+          "service_name": "memory",
+          "cpu_percentage": 0.2,
+          "memory_used_bytes": 39636172,
+          "memory_used_mib": 37.8,
+          "memory_limit_raw": "47.04GiB",
+          "memory_percentage": 0.08,
+          "net_io": "452kB / 860kB",
+          "block_io": "10.1MB / 0B"
+        },
+        {
+          "container_name": "pantheon-source-ingest-1",
+          "service_name": "source-ingest",
+          "cpu_percentage": 0.22,
+          "memory_used_bytes": 143130624,
+          "memory_used_mib": 136.5,
+          "memory_limit_raw": "47.04GiB",
+          "memory_percentage": 0.28,
+          "net_io": "11.2MB / 5.23GB",
+          "block_io": "42MB / 0B"
+        },
+        {
+          "container_name": "pantheon-promotion-1",
+          "service_name": "promotion",
+          "cpu_percentage": 0.22,
+          "memory_used_bytes": 43358617,
+          "memory_used_mib": 41.35,
+          "memory_limit_raw": "47.04GiB",
+          "memory_percentage": 0.09,
+          "net_io": "452kB / 827kB",
+          "block_io": "8.53MB / 0B"
+        },
+        {
+          "container_name": "pantheon-policy-learning-svc-1",
+          "service_name": "policy-learning-svc",
+          "cpu_percentage": 0.2,
+          "memory_used_bytes": 50038046,
+          "memory_used_mib": 47.72,
+          "memory_limit_raw": "47.04GiB",
+          "memory_percentage": 0.1,
+          "net_io": "487kB / 1.35MB",
+          "block_io": "20.1MB / 0B"
+        },
+        {
+          "container_name": "pantheon-feedback-1",
+          "service_name": "feedback",
+          "cpu_percentage": 0.14,
+          "memory_used_bytes": 41009807,
+          "memory_used_mib": 39.11,
+          "memory_limit_raw": "47.04GiB",
+          "memory_percentage": 0.08,
+          "net_io": "83.3kB / 126B",
+          "block_io": "13.3MB / 0B"
+        },
+        {
+          "container_name": "pantheon-research-orchestrator-svc-1",
+          "service_name": "research-orchestrator-svc",
+          "cpu_percentage": 0.2,
+          "memory_used_bytes": 40768634,
+          "memory_used_mib": 38.88,
+          "memory_limit_raw": "47.04GiB",
+          "memory_percentage": 0.08,
+          "net_io": "463kB / 898kB",
+          "block_io": "10.1MB / 0B"
+        },
+        {
+          "container_name": "pantheon-evaluation-1",
+          "service_name": "evaluation",
+          "cpu_percentage": 0.2,
+          "memory_used_bytes": 40254832,
+          "memory_used_mib": 38.39,
+          "memory_limit_raw": "47.04GiB",
+          "memory_percentage": 0.08,
+          "net_io": "83kB / 126B",
+          "block_io": "8.29MB / 0B"
+        },
+        {
+          "container_name": "pantheon-optimizer-svc-1",
+          "service_name": "optimizer-svc",
+          "cpu_percentage": 0.17,
+          "memory_used_bytes": 37654364,
+          "memory_used_mib": 35.91,
+          "memory_limit_raw": "47.04GiB",
+          "memory_percentage": 0.07,
+          "net_io": "82.6kB / 126B",
+          "block_io": "8.3MB / 0B"
+        }
+      ]
+    },
+    "management-ai": {
+      "container_count": 6,
+      "total_memory_bytes": 1414151534,
+      "total_memory_mib": 1348.64,
+      "total_cpu_percentage": 130.38,
+      "services": [
+        {
+          "container_name": "pantheon-web-channel-1",
+          "service_name": "web-channel",
+          "cpu_percentage": 0.17,
+          "memory_used_bytes": 49283072,
+          "memory_used_mib": 47.0,
+          "memory_limit_raw": "47.04GiB",
+          "memory_percentage": 0.1,
+          "net_io": "2.21MB / 1.58MB",
+          "block_io": "13MB / 0B"
+        },
+        {
+          "container_name": "pantheon-router-1",
+          "service_name": "router",
+          "cpu_percentage": 0.17,
+          "memory_used_bytes": 39992688,
+          "memory_used_mib": 38.14,
+          "memory_limit_raw": "47.04GiB",
+          "memory_percentage": 0.08,
+          "net_io": "1.66MB / 2.14MB",
+          "block_io": "12.1MB / 0B"
+        },
+        {
+          "container_name": "pantheon-persona-1",
+          "service_name": "persona",
+          "cpu_percentage": 0.17,
+          "memory_used_bytes": 41114664,
+          "memory_used_mib": 39.21,
+          "memory_limit_raw": "47.04GiB",
+          "memory_percentage": 0.08,
+          "net_io": "405kB / 520kB",
+          "block_io": "11.5MB / 0B"
+        },
+        {
+          "container_name": "pantheon-consultation-svc-1",
+          "service_name": "consultation-svc",
+          "cpu_percentage": 0.23,
+          "memory_used_bytes": 73599549,
+          "memory_used_mib": 70.19,
+          "memory_limit_raw": "47.04GiB",
+          "memory_percentage": 0.15,
+          "net_io": "453kB / 806kB",
+          "block_io": "11.1MB / 17.6MB"
+        },
+        {
+          "container_name": "pantheon-openclaw-gateway-adapter-1",
+          "service_name": "openclaw-gateway-adapter",
+          "cpu_percentage": 129.29,
+          "memory_used_bytes": 609851801,
+          "memory_used_mib": 581.6,
+          "memory_limit_raw": "47.04GiB",
+          "memory_percentage": 1.21,
+          "net_io": "181MB / 54.6MB",
+          "block_io": "248MB / 129MB"
+        },
+        {
+          "container_name": "pantheon-openclaw-gateway-1",
+          "service_name": "openclaw-gateway",
+          "cpu_percentage": 0.35,
+          "memory_used_bytes": 600309760,
+          "memory_used_mib": 572.5,
+          "memory_limit_raw": "47.04GiB",
+          "memory_percentage": 1.19,
+          "net_io": "98.8MB / 182MB",
+          "block_io": "1.53GB / 273MB"
+        }
+      ]
+    },
+    "execution": {
+      "container_count": 3,
+      "total_memory_bytes": 99981720,
+      "total_memory_mib": 95.35,
+      "total_cpu_percentage": 6.93,
+      "services": [
+        {
+          "container_name": "pantheon-runtime-manager-1",
+          "service_name": "runtime-manager",
+          "cpu_percentage": 6.09,
+          "memory_used_bytes": 42834329,
+          "memory_used_mib": 40.85,
+          "memory_limit_raw": "47.04GiB",
+          "memory_percentage": 0.08,
+          "net_io": "80.7MB / 10.8GB",
+          "block_io": "9.66MB / 221kB"
+        },
+        {
+          "container_name": "pantheon-broker-1",
+          "service_name": "broker",
+          "cpu_percentage": 0.23,
+          "memory_used_bytes": 46179287,
+          "memory_used_mib": 44.04,
+          "memory_limit_raw": "47.04GiB",
+          "memory_percentage": 0.09,
+          "net_io": "83.2kB / 126B",
+          "block_io": "37MB / 909kB"
+        },
+        {
+          "container_name": "pantheon-signal-store-1",
+          "service_name": "signal-store",
+          "cpu_percentage": 0.61,
+          "memory_used_bytes": 10968104,
+          "memory_used_mib": 10.46,
+          "memory_limit_raw": "47.04GiB",
+          "memory_percentage": 0.02,
+          "net_io": "8.27GB / 3.34GB",
+          "block_io": "426MB / 91.3GB"
+        }
+      ]
+    },
+    "other": {
+      "container_count": 0,
+      "total_memory_bytes": 0,
+      "total_memory_mib": 0.0,
+      "total_cpu_percentage": 0.0,
+      "services": []
+    }
+  },
+  "deployment_durations_baseline": {
+    "historical_verified_runs": [
+      {
+        "run_id": "27357842338",
+        "scope": "root stack full deploy",
+        "duration_seconds": 617,
+        "duration_human": "10m17s",
+        "status": "success",
+        "notes": "Historical pre-controller verified dev root deploy"
+      },
+      {
+        "run_id": "32679566250",
+        "scope": "paired release admission + BFF candidate + FE gate + symlink cutover",
+        "duration_seconds": 540,
+        "duration_human": "9m00s",
+        "status": "success",
+        "notes": "Includes 600s lifecycle projector readiness gate"
+      },
+      {
+        "run_id": "dev-bff-rebuild",
+        "scope": "bff component rebuild only",
+        "duration_seconds": 125,
+        "duration_human": "2m05s",
+        "status": "success",
+        "notes": "Single component BFF rebuild without resetting shared dependencies"
+      }
+    ],
+    "configured_deadlines": {
+      "dev_deploy_deadline_seconds": 1200,
+      "lifecycle_projector_initial_timeout_seconds": 600,
+      "lifecycle_projector_recovery_extension_seconds": 180,
+      "bff_auth_readiness_timeout_seconds": 120
+    }
+  }
+}
