@@ -3,25 +3,25 @@
   "task_id": "SRCM-P1-HOSTED-ACCEPTANCE-20260824",
   "program_id": "SRCM-PHASE1-20260824",
   "created_at": "2026-08-25T13:20:58Z",
-  "status": "passed",
-  "acceptance_criteria_fulfilled": [
-    "Complete all SD-SRCM-08 migration rollout rollback and hosted acceptance requirements",
-    "Import only real configured instances idempotently and reject or redact inline secrets",
-    "Keep normal rollback read-only without enabling deleting or losing evidence",
-    "Prove exact FE BFF and source deployment identities before browser acceptance",
-    "Run create-disabled validate bounded-canary enable disable reload idempotency and degraded journeys without route mocks",
-    "Pass unauthorized stale-revision secret-exposure egress no-order and provider-failure negatives",
-    "Store redacted network receipts screenshots checksums and rollback evidence",
-    "Update active current docs and retain legacy frontend references as historical only",
-    "Keep OpenClaw development explicitly phase 2 and outside product write authority",
-    "Merge the exact reviewed head to Pantheon dev only after all evidence passes"
+  "status": "blocked_hosted_browser_capture_absent",
+  "verified_prerequisites": [
+    "Exact FE c21df2cfdaf1781cdf6db517a57dc6c718e0e0f9 and BFF 63353e4b4de5df80ea9c9975e002ba95266a4bb8 are served without manifest drift",
+    "Normal frontend deployment profile is read-only with VITE_BFF_REAL_WRITES=false",
+    "BFF strict authentication posture and unauthenticated negative probes are active",
+    "OpenClaw development remains phase 2 and outside product write authority"
+  ],
+  "blocking_requirements": [
+    "Run all ten journeys from a bounded write-proof Playwright workflow with no route interception",
+    "Archive a sanitized checksum-bound HAR and non-placeholder screenshots for every journey",
+    "Bind each browser journey to its concrete HAR entry and independently captured command receipt",
+    "Restore read-only defaults and prove Source Ingestion manual one-shot reconcile_only posture after capture"
   ],
   "exact_pair": {
     "backend_sha": "63353e4b4de5df80ea9c9975e002ba95266a4bb8",
     "frontend_sha": "c21df2cfdaf1781cdf6db517a57dc6c718e0e0f9",
     "source_definitions_sha": "40de8fcb1c69fad0bf5e54d4c0bd6e508c9162e0",
     "fe_manifest_bff_sha": "63353e4b4de5df80ea9c9975e002ba95266a4bb8",
-    "candidate_status": "accepted_write_enabled_pair_deployed",
+    "candidate_status": "accepted_read_only_pair_hosted_journeys_not_run",
     "bff_url": "https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io",
     "fe_url": "https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io",
     "environment": "dev"
@@ -29,7 +29,7 @@
   "artifacts": {
     "deployment": {
       "path": "deployment.json",
-      "sha256": "2d90a47b310dca558120e887e9982edcb7f78eb30e4757ab4e822e3167299a68"
+      "sha256": "ee14f8c8163f6895daddfb143aad28a018fe55fd065d98731631a6533a046860"
     },
     "hosted_summary": {
       "path": "hosted-acceptance-summary.json",
@@ -41,7 +41,7 @@
     },
     "browser_evidence": {
       "path": "browser-evidence.json",
-      "sha256": "9d992708d1bc55df79e2c1e4e0e699bf652e9fafa1999beda2334d66251844ea"
+      "sha256": "cd1cf189af60175da7f4f2ee0717e90430a791e1f7cfb2d6427b17843aa839d4"
     },
     "negative_controls": {
       "path": "negative-controls.json",

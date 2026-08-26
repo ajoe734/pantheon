@@ -66,7 +66,7 @@ Pantheon checkout.
 | Provider Adapter Coverage | `SRCM-P1-PROVIDER-COVERAGE-20260824` | SD-SRCM-05 | Done (PR #5201) |
 | Governed Search & Alpha | `SRCM-P1-SEARCH-ALPHA-20260824` | SD-SRCM-06 | Done (PR #5198) |
 | Reviewed Memory Writeback | `SRCM-P1-MEMORY-WRITEBACK-20260824` | SD-SRCM-07 | Done (PR #5207) |
-| Hosted Acceptance & Closeout | `SRCM-P1-HOSTED-ACCEPTANCE-20260824` | SD-SRCM-08 | In Progress (Blocked: awaiting matching write-enabled FE deployment on dev host) |
+| Hosted Acceptance & Closeout | `SRCM-P1-HOSTED-ACCEPTANCE-20260824` | SD-SRCM-08 | Blocked: exact read-only FE/BFF pair is served, but ten-journey Playwright/HAR capture is absent and Source Ingestion is not in manual one-shot posture |
 
 - **Hosted Acceptance Evidence Package**: [`docs/deployment/evidence/external-source-management-phase1/`](../../deployment/evidence/external-source-management-phase1/)
-- **Verification Script**: `python3 scripts/verify_external_source_management_acceptance.py`
+- **Verification Script**: `python3 scripts/verify_external_source_management_acceptance.py` (intentionally fails closed until real capture replaces the pending manifest)

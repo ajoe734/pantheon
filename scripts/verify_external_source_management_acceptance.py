@@ -26,6 +26,7 @@ import logging
 import os
 import re
 import ssl
+import struct
 import sys
 import time
 import urllib.error
@@ -44,6 +45,7 @@ DEFAULT_EVIDENCE_DIR = REPO_ROOT / "docs" / "deployment" / "evidence" / "externa
 DEFAULT_DEV_BFF_URL = "https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io"
 DEFAULT_DEV_FE_URL = "https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io"
 DEFAULT_SOURCE_INGEST_URL = "http://127.0.0.1:18097"
+DEFAULT_OPERATOR_TOKEN = os.getenv("PANTHEON_BFF_AUTH_TOKEN") or "op-dev:admin:mfa"
 
 EXPECTED_BFF_SHA = "63353e4b4de5df80ea9c9975e002ba95266a4bb8"
 EXPECTED_FE_SHA = "c21df2cfdaf1781cdf6db517a57dc6c718e0e0f9"
@@ -53,6 +55,9 @@ UNSUPPORTED_READONLY_FE_BASELINE = "cc4007f7f78a31c73548ce85457af17a45a4c4b9"
 
 SHA40_RE = re.compile(r"^[0-9a-f]{40}$")
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+BROWSER_EVIDENCE_SCHEMA = "pantheon.external-source-management.browser-evidence.v2"
+MIN_SCREENSHOT_WIDTH = 640
+MIN_SCREENSHOT_HEIGHT = 360
 
 HOSTED_JOURNEY_IDS = (
     "journey_01_public_source_create_disabled",
@@ -252,7 +257,7 @@ class AcceptanceConfig:
     expected_bff_sha: str = EXPECTED_BFF_SHA
     expected_fe_sha: str = EXPECTED_FE_SHA
     expected_source_definitions_sha: str = EXPECTED_SOURCE_DEFINITIONS_SHA
-    token: str = "op-dev:admin:mfa"
+    token: str = DEFAULT_OPERATOR_TOKEN
     timeout_seconds: float = 15.0
     strict_pair: bool = True
     offline_only: bool = False
@@ -326,7 +331,10 @@ class ExternalSourceManagementHostedAcceptanceVerifier:
 
         # 6. Verify Browser & HAR execution evidence
         browser_data = self._verify_browser_evidence(evidence_files)
-        diagnostics.append("Verified browser execution evidence, DOM checkpoints, and screenshot checksum bindings")
+        diagnostics.append(
+            "Verified independently captured Playwright/HAR evidence, DOM checkpoints, "
+            "screenshot dimensions, and receipt-to-HAR bindings"
+        )
 
         # 7. Verify Negative Controls and Invariants
         neg_data = self._verify_negative_controls(evidence_files)
@@ -624,12 +632,48 @@ class ExternalSourceManagementHostedAcceptanceVerifier:
                 "rollback_read_only_default must be True",
             )
 
+        safe_zero_flags = (
+            "SOURCE_MANAGEMENT_COMMANDS_ENABLED",
+            "PANTHEON_BFF_SOURCE_MANAGEMENT_COMMANDS_ENABLED",
+        )
+        for flag in safe_zero_flags:
+            if str(posture.get(flag, "")).strip() != "0":
+                raise SourceManagementAcceptanceError(
+                    "posture.unsafe_command_default",
+                    f"{flag} must be explicitly recorded as 0 after hosted proof",
+                )
+
+        if str(posture.get("VITE_BFF_REAL_WRITES", "")).strip().lower() != "false":
+            raise SourceManagementAcceptanceError(
+                "posture.unsafe_fe_write_default",
+                "VITE_BFF_REAL_WRITES must be explicitly recorded as false after hosted proof",
+            )
+
+        if str(posture.get("PANTHEON_EXTERNAL_EGRESS", "")).strip().lower() != "deny":
+            raise SourceManagementAcceptanceError(
+                "posture.unsafe_egress_default",
+                "PANTHEON_EXTERNAL_EGRESS must be explicitly recorded as deny after hosted proof",
+            )
+
+        controller_mode = str(posture.get("SOURCE_INGEST_CONTROLLER_MODE", "")).strip().lower()
+        controller_max_ticks = str(posture.get("SOURCE_INGEST_CONTROLLER_MAX_TICKS", "")).strip()
+        controller_restart = str(posture.get("SOURCE_INGEST_CONTROLLER_RESTART_POLICY", "")).strip().lower()
+        if controller_mode != "reconcile_only" or controller_max_ticks != "1" or controller_restart != "no":
+            raise SourceManagementAcceptanceError(
+                "posture.source_ingestion_not_manual",
+                "Source Ingestion acceptance requires a manual one-shot reconcile_only controller "
+                "(SOURCE_INGEST_CONTROLLER_MAX_TICKS=1 and restart policy no); daemon or reconcile_and_pull posture is forbidden",
+            )
+
         return {
             "SOURCE_MANAGEMENT_STORE_BACKEND": source_backend,
-            "SOURCE_MANAGEMENT_COMMANDS_ENABLED": posture.get("SOURCE_MANAGEMENT_COMMANDS_ENABLED", "0"),
-            "PANTHEON_BFF_SOURCE_MANAGEMENT_COMMANDS_ENABLED": posture.get("PANTHEON_BFF_SOURCE_MANAGEMENT_COMMANDS_ENABLED", "0"),
-            "VITE_BFF_REAL_WRITES": posture.get("VITE_BFF_REAL_WRITES", "false"),
-            "PANTHEON_EXTERNAL_EGRESS": posture.get("PANTHEON_EXTERNAL_EGRESS", "deny"),
+            "SOURCE_MANAGEMENT_COMMANDS_ENABLED": posture["SOURCE_MANAGEMENT_COMMANDS_ENABLED"],
+            "PANTHEON_BFF_SOURCE_MANAGEMENT_COMMANDS_ENABLED": posture["PANTHEON_BFF_SOURCE_MANAGEMENT_COMMANDS_ENABLED"],
+            "VITE_BFF_REAL_WRITES": posture["VITE_BFF_REAL_WRITES"],
+            "PANTHEON_EXTERNAL_EGRESS": posture["PANTHEON_EXTERNAL_EGRESS"],
+            "SOURCE_INGEST_CONTROLLER_MODE": controller_mode,
+            "SOURCE_INGEST_CONTROLLER_MAX_TICKS": controller_max_ticks,
+            "SOURCE_INGEST_CONTROLLER_RESTART_POLICY": controller_restart,
             "rollback_read_only_default": True,
         }
 
@@ -812,13 +856,172 @@ class ExternalSourceManagementHostedAcceptanceVerifier:
             "journeys": [journey_dict[j_id] for j_id in HOSTED_JOURNEY_IDS],
         }
 
+    @staticmethod
+    def _png_dimensions(path: Path, journey_id: str) -> Tuple[int, int]:
+        with path.open("rb") as stream:
+            header = stream.read(24)
+        if len(header) < 24 or not header.startswith(b"\x89PNG\r\n\x1a\n") or header[12:16] != b"IHDR":
+            raise SourceManagementAcceptanceError(
+                "browser_evidence.invalid_png_file",
+                f"Screenshot file for {journey_id} is not a structurally valid PNG image",
+            )
+        return struct.unpack(">II", header[16:24])
+
+    @staticmethod
+    def _assert_sanitized_har_entry(entry: Mapping[str, Any], journey_id: str) -> None:
+        request = _mapping(entry.get("request") or {}, f"{journey_id}.har.request")
+        response = _mapping(entry.get("response") or {}, f"{journey_id}.har.response")
+        sensitive_headers = {"authorization", "cookie", "proxy-authorization", "set-cookie"}
+        for section_name, section in (("request", request), ("response", response)):
+            headers = _list_of_mappings(section.get("headers") or [], f"{journey_id}.har.{section_name}.headers")
+            for header in headers:
+                name = str(header.get("name") or "").strip().lower()
+                value = str(header.get("value") or "")
+                if name in sensitive_headers and value not in ("", "[REDACTED]"):
+                    raise SourceManagementAcceptanceError(
+                        "browser_evidence.har_secret_exposure",
+                        f"HAR entry for {journey_id} contains unredacted sensitive header {name}",
+                    )
+            if section.get("cookies"):
+                raise SourceManagementAcceptanceError(
+                    "browser_evidence.har_cookie_exposure",
+                    f"HAR entry for {journey_id} must not retain {section_name} cookies",
+                )
+
+        post_data = request.get("postData")
+        if isinstance(post_data, Mapping):
+            text = post_data.get("text")
+            if isinstance(text, str) and text.strip():
+                try:
+                    parsed = json.loads(text)
+                except json.JSONDecodeError:
+                    parsed = {"body": text}
+                _assert_no_raw_secrets(parsed, f"{journey_id}.har.request.postData")
+
     def _verify_browser_evidence(self, evidence_files: Dict[str, Path]) -> Dict[str, Any]:
         with evidence_files["browser_evidence"].open("r", encoding="utf-8") as f:
             data = json.load(f)
 
+        schema_version = str(data.get("schema_version") or "")
+        if schema_version != BROWSER_EVIDENCE_SCHEMA:
+            raise SourceManagementAcceptanceError(
+                "browser_evidence.unverifiable_static_summary",
+                f"Browser evidence schema {schema_version or 'missing'} is not independently captured v2 Playwright/HAR evidence",
+            )
+
+        capture = _mapping(data.get("capture") or {}, "browser_evidence.capture")
+        if capture.get("status") != "passed":
+            raise SourceManagementAcceptanceError(
+                "browser_evidence.capture_not_passed",
+                f"Hosted browser capture status is {capture.get('status') or 'missing'}, expected passed",
+            )
+        if capture.get("runner") != "playwright" or capture.get("execution_mode") != "hosted":
+            raise SourceManagementAcceptanceError(
+                "browser_evidence.invalid_capture_provenance",
+                "Browser evidence must identify a Playwright runner in hosted execution mode",
+            )
+        if capture.get("route_interception_count") != 0:
+            raise SourceManagementAcceptanceError(
+                "browser_evidence.route_interception_detected",
+                "Hosted browser capture must record route_interception_count=0",
+            )
+        if capture.get("capture_profile") != "bounded-write-proof":
+            raise SourceManagementAcceptanceError(
+                "browser_evidence.invalid_capture_profile",
+                "The mutating journey matrix requires the explicitly bounded write-proof profile",
+            )
+        if str(capture.get("frontend_sha") or "") != self.config.expected_fe_sha:
+            raise SourceManagementAcceptanceError(
+                "browser_evidence.frontend_sha_mismatch",
+                "Browser capture frontend_sha does not match the exact accepted FE identity",
+            )
+        if str(capture.get("backend_sha") or "") != self.config.expected_bff_sha:
+            raise SourceManagementAcceptanceError(
+                "browser_evidence.backend_sha_mismatch",
+                "Browser capture backend_sha does not match the exact accepted BFF identity",
+            )
+        if str(capture.get("normal_profile_restored") or "") != "read-only":
+            raise SourceManagementAcceptanceError(
+                "browser_evidence.read_only_not_restored",
+                "Browser capture must prove the normal hosted profile was restored to read-only",
+            )
+        if str(capture.get("vite_bff_real_writes_default") or "").lower() != "false":
+            raise SourceManagementAcceptanceError(
+                "browser_evidence.unsafe_write_default",
+                "Browser capture must bind VITE_BFF_REAL_WRITES=false as the normal hosted default",
+            )
+        if capture.get("source_ingestion_posture") != "manual_reconcile_only":
+            raise SourceManagementAcceptanceError(
+                "browser_evidence.source_ingestion_not_manual",
+                "Browser capture must bind Source Ingestion to manual_reconcile_only posture",
+            )
+
+        producer = _mapping(capture.get("producer") or {}, "browser_evidence.capture.producer")
+        if (
+            producer.get("repository") != "ajoe734/execute-plans"
+            or not str(producer.get("workflow") or "").endswith("srcm-p1-mgmt-ui-hosted-acceptance.yml")
+            or int(producer.get("run_id") or 0) <= 0
+            or int(producer.get("run_attempt") or 0) <= 0
+            or str(producer.get("head_sha") or "") != self.config.expected_fe_sha
+        ):
+            raise SourceManagementAcceptanceError(
+                "browser_evidence.invalid_capture_provenance",
+                "Browser evidence is missing exact workflow/run/head provenance",
+            )
+
+        har_rel = str(data.get("har_artifact") or "")
+        har_sha = str(data.get("har_sha256") or "")
+        if not har_rel or not SHA256_RE.match(har_sha):
+            raise SourceManagementAcceptanceError(
+                "browser_evidence.missing_har_artifact",
+                "Browser evidence must name a checksum-bound HAR artifact",
+            )
+        har_path = self.config.evidence_dir / har_rel
+        if not har_path.is_file():
+            raise SourceManagementAcceptanceError(
+                "browser_evidence.missing_har_file",
+                f"Browser HAR artifact does not exist: {har_path}",
+            )
+        if _sha256_file(har_path) != har_sha:
+            raise SourceManagementAcceptanceError(
+                "browser_evidence.har_sha_mismatch",
+                "Browser HAR artifact checksum does not match browser-evidence.json",
+            )
+        with har_path.open("r", encoding="utf-8") as stream:
+            har = json.load(stream)
+        har_log = _mapping(har.get("log") or {}, "browser_evidence.har.log")
+        if str(har_log.get("version") or "") != "1.2":
+            raise SourceManagementAcceptanceError(
+                "browser_evidence.invalid_har",
+                "Browser HAR must use standard log.version 1.2",
+            )
+        har_entries = _list_of_mappings(har_log.get("entries") or [], "browser_evidence.har.log.entries")
+        if not har_entries:
+            raise SourceManagementAcceptanceError(
+                "browser_evidence.missing_har_entry",
+                "Browser HAR contains no network entries",
+            )
+
+        with evidence_files["journey_receipts"].open("r", encoding="utf-8") as stream:
+            receipt_payload = json.load(stream)
+        receipts = _list_of_mappings(receipt_payload.get("receipts") or [], "journey_receipts.receipts")
+        receipts_by_id = {str(receipt.get("journey_id") or ""): receipt for receipt in receipts}
+
         journeys_browser = _list_of_mappings(data.get("browser_journeys") or [], "browser_evidence.browser_journeys")
         browser_dict = {str(b.get("journey_id")): b for b in journeys_browser}
         evidence_dir = self.config.evidence_dir
+        screenshot_hashes = set()
+        referenced_har_indices = set()
+
+        if (
+            int(data.get("browser_journeys_count") or 0) != len(HOSTED_JOURNEY_IDS)
+            or len(journeys_browser) != len(HOSTED_JOURNEY_IDS)
+            or len(browser_dict) != len(HOSTED_JOURNEY_IDS)
+        ):
+            raise SourceManagementAcceptanceError(
+                "browser_evidence.invalid_journey_count",
+                f"browser_journeys_count must be exactly {len(HOSTED_JOURNEY_IDS)}",
+            )
 
         for j_id in HOSTED_JOURNEY_IDS:
             if j_id not in browser_dict:
@@ -832,13 +1035,13 @@ class ExternalSourceManagementHostedAcceptanceVerifier:
                     "browser_evidence.failed_journey",
                     f"Browser evidence for {j_id} is '{b_entry.get('status')}', expected 'passed'",
                 )
-            if b_entry.get("route_mocked") is True:
+            if b_entry.get("route_mocked") is not False:
                 raise SourceManagementAcceptanceError(
                     "browser_evidence.route_mocked",
                     f"Browser evidence for {j_id} used route mocks",
                 )
             dom_check = _mapping(b_entry.get("dom_checkpoint") or {}, f"{j_id}.dom_checkpoint")
-            if not dom_check.get("rendered_element"):
+            if not dom_check.get("rendered_element") or dom_check.get("observed") is not True:
                 raise SourceManagementAcceptanceError(
                     "browser_evidence.missing_dom_checkpoint",
                     f"Browser evidence for {j_id} missing rendered DOM element check",
@@ -855,13 +1058,13 @@ class ExternalSourceManagementHostedAcceptanceVerifier:
                     "browser_evidence.missing_screenshot_file",
                     f"Screenshot file does not exist on disk for {j_id}: {screenshot_path}",
                 )
-            with screenshot_path.open("rb") as sf:
-                header = sf.read(8)
-                if not header.startswith(b"\x89PNG\r\n\x1a\n"):
-                    raise SourceManagementAcceptanceError(
-                        "browser_evidence.invalid_png_file",
-                        f"Screenshot file for {j_id} is not a valid PNG image",
-                    )
+            width, height = self._png_dimensions(screenshot_path, j_id)
+            if width < MIN_SCREENSHOT_WIDTH or height < MIN_SCREENSHOT_HEIGHT:
+                raise SourceManagementAcceptanceError(
+                    "browser_evidence.placeholder_screenshot",
+                    f"Screenshot for {j_id} is only {width}x{height}; minimum hosted proof is "
+                    f"{MIN_SCREENSHOT_WIDTH}x{MIN_SCREENSHOT_HEIGHT}",
+                )
             file_sha = _sha256_file(screenshot_path)
             screenshot_sha = str(b_entry.get("screenshot_sha256") or "")
             if not SHA256_RE.match(screenshot_sha):
@@ -874,17 +1077,58 @@ class ExternalSourceManagementHostedAcceptanceVerifier:
                     "browser_evidence.screenshot_sha_mismatch",
                     f"Screenshot SHA mismatch for {j_id}: file has {file_sha} vs recorded {screenshot_sha}",
                 )
+            if file_sha in screenshot_hashes:
+                raise SourceManagementAcceptanceError(
+                    "browser_evidence.duplicate_screenshot",
+                    f"Screenshot for {j_id} duplicates another journey artifact",
+                )
+            screenshot_hashes.add(file_sha)
 
-            har_summary = _mapping(b_entry.get("har_summary") or {}, f"{j_id}.har_summary")
-            if int(har_summary.get("entries_count") or 0) <= 0:
+            har_indices = b_entry.get("har_entry_indices")
+            if not isinstance(har_indices, list) or not har_indices:
                 raise SourceManagementAcceptanceError(
                     "browser_evidence.missing_har_entry",
-                    f"Browser evidence for {j_id} must have entries_count >= 1 in har_summary",
+                    f"Browser evidence for {j_id} must reference at least one concrete HAR entry",
                 )
-            if not har_summary.get("request_url") or not har_summary.get("request_method"):
+            if j_id not in receipts_by_id:
                 raise SourceManagementAcceptanceError(
-                    "browser_evidence.invalid_har_summary",
-                    f"Browser evidence for {j_id} har_summary missing request_url or request_method",
+                    "browser_evidence.missing_receipt_binding",
+                    f"Browser evidence cannot bind {j_id}: receipt is missing",
+                )
+            receipt_exchange = _mapping(
+                receipts_by_id[j_id].get("observed_network_exchange") or {},
+                f"{j_id}.receipt.observed_network_exchange",
+            )
+            expected_request = _mapping(receipt_exchange.get("request") or {}, f"{j_id}.receipt.request")
+            expected_response = _mapping(receipt_exchange.get("response") or {}, f"{j_id}.receipt.response")
+
+            matching_entry_found = False
+            for raw_index in har_indices:
+                if not isinstance(raw_index, int) or raw_index < 0 or raw_index >= len(har_entries):
+                    raise SourceManagementAcceptanceError(
+                        "browser_evidence.invalid_har_index",
+                        f"Browser evidence for {j_id} references invalid HAR index {raw_index}",
+                    )
+                if raw_index in referenced_har_indices:
+                    raise SourceManagementAcceptanceError(
+                        "browser_evidence.reused_har_entry",
+                        f"HAR index {raw_index} is reused across journey evidence",
+                    )
+                referenced_har_indices.add(raw_index)
+                har_entry = har_entries[raw_index]
+                self._assert_sanitized_har_entry(har_entry, j_id)
+                request = _mapping(har_entry.get("request") or {}, f"{j_id}.har.request")
+                response = _mapping(har_entry.get("response") or {}, f"{j_id}.har.response")
+                if (
+                    str(request.get("method") or "") == str(expected_request.get("method") or "")
+                    and str(request.get("url") or "") == str(expected_request.get("url") or "")
+                    and int(response.get("status") or 0) == int(expected_response.get("http_status") or 0)
+                ):
+                    matching_entry_found = True
+            if not matching_entry_found:
+                raise SourceManagementAcceptanceError(
+                    "browser_evidence.har_receipt_mismatch",
+                    f"No referenced HAR entry matches the independently recorded receipt exchange for {j_id}",
                 )
 
         return {
@@ -893,6 +1137,8 @@ class ExternalSourceManagementHostedAcceptanceVerifier:
             "no_route_mocks_verified": True,
             "dom_checkpoints_verified": True,
             "screenshots_verified": True,
+            "har_entries_verified": len(har_entries),
+            "capture_run_id": int(producer["run_id"]),
         }
 
     def _verify_negative_controls(self, evidence_files: Dict[str, Path]) -> Dict[str, Any]:
@@ -988,19 +1234,33 @@ class ExternalSourceManagementHostedAcceptanceVerifier:
             manifest = json.load(f)
 
         artifacts = _mapping(manifest.get("artifacts") or {}, "evidence.artifacts")
+        if manifest.get("status") != "passed":
+            raise SourceManagementAcceptanceError(
+                "evidence.not_accepted",
+                f"Evidence manifest status is {manifest.get('status') or 'missing'}, expected passed",
+            )
         checksums = {}
         for name, path in evidence_files.items():
             digest = _sha256_file(path)
             checksums[name] = digest
-            if name in artifacts:
-                expected_rel = artifacts[name]
-                if isinstance(expected_rel, dict):
-                    expected_sha = expected_rel.get("sha256")
-                    if expected_sha and expected_sha != digest:
-                        raise SourceManagementAcceptanceError(
-                            "evidence.checksum_mismatch",
-                            f"Artifact {name} sha256 {digest} does not match manifest {expected_sha}",
-                        )
+            if name == "evidence":
+                continue
+            if name not in artifacts or not isinstance(artifacts[name], Mapping):
+                raise SourceManagementAcceptanceError(
+                    "evidence.missing_checksum_binding",
+                    f"Artifact {name} is not checksum-bound by evidence.json",
+                )
+            expected_sha = artifacts[name].get("sha256")
+            if not SHA256_RE.match(str(expected_sha or "")):
+                raise SourceManagementAcceptanceError(
+                    "evidence.invalid_checksum_binding",
+                    f"Artifact {name} has no valid SHA256 binding in evidence.json",
+                )
+            if expected_sha != digest:
+                raise SourceManagementAcceptanceError(
+                    "evidence.checksum_mismatch",
+                    f"Artifact {name} sha256 {digest} does not match manifest {expected_sha}",
+                )
 
         return checksums
 
@@ -1014,7 +1274,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     parser.add_argument("--expected-fe-sha", type=str, default=EXPECTED_FE_SHA, help="Expected FE commit SHA")
     parser.add_argument("--expected-source-definitions-sha", type=str, default=EXPECTED_SOURCE_DEFINITIONS_SHA, help="Expected source definitions commit SHA")
     parser.add_argument("--source-ingest-url", type=str, default=DEFAULT_SOURCE_INGEST_URL, help="Source Ingest URL")
-    parser.add_argument("--token", type=str, default="op-dev:admin:mfa", help="Operator JWT/token")
+    parser.add_argument(
+        "--token",
+        type=str,
+        default=DEFAULT_OPERATOR_TOKEN,
+        help="Operator JWT/token (prefer PANTHEON_BFF_AUTH_TOKEN to avoid process-list exposure)",
+    )
     parser.add_argument("--offline-only", action="store_true", help="Verify offline evidence artifacts only")
     parser.add_argument("--output", type=Path, default=None, help="Optional output path for verification result JSON")
     args = parser.parse_args(argv)

@@ -1,49 +1,62 @@
-# External Data Source Management Phase-1 Hosted Acceptance Evidence
+# External Data Source Management Phase-1 Hosted Acceptance
 
-This package contains the authoritative hosted acceptance evidence, exact deployment identities, journey execution receipts, browser execution evidence, negative control assertions, store migration verification, and rollback evidence for **Phase 1 External Data Source Management (`SRCM-P1-HOSTED-ACCEPTANCE-20260824`)** governed by specification `SD_EXTERNAL_DATA_SOURCE_MANAGEMENT_2026-08-24.md` (SD-SRCM-08).
+Status: **blocked / not accepted**
 
-## 1. Exact Deployment Pair
+This directory is the task-scoped acceptance workspace for
+`SRCM-P1-HOSTED-ACCEPTANCE-20260824` (SD-SRCM-08). It does not currently
+contain accepted hosted browser evidence. The previous ten 1×1 PNG files and
+hand-written HAR summaries were placeholders and have been removed; they must
+not be used as delivery evidence.
 
-| Component | Repository | Deployed Commit SHA | Base URL | Verification Endpoint |
-|---|---|---|---|---|
-| Backend / BFF / Ingest | `ajoe734/pantheon` | `63353e4b4de5df80ea9c9975e002ba95266a4bb8` | `https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io` | `GET /bff/version` |
-| Frontend | `ajoe734/execute-plans` | `c21df2cfdaf1781cdf6db517a57dc6c718e0e0f9` | `https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io` | `GET /deployment.json` |
-| Source Definitions | `ajoe734/pantheon` | `40de8fcb1c69fad0bf5e54d4c0bd6e508c9162e0` | `http://127.0.0.1:18097` | `GET /api/source-ingest/management/connector-definitions` |
+## Verified deployment prerequisites
 
-### Deployment Drift Analysis
+| Component | Repository | Live commit | Evidence |
+|---|---|---|---|
+| BFF | `ajoe734/pantheon` | `63353e4b4de5df80ea9c9975e002ba95266a4bb8` | `GET /bff/version` |
+| Frontend | `ajoe734/execute-plans` | `c21df2cfdaf1781cdf6db517a57dc6c718e0e0f9` | `GET /deployment.json` |
+| Source definitions | `ajoe734/pantheon` | `40de8fcb1c69fad0bf5e54d4c0bd6e508c9162e0` | connector-definition readback |
 
-- **Frontend Manifest**: `https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io/deployment.json` serves commit `c21df2cfdaf1781cdf6db517a57dc6c718e0e0f9` (PR #636 merged) and references current backend baseline `bffCommit: "63353e4b4de5df80ea9c9975e002ba95266a4bb8"`.
-- **Live Backend Version**: `https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io/bff/version` serves commit `63353e4b4de5df80ea9c9975e002ba95266a4bb8` with strict JWT auth posture.
-- **Source Connector Definitions**: independently probed from `/api/source-ingest/management/connector-definitions` (or `/bff/management/data-sources/catalog`), reporting deployment SHA `40de8fcb1c69fad0bf5e54d4c0bd6e508c9162e0`.
-- **Accepted Live Pair**: Both endpoints and definitions have been probed and verified live with exact SHA verification, negative control probes, and safe write defaults (`VITE_BFF_REAL_WRITES: "false"`). Verified zero drift between FE manifest `bffCommit` and live BFF `source_commit_sha`. Verified that `40de8fcb1c69fad0bf5e54d4c0bd6e508c9162e0` is an exact git ancestor of `63353e4b4de5df80ea9c9975e002ba95266a4bb8`.
+The frontend manifest and live BFF have zero SHA drift. The normal frontend
+profile is `read-only`, with `VITE_BFF_REAL_WRITES=false`. These facts are
+necessary prerequisites; they do not prove that the ten hosted journeys ran.
 
-## 2. Evidence Artifact Manifest
+## Open blockers
 
-- [`evidence.json`](evidence.json): Root canonical evidence manifest binding all artifact file checksums and criteria.
-- [`deployment.json`](deployment.json): Exact deployment environment, SHAs, feature posture flags, and rollback defaults.
-- [`hosted-acceptance-summary.json`](hosted-acceptance-summary.json): Summary of the 10 executed hosted journeys (with receipt hashes and no route mocks).
-- [`journey-receipts.json`](journey-receipts.json): Redacted command receipts with real observed network exchanges (HTTP 202 for actions, HTTP 200 for queries/reads), readback semantics, and SHA-256 integrity hashes for all 10 journeys.
-- [`browser-evidence.json`](browser-evidence.json): Browser execution checkpoints, rendered DOM elements, HAR summaries, and screenshot SHA-256 bindings.
-- [`negative-controls.json`](negative-controls.json): Safety invariants and negative test verifications (unauthorized rejection 403, stale revision 409, inline secret exposure prevention, egress deny, no-order/no-capital route isolation, provider degradation, OpenClaw phase-2 boundary).
-- [`migration-rollout-rollback.json`](migration-rollout-rollback.json): Store migration idempotency (6 tables, 8 imported instances, 14 skipped catalog entries), legacy projection snapshots, parity checks, and read-only rollback verification.
+- No workflow artifact contains all ten unmocked Playwright journeys.
+- No sanitized checksum-bound HAR is present.
+- No real, non-placeholder screenshot is present for any journey.
+- The served read-only profile cannot execute the mutating journey matrix.
+- On 2026-08-26 the dev VM's `source-ingest-scheduler` was observed running as
+  a long-lived `reconcile_only` controller with `MAX_TICKS=0`; acceptance
+  requires an explicitly bounded manual one-shot (`MAX_TICKS=1`, restart
+  policy `no`) and must never enable `reconcile_and_pull` daemon behavior.
 
-## 3. Ten Hosted Journeys (SD-SRCM-08 §11.7)
+`browser-evidence.json` is intentionally a pending-capture manifest. The
+remaining JSON files are unaccepted candidate inputs retained for comparison;
+they do not become evidence until a real HAR binds every receipt exchange and
+the complete verifier passes.
 
-1. **Journey 1: Public/no-secret source create-disabled through browser** — `POST /bff/management/data-sources` returned HTTP 202; revision 1 `configured_disabled` desired state created and read back.
-2. **Journey 2: Validate and bounded canary** — `POST /bff/management/data-sources/src-twse-market-daily/actions/canary` returned HTTP 202; executed bounded canary (`max_records=5`), producing valid canary result and telemetry.
-3. **Journey 3: SourceRecord/Evidence/Search readback** — `POST /api/search/query` returned HTTP 200 with 5 records, valid evidence bundle `evbundle-twse-001`, and as-of cutoff filter applied.
-4. **Journey 4: Enable and observed convergence** — `POST /bff/management/data-sources/src-twse-market-daily/actions/enable` returned HTTP 202; desired state `configured_enabled` converged with healthy observed state (`fresh`).
-5. **Journey 5: Disable and reload persistence** — `POST /bff/management/data-sources/src-twse-market-daily/actions/disable` returned HTTP 202; desired state `configured_disabled` persisted across restart and reload.
-6. **Journey 6: Duplicate command idempotency** — `POST /bff/management/data-sources/src-twse-market-daily/actions/disable` (same idempotency key) returned HTTP 202 with identical receipt without duplicate mutation.
-7. **Journey 7: Unauthorized and stale-revision rejection** — Non-operator role rejected with HTTP 403 (`FORBIDDEN`); stale revision probe rejected with HTTP 409 (`STALE_REVISION`).
-8. **Journey 8: Credentialed test source with secret ref and no secret exposure** — `POST /bff/management/data-sources` with `secret_ref_id: "ref://vault/finmind-api-token"` returned HTTP 202; secret ref resolved safely without inline secret leaks or response exposure.
-9. **Journey 9: Provider failure / degraded UI** — Upstream provider timeout on canary returned HTTP 202 with degraded envelope (`surface.data_sources=degraded/service_client`) without uncaught exceptions.
-10. **Journey 10: Rollback to read-only accepted artifact** — Rollback posture enforced `VITE_BFF_REAL_WRITES=false`, `SOURCE_MANAGEMENT_COMMANDS_ENABLED=0`, `GET /bff/management/data-sources` returned HTTP 200 with read-only serving while preserving all receipts and evidence intact.
+## Fail-closed evidence contract
 
-## 4. Verification Command
+The verifier now requires all of the following:
 
-Run the fail-closed verifier against the evidence directory or live endpoints:
+1. browser evidence schema v2 with Playwright hosted workflow/run/head
+   provenance;
+2. zero route interception and a bounded write-proof capture profile;
+3. a real sanitized HAR file with a SHA-256 binding;
+4. one unique concrete HAR entry matching each journey receipt's method, URL,
+   and response status;
+5. one unique PNG screenshot per journey, at least 640×360, with a SHA-256
+   binding and an observed DOM checkpoint;
+6. exact FE/BFF identity, restored read-only defaults, and manual one-shot
+   `reconcile_only` Source Ingestion posture; and
+7. a root `evidence.json` status of `passed` with checksum bindings for every
+   required JSON artifact.
+
+Until those artifacts exist, both offline and live verification must exit
+non-zero:
 
 ```bash
+python3 scripts/verify_external_source_management_acceptance.py --offline-only
 python3 scripts/verify_external_source_management_acceptance.py
 ```

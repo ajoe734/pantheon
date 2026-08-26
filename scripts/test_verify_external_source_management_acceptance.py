@@ -1,5 +1,8 @@
+import hashlib
 import json
 import shutil
+import struct
+import zlib
 from pathlib import Path
 from typing import Any, Dict, Mapping, Optional, Tuple
 
@@ -21,11 +24,186 @@ from scripts.verify_external_source_management_acceptance import (
 )
 
 
+def _sha256(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _png_chunk(chunk_type: bytes, payload: bytes) -> bytes:
+    return (
+        struct.pack(">I", len(payload))
+        + chunk_type
+        + payload
+        + struct.pack(">I", zlib.crc32(chunk_type + payload) & 0xFFFFFFFF)
+    )
+
+
+def _write_synthetic_screenshot(
+    path: Path,
+    *,
+    red: int,
+    green: int,
+    blue: int,
+    width: int = 640,
+    height: int = 360,
+) -> None:
+    """Write a structurally valid, non-placeholder PNG used only inside tmp_path tests."""
+    scanline = b"\x00" + bytes((red, green, blue)) * width
+    pixels = scanline * height
+    png = (
+        b"\x89PNG\r\n\x1a\n"
+        + _png_chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0))
+        + _png_chunk(b"IDAT", zlib.compress(pixels, level=9))
+        + _png_chunk(b"IEND", b"")
+    )
+    path.write_bytes(png)
+
+
+def _bind_manifest_checksums(bundle_dir: Path) -> None:
+    manifest_path = bundle_dir / "evidence.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["status"] = "passed"
+    for key, filename in {
+        "deployment": "deployment.json",
+        "hosted_summary": "hosted-acceptance-summary.json",
+        "journey_receipts": "journey-receipts.json",
+        "browser_evidence": "browser-evidence.json",
+        "negative_controls": "negative-controls.json",
+        "migration_rollout": "migration-rollout-rollback.json",
+    }.items():
+        manifest.setdefault("artifacts", {}).setdefault(key, {})["path"] = filename
+        manifest["artifacts"][key]["sha256"] = _sha256(bundle_dir / filename)
+    manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+
+
+def _install_valid_browser_capture(bundle_dir: Path) -> None:
+    receipts = json.loads((bundle_dir / "journey-receipts.json").read_text(encoding="utf-8"))["receipts"]
+    screenshots = bundle_dir / "screenshots"
+    screenshots.mkdir(parents=True, exist_ok=True)
+    har_entries = []
+    browser_journeys = []
+
+    for index, receipt in enumerate(receipts):
+        journey_id = receipt["journey_id"]
+        exchange = receipt["observed_network_exchange"]
+        screenshot = screenshots / f"{journey_id}.png"
+        _write_synthetic_screenshot(
+            screenshot,
+            red=(index * 31 + 17) % 256,
+            green=(index * 47 + 29) % 256,
+            blue=(index * 61 + 43) % 256,
+        )
+        har_entries.append(
+            {
+                "startedDateTime": f"2026-08-26T08:{20 + index:02d}:00.000Z",
+                "time": 25 + index,
+                "request": {
+                    "method": exchange["request"]["method"],
+                    "url": exchange["request"]["url"],
+                    "httpVersion": "HTTP/2",
+                    "headers": [{"name": "authorization", "value": "[REDACTED]"}],
+                    "queryString": [],
+                    "cookies": [],
+                    "headersSize": -1,
+                    "bodySize": 0,
+                },
+                "response": {
+                    "status": exchange["response"]["http_status"],
+                    "statusText": "captured",
+                    "httpVersion": "HTTP/2",
+                    "headers": [],
+                    "cookies": [],
+                    "content": {"size": 0, "mimeType": "application/json", "text": "[REDACTED]"},
+                    "redirectURL": "",
+                    "headersSize": -1,
+                    "bodySize": 0,
+                },
+                "cache": {},
+                "timings": {"send": 0, "wait": 25 + index, "receive": 0},
+            }
+        )
+        browser_journeys.append(
+            {
+                "journey_id": journey_id,
+                "status": "passed",
+                "route_mocked": False,
+                "dom_checkpoint": {
+                    "rendered_element": f"[data-testid='{journey_id}']",
+                    "observed": True,
+                },
+                "screenshot_artifact": f"screenshots/{journey_id}.png",
+                "screenshot_sha256": _sha256(screenshot),
+                "har_entry_indices": [index],
+                "executed_at": f"2026-08-26T08:{20 + index:02d}:01Z",
+            }
+        )
+
+    har_path = bundle_dir / "browser-network.har"
+    har_path.write_text(
+        json.dumps(
+            {
+                "log": {
+                    "version": "1.2",
+                    "creator": {"name": "Playwright", "version": "test-fixture"},
+                    "pages": [],
+                    "entries": har_entries,
+                }
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    browser_payload = {
+        "schema_version": "pantheon.external-source-management.browser-evidence.v2",
+        "task_id": "SRCM-P1-HOSTED-ACCEPTANCE-20260824",
+        "program_id": "SRCM-PHASE1-20260824",
+        "capture": {
+            "status": "passed",
+            "runner": "playwright",
+            "execution_mode": "hosted",
+            "capture_profile": "bounded-write-proof",
+            "route_interception_count": 0,
+            "frontend_sha": EXPECTED_FE_SHA,
+            "backend_sha": EXPECTED_BFF_SHA,
+            "normal_profile_restored": "read-only",
+            "vite_bff_real_writes_default": "false",
+            "source_ingestion_posture": "manual_reconcile_only",
+            "producer": {
+                "repository": "ajoe734/execute-plans",
+                "workflow": ".github/workflows/srcm-p1-mgmt-ui-hosted-acceptance.yml",
+                "run_id": 32999900001,
+                "run_attempt": 1,
+                "head_sha": EXPECTED_FE_SHA,
+            },
+        },
+        "har_artifact": har_path.name,
+        "har_sha256": _sha256(har_path),
+        "browser_journeys_count": len(browser_journeys),
+        "browser_journeys": browser_journeys,
+    }
+    (bundle_dir / "browser-evidence.json").write_text(
+        json.dumps(browser_payload, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+
 def _setup_valid_bundle(tmp_path: Path) -> Path:
     target_dir = tmp_path / "evidence"
     if target_dir.exists():
         shutil.rmtree(target_dir)
     shutil.copytree(DEFAULT_EVIDENCE_DIR, target_dir)
+    deployment_path = target_dir / "deployment.json"
+    deployment = json.loads(deployment_path.read_text(encoding="utf-8"))
+    deployment["feature_posture"].update(
+        {
+            "SOURCE_INGEST_CONTROLLER_MODE": "reconcile_only",
+            "SOURCE_INGEST_CONTROLLER_MAX_TICKS": "1",
+            "SOURCE_INGEST_CONTROLLER_RESTART_POLICY": "no",
+        }
+    )
+    deployment_path.write_text(json.dumps(deployment, indent=2) + "\n", encoding="utf-8")
+    _install_valid_browser_capture(target_dir)
+    _bind_manifest_checksums(target_dir)
     return target_dir
 
 
@@ -550,7 +728,7 @@ def test_verify_browser_evidence_missing_journey(tmp_path: Path) -> None:
 
     with pytest.raises(SourceManagementAcceptanceError) as exc_info:
         verifier.run()
-    assert exc_info.value.code == "browser_evidence.missing_journey"
+    assert exc_info.value.code == "browser_evidence.invalid_journey_count"
 
 
 def test_cli_main_success_and_output(tmp_path: Path) -> None:
@@ -662,7 +840,7 @@ def test_browser_evidence_missing_har_entry_fails(tmp_path: Path) -> None:
     browser_file = bundle_dir / "browser-evidence.json"
     with browser_file.open("r", encoding="utf-8") as f:
         data = json.load(f)
-    data["browser_journeys"][0]["har_summary"]["entries_count"] = 0
+    data["browser_journeys"][0]["har_entry_indices"] = []
     with browser_file.open("w", encoding="utf-8") as f:
         json.dump(data, f)
 
@@ -672,3 +850,93 @@ def test_browser_evidence_missing_har_entry_fails(tmp_path: Path) -> None:
     with pytest.raises(SourceManagementAcceptanceError) as exc_info:
         verifier.run()
     assert exc_info.value.code == "browser_evidence.missing_har_entry"
+
+
+def test_browser_evidence_pending_capture_fails_closed(tmp_path: Path) -> None:
+    bundle_dir = _setup_valid_bundle(tmp_path)
+    browser_file = bundle_dir / "browser-evidence.json"
+    browser_file.write_text(
+        json.dumps(
+            {
+                "schema_version": "pantheon.external-source-management.browser-evidence.v2",
+                "capture": {"status": "not_run"},
+                "browser_journeys_count": 0,
+                "browser_journeys": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    verifier = ExternalSourceManagementHostedAcceptanceVerifier(
+        AcceptanceConfig(evidence_dir=bundle_dir, offline_only=True)
+    )
+    with pytest.raises(SourceManagementAcceptanceError) as exc_info:
+        verifier.run()
+    assert exc_info.value.code == "browser_evidence.capture_not_passed"
+
+
+def test_browser_evidence_legacy_static_summary_fails_closed(tmp_path: Path) -> None:
+    bundle_dir = _setup_valid_bundle(tmp_path)
+    browser_file = bundle_dir / "browser-evidence.json"
+    data = json.loads(browser_file.read_text(encoding="utf-8"))
+    data["schema_version"] = "pantheon.external-source-management.browser-evidence.v1"
+    browser_file.write_text(json.dumps(data), encoding="utf-8")
+
+    verifier = ExternalSourceManagementHostedAcceptanceVerifier(
+        AcceptanceConfig(evidence_dir=bundle_dir, offline_only=True)
+    )
+    with pytest.raises(SourceManagementAcceptanceError) as exc_info:
+        verifier.run()
+    assert exc_info.value.code == "browser_evidence.unverifiable_static_summary"
+
+
+def test_browser_evidence_missing_har_file_fails_closed(tmp_path: Path) -> None:
+    bundle_dir = _setup_valid_bundle(tmp_path)
+    (bundle_dir / "browser-network.har").unlink()
+
+    verifier = ExternalSourceManagementHostedAcceptanceVerifier(
+        AcceptanceConfig(evidence_dir=bundle_dir, offline_only=True)
+    )
+    with pytest.raises(SourceManagementAcceptanceError) as exc_info:
+        verifier.run()
+    assert exc_info.value.code == "browser_evidence.missing_har_file"
+
+
+def test_browser_evidence_placeholder_screenshot_fails_closed(tmp_path: Path) -> None:
+    bundle_dir = _setup_valid_bundle(tmp_path)
+    browser_file = bundle_dir / "browser-evidence.json"
+    data = json.loads(browser_file.read_text(encoding="utf-8"))
+    screenshot_path = bundle_dir / data["browser_journeys"][0]["screenshot_artifact"]
+    _write_synthetic_screenshot(
+        screenshot_path,
+        red=1,
+        green=2,
+        blue=3,
+        width=1,
+        height=1,
+    )
+    data["browser_journeys"][0]["screenshot_sha256"] = _sha256(screenshot_path)
+    browser_file.write_text(json.dumps(data), encoding="utf-8")
+
+    verifier = ExternalSourceManagementHostedAcceptanceVerifier(
+        AcceptanceConfig(evidence_dir=bundle_dir, offline_only=True)
+    )
+    with pytest.raises(SourceManagementAcceptanceError) as exc_info:
+        verifier.run()
+    assert exc_info.value.code == "browser_evidence.placeholder_screenshot"
+
+
+def test_source_ingestion_daemon_posture_fails_closed(tmp_path: Path) -> None:
+    bundle_dir = _setup_valid_bundle(tmp_path)
+    deployment_path = bundle_dir / "deployment.json"
+    deployment = json.loads(deployment_path.read_text(encoding="utf-8"))
+    deployment["feature_posture"]["SOURCE_INGEST_CONTROLLER_MAX_TICKS"] = "0"
+    deployment["feature_posture"]["SOURCE_INGEST_CONTROLLER_RESTART_POLICY"] = "unless-stopped"
+    deployment_path.write_text(json.dumps(deployment), encoding="utf-8")
+
+    verifier = ExternalSourceManagementHostedAcceptanceVerifier(
+        AcceptanceConfig(evidence_dir=bundle_dir, offline_only=True)
+    )
+    with pytest.raises(SourceManagementAcceptanceError) as exc_info:
+        verifier.run()
+    assert exc_info.value.code == "posture.source_ingestion_not_manual"
