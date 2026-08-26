@@ -24,7 +24,7 @@
     "validation": {
       "focused_contract_tests": {
         "status": "passed",
-        "count": 271,
+        "count": 272,
         "scope": [
           "scripts/test_verify_external_source_management_acceptance.py",
           "scripts/test_source_ingest_deploy_diagnostics_contract.py",
