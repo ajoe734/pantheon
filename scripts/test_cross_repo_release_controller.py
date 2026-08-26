@@ -205,12 +205,14 @@ def test_coordinates_exact_gate_then_exact_deploy_on_dev() -> None:
         "frontend_ref": "dev",
         "bff_sha": BACKEND_SHA,
         "bff_base_url": "https://bff.test",
-        "pantheon_contract_ref": BACKEND_SHA,
         "release_candidate_id": CANDIDATE_ID,
         "compatibility_manifest_sha256": MANIFEST_SHA,
         "release_controller_run_id": CONTROLLER_RUN_ID,
         "soft_fail": "false",
     }
+    # execute-plans derives its contract ref from bff_sha. Dispatching the
+    # retired pantheon_contract_ref input makes GitHub reject the run with 422.
+    assert "pantheon_contract_ref" not in gate_inputs
     assert deploy_inputs["gate_run_id"] == "101"
     assert deploy_inputs["candidate_sha"] == FRONTEND_SHA
     assert deploy_inputs["deployment_profile"] == "read-only"
