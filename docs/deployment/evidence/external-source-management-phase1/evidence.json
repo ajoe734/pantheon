@@ -24,9 +24,12 @@
     "validation": {
       "focused_contract_tests": {
         "status": "passed",
-        "count": 272,
+        "count": 287,
+        "passed": 286,
+        "skipped": 1,
         "scope": [
           "scripts/test_verify_external_source_management_acceptance.py",
+          "scripts/test_deploy_nonprod_vm.py",
           "scripts/test_source_ingest_deploy_diagnostics_contract.py",
           "scripts/test_dev_environment_lease_deploy_contract.py",
           "scripts/test_current_l12_compose_wiring.py",

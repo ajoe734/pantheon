@@ -156,7 +156,7 @@ def test_deploy_nonprod_vm_script_syntax_and_vacuum_presence() -> None:
 
 
 def test_source_ingestion_remains_reconcile_only_manual() -> None:
-    """Source Ingestion in docker-compose.yml must remain reconcile-only / manual.
+    """Source Ingestion must default to a non-restarting reconcile-only one-shot.
 
     Continuous pull or permissive live execution modes must not be enabled.
     """
@@ -168,7 +168,8 @@ def test_source_ingestion_remains_reconcile_only_manual() -> None:
     scheduler_env = scheduler.get("environment", {})
 
     assert scheduler_env.get("SOURCE_INGEST_CONTROLLER_MODE") == "${SOURCE_INGEST_CONTROLLER_MODE:-reconcile_only}"
-    assert scheduler_env.get("SOURCE_INGEST_CONTROLLER_MAX_TICKS") == "${SOURCE_INGEST_CONTROLLER_MAX_TICKS:-0}"
+    assert scheduler_env.get("SOURCE_INGEST_CONTROLLER_MAX_TICKS") == "${SOURCE_INGEST_CONTROLLER_MAX_TICKS:-1}"
+    assert scheduler.get("restart") == "${SOURCE_INGEST_CONTROLLER_RESTART_POLICY:-no}"
 
     for svc_name, svc in services.items():
         env = svc.get("environment", {})
