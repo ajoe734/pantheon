@@ -167,6 +167,10 @@ class AcceptanceConfig:
     request_timeout_seconds: float = 15.0
     strict: bool = False
     mode: str = "hosted"
+    # Keep ``mode=hosted`` for evidence-schema compatibility.  The profile
+    # states which claim is being made: paper-only functional acceptance or
+    # the stronger independent operator/reviewer proof.
+    profile: str = "privileged"
     task_id: str = TASK_ID
     program_id: str = PROGRAM_ID
 
@@ -175,6 +179,11 @@ class AcceptanceConfig:
             raise AgoraAcceptanceError(
                 "config.mode",
                 "only mode=hosted is supported; in-process or simulated evidence cannot qualify a hosted pair",
+            )
+        if self.profile not in {"hosted-functional", "privileged"}:
+            raise AgoraAcceptanceError(
+                "config.profile",
+                "profile must be hosted-functional or privileged",
             )
         for label, value in (
             ("expected_bff_sha", self.expected_bff_sha),
@@ -329,7 +338,7 @@ class AgoraHostedAcceptanceVerifier:
         }
 
     def run_full_acceptance(self) -> HostedAcceptanceReport:
-        gates = (
+        privileged_gates = (
             (
                 "gate_01_manifest_exact_pair",
                 "Live manifest and exact deployed pair",
@@ -361,6 +370,34 @@ class AgoraHostedAcceptanceVerifier:
                 self.verify_gate_06_rollback_safety,
             ),
         )
+        functional_gates = (
+            (
+                "gate_01_manifest_exact_pair",
+                "Live manifest and exact deployed pair",
+                self.verify_gate_01_manifest_exact_pair,
+            ),
+            (
+                "gate_02_readiness_and_liveness",
+                "Live BFF health, liveness, and readiness",
+                self.verify_gate_02_readiness_and_liveness,
+            ),
+            (
+                "gate_03_agora_product_journey",
+                "Hosted service journey and browser E2E",
+                self.verify_gate_03_agora_product_journey,
+            ),
+            (
+                "gate_04_functional_boundaries",
+                "Paper-only functional boundaries",
+                self.verify_gate_04_functional_boundaries,
+            ),
+            (
+                "gate_05_restart_persistence_readback",
+                "Actual service restart and durable readback",
+                self.verify_gate_05_restart_persistence_readback,
+            ),
+        )
+        gates = functional_gates if self.config.profile == "hosted-functional" else privileged_gates
         results: list[GateCheckResult] = []
         for gate_id, name, runner in gates:
             started = time.monotonic()
@@ -397,7 +434,14 @@ class AgoraHostedAcceptanceVerifier:
                 "frontend_sha": self.config.expected_fe_sha,
                 "bff_url": self.config.bff_base_url,
                 "fe_url": self.config.fe_base_url,
-                "deployment_profile": "accepted" if passed else "unaccepted",
+                "deployment_profile": (
+                    "functional-accepted"
+                    if passed and self.config.profile == "hosted-functional"
+                    else "accepted"
+                    if passed
+                    else "unaccepted"
+                ),
+                "acceptance_profile": self.config.profile,
             },
             gate_results=results,
             gap_matrix=self._build_gap_matrix(results),
@@ -406,6 +450,16 @@ class AgoraHostedAcceptanceVerifier:
                 "executed_gates": len(results),
                 "passed_gates": sum(result.status == "PASSED" for result in results),
                 "failed_gates": sum(result.status == "FAILED" for result in results),
+                **(
+                    {
+                        "skipped_privileged_gates": [
+                            "gate_04_security_and_boundaries",
+                            "gate_06_rollback_safety",
+                        ]
+                    }
+                    if self.config.profile == "hosted-functional"
+                    else {}
+                ),
                 "duration_ms": round((time.monotonic() - self.started) * 1000, 2),
             },
         )
@@ -622,6 +676,56 @@ class AgoraHostedAcceptanceVerifier:
             )
         return {"negative_controls": {key: "passed" for key in NEGATIVE_CONTROL_KEYS}, "authentication": auth}
 
+    def verify_gate_04_functional_boundaries(self) -> dict[str, Any]:
+        """Verify paper-only boundaries without privileged proof actors.
+
+        Functional hosted acceptance still needs a real Firebase/BFF-authenticated
+        browser session and rejects fixture/client-derived truth. It does not
+        require an operator/reviewer pair or the separate write-proof credential.
+        """
+
+        service = self._load_evidence("service_journey", self.config.service_journey_evidence)
+        controls = _mapping(
+            service.get("negative_controls"),
+            "gate_04_functional_boundaries.negative_controls",
+        )
+        required = (
+            "broker_order_authority_absent",
+            "capital_authority_absent",
+            "fixture_fallback_rejected",
+            "client_derived_truth_rejected",
+        )
+        failed = [key for key in required if controls.get(key) not in (True, "passed")]
+        if failed:
+            raise AgoraAcceptanceError(
+                "gate_04_functional_boundaries.negative_controls",
+                f"paper-only boundary controls did not pass: {failed}",
+            )
+        auth = _mapping(
+            service.get("authentication"),
+            "gate_04_functional_boundaries.authentication",
+        )
+        if (
+            auth.get("mode") != "strict"
+            or auth.get("stub") is not False
+            or not auth.get("operator_subject")
+        ):
+            raise AgoraAcceptanceError(
+                "gate_04_functional_boundaries.authentication",
+                "a real Firebase/BFF-authenticated functional session was not proven",
+            )
+        return {
+            "negative_controls": {key: "passed" for key in required},
+            "authentication": {
+                "mode": auth.get("mode"),
+                "stub": auth.get("stub"),
+                "subject_present": True,
+                "privileged_reviewer_required": False,
+            },
+            "execution_authority": "none",
+            "write_profile": "paper-only",
+        }
+
     def verify_gate_05_restart_persistence_readback(self) -> dict[str, Any]:
         restart = self._load_evidence("restart", self.config.restart_evidence)
         run = self._verify_github_run(
@@ -688,6 +792,11 @@ class AgoraHostedAcceptanceVerifier:
 
     def _build_gap_matrix(self, gate_results: list[GateCheckResult]) -> list[dict[str, Any]]:
         passed = {result.gate_id for result in gate_results if result.status == "PASSED"}
+        not_claimed = (
+            {"gate_04_security_and_boundaries", "gate_06_rollback_safety"}
+            if self.config.profile == "hosted-functional"
+            else set()
+        )
         rows: list[tuple[str, str, str]] = [
             ("S01", "Identity and private Agora scope", "gate_03_agora_product_journey"),
             ("S02", "Workshop creation", "gate_03_agora_product_journey"),
@@ -717,8 +826,20 @@ class AgoraHostedAcceptanceVerifier:
                 "gap_id": gap_id,
                 "description": description,
                 "gate": gate,
-                "status": "RESOLVED" if gate in passed else "UNRESOLVED",
-                "evidence": "hosted gate passed" if gate in passed else "hosted evidence missing or rejected",
+                "status": (
+                    "NOT_CLAIMED"
+                    if gate in not_claimed
+                    else "RESOLVED"
+                    if gate in passed
+                    else "UNRESOLVED"
+                ),
+                "evidence": (
+                    "privileged proof is intentionally separate from hosted-functional acceptance"
+                    if gate in not_claimed
+                    else "hosted gate passed"
+                    if gate in passed
+                    else "hosted evidence missing or rejected"
+                ),
             }
             for gap_id, description, gate in rows
         ]
@@ -791,6 +912,12 @@ class AgoraHostedAcceptanceVerifier:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Fail-closed Agora real hosted acceptance aggregator")
     parser.add_argument("--mode", choices=["hosted"], default="hosted")
+    parser.add_argument(
+        "--profile",
+        choices=["hosted-functional", "privileged"],
+        default="privileged",
+        help="Claim paper-only functional behavior or privileged operator/reviewer proof",
+    )
     parser.add_argument("--bff-url", default=DEFAULT_DEV_BFF_URL)
     parser.add_argument("--fe-url", default=DEFAULT_DEV_FE_URL)
     parser.add_argument("--expected-bff-sha", required=True)
@@ -822,6 +949,7 @@ def main() -> int:
         request_timeout_seconds=args.request_timeout_seconds,
         strict=args.strict,
         mode=args.mode,
+        profile=args.profile,
         evidence_dir=args.evidence_dir
         or REPO_ROOT / "docs" / "deployment" / "evidence" / "agora" / TASK_ID,
     )

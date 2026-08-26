@@ -111,6 +111,19 @@ terminal dependency for backward compatibility.
   hosted track. Missing credentials produce `external_wait`; they do not
   block a functional dependency and never justify enabling capital writes.
 
+The hosted acceptance verifier exposes two profiles over the same hosted
+evidence contract:
+
+- `--profile hosted-functional`: exact FE/BFF deployment, authenticated
+  paper-only journey, readiness, and durable restart readback. It does not
+  require operator-live/write-proof or an independent reviewer credential.
+- `--profile privileged`: the full operator/reviewer, negative-control, and
+  rollback qualification.
+
+Both profiles use a real Firebase/BFF browser session; hosted-functional is
+not a simulated or auth-stub result. The privileged profile remains optional
+for the functional closure path.
+
 Workers record a track through the governed command:
 
 ```bash
