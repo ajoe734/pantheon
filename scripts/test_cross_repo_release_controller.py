@@ -43,6 +43,7 @@ def _run(
     status: str = "completed",
     conclusion: str | None = "success",
     head_sha: str = FRONTEND_SHA,
+    head_branch: str = "dev",
 ) -> dict[str, Any]:
     return {
         "id": run_id,
@@ -50,7 +51,7 @@ def _run(
         "head_repository": {"full_name": "ajoe734/execute-plans"},
         "repository": {"full_name": "ajoe734/execute-plans"},
         "event": "workflow_dispatch",
-        "head_branch": "dev",
+        "head_branch": head_branch,
         "head_sha": head_sha,
         "display_title": title,
         "status": status,
@@ -67,14 +68,17 @@ class FakeClient:
         deploy_conclusion: str = "success",
         ambiguous: bool = False,
         timeout_workflow: str | None = None,
+        controller_sha: str = FRONTEND_SHA,
     ):
         self.dispatches: list[tuple[str, dict[str, str]]] = []
+        self.dispatch_refs: list[tuple[str, str]] = []
         self.gate_conclusion = gate_conclusion
         self.deploy_conclusion = deploy_conclusion
         self.ambiguous = ambiguous
         self.timeout_workflow = timeout_workflow
+        self.controller_sha = controller_sha
 
-    def list_runs(self, workflow: str) -> list[dict[str, Any]]:
+    def list_runs(self, workflow: str, *, branch: str = "dev") -> list[dict[str, Any]]:
         dispatched = [item for item in self.dispatches if item[0] == workflow]
         if not dispatched:
             return []
@@ -87,7 +91,8 @@ class FakeClient:
             if workflow == GATE_WORKFLOW
             else f"Deploy release candidate {candidate_id}"
         )
-        head_sha = inputs.get("fe_sha") or inputs.get("candidate_sha") or FRONTEND_SHA
+        head_sha = self.controller_sha
+        head_branch = "dev"
         run = _run(
             101 if workflow == GATE_WORKFLOW else 202,
             workflow=workflow,
@@ -95,37 +100,47 @@ class FakeClient:
             status="in_progress",
             conclusion=None,
             head_sha=head_sha,
+            head_branch=head_branch,
         )
         if self.ambiguous:
             return [run, {**run, "id": run["id"] + 1}]
         return [run]
 
-    def dispatch(self, workflow: str, inputs: dict[str, str]) -> None:
+    def dispatch(self, workflow: str, inputs: dict[str, str], *, ref: str = "dev") -> None:
         self.dispatches.append((workflow, inputs))
+        self.dispatch_refs.append((workflow, ref))
+
+    def get_ref(self, ref: str) -> str:
+        assert ref == "heads/dev" or ref in {"dev", "task/candidate"}
+        return self.controller_sha
 
     def get_run(self, run_id: int) -> dict[str, Any]:
         if run_id == 101:
             gate_dispatches = [item for item in self.dispatches if item[0] == GATE_WORKFLOW]
             inputs = gate_dispatches[-1][1] if gate_dispatches else {}
             candidate_id = inputs.get("release_candidate_id", CANDIDATE_ID)
-            head_sha = inputs.get("fe_sha", FRONTEND_SHA)
+            head_sha = self.controller_sha
+            head_branch = "dev"
             return _run(
                 101,
                 workflow=GATE_WORKFLOW,
                 title=f"Release candidate {candidate_id}",
                 conclusion=self.gate_conclusion,
                 head_sha=head_sha,
+                head_branch=head_branch,
             )
         deploy_dispatches = [item for item in self.dispatches if item[0] == DEPLOY_WORKFLOW]
         inputs = deploy_dispatches[-1][1] if deploy_dispatches else {}
         candidate_id = inputs.get("release_candidate_id", CANDIDATE_ID)
-        head_sha = inputs.get("candidate_sha", FRONTEND_SHA)
+        head_sha = self.controller_sha
+        head_branch = "dev"
         return _run(
             202,
             workflow=DEPLOY_WORKFLOW,
             title=f"Deploy release candidate {candidate_id}",
             conclusion=self.deploy_conclusion,
             head_sha=head_sha,
+            head_branch=head_branch,
         )
 
 
@@ -167,6 +182,7 @@ def _coordinate(
         "sleep": lambda _: None,
     }
     kwargs.update(overrides)
+    client.controller_sha = kwargs["frontend_sha"]
     return coordinate_release(
         client,  # type: ignore[arg-type]
         **kwargs,
@@ -186,14 +202,17 @@ def test_coordinates_exact_gate_then_exact_deploy_on_dev() -> None:
     deploy_inputs = client.dispatches[1][1]
     assert gate_inputs == {
         "fe_sha": FRONTEND_SHA,
+        "frontend_ref": "dev",
         "bff_sha": BACKEND_SHA,
         "bff_base_url": "https://bff.test",
-        "pantheon_contract_ref": BACKEND_SHA,
         "release_candidate_id": CANDIDATE_ID,
         "compatibility_manifest_sha256": MANIFEST_SHA,
         "release_controller_run_id": CONTROLLER_RUN_ID,
         "soft_fail": "false",
     }
+    # execute-plans derives its contract ref from bff_sha. Dispatching the
+    # retired pantheon_contract_ref input makes GitHub reject the run with 422.
+    assert "pantheon_contract_ref" not in gate_inputs
     assert deploy_inputs["gate_run_id"] == "101"
     assert deploy_inputs["candidate_sha"] == FRONTEND_SHA
     assert deploy_inputs["deployment_profile"] == "read-only"
@@ -211,6 +230,19 @@ def test_coordinates_exact_gate_then_exact_deploy_on_dev() -> None:
     assert evidence["served_verification"]["observed_bff_sha"] == BACKEND_SHA
     assert evidence["served_verification"]["observed_fe_sha"] == FRONTEND_SHA
     assert evidence["served_verification"]["observed_pair_id"] == SERVED_PAIR_ID
+
+
+def test_coordinates_candidate_ref_without_requiring_current_dev_tip() -> None:
+    client = FakeClient()
+
+    _coordinate(client, frontend_ref="task/candidate")
+
+    assert client.dispatch_refs == [
+        (GATE_WORKFLOW, "dev"),
+        (DEPLOY_WORKFLOW, "dev"),
+    ]
+    assert client.dispatches[0][1]["frontend_ref"] == "task/candidate"
+    assert client.dispatches[1][1]["frontend_ref"] == "task/candidate"
 
 
 def test_predecessor_to_candidate_switching_and_served_binding() -> None:
@@ -272,6 +304,7 @@ def test_ambiguous_dispatch_fails_closed() -> None:
     ("field", "value", "message"),
     [
         ("frontend_sha", "main", "frontend SHA"),
+        ("frontend_ref", "../candidate", "frontend ref"),
         ("backend_sha", "f" * 39, "backend SHA"),
         ("release_candidate_id", "0" * 63, "release candidate ID"),
         ("compatibility_manifest_sha256", "x" * 64, "compatibility manifest"),
@@ -601,10 +634,9 @@ def test_nonprod_workflow_seals_exact_dev_pair_before_any_switch() -> None:
         'GITHUB_REF}" != "refs/heads/dev" || "${GITHUB_SHA}" != "${sha}"'
         in deploy_job
     )
-    assert (
-        "Out-of-order execute-plans candidate rejected: current dev is"
-        in deploy_job
-    )
+    assert "frontend_ref:" in deploy_job
+    assert "refs/heads/${FRONTEND_REF}:refs/remotes/origin/${FRONTEND_REF}" in deploy_job
+    assert "requested" in deploy_job and "ref_tip" in deploy_job
     generate = deploy_job.index(
         "Generate immutable exact-pair admission before any dev switch"
     )
@@ -1088,7 +1120,7 @@ def test_execution_path_cli_main_workflow_path(tmp_path: Path, monkeypatch: pyte
 
     monkeypatch.setattr("scripts.cross_repo_release_controller.fetch_url_json", fake_fetch)
 
-    fake_client = FakeClient()
+    fake_client = FakeClient(controller_sha=REAL_FRONTEND_SHA)
     monkeypatch.setattr(
         "scripts.cross_repo_release_controller.GitHubClient",
         lambda **kwargs: fake_client,
@@ -1144,7 +1176,7 @@ def test_execution_path_cli_main_stale_pair_rejected(tmp_path: Path, monkeypatch
 
     monkeypatch.setattr("scripts.cross_repo_release_controller.fetch_url_json", fake_fetch)
 
-    fake_client = FakeClient()
+    fake_client = FakeClient(controller_sha=REAL_FRONTEND_SHA)
     monkeypatch.setattr(
         "scripts.cross_repo_release_controller.GitHubClient",
         lambda **kwargs: fake_client,
