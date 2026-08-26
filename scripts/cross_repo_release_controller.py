@@ -34,6 +34,7 @@ SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 DIGEST_RE = re.compile(r"^[0-9a-f]{64}$")
 PAIR_ID_RE = re.compile(r"^[0-9a-zA-Z._:-]{1,256}$")
 RUN_ID_RE = re.compile(r"^[1-9][0-9]*$")
+REF_RE = re.compile(r"^[A-Za-z0-9._/-]+$")
 PROOF_PROFILES = ("write-proof", "read-only", "operator-live")
 PROOF_STATES = (
     "CREATED",
@@ -79,6 +80,21 @@ def exact_run_id(value: str, label: str) -> str:
     normalized = str(value or "").strip()
     if not RUN_ID_RE.fullmatch(normalized):
         raise ControllerError(f"{label} must be one positive integer run ID")
+    return normalized
+
+
+def exact_ref(value: str, label: str = "frontend ref") -> str:
+    normalized = str(value or "").strip()
+    if (
+        not normalized
+        or not REF_RE.fullmatch(normalized)
+        or normalized.startswith("/")
+        or normalized.endswith("/")
+        or ".." in normalized
+        or "//" in normalized
+        or normalized.startswith("-")
+    ):
+        raise ControllerError(f"{label} must be one exact branch ref")
     return normalized
 
 
@@ -377,6 +393,7 @@ class ExpectedRun:
     workflow: str
     title: str
     head_sha: str
+    head_branch: str = FRONTEND_BRANCH
 
 
 class GitHubClient:
@@ -428,9 +445,9 @@ class GitHubClient:
                 f"GitHub API {method} {path} returned invalid JSON"
             ) from exc
 
-    def list_runs(self, workflow: str) -> list[dict[str, Any]]:
+    def list_runs(self, workflow: str, *, branch: str = FRONTEND_BRANCH) -> list[dict[str, Any]]:
         query = urllib.parse.urlencode(
-            {"branch": FRONTEND_BRANCH, "event": "workflow_dispatch", "per_page": 100}
+            {"branch": branch, "event": "workflow_dispatch", "per_page": 100}
         )
         payload = self.request(
             "GET",
@@ -441,11 +458,11 @@ class GitHubClient:
             raise ControllerError(f"{workflow} run listing has no workflow_runs array")
         return [run for run in runs if isinstance(run, dict)]
 
-    def dispatch(self, workflow: str, inputs: dict[str, str]) -> None:
+    def dispatch(self, workflow: str, inputs: dict[str, str], *, ref: str = FRONTEND_BRANCH) -> None:
         self.request(
             "POST",
             f"/repos/{self.repository}/actions/workflows/{workflow}/dispatches",
-            {"ref": FRONTEND_BRANCH, "inputs": inputs},
+            {"ref": ref, "inputs": inputs},
         )
 
     def get_run(self, run_id: int) -> dict[str, Any]:
@@ -456,6 +473,17 @@ class GitHubClient:
         if not isinstance(payload, dict):
             raise ControllerError(f"run {run_id} response is not an object")
         return payload
+
+    def get_ref(self, ref: str) -> str:
+        normalized = str(ref).removeprefix("refs/heads/").removeprefix("heads/")
+        if not normalized:
+            raise ControllerError("execute-plans controller ref is empty")
+        payload = self.request(
+            "GET",
+            f"/repos/{self.repository}/git/ref/heads/{normalized}",
+        )
+        value = str((payload or {}).get("object", {}).get("sha") or "").lower()
+        return exact_sha(value, "execute-plans controller SHA")
 
 
 def validate_run(run: dict[str, Any], expected: ExpectedRun) -> int:
@@ -472,7 +500,7 @@ def validate_run(run: dict[str, Any], expected: ExpectedRun) -> int:
         path == f".github/workflows/{expected.workflow}"
         and repository == FRONTEND_REPOSITORY
         and run.get("event") == "workflow_dispatch"
-        and run.get("head_branch") == FRONTEND_BRANCH
+        and run.get("head_branch") == expected.head_branch
         and str(run.get("head_sha") or "").lower() == expected.head_sha
         and str(run.get("display_title") or "") == expected.title
     )
@@ -493,15 +521,21 @@ def dispatch_and_wait(
     sleep: Callable[[float], None] = time.sleep,
 ) -> dict[str, Any]:
     existing_ids = {
-        run.get("id") for run in client.list_runs(expected.workflow) if run.get("id")
+        run.get("id")
+        for run in client.list_runs(expected.workflow, branch=FRONTEND_BRANCH)
+        if run.get("id")
     }
-    client.dispatch(expected.workflow, inputs)
+    # Workflow definitions are dispatched from the trusted execute-plans/dev
+    # controller.  ``frontend_ref`` is the candidate source ref carried as an
+    # input and verified by the workflow; dispatching the candidate branch
+    # itself would execute unmerged workflow code and recreate the deadlock.
+    client.dispatch(expected.workflow, inputs, ref=FRONTEND_BRANCH)
     deadline = time.monotonic() + timeout_seconds
     selected: dict[str, Any] | None = None
     while time.monotonic() < deadline:
         matches = [
             run
-            for run in client.list_runs(expected.workflow)
+            for run in client.list_runs(expected.workflow, branch=FRONTEND_BRANCH)
             if run.get("id") not in existing_ids
             and str(run.get("display_title") or "") == expected.title
         ]
@@ -541,6 +575,7 @@ def coordinate_release(
     client: GitHubClient,
     *,
     frontend_sha: str,
+    frontend_ref: str = FRONTEND_BRANCH,
     backend_sha: str,
     bff_base_url: str,
     release_candidate_id: str,
@@ -557,6 +592,13 @@ def coordinate_release(
     sleep: Callable[[float], None] = time.sleep,
 ) -> dict[str, Any]:
     frontend_sha = exact_sha(frontend_sha, "frontend SHA")
+    frontend_ref = exact_ref(frontend_ref)
+    controller_sha = client.get_ref("heads/dev")
+    candidate_ref_sha = client.get_ref(frontend_ref)
+    if candidate_ref_sha != frontend_sha:
+        raise ControllerError(
+            f"frontend ref {frontend_ref} does not point to the exact frontend SHA"
+        )
     backend_sha = exact_sha(backend_sha, "backend SHA")
     release_candidate_id = exact_digest(
         release_candidate_id, "release candidate ID"
@@ -619,10 +661,12 @@ def coordinate_release(
             expected=ExpectedRun(
                 workflow=GATE_WORKFLOW,
                 title=gate_title,
-                head_sha=frontend_sha,
+                head_sha=controller_sha,
+                head_branch=FRONTEND_BRANCH,
             ),
             inputs={
                 "fe_sha": frontend_sha,
+                "frontend_ref": frontend_ref,
                 "bff_sha": backend_sha,
                 "bff_base_url": bff_base_url,
                 "pantheon_contract_ref": backend_sha,
@@ -638,7 +682,7 @@ def coordinate_release(
         gate_run = gate
         gate_run_id = str(validate_run(
             gate,
-            ExpectedRun(GATE_WORKFLOW, gate_title, frontend_sha),
+            ExpectedRun(GATE_WORKFLOW, gate_title, controller_sha, FRONTEND_BRANCH),
         ))
 
         deploy_title = f"Deploy release candidate {release_candidate_id}"
@@ -647,10 +691,12 @@ def coordinate_release(
             expected=ExpectedRun(
                 workflow=DEPLOY_WORKFLOW,
                 title=deploy_title,
-                head_sha=frontend_sha,
+                head_sha=controller_sha,
+                head_branch=FRONTEND_BRANCH,
             ),
             inputs={
                 "candidate_sha": frontend_sha,
+                "frontend_ref": frontend_ref,
                 "gate_run_id": gate_run_id,
                 "release_candidate_id": release_candidate_id,
                 "compatibility_manifest_sha256": compatibility_manifest_sha256,
@@ -722,6 +768,7 @@ def coordinate_release(
         "frontend": {
             "repository": FRONTEND_REPOSITORY,
             "branch": FRONTEND_BRANCH,
+            "source_ref": frontend_ref,
             "commit": frontend_sha,
         },
         "integration_gate": {
@@ -743,6 +790,7 @@ def coordinate_release(
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--frontend-sha", required=True)
+    parser.add_argument("--frontend-ref", default=FRONTEND_BRANCH)
     parser.add_argument("--backend-sha", required=True)
     parser.add_argument("--bff-base-url", required=True)
     parser.add_argument("--fe-base-url", default=None)
@@ -780,6 +828,7 @@ def main(argv: list[str] | None = None) -> int:
                 repository=FRONTEND_REPOSITORY,
             ),
             frontend_sha=args.frontend_sha,
+            frontend_ref=args.frontend_ref,
             backend_sha=args.backend_sha,
             bff_base_url=args.bff_base_url,
             fe_base_url=args.fe_base_url,
