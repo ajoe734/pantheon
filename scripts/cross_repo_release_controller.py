@@ -669,7 +669,11 @@ def coordinate_release(
                 "frontend_ref": frontend_ref,
                 "bff_sha": backend_sha,
                 "bff_base_url": bff_base_url,
-                "pantheon_contract_ref": backend_sha,
+                # The execute-plans gate derives its Pantheon contract ref
+                # from bff_sha.  Do not send a separate pantheon_contract_ref
+                # input: GitHub validates workflow_dispatch inputs against the
+                # target workflow and that legacy field was removed when the
+                # workflow reached GitHub's 25-input limit.
                 "release_candidate_id": release_candidate_id,
                 "compatibility_manifest_sha256": compatibility_manifest_sha256,
                 "release_controller_run_id": controller_run_id,
