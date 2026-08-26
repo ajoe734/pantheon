@@ -4,11 +4,11 @@
   "program_id": "SRCM-PHASE1-20260824",
   "created_at": "2026-08-25T13:20:58Z",
   "exact_pair": {
-    "backend_sha": "03757f0254fb48ea37098e3d9ab0176c006d4da5",
-    "frontend_sha": "88a4dafbccd0f497638e6d555a157eab010fc03a",
+    "backend_sha": "63353e4b4de5df80ea9c9975e002ba95266a4bb8",
+    "frontend_sha": "c21df2cfdaf1781cdf6db517a57dc6c718e0e0f9",
     "source_definitions_sha": "40de8fcb1c69fad0bf5e54d4c0bd6e508c9162e0",
-    "fe_manifest_bff_sha": "03757f0254fb48ea37098e3d9ab0176c006d4da5",
-    "candidate_status": "candidate_write_enabled_pair_prepared",
+    "fe_manifest_bff_sha": "63353e4b4de5df80ea9c9975e002ba95266a4bb8",
+    "candidate_status": "accepted_write_enabled_pair_deployed",
     "bff_url": "https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io",
     "fe_url": "https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io",
     "environment": "dev"

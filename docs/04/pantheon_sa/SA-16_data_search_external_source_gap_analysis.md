@@ -688,7 +688,7 @@ python3 -m pytest services/knowledge/evidence services/search/tests/test_governe
 
 6. **Hosted Acceptance Status**:
    - `scripts/verify_external_source_management_acceptance.py` 嚴格把關 10 個 hosted journeys、負向安全控制、exact-pair identity drift rejection、migration idempotency、read-only rollback 與 zero secret leak。
-   - Live dev acceptance 要求 dev host 部署對齊的 write-enabled candidate (execute-plans PR #636 / `88a4dafb`) 與 BFF (`03757f02`)，在 stale baseline 或 identity drift 時 fail-closed。
+   - Live dev acceptance 要求 dev host 部署對齊的 write-enabled candidate (execute-plans PR #636 / `c21df2cf`) 與 BFF (`63353e4b`)，在 stale baseline 或 identity drift 時 fail-closed。
    - OpenClaw 維持 Phase 2，不具備 product write 權限。
 
 ---

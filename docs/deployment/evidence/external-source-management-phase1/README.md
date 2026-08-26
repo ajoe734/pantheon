@@ -6,16 +6,16 @@ This package contains the authoritative hosted acceptance evidence, exact deploy
 
 | Component | Repository | Deployed Commit SHA | Base URL | Verification Endpoint |
 |---|---|---|---|---|
-| Backend / BFF / Ingest | `ajoe734/pantheon` | `03757f0254fb48ea37098e3d9ab0176c006d4da5` | `https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io` | `GET /bff/version` |
-| Frontend | `ajoe734/execute-plans` | `cc4007f7f78a31c73548ce85457af17a45a4c4b9` | `https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io` | `GET /deployment.json` |
+| Backend / BFF / Ingest | `ajoe734/pantheon` | `63353e4b4de5df80ea9c9975e002ba95266a4bb8` | `https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io` | `GET /bff/version` |
+| Frontend | `ajoe734/execute-plans` | `c21df2cfdaf1781cdf6db517a57dc6c718e0e0f9` | `https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io` | `GET /deployment.json` |
 | Source Definitions | `ajoe734/pantheon` | `40de8fcb1c69fad0bf5e54d4c0bd6e508c9162e0` | `http://127.0.0.1:18097` | `GET /api/source-ingest/management/connector-definitions` |
 
 ### Deployment Drift Analysis
 
-- **Frontend Manifest**: `https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io/deployment.json` serves commit `cc4007f7f78a31c73548ce85457af17a45a4c4b9` and references prior backend baseline `bffCommit: "40de8fcb1c69fad0bf5e54d4c0bd6e508c9162e0"`.
-- **Live Backend Version**: `https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io/bff/version` serves commit `03757f0254fb48ea37098e3d9ab0176c006d4da5` with strict JWT auth posture.
+- **Frontend Manifest**: `https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io/deployment.json` serves commit `c21df2cfdaf1781cdf6db517a57dc6c718e0e0f9` (PR #636 merged) and references current backend baseline `bffCommit: "63353e4b4de5df80ea9c9975e002ba95266a4bb8"`.
+- **Live Backend Version**: `https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io/bff/version` serves commit `63353e4b4de5df80ea9c9975e002ba95266a4bb8` with strict JWT auth posture.
 - **Source Connector Definitions**: independently probed from `/api/source-ingest/management/connector-definitions` (or `/bff/management/data-sources/catalog`), reporting deployment SHA `40de8fcb1c69fad0bf5e54d4c0bd6e508c9162e0`.
-- **Accepted Live Pair**: Both endpoints and definitions have been probed and verified live with exact SHA verification, negative control probes, and safe write defaults (`VITE_BFF_REAL_WRITES: "false"`). Verified that `40de8fcb1c69fad0bf5e54d4c0bd6e508c9162e0` is an exact git ancestor of `03757f0254fb48ea37098e3d9ab0176c006d4da5`.
+- **Accepted Live Pair**: Both endpoints and definitions have been probed and verified live with exact SHA verification, negative control probes, and safe write defaults (`VITE_BFF_REAL_WRITES: "false"`). Verified zero drift between FE manifest `bffCommit` and live BFF `source_commit_sha`. Verified that `40de8fcb1c69fad0bf5e54d4c0bd6e508c9162e0` is an exact git ancestor of `63353e4b4de5df80ea9c9975e002ba95266a4bb8`.
 
 ## 2. Evidence Artifact Manifest
 

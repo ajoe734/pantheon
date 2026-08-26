@@ -45,10 +45,10 @@ DEFAULT_DEV_BFF_URL = "https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io"
 DEFAULT_DEV_FE_URL = "https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io"
 DEFAULT_SOURCE_INGEST_URL = "http://127.0.0.1:18097"
 
-EXPECTED_BFF_SHA = "03757f0254fb48ea37098e3d9ab0176c006d4da5"
-EXPECTED_FE_SHA = "88a4dafbccd0f497638e6d555a157eab010fc03a"
+EXPECTED_BFF_SHA = "63353e4b4de5df80ea9c9975e002ba95266a4bb8"
+EXPECTED_FE_SHA = "c21df2cfdaf1781cdf6db517a57dc6c718e0e0f9"
 EXPECTED_SOURCE_DEFINITIONS_SHA = "40de8fcb1c69fad0bf5e54d4c0bd6e508c9162e0"
-FE_MANIFEST_BFF_SHA = "03757f0254fb48ea37098e3d9ab0176c006d4da5"
+FE_MANIFEST_BFF_SHA = "63353e4b4de5df80ea9c9975e002ba95266a4bb8"
 UNSUPPORTED_READONLY_FE_BASELINE = "cc4007f7f78a31c73548ce85457af17a45a4c4b9"
 
 SHA40_RE = re.compile(r"^[0-9a-f]{40}$")
@@ -419,7 +419,7 @@ class ExternalSourceManagementHostedAcceptanceVerifier:
             raise SourceManagementAcceptanceError(
                 "live.fe_unsupported_baseline",
                 f"Deployed FE {live_fe_sha} is a legacy read-only list/refresh page lacking data source management controls. "
-                f"Exact write-enabled candidate (PR #636 / 88a4dafb) required for hosted acceptance.",
+                f"Exact write-enabled candidate (PR #636 / c21df2cf) required for hosted acceptance.",
             )
 
         if self.config.strict_pair and self.config.expected_fe_sha:

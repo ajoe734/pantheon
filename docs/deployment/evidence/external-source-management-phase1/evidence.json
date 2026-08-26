@@ -17,11 +17,11 @@
     "Merge the exact reviewed head to Pantheon dev only after all evidence passes"
   ],
   "exact_pair": {
-    "backend_sha": "03757f0254fb48ea37098e3d9ab0176c006d4da5",
-    "frontend_sha": "88a4dafbccd0f497638e6d555a157eab010fc03a",
+    "backend_sha": "63353e4b4de5df80ea9c9975e002ba95266a4bb8",
+    "frontend_sha": "c21df2cfdaf1781cdf6db517a57dc6c718e0e0f9",
     "source_definitions_sha": "40de8fcb1c69fad0bf5e54d4c0bd6e508c9162e0",
-    "fe_manifest_bff_sha": "03757f0254fb48ea37098e3d9ab0176c006d4da5",
-    "candidate_status": "candidate_write_enabled_pair_prepared",
+    "fe_manifest_bff_sha": "63353e4b4de5df80ea9c9975e002ba95266a4bb8",
+    "candidate_status": "accepted_write_enabled_pair_deployed",
     "bff_url": "https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io",
     "fe_url": "https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io",
     "environment": "dev"
@@ -29,7 +29,7 @@
   "artifacts": {
     "deployment": {
       "path": "deployment.json",
-      "sha256": "eca2aeb72628f848dc5a6e9491d551ffc506d279b67d54b7fa24bf59a0afb88d"
+      "sha256": "2d90a47b310dca558120e887e9982edcb7f78eb30e4757ab4e822e3167299a68"
     },
     "hosted_summary": {
       "path": "hosted-acceptance-summary.json",
