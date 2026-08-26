@@ -236,19 +236,19 @@ services:
       context: .
       dockerfile: services/source_ingestion/Dockerfile
     command: ["python", "-m", "services.source_ingestion.controller_worker"]
-    restart: "${SOURCE_INGEST_CONTROLLER_RESTART_POLICY:-unless-stopped}"
+    restart: "${SOURCE_INGEST_CONTROLLER_RESTART_POLICY:-no}"
     stop_grace_period: 30s
-    # This same controller is the sole durable owner. Operators retain an
-    # explicit bounded smoke with `docker compose run --rm -e
-    # SOURCE_INGEST_CONTROLLER_MAX_TICKS=1 source-ingest-scheduler`; there is
-    # no second scheduler service or profile-only production owner.
+    # The default dev controller performs one internal reconcile-only tick and
+    # exits. Provider pulls remain available only through the explicitly
+    # allowlisted source-ingest-scheduler deployment profile; there is no
+    # continuous external-pull owner in the default dev topology.
     environment:
       SOURCE_INGEST_API_URL: http://source-ingest:8097
       SOURCE_INGEST_DESIRED_STATE_PATH: /workspace/services/source_ingestion/default_desired_state.json
       SOURCE_INGEST_CONTROLLER_INTERVAL_SECONDS: ${SOURCE_INGEST_CONTROLLER_INTERVAL_SECONDS:-60}
       SOURCE_INGEST_CONTROLLER_TIMEOUT_SECONDS: ${SOURCE_INGEST_CONTROLLER_TIMEOUT_SECONDS:-30}
       SOURCE_INGEST_CONTROLLER_MODE: ${SOURCE_INGEST_CONTROLLER_MODE:-reconcile_only}
-      SOURCE_INGEST_CONTROLLER_MAX_TICKS: ${SOURCE_INGEST_CONTROLLER_MAX_TICKS:-0}
+      SOURCE_INGEST_CONTROLLER_MAX_TICKS: ${SOURCE_INGEST_CONTROLLER_MAX_TICKS:-1}
       SOURCE_INGEST_CONTROLLER_FORCE_CONNECTOR_IDS: ${SOURCE_INGEST_CONTROLLER_FORCE_CONNECTOR_IDS:-}
       SOURCE_INGEST_CONTROLLER_EXCLUSIVE_CONNECTOR_IDS: ${SOURCE_INGEST_CONTROLLER_EXCLUSIVE_CONNECTOR_IDS:-}
       SOURCE_INGEST_CONTROLLER_STATE_PATH: /data/source-ingest/controller_state.json

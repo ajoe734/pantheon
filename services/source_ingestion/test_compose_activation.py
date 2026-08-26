@@ -68,10 +68,11 @@ def test_root_compose_wires_source_ingest_service_boundary() -> None:
 
     controller = services["source-ingest-scheduler"]
     controller_env = _env_map(controller)
-    # Default-on owner is an unbounded internal reconciler. Explicit bounded
-    # deployments override these four variables to enable finite provider pull.
+    # Default-on owner is a non-restarting internal reconcile-only one-shot.
+    # The explicit deployment profile overrides mode and allowlists for a
+    # bounded provider pull without creating a continuous external connection.
     assert "profiles" not in controller
-    assert controller["restart"] == "${SOURCE_INGEST_CONTROLLER_RESTART_POLICY:-unless-stopped}"
+    assert controller["restart"] == "${SOURCE_INGEST_CONTROLLER_RESTART_POLICY:-no}"
     assert controller["command"] == ["python", "-m", "services.source_ingestion.controller_worker"]
     assert controller_env["SOURCE_INGEST_API_URL"] == "http://source-ingest:8097"
     assert controller_env["SOURCE_INGEST_CONTROLLER_MODE"] == "${SOURCE_INGEST_CONTROLLER_MODE:-reconcile_only}"
@@ -81,7 +82,7 @@ def test_root_compose_wires_source_ingest_service_boundary() -> None:
     assert controller_env["SOURCE_INGEST_CONTROLLER_TIMEOUT_SECONDS"] == "${SOURCE_INGEST_CONTROLLER_TIMEOUT_SECONDS:-30}"
     assert controller_env["PANTHEON_TENANT_ID"] == "${PANTHEON_TENANT_ID:-${PANTHEON_BFF_TENANT_ID:-default}}"
     assert "SOURCE_INGEST_CONTROLLER_LEASE_SECONDS" not in controller_env
-    assert controller_env["SOURCE_INGEST_CONTROLLER_MAX_TICKS"] == "${SOURCE_INGEST_CONTROLLER_MAX_TICKS:-0}"
+    assert controller_env["SOURCE_INGEST_CONTROLLER_MAX_TICKS"] == "${SOURCE_INGEST_CONTROLLER_MAX_TICKS:-1}"
     assert controller_env["SOURCE_INGEST_CONTROLLER_FORCE_CONNECTOR_IDS"] == "${SOURCE_INGEST_CONTROLLER_FORCE_CONNECTOR_IDS:-}"
     assert controller_env["SOURCE_INGEST_CONTROLLER_EXCLUSIVE_CONNECTOR_IDS"] == "${SOURCE_INGEST_CONTROLLER_EXCLUSIVE_CONNECTOR_IDS:-}"
     assert controller_env["SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY"] == "${SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY:-1}"

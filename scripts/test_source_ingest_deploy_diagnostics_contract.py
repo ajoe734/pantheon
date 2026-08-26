@@ -113,13 +113,13 @@ def test_bounded_source_refresh_profile_is_fail_closed() -> None:
     assert "source-ingest-scheduler" not in default_profiles
 
 
-def test_default_source_owner_is_unbounded_reconcile_only() -> None:
+def test_default_source_owner_is_one_shot_reconcile_only() -> None:
     deploy = DEPLOY_SCRIPT.read_text(encoding="utf-8")
 
     assert 'SOURCE_REFRESH_CONTROLLER_MODE="reconcile_only"' in deploy
     assert 'SOURCE_REFRESH_TRUTH_LEVEL="scheduled_tick"' in deploy
-    assert 'SOURCE_REFRESH_MAX_TICKS="0"' in deploy
-    assert 'SOURCE_REFRESH_RESTART_POLICY="unless-stopped"' in deploy
+    assert 'SOURCE_REFRESH_MAX_TICKS="1"' in deploy
+    assert 'SOURCE_REFRESH_RESTART_POLICY="no"' in deploy
     assert 'SOURCE_INGEST_CONTROLLER_MODE=$(shell_quote "${SOURCE_REFRESH_CONTROLLER_MODE}")' in deploy
     assert 'SOURCE_INGEST_CONTROLLER_TRUTH_LEVEL=$(shell_quote "${SOURCE_REFRESH_TRUTH_LEVEL}")' in deploy
     assert 'SOURCE_INGEST_CONTROLLER_RESTART_POLICY=$(shell_quote "${SOURCE_REFRESH_RESTART_POLICY}")' in deploy
@@ -133,8 +133,8 @@ def test_default_source_owner_is_unbounded_reconcile_only() -> None:
     gate = deploy[start:end]
     assert 'SOURCE_INGEST_CONTROLLER_MODE:-}" == "reconcile_only"' in gate
     assert 'SOURCE_INGEST_CONTROLLER_TRUTH_LEVEL:-}" == "scheduled_tick"' in gate
-    assert 'SOURCE_INGEST_CONTROLLER_MAX_TICKS:-}" == "0"' in gate
-    assert 'SOURCE_INGEST_CONTROLLER_RESTART_POLICY:-}" == "unless-stopped"' in gate
+    assert 'SOURCE_INGEST_CONTROLLER_MAX_TICKS:-}" == "1"' in gate
+    assert 'SOURCE_INGEST_CONTROLLER_RESTART_POLICY:-}" == "no"' in gate
 
 
 def test_bounded_source_refresh_deploy_waits_and_gates_readback() -> None:

@@ -37,13 +37,13 @@ def _env(service: str) -> dict[str, str]:
     return environment
 
 
-def test_source_controller_is_the_single_default_durable_owner() -> None:
+def test_source_controller_is_the_single_default_one_shot_owner() -> None:
     owner = SERVICES["source-ingest-scheduler"]
 
     assert "profiles" not in owner
     assert (
         owner["restart"]
-        == "${SOURCE_INGEST_CONTROLLER_RESTART_POLICY:-unless-stopped}"
+        == "${SOURCE_INGEST_CONTROLLER_RESTART_POLICY:-no}"
     )
     assert owner["stop_grace_period"] == "30s"
     assert owner["command"] == [
@@ -61,7 +61,7 @@ def test_source_controller_is_the_single_default_durable_owner() -> None:
     )
     assert (
         owner["environment"]["SOURCE_INGEST_CONTROLLER_MAX_TICKS"]
-        == "${SOURCE_INGEST_CONTROLLER_MAX_TICKS:-0}"
+        == "${SOURCE_INGEST_CONTROLLER_MAX_TICKS:-1}"
     )
 
     matching_commands = [
@@ -71,8 +71,8 @@ def test_source_controller_is_the_single_default_durable_owner() -> None:
     ]
     assert matching_commands == ["source-ingest-scheduler"]
 
-    # A bounded run remains an explicit override of this same service:
-    # docker compose run --rm -e SOURCE_INGEST_CONTROLLER_MAX_TICKS=1 ...
+    # The explicit source-ingest-scheduler profile changes this same service
+    # to bounded reconcile_and_pull with exact connector and host allowlists.
     assert "SOURCE_INGEST_CONTROLLER_MAX_TICKS" in owner["environment"]
 
 

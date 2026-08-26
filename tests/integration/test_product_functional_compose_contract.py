@@ -45,18 +45,16 @@ def test_source_default_is_zero_egress_and_snapshot_state_is_durable() -> None:
     assert "source-ingest-data:/data/source-ingest" in source["volumes"]
     assert "/readyz" in " ".join(source["healthcheck"]["test"])
 
-    # Reconciliation is the default service behavior.  A pull requires an
-    # explicit operator `docker compose run` override with max_ticks=1.
+    # A single reconcile-only tick is the default service behavior. A pull
+    # requires the explicit bounded deployment profile and exact allowlists.
     assert "profiles" not in scheduler
     assert scheduler_env["SOURCE_INGEST_CONTROLLER_MODE"] == (
         "${SOURCE_INGEST_CONTROLLER_MODE:-reconcile_only}"
     )
     assert scheduler_env["SOURCE_INGEST_CONTROLLER_MAX_TICKS"] == (
-        "${SOURCE_INGEST_CONTROLLER_MAX_TICKS:-0}"
+        "${SOURCE_INGEST_CONTROLLER_MAX_TICKS:-1}"
     )
-    assert "MAX_TICKS=1 source-ingest-scheduler" in (
-        ROOT / "docker-compose.yml"
-    ).read_text(encoding="utf-8")
+    assert scheduler["restart"] == "${SOURCE_INGEST_CONTROLLER_RESTART_POLICY:-no}"
 
 
 def test_agora_management_and_provider_use_exact_healthy_owners() -> None:
@@ -167,8 +165,6 @@ def test_dev_login_ttl_contract_supports_bounded_proof_window() -> None:
     assert bff_env["PANTHEON_BFF_DEV_LOGIN_TTL_SECONDS"] == (
         "${PANTHEON_BFF_DEV_LOGIN_TTL_SECONDS:-1800}"
     )
-
-
 def test_postgres_container_shared_memory_floor_is_at_least_256m() -> None:
     services = _compose()["services"]
     postgres = services.get("postgres")
