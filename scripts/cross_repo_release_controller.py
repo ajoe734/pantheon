@@ -669,7 +669,6 @@ def coordinate_release(
                 "frontend_ref": frontend_ref,
                 "bff_sha": backend_sha,
                 "bff_base_url": bff_base_url,
-                "pantheon_contract_ref": backend_sha,
                 "release_candidate_id": release_candidate_id,
                 "compatibility_manifest_sha256": compatibility_manifest_sha256,
                 "release_controller_run_id": controller_run_id,
