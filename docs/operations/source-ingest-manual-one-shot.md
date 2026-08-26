@@ -2,23 +2,30 @@
 
 Status: canonical operational guide for Source Ingestion manual pull and dev posture
 Task: PFG-SOURCE-MANUAL-ONCE-20260820
+Corrected by: SRCM-P1-HOSTED-ACCEPTANCE-20260824
 
 ## 1. Principles & Architecture
 
-- **Single Durable Owner**: `services/source_ingestion/controller_worker.py` is the sole canonical desired-state and schedule reconciler. No secondary daemon or legacy scheduler service is permitted.
-- **Default Dev Posture**: The default controller mode is `reconcile_only` (`SOURCE_INGEST_CONTROLLER_MODE=reconcile_only`, `SOURCE_INGEST_CONTROLLER_TRUTH_LEVEL=scheduled_tick`). In this mode, internal persona/connector desired state is continuously reconciled while attempting **zero provider egress** (`provider_egress_attempted: false`).
-- **Bounded Manual Pull**: When acceptance testing or dev verification requires live provider data, an operator or test suite must explicitly invoke a bounded one-tick action targeting allowlisted connector IDs. In `reconcile_and_pull` mode, an explicit non-empty connector set (`exclusive_connector_ids`) is strictly required to prevent unbounded schedule claiming.
+- **Single Controller Entrypoint**: `services/source_ingestion/controller_worker.py` is the sole canonical desired-state and schedule reconciler. No secondary daemon or legacy scheduler service is permitted.
+- **Default Dev Posture**: The default controller performs exactly one `reconcile_only` tick (`SOURCE_INGEST_CONTROLLER_MODE=reconcile_only`, `SOURCE_INGEST_CONTROLLER_TRUTH_LEVEL=scheduled_tick`, `SOURCE_INGEST_CONTROLLER_MAX_TICKS=1`) and uses restart policy `no`. It reconciles internal persona/connector desired state once, attempts **zero provider egress** (`provider_egress_attempted: false`), then exits; default dev never maintains a continuous external-pull connection.
+- **Bounded Manual Pull**: When acceptance testing or dev verification requires live provider data, an operator or test suite must explicitly select the `source-ingest-scheduler` deployment profile. That profile runs a bounded one-tick `reconcile_and_pull` action targeting one exact connector ID and the reviewed exact provider-host allowlist. An explicit non-empty connector set (`exclusive_connector_ids`) is strictly required to prevent unbounded schedule claiming.
 - **Cross-Process Serialization, Request Fingerprint & Deduplication**: Manual one-shot executions serialize via an exclusive cross-process file lock (`<state_path>.lock`). When an `operation_key` is supplied, operations are bound to a canonical request fingerprint (covering mode, connector selection, force connectors, API URL, truth level, and max concurrency). Replayed executions with matching fingerprints are deduplicated against recorded terminal operations, returning terminal readback immediately without invoking redundant provider ticks. Reusing an existing operation key with mismatched parameters raises a fatal conflict error (`operation_key_conflict`).
 - **Fail-Closed Execution**: Unbounded provider pull (`max_ticks=0` in `reconcile_and_pull` mode), missing connector selection in `reconcile_and_pull` mode, connector selection in `reconcile_only` mode, and operation-key parameter conflicts are strictly rejected with fatal errors.
 
-## 2. PR #5064 Candidate Reuse
+## 2. PR #5064 Baseline and Phase-1 Correction
 
 Pantheon PR #5064 (`OPS-DEV-SOURCE-MANUAL-PULL-20260820-V2`) established:
 1. Default Source controller running indefinitely as an internal `reconcile_only` owner.
 2. Direct Compose defaults locked to `reconcile_only` with `MAX_TICKS=0`.
 3. Bounded provider egress allowed only via explicit exact-host allowlist and single-tick limit.
 
-Under `PFG-SOURCE-MANUAL-ONCE-20260820`, these guarantees are consolidated into the core Python contracts (`controller_worker.py`), the retained CLI entrypoint (`scripts/source_ingest_scheduler_once.py`), unit/contract tests, and operational documentation.
+The first two points are historical and are superseded by
+`SRCM-P1-HOSTED-ACCEPTANCE-20260824`: default dev now uses
+`reconcile_only`, `MAX_TICKS=1`, and restart policy `no`. The third guarantee
+remains unchanged for the explicit `source-ingest-scheduler` profile. The core
+Python contracts (`controller_worker.py`), retained CLI entrypoint
+(`scripts/source_ingest_scheduler_once.py`), Compose/deploy contract tests, and
+this guide carry the corrected boundary.
 
 ## 3. Retained CLI Entrypoint (`scripts/source_ingest_scheduler_once.py`)
 

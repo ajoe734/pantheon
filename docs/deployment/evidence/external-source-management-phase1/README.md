@@ -20,16 +20,16 @@ The frontend manifest and live BFF have zero SHA drift. The normal frontend
 profile is `read-only`, with `VITE_BFF_REAL_WRITES=false`. These facts are
 necessary prerequisites; they do not prove that the ten hosted journeys ran.
 
-## Open blockers
+## Open blocker
 
-- No workflow artifact contains all ten unmocked Playwright journeys.
-- No sanitized checksum-bound HAR is present.
-- No real, non-placeholder screenshot is present for any journey.
-- The served read-only profile cannot execute the mutating journey matrix.
-- On 2026-08-26 the dev VM's `source-ingest-scheduler` was observed running as
-  a long-lived `reconcile_only` controller with `MAX_TICKS=0`; acceptance
-  requires an explicitly bounded manual one-shot (`MAX_TICKS=1`, restart
-  policy `no`) and must never enable `reconcile_and_pull` daemon behavior.
+- No authorized bounded ten-journey write-proof run exists. Consequently there
+  is no unmocked Playwright workflow artifact, sanitized checksum-bound HAR, or
+  real per-journey screenshot. The served profile remains read-only. The last
+  2026-08-26 dev observation also predates this task's code correction and
+  records `source-ingest-scheduler` as `reconcile_only`, `MAX_TICKS=0`, and
+  `unless-stopped`; the corrected task branch defaults to one
+  `reconcile_only` tick with restart policy `no`, but that is implementation
+  evidence, not proof that the exact hosted candidate or journeys ran.
 
 `browser-evidence.json` is intentionally a pending-capture manifest. The
 remaining JSON files are unaccepted candidate inputs retained for comparison;

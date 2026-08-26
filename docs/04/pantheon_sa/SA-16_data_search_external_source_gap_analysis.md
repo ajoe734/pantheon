@@ -688,7 +688,7 @@ python3 -m pytest services/knowledge/evidence services/search/tests/test_governe
 
 6. **Hosted Acceptance Status**:
    - `scripts/verify_external_source_management_acceptance.py` 嚴格把關 10 個 hosted journeys、實際 Playwright/HAR、非 placeholder 截圖、負向安全控制、exact-pair identity drift rejection、migration idempotency、read-only rollback 與 zero secret leak。
-   - Dev host 目前已對齊 execute-plans `c21df2cf` 與 BFF `63353e4b`，且 normal profile 為 `VITE_BFF_REAL_WRITES=false`；但尚無十個 journey 的獨立 browser/HAR capture，Source Ingestion 亦觀察到 `reconcile_only` daemon（`max_ticks=0`）而非 manual one-shot，因此 SD-SRCM-08 仍 fail-closed、不得宣稱 live 完成。
+   - Dev Compose/deploy contract 已修正為 `reconcile_only`、`MAX_TICKS=1`、restart `no` 的單次預設；顯式 `source-ingest-scheduler` profile 仍只允許 exact connector/host allowlist 的 bounded `reconcile_and_pull`。Dev host 目前已對齊 execute-plans `c21df2cf` 與 BFF `63353e4b`，且 normal profile 為 `VITE_BFF_REAL_WRITES=false`；但最後一次 Source Ingestion hosted observation 仍是修正前 daemon，且尚無十個 journey 的獨立 browser/HAR capture，因此 SD-SRCM-08 仍 fail-closed、不得宣稱 live 完成。
    - OpenClaw 維持 Phase 2，不具備 product write 權限。
 
 ---

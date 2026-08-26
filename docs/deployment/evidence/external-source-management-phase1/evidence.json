@@ -10,6 +10,56 @@
     "BFF strict authentication posture and unauthenticated negative probes are active",
     "OpenClaw development remains phase 2 and outside product write authority"
   ],
+  "implementation_correction": {
+    "status": "locally_verified_not_hosted",
+    "default_controller_mode": "reconcile_only",
+    "default_max_ticks": "1",
+    "default_restart_policy": "no",
+    "default_external_egress": "deny",
+    "explicit_profile_mode": "reconcile_and_pull",
+    "explicit_profile_max_ticks": "1",
+    "explicit_profile_requires_exact_connector_and_host_allowlists": true,
+    "capital_writes_enabled": false,
+    "hosted_acceptance_claimed": false,
+    "validation": {
+      "focused_contract_tests": {
+        "status": "passed",
+        "count": 271,
+        "scope": [
+          "scripts/test_verify_external_source_management_acceptance.py",
+          "scripts/test_source_ingest_deploy_diagnostics_contract.py",
+          "scripts/test_dev_environment_lease_deploy_contract.py",
+          "scripts/test_current_l12_compose_wiring.py",
+          "services/source_ingestion/test_compose_activation.py",
+          "tests/integration/test_product_functional_compose_contract.py"
+        ]
+      },
+      "default_compose_render": {
+        "status": "passed",
+        "mode": "reconcile_only",
+        "max_ticks": "1",
+        "restart_policy": "no",
+        "external_egress": "deny",
+        "profile_projector_present": false
+      },
+      "explicit_profile_render": {
+        "status": "passed",
+        "mode": "reconcile_and_pull",
+        "max_ticks": "1",
+        "restart_policy": "no",
+        "external_egress": "allowlist",
+        "profile_projector_present": true
+      },
+      "official_offline_verifier": {
+        "status": "failed_closed",
+        "code": "posture.source_ingestion_not_manual"
+      },
+      "official_live_verifier": {
+        "status": "failed_closed_after_exact_identity_probes",
+        "code": "posture.source_ingestion_not_manual"
+      }
+    }
+  },
   "blocking_requirements": [
     "Run all ten journeys from a bounded write-proof Playwright workflow with no route interception",
     "Archive a sanitized checksum-bound HAR and non-placeholder screenshots for every journey",

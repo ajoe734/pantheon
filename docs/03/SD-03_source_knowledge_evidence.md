@@ -29,7 +29,7 @@ OpenClaw 不得直接持有 vendor token，也不得直接任意上網抓資料�
 
 ## 2. Repo ownership & Phase-1 Canonical Correction
 
-> **2026-08-26 Canonical Update**: Phase-1 External Data Source Management (`SRCM-PHASE1-20260824`, SD-SRCM-01 ~ SD-SRCM-07) is implemented in Pantheon. The exact read-only FE/BFF pair is deployed, but SD-SRCM-08 remains fail-closed until independently captured ten-journey Playwright/HAR evidence exists and Source Ingestion is restored to manual one-shot `reconcile_only` posture. Active Management UI lives in `execute-plans` under `/management/data-sources`.
+> **2026-08-26 Canonical Update**: Phase-1 External Data Source Management (`SRCM-PHASE1-20260824`, SD-SRCM-01 ~ SD-SRCM-07) is implemented in Pantheon. The dev Compose/deploy contract now defaults Source Ingestion to one `reconcile_only` tick (`MAX_TICKS=1`, restart `no`) while the explicit provider-pull profile remains bounded and allowlisted. The exact read-only FE/BFF pair is deployed, but SD-SRCM-08 remains fail-closed until that corrected posture and an independently captured ten-journey Playwright/HAR run are proven on the exact hosted candidate. Active Management UI lives in `execute-plans` under `/management/data-sources`.
 
 | Repo | Ownership | Status |
 |---|---|---|

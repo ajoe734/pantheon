@@ -320,10 +320,12 @@ it.
 
 ### 7.4 Safe dev posture is being mistaken for missing capability or live proof
 
-`PANTHEON_EXTERNAL_EGRESS=deny`, an empty host allowlist, and controller
-`reconcile_only` are intentional defaults. Phase 1 must retain safe bounded
-activation while making the operating mode visible. It must not solve the
-management gap by enabling unrestricted recurring provider pulls.
+`PANTHEON_EXTERNAL_EGRESS=deny`, an empty host allowlist, and a single
+non-restarting `reconcile_only` tick are intentional dev defaults. Phase 1
+must retain safe bounded activation while making the operating mode visible.
+The explicit provider-pull profile must require one bounded
+`reconcile_and_pull` run plus exact connector and host allowlists. It must not
+solve the management gap by enabling unrestricted recurring provider pulls.
 
 ## 8. Search, Alpha DB, and knowledge GAP
 
