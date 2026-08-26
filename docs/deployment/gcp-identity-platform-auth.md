@@ -8,7 +8,8 @@ dependency.
 
 - Frontend: Firebase Web SDK against GCP Identity Platform, with
   `browserSessionPersistence` only.
-- First factor: email and password.
+- First factor: email/password or Google OAuth through the same Firebase
+  Identity Platform project.
 - Account recovery: Identity Platform verification and password-reset email.
 - Second factor: TOTP authenticator.
 - BFF verification:
@@ -31,6 +32,9 @@ or user password in a `VITE_*` variable.
 Identity Platform must have:
 
 - Email/password enabled and password-required.
+- Google sign-in enabled when the dev hosted functional browser path uses
+  Google OAuth. The OAuth provider must be registered in the same Identity
+  Platform project; do not introduce a second Supabase or OIDC user store.
 - Password policy enforced with minimum 12 and maximum 128 characters,
   including lower-case, upper-case, numeric, and non-alphanumeric characters.
 - TOTP MFA enabled.
@@ -39,6 +43,11 @@ Identity Platform must have:
   - `pantheon-lupin-dev-20260719.web.app`
   - `pantheon-lupin-dev-fe.35.201.204.12.sslip.io`
   - `localhost`
+
+The hosted functional browser path uses the Firebase Web SDK's short-lived
+Google ID token exactly like an email/password ID token. The BFF validates the
+token against the same issuer/audience/JWKS configuration; no OAuth client
+secret is compiled into the frontend.
 
 Frontend repository variables:
 
