@@ -178,7 +178,11 @@ switch path.
 
 The accepted release transaction is ordered:
 
-1. Resolve both exact protected `dev` tips.
+1. Resolve the exact protected Pantheon `dev` tip and the exact FE candidate
+   SHA. For a pre-merge FE candidate, `frontend_ref` identifies the candidate
+   branch and is checked against its remote tip; workflow definitions are still
+   dispatched from trusted `execute-plans/dev` code, so an unmerged branch
+   cannot replace the controller itself.
 2. Generate and seal the immutable compatibility ledger and hosted rollback
    baseline.
 3. Deploy the exact BFF candidate under the shared environment lease and pass

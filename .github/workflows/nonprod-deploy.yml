@@ -29,9 +29,14 @@ on:
         default: ""
         type: string
       frontend_sha:
-        description: "Dev only: exact current execute-plans dev SHA for the paired release."
+        description: "Dev only: exact execute-plans FE candidate SHA for the paired release."
         required: false
         default: ""
+        type: string
+      frontend_ref:
+        description: "Dev only: exact execute-plans ref that owns frontend_sha (dev or candidate branch)."
+        required: false
+        default: "dev"
         type: string
       allow_dirty:
         description: "Emergency only: allow dirty remote checkout"
@@ -88,6 +93,7 @@ jobs:
     outputs:
       backend_sha: ${{ steps.target.outputs.sha }}
       frontend_sha: ${{ steps.frontend.outputs.sha }}
+      frontend_ref: ${{ steps.frontend.outputs.ref }}
       previous_backend_sha: ${{ steps.rollback_baseline.outputs.sha }}
       previous_frontend_sha: ${{ steps.rollback_baseline.outputs.frontend_sha }}
       release_candidate_id: ${{ steps.release_admission.outputs.release_candidate_id }}
@@ -105,6 +111,7 @@ jobs:
       TARGET_COMPONENT: ${{ inputs.component }}
       TARGET_REF: ${{ inputs.ref || github.sha }}
       FRONTEND_SHA: ${{ inputs.frontend_sha }}
+      FRONTEND_REF: ${{ inputs.frontend_ref }}
       ALLOW_DIRTY: ${{ inputs.allow_dirty }}
       DEV_AUTH_PROFILE: ${{ inputs.dev_auth_profile }}
       PPL_ALLOC_009_DEV_PROOF_ENABLED: ${{ inputs.ppl_alloc_009_dev_proof_enabled }}
@@ -144,7 +151,7 @@ jobs:
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           repository: ajoe734/execute-plans
-          ref: dev
+          ref: ${{ env.FRONTEND_REF }}
           path: .agora-frontend
           fetch-depth: 0
           persist-credentials: false
@@ -196,16 +203,37 @@ jobs:
         shell: /bin/bash --noprofile --norc -euo pipefail {0}
         run: |
           requested="${FRONTEND_SHA,,}"
-          current="$(git rev-parse refs/remotes/origin/dev)"
           [[ "${requested}" =~ ^[0-9a-f]{40}$ ]] || {
             echo "frontend_sha must be one exact lowercase 40-character commit SHA" >&2
             exit 1
           }
-          if [[ "${requested}" != "${current}" ]]; then
-            echo "Out-of-order execute-plans candidate rejected: current dev is ${current}, requested ${requested}" >&2
+          [[ "${FRONTEND_REF}" =~ ^[A-Za-z0-9._/-]+$ && "${FRONTEND_REF}" != *..* && "${FRONTEND_REF}" != /* && "${FRONTEND_REF}" != */ && "${FRONTEND_REF}" != *//* ]] || {
+            echo "frontend_ref must be one exact branch ref" >&2
             exit 1
+          }
+          git fetch --no-tags origin "refs/heads/${FRONTEND_REF}:refs/remotes/origin/${FRONTEND_REF}" >/dev/null 2>&1 || {
+            echo "execute-plans frontend ref does not exist: ${FRONTEND_REF}" >&2
+            exit 1
+          }
+          resolved="$(git rev-parse "${requested}^{commit}")"
+          [[ "${resolved}" == "${requested}" ]] || {
+            echo "execute-plans frontend ref does not resolve to the requested SHA" >&2
+            exit 1
+          }
+          ref_tip="$(git rev-parse "refs/remotes/origin/${FRONTEND_REF}")"
+          [[ "${ref_tip}" == "${requested}" ]] || {
+            echo "execute-plans frontend ref ${FRONTEND_REF} moved: tip=${ref_tip} requested=${requested}" >&2
+            exit 1
+          }
+          if [[ "${FRONTEND_REF}" == "dev" ]]; then
+            current="$(git rev-parse refs/remotes/origin/dev)"
+            [[ "${requested}" == "${current}" ]] || {
+              echo "current execute-plans dev moved: current=${current} requested=${requested}" >&2
+              exit 1
+            }
           fi
           echo "sha=${requested}" >> "${GITHUB_OUTPUT}"
+          echo "ref=${FRONTEND_REF}" >> "${GITHUB_OUTPUT}"
 
       - name: Generate immutable exact-pair admission before any dev switch
         id: release_admission
@@ -228,7 +256,7 @@ jobs:
             --output "${manifest}" \
             --frontend-root "${GITHUB_WORKSPACE}/.agora-frontend" \
             --backend-dev-ref refs/remotes/origin/dev \
-            --frontend-dev-ref refs/remotes/origin/dev \
+            --frontend-dev-ref "refs/remotes/origin/${FRONTEND_REF}" \
             --backend-runtime-commit "${{ steps.target.outputs.sha }}" \
             --frontend-runtime-commit "${{ steps.frontend.outputs.sha }}" \
             --compatibility-status accepted
@@ -236,7 +264,7 @@ jobs:
             --manifest "${manifest}" \
             --frontend-root "${GITHUB_WORKSPACE}/.agora-frontend" \
             --backend-dev-ref refs/remotes/origin/dev \
-            --frontend-dev-ref refs/remotes/origin/dev \
+            --frontend-dev-ref "refs/remotes/origin/${FRONTEND_REF}" \
             --backend-runtime-commit "${{ steps.target.outputs.sha }}" \
             --frontend-runtime-commit "${{ steps.frontend.outputs.sha }}" \
             --evidence-out "${ledger}"
@@ -1827,6 +1855,7 @@ jobs:
     outputs:
       backend_sha: ${{ needs.deploy-dev.outputs.backend_sha }}
       frontend_sha: ${{ needs.deploy-dev.outputs.frontend_sha }}
+      frontend_ref: ${{ needs.deploy-dev.outputs.frontend_ref }}
       release_candidate_id: ${{ needs.deploy-dev.outputs.release_candidate_id }}
       pair_id: ${{ steps.frontend_release.outputs.pair_id }}
       candidate_id: ${{ steps.frontend_release.outputs.candidate_id || needs.deploy-dev.outputs.release_candidate_id }}
@@ -1839,6 +1868,7 @@ jobs:
       RELEASE_EVIDENCE_DIR: ${{ github.workspace }}/.pantheon-cross-repo-release-${{ github.run_id }}-${{ github.run_attempt }}
       DEV_BFF_URL: ${{ vars.DEV_BFF_URL || 'https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io' }}
       DEV_FE_URL: ${{ vars.DEV_FE_URL || 'https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io' }}
+      FRONTEND_REF: ${{ needs.deploy-dev.outputs.frontend_ref }}
     steps:
       - name: Checkout pinned lease controller
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
@@ -1875,6 +1905,7 @@ jobs:
           set +e
           python3 .target/scripts/cross_repo_release_controller.py \
             --frontend-sha "${FRONTEND_SHA}" \
+            --frontend-ref "${FRONTEND_REF}" \
             --backend-sha "${BACKEND_SHA}" \
             --bff-base-url "${DEV_BFF_URL}" \
             --fe-base-url "${DEV_FE_URL}" \
