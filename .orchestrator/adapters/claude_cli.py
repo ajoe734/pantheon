@@ -19,6 +19,7 @@ from common import (
     spawn_background_process,
     command_exists,
     worker_runtime_paths,
+    supervisor_issued_access_roots,
 )
 from provider_permissions import desired_claude_local_settings
 
@@ -83,38 +84,7 @@ def _configured_claude_cli(config: dict | None = None, provider_id: str | None =
     return command_exists(runtime.get("cli") or "claude")
 
 
-def _supervisor_issued_access_roots(metadata: dict | None) -> list[Path]:
-    """Return absolute roots that the supervisor issued for governed task work.
-
-    Claude limits file and shell access to its working directory unless extra
-    roots are declared explicitly.  Workers need read access to task briefs in
-    the canonical status root and execute access to the immutable command
-    runtime in order to report lifecycle transitions through ``ai-status.sh``.
-    Only supervisor-issued metadata is accepted here; task context and target
-    paths are intentionally not promoted into additional access roots.
-    """
-
-    metadata = metadata or {}
-    command_runtime = metadata.get("status_command_runtime") or {}
-    candidates = [metadata.get("status_root")]
-    if isinstance(command_runtime, dict):
-        candidates.append(command_runtime.get("command_root"))
-
-    roots: list[Path] = []
-    seen: set[Path] = set()
-    for candidate in candidates:
-        value = str(candidate or "").strip()
-        if not value:
-            continue
-        path = Path(os.path.expanduser(value))
-        if not path.is_absolute():
-            continue
-        resolved = path.resolve()
-        if resolved in seen:
-            continue
-        seen.add(resolved)
-        roots.append(resolved)
-    return roots
+_supervisor_issued_access_roots = supervisor_issued_access_roots
 
 
 class ClaudeCLIAdapter(BaseAdapter):

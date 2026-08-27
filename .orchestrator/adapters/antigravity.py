@@ -15,6 +15,7 @@ from common import (
     runtime_log_path,
     spawn_background_process,
     worker_runtime_paths,
+    supervisor_issued_access_roots,
 )
 
 
@@ -147,14 +148,25 @@ class AntigravityAdapter(BaseAdapter):
         if approval.get("dangerously_skip_permissions", True):
             command.append("--dangerously-skip-permissions")
         include_directories = settings.get("include_directories")
+        add_dirs: list[Path] = []
         if include_directories:
             root = workspace_root
-            paths = [str(root)] if include_directories is True else include_directories
+            paths = [root] if include_directories is True else include_directories
             if isinstance(paths, (str, os.PathLike)):
                 paths = [paths]
             for path in paths:
                 expanded = Path(os.path.expanduser(str(path)))
-                command.extend(["--add-dir", str(expanded if expanded.is_absolute() else root / expanded)])
+                add_dirs.append(expanded if expanded.is_absolute() else root / expanded)
+        for access_root in supervisor_issued_access_roots(request.metadata):
+            add_dirs.append(access_root)
+
+        seen_dirs: set[Path] = set()
+        for d in add_dirs:
+            resolved = d.resolve()
+            if resolved in seen_dirs:
+                continue
+            seen_dirs.add(resolved)
+            command.extend(["--add-dir", str(resolved)])
         command.extend(["--prompt", request.message])
 
         base_env = dict(os.environ)

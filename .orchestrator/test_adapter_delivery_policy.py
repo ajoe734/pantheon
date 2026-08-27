@@ -661,8 +661,8 @@ class AdapterDeliveryPolicyTests(unittest.TestCase):
         self.assertIn("--print-timeout", result.command)
         self.assertEqual(result.command[result.command.index("--print-timeout") + 1], "15m")
         self.assertIn("--dangerously-skip-permissions", result.command)
-        self.assertIn("--add-dir", result.command)
-        self.assertEqual(result.command[result.command.index("--add-dir") + 1], str(root / "task-worktree"))
+        add_dirs = [result.command[i + 1] for i, v in enumerate(result.command) if v == "--add-dir"]
+        self.assertEqual(add_dirs, [str(root / "task-worktree"), str(root / "supervisor-root")])
         self.assertEqual(spawn.call_args.kwargs["cwd"], root / "task-worktree")
         env = spawn.call_args.kwargs["env"]
         self.assertEqual(env["AI_NAME"], "Antigravity2")
@@ -675,6 +675,105 @@ class AdapterDeliveryPolicyTests(unittest.TestCase):
         self.assertEqual(env["ORCH_TASK_ID"], "T-AGY2")
         self.assertEqual(env["ORCH_REASON"], "owned_ready_dispatch")
         self.assertEqual(env["PANTHEON_STATUS_ROOT"], str(root / "supervisor-root"))
+
+    def test_antigravity_adds_supervisor_issued_status_and_command_roots(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            status_root = root / "status-root"
+            command_root = root / "command-runtime"
+            config = {
+                "paths": {"status_file": str(status_root / "ai-status.json")},
+                "agents": {"antigravity": {"id": "antigravity", "display_name": "Antigravity", "provider": "antigravity"}},
+                "providers": {
+                    "antigravity": {
+                        "delivery_mode": "antigravity",
+                        "antigravity": {
+                            "cli": "agy",
+                        },
+                        "approval": {"dangerously_skip_permissions": True},
+                    }
+                },
+            }
+            request = DeliveryRequest(
+                agent_id="antigravity",
+                provider="antigravity",
+                delivery_mode="antigravity",
+                message="wake",
+                metadata={
+                    "status_root": str(status_root),
+                    "status_command_runtime": {"command_root": str(command_root)},
+                },
+            )
+            adapter = AntigravityAdapter(config=config, provider_capabilities={})
+            fake_process = mock.Mock(pid=1234)
+
+            with (
+                mock.patch("adapters.antigravity.command_exists", return_value="agy"),
+                mock.patch("adapters.antigravity._auth_ready", return_value=True),
+                mock.patch("adapters.antigravity.delivery_runtime_env", return_value={}),
+                mock.patch(
+                    "adapters.antigravity.spawn_background_process",
+                    return_value=(fake_process, root / "agy.log"),
+                ),
+            ):
+                result = adapter.deliver(request)
+
+        self.assertTrue(result.ok)
+        add_dirs = [
+            result.command[index + 1]
+            for index, value in enumerate(result.command)
+            if value == "--add-dir"
+        ]
+        self.assertEqual(add_dirs, [str(status_root), str(command_root)])
+
+    def test_antigravity_deduplicates_roots_and_ignores_task_context(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            status_root = root / "status-root"
+            config = {
+                "paths": {"status_file": str(status_root / "ai-status.json")},
+                "agents": {"antigravity": {"id": "antigravity", "display_name": "Antigravity", "provider": "antigravity"}},
+                "providers": {
+                    "antigravity": {
+                        "delivery_mode": "antigravity",
+                        "antigravity": {
+                            "cli": "agy",
+                        },
+                        "approval": {"dangerously_skip_permissions": True},
+                    }
+                },
+            }
+            request = DeliveryRequest(
+                agent_id="antigravity",
+                provider="antigravity",
+                delivery_mode="antigravity",
+                message="wake",
+                context_files=["task-controlled-relative-path"],
+                metadata={
+                    "status_root": str(status_root),
+                    "status_command_runtime": {"command_root": str(status_root)},
+                },
+            )
+            adapter = AntigravityAdapter(config=config, provider_capabilities={})
+            fake_process = mock.Mock(pid=1234)
+
+            with (
+                mock.patch("adapters.antigravity.command_exists", return_value="agy"),
+                mock.patch("adapters.antigravity._auth_ready", return_value=True),
+                mock.patch("adapters.antigravity.delivery_runtime_env", return_value={}),
+                mock.patch(
+                    "adapters.antigravity.spawn_background_process",
+                    return_value=(fake_process, root / "agy.log"),
+                ),
+            ):
+                result = adapter.deliver(request)
+
+        add_dirs = [
+            result.command[index + 1]
+            for index, value in enumerate(result.command)
+            if value == "--add-dir"
+        ]
+        self.assertEqual(add_dirs, [str(status_root)])
 
     def _rotation_config(self, root: Path) -> dict:
         return {

@@ -372,10 +372,39 @@ def bind_worker_sandbox(
     # 6. Leased delivery worktree is explicitly writable
     if ws_resolved:
         bwrap_cmd.extend(["--bind", str(ws_resolved), str(ws_resolved)])
+        dot_git = ws_resolved / ".git"
+        if dot_git.is_file():
+            try:
+                content = dot_git.read_text(encoding="utf-8").strip()
+                if content.startswith("gitdir:"):
+                    gitdir_raw = content[len("gitdir:"):].strip()
+                    gitdir = Path(gitdir_raw)
+                    if not gitdir.is_absolute():
+                        gitdir = (ws_resolved / gitdir).resolve()
+                    else:
+                        gitdir = gitdir.resolve()
+                    if gitdir.exists():
+                        bwrap_cmd.extend(["--bind", str(gitdir), str(gitdir)])
+                        commondir_file = gitdir / "commondir"
+                        if commondir_file.exists():
+                            commondir_raw = commondir_file.read_text(encoding="utf-8").strip()
+                            commondir = Path(commondir_raw)
+                            if not commondir.is_absolute():
+                                commondir = (gitdir / commondir).resolve()
+                            else:
+                                commondir = commondir.resolve()
+                            if commondir.exists():
+                                for git_sub in ("objects", "refs", "logs"):
+                                    sub_p = commondir / git_sub
+                                    if sub_p.exists():
+                                        bwrap_cmd.extend(["--bind", str(sub_p), str(sub_p)])
+            except OSError:
+                pass
 
     # 7. Governed coordination state interfaces
+    governed_candidates: list[Path] = []
     if coord_resolved and (ws_resolved is None or coord_resolved != ws_resolved):
-        governed_candidates = [
+        governed_candidates.extend([
             coord_resolved / "ai-status.json",
             coord_resolved / "ai-activity-log.jsonl",
             coord_resolved / "current-work.md",
@@ -389,14 +418,39 @@ def bind_worker_sandbox(
             coord_resolved / ".orchestrator" / "worker-runtime",
             coord_resolved / "archive" / "logs",
             coord_resolved / ".orchestrator" / "logs",
-        ]
-        event_log = os.environ.get("PANTHEON_TASK_STATE_EVENT_LOG")
-        if event_log and event_log.strip():
-            governed_candidates.append(Path(os.path.expanduser(event_log.strip())).resolve())
+        ])
 
-        for p in governed_candidates:
+    event_log = os.environ.get("PANTHEON_TASK_STATE_EVENT_LOG")
+    if event_log and event_log.strip():
+        event_log_path = Path(os.path.expanduser(event_log.strip())).resolve()
+        parent = event_log_path.parent
+        if (
+            parent.exists()
+            and (coord_resolved is None or parent != coord_resolved)
+            and (command_root is None or parent != command_root)
+            and not (parent / ".git").exists()
+        ):
+            governed_candidates.append(parent)
+        else:
+            governed_candidates.extend([
+                event_log_path,
+                event_log_path.with_name(f"{event_log_path.name}.lock"),
+                event_log_path.with_name(f"{event_log_path.name}.head.json"),
+                event_log_path.with_name(f"{event_log_path.name}.legacy-anchor.json"),
+                event_log_path.with_name(f"{event_log_path.name}.checkpoint.json"),
+            ])
+
+    seen_bound: set[Path] = set()
+    for p in governed_candidates:
+        try:
             if p.exists():
-                bwrap_cmd.extend(["--bind", str(p.resolve()), str(p.resolve())])
+                p_res = p.resolve()
+                if p_res != Path("/") and (coord_resolved is None or p_res != coord_resolved):
+                    if p_res not in seen_bound:
+                        seen_bound.add(p_res)
+                        bwrap_cmd.extend(["--bind", str(p_res), str(p_res)])
+        except OSError:
+            pass
 
     # 8. Procfs and user command
     bwrap_cmd.extend([

@@ -685,6 +685,40 @@ def delivery_status_root(config: dict[str, Any], metadata: dict[str, Any] | None
     return repo_root
 
 
+def supervisor_issued_access_roots(metadata: dict[str, Any] | None) -> list[Path]:
+    """Return absolute roots that the supervisor issued for governed task work.
+
+    Workers limit file access to their working directory unless extra roots
+    are declared explicitly. Workers need read access to task briefs in the
+    canonical status root and execute access to the immutable command runtime
+    in order to report lifecycle transitions through ``ai-status.sh``.
+    Only supervisor-issued metadata is accepted here; task context and target
+    paths are intentionally not promoted into additional access roots.
+    """
+
+    metadata = metadata or {}
+    command_runtime = metadata.get("status_command_runtime") or {}
+    candidates = [metadata.get("status_root")]
+    if isinstance(command_runtime, dict):
+        candidates.append(command_runtime.get("command_root"))
+
+    roots: list[Path] = []
+    seen: set[Path] = set()
+    for candidate in candidates:
+        value = str(candidate or "").strip()
+        if not value:
+            continue
+        path = Path(os.path.expanduser(value))
+        if not path.is_absolute():
+            continue
+        resolved = path.resolve()
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        roots.append(resolved)
+    return roots
+
+
 STATUS_COMMAND_ROOT_ENV = "PANTHEON_COMMAND_ROOT"
 STATUS_COMMAND_SHA_ENV = "PANTHEON_COMMAND_RUNTIME_SHA"
 STATUS_COMMAND_REMOTE_ENV = "PANTHEON_COMMAND_REMOTE"

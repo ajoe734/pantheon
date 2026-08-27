@@ -1028,6 +1028,99 @@ class TestCrossRepoLeasedWorktreeWriteBoundary(unittest.TestCase):
             self.assertNotIn(str(fake_local.resolve()), bound_rw_paths)
             self.assertNotIn(str(local_bin.resolve()), bound_rw_paths)
 
+    def test_bind_worker_sandbox_authoritative_task_state_event_log_runtime_dir(self):
+        with tempfile.TemporaryDirectory(prefix="worker-runner-sandbox-eventlog-") as temp_dir:
+            root = Path(temp_dir)
+            central = root / "central"
+            command_root = root / "command-runtime"
+            worktree = root / "execute-plans-worktree"
+            runtime_dir = root / "runtime"
+            runtime_dir.mkdir(parents=True, exist_ok=True)
+            event_log = runtime_dir / "task-state-events-v2.jsonl"
+            event_log.write_text("{}\n")
+            event_lock = runtime_dir / "task-state-events-v2.jsonl.lock"
+            event_lock.touch()
+            event_head = runtime_dir / "task-state-events-v2.jsonl.head.json"
+            event_head.write_text("{}\n")
+
+            _init_repo(central)
+            _init_repo(command_root)
+            _init_repo(worktree)
+            _write_status(central)
+
+            cmd = ["python3", "-c", "pass"]
+            env = {
+                "PANTHEON_TASK_STATE_EVENT_LOG": str(event_log),
+            }
+            with mock.patch.dict(os.environ, env, clear=False):
+                sandbox_args = wr.bind_worker_sandbox(
+                    cmd,
+                    command_root=command_root,
+                    workspace_path=worktree,
+                    coordination_root=central,
+                    sandbox_binary="/usr/bin/bwrap",
+                )
+
+            # 1. Dedicated runtime directory is mounted --bind (read-write)
+            self.assertIn(str(runtime_dir.resolve()), sandbox_args)
+            runtime_idx = sandbox_args.index(str(runtime_dir.resolve()))
+            self.assertEqual(sandbox_args[runtime_idx - 1], "--bind")
+
+            # 2. Central coordination root and command runtime are NOT mounted --bind
+            bound_rw_paths = [
+                sandbox_args[i + 1]
+                for i, arg in enumerate(sandbox_args)
+                if arg in ("--bind", "--bind-try") and i + 1 < len(sandbox_args)
+            ]
+            self.assertNotIn(str(central.resolve()), bound_rw_paths)
+            self.assertNotIn(str(command_root.resolve()), bound_rw_paths)
+
+    def test_bind_worker_sandbox_linked_worktree_git_metadata_rw(self):
+        with tempfile.TemporaryDirectory(prefix="worker-runner-sandbox-wt-") as temp_dir:
+            root = Path(temp_dir)
+            central = root / "central"
+            command_root = root / "command-runtime"
+            _init_repo(central)
+            _init_repo(command_root)
+            _write_status(central)
+
+            # Create a linked worktree
+            worktree = root / "leased-worktree"
+            subprocess.run(
+                ["git", "worktree", "add", "-b", "task-wt", str(worktree), "HEAD"],
+                cwd=central,
+                check=True,
+                capture_output=True,
+            )
+
+            cmd = ["python3", "-c", "pass"]
+            sandbox_args = wr.bind_worker_sandbox(
+                cmd,
+                command_root=command_root,
+                workspace_path=worktree,
+                coordination_root=central,
+                sandbox_binary="/usr/bin/bwrap",
+            )
+
+            # 1. Leased worktree is mounted --bind
+            self.assertIn(str(worktree.resolve()), sandbox_args)
+            ws_idx = sandbox_args.index(str(worktree.resolve()))
+            self.assertEqual(sandbox_args[ws_idx - 1], "--bind")
+
+            # 2. Worktree gitdir and common git objects/refs/logs are mounted --bind
+            git_objects = central / ".git" / "objects"
+            self.assertIn(str(git_objects.resolve()), sandbox_args)
+            obj_idx = sandbox_args.index(str(git_objects.resolve()))
+            self.assertEqual(sandbox_args[obj_idx - 1], "--bind")
+
+            # 3. Central working directory is NOT mounted --bind
+            bound_rw_paths = [
+                sandbox_args[i + 1]
+                for i, arg in enumerate(sandbox_args)
+                if arg in ("--bind", "--bind-try") and i + 1 < len(sandbox_args)
+            ]
+            self.assertNotIn(str(central.resolve()), bound_rw_paths)
+
     @unittest.skipUnless(_FUNCTIONAL_BWRAP, "Functional bubblewrap with user namespace support is required for sandbox execution tests")
     def test_reproduce_and_prevent_20260827_reviewer_checkout_mutation(self):
         """Reproduce and prove fix for the 2026-08-27 reviewer checkout mutation incident.
