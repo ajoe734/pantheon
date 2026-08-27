@@ -13,7 +13,7 @@ import json
 import os
 import re
 import threading
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Dict, List, Optional
 
 
@@ -116,12 +116,18 @@ class InteractionLifecycleStore:
                     status TEXT NOT NULL,
                     retry_count INTEGER NOT NULL DEFAULT 0,
                     trace_id TEXT NOT NULL,
+                    lease_owner TEXT,
+                    lease_until TIMESTAMPTZ,
+                    demo_run_id TEXT,
                     created_at TIMESTAMPTZ NOT NULL,
                     updated_at TIMESTAMPTZ NOT NULL,
                     UNIQUE (idempotency_scope, idempotency_key),
                     CHECK (status IN ('queued','running','completed','degraded','failed'))
                 )
             """)
+            conn.execute(f'ALTER TABLE {self._request_table} ADD COLUMN IF NOT EXISTS lease_owner TEXT')
+            conn.execute(f'ALTER TABLE {self._request_table} ADD COLUMN IF NOT EXISTS lease_until TIMESTAMPTZ')
+            conn.execute(f'ALTER TABLE {self._request_table} ADD COLUMN IF NOT EXISTS demo_run_id TEXT')
             conn.execute(f"""
                 CREATE INDEX IF NOT EXISTS ix_persona_interaction_scope_created
                 ON {self._request_table} (tenant_id, owner_user_id, created_at DESC, interaction_id)
@@ -130,6 +136,10 @@ class InteractionLifecycleStore:
                 CREATE INDEX IF NOT EXISTS ix_persona_interaction_recovery
                 ON {self._request_table}
                     (tenant_id, owner_user_id, status, created_at, interaction_id)
+            """)
+            conn.execute(f"""
+                CREATE INDEX IF NOT EXISTS ix_persona_interaction_claim
+                ON {self._request_table} (status, lease_until, created_at)
             """)
             conn.execute(f"""
                 CREATE TABLE IF NOT EXISTS {self._invocation_table} (
@@ -312,6 +322,7 @@ class InteractionLifecycleStore:
     ) -> tuple[Dict[str, Any], bool]:
         interaction_id = str(record["interaction_id"])
         compound = f"{idempotency_scope}:{idempotency_key}"
+        demo_run_id = record.get("demo_run_id")
         if self.backend == "memory":
             with self._lock:
                 replay = self._idempotency.get(compound)
@@ -325,24 +336,38 @@ class InteractionLifecycleStore:
                         raise InteractionConflict("interaction_id reused with different immutable content")
                     return self.get(interaction_id, record["tenant_id"], record["owner_user_id"]), False  # type: ignore[return-value]
                 saved = copy.deepcopy(record)
-                saved.update({"request_fingerprint": fingerprint, "trace_id": trace_id})
+                saved.update({"request_fingerprint": fingerprint, "trace_id": trace_id, "demo_run_id": demo_run_id, "lease_owner": None, "lease_until": None})
                 self._requests[interaction_id] = saved
                 self._idempotency[compound] = (fingerprint, interaction_id)
                 self._audit_locked(interaction_id, f"audit:{interaction_id}:submitted", {
                     "audit_id": f"audit:{interaction_id}:submitted", "action": "interaction_submitted",
                     "actor_id": saved["human_request"]["operator_id"], "occurred_at": saved["created_at"],
                 })
+                self._enqueue_locked(interaction_id, {
+                    "outbox_id": f"iob:interaction_queued:{interaction_id}",
+                    "projection_kind": "interaction_queued",
+                    "payload": {
+                        "interaction_id": interaction_id,
+                        "workshop_id": record["workshop_id"],
+                        "tenant_id": record["tenant_id"],
+                        "owner_user_id": record["owner_user_id"],
+                        "status": "queued",
+                        "created_at": record["created_at"],
+                        "trace_id": trace_id,
+                        "demo_run_id": demo_run_id,
+                    },
+                })
                 return self._materialize_locked(interaction_id), True
         with self._connect() as conn:
             inserted = conn.execute(
                 f"INSERT INTO {self._request_table} "
                 "(interaction_id,tenant_id,owner_user_id,workshop_id,idempotency_scope,idempotency_key,"
-                "request_fingerprint,request_json,status,trace_id,created_at,updated_at) "
-                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s::jsonb,'queued',%s,%s,%s) "
+                "request_fingerprint,request_json,status,trace_id,demo_run_id,created_at,updated_at) "
+                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s::jsonb,'queued',%s,%s,%s,%s) "
                 "ON CONFLICT DO NOTHING RETURNING interaction_id",
                 (interaction_id, record["tenant_id"], record["owner_user_id"], record["workshop_id"],
                  idempotency_scope, idempotency_key, fingerprint, json.dumps(record, default=str),
-                 trace_id, record["created_at"], record["updated_at"]),
+                 trace_id, demo_run_id, record["created_at"], record["updated_at"]),
             ).fetchone()
             created = inserted is not None
             existing = conn.execute(
@@ -364,6 +389,20 @@ class InteractionLifecycleStore:
                 self._insert_audit_pg(conn, interaction_id, f"audit:{interaction_id}:submitted", {
                     "audit_id": f"audit:{interaction_id}:submitted", "action": "interaction_submitted",
                     "actor_id": record["human_request"]["operator_id"], "occurred_at": record["created_at"],
+                })
+                self._enqueue_pg(conn, interaction_id, {
+                    "outbox_id": f"iob:interaction_queued:{interaction_id}",
+                    "projection_kind": "interaction_queued",
+                    "payload": {
+                        "interaction_id": interaction_id,
+                        "workshop_id": record["workshop_id"],
+                        "tenant_id": record["tenant_id"],
+                        "owner_user_id": record["owner_user_id"],
+                        "status": "queued",
+                        "created_at": record["created_at"],
+                        "trace_id": trace_id,
+                        "demo_run_id": demo_run_id,
+                    },
                 })
         loaded = self.get(existing_id, record["tenant_id"], record["owner_user_id"])
         if loaded is None:  # pragma: no cover - defensive corruption guard
@@ -403,10 +442,24 @@ class InteractionLifecycleStore:
                     return copy.deepcopy(row), True
                 if row["invocation"]["participant"]["persona_id"] != persona_id:
                     raise InteractionConflict("invocation identity reused for a different Persona")
-                if row["status"] == "queued":
-                    row.update({"status": "running", "attempt": row["attempt"] + 1, "lease_owner": lease_owner})
-                    row["invocation"]["status"] = "running"
-                    return copy.deepcopy(row), True
+                if row["status"] in {"queued", "running"}:
+                    now_dt = datetime.now(timezone.utc)
+                    l_until = row.get("lease_until")
+                    expired = True
+                    if l_until:
+                        try:
+                            expired = datetime.fromisoformat(str(l_until).replace("Z", "+00:00")) < now_dt
+                        except Exception:
+                            expired = True
+                    if row["status"] == "queued" or expired or row.get("lease_owner") != lease_owner:
+                        row.update({
+                            "status": "running",
+                            "attempt": row["attempt"] + 1,
+                            "lease_owner": lease_owner,
+                            "lease_until": (now_dt + timedelta(seconds=300)).isoformat().replace("+00:00", "Z"),
+                        })
+                        row["invocation"]["status"] = "running"
+                        return copy.deepcopy(row), True
                 return copy.deepcopy(row), False
         with self._connect() as conn:
             conn.execute(
@@ -832,7 +885,7 @@ class InteractionLifecycleStore:
                 return self._materialize_locked(interaction_id)
         with self._connect() as conn:
             request_row = conn.execute(
-                f"SELECT request_json,status,retry_count,trace_id,created_at,updated_at FROM {self._request_table} "
+                f"SELECT request_json,status,retry_count,trace_id,created_at,updated_at,lease_owner,lease_until,demo_run_id FROM {self._request_table} "
                 "WHERE interaction_id=%s AND tenant_id=%s AND owner_user_id=%s",
                 (interaction_id, tenant_id, user_id),
             ).fetchone()
@@ -857,6 +910,12 @@ class InteractionLifecycleStore:
         resource = _decode(request_row[0])
         resource.update({"status": request_row[1], "retry_count": request_row[2], "trace_id": request_row[3],
                          "created_at": _timestamp(request_row[4]), "updated_at": _timestamp(request_row[5])})
+        if request_row[6] is not None:
+            resource["lease_owner"] = request_row[6]
+        if request_row[7] is not None:
+            resource["lease_until"] = _timestamp(request_row[7])
+        if request_row[8] is not None:
+            resource["demo_run_id"] = request_row[8]
         resource["provider_invocations"] = []
         resource["opinions"] = []
         for invocation_json, opinion_json, error_json, status in invocations:
@@ -919,6 +978,155 @@ class InteractionLifecycleStore:
             if (item := self.get(row[0], tenant_id, user_id)) is not None
         ]
 
+    def claim_interaction(
+        self,
+        *,
+        lease_owner: str,
+        lease_duration_seconds: int = 300,
+        interaction_id: Optional[str] = None,
+        tenant_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        if self.backend == "memory":
+            with self._lock:
+                now_dt = datetime.now(timezone.utc)
+                candidates = []
+                for iid, req in self._requests.items():
+                    if interaction_id and iid != interaction_id:
+                        continue
+                    if tenant_id and req.get("tenant_id") != tenant_id:
+                        continue
+                    if user_id and req.get("owner_user_id") != user_id:
+                        continue
+                    st = req.get("status")
+                    l_until = req.get("lease_until")
+                    expired = False
+                    if l_until:
+                        try:
+                            expired = datetime.fromisoformat(str(l_until).replace("Z", "+00:00")) < now_dt
+                        except Exception:
+                            expired = True
+                    else:
+                        expired = True
+                    if st == "queued" or (st == "running" and expired):
+                        candidates.append(req)
+                if not candidates:
+                    return None
+                candidates.sort(key=lambda r: (r.get("created_at", ""), r.get("interaction_id", "")))
+                chosen = candidates[0]
+                chosen_id = chosen["interaction_id"]
+                lease_until_str = (now_dt + timedelta(seconds=lease_duration_seconds)).isoformat().replace("+00:00", "Z")
+                chosen["status"] = "running"
+                chosen["lease_owner"] = lease_owner
+                chosen["lease_until"] = lease_until_str
+                chosen["updated_at"] = _now()
+                return self.get(chosen_id, chosen["tenant_id"], chosen["owner_user_id"])
+
+        where_clauses = ["(status = 'queued' OR (status = 'running' AND (lease_until IS NULL OR lease_until < now())))"]
+        params: List[Any] = [lease_owner, lease_duration_seconds]
+        sub_params: List[Any] = []
+        if interaction_id:
+            where_clauses.append("interaction_id = %s")
+            sub_params.append(interaction_id)
+        if tenant_id:
+            where_clauses.append("tenant_id = %s")
+            sub_params.append(tenant_id)
+        if user_id:
+            where_clauses.append("owner_user_id = %s")
+            sub_params.append(user_id)
+        where_sql = " AND ".join(where_clauses)
+        query = f"""
+            UPDATE {self._request_table}
+            SET status = 'running',
+                lease_owner = %s,
+                lease_until = now() + (%s || ' seconds')::interval,
+                updated_at = now()
+            WHERE interaction_id = (
+                SELECT interaction_id
+                FROM {self._request_table}
+                WHERE {where_sql}
+                ORDER BY created_at ASC, interaction_id ASC
+                FOR UPDATE SKIP LOCKED
+                LIMIT 1
+            )
+            RETURNING interaction_id, tenant_id, owner_user_id
+        """
+        all_params = params + sub_params
+        with self._connect() as conn:
+            row = conn.execute(query, all_params).fetchone()
+        if row is None:
+            return None
+        return self.get(row[0], row[1], row[2])
+
+    def heartbeat_interaction(
+        self,
+        interaction_id: str,
+        *,
+        lease_owner: str,
+        lease_duration_seconds: int = 300,
+    ) -> bool:
+        if self.backend == "memory":
+            with self._lock:
+                req = self._requests.get(interaction_id)
+                if req and req.get("status") == "running" and req.get("lease_owner") == lease_owner:
+                    now_dt = datetime.now(timezone.utc)
+                    req["lease_until"] = (now_dt + timedelta(seconds=lease_duration_seconds)).isoformat().replace("+00:00", "Z")
+                    req["updated_at"] = _now()
+                    return True
+                return False
+        with self._connect() as conn:
+            row = conn.execute(
+                f"UPDATE {self._request_table} "
+                "SET lease_until = now() + (%s || ' seconds')::interval, updated_at = now() "
+                "WHERE interaction_id = %s AND status = 'running' AND lease_owner = %s "
+                "RETURNING interaction_id",
+                (lease_duration_seconds, interaction_id, lease_owner),
+            ).fetchone()
+            return row is not None
+
+    def release_interaction_lease(
+        self,
+        interaction_id: str,
+        *,
+        lease_owner: str,
+        reset_to_queued: bool = True,
+    ) -> bool:
+        new_status = "queued" if reset_to_queued else "running"
+        if self.backend == "memory":
+            with self._lock:
+                req = self._requests.get(interaction_id)
+                if req and req.get("status") == "running" and req.get("lease_owner") == lease_owner:
+                    req["status"] = new_status
+                    req["lease_owner"] = None
+                    req["lease_until"] = None
+                    req["updated_at"] = _now()
+                    if reset_to_queued:
+                        bucket = self._invocations.get(interaction_id, {})
+                        for inv_id, inv_row in bucket.items():
+                            if inv_row.get("status") == "running":
+                                inv_row["status"] = "queued"
+                                inv_row["lease_owner"] = None
+                                inv_row["lease_until"] = None
+                                inv_row["invocation"]["status"] = "queued"
+                    return True
+                return False
+        with self._connect() as conn:
+            row = conn.execute(
+                f"UPDATE {self._request_table} "
+                "SET status = %s, lease_owner = NULL, lease_until = NULL, updated_at = now() "
+                "WHERE interaction_id = %s AND status = 'running' AND lease_owner = %s "
+                "RETURNING interaction_id",
+                (new_status, interaction_id, lease_owner),
+            ).fetchone()
+            if row is not None and reset_to_queued:
+                conn.execute(
+                    f"UPDATE {self._invocation_table} "
+                    "SET status = 'queued', lease_owner = NULL, lease_until = NULL, updated_at = now() "
+                    "WHERE interaction_id = %s AND status = 'running'",
+                    (interaction_id,),
+                )
+            return row is not None
+
     def _materialize_locked(self, interaction_id: str) -> Dict[str, Any]:
         resource = copy.deepcopy(self._requests[interaction_id])
         resource.pop("request_fingerprint", None)
@@ -931,6 +1139,12 @@ class InteractionLifecycleStore:
         resource["candidate_proposal_links"] = list(copy.deepcopy(self._candidate_links.get(interaction_id, {})).values())
         resource["audit_refs"] = list(copy.deepcopy(self._audits.get(interaction_id, {})).keys())
         resource.setdefault("retry_count", 0)
+        if "lease_owner" in self._requests[interaction_id]:
+            resource["lease_owner"] = self._requests[interaction_id]["lease_owner"]
+        if "lease_until" in self._requests[interaction_id]:
+            resource["lease_until"] = self._requests[interaction_id]["lease_until"]
+        if "demo_run_id" in self._requests[interaction_id]:
+            resource["demo_run_id"] = self._requests[interaction_id]["demo_run_id"]
         return resource
 
     def _audit_locked(self, interaction_id: str, audit_id: str, audit: Dict[str, Any]) -> None:

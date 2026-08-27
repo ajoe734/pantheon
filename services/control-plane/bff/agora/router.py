@@ -256,4 +256,8 @@ def create_agora_router(
     router.include_router(create_trading_data_router(**_kw))
     router.include_router(create_decision_projection_router(**_kw, require_write_role=require_write_role))
 
+    router.interaction_lifecycle = interaction_lifecycle
+    router.workshop_store = workshop_store
+    router.proposal_store = proposal_store
+
     return router

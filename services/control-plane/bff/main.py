@@ -69502,19 +69502,20 @@ def _resolve_agora_interaction_context_ref(
 
 # AG-BE-000: Agora BFF package router (must stay last to avoid route conflicts)
 from agora.router import create_agora_router as _create_agora_router  # noqa: E402
-app.include_router(
-    _create_agora_router(
-        extract_identity=_extract_identity,
-        require_read_role=_require_read_role,
-        require_write_role=_require_operator_role,
-        bff_error=_bff_error,
-        utc_now=utc_now,
-        get_read_store=lambda: read_store,
-        get_trade_journey_store=lambda: _trade_journeys.EVENT_STORE,
-        sync_servant_agent=lambda persona: _ensure_agora_servant_openclaw_agent(dict(persona)),
-        canonical_context_ref_resolver=_resolve_agora_interaction_context_ref,
-    )
+_agora_router = _create_agora_router(
+    extract_identity=_extract_identity,
+    require_read_role=_require_read_role,
+    require_write_role=_require_operator_role,
+    bff_error=_bff_error,
+    utc_now=utc_now,
+    get_read_store=lambda: read_store,
+    get_trade_journey_store=lambda: _trade_journeys.EVENT_STORE,
+    sync_servant_agent=lambda persona: _ensure_agora_servant_openclaw_agent(dict(persona)),
+    canonical_context_ref_resolver=_resolve_agora_interaction_context_ref,
 )
+app.include_router(_agora_router)
+interaction_lifecycle = _agora_router.interaction_lifecycle
+workshop_store = _agora_router.workshop_store
 
 
 if __name__ == "__main__":

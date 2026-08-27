@@ -62,6 +62,8 @@ def drain_interaction_outbox(store: InteractionLifecycleStore, workshop_store: A
                 payload["workshop_id"], payload["event_type"], payload["data"],
                 event_id=str(payload["data"].get("event_id") or ""),
             )
+        elif kind in {"interaction_queued", "interaction_admitted", "interaction.queued"}:
+            pass
         else:  # pragma: no cover - durable corruption guard
             raise ValueError(f"unknown interaction projection kind: {kind}")
 
@@ -216,6 +218,7 @@ def run_selected_persona_interaction(
     lifecycle_store: Optional[InteractionLifecycleStore] = None,
     frozen_participants: Optional[List[Dict[str, Any]]] = None,
     invocation_attempt: int = 0,
+    lease_owner: Optional[str] = None,
 ) -> Dict[str, Any]:
     from agora.strategy_workshop.router import _ws_publish
 
@@ -337,7 +340,7 @@ def run_selected_persona_interaction(
         _ws_publish(workshop_id, "consultation.started", started_sse["data"])
 
     client = (client_factory or OpenClawOpsClient)()
-    lease_owner = f"bff:{uuid.uuid4().hex}"
+    lease_owner = lease_owner or f"worker:{uuid.uuid4().hex}"
     for index, (persona, participant, admission) in enumerate(frozen):
         invocation_id = "inv-" + hashlib.sha256(
             f"{interaction_id}\0{participant['persona_id']}\0{participant['persona_version']}\0{invocation_attempt}".encode("utf-8")
