@@ -259,32 +259,176 @@ def validate_status_command_runtime() -> dict[str, str]:
     }
 
 
-def bind_command_runtime_readonly(
+def _discover_readonly_repository_checkouts(
+    coordination_root: Path | None,
+    workspace_path: Path | None,
+    extra_roots: Iterable[Path | str] | None = None,
+) -> set[Path]:
+    """Find all local repository source checkouts that must remain read-only."""
+    ro_roots: set[Path] = set()
+    ws_resolved = Path(workspace_path).expanduser().resolve() if workspace_path else None
+    coord_resolved = Path(coordination_root).expanduser().resolve() if coordination_root else None
+
+    config_dict: dict[str, Any] = {}
+    if coord_resolved:
+        cfg_file = coord_resolved / ".orchestrator" / "config.json"
+        if cfg_file.exists():
+            try:
+                config_dict = json.loads(cfg_file.read_text(encoding="utf-8"))
+            except Exception:
+                pass
+    try:
+        from multi_repo_registry import iter_local_repositories
+        for repo_info in iter_local_repositories(config_dict):
+            repo_path = repo_info.get("resolved_local_path")
+            if isinstance(repo_path, Path) and repo_path.exists():
+                r_resolved = repo_path.resolve()
+                if ws_resolved and r_resolved == ws_resolved:
+                    continue
+                if coord_resolved and r_resolved == coord_resolved:
+                    continue
+                ro_roots.add(r_resolved)
+    except Exception:
+        pass
+
+    for env_key in ("ORCH_WORKSPACE_SOURCE_ROOT", "PANTHEON_WORKSPACE_SOURCE_ROOT", "PANTHEON_REPO_ROOT"):
+        val = os.environ.get(env_key)
+        if val and val.strip():
+            p = Path(os.path.expanduser(val.strip())).resolve()
+            if p.exists() and p.is_dir():
+                if ws_resolved and p == ws_resolved:
+                    continue
+                if coord_resolved and p == coord_resolved:
+                    continue
+                ro_roots.add(p)
+
+    if extra_roots:
+        for item in extra_roots:
+            p = Path(os.path.expanduser(str(item))).resolve()
+            if p.exists() and p.is_dir():
+                if ws_resolved and p == ws_resolved:
+                    continue
+                if coord_resolved and p == coord_resolved:
+                    continue
+                ro_roots.add(p)
+
+    worktrees_root = Path("/tmp/pantheon-worker-worktrees")
+    if worktrees_root.exists() and worktrees_root.is_dir():
+        if ws_resolved and ws_resolved != worktrees_root.resolve():
+            ro_roots.add(worktrees_root.resolve())
+
+    return ro_roots
+
+
+def bind_worker_sandbox(
     command: list[str],
     command_root: Path,
     *,
+    workspace_path: Path | None = None,
+    coordination_root: Path | None = None,
+    extra_readonly_roots: Iterable[Path | str] | None = None,
     sandbox_binary: str | None = None,
 ) -> list[str]:
-    """Wrap one provider command in a mount namespace with a read-only runtime.
+    """Wrap one provider command in a mount namespace with a leased-worktree write boundary.
 
-    The outer worker runner intentionally remains outside the namespace so it
-    can keep publishing heartbeats.  The provider retains the existing host
-    view (including its delivery worktree, status root, credentials, and
-    caches), while the exact validated command runtime is over-mounted
-    read-only.  A private PID namespace and procfs prevent `/proc/*/root` from
-    reaching a process whose mount namespace still exposes that tree writable.
+    Enforces:
+    - Exactly one leased delivery worktree (workspace_path) and governed
+      ai-status interfaces in coordination_root are writable.
+    - All shared source repositories, command runtime, coordination-root code/git,
+      and other worker worktrees remain strictly read-only.
+    - Outer worker_runner remains outside the namespace to publish heartbeats.
+    - Private PID namespace and procfs isolate the process tree.
     """
 
-    binary = sandbox_binary or shutil.which("bwrap")
+    binary = sandbox_binary or os.environ.get("PANTHEON_SANDBOX_BINARY") or shutil.which("bwrap")
     if not binary:
         raise RuntimeError(
             "bubblewrap (bwrap) is required to enforce the read-only "
             "PANTHEON_COMMAND_ROOT worker boundary"
         )
-    root = command_root.expanduser().resolve()
+    root = Path(command_root).expanduser().resolve()
     if not root.is_dir():
         raise RuntimeError(f"validated command runtime is not a directory: {root}")
-    return [
+
+    ws_resolved = Path(workspace_path).expanduser().resolve() if workspace_path else None
+    coord_resolved = Path(coordination_root).expanduser().resolve() if coordination_root else None
+
+    ro_paths: set[Path] = {root}
+    rw_paths: list[Path] = []
+
+    discovered_ro = _discover_readonly_repository_checkouts(
+        coord_resolved, ws_resolved, extra_roots=extra_readonly_roots
+    )
+    ro_paths.update(discovered_ro)
+
+    if coord_resolved and (ws_resolved is None or coord_resolved != ws_resolved):
+        git_dir = coord_resolved / ".git"
+        if git_dir.exists():
+            ro_paths.add(git_dir.resolve())
+        for code_dir in ("services", "scripts", "docs", "src", "integrations", "audits", "tests", "lean", "config"):
+            p = coord_resolved / code_dir
+            if p.exists() and p.is_dir():
+                ro_paths.add(p.resolve())
+        for doc_file in (
+            "TARGET_ARCHITECTURE.md",
+            "AI_COLLABORATION_GUIDE.md",
+            "CANONICAL_DOCUMENT_MAP.md",
+            "DOCUMENT_AUTHORITY_AND_RECORD_BOUNDARY.md",
+            "ROADMAP.md",
+            "DEVELOPMENT_WORKBREAKDOWN.md",
+            "WORKBENCH_DELIVERY_BACKLOG.md",
+            "DELIVERY_CLOSURE_AND_LOOP_STATES.md",
+            "EXECUTION_PROOF_AND_MATURITY_LEVELS.md",
+            "OSS_INTEGRATION_CHECKLIST.md",
+            "pyproject.toml",
+            "package.json",
+            "tsconfig.json",
+            "Makefile",
+            "Dockerfile",
+        ):
+            f = coord_resolved / doc_file
+            if f.exists() and f.is_file():
+                ro_paths.add(f.resolve())
+        orch_dir = coord_resolved / ".orchestrator"
+        if orch_dir.exists() and orch_dir.is_dir():
+            for item in orch_dir.iterdir():
+                if item.name not in {
+                    "state.json",
+                    "approval-queue.json",
+                    "task-state.lock",
+                    "activity-audit.lock",
+                    "worker-runtime",
+                    "logs",
+                    "task-state-events-v2.jsonl",
+                }:
+                    ro_paths.add(item.resolve())
+
+        governed_candidates = [
+            coord_resolved / "ai-status.json",
+            coord_resolved / "ai-activity-log.jsonl",
+            coord_resolved / "current-work.md",
+            coord_resolved / "docs-site",
+            coord_resolved / "ai-task-archive",
+            coord_resolved / ".orchestrator" / "state.json",
+            coord_resolved / ".orchestrator" / "approval-queue.json",
+            coord_resolved / ".orchestrator" / "task-state.lock",
+            coord_resolved / ".orchestrator" / "activity-audit.lock",
+            coord_resolved / ".orchestrator" / "worker-runtime",
+            coord_resolved / "archive" / "logs",
+            coord_resolved / ".orchestrator" / "logs",
+        ]
+        event_log = os.environ.get("PANTHEON_TASK_STATE_EVENT_LOG")
+        if event_log and event_log.strip():
+            governed_candidates.append(Path(os.path.expanduser(event_log.strip())).resolve())
+
+        for p in governed_candidates:
+            if p.exists():
+                rw_paths.append(p.resolve())
+
+    if ws_resolved:
+        rw_paths.append(ws_resolved)
+
+    bwrap_cmd = [
         str(Path(binary).expanduser().resolve()),
         "--die-with-parent",
         "--unshare-pid",
@@ -294,14 +438,32 @@ def bind_command_runtime_readonly(
         "--dev-bind",
         "/dev",
         "/dev",
-        "--ro-bind",
-        str(root),
-        str(root),
+    ]
+    for ro_mount in sorted(ro_paths, key=lambda p: (len(p.parts), str(p))):
+        bwrap_cmd.extend(["--ro-bind", str(ro_mount), str(ro_mount)])
+    for rw_mount in sorted(rw_paths, key=lambda p: (len(p.parts), str(p))):
+        bwrap_cmd.extend(["--bind", str(rw_mount), str(rw_mount)])
+
+    bwrap_cmd.extend([
         "--proc",
         "/proc",
         "--",
         *command,
-    ]
+    ])
+    return bwrap_cmd
+
+
+def bind_command_runtime_readonly(
+    command: list[str],
+    command_root: Path,
+    *,
+    sandbox_binary: str | None = None,
+) -> list[str]:
+    return bind_worker_sandbox(
+        command,
+        command_root=command_root,
+        sandbox_binary=sandbox_binary,
+    )
 
 
 def bind_relative_command_to_runtime(command: list[str], command_root: Path) -> list[str]:
@@ -458,7 +620,12 @@ def main(argv: list[str] | None = None) -> int:
         command,
         command_root,
     )
-    sandboxed_command = bind_command_runtime_readonly(command, command_root)
+    sandboxed_command = bind_worker_sandbox(
+        command,
+        command_root=command_root,
+        workspace_path=workspace_path if isinstance(workspace_path, Path) else None,
+        coordination_root=coordination_root,
+    )
     if workspace_path:
         try:
             os.chdir(workspace_path)
