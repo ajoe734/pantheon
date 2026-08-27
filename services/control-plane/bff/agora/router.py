@@ -50,6 +50,10 @@ from .candidate_decisions.service import CandidateDecisionService
 from .candidate_decisions.store import CandidateDecisionStore
 from .trading_data.router import create_trading_data_router
 from .decision_projection.router import create_decision_projection_router
+from .operational_readiness import (
+    AgoraOperationalReadinessService,
+    create_operational_readiness_router,
+)
 
 
 _CAPABILITY_MANIFEST_PATH = os.path.join(
@@ -221,6 +225,7 @@ def create_agora_router(
         **_kw,
         require_write_role=require_write_role,
         get_trade_journey_store=get_trade_journey_store,
+        workshop_store=workshop_store,
     ))
     router.include_router(create_dashboard_router(**_kw))
     router.include_router(create_shadow_router(**_kw))
@@ -255,5 +260,10 @@ def create_agora_router(
     ))
     router.include_router(create_trading_data_router(**_kw))
     router.include_router(create_decision_projection_router(**_kw, require_write_role=require_write_role))
+    router.include_router(create_operational_readiness_router(**_kw, get_read_store=get_read_store))
+
+    router.interaction_lifecycle = interaction_lifecycle
+    router.workshop_store = workshop_store
+    router.proposal_store = proposal_store
 
     return router

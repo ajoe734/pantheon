@@ -139,6 +139,7 @@ class SubmitInteractionRequest(BaseModel):
     model_config = {"extra": "forbid"}
     workshop_id: str = Field(min_length=1)
     interaction_id: Optional[str] = None
+    demo_run_id: Optional[str] = None
     human_request: Optional[ImmutableHumanRequest] = None
     context_snapshot: Optional[InteractionContextSnapshot] = None
     participants: Optional[List[SubmittedParticipant]] = None
@@ -351,41 +352,6 @@ def create_interaction_router(*, extract_identity: Callable[..., Any], require_r
                             "participant_snapshot": participant_snapshot})
         return {"included": [x for x in results if x["eligible"]], "excluded": [x for x in results if not x["eligible"]]}
 
-    def execute_resource(resource: Dict[str, Any]) -> Dict[str, Any]:
-        refs = resource["context_snapshot"]["context_refs"]
-        binding = resource.get("_context_binding") or {}
-        advice_environment = resource.get("_legacy_environment") or binding.get("advice_environment")
-        if advice_environment not in {"research", "shadow", "paper"}:
-            raise RuntimeError("durable interaction context omitted canonical advice_environment")
-        run_selected_persona_interaction(
-            workshop_store=workshop_store,
-            read_store=get_read_store(),
-            workshop_id=resource["workshop_id"],
-            interaction_id=resource["interaction_id"],
-            topic=resource["human_request"]["request_text"],
-            mode=resource["human_request"]["mode"],
-            participants=list(resource["context_snapshot"]["selected_persona_ids"]),
-            context_refs=[{
-                "type": item["kind"], "id": item["id"], "version_id": item.get("version"),
-            } for item in resource["context_snapshot"]["context_refs"]],
-            environment=advice_environment,
-            tenant_id=resource["tenant_id"],
-            user_id=resource["owner_user_id"],
-            operator_id=resource["human_request"]["operator_id"],
-            trace_id=resource["trace_id"],
-            proposal_snapshot=resource.get("proposal"),
-            proposal_etag=resource.get("proposal_etag"),
-            occurred_at=utc_now(),
-            human_submitted_at=resource["human_request"]["submitted_at"],
-            lifecycle_store=lifecycle,
-            frozen_participants=resource.get("_frozen_personas"),
-            invocation_attempt=int(resource.get("retry_count", 0)),
-        )
-        loaded = lifecycle.get(resource["interaction_id"], resource["tenant_id"], resource["owner_user_id"])
-        if loaded is None:  # pragma: no cover - corruption guard
-            raise RuntimeError("interaction disappeared after provider execution")
-        return loaded
-
     def validate_v19_context(body: SubmitInteractionRequest, session: Dict[str, Any], resolved: Any) -> Optional[Dict[str, Any]]:
         snapshot = body.context_snapshot
         human = body.human_request
@@ -476,8 +442,8 @@ def create_interaction_router(*, extract_identity: Callable[..., Any], require_r
         }
         return {key: value for key, value in resource.items() if key in allowed}
 
-    def daily_meta(resolved: Any, *, next_page_token: Optional[str] = None) -> Dict[str, Any]:
-        return {
+    def daily_meta(resolved: Any, *, next_page_token: Optional[str] = None, replayed: bool = False, admitted_at: Optional[str] = None) -> Dict[str, Any]:
+        meta = {
             "snapshot_at": utc_now(),
             "capability": "agora.persona.interaction.daily.v1",
             "audience": f"tenant:{resolved.tenant_id}:user:{resolved.user_id}",
@@ -487,6 +453,10 @@ def create_interaction_router(*, extract_identity: Callable[..., Any], require_r
             ),
             "next_page_token": next_page_token,
         }
+        if admitted_at is not None:
+            meta["admitted_at"] = admitted_at
+            meta["replayed"] = replayed
+        return meta
 
     @router.post("/bff/agora/interactions/context:resolve")
     def resolve_context(body: ResolveContextRequest, authorization: Optional[str] = Header(default=None),
@@ -1030,6 +1000,8 @@ def create_interaction_router(*, extract_identity: Callable[..., Any], require_r
             "_frozen_personas": frozen_entries,
             **({key: data[key] for key in ("proposal_id", "proposal_ref", "proposal_refs", "proposal", "proposal_etag") if key in data}),
         }
+        if getattr(body, "demo_run_id", None):
+            record["demo_run_id"] = body.demo_run_id
         try:
             resource, created = lifecycle.create_request(
                 record,
@@ -1040,9 +1012,10 @@ def create_interaction_router(*, extract_identity: Callable[..., Any], require_r
             )
         except InteractionConflict as exc:
             raise HTTPException(409, detail=str(exc)) from exc
-        if created or resource.get("status") in {"queued", "running"}:
-            resource = execute_resource(resource)
-        return {"data": public_resource(resource), "meta": daily_meta(resolved)}
+        return {
+            "data": public_resource(resource),
+            "meta": daily_meta(resolved, replayed=not created, admitted_at=resource.get("created_at")),
+        }
 
     @router.get("/bff/agora/interactions")
     def list_interactions(
@@ -1121,9 +1094,7 @@ def create_interaction_router(*, extract_identity: Callable[..., Any], require_r
             raise bff_error(404, ErrorCode.RESOURCE_NOT_FOUND, "Interaction not found", interaction_id)
         except InteractionConflict as exc:
             raise HTTPException(409, detail=str(exc)) from exc
-        if not replayed:
-            resource = execute_resource(resource)
-        return {"data": public_resource(resource), "meta": daily_meta(resolved)}
+        return {"data": public_resource(resource), "meta": daily_meta(resolved, replayed=replayed)}
 
     @router.post("/bff/agora/interactions:recover", status_code=202)
     def recover_interactions(
@@ -1135,9 +1106,7 @@ def create_interaction_router(*, extract_identity: Callable[..., Any], require_r
             drained = drain_interaction_outbox(lifecycle, workshop_store)
         except Exception:
             drained = 0
-        recovered: List[Dict[str, Any]] = []
-        for resource in lifecycle.recoverable(resolved.tenant_id, resolved.user_id):
-            recovered.append(execute_resource(resource))
+        recovered = lifecycle.recoverable(resolved.tenant_id, resolved.user_id)
         return {"data": [public_resource(item) for item in recovered],
                 "meta": {**daily_meta(resolved), "outbox_drained": drained}}
 

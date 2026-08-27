@@ -12,9 +12,11 @@ import jsonschema
 import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+import main as bff_main
 
 from agora.interaction.router import SubmitInteractionRequest
 from agora.interaction.store import InteractionLifecycleStore
+from agora.interaction.worker import AgoraInteractionWorker
 from test_agora_persona_interactions import AUTH, client
 
 
@@ -380,19 +382,30 @@ def test_retry_uses_frozen_persona_snapshot_and_new_invocation_identity(monkeypa
 
     c = client(monkeypatch)
     submitted = _submit(c, _v19_request(c, monkeypatch)).json()["data"]
-    assert submitted["status"] == "failed"
-    original = submitted["provider_invocations"][0]
+    assert submitted["status"] == "queued"
+    interaction_id = submitted["interaction_id"]
+    worker = AgoraInteractionWorker(
+        lifecycle_store=bff_main.interaction_lifecycle,
+        workshop_store=bff_main.workshop_store,
+        read_store=bff_main.read_store,
+    )
+    worker.run_once()
+    initial_detail = c.get(f"/bff/agora/interactions/{interaction_id}", headers=AUTH).json()["data"]
+    assert initial_detail["status"] == "failed"
+    original = initial_detail["provider_invocations"][0]
     bff_main.read_store.list_personas = lambda **_kwargs: [{
         "persona_id": "ready", "tenant_id": "pantheon-dev", "display_name": "DRIFTED",
         "lifecycle_state": "active", "environment_ceiling": "paper",
     }]
     retried = c.post(
-        f"/bff/agora/interactions/{submitted['interaction_id']}:retry",
+        f"/bff/agora/interactions/{interaction_id}:retry",
         headers={**AUTH, "Idempotency-Key": f"retry-drift-{uuid.uuid4().hex}"},
         json={"reason": "verify persisted freeze"},
     )
     assert retried.status_code == 202, retried.text
-    invocations = retried.json()["data"]["provider_invocations"]
+    worker.run_once()
+    retried_detail = c.get(f"/bff/agora/interactions/{interaction_id}", headers=AUTH).json()["data"]
+    invocations = retried_detail["provider_invocations"]
     assert len(invocations) == 2
     assert len({item["invocation_id"] for item in invocations}) == 2
     assert all(item["participant"]["display_name"] == original["participant"]["display_name"] for item in invocations)
@@ -714,8 +727,15 @@ def test_v19_propose_human_topic_never_becomes_governance_candidate(monkeypatch)
 def test_retry_command_is_durably_idempotent_and_audited(monkeypatch):
     c = client(monkeypatch)
     submitted = _submit(c, _v19_request(c, monkeypatch)).json()["data"]
-    assert submitted["status"] == "failed"
+    assert submitted["status"] == "queued"
     interaction_id = submitted["interaction_id"]
+    AgoraInteractionWorker(
+        lifecycle_store=bff_main.interaction_lifecycle,
+        workshop_store=bff_main.workshop_store,
+        read_store=bff_main.read_store,
+    ).run_once()
+    initial_detail = c.get(f"/bff/agora/interactions/{interaction_id}", headers=AUTH).json()["data"]
+    assert initial_detail["status"] == "failed"
     key = f"retry-{uuid.uuid4().hex}"
     first = c.post(
         f"/bff/agora/interactions/{interaction_id}:retry",

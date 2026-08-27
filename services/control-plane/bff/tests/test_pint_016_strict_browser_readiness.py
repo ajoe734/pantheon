@@ -166,6 +166,31 @@ def test_strict_operator_readiness_is_product_shaped_and_secret_free(monkeypatch
     assert JWT_SECRET not in response.text
 
 
+def test_readiness_survives_provider_failure_for_valid_strict_session(monkeypatch) -> None:
+    _strict_env(monkeypatch)
+
+    def _raise_provider() -> dict:
+        raise RuntimeError("openclaw provider unreachable")
+
+    monkeypatch.setattr(bff_main, "_assistant_provider_readiness", _raise_provider)
+    client = TestClient(bff_main.app, raise_server_exceptions=False)
+
+    response = client.get(
+        "/bff/auth/readiness",
+        headers={
+            "Authorization": f"Bearer {_token('operator')}",
+            "X-Tenant-Id": "tenant-pint-016",
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    data = response.json()["data"]
+    assert data["authReady"] is True
+    assert data["ready"] is True
+    assert data["providerReady"] is False
+    assert data["provider"]["ready"] is False
+
+
 def test_readiness_route_is_published_in_openapi(monkeypatch) -> None:
     _strict_env(monkeypatch)
     schema = TestClient(bff_main.app).get("/openapi.json")

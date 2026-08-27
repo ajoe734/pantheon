@@ -465,3 +465,116 @@ def test_paper_rank_snapshot_is_captured_before_broader_fleet_reads() -> None:
             assert fleet_row["rank"]["basis"] == "quarterly_ranking"
         finally:
             bff_main.read_store = original
+
+
+def test_sd_agc_03_persona_list_fleet_detail_admitted_identity_symmetry() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        original = bff_main.read_store
+        try:
+            client = _fresh_client(td)
+            list_resp = client.get("/bff/personas?page_size=100", headers=OPERATOR_HEADERS)
+            fleet_resp = client.get("/bff/management/persona-fleet?page_size=100", headers=OPERATOR_HEADERS)
+
+            assert list_resp.status_code == 200, list_resp.text
+            assert fleet_resp.status_code == 200, fleet_resp.text
+
+            list_items = list_resp.json()["data"]
+            fleet_items = fleet_resp.json()["data"]["items"]
+
+            list_ids = [item["id"] for item in list_items]
+            fleet_ids = [item["id"] for item in fleet_items]
+
+            # Invariant 1: Persona list and fleet share identical admitted identity set
+            assert set(list_ids) == set(fleet_ids)
+            assert len(list_ids) == len(fleet_ids)
+            assert len(list_ids) >= 1
+
+            # Invariant 2: Page info and summary totals are consistent
+            list_page_info = list_resp.json()["page_info"]
+            fleet_summary = fleet_resp.json()["data"]["summary"]
+            assert list_page_info["canonical_total"] == len(list_ids)
+            assert fleet_summary["canonical_total"] == len(fleet_ids)
+
+            # Invariant 3: Every fleet detail link resolves with 200 and the same ID
+            for item in fleet_items:
+                persona_id = item["id"]
+                detail_resp = client.get(f"/bff/personas/{persona_id}", headers=OPERATOR_HEADERS)
+                assert detail_resp.status_code == 200, f"Detail lookup for {persona_id} failed: {detail_resp.text}"
+                detail_data = detail_resp.json()["data"]
+                assert detail_data["id"] == persona_id
+                assert detail_data["name"]
+        finally:
+            bff_main.read_store = original
+
+
+def test_sd_agc_03_foreign_identities_and_unadmitted_catalog_defaults_return_404() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        original = bff_main.read_store
+        try:
+            # Store without fallback - only dev-probe is admitted
+            bff_main.read_store = ReadSurfaceStore(
+                os.path.join(td, "read_surfaces.json"),
+                allow_local_snapshot_fallback=False,
+            )
+            bff_main._PERSONA_BFF_OVERLAY.clear()
+            bff_main._STRATEGY_BFF_OVERLAY.clear()
+            bff_main._STRATEGY_PERSONA_BFF_IDEMPOTENCY.clear()
+            bff_main.read_store._data["personas"] = {
+                "persona-dev-probe": {
+                    "id": "persona-dev-probe",
+                    "persona_id": "persona-dev-probe",
+                    "name": "dev-probe",
+                    "lifecycle_state": "paper",
+                    "status": "healthy",
+                    "created_at": "2026-06-03T08:27:44Z",
+                    "updated_at": "2026-06-03T08:27:44Z",
+                    "metadata": {"owner": "pantheon-dev-browser", "tenant_id": "pantheon-dev"},
+                    "canonicalWriteAuthority": "persona_registry_service",
+                    "persistenceMode": "bff_local_dev_store",
+                },
+                "persona-other-tenant": {
+                    "id": "persona-other-tenant",
+                    "persona_id": "persona-other-tenant",
+                    "name": "other-tenant-persona",
+                    "lifecycle_state": "paper",
+                    "status": "healthy",
+                    "created_at": "2026-06-03T08:27:44Z",
+                    "updated_at": "2026-06-03T08:27:44Z",
+                    "metadata": {"owner": "pantheon-dev-browser", "tenant_id": "tenant-other"},
+                    "canonicalWriteAuthority": "persona_registry_service",
+                    "persistenceMode": "bff_local_dev_store",
+                },
+            }
+
+            client = TestClient(bff_main.app)
+
+            # 1. Admitted persona resolves
+            admitted_resp = client.get("/bff/personas/persona-dev-probe", headers=OPERATOR_HEADERS)
+            assert admitted_resp.status_code == 200, admitted_resp.text
+            assert admitted_resp.json()["data"]["id"] == "persona-dev-probe"
+
+            # 2. Foreign-tenant persona returns 404
+            foreign_resp = client.get("/bff/personas/persona-other-tenant", headers=OPERATOR_HEADERS)
+            assert foreign_resp.status_code == 404, foreign_resp.text
+            assert foreign_resp.json()["error"]["code"] == "RESOURCE_NOT_FOUND"
+
+            # 3. Unadmitted catalog default returns 404 (not ghost navigable)
+            catalog_default_resp = client.get("/bff/personas/persona-crypto", headers=OPERATOR_HEADERS)
+            assert catalog_default_resp.status_code == 404, catalog_default_resp.text
+            assert catalog_default_resp.json()["error"]["code"] == "RESOURCE_NOT_FOUND"
+
+            # 4. Unknown random identity returns 404
+            unknown_resp = client.get("/bff/personas/persona-nonexistent-999", headers=OPERATOR_HEADERS)
+            assert unknown_resp.status_code == 404, unknown_resp.text
+            assert unknown_resp.json()["error"]["code"] == "RESOURCE_NOT_FOUND"
+
+            # 5. List and Fleet contain only persona-dev-probe
+            fleet_resp = client.get("/bff/management/persona-fleet", headers=OPERATOR_HEADERS)
+            assert fleet_resp.status_code == 200
+            fleet_items = fleet_resp.json()["data"]["items"]
+            assert len(fleet_items) == 1
+            assert fleet_items[0]["id"] == "persona-dev-probe"
+            assert fleet_resp.json()["data"]["summary"]["catalog_default_total"] > 0
+        finally:
+            bff_main.read_store = original
+

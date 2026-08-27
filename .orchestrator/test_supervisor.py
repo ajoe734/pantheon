@@ -309,6 +309,98 @@ class V2StartupCacheTests(unittest.TestCase):
                 resolver,
                 {"done"},
             )
+            )
+
+    def test_terminal_fact_completion_track_is_preserved_for_dispatch(self) -> None:
+        config = config_fixture()
+        child = task_fixture(
+            task_id="CHILD-HOSTED",
+            status="in_progress",
+            depends_on=["MERGED-LEGACY"],
+        )
+        child["dependency_tracks"] = {"MERGED-LEGACY": "hosted"}
+        status = {
+            "tasks": [child],
+            "terminal_facts": {
+                "MERGED-LEGACY": {
+                    "status": "done",
+                    "terminal_outcome": "completed",
+                    "generation": 4,
+                    "recorded_at": "2026-08-14T00:00:00Z",
+                    "completion_tracks": {
+                        "hosted": {
+                            "status": "done",
+                            "updated_at": "2026-08-15T00:00:00Z",
+                        }
+                    },
+                }
+            },
+        }
+
+        task_map = supervisor.task_index_from_status(config, status)
+        resolver = supervisor.task_resolver_for_config(config, task_map)
+
+        self.assertEqual(
+            resolver.get("MERGED-LEGACY")["completion_tracks"]["hosted"]["status"],
+            "done",
+        )
+        self.assertTrue(
+            supervisor.dependencies_satisfied(
+                child,
+                resolver,
+                {"done"},
+            )
+        )
+        self.assertEqual(
+            supervisor.task_execution_dispatch_candidate(
+                config,
+                child,
+                "Codex",
+                resolver,
+            ),
+            (supervisor.REASON_OWNED_IN_PROGRESS, 2),
+        )
+
+    def test_terminal_fact_external_wait_does_not_release_dispatch(self) -> None:
+        config = config_fixture()
+        child = task_fixture(
+            task_id="CHILD-HOSTED-WAIT",
+            status="in_progress",
+            depends_on=["MERGED-LEGACY"],
+        )
+        child["dependency_tracks"] = {"MERGED-LEGACY": "hosted"}
+        status = {
+            "tasks": [child],
+            "terminal_facts": {
+                "MERGED-LEGACY": {
+                    "status": "done",
+                    "terminal_outcome": "completed",
+                    "generation": 4,
+                    "recorded_at": "2026-08-14T00:00:00Z",
+                    "completion_tracks": {
+                        "hosted": {"status": "external_wait"},
+                    },
+                }
+            },
+        }
+
+        task_map = supervisor.task_index_from_status(config, status)
+        resolver = supervisor.task_resolver_for_config(config, task_map)
+
+        self.assertFalse(
+            supervisor.dependencies_satisfied(
+                child,
+                resolver,
+                {"done"},
+            )
+        )
+        self.assertIsNone(
+            supervisor.task_execution_dispatch_candidate(
+                config,
+                child,
+                "Codex",
+                resolver,
+            )
         )
 
     def test_dispatch_key_ignores_observability_timestamp(self) -> None:

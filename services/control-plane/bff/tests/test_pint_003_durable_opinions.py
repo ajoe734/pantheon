@@ -10,10 +10,21 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 import main as bff_main
 import agora.interaction.runner as interaction_runner
+from agora.interaction.worker import AgoraInteractionWorker
 from openclaw_ops_client import OpenClawOpsClientError
 from agora.strategy_workshop.router import _ws_replay_after
 
 AUTH = {"Authorization": "Bearer interaction-user:operator", "Idempotency-Key": "idem-context-p3"}
+
+
+def _run_worker(provider=None):
+    worker = AgoraInteractionWorker(
+        lifecycle_store=bff_main.interaction_lifecycle,
+        workshop_store=bff_main.workshop_store,
+        read_store=bff_main.read_store,
+        client_factory=(lambda: provider) if provider else None,
+    )
+    return worker.run_once(limit=10)
 
 
 class FakeReadStore:
@@ -85,7 +96,9 @@ def test_partial_retry_only_calls_latest_retryable_persona_and_reuses_persisted_
         },
     )
     assert submitted.status_code == 202, submitted.text
-    first = submitted.json()["data"]
+    interaction_id = submitted.json()["data"]["interaction_id"]
+    _run_worker(provider)
+    first = c.get(f"/bff/agora/interactions/{interaction_id}", headers=AUTH).json()["data"]
     assert first["status"] == "degraded"
     assert provider.calls == ["ready", "risk"]
     ready_opinion_id = first["opinions"][0]["opinion_id"]
@@ -97,7 +110,8 @@ def test_partial_retry_only_calls_latest_retryable_persona_and_reuses_persisted_
         json={"reason": "Risk Persona provider recovered"},
     )
     assert retried.status_code == 202, retried.text
-    result = retried.json()["data"]
+    _run_worker(provider)
+    result = c.get(f"/bff/agora/interactions/{interaction_id}", headers=AUTH).json()["data"]
     assert result["status"] == "completed"
     assert provider.calls == ["ready", "risk", "risk"]
     assert len([item for item in result["provider_invocations"]
@@ -155,7 +169,9 @@ def test_adapter_shaped_transient_degraded_reason_remains_retryable(monkeypatch,
         },
     )
     assert submitted.status_code == 202, submitted.text
-    first = submitted.json()["data"]
+    interaction_id = submitted.json()["data"]["interaction_id"]
+    _run_worker(provider)
+    first = c.get(f"/bff/agora/interactions/{interaction_id}", headers=AUTH).json()["data"]
     assert first["status"] == "failed"
     assert first["provider_invocations"][0]["error"] == {
         "code": degraded_reason,
@@ -170,7 +186,9 @@ def test_adapter_shaped_transient_degraded_reason_remains_retryable(monkeypatch,
         json={"reason": "OpenClaw gateway recovered"},
     )
     assert retried.status_code == 202, retried.text
-    assert retried.json()["data"]["status"] == "completed"
+    _run_worker(provider)
+    retried_detail = c.get(f"/bff/agora/interactions/{interaction_id}", headers=AUTH).json()["data"]
+    assert retried_detail["status"] == "completed"
     assert provider.calls == ["ready", "ready"]
 
 
@@ -211,6 +229,7 @@ def test_durable_opinions_debate_and_synthesis_flow(monkeypatch):
     headers = {**AUTH, "Idempotency-Key": f"idem-interaction-{uuid.uuid4().hex[:8]}"}
     response = c.post("/bff/agora/interactions", headers=headers, json=payload)
     assert response.status_code == 202, response.text
+    _run_worker()
 
     # Verify events were created in the store
     events_response = c.get(f"/bff/agora/workshops/{workshop_id}/events", headers=AUTH)
@@ -243,7 +262,8 @@ def test_durable_opinions_debate_and_synthesis_flow(monkeypatch):
 
 
 def test_durable_opinions_no_consensus_flow(monkeypatch):
-    c = client(monkeypatch, FakeProvider({"ready": "support", "risk": "oppose"}))
+    provider = FakeProvider({"ready": "support", "risk": "oppose"})
+    c = client(monkeypatch, provider)
     resolve_headers = {**AUTH, "Idempotency-Key": f"idem-context-{uuid.uuid4().hex[:8]}"}
     resolved = c.post("/bff/agora/interactions/context:resolve", headers=resolve_headers, json=context_payload()).json()["data"]
     workshop_id = resolved["workshop_id"]
@@ -260,6 +280,7 @@ def test_durable_opinions_no_consensus_flow(monkeypatch):
     headers = {**AUTH, "Idempotency-Key": f"idem-interaction-{uuid.uuid4().hex[:8]}"}
     response = c.post("/bff/agora/interactions", headers=headers, json=payload)
     assert response.status_code == 202, response.text
+    _run_worker(provider)
 
     # Verify consult_result card has no_consensus status
     cards = c.get(f"/bff/agora/workshops/{workshop_id}/cards", headers=AUTH).json()["data"]
@@ -269,7 +290,8 @@ def test_durable_opinions_no_consensus_flow(monkeypatch):
 
 
 def test_durable_opinions_more_research_flow(monkeypatch):
-    c = client(monkeypatch, FakeProvider({"ready": "insufficient_evidence"}))
+    provider = FakeProvider({"ready": "insufficient_evidence"})
+    c = client(monkeypatch, provider)
     resolve_headers = {**AUTH, "Idempotency-Key": f"idem-context-{uuid.uuid4().hex[:8]}"}
     resolved = c.post("/bff/agora/interactions/context:resolve", headers=resolve_headers, json=context_payload()).json()["data"]
     workshop_id = resolved["workshop_id"]
@@ -286,6 +308,7 @@ def test_durable_opinions_more_research_flow(monkeypatch):
     headers = {**AUTH, "Idempotency-Key": f"idem-interaction-{uuid.uuid4().hex[:8]}"}
     response = c.post("/bff/agora/interactions", headers=headers, json=payload)
     assert response.status_code == 202, response.text
+    _run_worker(provider)
 
     # Verify consult_result card has more_research_required status and conditions
     cards = c.get(f"/bff/agora/workshops/{workshop_id}/cards", headers=AUTH).json()["data"]
@@ -312,6 +335,7 @@ def test_durable_opinions_homogeneity_warning_flow(monkeypatch):
     headers = {**AUTH, "Idempotency-Key": f"idem-interaction-{uuid.uuid4().hex[:8]}"}
     response = c.post("/bff/agora/interactions", headers=headers, json=payload)
     assert response.status_code == 202, response.text
+    _run_worker()
 
     # Verify consult_result card contains homogeneity warning in risk notes
     cards = c.get(f"/bff/agora/workshops/{workshop_id}/cards", headers=AUTH).json()["data"]
@@ -321,7 +345,8 @@ def test_durable_opinions_homogeneity_warning_flow(monkeypatch):
 
 
 def test_durable_opinions_degraded_path_flow(monkeypatch):
-    c = client(monkeypatch, FakeProvider(unavailable=True))
+    provider = FakeProvider(unavailable=True)
+    c = client(monkeypatch, provider)
     resolve_headers = {**AUTH, "Idempotency-Key": f"idem-context-{uuid.uuid4().hex[:8]}"}
     resolved = c.post("/bff/agora/interactions/context:resolve", headers=resolve_headers, json=context_payload()).json()["data"]
     workshop_id = resolved["workshop_id"]
@@ -338,6 +363,7 @@ def test_durable_opinions_degraded_path_flow(monkeypatch):
     headers = {**AUTH, "Idempotency-Key": f"idem-interaction-{uuid.uuid4().hex[:8]}"}
     response = c.post("/bff/agora/interactions", headers=headers, json=payload)
     assert response.status_code == 202, response.text
+    _run_worker(provider)
 
     # Provider failure is persisted without manufacturing an abstain opinion.
     events_response = c.get(f"/bff/agora/workshops/{workshop_id}/events", headers=AUTH)
