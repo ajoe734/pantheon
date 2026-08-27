@@ -3981,6 +3981,161 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
         self.assertEqual(task["status"], "review_approved")
         self.assertNotIn("terminal_outcome", task)
 
+    def test_reconcile_merged_done_accepts_human_ops_tooling_delivery(self) -> None:
+        task = self.state["tasks"][0]
+        task["status"] = "blocked"
+        task["task_class"] = "development_tooling"
+        delivery = {
+            "reconciled_from_tooling_delivery": True,
+            "delivery_class": "development_tooling",
+            "commit": "a" * 40,
+        }
+        with (
+            mock.patch.dict(
+                os.environ,
+                {
+                    "AI_NAME": "Human/Ops",
+                    "RECONCILE_DELIVERY_CLASS": "development_tooling",
+                },
+                clear=False,
+            ),
+            mock.patch.object(
+                ai_status,
+                "validate_merged_tooling_done",
+                return_value=delivery,
+            ),
+            mock.patch.object(
+                ai_status,
+                "validate_protected_closeout_transition",
+            ) as protected,
+            mock.patch.object(ai_status, "load_archived_snapshot", return_value=None),
+        ):
+            _command_reconcile_merged_done(
+                self.state,
+                ["REG-002", "Operator-authorized tooling delivery reconciled."],
+            )
+
+        terminal = ai_status.get_task(self.state, "REG-002")
+        self.assertEqual(terminal["status"], "done")
+        self.assertEqual(terminal["terminal_outcome"], "completed")
+        self.assertTrue(terminal["delivery"]["reconciled_from_tooling_delivery"])
+        protected.assert_not_called()
+
+    def test_reconcile_merged_done_tooling_mode_rejects_product_task(self) -> None:
+        task = self.state["tasks"][0]
+        task["status"] = "blocked"
+        task["task_class"] = "product"
+        with (
+            mock.patch.dict(
+                os.environ,
+                {
+                    "AI_NAME": "Human/Ops",
+                    "RECONCILE_DELIVERY_CLASS": "development_tooling",
+                },
+                clear=False,
+            ),
+            self.assertRaisesRegex(SystemExit, "task_class=development_tooling"),
+        ):
+            _command_reconcile_merged_done(
+                self.state,
+                ["REG-002", "Invalid product tooling reconcile."],
+            )
+
+    def test_reconcile_merged_done_tooling_mode_rejects_reviewer(self) -> None:
+        task = self.state["tasks"][0]
+        task["status"] = "blocked"
+        task["task_class"] = "development_tooling"
+        with (
+            mock.patch.dict(
+                os.environ,
+                {
+                    "AI_NAME": "Claude",
+                    "RECONCILE_DELIVERY_CLASS": "development_tooling",
+                },
+                clear=False,
+            ),
+            self.assertRaisesRegex(SystemExit, "Only Human/Ops"),
+        ):
+            _command_reconcile_merged_done(
+                self.state,
+                ["REG-002", "Reviewer cannot use direct tooling reconcile."],
+            )
+
+    def test_validate_merged_tooling_done_binds_task_id(self) -> None:
+        task = {
+            "id": "REG-002",
+            "task_class": "development_tooling",
+        }
+        delivery = {
+            "repository_id": "pantheon",
+            "repository_slug": "ajoe734/pantheon",
+            "repository_path": "/tmp/pantheon",
+            "commit": "a" * 40,
+            "merge_target_ref": "origin/dev",
+            "merge_target_sha": "b" * 40,
+            "head_merged_to_target": True,
+        }
+        with (
+            mock.patch.object(
+                ai_status,
+                "_validated_reconcile_delivery",
+                return_value=delivery,
+            ),
+            mock.patch.object(
+                ai_status,
+                "run_git_command",
+                return_value="Merge delivery without matching task",
+            ),
+            self.assertRaisesRegex(SystemExit, "does not bind the task id"),
+        ):
+            ai_status.validate_merged_tooling_done(task)
+
+        with (
+            mock.patch.object(
+                ai_status,
+                "_validated_reconcile_delivery",
+                return_value=delivery,
+            ),
+            mock.patch.object(
+                ai_status,
+                "run_git_command",
+                return_value="REG-002: merged tooling delivery",
+            ),
+        ):
+            result = ai_status.validate_merged_tooling_done(task)
+
+        self.assertTrue(result["reconciled_from_tooling_delivery"])
+        self.assertEqual(result["commit"], "a" * 40)
+
+    def test_validate_merged_tooling_done_rejects_task_id_substring(self) -> None:
+        task = {
+            "id": "REG-002",
+            "task_class": "development_tooling",
+        }
+        delivery = {
+            "repository_id": "pantheon",
+            "repository_slug": "ajoe734/pantheon",
+            "repository_path": "/tmp/pantheon",
+            "commit": "a" * 40,
+            "merge_target_ref": "origin/dev",
+            "merge_target_sha": "b" * 40,
+            "head_merged_to_target": True,
+        }
+        with (
+            mock.patch.object(
+                ai_status,
+                "_validated_reconcile_delivery",
+                return_value=delivery,
+            ),
+            mock.patch.object(
+                ai_status,
+                "run_git_command",
+                return_value="REG-002-UNRELATED: another task",
+            ),
+            self.assertRaisesRegex(SystemExit, "does not bind the task id"),
+        ):
+            ai_status.validate_merged_tooling_done(task)
+
     def _init_repo(self, root: Path, *, remote: str, files: dict[str, str]) -> str:
         root.mkdir(parents=True)
         subprocess.run(["git", "init", "-b", "dev"], cwd=root, check=True, capture_output=True)
