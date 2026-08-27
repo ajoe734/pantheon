@@ -499,7 +499,8 @@ class ExternalSourceManagementHostedAcceptanceVerifier:
                 f"Probing source definitions at {source_defs_url} returned HTTP {status}, expected 200",
             )
 
-        defs_list = _list_of_mappings(defs_body.get("definitions") or [], "defs_body.definitions")
+        defs_root = _mapping(defs_body.get("data") or defs_body, "defs_body.data")
+        defs_list = _list_of_mappings(defs_root.get("definitions") or [], "defs_body.definitions")
         if not defs_list:
             raise SourceManagementAcceptanceError(
                 "live.empty_source_definitions",
