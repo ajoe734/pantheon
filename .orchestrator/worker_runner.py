@@ -6,6 +6,7 @@ import json
 import os
 import shutil
 import signal
+import stat
 import subprocess
 import sys
 import tempfile
@@ -120,6 +121,33 @@ def _validate_directory_no_symlinks_recursive(directory: Path, label: str) -> No
                 raise RuntimeError(f"PANTHEON_STATUS_ROOT {label} leaf cannot be a symlink: {p}")
 
 
+def _ensure_governed_lock_file(path: Path, *, label: str) -> None:
+    """Create one regular coordination lock before the worker mount is sealed."""
+
+    symlink_comp = _first_symlink_component(path)
+    if symlink_comp is not None or path.is_symlink():
+        raise RuntimeError(
+            f"PANTHEON_STATUS_ROOT {label} cannot contain a symlink: "
+            f"{symlink_comp or path}"
+        )
+    descriptor = os.open(
+        path,
+        os.O_RDWR
+        | os.O_CREAT
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NOFOLLOW", 0),
+        0o600,
+    )
+    try:
+        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+            raise RuntimeError(
+                f"PANTHEON_STATUS_ROOT {label} must be a regular file: {path}"
+            )
+        os.fchmod(descriptor, 0o600)
+    finally:
+        os.close(descriptor)
+
+
 def validate_coordination_root(
     workspace_path: Path | None,
     *,
@@ -185,6 +213,11 @@ def validate_coordination_root(
                 f"PANTHEON_STATUS_ROOT is missing required supervisor marker: {marker_path}"
             )
 
+    _ensure_governed_lock_file(
+        root / ".orchestrator" / "status-derived-views.lock",
+        label="derived status views lock",
+    )
+
     for path in (
         root / "ai-activity-log.jsonl",
         root / "current-work.md",
@@ -203,6 +236,7 @@ def validate_coordination_root(
         root / ".orchestrator" / "config.json",
         root / ".orchestrator" / "task-state.lock",
         root / ".orchestrator" / "activity-audit.lock",
+        root / ".orchestrator" / "status-derived-views.lock",
     ):
         symlink_comp = _first_symlink_component(path)
         if symlink_comp is not None:
@@ -557,6 +591,7 @@ def bind_worker_sandbox(
             coord_resolved / ".orchestrator" / "runtime-admission.lock",
             coord_resolved / ".orchestrator" / "task-state.lock",
             coord_resolved / ".orchestrator" / "activity-audit.lock",
+            coord_resolved / ".orchestrator" / "status-derived-views.lock",
             coord_resolved / ".orchestrator" / "worker-runtime",
             coord_resolved / "archive" / "logs",
             coord_resolved / ".orchestrator" / "logs",

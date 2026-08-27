@@ -218,6 +218,40 @@ class TestCoordinationRootValidation(unittest.TestCase):
 
             runtime_leaf.unlink()
 
+    def test_validate_coordination_root_creates_regular_derived_views_lock(self):
+        with tempfile.TemporaryDirectory(prefix="worker-runner-derived-lock-") as temp_dir:
+            root = Path(temp_dir)
+            central = root / "central"
+            worktree = root / "task-worktree"
+            _init_repo(central)
+            _init_repo(worktree)
+            _write_status(central)
+
+            lock_path = central / ".orchestrator" / "status-derived-views.lock"
+            with mock.patch.dict(
+                os.environ,
+                {"PANTHEON_STATUS_ROOT": str(central)},
+                clear=True,
+            ):
+                self.assertEqual(
+                    wr.validate_coordination_root(worktree), central.resolve()
+                )
+
+            self.assertTrue(lock_path.is_file())
+            self.assertFalse(lock_path.is_symlink())
+
+            lock_path.unlink()
+            lock_path.symlink_to(root / "outside.lock")
+            with mock.patch.dict(
+                os.environ,
+                {"PANTHEON_STATUS_ROOT": str(central)},
+                clear=True,
+            ):
+                with self.assertRaisesRegex(
+                    RuntimeError, "derived status views lock cannot contain a symlink"
+                ):
+                    wr.validate_coordination_root(worktree)
+
     @unittest.skipUnless(_FUNCTIONAL_BWRAP, "Functional bubblewrap with user namespace support is required for sandbox execution tests")
     def test_child_command_runs_in_task_worktree_with_central_status_root(self):
         with tempfile.TemporaryDirectory(prefix="worker-runner-cwd-") as temp_dir:
@@ -1535,7 +1569,7 @@ class TestCrossRepoLeasedWorktreeWriteBoundary(unittest.TestCase):
             env.update(_command_runtime_env(command_root))
 
             program = (
-                "import json, os, sys, pathlib, tempfile\n"
+                "import fcntl, json, os, sys, pathlib, tempfile\n"
                 "central = pathlib.Path(sys.argv[1])\n"
                 "# 1. Atomically replace ai-status.json through its parent.\n"
                 "status_path = central / 'ai-status.json'\n"
@@ -1553,6 +1587,12 @@ class TestCrossRepoLeasedWorktreeWriteBoundary(unittest.TestCase):
                 "    f.write(json.dumps({'event': 'done'}) + '\\n')\n"
                 "# 3. Update current-work.md\n"
                 "(central / 'current-work.md').write_text('# Done\\n')\n"
+                "# 4. The derived projection lock is a governed writable file.\n"
+                "lock_path = central / '.orchestrator' / 'status-derived-views.lock'\n"
+                "descriptor = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o600)\n"
+                "fcntl.flock(descriptor, fcntl.LOCK_EX)\n"
+                "fcntl.flock(descriptor, fcntl.LOCK_UN)\n"
+                "os.close(descriptor)\n"
                 "sys.exit(0)\n"
             )
 
