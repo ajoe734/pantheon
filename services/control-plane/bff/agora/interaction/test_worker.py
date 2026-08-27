@@ -47,7 +47,11 @@ class FakePersonaReadStore:
         return []
 
 
-def _make_mock_client(return_values: Optional[Dict[str, Any]] = None, call_log: Optional[List[Dict[str, Any]]] = None):
+def _make_mock_client(
+    return_values: Optional[Dict[str, Any]] = None,
+    call_log: Optional[List[Dict[str, Any]]] = None,
+    invoke_fn: Optional[Any] = None,
+):
     import json
     call_log = call_log if call_log is not None else []
     return_values = return_values or {}
@@ -57,6 +61,8 @@ def _make_mock_client(return_values: Optional[Dict[str, Any]] = None, call_log: 
             return {"execution_authority": "none", "agent_id": admission.get("agent_id", "mock-agent")}
 
         def invoke_assistant_provider(self, *, prompt: str, **kwargs) -> Dict[str, Any]:
+            if invoke_fn is not None:
+                return invoke_fn(prompt=prompt, **kwargs)
             persona_adm = kwargs.get("persona_admission") or {}
             pid = str(persona_adm.get("persona_id") or "")
             agent_id = str(kwargs.get("agent_id") or "mock-agent")
@@ -226,6 +232,9 @@ def test_durable_lease_recovery_prevents_duplicate_invocation(bff_client):
         with store._lock:
             store._requests[interaction_id]["lease_until"] = "2020-01-01T00:00:00Z"
             store._requests[interaction_id]["status"] = "running"
+            for inv_id, inv_row in store._invocations.get(interaction_id, {}).items():
+                if inv_row.get("status") == "running":
+                    inv_row["lease_until"] = "2020-01-01T00:00:00Z"
 
     # Recovery worker starts up
     recovery_calls = []
@@ -290,30 +299,211 @@ def test_tenant_isolation_covers_every_interaction_route(bff_client, monkeypatch
     assert foreign_worker.claim_and_process_one(tenant_id="other-tenant") is None
 
 
-def test_restart_preserves_terminal_readback(bff_client):
+def test_restart_preserves_terminal_readback(tmp_path):
+    storage_file = str(tmp_path / "interactions_durable.json")
+    durable_store = InteractionLifecycleStore(storage_filepath=storage_file)
     client_factory, _ = _make_mock_client()
-    submit_resp, _ = _submit_interaction(bff_client)
-    interaction_id = submit_resp.json()["data"]["interaction_id"]
+
+    workshop_store = MemoryWorkshopStore()
+    read_store = FakePersonaReadStore()
+    session = workshop_store.create_session({
+        "session_id": "ws-restart",
+        "workshop_id": "ws-restart",
+        "tenant_id": "pantheon-dev",
+        "user_id": "interaction-user",
+        "created_at": "2026-08-27T00:00:00Z",
+    })
+
+    binding = {
+        "binding_id": "bind-restart-1",
+        "tenant_id": "pantheon-dev",
+        "workshop_id": session["workshop_id"],
+        "context_digest": "cd-restart-1",
+        "source_route": "/agora/workshops/ws-restart",
+        "focused_object": {"kind": "strategy", "id": "strat-1", "version": "v1"},
+        "context_refs": [{"kind": "strategy", "id": "strat-1", "version": "v1"}],
+        "selected_persona_ids": ["risk-analyst"],
+        "initial_mode": "consult",
+        "return_route": "/agora/workshops/ws-restart",
+        "captured_at": "2026-08-27T00:00:00Z",
+        "evidence_cutoff": "2026-08-27T00:00:00Z",
+    }
+    durable_store.save_context_binding(binding, owner_user_id="interaction-user")
+
+    interaction_id = "ix-restart-test-1"
+    req_body = {
+        "interaction_id": interaction_id,
+        "tenant_id": "pantheon-dev",
+        "owner_user_id": "interaction-user",
+        "workshop_id": session["workshop_id"],
+        "human_request": {
+            "mode": "consult",
+            "request_text": "Restart recovery test topic",
+            "operator_id": "interaction-user",
+            "submitted_at": "2026-08-27T00:00:00Z",
+        },
+        "context_snapshot": {
+            "initial_mode": "consult",
+            "selected_persona_ids": ["risk-analyst"],
+            "context_refs": [{"kind": "strategy", "id": "strat-1", "version": "v1"}],
+        },
+        "created_at": "2026-08-27T00:00:00Z",
+        "updated_at": "2026-08-27T00:00:00Z",
+        "status": "queued",
+        "_context_binding": binding,
+    }
+    durable_store.create_request(
+        req_body,
+        idempotency_scope="pantheon-dev:interaction-user",
+        idempotency_key="key-restart-1",
+        fingerprint="fp-restart-1",
+        trace_id="tr-restart-1",
+    )
 
     worker = AgoraInteractionWorker(
+        lifecycle_store=durable_store,
+        workshop_store=workshop_store,
+        read_store=read_store,
+        client_factory=client_factory,
+        worker_id="worker-restart-test",
+    )
+    processed = worker.run_once()
+    assert processed is not None
+
+    first_read = durable_store.get(interaction_id, "pantheon-dev", "interaction-user")
+    assert first_read is not None
+    assert first_read["status"] == "completed"
+    assert len(first_read["opinions"]) == 1
+    assert first_read["synthesis"] is not None
+
+    # Simulate restart by constructing brand new store instance from disk
+    restarted_store = InteractionLifecycleStore(storage_filepath=storage_file)
+    second_read = restarted_store.get(interaction_id, "pantheon-dev", "interaction-user")
+    assert second_read is not None
+    assert second_read["status"] == "completed"
+    assert second_read["opinions"] == first_read["opinions"]
+    assert second_read["synthesis"] == first_read["synthesis"]
+    assert second_read["provider_invocations"] == first_read["provider_invocations"]
+
+
+def test_claim_invocation_pre_expiry_rejects_second_claim():
+    store = InteractionLifecycleStore()
+    interaction_id = "ix-claim-pre-expiry-1"
+    req_body = {
+        "interaction_id": interaction_id,
+        "tenant_id": "pantheon-dev",
+        "owner_user_id": "interaction-user",
+        "workshop_id": "ws-1",
+        "human_request": {"operator_id": "interaction-user", "request_text": "Claim test"},
+        "created_at": "2026-08-27T00:00:00Z",
+        "updated_at": "2026-08-27T00:00:00Z",
+        "status": "queued",
+    }
+    store.create_request(
+        req_body,
+        idempotency_scope="pantheon-dev:interaction-user",
+        idempotency_key="key-claim-1",
+        fingerprint="fp-claim-1",
+        trace_id="tr-claim-1",
+    )
+    invocation = {
+        "invocation_id": "inv-claim-1",
+        "interaction_id": interaction_id,
+        "participant": {"persona_id": "risk-analyst", "display_name": "Risk Analyst"},
+        "provider_kind": "openclaw",
+        "status": "running",
+    }
+
+    # First claim by worker-1 succeeds
+    first_row, first_claimed = store.claim_invocation(
+        interaction_id,
+        invocation,
+        lease_owner="worker-1",
+        lease_duration_seconds=300,
+    )
+    assert first_claimed is True
+    assert first_row["status"] == "running"
+    assert first_row["attempt"] == 1
+    assert first_row["lease_owner"] == "worker-1"
+
+    # Second claim by worker-2 before lease expiry fails
+    second_row, second_claimed = store.claim_invocation(
+        interaction_id,
+        invocation,
+        lease_owner="worker-2",
+        lease_duration_seconds=300,
+    )
+    assert second_claimed is False
+    assert second_row["status"] == "running"
+    assert second_row["attempt"] == 1
+    assert second_row["lease_owner"] == "worker-1"
+
+
+def test_concurrent_pre_expiry_workers_execute_provider_only_once(bff_client):
+    import concurrent.futures
+    import json
+
+    call_log = []
+    barrier = threading.Barrier(2)
+
+    def slow_invoke(*args, **kwargs):
+        call_log.append(kwargs)
+        try:
+            barrier.wait(timeout=1.0)
+        except Exception:
+            pass
+        time.sleep(0.05)
+        opinion_data = {
+            "conclusion": "support",
+            "rationale": "Concurrent invocation safety verified.",
+            "confidence": 0.9,
+            "uncertainty": [],
+            "risks": [],
+            "invalidation_conditions": [],
+            "evidence_refs": [],
+            "recommended_measures": [],
+        }
+        return {
+            "status": "completed",
+            "output": {
+                "request_id": f"resp-risk-analyst-{uuid.uuid4().hex[:8]}",
+                "agent_id": str(kwargs.get("agent_id") or "mock-agent"),
+                "json_events": [{"item": {"text": json.dumps(opinion_data)}}],
+            },
+        }
+
+    client_factory, _ = _make_mock_client(invoke_fn=slow_invoke)
+
+    submit_resp, _ = _submit_interaction(bff_client, personas=("risk-analyst",))
+    interaction_id = submit_resp.json()["data"]["interaction_id"]
+
+    worker_1 = AgoraInteractionWorker(
         lifecycle_store=bff_main.interaction_lifecycle,
         workshop_store=bff_main.workshop_store,
         read_store=bff_main.read_store,
         client_factory=client_factory,
-        worker_id="worker-restart-test",
+        worker_id="concurrent-worker-1",
     )
-    worker.run_once()
+    worker_2 = AgoraInteractionWorker(
+        lifecycle_store=bff_main.interaction_lifecycle,
+        workshop_store=bff_main.workshop_store,
+        read_store=bff_main.read_store,
+        client_factory=client_factory,
+        worker_id="concurrent-worker-2",
+    )
 
-    first_read = bff_client.get(f"/bff/agora/interactions/{interaction_id}", headers={"Authorization": "Bearer interaction-user:operator"}).json()["data"]
-    assert first_read["status"] == "completed"
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+        f1 = executor.submit(worker_1.run_once)
+        f2 = executor.submit(worker_2.run_once)
+        concurrent.futures.wait([f1, f2], timeout=5.0)
 
-    # Simulate restart by reading through newly constructed lifecycle store instance
-    if bff_main.interaction_lifecycle.backend == "postgres":
-        restarted_store = InteractionLifecycleStore(backend="postgres", dsn=bff_main.interaction_lifecycle.dsn, schema=bff_main.interaction_lifecycle.schema)
-        second_read = restarted_store.get(interaction_id, "pantheon-dev", "interaction-user")
-        assert second_read["status"] == "completed"
-        assert second_read["opinions"] == first_read["opinions"]
-        assert second_read["synthesis"] == first_read["synthesis"]
+    # Exactly ONE provider invocation should have occurred
+    assert len(call_log) == 1
+
+    detail = bff_main.interaction_lifecycle.get(interaction_id, "pantheon-dev", "interaction-user")
+    assert detail["status"] == "completed"
+    assert len(detail["opinions"]) == 1
+    assert len(detail["provider_invocations"]) == 1
 
 
 def test_retry_and_recover_routes_do_not_execute_inline(bff_client):

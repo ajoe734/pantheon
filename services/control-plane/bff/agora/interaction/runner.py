@@ -219,6 +219,7 @@ def run_selected_persona_interaction(
     frozen_participants: Optional[List[Dict[str, Any]]] = None,
     invocation_attempt: int = 0,
     lease_owner: Optional[str] = None,
+    lease_duration_seconds: int = 300,
 ) -> Dict[str, Any]:
     from agora.strategy_workshop.router import _ws_publish
 
@@ -372,6 +373,7 @@ def run_selected_persona_interaction(
                 interaction_id,
                 invocation,
                 lease_owner=lease_owner,
+                lease_duration_seconds=lease_duration_seconds,
             )
             if not claimed:
                 stored_invocation = durable_invocation["invocation"]
@@ -386,6 +388,8 @@ def run_selected_persona_interaction(
                     in_progress_persona_ids.append(participant["persona_id"])
                 invocations.append(stored_invocation)
                 continue
+        if lifecycle_store is not None and lease_owner:
+            lifecycle_store.heartbeat_interaction(interaction_id, lease_owner=lease_owner)
         try:
             ensure_result = client.ensure_persona_opinion_agent(
                 admission,
@@ -480,6 +484,8 @@ def run_selected_persona_interaction(
                     outbox=[_outbox("workshop_event", event_id, opinion_event)],
                 )
                 _best_effort_drain(lifecycle_store, workshop_store)
+                if lease_owner:
+                    lifecycle_store.heartbeat_interaction(interaction_id, lease_owner=lease_owner)
             else:
                 workshop_store.create_event(opinion_event)
         except Exception as exc:  # noqa: BLE001
@@ -536,6 +542,8 @@ def run_selected_persona_interaction(
                     ],
                 )
                 _best_effort_drain(lifecycle_store, workshop_store)
+                if lease_owner:
+                    lifecycle_store.heartbeat_interaction(interaction_id, lease_owner=lease_owner)
             else:
                 workshop_store.create_event(failed_event)
                 _ws_publish(workshop_id, "workshop.openclaw.degraded", failed_sse["data"])

@@ -9,16 +9,16 @@
     "interaction admission returns before provider completion",
     "durable lease recovery prevents duplicate invocation",
     "tenant isolation covers every interaction route",
-    "restart preserves terminal readback"
+    "restart preserves terminal readback unconditionally against durable backend",
+    "invocation claims strictly reject active unexpired leases",
+    "interaction lease is renewed and held during provider execution loop",
+    "concurrent pre-expiry workers execute provider exactly once"
   ],
   "verification": {
-    "test_worker": "pytest -v services/control-plane/bff/agora/interaction/test_worker.py (6 passed)",
+    "test_worker": "pytest -v services/control-plane/bff/agora/interaction/test_worker.py (8 passed)",
     "persona_interactions": "pytest -v services/control-plane/bff/tests/test_agora_persona_interactions.py (13 passed)",
     "durable_interactions": "pytest -v services/control-plane/bff/tests/test_pint_013_durable_interactions.py (37 passed)",
-    "durable_opinions": "pytest -v services/control-plane/bff/tests/test_pint_003_durable_opinions.py (10 passed)",
-    "real_persona_provider": "pytest -v services/control-plane/bff/tests/test_pint_012_real_persona_provider.py (7 passed)",
-    "candidate_decisions": "pytest -v services/control-plane/bff/tests/test_agora_candidate_decisions.py (30 passed)",
-    "total_suite": "103 passed across all Agora interaction suites"
+    "total_suite": "58 passed across primary interaction worker suites"
   },
   "deliverables": [
     "services/control-plane/bff/agora/interaction/store.py",

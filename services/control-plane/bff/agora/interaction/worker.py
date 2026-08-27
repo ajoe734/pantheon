@@ -20,6 +20,51 @@ def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
+class _InteractionHeartbeat:
+    """Background context manager that periodically renews the interaction lease while work runs."""
+
+    def __init__(
+        self,
+        store: InteractionLifecycleStore,
+        interaction_id: str,
+        lease_owner: str,
+        lease_duration_seconds: int = 300,
+    ) -> None:
+        self.store = store
+        self.interaction_id = interaction_id
+        self.lease_owner = lease_owner
+        self.lease_duration_seconds = lease_duration_seconds
+        self._stop_event = threading.Event()
+        self._thread: Optional[threading.Thread] = None
+
+    def __enter__(self) -> "_InteractionHeartbeat":
+        interval = max(0.5, self.lease_duration_seconds / 3.0)
+
+        def _loop() -> None:
+            while not self._stop_event.wait(timeout=interval):
+                try:
+                    self.store.heartbeat_interaction(
+                        self.interaction_id,
+                        lease_owner=self.lease_owner,
+                        lease_duration_seconds=self.lease_duration_seconds,
+                    )
+                except Exception as exc:
+                    logger.debug("Heartbeat renewal error on %s: %s", self.interaction_id, exc)
+
+        self._thread = threading.Thread(
+            target=_loop,
+            daemon=True,
+            name=f"interaction-heartbeat-{self.interaction_id[:8]}",
+        )
+        self._thread.start()
+        return self
+
+    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
+        self._stop_event.set()
+        if self._thread is not None and self._thread.is_alive():
+            self._thread.join(timeout=2.0)
+
+
 class AgoraInteractionWorker:
     """Independent background worker for processing queued Agora Persona interactions."""
 
@@ -91,6 +136,22 @@ class AgoraInteractionWorker:
 
         return self._execute_and_finalize(resource)
 
+    def run_once(
+        self,
+        *,
+        limit: int = 1,
+        tenant_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+    ) -> int:
+        """Claim and process up to limit interactions."""
+        processed = 0
+        for _ in range(max(1, limit)):
+            item = self.claim_and_process_one(tenant_id=tenant_id, user_id=user_id)
+            if item is None:
+                break
+            processed += 1
+        return processed
+
     def process_interaction(
         self,
         interaction_id: str,
@@ -148,30 +209,37 @@ class AgoraInteractionWorker:
         attempt = int(resource.get("retry_count", 0))
 
         try:
-            result = run_selected_persona_interaction(
-                workshop_store=self.workshop_store,
-                read_store=self.read_store,
-                workshop_id=workshop_id,
-                interaction_id=interaction_id,
-                topic=topic,
-                mode=mode,
-                participants=selected_personas,
-                context_refs=context_refs,
-                environment=advice_environment,
-                tenant_id=tenant_id,
-                user_id=user_id,
-                operator_id=operator_id,
-                trace_id=trace_id,
-                proposal_snapshot=resource.get("proposal"),
-                proposal_etag=resource.get("proposal_etag"),
-                occurred_at=str(resource.get("admitted_at") or resource.get("created_at") or _utc_now()),
-                human_submitted_at=submitted_at,
-                client_factory=self.client_factory,
-                lifecycle_store=self.lifecycle_store,
-                frozen_participants=resource.get("_frozen_personas"),
-                invocation_attempt=attempt,
-                lease_owner=self.worker_id,
-            )
+            with _InteractionHeartbeat(
+                self.lifecycle_store,
+                interaction_id,
+                self.worker_id,
+                self.lease_duration_seconds,
+            ):
+                result = run_selected_persona_interaction(
+                    workshop_store=self.workshop_store,
+                    read_store=self.read_store,
+                    workshop_id=workshop_id,
+                    interaction_id=interaction_id,
+                    topic=topic,
+                    mode=mode,
+                    participants=selected_personas,
+                    context_refs=context_refs,
+                    environment=advice_environment,
+                    tenant_id=tenant_id,
+                    user_id=user_id,
+                    operator_id=operator_id,
+                    trace_id=trace_id,
+                    proposal_snapshot=resource.get("proposal"),
+                    proposal_etag=resource.get("proposal_etag"),
+                    occurred_at=str(resource.get("admitted_at") or resource.get("created_at") or _utc_now()),
+                    human_submitted_at=submitted_at,
+                    client_factory=self.client_factory,
+                    lifecycle_store=self.lifecycle_store,
+                    frozen_participants=resource.get("_frozen_personas"),
+                    invocation_attempt=attempt,
+                    lease_owner=self.worker_id,
+                    lease_duration_seconds=self.lease_duration_seconds,
+                )
             elapsed = time.monotonic() - start_time
             final_status = result.get("status", "completed")
 
