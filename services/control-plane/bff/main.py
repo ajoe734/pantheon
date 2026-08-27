@@ -7373,11 +7373,15 @@ async def bff_auth_readiness(
         and interaction_capability_ready
         and verifier_ready
     )
+    # Auth readiness is a local-authority decision: it must not be gated by
+    # OpenClaw provider health. Provider status is still probed and surfaced
+    # for observability, but a provider outage or probe failure must never
+    # flip a validly authenticated strict session to not-ready.
     provider = _safe_provider_readiness()
     provider_ready = bool(provider["ready"])
     return {
         "data": {
-            "ready": auth_ready and provider_ready,
+            "ready": auth_ready,
             "authReady": auth_ready,
             "providerReady": provider_ready,
             "sourceCommitSha": _bff_source_commit(),
