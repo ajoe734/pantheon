@@ -195,6 +195,14 @@ def _setup_valid_bundle(tmp_path: Path) -> Path:
     shutil.copytree(DEFAULT_EVIDENCE_DIR, target_dir)
     deployment_path = target_dir / "deployment.json"
     deployment = json.loads(deployment_path.read_text(encoding="utf-8"))
+    deployment["exact_pair"].update(
+        {
+            "backend_sha": EXPECTED_BFF_SHA,
+            "frontend_sha": EXPECTED_FE_SHA,
+            "source_definitions_sha": EXPECTED_SOURCE_DEFINITIONS_SHA,
+            "fe_manifest_bff_sha": EXPECTED_BFF_SHA,
+        }
+    )
     deployment["feature_posture"].update(
         {
             "SOURCE_INGEST_CONTROLLER_MODE": "reconcile_only",
