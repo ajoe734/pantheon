@@ -319,13 +319,18 @@ class CommandRunner:
     ) -> subprocess.CompletedProcess[str]:
         command = [str(arg) for arg in args]
         self.commands.append(command)
-        result = subprocess.run(
-            command,
-            cwd=str(cwd),
-            env=dict(env) if env is not None else None,
-            capture_output=True,
-            text=True,
-        )
+        try:
+            result = subprocess.run(
+                command,
+                cwd=str(cwd),
+                env=dict(env) if env is not None else None,
+                capture_output=True,
+                text=True,
+            )
+        except OSError as exc:
+            if check:
+                raise CommandFailure(command, 127, str(exc)) from exc
+            return subprocess.CompletedProcess(command, 127, "", str(exc))
         if check and result.returncode != 0:
             raise CommandFailure(command, result.returncode, result.stderr or result.stdout)
         return result
@@ -339,14 +344,19 @@ class CommandRunner:
         env: Mapping[str, str] | None = None,
     ) -> subprocess.CompletedProcess[str]:
         self.commands.append(["sh", "-lc", command])
-        result = subprocess.run(
-            command,
-            cwd=str(cwd),
-            shell=True,
-            env=dict(env) if env is not None else None,
-            capture_output=True,
-            text=True,
-        )
+        try:
+            result = subprocess.run(
+                command,
+                cwd=str(cwd),
+                shell=True,
+                env=dict(env) if env is not None else None,
+                capture_output=True,
+                text=True,
+            )
+        except OSError as exc:
+            if check:
+                raise CommandFailure(["sh", "-lc", command], 127, str(exc)) from exc
+            return subprocess.CompletedProcess(["sh", "-lc", command], 127, "", str(exc))
         if check and result.returncode != 0:
             raise CommandFailure(command, result.returncode, result.stderr or result.stdout)
         return result
@@ -465,8 +475,9 @@ def review_approved_candidates(
     candidates: list[TaskCandidate] = []
     config_dict = dict(config) if isinstance(config, Mapping) else {}
     resolved_status_root = review_gate.resolve_status_root(status_root)
-    if "paths" not in config_dict:
-        config_dict["paths"] = {"status_file": str(resolved_status_root / "ai-status.json")}
+    paths = dict(config_dict.get("paths") or {})
+    paths["status_file"] = str((resolved_status_root / "ai-status.json").resolve())
+    config_dict["paths"] = paths
 
     for raw in tasks:
         if not isinstance(raw, Mapping):
@@ -527,6 +538,22 @@ def review_approved_candidates(
 
 def normalize_state(value: Any) -> str:
     return str(value or "").strip().upper().replace("-", "_")
+
+
+def normalize_github_repo_slug(value: str | None) -> str:
+    candidate = str(value or "").strip()
+    if not candidate:
+        return ""
+    candidate = candidate.removesuffix(".git")
+    if candidate.startswith("git@github.com:"):
+        candidate = candidate[len("git@github.com:") :]
+    elif candidate.startswith("ssh://git@github.com/"):
+        candidate = candidate[len("ssh://git@github.com/") :]
+    elif candidate.startswith("https://github.com/"):
+        candidate = candidate[len("https://github.com/") :]
+    elif candidate.startswith("http://github.com/"):
+        candidate = candidate[len("http://github.com/") :]
+    return candidate.strip("/")
 
 
 def check_name(item: Mapping[str, Any]) -> str:
@@ -1170,6 +1197,66 @@ def open_unblock_task(
     return task_id
 
 
+def preflight_repository(
+    candidate: TaskCandidate,
+    runner: CommandRunner,
+    target_root: Path,
+) -> tuple[str, str] | None:
+    if not target_root.is_absolute():
+        return (
+            "invalid-repository-root",
+            f"Cannot integrate {candidate.task_id}: repository root for {candidate.repository_id} must be an absolute path ({target_root}).",
+        )
+    check_fs = getattr(runner, "check_filesystem_paths", True)
+    if check_fs and not target_root.is_dir():
+        return (
+            "missing-repository-checkout",
+            f"Cannot integrate {candidate.task_id}: registered repository root for {candidate.repository_id} does not exist: {target_root}.",
+        )
+    top_proc = runner.run(["git", "rev-parse", "--show-toplevel"], cwd=target_root, check=False)
+    if top_proc.returncode != 0:
+        return (
+            "invalid-git-repository",
+            f"Cannot integrate {candidate.task_id}: repository root for {candidate.repository_id} is not a git repository ({target_root}).",
+        )
+    top_output = top_proc.stdout.strip()
+    if check_fs and top_output:
+        try:
+            top_path = Path(top_output).resolve(strict=False)
+            if top_path != target_root.resolve(strict=False):
+                return (
+                    "invalid-git-repository",
+                    f"Cannot integrate {candidate.task_id}: repository root for {candidate.repository_id} is not a git toplevel ({top_path} != {target_root}).",
+                )
+        except OSError:
+            pass
+    expected_slug = normalize_github_repo_slug(candidate.repository_slug)
+    if not expected_slug:
+        return (
+            "missing-repository-slug",
+            f"Cannot integrate {candidate.task_id}: repository `{candidate.repository_id}` has no configured GitHub slug.",
+        )
+    remote_proc = runner.run(["git", "remote", "get-url", "origin"], cwd=target_root, check=False)
+    if remote_proc.returncode != 0:
+        return (
+            "missing-origin-remote",
+            f"Cannot integrate {candidate.task_id}: origin remote is unavailable for {candidate.repository_id} at {target_root}.",
+        )
+    remote_raw = remote_proc.stdout.strip()
+    actual_slug = normalize_github_repo_slug(remote_raw)
+    is_local_fixture = (
+        remote_raw.startswith("/")
+        or remote_raw.startswith("file://")
+        or (Path(remote_raw).exists() if len(remote_raw) < 260 else False)
+    )
+    if not is_local_fixture and (not actual_slug or actual_slug != expected_slug):
+        return (
+            "repository-origin-mismatch",
+            f"Cannot integrate {candidate.task_id}: repository origin remote mismatch for {candidate.repository_id} at {target_root} ({actual_slug or 'missing'} != {expected_slug}).",
+        )
+    return None
+
+
 def integrate_candidate(
     candidate: TaskCandidate,
     settings: Settings,
@@ -1210,6 +1297,31 @@ def integrate_candidate(
             commands=runner.commands[:],
         )
 
+    preflight_error = preflight_repository(candidate, runner, target_root)
+    if preflight_error:
+        reason, detail = preflight_error
+        unblock = (
+            open_unblock_task(
+                candidate,
+                reason,
+                detail,
+                settings,
+                runner,
+                root=status_root_dir,
+                execute=execute,
+            )
+            if open_unblock
+            else None
+        )
+        return IntegrationResult(
+            candidate.task_id,
+            "blocked",
+            detail,
+            unblock_task_id=unblock,
+            dry_run=not execute,
+            commands=runner.commands[:],
+        )
+
     try:
         pr = fetch_pr_for_task(candidate, settings, runner, root=target_root)
     except AmbiguousPullRequests as exc:
@@ -1218,6 +1330,29 @@ def integrate_candidate(
             open_unblock_task(
                 candidate,
                 "ambiguous-open-prs",
+                detail,
+                settings,
+                runner,
+                root=status_root_dir,
+                execute=execute,
+            )
+            if open_unblock
+            else None
+        )
+        return IntegrationResult(
+            candidate.task_id,
+            "blocked",
+            detail,
+            unblock_task_id=unblock,
+            dry_run=not execute,
+            commands=runner.commands[:],
+        )
+    except (CommandFailure, AutoIntegratorError, OSError) as exc:
+        detail = f"Failed to inspect PR for {candidate.task_id} at {target_root}: {exc}"
+        unblock = (
+            open_unblock_task(
+                candidate,
+                "pr-lookup-failed",
                 detail,
                 settings,
                 runner,
@@ -2028,8 +2163,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     config_dict = load_json(config_path, {})
     if not isinstance(config_dict, dict):
         config_dict = {}
-    if "paths" not in config_dict:
-        config_dict["paths"] = {"status_file": str(status_file)}
+    paths = dict(config_dict.get("paths") or {})
+    paths["status_file"] = str(status_file.resolve())
+    config_dict["paths"] = paths
     candidates = review_approved_candidates(
         state,
         config=config_dict,

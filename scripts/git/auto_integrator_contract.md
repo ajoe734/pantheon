@@ -20,6 +20,15 @@ or unblock task
 - Repository scope is resolved per task via `.orchestrator/multi_repo_registry.py`:
   derives repository ID (`pantheon`, `execute_plans`), GitHub slug (`ajoe734/pantheon`,
   `ajoe734/execute-plans`), local checkout root, and target branch (`dev`).
+  Path authority is anchored in `PANTHEON_STATUS_ROOT` / status file, ensuring
+  sibling repository paths (e.g. `../code/execute-plans`) resolve against the
+  canonical coordination root.
+- Before interacting with the repository, a preflight check verifies that the
+  target root exists, is an absolute directory, is a valid git repository root,
+  and that its origin remote matches the configured repository slug. Any missing
+  checkout, invalid git repository, or remote origin mismatch fails closed safely
+  with a blocking unblock task (`missing-repository-checkout`, `invalid-git-repository`,
+  `repository-origin-mismatch`) instead of raising uncaught errors.
 - The PR head must be `task/<TASK-ID>` and the base must match the target repository's
   configured default branch (e.g. `dev`).
 - The PR URL's GitHub slug must match the candidate's resolved repository slug.

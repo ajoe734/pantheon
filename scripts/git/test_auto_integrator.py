@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import json
 import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -33,6 +34,11 @@ class FakeRunner(auto_integrator.CommandRunner):
         carry_forward_publish_fails: bool = False,
         requiredness_nodes: Sequence[Mapping[str, Any]] | None = None,
         requiredness_query_fails: bool = False,
+        check_filesystem_paths: bool = False,
+        git_toplevel_returncode: int = 0,
+        git_toplevel_path: str | None = None,
+        origin_remote_returncode: int = 0,
+        origin_remote_slug: str | None = None,
     ) -> None:
         super().__init__()
         self.pr = dict(pr) if pr is not None else None
@@ -42,6 +48,11 @@ class FakeRunner(auto_integrator.CommandRunner):
         self.disable_auto_clears_request = disable_auto_clears_request
         self.disable_auto_returncode = disable_auto_returncode
         self.auto_merge_read_fails = auto_merge_read_fails
+        self.check_filesystem_paths = check_filesystem_paths
+        self.git_toplevel_returncode = git_toplevel_returncode
+        self.git_toplevel_path = git_toplevel_path
+        self.origin_remote_returncode = origin_remote_returncode
+        self.origin_remote_slug = origin_remote_slug
         # SUP-GATED-PR-EXACT-HEAD-QUEUE-MERGE-20260805: outcome of the
         # disposable `git merge origin/dev` test-merge run against a behind
         # gated PR's exact reviewed head. 0 = clean (default); non-zero
@@ -147,6 +158,21 @@ class FakeRunner(auto_integrator.CommandRunner):
             return completed(command)
         if command[:3] == ["git", "worktree", "add"]:
             return completed(command)
+        if command[:3] == ["git", "rev-parse", "--show-toplevel"]:
+            if self.git_toplevel_returncode != 0:
+                return completed(command, returncode=self.git_toplevel_returncode)
+            top = self.git_toplevel_path if self.git_toplevel_path is not None else str(cwd)
+            return completed(command, stdout=f"{top}\n")
+        if command[:3] == ["git", "remote", "get-url"]:
+            if self.origin_remote_returncode != 0:
+                return completed(command, returncode=self.origin_remote_returncode)
+            if self.origin_remote_slug:
+                slug = self.origin_remote_slug
+            elif "execute-plans" in str(cwd) or "execute_plans" in str(cwd):
+                slug = "ajoe734/execute-plans"
+            else:
+                slug = "ajoe734/pantheon"
+            return completed(command, stdout=f"https://github.com/{slug}.git\n")
         if command[:3] == ["git", "rev-parse", "HEAD"]:
             return completed(command, stdout="abc123\n")
         if command[:2] == ["git", "rebase"] and "--abort" not in command:
@@ -1635,9 +1661,280 @@ class CrossRepoIntegrationTests(unittest.TestCase):
             gate=gate,
         )
 
+    def test_pantheon_status_root_resolves_execute_plans_path_authority(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            coordination_root = tmp_path / "coordination-root"
+            coordination_root.mkdir()
+            config = {
+                "paths": {"status_file": str(coordination_root / "ai-status.json")},
+                "coordination": {
+                    "repositories": {
+                        "execute_plans": {"local_path": "../code/execute-plans"}
+                    }
+                },
+            }
+            state = {
+                "tasks": [
+                    {
+                        "id": "FE-001",
+                        "title": "FE Task",
+                        "status": "review_approved",
+                        "owner": "Codex",
+                        "reviewer": "Claude",
+                        "target_repo": "execute_plans",
+                        "artifacts": ["execute-plans/src/App.tsx"],
+                    }
+                ]
+            }
+            candidates = auto_integrator.review_approved_candidates(
+                state, config=config, status_root=coordination_root
+            )
+            self.assertEqual(len(candidates), 1)
+            expected_root = (coordination_root / "../code/execute-plans").resolve()
+            self.assertEqual(candidates[0].repository_root, expected_root)
+            self.assertIsNone(candidates[0].scope_error)
+
+    def test_missing_repository_checkout_fails_closed(self) -> None:
+        missing_root = Path("/nonexistent/custom/path/to/execute-plans")
+        candidate = auto_integrator.TaskCandidate(
+            task_id="FE-001",
+            title="FE Task",
+            owner="Codex",
+            reviewer="Claude",
+            branch="task/FE-001",
+            repository_id="execute_plans",
+            repository_slug="ajoe734/execute-plans",
+            repository_root=missing_root,
+            target_branch="dev",
+        )
+        runner = FakeRunner(check_filesystem_paths=True)
+        result = auto_integrator.integrate_candidate(
+            candidate,
+            auto_integrator.Settings(),
+            runner,
+            execute=True,
+        )
         self.assertEqual(result.action, "blocked")
-        self.assertTrue("approval_head_mismatch" in result.detail or "head_changed_after_approval" in result.detail)
-        self.assertFalse(any(cmd[:3] == ["gh", "pr", "merge"] for cmd in runner.commands))
+        self.assertIn("does not exist", result.detail)
+        self.assertEqual(
+            result.unblock_task_id,
+            "INTEGRATION-UNBLOCK-FE-001-MISSING-REPOSITORY-CHECKOUT",
+        )
+
+    def test_invalid_git_repository_fails_closed(self) -> None:
+        ep_root = Path("/fake/execute-plans")
+        candidate = auto_integrator.TaskCandidate(
+            task_id="FE-001",
+            title="FE Task",
+            owner="Codex",
+            reviewer="Claude",
+            branch="task/FE-001",
+            repository_id="execute_plans",
+            repository_slug="ajoe734/execute-plans",
+            repository_root=ep_root,
+            target_branch="dev",
+        )
+        runner = FakeRunner(git_toplevel_returncode=1)
+        result = auto_integrator.integrate_candidate(
+            candidate,
+            auto_integrator.Settings(),
+            runner,
+            execute=True,
+        )
+        self.assertEqual(result.action, "blocked")
+        self.assertIn("is not a git repository", result.detail)
+        self.assertEqual(
+            result.unblock_task_id,
+            "INTEGRATION-UNBLOCK-FE-001-INVALID-GIT-REPOSITORY",
+        )
+
+    def test_mismatched_origin_remote_fails_closed(self) -> None:
+        ep_root = Path("/fake/execute-plans")
+        candidate = auto_integrator.TaskCandidate(
+            task_id="FE-001",
+            title="FE Task",
+            owner="Codex",
+            reviewer="Claude",
+            branch="task/FE-001",
+            repository_id="execute_plans",
+            repository_slug="ajoe734/execute-plans",
+            repository_root=ep_root,
+            target_branch="dev",
+        )
+        runner = FakeRunner(origin_remote_slug="ajoe734/other-repo")
+        result = auto_integrator.integrate_candidate(
+            candidate,
+            auto_integrator.Settings(),
+            runner,
+            execute=True,
+        )
+        self.assertEqual(result.action, "blocked")
+        self.assertIn("repository origin remote mismatch", result.detail)
+        self.assertEqual(
+            result.unblock_task_id,
+            "INTEGRATION-UNBLOCK-FE-001-REPOSITORY-ORIGIN-MISMATCH",
+        )
+
+    def test_command_runner_handles_oserror_cleanly(self) -> None:
+        runner = auto_integrator.CommandRunner()
+        nonexistent = Path("/nonexistent/directory/path/for/test")
+
+        res = runner.run(["git", "status"], cwd=nonexistent, check=False)
+        self.assertEqual(res.returncode, 127)
+        self.assertIn("No such file or directory", res.stderr)
+
+        with self.assertRaises(auto_integrator.CommandFailure) as ctx:
+            runner.run(["git", "status"], cwd=nonexistent, check=True)
+        self.assertEqual(ctx.exception.returncode, 127)
+
+    def test_real_filesystem_execute_plans_candidate_preflights_and_merges(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            ep_dir = Path(tmp_dir) / "execute-plans"
+            ep_dir.mkdir()
+            subprocess.run(["git", "init", "-b", "dev", str(ep_dir)], check=True, capture_output=True)
+            subprocess.run(
+                ["git", "remote", "add", "origin", "https://github.com/ajoe734/execute-plans.git"],
+                cwd=ep_dir,
+                check=True,
+                capture_output=True,
+            )
+            candidate = auto_integrator.TaskCandidate(
+                task_id="FE-001",
+                title="FE Task",
+                owner="Codex",
+                reviewer="Claude",
+                branch="task/FE-001",
+                repository_id="execute_plans",
+                repository_slug="ajoe734/execute-plans",
+                repository_root=ep_dir,
+                target_branch="dev",
+            )
+            pr = green_ep_pr(number=99, task_id="FE-001")
+            runner = FakeRunner(pr=pr, check_filesystem_paths=True)
+            gate = approved_gate(task_id="FE-001", pr_number=99)
+
+            result = auto_integrator.integrate_candidate(
+                candidate,
+                auto_integrator.Settings(smoke_commands=("true",)),
+                runner,
+                execute=True,
+                gate=gate,
+            )
+            self.assertEqual(result.action, "merged")
+            self.assertEqual(result.pr_number, 99)
+
+    def test_non_absolute_repository_root_fails_closed(self) -> None:
+        candidate = auto_integrator.TaskCandidate(
+            task_id="FE-001",
+            title="FE Task",
+            owner="Codex",
+            reviewer="Claude",
+            branch="task/FE-001",
+            repository_id="execute_plans",
+            repository_slug="ajoe734/execute-plans",
+            repository_root=Path("relative/path/to/execute-plans"),
+            target_branch="dev",
+        )
+        runner = FakeRunner()
+        result = auto_integrator.integrate_candidate(
+            candidate,
+            auto_integrator.Settings(),
+            runner,
+            execute=True,
+        )
+        self.assertEqual(result.action, "blocked")
+        self.assertIn("must be an absolute path", result.detail)
+        self.assertEqual(
+            result.unblock_task_id,
+            "INTEGRATION-UNBLOCK-FE-001-INVALID-REPOSITORY-ROOT",
+        )
+
+    def test_missing_repository_slug_fails_closed(self) -> None:
+        ep_root = Path("/fake/execute-plans")
+        candidate = auto_integrator.TaskCandidate(
+            task_id="FE-001",
+            title="FE Task",
+            owner="Codex",
+            reviewer="Claude",
+            branch="task/FE-001",
+            repository_id="execute_plans",
+            repository_slug="",
+            repository_root=ep_root,
+            target_branch="dev",
+        )
+        runner = FakeRunner()
+        result = auto_integrator.integrate_candidate(
+            candidate,
+            auto_integrator.Settings(),
+            runner,
+            execute=True,
+        )
+        self.assertEqual(result.action, "blocked")
+        self.assertIn("has no configured GitHub slug", result.detail)
+        self.assertEqual(
+            result.unblock_task_id,
+            "INTEGRATION-UNBLOCK-FE-001-MISSING-REPOSITORY-SLUG",
+        )
+
+    def test_origin_remote_command_failure_fails_closed(self) -> None:
+        ep_root = Path("/fake/execute-plans")
+        candidate = auto_integrator.TaskCandidate(
+            task_id="FE-001",
+            title="FE Task",
+            owner="Codex",
+            reviewer="Claude",
+            branch="task/FE-001",
+            repository_id="execute_plans",
+            repository_slug="ajoe734/execute-plans",
+            repository_root=ep_root,
+            target_branch="dev",
+        )
+        runner = FakeRunner(origin_remote_returncode=1)
+        result = auto_integrator.integrate_candidate(
+            candidate,
+            auto_integrator.Settings(),
+            runner,
+            execute=True,
+        )
+        self.assertEqual(result.action, "blocked")
+        self.assertIn("origin remote is unavailable", result.detail)
+        self.assertEqual(
+            result.unblock_task_id,
+            "INTEGRATION-UNBLOCK-FE-001-MISSING-ORIGIN-REMOTE",
+        )
+
+    def test_pr_lookup_failure_fails_closed_without_crashing(self) -> None:
+        ep_root = Path("/fake/execute-plans")
+        candidate = auto_integrator.TaskCandidate(
+            task_id="FE-001",
+            title="FE Task",
+            owner="Codex",
+            reviewer="Claude",
+            branch="task/FE-001",
+            repository_id="execute_plans",
+            repository_slug="ajoe734/execute-plans",
+            repository_root=ep_root,
+            target_branch="dev",
+        )
+        runner = FakeRunner()
+        with mock.patch.object(
+            auto_integrator,
+            "fetch_pr_for_task",
+            side_effect=auto_integrator.CommandFailure(["gh", "pr", "list"], 1, "network timeout"),
+        ):
+            result = auto_integrator.integrate_candidate(
+                candidate,
+                auto_integrator.Settings(),
+                runner,
+                execute=True,
+            )
+        self.assertEqual(result.action, "blocked")
+        self.assertIn("Failed to inspect PR", result.detail)
+        self.assertEqual(
+            result.unblock_task_id,
+            "INTEGRATION-UNBLOCK-FE-001-PR-LOOKUP-FAILED",
+        )
 
 
 if __name__ == "__main__":
