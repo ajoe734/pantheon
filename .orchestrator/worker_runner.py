@@ -259,6 +259,143 @@ def validate_status_command_runtime() -> dict[str, str]:
     }
 
 
+def _append_leased_git_metadata_mounts(
+    bwrap_cmd: list[str], workspace: Path
+) -> None:
+    """Make only the selected linked worktree's Git control surface usable.
+
+    A linked worktree keeps its index/HEAD under the source repository's
+    ``.git/worktrees`` directory and shares objects/refs with that repository.
+    Binding only the delivery directory therefore makes source files writable
+    but leaves every real Git mutation read-only.  Mount the selected common
+    Git directory writable, then overlay the source checkout's control files,
+    every other local branch, tags, and every other linked-worktree directory
+    read-only before reopening only this worktree's metadata directory.
+    """
+
+    dot_git = workspace / ".git"
+    if dot_git.is_symlink():
+        raise RuntimeError(f"leased-worktree .git cannot be a symlink: {dot_git}")
+    if dot_git.is_dir():
+        # Standalone repositories keep all Git state under the already writable
+        # leased workspace and require no shared metadata exception.
+        return
+    if not dot_git.is_file():
+        raise RuntimeError(f"leased workspace has no regular .git marker: {dot_git}")
+    marker = dot_git.read_text(encoding="utf-8").strip()
+    prefix = "gitdir:"
+    if not marker.lower().startswith(prefix):
+        raise RuntimeError(f"leased-worktree .git marker is invalid: {dot_git}")
+    git_dir = Path(marker[len(prefix) :].strip())
+    if not git_dir.is_absolute():
+        git_dir = workspace / git_dir
+    symlink = _first_symlink_component(git_dir)
+    if symlink is not None:
+        raise RuntimeError(f"leased-worktree git metadata contains a symlink: {symlink}")
+    git_dir = git_dir.resolve()
+    commondir_file = git_dir / "commondir"
+    if commondir_file.is_symlink() or not commondir_file.is_file():
+        raise RuntimeError(f"leased-worktree commondir is unavailable: {commondir_file}")
+    common_dir = Path(commondir_file.read_text(encoding="utf-8").strip())
+    if not common_dir.is_absolute():
+        common_dir = git_dir / common_dir
+    common_dir = common_dir.resolve()
+    symlink = _first_symlink_component(common_dir)
+    if symlink is not None:
+        raise RuntimeError(f"leased-worktree common git metadata contains a symlink: {symlink}")
+    try:
+        git_dir.relative_to(common_dir / "worktrees")
+    except ValueError as exc:
+        raise RuntimeError(
+            "leased workspace gitdir is not task-scoped under the selected common git dir"
+        ) from exc
+
+    head_file = git_dir / "HEAD"
+    if head_file.is_symlink() or not head_file.is_file():
+        raise RuntimeError(f"leased-worktree HEAD is unavailable: {head_file}")
+    head_marker = head_file.read_text(encoding="utf-8").strip()
+    branch_ref = head_marker[4:].strip() if head_marker.startswith("ref:") else ""
+    if not branch_ref.startswith("refs/heads/task/"):
+        raise RuntimeError(
+            "leased linked worktree must be attached to a task/* branch before launch"
+        )
+
+    bwrap_cmd.extend(["--bind", str(common_dir), str(common_dir)])
+
+    protected: list[Path] = []
+    for relative in (
+        "HEAD",
+        "index",
+        "config",
+        "config.worktree",
+        "hooks",
+        "info",
+        "refs/tags",
+        "logs/HEAD",
+        "worktrees",
+    ):
+        candidate = common_dir / relative
+        if candidate.exists():
+            protected.append(candidate)
+    heads_root = common_dir / "refs" / "heads"
+    if heads_root.is_dir():
+        for candidate in heads_root.rglob("*"):
+            if not candidate.is_file():
+                continue
+            relative_ref = candidate.relative_to(common_dir).as_posix()
+            if relative_ref != branch_ref:
+                protected.append(candidate)
+
+    # Parent protections are installed before the selected nested gitdir is
+    # reopened.  Bubblewrap applies later mounts on top of earlier mounts.
+    for candidate in sorted(set(protected), key=lambda item: (len(item.parts), str(item))):
+        bwrap_cmd.extend(["--ro-bind", str(candidate), str(candidate)])
+    bwrap_cmd.extend(["--bind", str(git_dir), str(git_dir)])
+
+
+def _append_task_store_mounts(bwrap_cmd: list[str], raw_event_log: str) -> None:
+    """Expose the atomic TaskStore surface without exposing sibling runtime data."""
+
+    expanded_event_path = Path(os.path.expanduser(raw_event_log))
+    if not expanded_event_path.is_absolute():
+        raise RuntimeError("PANTHEON_TASK_STATE_EVENT_LOG must be absolute")
+    event_path = expanded_event_path.absolute()
+    parent = event_path.parent
+    symlink = _first_symlink_component(parent)
+    if symlink is not None or parent.is_symlink():
+        raise RuntimeError(
+            f"task-state store parent cannot contain a symlink: {symlink or parent}"
+        )
+    if not parent.is_dir() or not event_path.is_file():
+        raise RuntimeError(f"task-state store is unavailable: {event_path}")
+
+    allowed_names = {
+        event_path.name,
+        f"{event_path.name}.head.json",
+        f"{event_path.name}.lock",
+        f"{event_path.name}.legacy-anchor.json",
+    }
+    for required in (
+        event_path,
+        parent / f"{event_path.name}.head.json",
+        parent / f"{event_path.name}.lock",
+    ):
+        if required.is_symlink() or not required.is_file():
+            raise RuntimeError(f"task-state governed file is unavailable: {required}")
+
+    # The V2 store replaces its head through a same-directory temporary file,
+    # so binding individual files is insufficient.  Bind the parent writable,
+    # then remount every non-TaskStore sibling read-only.  Existing protected
+    # mountpoints cannot be replaced or unlinked from inside the namespace.
+    bwrap_cmd.extend(["--bind", str(parent), str(parent)])
+    for sibling in sorted(parent.iterdir(), key=lambda item: item.name):
+        if sibling.name in allowed_names:
+            continue
+        if sibling.is_symlink():
+            raise RuntimeError(f"runtime sibling cannot be a symlink: {sibling}")
+        bwrap_cmd.extend(["--ro-bind", str(sibling), str(sibling)])
+
+
 def bind_worker_sandbox(
     command: list[str],
     command_root: Path,
@@ -372,6 +509,7 @@ def bind_worker_sandbox(
     # 6. Leased delivery worktree is explicitly writable
     if ws_resolved:
         bwrap_cmd.extend(["--bind", str(ws_resolved), str(ws_resolved)])
+        _append_leased_git_metadata_mounts(bwrap_cmd, ws_resolved)
 
     # 7. Governed coordination state interfaces
     if coord_resolved and (ws_resolved is None or coord_resolved != ws_resolved):
@@ -392,7 +530,7 @@ def bind_worker_sandbox(
         ]
         event_log = os.environ.get("PANTHEON_TASK_STATE_EVENT_LOG")
         if event_log and event_log.strip():
-            governed_candidates.append(Path(os.path.expanduser(event_log.strip())).resolve())
+            _append_task_store_mounts(bwrap_cmd, event_log.strip())
 
         for p in governed_candidates:
             if p.exists():

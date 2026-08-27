@@ -922,6 +922,217 @@ class TestCrossRepoLeasedWorktreeWriteBoundary(unittest.TestCase):
             self.assertNotIn(str(shared_ep.resolve()), bound_rw_paths)
             self.assertNotIn(str(command_root.resolve()), bound_rw_paths)
 
+    def test_bind_worker_sandbox_mounts_atomic_task_store_parent_only(self):
+        with tempfile.TemporaryDirectory(prefix="worker-runner-task-store-") as temp_dir:
+            root = Path(temp_dir)
+            central = root / "central"
+            command_root = root / "command-runtime"
+            worktree = root / "execute-plans-worktree"
+            runtime = root / "runtime"
+            for repository in (central, command_root, worktree):
+                _init_repo(repository)
+            _write_status(central)
+            runtime.mkdir()
+            event_log = runtime / "task-state-events-v2.jsonl"
+            event_log.write_text("event\n", encoding="utf-8")
+            (runtime / f"{event_log.name}.head.json").write_text("{}\n", encoding="utf-8")
+            (runtime / f"{event_log.name}.lock").touch()
+            live_config = runtime / "live-supervisor.json"
+            live_config.write_text("{}\n", encoding="utf-8")
+
+            with mock.patch.dict(
+                os.environ,
+                {"PANTHEON_TASK_STATE_EVENT_LOG": str(event_log)},
+                clear=False,
+            ):
+                sandbox_args = wr.bind_worker_sandbox(
+                    ["python3", "-c", "pass"],
+                    command_root=command_root,
+                    workspace_path=worktree,
+                    coordination_root=central,
+                    sandbox_binary="/usr/bin/bwrap",
+                )
+
+            runtime_indices = [
+                index
+                for index, value in enumerate(sandbox_args)
+                if value == str(runtime.resolve())
+            ]
+            self.assertEqual(len(runtime_indices), 2)
+            self.assertEqual(sandbox_args[runtime_indices[0] - 1], "--bind")
+            self.assertEqual(sandbox_args[runtime_indices[0] + 1], str(runtime.resolve()))
+            config_idx = sandbox_args.index(str(live_config.resolve()))
+            self.assertEqual(sandbox_args[config_idx - 1], "--ro-bind")
+            self.assertNotIn(str(event_log.resolve()), sandbox_args)
+
+    def test_bind_worker_sandbox_reopens_only_selected_linked_gitdir(self):
+        with tempfile.TemporaryDirectory(prefix="worker-runner-linked-git-") as temp_dir:
+            root = Path(temp_dir)
+            central = root / "central"
+            command_root = root / "command-runtime"
+            source = root / "execute-plans"
+            worktree = root / "task-worktree"
+            for repository in (central, command_root, source):
+                _init_repo(repository)
+            _write_status(central)
+            subprocess.run(
+                ["git", "worktree", "add", "-q", "-b", "task/BOUNDARY", str(worktree), "HEAD"],
+                cwd=source,
+                check=True,
+            )
+
+            sandbox_args = wr.bind_worker_sandbox(
+                ["python3", "-c", "pass"],
+                command_root=command_root,
+                workspace_path=worktree,
+                coordination_root=central,
+                sandbox_binary="/usr/bin/bwrap",
+            )
+
+            common_dir = Path(
+                subprocess.check_output(
+                    ["git", "rev-parse", "--git-common-dir"],
+                    cwd=worktree,
+                    text=True,
+                ).strip()
+            ).resolve()
+            git_dir = Path(
+                subprocess.check_output(
+                    ["git", "rev-parse", "--absolute-git-dir"],
+                    cwd=worktree,
+                    text=True,
+                ).strip()
+            ).resolve()
+            common_idx = sandbox_args.index(str(common_dir))
+            self.assertEqual(sandbox_args[common_idx - 1], "--bind")
+            source_head_idx = sandbox_args.index(str(common_dir / "HEAD"))
+            self.assertEqual(sandbox_args[source_head_idx - 1], "--ro-bind")
+            all_worktrees_idx = sandbox_args.index(str(common_dir / "worktrees"))
+            self.assertEqual(sandbox_args[all_worktrees_idx - 1], "--ro-bind")
+            selected_idx = sandbox_args.index(str(git_dir))
+            self.assertEqual(sandbox_args[selected_idx - 1], "--bind")
+            self.assertGreater(selected_idx, all_worktrees_idx)
+
+    @unittest.skipUnless(
+        _FUNCTIONAL_BWRAP,
+        "Functional bubblewrap with user namespace support is required for sandbox execution tests",
+    )
+    def test_atomic_task_store_write_succeeds_and_runtime_sibling_stays_read_only(self):
+        with tempfile.TemporaryDirectory(prefix="worker-runner-task-store-live-") as temp_dir:
+            root = Path(temp_dir)
+            central = root / "central"
+            command_root = root / "command-runtime"
+            worktree = root / "execute-plans-worktree"
+            runtime = root / "runtime"
+            for repository in (central, command_root, worktree):
+                _init_repo(repository)
+            _write_status(central)
+            runtime.mkdir()
+            event_log = runtime / "task-state-events-v2.jsonl"
+            head = runtime / f"{event_log.name}.head.json"
+            lock = runtime / f"{event_log.name}.lock"
+            live_config = runtime / "live-supervisor.json"
+            event_log.write_text("event-1\n", encoding="utf-8")
+            head.write_text('{"sequence":1}\n', encoding="utf-8")
+            lock.touch()
+            live_config.write_text('{"protected":true}\n', encoding="utf-8")
+            program = (
+                "import os, pathlib, sys\n"
+                "event, head, lock, protected = map(pathlib.Path, sys.argv[1:])\n"
+                "with event.open('a') as handle: handle.write('event-2\\n')\n"
+                "with lock.open('r+'): pass\n"
+                "temporary = head.with_name(head.name + '.worker.tmp')\n"
+                "temporary.write_text('{\\\"sequence\\\":2}\\n')\n"
+                "os.replace(temporary, head)\n"
+                "blocked = False\n"
+                "try: protected.write_text('mutated\\n')\n"
+                "except OSError: blocked = True\n"
+                "sys.exit(0 if blocked else 41)\n"
+            )
+            with mock.patch.dict(
+                os.environ,
+                {"PANTHEON_TASK_STATE_EVENT_LOG": str(event_log)},
+                clear=False,
+            ):
+                sandbox_args = wr.bind_worker_sandbox(
+                    [
+                        sys.executable,
+                        "-c",
+                        program,
+                        str(event_log),
+                        str(head),
+                        str(lock),
+                        str(live_config),
+                    ],
+                    command_root=command_root,
+                    workspace_path=worktree,
+                    coordination_root=central,
+                    sandbox_binary=_FUNCTIONAL_BWRAP,
+                )
+            proc = subprocess.run(sandbox_args, cwd=worktree, capture_output=True, text=True)
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            self.assertEqual(head.read_text(encoding="utf-8"), '{"sequence":2}\n')
+            self.assertIn("event-2", event_log.read_text(encoding="utf-8"))
+            self.assertEqual(live_config.read_text(encoding="utf-8"), '{"protected":true}\n')
+
+    @unittest.skipUnless(
+        _FUNCTIONAL_BWRAP,
+        "Functional bubblewrap with user namespace support is required for sandbox execution tests",
+    )
+    def test_linked_task_worktree_can_rebase_without_mutating_source_checkout(self):
+        with tempfile.TemporaryDirectory(prefix="worker-runner-linked-git-live-") as temp_dir:
+            root = Path(temp_dir)
+            central = root / "central"
+            command_root = root / "command-runtime"
+            source = root / "execute-plans"
+            worktree = root / "task-worktree"
+            for repository in (central, command_root, source):
+                _init_repo(repository)
+            _write_status(central)
+            subprocess.run(["git", "branch", "-M", "dev"], cwd=source, check=True)
+            subprocess.run(
+                ["git", "worktree", "add", "-q", "-b", "task/BOUNDARY", str(worktree), "HEAD"],
+                cwd=source,
+                check=True,
+            )
+            (source / "base.txt").write_text("new base\n", encoding="utf-8")
+            subprocess.run(["git", "add", "base.txt"], cwd=source, check=True)
+            subprocess.run(["git", "commit", "-q", "-m", "advance dev"], cwd=source, check=True)
+            source_head = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=source, text=True).strip()
+            source_branch = subprocess.check_output(
+                ["git", "branch", "--show-current"], cwd=source, text=True
+            ).strip()
+            program = (
+                "set -eu\n"
+                "git rebase dev\n"
+                "printf 'worker\\n' > worker.txt\n"
+                "git add worker.txt\n"
+                "git commit -q -m 'task commit'\n"
+                f"if git -C {source} checkout --detach HEAD~1; then exit 42; fi\n"
+            )
+            sandbox_args = wr.bind_worker_sandbox(
+                ["/bin/bash", "-lc", program],
+                command_root=command_root,
+                workspace_path=worktree,
+                coordination_root=central,
+                sandbox_binary=_FUNCTIONAL_BWRAP,
+            )
+            proc = subprocess.run(sandbox_args, cwd=worktree, capture_output=True, text=True)
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            self.assertTrue((worktree / "worker.txt").is_file())
+            self.assertEqual(
+                subprocess.check_output(["git", "rev-parse", "dev"], cwd=worktree, text=True).strip(),
+                source_head,
+            )
+            self.assertEqual(
+                subprocess.check_output(["git", "branch", "--show-current"], cwd=source, text=True).strip(),
+                source_branch,
+            )
+            self.assertEqual(
+                subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=source, text=True).strip(),
+                source_head,
+            )
+
     def test_bind_worker_sandbox_protects_worktrees_under_tmp(self):
         with tempfile.TemporaryDirectory(prefix="worker-runner-sandbox-tmp-") as temp_dir:
             root = Path(temp_dir)
