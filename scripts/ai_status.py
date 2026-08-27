@@ -1870,12 +1870,18 @@ def _terminal_fact_for_task(
         raise RuntimeError(f"terminal task has invalid generation: {task_id}") from exc
     if not task_id or not outcome or generation < 1:
         raise RuntimeError(f"terminal task cannot produce a dependency fact: {task_id}")
-    return {
+    fact = {
         "status": "done",
         "terminal_outcome": outcome,
         "generation": generation,
         "recorded_at": str(recorded_at or iso_now()),
     }
+    tracks = task_archive_module.compact_completion_tracks(
+        task.get("completion_tracks")
+    )
+    if tracks:
+        fact["completion_tracks"] = tracks
+    return fact
 
 
 def normalize_terminal_facts(state: dict[str, Any]) -> None:
@@ -1909,12 +1915,18 @@ def normalize_terminal_facts(state: dict[str, Any]) -> None:
             or not recorded_at
         ):
             raise RuntimeError(f"terminal fact has invalid lifecycle data: {task_id}")
-        normalized[task_id] = {
+        fact = {
             "status": "done",
             "terminal_outcome": outcome,
             "generation": generation,
             "recorded_at": recorded_at,
         }
+        tracks = task_archive_module.compact_completion_tracks(
+            raw_fact.get("completion_tracks")
+        )
+        if tracks:
+            fact["completion_tracks"] = tracks
+        normalized[task_id] = fact
     state[TERMINAL_FACTS_KEY] = normalized
 
 
@@ -1932,13 +1944,19 @@ def record_terminal_fact(
     facts = state[TERMINAL_FACTS_KEY]
     existing = facts.get(task_id)
     if existing is not None:
-        if {
-            key: existing.get(key)
-            for key in ("status", "terminal_outcome", "generation")
-        } != {
-            key: candidate[key]
-            for key in ("status", "terminal_outcome", "generation")
-        }:
+        existing_identity = {
+            "status": existing.get("status"),
+            "terminal_outcome": existing.get("terminal_outcome"),
+            "generation": existing.get("generation"),
+            "completion_tracks": existing.get("completion_tracks") or {},
+        }
+        candidate_identity = {
+            "status": candidate.get("status"),
+            "terminal_outcome": candidate.get("terminal_outcome"),
+            "generation": candidate.get("generation"),
+            "completion_tracks": candidate.get("completion_tracks") or {},
+        }
+        if existing_identity != candidate_identity:
             raise RuntimeError(f"terminal fact conflicts with existing TaskStore fact: {task_id}")
         return deepcopy(existing)
     facts[task_id] = candidate

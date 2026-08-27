@@ -1,0 +1,34 @@
+{
+  "program_id": "AGORA-PRODUCT-CLOSURE-20260827",
+  "task_id": "AGORA-AGC-06-DATA-READINESS-BFF-20260827",
+  "design_unit": "SD-AGC-06-BFF",
+  "task_title": "Compose Agora source producer and surface readiness",
+  "verified_at": "2026-08-27T06:58:11Z",
+  "author_worker": "Antigravity",
+  "reviewer": "Antigravity2",
+  "branch": "task/AGORA-AGC-06-DATA-READINESS-BFF-20260827",
+  "verification_status": "PASSED",
+  "summary": {
+    "stages_executed": 7,
+    "stages_passed": 7,
+    "stages_failed": 0,
+    "pytest_total": 35,
+    "pytest_passed": 35,
+    "pytest_failed": 0
+  },
+  "artifacts": [
+    "services/control-plane/bff/agora/operational_readiness.py",
+    "services/control-plane/bff/agora/test_operational_readiness.py",
+    "services/control-plane/bff/agora/router.py",
+    "scripts/verify_agora_operational_readiness.py",
+    "scripts/test_verify_agora_operational_readiness.py"
+  ],
+  "invariants_asserted": [
+    "Operational readiness binds source snapshot and producer identity",
+    "Stale, empty_fresh, and unavailable states are distinct and mutually exclusive",
+    "Route is read-only and never auth-critical (requiredForAuthentication=False)",
+    "Bounded recovery verifier fails closed and restores safe dev posture",
+    "No broker order or capital mutation authority on operational readiness route",
+    "Management Data Sources displays active source feeding snapshot with desired and observed state"
+  ]
+}

@@ -945,6 +945,12 @@
       "task_id": "BFF-LUV-GAP-006"
     },
     {
+      "method": "GET",
+      "path": "/bff/agora/trading-room/performance-attribution/by-strategy",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
       "method": "POST",
       "path": "/bff/agora/committee/{sessionId}/evidence-pack",
       "family": "agora-extended",
