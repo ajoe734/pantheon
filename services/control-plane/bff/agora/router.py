@@ -221,6 +221,7 @@ def create_agora_router(
         **_kw,
         require_write_role=require_write_role,
         get_trade_journey_store=get_trade_journey_store,
+        workshop_store=workshop_store,
     ))
     router.include_router(create_dashboard_router(**_kw))
     router.include_router(create_shadow_router(**_kw))

@@ -87,7 +87,32 @@ def _bff_error(status: int, _code: Any, message: str, _reason: str, **_: Any) ->
     return HTTPException(status, detail=message)
 
 
-def _app(store: PerformanceSuggestionStore, journey_store: _JourneyStore) -> FastAPI:
+class _MockWorkshopStore:
+    def __init__(self, sessions: Optional[list[dict[str, Any]]] = None) -> None:
+        self.sessions = sessions or []
+
+    def list_sessions(
+        self,
+        *,
+        user_id: Optional[str] = None,
+        tenant_id: Optional[str] = None,
+        status: Optional[str] = None,
+        limit: int = 100,
+    ) -> tuple[list[dict[str, Any]], None]:
+        results = [
+            s
+            for s in self.sessions
+            if (user_id is None or s.get("user_id") == user_id)
+            and (tenant_id is None or s.get("tenant_id") == tenant_id)
+        ]
+        return results[:limit], None
+
+
+def _app(
+    store: PerformanceSuggestionStore,
+    journey_store: _JourneyStore,
+    workshop_store: Optional[Any] = None,
+) -> FastAPI:
     app = FastAPI()
     app.include_router(
         create_performance_router(
@@ -97,6 +122,7 @@ def _app(store: PerformanceSuggestionStore, journey_store: _JourneyStore) -> Fas
             bff_error=_bff_error,
             utc_now=lambda: NOW,
             get_trade_journey_store=lambda: journey_store,
+            workshop_store=workshop_store,
             suggestion_store=store,
         )
     )
@@ -512,3 +538,237 @@ def test_static_schema_accepts_live_projection_and_action_receipt(tmp_path: Path
     )
     assert list(projection_validator.iter_errors(projection)) == []
     assert list(action_validator.iter_errors(action)) == []
+
+
+def test_performance_attribution_empty_sources_typed_unavailable(tmp_path: Path) -> None:
+    store = PerformanceSuggestionStore(str(tmp_path / "performance.db"))
+    client = TestClient(_app(store, _JourneyStore()))
+    response = client.get(
+        "/bff/agora/trading-room/performance-attribution/by-strategy",
+        headers=_headers(),
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    data = body["data"]
+    meta = body["meta"]
+    assert data["id"] == "agora-trading-room-performance-attribution-by-strategy"
+    assert data["dimensions"] == ["strategy"]
+    assert data["items"] == []
+    assert data["summary"]["row_count"] == 0
+    assert data["summary"]["returned_row_count"] == 0
+    assert data["summary"]["runtime_count"] == 0
+    assert data["summary"]["basis"] == "owner_scoped_strategy_attribution"
+    assert meta["no_order_route_proof"] == "agora_performance_read_only"
+    assert meta["scope"] == {"tenant_id": "tenant-a", "owner_user_id": "alice"}
+    assert meta["surfaces"]["strategy_directory"] == {
+        "status": "unavailable",
+        "as_of": None,
+        "source_ids": [],
+        "reason": "no_strategies_found",
+    }
+    assert meta["surfaces"]["telemetry"] == {
+        "status": "unavailable",
+        "as_of": None,
+        "source_ids": [],
+        "reason": "no_current_rows",
+    }
+    assert meta["surfaces"]["trade_journeys"] == {
+        "status": "unavailable",
+        "as_of": None,
+        "source_ids": [],
+        "reason": "no_journey_records",
+    }
+
+
+def test_performance_attribution_owner_isolation_alice_cannot_observe_bob(tmp_path: Path) -> None:
+    store = PerformanceSuggestionStore(str(tmp_path / "performance.db"))
+    workshop = _MockWorkshopStore(
+        sessions=[
+            {
+                "workshop_id": "ws-alice-1",
+                "strategy_id": "alice-strategy-alpha",
+                "title": "Alice Alpha Strategy",
+                "user_id": "alice",
+                "tenant_id": "tenant-a",
+            },
+            {
+                "workshop_id": "ws-bob-1",
+                "strategy_id": "bob-secret-strategy",
+                "title": "Bob Top Secret",
+                "user_id": "bob",
+                "tenant_id": "tenant-a",
+            },
+        ]
+    )
+    alice_events = _events(user_id="alice", tenant_id="tenant-a")
+    for ev in alice_events:
+        ev["strategy_id"] = "alice-strategy-alpha"
+    bob_events = _events(user_id="bob", tenant_id="tenant-a")
+    for i, ev in enumerate(bob_events):
+        ev["strategy_id"] = "bob-secret-strategy"
+        ev["journey_id"] = "journey-bob-001"
+        ev["event_id"] = f"event-bob-{i:03d}"
+        ev["decision_id"] = "decision-bob-001"
+        ev["order_id"] = "order-bob-001"
+        ev["fill_id"] = "fill-bob-001"
+        ev["reconciliation_id"] = "reconciliation-bob-001"
+
+    client = TestClient(_app(store, _JourneyStore(alice_events + bob_events), workshop_store=workshop))
+
+    # 1. Alice query: sees only Alice's strategy
+    alice_resp = client.get(
+        "/bff/agora/trading-room/performance-attribution/by-strategy",
+        headers=_headers(user="alice"),
+    )
+    assert alice_resp.status_code == 200, alice_resp.text
+    alice_data = alice_resp.json()["data"]
+    alice_meta = alice_resp.json()["meta"]
+    assert len(alice_data["items"]) == 1
+    assert alice_data["items"][0]["dimension_key"] == "alice-strategy-alpha"
+    assert alice_data["items"][0]["label"] == "Alice Alpha Strategy"
+    assert alice_data["summary"]["row_count"] == 1
+    assert alice_meta["scope"] == {"tenant_id": "tenant-a", "owner_user_id": "alice"}
+    assert alice_meta["surfaces"]["strategy_directory"]["source_ids"] == ["alice-strategy-alpha"]
+    assert "bob-secret-strategy" not in str(alice_resp.json())
+
+    # 2. Alice attempts to probe Bob's strategy_id: returns empty/total 0 (no existence leakage)
+    probe_resp = client.get(
+        "/bff/agora/trading-room/performance-attribution/by-strategy?strategy_id=bob-secret-strategy",
+        headers=_headers(user="alice"),
+    )
+    assert probe_resp.status_code == 200, probe_resp.text
+    probe_data = probe_resp.json()["data"]
+    assert len(probe_data["items"]) == 0
+    assert probe_data["summary"]["row_count"] == 0
+
+    # 3. Bob query: sees only Bob's strategy
+    bob_resp = client.get(
+        "/bff/agora/trading-room/performance-attribution/by-strategy",
+        headers=_headers(user="bob"),
+    )
+    assert bob_resp.status_code == 200, bob_resp.text
+    bob_data = bob_resp.json()["data"]
+    bob_meta = bob_resp.json()["meta"]
+    assert len(bob_data["items"]) == 1
+    assert bob_data["items"][0]["dimension_key"] == "bob-secret-strategy"
+    assert bob_data["items"][0]["label"] == "Bob Top Secret"
+    assert bob_data["summary"]["row_count"] == 1
+    assert bob_meta["scope"] == {"tenant_id": "tenant-a", "owner_user_id": "bob"}
+    assert bob_meta["surfaces"]["strategy_directory"]["source_ids"] == ["bob-secret-strategy"]
+    assert "alice-strategy-alpha" not in str(bob_resp.json())
+
+
+def test_performance_attribution_metrics_and_period_filtering(tmp_path: Path) -> None:
+    store = PerformanceSuggestionStore(str(tmp_path / "performance.db"))
+    events = [
+        {
+            "journey_id": "j-1",
+            "tenant_id": "tenant-a",
+            "environment": "paper",
+            "source": "canonical-lifecycle-projector",
+            "user_id": "alice",
+            "strategy_id": "strat-1",
+            "event_id": "ev-1",
+            "occurred_at": "2026-07-22T17:00:00Z",
+            "stage": "trade_decision",
+            "stage_status": "succeeded",
+            "metrics": {
+                "pnl": 1250.50,
+                "unrealized_pnl": 250.50,
+                "realized_pnl": 1000.0,
+                "notional": 50000.0,
+                "exposure": 15000.0,
+                "drawdown": -0.045,
+                "fill_rate": 0.98,
+                "slippage_bps": 2.5,
+            },
+        },
+        {
+            "journey_id": "j-2",
+            "tenant_id": "tenant-a",
+            "environment": "paper",
+            "source": "canonical-lifecycle-projector",
+            "user_id": "alice",
+            "strategy_id": "strat-2",
+            "event_id": "ev-2",
+            "occurred_at": "2026-07-22T17:15:00Z",
+            "stage": "trade_decision",
+            "stage_status": "succeeded",
+            "metrics": {
+                "pnl": 750.25,
+                "unrealized_pnl": 150.25,
+                "realized_pnl": 600.0,
+                "notional": 25000.0,
+                "exposure": 8000.0,
+                "drawdown": -0.02,
+                "fill_rate": 0.95,
+                "slippage_bps": 3.0,
+            },
+        },
+    ]
+
+    client = TestClient(_app(store, _JourneyStore(events)))
+    response = client.get(
+        "/bff/agora/trading-room/performance-attribution/by-strategy?period=latest",
+        headers=_headers(),
+    )
+    assert response.status_code == 200, response.text
+    data = response.json()["data"]
+    assert len(data["items"]) == 2
+    assert data["items"][0]["dimension_key"] == "strat-1"
+    assert data["items"][0]["rank"] == 1
+    assert data["items"][0]["total_pnl"] == 1250.50
+    assert data["items"][0]["metrics"]["runtime_count"] == 0
+    assert data["items"][0]["metrics"]["data_confidence"] == "formal"
+    assert data["items"][0]["links"] == {
+        "strategy": "/agora/strategies/strat-1",
+        "performance": "/bff/agora/trading-room/strategies/strat-1/performance",
+    }
+    assert data["items"][1]["dimension_key"] == "strat-2"
+    assert data["items"][1]["rank"] == 2
+    assert data["items"][1]["total_pnl"] == 750.25
+
+    summary = data["summary"]
+    assert summary["row_count"] == 2
+    assert summary["total_pnl"] == 2000.75
+    assert summary["total_notional"] == 75000.0
+
+
+def test_performance_attribution_pagination(tmp_path: Path) -> None:
+    store = PerformanceSuggestionStore(str(tmp_path / "performance.db"))
+    workshop = _MockWorkshopStore(
+        sessions=[
+            {"workshop_id": f"ws-{i}", "strategy_id": f"strat-{i:02d}", "title": f"Strategy {i}", "user_id": "alice", "tenant_id": "tenant-a"}
+            for i in range(1, 6)
+        ]
+    )
+    client = TestClient(_app(store, _JourneyStore(), workshop_store=workshop))
+
+    page1 = client.get(
+        "/bff/agora/trading-room/performance-attribution/by-strategy?pageSize=2",
+        headers=_headers(),
+    )
+    assert page1.status_code == 200, page1.text
+    data1 = page1.json()["data"]
+    assert len(data1["items"]) == 2
+    assert data1["page_info"]["total"] == 5
+    assert data1["page_info"]["next_page_token"] == "offset-2"
+
+    page2 = client.get(
+        f"/bff/agora/trading-room/performance-attribution/by-strategy?pageSize=2&pageToken={data1['page_info']['next_page_token']}",
+        headers=_headers(),
+    )
+    assert page2.status_code == 200, page2.text
+    data2 = page2.json()["data"]
+    assert len(data2["items"]) == 2
+    assert data2["items"][0]["dimension_key"] != data1["items"][0]["dimension_key"]
+    assert data2["page_info"]["next_page_token"] == "offset-4"
+
+
+def test_openapi_contains_attribution_contract(tmp_path: Path) -> None:
+    app = _app(PerformanceSuggestionStore(str(tmp_path / "performance.db")), _JourneyStore())
+    schema = app.openapi()
+    attr_path = "/bff/agora/trading-room/performance-attribution/by-strategy"
+    assert attr_path in schema["paths"]
+    assert schema["paths"][attr_path]["get"]["responses"]["200"]["content"]["application/json"]["schema"]["$ref"].endswith("/TradingRoomPerformanceAttributionEnvelope")
+

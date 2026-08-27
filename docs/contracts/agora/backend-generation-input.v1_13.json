@@ -10,15 +10,15 @@
   "contract": {
     "bundle_index": {
       "path": "services/control-plane/specs/agora/bundle_index.v1_13.json",
-      "sha256": "b1d488c3b35aa1c691e5b464362ac5a2fdd1efc442249e15be9bb143f379f870"
+      "sha256": "bd11b4f152e7808e71d146fd6ade26c5394b2a74031abb9eb1b04c7f70ff1948"
     },
     "openapi": {
       "path": "services/control-plane/openapi/agora_v1_13.openapi.yaml",
-      "sha256": "36d1be5bc033ea1a55610f3f523fc478704fdfad1f06fec620e741bed9bf6f86"
+      "sha256": "56f12e43bb6041a0f83bf4ff69bf13ae86a335a38246f68a10f0a4ef3a856087"
     },
     "capability_manifest": {
       "path": "services/control-plane/specs/agora/v14/capability_manifest_v1_13.json",
-      "sha256": "7dfddaf220c00eddb7cbd0862eaa6f2aba7423dbd02e54d15db1d67a0cb4ded1"
+      "sha256": "8b44dd85412b6ba7a0b9686b25d657fa9e3f95efdd4b0f280ff97d2be1186ff5"
     }
   },
   "frontend_generation": {
@@ -42,7 +42,7 @@
   "source_files": [
     {
       "path": "docs/contracts/agora/generate_backend_contract.py",
-      "sha256": "96f38baa20d30c7f79f05c87e3ed82f0dddfb6ac12576c41242dae6437743f81"
+      "sha256": "a86facb081dcacf314b144732bcda0883f6916db969d0f5fee283ce00b10b313"
     },
     {
       "path": "services/control-plane/openapi/agora_v1_10.openapi.yaml",
@@ -58,7 +58,7 @@
     },
     {
       "path": "services/control-plane/openapi/agora_v1_13.openapi.yaml",
-      "sha256": "36d1be5bc033ea1a55610f3f523fc478704fdfad1f06fec620e741bed9bf6f86"
+      "sha256": "56f12e43bb6041a0f83bf4ff69bf13ae86a335a38246f68a10f0a4ef3a856087"
     },
     {
       "path": "services/control-plane/specs/agora/bundle_index.v1_10.json",
@@ -74,7 +74,7 @@
     },
     {
       "path": "services/control-plane/specs/agora/bundle_index.v1_13.json",
-      "sha256": "b1d488c3b35aa1c691e5b464362ac5a2fdd1efc442249e15be9bb143f379f870"
+      "sha256": "bd11b4f152e7808e71d146fd6ade26c5394b2a74031abb9eb1b04c7f70ff1948"
     },
     {
       "path": "services/control-plane/specs/agora/v11/capability_manifest_v1_10.json",
@@ -106,7 +106,7 @@
     },
     {
       "path": "services/control-plane/specs/agora/v14/capability_manifest_v1_13.json",
-      "sha256": "7dfddaf220c00eddb7cbd0862eaa6f2aba7423dbd02e54d15db1d67a0cb4ded1"
+      "sha256": "8b44dd85412b6ba7a0b9686b25d657fa9e3f95efdd4b0f280ff97d2be1186ff5"
     },
     {
       "path": "services/control-plane/specs/agora/v9/workshop_live_operations.schema.json",

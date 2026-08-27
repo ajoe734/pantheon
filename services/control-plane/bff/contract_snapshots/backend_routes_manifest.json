@@ -1,9 +1,9 @@
 {
   "metadata": {
-    "snapshot_date": "2026-08-24",
+    "snapshot_date": "2026-08-27",
     "source": "services/control-plane/bff/main.py",
     "generator": "scripts/bff_route_manifest_backend.py",
-    "total_routes": 700,
+    "total_routes": 701,
     "status_values": [
       "implemented",
       "alias",
@@ -453,6 +453,12 @@
     {
       "method": "GET",
       "path": "/bff/agora/trading-room/decision-events/{param}",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/trading-room/performance-attribution/by-strategy",
       "family": "agora-core",
       "status": "implemented"
     },

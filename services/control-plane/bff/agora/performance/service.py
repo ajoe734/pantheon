@@ -25,6 +25,10 @@ from .models import (
     SuggestionProjection,
     WarningProjection,
 )
+from .attribution import (
+    TradingRoomPerformanceAttributionEnvelope,
+    project_agora_performance_attribution_by_strategy,
+)
 from .store import PerformanceSuggestionStore
 
 
@@ -379,4 +383,28 @@ class PerformanceProjectionService:
             execution_history=execution,
             warnings=warning_projection,
             adjustment_suggestions=suggestion_projection,
+        )
+
+    def project_attribution(
+        self,
+        *,
+        tenant_id: str,
+        owner_user_id: str,
+        period: str = "latest",
+        page_size: int = 50,
+        page_token: Optional[str] = None,
+        strategy_id_filter: Optional[str] = None,
+        workshop_store: Optional[Any] = None,
+    ) -> TradingRoomPerformanceAttributionEnvelope:
+        return project_agora_performance_attribution_by_strategy(
+            tenant_id=tenant_id,
+            owner_user_id=owner_user_id,
+            period=period,
+            page_size=page_size,
+            page_token=page_token,
+            strategy_id_filter=strategy_id_filter,
+            journey_store=self.get_trade_journey_store(),
+            workshop_store=workshop_store,
+            suggestion_store=self.suggestion_store,
+            utc_now=self.utc_now,
         )
