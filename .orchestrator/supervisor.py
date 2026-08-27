@@ -102,6 +102,7 @@ from runtime_state import (
 )
 from task_archive import (
     TaskResolver,
+    compact_completion_tracks,
     completion_track_status,
     dependency_satisfied_for,
     dependency_track_for,
@@ -12406,12 +12407,16 @@ def task_index_from_status(config: dict[str, Any], status: dict[str, Any]) -> di
             or int(raw_fact["generation"]) < 1
         ):
             raise RuntimeError(f"canonical terminal fact is invalid: {task_id}")
-        tasks[task_id] = {
+        terminal_task = {
             "id": task_id,
             "status": "done",
             "terminal_outcome": raw_fact["terminal_outcome"],
             "generation": raw_fact["generation"],
         }
+        tracks = compact_completion_tracks(raw_fact.get("completion_tracks"))
+        if tracks:
+            terminal_task["completion_tracks"] = tracks
+        tasks[task_id] = terminal_task
     return tasks
 
 

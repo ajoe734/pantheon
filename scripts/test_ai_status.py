@@ -7097,6 +7097,48 @@ class ArchiveWorkflowTests(unittest.TestCase):
         self.assertEqual(resolved["status"], "done")
         self.assertTrue(resolver.dependency_satisfied("REG-100"))
 
+    def test_terminal_facts_preserve_compact_completion_track_status(self) -> None:
+        terminal = deepcopy(self.state["tasks"][0])
+        terminal.update(
+            {
+                "status": "done",
+                "terminal_outcome": "completed",
+                "generation": 3,
+                "completion_tracks": {
+                    "functional": {
+                        "status": "done",
+                        "evidence": ["paper-proof.json"],
+                    },
+                    "hosted": {
+                        "status": "external_wait",
+                        "message": "awaiting governed hosted run",
+                    },
+                },
+            }
+        )
+        self.state["tasks"] = [self.state["tasks"][1]]
+
+        ai_status.record_terminal_fact(
+            self.state,
+            terminal,
+            recorded_at="2026-04-14T02:01:00Z",
+        )
+
+        fact = self.state[ai_status.TERMINAL_FACTS_KEY]["REG-100"]
+        self.assertEqual(
+            fact["completion_tracks"],
+            {
+                "functional": {"status": "done"},
+                "hosted": {"status": "external_wait"},
+            },
+        )
+        resolver = ai_status.task_resolver(self.state)
+        resolved = resolver.get("REG-100")
+        self.assertEqual(
+            resolved["completion_tracks"]["hosted"]["status"],
+            "external_wait",
+        )
+
     def test_reopen_rejects_archived_task(self) -> None:
         self.state["tasks"] = []
         self.state[ai_status.TERMINAL_FACTS_KEY] = {
