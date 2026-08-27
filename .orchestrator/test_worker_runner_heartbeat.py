@@ -962,6 +962,64 @@ class TestCrossRepoLeasedWorktreeWriteBoundary(unittest.TestCase):
                             sandbox_binary=None,
                         )
 
+    def test_bind_worker_sandbox_claude_config_dir_and_narrowed_local_dirs(self):
+        with tempfile.TemporaryDirectory(prefix="worker-runner-sandbox-user-") as temp_dir:
+            root = Path(temp_dir)
+            central = root / "central"
+            command_root = root / "command-runtime"
+            worktree = root / "execute-plans-worktree"
+            fake_home = root / "fake-home"
+            fake_local = fake_home / ".local"
+            local_state = fake_local / "state"
+            local_share = fake_local / "share"
+            local_cache = fake_local / "cache"
+            local_bin = fake_local / "bin"
+            custom_claude_dir = root / "custom-claude-config"
+
+            for d in (local_state, local_share, local_cache, local_bin, custom_claude_dir):
+                d.mkdir(parents=True, exist_ok=True)
+
+            _init_repo(central)
+            _init_repo(command_root)
+            _init_repo(worktree)
+            _write_status(central)
+
+            cmd = ["python3", "-c", "pass"]
+            env = {
+                "CLAUDE_CONFIG_DIR": str(custom_claude_dir),
+            }
+            with (
+                mock.patch.object(Path, "home", return_value=fake_home),
+                mock.patch.dict(os.environ, env, clear=False),
+            ):
+                sandbox_args = wr.bind_worker_sandbox(
+                    cmd,
+                    command_root=command_root,
+                    workspace_path=worktree,
+                    coordination_root=central,
+                    sandbox_binary="/usr/bin/bwrap",
+                )
+
+            # 1. CLAUDE_CONFIG_DIR is discovered and mounted writable with --bind-try
+            self.assertIn(str(custom_claude_dir.resolve()), sandbox_args)
+            claude_idx = sandbox_args.index(str(custom_claude_dir.resolve()))
+            self.assertEqual(sandbox_args[claude_idx - 1], "--bind-try")
+
+            # 2. Narrowed ~/.local subdirectories (state, share, cache) are mounted writable with --bind-try
+            for sub_dir in (local_state, local_share, local_cache):
+                self.assertIn(str(sub_dir.resolve()), sandbox_args)
+                idx = sandbox_args.index(str(sub_dir.resolve()))
+                self.assertEqual(sandbox_args[idx - 1], "--bind-try")
+
+            # 3. Whole ~/.local and ~/.local/bin are NOT mounted writable
+            bound_rw_paths = [
+                sandbox_args[i + 1]
+                for i, arg in enumerate(sandbox_args)
+                if arg in ("--bind", "--bind-try") and i + 1 < len(sandbox_args)
+            ]
+            self.assertNotIn(str(fake_local.resolve()), bound_rw_paths)
+            self.assertNotIn(str(local_bin.resolve()), bound_rw_paths)
+
     @unittest.skipUnless(_FUNCTIONAL_BWRAP, "Functional bubblewrap with user namespace support is required for sandbox execution tests")
     def test_reproduce_and_prevent_20260827_reviewer_checkout_mutation(self):
         """Reproduce and prove fix for the 2026-08-27 reviewer checkout mutation incident.

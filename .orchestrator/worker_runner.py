@@ -335,7 +335,9 @@ def bind_worker_sandbox(
     candidate_user_dirs = [
         home / ".cache",
         home / ".config",
-        home / ".local",
+        home / ".local" / "state",
+        home / ".local" / "share",
+        home / ".local" / "cache",
         home / ".gemini",
         home / ".claude",
         home / ".codex",
@@ -344,7 +346,7 @@ def bind_worker_sandbox(
         home / ".rustup",
         home / ".antigravity",
     ]
-    for env_var in ("ANTIGRAVITY_HOME", "CODEX_HOME", "CLAUDE_HOME", "GH_CONFIG_DIR"):
+    for env_var in ("ANTIGRAVITY_HOME", "CODEX_HOME", "CLAUDE_HOME", "CLAUDE_CONFIG_DIR", "GH_CONFIG_DIR"):
         val = os.environ.get(env_var)
         if val and val.strip():
             p = Path(os.path.expanduser(val.strip())).resolve()
