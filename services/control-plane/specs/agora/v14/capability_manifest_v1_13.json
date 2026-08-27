@@ -22,12 +22,14 @@
         "PerformanceProjectionEnvelope",
         "SuggestionActionRequest",
         "SuggestionActionReceipt",
-        "SuggestionActionEnvelope"
+        "SuggestionActionEnvelope",
+        "TradingRoomPerformanceAttributionEnvelope"
       ],
       "routes": [
         "GET /bff/agora/trading-room/strategies/{strategy_id}/performance",
         "POST /bff/agora/trading-room/strategies/{strategy_id}/performance/suggestions/{suggestion_id}/actions",
-        "GET /bff/agora/performance/action-receipts/{receipt_id}"
+        "GET /bff/agora/performance/action-receipts/{receipt_id}",
+        "GET /bff/agora/trading-room/performance-attribution/by-strategy"
       ],
       "implementation_status": "implemented"
     },
