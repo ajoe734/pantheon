@@ -178,3 +178,48 @@ def test_sync_is_a_noop_when_installed_config_already_names_exact_candidate(tmp_
     assert result.returncode == 0, result.stderr
     assert "promotion=no-op-current-runtime" in result.stdout
     assert not promotion_args.exists()
+
+
+def test_sync_prunes_old_command_runtimes_after_promotion(tmp_path: Path) -> None:
+    remote, seed = _seed_remote(tmp_path)
+    dev_root = tmp_path / "dev-root"
+    _git(tmp_path, "clone", "--branch", "dev", str(remote), str(dev_root))
+    target = _advance(seed)
+    runtime_parent = tmp_path / "command-runtimes"
+    script = _patched_sync_script(tmp_path, runtime_parent)
+    coordination = _coordination_root(tmp_path)
+    live_config = tmp_path / "runtime" / "live.json"
+    promotion_args = tmp_path / "promotion-args.txt"
+    prune_args = tmp_path / "prune-args.txt"
+
+    prune_script = dev_root / "scripts" / "prune_command_runtimes.py"
+    prune_script.write_text(
+        "import sys, os\n"
+        "with open(os.environ['SYNC_PRUNE_ARGS_FILE'], 'w') as fh:\n"
+        "    fh.write('\\n'.join(sys.argv[1:]))\n",
+        encoding="utf-8",
+    )
+
+    env = os.environ.copy()
+    env["SYNC_PROMOTION_ARGS_FILE"] = str(promotion_args)
+    env["SYNC_PRUNE_ARGS_FILE"] = str(prune_args)
+    result = subprocess.run(
+        ["bash", str(script), str(dev_root), str(live_config), str(coordination)],
+        cwd=REPO_ROOT,
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert prune_args.read_text(encoding="utf-8").splitlines() == [
+        "--parent",
+        str(runtime_parent),
+        "--live-config",
+        str(live_config),
+        "--status-root",
+        str(coordination),
+        "--keep",
+        "5",
+    ]

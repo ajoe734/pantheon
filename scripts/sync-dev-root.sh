@@ -13,6 +13,7 @@ LIVE_CONFIG="${2:-/home/lupin/pantheon-ci-deploy/runtime/live-supervisor-mainroo
 COORDINATION_ROOT="${3:-${PANTHEON_COORDINATION_ROOT:-/home/lupin/pantheon-ci-deploy/coordination-root}}"
 REF="${SYNC_REF:-origin/dev}"
 COMMAND_RUNTIME_PARENT="/home/lupin/pantheon-ci-deploy/command-runtimes"
+COMMAND_RUNTIME_KEEP="${COMMAND_RUNTIME_KEEP:-5}"
 
 stamp() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 log() { echo "[sync-dev-root $(stamp)] $*"; }
@@ -102,8 +103,23 @@ if [[ -f "$LIVE_CONFIG" && -f "$DEV_ROOT/scripts/check_config_drift.py" ]]; then
   rm -f -- "$drift_report"
 fi
 
+prune_old_command_runtimes() {
+  local prune_script="${DEV_ROOT}/scripts/prune_command_runtimes.py"
+  if [[ ! -f "$prune_script" ]]; then
+    return 0
+  fi
+  if ! python3 -B "$prune_script" \
+    --parent "$COMMAND_RUNTIME_PARENT" \
+    --live-config "$LIVE_CONFIG" \
+    --status-root "$COORDINATION_ROOT" \
+    --keep "$COMMAND_RUNTIME_KEEP"; then
+    log "WARN: command-runtimes prune failed (non-fatal, promotion unaffected)"
+  fi
+}
+
 active_root="$(current_command_root 2>/dev/null || true)"
 if [[ "$active_root" == "$candidate_root" && "$config_drift" -eq 0 ]]; then
+  prune_old_command_runtimes
   log "done (staging=$DEV_ROOT coordination=$COORDINATION_ROOT promotion=no-op-current-runtime)"
   exit 0
 fi
@@ -190,4 +206,5 @@ if ! "$candidate_root/scripts/promote-supervisor-runtime.sh" \
   exit 1
 fi
 
+prune_old_command_runtimes
 log "done (staging=$DEV_ROOT coordination=$COORDINATION_ROOT promotion=replaced)"
