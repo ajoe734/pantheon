@@ -4,8 +4,8 @@
   "generated": true,
   "backend": {
     "repo": "ajoe734/pantheon",
-    "runtime_commit": "6e08b040eebd2c317a9b44741d8badbf878e26ad",
-    "contract_commit": "9e909de182f9f2379d23e8e6b81eefec29ffbce7"
+    "runtime_commit": "6ad99d2e5abe4f31c9f48892ae7f44bf3bbab980",
+    "contract_commit": "6ad99d2e5abe4f31c9f48892ae7f44bf3bbab980"
   },
   "contract": {
     "bundle_index": {
@@ -128,5 +128,5 @@
       "generated_types_sha256"
     ]
   },
-  "generated_at": "2026-07-23T01:09:22Z"
+  "generated_at": "2026-08-27T07:19:29Z"
 }

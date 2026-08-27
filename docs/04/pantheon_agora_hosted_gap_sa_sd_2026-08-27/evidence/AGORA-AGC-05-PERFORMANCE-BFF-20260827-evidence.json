@@ -20,7 +20,9 @@
     "services/control-plane/specs/agora/v14/capability_manifest_v1_13.json",
     "services/control-plane/specs/agora/bundle_index.v1_13.json",
     "docs/contracts/agora/backend-generation-input.v1_13.json",
-    "services/control-plane/bff/contract_snapshots/backend_routes_manifest.json"
+    "services/control-plane/bff/contract_snapshots/backend_routes_manifest.json",
+    "services/control-plane/bff/contract_snapshots/execute_plans_bff_routes.json",
+    "docs/bff/contract_snapshots/route-diff-baseline.json"
   ],
   "tests_implemented": [
     "services/control-plane/bff/agora/performance/test_performance.py"
@@ -36,6 +38,8 @@
     "performance_test_suite_passing": 21,
     "agora_full_test_suite_passing": 200,
     "backend_routes_manifest_check_passing": true,
-    "generate_backend_contract_bundle_check_passing": true
+    "generate_backend_contract_bundle_check_passing": true,
+    "generate_backend_contract_verify_passing": true,
+    "route_diff_check_passing": true
   }
 }
