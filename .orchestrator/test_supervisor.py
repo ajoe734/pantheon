@@ -1791,6 +1791,20 @@ class SharedPlannerContractTests(unittest.TestCase):
 
         self.assertFalse(decision["eligible"])
 
+    def test_removing_named_track_restores_terminal_dependency_admission(self) -> None:
+        dependency = task_fixture("DEP", status="done")
+        task = task_fixture(depends_on=["DEP"])
+        task["dependency_tracks"] = {"DEP": "hosted"}
+        status = {"tasks": [task, dependency]}
+
+        self.assertFalse(planner_decision(self.config, task, status=status)["eligible"])
+
+        task["dependency_tracks"].pop("DEP")
+        decision = planner_decision(self.config, task, status=status)
+
+        self.assertTrue(decision["eligible"])
+        self.assertEqual(decision["reason"], supervisor.REASON_OWNED_READY)
+
     def test_planner_consumes_terminal_facts_from_authoritative_projection(self) -> None:
         task = task_fixture(
             "CHILD",

@@ -5804,7 +5804,7 @@ def command_dependency_track(state: dict[str, Any], args: list[str]) -> None:
     if len(args) < 4:
         raise SystemExit(
             "Usage: dependency-track <task-id> <dependency-id> "
-            "<functional|hosted> <reason>"
+            "<functional|hosted|terminal> <reason>"
         )
     task_id, dependency_id, track, reason = (
         args[0],
@@ -5814,8 +5814,8 @@ def command_dependency_track(state: dict[str, Any], args: list[str]) -> None:
     )
     if current_actor() != "Human/Ops":
         raise SystemExit("Only Human/Ops can revise dependency tracks")
-    if track not in {"functional", "hosted"}:
-        raise SystemExit("Dependency track must be functional or hosted")
+    if track not in {"functional", "hosted", "terminal"}:
+        raise SystemExit("Dependency track must be functional, hosted, or terminal")
     task = get_task(state, task_id)
     if task is None:
         raise SystemExit(f"Unknown task: {task_id}")
@@ -5837,7 +5837,14 @@ def command_dependency_track(state: dict[str, Any], args: list[str]) -> None:
     if not isinstance(tracks, dict):
         raise SystemExit(f"Task {task_id} dependency_tracks is invalid")
     previous = tracks.get(dependency_id)
-    tracks[dependency_id] = track
+    if track == "terminal":
+        # ``dependency_tracks`` stores named milestone overrides only.  An
+        # absent entry is the canonical terminal-task dependency contract, so
+        # restoring that contract removes the override instead of persisting
+        # a third value that older readers would reject.
+        tracks.pop(dependency_id, None)
+    else:
+        tracks[dependency_id] = track
     task["contract_revision"] = {
         "kind": "dependency_track",
         "dependency_id": dependency_id,

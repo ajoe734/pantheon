@@ -7722,6 +7722,95 @@ class ArchiveWorkflowTests(unittest.TestCase):
             self.assertEqual(status_file.read_bytes(), before)
 
 
+class DependencyTrackCommandTests(unittest.TestCase):
+    def setUp(self) -> None:
+        _setup_test_isolation(self)
+        self.state = {
+            "agents": [],
+            "tasks": [
+                {
+                    "id": "CONSUMER",
+                    "title": "Consumer task",
+                    "status": "todo",
+                    "owner": "Codex",
+                    "reviewer": "Claude",
+                    "depends_on": ["PRODUCER"],
+                    "dependency_tracks": {"PRODUCER": "hosted"},
+                    "last_update": "2026-08-27T00:00:00Z",
+                }
+            ],
+            "handoffs": [],
+            "blockers": [],
+        }
+
+    def tearDown(self) -> None:
+        _teardown_test_isolation(self)
+
+    def test_terminal_track_removes_named_override_and_audits_revision(self) -> None:
+        with mock.patch.dict(os.environ, {"AI_NAME": "Human/Ops"}, clear=False):
+            ai_status.command_dependency_track(
+                self.state,
+                [
+                    "CONSUMER",
+                    "PRODUCER",
+                    "terminal",
+                    "Restore ordinary terminal dependency semantics",
+                ],
+            )
+
+        task = ai_status.get_task(self.state, "CONSUMER")
+        self.assertEqual(task["dependency_tracks"], {})
+        self.assertEqual(
+            task["contract_revision"],
+            {
+                "kind": "dependency_track",
+                "dependency_id": "PRODUCER",
+                "previous": "hosted",
+                "current": "terminal",
+                "reason": "Restore ordinary terminal dependency semantics",
+                "updated_at": task["last_update"],
+                "updated_by": "Human/Ops",
+            },
+        )
+        events = [
+            json.loads(line)
+            for line in self._test_log_file.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        revision = next(
+            event for event in events if event.get("type") == "dependency_track_revised"
+        )
+        self.assertEqual(revision["previous"], "hosted")
+        self.assertEqual(revision["track"], "terminal")
+
+    def test_terminal_track_is_idempotent_when_override_is_absent(self) -> None:
+        task = ai_status.get_task(self.state, "CONSUMER")
+        task["dependency_tracks"] = {}
+
+        with mock.patch.dict(os.environ, {"AI_NAME": "Human/Ops"}, clear=False):
+            ai_status.command_dependency_track(
+                self.state,
+                ["CONSUMER", "PRODUCER", "terminal", "Keep terminal semantics"],
+            )
+
+        self.assertEqual(task["dependency_tracks"], {})
+        self.assertIsNone(task["contract_revision"]["previous"])
+        self.assertEqual(task["contract_revision"]["current"], "terminal")
+
+    def test_dependency_track_rejects_unknown_track(self) -> None:
+        with (
+            mock.patch.dict(os.environ, {"AI_NAME": "Human/Ops"}, clear=False),
+            self.assertRaisesRegex(
+                SystemExit,
+                "Dependency track must be functional, hosted, or terminal",
+            ),
+        ):
+            ai_status.command_dependency_track(
+                self.state,
+                ["CONSUMER", "PRODUCER", "operator-live", "Invalid override"],
+            )
+
+
 class SidecarTaskTests(unittest.TestCase):
     def setUp(self) -> None:
         _setup_test_isolation(self)
