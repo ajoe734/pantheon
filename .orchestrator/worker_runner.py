@@ -259,67 +259,6 @@ def validate_status_command_runtime() -> dict[str, str]:
     }
 
 
-def _discover_readonly_repository_checkouts(
-    coordination_root: Path | None,
-    workspace_path: Path | None,
-    extra_roots: Iterable[Path | str] | None = None,
-) -> set[Path]:
-    """Find all local repository source checkouts that must remain read-only."""
-    ro_roots: set[Path] = set()
-    ws_resolved = Path(workspace_path).expanduser().resolve() if workspace_path else None
-    coord_resolved = Path(coordination_root).expanduser().resolve() if coordination_root else None
-
-    config_dict: dict[str, Any] = {}
-    if coord_resolved:
-        cfg_file = coord_resolved / ".orchestrator" / "config.json"
-        if cfg_file.exists():
-            try:
-                config_dict = json.loads(cfg_file.read_text(encoding="utf-8"))
-            except Exception:
-                pass
-    try:
-        from multi_repo_registry import iter_local_repositories
-        for repo_info in iter_local_repositories(config_dict):
-            repo_path = repo_info.get("resolved_local_path")
-            if isinstance(repo_path, Path) and repo_path.exists():
-                r_resolved = repo_path.resolve()
-                if ws_resolved and r_resolved == ws_resolved:
-                    continue
-                if coord_resolved and r_resolved == coord_resolved:
-                    continue
-                ro_roots.add(r_resolved)
-    except Exception:
-        pass
-
-    for env_key in ("ORCH_WORKSPACE_SOURCE_ROOT", "PANTHEON_WORKSPACE_SOURCE_ROOT", "PANTHEON_REPO_ROOT"):
-        val = os.environ.get(env_key)
-        if val and val.strip():
-            p = Path(os.path.expanduser(val.strip())).resolve()
-            if p.exists() and p.is_dir():
-                if ws_resolved and p == ws_resolved:
-                    continue
-                if coord_resolved and p == coord_resolved:
-                    continue
-                ro_roots.add(p)
-
-    if extra_roots:
-        for item in extra_roots:
-            p = Path(os.path.expanduser(str(item))).resolve()
-            if p.exists() and p.is_dir():
-                if ws_resolved and p == ws_resolved:
-                    continue
-                if coord_resolved and p == coord_resolved:
-                    continue
-                ro_roots.add(p)
-
-    worktrees_root = Path("/tmp/pantheon-worker-worktrees")
-    if worktrees_root.exists() and worktrees_root.is_dir():
-        if ws_resolved and ws_resolved != worktrees_root.resolve():
-            ro_roots.add(worktrees_root.resolve())
-
-    return ro_roots
-
-
 def bind_worker_sandbox(
     command: list[str],
     command_root: Path,
@@ -332,10 +271,15 @@ def bind_worker_sandbox(
     """Wrap one provider command in a mount namespace with a leased-worktree write boundary.
 
     Enforces:
-    - Exactly one leased delivery worktree (workspace_path) and governed
-      ai-status interfaces in coordination_root are writable.
-    - All shared source repositories, command runtime, coordination-root code/git,
-      and other worker worktrees remain strictly read-only.
+    - Default host root filesystem is strictly read-only (--ro-bind / /).
+    - Exactly one leased delivery worktree (workspace_path) and designated
+      governance state interfaces in coordination_root are writable.
+    - Standard temporary directories (/tmp, /var/tmp, /run/user/<uid>) and user tool
+      cache/config directories (~/.cache, ~/.config, ~/.gemini, etc.) are writable
+      so CLI providers and development tools can execute.
+    - Other worker worktrees under /tmp/pantheon-worker-worktrees, all shared source
+      repositories, the command runtime, and coordination-root source code/git remain
+      strictly read-only.
     - Outer worker_runner remains outside the namespace to publish heartbeats.
     - Private PID namespace and procfs isolate the process tree.
     """
@@ -353,56 +297,82 @@ def bind_worker_sandbox(
     ws_resolved = Path(workspace_path).expanduser().resolve() if workspace_path else None
     coord_resolved = Path(coordination_root).expanduser().resolve() if coordination_root else None
 
-    ro_paths: set[Path] = {root}
-    rw_paths: list[Path] = []
+    # 1. Base command: isolate pid namespace, root read-only by default, dev bind
+    bwrap_cmd = [
+        str(Path(binary).expanduser().resolve()),
+        "--die-with-parent",
+        "--unshare-pid",
+        "--ro-bind",
+        "/",
+        "/",
+        "--dev-bind",
+        "/dev",
+        "/dev",
+    ]
 
-    discovered_ro = _discover_readonly_repository_checkouts(
-        coord_resolved, ws_resolved, extra_roots=extra_readonly_roots
-    )
-    ro_paths.update(discovered_ro)
+    # 2. Mount standard temporary directories writable
+    for tmp_dir in ("/tmp", "/var/tmp"):
+        p = Path(tmp_dir)
+        if p.exists() and p.is_dir():
+            bwrap_cmd.extend(["--bind-try", str(p), str(p)])
 
+    try:
+        uid = os.getuid()
+        user_run = Path(f"/run/user/{uid}")
+        if user_run.exists() and user_run.is_dir():
+            bwrap_cmd.extend(["--bind-try", str(user_run), str(user_run)])
+    except (AttributeError, OSError):
+        pass
+
+    # 3. Protect other worker worktrees under /tmp/pantheon-worker-worktrees
+    worktrees_root = Path("/tmp/pantheon-worker-worktrees")
+    if worktrees_root.exists() and worktrees_root.is_dir():
+        bwrap_cmd.extend(["--ro-bind-try", str(worktrees_root.resolve()), str(worktrees_root.resolve())])
+
+    # 4. User tool cache and configuration directories
+    # Providers (agy, codex, claude, etc.) and compilers/tools write cache, auth tokens, logs to these dirs
+    home = Path.home().resolve()
+    candidate_user_dirs = [
+        home / ".cache",
+        home / ".config",
+        home / ".local",
+        home / ".gemini",
+        home / ".claude",
+        home / ".codex",
+        home / ".npm",
+        home / ".cargo",
+        home / ".rustup",
+        home / ".antigravity",
+    ]
+    for env_var in ("ANTIGRAVITY_HOME", "CODEX_HOME", "CLAUDE_HOME", "GH_CONFIG_DIR"):
+        val = os.environ.get(env_var)
+        if val and val.strip():
+            p = Path(os.path.expanduser(val.strip())).resolve()
+            if p != home and p != Path("/"):
+                candidate_user_dirs.append(p)
+
+    for u_dir in candidate_user_dirs:
+        try:
+            if u_dir.exists():
+                u_res = u_dir.resolve()
+                if u_res != Path("/") and (coord_resolved is None or u_res != coord_resolved):
+                    bwrap_cmd.extend(["--bind-try", str(u_res), str(u_res)])
+        except OSError:
+            pass
+
+    # 5. Extra readonly roots if specified
+    if extra_readonly_roots:
+        for item in extra_readonly_roots:
+            p = Path(os.path.expanduser(str(item))).resolve()
+            if p.exists():
+                bwrap_cmd.extend(["--ro-bind-try", str(p), str(p)])
+
+    # 6. Leased delivery worktree is explicitly writable
+    if ws_resolved:
+        bwrap_cmd.extend(["--bind", str(ws_resolved), str(ws_resolved)])
+
+    # 7. Governed coordination state interfaces
     if coord_resolved and (ws_resolved is None or coord_resolved != ws_resolved):
-        git_dir = coord_resolved / ".git"
-        if git_dir.exists():
-            ro_paths.add(git_dir.resolve())
-        for code_dir in ("services", "scripts", "docs", "src", "integrations", "audits", "tests", "lean", "config"):
-            p = coord_resolved / code_dir
-            if p.exists() and p.is_dir():
-                ro_paths.add(p.resolve())
-        for doc_file in (
-            "TARGET_ARCHITECTURE.md",
-            "AI_COLLABORATION_GUIDE.md",
-            "CANONICAL_DOCUMENT_MAP.md",
-            "DOCUMENT_AUTHORITY_AND_RECORD_BOUNDARY.md",
-            "ROADMAP.md",
-            "DEVELOPMENT_WORKBREAKDOWN.md",
-            "WORKBENCH_DELIVERY_BACKLOG.md",
-            "DELIVERY_CLOSURE_AND_LOOP_STATES.md",
-            "EXECUTION_PROOF_AND_MATURITY_LEVELS.md",
-            "OSS_INTEGRATION_CHECKLIST.md",
-            "pyproject.toml",
-            "package.json",
-            "tsconfig.json",
-            "Makefile",
-            "Dockerfile",
-        ):
-            f = coord_resolved / doc_file
-            if f.exists() and f.is_file():
-                ro_paths.add(f.resolve())
-        orch_dir = coord_resolved / ".orchestrator"
-        if orch_dir.exists() and orch_dir.is_dir():
-            for item in orch_dir.iterdir():
-                if item.name not in {
-                    "state.json",
-                    "approval-queue.json",
-                    "task-state.lock",
-                    "activity-audit.lock",
-                    "worker-runtime",
-                    "logs",
-                    "task-state-events-v2.jsonl",
-                }:
-                    ro_paths.add(item.resolve())
-
         governed_candidates = [
             coord_resolved / "ai-status.json",
             coord_resolved / "ai-activity-log.jsonl",
@@ -423,27 +393,9 @@ def bind_worker_sandbox(
 
         for p in governed_candidates:
             if p.exists():
-                rw_paths.append(p.resolve())
+                bwrap_cmd.extend(["--bind", str(p.resolve()), str(p.resolve())])
 
-    if ws_resolved:
-        rw_paths.append(ws_resolved)
-
-    bwrap_cmd = [
-        str(Path(binary).expanduser().resolve()),
-        "--die-with-parent",
-        "--unshare-pid",
-        "--bind",
-        "/",
-        "/",
-        "--dev-bind",
-        "/dev",
-        "/dev",
-    ]
-    for ro_mount in sorted(ro_paths, key=lambda p: (len(p.parts), str(p))):
-        bwrap_cmd.extend(["--ro-bind", str(ro_mount), str(ro_mount)])
-    for rw_mount in sorted(rw_paths, key=lambda p: (len(p.parts), str(p))):
-        bwrap_cmd.extend(["--bind", str(rw_mount), str(rw_mount)])
-
+    # 8. Procfs and user command
     bwrap_cmd.extend([
         "--proc",
         "/proc",

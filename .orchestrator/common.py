@@ -925,10 +925,6 @@ def delivery_runtime_env(config: dict[str, Any], metadata: dict[str, Any] | None
         "ORCH_WORKSPACE_PATH": str(workspace_root),
     }
     env.update(status_command_runtime_env(config, metadata))
-    if metadata and metadata.get("workspace_source_root"):
-        env["ORCH_WORKSPACE_SOURCE_ROOT"] = str(metadata["workspace_source_root"])
-    if metadata and metadata.get("workspace_repository_id"):
-        env["ORCH_WORKSPACE_REPOSITORY_ID"] = str(metadata["workspace_repository_id"])
     task_generation = (metadata or {}).get("task_generation")
     try:
         normalized_generation = int(task_generation)

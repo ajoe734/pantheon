@@ -28,7 +28,7 @@ def _probe_bwrap() -> str | None:
         return None
     try:
         res = subprocess.run(
-            [bwrap_path, "--die-with-parent", "--unshare-pid", "--bind", "/", "/", "--dev-bind", "/dev", "/dev", "--proc", "/proc", "--", "/bin/true"],
+            [bwrap_path, "--die-with-parent", "--unshare-pid", "--ro-bind", "/", "/", "--dev-bind", "/dev", "/dev", "--proc", "/proc", "--", "/bin/true"],
             capture_output=True,
             check=False,
             timeout=5,
@@ -38,214 +38,16 @@ def _probe_bwrap() -> str | None:
         return None
 
 _FUNCTIONAL_BWRAP = _probe_bwrap()
-_SHIM_SCRIPT = Path(tempfile.gettempdir()) / "test_worker_sandbox_shim.py"
-_SHIM_SITE_DIR = Path(tempfile.gettempdir()) / "test_worker_sandbox_site"
-_SHIM_SITE_DIR.mkdir(parents=True, exist_ok=True)
-
-if not _FUNCTIONAL_BWRAP:
-    _site_file_str = str(_SHIM_SITE_DIR / "sitecustomize.py")
-    _site_dir_str = str(_SHIM_SITE_DIR)
-    _SHIM_SCRIPT.write_text(
-        f"""#!/usr/bin/env python3
-import sys, os, subprocess, pathlib
-
-args = sys.argv[1:]
-ro_paths = []
-rw_paths = []
-cmd = []
-
-i = 0
-while i < len(args):
-    arg = args[i]
-    if arg == "--":
-        cmd = args[i+1:]
-        break
-    elif arg in ("--ro-bind", "--ro-bind-try"):
-        if i + 2 < len(args):
-            ro_paths.append(str(pathlib.Path(os.path.expanduser(args[i+1])).resolve()))
-            i += 3
-            continue
-    elif arg in ("--bind", "--bind-try"):
-        if i + 2 < len(args):
-            rw_paths.append(str(pathlib.Path(os.path.expanduser(args[i+1])).resolve()))
-            i += 3
-            continue
-    i += 1
-
-site_code = f'''
-import os, builtins, io, pathlib, errno
-
-_orig_chmod = os.chmod
-_orig_open = os.open
-_orig_builtins_open = builtins.open
-_orig_io_open = io.open
-_orig_unlink = os.unlink
-_orig_remove = os.remove
-_orig_mkdir = os.mkdir
-_orig_rmdir = os.rmdir
-_orig_rename = os.rename
-_orig_replace = os.replace
-
-RO_PATHS = {{ro_paths!r}}
-RW_PATHS = {{rw_paths!r}}
-
-def _is_ro(path):
-    try:
-        res = pathlib.Path(os.path.expanduser(str(path))).resolve()
-    except Exception:
-        return False
-    matching_ro = [pathlib.Path(ro) for ro in RO_PATHS if ro != "/" and (res == pathlib.Path(ro) or pathlib.Path(ro) in res.parents)]
-    if not matching_ro:
-        return False
-    best_ro = max(matching_ro, key=lambda p: len(p.parts))
-    matching_rw = [pathlib.Path(rw) for rw in RW_PATHS if rw != "/" and (res == pathlib.Path(rw) or pathlib.Path(rw) in res.parents)]
-    if not matching_rw:
-        return True
-    best_rw = max(matching_rw, key=lambda p: len(p.parts))
-    return len(best_ro.parts) >= len(best_rw.parts)
-
-def custom_chmod(path, mode, *args, **kwargs):
-    if _is_ro(path):
-        raise OSError(errno.EROFS, "Read-only file system: " + str(path))
-    return _orig_chmod(path, mode, *args, **kwargs)
-
-def custom_open(path, flags, *args, **kwargs):
-    if _is_ro(path) and (flags & (os.O_WRONLY | os.O_RDWR | os.O_CREAT | os.O_TRUNC | os.O_APPEND)):
-        raise OSError(errno.EROFS, "Read-only file system: " + str(path))
-    return _orig_open(path, flags, *args, **kwargs)
-
-def custom_b_open(file, mode="r", *args, **kwargs):
-    if any(m in mode for m in ("w", "a", "+", "x")) and _is_ro(file):
-        raise OSError(errno.EROFS, "Read-only file system: " + str(file))
-    return _orig_builtins_open(file, mode, *args, **kwargs)
-
-def custom_io_open(file, mode="r", *args, **kwargs):
-    if any(m in mode for m in ("w", "a", "+", "x")) and _is_ro(file):
-        raise OSError(errno.EROFS, "Read-only file system: " + str(file))
-    return _orig_io_open(file, mode, *args, **kwargs)
-
-def custom_unlink(path, *args, **kwargs):
-    if _is_ro(path):
-        raise OSError(errno.EROFS, "Read-only file system: " + str(path))
-    return _orig_unlink(path, *args, **kwargs)
-
-def custom_remove(path, *args, **kwargs):
-    if _is_ro(path):
-        raise OSError(errno.EROFS, "Read-only file system: " + str(path))
-    return _orig_remove(path, *args, **kwargs)
-
-def custom_mkdir(path, *args, **kwargs):
-    if _is_ro(path):
-        raise OSError(errno.EROFS, "Read-only file system: " + str(path))
-    return _orig_mkdir(path, *args, **kwargs)
-
-def custom_rmdir(path, *args, **kwargs):
-    if _is_ro(path):
-        raise OSError(errno.EROFS, "Read-only file system: " + str(path))
-    return _orig_rmdir(path, *args, **kwargs)
-
-def custom_rename(src, dst, *args, **kwargs):
-    if _is_ro(src) or _is_ro(dst):
-        raise OSError(errno.EROFS, "Read-only file system")
-    return _orig_rename(src, dst, *args, **kwargs)
-
-def custom_replace(src, dst, *args, **kwargs):
-    if _is_ro(src) or _is_ro(dst):
-        raise OSError(errno.EROFS, "Read-only file system")
-    return _orig_replace(src, dst, *args, **kwargs)
-
-os.chmod = custom_chmod
-os.open = custom_open
-builtins.open = custom_b_open
-io.open = custom_io_open
-os.unlink = custom_unlink
-os.remove = custom_remove
-os.mkdir = custom_mkdir
-os.rmdir = custom_rmdir
-os.rename = custom_rename
-os.replace = custom_replace
-'''
-
-site_file = pathlib.Path({_site_file_str!r})
-site_file.write_text(site_code, encoding="utf-8")
-
-env = dict(os.environ)
-old_pp = env.get("PYTHONPATH", "")
-env["PYTHONPATH"] = {_site_dir_str!r} + ((":" + old_pp) if old_pp else "")
-
-original_modes = {{}}
-
-def make_ro(path_str):
-    p = pathlib.Path(path_str)
-    if not p.exists():
-        return
-    if any(p == pathlib.Path(rw) or pathlib.Path(rw) in p.parents for rw in rw_paths if rw != "/"):
-        return
-    if p.is_file():
-        try:
-            m = p.stat().st_mode
-            original_modes[p] = m
-            os.chmod(p, m & ~0o222)
-        except OSError:
-            pass
-    elif p.is_dir():
-        for root, dirs, files in os.walk(p):
-            for f in files:
-                fp = pathlib.Path(root) / f
-                if not any(fp == pathlib.Path(rw) or pathlib.Path(rw) in fp.parents for rw in rw_paths if rw != "/"):
-                    try:
-                        m = fp.stat().st_mode
-                        original_modes[fp] = m
-                        os.chmod(fp, m & ~0o222)
-                    except OSError:
-                        pass
-            for d in dirs:
-                dp = pathlib.Path(root) / d
-                if not any(dp == pathlib.Path(rw) or pathlib.Path(rw) in dp.parents for rw in rw_paths if rw != "/"):
-                    try:
-                        m = dp.stat().st_mode
-                        original_modes[dp] = m
-                        os.chmod(dp, m & ~0o222)
-                    except OSError:
-                        pass
-        try:
-            m = p.stat().st_mode
-            original_modes[p] = m
-            os.chmod(p, m & ~0o222)
-        except OSError:
-            pass
-
-for ro in ro_paths:
-    if ro != "/" and ro != "/tmp/pantheon-worker-worktrees":
-        make_ro(ro)
-
-try:
-    ret = subprocess.run(cmd, env=env).returncode
-finally:
-    for path, mode in reversed(list(original_modes.items())):
-        try:
-            os.chmod(path, mode)
-        except OSError:
-            pass
-
-sys.exit(ret)
-""",
-        encoding="utf-8",
-    )
-    _SHIM_SCRIPT.chmod(0o755)
 
 
 def _command_runtime_env(root: Path) -> dict[str, str]:
     sha = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip()
-    env = {
+    return {
         "PANTHEON_COMMAND_ROOT": str(root),
         "PANTHEON_COMMAND_RUNTIME_SHA": sha,
         "PANTHEON_COMMAND_REMOTE": "ajoe734/pantheon",
         "PANTHEON_COMMAND_BASE_REF": "origin/dev",
     }
-    if not _FUNCTIONAL_BWRAP:
-        env["PANTHEON_SANDBOX_BINARY"] = str(_SHIM_SCRIPT)
-    return env
 
 
 def _write_status(path: Path) -> None:
@@ -416,6 +218,7 @@ class TestCoordinationRootValidation(unittest.TestCase):
 
             runtime_leaf.unlink()
 
+    @unittest.skipUnless(_FUNCTIONAL_BWRAP, "Functional bubblewrap with user namespace support is required for sandbox execution tests")
     def test_child_command_runs_in_task_worktree_with_central_status_root(self):
         with tempfile.TemporaryDirectory(prefix="worker-runner-cwd-") as temp_dir:
             root = Path(temp_dir)
@@ -473,6 +276,7 @@ class TestCoordinationRootValidation(unittest.TestCase):
             heartbeat_payload = json.loads(heartbeat.read_text(encoding="utf-8"))
             self.assertEqual(heartbeat_payload["status_command_runtime"]["command_root"], str(command_root.resolve()))
 
+    @unittest.skipUnless(_FUNCTIONAL_BWRAP, "Functional bubblewrap with user namespace support is required for sandbox execution tests")
     def test_provider_cannot_chmod_or_write_command_runtime(self):
         with tempfile.TemporaryDirectory(prefix="worker-runner-readonly-") as temp_dir:
             root = Path(temp_dir)
@@ -558,6 +362,7 @@ class TestCoordinationRootValidation(unittest.TestCase):
             self.assertEqual((worktree / "provider-write-ok").read_text(), "ok\n")
             self.assertEqual((central / "provider-status-write-ok").read_text(), "ok\n")
 
+    @unittest.skipUnless(_FUNCTIONAL_BWRAP, "Functional bubblewrap with user namespace support is required for sandbox execution tests")
     def test_relative_provider_command_is_bound_to_command_runtime(self):
         with tempfile.TemporaryDirectory(prefix="worker-runner-command-root-") as temp_dir:
             root = Path(temp_dir)
@@ -638,6 +443,7 @@ class TestCoordinationRootValidation(unittest.TestCase):
                     command_root,
                 )
 
+    @unittest.skipUnless(_FUNCTIONAL_BWRAP, "Functional bubblewrap with user namespace support is required for sandbox execution tests")
     def test_heartbeat_binds_task_roles_and_run_id(self):
         with tempfile.TemporaryDirectory(prefix="worker-runner-roles-") as temp_dir:
             root = Path(temp_dir)
@@ -718,6 +524,7 @@ class TestCoordinationRootValidation(unittest.TestCase):
             self.assertEqual(heartbeat_payload["reviewer"], "Claude")
             self.assertEqual(heartbeat_payload["run_id"], "codex-20260716T000000Z-test")
 
+    @unittest.skipUnless(_FUNCTIONAL_BWRAP, "Functional bubblewrap with user namespace support is required for sandbox execution tests")
     def test_child_command_failure_writes_failed_status(self):
         with tempfile.TemporaryDirectory(prefix="worker-runner-failure-") as temp_dir:
             root = Path(temp_dir)
@@ -1071,33 +878,91 @@ class TestCrossRepoLeasedWorktreeWriteBoundary(unittest.TestCase):
                 sandbox_binary="/usr/bin/bwrap",
             )
 
+            import inspect
+            sig = inspect.signature(wr.bind_worker_sandbox)
+            self.assertNotIn("extra_writable_roots", sig.parameters)
+
             self.assertIn("--die-with-parent", sandbox_args)
             self.assertIn("--unshare-pid", sandbox_args)
 
-            # Verify command runtime is mounted --ro-bind
-            cmd_idx = sandbox_args.index(str(command_root.resolve()))
-            self.assertEqual(sandbox_args[cmd_idx - 1], "--ro-bind")
+            # 1. Verify host root is mounted --ro-bind / / (default read-only)
+            ro_root_idx = sandbox_args.index("/")
+            self.assertEqual(sandbox_args[ro_root_idx - 1], "--ro-bind")
+            self.assertEqual(sandbox_args[ro_root_idx + 1], "/")
 
-            # Verify shared repos are mounted --ro-bind
-            pantheon_idx = sandbox_args.index(str(shared_pantheon.resolve()))
-            self.assertEqual(sandbox_args[pantheon_idx - 1], "--ro-bind")
-            ep_idx = sandbox_args.index(str(shared_ep.resolve()))
-            self.assertEqual(sandbox_args[ep_idx - 1], "--ro-bind")
+            # 2. Verify --bind / / is NEVER present
+            for i, arg in enumerate(sandbox_args):
+                if arg == "--bind" and i + 2 < len(sandbox_args):
+                    self.assertNotEqual((sandbox_args[i + 1], sandbox_args[i + 2]), ("/", "/"))
 
-            # Verify central .git and code dirs are mounted --ro-bind
-            git_idx = sandbox_args.index(str((central / ".git").resolve()))
-            self.assertEqual(sandbox_args[git_idx - 1], "--ro-bind")
-            services_idx = sandbox_args.index(str((central / "services").resolve()))
-            self.assertEqual(sandbox_args[services_idx - 1], "--ro-bind")
-
-            # Verify workspace_path is mounted --bind (read-write)
+            # 3. Verify workspace_path is mounted --bind (read-write)
             ws_idx = sandbox_args.index(str(worktree.resolve()))
             self.assertEqual(sandbox_args[ws_idx - 1], "--bind")
 
-            # Verify ai-status.json in central is mounted --bind (read-write)
+            # 4. Verify ai-status.json in central is mounted --bind (read-write)
             status_idx = sandbox_args.index(str((central / "ai-status.json").resolve()))
             self.assertEqual(sandbox_args[status_idx - 1], "--bind")
 
+            # 5. Verify shared repos and central root are NOT mounted --bind
+            bound_rw_paths = [
+                sandbox_args[i + 1]
+                for i, arg in enumerate(sandbox_args)
+                if arg == "--bind" and i + 1 < len(sandbox_args)
+            ]
+            self.assertNotIn(str(central.resolve()), bound_rw_paths)
+            self.assertNotIn(str(shared_pantheon.resolve()), bound_rw_paths)
+            self.assertNotIn(str(shared_ep.resolve()), bound_rw_paths)
+            self.assertNotIn(str(command_root.resolve()), bound_rw_paths)
+
+    def test_bind_worker_sandbox_protects_worktrees_under_tmp(self):
+        with tempfile.TemporaryDirectory(prefix="worker-runner-sandbox-tmp-") as temp_dir:
+            root = Path(temp_dir)
+            central = root / "central"
+            command_root = root / "command-runtime"
+            worktree = root / "worktrees" / "pantheon" / "task-1"
+            _init_repo(central)
+            _init_repo(command_root)
+            _init_repo(worktree)
+            _write_status(central)
+
+            cmd = ["python3", "-c", "pass"]
+            sandbox_args = wr.bind_worker_sandbox(
+                cmd,
+                command_root=command_root,
+                workspace_path=worktree,
+                coordination_root=central,
+                sandbox_binary="/usr/bin/bwrap",
+            )
+
+            if Path("/tmp").exists():
+                tmp_idx = sandbox_args.index("/tmp")
+                self.assertEqual(sandbox_args[tmp_idx - 1], "--bind-try")
+
+            if Path("/tmp/pantheon-worker-worktrees").exists():
+                wt_idx = sandbox_args.index(str(Path("/tmp/pantheon-worker-worktrees").resolve()))
+                self.assertEqual(sandbox_args[wt_idx - 1], "--ro-bind-try")
+                ws_idx = sandbox_args.index(str(worktree.resolve()))
+                self.assertGreater(ws_idx, wt_idx)
+
+    def test_bind_worker_sandbox_missing_binary_fails_closed(self):
+        with tempfile.TemporaryDirectory(prefix="worker-runner-sandbox-nobin-") as temp_dir:
+            root = Path(temp_dir)
+            central = root / "central"
+            command_root = root / "command-runtime"
+            _init_repo(central)
+            _init_repo(command_root)
+            _write_status(central)
+
+            with mock.patch("shutil.which", return_value=None):
+                with mock.patch.dict(os.environ, {}, clear=True):
+                    with self.assertRaisesRegex(RuntimeError, "bubblewrap.*required"):
+                        wr.bind_worker_sandbox(
+                            ["echo", "hi"],
+                            command_root=command_root,
+                            sandbox_binary=None,
+                        )
+
+    @unittest.skipUnless(_FUNCTIONAL_BWRAP, "Functional bubblewrap with user namespace support is required for sandbox execution tests")
     def test_reproduce_and_prevent_20260827_reviewer_checkout_mutation(self):
         """Reproduce and prove fix for the 2026-08-27 reviewer checkout mutation incident.
 
@@ -1135,7 +1000,6 @@ class TestCrossRepoLeasedWorktreeWriteBoundary(unittest.TestCase):
                 "PANTHEON_STATUS_ROOT": str(central),
                 "PANTHEON_WORKTREE_ROOT": str(worktree),
                 "ORCH_WORKSPACE_PATH": str(worktree),
-                "ORCH_WORKSPACE_SOURCE_ROOT": str(shared_pantheon),
             })
             env.update(_command_runtime_env(command_root))
 
@@ -1189,6 +1053,7 @@ class TestCrossRepoLeasedWorktreeWriteBoundary(unittest.TestCase):
             # Verify delivery worktree write succeeded
             self.assertEqual((worktree / "delivery-result.txt").read_text(), "delivered\n")
 
+    @unittest.skipUnless(_FUNCTIONAL_BWRAP, "Functional bubblewrap with user namespace support is required for sandbox execution tests")
     def test_prevent_cross_repo_file_mutations(self):
         with tempfile.TemporaryDirectory(prefix="worker-runner-file-mut-") as temp_dir:
             root = Path(temp_dir)
@@ -1217,7 +1082,6 @@ class TestCrossRepoLeasedWorktreeWriteBoundary(unittest.TestCase):
                 "PANTHEON_STATUS_ROOT": str(central),
                 "PANTHEON_WORKTREE_ROOT": str(worktree),
                 "ORCH_WORKSPACE_PATH": str(worktree),
-                "ORCH_WORKSPACE_SOURCE_ROOT": str(shared_pantheon),
             })
             env.update(_command_runtime_env(command_root))
 
@@ -1265,6 +1129,7 @@ class TestCrossRepoLeasedWorktreeWriteBoundary(unittest.TestCase):
             self.assertFalse((shared_pantheon / "services" / "evil.py").exists())
             self.assertEqual((shared_pantheon / "services" / "app.py").read_text(), "original\n")
 
+    @unittest.skipUnless(_FUNCTIONAL_BWRAP, "Functional bubblewrap with user namespace support is required for sandbox execution tests")
     def test_symlink_and_path_traversal_cannot_escape_leased_worktree(self):
         with tempfile.TemporaryDirectory(prefix="worker-runner-traversal-") as temp_dir:
             root = Path(temp_dir)
@@ -1294,7 +1159,6 @@ class TestCrossRepoLeasedWorktreeWriteBoundary(unittest.TestCase):
                 "PANTHEON_STATUS_ROOT": str(central),
                 "PANTHEON_WORKTREE_ROOT": str(worktree),
                 "ORCH_WORKSPACE_PATH": str(worktree),
-                "ORCH_WORKSPACE_SOURCE_ROOT": str(shared_pantheon),
             })
             env.update(_command_runtime_env(command_root))
 
@@ -1346,6 +1210,7 @@ class TestCrossRepoLeasedWorktreeWriteBoundary(unittest.TestCase):
             self.assertEqual(proc.returncode, 0, proc.stderr + proc.stdout)
             self.assertEqual(target.read_text(), "safe\n")
 
+    @unittest.skipUnless(_FUNCTIONAL_BWRAP, "Functional bubblewrap with user namespace support is required for sandbox execution tests")
     def test_governed_ai_status_writes_succeed_under_boundary(self):
         with tempfile.TemporaryDirectory(prefix="worker-runner-status-write-") as temp_dir:
             root = Path(temp_dir)
