@@ -58,6 +58,10 @@ their original terminal semantics; no duplicate or superseding task is created.
 The migration is applied to the live TaskStore only through the audited
 `dependency-track` command after this tooling change is promoted. Workers then
 record verified milestones with the `milestone` command and evidence paths.
+Human/Ops may set the track to `terminal` to remove a named-track override and
+restore the ordinary completed-task dependency contract. The canonical task
+stores no `terminal` override value; absence remains the backward-compatible
+representation.
 
 ## Environment rule
 

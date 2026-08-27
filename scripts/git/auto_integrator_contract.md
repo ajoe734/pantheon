@@ -17,7 +17,27 @@ or unblock task
 - A lock at `.orchestrator/auto-integrator.lock` permits one integration pass at
   a time.
 - Only active `ai-status.json` tasks with `status=review_approved` are eligible.
-- The PR head must be `task/<TASK-ID>` and the base must be `dev`.
+- Repository scope is resolved per task via `.orchestrator/multi_repo_registry.py`:
+  derives repository ID (`pantheon`, `execute_plans`), GitHub slug (`ajoe734/pantheon`,
+  `ajoe734/execute-plans`), local checkout root, and target branch (`dev`).
+  Path authority is anchored in `PANTHEON_STATUS_ROOT` / status file, ensuring
+  sibling repository paths (e.g. `../code/execute-plans`) resolve against the
+  canonical coordination root.
+- Before interacting with the repository, a preflight check verifies that the
+  target root exists, is an absolute directory, is a valid git repository root,
+  and that its origin remote matches the configured repository slug. Any missing
+  checkout, invalid git repository, or remote origin mismatch fails closed safely
+  with a blocking unblock task (`missing-repository-checkout`, `invalid-git-repository`,
+  `repository-origin-mismatch`) instead of raising uncaught errors.
+- The PR head must be `task/<TASK-ID>` and the base must match the target repository's
+  configured default branch (e.g. `dev`).
+- The PR URL's GitHub slug must match the candidate's resolved repository slug.
+  A mismatched slug, unrecognized `target_repo`, or conflicting multi-repository
+  artifacts fails closed with a blocking unblock task (`invalid-repository-scope` or
+  `repository_mismatch`).
+- All git fetch/rebase/smoke operations and GitHub CLI merge calls execute in the
+  resolved local repository root for that candidate, while canonical status tracking
+  and unblock task creation remain anchored in `PANTHEON_STATUS_ROOT`.
 - Draft PRs, truly missing PRs, required failing checks, missing checks, dirty merge
   states, and rebase conflicts are not merged.
 - Status check classification uses a data-driven required-versus-diagnostic
@@ -49,23 +69,24 @@ or unblock task
 - Two open PRs claiming the same task branch fail closed instead of resolving
   to the first row.
 - If the open PR is already gone because GitHub merged it, the integrator
-  verifies the merged PR's merge commit is already in `origin/dev` and reports
-  `already_merged`, leaving the task in `review_approved` for owner closeout
+  verifies the merged PR's merge commit is already in `origin/<target-branch>`
+  and reports `already_merged`, leaving the task in `review_approved` for owner closeout
   without opening spurious unblock tasks or mutating task status to `done`.
 - The integrator never resolves conflicts and never bypasses branch protection.
-- Blockers create an `INTEGRATION-UNBLOCK-*` task instead of leaving the parent
-  stranded.
+- Blockers create an `INTEGRATION-UNBLOCK-*` task in the canonical status store
+  instead of leaving the parent stranded.
 
 ## Merge Flow
 
 For each eligible task, capped by `max_tasks_per_run`:
 
-1. Read the task row from canonical `ai-status.json` (`PANTHEON_STATUS_ROOT` or `--status-file`).
-2. Find the open PR for `task/<TASK-ID>` into `dev`.
+1. Read the task row from canonical `ai-status.json` (`PANTHEON_STATUS_ROOT` or `--status-file`)
+   and resolve repository scope (`repository_id`, `repository_slug`, `repository_root`, `target_branch`).
+2. Find the open PR for `task/<TASK-ID>` into the candidate's `target_branch` within `repository_root`.
 3. If no open PR exists, check for a merged PR from the same head/base whose
-   merge commit is already in `origin/dev`; if found, report `already_merged`
+   merge commit is already in `origin/<target-branch>`; if found, report `already_merged`
    and leave the task in `review_approved` for owner finalization.
-4. If no open or already-merged PR exists, create a missing-PR unblock task.
+4. If no open or already-merged PR exists, create a missing-PR unblock task in `PANTHEON_STATUS_ROOT`.
 5. Evaluate the review-before-merge gate against this exact PR head. Any
    pending auto-merge request on a gated PR is revoked here, before the CI and
    merge-state probes, whatever the gate decided - a PR that ends up `waiting`
@@ -78,9 +99,9 @@ For each eligible task, capped by `max_tasks_per_run`:
    emitted - approval of this head does not make it safe to merge alongside a
    standing grant.
 7. Require green GitHub status rollup.
-8. Fetch `origin/dev` and the task branch.
+8. Fetch `origin/<target-branch>` and the task branch in `repository_root`.
 9. Create a temporary detached worktree for the task branch.
-10. Rebase that worktree onto `origin/dev`.
+10. Rebase that worktree onto `origin/<target-branch>`.
 11. Run configured smoke commands.
 12. Merge-then-review tasks only: if the rebase changed the task branch and
     `--execute` is active, push with `--force-with-lease` and enable

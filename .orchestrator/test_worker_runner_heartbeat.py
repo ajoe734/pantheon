@@ -20,6 +20,26 @@ def _init_repo(path: Path) -> None:
     subprocess.run(["git", "update-ref", "refs/remotes/origin/dev", "HEAD"], cwd=path, check=True)
 
 
+import shutil
+
+def _probe_bwrap() -> str | None:
+    bwrap_path = shutil.which("bwrap")
+    if not bwrap_path:
+        return None
+    try:
+        res = subprocess.run(
+            [bwrap_path, "--die-with-parent", "--unshare-pid", "--ro-bind", "/", "/", "--dev-bind", "/dev", "/dev", "--proc", "/proc", "--", "/bin/true"],
+            capture_output=True,
+            check=False,
+            timeout=5,
+        )
+        return bwrap_path if res.returncode == 0 else None
+    except Exception:
+        return None
+
+_FUNCTIONAL_BWRAP = _probe_bwrap()
+
+
 def _command_runtime_env(root: Path) -> dict[str, str]:
     sha = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip()
     return {
@@ -198,6 +218,41 @@ class TestCoordinationRootValidation(unittest.TestCase):
 
             runtime_leaf.unlink()
 
+    def test_validate_coordination_root_creates_regular_derived_views_lock(self):
+        with tempfile.TemporaryDirectory(prefix="worker-runner-derived-lock-") as temp_dir:
+            root = Path(temp_dir)
+            central = root / "central"
+            worktree = root / "task-worktree"
+            _init_repo(central)
+            _init_repo(worktree)
+            _write_status(central)
+
+            lock_path = central / ".orchestrator" / "status-derived-views.lock"
+            with mock.patch.dict(
+                os.environ,
+                {"PANTHEON_STATUS_ROOT": str(central)},
+                clear=True,
+            ):
+                self.assertEqual(
+                    wr.validate_coordination_root(worktree), central.resolve()
+                )
+
+            self.assertTrue(lock_path.is_file())
+            self.assertFalse(lock_path.is_symlink())
+
+            lock_path.unlink()
+            lock_path.symlink_to(root / "outside.lock")
+            with mock.patch.dict(
+                os.environ,
+                {"PANTHEON_STATUS_ROOT": str(central)},
+                clear=True,
+            ):
+                with self.assertRaisesRegex(
+                    RuntimeError, "derived status views lock cannot contain a symlink"
+                ):
+                    wr.validate_coordination_root(worktree)
+
+    @unittest.skipUnless(_FUNCTIONAL_BWRAP, "Functional bubblewrap with user namespace support is required for sandbox execution tests")
     def test_child_command_runs_in_task_worktree_with_central_status_root(self):
         with tempfile.TemporaryDirectory(prefix="worker-runner-cwd-") as temp_dir:
             root = Path(temp_dir)
@@ -255,6 +310,7 @@ class TestCoordinationRootValidation(unittest.TestCase):
             heartbeat_payload = json.loads(heartbeat.read_text(encoding="utf-8"))
             self.assertEqual(heartbeat_payload["status_command_runtime"]["command_root"], str(command_root.resolve()))
 
+    @unittest.skipUnless(_FUNCTIONAL_BWRAP, "Functional bubblewrap with user namespace support is required for sandbox execution tests")
     def test_provider_cannot_chmod_or_write_command_runtime(self):
         with tempfile.TemporaryDirectory(prefix="worker-runner-readonly-") as temp_dir:
             root = Path(temp_dir)
@@ -340,6 +396,7 @@ class TestCoordinationRootValidation(unittest.TestCase):
             self.assertEqual((worktree / "provider-write-ok").read_text(), "ok\n")
             self.assertEqual((central / "provider-status-write-ok").read_text(), "ok\n")
 
+    @unittest.skipUnless(_FUNCTIONAL_BWRAP, "Functional bubblewrap with user namespace support is required for sandbox execution tests")
     def test_relative_provider_command_is_bound_to_command_runtime(self):
         with tempfile.TemporaryDirectory(prefix="worker-runner-command-root-") as temp_dir:
             root = Path(temp_dir)
@@ -420,6 +477,7 @@ class TestCoordinationRootValidation(unittest.TestCase):
                     command_root,
                 )
 
+    @unittest.skipUnless(_FUNCTIONAL_BWRAP, "Functional bubblewrap with user namespace support is required for sandbox execution tests")
     def test_heartbeat_binds_task_roles_and_run_id(self):
         with tempfile.TemporaryDirectory(prefix="worker-runner-roles-") as temp_dir:
             root = Path(temp_dir)
@@ -500,6 +558,7 @@ class TestCoordinationRootValidation(unittest.TestCase):
             self.assertEqual(heartbeat_payload["reviewer"], "Claude")
             self.assertEqual(heartbeat_payload["run_id"], "codex-20260716T000000Z-test")
 
+    @unittest.skipUnless(_FUNCTIONAL_BWRAP, "Functional bubblewrap with user namespace support is required for sandbox execution tests")
     def test_child_command_failure_writes_failed_status(self):
         with tempfile.TemporaryDirectory(prefix="worker-runner-failure-") as temp_dir:
             root = Path(temp_dir)
@@ -818,6 +877,817 @@ class TestCoordinationRootValidation(unittest.TestCase):
             with mock.patch.dict(os.environ, env, clear=True):
                 with self.assertRaisesRegex(RuntimeError, "contains dirty executable/import file"):
                     wr.validate_status_command_runtime()
+
+
+class TestCrossRepoLeasedWorktreeWriteBoundary(unittest.TestCase):
+    """Test suite for leased-worktree write boundary and cross-repo isolation."""
+
+    def test_bind_worker_sandbox_argument_structure(self):
+        with tempfile.TemporaryDirectory(prefix="worker-runner-sandbox-struct-") as temp_dir:
+            root = Path(temp_dir)
+            central = root / "central"
+            command_root = root / "command-runtime"
+            worktree = root / "execute-plans-worktree"
+            shared_pantheon = root / "shared-pantheon"
+            shared_ep = root / "code" / "execute-plans"
+            _init_repo(central)
+            _init_repo(command_root)
+            _init_repo(worktree)
+            _init_repo(shared_pantheon)
+            _init_repo(shared_ep)
+            _write_status(central)
+
+            runtime_admission_lock = central / ".orchestrator" / "runtime-admission.lock"
+            runtime_admission_lock.touch()
+
+            # Create code subdirectories in central
+            (central / "services").mkdir(parents=True, exist_ok=True)
+            (central / "services" / "api.py").write_text("API=1\n")
+            (central / "scripts").mkdir(parents=True, exist_ok=True)
+
+            cmd = ["python3", "-c", "print('hello')"]
+            sandbox_args = wr.bind_worker_sandbox(
+                cmd,
+                command_root=command_root,
+                workspace_path=worktree,
+                coordination_root=central,
+                extra_readonly_roots=[shared_pantheon, shared_ep],
+                sandbox_binary="/usr/bin/bwrap",
+            )
+
+            import inspect
+            sig = inspect.signature(wr.bind_worker_sandbox)
+            self.assertNotIn("extra_writable_roots", sig.parameters)
+
+            self.assertIn("--die-with-parent", sandbox_args)
+            self.assertIn("--unshare-pid", sandbox_args)
+
+            # 1. Verify host root is mounted --ro-bind / / (default read-only)
+            ro_root_idx = sandbox_args.index("/")
+            self.assertEqual(sandbox_args[ro_root_idx - 1], "--ro-bind")
+            self.assertEqual(sandbox_args[ro_root_idx + 1], "/")
+
+            # 2. Verify --bind / / is NEVER present
+            for i, arg in enumerate(sandbox_args):
+                if arg == "--bind" and i + 2 < len(sandbox_args):
+                    self.assertNotEqual((sandbox_args[i + 1], sandbox_args[i + 2]), ("/", "/"))
+
+            # 3. Verify workspace_path is mounted --bind (read-write)
+            ws_idx = sandbox_args.index(str(worktree.resolve()))
+            self.assertEqual(sandbox_args[ws_idx - 1], "--bind")
+
+            # 4. The coordination parent is writable so ai-status.json can be
+            # replaced atomically through a same-directory temporary file.
+            central_indices = [
+                index
+                for index, value in enumerate(sandbox_args)
+                if value == str(central.resolve())
+            ]
+            self.assertEqual(len(central_indices), 2)
+            self.assertEqual(sandbox_args[central_indices[0] - 1], "--bind")
+            self.assertEqual(
+                sandbox_args[central_indices[0] + 1], str(central.resolve())
+            )
+
+            # Existing non-governed source remains a protected mountpoint.
+            source_idx = sandbox_args.index(str((central / "services").resolve()))
+            self.assertEqual(sandbox_args[source_idx - 1], "--ro-bind")
+
+            # 5. Runtime admission is an existing governed state interface,
+            # not a reason to make the coordination source tree writable.
+            runtime_lock_idx = sandbox_args.index(str(runtime_admission_lock.resolve()))
+            self.assertEqual(sandbox_args[runtime_lock_idx - 1], "--bind")
+
+            # 6. Verify shared repos and command runtime are NOT mounted --bind
+            bound_rw_paths = [
+                sandbox_args[i + 1]
+                for i, arg in enumerate(sandbox_args)
+                if arg == "--bind" and i + 1 < len(sandbox_args)
+            ]
+            self.assertIn(str(central.resolve()), bound_rw_paths)
+            self.assertNotIn(str(shared_pantheon.resolve()), bound_rw_paths)
+            self.assertNotIn(str(shared_ep.resolve()), bound_rw_paths)
+            self.assertNotIn(str(command_root.resolve()), bound_rw_paths)
+
+    def test_bind_worker_sandbox_mounts_atomic_task_store_parent_only(self):
+        with tempfile.TemporaryDirectory(prefix="worker-runner-task-store-") as temp_dir:
+            root = Path(temp_dir)
+            central = root / "central"
+            command_root = root / "command-runtime"
+            worktree = root / "execute-plans-worktree"
+            runtime = root / "runtime"
+            for repository in (central, command_root, worktree):
+                _init_repo(repository)
+            _write_status(central)
+            runtime.mkdir()
+            event_log = runtime / "task-state-events-v2.jsonl"
+            event_log.write_text("event\n", encoding="utf-8")
+            (runtime / f"{event_log.name}.head.json").write_text("{}\n", encoding="utf-8")
+            (runtime / f"{event_log.name}.lock").touch()
+            live_config = runtime / "live-supervisor.json"
+            live_config.write_text("{}\n", encoding="utf-8")
+
+            with mock.patch.dict(
+                os.environ,
+                {"PANTHEON_TASK_STATE_EVENT_LOG": str(event_log)},
+                clear=False,
+            ):
+                sandbox_args = wr.bind_worker_sandbox(
+                    ["python3", "-c", "pass"],
+                    command_root=command_root,
+                    workspace_path=worktree,
+                    coordination_root=central,
+                    sandbox_binary="/usr/bin/bwrap",
+                )
+
+            runtime_indices = [
+                index
+                for index, value in enumerate(sandbox_args)
+                if value == str(runtime.resolve())
+            ]
+            self.assertEqual(len(runtime_indices), 2)
+            self.assertEqual(sandbox_args[runtime_indices[0] - 1], "--bind")
+            self.assertEqual(sandbox_args[runtime_indices[0] + 1], str(runtime.resolve()))
+            config_idx = sandbox_args.index(str(live_config.resolve()))
+            self.assertEqual(sandbox_args[config_idx - 1], "--ro-bind")
+            self.assertNotIn(str(event_log.resolve()), sandbox_args)
+
+    def test_bind_worker_sandbox_reopens_only_selected_linked_gitdir(self):
+        with tempfile.TemporaryDirectory(prefix="worker-runner-linked-git-") as temp_dir:
+            root = Path(temp_dir)
+            central = root / "central"
+            command_root = root / "command-runtime"
+            source = root / "execute-plans"
+            worktree = root / "task-worktree"
+            for repository in (central, command_root, source):
+                _init_repo(repository)
+            _write_status(central)
+            subprocess.run(
+                ["git", "worktree", "add", "-q", "-b", "task/BOUNDARY", str(worktree), "HEAD"],
+                cwd=source,
+                check=True,
+            )
+
+            sandbox_args = wr.bind_worker_sandbox(
+                ["python3", "-c", "pass"],
+                command_root=command_root,
+                workspace_path=worktree,
+                coordination_root=central,
+                sandbox_binary="/usr/bin/bwrap",
+            )
+
+            common_dir = Path(
+                subprocess.check_output(
+                    ["git", "rev-parse", "--git-common-dir"],
+                    cwd=worktree,
+                    text=True,
+                ).strip()
+            ).resolve()
+            git_dir = Path(
+                subprocess.check_output(
+                    ["git", "rev-parse", "--absolute-git-dir"],
+                    cwd=worktree,
+                    text=True,
+                ).strip()
+            ).resolve()
+            common_idx = sandbox_args.index(str(common_dir))
+            self.assertEqual(sandbox_args[common_idx - 1], "--bind")
+            source_head_idx = sandbox_args.index(str(common_dir / "HEAD"))
+            self.assertEqual(sandbox_args[source_head_idx - 1], "--ro-bind")
+            all_worktrees_idx = sandbox_args.index(str(common_dir / "worktrees"))
+            self.assertEqual(sandbox_args[all_worktrees_idx - 1], "--ro-bind")
+            selected_idx = sandbox_args.index(str(git_dir))
+            self.assertEqual(sandbox_args[selected_idx - 1], "--bind")
+            self.assertGreater(selected_idx, all_worktrees_idx)
+
+    @unittest.skipUnless(
+        _FUNCTIONAL_BWRAP,
+        "Functional bubblewrap with user namespace support is required for sandbox execution tests",
+    )
+    def test_atomic_task_store_write_succeeds_and_runtime_sibling_stays_read_only(self):
+        with tempfile.TemporaryDirectory(prefix="worker-runner-task-store-live-") as temp_dir:
+            root = Path(temp_dir)
+            central = root / "central"
+            command_root = root / "command-runtime"
+            worktree = root / "execute-plans-worktree"
+            runtime = root / "runtime"
+            for repository in (central, command_root, worktree):
+                _init_repo(repository)
+            _write_status(central)
+            runtime.mkdir()
+            event_log = runtime / "task-state-events-v2.jsonl"
+            head = runtime / f"{event_log.name}.head.json"
+            lock = runtime / f"{event_log.name}.lock"
+            live_config = runtime / "live-supervisor.json"
+            event_log.write_text("event-1\n", encoding="utf-8")
+            head.write_text('{"sequence":1}\n', encoding="utf-8")
+            lock.touch()
+            live_config.write_text('{"protected":true}\n', encoding="utf-8")
+            program = (
+                "import os, pathlib, sys\n"
+                "event, head, lock, protected = map(pathlib.Path, sys.argv[1:])\n"
+                "with event.open('a') as handle: handle.write('event-2\\n')\n"
+                "with lock.open('r+'): pass\n"
+                "temporary = head.with_name(head.name + '.worker.tmp')\n"
+                "temporary.write_text('{\\\"sequence\\\":2}\\n')\n"
+                "os.replace(temporary, head)\n"
+                "blocked = False\n"
+                "try: protected.write_text('mutated\\n')\n"
+                "except OSError: blocked = True\n"
+                "sys.exit(0 if blocked else 41)\n"
+            )
+            with mock.patch.dict(
+                os.environ,
+                {"PANTHEON_TASK_STATE_EVENT_LOG": str(event_log)},
+                clear=False,
+            ):
+                sandbox_args = wr.bind_worker_sandbox(
+                    [
+                        sys.executable,
+                        "-c",
+                        program,
+                        str(event_log),
+                        str(head),
+                        str(lock),
+                        str(live_config),
+                    ],
+                    command_root=command_root,
+                    workspace_path=worktree,
+                    coordination_root=central,
+                    sandbox_binary=_FUNCTIONAL_BWRAP,
+                )
+            proc = subprocess.run(sandbox_args, cwd=worktree, capture_output=True, text=True)
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            self.assertEqual(head.read_text(encoding="utf-8"), '{"sequence":2}\n')
+            self.assertIn("event-2", event_log.read_text(encoding="utf-8"))
+            self.assertEqual(live_config.read_text(encoding="utf-8"), '{"protected":true}\n')
+
+    @unittest.skipUnless(
+        _FUNCTIONAL_BWRAP,
+        "Functional bubblewrap with user namespace support is required for sandbox execution tests",
+    )
+    def test_linked_task_worktree_can_rebase_without_mutating_source_checkout(self):
+        with tempfile.TemporaryDirectory(prefix="worker-runner-linked-git-live-") as temp_dir:
+            root = Path(temp_dir)
+            central = root / "central"
+            command_root = root / "command-runtime"
+            source = root / "execute-plans"
+            worktree = root / "task-worktree"
+            for repository in (central, command_root, source):
+                _init_repo(repository)
+            _write_status(central)
+            subprocess.run(["git", "branch", "-M", "dev"], cwd=source, check=True)
+            subprocess.run(
+                ["git", "worktree", "add", "-q", "-b", "task/BOUNDARY", str(worktree), "HEAD"],
+                cwd=source,
+                check=True,
+            )
+            (source / "base.txt").write_text("new base\n", encoding="utf-8")
+            subprocess.run(["git", "add", "base.txt"], cwd=source, check=True)
+            subprocess.run(["git", "commit", "-q", "-m", "advance dev"], cwd=source, check=True)
+            source_head = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=source, text=True).strip()
+            source_branch = subprocess.check_output(
+                ["git", "branch", "--show-current"], cwd=source, text=True
+            ).strip()
+            program = (
+                "set -eu\n"
+                "git rebase dev\n"
+                "printf 'worker\\n' > worker.txt\n"
+                "git add worker.txt\n"
+                "git commit -q -m 'task commit'\n"
+                f"if git -C {source} checkout --detach HEAD~1; then exit 42; fi\n"
+            )
+            sandbox_args = wr.bind_worker_sandbox(
+                ["/bin/bash", "-lc", program],
+                command_root=command_root,
+                workspace_path=worktree,
+                coordination_root=central,
+                sandbox_binary=_FUNCTIONAL_BWRAP,
+            )
+            proc = subprocess.run(sandbox_args, cwd=worktree, capture_output=True, text=True)
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            self.assertTrue((worktree / "worker.txt").is_file())
+            self.assertEqual(
+                subprocess.check_output(["git", "rev-parse", "dev"], cwd=worktree, text=True).strip(),
+                source_head,
+            )
+            self.assertEqual(
+                subprocess.check_output(["git", "branch", "--show-current"], cwd=source, text=True).strip(),
+                source_branch,
+            )
+            self.assertEqual(
+                subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=source, text=True).strip(),
+                source_head,
+            )
+
+    def test_bind_worker_sandbox_protects_worktrees_under_tmp(self):
+        with tempfile.TemporaryDirectory(prefix="worker-runner-sandbox-tmp-") as temp_dir:
+            root = Path(temp_dir)
+            central = root / "central"
+            command_root = root / "command-runtime"
+            worktree = root / "worktrees" / "pantheon" / "task-1"
+            _init_repo(central)
+            _init_repo(command_root)
+            _init_repo(worktree)
+            _write_status(central)
+
+            cmd = ["python3", "-c", "pass"]
+            sandbox_args = wr.bind_worker_sandbox(
+                cmd,
+                command_root=command_root,
+                workspace_path=worktree,
+                coordination_root=central,
+                sandbox_binary="/usr/bin/bwrap",
+            )
+
+            if Path("/tmp").exists():
+                tmp_idx = sandbox_args.index("/tmp")
+                self.assertEqual(sandbox_args[tmp_idx - 1], "--bind-try")
+
+            if Path("/tmp/pantheon-worker-worktrees").exists():
+                wt_idx = sandbox_args.index(str(Path("/tmp/pantheon-worker-worktrees").resolve()))
+                self.assertEqual(sandbox_args[wt_idx - 1], "--ro-bind-try")
+                ws_idx = sandbox_args.index(str(worktree.resolve()))
+                self.assertGreater(ws_idx, wt_idx)
+
+    def test_bind_worker_sandbox_missing_binary_fails_closed(self):
+        with tempfile.TemporaryDirectory(prefix="worker-runner-sandbox-nobin-") as temp_dir:
+            root = Path(temp_dir)
+            central = root / "central"
+            command_root = root / "command-runtime"
+            _init_repo(central)
+            _init_repo(command_root)
+            _write_status(central)
+
+            with mock.patch("shutil.which", return_value=None):
+                with mock.patch.dict(os.environ, {}, clear=True):
+                    with self.assertRaisesRegex(RuntimeError, "bubblewrap.*required"):
+                        wr.bind_worker_sandbox(
+                            ["echo", "hi"],
+                            command_root=command_root,
+                            sandbox_binary=None,
+                        )
+
+    def test_bind_worker_sandbox_claude_config_dir_and_narrowed_local_dirs(self):
+        with tempfile.TemporaryDirectory(prefix="worker-runner-sandbox-user-") as temp_dir:
+            root = Path(temp_dir)
+            central = root / "central"
+            command_root = root / "command-runtime"
+            worktree = root / "execute-plans-worktree"
+            fake_home = root / "fake-home"
+            fake_local = fake_home / ".local"
+            local_state = fake_local / "state"
+            local_share = fake_local / "share"
+            local_cache = fake_local / "cache"
+            local_bin = fake_local / "bin"
+            custom_claude_dir = root / "custom-claude-config"
+
+            for d in (local_state, local_share, local_cache, local_bin, custom_claude_dir):
+                d.mkdir(parents=True, exist_ok=True)
+
+            _init_repo(central)
+            _init_repo(command_root)
+            _init_repo(worktree)
+            _write_status(central)
+
+            cmd = ["python3", "-c", "pass"]
+            env = {
+                "CLAUDE_CONFIG_DIR": str(custom_claude_dir),
+            }
+            with (
+                mock.patch.object(Path, "home", return_value=fake_home),
+                mock.patch.dict(os.environ, env, clear=False),
+            ):
+                sandbox_args = wr.bind_worker_sandbox(
+                    cmd,
+                    command_root=command_root,
+                    workspace_path=worktree,
+                    coordination_root=central,
+                    sandbox_binary="/usr/bin/bwrap",
+                )
+
+            # 1. CLAUDE_CONFIG_DIR is discovered and mounted writable with --bind-try
+            self.assertIn(str(custom_claude_dir.resolve()), sandbox_args)
+            claude_idx = sandbox_args.index(str(custom_claude_dir.resolve()))
+            self.assertEqual(sandbox_args[claude_idx - 1], "--bind-try")
+
+            # 2. Narrowed ~/.local subdirectories (state, share, cache) are mounted writable with --bind-try
+            for sub_dir in (local_state, local_share, local_cache):
+                self.assertIn(str(sub_dir.resolve()), sandbox_args)
+                idx = sandbox_args.index(str(sub_dir.resolve()))
+                self.assertEqual(sandbox_args[idx - 1], "--bind-try")
+
+            # 3. Whole ~/.local and ~/.local/bin are NOT mounted writable
+            bound_rw_paths = [
+                sandbox_args[i + 1]
+                for i, arg in enumerate(sandbox_args)
+                if arg in ("--bind", "--bind-try") and i + 1 < len(sandbox_args)
+            ]
+            self.assertNotIn(str(fake_local.resolve()), bound_rw_paths)
+            self.assertNotIn(str(local_bin.resolve()), bound_rw_paths)
+
+    @unittest.skipUnless(_FUNCTIONAL_BWRAP, "Functional bubblewrap with user namespace support is required for sandbox execution tests")
+    def test_reproduce_and_prevent_20260827_reviewer_checkout_mutation(self):
+        """Reproduce and prove fix for the 2026-08-27 reviewer checkout mutation incident.
+
+        Incident: worker dispatched for execute-plans review ran `git checkout origin/dev`
+        in shared pantheon checkout, detaching the shared HEAD.
+        Fix: shared checkouts are mounted read-only, git checkout fails, HEAD unchanged.
+        """
+        with tempfile.TemporaryDirectory(prefix="worker-runner-incident-") as temp_dir:
+            root = Path(temp_dir)
+            central = root / "central"
+            command_root = root / "command-runtime"
+            worktree = root / "execute-plans-worktree"
+            shared_pantheon = root / "shared-pantheon"
+
+            _init_repo(central)
+            _init_repo(command_root)
+            _init_repo(worktree)
+            _init_repo(shared_pantheon)
+            _write_status(central)
+
+            # Ensure shared pantheon is on branch dev
+            subprocess.run(["git", "checkout", "-q", "-b", "dev"], cwd=shared_pantheon, check=True)
+            initial_branch = subprocess.check_output(["git", "branch", "--show-current"], cwd=shared_pantheon, text=True).strip()
+            self.assertEqual(initial_branch, "dev")
+            initial_head = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=shared_pantheon, text=True).strip()
+
+            heartbeat = central / ".orchestrator" / "worker-runtime" / "heartbeats" / "run.json"
+            status = central / ".orchestrator" / "worker-runtime" / "status" / "run.json"
+
+            env = os.environ.copy()
+            for key in list(env):
+                if key.startswith("PANTHEON_COMMAND_"):
+                    env.pop(key)
+            env.update({
+                "PANTHEON_STATUS_ROOT": str(central),
+                "PANTHEON_WORKTREE_ROOT": str(worktree),
+                "ORCH_WORKSPACE_PATH": str(worktree),
+            })
+            env.update(_command_runtime_env(command_root))
+
+            # Worker attempts to run git checkout in shared pantheon checkout
+            program = (
+                "import subprocess, sys, pathlib\n"
+                "shared = pathlib.Path(sys.argv[1])\n"
+                "worktree = pathlib.Path(sys.argv[2])\n"
+                "mutation_prevented = False\n"
+                "# 1. Attempt git checkout in shared pantheon checkout\n"
+                "try:\n"
+                "    p = subprocess.run(['git', 'checkout', 'origin/dev'], cwd=shared, capture_output=True, text=True, check=True)\n"
+                "except (subprocess.CalledProcessError, OSError):\n"
+                "    mutation_prevented = True\n"
+                "# 2. Writing in own worktree succeeds\n"
+                "(worktree / 'delivery-result.txt').write_text('delivered\\n')\n"
+                "sys.exit(0 if mutation_prevented else 42)\n"
+            )
+
+            proc = subprocess.run(
+                [
+                    sys.executable,
+                    _P,
+                    "--run-id",
+                    "antigravity-20260827T171213Z-boundary-test",
+                    "--heartbeat-path",
+                    str(heartbeat),
+                    "--status-path",
+                    str(status),
+                    "--",
+                    sys.executable,
+                    "-c",
+                    program,
+                    str(shared_pantheon),
+                    str(worktree),
+                ],
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=20,
+                check=False,
+            )
+
+            self.assertEqual(proc.returncode, 0, proc.stderr + proc.stdout)
+            # Verify shared pantheon checkout was NOT mutated or detached
+            current_branch = subprocess.check_output(["git", "branch", "--show-current"], cwd=shared_pantheon, text=True).strip()
+            self.assertEqual(current_branch, "dev")
+            current_head = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=shared_pantheon, text=True).strip()
+            self.assertEqual(current_head, initial_head)
+
+            # Verify delivery worktree write succeeded
+            self.assertEqual((worktree / "delivery-result.txt").read_text(), "delivered\n")
+
+    @unittest.skipUnless(_FUNCTIONAL_BWRAP, "Functional bubblewrap with user namespace support is required for sandbox execution tests")
+    def test_prevent_cross_repo_file_mutations(self):
+        with tempfile.TemporaryDirectory(prefix="worker-runner-file-mut-") as temp_dir:
+            root = Path(temp_dir)
+            central = root / "central"
+            command_root = root / "command-runtime"
+            worktree = root / "execute-plans-worktree"
+            shared_pantheon = root / "shared-pantheon"
+
+            _init_repo(central)
+            _init_repo(command_root)
+            _init_repo(worktree)
+            _init_repo(shared_pantheon)
+            _write_status(central)
+
+            (shared_pantheon / "services").mkdir(parents=True, exist_ok=True)
+            (shared_pantheon / "services" / "app.py").write_text("original\n")
+
+            heartbeat = central / ".orchestrator" / "worker-runtime" / "heartbeats" / "run.json"
+            status = central / ".orchestrator" / "worker-runtime" / "status" / "run.json"
+
+            env = os.environ.copy()
+            for key in list(env):
+                if key.startswith("PANTHEON_COMMAND_"):
+                    env.pop(key)
+            env.update({
+                "PANTHEON_STATUS_ROOT": str(central),
+                "PANTHEON_WORKTREE_ROOT": str(worktree),
+                "ORCH_WORKSPACE_PATH": str(worktree),
+            })
+            env.update(_command_runtime_env(command_root))
+
+            program = (
+                "import sys, pathlib\n"
+                "shared_svc = pathlib.Path(sys.argv[1]) / 'services'\n"
+                "denied = 0\n"
+                "# 1. Attempt to create new file in shared repo\n"
+                "try:\n"
+                "    (shared_svc / 'evil.py').write_text('evil')\n"
+                "except OSError:\n"
+                "    denied += 1\n"
+                "# 2. Attempt to overwrite existing file in shared repo\n"
+                "try:\n"
+                "    (shared_svc / 'app.py').write_text('mutated')\n"
+                "except OSError:\n"
+                "    denied += 1\n"
+                "sys.exit(0 if denied == 2 else 43)\n"
+            )
+
+            proc = subprocess.run(
+                [
+                    sys.executable,
+                    _P,
+                    "--run-id",
+                    "codex-20260827T000000Z-file-mut-test",
+                    "--heartbeat-path",
+                    str(heartbeat),
+                    "--status-path",
+                    str(status),
+                    "--",
+                    sys.executable,
+                    "-c",
+                    program,
+                    str(shared_pantheon),
+                ],
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=20,
+                check=False,
+            )
+
+            self.assertEqual(proc.returncode, 0, proc.stderr + proc.stdout)
+            self.assertFalse((shared_pantheon / "services" / "evil.py").exists())
+            self.assertEqual((shared_pantheon / "services" / "app.py").read_text(), "original\n")
+
+    @unittest.skipUnless(_FUNCTIONAL_BWRAP, "Functional bubblewrap with user namespace support is required for sandbox execution tests")
+    def test_symlink_and_path_traversal_cannot_escape_leased_worktree(self):
+        with tempfile.TemporaryDirectory(prefix="worker-runner-traversal-") as temp_dir:
+            root = Path(temp_dir)
+            central = root / "central"
+            command_root = root / "command-runtime"
+            worktree = root / "execute-plans-worktree"
+            shared_pantheon = root / "shared-pantheon"
+
+            _init_repo(central)
+            _init_repo(command_root)
+            _init_repo(worktree)
+            _init_repo(shared_pantheon)
+            _write_status(central)
+
+            (shared_pantheon / "services").mkdir(parents=True, exist_ok=True)
+            target = shared_pantheon / "services" / "target.py"
+            target.write_text("safe\n")
+
+            heartbeat = central / ".orchestrator" / "worker-runtime" / "heartbeats" / "run.json"
+            status = central / ".orchestrator" / "worker-runtime" / "status" / "run.json"
+
+            env = os.environ.copy()
+            for key in list(env):
+                if key.startswith("PANTHEON_COMMAND_"):
+                    env.pop(key)
+            env.update({
+                "PANTHEON_STATUS_ROOT": str(central),
+                "PANTHEON_WORKTREE_ROOT": str(worktree),
+                "ORCH_WORKSPACE_PATH": str(worktree),
+            })
+            env.update(_command_runtime_env(command_root))
+
+            program = (
+                "import os, sys, pathlib\n"
+                "target = pathlib.Path(sys.argv[1])\n"
+                "worktree = pathlib.Path(sys.argv[2])\n"
+                "denied = 0\n"
+                "# 1. Symlink pointing outside leased worktree\n"
+                "symlink = worktree / 'symlink_to_shared'\n"
+                "symlink.symlink_to(target)\n"
+                "try:\n"
+                "    symlink.write_text('mutated via symlink')\n"
+                "except OSError:\n"
+                "    denied += 1\n"
+                "# 2. Path traversal escaping worktree\n"
+                "relative_escape = worktree / '..' / 'shared-pantheon' / 'services' / 'target.py'\n"
+                "try:\n"
+                "    relative_escape.write_text('mutated via dotdot')\n"
+                "except OSError:\n"
+                "    denied += 1\n"
+                "sys.exit(0 if denied == 2 else 44)\n"
+            )
+
+            proc = subprocess.run(
+                [
+                    sys.executable,
+                    _P,
+                    "--run-id",
+                    "claude-1-20260827T000000Z-traversal-test",
+                    "--heartbeat-path",
+                    str(heartbeat),
+                    "--status-path",
+                    str(status),
+                    "--",
+                    sys.executable,
+                    "-c",
+                    program,
+                    str(target),
+                    str(worktree),
+                ],
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=20,
+                check=False,
+            )
+
+            self.assertEqual(proc.returncode, 0, proc.stderr + proc.stdout)
+            self.assertEqual(target.read_text(), "safe\n")
+
+    @unittest.skipUnless(_FUNCTIONAL_BWRAP, "Functional bubblewrap with user namespace support is required for sandbox execution tests")
+    def test_governed_ai_status_writes_succeed_under_boundary(self):
+        with tempfile.TemporaryDirectory(prefix="worker-runner-status-write-") as temp_dir:
+            root = Path(temp_dir)
+            central = root / "central"
+            command_root = root / "command-runtime"
+            worktree = root / "execute-plans-worktree"
+
+            _init_repo(central)
+            _init_repo(command_root)
+            _init_repo(worktree)
+            _write_status(central)
+
+            # Create governance status files
+            (central / "ai-status.json").write_text(
+                json.dumps({"tasks": [{"id": "TASK-001", "status": "in_progress"}], "agents": [], "handoffs": []}) + "\n"
+            )
+            (central / "ai-activity-log.jsonl").write_text('{"event": "start"}\n')
+            (central / "current-work.md").write_text("# Current Work\n")
+            (central / "dashboard-bundle.json").write_text(
+                json.dumps({"status": "current"}) + "\n"
+            )
+
+            heartbeat = central / ".orchestrator" / "worker-runtime" / "heartbeats" / "run.json"
+            status = central / ".orchestrator" / "worker-runtime" / "status" / "run.json"
+
+            env = os.environ.copy()
+            for key in list(env):
+                if key.startswith("PANTHEON_COMMAND_"):
+                    env.pop(key)
+            env.update({
+                "PANTHEON_STATUS_ROOT": str(central),
+                "PANTHEON_WORKTREE_ROOT": str(worktree),
+                "ORCH_WORKSPACE_PATH": str(worktree),
+            })
+            env.update(_command_runtime_env(command_root))
+
+            program = (
+                "import fcntl, json, os, sys, pathlib, tempfile\n"
+                "central = pathlib.Path(sys.argv[1])\n"
+                "# 1. Atomically replace ai-status.json through its parent.\n"
+                "status_path = central / 'ai-status.json'\n"
+                "data = json.loads(status_path.read_text())\n"
+                "data['tasks'][0]['status'] = 'completed'\n"
+                "with tempfile.NamedTemporaryFile('w', dir=central, delete=False) as handle:\n"
+                "    handle.write(json.dumps(data) + '\\n')\n"
+                "    handle.flush()\n"
+                "    os.fsync(handle.fileno())\n"
+                "    temp_path = pathlib.Path(handle.name)\n"
+                "os.replace(temp_path, status_path)\n"
+                "# 2. Append to ai-activity-log.jsonl\n"
+                "log_path = central / 'ai-activity-log.jsonl'\n"
+                "with log_path.open('a') as f:\n"
+                "    f.write(json.dumps({'event': 'done'}) + '\\n')\n"
+                "# 3. Update current-work.md\n"
+                "(central / 'current-work.md').write_text('# Done\\n')\n"
+                "# 4. Update the top-level dashboard projection.\n"
+                "dashboard_path = central / 'dashboard-bundle.json'\n"
+                "dashboard_path.write_text(json.dumps({'status': 'updated'}) + '\\n')\n"
+                "# 5. The derived projection lock is a governed writable file.\n"
+                "lock_path = central / '.orchestrator' / 'status-derived-views.lock'\n"
+                "descriptor = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o600)\n"
+                "fcntl.flock(descriptor, fcntl.LOCK_EX)\n"
+                "fcntl.flock(descriptor, fcntl.LOCK_UN)\n"
+                "os.close(descriptor)\n"
+                "sys.exit(0)\n"
+            )
+
+            proc = subprocess.run(
+                [
+                    sys.executable,
+                    _P,
+                    "--run-id",
+                    "antigravity-20260827T000000Z-status-test",
+                    "--heartbeat-path",
+                    str(heartbeat),
+                    "--status-path",
+                    str(status),
+                    "--",
+                    sys.executable,
+                    "-c",
+                    program,
+                    str(central),
+                ],
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=20,
+                check=False,
+            )
+
+            self.assertEqual(proc.returncode, 0, proc.stderr + proc.stdout)
+            updated_status = json.loads((central / "ai-status.json").read_text())
+            self.assertEqual(updated_status["tasks"][0]["status"], "completed")
+            self.assertIn('{"event": "done"}', (central / "ai-activity-log.jsonl").read_text())
+            self.assertEqual((central / "current-work.md").read_text(), "# Done\n")
+            self.assertEqual(
+                json.loads((central / "dashboard-bundle.json").read_text()),
+                {"status": "updated"},
+            )
+
+    @unittest.skipUnless(_FUNCTIONAL_BWRAP, "Functional bubblewrap with user namespace support is required for sandbox execution tests")
+    def test_coordination_source_stays_read_only_with_atomic_status_parent(self):
+        with tempfile.TemporaryDirectory(prefix="worker-runner-status-source-ro-") as temp_dir:
+            root = Path(temp_dir)
+            central = root / "central"
+            command_root = root / "command-runtime"
+            worktree = root / "execute-plans-worktree"
+            _init_repo(central)
+            _init_repo(command_root)
+            _init_repo(worktree)
+            _write_status(central)
+            source = central / "services" / "api.py"
+            source.parent.mkdir(parents=True)
+            source.write_text("API = 1\n", encoding="utf-8")
+
+            heartbeat = central / ".orchestrator" / "worker-runtime" / "heartbeats" / "run.json"
+            status = central / ".orchestrator" / "worker-runtime" / "status" / "run.json"
+            env = os.environ.copy()
+            for key in list(env):
+                if key.startswith("PANTHEON_COMMAND_"):
+                    env.pop(key)
+            env.update({
+                "PANTHEON_STATUS_ROOT": str(central),
+                "PANTHEON_WORKTREE_ROOT": str(worktree),
+                "ORCH_WORKSPACE_PATH": str(worktree),
+            })
+            env.update(_command_runtime_env(command_root))
+
+            proc = subprocess.run(
+                [
+                    sys.executable,
+                    _P,
+                    "--run-id",
+                    "antigravity-20260827T000000Z-source-ro-test",
+                    "--heartbeat-path",
+                    str(heartbeat),
+                    "--status-path",
+                    str(status),
+                    "--",
+                    sys.executable,
+                    "-c",
+                    "import pathlib,sys; pathlib.Path(sys.argv[1]).write_text('API = 2\\n')",
+                    str(source),
+                ],
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=20,
+                check=False,
+            )
+
+            self.assertNotEqual(proc.returncode, 0, proc.stderr + proc.stdout)
+            self.assertEqual(source.read_text(encoding="utf-8"), "API = 1\n")
 
 
 if __name__ == "__main__":

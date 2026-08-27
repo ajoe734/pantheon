@@ -335,6 +335,15 @@ resolves stale blockers/handoffs, and archives the task through the same
 canonical transaction as `done`. Never use it with a draft, unmerged review
 file, inferred reviewer identity, or a commit that is not already on `dev`.
 
+For an operator-authorized task whose canonical `task_class` is exactly
+`development_tooling`, the same command has a separate direct-delivery mode.
+It does not manufacture product review evidence: local `Human/Ops` must set
+`RECONCILE_DELIVERY_CLASS=development_tooling` and supply the delivery
+repository/root/commit variables above, while omitting the review-evidence
+variables. The command still verifies the repository identity, exact task id
+in the commit message, and that the supplied commit is merged into the target
+dev ref. Product tasks and non-Human/Ops actors cannot use this mode.
+
 ## Reviewer Recovery When A Reject Verdict Cannot Be Recorded
 
 `reconcile_merged_done` above only covers a task that was already merged and

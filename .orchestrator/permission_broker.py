@@ -121,6 +121,52 @@ SAFE_BASH_PATTERNS = [
     re.compile(r"^ss\s+"),
     re.compile(r"^netstat\s+"),
 ]
+
+
+def load_broker_runtime_config() -> dict[str, Any]:
+    """Load immutable broker policy with mutable state bound to status root.
+
+    The broker executable/config belongs to ``PANTHEON_COMMAND_ROOT`` while
+    runtime state belongs to the supervisor coordination root.  Keeping that
+    distinction here prevents a promoted worker from either writing into an
+    immutable/shared source checkout or treating its delivery worktree as
+    governance authority.
+    """
+
+    config = load_config()
+    raw_status_root = str(os.environ.get("PANTHEON_STATUS_ROOT") or "").strip()
+    if not raw_status_root:
+        return config
+
+    status_root = Path(os.path.expanduser(raw_status_root))
+    if not status_root.is_absolute():
+        raise RuntimeError("PANTHEON_STATUS_ROOT must be absolute for permission broker state")
+    status_root = status_root.resolve()
+    if not status_root.is_dir():
+        raise RuntimeError(
+            f"PANTHEON_STATUS_ROOT does not exist for permission broker state: {status_root}"
+        )
+
+    rebound = dict(config)
+    paths = dict(config.get("paths") or {})
+    paths.update(
+        {
+            "status_file": str(status_root / "ai-status.json"),
+            "activity_log": str(status_root / "ai-activity-log.jsonl"),
+            "current_work": str(status_root / "current-work.md"),
+            "dashboard": str(status_root / "docs-site" / "index.html"),
+            "state_file": str(status_root / ".orchestrator" / "state.json"),
+            "approval_queue": str(status_root / ".orchestrator" / "approval-queue.json"),
+            "provider_capabilities": str(
+                status_root / ".orchestrator" / "provider_capabilities.json"
+            ),
+            "claude_mcp_config": str(
+                status_root / ".orchestrator" / "claude-approval-broker.mcp.json"
+            ),
+        }
+    )
+    rebound["paths"] = paths
+    return rebound
 DEFER_BASH_PATTERNS = [
     re.compile(r"^git (add|commit|remote set-url|submodule)(\s|$)"),
     re.compile(r"^(curl|wget)(\s|$)"),
@@ -1818,7 +1864,7 @@ def hook_mode(config: dict[str, Any], event_name: str, payload: dict[str, Any]) 
 
 def main() -> int:
     args = parse_args()
-    config = load_config()
+    config = load_broker_runtime_config()
 
     if args.command == "classify":
         print(classify_command(args.shell_command))
