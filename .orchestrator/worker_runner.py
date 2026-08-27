@@ -259,49 +259,165 @@ def validate_status_command_runtime() -> dict[str, str]:
     }
 
 
+def bind_worker_sandbox(
+    command: list[str],
+    command_root: Path,
+    *,
+    workspace_path: Path | None = None,
+    coordination_root: Path | None = None,
+    extra_readonly_roots: Iterable[Path | str] | None = None,
+    sandbox_binary: str | None = None,
+) -> list[str]:
+    """Wrap one provider command in a mount namespace with a leased-worktree write boundary.
+
+    Enforces:
+    - Default host root filesystem is strictly read-only (--ro-bind / /).
+    - Exactly one leased delivery worktree (workspace_path) and designated
+      governance state interfaces in coordination_root are writable.
+    - Standard temporary directories (/tmp, /var/tmp, /run/user/<uid>) and user tool
+      cache/config directories (~/.cache, ~/.config, ~/.gemini, etc.) are writable
+      so CLI providers and development tools can execute.
+    - Other worker worktrees under /tmp/pantheon-worker-worktrees, all shared source
+      repositories, the command runtime, and coordination-root source code/git remain
+      strictly read-only.
+    - Outer worker_runner remains outside the namespace to publish heartbeats.
+    - Private PID namespace and procfs isolate the process tree.
+    """
+
+    binary = sandbox_binary or os.environ.get("PANTHEON_SANDBOX_BINARY") or shutil.which("bwrap")
+    if not binary:
+        raise RuntimeError(
+            "bubblewrap (bwrap) is required to enforce the read-only "
+            "PANTHEON_COMMAND_ROOT worker boundary"
+        )
+    root = Path(command_root).expanduser().resolve()
+    if not root.is_dir():
+        raise RuntimeError(f"validated command runtime is not a directory: {root}")
+
+    ws_resolved = Path(workspace_path).expanduser().resolve() if workspace_path else None
+    coord_resolved = Path(coordination_root).expanduser().resolve() if coordination_root else None
+
+    # 1. Base command: isolate pid namespace, root read-only by default, dev bind
+    bwrap_cmd = [
+        str(Path(binary).expanduser().resolve()),
+        "--die-with-parent",
+        "--unshare-pid",
+        "--ro-bind",
+        "/",
+        "/",
+        "--dev-bind",
+        "/dev",
+        "/dev",
+    ]
+
+    # 2. Mount standard temporary directories writable
+    for tmp_dir in ("/tmp", "/var/tmp"):
+        p = Path(tmp_dir)
+        if p.exists() and p.is_dir():
+            bwrap_cmd.extend(["--bind-try", str(p), str(p)])
+
+    try:
+        uid = os.getuid()
+        user_run = Path(f"/run/user/{uid}")
+        if user_run.exists() and user_run.is_dir():
+            bwrap_cmd.extend(["--bind-try", str(user_run), str(user_run)])
+    except (AttributeError, OSError):
+        pass
+
+    # 3. Protect other worker worktrees under /tmp/pantheon-worker-worktrees
+    worktrees_root = Path("/tmp/pantheon-worker-worktrees")
+    if worktrees_root.exists() and worktrees_root.is_dir():
+        bwrap_cmd.extend(["--ro-bind-try", str(worktrees_root.resolve()), str(worktrees_root.resolve())])
+
+    # 4. User tool cache and configuration directories
+    # Providers (agy, codex, claude, etc.) and compilers/tools write cache, auth tokens, logs to these dirs
+    home = Path.home().resolve()
+    candidate_user_dirs = [
+        home / ".cache",
+        home / ".config",
+        home / ".local" / "state",
+        home / ".local" / "share",
+        home / ".local" / "cache",
+        home / ".gemini",
+        home / ".claude",
+        home / ".codex",
+        home / ".npm",
+        home / ".cargo",
+        home / ".rustup",
+        home / ".antigravity",
+    ]
+    for env_var in ("ANTIGRAVITY_HOME", "CODEX_HOME", "CLAUDE_HOME", "CLAUDE_CONFIG_DIR", "GH_CONFIG_DIR"):
+        val = os.environ.get(env_var)
+        if val and val.strip():
+            p = Path(os.path.expanduser(val.strip())).resolve()
+            if p != home and p != Path("/"):
+                candidate_user_dirs.append(p)
+
+    for u_dir in candidate_user_dirs:
+        try:
+            if u_dir.exists():
+                u_res = u_dir.resolve()
+                if u_res != Path("/") and (coord_resolved is None or u_res != coord_resolved):
+                    bwrap_cmd.extend(["--bind-try", str(u_res), str(u_res)])
+        except OSError:
+            pass
+
+    # 5. Extra readonly roots if specified
+    if extra_readonly_roots:
+        for item in extra_readonly_roots:
+            p = Path(os.path.expanduser(str(item))).resolve()
+            if p.exists():
+                bwrap_cmd.extend(["--ro-bind-try", str(p), str(p)])
+
+    # 6. Leased delivery worktree is explicitly writable
+    if ws_resolved:
+        bwrap_cmd.extend(["--bind", str(ws_resolved), str(ws_resolved)])
+
+    # 7. Governed coordination state interfaces
+    if coord_resolved and (ws_resolved is None or coord_resolved != ws_resolved):
+        governed_candidates = [
+            coord_resolved / "ai-status.json",
+            coord_resolved / "ai-activity-log.jsonl",
+            coord_resolved / "current-work.md",
+            coord_resolved / "docs-site",
+            coord_resolved / "ai-task-archive",
+            coord_resolved / ".orchestrator" / "state.json",
+            coord_resolved / ".orchestrator" / "approval-queue.json",
+            coord_resolved / ".orchestrator" / "task-state.lock",
+            coord_resolved / ".orchestrator" / "activity-audit.lock",
+            coord_resolved / ".orchestrator" / "worker-runtime",
+            coord_resolved / "archive" / "logs",
+            coord_resolved / ".orchestrator" / "logs",
+        ]
+        event_log = os.environ.get("PANTHEON_TASK_STATE_EVENT_LOG")
+        if event_log and event_log.strip():
+            governed_candidates.append(Path(os.path.expanduser(event_log.strip())).resolve())
+
+        for p in governed_candidates:
+            if p.exists():
+                bwrap_cmd.extend(["--bind", str(p.resolve()), str(p.resolve())])
+
+    # 8. Procfs and user command
+    bwrap_cmd.extend([
+        "--proc",
+        "/proc",
+        "--",
+        *command,
+    ])
+    return bwrap_cmd
+
+
 def bind_command_runtime_readonly(
     command: list[str],
     command_root: Path,
     *,
     sandbox_binary: str | None = None,
 ) -> list[str]:
-    """Wrap one provider command in a mount namespace with a read-only runtime.
-
-    The outer worker runner intentionally remains outside the namespace so it
-    can keep publishing heartbeats.  The provider retains the existing host
-    view (including its delivery worktree, status root, credentials, and
-    caches), while the exact validated command runtime is over-mounted
-    read-only.  A private PID namespace and procfs prevent `/proc/*/root` from
-    reaching a process whose mount namespace still exposes that tree writable.
-    """
-
-    binary = sandbox_binary or shutil.which("bwrap")
-    if not binary:
-        raise RuntimeError(
-            "bubblewrap (bwrap) is required to enforce the read-only "
-            "PANTHEON_COMMAND_ROOT worker boundary"
-        )
-    root = command_root.expanduser().resolve()
-    if not root.is_dir():
-        raise RuntimeError(f"validated command runtime is not a directory: {root}")
-    return [
-        str(Path(binary).expanduser().resolve()),
-        "--die-with-parent",
-        "--unshare-pid",
-        "--bind",
-        "/",
-        "/",
-        "--dev-bind",
-        "/dev",
-        "/dev",
-        "--ro-bind",
-        str(root),
-        str(root),
-        "--proc",
-        "/proc",
-        "--",
-        *command,
-    ]
+    return bind_worker_sandbox(
+        command,
+        command_root=command_root,
+        sandbox_binary=sandbox_binary,
+    )
 
 
 def bind_relative_command_to_runtime(command: list[str], command_root: Path) -> list[str]:
@@ -458,7 +574,12 @@ def main(argv: list[str] | None = None) -> int:
         command,
         command_root,
     )
-    sandboxed_command = bind_command_runtime_readonly(command, command_root)
+    sandboxed_command = bind_worker_sandbox(
+        command,
+        command_root=command_root,
+        workspace_path=workspace_path if isinstance(workspace_path, Path) else None,
+        coordination_root=coordination_root,
+    )
     if workspace_path:
         try:
             os.chdir(workspace_path)

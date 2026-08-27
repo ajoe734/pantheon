@@ -31,8 +31,17 @@ class AdapterDeliveryPolicyTests(unittest.TestCase):
             },
         )
         self._task_state_env.start()
+        self._status_command_env = mock.patch(
+            "common.status_command_runtime_env",
+            return_value={
+                "PANTHEON_COMMAND_ROOT": "/tmp/mock-command-root",
+                "PANTHEON_COMMAND_RUNTIME_SHA": "mocksha",
+            },
+        )
+        self._status_command_env.start()
 
     def tearDown(self) -> None:
+        self._status_command_env.stop()
         self._task_state_env.stop()
 
     def test_codex_alias_sets_agent_identity_env(self) -> None:
