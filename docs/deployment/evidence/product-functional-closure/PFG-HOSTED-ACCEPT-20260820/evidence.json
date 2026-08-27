@@ -44,7 +44,7 @@
       "git diff --check"
     ],
     "results": [
-      "15 passed across scripts/test_verify_product_functional_closure.py covering all 6 acceptance gates, exact-pair validation, profile switching, drift detection, and strict fail-fast mode.",
+      "36 passed across scripts/test_verify_product_functional_closure.py covering all 6 fail-closed acceptance gates, negative tests for unobserved/missing Source and Paper postures, all four hosted journey validation checks, code disposition, rollback checks, and CLI main entrypoint.",
       "py_compile succeeded with zero syntax or compile errors.",
       "git diff --check passed with zero formatting or trailing whitespace issues."
     ]

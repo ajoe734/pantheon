@@ -37,6 +37,6 @@ This task implements and delivers the fail-closed hosted acceptance aggregator a
 
 ## Validation Results
 
-- `.venv-pantheon/bin/python3 -m pytest -v scripts/test_verify_product_functional_closure.py`: 15 passed in 1.84s
+- `.venv-pantheon/bin/python3 -m pytest -v scripts/test_verify_product_functional_closure.py`: 36 passed in 3.18s
 - `python3 -m py_compile scripts/verify_product_functional_closure.py scripts/test_verify_product_functional_closure.py`: passed with 0 errors
 - `git diff --check`: passed with zero whitespace or formatting errors

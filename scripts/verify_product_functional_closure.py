@@ -227,11 +227,11 @@ class ProductFunctionalClosureVerifier:
         self,
         config: AcceptanceConfig,
         *,
-        transport: Transport = _default_transport,
+        transport: Optional[Transport] = None,
     ):
         config.validate()
         self.config = config
-        self.transport = transport
+        self.transport = transport if transport is not None else _default_transport
         self.started = time.monotonic()
         self._artifacts: dict[str, Mapping[str, Any]] = {}
         self._manifest: Mapping[str, Any] = {}
@@ -503,18 +503,38 @@ class ProductFunctionalClosureVerifier:
                 "gate_02.health", "BFF /healthz or /readyz reported unready"
             )
 
+        deps = ready.get("dependencies", {})
+        if isinstance(deps, Mapping):
+            for dep_key in ("source-ingest", "source_ingest"):
+                if dep_key in deps:
+                    dep_val = deps[dep_key]
+                    if isinstance(dep_val, Mapping) and dep_val.get("status") not in ("ok", "ready"):
+                        raise ProductFunctionalClosureAcceptanceError(
+                            "gate_02.source_dep_unready",
+                            f"source ingestion dependency {dep_key} is not ready: {dep_val}",
+                        )
+
         # Check docker-compose contract if available locally
         compose_path = REPO_ROOT / "docker-compose.yml"
         compose_findings: dict[str, Any] = {}
-        if compose_path.exists():
-            text = compose_path.read_text(encoding="utf-8")
-            if "reconcile_only" not in text:
-                raise ProductFunctionalClosureAcceptanceError(
-                    "gate_02.compose",
-                    "docker-compose.yml must specify reconcile_only fallback default",
-                )
-            compose_findings["reconcile_only_default"] = True
-            compose_findings["max_ticks_default"] = "${SOURCE_INGEST_CONTROLLER_MAX_TICKS:-0}"
+        if not compose_path.exists():
+            raise ProductFunctionalClosureAcceptanceError(
+                "gate_02.compose_missing",
+                "docker-compose.yml must exist to verify source controller configuration",
+            )
+        text = compose_path.read_text(encoding="utf-8")
+        if "reconcile_only" not in text or "SOURCE_INGEST_CONTROLLER_MODE" not in text:
+            raise ProductFunctionalClosureAcceptanceError(
+                "gate_02.compose",
+                "docker-compose.yml must specify reconcile_only fallback default",
+            )
+        if "SOURCE_INGEST_CONTROLLER_MAX_TICKS" not in text:
+            raise ProductFunctionalClosureAcceptanceError(
+                "gate_02.compose_ticks",
+                "docker-compose.yml must declare SOURCE_INGEST_CONTROLLER_MAX_TICKS",
+            )
+        compose_findings["reconcile_only_default"] = True
+        compose_findings["max_ticks_default"] = "${SOURCE_INGEST_CONTROLLER_MAX_TICKS:-0}"
 
         return {
             "health_status": health.get("status"),
@@ -522,6 +542,7 @@ class ProductFunctionalClosureVerifier:
             "controller_mode": "reconcile_only",
             "recurring_provider_process": "absent",
             "compose_verified": compose_findings,
+            "dependencies_observed": list(deps.keys()) if isinstance(deps, Mapping) else [],
         }
 
     def verify_gate_03_paper_runtime_execution(self) -> dict[str, Any]:
@@ -529,21 +550,85 @@ class ProductFunctionalClosureVerifier:
         ready = self._get_json(
             "gate_03.readyz", f"{self.config.bff_base_url}/readyz"
         )
+        if ready.get("ready") is not True:
+            raise ProductFunctionalClosureAcceptanceError(
+                "gate_03.readyz_unready", "BFF /readyz reported unready"
+            )
         deps = _mapping(ready.get("dependencies", {}), "gate_03.dependencies")
-        
+        if not deps:
+            raise ProductFunctionalClosureAcceptanceError(
+                "gate_03.empty_dependencies", "BFF /readyz returned empty dependencies"
+            )
+
+        lifecycle_projector = deps.get("lifecycle_projector")
+        if isinstance(lifecycle_projector, Mapping):
+            if lifecycle_projector.get("ready") is not True and lifecycle_projector.get("status") != "ready":
+                raise ProductFunctionalClosureAcceptanceError(
+                    "gate_03.lifecycle_projector_unready",
+                    f"lifecycle_projector is not ready: {lifecycle_projector.get('status')}",
+                )
+            if lifecycle_projector.get("environment_scope") != "paper":
+                raise ProductFunctionalClosureAcceptanceError(
+                    "gate_03.environment_scope",
+                    f"lifecycle_projector environment_scope is {lifecycle_projector.get('environment_scope')!r}, expected 'paper'",
+                )
+            if (
+                lifecycle_projector.get("deployment_sha")
+                and lifecycle_projector.get("deployment_sha") != self.config.expected_bff_sha
+            ):
+                raise ProductFunctionalClosureAcceptanceError(
+                    "gate_03.deployment_sha",
+                    f"lifecycle_projector deployment_sha {lifecycle_projector.get('deployment_sha')!r} != expected {self.config.expected_bff_sha!r}",
+                )
+            if lifecycle_projector.get("mode") and lifecycle_projector.get("mode") != "live":
+                raise ProductFunctionalClosureAcceptanceError(
+                    "gate_03.mode",
+                    f"lifecycle_projector mode is {lifecycle_projector.get('mode')!r}, expected 'live'",
+                )
+        elif "paper-fleet-reconciler" in deps:
+            fleet = deps["paper-fleet-reconciler"]
+            if isinstance(fleet, Mapping) and fleet.get("status") not in ("ok", "ready"):
+                raise ProductFunctionalClosureAcceptanceError(
+                    "gate_03.fleet_unready",
+                    f"paper-fleet-reconciler is not ready: {fleet}",
+                )
+        else:
+            raise ProductFunctionalClosureAcceptanceError(
+                "gate_03.lifecycle_projector_missing",
+                "lifecycle_projector or paper-fleet-reconciler must be present in /readyz dependencies",
+            )
+
         return {
             "paper_fleet_ready": True,
             "executable_binding_contract": "admitted",
             "bounded_lifecycle_outbox": "enforced",
             "dependencies": list(deps.keys()),
+            "lifecycle_projector_observed": isinstance(lifecycle_projector, Mapping),
         }
 
     def verify_gate_04_authenticated_product_journeys(self) -> dict[str, Any]:
         """Gate 04: Verify L12, Agora, Management, Management AI authenticated journeys with 0 skips."""
-        l12 = self._load_evidence("l12", self.config.l12_evidence) if self.config.l12_evidence else {}
-        agora = self._load_evidence("agora", self.config.agora_evidence) if self.config.agora_evidence else {}
-        mgmt = self._load_evidence("mgmt", self.config.mgmt_evidence) if self.config.mgmt_evidence else {}
-        mgmt_ai = self._load_evidence("mgmt_ai", self.config.mgmt_ai_evidence) if self.config.mgmt_ai_evidence else {}
+        if not self.config.l12_evidence:
+            raise ProductFunctionalClosureAcceptanceError(
+                "gate_04.missing_l12_evidence", "--l12-evidence is required and must be provided"
+            )
+        if not self.config.agora_evidence:
+            raise ProductFunctionalClosureAcceptanceError(
+                "gate_04.missing_agora_evidence", "--agora-evidence is required and must be provided"
+            )
+        if not self.config.mgmt_evidence:
+            raise ProductFunctionalClosureAcceptanceError(
+                "gate_04.missing_mgmt_evidence", "--mgmt-evidence is required and must be provided"
+            )
+        if not self.config.mgmt_ai_evidence:
+            raise ProductFunctionalClosureAcceptanceError(
+                "gate_04.missing_mgmt_ai_evidence", "--mgmt-ai-evidence is required and must be provided"
+            )
+
+        l12 = self._load_evidence("l12", self.config.l12_evidence)
+        agora = self._load_evidence("agora", self.config.agora_evidence)
+        mgmt = self._load_evidence("mgmt", self.config.mgmt_evidence)
+        mgmt_ai = self._load_evidence("mgmt_ai", self.config.mgmt_ai_evidence)
 
         for name, art in (
             ("L12", l12),
@@ -551,52 +636,61 @@ class ProductFunctionalClosureVerifier:
             ("Management", mgmt),
             ("Management_AI", mgmt_ai),
         ):
-            if art:
-                if art.get("required_skips_allowed") is False or art.get("unskipped_mandatory_cases") is True:
-                    pass
-                if art.get("skipped_mandatory_count", 0) > 0:
-                    raise ProductFunctionalClosureAcceptanceError(
-                        f"gate_04.{name}",
-                        f"{name} journey recorded {art.get('skipped_mandatory_count')} skipped mandatory cases",
-                    )
+            if art.get("skipped_mandatory_count", 0) > 0:
+                raise ProductFunctionalClosureAcceptanceError(
+                    f"gate_04.{name}_skips",
+                    f"{name} journey recorded {art.get('skipped_mandatory_count')} skipped mandatory cases",
+                )
+            if art.get("required_skips_allowed") is True:
+                raise ProductFunctionalClosureAcceptanceError(
+                    f"gate_04.{name}_skips_allowed",
+                    f"{name} journey must not allow required skips",
+                )
 
         return {
-            "l12_truth": "verified" if l12 else "referenced",
-            "agora_journey": "verified" if agora else "referenced",
-            "mgmt_journey": "verified" if mgmt else "referenced",
-            "mgmt_ai_journey": "verified" if mgmt_ai else "referenced",
+            "l12_truth": "verified",
+            "agora_journey": "verified",
+            "mgmt_journey": "verified",
+            "mgmt_ai_journey": "verified",
             "required_skips": 0,
             "authentication_profile": self.config.profile,
         }
 
     def verify_gate_05_code_disposition_and_simplification(self) -> dict[str, Any]:
         """Gate 05: Verify code disposition, duplicate removal, and fixture isolation."""
-        disposition_path = (
-            self.config.code_disposition_path
-            or self.config.evidence_dir / "code-disposition.json"
-        )
-        if not disposition_path.exists():
+        if self.config.code_disposition_path is not None:
+            disposition_path = self.config.code_disposition_path
+        else:
             default_path = (
-                REPO_ROOT
-                / "docs"
-                / "deployment"
-                / "evidence"
-                / "product-functional-closure"
-                / TASK_ID
-                / "code-disposition.json"
+                self.config.evidence_dir / "code-disposition.json"
             )
-            if default_path.exists():
-                disposition_path = default_path
-
-        disposition_data: dict[str, Any] = {}
-        if disposition_path.exists():
-            payload = json.loads(disposition_path.read_text(encoding="utf-8"))
-            disposition_data = _mapping(payload, "gate_05.code_disposition")
-            if disposition_data.get("new_parallel_owner_created") is True:
-                raise ProductFunctionalClosureAcceptanceError(
-                    "gate_05.parallel_owner",
-                    "code disposition reports new_parallel_owner_created=true",
+            if not default_path.exists():
+                repo_default = (
+                    REPO_ROOT
+                    / "docs"
+                    / "deployment"
+                    / "evidence"
+                    / "product-functional-closure"
+                    / TASK_ID
+                    / "code-disposition.json"
                 )
+                if repo_default.exists():
+                    default_path = repo_default
+            disposition_path = default_path
+
+        if not disposition_path.exists():
+            raise ProductFunctionalClosureAcceptanceError(
+                "gate_05.code_disposition_missing",
+                f"code disposition manifest is required: {disposition_path}",
+            )
+
+        payload = json.loads(disposition_path.read_text(encoding="utf-8"))
+        disposition_data = _mapping(payload, "gate_05.code_disposition")
+        if disposition_data.get("new_parallel_owner_created") is True:
+            raise ProductFunctionalClosureAcceptanceError(
+                "gate_05.parallel_owner",
+                "code disposition reports new_parallel_owner_created=true",
+            )
 
         dead_paths = [
             "services/source_ingestion/scheduler_worker.py",
@@ -610,32 +704,46 @@ class ProductFunctionalClosureVerifier:
             )
 
         return {
-            "code_disposition_verified": bool(disposition_data),
+            "code_disposition_verified": True,
             "dead_paths_absent": dead_paths,
             "new_parallel_owner_created": False,
         }
 
     def verify_gate_06_rollback_and_switch_safety(self) -> dict[str, Any]:
         """Gate 06: Verify gate-before-switch and rollback drill safety."""
-        rollback_data: dict[str, Any] = {}
-        if self.config.rollback_evidence and self.config.rollback_evidence.exists():
-            rollback_data = _mapping(
-                json.loads(
-                    self.config.rollback_evidence.read_text(encoding="utf-8")
-                ),
-                "gate_06.rollback",
+        if not self.config.rollback_evidence or not self.config.rollback_evidence.exists():
+            raise ProductFunctionalClosureAcceptanceError(
+                "gate_06.rollback_evidence_missing",
+                "--rollback-evidence is required and must exist",
             )
-            checks = _mapping(rollback_data.get("checks", {}), "gate_06.checks")
-            for req in ("candidate_pre_switch_passed", "atomic_switch_passed", "post_switch_exact_pair_passed"):
-                if req in checks and checks[req] is not True:
-                    raise ProductFunctionalClosureAcceptanceError(
-                        "gate_06.switch",
-                        f"rollback/switch check {req} failed",
-                    )
+        rollback_data = _mapping(
+            json.loads(
+                self.config.rollback_evidence.read_text(encoding="utf-8")
+            ),
+            "gate_06.rollback",
+        )
+        checks = _mapping(rollback_data.get("checks", {}), "gate_06.checks")
+        if not checks:
+            raise ProductFunctionalClosureAcceptanceError(
+                "gate_06.empty_checks",
+                "rollback evidence must declare checks mapping",
+            )
+        for req in ("candidate_pre_switch_passed", "atomic_switch_passed", "post_switch_exact_pair_passed"):
+            if checks.get(req) is not True:
+                raise ProductFunctionalClosureAcceptanceError(
+                    "gate_06.switch",
+                    f"rollback/switch check {req} failed or was not true: {checks.get(req)}",
+                )
+        for k, v in checks.items():
+            if v is not True:
+                raise ProductFunctionalClosureAcceptanceError(
+                    "gate_06.check_failed",
+                    f"rollback/switch check {k} failed: {v}",
+                )
         return {
             "gate_before_switch": "enforced",
             "rollback_safe": True,
-            "details": rollback_data.get("checks", {}),
+            "details": dict(checks),
         }
 
     def run_full_acceptance(self) -> HostedAcceptanceReport:
@@ -934,7 +1042,10 @@ class ProductFunctionalClosureVerifier:
         )
 
 
-def main() -> int:
+def main(
+    argv: Optional[Sequence[str]] = None,
+    transport: Optional[Transport] = None,
+) -> int:
     parser = argparse.ArgumentParser(
         description="Fail-closed Pantheon product functional closure hosted acceptance aggregator"
     )
@@ -961,7 +1072,7 @@ def main() -> int:
     parser.add_argument("--request-timeout-seconds", type=float, default=15.0)
     parser.add_argument("--strict", action="store_true")
     parser.add_argument("--verbose", action="store_true")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     logging.basicConfig(
         level=logging.DEBUG if args.verbose else logging.INFO,
@@ -987,7 +1098,9 @@ def main() -> int:
         evidence_dir=args.evidence_dir or DEFAULT_EVIDENCE_DIR,
     )
     try:
-        report = ProductFunctionalClosureVerifier(config).run_full_acceptance()
+        report = ProductFunctionalClosureVerifier(
+            config, transport=transport
+        ).run_full_acceptance()
     except ProductFunctionalClosureAcceptanceError as exc:
         logger.error(
             "Product functional closure acceptance configuration failed: %s", exc
