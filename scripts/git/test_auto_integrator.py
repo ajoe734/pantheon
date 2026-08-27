@@ -1330,5 +1330,315 @@ class CheckClassifierTests(unittest.TestCase):
         self.assertTrue("approval_head_mismatch" in result.detail or "head_changed_after_approval" in result.detail)
 
 
+def green_ep_pr(number: int = 99, *, task_id: str = "FE-001") -> dict[str, Any]:
+    return {
+        "number": number,
+        "title": "FE Task PR",
+        "url": f"https://github.com/ajoe734/execute-plans/pull/{number}",
+        "headRefName": f"task/{task_id}",
+        "headRefOid": APPROVED_HEAD,
+        "baseRefName": "dev",
+        "isDraft": False,
+        "mergeStateStatus": "CLEAN",
+        "reviewDecision": "APPROVED",
+        "commits": [{"oid": APPROVED_HEAD, "committedDate": "2026-06-12T00:30:00Z"}],
+        "statusCheckRollup": [
+            {"name": "Commit trailers", "conclusion": "SUCCESS", "status": "COMPLETED"},
+            {"name": "Frontend tests", "state": "SUCCESS"},
+        ],
+    }
+
+
+class CrossRepoIntegrationTests(unittest.TestCase):
+    def test_candidate_derives_execute_plans_scope_from_target_repo_and_artifacts(self) -> None:
+        state = {
+            "tasks": [
+                {
+                    "id": "FE-001",
+                    "title": "FE task",
+                    "status": "review_approved",
+                    "owner": "Codex",
+                    "reviewer": "Claude",
+                    "target_repo": "execute_plans",
+                    "artifacts": ["execute-plans/src/App.tsx"],
+                },
+                {
+                    "id": "PANTHEON-001",
+                    "title": "Pantheon task",
+                    "status": "review_approved",
+                    "owner": "Codex",
+                    "reviewer": "Claude",
+                    "artifacts": ["services/telemetry/main.py"],
+                },
+            ]
+        }
+        candidates = auto_integrator.review_approved_candidates(state)
+        self.assertEqual(len(candidates), 2)
+        fe_cand = candidates[0]
+        self.assertEqual(fe_cand.task_id, "FE-001")
+        self.assertEqual(fe_cand.repository_id, "execute_plans")
+        self.assertEqual(fe_cand.repository_slug, "ajoe734/execute-plans")
+        self.assertEqual(fe_cand.target_branch, "dev")
+        self.assertIsNone(fe_cand.scope_error)
+
+        pan_cand = candidates[1]
+        self.assertEqual(pan_cand.task_id, "PANTHEON-001")
+        self.assertEqual(pan_cand.repository_id, "pantheon")
+        self.assertEqual(pan_cand.repository_slug, "ajoe734/pantheon")
+        self.assertEqual(pan_cand.target_branch, "dev")
+        self.assertIsNone(pan_cand.scope_error)
+
+    def test_candidate_captures_scope_error_for_invalid_target_repo(self) -> None:
+        state = {
+            "tasks": [
+                {
+                    "id": "BAD-001",
+                    "title": "Bad target repo",
+                    "status": "review_approved",
+                    "owner": "Codex",
+                    "reviewer": "Claude",
+                    "target_repo": "nonexistent_repo",
+                }
+            ]
+        }
+        candidates = auto_integrator.review_approved_candidates(state)
+        self.assertEqual(len(candidates), 1)
+        self.assertIsNotNone(candidates[0].scope_error)
+        self.assertIn("unrecognized target_repo", candidates[0].scope_error or "")
+
+    def test_candidate_captures_scope_error_for_conflicting_multi_repo_artifacts(self) -> None:
+        state = {
+            "tasks": [
+                {
+                    "id": "MULTI-001",
+                    "title": "Multi repo artifacts",
+                    "status": "review_approved",
+                    "owner": "Codex",
+                    "reviewer": "Claude",
+                    "artifacts": ["execute-plans/src/a.ts", "lean-platform/b.py"],
+                }
+            ]
+        }
+        candidates = auto_integrator.review_approved_candidates(state)
+        self.assertEqual(len(candidates), 1)
+        self.assertIsNotNone(candidates[0].scope_error)
+        self.assertIn("multiple non-Pantheon repositories", candidates[0].scope_error or "")
+
+    def test_execute_plans_dry_run_would_merge(self) -> None:
+        ep_root = Path("/fake/execute-plans")
+        candidate = auto_integrator.TaskCandidate(
+            task_id="FE-001",
+            title="FE Task",
+            owner="Codex",
+            reviewer="Claude",
+            branch="task/FE-001",
+            repository_id="execute_plans",
+            repository_slug="ajoe734/execute-plans",
+            repository_root=ep_root,
+            target_branch="dev",
+        )
+        pr = green_ep_pr(number=99, task_id="FE-001")
+        runner = FakeRunner(pr=pr)
+        gate = approved_gate(task_id="FE-001", pr_number=99)
+
+        result = auto_integrator.integrate_candidate(
+            candidate,
+            auto_integrator.Settings(smoke_commands=("npm test",)),
+            runner,
+            execute=False,
+            gate=gate,
+        )
+
+        self.assertEqual(result.action, "would_merge")
+        self.assertTrue(result.dry_run)
+        self.assertEqual(result.pr_number, 99)
+        self.assertIn("would merge", result.detail)
+        self.assertFalse(any(cmd[:3] == ["gh", "pr", "merge"] for cmd in runner.commands))
+        self.assertTrue(any(cmd[:3] == ["gh", "pr", "list"] for cmd in runner.commands))
+
+    def test_execute_plans_execute_merges_in_target_repository(self) -> None:
+        ep_root = Path("/fake/execute-plans")
+        candidate = auto_integrator.TaskCandidate(
+            task_id="FE-001",
+            title="FE Task",
+            owner="Codex",
+            reviewer="Claude",
+            branch="task/FE-001",
+            repository_id="execute_plans",
+            repository_slug="ajoe734/execute-plans",
+            repository_root=ep_root,
+            target_branch="dev",
+        )
+        pr = green_ep_pr(number=99, task_id="FE-001")
+        runner = FakeRunner(pr=pr)
+        gate = approved_gate(task_id="FE-001", pr_number=99)
+
+        result = auto_integrator.integrate_candidate(
+            candidate,
+            auto_integrator.Settings(smoke_commands=("npm test",)),
+            runner,
+            execute=True,
+            gate=gate,
+        )
+
+        self.assertEqual(result.action, "merged")
+        self.assertFalse(result.dry_run)
+        self.assertEqual(result.pr_number, 99)
+        self.assertIn("Merged the reviewer-approved head", result.detail)
+        self.assertIn("into dev", result.detail)
+        self.assertTrue(
+            any(
+                cmd[:4] == ["gh", "pr", "merge", "99"]
+                and "--match-head-commit" in cmd
+                for cmd in runner.commands
+            )
+        )
+
+    def test_execute_plans_already_merged_pr_reconciles(self) -> None:
+        ep_root = Path("/fake/execute-plans")
+        candidate = auto_integrator.TaskCandidate(
+            task_id="FE-001",
+            title="FE Task",
+            owner="Codex",
+            reviewer="Claude",
+            branch="task/FE-001",
+            repository_id="execute_plans",
+            repository_slug="ajoe734/execute-plans",
+            repository_root=ep_root,
+            target_branch="dev",
+        )
+        pr = green_ep_pr(number=99, task_id="FE-001")
+        pr["state"] = "MERGED"
+        pr["mergeCommit"] = {"oid": "merge999"}
+        pr["mergedAt"] = "2026-06-12T01:01:07Z"
+        runner = FakeRunner(pr=None, merged_pr=pr)
+        gate = approved_gate(task_id="FE-001", pr_number=99)
+
+        result = auto_integrator.integrate_candidate(
+            candidate,
+            auto_integrator.Settings(),
+            runner,
+            execute=True,
+            gate=gate,
+        )
+
+        self.assertEqual(result.action, "already_merged")
+        self.assertEqual(result.pr_number, 99)
+        self.assertIn("already merged into dev", result.detail)
+        self.assertIn(["git", "merge-base", "--is-ancestor", "merge999", "origin/dev"], runner.commands)
+        self.assertFalse(any(cmd[:3] == ["gh", "pr", "merge"] for cmd in runner.commands))
+
+    def test_wrong_repository_slug_in_pr_fails_closed(self) -> None:
+        ep_root = Path("/fake/execute-plans")
+        candidate = auto_integrator.TaskCandidate(
+            task_id="FE-001",
+            title="FE Task",
+            owner="Codex",
+            reviewer="Claude",
+            branch="task/FE-001",
+            repository_id="execute_plans",
+            repository_slug="ajoe734/execute-plans",
+            repository_root=ep_root,
+            target_branch="dev",
+        )
+        # PR is from pantheon instead of execute-plans
+        pr = green_pr(number=44, task_id="FE-001")
+        pr["url"] = "https://github.com/ajoe734/pantheon/pull/44"
+        runner = FakeRunner(pr=pr)
+        gate = approved_gate(task_id="FE-001", pr_number=44)
+
+        result = auto_integrator.integrate_candidate(
+            candidate,
+            auto_integrator.Settings(),
+            runner,
+            execute=True,
+            gate=gate,
+        )
+
+        self.assertEqual(result.action, "blocked")
+        self.assertIn("repository_mismatch", result.detail)
+        self.assertEqual(result.unblock_task_id, "INTEGRATION-UNBLOCK-FE-001-REPOSITORY-MISMATCH")
+        self.assertFalse(any(cmd[:3] == ["gh", "pr", "merge"] for cmd in runner.commands))
+
+    def test_pantheon_task_rejects_execute_plans_pr(self) -> None:
+        candidate = auto_integrator.TaskCandidate(
+            task_id="ABC-001",
+            title="Backend Task",
+            owner="Codex",
+            reviewer="Claude",
+            branch="task/ABC-001",
+            repository_id="pantheon",
+            repository_slug="ajoe734/pantheon",
+            repository_root=REPO_ROOT,
+            target_branch="dev",
+        )
+        # PR is from execute-plans instead of pantheon
+        pr = green_ep_pr(number=99, task_id="ABC-001")
+        runner = FakeRunner(pr=pr)
+        gate = approved_gate(task_id="ABC-001", pr_number=99)
+
+        result = auto_integrator.integrate_candidate(
+            candidate,
+            auto_integrator.Settings(),
+            runner,
+            execute=True,
+            gate=gate,
+        )
+
+        self.assertEqual(result.action, "blocked")
+        self.assertIn("repository_mismatch", result.detail)
+        self.assertFalse(any(cmd[:3] == ["gh", "pr", "merge"] for cmd in runner.commands))
+
+    def test_invalid_scope_error_blocks_and_opens_unblock_task(self) -> None:
+        candidate = auto_integrator.TaskCandidate(
+            task_id="BAD-001",
+            title="Bad scope",
+            owner="Codex",
+            reviewer="Claude",
+            branch="task/BAD-001",
+            scope_error="Task BAD-001 specifies unrecognized target_repo: 'unknown'",
+        )
+        runner = FakeRunner(pr=green_pr())
+        result = auto_integrator.integrate_candidate(
+            candidate,
+            auto_integrator.Settings(),
+            runner,
+            execute=True,
+        )
+        self.assertEqual(result.action, "blocked")
+        self.assertIn("unrecognized target_repo", result.detail)
+        self.assertEqual(result.unblock_task_id, "INTEGRATION-UNBLOCK-BAD-001-INVALID-REPOSITORY-SCOPE")
+
+    def test_execute_plans_exact_head_mismatch_fails_closed(self) -> None:
+        ep_root = Path("/fake/execute-plans")
+        candidate = auto_integrator.TaskCandidate(
+            task_id="FE-001",
+            title="FE Task",
+            owner="Codex",
+            reviewer="Claude",
+            branch="task/FE-001",
+            repository_id="execute_plans",
+            repository_slug="ajoe734/execute-plans",
+            repository_root=ep_root,
+            target_branch="dev",
+        )
+        pr = green_ep_pr(number=99, task_id="FE-001")
+        pr["headRefOid"] = "e" * 40
+        runner = FakeRunner(pr=pr)
+        gate = approved_gate(task_id="FE-001", pr_number=99)
+
+        result = auto_integrator.integrate_candidate(
+            candidate,
+            auto_integrator.Settings(),
+            runner,
+            execute=True,
+            gate=gate,
+        )
+
+        self.assertEqual(result.action, "blocked")
+        self.assertTrue("approval_head_mismatch" in result.detail or "head_changed_after_approval" in result.detail)
+        self.assertFalse(any(cmd[:3] == ["gh", "pr", "merge"] for cmd in runner.commands))
+
+
 if __name__ == "__main__":
     unittest.main()

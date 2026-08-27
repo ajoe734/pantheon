@@ -37,9 +37,11 @@ from typing import Any, Iterable, Iterator, Mapping, Sequence
 
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / ".orchestrator"))
 
 import task_review_merge_gate as review_gate  # noqa: E402  (local helper module)
 import github_review_bridge  # noqa: E402  (local helper module)
+import multi_repo_registry  # noqa: E402  (orchestrator module)
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -97,6 +99,12 @@ class TaskCandidate:
     owner: str
     reviewer: str
     branch: str
+    repository_id: str = "pantheon"
+    repository_slug: str = "ajoe734/pantheon"
+    repository_root: Path = ROOT
+    target_branch: str = DEFAULT_DEV_BRANCH
+    scope_error: str | None = None
+    raw_task: Mapping[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -157,7 +165,7 @@ class ReviewGate:
             candidate.task_id,
             pr,
             status_root=self.status_root,
-            dev_branch=settings.dev_branch,
+            dev_branch=candidate.target_branch,
             task_branch_prefix=settings.task_branch_prefix,
             state=self.state,
             events=self.events,
@@ -177,7 +185,10 @@ class ReviewGate:
         if not isinstance(pr, Mapping):
             return None
         head_sha = str(pr.get("headRefOid") or "").strip().lower()
-        repository = github_review_bridge.repository_from_pull_request_url(pr.get("url"))
+        repository = (
+            github_review_bridge.repository_from_pull_request_url(pr.get("url"))
+            or candidate.repository_slug
+        )
         if not repository:
             return None
         try:
@@ -244,8 +255,13 @@ class ReviewGate:
             or not isinstance(carried, Mapping)
         ):
             return None
-        repository = github_review_bridge.repository_from_pull_request_url(pr.get("url"))
-        actor = str(decision.approval.get("reviewer") or decision.contract.get("reviewer") or "").strip()
+        repository = (
+            github_review_bridge.repository_from_pull_request_url(pr.get("url"))
+            or candidate.repository_slug
+        )
+        actor = str(
+            decision.approval.get("reviewer") or decision.contract.get("reviewer") or ""
+        ).strip()
         if not repository or not actor:
             raise AutoIntegratorError(
                 "task-brief carry-forward was gate-approved but lacks a publishable repository or reviewer"
@@ -440,11 +456,18 @@ def load_settings(path: Path | None = None, *, status_root: Path | None = None) 
 def review_approved_candidates(
     state: Mapping[str, Any],
     *,
+    config: Mapping[str, Any] | None = None,
     task_branch_prefix: str = DEFAULT_TASK_PREFIX,
     only_task_id: str | None = None,
+    status_root: Path | None = None,
 ) -> list[TaskCandidate]:
     tasks = state.get("tasks") if isinstance(state.get("tasks"), list) else []
     candidates: list[TaskCandidate] = []
+    config_dict = dict(config) if isinstance(config, Mapping) else {}
+    resolved_status_root = review_gate.resolve_status_root(status_root)
+    if "paths" not in config_dict:
+        config_dict["paths"] = {"status_file": str(resolved_status_root / "ai-status.json")}
+
     for raw in tasks:
         if not isinstance(raw, Mapping):
             continue
@@ -457,6 +480,33 @@ def review_approved_candidates(
         reviewer = str(raw.get("reviewer") or "").strip()
         if not owner or not reviewer:
             continue
+
+        scope_error = None
+        repo_id = "pantheon"
+        repo_slug = "ajoe734/pantheon"
+        repo_root = ROOT
+        target_branch = DEFAULT_DEV_BRANCH
+
+        try:
+            repo_id = multi_repo_registry.validate_task_repository_scope(config_dict, raw)
+            resolved_repo = multi_repo_registry.resolve_repository(config_dict, repo_id)
+            repo_slug = str(resolved_repo.get("repo") or "").strip()
+            if not repo_slug:
+                scope_error = f"Repository `{repo_id}` has no configured GitHub slug"
+            target_branch = (
+                str(resolved_repo.get("default_branch") or DEFAULT_DEV_BRANCH).strip()
+                or DEFAULT_DEV_BRANCH
+            )
+            configured_path = multi_repo_registry.repository_configured_local_path(
+                config_dict, repo_id
+            )
+            if configured_path is None:
+                scope_error = f"Repository `{repo_id}` has no configured local_path"
+            else:
+                repo_root = configured_path.resolve(strict=False)
+        except (ValueError, RuntimeError) as exc:
+            scope_error = str(exc)
+
         candidates.append(
             TaskCandidate(
                 task_id=task_id,
@@ -464,6 +514,12 @@ def review_approved_candidates(
                 owner=owner,
                 reviewer=reviewer,
                 branch=f"{task_branch_prefix}{task_id}",
+                repository_id=repo_id,
+                repository_slug=repo_slug,
+                repository_root=repo_root,
+                target_branch=target_branch,
+                scope_error=scope_error,
+                raw_task=dict(raw),
             )
         )
     return candidates
@@ -766,7 +822,7 @@ def fetch_pr_for_task(
             "--head",
             candidate.branch,
             "--base",
-            settings.dev_branch,
+            candidate.target_branch,
             "--state",
             state,
             "--json",
@@ -807,8 +863,12 @@ def validate_pr(candidate: TaskCandidate, pr: Mapping[str, Any], settings: Setti
         return "pr_is_draft"
     if str(pr.get("headRefName") or "") != candidate.branch:
         return "head_branch_mismatch"
-    if str(pr.get("baseRefName") or "") != settings.dev_branch:
+    if str(pr.get("baseRefName") or "") != candidate.target_branch:
         return "base_branch_mismatch"
+    pr_repo = github_review_bridge.repository_from_pull_request_url(pr.get("url"))
+    if pr_repo and candidate.repository_slug:
+        if pr_repo.strip().casefold() != candidate.repository_slug.strip().casefold():
+            return "repository_mismatch"
     return None
 
 
@@ -821,14 +881,14 @@ def pr_merge_commit_oid(pr: Mapping[str, Any]) -> str:
 
 def target_contains_commit(
     oid: str,
-    settings: Settings,
+    target_branch: str,
     runner: CommandRunner,
     *,
     root: Path = ROOT,
 ) -> bool:
-    runner.run(["git", "fetch", "origin", settings.dev_branch, "--quiet"], cwd=root)
+    runner.run(["git", "fetch", "origin", target_branch, "--quiet"], cwd=root)
     result = runner.run(
-        ["git", "merge-base", "--is-ancestor", oid, f"origin/{settings.dev_branch}"],
+        ["git", "merge-base", "--is-ancestor", oid, f"origin/{target_branch}"],
         cwd=root,
         check=False,
     )
@@ -856,8 +916,8 @@ def lock_file(lock_path: Path, *, enabled: bool = True) -> Iterator[None]:
             pass
 
 
-def fetch_refs(candidate: TaskCandidate, settings: Settings, runner: CommandRunner, *, root: Path) -> None:
-    runner.run(["git", "fetch", "origin", settings.dev_branch, "--quiet"], cwd=root)
+def fetch_refs(candidate: TaskCandidate, runner: CommandRunner, *, root: Path) -> None:
+    runner.run(["git", "fetch", "origin", candidate.target_branch, "--quiet"], cwd=root)
     runner.run(
         [
             "git",
@@ -881,7 +941,7 @@ def run_rebase_smoke(
     allow_push: bool = True,
     exact_head: str = "",
 ) -> tuple[bool, str]:
-    fetch_refs(candidate, settings, runner, root=root)
+    fetch_refs(candidate, runner, root=root)
     commands = tuple(extra_smoke_commands) or settings.smoke_commands
 
     if not allow_push:
@@ -900,7 +960,7 @@ def run_rebase_smoke(
                 "git",
                 "merge-base",
                 "--is-ancestor",
-                f"origin/{settings.dev_branch}",
+                f"origin/{candidate.target_branch}",
                 exact_head,
             ],
             cwd=root,
@@ -931,7 +991,7 @@ def run_rebase_smoke(
             runner.run(["git", "worktree", "add", "--detach", str(worktree), exact_head], cwd=root)
             try:
                 merge = runner.run(
-                    ["git", "merge", "--no-edit", f"origin/{settings.dev_branch}"],
+                    ["git", "merge", "--no-edit", f"origin/{candidate.target_branch}"],
                     cwd=worktree,
                     check=False,
                 )
@@ -949,7 +1009,7 @@ def run_rebase_smoke(
         runner.run(["git", "worktree", "add", "--detach", str(worktree), f"origin/{candidate.branch}"], cwd=root)
         try:
             before = runner.run(["git", "rev-parse", "HEAD"], cwd=worktree).stdout.strip()
-            rebase = runner.run(["git", "rebase", f"origin/{settings.dev_branch}"], cwd=worktree, check=False)
+            rebase = runner.run(["git", "rebase", f"origin/{candidate.target_branch}"], cwd=worktree, check=False)
             if rebase.returncode != 0:
                 runner.run(["git", "rebase", "--abort"], cwd=worktree, check=False)
                 return False, "rebase_conflict"
@@ -1080,6 +1140,8 @@ def open_unblock_task(
     env["TASK_ARTIFACTS"] = "ai-status.json,.orchestrator/task-briefs,scripts/git/auto_integrator.py"
     env["TASK_AUTO_CREATED_BY"] = "auto_integrator"
     env["TASK_AUTO_GENERATED"] = "true"
+    if candidate.repository_id:
+        env["TASK_TARGET_REPO"] = candidate.repository_id
     runner.run(
         [
             sys.executable,
@@ -1113,48 +1175,142 @@ def integrate_candidate(
     settings: Settings,
     runner: CommandRunner,
     *,
-    root: Path = ROOT,
+    root: Path | None = None,
+    status_root: Path | None = None,
     execute: bool = False,
     open_unblock: bool = True,
     extra_smoke_commands: Sequence[str] = (),
     gate: ReviewGate | None = None,
 ) -> IntegrationResult:
     gate = gate or ReviewGate()
-    try:
-        pr = fetch_pr_for_task(candidate, settings, runner, root=root)
-    except AmbiguousPullRequests as exc:
-        detail = f"{exc}; refusing to choose a head for {candidate.task_id}."
+    status_root_dir = status_root if status_root is not None else gate.status_root
+    target_root = root if root is not None else candidate.repository_root
+
+    if candidate.scope_error:
+        detail = f"Cannot integrate {candidate.task_id}: {candidate.scope_error}."
         unblock = (
-            open_unblock_task(candidate, "ambiguous-open-prs", detail, settings, runner, root=root, execute=execute)
+            open_unblock_task(
+                candidate,
+                "invalid-repository-scope",
+                detail,
+                settings,
+                runner,
+                root=status_root_dir,
+                execute=execute,
+            )
             if open_unblock
             else None
         )
         return IntegrationResult(
-            candidate.task_id, "blocked", detail, unblock_task_id=unblock, dry_run=not execute, commands=runner.commands[:]
+            candidate.task_id,
+            "blocked",
+            detail,
+            unblock_task_id=unblock,
+            dry_run=not execute,
+            commands=runner.commands[:],
+        )
+
+    try:
+        pr = fetch_pr_for_task(candidate, settings, runner, root=target_root)
+    except AmbiguousPullRequests as exc:
+        detail = f"{exc}; refusing to choose a head for {candidate.task_id}."
+        unblock = (
+            open_unblock_task(
+                candidate,
+                "ambiguous-open-prs",
+                detail,
+                settings,
+                runner,
+                root=status_root_dir,
+                execute=execute,
+            )
+            if open_unblock
+            else None
+        )
+        return IntegrationResult(
+            candidate.task_id,
+            "blocked",
+            detail,
+            unblock_task_id=unblock,
+            dry_run=not execute,
+            commands=runner.commands[:],
         )
     if pr is None:
-        merged_pr = fetch_pr_for_task(candidate, settings, runner, root=root, state="merged")
+        merged_pr = fetch_pr_for_task(candidate, settings, runner, root=target_root, state="merged")
         if merged_pr is not None:
             number = pr_number(merged_pr)
             url = str(merged_pr.get("url") or "")
             problem = validate_pr(candidate, merged_pr, settings)
             if problem:
                 detail = f"Merged PR #{number} is not eligible for reconciliation: {problem}."
-                unblock = open_unblock_task(candidate, problem, detail, settings, runner, root=root, execute=execute) if open_unblock else None
-                return IntegrationResult(candidate.task_id, "blocked", detail, number, url, unblock, not execute, runner.commands[:])
+                unblock = (
+                    open_unblock_task(
+                        candidate,
+                        problem,
+                        detail,
+                        settings,
+                        runner,
+                        root=status_root_dir,
+                        execute=execute,
+                    )
+                    if open_unblock
+                    else None
+                )
+                return IntegrationResult(
+                    candidate.task_id,
+                    "blocked",
+                    detail,
+                    number,
+                    url,
+                    unblock,
+                    not execute,
+                    runner.commands[:],
+                )
             oid = pr_merge_commit_oid(merged_pr)
             if not oid:
                 detail = f"Merged PR #{number} has no merge commit oid; cannot reconcile {candidate.task_id}."
-                unblock = open_unblock_task(candidate, "merged-pr-no-merge-commit", detail, settings, runner, root=root, execute=execute) if open_unblock else None
-                return IntegrationResult(candidate.task_id, "blocked", detail, number, url, unblock, not execute, runner.commands[:])
-            if not target_contains_commit(oid, settings, runner, root=root):
-                detail = f"Merged PR #{number} merge commit {oid} is not in origin/{settings.dev_branch}; not reconciling."
-                return IntegrationResult(candidate.task_id, "waiting", detail, number, url, dry_run=not execute, commands=runner.commands[:])
+                unblock = (
+                    open_unblock_task(
+                        candidate,
+                        "merged-pr-no-merge-commit",
+                        detail,
+                        settings,
+                        runner,
+                        root=status_root_dir,
+                        execute=execute,
+                    )
+                    if open_unblock
+                    else None
+                )
+                return IntegrationResult(
+                    candidate.task_id,
+                    "blocked",
+                    detail,
+                    number,
+                    url,
+                    unblock,
+                    not execute,
+                    runner.commands[:],
+                )
+            if not target_contains_commit(oid, candidate.target_branch, runner, root=target_root):
+                detail = (
+                    f"Merged PR #{number} merge commit {oid} is not in "
+                    f"origin/{candidate.target_branch}; not reconciling."
+                )
+                return IntegrationResult(
+                    candidate.task_id,
+                    "waiting",
+                    detail,
+                    number,
+                    url,
+                    dry_run=not execute,
+                    commands=runner.commands[:],
+                )
             merged_carry_forward = gate.task_brief_carry_forward(
                 candidate,
                 merged_pr,
                 runner,
-                root=root,
+                root=target_root,
             )
             merged_decision = gate.decide(
                 candidate,
@@ -1162,7 +1318,10 @@ def integrate_candidate(
                 settings,
                 task_brief_carry_forward=merged_carry_forward,
             )
-            if merged_decision.policy == review_gate.POLICY_REVIEW_BEFORE_MERGE and not merged_decision.allow_merge:
+            if (
+                merged_decision.policy == review_gate.POLICY_REVIEW_BEFORE_MERGE
+                and not merged_decision.allow_merge
+            ):
                 # An already-merged PR that the gate would have refused must not
                 # be laundered into `done` by the reconciliation path.
                 detail = (
@@ -1176,41 +1335,123 @@ def integrate_candidate(
                         detail,
                         settings,
                         runner,
-                        root=root,
+                        root=status_root_dir,
                         execute=execute,
                     )
                     if open_unblock
                     else None
                 )
-                return IntegrationResult(candidate.task_id, "blocked", detail, number, url, unblock, not execute, runner.commands[:])
+                return IntegrationResult(
+                    candidate.task_id,
+                    "blocked",
+                    detail,
+                    number,
+                    url,
+                    unblock,
+                    not execute,
+                    runner.commands[:],
+                )
             if not execute:
-                detail = f"Dry-run: PR #{number} is already merged into {settings.dev_branch}; left {candidate.task_id} in review_approved for owner finalization."
-                return IntegrationResult(candidate.task_id, "already_merged", detail, number, url, dry_run=True, commands=runner.commands[:])
+                detail = (
+                    f"Dry-run: PR #{number} is already merged into {candidate.target_branch}; "
+                    f"left {candidate.task_id} in review_approved for owner finalization."
+                )
+                return IntegrationResult(
+                    candidate.task_id,
+                    "already_merged",
+                    detail,
+                    number,
+                    url,
+                    dry_run=True,
+                    commands=runner.commands[:],
+                )
             try:
                 gate.publish_task_brief_carry_forward(
                     candidate,
                     merged_pr,
                     runner,
-                    root=root,
+                    root=target_root,
                     carried=merged_carry_forward,
                     decision=merged_decision,
                 )
             except AutoIntegratorError as exc:
-                detail = f"Merged PR #{number} has a gate-approved carry-forward but {exc}; refusing integration."
-                return IntegrationResult(candidate.task_id, "blocked", detail, number, url, dry_run=False, commands=runner.commands[:])
-            detail = f"PR #{number} is already merged into {settings.dev_branch}; left {candidate.task_id} in review_approved for owner finalization."
-            return IntegrationResult(candidate.task_id, "already_merged", detail, number, url, dry_run=False, commands=runner.commands[:])
+                detail = (
+                    f"Merged PR #{number} has a gate-approved carry-forward but {exc}; "
+                    "refusing integration."
+                )
+                return IntegrationResult(
+                    candidate.task_id,
+                    "blocked",
+                    detail,
+                    number,
+                    url,
+                    dry_run=False,
+                    commands=runner.commands[:],
+                )
+            detail = (
+                f"PR #{number} is already merged into {candidate.target_branch}; "
+                f"left {candidate.task_id} in review_approved for owner finalization."
+            )
+            return IntegrationResult(
+                candidate.task_id,
+                "already_merged",
+                detail,
+                number,
+                url,
+                dry_run=False,
+                commands=runner.commands[:],
+            )
 
-        detail = f"No open or merged PR found for {candidate.branch} -> {settings.dev_branch}."
-        unblock = open_unblock_task(candidate, "missing-pr", detail, settings, runner, root=root, execute=execute) if open_unblock else None
-        return IntegrationResult(candidate.task_id, "blocked", detail, unblock_task_id=unblock, dry_run=not execute, commands=runner.commands[:])
+        detail = f"No open or merged PR found for {candidate.branch} -> {candidate.target_branch}."
+        unblock = (
+            open_unblock_task(
+                candidate,
+                "missing-pr",
+                detail,
+                settings,
+                runner,
+                root=status_root_dir,
+                execute=execute,
+            )
+            if open_unblock
+            else None
+        )
+        return IntegrationResult(
+            candidate.task_id,
+            "blocked",
+            detail,
+            unblock_task_id=unblock,
+            dry_run=not execute,
+            commands=runner.commands[:],
+        )
     number = pr_number(pr)
     url = str(pr.get("url") or "")
     problem = validate_pr(candidate, pr, settings)
     if problem:
         detail = f"PR #{number} is not eligible: {problem}."
-        unblock = open_unblock_task(candidate, problem, detail, settings, runner, root=root, execute=execute) if open_unblock else None
-        return IntegrationResult(candidate.task_id, "blocked", detail, number, url, unblock, not execute, runner.commands[:])
+        unblock = (
+            open_unblock_task(
+                candidate,
+                problem,
+                detail,
+                settings,
+                runner,
+                root=status_root_dir,
+                execute=execute,
+            )
+            if open_unblock
+            else None
+        )
+        return IntegrationResult(
+            candidate.task_id,
+            "blocked",
+            detail,
+            number,
+            url,
+            unblock,
+            not execute,
+            runner.commands[:],
+        )
 
     # Canonical review-before-merge gate. This runs before the CI and merge
     # state probes so a premature auto-merge request is revoked immediately
@@ -1219,7 +1460,7 @@ def integrate_candidate(
         candidate,
         pr,
         runner,
-        root=root,
+        root=target_root,
     )
     decision = gate.decide(
         candidate,
@@ -1237,10 +1478,14 @@ def integrate_candidate(
     revocation_read_error = ""
     revocation_attempted = gated and has_auto_merge_request(pr)
     if revocation_attempted:
-        revocation_command_succeeded = disable_auto_merge(number, runner, root=root, execute=execute)
+        revocation_command_succeeded = disable_auto_merge(
+            number, runner, root=target_root, execute=execute
+        )
         if execute:
             try:
-                live_auto_merge_request = read_auto_merge_request(number, runner, root=root)
+                live_auto_merge_request = read_auto_merge_request(
+                    number, runner, root=target_root
+                )
             except AutoIntegratorError as exc:
                 revocation_read_error = str(exc)
             else:
@@ -1265,13 +1510,22 @@ def integrate_candidate(
                 detail,
                 settings,
                 runner,
-                root=root,
+                root=status_root_dir,
                 execute=execute,
             )
             if open_unblock
             else None
         )
-        return IntegrationResult(candidate.task_id, "blocked", detail, number, url, unblock, not execute, runner.commands[:])
+        return IntegrationResult(
+            candidate.task_id,
+            "blocked",
+            detail,
+            number,
+            url,
+            unblock,
+            not execute,
+            runner.commands[:],
+        )
 
     if revocation_attempted and execute and (
         revocation_read_error or has_auto_merge_request(pr)
@@ -1305,14 +1559,21 @@ def integrate_candidate(
                 detail,
                 settings,
                 runner,
-                root=root,
+                root=status_root_dir,
                 execute=execute,
             )
             if open_unblock
             else None
         )
         return IntegrationResult(
-            candidate.task_id, "blocked", detail, number, url, unblock, not execute, runner.commands[:]
+            candidate.task_id,
+            "blocked",
+            detail,
+            number,
+            url,
+            unblock,
+            not execute,
+            runner.commands[:],
         )
 
     # A direct generated-task-brief successor is allowed by the canonical
@@ -1332,7 +1593,7 @@ def integrate_candidate(
                 candidate,
                 pr,
                 runner,
-                root=root,
+                root=target_root,
                 carried=carry_forward,
                 decision=decision,
                 dispatch_if_proof_exists=not canonical_review_gate_is_green(
@@ -1348,47 +1609,122 @@ def integrate_candidate(
                     detail,
                     settings,
                     runner,
-                    root=root,
+                    root=status_root_dir,
                     execute=execute,
                 )
                 if open_unblock
                 else None
             )
-            return IntegrationResult(candidate.task_id, "blocked", detail, number, url, unblock, False, runner.commands[:])
+            return IntegrationResult(
+                candidate.task_id,
+                "blocked",
+                detail,
+                number,
+                url,
+                unblock,
+                False,
+                runner.commands[:],
+            )
         if publication is None:
             detail = (
                 f"PR #{number} has a carry-forward gate decision but no publishable "
                 "task-brief proof; refusing to merge."
             )
-            return IntegrationResult(candidate.task_id, "blocked", detail, number, url, dry_run=False, commands=runner.commands[:])
+            return IntegrationResult(
+                candidate.task_id,
+                "blocked",
+                detail,
+                number,
+                url,
+                dry_run=False,
+                commands=runner.commands[:],
+            )
         if publication.get("proof_published") or publication.get("workflow_dispatched"):
             detail = (
                 f"PR #{number} published the task-brief carry-forward proof and dispatched "
                 "the canonical review gate; waiting for that successor check to turn green."
             )
-            return IntegrationResult(candidate.task_id, "waiting", detail, number, url, dry_run=False, commands=runner.commands[:])
+            return IntegrationResult(
+                candidate.task_id,
+                "waiting",
+                detail,
+                number,
+                url,
+                dry_run=False,
+                commands=runner.commands[:],
+            )
 
     checks = summarize_status_rollup(pr.get("statusCheckRollup"))
     if checks.state == "red":
         detail = f"PR #{number} has failing checks: {', '.join(checks.failing)}."
-        unblock = open_unblock_task(candidate, "ci-red", detail, settings, runner, root=root, execute=execute) if open_unblock else None
-        return IntegrationResult(candidate.task_id, "blocked", detail, number, url, unblock, not execute, runner.commands[:])
+        unblock = (
+            open_unblock_task(
+                candidate,
+                "ci-red",
+                detail,
+                settings,
+                runner,
+                root=status_root_dir,
+                execute=execute,
+            )
+            if open_unblock
+            else None
+        )
+        return IntegrationResult(
+            candidate.task_id,
+            "blocked",
+            detail,
+            number,
+            url,
+            unblock,
+            not execute,
+            runner.commands[:],
+        )
     if checks.state in {"pending", "empty"}:
         detail = f"PR #{number} checks are {checks.state}; not merging."
-        return IntegrationResult(candidate.task_id, "waiting", detail, number, url, dry_run=not execute, commands=runner.commands[:])
+        return IntegrationResult(
+            candidate.task_id,
+            "waiting",
+            detail,
+            number,
+            url,
+            dry_run=not execute,
+            commands=runner.commands[:],
+        )
 
     merge_state = normalize_state(pr.get("mergeStateStatus"))
     if merge_state and merge_state not in ALLOWED_PRE_REBASE_MERGE_STATES:
         detail = f"PR #{number} is not eligible: mergeStateStatus={merge_state}."
-        unblock = open_unblock_task(candidate, f"merge-state-{merge_state.lower()}", detail, settings, runner, root=root, execute=execute) if open_unblock else None
-        return IntegrationResult(candidate.task_id, "blocked", detail, number, url, unblock, not execute, runner.commands[:])
+        unblock = (
+            open_unblock_task(
+                candidate,
+                f"merge-state-{merge_state.lower()}",
+                detail,
+                settings,
+                runner,
+                root=status_root_dir,
+                execute=execute,
+            )
+            if open_unblock
+            else None
+        )
+        return IntegrationResult(
+            candidate.task_id,
+            "blocked",
+            detail,
+            number,
+            url,
+            unblock,
+            not execute,
+            runner.commands[:],
+        )
 
     try:
         pushed, rebase_status = run_rebase_smoke(
             candidate,
             settings,
             runner,
-            root=root,
+            root=target_root,
             execute=execute,
             extra_smoke_commands=extra_smoke_commands,
             # A gated PR may never be force-pushed: replacing the head would
@@ -1398,13 +1734,55 @@ def integrate_candidate(
         )
     except CommandFailure as exc:
         detail = f"Local smoke or git command failed for PR #{number}: {exc.output.strip() or exc.args_rendered}"
-        unblock = open_unblock_task(candidate, "smoke-failed", detail, settings, runner, root=root, execute=execute) if open_unblock else None
-        return IntegrationResult(candidate.task_id, "blocked", detail, number, url, unblock, not execute, runner.commands[:])
+        unblock = (
+            open_unblock_task(
+                candidate,
+                "smoke-failed",
+                detail,
+                settings,
+                runner,
+                root=status_root_dir,
+                execute=execute,
+            )
+            if open_unblock
+            else None
+        )
+        return IntegrationResult(
+            candidate.task_id,
+            "blocked",
+            detail,
+            number,
+            url,
+            unblock,
+            not execute,
+            runner.commands[:],
+        )
 
     if rebase_status == "rebase_conflict":
-        detail = f"PR #{number} does not rebase cleanly onto {settings.dev_branch}."
-        unblock = open_unblock_task(candidate, "rebase-conflict", detail, settings, runner, root=root, execute=execute) if open_unblock else None
-        return IntegrationResult(candidate.task_id, "blocked", detail, number, url, unblock, not execute, runner.commands[:])
+        detail = f"PR #{number} does not rebase cleanly onto {candidate.target_branch}."
+        unblock = (
+            open_unblock_task(
+                candidate,
+                "rebase-conflict",
+                detail,
+                settings,
+                runner,
+                root=status_root_dir,
+                execute=execute,
+            )
+            if open_unblock
+            else None
+        )
+        return IntegrationResult(
+            candidate.task_id,
+            "blocked",
+            detail,
+            number,
+            url,
+            unblock,
+            not execute,
+            runner.commands[:],
+        )
 
     if gated and rebase_status == "exact_head_missing":
         detail = (
@@ -1418,7 +1796,7 @@ def integrate_candidate(
                 detail,
                 settings,
                 runner,
-                root=root,
+                root=status_root_dir,
                 execute=execute,
             )
             if open_unblock
@@ -1438,11 +1816,19 @@ def integrate_candidate(
     if gated and rebase_status == "rebase_required":
         # Landing this PR needs a new head, and no reviewer has seen that head.
         detail = (
-            f"PR #{number} needs a refreshed head to land on {settings.dev_branch}; "
+            f"PR #{number} needs a refreshed head to land on {candidate.target_branch}; "
             f"the approval of {decision.head_oid} would not cover it. "
             "Owner refreshes the branch and the assigned reviewer re-approves the new head."
         )
-        return IntegrationResult(candidate.task_id, "waiting", detail, number, url, dry_run=not execute, commands=runner.commands[:])
+        return IntegrationResult(
+            candidate.task_id,
+            "waiting",
+            detail,
+            number,
+            url,
+            dry_run=not execute,
+            commands=runner.commands[:],
+        )
 
     if gated and rebase_status == "exact_head_merge_conflict":
         # A real conflict, not mere staleness: merging the current dev tip
@@ -1451,15 +1837,32 @@ def integrate_candidate(
         # needs the owner, not another wait cycle.
         detail = (
             f"PR #{number}'s approved head {decision.head_oid} no longer merges cleanly "
-            f"with {settings.dev_branch}; a real conflict, not just staleness. "
+            f"with {candidate.target_branch}; a real conflict, not just staleness. "
             "Owner resolves it (new commit, new review) rather than waiting it out."
         )
         unblock = (
-            open_unblock_task(candidate, "exact-head-merge-conflict", detail, settings, runner, root=root, execute=execute)
+            open_unblock_task(
+                candidate,
+                "exact-head-merge-conflict",
+                detail,
+                settings,
+                runner,
+                root=status_root_dir,
+                execute=execute,
+            )
             if open_unblock
             else None
         )
-        return IntegrationResult(candidate.task_id, "blocked", detail, number, url, unblock, not execute, runner.commands[:])
+        return IntegrationResult(
+            candidate.task_id,
+            "blocked",
+            detail,
+            number,
+            url,
+            unblock,
+            not execute,
+            runner.commands[:],
+        )
 
     # SUP-GATED-PR-EXACT-HEAD-QUEUE-MERGE-20260805: the approved head was
     # behind dev, but a disposable local merge of the current dev tip into it
@@ -1477,17 +1880,41 @@ def integrate_candidate(
         else:
             detail = f"Dry-run: PR #{number} is green and {rebase_status}; would merge or enable auto-merge."
         detail += ignored_diagnostic_note(checks)
-        return IntegrationResult(candidate.task_id, "would_merge", detail, number, url, dry_run=True, commands=runner.commands[:])
+        return IntegrationResult(
+            candidate.task_id,
+            "would_merge",
+            detail,
+            number,
+            url,
+            dry_run=True,
+            commands=runner.commands[:],
+        )
 
     if pushed:
-        runner.run(merge_command(number or 0, settings, auto=True), cwd=root)
+        runner.run(merge_command(number or 0, settings, auto=True), cwd=target_root)
         detail = f"Rebased {candidate.branch}, pushed updated head, and enabled auto-merge on PR #{number}."
-        return IntegrationResult(candidate.task_id, "auto_merge_enabled", detail, number, url, dry_run=False, commands=runner.commands[:])
+        return IntegrationResult(
+            candidate.task_id,
+            "auto_merge_enabled",
+            detail,
+            number,
+            url,
+            dry_run=False,
+            commands=runner.commands[:],
+        )
 
     merge_state = normalize_state(pr.get("mergeStateStatus"))
     if merge_state and merge_state not in ALLOWED_DIRECT_MERGE_STATES and not verified_behind:
         detail = f"PR #{number} is green but mergeStateStatus={merge_state}; waiting instead of merging."
-        return IntegrationResult(candidate.task_id, "waiting", detail, number, url, dry_run=False, commands=runner.commands[:])
+        return IntegrationResult(
+            candidate.task_id,
+            "waiting",
+            detail,
+            number,
+            url,
+            dry_run=False,
+            commands=runner.commands[:],
+        )
     runner.run(
         merge_command(
             number or 0,
@@ -1495,7 +1922,7 @@ def integrate_candidate(
             auto=False,
             match_head_commit=decision.head_oid if gated else "",
         ),
-        cwd=root,
+        cwd=target_root,
     )
     # `gh pr merge` on a branch that requires a merge queue does not merge
     # synchronously: a request whose checks have already passed is *added to
@@ -1504,28 +1931,54 @@ def integrate_candidate(
     # guaranteed to complete before this process exits. Re-check the actual
     # state before treating the merge as done; do not call reconcile_done for
     # a merge that has not landed. SUP-MERGE-QUEUE-AWARE-INTEGRATOR-20260804.
-    post_merge_pr = gh_json(runner, ["pr", "view", str(number), "--json", PR_DETAIL_FIELDS], cwd=root)
-    post_merge_pr = enrich_pr_status_rollup(post_merge_pr, runner, root=root)
-    if not isinstance(post_merge_pr, Mapping) or str(post_merge_pr.get("state") or "").upper() != "MERGED":
+    post_merge_pr = gh_json(
+        runner,
+        ["pr", "view", str(number), "--json", PR_DETAIL_FIELDS],
+        cwd=target_root,
+    )
+    post_merge_pr = enrich_pr_status_rollup(post_merge_pr, runner, root=target_root)
+    if (
+        not isinstance(post_merge_pr, Mapping)
+        or str(post_merge_pr.get("state") or "").upper() != "MERGED"
+    ):
         # Not a failure: the merge request was accepted (directly or into the
         # queue) and simply has not landed within this process's lifetime.
         # The next auto-integrator pass finds this PR through the existing
         # "already merged" fallback above (fetch_pr_for_task(..., state=
         # "merged")) once GitHub actually reports it MERGED.
-        detail = f"PR #{number}'s merge was requested but has not landed yet (queued or pending); will re-check next pass."
-        return IntegrationResult(candidate.task_id, "queued_for_merge", detail, number, url, dry_run=False, commands=runner.commands[:])
+        detail = (
+            f"PR #{number}'s merge was requested but has not landed yet (queued or pending); "
+            "will re-check next pass."
+        )
+        return IntegrationResult(
+            candidate.task_id,
+            "queued_for_merge",
+            detail,
+            number,
+            url,
+            dry_run=False,
+            commands=runner.commands[:],
+        )
     if gated:
         detail = (
             f"Merged the reviewer-approved head {decision.head_oid} of PR #{number} into "
-            f"{settings.dev_branch}; left {candidate.task_id} in review_approved for owner finalization."
+            f"{candidate.target_branch}; left {candidate.task_id} in review_approved for owner finalization."
         )
     else:
         detail = (
-            f"Merged PR #{number} into {settings.dev_branch}; "
+            f"Merged PR #{number} into {candidate.target_branch}; "
             f"left {candidate.task_id} in review_approved for owner finalization."
         )
     detail += ignored_diagnostic_note(checks)
-    return IntegrationResult(candidate.task_id, "merged", detail, number, url, dry_run=False, commands=runner.commands[:])
+    return IntegrationResult(
+        candidate.task_id,
+        "merged",
+        detail,
+        number,
+        url,
+        dry_run=False,
+        commands=runner.commands[:],
+    )
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -1572,10 +2025,17 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.max_tasks is not None:
         settings = Settings(**{**settings.__dict__, "max_tasks_per_run": args.max_tasks})
     state = load_json(status_file, {})
+    config_dict = load_json(config_path, {})
+    if not isinstance(config_dict, dict):
+        config_dict = {}
+    if "paths" not in config_dict:
+        config_dict["paths"] = {"status_file": str(status_file)}
     candidates = review_approved_candidates(
         state,
+        config=config_dict,
         task_branch_prefix=settings.task_branch_prefix,
         only_task_id=args.task_id,
+        status_root=status_root,
     )
     max_tasks = max(1, int(settings.max_tasks_per_run))
     candidates = candidates[:max_tasks]
@@ -1592,7 +2052,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                     candidate,
                     settings,
                     runner,
-                    root=ROOT,
+                    root=candidate.repository_root,
+                    status_root=status_root,
                     execute=args.execute,
                     open_unblock=not args.no_open_unblock,
                     extra_smoke_commands=smoke_commands,
