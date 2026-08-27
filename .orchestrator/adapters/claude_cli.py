@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 
@@ -19,6 +20,7 @@ from common import (
     command_exists,
     worker_runtime_paths,
 )
+from provider_permissions import desired_claude_local_settings
 
 
 def _provider_key(config: dict | None, agent_id: str | None = None, provider_id: str | None = None) -> str:
@@ -184,6 +186,25 @@ class ClaudeCLIAdapter(BaseAdapter):
             command.append("--verbose")
         if runtime.get("include_hook_events", True):
             command.append("--include-hook-events")
+
+        # Auto-workers must not inherit project/local Claude settings from a
+        # shared checkout or candidate-controlled delivery worktree.  Load
+        # user settings for account-level preferences, then inject the exact
+        # promoted command-runtime hooks and permission policy as an explicit
+        # settings payload.  This keeps executable policy versioned with the
+        # command runtime while avoiding another mutable settings sidecar.
+        command.extend(["--setting-sources", "user"])
+        command.extend(
+            [
+                "--settings",
+                json.dumps(
+                    desired_claude_local_settings(self.config, current={}),
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                    sort_keys=True,
+                ),
+            ]
+        )
         for access_root in _supervisor_issued_access_roots(request.metadata):
             command.extend(["--add-dir", str(access_root)])
 
