@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import sys
 import tempfile
@@ -357,6 +358,59 @@ class AdapterDeliveryPolicyTests(unittest.TestCase):
         self.assertEqual(result.command[result.command.index("--model") + 1], "sonnet")
         self.assertIn("--effort", result.command)
         self.assertEqual(result.command[result.command.index("--effort") + 1], "medium")
+
+    def test_claude_runtime_uses_explicit_promoted_worker_settings(self) -> None:
+        config = {
+            "paths": {"status_file": "ai-status.json"},
+            "providers": {
+                "claude": {
+                    "runtime": {
+                        "cli": ".orchestrator/bin/claude",
+                        "output_format": "stream-json",
+                    },
+                }
+            },
+        }
+        request = DeliveryRequest(
+            agent_id="claude",
+            provider="claude",
+            delivery_mode="claude_cli",
+            message="wake",
+        )
+        adapter = ClaudeCLIAdapter(config=config, provider_capabilities={})
+        fake_process = mock.Mock(pid=1234)
+
+        with (
+            mock.patch(
+                "adapters.claude_cli._configured_claude_cli",
+                return_value=".orchestrator/bin/claude",
+            ),
+            mock.patch("adapters.claude_cli._claude_auth_ready", return_value=True),
+            mock.patch(
+                "adapters.claude_cli.spawn_background_process",
+                return_value=(fake_process, Path("/tmp/claude.log")),
+            ),
+        ):
+            result = adapter.deliver(request)
+
+        self.assertTrue(result.ok)
+        source_index = result.command.index("--setting-sources")
+        self.assertEqual(result.command[source_index + 1], "user")
+        settings_index = result.command.index("--settings")
+        settings = json.loads(result.command[settings_index + 1])
+        hook_commands = [
+            hook["command"]
+            for event_entries in settings["hooks"].values()
+            for entry in event_entries
+            for hook in entry["hooks"]
+        ]
+        self.assertTrue(hook_commands)
+        self.assertTrue(
+            all("${PANTHEON_COMMAND_ROOT:-" in command for command in hook_commands)
+        )
+        self.assertTrue(
+            all("/home/lupin/pantheon/.orchestrator" not in command for command in hook_commands)
+        )
 
     def test_claude_runtime_auto_permission_does_not_require_retired_provider_cache(self) -> None:
         config = {
