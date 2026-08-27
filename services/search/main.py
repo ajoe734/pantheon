@@ -1,4 +1,4 @@
-"""Deployable HTTP wrapper for governed search."""
+"""Deployable HTTP wrapper for governed search and structured alpha queries."""
 
 from __future__ import annotations
 
@@ -22,12 +22,26 @@ from services.knowledge.evidence.models import EvidenceValidationError
 from services.source_ingestion.connectors import SourceRecord
 from services.source_search_posture import require_source_search_posture
 
-from .filters import SearchAccessContext, SearchPolicyError, SearchRequest
+from .filters import (
+    SearchAccessContext,
+    SearchCapabilityUnavailableError,
+    SearchFilters,
+    SearchPolicyError,
+    SearchRequest,
+)
 from .gateway import SearchGateway
+from .hybrid_retriever import HybridRetriever
 from .index_adapter import KeywordIndexAdapter
 from .index_pipeline import IncrementalIndexPipeline, JsonlIndexPipelineStore
 from .index_store import JsonlSearchIndexStore
 from .pg_store import build_search_evidence_repository, build_search_index_store
+from .retriever import (
+    FullTextRetriever,
+    KeywordRetriever,
+    MockVectorEmbeddingBackend,
+    SemanticRetriever,
+)
+from .structured_alpha import StructuredAlphaEngine, StructuredAlphaQuery
 
 
 def _resolve_data_dir() -> Path:
@@ -49,6 +63,7 @@ EVIDENCE_STORE_PATH = Path(
 FRESHNESS_SLA_SECONDS = max(1, int(os.getenv("SEARCH_FRESHNESS_SLA_SECONDS", "3600")))
 PIPELINE_RETENTION_RUNS = max(1, int(os.getenv("SEARCH_PIPELINE_RETENTION_RUNS", "500")))
 DURABLE_INDEX_ONLY = os.getenv("SEARCH_DURABLE_INDEX_ONLY", "false").strip().lower() in ("1", "true", "yes")
+VECTOR_EMBEDDING_ENABLED = os.getenv("SEARCH_VECTOR_EMBEDDING_ENABLED", "false").strip().lower() in ("1", "true", "yes")
 PRODUCTION_POSTURE = require_source_search_posture("search")
 
 
@@ -119,24 +134,41 @@ class SearchDocumentBody(BaseModel):
 
 
 class AccessContextBody(BaseModel):
+    actor_ref: str | None = None
     persona_id: str | None = None
     workspace_id: str | None = None
+    role_refs: list[str] = Field(default_factory=lambda: ["researcher"])
     environment: str = "paper"
-    access_scopes: list[str] = Field(default_factory=lambda: ["operator", "research"])
-    license_scopes: list[str] = Field(default_factory=lambda: ["internal"])
+    access_scopes: list[str] = Field(default_factory=lambda: ["operator", "research", "public"])
+    license_scopes: list[str] = Field(default_factory=lambda: ["internal", "open"])
+    sensitivity_scopes: list[str] = Field(default_factory=lambda: ["public", "internal"])
+    capital_pool_scopes: list[str] = Field(default_factory=list)
+    entitlements: list[str] = Field(default_factory=list)
+    as_of: str | None = None
 
     def to_domain(self) -> SearchAccessContext:
         return SearchAccessContext(
+            actor_ref=self.actor_ref,
             persona_id=self.persona_id,
             workspace_id=self.workspace_id,
+            role_refs=self.role_refs,
             environment=self.environment,
             access_scopes=self.access_scopes,
             license_scopes=self.license_scopes,
+            sensitivity_scopes=self.sensitivity_scopes,
+            capital_pool_scopes=self.capital_pool_scopes,
+            entitlements=self.entitlements,
+            as_of=self.as_of,
         )
 
 
 class SearchQueryBody(BaseModel):
-    query: str
+    query: str = ""
+    schema_version: str = "governed_search_request.v2"
+    retrieval_mode: str = "keyword"
+    actor_ref: str | None = None
+    role_refs: list[str] = Field(default_factory=lambda: ["researcher"])
+    purpose: str = "research"
     documents: list[SearchDocumentBody] = Field(default_factory=list)
     allow_request_documents_compat: bool = False
     request_id: str = "search-service-query"
@@ -145,9 +177,25 @@ class SearchQueryBody(BaseModel):
     workspace_id: str | None = None
     source_types: list[str] = Field(default_factory=lambda: ["internal_note"])
     environment: str = "paper"
+    time_window: dict[str, Any] | None = None
+    filters: dict[str, Any] | None = None
+    structured_alpha: dict[str, Any] | None = None
     top_k: int = 10
     require_citations: bool = True
     filters_applied: dict[str, Any] = Field(default_factory=dict)
+    access_context: AccessContextBody = Field(default_factory=AccessContextBody)
+
+
+class StructuredAlphaQueryBody(BaseModel):
+    schema_version: str = "alpha_rule_query.v1"
+    dataset_ref: str
+    universe: list[str] = Field(default_factory=lambda: ["US_EQUITY"])
+    as_of: str | None = None
+    rule: dict[str, Any]
+    sort: list[dict[str, Any]] = Field(default_factory=list)
+    limit: int = 50
+    request_id: str = "alpha-service-query"
+    trace_id: str = "trace-alpha-query"
     access_context: AccessContextBody = Field(default_factory=AccessContextBody)
 
 
@@ -288,8 +336,10 @@ def create_app(
     freshness_sla_seconds: int | None = None,
     pipeline_retention_runs: int | None = None,
     durable_index_only: bool | None = None,
+    vector_embedding_backend: Any | None = None,
+    alpha_engine: StructuredAlphaEngine | None = None,
 ) -> FastAPI:
-    app = FastAPI(title="Pantheon Search Service", version="0.1.0")
+    app = FastAPI(title="Pantheon Search Service", version="0.2.0")
     store = build_search_index_store(index_store_path or INDEX_STORE_PATH)
     durable_repository = build_search_evidence_repository(evidence_store_path or EVIDENCE_STORE_PATH)
     materialize_store = JsonlMaterializedIndexStore(materialize_store_path or MATERIALIZE_STORE_PATH)
@@ -298,6 +348,28 @@ def create_app(
     pipeline_store = JsonlIndexPipelineStore(pipeline_store_path or PIPELINE_STORE_PATH, max_retention=retention_runs)
     sla_seconds = freshness_sla_seconds if freshness_sla_seconds is not None else FRESHNESS_SLA_SECONDS
     pipeline = IncrementalIndexPipeline(durable_repository, pipeline_store, freshness_sla_seconds=sla_seconds)
+
+    # Initialize retrievers
+    kw_retriever = KeywordRetriever()
+    ft_retriever = FullTextRetriever()
+    embedding_backend = vector_embedding_backend
+    if embedding_backend is None and VECTOR_EMBEDDING_ENABLED:
+        embedding_backend = MockVectorEmbeddingBackend()
+    sem_retriever = SemanticRetriever(embedding_backend=embedding_backend)
+    hyb_retriever = HybridRetriever(lexical_retriever=ft_retriever, semantic_retriever=sem_retriever)
+    alpha_eng = alpha_engine or StructuredAlphaEngine()
+
+    def _build_gateway(repository: InMemoryEvidenceRepository, adapter: KeywordIndexAdapter | None = None) -> SearchGateway:
+        return SearchGateway(
+            repository=repository,
+            retriever=kw_retriever,
+            full_text_retriever=ft_retriever,
+            semantic_retriever=sem_retriever,
+            hybrid_retriever=hyb_retriever,
+            alpha_engine=alpha_eng,
+            index_store=store,
+            index_adapter=adapter,
+        )
 
     def _materialize_index_state(
         *,
@@ -392,9 +464,15 @@ def create_app(
             "pipeline_retention_runs": pipeline_store.max_retention,
             "freshness_sla_seconds": sla_seconds,
             "durable_index_only": durable_only,
+            "capabilities": _build_gateway(durable_repository).get_capabilities(),
             "source_search_posture": PRODUCTION_POSTURE.to_dict(),
             "posture_alert_count": PRODUCTION_POSTURE.alert_count(),
         }
+
+    @app.get("/api/search/capabilities")
+    def search_capabilities() -> dict[str, Any]:
+        """Report retrieval mode capabilities honestly."""
+        return _build_gateway(durable_repository).get_capabilities()
 
     @app.post("/api/search/index/refresh")
     def refresh_index(body: IndexRefreshBody | None = Body(default=None)) -> dict[str, Any]:
@@ -535,18 +613,27 @@ def create_app(
                 durable_repository.reload()
                 repository = durable_repository
                 adapter_state = "durable"
+
             index_adapter = KeywordIndexAdapter(
                 repository,
                 source_watermarks=_source_watermarks(repository),
                 adapter_state=adapter_state,
             )
             request = SearchRequest(
+                schema_version=body.schema_version,
                 request_id=body.request_id,
                 query=body.query,
+                retrieval_mode=body.retrieval_mode,
+                actor_ref=body.actor_ref or body.access_context.actor_ref,
                 persona_id=body.persona_id or body.access_context.persona_id,
                 workspace_id=body.workspace_id or body.access_context.workspace_id,
+                role_refs=body.role_refs or body.access_context.role_refs,
                 source_types=body.source_types,
-                environment=body.environment,
+                environment=body.environment or body.access_context.environment,
+                purpose=body.purpose,
+                time_window=body.time_window,
+                filters=body.filters,
+                structured_alpha=body.structured_alpha,
                 top_k=body.top_k,
                 require_citations=body.require_citations,
                 trace_id=body.trace_id,
@@ -554,19 +641,69 @@ def create_app(
             )
             context = body.access_context.to_domain()
             context.require_persona_workspace()
-            response = SearchGateway(repository, index_store=store, index_adapter=index_adapter).search(request, context)
+
+            gateway = _build_gateway(repository, adapter=index_adapter)
+            response = gateway.search(request, context)
             snapshot = store.get_snapshot(response.request_id)
             return {
                 **response.to_dict(),
                 "index_adapter": index_adapter.snapshot().to_dict(),
                 "index_snapshot": snapshot.to_dict() if snapshot else None,
             }
+        except SearchCapabilityUnavailableError as exc:
+            raise HTTPException(status_code=501, detail=str(exc)) from exc
         except (EvidenceValidationError, SearchPolicyError, ValueError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @app.post("/api/search/query")
     def query_search(body: SearchQueryBody) -> dict[str, Any]:
         return _query_search(body)
+
+    @app.post("/api/search/v2/query")
+    def query_search_v2(body: SearchQueryBody) -> dict[str, Any]:
+        return _query_search(body)
+
+    @app.post("/api/search/v2/alpha-query")
+    def query_structured_alpha(body: StructuredAlphaQueryBody) -> dict[str, Any]:
+        """Execute a constrained structured alpha rule query."""
+        try:
+            alpha_query = StructuredAlphaQuery(
+                schema_version=body.schema_version,
+                dataset_ref=body.dataset_ref,
+                universe=body.universe,
+                as_of=body.as_of,
+                rule=body.rule,
+                sort=body.sort,
+                limit=body.limit,
+            )
+            context = body.access_context.to_domain()
+            context.require_persona_workspace()
+
+            request = SearchRequest(
+                schema_version="governed_search_request.v2",
+                request_id=body.request_id,
+                query="",
+                retrieval_mode="structured_alpha",
+                actor_ref=context.actor_ref,
+                persona_id=context.persona_id,
+                workspace_id=context.workspace_id,
+                role_refs=context.role_refs,
+                environment=context.environment,
+                structured_alpha=alpha_query.to_dict(),
+                top_k=body.limit,
+                trace_id=body.trace_id,
+            )
+            gateway = _build_gateway(durable_repository)
+            response = gateway.search(request, context)
+            snapshot = store.get_snapshot(response.request_id)
+            return {
+                **response.to_dict(),
+                "index_snapshot": snapshot.to_dict() if snapshot else None,
+            }
+        except SearchCapabilityUnavailableError as exc:
+            raise HTTPException(status_code=501, detail=str(exc)) from exc
+        except (EvidenceValidationError, SearchPolicyError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @app.post("/api/search/query/request-documents-compat")
     def query_search_request_documents_compat(body: SearchQueryBody, response: Response) -> dict[str, Any]:

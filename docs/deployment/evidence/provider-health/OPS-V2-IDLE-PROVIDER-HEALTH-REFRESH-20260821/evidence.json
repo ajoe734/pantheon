@@ -1,0 +1,156 @@
+{
+  "schema_version": "pantheon.supervisor.idle-provider-health.v2",
+  "task": {
+    "id": "OPS-V2-IDLE-PROVIDER-HEALTH-REFRESH-20260821",
+    "title": "Refresh stale V2 provider health without unrelated task demand",
+    "owner": "Codex",
+    "reviewer": "Antigravity",
+    "repository": "ajoe734/pantheon",
+    "target_branch": "dev",
+    "task_branch": "task/OPS-V2-IDLE-PROVIDER-HEALTH-REFRESH-20260821",
+    "review_file": "docs/deployment/evidence/provider-health/OPS-V2-IDLE-PROVIDER-HEALTH-REFRESH-20260821/evidence.json"
+  },
+  "status": "ready_for_independent_review",
+  "scope": {
+    "owned_layer": "Supervisor Authority V2 post-dispatch reconciliation of runtime delivery-health rows against the configured endpoint/account topology.",
+    "implementation_files": [
+      ".orchestrator/supervisor.py",
+      ".orchestrator/test_supervisor.py"
+    ],
+    "not_changing": [
+      "TaskStore or canonical task lifecycle write ownership",
+      "runtime-state lock, reservation, CAS, or atomic-write primitives",
+      "provider credentials, provider configuration, or account rotation",
+      "retired V1 pause, recovery, or capacity control planes",
+      "product services, frontend, production, or capital authority"
+    ]
+  },
+  "prior_round_gap": {
+    "merged_pr": 5113,
+    "promoted_runtime": "8dce056fe86b3bcb7bd3347497a4e4a241b2806e",
+    "accepted_live_behavior": "Bounded refresh produced fresh healthy codex1 and claude2 observations on distinct configured accounts.",
+    "remaining_failure": "delivery_health.accounts.claude_account_shared_max_1 remained in runtime state even though no configured endpoint/account topology referenced it.",
+    "resolution": "Reconcile delivery-health endpoint and account buckets against only the deliverable topology during the existing locked post-dispatch maintenance phase."
+  },
+  "implementation": {
+    "base_commit": "bb83df12e3cec11de0f441850f08a179ddd7394a",
+    "validated_implementation_anchor": "04cc2e6e233888c6ce90fb8f0f923430735750fc",
+    "supervisor_source_blob": "3755419c48926c5cb0c81fed3ab859a3198276ca",
+    "supervisor_test_blob": "fd9fa362a2dfb40e07dff970e290c55a477559e9",
+    "implementation_diff_sha256": "1e87646a2f4f0459f4387f335e5a1608d440934e5a3b428d0829c39244b88bff",
+    "source_scope": [
+      ".orchestrator/supervisor.py",
+      ".orchestrator/test_supervisor.py"
+    ]
+  },
+  "contract": {
+    "topology_source": "_configured_delivery_endpoints is the shared deliverable topology used by idle refresh and topology fingerprinting; provider declarations without endpoints are excluded.",
+    "endpoint_ownership": "delivery_health.endpoints may retain only configured deliverable endpoint ids.",
+    "account_ownership": "delivery_health.accounts may retain only account ids referenced by configured deliverable endpoints.",
+    "preservation": "Every configured endpoint/account entry, root delivery-health metadata, and all state outside delivery_health remain byte-equivalent.",
+    "idempotence": "When no orphan row exists, reconciliation returns false and does not replace delivery_health; a second pass over an unchanged topology is a pure no-op.",
+    "observation_order": "Post-dispatch maintenance applies live observations first and topology reconciliation second, so an obsolete in-flight or provider-only observation cannot persist an orphan row.",
+    "write_authority": "apply_post_dispatch_maintenance runs inside the existing post_dispatch_maintenance runtime reservation and whole-state CAS transaction; no new writer or lock primitive was added.",
+    "refresh_compatibility": "The prior due-only scan, authorized future-retry bypass, explicit Human/Ops trigger, refresh_max_per_cycle cap, and fail-closed observation projection are unchanged."
+  },
+  "acceptance": {
+    "shared_claude_account_migration": {
+      "status": "proven",
+      "test": "AccountHealthAndRecoveryContractTests.test_topology_reconciliation_migrates_shared_claude_health_once",
+      "proof": "A former claude_shared endpoint and claude_account_shared_max_1 account are removed after topology moves to distinct claude1/claude2 endpoints and accounts."
+    },
+    "configured_and_unrelated_state_preserved": {
+      "status": "proven",
+      "test": "AccountHealthAndRecoveryContractTests.test_topology_reconciliation_migrates_shared_claude_health_once",
+      "proof": "Configured claude1/claude2 entries, unrelated health metadata, workers, and watchdog state remain exactly equal."
+    },
+    "idempotent_no_every_cycle_mutation": {
+      "status": "proven",
+      "test": "AccountHealthAndRecoveryContractTests.test_topology_reconciliation_migrates_shared_claude_health_once",
+      "proof": "The first pass removes only retired rows; the second pass returns false and leaves the complete state equal to the prior snapshot."
+    },
+    "provider_only_orphan_cannot_remain": {
+      "status": "proven",
+      "test": "AccountHealthAndRecoveryContractTests.test_post_dispatch_maintenance_prunes_provider_only_health_projection",
+      "proof": "A configured provider with no agent/delivery endpoint cannot retain either its endpoint projection or its orphan_account row after post-dispatch maintenance."
+    },
+    "prior_refresh_contract_preserved": {
+      "status": "proven",
+      "proof": "All 20 account-health focused tests plus full supervisor, watchdog, provider-permissions, provider-health, dispatch-admission, and runtime-state suites passed."
+    }
+  },
+  "owner_verification": {
+    "commands": [
+      {
+        "command": ".venv-pantheon/bin/python3 -m py_compile .orchestrator/supervisor.py .orchestrator/test_supervisor.py",
+        "result": "passed"
+      },
+      {
+        "command": "PYTHONPATH=.orchestrator .venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_supervisor.py::AccountHealthAndRecoveryContractTests",
+        "result": "20 passed"
+      },
+      {
+        "command": "PYTHONPATH=.orchestrator .venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_supervisor.py",
+        "result": "111 passed, 18 subtests passed"
+      },
+      {
+        "command": "PYTHONPATH=.orchestrator .venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_supervisor_watchdog.py",
+        "result": "61 passed"
+      },
+      {
+        "command": "PYTHONPATH=.orchestrator .venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_provider_permissions.py",
+        "result": "107 passed, 7 subtests passed"
+      },
+      {
+        "command": "PYTHONPATH=.orchestrator .venv-pantheon/bin/python3 .orchestrator/rewrite/test_provider_health.py -v",
+        "result": "5 passed"
+      },
+      {
+        "command": "PYTHONPATH=.orchestrator .venv-pantheon/bin/python3 .orchestrator/rewrite/test_dispatch_admission.py -v",
+        "result": "16 passed"
+      },
+      {
+        "command": "PYTHONPATH=.orchestrator .venv-pantheon/bin/python3 -m unittest discover -s .orchestrator -p 'test_runtime_state.py' -v",
+        "result": "26 passed"
+      },
+      {
+        "command": "git diff --check bb83df12e3cec11de0f441850f08a179ddd7394a...04cc2e6e233888c6ce90fb8f0f923430735750fc",
+        "result": "passed"
+      }
+    ]
+  },
+  "integrity": {
+    "algorithm": "sha256",
+    "companion_checksum_path": "docs/deployment/evidence/provider-health/OPS-V2-IDLE-PROVIDER-HEALTH-REFRESH-20260821/evidence.sha256",
+    "checksum_coverage": [
+      "evidence.json",
+      "README.md"
+    ],
+    "source_recompute": "git diff --binary bb83df12e3cec11de0f441850f08a179ddd7394a...04cc2e6e233888c6ce90fb8f0f923430735750fc -- .orchestrator/supervisor.py .orchestrator/test_supervisor.py | sha256sum",
+    "manifest_recompute": "cd docs/deployment/evidence/provider-health/OPS-V2-IDLE-PROVIDER-HEALTH-REFRESH-20260821 && sha256sum -c evidence.sha256"
+  },
+  "review": {
+    "decision": "pending",
+    "required_reviewer": "Antigravity",
+    "exact_head_requirement": "Antigravity must bind approval to the final GitHub PR head through governed REVIEW_PR and REVIEW_HEAD_SHA inputs. The manifest does not self-reference its containing commit; later source or evidence changes require fresh checksums and exact-head review.",
+    "required": [
+      "Confirm only rows absent from _configured_delivery_endpoints and its referenced accounts are removed.",
+      "Confirm configured delivery-health entries and unrelated runtime state are preserved exactly.",
+      "Confirm reconciliation is invoked after observations inside post_dispatch_maintenance and therefore uses the existing runtime reservation/CAS authority.",
+      "Confirm the unchanged-topology second pass is a no-op and no per-cycle health mutation was introduced.",
+      "Confirm provider-only orphan rows cannot remain and no V1 or credential control plane was added."
+    ]
+  },
+  "post_merge_rollout": {
+    "required": true,
+    "authority": "Human/Ops or supervisor deployment authority",
+    "action": "Promote the exact merged dev command runtime, run one governed bounded supervisor cycle, and read back the live runtime delivery_health document without manual state edits.",
+    "acceptance_readback": [
+      "configured codex1 endpoint and account have fresh healthy live evidence",
+      "configured claude2 endpoint and distinct claude2 account have fresh healthy live evidence",
+      "claude_account_shared_max_1 is absent from delivery_health.accounts",
+      "no provider-only endpoint or account projection remains"
+    ],
+    "rollback": "Promote the last accepted command runtime. V2 remains fail-closed on stale evidence; no credential or TaskStore rollback is required."
+  }
+}

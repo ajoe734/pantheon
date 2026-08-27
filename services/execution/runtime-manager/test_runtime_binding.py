@@ -622,3 +622,63 @@ class TestPersistence:
         loaded = store2.get("rtb-001")
         assert loaded is not None
         assert loaded.binding_id == b.binding_id
+
+
+class TestRuntimeBindingMetadataPatch:
+
+    def test_transition_status_with_metadata_patch(self, store: RuntimeBindingStore) -> None:
+        b = _base(binding_id="rtb-meta-001", metadata={"existing_key": "val1"})
+        store.create(b, single_runtime_enforced=False)
+
+        stale_admission = {
+            "session_admission": {
+                "reason_code": "market_input_stale",
+                "source_snapshot_id": "snap-001",
+                "source_event_time": "2026-08-22T00:00:00Z",
+                "observed_at": "2026-08-22T10:00:00Z",
+                "max_age_seconds": 86400,
+                "pause_command_ref": "cmd-stale-001",
+                "resume_snapshot_id": None,
+                "resumed_at": None,
+            }
+        }
+        updated = store.transition_status(
+            "rtb-meta-001",
+            "pending_pause",
+            metadata_patch=stale_admission,
+        )
+        assert updated.status == "pending_pause"
+        assert updated.metadata["existing_key"] == "val1"
+        assert updated.metadata["session_admission"]["reason_code"] == "market_input_stale"
+        assert updated.metadata["session_admission"]["source_snapshot_id"] == "snap-001"
+
+        paused = store.transition_status(
+            "rtb-meta-001",
+            "paused",
+        )
+        assert paused.status == "paused"
+        assert paused.metadata["session_admission"]["reason_code"] == "market_input_stale"
+
+        resume_patch = {
+            "session_admission": {
+                "resume_snapshot_id": "snap-002",
+                "resumed_at": "2026-08-22T11:00:00Z",
+            }
+        }
+        resumed = store.transition_status(
+            "rtb-meta-001",
+            "active",
+            metadata_patch=resume_patch,
+        )
+        assert resumed.status == "active"
+        assert resumed.metadata["session_admission"]["source_snapshot_id"] == "snap-001"
+        assert resumed.metadata["session_admission"]["resume_snapshot_id"] == "snap-002"
+        assert resumed.metadata["session_admission"]["resumed_at"] == "2026-08-22T11:00:00Z"
+
+    def test_patch_metadata_without_status_change(self, store: RuntimeBindingStore) -> None:
+        b = _base(binding_id="rtb-patch-001", metadata={"foo": "bar"})
+        store.create(b, single_runtime_enforced=False)
+
+        patched = store.patch_metadata("rtb-patch-001", {"baz": 42})
+        assert patched.status == "active"
+        assert patched.metadata == {"foo": "bar", "baz": 42}

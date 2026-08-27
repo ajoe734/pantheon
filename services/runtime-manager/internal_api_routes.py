@@ -55,8 +55,8 @@ class _InProcessRuntimeManagerAdapter:
         binding = self._service_factory().get(binding_id)
         return binding.to_dict() if binding is not None else None
 
-    def transition(self, binding_id: str, new_status: str):
-        binding = self._service_factory().transition(binding_id, new_status)
+    def transition(self, binding_id: str, new_status: str, *, metadata_patch: Optional[Dict[str, Any]] = None):
+        binding = self._service_factory().transition(binding_id, new_status, metadata_patch=metadata_patch)
         return binding.to_dict()
 
     def retire(self, binding_id: str, *, retired_at: str | None = None):

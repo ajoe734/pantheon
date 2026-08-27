@@ -298,6 +298,51 @@ class DispatchAdmissionTests(unittest.TestCase):
         self.assertTrue(decision.eligible)
         self.assertEqual(decision.endpoint_id, "codex-1")
 
+    def test_pantheon_dev_resource_is_admitted_when_capacity_free(self) -> None:
+        decision = evaluate_dispatch_intent(
+            intent(execution_resources=("pantheon-dev",)),
+            lane(endpoint()),
+            healthy_snapshot(resource_reserved={"pantheon-dev": 0}),
+        )
+
+        self.assertTrue(decision.eligible)
+        self.assertEqual(decision.endpoint_id, "codex-1")
+
+    def test_pantheon_dev_resource_is_blocked_when_capacity_reached(self) -> None:
+        decision = evaluate_dispatch_intent(
+            intent(execution_resources=("pantheon-dev",)),
+            lane(endpoint()),
+            healthy_snapshot(resource_reserved={"pantheon-dev": 1}),
+        )
+
+        self.assertFalse(decision.eligible)
+        self.assertEqual(decision.reason, DispatchBlockReason.RESOURCE_CAPACITY_REACHED)
+
+    def test_worktree_only_task_is_admitted_when_pantheon_dev_capacity_reached(self) -> None:
+        decision = evaluate_dispatch_intent(
+            intent(execution_resources=()),
+            lane(endpoint()),
+            healthy_snapshot(resource_reserved={"pantheon-dev": 1}),
+        )
+
+        self.assertTrue(decision.eligible)
+        self.assertEqual(decision.endpoint_id, "codex-1")
+
+    def test_parallel_functional_tasks_fill_free_lanes_regardless_of_resource_reservation(self) -> None:
+        shared_endpoint = endpoint(exclusive=False)
+        decision = evaluate_dispatch_intent(
+            intent(execution_resources=()),
+            lane(shared_endpoint, max_parallel=4),
+            healthy_snapshot(
+                lane_reserved={"codex": 2},
+                resource_reserved={"pantheon-dev": 1},
+                reserved_endpoint_ids=frozenset({"codex-1"}),
+            ),
+        )
+
+        self.assertTrue(decision.eligible)
+        self.assertEqual(decision.endpoint_id, "codex-1")
+
 
 class HealthGateForEndpointRawSnapshotTests(unittest.TestCase):
     """Migrated from test_provider_health.py's delivery_health_block_reason

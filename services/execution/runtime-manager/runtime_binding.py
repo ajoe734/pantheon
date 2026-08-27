@@ -371,6 +371,7 @@ class RuntimeBindingStore:
         new_status: str,
         *,
         retired_at: Optional[str] = None,
+        metadata_patch: Optional[Dict[str, Any]] = None,
     ) -> RuntimeBinding:
         """
         Transition a binding to a new status following the allowed state machine.
@@ -378,6 +379,7 @@ class RuntimeBindingStore:
         Terminal bindings (retired / failed) cannot be transitioned further.
         Sets `retired_at` automatically when transitioning to a terminal state
         if not provided by the caller.
+        If `metadata_patch` is provided, it is merged atomically into metadata.
         """
         binding = self.require(binding_id)
 
@@ -399,8 +401,45 @@ class RuntimeBindingStore:
         if target_status in {RuntimeBindingStatus.RETIRED, RuntimeBindingStatus.FAILED}:
             updates["retired_at"] = retired_at or utc_now()
 
+        if metadata_patch:
+            current_metadata = dict(binding.metadata)
+            for k, v in metadata_patch.items():
+                if isinstance(v, dict) and isinstance(current_metadata.get(k), dict):
+                    merged = dict(current_metadata[k])
+                    merged.update(v)
+                    current_metadata[k] = merged
+                else:
+                    current_metadata[k] = v
+            updates["metadata"] = current_metadata
+
         updated = RuntimeBinding(
             **{**binding.to_dict(), **updates}
+        )
+        self._bindings[binding_id] = updated
+        try:
+            self._save()
+        except Exception:
+            self._bindings[binding_id] = binding
+            raise
+        return updated
+
+    def patch_metadata(
+        self,
+        binding_id: str,
+        metadata_patch: Dict[str, Any],
+    ) -> RuntimeBinding:
+        """Merge metadata into an existing binding."""
+        binding = self.require(binding_id)
+        current_metadata = dict(binding.metadata)
+        for k, v in metadata_patch.items():
+            if isinstance(v, dict) and isinstance(current_metadata.get(k), dict):
+                merged = dict(current_metadata[k])
+                merged.update(v)
+                current_metadata[k] = merged
+            else:
+                current_metadata[k] = v
+        updated = RuntimeBinding(
+            **{**binding.to_dict(), "metadata": current_metadata}
         )
         self._bindings[binding_id] = updated
         try:

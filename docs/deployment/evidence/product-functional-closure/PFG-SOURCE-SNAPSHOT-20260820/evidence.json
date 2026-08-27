@@ -1,0 +1,117 @@
+{
+  "schema_version": "pantheon.product_functional_closure.source_snapshot_evidence.v1",
+  "task": {
+    "id": "PFG-SOURCE-SNAPSHOT-20260820",
+    "title": "Provide one canonical stored market snapshot contract for paper",
+    "owner": "Codex2",
+    "reviewer": "Antigravity",
+    "repository": "ajoe734/pantheon",
+    "base_branch": "dev",
+    "task_branch": "task/PFG-SOURCE-SNAPSHOT-20260820",
+    "review_file": "docs/deployment/evidence/product-functional-closure/PFG-SOURCE-SNAPSHOT-20260820/evidence.json",
+    "evidence_status": "owner_validation_passed_pending_independent_reviewer"
+  },
+  "scope": {
+    "owned_layer": [
+      "The Source-owned checksummed latest-normalized-market-snapshot projection.",
+      "The read-only Source endpoint and normalized SourceRecord ingest projection.",
+      "Paper CurrentArtifactStrategy RuntimeBinding policy selection, typed stale/missing rejection, and input lineage propagation.",
+      "Focused Source endpoint, zero-egress, producer integration, stale-input, and no-static-fallback tests."
+    ],
+    "not_changing": [
+      "Source controller mode, scheduler topology, or any continuous provider connection.",
+      "A new market-data service, live feed, live trading, or capital activation.",
+      "RuntimeBinding write authority, artifact loader ownership, or the explicitly selected smoke/profile strategy."
+    ]
+  },
+  "canonical_contract": {
+    "owner": "services/source_ingestion/main.py",
+    "ingest_projection": "LatestMarketSnapshotStore.append_normalized_records() accepts only already-normalized SourceRecords from the existing completed ingest path.",
+    "storage": {
+      "path_env": "SOURCE_INGEST_LATEST_MARKET_SNAPSHOT_PATH",
+      "default_path": "<SOURCE_INGEST_DATA_DIR>/latest_market_snapshots.jsonl",
+      "schema": "source_ingest_latest_market_snapshot.v1",
+      "integrity": "append-only JSONL envelopes with per-entry sha256 checksums; malformed history fails closed",
+      "bound": "SOURCE_INGEST_MARKET_SNAPSHOT_MAX_CLOSES (default 60) closes per canonical symbol"
+    },
+    "endpoint": {
+      "method": "GET",
+      "path": "/api/source-ingest/snapshots/latest?symbol=<canonical-symbol>",
+      "response_fields": [
+        "symbol",
+        "snapshot_id",
+        "event_time",
+        "observed_at",
+        "closes",
+        "lineage",
+        "source_ref"
+      ],
+      "missing_response": {
+        "http_status": 404,
+        "code": "market_snapshot_not_found"
+      },
+      "read_safety": "The handler calls only LatestMarketSnapshotStore.get(); it has no connector, provider, configured fetcher, or scheduler access."
+    },
+    "paper_policy": {
+      "binding_field": "market_data_policy",
+      "required_for_fetch": {
+        "owner": "source-ingest",
+        "contract": "latest_stored_normalized",
+        "max_age_seconds": "positive integer",
+        "minimum_closes": "integer >= 2"
+      },
+      "fail_closed_codes": [
+        "market_input_missing",
+        "market_input_policy_invalid",
+        "market_input_unavailable",
+        "market_input_invalid",
+        "market_input_insufficient",
+        "market_input_stale"
+      ],
+      "rollback": "No signal is enqueued; PaperSignalProducer reports the typed degraded binding."
+    }
+  },
+  "snapshot_client_provider_audit": {
+    "canonical_client": {
+      "path": "services/execution/lean_runtime/paper_signal_producer.py:_market_input_for_binding",
+      "contract": "PANTHEON_SOURCE_INGEST_URL + /api/source-ingest/snapshots/latest?symbol=...",
+      "disposition": "Retained as the sole normal artifact-runner snapshot client; validates policy, snapshot ID, event time, lineage, minimum closes, and age."
+    },
+    "canonical_provider": {
+      "path": "services/source_ingestion/main.py:_persist_latest_market_snapshots and get_latest_market_snapshot",
+      "contract": "Completed ingest projects normalized SourceRecord metadata; GET returns the persisted projection.",
+      "disposition": "Added as the single Source authority; no provider egress on reads."
+    },
+    "retired_or_excluded_paths": [
+      {
+        "path": "CurrentArtifactStrategy recent_closes fallback",
+        "disposition": "Removed. A RuntimeBinding cannot emit an artifact-runner signal from fixed binding/metadata closes."
+      },
+      {
+        "path": "BoundedPaperStrategy recent_closes",
+        "disposition": "Explicit PAPER_SIGNAL_STRATEGY=smoke profile/test path only; it is not a CurrentArtifactStrategy snapshot client and is not selected by the deployable default."
+      },
+      {
+        "path": "additional /snapshots/latest providers or endpoint aliases",
+        "disposition": "None found; none added."
+      }
+    ]
+  },
+  "validation": {
+    "commands": [
+      "/home/lupin/pantheon/.venv/bin/python -m py_compile services/source_ingestion/requirement_state.py services/source_ingestion/main.py services/execution/lean_runtime/paper_signal_producer.py",
+      "/home/lupin/pantheon/.venv/bin/python -m pytest -q services/source_ingestion/tests/test_requirement_state.py services/source_ingestion/tests/test_latest_market_snapshot.py services/source_ingestion/tests/test_market_data_foundation.py services/execution/lean_runtime/test_paper_signal_producer.py services/execution/lean_runtime/test_current_artifact_signal.py",
+      "git diff --check"
+    ],
+    "results": [
+      "66 passed in 22.30 seconds; one upstream FastAPI TestClient deprecation warning.",
+      "Endpoint contract test proves the stored normalized response has symbol, snapshot ID, latest event time, lineage, and ordered closes.",
+      "Zero-egress test replaces both the scheduler and urllib.request.urlopen with forbidden implementations before GET; the stored snapshot is still returned.",
+      "Producer integration test requires the RuntimeBinding policy and carries Source snapshot ID/lineage into signal metadata; stale test returns market_input_stale with zero queued signals; recent_closes test returns market_input_missing with zero queued signals."
+    ]
+  },
+  "review_decision": {
+    "decision": "owner_validation_passed_pending_independent_reviewer",
+    "reviewer_action_required": "Antigravity must independently inspect this committed manifest and exact task-branch head, rerun the focused suite, verify the endpoint/client audit, and bind canonical approval with this review_file before merge."
+  }
+}

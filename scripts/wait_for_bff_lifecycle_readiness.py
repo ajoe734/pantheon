@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import time
 import urllib.error
 import urllib.parse
@@ -44,6 +45,37 @@ Fetch = Callable[[], tuple[int, dict[str, Any] | None]]
 ExactTargetProbe = Callable[[], str]
 Clock = Callable[[], float]
 Sleeper = Callable[[float], None]
+
+# The canonical BFF contract exposes a numeric age instead of the legacy
+# ``freshness.stale`` object.  Keep the same bounded freshness guarantee when
+# adapting that shape; an old or malformed sample must never grant an
+# identity-bound recovery extension.
+MAX_CANONICAL_FRESHNESS_AGE_SECONDS = 300.0
+
+
+def _freshness_is_current(projector: dict[str, Any]) -> bool:
+    freshness = projector.get("freshness")
+    if isinstance(freshness, dict):
+        return freshness.get("stale") is False
+
+    raw_age = projector.get("freshness_age_seconds")
+    try:
+        age = float(raw_age)
+    except (TypeError, ValueError):
+        return False
+    if not math.isfinite(age) or age < 0:
+        return False
+    if age > MAX_CANONICAL_FRESHNESS_AGE_SECONDS:
+        return False
+
+    # Preserve an explicit stale/error signal even when a producer includes a
+    # numeric age for diagnostic purposes.
+    reasons = projector.get("reasons")
+    if isinstance(reasons, list) and any(
+        "stale" in str(reason).lower() for reason in reasons
+    ):
+        return False
+    return True
 
 
 def _integer(payload: dict[str, Any], key: str) -> int:
@@ -82,14 +114,12 @@ def classify_readiness(
     deployment_sha = str(projector.get("deployment_sha") or "").strip()
     if deployment_sha != expected_deployment_sha:
         return "deployment_pending", None
-    freshness = projector.get("freshness")
-    if (
-        not isinstance(freshness, dict)
-        or freshness.get("stale") is not False
-    ):
-        if status != 200:
-            return "unavailable", None
-        raise ReadinessError("lifecycle projector freshness is stale or absent")
+    if not _freshness_is_current(projector):
+        # A freshly restarted BFF can answer HTTP 200 before the projector has
+        # published its first post-startup snapshot.  Treat that short-lived
+        # state as retryable regardless of HTTP status; it is not readiness
+        # evidence and must not grant the recovery extension on its own.
+        return "unavailable", None
 
     if status == 200 and payload.get("ready") is True:
         for dependency in ("runtime_manager", "governance", "deployment"):
@@ -103,9 +133,20 @@ def classify_readiness(
                 )
         if (
             projector.get("ready") is not True
-            or projector.get("status") != "ok"
+            # The BFF readiness contract names the accepted projector state
+            # ``ready``.  Older probe fixtures used ``ok`` here, so accept
+            # both spellings while keeping the explicit ready boolean gate.
+            or projector.get("status") not in {"ok", "ready"}
             or projector.get("worker_status") != "ready"
-            or projector.get("controller_status") != "ready"
+            or (
+                projector.get("controller_status")
+                or (
+                    (projector.get("controller") or {}).get("status")
+                    if isinstance(projector.get("controller"), dict)
+                    else None
+                )
+            )
+            != "ready"
             or projector.get("mode") != "live"
             or projector.get("accepted_live") is not True
             or list(projector.get("reasons") or [])
@@ -213,15 +254,13 @@ def exact_deployment_evidence(
     if not isinstance(projector, dict):
         return "absent"
     deployment_sha = str(projector.get("deployment_sha") or "").strip()
-    freshness = projector.get("freshness")
     if deployment_sha and deployment_sha != expected_deployment_sha:
         return "contradicted"
-    if isinstance(freshness, dict) and freshness.get("stale") is True:
+    if not _freshness_is_current(projector):
         return "contradicted"
     if (
         deployment_sha == expected_deployment_sha
-        and isinstance(freshness, dict)
-        and freshness.get("stale") is False
+        and _freshness_is_current(projector)
     ):
         return "exact"
     return "absent"

@@ -1,0 +1,18 @@
+{
+  "task_id": "L12-GAP-CLEAN-POLICY-LEGACY-R2-20260819",
+  "owner": "Antigravity",
+  "reviewer": "Antigravity2",
+  "status": "review_approved",
+  "summary": "Verified policy-learning component scope for duplicate Agora dataset discovery retirement (R2). Confirmed candidate_experiment_handoff.py docstring fix and agora_dataset_authority.py fail-closed behavior.",
+  "verification": {
+    "test_command": "pytest services/policy-learning/tests",
+    "passed": 129,
+    "failed": 0
+  },
+  "acceptance_criteria_validated": [
+    "Automatic no-ref direct Agora database discovery is removed after the durable deployed E2E passes",
+    "Explicit dataset-ref diagnostics remain only when they do not form a second production owner",
+    "The stale direct-intake docstring is corrected and no fallback is rebuilt",
+    "Focused policy-learning tests prove the durable handoff and Research HTTP paths remain functional"
+  ]
+}

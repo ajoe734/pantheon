@@ -2,7 +2,10 @@ import json
 import os
 import subprocess
 import tempfile
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from typing import Any
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -316,6 +319,54 @@ def test_service_token_is_redacted_from_dry_run_output() -> None:
     assert "dev_openclaw_adapter_service_token_configured=true" in result.stdout
 
 
+def test_openclaw_claude_oauth_token_has_no_fabricated_deploy_default() -> None:
+    script = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+
+    assert (
+        'DEV_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN="${DEV_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN:-}"'
+        in script
+    )
+    assert "DEV_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN:-sk-" not in script
+
+
+def test_openclaw_claude_oauth_token_is_redacted_from_dry_run_output() -> None:
+    secret = "sk-ant-oat01-must-not-appear-in-deploy-output"
+    result = _run_deploy_script(
+        {"DEV_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN": secret},
+        "--dry-run",
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert secret not in result.stdout
+    assert secret not in result.stderr
+    assert "dev_openclaw_claude_code_oauth_token_configured=true" in result.stdout
+
+
+def test_openclaw_claude_oauth_token_defaults_to_unconfigured_in_dry_run() -> None:
+    result = _run_deploy_script({}, "--dry-run")
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "dev_openclaw_claude_code_oauth_token_configured=false" in result.stdout
+
+
+def test_openclaw_claude_oauth_token_reaches_the_deploy_export() -> None:
+    """The var has to reach both docker compose invocations (root and the
+    narrower bff-only rebuild), keyed the same as the adapter service token
+    docker-compose.yml already reads with a PANTHEON_ prefix."""
+
+    script = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    export_line = (
+        'PANTHEON_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN="${PANTHEON_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN}" \\'
+    )
+    assert script.count(export_line) >= 2
+
+    compose = (REPO_ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+    assert (
+        "CLAUDE_CODE_OAUTH_TOKEN: ${PANTHEON_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN:-}"
+        in compose
+    )
+
+
 def test_auth_gate_checks_hosted_posture_and_fixed_bearer_negative() -> None:
     """Regression guard: the post-deploy gate must assert both the hosted
     /bff/version auth posture and reject a fixed/arbitrary bearer token,
@@ -368,7 +419,7 @@ def test_auth_gate_checks_all_dedicated_identities_and_distinct_subjects() -> No
     auth_floor = workflow[
         workflow.index("- name: Enforce dev auth deployment floor") :
         workflow.index(
-            "- name: Authenticate to Google Cloud via Workload Identity Federation"
+            "- name: Prepare pinned direct SSH transport"
         )
     ]
     deploy_step = workflow[
@@ -386,7 +437,7 @@ def test_auth_gate_checks_all_dedicated_identities_and_distinct_subjects() -> No
         compose_client_id = f"PANTHEON_{client_id.removeprefix('DEV_')}"
         assert f'{client_secret}="${{{client_secret}:-}}"' in script
         assert f"PANTHEON_{client_id}" in script
-        assert script.count(f"{compose_client_id}=") == 2
+        assert script.count(f"{compose_client_id}=") >= 2
         secret_ref = f"secrets.{client_secret}"
         assert auth_floor.count(secret_ref) == 1
         assert deploy_step.count(secret_ref) == 1
@@ -397,10 +448,10 @@ def test_auth_gate_checks_all_dedicated_identities_and_distinct_subjects() -> No
                 "${{ secrets.DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_SECRET }}"
                 in hosted_probe
             )
-            assert workflow.count(secret_ref) == 4
+            assert workflow.count(secret_ref) == 5
         else:
             assert secret_ref not in hosted_probe
-            assert workflow.count(secret_ref) == 3
+            assert workflow.count(secret_ref) == 4
 
 
 def test_dev_deploy_plumbs_product_oidc_and_fail_closed_role_mapping() -> None:
@@ -490,3 +541,469 @@ def test_auth_gate_posture_assertion_is_valid_python() -> None:
     )
     assert permissive.returncode != 0
     assert "auth_stub=True, expected False" in permissive.stderr
+
+
+class _MockBffHandler(BaseHTTPRequestHandler):
+    readiness_responses: list[dict[str, Any]] = []
+    readiness_call_count: int = 0
+    version_posture: dict[str, Any] = {"auth_stub": False, "auth_mode": "strict"}
+
+    def log_message(self, format: str, *args: Any) -> None:
+        pass
+
+    def do_GET(self) -> None:
+        if self.path == "/bff/version":
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps({"config_posture": self.version_posture}).encode("utf-8"))
+            return
+
+        if self.path == "/bff/me":
+            auth = self.headers.get("Authorization", "")
+            if "op-fixed:operator:mfa" in auth:
+                self.send_response(401)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(b'{"error": "unauthorized"}')
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(b'{"meta": {"status": "ok"}}')
+            return
+
+        if self.path == "/bff/auth/readiness":
+            type(self).readiness_call_count += 1
+            idx = min(type(self).readiness_call_count - 1, len(self.readiness_responses) - 1)
+            response = self.readiness_responses[idx] if self.readiness_responses else {}
+            status_code = response.get("__status_code", 200)
+            body = {k: v for k, v in response.items() if k != "__status_code"}
+            self.send_response(status_code)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps(body).encode("utf-8"))
+            return
+
+        self.send_response(404)
+        self.end_headers()
+
+    def do_POST(self) -> None:
+        if self.path == "/bff/auth/dev-login":
+            import base64
+
+            length = int(self.headers.get("Content-Length", 0))
+            body = json.loads(self.rfile.read(length).decode("utf-8"))
+            client_id = body.get("client_id", "")
+
+            if "viewer" in client_id:
+                identity = "viewer"
+                role = "viewer"
+            elif "approver" in client_id:
+                identity = "approver"
+                role = "approver"
+            elif "risk" in client_id:
+                identity = "risk_owner"
+                role = "risk_owner"
+            elif "operator-b" in client_id:
+                identity = "operator_b"
+                role = "operator"
+            else:
+                identity = "operator_a"
+                role = "operator"
+
+            claims = {
+                "sub": f"sub-{identity}",
+                "roles": [role],
+                "mfa_verified": True,
+            }
+            claims_b64 = base64.urlsafe_b64encode(json.dumps(claims).encode("utf-8")).decode("utf-8").rstrip("=")
+            token = f"eyJhbGciOiJIUzI1NiJ9.{claims_b64}.sig"
+
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps({
+                "access_token": token,
+                "meta": {"identity": identity},
+            }).encode("utf-8"))
+            return
+
+        self.send_response(404)
+        self.end_headers()
+
+
+def _run_auth_gate_against_server(
+    base_url: str,
+    *,
+    expected_sha: str = _TEST_SHA,
+    timeout_seconds: float = 2.0,
+    poll_interval_seconds: float = 0.05,
+    extra_env: dict[str, str] | None = None,
+) -> subprocess.CompletedProcess:
+    script_text = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    auth_gate_section = script_text[
+        script_text.index("assert_dedicated_dev_login_identity() {") : script_text.index(
+            "snapshot_remote_state()"
+        )
+    ]
+    bash_code = f"""
+set -euo pipefail
+info() {{ echo "[nonprod-deploy] $*"; }}
+error() {{ echo "[nonprod-deploy] ERROR: $*" >&2; exit 1; }}
+
+{auth_gate_section}
+
+assert_bff_auth_gate "{base_url}"
+"""
+    env = os.environ.copy()
+    env["PANTHEON_DEPLOY_SHA"] = expected_sha
+    env["PANTHEON_DEV_BFF_AUTH_MODE"] = "strict"
+    env["PANTHEON_DEV_BFF_AUTH_STUB"] = "false"
+    env["PANTHEON_DEV_BFF_AUTH_READINESS_TIMEOUT_SECONDS"] = str(timeout_seconds)
+    env["PANTHEON_DEV_BFF_AUTH_READINESS_POLL_INTERVAL_SECONDS"] = str(poll_interval_seconds)
+    for identity in ("VIEWER", "APPROVER", "RISK_OWNER", "OPERATOR_A", "OPERATOR_B"):
+        slug = identity.lower().replace("_", "-")
+        env[f"PANTHEON_DEV_BFF_DEV_LOGIN_{identity}_CLIENT_ID"] = f"test-{slug}-client"
+        env[f"PANTHEON_DEV_BFF_DEV_LOGIN_{identity}_CLIENT_SECRET"] = f"test-{slug}-secret"
+    if extra_env:
+        env.update(extra_env)
+
+    return subprocess.run(
+        ["bash", "-c", bash_code],
+        capture_output=True,
+        text=True,
+        env=env,
+        timeout=15,
+    )
+
+
+def test_auth_gate_readiness_retry_succeeds_on_delayed_provider_readiness() -> None:
+    from http.server import ThreadingHTTPServer
+    import threading
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _MockBffHandler)
+    port = server.server_port
+    _MockBffHandler.readiness_call_count = 0
+    _MockBffHandler.version_posture = {"auth_stub": False, "auth_mode": "strict"}
+    _MockBffHandler.readiness_responses = [
+        {
+            "data": {
+                "ready": False,
+                "authReady": True,
+                "providerReady": False,
+                "sourceCommitSha": _TEST_SHA,
+                "auth": {
+                    "mode": "strict",
+                    "stub": False,
+                    "sessionKind": "bearer",
+                    "operatorRoleReady": True,
+                    "interactionCapabilityReady": True,
+                    "verifierReady": True,
+                },
+                "provider": {
+                    "provider": "openclaw",
+                    "ready": False,
+                    "status": "unavailable",
+                    "reason": "OPENCLAW_GATEWAY_TIMEOUT",
+                },
+            }
+        },
+        {
+            "data": {
+                "ready": True,
+                "authReady": True,
+                "providerReady": True,
+                "sourceCommitSha": _TEST_SHA,
+                "auth": {
+                    "mode": "strict",
+                    "stub": False,
+                    "sessionKind": "bearer",
+                    "operatorRoleReady": True,
+                    "interactionCapabilityReady": True,
+                    "verifierReady": True,
+                },
+                "provider": {
+                    "provider": "openclaw",
+                    "ready": True,
+                    "status": "ready",
+                },
+            }
+        },
+    ]
+
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        result = _run_auth_gate_against_server(
+            f"http://127.0.0.1:{port}",
+            timeout_seconds=3.0,
+            poll_interval_seconds=0.05,
+        )
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert (
+            "authenticated dev-login and strict browser readiness round trip succeeded"
+            in result.stdout
+        )
+        assert _MockBffHandler.readiness_call_count >= 2
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_auth_gate_readiness_retry_times_out_on_permanent_non_ready() -> None:
+    from http.server import ThreadingHTTPServer
+    import threading
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _MockBffHandler)
+    port = server.server_port
+    _MockBffHandler.readiness_call_count = 0
+    _MockBffHandler.version_posture = {"auth_stub": False, "auth_mode": "strict"}
+    _MockBffHandler.readiness_responses = [
+        {
+            "data": {
+                "ready": False,
+                "authReady": True,
+                "providerReady": False,
+                "sourceCommitSha": _TEST_SHA,
+                "auth": {
+                    "mode": "strict",
+                    "stub": False,
+                    "sessionKind": "bearer",
+                    "operatorRoleReady": True,
+                    "interactionCapabilityReady": True,
+                    "verifierReady": True,
+                },
+                "provider": {
+                    "provider": "openclaw",
+                    "ready": False,
+                    "status": "unavailable",
+                    "reason": "OPENCLAW_GATEWAY_TIMEOUT",
+                },
+            }
+        }
+    ]
+
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        result = _run_auth_gate_against_server(
+            f"http://127.0.0.1:{port}",
+            timeout_seconds=1,
+            poll_interval_seconds=0.05,
+        )
+        assert result.returncode != 0, result.stdout
+        assert "strict browser readiness contract is not satisfied within 1s timeout" in result.stderr
+        assert "OPENCLAW_GATEWAY_TIMEOUT" in result.stderr
+        assert "providerReady" in result.stderr
+        assert "test-operator-a-secret" not in result.stdout
+        assert "test-operator-a-secret" not in result.stderr
+        assert "eyJhbGci" not in result.stdout
+        assert "eyJhbGci" not in result.stderr
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_auth_gate_readiness_fails_closed_on_sha_mismatch() -> None:
+    from http.server import ThreadingHTTPServer
+    import threading
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _MockBffHandler)
+    port = server.server_port
+    _MockBffHandler.readiness_call_count = 0
+    _MockBffHandler.version_posture = {"auth_stub": False, "auth_mode": "strict"}
+    _MockBffHandler.readiness_responses = [
+        {
+            "data": {
+                "ready": True,
+                "authReady": True,
+                "providerReady": True,
+                "sourceCommitSha": "wrong" * 8,
+                "auth": {
+                    "mode": "strict",
+                    "stub": False,
+                    "sessionKind": "bearer",
+                    "operatorRoleReady": True,
+                    "interactionCapabilityReady": True,
+                    "verifierReady": True,
+                },
+                "provider": {
+                    "provider": "openclaw",
+                    "ready": True,
+                    "status": "ready",
+                },
+            }
+        }
+    ]
+
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        result = _run_auth_gate_against_server(
+            f"http://127.0.0.1:{port}",
+            timeout_seconds=1,
+            poll_interval_seconds=0.05,
+        )
+        assert result.returncode != 0, result.stdout
+        assert "sourceCommitSha" in result.stderr
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_auth_gate_configures_bounded_readiness_timeout_and_plumbing() -> None:
+    script = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+
+    assert 'DEV_BFF_AUTH_READINESS_TIMEOUT_SECONDS="${DEV_BFF_AUTH_READINESS_TIMEOUT_SECONDS:-120}"' in script
+    assert 'DEV_BFF_AUTH_READINESS_POLL_INTERVAL_SECONDS="${DEV_BFF_AUTH_READINESS_POLL_INTERVAL_SECONDS:-2}"' in script
+    assert 'command_prefix+=" PANTHEON_DEV_BFF_AUTH_READINESS_TIMEOUT_SECONDS=' in script
+    assert 'command_prefix+=" PANTHEON_DEV_BFF_AUTH_READINESS_POLL_INTERVAL_SECONDS=' in script
+
+
+def test_auth_gate_readiness_retry_succeeds_on_transient_http_error() -> None:
+    from http.server import ThreadingHTTPServer
+    import threading
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _MockBffHandler)
+    port = server.server_port
+    _MockBffHandler.readiness_call_count = 0
+    _MockBffHandler.version_posture = {"auth_stub": False, "auth_mode": "strict"}
+    _MockBffHandler.readiness_responses = [
+        {"__status_code": 503, "error": "service unavailable during restart"},
+        {
+            "data": {
+                "ready": True,
+                "authReady": True,
+                "providerReady": True,
+                "sourceCommitSha": _TEST_SHA,
+                "auth": {
+                    "mode": "strict",
+                    "stub": False,
+                    "sessionKind": "bearer",
+                    "operatorRoleReady": True,
+                    "interactionCapabilityReady": True,
+                    "verifierReady": True,
+                },
+                "provider": {
+                    "provider": "openclaw",
+                    "ready": True,
+                    "status": "ready",
+                },
+            }
+        },
+    ]
+
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        result = _run_auth_gate_against_server(
+            f"http://127.0.0.1:{port}",
+            timeout_seconds=3,
+            poll_interval_seconds=0.05,
+        )
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert (
+            "authenticated dev-login and strict browser readiness round trip succeeded"
+            in result.stdout
+        )
+        assert _MockBffHandler.readiness_call_count >= 2
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_auth_gate_readiness_fails_closed_on_auth_posture_mismatch() -> None:
+    from http.server import ThreadingHTTPServer
+    import threading
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _MockBffHandler)
+    port = server.server_port
+    _MockBffHandler.readiness_call_count = 0
+    _MockBffHandler.version_posture = {"auth_stub": False, "auth_mode": "strict"}
+    _MockBffHandler.readiness_responses = [
+        {
+            "data": {
+                "ready": True,
+                "authReady": True,
+                "providerReady": True,
+                "sourceCommitSha": _TEST_SHA,
+                "auth": {
+                    "mode": "permissive",
+                    "stub": True,
+                    "sessionKind": "bearer",
+                    "operatorRoleReady": True,
+                    "interactionCapabilityReady": True,
+                    "verifierReady": True,
+                },
+                "provider": {
+                    "provider": "openclaw",
+                    "ready": True,
+                    "status": "ready",
+                },
+            }
+        }
+    ]
+
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        result = _run_auth_gate_against_server(
+            f"http://127.0.0.1:{port}",
+            timeout_seconds=1,
+            poll_interval_seconds=0.05,
+        )
+        assert result.returncode != 0, result.stdout
+        assert "auth.mode" in result.stderr or "auth.stub" in result.stderr
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_auth_gate_readiness_fails_closed_on_auth_not_ready() -> None:
+    from http.server import ThreadingHTTPServer
+    import threading
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _MockBffHandler)
+    port = server.server_port
+    _MockBffHandler.readiness_call_count = 0
+    _MockBffHandler.version_posture = {"auth_stub": False, "auth_mode": "strict"}
+    _MockBffHandler.readiness_responses = [
+        {
+            "data": {
+                "ready": False,
+                "authReady": False,
+                "providerReady": True,
+                "sourceCommitSha": _TEST_SHA,
+                "auth": {
+                    "mode": "strict",
+                    "stub": False,
+                    "sessionKind": "bearer",
+                    "operatorRoleReady": False,
+                    "interactionCapabilityReady": False,
+                    "verifierReady": False,
+                },
+                "provider": {
+                    "provider": "openclaw",
+                    "ready": True,
+                    "status": "ready",
+                },
+            }
+        }
+    ]
+
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        result = _run_auth_gate_against_server(
+            f"http://127.0.0.1:{port}",
+            timeout_seconds=1,
+            poll_interval_seconds=0.05,
+        )
+        assert result.returncode != 0, result.stdout
+        assert "authReady" in result.stderr
+    finally:
+        server.shutdown()
+        server.server_close()
+
+

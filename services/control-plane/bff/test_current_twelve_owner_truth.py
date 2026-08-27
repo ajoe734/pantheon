@@ -77,15 +77,18 @@ def _scoped_health_client(
             env_overrides["PANTHEON_BFF_LOOP_HEALTH_STORE"] = str(health_path)
 
         original_store = bff_main.read_store
+        original_monitor = getattr(bff_main, "downstream_health_monitor", None)
         bff_main.read_store = ReadSurfaceStore(
             str(snapshot_path),
             allow_local_snapshot_fallback=False,
         )
+        bff_main.downstream_health_monitor = None
         with patch.dict(os.environ, env_overrides, clear=False):
             try:
                 yield TestClient(bff_main.app, raise_server_exceptions=False)
             finally:
                 bff_main.read_store = original_store
+                bff_main.downstream_health_monitor = original_monitor
 
 
 def _build_valid_controller_row(
@@ -139,6 +142,8 @@ def _build_valid_controller_row(
             else [f"docs/deployment/evidence/twelve-loop-gap/{loop_id}.json"]
         ),
         "truth_level": "reconciled_live_proof",
+        "evidence_basis": "controller_runtime",
+        "evidence_bases": ["controller_runtime"],
         "lease_token": f"{loop_id}-fence-1",
         "lease_expires_at": (heartbeat + timedelta(seconds=60)).isoformat(),
         "controller_status": status,
@@ -200,9 +205,9 @@ class TestTwelveOwnerCatalogContract:
                 assert contract["restart_behavior"] is None, f"{loop_id} restart_behavior must be null"
                 assert contract["liveness_metric"] is None, f"{loop_id} liveness_metric must be null"
 
-            # Maturity bounds
-            assert loop["maturity"]["current"] in {"api-only", "manual", "scheduled"}, (
-                f"{loop_id} maturity ceiling exceeded: {loop['maturity']['current']}"
+            # Static contract status ceiling (proven_live requires live runtime projection, not static catalog)
+            assert loop["controller_contract"]["status"] in {"not_implemented", "implemented"}, (
+                f"{loop_id} controller_contract status ceiling exceeded: {loop['controller_contract']['status']}"
             )
 
     def test_composite_overlay_is_isolated_from_canonical_loops(self) -> None:
@@ -472,3 +477,222 @@ class TestTaskArchiveLivenessRejection:
         )
         assert data["live_status"]["is_live"] is False
         assert data["live_status"]["has_live_evidence"] is False
+
+
+class TestAllTwelveProductLoopsRuntimeObservations:
+    """Validate positive and negative runtime observation acceptance across all twelve loops."""
+
+    def test_all_twelve_canonical_loops_accept_positive_runtime_observation(self) -> None:
+        conformance = _loop_conformance_module()
+        now = datetime.now(timezone.utc)
+        store = {
+            loop_id: _build_valid_controller_row(loop_id, now=now)
+            for loop_id in conformance.CANONICAL_LOOP_IDS
+        }
+
+        with _scoped_health_client(loop_health_store=store) as client:
+            response = client.get("/bff/v5/loop-health", headers=HEADERS)
+
+        assert response.status_code == 200, response.text
+        payload = response.json()
+        assert payload["meta"]["coverage"]["canonical_loop_count"] == 12
+        assert payload["meta"]["coverage"]["controller_health_record_count"] == 12
+        assert payload["meta"]["surfaces"]["loop_health"]["status"] == "ok"
+
+        items = {item["loop_id"]: item for item in payload["items"]}
+        for loop_id in conformance.CANONICAL_LOOP_IDS:
+            assert loop_id in items, f"{loop_id} missing from items"
+            item = items[loop_id]
+            health = item["controller_health"]
+            live_status = item["live_status"]
+            packet = item["evidence_packet"]
+            maturity = item["runtime_maturity"]
+
+            assert health["current_record_accepted"] is True, f"{loop_id} current_record_accepted should be True"
+            assert health["status"] == "healthy", f"{loop_id} status mismatch"
+            assert health["rejection_reason"] is None, f"{loop_id} has unexpected rejection_reason"
+            assert live_status["has_live_evidence"] is True, f"{loop_id} has_live_evidence should be True"
+            assert live_status["is_reconciled"] is True, f"{loop_id} is_reconciled should be True"
+            assert live_status["operator_truth"]["accepted_as_live"] is True, f"{loop_id} operator_truth accepted_as_live"
+            assert live_status["operator_truth"]["degraded"] is False, f"{loop_id} operator_truth degraded"
+            assert maturity["state"] == "reconciled", f"{loop_id} maturity state should be reconciled"
+            assert packet["runtime_controller_record_qualified"] is True, f"{loop_id} packet qualified"
+            assert packet["accepted_live_liveness"] is True, f"{loop_id} packet accepted_live_liveness"
+
+    def test_all_twelve_loops_detail_endpoints(self) -> None:
+        conformance = _loop_conformance_module()
+        now = datetime.now(timezone.utc)
+        for loop_id in conformance.CANONICAL_LOOP_IDS:
+            row = _build_valid_controller_row(loop_id, now=now)
+            store = {loop_id: row}
+            with _scoped_health_client(loop_health_store=store) as client:
+                response = client.get(f"/bff/v5/loop-health/{loop_id}", headers=HEADERS)
+
+            assert response.status_code == 200, f"{loop_id} detail failed: {response.text}"
+            data = response.json()["data"]
+            assert data["controller_health"]["current_record_accepted"] is True, loop_id
+            assert data["controller_health"]["status"] == "healthy", loop_id
+            assert data["live_status"]["is_reconciled"] is True, loop_id
+            assert data["live_status"]["has_live_evidence"] is True, loop_id
+
+    def test_all_twelve_loops_reject_negative_stale_heartbeat(self) -> None:
+        conformance = _loop_conformance_module()
+        now = datetime.now(timezone.utc)
+        stale_heartbeat = now - timedelta(hours=2)
+        for loop_id in conformance.CANONICAL_LOOP_IDS:
+            row = _build_valid_controller_row(
+                loop_id,
+                now=now,
+                heartbeat_at=stale_heartbeat,
+            )
+            store = {loop_id: row}
+            with _scoped_health_client(loop_health_store=store) as client:
+                response = client.get(f"/bff/v5/loop-health/{loop_id}", headers=HEADERS)
+
+            assert response.status_code == 200, response.text
+            data = response.json()["data"]
+            assert data["controller_health"]["freshness"]["current"] is False, loop_id
+            assert data["controller_health"]["current_record_accepted"] is False, loop_id
+            assert data["live_status"]["has_live_evidence"] is False, loop_id
+            assert data["live_status"]["is_reconciled"] is False, loop_id
+
+    def test_all_twelve_loops_reject_negative_degraded_worker_health(self) -> None:
+        conformance = _loop_conformance_module()
+        now = datetime.now(timezone.utc)
+        for loop_id in conformance.CANONICAL_LOOP_IDS:
+            row = _build_valid_controller_row(
+                loop_id,
+                now=now,
+                worker_health={
+                    "ready": False,
+                    "status": "degraded",
+                    "reason": f"{loop_id} worker worker_unready",
+                },
+            )
+            store = {loop_id: row}
+            with _scoped_health_client(loop_health_store=store) as client:
+                response = client.get(f"/bff/v5/loop-health/{loop_id}", headers=HEADERS)
+
+            assert response.status_code == 200, response.text
+            data = response.json()["data"]
+            assert data["controller_health"]["current_record_accepted"] is False, loop_id
+            assert data["controller_health"]["rejection_reason"] == (
+                "worker functional health is degraded despite process readiness"
+            ), loop_id
+            assert data["live_status"]["has_live_evidence"] is False, loop_id
+            assert data["live_status"]["is_reconciled"] is False, loop_id
+
+    def test_all_twelve_loops_reject_negative_archive_only_refs(self) -> None:
+        conformance = _loop_conformance_module()
+        now = datetime.now(timezone.utc)
+        for loop_id in conformance.CANONICAL_LOOP_IDS:
+            row = _build_valid_controller_row(
+                loop_id,
+                now=now,
+                evidence_refs=[f"ai-task-archive/tasks/LOOP-{loop_id}.json"],
+            )
+            store = {loop_id: row}
+            with _scoped_health_client(loop_health_store=store) as client:
+                response = client.get(f"/bff/v5/loop-health/{loop_id}", headers=HEADERS)
+
+            assert response.status_code == 200, response.text
+            data = response.json()["data"]
+            assert data["controller_health"]["current_record_accepted"] is False, loop_id
+            assert data["controller_health"]["rejection_reason"] == (
+                "task archive completion is reference-only, not runtime evidence"
+            ), loop_id
+            assert data["live_status"]["has_live_evidence"] is False, loop_id
+            assert data["live_status"]["is_reconciled"] is False, loop_id
+
+
+class TestOverlayExclusion:
+    """Validate that composite overlay controllers are excluded from canonical loop runtime acceptance."""
+
+    def test_composite_overlay_per_persona_ooda_rejects_direct_controller_record(self) -> None:
+        now = datetime.now(timezone.utc)
+        row = _build_valid_controller_row("per_persona_ooda", now=now)
+        store = {"per_persona_ooda": row}
+
+        with _scoped_health_client(loop_health_store=store) as client:
+            response = client.get("/bff/v5/loop-health/per_persona_ooda", headers=HEADERS)
+
+        assert response.status_code == 200, response.text
+        data = response.json()["data"]
+        assert data["classification"] == "composite_overlay"
+        assert data["controller_health"]["current_record_accepted"] is False
+        assert data["controller_health"]["rejection_reason"] == (
+            "composite overlay loops do not accept direct controller runtime records"
+        )
+        assert data["live_status"]["is_live"] is False
+        assert data["live_status"]["has_live_evidence"] is False
+
+
+class TestBffDownstreamWorkerFailureAttribution:
+    """Validate that BFF attributes functional worker failures to the correct loops (8, 9, 12)."""
+
+    def test_downstream_health_prober_attributes_failures_to_loops_8_9_12(self) -> None:
+        now_iso = datetime.now(timezone.utc).isoformat()
+        mock_monitor = MagicMock()
+        mock_monitor.publish_loop_12_controller_truth.return_value = {
+            "loop_id": "bff_health_monitoring",
+            "controller_name": "bff_downstream_health_monitor",
+            "status": "degraded",
+            "last_heartbeat_at": now_iso,
+            "evidence_refs": ["docs/deployment/evidence/twelve-loop-gap/L12-TRUTH-001/bff_health_monitoring.json"],
+            "truth_level": "reconciled_live_proof",
+        }
+        mock_monitor.get_state.return_value = {
+            "targets": {
+                "deployment-outbox-consumer": {
+                    "name": "deployment-outbox-consumer",
+                    "ok": False,
+                    "failure_reason": "database outbox deadletter threshold exceeded",
+                    "checked_at": now_iso,
+                },
+                "paper-fleet-reconciler": {
+                    "name": "paper-fleet-reconciler",
+                    "ok": False,
+                    "failure_reason": "portfolio drift exceeds guardrail limit",
+                    "checked_at": now_iso,
+                },
+                "runtime-manager": {
+                    "name": "runtime-manager",
+                    "ok": False,
+                    "failure_reason": "container runtime unreachable",
+                    "checked_at": now_iso,
+                },
+            }
+        }
+
+        with tempfile.TemporaryDirectory() as td:
+            snapshot_path = Path(td) / "read_surfaces.json"
+            original_store = bff_main.read_store
+            original_monitor = getattr(bff_main, "downstream_health_monitor", None)
+            bff_main.read_store = ReadSurfaceStore(
+                str(snapshot_path),
+                allow_local_snapshot_fallback=False,
+            )
+            bff_main.downstream_health_monitor = mock_monitor
+            try:
+                client = TestClient(bff_main.app, raise_server_exceptions=False)
+                response = client.get("/bff/v5/loop-health", headers=HEADERS)
+                assert response.status_code == 200, response.text
+                items = {item["loop_id"]: item for item in response.json()["items"]}
+
+                # Loop 8: promotion_deployment
+                loop8 = items["promotion_deployment"]
+                assert loop8["controller_health"]["current_record_accepted"] is False
+                assert "deployment-outbox-consumer" in str(loop8.get("truth_note") or "") or "deployment-outbox-consumer" in str(loop8.get("downstream_actual_state") or "")
+
+                # Loop 9: capital_pool_execution
+                loop9 = items["capital_pool_execution"]
+                assert loop9["controller_health"]["current_record_accepted"] is False
+                assert "paper-fleet-reconciler" in str(loop9.get("truth_note") or "") or "paper-fleet-reconciler" in str(loop9.get("downstream_actual_state") or "")
+
+                # Loop 12: bff_health_monitoring
+                loop12 = items["bff_health_monitoring"]
+                assert loop12["controller_health"]["current_record_accepted"] is False
+                assert "runtime-manager" in str(loop12.get("truth_note") or "") or "runtime-manager" in str(loop12.get("downstream_actual_state") or "")
+            finally:
+                bff_main.read_store = original_store
+                bff_main.downstream_health_monitor = original_monitor

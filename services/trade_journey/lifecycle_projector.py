@@ -1,61 +1,63 @@
-"""Durable canonical telemetry -> Trade Journey and loop-run projector.
+"""Durable canonical telemetry -> Trade Journey and loop-run PostgreSQL projector.
 
 The projector consumes committed ``telemetry_events`` rows by the monotonic
-``ingested_seq`` assigned by Postgres.  It owns one atomic read-model bundle:
-
-* ``trade_journey_events.json`` -- immutable derived stage events;
-* ``loop_runs.json`` -- one loop run for the same lifecycle identity; and
-* ``controller_state.json`` -- durable checkpoint and live/repair watermarks.
-* ``health_state.json`` -- bounded readiness metadata atomically advanced with
-  the active generation.
-
-Only records consumed in ``live`` mode advance live freshness.  Startup catch-
-up, replay, and manual backfill can repair the read model, but remain explicitly
-labelled and can never make a backfill-only projection look live.
+``ingested_seq`` assigned by Postgres. It updates durable projection tables and
+receipts via ``ProjectionStore`` transactions. Legacy JSON files and file-based
+writer/read models are retired.
 """
 
 from __future__ import annotations
 
 import argparse
 import asyncio
-import copy
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
-import shutil
 import sys
-import tempfile
-import time
 from typing import Any, Callable, Iterable, Mapping, Sequence
-import uuid
 
 from services.trade_journey.correlation_envelope import (
     CorrelationEnvelopeError,
     validate_envelope,
 )
 from services.trade_journey.incremental_materializer import IncrementalLifecycleMaterializer
-from services.trade_journey.materializer import JourneyMaterializer
+from services.trade_journey.materializer import (
+    IDENTIFIER_FIELDS,
+    TERMINAL_STATUSES,
+    JourneyMaterializer,
+)
+from services.trade_journey.projection_store import (
+    BatchProjectionMutation,
+    EventReceiptRow,
+    IdentityLinkRow,
+    JourneyRow,
+    JourneyStageRow,
+    LoopRunRow,
+    ProjectionStore,
+    QuarantineRow,
+)
 
 
-STATE_SCHEMA = "pantheon.lifecycle-projector-state.v1"
 JOURNEY_STORE_SCHEMA = "pantheon.trade-journey-projection.v1"
 LOOP_STORE_SCHEMA = "pantheon.loop-run-projection.v1"
 PROJECTION_MODES = frozenset({"live", "recovery", "backfill", "replay"})
 
-DEFAULT_ROOT = Path("/data/bff/lifecycle-projection")
-DEFAULT_STATE_PATH = DEFAULT_ROOT / "controller_state.json"
-DEFAULT_HEALTH_STATE_PATH = DEFAULT_ROOT / "health_state.json"
 DEFAULT_CHANNEL = "pantheon_lifecycle_events"
-DEFAULT_GENERATION_RETENTION = 32
-DEFAULT_STAGING_MAX_AGE_SECONDS = 3600.0
-DEFAULT_HEALTH_MAX_AGE_SECONDS = 120.0
-DEFAULT_HEALTH_MAX_BACKLOG = 5000
-DEFAULT_HEALTH_MIN_FREE_BYTES = 128 * 1024 * 1024
-DEFAULT_HEALTH_MIN_FREE_PERCENT = 5.0
 DEFAULT_SOURCE_STARTUP_TIMEOUT_SECONDS = 10.0
+DEFAULT_SOURCE_TIMEOUT_SECONDS = 10.0
+DEFAULT_PROJECTION_TIMEOUT_SECONDS = 10.0
+RELATIONAL_WRITER_BACKEND_ENV = "LIFECYCLE_PROJECTOR_WRITER_BACKEND"
+RELATIONAL_WRITER_DSN_ENV = "LIFECYCLE_PROJECTOR_PROJECTION_DSN"
+RELATIONAL_WRITER_SCHEMA_ENV = "LIFECYCLE_PROJECTOR_PROJECTION_SCHEMA"
+RELATIONAL_WRITER_BACKEND_SHADOW = "shadow"
+RELATIONAL_WRITER_DEFAULT_SCHEMA = "trade_journey_projection"
+RELATIONAL_CONTROLLER_ID = "canonical-lifecycle-projector"
+RELATIONAL_CONTROLLER_TENANT_SCOPE = "*"
+RELATIONAL_CONTROLLER_ENVIRONMENT_SCOPE = "*"
 
 LIFECYCLE_EVENT_TYPES = frozenset(
     {
@@ -220,6 +222,10 @@ def _utc_now() -> str:
 
 
 def _parse_iso(value: Any) -> datetime:
+    if isinstance(value, datetime):
+        if value.tzinfo is None:
+            raise InvalidLifecycleEvent(f"invalid timezone-aware timestamp: {value!r}")
+        return value.astimezone(timezone.utc)
     try:
         parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
     except (TypeError, ValueError) as exc:
@@ -249,1022 +255,396 @@ def _first(*values: Any) -> Any:
     return None
 
 
-def _prepare_atomic_json(path: Path, payload: Mapping[str, Any]) -> Path:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd, raw_tmp = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
-    tmp = Path(raw_tmp)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            json.dump(payload, handle, ensure_ascii=False, indent=2, sort_keys=True)
-            handle.write("\n")
-            handle.flush()
-            os.fsync(handle.fileno())
-        return tmp
-    except BaseException:
-        try:
-            tmp.unlink()
-        except OSError:
-            pass
-        raise
+def _stage_status(value: Any) -> str:
+    token = str(value or "unknown").strip().lower()
+    if token in {"ok", "accepted", "submitted", "filled", "resolved", "complete", "completed", "succeeded"}:
+        return "succeeded"
+    if token in {"partial", "partially_filled", "partially_succeeded"}:
+        return "partially_succeeded"
+    if token in {"rejected", "failed", "error"}:
+        return "failed"
+    if token in {"cancelled", "canceled"}:
+        return "cancelled"
+    if token in {"noop", "no_order", "not_submitted", "skipped"}:
+        return "skipped"
+    return token
 
 
-def _commit_prepared_json(path: Path, tmp: Path) -> None:
-    os.replace(tmp, path)
-    directory_fd = os.open(path.parent, os.O_RDONLY)
-    try:
-        os.fsync(directory_fd)
-    finally:
-        os.close(directory_fd)
+class RelationalLifecycleProjector:
+    """Canonical bounded relational lifecycle projector.
 
-
-def _atomic_write_json(path: Path, payload: Mapping[str, Any]) -> None:
-    tmp = _prepare_atomic_json(path, payload)
-    try:
-        _commit_prepared_json(path, tmp)
-    except BaseException:
-        try:
-            tmp.unlink()
-        except OSError:
-            pass
-        raise
-
-
-class AtomicProjectionBundle:
-    """Publish two read models with one atomic ``current`` symlink switch."""
+    Durable cursor, receipts, quarantines, aggregate summaries, and controller
+    revision all live in the PostgreSQL projection schema and are committed by
+    atomic ``ProjectionStore`` transactions. Legacy JSON file-based generation and
+    read-model paths are retired.
+    """
 
     def __init__(
         self,
-        root: str | Path,
+        store: ProjectionStore,
         *,
-        before_switch: Callable[[Path], None] | None = None,
-        generation_retention: int | None = None,
-        staging_max_age_seconds: float | None = None,
-        epoch_clock: Callable[[], float] = time.time,
-    ) -> None:
-        self.root = Path(root)
-        self.generations = self.root / "generations"
-        self.current = self.root / "current"
-        self._before_switch = before_switch
-        configured_retention = (
-            generation_retention
-            if generation_retention is not None
-            else int(
-                os.getenv(
-                    "LIFECYCLE_PROJECTOR_GENERATION_RETENTION",
-                    str(DEFAULT_GENERATION_RETENTION),
-                )
-            )
-        )
-        configured_staging_age = (
-            staging_max_age_seconds
-            if staging_max_age_seconds is not None
-            else float(
-                os.getenv(
-                    "LIFECYCLE_PROJECTOR_STAGING_MAX_AGE_SECONDS",
-                    str(DEFAULT_STAGING_MAX_AGE_SECONDS),
-                )
-            )
-        )
-        self.generation_retention = max(1, int(configured_retention))
-        self.staging_max_age_seconds = max(0.0, float(configured_staging_age))
-        self._epoch_clock = epoch_clock
-
-    @staticmethod
-    def _generation_number(path: Path) -> int | None:
-        name = path.name
-        if not name.startswith("g") or "-" not in name:
-            return None
-        raw_generation, suffix = name[1:].split("-", 1)
-        if (
-            len(raw_generation) != 12
-            or not raw_generation.isdigit()
-            or len(suffix) != 12
-            or any(
-                character not in "0123456789abcdef"
-                for character in suffix.lower()
-            )
-        ):
-            return None
-        return int(raw_generation)
-
-    def _active_generation_name(self) -> str | None:
-        if not self.current.is_symlink():
-            return None
-        try:
-            target = (self.root / os.readlink(self.current)).resolve(strict=False)
-            generations_root = self.generations.resolve(strict=False)
-            relative = target.relative_to(generations_root)
-        except (OSError, ValueError):
-            return None
-        if len(relative.parts) != 1:
-            return None
-        return relative.name
-
-    def _generation_directories(self) -> list[Path]:
-        if not self.generations.is_dir():
-            return []
-        return [
-            path
-            for path in self.generations.iterdir()
-            if path.is_dir()
-            and not path.is_symlink()
-            and self._generation_number(path) is not None
-        ]
-
-    def _staging_candidates(self) -> list[Path]:
-        if not self.generations.is_dir():
-            return []
-        now = self._epoch_clock()
-        candidates: list[Path] = []
-        for path in self.generations.iterdir():
-            if not path.name.startswith(".g") or not path.name.endswith(".tmp"):
-                continue
-            if self._generation_number(Path(path.name[1:-4])) is None:
-                continue
-            try:
-                age = now - path.lstat().st_mtime
-            except OSError:
-                continue
-            if age >= self.staging_max_age_seconds:
-                candidates.append(path)
-        return sorted(candidates, key=lambda path: path.name)
-
-    def _temporary_link_candidates(self) -> list[Path]:
-        if not self.root.is_dir():
-            return []
-        now = self._epoch_clock()
-        candidates: list[Path] = []
-        for path in self.root.iterdir():
-            if not path.name.startswith(".current.") or not path.name.endswith(".tmp"):
-                continue
-            suffix = path.name[len(".current.") : -len(".tmp")]
-            if len(suffix) != 32 or any(
-                character not in "0123456789abcdef" for character in suffix.lower()
-            ):
-                continue
-            try:
-                age = now - path.lstat().st_mtime
-            except OSError:
-                continue
-            if age >= self.staging_max_age_seconds:
-                candidates.append(path)
-        return sorted(candidates, key=lambda path: path.name)
-
-    def _retention_removals(self, *, max_count: int) -> list[Path]:
-        generations = sorted(
-            self._generation_directories(),
-            key=lambda path: (self._generation_number(path) or -1, path.name),
-            reverse=True,
-        )
-        active_name = self._active_generation_name()
-        retained: set[str] = set()
-        if active_name is not None and any(path.name == active_name for path in generations):
-            retained.add(active_name)
-        for path in generations:
-            if len(retained) >= max(1, max_count):
-                break
-            retained.add(path.name)
-        return [path for path in generations if path.name not in retained]
-
-    def maintain(self, *, reserve_for_publish: bool = False) -> dict[str, Any]:
-        """Bound debris while preserving the generation referenced by ``current``."""
-
-        self.generations.mkdir(parents=True, exist_ok=True)
-        staging = self._staging_candidates()
-        temporary_links = self._temporary_link_candidates()
-        max_count = (
-            max(1, self.generation_retention - 1)
-            if reserve_for_publish
-            else self.generation_retention
-        )
-        generation_removals = self._retention_removals(max_count=max_count)
-        report = {
-            "active_generation": self._active_generation_name(),
-            "generation_retention": self.generation_retention,
-            "reserve_for_publish": reserve_for_publish,
-            "abandoned_staging_count": len(staging),
-            "abandoned_staging": [path.name for path in staging[:100]],
-            "temporary_link_count": len(temporary_links),
-            "temporary_links": [path.name for path in temporary_links[:100]],
-            "generation_removal_count": len(generation_removals),
-            "oldest_generation_removed": (
-                generation_removals[-1].name if generation_removals else None
-            ),
-            "newest_generation_removed": (
-                generation_removals[0].name if generation_removals else None
-            ),
-        }
-        if staging or temporary_links or generation_removals:
-            print(
-                f"lifecycle projector cleanup plan: {_canonical_json(report)}",
-                flush=True,
-            )
-        for path in staging:
-            if path.is_dir() and not path.is_symlink():
-                shutil.rmtree(path)
-            else:
-                path.unlink()
-        for path in temporary_links:
-            path.unlink()
-        for path in generation_removals:
-            shutil.rmtree(path)
-        return report
-
-    def publish(
-        self,
-        generation: int,
-        journey_payload: Mapping[str, Any],
-        loop_payload: Mapping[str, Any],
-    ) -> Path:
-        self.maintain(reserve_for_publish=True)
-        generation_name = f"g{generation:012d}-{uuid.uuid4().hex[:12]}"
-        staging = self.generations / f".{generation_name}.tmp"
-        final = self.generations / generation_name
-        tmp_link: Path | None = None
-        staging.mkdir()
-        try:
-            _atomic_write_json(staging / "trade_journey_events.json", journey_payload)
-            _atomic_write_json(staging / "loop_runs.json", loop_payload)
-            manifest = {
-                "schema_version": "pantheon.lifecycle-projection-bundle.v1",
-                "generation": generation,
-                "journey_sha256": _fingerprint(journey_payload),
-                "loop_runs_sha256": _fingerprint(loop_payload),
-            }
-            _atomic_write_json(staging / "manifest.json", manifest)
-            os.replace(staging, final)
-            if self._before_switch is not None:
-                self._before_switch(final)
-            tmp_link = self.root / f".current.{uuid.uuid4().hex}.tmp"
-            os.symlink(str(Path("generations") / generation_name), tmp_link)
-            os.replace(tmp_link, self.current)
-            directory_fd = os.open(self.root, os.O_RDONLY)
-            try:
-                os.fsync(directory_fd)
-            finally:
-                os.close(directory_fd)
-            return final
-        except BaseException:
-            if staging.exists():
-                shutil.rmtree(staging, ignore_errors=True)
-            if tmp_link is not None:
-                try:
-                    tmp_link.unlink()
-                except OSError:
-                    pass
-            raise
-
-
-def projector_readiness(
-    *,
-    state_path: str | Path = DEFAULT_HEALTH_STATE_PATH,
-    bundle_root: str | Path | None = None,
-    max_age_seconds: float | None = None,
-    max_backlog: int | None = None,
-    min_free_bytes: int | None = None,
-    min_free_percent: float | None = None,
-    now: datetime | None = None,
-) -> dict[str, Any]:
-    """Return fail-closed worker, projection, freshness, and disk truth."""
-
-    resolved_state_path = Path(state_path)
-    resolved_root = Path(bundle_root) if bundle_root is not None else resolved_state_path.parent
-    configured_max_age = (
-        float(max_age_seconds)
-        if max_age_seconds is not None
-        else float(
-            os.getenv(
-                "LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS",
-                str(DEFAULT_HEALTH_MAX_AGE_SECONDS),
-            )
-        )
-    )
-    configured_max_backlog = (
-        int(max_backlog)
-        if max_backlog is not None
-        else int(
-            os.getenv(
-                "LIFECYCLE_PROJECTOR_HEALTH_MAX_BACKLOG",
-                str(DEFAULT_HEALTH_MAX_BACKLOG),
-            )
-        )
-    )
-    configured_min_free_bytes = (
-        int(min_free_bytes)
-        if min_free_bytes is not None
-        else int(
-            os.getenv(
-                "LIFECYCLE_PROJECTOR_HEALTH_MIN_FREE_BYTES",
-                str(DEFAULT_HEALTH_MIN_FREE_BYTES),
-            )
-        )
-    )
-    configured_min_free_percent = (
-        float(min_free_percent)
-        if min_free_percent is not None
-        else float(
-            os.getenv(
-                "LIFECYCLE_PROJECTOR_HEALTH_MIN_FREE_PERCENT",
-                str(DEFAULT_HEALTH_MIN_FREE_PERCENT),
-            )
-        )
-    )
-    observed_at = now or datetime.now(timezone.utc)
-    if observed_at.tzinfo is None:
-        observed_at = observed_at.replace(tzinfo=timezone.utc)
-
-    base_payload: dict[str, Any] = {
-        "state_path": str(resolved_state_path),
-        "bundle_root": str(resolved_root),
-        "worker_status": "unavailable",
-        "controller_status": "unavailable",
-        "mode": None,
-        "accepted_live": False,
-        "checkpoint": None,
-        "source_high_watermark": None,
-        "backlog": None,
-        "current_generation": None,
-        "controller_generation": None,
-        "last_poll_at": None,
-        "last_successful_publish_at": None,
-        "deployment_sha": None,
-        "freshness": {
-            "age_seconds": None,
-            "max_age_seconds": configured_max_age,
-            "stale": True,
-        },
-        "disk": {
-            "free_bytes": None,
-            "free_percent": None,
-            "min_free_bytes": configured_min_free_bytes,
-            "min_free_percent": configured_min_free_percent,
-            "low": True,
-        },
-        "retention": {
-            "generation_limit": max(
-                1,
-                int(
-                    os.getenv(
-                        "LIFECYCLE_PROJECTOR_GENERATION_RETENTION",
-                        str(DEFAULT_GENERATION_RETENTION),
-                    )
-                ),
-            ),
-            "staging_max_age_seconds": max(
-                0.0,
-                float(
-                    os.getenv(
-                        "LIFECYCLE_PROJECTOR_STAGING_MAX_AGE_SECONDS",
-                        str(DEFAULT_STAGING_MAX_AGE_SECONDS),
-                    )
-                ),
-            ),
-        },
-        "stale_reason": "projector_state_unavailable",
-        "error_reason": "projector_state_unavailable",
-        "reasons": ["projector_state_unavailable"],
-        "status": "unavailable",
-        "ready": False,
-    }
-    try:
-        payload = json.loads(resolved_state_path.read_text(encoding="utf-8"))
-        if not isinstance(payload, Mapping) or payload.get("schema_version") != STATE_SCHEMA:
-            raise LifecycleProjectionError("unsupported projector state schema")
-        controller = payload.get("controller")
-        if not isinstance(controller, Mapping):
-            raise LifecycleProjectionError("projector controller state is missing")
-    except Exception as exc:  # noqa: BLE001 - readiness must fail closed
-        reason = f"projector_state_unavailable: {type(exc).__name__}: {exc}"
-        base_payload.update(
-            {
-                "stale_reason": reason,
-                "error_reason": reason,
-                "reasons": [reason],
-            }
-        )
-        return base_payload
-
-    reasons: list[str] = []
-    last_poll_at = controller.get("last_poll_at")
-    age_seconds: float | None = None
-    try:
-        age_seconds = max(0.0, (observed_at - _parse_iso(last_poll_at)).total_seconds())
-        if age_seconds > configured_max_age:
-            reasons.append(f"last_poll_stale:{age_seconds:.3f}s")
-    except Exception as exc:  # noqa: BLE001 - malformed freshness is unavailable truth
-        reasons.append(f"last_poll_invalid:{type(exc).__name__}")
-
-    controller_status = str(controller.get("status") or "unavailable")
-    mode = str(controller.get("mode") or "unknown")
-    accepted_live = bool(controller.get("accepted_live"))
-    backlog = int(controller.get("backlog") or 0)
-    controller_generation = int(
-        controller.get("generation")
-        if controller.get("generation") is not None
-        else payload.get("generation") or 0
-    )
-    if controller.get("last_error"):
-        reasons.append(f"last_error:{controller.get('last_error')}")
-    if backlog > configured_max_backlog:
-        reasons.append(f"backlog_exceeds_policy:{backlog}>{configured_max_backlog}")
-    if controller_status != "ready":
-        reasons.append(f"controller_not_ready:{controller_status}")
-    if mode != "live" or not accepted_live:
-        reasons.append(f"live_truth_not_accepted:{mode}:{str(accepted_live).lower()}")
-
-    current_generation: int | None = None
-    current = resolved_root / "current"
-    generations_root = resolved_root / "generations"
-    try:
-        if not current.is_symlink():
-            raise LifecycleProjectionError("current is not a symlink")
-        current_target = current.resolve(strict=True)
-        relative = current_target.relative_to(generations_root.resolve(strict=True))
-        if len(relative.parts) != 1:
-            raise LifecycleProjectionError("current points outside the generation root")
-        manifest = json.loads((current_target / "manifest.json").read_text(encoding="utf-8"))
-        current_generation = int(manifest["generation"])
-        if current_generation != controller_generation:
-            reasons.append(
-                f"current_generation_mismatch:{current_generation}!={controller_generation}"
-            )
-    except Exception as exc:  # noqa: BLE001 - a broken active bundle is not ready
-        reasons.append(f"current_generation_unavailable:{type(exc).__name__}:{exc}")
-
-    disk_path = resolved_root if resolved_root.exists() else resolved_root.parent
-    free_bytes: int | None = None
-    free_percent: float | None = None
-    disk_low = True
-    try:
-        disk = shutil.disk_usage(disk_path)
-        free_bytes = int(disk.free)
-        free_percent = (float(disk.free) / float(disk.total) * 100.0) if disk.total else 0.0
-        disk_low = (
-            free_bytes < configured_min_free_bytes
-            or free_percent < configured_min_free_percent
-        )
-        if disk_low:
-            reasons.append(
-                "disk_below_policy:"
-                f"{free_bytes}B/{free_percent:.3f}%"
-            )
-    except OSError as exc:
-        reasons.append(f"disk_unavailable:{type(exc).__name__}:{exc}")
-
-    stale_reason = next(
-        (
-            reason
-            for reason in reasons
-            if reason.startswith("last_poll_") or reason.startswith("projector_state_")
-        ),
-        None,
-    )
-    worker_status = (
-        "stale"
-        if stale_reason is not None
-        else "error"
-        if controller.get("last_error")
-        else controller_status
-    )
-    base_payload.update(
-        {
-            "worker_status": worker_status,
-            "controller_status": controller_status,
-            "mode": mode,
-            "accepted_live": accepted_live,
-            "checkpoint": int(payload.get("checkpoint") or 0),
-            "source_high_watermark": int(controller.get("source_high_watermark") or 0),
-            "backlog": backlog,
-            "current_generation": current_generation,
-            "controller_generation": controller_generation,
-            "last_poll_at": last_poll_at,
-            "last_successful_publish_at": (
-                controller.get("last_successful_publish_at")
-                or controller.get("last_projection_success_at")
-            ),
-            "deployment_sha": controller.get("deployment_sha"),
-            "freshness": {
-                "age_seconds": age_seconds,
-                "max_age_seconds": configured_max_age,
-                "stale": stale_reason is not None,
-            },
-            "disk": {
-                "free_bytes": free_bytes,
-                "free_percent": free_percent,
-                "min_free_bytes": configured_min_free_bytes,
-                "min_free_percent": configured_min_free_percent,
-                "low": disk_low,
-            },
-            "stale_reason": stale_reason,
-            "error_reason": reasons[0] if reasons else None,
-            "reasons": reasons,
-            "status": "ok" if not reasons else "degraded",
-            "ready": not reasons,
-        }
-    )
-    return base_payload
-
-
-class LifecycleProjector:
-    """Deterministic durable projector over committed telemetry append rows."""
-
-    def __init__(
-        self,
-        *,
-        state_path: str | Path = DEFAULT_STATE_PATH,
-        health_state_path: str | Path | None = None,
-        bundle_root: str | Path = DEFAULT_ROOT,
         deployment_sha: str = "unknown",
         clock: Callable[[], str] = _utc_now,
-        publisher: AtomicProjectionBundle | None = None,
+        controller_id: str = RELATIONAL_CONTROLLER_ID,
+        tenant_scope: str = RELATIONAL_CONTROLLER_TENANT_SCOPE,
+        environment_scope: str = RELATIONAL_CONTROLLER_ENVIRONMENT_SCOPE,
     ) -> None:
-        self.state_path = Path(state_path)
-        self.health_state_path = Path(
-            health_state_path
-            if health_state_path is not None
-            else Path(bundle_root) / "health_state.json"
-        )
-        self.bundle = publisher or AtomicProjectionBundle(bundle_root)
+        self.store = store
         self.deployment_sha = str(deployment_sha or "unknown")
         self.clock = clock
-        self.state = self._load_state()
-        self.state["restart_count"] = int(self.state.get("restart_count", 0)) + 1
-        # The folded aggregates live in memory for the process lifetime.  They
-        # are rebuilt from disk exactly once, at startup, so no poll pays the
-        # cost of re-reading the whole read model.
-        self._materializer = IncrementalLifecycleMaterializer(
-            self.state, journey_events_fn=self._journey_events
+        self.controller_id = str(controller_id)
+        self.tenant_scope = str(tenant_scope)
+        self.environment_scope = str(environment_scope)
+        self._controller_state = self.store.get_controller_state(
+            self.controller_id, self.tenant_scope, self.environment_scope
         )
-        self._serialized_aggregates = self._materializer.serialize_aggregates()
-        self.state["aggregates"] = self._serialized_aggregates
-        self.state.pop("canonical_events", None)
+        self._materializer = IncrementalLifecycleMaterializer(
+            journey_events_fn=self._journey_events
+        )
 
     @property
     def checkpoint(self) -> int:
-        return int(self.state.get("checkpoint", 0))
+        return int(self._controller().checkpoint_seq)
 
     @property
     def controller(self) -> dict[str, Any]:
-        return copy.deepcopy(self.state.get("controller") or {})
-
-    def _new_state(self) -> dict[str, Any]:
+        state = self._controller()
         return {
-            "schema_version": STATE_SCHEMA,
-            "checkpoint": 0,
-            "generation": 0,
-            "restart_count": 0,
-            "aggregates": {},
-            "identity_chains": {},
-            "quarantine": [],
-            "controller": {
-                "controller_id": "canonical-lifecycle-projector",
-                "controller_name": "canonical-lifecycle-projector",
-                "deployment_sha": self.deployment_sha,
-                "status": "initializing",
-                "mode": "recovery",
-                "truth_level": "unavailable",
-                "accepted_live": False,
-                "checkpoint": 0,
-                "source_high_watermark": 0,
-                "backlog": 0,
-                "quarantine_count": 0,
-                "last_poll_at": None,
-                "last_projection_success_at": None,
-                "last_successful_publish_at": None,
-                "last_successful_publish_generation": None,
-                "last_live_success_at": None,
-                "last_live_event_at": None,
-                "last_recovery_at": None,
-                "last_backfill_at": None,
-                "last_replay_at": None,
-                "last_failure_at": None,
-                "last_error": None,
-                "error_publication_failure": None,
-            },
+            "controller_id": state.controller_id,
+            "checkpoint": state.checkpoint_seq,
+            "source_high_watermark": state.source_high_watermark,
+            "backlog": state.backlog_count,
+            "generation": state.projection_revision,
+            "deployment_sha": state.deployment_sha,
+            "mode": state.mode,
+            "status": state.status,
+            "accepted_live": state.accepted_live,
+            "quarantine_count": state.unresolved_quarantine_count,
+            "last_error": state.last_error_message or None,
         }
 
-    def _load_state(self) -> dict[str, Any]:
-        if not self.state_path.exists():
-            return self._new_state()
-        try:
-            payload = json.loads(self.state_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError) as exc:
-            raise LifecycleProjectionError(
-                f"projector state is unreadable; refusing destructive reset: {self.state_path}"
-            ) from exc
-        if not isinstance(payload, dict) or payload.get("schema_version") != STATE_SCHEMA:
-            raise LifecycleProjectionError(
-                f"unsupported projector state; refusing destructive reset: {self.state_path}"
+    def _controller(self):
+        if self._controller_state is None:
+            from services.trade_journey.projection_store import ControllerStateRow
+
+            return ControllerStateRow(
+                controller_id=self.controller_id,
+                tenant_scope=self.tenant_scope,
+                environment_scope=self.environment_scope,
+                checkpoint_seq=0,
+                source_high_watermark=0,
+                backlog_count=0,
+                projection_revision=0,
+                deployment_sha=self.deployment_sha,
+                mode="recovery",
+                status="initializing",
+                accepted_live=False,
             )
-        return payload
+        return self._controller_state
 
     @staticmethod
-    def _health_snapshot(state: Mapping[str, Any]) -> dict[str, Any]:
-        return {
-            "schema_version": STATE_SCHEMA,
-            "checkpoint": int(state.get("checkpoint") or 0),
-            "generation": int(state.get("generation") or 0),
-            "restart_count": int(state.get("restart_count") or 0),
-            "controller": copy.deepcopy(state.get("controller") or {}),
-        }
+    def _row_event_id(row: Mapping[str, Any]) -> str:
+        payload = row.get("payload")
+        candidate = row.get("event_id")
+        if candidate in (None, "") and isinstance(payload, Mapping):
+            candidate = payload.get("event_id")
+        value = str(candidate or "").strip()
+        if not value:
+            raise InvalidLifecycleEvent("source row missing event_id")
+        return value
 
-    def _publish_candidate(
-        self,
-        candidate: Mapping[str, Any],
-        journey_payload: Mapping[str, Any],
-        loop_payload: Mapping[str, Any],
-    ) -> None:
-        """Pre-fsync state, then commit bundle/state/health with short switch gaps."""
+    @staticmethod
+    def _row_event_type(row: Mapping[str, Any]) -> str:
+        payload = row.get("payload")
+        candidate = row.get("event_type")
+        if candidate in (None, "") and isinstance(payload, Mapping):
+            candidate = payload.get("event_type")
+        return str(candidate or "unknown")
 
-        prepared_state: Path | None = _prepare_atomic_json(self.state_path, candidate)
-        prepared_health: Path | None = _prepare_atomic_json(
-            self.health_state_path,
-            self._health_snapshot(candidate),
-        )
-        try:
-            self.bundle.publish(
-                int(candidate.get("generation") or 0),
-                journey_payload,
-                loop_payload,
-            )
-            _commit_prepared_json(self.state_path, prepared_state)
-            prepared_state = None
-            _commit_prepared_json(self.health_state_path, prepared_health)
-            prepared_health = None
-        finally:
-            for prepared in (prepared_state, prepared_health):
-                if prepared is not None:
-                    try:
-                        prepared.unlink()
-                    except OSError:
-                        pass
-
-    def _persist_health_only(self, candidate: Mapping[str, Any]) -> None:
-        _atomic_write_json(
-            self.health_state_path,
-            self._health_snapshot(candidate),
-        )
-
-    def _bounded_state_copy(self) -> dict[str, Any]:
-        """Copy the mutable non-aggregate state without duplicating event data.
-
-        Only fixed-size scalars, the controller dict, the bounded quarantine
-        ring and a shallow key copy of ``identity_chains`` are duplicated;
-        ``_admit_identity`` replaces chain entries rather than mutating them, so
-        the shallow copy is safe.  Aggregates are staged separately, which is
-        why no poll deep-copies the read model.
-        """
-        candidate = dict(self.state)
-        candidate["controller"] = copy.deepcopy(self.state.get("controller") or {})
-        candidate["quarantine"] = list(self.state.get("quarantine") or [])
-        candidate["identity_chains"] = dict(self.state.get("identity_chains") or {})
-        return candidate
-
-    def project_records(
-        self,
-        records: Iterable[Mapping[str, Any]],
-        *,
-        mode: str,
-        source_high_watermark: int | None = None,
-    ) -> ProjectionResult:
-        if mode not in PROJECTION_MODES:
-            raise ValueError(f"unsupported projection mode: {mode}")
-        candidate = self._bounded_state_copy()
-        duplicates = ignored = quarantined = 0
-        max_seen = int(candidate.get("checkpoint", 0))
-        now = self.clock()
-
-        inc_mat = self._materializer
-        inc_mat.reset_stats()
-
-        ordered_records = sorted(
-            (dict(record) for record in records),
-            key=lambda row: (int(row.get("ingested_seq") or 0), str(row.get("event_id") or "")),
-        )
-        batch_entries: list[dict[str, Any]] = []
-        batch_fingerprints: dict[str, str] = {}
-        promotions: dict[str, set[str]] = {}
-        for row in ordered_records:
-            sequence = int(row.get("ingested_seq") or 0)
-            if mode in {"live", "recovery"} and sequence <= 0:
-                raise InvalidLifecycleEvent("committed source row requires positive ingested_seq")
-            max_seen = max(max_seen, sequence)
-            event = self._source_event(row)
-            if event["event_type"] not in LIFECYCLE_EVENT_TYPES:
-                ignored += 1
-                continue
-            event_id = event["event_id"]
-            fingerprint = _fingerprint(
+    def _row_fingerprint(self, row: Mapping[str, Any], event: Mapping[str, Any] | None) -> str:
+        if event is not None:
+            return _fingerprint(
                 {
-                    "event_id": event_id,
-                    "event_type": event["event_type"],
-                    "created_at": event["created_at"],
+                    "event_id": event.get("event_id"),
+                    "event_type": event.get("event_type"),
+                    "created_at": event.get("created_at"),
                     "payload": event,
                 }
             )
-
-            # Idempotency is resolved against committed aggregate state *and*
-            # against the entries already accepted from this same batch, so an
-            # intra-batch duplicate is never double-counted and an intra-batch
-            # conflict fails closed before the controller is touched at all.
-            try:
-                journey_id = self._identity(event).get("journey_id")
-            except InvalidLifecycleEvent:
-                journey_id = None
-            known_fingerprint = None
-            if journey_id is not None:
-                aggregate = inc_mat.aggregates.get(journey_id)
-                if aggregate is not None:
-                    known_fingerprint = aggregate.event_fingerprints.get(event_id)
-            if known_fingerprint is None:
-                known_fingerprint = batch_fingerprints.get(event_id)
-            if known_fingerprint is not None:
-                if known_fingerprint != fingerprint:
-                    raise ConflictingLifecycleEvent(
-                        f"conflicting canonical event_id: {event_id}"
-                    )
-                duplicates += 1
-                if mode == "live" and journey_id is not None:
-                    # A recovery/backfill event re-delivered live promotes the
-                    # stored aggregate; the promotion is staged, not applied to
-                    # committed state, so a failed publish cannot leak it.
-                    promotions.setdefault(journey_id, set()).add(event_id)
-                continue
-
-            try:
-                self._validate_fixture_event(event)
-                identity = self._identity(event)
-                source_sequence = self._sequence_no(event)
-                self._admit_identity(candidate, identity)
-            except InvalidLifecycleEvent as exc:
-                quarantined += 1
-                candidate.setdefault("quarantine", []).append(
-                    {
-                        "event_id": event_id,
-                        "ingested_seq": sequence,
-                        "event_type": event["event_type"],
-                        "reason": str(exc),
-                        "quarantined_at": now,
-                        "source_mode": mode,
-                    }
-                )
-                candidate["quarantine"] = candidate["quarantine"][-1000:]
-                continue
-
-            entry = {
-                "fingerprint": fingerprint,
-                "event": event,
-                "identity": identity,
-                "sequence_no": source_sequence,
-                "ingested_seq": sequence,
-                "ingested_at": str(row.get("ingested_at") or now),
-                "source_mode": mode,
-                "accepted_live": mode == "live",
-            }
-            batch_entries.append(entry)
-            batch_fingerprints[event_id] = fingerprint
-
-        # Fold the batch into deep copies of only the aggregates it touches.
-        # Conflicts raise here, before checkpoint/generation/controller move.
-        staged, affected, accepted, staged_duplicates = inc_mat.stage_batch(
-            batch_entries,
-            promotions=promotions,
-            journey_events_fn=self._journey_events,
-        )
-        duplicates += staged_duplicates
-
-        if mode in {"live", "recovery"}:
-            candidate["checkpoint"] = max_seen
-        candidate["generation"] = int(candidate.get("generation", 0)) + 1
-        controller = candidate.setdefault("controller", {})
-        previous_high_watermark = int(controller.get("source_high_watermark") or 0)
-        next_high_watermark = (
-            int(source_high_watermark)
-            if source_high_watermark is not None
-            else previous_high_watermark
-            if mode in {"backfill", "replay"}
-            else max(max_seen, previous_high_watermark)
-        )
-        controller.update(
+        return _fingerprint(
             {
-                "controller_id": "canonical-lifecycle-projector",
-                "controller_name": "canonical-lifecycle-projector",
-                "deployment_sha": self.deployment_sha,
-                "mode": mode,
-                "checkpoint": int(candidate.get("checkpoint", 0)),
-                "source_high_watermark": next_high_watermark,
-                "last_poll_at": now,
-                "last_projection_success_at": now,
-                "last_error": None,
-                "error_publication_failure": None,
-                "quarantine_count": len(candidate.get("quarantine") or []),
-                "generation": int(candidate.get("generation", 0)),
-                "restart_count": int(candidate.get("restart_count", 0)),
+                "event_id": self._row_event_id(row),
+                "event_type": self._row_event_type(row),
+                "created_at": row.get("created_at"),
+                "payload": row.get("payload"),
             }
         )
-        controller["backlog"] = max(
-            0,
-            int(controller["source_high_watermark"]) - int(candidate.get("checkpoint", 0)),
-        )
-        live_admissible = self._live_admissible(controller, mode=mode)
-        if live_admissible:
-            controller["last_live_success_at"] = now
-            if accepted:
-                controller["last_live_event_at"] = inc_mat.last_live_event_at(staged)
-        elif mode == "recovery":
-            controller["last_recovery_at"] = now
-        elif mode == "backfill":
-            controller["last_backfill_at"] = now
-        elif mode == "replay":
-            controller["last_replay_at"] = now
-        historic_live = bool(controller.get("last_live_success_at"))
-        controller["accepted_live"] = live_admissible
-        controller["truth_level"] = (
-            "canonical_live"
-            if controller["accepted_live"]
-            else f"{mode}_with_historic_live"
-            if historic_live
-            else f"{mode}_only"
-        )
-        controller["status"] = (
-            "degraded"
-            if controller["quarantine_count"]
-            else "ready"
-            if controller["accepted_live"]
-            else "recovering"
-            if mode == "recovery" or controller["backlog"]
-            else "repair_only"
+
+    def _receipt(
+        self,
+        *,
+        event_id: str,
+        ingested_seq: int,
+        fingerprint: str,
+        source_event_type: str,
+        created_at: datetime,
+        disposition: str,
+        identity: Mapping[str, str] | None = None,
+    ) -> EventReceiptRow:
+        identity = identity or {}
+        return EventReceiptRow(
+            event_id=event_id,
+            ingested_seq=ingested_seq,
+            fingerprint=fingerprint,
+            tenant_id=str(identity.get("tenant_id") or ""),
+            environment=str(identity.get("environment") or ""),
+            journey_id=str(identity.get("journey_id") or ""),
+            loop_run_id=str(identity.get("loop_run_id") or ""),
+            source_event_type=source_event_type,
+            created_at=created_at,
+            disposition=disposition,
+            projection_revision=0,
         )
 
-        controller["last_successful_publish_at"] = now
-        controller["last_successful_publish_generation"] = int(candidate["generation"])
-
-        # Only the staged aggregates are re-serialized; the rest are carried
-        # over by reference from the previous poll.
-        candidate["aggregates"] = inc_mat.serialize_aggregates(
-            base=self._serialized_aggregates, staged=staged
+    def _hydrate_materializer(
+        self, entries: Sequence[Mapping[str, Any]]
+    ) -> IncrementalLifecycleMaterializer:
+        materializer = IncrementalLifecycleMaterializer(
+            journey_events_fn=self._journey_events
         )
+        affected = {
+            (
+                str(entry["identity"]["tenant_id"]),
+                str(entry["identity"]["environment"]),
+                str(entry["identity"]["journey_id"]),
+            )
+            for entry in entries
+        }
+        affected_keys = tuple(sorted(affected))
+        prior_events = self.store.load_journey_stage_events_bulk(affected_keys)
+        for tenant_id, environment, journey_id in affected_keys:
+            materializer.hydrate_aggregate(
+                journey_id,
+                prior_events[(tenant_id, environment, journey_id)],
+            )
+        materializer.reset_stats()
+        return materializer
 
-        journey_payload, loop_payload = inc_mat.render_full_payloads(
-            schema_version_journey=JOURNEY_STORE_SCHEMA,
-            schema_version_loop=LOOP_STORE_SCHEMA,
-            generation=int(candidate["generation"]),
-            controller=controller,
-            staged=staged,
-        )
+    @staticmethod
+    def _identity_links_for_aggregate(agg: Any) -> list[IdentityLinkRow]:
+        observations: dict[tuple[str, str], list[tuple[int, datetime]]] = {}
+        for event in agg.journey_events:
+            occurred_at = _parse_iso(event.get("occurred_at"))
+            source_offset = int(event.get("source_offset") or 0)
+            if source_offset <= 0:
+                continue
+            values: dict[str, Any] = {
+                "journey_id": event.get("journey_id"),
+                "run_id": event.get("run_id"),
+                "loop_run_id": event.get("loop_run_id"),
+                "signal_id": event.get("signal_id"),
+                "strategy_id": event.get("strategy_id"),
+                "runtime_id": event.get("runtime_id"),
+                "binding_id": event.get("binding_id"),
+                "capital_pool_id": event.get("capital_pool_id"),
+                "persona_id": event.get("persona_id"),
+                "persona_capital_binding_id": event.get("persona_capital_binding_id"),
+                "artifact_id": event.get("artifact_id"),
+                "artifact_version": event.get("artifact_version"),
+                "plan_id": event.get("plan_id"),
+                "trace_id": event.get("trace_id"),
+            }
+            values.update(
+                {
+                    identifier: event.get(identifier)
+                    for identifier in IDENTIFIER_FIELDS
+                }
+            )
+            for identifier_type, value in values.items():
+                if isinstance(value, str) and value:
+                    observations.setdefault((identifier_type, value), []).append(
+                        (source_offset, occurred_at)
+                    )
+        links: list[IdentityLinkRow] = []
+        for (identifier_type, identifier_value), values in sorted(observations.items()):
+            links.append(
+                IdentityLinkRow(
+                    tenant_id=agg.tenant_id,
+                    environment=agg.environment,
+                    identifier_type=identifier_type,
+                    identifier_value=identifier_value,
+                    journey_id=agg.journey_id,
+                    first_ingested_seq=min(value[0] for value in values),
+                    last_ingested_seq=max(value[0] for value in values),
+                    first_occurred_at=min(value[1] for value in values),
+                    last_occurred_at=max(value[1] for value in values),
+                )
+            )
+        return links
 
-        self._publish_candidate(candidate, journey_payload, loop_payload)
-        inc_mat.commit(staged)
-        self._serialized_aggregates = candidate["aggregates"]
-        self.state = candidate
-        return ProjectionResult(
-            checkpoint=int(candidate["checkpoint"]),
-            accepted=accepted,
-            duplicates=duplicates,
-            ignored=ignored,
-            quarantined=quarantined,
-            journey_count=len(journey_payload["events"]),
-            loop_run_count=len(loop_payload["records"]),
-            generation=int(candidate["generation"]),
-            mode=mode,
-        )
+    def _aggregate_mutations(
+        self,
+        staged: Mapping[str, Any],
+        entries: Sequence[Mapping[str, Any]],
+        *,
+        mode: str,
+        accepted_live: bool,
+    ) -> tuple[list[IdentityLinkRow], list[JourneyRow], list[JourneyStageRow], list[LoopRunRow]]:
+        entries_by_event_id = {
+            str(entry["event"]["event_id"]): entry for entry in entries
+        }
+        identity_links: list[IdentityLinkRow] = []
+        journeys: list[JourneyRow] = []
+        stages: list[JourneyStageRow] = []
+        loop_runs: list[LoopRunRow] = []
+        for journey_id, agg in sorted(staged.items()):
+            source_event_ids = {
+                str(entry["event"]["event_id"])
+                for entry in entries
+                if str(entry["identity"]["journey_id"]) == journey_id
+            }
+            if not source_event_ids:
+                continue
+            identity_links.extend(self._identity_links_for_aggregate(agg))
+            reducer = JourneyMaterializer()
+            reducer.rebuild(agg.journey_events)
+            projection = reducer.get(
+                journey_id, tenant_id=agg.tenant_id, environment=agg.environment
+            )
+            if projection is None:
+                continue
+            snapshot = projection.snapshot
+            journeys.append(
+                JourneyRow(
+                    tenant_id=agg.tenant_id,
+                    environment=agg.environment,
+                    journey_id=journey_id,
+                    status=str(snapshot.get("status") or "incomplete"),
+                    stage_coverage=dict(snapshot.get("stages") or {}),
+                    is_terminal=str(snapshot.get("status") or "") in TERMINAL_STATUSES,
+                    first_occurred_at=_parse_iso(snapshot["created_at"]),
+                    last_occurred_at=_parse_iso(snapshot["updated_at"]),
+                    first_ingested_seq=min(
+                        int(event.get("source_offset") or 0)
+                        for event in agg.journey_events
+                        if int(event.get("source_offset") or 0) > 0
+                    ),
+                    last_ingested_seq=max(
+                        int(event.get("source_offset") or 0)
+                        for event in agg.journey_events
+                    ),
+                    current_identity_summary={"identifiers": snapshot.get("identifiers") or {}},
+                    evidence_summary={
+                        "event_count": len(agg.journey_events),
+                        "stage_event_ids": [
+                            event.get("event_id") for event in projection.timeline
+                        ],
+                    },
+                    diagnostic_summary={"diagnostics": projection.diagnostics},
+                    loop_run_id=str(agg.identity.get("loop_run_id") or ""),
+                )
+            )
+            for stage_event in agg.journey_events:
+                canonical_event_id = str(stage_event.get("canonical_event_id") or "")
+                if canonical_event_id not in source_event_ids:
+                    continue
+                entry = entries_by_event_id[canonical_event_id]
+                source_sequence = int(stage_event.get("source_sequence_no") or 0)
+                stage_sequence = int(stage_event.get("sequence_no") or 0)
+                evidence_refs = stage_event.get("evidence_refs")
+                stages.append(
+                    JourneyStageRow(
+                        tenant_id=agg.tenant_id,
+                        environment=agg.environment,
+                        journey_id=journey_id,
+                        source_event_id=canonical_event_id,
+                        stage_name=str(stage_event.get("stage") or ""),
+                        stage_status=str(stage_event.get("stage_status") or "unknown"),
+                        stage_ordinal=max(0, stage_sequence - source_sequence * 100),
+                        source_ingested_seq=int(stage_event.get("source_offset") or 0),
+                        event_sequence=source_sequence,
+                        occurred_at=_parse_iso(stage_event["occurred_at"]),
+                        contract_fields=dict(stage_event),
+                        evidence_references=(
+                            list(evidence_refs)
+                            if isinstance(evidence_refs, list)
+                            else []
+                        ),
+                        fingerprint=_fingerprint(
+                            {
+                                "canonical_fingerprint": entry["fingerprint"],
+                                "stage": stage_event.get("stage"),
+                            }
+                        ),
+                    )
+                )
+            if agg.loop_record:
+                loop_record = dict(agg.loop_record)
+                freshness = {
+                    "mode": mode,
+                    "accepted_live": accepted_live,
+                    "source_modes": loop_record.get("source_modes") or [],
+                    "last_source_offset": loop_record.get("last_source_offset"),
+                }
+                loop_runs.append(
+                    LoopRunRow(
+                        tenant_id=agg.tenant_id,
+                        environment=agg.environment,
+                        loop_run_id=str(loop_record["loop_run_id"]),
+                        journey_id=journey_id,
+                        status=str(loop_record.get("status") or "active"),
+                        lifecycle_summary=loop_record,
+                        freshness_lineage=freshness,
+                        contract_payload=loop_record,
+                    )
+                )
+        return identity_links, journeys, stages, loop_runs
 
-    def record_poll(
+    def _controller_mutation(
         self,
         *,
         source_high_watermark: int,
-        backlog: int,
         mode: str,
-    ) -> None:
-        """Persist a semantic health heartbeat without advancing live truth."""
-        candidate = self._bounded_state_copy()
-        now = self.clock()
-        controller = candidate.setdefault("controller", {})
-        semantic_fields = (
-            "deployment_sha",
-            "status",
-            "mode",
-            "truth_level",
-            "accepted_live",
-            "checkpoint",
-            "source_high_watermark",
-            "backlog",
-            "last_error",
-        )
-        previous_semantics = tuple(controller.get(field) for field in semantic_fields)
-        controller.update(
-            {
-                "deployment_sha": self.deployment_sha,
-                "last_poll_at": now,
-                "source_high_watermark": int(source_high_watermark),
-                "backlog": max(0, int(backlog)),
-                "mode": mode,
-                "checkpoint": int(candidate.get("checkpoint", 0)),
-                "last_error": None,
-                "error_publication_failure": None,
-            }
-        )
-        live_admissible = self._live_admissible(controller, mode=mode)
-        historic_live = bool(controller.get("last_live_success_at"))
-        if live_admissible:
-            # A successful zero-backlog read is the controller's authoritative
-            # live admission boundary after startup/recovery, even when no new
-            # trade arrived during that poll.
-            controller["last_live_success_at"] = now
-            controller["accepted_live"] = live_admissible
-            controller["truth_level"] = "canonical_live"
-        else:
-            controller["accepted_live"] = False
-            controller["truth_level"] = (
-                f"{mode}_with_historic_live" if historic_live else f"{mode}_only"
+        quarantined: int,
+        error_message: str = "",
+        backlog: int | None = None,
+    ) -> BatchProjectionMutation:
+        previous = self._controller()
+        optimistic_backlog = (
+            max(0, int(backlog))
+            if backlog is not None
+            else max(
+                0,
+                int(source_high_watermark) - int(previous.checkpoint_seq),
             )
-        controller["status"] = (
-            "degraded"
-            if int(controller.get("quarantine_count") or 0) > 0
+        )
+        accepted_live = (
+            mode == "live"
+            and optimistic_backlog == 0
+            and quarantined == 0
+            and int(previous.unresolved_quarantine_count) == 0
+            and not error_message
+        )
+        status = (
+            "failed"
+            if error_message
+            else "degraded"
+            if quarantined or int(previous.unresolved_quarantine_count) > 0
             else "ready"
-            if controller["accepted_live"]
+            if accepted_live
             else "recovering"
-            if mode == "recovery" or int(backlog) > 0
+            if mode == "recovery" or optimistic_backlog
             else "repair_only"
         )
-        current_semantics = tuple(controller.get(field) for field in semantic_fields)
-        if current_semantics != previous_semantics:
-            candidate["generation"] = int(candidate.get("generation", 0)) + 1
-            controller["generation"] = int(candidate["generation"])
-            controller["last_successful_publish_at"] = now
-            controller["last_successful_publish_generation"] = int(candidate["generation"])
-            journey_payload, loop_payload = self._materializer.render_full_payloads(
-                schema_version_journey=JOURNEY_STORE_SCHEMA,
-                schema_version_loop=LOOP_STORE_SCHEMA,
-                generation=int(candidate["generation"]),
-                controller=controller,
-            )
-            self._publish_candidate(candidate, journey_payload, loop_payload)
-        else:
-            # Only freshness changed.  Keep that hot-path bounded instead of
-            # serializing the full canonical event history every poll.
-            self._persist_health_only(candidate)
-        self.state = candidate
-
-    @staticmethod
-    def _live_admissible(controller: Mapping[str, Any], *, mode: str) -> bool:
-        """Return current live truth, never inferred from historic success.
-
-        Historical success is useful audit evidence, but cannot allow a
-        controller with backlog or quarantined records to advertise canonical
-        live readiness.
-        """
-        return (
-            mode == "live"
-            # ``telemetry_events`` is a retained source window.  The durable
-            # checkpoint is a global sequence and may be higher than the
-            # newest retained lifecycle record after source truncation; that is
-            # not a backlog.  ``backlog`` is the only current window lag.
-            and int(controller.get("backlog") or 0) == 0
-            and int(controller.get("quarantine_count") or 0) == 0
+        return BatchProjectionMutation(
+            source_high_watermark=max(0, int(source_high_watermark)),
+            backlog_count=optimistic_backlog,
+            mode=mode,
+            status=status,
+            accepted_live=accepted_live,
+            deployment_sha=self.deployment_sha,
+            error_message=error_message,
         )
-
-    def record_source_failure(self, error: str, *, backlog: int | None = None) -> None:
-        """Record source failure while preserving the last-good read-model bundle."""
-        candidate = self._bounded_state_copy()
-        controller = candidate.setdefault("controller", {})
-        previous_semantics = (
-            controller.get("status"),
-            controller.get("last_error"),
-            int(controller.get("backlog") or 0),
-        )
-        now = self.clock()
-        controller.update(
-            {
-                "status": "degraded",
-                "last_failure_at": now,
-                "last_error": str(error),
-                "restart_count": int(candidate.get("restart_count", 0)),
-            }
-        )
-        if backlog is not None:
-            controller["backlog"] = max(0, int(backlog))
-        current_semantics = (
-            controller.get("status"),
-            controller.get("last_error"),
-            int(controller.get("backlog") or 0),
-        )
-        if current_semantics != previous_semantics:
-            candidate["generation"] = int(candidate.get("generation", 0)) + 1
-            controller["generation"] = int(candidate["generation"])
-            controller["last_successful_publish_at"] = now
-            controller["last_successful_publish_generation"] = int(candidate["generation"])
-            journey_payload, loop_payload = self._materializer.render_full_payloads(
-                schema_version_journey=JOURNEY_STORE_SCHEMA,
-                schema_version_loop=LOOP_STORE_SCHEMA,
-                generation=int(candidate["generation"]),
-                controller=controller,
-            )
-            self._publish_candidate(candidate, journey_payload, loop_payload)
-        else:
-            _atomic_write_json(self.state_path, candidate)
-            self._persist_health_only(candidate)
-        self.state = candidate
 
     @staticmethod
     def _validate_fixture_event(event: Mapping[str, Any]) -> None:
@@ -1299,8 +679,12 @@ class LifecycleProjector:
         for field in ("event_id", "event_type", "created_at"):
             row_value = _clean(row.get(field))
             event_value = _clean(event.get(field))
-            if row_value is not None and event_value is not None and str(row_value) != str(event_value):
-                raise InvalidLifecycleEvent(f"source row/payload {field} mismatch")
+            if row_value is not None and event_value is not None:
+                if field == "created_at":
+                    if _parse_iso(row_value) != _parse_iso(event_value):
+                        raise InvalidLifecycleEvent(f"source row/payload {field} mismatch")
+                elif str(row_value) != str(event_value):
+                    raise InvalidLifecycleEvent(f"source row/payload {field} mismatch")
             if event_value is None and row_value is not None:
                 event[field] = row_value
             if _clean(event.get(field)) is None:
@@ -1361,24 +745,6 @@ class LifecycleProjector:
         if str(identity["environment"]) != str(envelope["environment"]):
             raise InvalidLifecycleEvent("environment conflicts with correlation envelope")
         return {field: str(identity[field]) for field in STABLE_IDENTITY_FIELDS}
-
-    @staticmethod
-    def _admit_identity(state: dict[str, Any], identity: Mapping[str, str]) -> None:
-        journey_id = identity["journey_id"]
-        chains = state.setdefault("identity_chains", {})
-        previous = chains.get(journey_id)
-        if previous is None:
-            chains[journey_id] = dict(identity)
-            return
-        mismatched = [
-            field
-            for field in STABLE_IDENTITY_FIELDS
-            if str(previous.get(field)) != str(identity.get(field))
-        ]
-        if mismatched:
-            raise InvalidLifecycleEvent(
-                f"identity chain conflict for {journey_id}: {', '.join(mismatched)}"
-            )
 
     @classmethod
     def _journey_events(cls, entry: Mapping[str, Any]) -> list[dict[str, Any]]:
@@ -1490,76 +856,348 @@ class LifecycleProjector:
             return [("reconciliation", "failed")]
         return []
 
-def _stage_status(value: Any) -> str:
-    token = str(value or "unknown").strip().lower()
-    if token in {"ok", "accepted", "submitted", "filled", "resolved", "complete", "completed", "succeeded"}:
-        return "succeeded"
-    if token in {"partial", "partially_filled", "partially_succeeded"}:
-        return "partially_succeeded"
-    if token in {"rejected", "failed", "error"}:
-        return "failed"
-    if token in {"cancelled", "canceled"}:
-        return "cancelled"
-    if token in {"noop", "no_order", "not_submitted", "skipped"}:
-        return "skipped"
-    return token
+    def project_records(
+        self,
+        records: Iterable[Mapping[str, Any]],
+        *,
+        mode: str,
+        source_high_watermark: int | None = None,
+    ) -> ProjectionResult:
+        if mode not in PROJECTION_MODES:
+            raise ValueError(f"unsupported projection mode: {mode}")
+        ordered_records = sorted(
+            (dict(record) for record in records),
+            key=lambda row: (int(row.get("ingested_seq") or 0), self._row_event_id(row)),
+        )
+        source_high = max(
+            int(source_high_watermark or 0),
+            int(self._controller().source_high_watermark),
+        )
+        known_receipts = self.store.get_receipts(
+            [self._row_event_id(row) for row in ordered_records]
+        )
+        receipts: list[EventReceiptRow] = []
+        quarantines: list[QuarantineRow] = []
+        accepted_entries: list[dict[str, Any]] = []
+        batch_fingerprints: dict[str, str] = {}
+        duplicates = ignored = quarantined = 0
+
+        for row in ordered_records:
+            sequence = int(row.get("ingested_seq") or 0)
+            if sequence <= 0:
+                raise InvalidLifecycleEvent("committed source row requires positive ingested_seq")
+            source_high = max(source_high, sequence)
+            event_id = self._row_event_id(row)
+            event: dict[str, Any] | None = None
+            try:
+                event = self._source_event(row)
+                fingerprint = self._row_fingerprint(row, event)
+            except InvalidLifecycleEvent as exc:
+                fingerprint = self._row_fingerprint(row, None)
+                known = known_receipts.get(event_id)
+                if known is not None:
+                    if known.fingerprint != fingerprint:
+                        raise ConflictingLifecycleEvent(
+                            f"conflicting canonical event_id: {event_id}"
+                        )
+                    duplicates += 1
+                    continue
+                receipts.append(
+                    self._receipt(
+                        event_id=event_id,
+                        ingested_seq=sequence,
+                        fingerprint=fingerprint,
+                        source_event_type=self._row_event_type(row),
+                        created_at=_parse_iso(row.get("created_at") or self.clock()),
+                        disposition="quarantined",
+                    )
+                )
+                quarantines.append(
+                    QuarantineRow(
+                        event_id=event_id,
+                        ingested_seq=sequence,
+                        reason_code="INVALID_LIFECYCLE_EVENT",
+                        reason_detail=str(exc),
+                        source_event_type=self._row_event_type(row),
+                        fingerprint=fingerprint,
+                    )
+                )
+                quarantined += 1
+                continue
+
+            known_fingerprint = batch_fingerprints.get(event_id)
+            if known_fingerprint is not None:
+                if known_fingerprint != fingerprint:
+                    raise ConflictingLifecycleEvent(
+                        f"conflicting canonical event_id: {event_id}"
+                    )
+                duplicates += 1
+                continue
+            known = known_receipts.get(event_id)
+            if known is not None:
+                if known.fingerprint != fingerprint:
+                    raise ConflictingLifecycleEvent(
+                        f"conflicting canonical event_id: {event_id}"
+                    )
+                duplicates += 1
+                continue
+            batch_fingerprints[event_id] = fingerprint
+            created_at = _parse_iso(event["created_at"])
+            if event["event_type"] not in LIFECYCLE_EVENT_TYPES:
+                receipts.append(
+                    self._receipt(
+                        event_id=event_id,
+                        ingested_seq=sequence,
+                        fingerprint=fingerprint,
+                        source_event_type=str(event["event_type"]),
+                        created_at=created_at,
+                        disposition="ignored",
+                    )
+                )
+                ignored += 1
+                continue
+            try:
+                self._validate_fixture_event(event)
+                identity = self._identity(event)
+                source_sequence = self._sequence_no(event)
+            except InvalidLifecycleEvent as exc:
+                receipts.append(
+                    self._receipt(
+                        event_id=event_id,
+                        ingested_seq=sequence,
+                        fingerprint=fingerprint,
+                        source_event_type=str(event["event_type"]),
+                        created_at=created_at,
+                        disposition="quarantined",
+                    )
+                )
+                quarantines.append(
+                    QuarantineRow(
+                        event_id=event_id,
+                        ingested_seq=sequence,
+                        reason_code="INVALID_LIFECYCLE_EVENT",
+                        reason_detail=str(exc),
+                        source_event_type=str(event["event_type"]),
+                        fingerprint=fingerprint,
+                    )
+                )
+                quarantined += 1
+                continue
+            accepted_entries.append(
+                {
+                    "fingerprint": fingerprint,
+                    "event": event,
+                    "identity": identity,
+                    "sequence_no": source_sequence,
+                    "ingested_seq": sequence,
+                    "ingested_at": str(row.get("ingested_at") or self.clock()),
+                    "source_mode": mode,
+                    "accepted_live": mode == "live",
+                }
+            )
+            receipts.append(
+                self._receipt(
+                    event_id=event_id,
+                    ingested_seq=sequence,
+                    fingerprint=fingerprint,
+                    source_event_type=str(event["event_type"]),
+                    created_at=created_at,
+                    disposition="applied",
+                    identity=identity,
+                )
+            )
+
+        materializer = self._hydrate_materializer(accepted_entries)
+        staged, _affected, accepted, staged_duplicates = materializer.stage_batch(
+            accepted_entries,
+            journey_events_fn=self._journey_events,
+        )
+        duplicates += staged_duplicates
+        predicted_checkpoint = max(
+            int(self._controller().checkpoint_seq),
+            max((int(row.get("ingested_seq") or 0) for row in ordered_records), default=0),
+        )
+        predicted_backlog = max(0, source_high - predicted_checkpoint)
+        mutation = self._controller_mutation(
+            source_high_watermark=source_high,
+            mode=mode,
+            quarantined=quarantined,
+            backlog=predicted_backlog,
+        )
+        mutation.receipts = receipts
+        mutation.quarantines = quarantines
+        (
+            mutation.identity_links,
+            mutation.journeys,
+            mutation.stages,
+            mutation.loop_runs,
+        ) = self._aggregate_mutations(
+            staged,
+            accepted_entries,
+            mode=mode,
+            accepted_live=mutation.accepted_live,
+        )
+        self._controller_state = self.store.execute_batch_transaction(
+            self.controller_id,
+            self.tenant_scope,
+            self.environment_scope,
+            mutation,
+        )
+        self._materializer = materializer
+        current = self._controller()
+        return ProjectionResult(
+            checkpoint=int(current.checkpoint_seq),
+            accepted=accepted,
+            duplicates=duplicates,
+            ignored=ignored,
+            quarantined=quarantined,
+            journey_count=len(mutation.journeys),
+            loop_run_count=len(mutation.loop_runs),
+            generation=int(current.projection_revision),
+            mode=mode,
+        )
+
+    def record_poll(
+        self,
+        *,
+        source_high_watermark: int,
+        backlog: int,
+        mode: str,
+    ) -> None:
+        if mode not in PROJECTION_MODES:
+            raise ValueError(f"unsupported projection mode: {mode}")
+        mutation = self._controller_mutation(
+            source_high_watermark=source_high_watermark,
+            mode=mode,
+            quarantined=0,
+            backlog=backlog,
+        )
+        self._controller_state = self.store.execute_batch_transaction(
+            self.controller_id,
+            self.tenant_scope,
+            self.environment_scope,
+            mutation,
+        )
+
+    def record_source_failure(self, error: str, *, backlog: int | None = None) -> None:
+        previous = self._controller()
+        mutation = self._controller_mutation(
+            source_high_watermark=int(previous.source_high_watermark),
+            mode=str(previous.mode or "recovery"),
+            quarantined=0,
+            error_message=str(error),
+            backlog=backlog,
+        )
+        self._controller_state = self.store.execute_batch_transaction(
+            self.controller_id,
+            self.tenant_scope,
+            self.environment_scope,
+            mutation,
+        )
+
+
+LifecycleProjector = RelationalLifecycleProjector
+
+
+def _validate_source_timeout(
+    value: Any,
+    *,
+    name: str = "timeout_seconds",
+    default: float = DEFAULT_SOURCE_TIMEOUT_SECONDS,
+) -> float:
+    if value is None:
+        return float(default)
+    if isinstance(value, str):
+        stripped = value.strip()
+        if not stripped:
+            return float(default)
+        value = stripped
+    if isinstance(value, bool):
+        raise ValueError(f"{name} must be a finite positive number (got {value!r})")
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{name} must be a finite positive number (got {value!r})") from exc
+    if not math.isfinite(parsed) or parsed <= 0.0:
+        raise ValueError(f"{name} must be a finite positive number (got {value!r})")
+    return parsed
 
 
 class PostgresLifecycleSource:
     """Read the retained lifecycle source window and receive wakeups.
 
     ``ingested_seq`` is global, but ``telemetry_events`` is retained and may be
-    truncated independently of the durable projection.  Both the watermark and
+    truncated independently of the durable projection. Both the watermark and
     fetch therefore use the same lifecycle-type window; a historical checkpoint
     greater than an empty retained window is valid, not a source rewind.
     """
 
-    def __init__(self, dsn: str, *, channel: str = DEFAULT_CHANNEL) -> None:
+    def __init__(
+        self,
+        dsn: str,
+        *,
+        channel: str = DEFAULT_CHANNEL,
+        include_non_lifecycle: bool = False,
+        timeout_seconds: float | None = None,
+        startup_timeout_seconds: float | None = None,
+    ) -> None:
         self.dsn = dsn
         self.channel = channel
+        self.include_non_lifecycle = bool(include_non_lifecycle)
+        self.timeout_seconds = _validate_source_timeout(
+            timeout_seconds,
+            name="timeout_seconds",
+            default=DEFAULT_SOURCE_TIMEOUT_SECONDS,
+        )
+        self.startup_timeout_seconds = _validate_source_timeout(
+            startup_timeout_seconds,
+            name="startup_timeout_seconds",
+            default=DEFAULT_SOURCE_STARTUP_TIMEOUT_SECONDS,
+        )
         self._listener: Any = None
         self._wake = asyncio.Event()
 
     async def verify_read_contract(self) -> None:
-        """Bounded read-only check for the cursor columns this worker consumes.
-
-        Database schema changes belong to ``scripts/db_migrate.sh``.  Running
-        DDL or a historic-row backfill in this long-lived read worker makes a
-        routine deploy wait indefinitely behind a database lock and prevents
-        the new deployment identity from reaching readiness.
-        """
         import asyncpg  # type: ignore[import]
 
         loop = asyncio.get_running_loop()
-        deadline = loop.time() + DEFAULT_SOURCE_STARTUP_TIMEOUT_SECONDS
+        timeout = self.startup_timeout_seconds
+        deadline = loop.time() + timeout
         conn: Any | None = None
 
         def remaining() -> float:
             return max(0.0, deadline - loop.time())
 
         try:
-            conn = await asyncio.wait_for(asyncpg.connect(self.dsn), timeout=remaining())
+            connect_timeout = remaining()
+            if connect_timeout <= 0:
+                raise TimeoutError("telemetry startup read-contract connect deadline exhausted")
+            conn = await asyncio.wait_for(asyncpg.connect(self.dsn), timeout=connect_timeout)
+            query_timeout = remaining()
+            if query_timeout <= 0:
+                raise TimeoutError("telemetry startup read-contract query deadline exhausted")
             await asyncio.wait_for(
                 conn.fetchrow(
                     "SELECT ingested_seq, ingested_at FROM telemetry_events LIMIT 1"
                 ),
-                timeout=remaining(),
+                timeout=query_timeout,
             )
         finally:
             if conn is not None:
                 close_timeout = remaining()
                 if close_timeout <= 0:
                     self._terminate_connection(conn)
-                    raise TimeoutError("telemetry startup read-contract deadline exhausted before close")
-                try:
-                    await asyncio.wait_for(conn.close(), timeout=close_timeout)
-                except BaseException:
-                    self._terminate_connection(conn)
-                    raise
+                    if sys.exc_info()[0] is None:
+                        raise TimeoutError("telemetry startup read-contract deadline exhausted before close")
+                else:
+                    try:
+                        await asyncio.wait_for(conn.close(), timeout=close_timeout)
+                    except BaseException:
+                        self._terminate_connection(conn)
+                        raise
 
     @staticmethod
     def _terminate_connection(conn: Any) -> None:
-        """Release a timed-out asyncpg connection without extending startup."""
         terminate = getattr(conn, "terminate", None)
         if callable(terminate):
             try:
@@ -1570,35 +1208,109 @@ class PostgresLifecycleSource:
     async def high_watermark(self) -> int:
         import asyncpg  # type: ignore[import]
 
-        conn = await asyncpg.connect(self.dsn)
+        loop = asyncio.get_running_loop()
+        timeout = self.timeout_seconds
+        deadline = loop.time() + timeout
+        conn: Any | None = None
+
+        def remaining() -> float:
+            return max(0.0, deadline - loop.time())
+
         try:
-            return int(
-                await conn.fetchval(
-                    "SELECT COALESCE(MAX(ingested_seq), 0) FROM telemetry_events "
-                    "WHERE event_type = ANY($1::text[])",
-                    list(LIFECYCLE_EVENT_TYPE_QUERY),
+            connect_timeout = remaining()
+            if connect_timeout <= 0:
+                raise TimeoutError(f"lifecycle source high_watermark connect deadline exhausted ({timeout}s)")
+            conn = await asyncio.wait_for(asyncpg.connect(self.dsn), timeout=connect_timeout)
+            query_timeout = remaining()
+            if query_timeout <= 0:
+                raise TimeoutError(f"lifecycle source high_watermark query deadline exhausted ({timeout}s)")
+            if self.include_non_lifecycle:
+                val = await asyncio.wait_for(
+                    conn.fetchval(
+                        "SELECT COALESCE(MAX(ingested_seq), 0) FROM telemetry_events"
+                    ),
+                    timeout=query_timeout,
                 )
-                or 0
-            )
+            else:
+                val = await asyncio.wait_for(
+                    conn.fetchval(
+                        "SELECT COALESCE(MAX(ingested_seq), 0) FROM telemetry_events "
+                        "WHERE event_type = ANY($1::text[])",
+                        list(LIFECYCLE_EVENT_TYPE_QUERY),
+                    ),
+                    timeout=query_timeout,
+                )
+            return int(val or 0)
         finally:
-            await conn.close()
+            if conn is not None:
+                close_timeout = remaining()
+                if close_timeout <= 0:
+                    self._terminate_connection(conn)
+                    if sys.exc_info()[0] is None:
+                        raise TimeoutError(f"lifecycle source high_watermark deadline exhausted before close ({timeout}s)")
+                else:
+                    try:
+                        await asyncio.wait_for(conn.close(), timeout=close_timeout)
+                    except BaseException:
+                        self._terminate_connection(conn)
+                        raise
 
     async def fetch_after(self, checkpoint: int, *, limit: int) -> list[dict[str, Any]]:
         import asyncpg  # type: ignore[import]
 
-        conn = await asyncpg.connect(self.dsn)
+        loop = asyncio.get_running_loop()
+        timeout = self.timeout_seconds
+        deadline = loop.time() + timeout
+        conn: Any | None = None
+
+        def remaining() -> float:
+            return max(0.0, deadline - loop.time())
+
         try:
-            rows = await conn.fetch(
-                "SELECT ingested_seq, ingested_at, event_id, event_type, created_at, payload "
-                "FROM telemetry_events WHERE ingested_seq > $1 "
-                "AND event_type = ANY($2::text[]) "
-                "ORDER BY ingested_seq ASC LIMIT $3",
-                int(checkpoint),
-                list(LIFECYCLE_EVENT_TYPE_QUERY),
-                int(limit),
-            )
+            connect_timeout = remaining()
+            if connect_timeout <= 0:
+                raise TimeoutError(f"lifecycle source fetch_after connect deadline exhausted ({timeout}s)")
+            conn = await asyncio.wait_for(asyncpg.connect(self.dsn), timeout=connect_timeout)
+            query_timeout = remaining()
+            if query_timeout <= 0:
+                raise TimeoutError(f"lifecycle source fetch_after query deadline exhausted ({timeout}s)")
+            if self.include_non_lifecycle:
+                rows = await asyncio.wait_for(
+                    conn.fetch(
+                        "SELECT ingested_seq, ingested_at, event_id, event_type, created_at, payload "
+                        "FROM telemetry_events WHERE ingested_seq > $1 "
+                        "ORDER BY ingested_seq ASC LIMIT $2",
+                        int(checkpoint),
+                        int(limit),
+                    ),
+                    timeout=query_timeout,
+                )
+            else:
+                rows = await asyncio.wait_for(
+                    conn.fetch(
+                        "SELECT ingested_seq, ingested_at, event_id, event_type, created_at, payload "
+                        "FROM telemetry_events WHERE ingested_seq > $1 "
+                        "AND event_type = ANY($2::text[]) "
+                        "ORDER BY ingested_seq ASC LIMIT $3",
+                        int(checkpoint),
+                        list(LIFECYCLE_EVENT_TYPE_QUERY),
+                        int(limit),
+                    ),
+                    timeout=query_timeout,
+                )
         finally:
-            await conn.close()
+            if conn is not None:
+                close_timeout = remaining()
+                if close_timeout <= 0:
+                    self._terminate_connection(conn)
+                    if sys.exc_info()[0] is None:
+                        raise TimeoutError(f"lifecycle source fetch_after deadline exhausted before close ({timeout}s)")
+                else:
+                    try:
+                        await asyncio.wait_for(conn.close(), timeout=close_timeout)
+                    except BaseException:
+                        self._terminate_connection(conn)
+                        raise
         result: list[dict[str, Any]] = []
         for row in rows:
             payload = row["payload"]
@@ -1621,12 +1333,43 @@ class PostgresLifecycleSource:
 
         if self._listener is not None:
             return
-        self._listener = await asyncpg.connect(self.dsn)
+        loop = asyncio.get_running_loop()
+        timeout = self.timeout_seconds
+        deadline = loop.time() + timeout
+        conn: Any | None = None
 
-        def _notified(*_: Any) -> None:
-            self._wake.set()
+        def remaining() -> float:
+            return max(0.0, deadline - loop.time())
 
-        await self._listener.add_listener(self.channel, _notified)
+        try:
+            connect_timeout = remaining()
+            if connect_timeout <= 0:
+                raise TimeoutError(f"lifecycle source start_listener connect deadline exhausted ({timeout}s)")
+            conn = await asyncio.wait_for(asyncpg.connect(self.dsn), timeout=connect_timeout)
+            listen_timeout = remaining()
+            if listen_timeout <= 0:
+                raise TimeoutError(f"lifecycle source start_listener deadline exhausted ({timeout}s)")
+
+            def _notified(*_: Any) -> None:
+                self._wake.set()
+
+            await asyncio.wait_for(
+                conn.add_listener(self.channel, _notified),
+                timeout=listen_timeout,
+            )
+            self._listener = conn
+            conn = None
+        finally:
+            if conn is not None:
+                close_timeout = remaining()
+                if close_timeout <= 0:
+                    self._terminate_connection(conn)
+                else:
+                    try:
+                        await asyncio.wait_for(conn.close(), timeout=close_timeout)
+                    except BaseException:
+                        self._terminate_connection(conn)
+                        raise
 
     async def wait(self, timeout: float) -> None:
         try:
@@ -1637,30 +1380,29 @@ class PostgresLifecycleSource:
 
     async def close(self) -> None:
         if self._listener is not None:
-            await self._listener.close()
+            listener = self._listener
             self._listener = None
+            timeout = self.timeout_seconds
+            try:
+                await asyncio.wait_for(listener.close(), timeout=timeout)
+            except BaseException:
+                self._terminate_connection(listener)
 
 
-def _record_worker_failure(projector: LifecycleProjector, error: BaseException) -> bool:
-    """Publish one durable error transition without allowing it to crash the worker."""
-
+def _record_worker_failure(projector: Any, error: BaseException) -> bool:
+    if projector is None:
+        print(
+            "lifecycle projector startup failed; retaining worker for retry: "
+            f"{type(error).__name__}: {error}",
+            file=sys.stderr,
+            flush=True,
+        )
+        return False
     error_message = f"{type(error).__name__}: {error}"
     try:
         projector.record_source_failure(error_message)
         return True
-    except Exception as record_error:  # noqa: BLE001 - disk recovery happens in-loop
-        now = projector.clock()
-        controller = projector.state.setdefault("controller", {})
-        controller.update(
-            {
-                "status": "degraded",
-                "last_failure_at": now,
-                "last_error": error_message,
-                "error_publication_failure": (
-                    f"{type(record_error).__name__}: {record_error}"
-                ),
-            }
-        )
+    except Exception as record_error:  # noqa: BLE001 - retry happens in-loop
         print(
             "lifecycle projector error publication failed; retaining worker for retry: "
             f"{type(record_error).__name__}: {record_error}",
@@ -1670,35 +1412,121 @@ def _record_worker_failure(projector: LifecycleProjector, error: BaseException) 
         return False
 
 
+def _relational_writer_backend() -> str:
+    return os.getenv(RELATIONAL_WRITER_BACKEND_ENV, "shadow").strip().lower()
+
+
+def _configured_relational_projector() -> RelationalLifecycleProjector:
+    backend = _relational_writer_backend()
+    if backend in {"disabled", "legacy_json", "json"}:
+        raise RuntimeError(
+            f"Legacy JSON projector writer is retired; {RELATIONAL_WRITER_BACKEND_ENV} "
+            f"must be 'shadow', 'postgres', or 'relational' (got {backend!r})"
+        )
+    if backend not in {RELATIONAL_WRITER_BACKEND_SHADOW, "postgres", "relational"}:
+        raise RuntimeError(
+            f"{RELATIONAL_WRITER_BACKEND_ENV} must be 'shadow', 'postgres', or 'relational'"
+        )
+    dsn = os.getenv(RELATIONAL_WRITER_DSN_ENV, "").strip() or os.getenv("TELEMETRY_DB_DSN", "").strip()
+    if not dsn:
+        raise RuntimeError(
+            f"{RELATIONAL_WRITER_DSN_ENV} or TELEMETRY_DB_DSN is required for relational writing"
+        )
+    source_timeout_raw = (
+        os.getenv("LIFECYCLE_PROJECTOR_PROJECTION_TIMEOUT_SECONDS")
+        or os.getenv("LIFECYCLE_PROJECTOR_DB_TIMEOUT_SECONDS")
+        or os.getenv("LIFECYCLE_PROJECTOR_SOURCE_TIMEOUT_SECONDS")
+        or ""
+    )
+    projection_timeout = _validate_source_timeout(
+        source_timeout_raw,
+        name="LIFECYCLE_PROJECTOR_PROJECTION_TIMEOUT_SECONDS",
+        default=DEFAULT_PROJECTION_TIMEOUT_SECONDS,
+    )
+    connect_timeout_raw = os.getenv("LIFECYCLE_PROJECTOR_PROJECTION_CONNECT_TIMEOUT_SECONDS", "")
+    connect_timeout = (
+        _validate_source_timeout(
+            connect_timeout_raw,
+            name="LIFECYCLE_PROJECTOR_PROJECTION_CONNECT_TIMEOUT_SECONDS",
+            default=projection_timeout,
+        )
+        if connect_timeout_raw.strip()
+        else projection_timeout
+    )
+    statement_timeout_raw = os.getenv("LIFECYCLE_PROJECTOR_PROJECTION_STATEMENT_TIMEOUT_SECONDS", "")
+    statement_timeout = (
+        _validate_source_timeout(
+            statement_timeout_raw,
+            name="LIFECYCLE_PROJECTOR_PROJECTION_STATEMENT_TIMEOUT_SECONDS",
+            default=projection_timeout,
+        )
+        if statement_timeout_raw.strip()
+        else projection_timeout
+    )
+    lock_timeout_raw = os.getenv("LIFECYCLE_PROJECTOR_PROJECTION_LOCK_TIMEOUT_SECONDS", "")
+    lock_timeout = (
+        _validate_source_timeout(
+            lock_timeout_raw,
+            name="LIFECYCLE_PROJECTOR_PROJECTION_LOCK_TIMEOUT_SECONDS",
+            default=projection_timeout,
+        )
+        if lock_timeout_raw.strip()
+        else projection_timeout
+    )
+    store = ProjectionStore(
+        dsn,
+        schema=os.getenv(RELATIONAL_WRITER_SCHEMA_ENV, RELATIONAL_WRITER_DEFAULT_SCHEMA),
+        bootstrap=False,
+        timeout_seconds=projection_timeout,
+        connect_timeout_seconds=connect_timeout,
+        statement_timeout_seconds=statement_timeout,
+        lock_timeout_seconds=lock_timeout,
+    )
+    return RelationalLifecycleProjector(
+        store,
+        deployment_sha=os.getenv("GIT_SHA", "unknown"),
+    )
+
+
 async def run_worker() -> int:
     dsn = os.getenv("TELEMETRY_DB_DSN", "").strip()
     if not dsn:
         raise RuntimeError("TELEMETRY_DB_DSN is required")
-    root = Path(os.getenv("LIFECYCLE_PROJECTION_ROOT", str(DEFAULT_ROOT)))
-    state_path = Path(os.getenv("LIFECYCLE_PROJECTOR_STATE_PATH", str(root / "controller_state.json")))
-    health_state_path = Path(
-        os.getenv(
-            "LIFECYCLE_PROJECTOR_HEALTH_STATE_PATH",
-            str(root / "health_state.json"),
-        )
+    source_timeout_raw = (
+        os.getenv("LIFECYCLE_PROJECTOR_SOURCE_TIMEOUT_SECONDS")
+        or os.getenv("LIFECYCLE_PROJECTOR_DB_TIMEOUT_SECONDS")
+        or ""
     )
-    projector = LifecycleProjector(
-        state_path=state_path,
-        health_state_path=health_state_path,
-        bundle_root=root,
-        deployment_sha=os.getenv("GIT_SHA", "unknown"),
+    source_timeout = _validate_source_timeout(
+        source_timeout_raw,
+        name="LIFECYCLE_PROJECTOR_SOURCE_TIMEOUT_SECONDS",
+        default=DEFAULT_SOURCE_TIMEOUT_SECONDS,
     )
-    source = PostgresLifecycleSource(dsn)
+    startup_timeout_raw = os.getenv("LIFECYCLE_PROJECTOR_STARTUP_TIMEOUT_SECONDS", "")
+    startup_timeout = _validate_source_timeout(
+        startup_timeout_raw,
+        name="LIFECYCLE_PROJECTOR_STARTUP_TIMEOUT_SECONDS",
+        default=DEFAULT_SOURCE_STARTUP_TIMEOUT_SECONDS,
+    )
+    source = PostgresLifecycleSource(
+        dsn,
+        include_non_lifecycle=True,
+        timeout_seconds=source_timeout,
+        startup_timeout_seconds=startup_timeout,
+    )
     interval = max(0.1, float(os.getenv("LIFECYCLE_PROJECTOR_POLL_SECONDS", "1")))
     batch_size = max(1, int(os.getenv("LIFECYCLE_PROJECTOR_BATCH_SIZE", "500")))
     max_ticks = max(0, int(os.getenv("LIFECYCLE_PROJECTOR_MAX_TICKS", "0")))
     tick = 0
     recovery_target = 0
     source_ready = False
+    projector: RelationalLifecycleProjector | None = None
     try:
         while True:
             tick += 1
             try:
+                if projector is None:
+                    projector = _configured_relational_projector()
                 if not source_ready:
                     await source.verify_read_contract()
                     recovery_target = await source.high_watermark()
@@ -1717,6 +1545,8 @@ async def run_worker() -> int:
                     )
                 if projector.checkpoint >= recovery_target:
                     recovery_target = projector.checkpoint
+            except (RuntimeError, ValueError):
+                raise
             except Exception as exc:  # noqa: BLE001 - durable controller records failure
                 _record_worker_failure(projector, exc)
                 if not source_ready:
@@ -1729,21 +1559,25 @@ async def run_worker() -> int:
 
 
 def healthcheck() -> int:
-    root = Path(os.getenv("LIFECYCLE_PROJECTION_ROOT", str(DEFAULT_ROOT)))
-    state_path = Path(
-        os.getenv(
-            "LIFECYCLE_PROJECTOR_HEALTH_STATE_PATH",
-            str(root / "health_state.json"),
-        )
+    relational_projector = _configured_relational_projector()
+    controller = relational_projector.controller
+    ready = (
+        controller.get("status") == "ready"
+        and bool(controller.get("accepted_live"))
+        and controller.get("mode") == "live"
+        and int(controller.get("backlog", 0)) == 0
+        and int(controller.get("quarantine_count", controller.get("unresolved_quarantine_count", 0))) == 0
     )
-    readiness = projector_readiness(
-        state_path=state_path,
-        bundle_root=root,
-    )
-    if not readiness["ready"]:
-        print(f"lifecycle projector unhealthy: {_canonical_json(readiness)}")
+    payload = {
+        "schema_version": "pantheon.lifecycle-projector-relational-health.v1",
+        "writer_backend": RELATIONAL_WRITER_BACKEND_SHADOW,
+        "ready": ready,
+        "controller": controller,
+    }
+    if not ready:
+        print(f"lifecycle relational projector unhealthy: {_canonical_json(payload)}")
         return 1
-    print(_canonical_json(readiness))
+    print(_canonical_json(payload))
     return 0
 
 
@@ -1752,16 +1586,7 @@ def _backfill(input_path: Path, *, mode: str) -> int:
     records = raw.get("records") if isinstance(raw, Mapping) else raw
     if not isinstance(records, list):
         raise ValueError("backfill input must be a list or {'records': [...]} object")
-    root = Path(os.getenv("LIFECYCLE_PROJECTION_ROOT", str(DEFAULT_ROOT)))
-    projector = LifecycleProjector(
-        state_path=os.getenv("LIFECYCLE_PROJECTOR_STATE_PATH", str(root / "controller_state.json")),
-        health_state_path=os.getenv(
-            "LIFECYCLE_PROJECTOR_HEALTH_STATE_PATH",
-            str(root / "health_state.json"),
-        ),
-        bundle_root=root,
-        deployment_sha=os.getenv("GIT_SHA", "unknown"),
-    )
+    projector = _configured_relational_projector()
     result = projector.project_records(records, mode=mode)
     print(_canonical_json(result.__dict__))
     return 0

@@ -1,0 +1,115 @@
+{
+  "schema_version": "pantheon.product_functional_closure.runtime_loops_e2e_evidence.v1",
+  "task": {
+    "id": "PFG-L12-RUNTIME-E2E-20260820",
+    "title": "Prove deployed Loops 8 through 12 from normal approval and deployment",
+    "owner": "Codex",
+    "reviewer": "Antigravity",
+    "phase": "W4-deployed-journey",
+    "repository": "ajoe734/pantheon",
+    "base_branch": "dev",
+    "task_branch": "task/PFG-L12-RUNTIME-E2E-20260820",
+    "review_file": "docs/deployment/evidence/product-functional-closure/PFG-L12-RUNTIME-E2E-20260820/evidence.json",
+    "run_report_file": "docs/deployment/evidence/product-functional-closure/PFG-L12-RUNTIME-E2E-20260820/run-report.json",
+    "run_report_sha256": "docs/deployment/evidence/product-functional-closure/PFG-L12-RUNTIME-E2E-20260820/run-report.sha256",
+    "evidence_status": "owner_validation_passed_pending_independent_reviewer"
+  },
+  "scope": {
+    "owned_layer": [
+      "Deployed integration test suite for runtime loops 8 through 12 (tests/integration/l12/test_current_runtime_loops_deployed_e2e.py)",
+      "Task evidence and code-disposition manifest for product functional closure of Loops 8 through 12"
+    ],
+    "not_changing": [
+      "Live broker or live capital execution",
+      "Manual JSON edits to task or runtime state",
+      "Inline artifact metadata fixtures in product path"
+    ],
+    "composes_with": [
+      "PFG-DEV-INTEGRATION-20260820",
+      "PFG-PAPER-STATE-20260820",
+      "PFG-RUNTIME-BINDING-R2-20260820",
+      "PFG-SOURCE-SNAPSHOT-20260820"
+    ]
+  },
+  "acceptance_verification": {
+    "normal_approval_deployment": "PASSED - Normal governance approval and StrategySpec mutation produce DeploymentPlan with market_data_policy and authority-derived artifact projection executed via deployment saga to active RuntimeBinding without inline price fixtures.",
+    "binding_migration_and_retirement": "PASSED - Pre-existing invalid/non-executable bindings are canonically retired via POST /api/runtime-bindings/{id}/retire prior to fleet admission, ensuring the desired fleet state contains only sanitized executable bindings.",
+    "paper_execution_chain": "PASSED - PaperSignalProducer fetches stored snapshot from Source Ingest via market_data_policy contract, matches RuntimeBinding, enqueues signal, paper runtime simulates fill, publishes telemetry, triggers drift report and incident, and feeds daily sweep evolution decision.",
+    "bounded_cursor_and_resource": "PASSED - LifecycleTelemetryOutbox maintains bounded pending depth via durable acknowledgment compaction (ack_cursor); paper_fleet_reconciler rejects non-executable bindings and maintains strict 1:1 running worker and port bounds.",
+    "strict_bff_authentication": "PASSED - Operator BFF runs with strict auth and stub=false; the test mints a short-lived HS256 JWT from the task-local process secret with exact subject, roles, tenant scope, iat, and exp claims. The token and secret are excluded from evidence.",
+    "safe_execution_controls": "PASSED - Isolated execution records paper=true while live broker, canary, and Shioaji sandbox remain false.",
+    "exact_identity_and_teardown": "PASSED - Every recorded service identity binds source/container revision to the tested SHA; canonical database migration succeeded and final l12currentruntimee2e container/network counts were both zero."
+  },
+  "cases_proven": [
+    "migration_invalid_bindings_prerequisite",
+    "loop_08_promotion_deployment",
+    "loop_09_capital_artifact_execution",
+    "negative_missing_artifact_checksum",
+    "negative_missing_market_symbol",
+    "loop_10_telemetry_reconciliation_incident",
+    "loop_11_evolution_decision",
+    "strict_bff_authentication",
+    "loop_12_bff_typed_health",
+    "negative_typed_worker_failure",
+    "bounded_lifecycle_cursor_and_resources"
+  ],
+  "code_disposition": {
+    "canonical_owners": {
+      "deployment": "services/deployment/",
+      "runtime_manager": "services/execution/runtime-manager/",
+      "paper_fleet": "services/execution/runtime-manager/paper_fleet_reconciler.py",
+      "paper_runtime": "services/execution/lean_runtime/paper_runtime.py",
+      "paper_signal_producer": "services/execution/lean_runtime/paper_signal_producer.py",
+      "source_ingest": "services/source_ingestion/",
+      "telemetry": "services/telemetry/",
+      "reconciliation": "services/reconciliation-drift/",
+      "incidents": "services/incidents/",
+      "evolution": "services/evolution/",
+      "bff": "services/control-plane/bff/"
+    },
+    "retained_compatibility_profiles": [
+      {
+        "profile": "static-paper-runtime",
+        "purpose": "Explicit compatibility profile; dynamic fleet is sole default owner."
+      },
+      {
+        "profile": "SmokeStrategy / BoundedPaperStrategy",
+        "purpose": "Explicit smoke profile only (PAPER_SIGNAL_STRATEGY=smoke); CurrentArtifactStrategy is production default."
+      }
+    ],
+    "retired_or_superseded_shortcuts": [
+      {
+        "path": "inline metadata shortcuts / caller-authored object_store in tests",
+        "disposition": "Superseded by canonical Registry -> Plan -> RuntimeBinding artifact projection verified in PFG-RUNTIME-BINDING-R2."
+      },
+      {
+        "path": "inline fixed market closes fixture in deployment metadata",
+        "disposition": "Superseded by market_data_policy contract and stored normalized snapshot in Source Ingest."
+      }
+    ]
+  },
+  "validation": {
+    "commands": [
+      "python3 scripts/dev/provision_python_distribution.py",
+      "PANTHEON_PY=\"$(python3 scripts/dev/provision_python_distribution.py --print-python)\"",
+      "\"$PANTHEON_PY\" -m py_compile tests/integration/l12/test_current_runtime_loops_deployed_e2e.py scripts/run_isolated_l12_runtime_e2e.py",
+      "\"$PANTHEON_PY\" -m pytest -q services/control-plane/bff/test_bff_auth_facade.py -k 'valid_jwt_operator_role or colon_stub_token_rejected_in_strict_mode or expired_token_raises_401'",
+      "COMPOSE_PROGRESS=plain \"$PANTHEON_PY\" scripts/run_isolated_l12_runtime_e2e.py --compose-project l12currentruntimee2e --provision-services --ready-timeout 180 --canonical-runtime-url http://127.0.0.1:18081 --sync-evidence"
+    ],
+    "results": {
+      "py_compile": "passed",
+      "strict_auth_facade_tests": "3 passed, 80 deselected",
+      "deployed_suite": "11 passed, 0 skipped in 133.16s",
+      "tested_source_sha": "06bad27a7b51340ab7c3164b968353a1e7182fce",
+      "run_report_sha256": "fb2a4bf01ef10dcdd0287afa310d108f1273a250aa655012ad12c32cd18fa8be",
+      "canonical_database_migration": "passed",
+      "final_compose_container_count": 0,
+      "final_compose_network_count": 0,
+      "harness_executable": "scripts/run_isolated_l12_runtime_e2e.py"
+    }
+  },
+  "review_decision": {
+    "decision": "owner_validation_passed_pending_independent_reviewer",
+    "reviewer_action_required": "Antigravity must independently inspect this committed manifest, run-report.json, and exact task-branch head, rerun the focused test suite, and bind canonical approval with this review_file before merge."
+  }
+}

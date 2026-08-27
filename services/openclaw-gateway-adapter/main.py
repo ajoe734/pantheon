@@ -2784,11 +2784,50 @@ class CreateSessionRequest(BaseModel):
     context_bundle: Optional[Dict[str, Any]] = None
 
 
+def _degraded_session_collection_route_error(exc: UpstreamClientError) -> UpstreamClientError:
+    """Normalize an absent upstream session collection route to degraded mode.
+
+    The deployed OpenClaw gateway can be healthy while omitting Pantheon's
+    optional ``/api/sessions`` compatibility route.  That is a dependency
+    capability gap, not a Pantheon facade route miss, so callers must receive
+    the documented 503 degraded envelope instead of a passthrough 404.
+
+    This is intentionally limited to the collection route used for list and
+    create.  A 404 for ``/api/sessions/{session_id}`` can still mean that the
+    requested session itself does not exist and must retain its typed upstream
+    semantics.
+    """
+
+    if exc.error_code != "UPSTREAM_NOT_FOUND" or exc.upstream_status != 404:
+        return exc
+
+    details: Dict[str, Any] = {
+        "route": "/api/sessions",
+        "upstream_error_code": exc.error_code,
+    }
+    if exc.details:
+        details["upstream_details"] = exc.details
+    return UpstreamClientError(
+        status_code=503,
+        error_code="UPSTREAM_UNAVAILABLE",
+        message=(
+            "The upstream OpenClaw gateway does not expose the required "
+            "session collection API; session work is safely deferred."
+        ),
+        retryable=True,
+        owner_plane=exc.owner_plane,
+        error_layer=exc.error_layer,
+        upstream_status=exc.upstream_status,
+        details=details,
+    )
+
+
 @app.get("/api/openclaw-adapter/sessions")
 def list_sessions() -> JSONResponse:
     try:
         return JSONResponse(status_code=200, content={"status": "ok", "sessions": _client().list_sessions()})
     except UpstreamClientError as exc:
+        exc = _degraded_session_collection_route_error(exc)
         return JSONResponse(
             status_code=exc.status_code,
             content={
@@ -2816,7 +2855,7 @@ def create_session(req: CreateSessionRequest) -> JSONResponse:
     try:
         return JSONResponse(status_code=201, content={"status": "ok", "session": _client().create_session(req)})
     except UpstreamClientError as exc:
-        return _error_response(exc)
+        return _error_response(_degraded_session_collection_route_error(exc))
 
 
 @app.post("/api/openclaw-adapter/sessions/{session_id}/cancel")

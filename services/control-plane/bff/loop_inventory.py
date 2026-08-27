@@ -17,6 +17,7 @@ _ACCEPTED_RUNTIME_HEALTH_SOURCES = {
     "controller_store",
     "service_store",
     "target_runtime",
+    "bff_downstream_health_monitor",
 }
 _ACCEPTED_RUNTIME_EVIDENCE_BASES = {
     "controller_runtime",
@@ -82,21 +83,25 @@ _TRUTH_SOURCE_DESCRIPTIONS = {
 
 
 class LoopInventoryEntry(BaseModel):
-    """Stable OpenAPI core for one catalog row while preserving extensions."""
+    """Stable catalog contract for one loop while preserving extensions.
+
+    The inventory describes only stable loop/spec/owner declarations.  It must
+    not turn a catalog's historical maturity or task references into a current
+    runtime statement; ``LoopHealthEntry`` owns that projection.
+    """
 
     model_config = ConfigDict(extra="allow")
 
     loop_id: str
     classification: Literal["canonical", "composite_overlay"]
-    current_maturity: str
-    target_maturity: str
     live_status: Dict[str, Any] = Field(default_factory=dict)
 
 
 class LoopHealthEntry(LoopInventoryEntry):
-    """Stable OpenAPI core for one composed controller-health row."""
+    """One composed, current-record-backed operator health row."""
 
     read_model: Literal["loop_health"]
+    runtime_maturity: Dict[str, Any] = Field(default_factory=dict)
     controller_health: Dict[str, Any] = Field(default_factory=dict)
     evidence_packet: Dict[str, Any] = Field(default_factory=dict)
 
@@ -142,14 +147,6 @@ def truth_label_payload() -> Dict[str, Dict[str, Any]]:
 
 def _load_registry() -> Dict[str, Any]:
     return json.loads(_REGISTRY_PATH.read_text(encoding="utf-8"))
-
-
-def _evidence_statuses(evidence_profile: Dict[str, Any]) -> Dict[str, str]:
-    statuses: Dict[str, str] = {}
-    for truth_level, evidence in evidence_profile.items():
-        if isinstance(evidence, dict):
-            statuses[truth_level] = str(evidence.get("status") or "missing")
-    return statuses
 
 
 def _dedupe_strings(values: List[Any]) -> List[str]:
@@ -254,8 +251,12 @@ def _runtime_controller_record_qualified(
     record: Dict[str, Any],
     health_source: str,
     expected_controller_name: Any,
+    *,
+    classification: str = "canonical",
 ) -> bool:
     if not record or health_source not in _ACCEPTED_RUNTIME_HEALTH_SOURCES:
+        return False
+    if classification == "composite_overlay":
         return False
     evidence_bases = _health_record_evidence_bases(record)
     if (
@@ -302,10 +303,16 @@ def _runtime_controller_record_qualified(
     if record.get("ready") is False or raw_health.get("ready") is False or record.get("functional_ready") is False:
         return False
 
+    name_matches = (
+        (controller_name == expected_name)
+        if expected_name
+        else bool(controller_name)
+    )
+
     return bool(
         reported_status in _ACCEPTED_CONTROLLER_HEALTH_STATUSES
-        and expected_name
-        and controller_name == expected_name
+        and controller_name
+        and name_matches
         and _controller_heartbeat_is_current(heartbeat)
         and _health_record_refs(record)
     )
@@ -313,19 +320,18 @@ def _runtime_controller_record_qualified(
 
 def _truth_source_from_profile(
     level: str,
-    evidence_profile: Dict[str, Any],
     health_record: Dict[str, Any],
     health_source: str,
-    eligible_live_truth_levels: set[str],
     expected_controller_name: Any,
+    *,
+    classification: str = "canonical",
 ) -> Dict[str, Any]:
-    evidence = evidence_profile.get(level) if isinstance(evidence_profile.get(level), dict) else {}
     health_truth_level = _health_record_truth_level(health_record)
     health_refs = _health_record_refs(health_record)
-    status = str(evidence.get("status") or "missing")
-    refs = _dedupe_strings(list(evidence.get("refs") or []))
-    note = evidence.get("note")
-    source = "bff_local_registry" if evidence else "missing"
+    status = "present" if level == "registry_metadata" else "missing"
+    refs: List[str] = [_REGISTRY_REF] if level == "registry_metadata" else []
+    note = None
+    source = "bff_local_registry" if level == "registry_metadata" else "missing"
 
     if level == _SNAPSHOT_TRUTH_LEVEL:
         status = "present" if health_source == "local_snapshot" and health_record else "missing"
@@ -347,6 +353,7 @@ def _truth_source_from_profile(
         health_record,
         health_source,
         expected_controller_name,
+        classification=classification,
     )
     evidence_basis = _health_record_evidence_basis(health_record)
     accepted_as_live = (
@@ -354,7 +361,6 @@ def _truth_source_from_profile(
         and status == "present"
         and health_truth_level == level
         and runtime_record_qualified
-        and level in eligible_live_truth_levels
     )
     if accepted_as_live:
         operator_note = "Accepted as live liveness proof."
@@ -371,10 +377,6 @@ def _truth_source_from_profile(
             "Live truth is not accepted without a current controller or target-runtime "
             "record; task archive completion is reference-only."
         )
-    elif level in _LIVE_EVIDENCE_LEVELS and level not in eligible_live_truth_levels:
-        operator_note = (
-            "The catalog maturity and controller contract do not admit this live claim."
-        )
     else:
         operator_note = "Live proof is missing or not present from an accepted source."
 
@@ -390,7 +392,7 @@ def _truth_source_from_profile(
         "evidence_basis": evidence_basis,
         "evidence_bases": _health_record_evidence_bases(health_record),
         "runtime_controller_record_qualified": runtime_record_qualified,
-        "catalog_claim_eligible": level in eligible_live_truth_levels,
+        "runtime_record_required": level in _LIVE_EVIDENCE_LEVELS,
         "refs": refs,
         "note": note,
         "accepted_as_live": accepted_as_live,
@@ -401,20 +403,19 @@ def _truth_source_from_profile(
 
 
 def _truth_sources(
-    evidence_profile: Dict[str, Any],
     health_record: Dict[str, Any],
     health_source: str,
-    eligible_live_truth_levels: set[str],
     expected_controller_name: Any,
+    *,
+    classification: str = "canonical",
 ) -> List[Dict[str, Any]]:
     return [
         _truth_source_from_profile(
             level,
-            evidence_profile,
             health_record,
             health_source,
-            eligible_live_truth_levels,
             expected_controller_name,
+            classification=classification,
         )
         for level in _TRUTH_LEVEL_ORDER
     ]
@@ -495,39 +496,6 @@ def _operator_truth_source(
         "highest_available_label": highest.get("label"),
         "truth_labels": truth_label_payload(),
     }
-
-
-def _is_proven_live(loop: Dict[str, Any]) -> bool:
-    maturity = loop.get("maturity") if isinstance(loop.get("maturity"), dict) else {}
-    controller = loop.get("controller_contract") if isinstance(loop.get("controller_contract"), dict) else {}
-    evidence_profile = loop.get("evidence_profile") if isinstance(loop.get("evidence_profile"), dict) else {}
-    return (
-        maturity.get("current") == "proven-live"
-        and controller.get("status") == "proven_live"
-        and isinstance(evidence_profile.get("proven_live_evidence"), dict)
-        and evidence_profile["proven_live_evidence"].get("status") == "present"
-    )
-
-
-def _is_reconciled_with_evidence(loop: Dict[str, Any]) -> bool:
-    maturity = loop.get("maturity") if isinstance(loop.get("maturity"), dict) else {}
-    controller = loop.get("controller_contract") if isinstance(loop.get("controller_contract"), dict) else {}
-    evidence_profile = loop.get("evidence_profile") if isinstance(loop.get("evidence_profile"), dict) else {}
-    return (
-        maturity.get("current") in {"reconciled", "proven-live"}
-        and controller.get("status") in {"implemented", "proven_live"}
-        and isinstance(evidence_profile.get("reconciled_live_proof"), dict)
-        and evidence_profile["reconciled_live_proof"].get("status") == "present"
-    )
-
-
-def _eligible_live_truth_levels(loop: Dict[str, Any]) -> set[str]:
-    levels: set[str] = set()
-    if _is_reconciled_with_evidence(loop):
-        levels.add("reconciled_live_proof")
-    if _is_proven_live(loop):
-        levels.add("proven_live_evidence")
-    return levels
 
 
 def _controller_contract_declaration(loop: Dict[str, Any]) -> Dict[str, Any]:
@@ -624,8 +592,6 @@ def loop_inventory_meta() -> Dict[str, Any]:
         "created_at": registry.get("created_at"),
         "source_documents": list(registry.get("source_documents") or []),
         "catalog_decisions": deepcopy(registry.get("catalog_decisions") or {}),
-        "maturity_levels": deepcopy(registry.get("maturity_levels") or []),
-        "truth_levels": deepcopy(registry.get("truth_levels") or []),
         "inventory_counts": {
             "canonical_loop_count": len(canonical),
             "composite_overlay_count": len(overlays),
@@ -637,8 +603,8 @@ def loop_inventory_meta() -> Dict[str, Any]:
             if isinstance(entry.get("trigger_model"), dict)
             and entry["trigger_model"].get("continuous") is True
         ],
-        "maturity_projection_policy": {
-            "catalog_role": "declared_maturity_and_eligibility_only",
+        "runtime_projection_policy": {
+            "catalog_role": "stable_loop_spec_and_owner_contract_only",
             "accepted_live_evidence_bases": sorted(_ACCEPTED_RUNTIME_EVIDENCE_BASES),
             "archived_task_completion": "reference_only",
             "archived_task_completion_accepted_as_liveness": False,
@@ -651,12 +617,8 @@ def loop_inventory_meta() -> Dict[str, Any]:
 
 def _project_loop(loop: Dict[str, Any]) -> Dict[str, Any]:
     loop_id = str(loop.get("loop_id") or "")
-    maturity = deepcopy(loop.get("maturity") or {})
     owner = deepcopy(loop.get("owner") or {})
     controller = deepcopy(loop.get("controller_contract") or {})
-    evidence_profile = deepcopy(loop.get("evidence_profile") or {})
-    eligible_live_levels = _eligible_live_truth_levels(loop)
-    evidence_statuses = _evidence_statuses(evidence_profile)
 
     return {
         "id": loop_id,
@@ -669,20 +631,7 @@ def _project_loop(loop: Dict[str, Any]) -> Dict[str, Any]:
         "trigger_model": deepcopy(loop.get("trigger_model") or {}),
         "desired_state": deepcopy(loop.get("desired_state") or {}),
         "actual_state": deepcopy(loop.get("actual_state") or {}),
-        "maturity": maturity,
-        "current_maturity": maturity.get("current"),
-        "target_maturity": maturity.get("target"),
         "controller": controller,
-        "evidence": evidence_profile,
-        "evidence_statuses": evidence_statuses,
-        "execution_tasks": deepcopy(loop.get("execution_tasks") or []),
-        "maturity_projection": {
-            "source": "static_json_registry",
-            "declared_only": True,
-            "eligible_live_truth_levels": sorted(eligible_live_levels),
-            "task_completion_policy": "reference_only",
-            "archived_task_completion_accepted": False,
-        },
         "controller_contract_declaration": _controller_contract_declaration(loop),
         "truth_source": {
             "level": "registry_metadata",
@@ -694,7 +643,6 @@ def _project_loop(loop: Dict[str, Any]) -> Dict[str, Any]:
             "is_live": False,
             "is_reconciled": False,
             "has_live_evidence": False,
-            "catalog_claim_eligible": bool(eligible_live_levels),
             "reason": "catalog metadata is not live liveness proof",
         },
     }
@@ -753,6 +701,8 @@ def _project_controller_health(
     controller: Dict[str, Any],
     health_record: Dict[str, Any],
     health_source: str,
+    *,
+    classification: str = "canonical",
 ) -> Dict[str, Any]:
     raw_health = _dict_or_empty(
         health_record.get("controller_health")
@@ -767,17 +717,14 @@ def _project_controller_health(
         health_record,
         health_source,
         controller.get("controller_name"),
+        classification=classification,
     )
-    contract_accepts_runtime_record = contract_status in {"implemented", "proven_live"}
     heartbeat = raw_health.get("last_heartbeat_at") or health_record.get("last_heartbeat_at")
-    current_record_accepted = bool(
-        runtime_record_qualified
-        and contract_accepts_runtime_record
-    )
+    current_record_accepted = bool(runtime_record_qualified)
     status = (
         reported_status
         if current_record_accepted
-        else ("not_implemented" if contract_status == "not_implemented" else "unobserved")
+        else ("not_implemented" if contract_status == "not_implemented" and not health_record else "unobserved")
     )
     source = health_source if current_record_accepted else "registry_metadata"
     evidence_bases = _health_record_evidence_bases(health_record)
@@ -812,10 +759,10 @@ def _project_controller_health(
     )
     if current_record_accepted:
         rejection_reason = None
+    elif classification == "composite_overlay":
+        rejection_reason = "composite overlay loops do not accept direct controller runtime records"
     elif functional_degraded:
         rejection_reason = "worker functional health is degraded despite process readiness"
-    elif not contract_accepts_runtime_record:
-        rejection_reason = "catalog controller contract is not implemented"
     elif len(evidence_bases) > 1:
         rejection_reason = "record declares conflicting evidence provenance"
     elif evidence_refs and not runtime_evidence_refs:
@@ -826,6 +773,8 @@ def _project_controller_health(
         and reported_controller_name != expected_controller_name
     ):
         rejection_reason = "runtime controller identity does not match catalog contract"
+    elif not reported_controller_name and health_record:
+        rejection_reason = "record lacks accepted current controller-runtime provenance"
     else:
         rejection_reason = "record lacks accepted current controller-runtime provenance"
     return {
@@ -943,34 +892,22 @@ def _project_desired_state_presence(
 
 def _project_evidence_packet(
     loop_id: str,
-    maturity: Dict[str, Any],
     controller: Dict[str, Any],
-    evidence_profile: Dict[str, Any],
     health_record: Dict[str, Any],
     health_source: str,
+    *,
+    classification: str = "canonical",
 ) -> Dict[str, Any]:
     packet = _dict_or_empty(health_record.get("evidence_packet"))
-    eligible_live_levels = _eligible_live_truth_levels(
-        {
-            "maturity": maturity,
-            "controller_contract": controller,
-            "evidence_profile": evidence_profile,
-        }
-    )
     truth_sources = _truth_sources(
-        evidence_profile,
         health_record,
         health_source,
-        eligible_live_levels,
         controller.get("controller_name"),
+        classification=classification,
     )
     highest = _highest_present_truth_source(truth_sources)
     operator_truth = _operator_truth_source(truth_sources, highest)
-    profile_refs: List[Any] = []
-    for evidence in evidence_profile.values():
-        if isinstance(evidence, dict) and isinstance(evidence.get("refs"), list):
-            profile_refs.extend(evidence["refs"])
-    refs = _dedupe_strings(profile_refs + _health_record_refs(health_record))
+    refs = _dedupe_strings([_REGISTRY_REF, *_health_record_refs(health_record)])
     accepted_live_sources = [
         source
         for source in truth_sources
@@ -987,9 +924,6 @@ def _project_evidence_packet(
         "loop_id": loop_id,
         "source": health_source if health_record else "bff_local_registry",
         "registry_ref": _REGISTRY_REF,
-        "current_maturity": maturity.get("current"),
-        "target_maturity": maturity.get("target"),
-        "eligible_live_truth_levels": sorted(eligible_live_levels),
         "runtime_record_evidence_basis": _health_record_evidence_basis(health_record),
         "runtime_record_evidence_bases": _health_record_evidence_bases(health_record),
         "runtime_evidence_refs": _health_record_runtime_refs(health_record),
@@ -997,6 +931,7 @@ def _project_evidence_packet(
             health_record,
             health_source,
             controller.get("controller_name"),
+            classification=classification,
         ),
         "archived_task_completion_accepted": False,
         "highest_truth_level": highest.get("truth_level"),
@@ -1019,6 +954,41 @@ def _project_evidence_packet(
     }
 
 
+def _runtime_maturity(
+    controller_health: Dict[str, Any],
+    evidence_packet: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Derive runtime maturity from a current accepted record only.
+
+    A catalog's old maturity/task fields are intentionally not an input here.
+    This makes an absent, stale, malformed, or functionally degraded record
+    visibly unobserved instead of preserving a historical implementation claim.
+    """
+
+    accepted = bool(controller_health.get("current_record_accepted"))
+    truth_level = str(evidence_packet.get("highest_truth_level") or "missing")
+    if not accepted:
+        state = "unobserved"
+    elif truth_level == "proven_live_evidence":
+        state = "proven-live"
+    elif truth_level == "reconciled_live_proof":
+        state = "reconciled"
+    else:
+        state = "observed"
+    return {
+        "state": state,
+        "source": controller_health.get("source") if accepted else "missing",
+        "truth_level": truth_level,
+        "current_record_accepted": accepted,
+        "reason": (
+            "derived from the current accepted controller-runtime record"
+            if accepted
+            else controller_health.get("rejection_reason")
+            or "no current accepted controller-runtime record"
+        ),
+    }
+
+
 def _project_loop_health(
     loop: Dict[str, Any],
     health_record: Dict[str, Any],
@@ -1026,23 +996,28 @@ def _project_loop_health(
 ) -> Dict[str, Any]:
     projected = _project_loop(loop)
     loop_id = str(projected.get("loop_id") or "")
-    maturity = projected.get("maturity") if isinstance(projected.get("maturity"), dict) else {}
-    controller = projected.get("controller") if isinstance(projected.get("controller"), dict) else {}
-    desired_state = projected.get("desired_state") if isinstance(projected.get("desired_state"), dict) else {}
-    actual_state = projected.get("actual_state") if isinstance(projected.get("actual_state"), dict) else {}
-    evidence_profile = projected.get("evidence") if isinstance(projected.get("evidence"), dict) else {}
+    classification = str(loop.get("classification") or "canonical")
+    controller = _dict_or_empty(loop.get("controller_contract"))
+    desired_state = _dict_or_empty(loop.get("desired_state"))
+    actual_state = _dict_or_empty(loop.get("actual_state"))
     evidence_packet = _project_evidence_packet(
         loop_id,
-        maturity,
         controller,
-        evidence_profile,
         health_record,
         health_source,
+        classification=classification,
+    )
+    controller_health = _project_controller_health(
+        controller,
+        health_record,
+        health_source,
+        classification=classification,
     )
     projected.update(
         {
             "read_model": "loop_health",
-            "controller_health": _project_controller_health(controller, health_record, health_source),
+            "controller_health": controller_health,
+            "runtime_maturity": _runtime_maturity(controller_health, evidence_packet),
             "last_success": _event_from_health_record(
                 health_record,
                 event_key="last_success",

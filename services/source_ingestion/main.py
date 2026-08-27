@@ -12,10 +12,10 @@ from __future__ import annotations
 import fcntl
 import json
 import hmac
+import uuid
 import os
 import re
 import threading
-import time
 import urllib.parse
 import urllib.request
 from dataclasses import replace
@@ -89,11 +89,16 @@ from .ingest_manager import IngestManager
 from .market_data_storage import MarketDataStorageWriter
 from .pg_store import build_source_evidence_repository
 from .policy_registry import crawler_policy_for_connector, policy_registry_payload
-from .controller_state import ControllerStateError, read_controller_state
+from .controller_state import ControllerStateError, ControllerStateStore, read_controller_state
 from .controller_auth import load_controller_token
 from .persona_source_reconciler import RECONCILIATION_METADATA_KEY, SourceProvisioningReconciler
 from .process_lock import exclusive_file_lock
-from .requirement_state import RequirementSnapshotStore, RequirementStateError
+from .requirement_state import (
+    LatestMarketSnapshotStore,
+    MarketSnapshotStateError,
+    RequirementSnapshotStore,
+    RequirementStateError,
+)
 from .scheduler import IngestBatch, IngestReceipt, IngestionScheduler, JsonlIngestScheduleStore
 from .source_health import (
     SourceHealth,
@@ -106,6 +111,32 @@ from .source_health import (
 from .retirement_engine import RecommendationType, RetirementRecommendation, compute_recommendations
 from .connector_coverage_matrix import build_coverage_matrix, build_source_alerts
 from .gap_report import generate_market_data_gap_report, render_gap_report_markdown
+from .connector_definitions import (
+    DEPLOYED_CONNECTOR_DEFINITIONS,
+    get_connector_definition,
+    list_connector_definitions,
+)
+from .source_management_models import (
+    SourceManagementCommand,
+    SourceManagementReceipt,
+    SourceCanaryResult,
+    CommandType,
+    ReceiptStatus,
+)
+from .source_management_store import (
+    SourceManagementStore,
+    build_source_management_store,
+    SourceInstanceNotFoundError,
+    StaleRevisionError,
+    IdempotencyConflictError,
+    DuplicateInstanceError,
+)
+from .source_management_commands import (
+    SourceCommandEngine,
+    CommandPreconditionError,
+    AdapterNotSupportedError,
+)
+
 
 
 def _resolve_data_dir() -> Path:
@@ -130,6 +161,12 @@ CONTROLLER_STATE_PATH = Path(
 )
 REQUIREMENT_STATE_PATH = Path(
     os.getenv("SOURCE_INGEST_REQUIREMENT_STATE_PATH", str(DATA_DIR / "requirement_snapshots.jsonl"))
+)
+LATEST_MARKET_SNAPSHOT_PATH = Path(
+    os.getenv(
+        "SOURCE_INGEST_LATEST_MARKET_SNAPSHOT_PATH",
+        str(DATA_DIR / "latest_market_snapshots.jsonl"),
+    )
 )
 RECONCILE_TRANSACTION_LOCK_PATH = Path(
     os.getenv(
@@ -156,6 +193,10 @@ DEFAULT_STALE_THRESHOLD_SECONDS = max(
     1,
     int(os.getenv("SOURCE_INGEST_DEFAULT_STALE_THRESHOLD_SECONDS", "86400")),
 )
+MARKET_SNAPSHOT_MAX_CLOSES = max(
+    2,
+    int(os.getenv("SOURCE_INGEST_MARKET_SNAPSHOT_MAX_CLOSES", "60")),
+)
 SOURCE_TIMESTAMP_FUTURE_TOLERANCE_SECONDS = max(
     0,
     int(os.getenv("SOURCE_INGEST_FUTURE_TIMESTAMP_TOLERANCE_SECONDS", "300")),
@@ -181,6 +222,10 @@ replay_processor = DeadLetterReplayProcessor(schema_registry=SchemaRegistry())
 source_health_store = SourceHealthStore.from_jsonl(SOURCE_HEALTH_STORE_PATH)
 source_usage_store = SourceUsageDailyStore.from_jsonl(SOURCE_USAGE_STORE_PATH)
 requirement_snapshot_store = RequirementSnapshotStore(REQUIREMENT_STATE_PATH)
+latest_market_snapshot_store = LatestMarketSnapshotStore(
+    LATEST_MARKET_SNAPSHOT_PATH,
+    max_closes=MARKET_SNAPSHOT_MAX_CLOSES,
+)
 controller_token = load_controller_token(token_path=CONTROLLER_TOKEN_PATH, create=True)
 authoritative_reconcile_lock = threading.RLock()
 audit_store_lock = threading.RLock()
@@ -190,6 +235,13 @@ market_data_storage_writer = MarketDataStorageWriter(MARKET_DATA_STORAGE_ROOT)
 # admitting a normalized SourceRecord commit here lets the controller's run_pending
 # pick it up immediately instead of waiting for its next catch_up poll.
 distillation_job_queue = DistillationJobQueue(DISTILLATION_JOB_QUEUE_PATH)
+source_management_store = build_source_management_store(DATA_DIR)
+source_command_engine = SourceCommandEngine(
+    store=source_management_store,
+    connector_store=connector_store,
+    schedule_config_store=schedule_config_store,
+    evidence_builder=evidence_builder,
+)
 register_fastapi_health_routes(
     app,
     "pantheon-source-ingest",
@@ -197,29 +249,14 @@ register_fastapi_health_routes(
         "source_search_posture": PRODUCTION_POSTURE.to_dict(),
         "source_freshness": _source_freshness_readiness(),
     },
-    metrics=lambda: {
-        "run_count": len(store.list_runs()),
-        "connector_count": len(connector_store.list_configs()),
-        "source_record_count": len(evidence_repository.list_source_records()),
-        "evidence_item_count": len(evidence_repository.list_evidence_items()),
-        "dlq_count": len(dead_letter_queue.entries()),
-        "pending_dlq_count": len(dead_letter_queue.pending_entries()),
-        "unresolved_dlq_count": sum(
-            len(dead_letter_queue.entries(status=status))
-            for status in (
-                DeadLetterStatus.PENDING,
-                DeadLetterStatus.REPLAY_FAILED,
-                DeadLetterStatus.SCHEMA_REJECTED,
-            )
-        ),
-        "frontier_count": len(store.list_frontier()),
-        "posture_alert_count": PRODUCTION_POSTURE.alert_count(),
-    },
+    metrics=lambda: _source_runtime_metrics(),
     details=lambda: {
         "store_path": str(SCHEDULE_STORE_PATH),
         "connector_store_path": str(CONNECTOR_STORE_PATH),
         "source_evidence_path": str(SOURCE_EVIDENCE_STORE_PATH),
         "market_data_storage_root": str(MARKET_DATA_STORAGE_ROOT),
+        "latest_market_snapshot_path": str(LATEST_MARKET_SNAPSHOT_PATH),
+        "market_snapshot_max_closes": MARKET_SNAPSHOT_MAX_CLOSES,
         "dlq_path": str(DLQ_STORE_PATH),
         "audit_path": str(AUDIT_STORE_PATH),
         "scheduler_max_concurrency": SCHEDULER_MAX_CONCURRENCY,
@@ -625,7 +662,12 @@ def _fetch_policy_summary(fetch: dict[str, Any] | None) -> dict[str, Any]:
 
 
 def _schedule_summary(connector_id: str) -> dict[str, Any]:
-    schedule = schedule_config_store.get_schedule(connector_id)
+    return _schedule_summary_from_config(
+        schedule_config_store.get_schedule(connector_id)
+    )
+
+
+def _schedule_summary_from_config(schedule: Any | None) -> dict[str, Any]:
     if schedule is None:
         return {
             "configured": False,
@@ -843,70 +885,138 @@ def _connector_freshness_summary(connector_id: str) -> dict[str, Any]:
     )
 
 
-_SOURCE_FRESHNESS_CACHE_TTL_SECONDS = max(
-    1, int(os.getenv("SOURCE_INGEST_FRESHNESS_CACHE_TTL_SECONDS", "30"))
+_SOURCE_READINESS_MAX_STATE_BYTES = max(
+    1,
+    int(os.getenv("SOURCE_INGEST_READINESS_MAX_STATE_BYTES", str(1024 * 1024))),
 )
-_source_freshness_cache: dict[str, Any] = {"computed_at": 0.0, "payload": None}
-_source_freshness_cache_lock = threading.Lock()
+_SOURCE_READINESS_MAX_CONTROLLER_AGE_SECONDS = max(
+    1,
+    int(os.getenv("SOURCE_INGEST_READINESS_MAX_CONTROLLER_AGE_SECONDS", "300")),
+)
 
 
 def _source_freshness_readiness() -> dict[str, Any]:
-    # Read each durable store once. Point lookups intentionally replay their
-    # JSONL source for cross-process consistency, so using them inside this
-    # fleet-wide loop multiplies connector count by journal size and can pin
-    # the service before the first cache entry exists.
-    now = time.monotonic()
-    with _source_freshness_cache_lock:
-        cached_payload = _source_freshness_cache["payload"]
-        cache_age = now - _source_freshness_cache["computed_at"]
-        if cached_payload is not None and cache_age < _SOURCE_FRESHNESS_CACHE_TTL_SECONDS:
-            return cached_payload
+    """Return a fixed-cost readiness projection from the controller snapshot.
 
-    configs = connector_store.list_configs()
-    schedules = {
-        schedule.connector_id: schedule
-        for schedule in schedule_config_store.list_schedules()
-    }
-    snapshot = store.read_freshness_snapshot()
-    runs_by_connector: dict[str, list[Any]] = {}
-    for run in snapshot["runs"]:
-        connector_id = str(getattr(run, "connector_id", ""))
-        runs_by_connector.setdefault(connector_id, []).append(run)
-    receipts_by_connector: dict[str, list[IngestReceipt]] = {}
-    for receipt in snapshot["receipts"]:
-        receipts_by_connector.setdefault(receipt.connector_id, []).append(receipt)
-    observed_at = datetime.now(timezone.utc)
-    summaries = []
-    for config in configs:
-        connector = config.connector
-        connector_id = connector.connector_id
-        summaries.append(
-            _connector_freshness_summary_from_snapshot(
-                connector_id,
-                connector_metadata=connector.metadata,
-                schedule=schedules.get(connector_id),
-                watermark=snapshot["watermarks"].get(connector_id),
-                runs=runs_by_connector.get(connector_id, ()),
-                receipts=receipts_by_connector.get(connector_id, ()),
-                now=observed_at,
-            )
-        )
-    scheduled = [summary for summary in summaries if summary["schedule_enabled"]]
-    stale = [summary for summary in scheduled if summary["status"] == "stale"]
-    degraded = [summary for summary in scheduled if summary["status"] in {"degraded", "never_ingested"}]
-    payload = {
+    Health probes must not replay source, schedule, connector, or evidence
+    journals.  The controller is the sole writer of this bounded local restart
+    snapshot; it is also the only component allowed to reconcile connectors.
+    """
+
+    try:
+        state_size_bytes = CONTROLLER_STATE_PATH.stat().st_size
+    except FileNotFoundError:
+        return {
+            "status": "not_observed",
+            "data_ready": False,
+            "scheduled_connector_count": 0,
+            "stale_connector_count": 0,
+            "degraded_connector_count": 0,
+            "reason": "controller_state_missing",
+        }
+    except OSError as exc:
+        return {
+            "status": "degraded_data",
+            "data_ready": False,
+            "scheduled_connector_count": 0,
+            "stale_connector_count": 0,
+            "degraded_connector_count": 0,
+            "reason": f"controller_state_stat_failed:{type(exc).__name__}",
+        }
+    if state_size_bytes > _SOURCE_READINESS_MAX_STATE_BYTES:
+        return {
+            "status": "degraded_data",
+            "data_ready": False,
+            "scheduled_connector_count": 0,
+            "stale_connector_count": 0,
+            "degraded_connector_count": 0,
+            "state_size_bytes": state_size_bytes,
+            "reason": "controller_state_exceeds_readiness_budget",
+        }
+    try:
+        state = ControllerStateStore(CONTROLLER_STATE_PATH).load()
+    except ControllerStateError as exc:
+        return {
+            "status": "degraded_data",
+            "data_ready": False,
+            "scheduled_connector_count": 0,
+            "stale_connector_count": 0,
+            "degraded_connector_count": 0,
+            "state_size_bytes": state_size_bytes,
+            "reason": f"controller_state_invalid:{exc}",
+        }
+    if state is None:
+        return {
+            "status": "not_observed",
+            "data_ready": False,
+            "scheduled_connector_count": 0,
+            "stale_connector_count": 0,
+            "degraded_connector_count": 0,
+            "reason": "controller_state_missing",
+        }
+
+    actual = dict(state.actual_readback)
+    terminal_inventory = actual.get("terminal_connectors")
+    terminal_connectors = (
+        terminal_inventory.get("items")
+        if isinstance(terminal_inventory, Mapping) and isinstance(terminal_inventory.get("items"), list)
+        else []
+    )
+    scheduled = [
+        item
+        for item in terminal_connectors
+        if isinstance(item, Mapping) and bool(dict(item.get("schedule") or {}).get("enabled"))
+    ]
+    stale = [
+        item
+        for item in scheduled
+        if str(dict(item.get("freshness") or {}).get("status") or "") == "stale"
+    ]
+    degraded = [
+        item
+        for item in scheduled
+        if str(dict(item.get("freshness") or {}).get("status") or "") in {"degraded", "never_ingested"}
+    ]
+    heartbeat = _parse_utc_datetime(state.heartbeat_at)
+    heartbeat_age_seconds = (
+        max(0, int((datetime.now(timezone.utc) - heartbeat).total_seconds()))
+        if heartbeat is not None
+        else None
+    )
+    controller_stale = (
+        heartbeat_age_seconds is None
+        or heartbeat_age_seconds > _SOURCE_READINESS_MAX_CONTROLLER_AGE_SECONDS
+    )
+    return {
         # Data staleness is visible but does not make the API process unready;
-        # the scheduler depends on API readiness and must be able to repair it.
-        "status": "stale" if stale else ("degraded_data" if degraded else "ok"),
-        "data_ready": not stale and not degraded,
+        # the reconcile-only controller must be able to repair it.
+        "status": "stale" if stale or controller_stale else ("degraded_data" if degraded else "ok"),
+        "data_ready": not stale and not degraded and not controller_stale,
         "scheduled_connector_count": len(scheduled),
         "stale_connector_count": len(stale),
         "degraded_connector_count": len(degraded),
+        "controller_state_size_bytes": state_size_bytes,
+        "controller_heartbeat_age_seconds": heartbeat_age_seconds,
+        "connector_inventory_count": (
+            terminal_inventory.get("count") if isinstance(terminal_inventory, Mapping) else 0
+        ),
+        "connector_inventory_truncated": bool(
+            terminal_inventory.get("truncated") if isinstance(terminal_inventory, Mapping) else False
+        ),
+        "provider_egress_attempted": bool(state.schedule.get("provider_egress_attempted")),
     }
-    with _source_freshness_cache_lock:
-        _source_freshness_cache["computed_at"] = time.monotonic()
-        _source_freshness_cache["payload"] = payload
-    return payload
+
+
+def _source_runtime_metrics() -> dict[str, Any]:
+    readiness = _source_freshness_readiness()
+    return {
+        "controller_state_size_bytes": readiness.get("controller_state_size_bytes", 0),
+        "connector_count": readiness.get("connector_inventory_count", 0),
+        "scheduled_connector_count": readiness.get("scheduled_connector_count", 0),
+        "stale_connector_count": readiness.get("stale_connector_count", 0),
+        "degraded_connector_count": readiness.get("degraded_connector_count", 0),
+        "posture_alert_count": PRODUCTION_POSTURE.alert_count(),
+    }
 
 
 def _connector_schema_hash(connector: SourceConnector, fetch: dict[str, Any] | None) -> str:
@@ -968,9 +1078,9 @@ def _connector_registry_entry(
     *,
     fetch: dict[str, Any] | None,
     state: dict[str, Any] | None,
+    schedule: dict[str, Any],
+    freshness: dict[str, Any],
 ) -> dict[str, Any]:
-    schedule = _schedule_summary(connector.connector_id)
-    freshness = _connector_freshness_summary(connector.connector_id)
     state_payload = state or {
         "connector_id": connector.connector_id,
         "attempts": 0,
@@ -1009,7 +1119,27 @@ def _connector_registry_entry(
 
 
 def _source_connector_entries() -> list[dict[str, Any]]:
-    configured_by_id = {config.connector.connector_id: config for config in connector_store.list_configs()}
+    # This is a fleet-wide projection. Point lookups replay the JSONL stores
+    # for cross-process consistency, so performing them once per connector
+    # makes persistent deployments connector-count multiplied by journal-size
+    # work. Read each durable store once and build every registry row from the
+    # same immutable-by-convention snapshots.
+    configs, fetch_states = connector_store.read_snapshot()
+    configured_by_id = {config.connector.connector_id: config for config in configs}
+    schedules = {
+        schedule.connector_id: schedule
+        for schedule in schedule_config_store.list_schedules()
+    }
+    freshness_snapshot = store.read_freshness_snapshot()
+    runs_by_connector: dict[str, list[Any]] = {}
+    for run in freshness_snapshot["runs"]:
+        connector_id = str(getattr(run, "connector_id", ""))
+        runs_by_connector.setdefault(connector_id, []).append(run)
+    receipts_by_connector: dict[str, list[IngestReceipt]] = {}
+    for receipt in freshness_snapshot["receipts"]:
+        receipts_by_connector.setdefault(receipt.connector_id, []).append(receipt)
+    observed_at = datetime.now(timezone.utc)
+
     connector_ids = set(configured_by_id)
     connectors = list(manager.list_connectors())
     connector_ids.update(connector.connector_id for connector in connectors)
@@ -1020,18 +1150,32 @@ def _source_connector_entries() -> list[dict[str, Any]]:
         connector = config.connector if config else manager.get_connector(connector_id)
         if connector is None:
             continue
+        schedule_config = schedules.get(connector_id)
         entries.append(
             _connector_registry_entry(
                 connector,
                 fetch=dict(config.fetch) if config else None,
-                state=connector_store.get_fetch_state(connector_id) if config else None,
+                state=fetch_states.get(connector_id) if config else None,
+                schedule=_schedule_summary_from_config(schedule_config),
+                freshness=_connector_freshness_summary_from_snapshot(
+                    connector_id,
+                    connector_metadata=connector.metadata,
+                    schedule=schedule_config,
+                    watermark=freshness_snapshot["watermarks"].get(connector_id),
+                    runs=runs_by_connector.get(connector_id, ()),
+                    receipts=receipts_by_connector.get(connector_id, ()),
+                    now=observed_at,
+                ),
             )
         )
     return entries
 
 
-def _source_policy_registry_payload() -> dict[str, Any]:
-    entries = _source_connector_entries()
+def _source_policy_registry_payload(
+    entries: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    if entries is None:
+        entries = _source_connector_entries()
     connector_policies = [dict(entry["crawler_policy"]) for entry in entries]
     return policy_registry_payload(
         connector_policies,
@@ -1715,6 +1859,29 @@ def _persist_market_data_storage_refs(result: Any) -> dict[str, Any]:
     return market_data_storage_writer.write_run(result=result, connector=connector).to_dict()
 
 
+def _persist_latest_market_snapshots(result: Any) -> dict[str, Any]:
+    """Project completed normalized SourceRecords into the read-only paper API.
+
+    This executes only as part of the already-authoritative ingest completion
+    path.  The corresponding GET endpoint only reads this stored projection;
+    it cannot call a provider or start the scheduler.
+    """
+
+    if result.run.status.value != "completed":
+        return {
+            "schema_version": "source_ingest_latest_market_snapshot_batch.v1",
+            "ingest_run_id": result.run.ingest_run_id,
+            "accepted_record_count": 0,
+            "updated_snapshot_count": 0,
+            "snapshots": [],
+        }
+    return latest_market_snapshot_store.append_normalized_records(
+        result.records,
+        ingest_run_id=result.run.ingest_run_id,
+        observed_at=_run_finished_at_iso(result.run),
+    )
+
+
 def _run_finished_at_iso(run: Any) -> str:
     value = run.to_dict().get("finished_at") or run.to_dict().get("started_at")
     return str(value or datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"))
@@ -2007,9 +2174,13 @@ def _run_job(
         post_processing_stage = "market_storage"
         storage_refs = _persist_market_data_storage_refs(result)
         evidence_refs["storage_refs"] = storage_refs
+        post_processing_stage = "latest_market_snapshot"
+        market_snapshots = _persist_latest_market_snapshots(result)
+        evidence_refs["market_snapshots"] = market_snapshots
         post_processing_stage = "source_evidence"
         evidence_refs = _persist_source_evidence_refs(result, storage_refs=storage_refs)
         evidence_refs["storage_refs"] = storage_refs
+        evidence_refs["market_snapshots"] = market_snapshots
         post_processing_stage = "source_health_usage"
         _update_source_health_and_usage(connector=connector, result=result, storage_refs=storage_refs)
         post_processing_stage = "receipt_finalize"
@@ -2481,6 +2652,7 @@ def _set_connector_lifecycle(connector_id: str, request: SetConnectorLifecycleRe
 
 @app.get("/health")
 def health() -> dict[str, Any]:
+    runtime_metrics = _source_runtime_metrics()
     return {
         "status": "ok",
         "service": "pantheon-source-ingest",
@@ -2488,29 +2660,46 @@ def health() -> dict[str, Any]:
         "connector_store_path": str(CONNECTOR_STORE_PATH),
         "source_evidence_path": str(SOURCE_EVIDENCE_STORE_PATH),
         "market_data_storage_root": str(MARKET_DATA_STORAGE_ROOT),
+        "latest_market_snapshot_path": str(LATEST_MARKET_SNAPSHOT_PATH),
         "dlq_path": str(DLQ_STORE_PATH),
         "audit_path": str(AUDIT_STORE_PATH),
-        "run_count": len(store.list_runs()),
-        "connector_count": len(connector_store.list_configs()),
-        "source_record_count": len(evidence_repository.list_source_records()),
-        "evidence_item_count": len(evidence_repository.list_evidence_items()),
-        "dlq_count": len(dead_letter_queue.entries()),
-        "pending_dlq_count": len(dead_letter_queue.pending_entries()),
-        "unresolved_dlq_count": sum(
-            len(dead_letter_queue.entries(status=status))
-            for status in (
-                DeadLetterStatus.PENDING,
-                DeadLetterStatus.REPLAY_FAILED,
-                DeadLetterStatus.SCHEMA_REJECTED,
-            )
-        ),
-        "frontier_count": len(store.list_frontier()),
+        **runtime_metrics,
         "scheduler_max_concurrency": SCHEDULER_MAX_CONCURRENCY,
         "frontier_max_attempts": FRONTIER_MAX_ATTEMPTS,
         "frontier_backoff_seconds": FRONTIER_BACKOFF_SECONDS,
         "source_search_posture": PRODUCTION_POSTURE.to_dict(),
         "posture_alert_count": PRODUCTION_POSTURE.alert_count(),
     }
+
+
+@app.get("/api/source-ingest/snapshots/latest")
+def get_latest_market_snapshot(symbol: str) -> dict[str, Any]:
+    """Return the one Source-owned, already-stored normalized snapshot.
+
+    This is intentionally a read-only projection lookup.  It does not invoke
+    a connector, call any provider, or schedule ingestion work.
+    """
+
+    try:
+        snapshot = latest_market_snapshot_store.get(symbol)
+    except (MarketSnapshotStateError, RequirementStateError) as exc:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "code": "market_snapshot_store_unavailable",
+                "symbol": str(symbol or "").strip(),
+                "detail": str(exc),
+            },
+        ) from exc
+    if snapshot is None:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "code": "market_snapshot_not_found",
+                "symbol": str(symbol or "").strip().upper(),
+            },
+        )
+    return snapshot.to_public_dict()
 
 
 @app.post("/api/source-ingest/connectors", status_code=201)
@@ -2555,7 +2744,7 @@ def source_connector_registry() -> dict[str, Any]:
         "schema_version": "source_connector_registry.v1",
         "connectors": entries,
         "provider_examples": _provider_example_payloads(),
-        "policy_registry": _source_policy_registry_payload(),
+        "policy_registry": _source_policy_registry_payload(entries),
         "financial_data_source_catalog": financial_catalog,
         "active_universe_policy": financial_catalog["active_universe_policy"],
     }
@@ -2590,7 +2779,8 @@ def source_ingest_controller_readback() -> dict[str, Any]:
     """Return authoritative connector/schedule/record/health actual state."""
 
     try:
-        return _controller_readback_payload()
+        with authoritative_reconcile_lock:
+            return _controller_readback_payload()
     except ControllerStateError as exc:
         raise HTTPException(status_code=503, detail=f"controller state is invalid: {exc}") from exc
 
@@ -3732,3 +3922,206 @@ def generate_gap_report(request: GapReportRequest) -> dict[str, Any]:
         return payload
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+# ---------------------------------------------------------------------------
+# Source Management Command & Query Routes (SD-SRCM-01, SD-SRCM-02)
+# ---------------------------------------------------------------------------
+
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+class SourceCommandActorBody(StrictBaseModel):
+    actor_type: str = "operator"
+    actor_id: str
+    roles: list[str] = Field(default_factory=lambda: ["operator"])
+
+
+class SourceCommandRequestBody(StrictBaseModel):
+    command_id: str | None = None
+    idempotency_key: str
+    command_type: str
+    source_instance_id: str
+    expected_revision: int | None = None
+    actor: SourceCommandActorBody
+    reason: str
+    parameters: dict[str, Any] = Field(default_factory=dict)
+    trace_id: str | None = None
+    requested_at: str | None = None
+
+
+def _require_service_authorization(authorization: str | None, *, operation: str) -> None:
+    scheme, _, presented = str(authorization or "").partition(" ")
+    if scheme.lower() != "bearer" or not presented:
+        raise HTTPException(
+            status_code=401,
+            detail=f"service authorization is required for {operation}",
+        )
+    current_controller_token = load_controller_token(token_path=CONTROLLER_TOKEN_PATH, create=True)
+    service_token = os.getenv("SOURCE_INGEST_SERVICE_TOKEN", current_controller_token)
+    if not (
+        hmac.compare_digest(presented, current_controller_token)
+        or hmac.compare_digest(presented, service_token)
+        or hmac.compare_digest(presented, controller_token)
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail=f"service authorization is invalid for {operation}",
+        )
+
+
+@app.get("/api/source-ingest/management/connector-definitions")
+def list_management_connector_definitions() -> dict[str, Any]:
+    definitions = list_connector_definitions()
+    return {
+        "definitions": [d.to_dict() for d in definitions],
+        "count": len(definitions),
+    }
+
+
+@app.get("/api/source-ingest/management/connector-definitions/{definition_id}")
+def get_management_connector_definition(definition_id: str) -> dict[str, Any]:
+    definition = get_connector_definition(definition_id)
+    if definition is None:
+        raise HTTPException(status_code=404, detail=f"connector definition not found: {definition_id}")
+    return {"definition": definition.to_dict()}
+
+
+@app.post("/api/source-ingest/management/commands", status_code=202)
+def execute_source_management_command(
+    request: SourceCommandRequestBody,
+    authorization: str | None = Header(default=None),
+) -> dict[str, Any]:
+    _require_service_authorization(authorization, operation="source management command")
+
+    cmd = SourceManagementCommand(
+        command_id=request.command_id or f"srcmd-{uuid.uuid4().hex[:12]}",
+        idempotency_key=request.idempotency_key,
+        command_type=request.command_type,
+        source_instance_id=request.source_instance_id,
+        expected_revision=request.expected_revision,
+        actor=request.actor.model_dump(),
+        reason=request.reason,
+        parameters=request.parameters,
+        trace_id=request.trace_id,
+        requested_at=request.requested_at or _utc_now(),
+    )
+
+    try:
+        receipt = source_command_engine.execute_command(cmd)
+        return {"receipt": receipt.to_dict()}
+    except AdapterNotSupportedError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": "adapter_not_supported",
+                "message": str(exc),
+                "development_need": exc.development_need,
+            },
+        ) from exc
+    except StaleRevisionError as exc:
+        raise HTTPException(status_code=409, detail=f"STALE_REVISION: {exc}") from exc
+    except IdempotencyConflictError as exc:
+        raise HTTPException(status_code=409, detail=f"RESOURCE_CONFLICT: {exc}") from exc
+    except DuplicateInstanceError as exc:
+        raise HTTPException(status_code=409, detail=f"RESOURCE_CONFLICT: {exc}") from exc
+    except SourceInstanceNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=f"RESOURCE_NOT_FOUND: {exc}") from exc
+    except CommandPreconditionError as exc:
+        raise HTTPException(status_code=412, detail=f"PRECONDITION_FAILED: {exc}") from exc
+    except SourceManagementContractError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/source-ingest/management/commands/{receipt_id}")
+def get_source_management_command_receipt(receipt_id: str) -> dict[str, Any]:
+    receipt = source_management_store.get_receipt(receipt_id)
+    if receipt is None:
+        raise HTTPException(status_code=404, detail=f"command receipt not found: {receipt_id}")
+    return {"receipt": receipt.to_dict()}
+
+
+@app.get("/api/source-ingest/management/sources")
+def list_management_sources(
+    source_kind: str | None = None,
+    lifecycle_state: str | None = None,
+) -> dict[str, Any]:
+    instances = source_management_store.list_instances(
+        source_kind=source_kind,
+        lifecycle_state=lifecycle_state,
+    )
+    return {
+        "sources": [inst.to_dict() for inst in instances],
+        "count": len(instances),
+    }
+
+
+@app.get("/api/source-ingest/management/sources/{source_instance_id}")
+def get_management_source(source_instance_id: str) -> dict[str, Any]:
+    instance = source_management_store.get_instance(source_instance_id)
+    if instance is None:
+        raise HTTPException(status_code=404, detail=f"source instance not found: {source_instance_id}")
+    desired = source_management_store.get_desired_state(source_instance_id)
+    observed = source_management_store.get_latest_observed_snapshot(source_instance_id)
+    return {
+        "source": instance.to_dict(),
+        "desired": desired.to_dict() if desired else None,
+        "observed": observed.to_dict() if observed else None,
+    }
+
+
+@app.get("/api/source-ingest/management/sources/{source_instance_id}/observations")
+def list_management_source_observations(
+    source_instance_id: str,
+    limit: int = 100,
+) -> dict[str, Any]:
+    instance = source_management_store.get_instance(source_instance_id)
+    if instance is None:
+        raise HTTPException(status_code=404, detail=f"source instance not found: {source_instance_id}")
+    observations = source_management_store.list_observed_snapshots(source_instance_id, limit=limit)
+    return {
+        "observations": [obs.to_dict() for obs in observations],
+        "count": len(observations),
+    }
+
+
+@app.get("/api/source-ingest/management/sources/{source_instance_id}/canaries")
+def list_management_source_canaries(
+    source_instance_id: str,
+    limit: int = 100,
+) -> dict[str, Any]:
+    instance = source_management_store.get_instance(source_instance_id)
+    if instance is None:
+        raise HTTPException(status_code=404, detail=f"source instance not found: {source_instance_id}")
+    canaries = source_management_store.list_canary_results(source_instance_id, limit=limit)
+    return {
+        "canaries": [can.to_dict() for can in canaries],
+        "count": len(canaries),
+    }
+
+
+@app.get("/api/source-ingest/management/sources/{source_instance_id}/canaries/{canary_id}")
+def get_management_source_canary(
+    source_instance_id: str,
+    canary_id: str,
+) -> dict[str, Any]:
+    canary = source_management_store.get_canary_result(canary_id)
+    if canary is None or canary.source_instance_id != source_instance_id:
+        raise HTTPException(status_code=404, detail=f"canary result not found: {canary_id}")
+    return {"canary": canary.to_dict()}
+
+
+@app.get("/api/source-ingest/management/sources/{source_instance_id}/receipts")
+def list_management_source_receipts(
+    source_instance_id: str,
+    limit: int = 100,
+) -> dict[str, Any]:
+    instance = source_management_store.get_instance(source_instance_id)
+    if instance is None:
+        raise HTTPException(status_code=404, detail=f"source instance not found: {source_instance_id}")
+    receipts = source_management_store.list_receipts(source_instance_id, limit=limit)
+    return {
+        "receipts": [rcp.to_dict() for rcp in receipts],
+        "count": len(receipts),
+    }

@@ -1,0 +1,47 @@
+{
+  "task_id": "SRCM-P1-SOURCE-COMMANDS-20260824",
+  "owner": "Antigravity",
+  "reviewer": "Antigravity2",
+  "repository": "ajoe734/pantheon",
+  "target_branch": "dev",
+  "head_branch": "task/SRCM-P1-SOURCE-COMMANDS-20260824",
+  "task_type": "command_engine_and_store",
+  "specification": "docs/04/pantheon_external_data_source_management_2026-08-24/SD_EXTERNAL_DATA_SOURCE_MANAGEMENT_2026-08-24.md",
+  "architecture": "docs/04/pantheon_external_data_source_management_2026-08-24/SA_EXTERNAL_DATA_SOURCE_MANAGEMENT_2026-08-24.md",
+  "schemas_created": [
+    "docs/contracts/source_management_command.schema.json",
+    "docs/contracts/source_management_receipt.schema.json",
+    "docs/contracts/source_canary_result.schema.json"
+  ],
+  "modules_implemented": [
+    "services/source_ingestion/source_management_models.py",
+    "services/source_ingestion/source_management_store.py",
+    "services/source_ingestion/source_management_commands.py",
+    "services/source_ingestion/registry/proposals.py",
+    "services/source_ingestion/main.py",
+    "scripts/db_migrate.sh"
+  ],
+  "tests_implemented": [
+    "services/source_ingestion/tests/test_srcm_p1_source_commands.py"
+  ],
+  "contract_assertions": {
+    "draft7_conformance": true,
+    "create_starts_configured_disabled": true,
+    "no_network_fetch_on_create": true,
+    "service_auth_and_rbac_enforcement": true,
+    "expected_revision_optimistic_locking": true,
+    "idempotency_fingerprint_conflict_detection": true,
+    "strict_raw_secret_rejection": true,
+    "atomic_transaction_instance_desired_receipt": true,
+    "bounded_canary_9_stages": true,
+    "canary_partial_vs_passed_truth": true,
+    "enable_requires_passed_canary": true,
+    "proposal_apply_requires_succeeded_receipt": true,
+    "postgres_and_jsonl_dual_store_support": true,
+    "concurrency_and_thread_safety": true
+  },
+  "validation": {
+    "command_unit_tests_passing": 20,
+    "full_ingestion_suite_passing": 796
+  }
+}

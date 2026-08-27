@@ -1,6 +1,11 @@
-"""Authoritative Agora Strategy Performance projections and governed actions."""
-
+from .producer import PerformanceOutcomeEvaluationInput, PerformanceSuggestionProducer
 from .router import create_performance_router
 from .store import PerformanceSuggestionStore
 
-__all__ = ["PerformanceSuggestionStore", "create_performance_router"]
+__all__ = [
+    "PerformanceOutcomeEvaluationInput",
+    "PerformanceSuggestionProducer",
+    "PerformanceSuggestionStore",
+    "create_performance_router",
+]
+

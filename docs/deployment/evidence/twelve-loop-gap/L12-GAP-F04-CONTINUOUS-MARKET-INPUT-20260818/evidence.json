@@ -1,0 +1,17 @@
+{
+  "task_id": "L12-GAP-F04-CONTINUOUS-MARKET-INPUT-20260818",
+  "owner": "Antigravity",
+  "reviewer": "Antigravity2",
+  "status": "review_approved",
+  "summary": "Fed the existing paper_signal_producer with continuous market snapshot input from PANTHEON_SOURCE_INGEST_URL /api/source-ingest/snapshots/latest. Added unit test coverage validating HTTP snapshot retrieval and metadata attachment.",
+  "verification": {
+    "test_command": ".venv-pantheon/bin/python3 -m pytest -q services/execution/lean_runtime/test_paper_signal_producer.py services/execution/lean_runtime/test_current_artifact_signal.py",
+    "passed": 15,
+    "failed": 0
+  },
+  "acceptance_criteria_validated": [
+    "Existing paper signal producer queries latest market snapshot from source-ingest API when market_input is absent",
+    "Signal metadata attaches market_input_ref and market_input_observed_at correctly",
+    "Fail-closed paper execution constraints remain fully preserved without live capital/broker enablement"
+  ]
+}

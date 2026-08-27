@@ -40,7 +40,9 @@ HttpGetTransport = Callable[[str], Any]
 
 _UTC = timezone.utc
 _READBACK_SCHEMA = "source_ingest_controller_readback.v1"
-_CONTROLLER_STATE_SCHEMA = "source_ingest_controller_state.v1"
+_CONTROLLER_STATE_SCHEMAS = frozenset(
+    {"source_ingest_controller_state.v1", "source_ingest_controller_state.v2"}
+)
 _REQUIREMENT_SCHEMA = "source_ingest_requirement_snapshot.v1"
 _CONNECTOR_SCHEMA = "source_connector.v2"
 _STORAGE_SCHEMA = "market_data_storage_manifest.v1"
@@ -332,8 +334,8 @@ def _validate_controller_readback(
         raise SourceDatasetAuthorityError("controller readback is stale")
 
     state = _required_mapping(payload.get("controller_state"), "readback.controller_state")
-    if state.get("schema_version") != _CONTROLLER_STATE_SCHEMA:
-        raise SourceDatasetAuthorityError("controller state schema must be v1")
+    if state.get("schema_version") not in _CONTROLLER_STATE_SCHEMAS:
+        raise SourceDatasetAuthorityError("controller state schema must be v1 or v2")
     identity = {
         key: _trusted_identity(state.get(key), f"controller_state.{key}")
         for key in ("controller_id", "controller_name", "environment", "tenant_id")

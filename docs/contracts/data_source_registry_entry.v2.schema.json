@@ -1,0 +1,279 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://pantheon/data-source-registry-entry/v2",
+  "title": "Pantheon DataSourceRegistryEntry v2",
+  "description": "Product-level registry contract for data supply source instances (v2).",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "data_source_id",
+    "source_kind",
+    "definition_id",
+    "connector_id",
+    "provider",
+    "source_class",
+    "datasets",
+    "markets",
+    "license_scope",
+    "entitlement_tags",
+    "allowed_use",
+    "retention_policy_ref",
+    "deletion_policy_ref",
+    "freshness_sla_seconds",
+    "sensitivity",
+    "lifecycle_state",
+    "revision",
+    "created_by",
+    "created_at",
+    "updated_by",
+    "updated_at"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "enum": [
+        "data_source_registry_entry.v2"
+      ]
+    },
+    "data_source_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "source_kind": {
+      "type": "string",
+      "const": "data_source",
+      "description": "Discriminator that keeps data sources separate from strategy seed sources."
+    },
+    "definition_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "ID of the deployed ConnectorDefinition backing this instance."
+    },
+    "connector_id": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "Connector ID backing this data source instance."
+    },
+    "provider": {
+      "type": "string",
+      "minLength": 1
+    },
+    "provider_account_ref": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "source_class": {
+      "type": "string",
+      "enum": [
+        "market_daily",
+        "intraday_quote",
+        "filing_event",
+        "financial_fundamental",
+        "taiwan_chip",
+        "news",
+        "social",
+        "macro",
+        "short_interest",
+        "vendor_backfill",
+        "broker_readback"
+      ]
+    },
+    "datasets": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": [
+          "dataset_id",
+          "dataset_class"
+        ],
+        "properties": {
+          "dataset_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "dataset_class": {
+            "type": "string",
+            "minLength": 1
+          },
+          "markets": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "asset_classes": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "storage_tier": {
+            "type": "string"
+          },
+          "point_in_time_fields": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "event_time",
+                "available_time",
+                "ingest_time"
+              ]
+            }
+          },
+          "metadata": {
+            "type": "object"
+          }
+        },
+        "additionalProperties": true
+      }
+    },
+    "markets": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "license_scope": {
+      "type": "string",
+      "minLength": 1
+    },
+    "entitlement_tags": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "allowed_use": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "enum": [
+          "research_data",
+          "backtest_data",
+          "feature_generation",
+          "monitoring",
+          "paper_runtime",
+          "canary_runtime",
+          "live_runtime",
+          "execution_sync",
+          "audit_evidence",
+          "citation_reference",
+          "internal_research_only"
+        ]
+      }
+    },
+    "retention_policy_ref": {
+      "type": "string",
+      "minLength": 1
+    },
+    "deletion_policy_ref": {
+      "type": "string",
+      "minLength": 1
+    },
+    "freshness_sla_seconds": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "sensitivity": {
+      "type": "string",
+      "enum": [
+        "public",
+        "internal",
+        "confidential",
+        "restricted"
+      ]
+    },
+    "lifecycle_state": {
+      "type": "string",
+      "enum": [
+        "candidate",
+        "configured_disabled",
+        "validated_disabled",
+        "canary_passed_disabled",
+        "enabled",
+        "degraded",
+        "disabled",
+        "degraded_disabled",
+        "retired"
+      ]
+    },
+    "revision": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "created_by": {
+      "type": "string",
+      "minLength": 1
+    },
+    "created_at": {
+      "type": "string",
+      "minLength": 1
+    },
+    "updated_by": {
+      "type": "string",
+      "minLength": 1
+    },
+    "updated_at": {
+      "type": "string",
+      "minLength": 1
+    },
+    "lineage": {
+      "type": "object",
+      "properties": {
+        "source_record_refs": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "evidence_refs": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "dependent_strategy_refs": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "consumer_refs": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "update_frequency": {
+      "type": "string"
+    },
+    "universe_policy_ref": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "metadata": {
+      "type": "object"
+    }
+  },
+  "additionalProperties": false
+}

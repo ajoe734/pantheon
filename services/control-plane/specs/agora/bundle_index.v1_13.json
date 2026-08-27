@@ -6,11 +6,11 @@
     "bundle_index_sha256": "25ca80c94a622a0845266cbecab617f96fc47daa8a08736a166d1d88c9dec7c6"
   },
   "files": {
-    "specs/agora/v14/capability_manifest_v1_13.json": "7dfddaf220c00eddb7cbd0862eaa6f2aba7423dbd02e54d15db1d67a0cb4ded1"
+    "specs/agora/v14/capability_manifest_v1_13.json": "8b44dd85412b6ba7a0b9686b25d657fa9e3f95efdd4b0f280ff97d2be1186ff5"
   },
   "openapi": {
     "path": "services/control-plane/openapi/agora_v1_13.openapi.yaml",
-    "sha256": "36d1be5bc033ea1a55610f3f523fc478704fdfad1f06fec620e741bed9bf6f86"
+    "sha256": "56f12e43bb6041a0f83bf4ff69bf13ae86a335a38246f68a10f0a4ef3a856087"
   },
   "source_contracts": [
     {
@@ -99,7 +99,8 @@
     "agora.performance.truth.v1": [
       "GET /bff/agora/trading-room/strategies/{strategy_id}/performance",
       "POST /bff/agora/trading-room/strategies/{strategy_id}/performance/suggestions/{suggestion_id}/actions",
-      "GET /bff/agora/performance/action-receipts/{receipt_id}"
+      "GET /bff/agora/performance/action-receipts/{receipt_id}",
+      "GET /bff/agora/trading-room/performance-attribution/by-strategy"
     ],
     "agora.workshop.versions.durable.v1": [
       "GET /bff/agora/workshops/{workshop_id}/versions",

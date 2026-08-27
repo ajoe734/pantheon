@@ -17,6 +17,7 @@ from collections import deque
 from copy import deepcopy
 from concurrent.futures import Executor, ThreadPoolExecutor
 from contextvars import ContextVar, copy_context
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from functools import partial, wraps
@@ -81,7 +82,6 @@ from services.foundation.health import (  # noqa: E402
     readiness_status_code,
     register_fastapi_health_routes,
 )
-from services.trade_journey.lifecycle_projector import projector_readiness  # noqa: E402
 from services.source_ingestion.replication_bridge import (  # noqa: E402
     StrategySeedReplicationBridge,
     StrategySeedReplicationBridgeError,
@@ -696,53 +696,148 @@ os.makedirs(BFF_DATA_DIR, exist_ok=True)
 
 
 def _lifecycle_projector_dependency() -> Dict[str, Any]:
-    state_path = Path(
+    reader_backend = os.getenv(
+        "PANTHEON_BFF_TRADE_JOURNEY_READER_BACKEND", "postgres"
+    ).strip().lower()
+    if reader_backend != "postgres":
+        return {
+            "ready": False,
+            "status": "degraded",
+            "worker_status": "error",
+            "writer_backend": "disabled",
+            "reader_backend": reader_backend,
+            "reasons": [f"legacy_reader_retired:{reader_backend}"],
+            "error_reason": f"legacy_reader_retired:{reader_backend}",
+        }
+
+    reader = read_store.trade_journey_projection_reader()
+    tenant_id = os.getenv("PANTHEON_BFF_HEALTH_TENANT_ID", "default").strip()
+    environment = os.getenv(
+        "PANTHEON_BFF_TRADE_JOURNEY_HEALTH_ENVIRONMENT", "paper"
+    ).strip()
+    reasons: List[str] = []
+    controller: Dict[str, Any] = {}
+    try:
+        if reader is None:
+            raise ProjectionReadUnavailable(
+                "Postgres reader selected but no projection reader was configured"
+            )
+        controller = dict(
+            reader.controller_freshness(
+                tenant_id=tenant_id,
+                environment=environment,
+            )
+            or {}
+        )
+    except (ProjectionReadUnavailable, ValueError) as exc:
+        reasons.append(f"projection_reader_unavailable:{exc}")
+    except Exception as exc:  # noqa: BLE001 - readiness is fail-closed truth
+        reasons.append(f"projection_reader_error:{type(exc).__name__}")
+
+    raw_writer_backend = os.getenv("LIFECYCLE_PROJECTOR_WRITER_BACKEND")
+    if raw_writer_backend is not None and raw_writer_backend.strip():
+        writer_backend = raw_writer_backend.strip().lower()
+    else:
+        writer_backend = "postgres" if controller else "disabled"
+
+    if writer_backend not in {"postgres", "shadow", "relational"}:
+        reasons.append(
+            f"writer_backend_mismatch:{writer_backend or 'missing'}!=postgres"
+        )
+
+    expected_sha = (
+        os.getenv("BFF_COMMIT") or os.getenv("GIT_SHA") or ""
+    ).strip()
+    controller_sha = str(controller.get("deployment_sha") or "").strip()
+    checkpoint = int(controller.get("checkpoint") or 0)
+    source_high = int(controller.get("source_high_watermark") or 0)
+    backlog = int(controller.get("backlog") or 0)
+    quarantine_count = int(controller.get("quarantine_count") or 0)
+    if not controller:
+        reasons.append("controller_missing")
+    if controller.get("status") != "ready":
+        reasons.append(f"controller_not_ready:{controller.get('status') or 'missing'}")
+    if controller.get("mode") != "live" or controller.get("accepted_live") is not True:
+        reasons.append(
+            "live_truth_not_accepted:"
+            f"{controller.get('mode') or 'missing'}:"
+            f"{str(bool(controller.get('accepted_live'))).lower()}"
+        )
+    if checkpoint != source_high:
+        reasons.append(f"checkpoint_mismatch:{checkpoint}!={source_high}")
+    if backlog != 0:
+        reasons.append(f"backlog_nonzero:{backlog}")
+    if quarantine_count != 0:
+        reasons.append(f"quarantine_nonzero:{quarantine_count}")
+    if controller.get("last_error"):
+        reasons.append(f"last_error:{controller['last_error']}")
+    if expected_sha and expected_sha != "unknown" and controller_sha != expected_sha:
+        reasons.append(
+            f"deployment_sha_mismatch:{controller_sha or 'missing'}!={expected_sha}"
+        )
+
+    last_poll_at = str(controller.get("last_poll_at") or "").strip()
+    freshness_age_seconds: Optional[float] = None
+    if not last_poll_at:
+        reasons.append("last_poll_missing")
+    else:
+        try:
+            last_poll = datetime.fromisoformat(last_poll_at.replace("Z", "+00:00"))
+            if last_poll.tzinfo is None:
+                last_poll = last_poll.replace(tzinfo=timezone.utc)
+            freshness_age_seconds = max(
+                0.0,
+                (datetime.now(timezone.utc) - last_poll.astimezone(timezone.utc)).total_seconds(),
+            )
+            max_age = max(
+                1.0,
+                float(os.getenv("LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS", "120")),
+            )
+            if freshness_age_seconds > max_age:
+                reasons.append(
+                    f"last_poll_stale:{freshness_age_seconds:.3f}>{max_age:.3f}"
+                )
+        except (TypeError, ValueError):
+            reasons.append("last_poll_invalid")
+
+    ready = not reasons
+    root = Path(
         os.getenv(
-            "LIFECYCLE_PROJECTOR_HEALTH_STATE_PATH",
-            str(Path(BFF_DATA_DIR) / "lifecycle-projection" / "health_state.json"),
+            "LIFECYCLE_PROJECTION_ROOT",
+            str(Path(BFF_DATA_DIR) / "lifecycle-projection"),
         )
     )
-    root = Path(os.getenv("LIFECYCLE_PROJECTION_ROOT", str(state_path.parent)))
-    dependency = projector_readiness(state_path=state_path, bundle_root=root)
-
-    expected_stores = {
-        "trade_journey_events": root / "current" / "trade_journey_events.json",
-        "loop_runs": root / "current" / "loop_runs.json",
+    return {
+        "ready": ready,
+        "status": "ready" if ready else "degraded",
+        "worker_status": "ready" if ready else "error",
+        "writer_backend": writer_backend,
+        "reader_backend": "postgres",
+        "tenant_scope": tenant_id,
+        "environment_scope": environment,
+        "deployment_sha": controller_sha or None,
+        "expected_deployment_sha": expected_sha or None,
+        "checkpoint": checkpoint,
+        "source_high_watermark": source_high,
+        "backlog": backlog,
+        "quarantine_count": quarantine_count,
+        "generation": controller.get("generation"),
+        "mode": controller.get("mode"),
+        "accepted_live": bool(controller.get("accepted_live")),
+        "last_poll_at": last_poll_at or None,
+        "freshness_age_seconds": freshness_age_seconds,
+        "reasons": reasons,
+        "error_reason": reasons[0] if reasons else None,
+        "legacy_recovery_stores": {
+            "trade_journey_events": str(
+                root / "current" / "trade_journey_events.json"
+            ),
+            "loop_runs": str(root / "current" / "loop_runs.json"),
+            "preserved": True,
+            "accepted_reader": False,
+        },
+        "controller": controller,
     }
-    configured_stores = {
-        "trade_journey_events": Path(
-            os.getenv(
-                "PANTHEON_BFF_TRADE_JOURNEY_EVENTS_STORE",
-                str(expected_stores["trade_journey_events"]),
-            )
-        ),
-        "loop_runs": Path(
-            os.getenv(
-                "PANTHEON_BFF_LOOP_RUN_STORE",
-                str(expected_stores["loop_runs"]),
-            )
-        ),
-    }
-    store_status: Dict[str, Dict[str, Any]] = {}
-    mismatches: List[str] = []
-    for name, expected_path in expected_stores.items():
-        configured_path = configured_stores[name]
-        aligned = configured_path.absolute() == expected_path.absolute()
-        store_status[name] = {
-            "configured_path": str(configured_path),
-            "expected_path": str(expected_path),
-            "aligned": aligned,
-        }
-        if not aligned:
-            mismatches.append(name)
-    dependency["read_surface_stores"] = store_status
-    if mismatches:
-        reason = f"read_surface_store_mismatch:{','.join(mismatches)}"
-        dependency["ready"] = False
-        dependency["status"] = "degraded"
-        dependency["reasons"] = [*dependency.get("reasons", []), reason]
-        dependency["error_reason"] = dependency.get("error_reason") or reason
-    return dependency
 
 
 def _bff_readiness_dependencies() -> Dict[str, Dict[str, Any]]:
@@ -1041,10 +1136,11 @@ def _pack_d_http_exception_response(
     )
 
 
+@app.exception_handler(HTTPException)
 @app.exception_handler(StarletteHTTPException)
 async def _bff_http_exception_handler(
     request: Request,
-    exc: StarletteHTTPException,
+    exc: StarletteHTTPException | HTTPException,
 ) -> JSONResponse:
     return _pack_d_http_exception_response(request, exc)
 
@@ -1238,11 +1334,11 @@ def _dev_login_forbidden_environment() -> bool:
 
 
 def _dev_login_ttl_seconds() -> int:
-    raw = os.getenv("PANTHEON_BFF_DEV_LOGIN_TTL_SECONDS", "900").strip()
+    raw = os.getenv("PANTHEON_BFF_DEV_LOGIN_TTL_SECONDS", "1800").strip()
     try:
         ttl = int(raw)
     except ValueError:
-        ttl = 900
+        ttl = 1800
     return max(300, min(ttl, 3600))
 
 
@@ -4557,7 +4653,7 @@ def _stored_command_params(
         params["persona_id"] = cmd.target.id
     canonical_action_id = _HUMAN_GATE_DECISIONS_BY_COMMAND.get(
         cmd.command,
-        cmd.command.value,
+        cmd.action or cmd.params.get("action_id") or cmd.params.get("actionId") or cmd.command.value,
     )
     if cmd.command == CommandType.QUARTERLY_RANKING_RECOMMENDATION_SUBMIT:
         canonical_action_id = "submit_recommendation"
@@ -4566,7 +4662,7 @@ def _stored_command_params(
     # prevents a caller from redirecting an admitted command after validation.
     params.update(
         {
-            "entity_type": cmd.target.type.value,
+            "entity_type": cmd.params.get("entity_type") or cmd.target.type.value,
             "entity_id": cmd.target.id,
             "action_id": canonical_action_id,
             "actionId": canonical_action_id,
@@ -6517,7 +6613,7 @@ _VALIDATORS = {
 # Read surface helpers
 # --------------------------------------------------------------------------- #
 
-_READ_ROLES = {"viewer", "operator", "approver", "admin", "reviewer"}
+_READ_ROLES = {"viewer", "view_only", "operator", "approver", "admin", "reviewer"}
 _WRITE_ROLES = {"operator", "approver", "admin", "reviewer"}
 
 
@@ -7278,11 +7374,15 @@ async def bff_auth_readiness(
         and interaction_capability_ready
         and verifier_ready
     )
+    # Auth readiness is a local-authority decision: it must not be gated by
+    # OpenClaw provider health. Provider status is still probed and surfaced
+    # for observability, but a provider outage or probe failure must never
+    # flip a validly authenticated strict session to not-ready.
     provider = _safe_provider_readiness()
     provider_ready = bool(provider["ready"])
     return {
         "data": {
-            "ready": auth_ready and provider_ready,
+            "ready": auth_ready,
             "authReady": auth_ready,
             "providerReady": provider_ready,
             "sourceCommitSha": _bff_source_commit(),
@@ -9576,9 +9676,22 @@ def _build_home_card(
     }
 
 
-def _build_operator_home_payload(snapshot_at: str) -> Dict[str, Any]:
-    alerts_payload = _build_operator_alerts_payload(snapshot_at)
-    health_payload = _build_operator_health_status_payload(snapshot_at)
+def _build_operator_home_payload(
+    snapshot_at: str,
+    *,
+    alerts_payload: Optional[Dict[str, Any]] = None,
+    health_payload: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Build the home cards from an optional already-read cockpit snapshot.
+
+    The cockpit embeds the operator-home, alerts, and health sections in one
+    response.  Reusing its two already-built contributors prevents that
+    aggregate from rebuilding the same alert and runtime-health fan-out just
+    to derive the home cards.  Standalone operator-home reads retain their
+    existing direct composition path.
+    """
+    alerts_payload = alerts_payload or _build_operator_alerts_payload(snapshot_at)
+    health_payload = health_payload or _build_operator_health_status_payload(snapshot_at)
     groups_by_id = {
         str(group.get("group_id") or ""): group
         for group in health_payload["groups"]
@@ -12176,9 +12289,13 @@ def _build_management_cockpit_payload(
     *,
     human_inbox: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
-    operator_home = _build_operator_home_payload(snapshot_at)
-    runtime_health = _build_operator_health_status_payload(snapshot_at)
     alerts_payload = _build_operator_alerts_payload(snapshot_at)
+    runtime_health = _build_operator_health_status_payload(snapshot_at)
+    operator_home = _build_operator_home_payload(
+        snapshot_at,
+        alerts_payload=alerts_payload,
+        health_payload=runtime_health,
+    )
     if human_inbox is None:
         human_inbox = _human_inbox_payload(snapshot_at, page_size=None)
     trading_pulse = _build_management_trading_pulse_payload(snapshot_at)
@@ -12246,6 +12363,20 @@ def _management_cockpit_read_timeout_seconds() -> float:
         return 2.5
 
 
+def _management_data_sources_read_timeout_seconds() -> float:
+    """Bound the one Source Ingest registry read used by Management.
+
+    Source Ingest is the canonical registry authority.  A slow or unhealthy
+    registry must therefore yield a typed unavailable envelope rather than
+    make the Management event loop wait for the downstream HTTP timeout.
+    """
+    raw = os.getenv("PANTHEON_BFF_DATA_SOURCES_READ_TIMEOUT_SECONDS", "0.75").strip()
+    try:
+        return max(0.05, float(raw))
+    except (TypeError, ValueError):
+        return 0.75
+
+
 _MANAGEMENT_COCKPIT_READ_SLOT_COUNT = 2
 _MANAGEMENT_COCKPIT_READ_SLOTS = threading.BoundedSemaphore(
     _MANAGEMENT_COCKPIT_READ_SLOT_COUNT
@@ -12253,6 +12384,14 @@ _MANAGEMENT_COCKPIT_READ_SLOTS = threading.BoundedSemaphore(
 _MANAGEMENT_COCKPIT_READ_EXECUTOR = ThreadPoolExecutor(
     max_workers=_MANAGEMENT_COCKPIT_READ_SLOT_COUNT,
     thread_name_prefix="bff-management-cockpit",
+)
+_MANAGEMENT_DATA_SOURCES_READ_SLOT_COUNT = 2
+_MANAGEMENT_DATA_SOURCES_READ_SLOTS = threading.BoundedSemaphore(
+    _MANAGEMENT_DATA_SOURCES_READ_SLOT_COUNT
+)
+_MANAGEMENT_DATA_SOURCES_READ_EXECUTOR = ThreadPoolExecutor(
+    max_workers=_MANAGEMENT_DATA_SOURCES_READ_SLOT_COUNT,
+    thread_name_prefix="bff-management-data-sources",
 )
 
 
@@ -12769,12 +12908,16 @@ def _ew04_inspiration_projection_from_lineage_edges(artifact_id: str) -> Optiona
         strategy_id = str(edge.get("strategy_id") or "").strip()
         if strategy_id:
             strategy_tags.add(strategy_id)
+        raw_influence = edge.get("influence_weight")
+        influence_weight = float(raw_influence) if raw_influence is not None else None
+        influence_state = str(edge.get("influence_state") or ("confirmed_influence" if influence_weight is not None else "influence_unknown"))
         inspiration_edges.append(
             {
                 "lineage_edge_id": edge.get("id"),
                 "source_artifact_id": source_artifact_id,
                 "relationship_type": relationship_type,
-                "influence_weight": 1.0,
+                "influence_weight": influence_weight,
+                "influence_state": influence_state,
             }
         )
     return {
@@ -14838,6 +14981,45 @@ async def _run_management_read(
         worker_future.cancel()
     task.add_done_callback(_discard_late_management_read_result)
     raise _ManagementReadTimeout()
+
+
+async def _read_management_source_connector_registry(
+    store: ReadSurfaceStore,
+) -> Dict[str, Any]:
+    """Read the canonical Source registry within the Management read budget.
+
+    This is deliberately a bounded projection, not a second registry or a
+    cache authority.  Timeout and capacity outcomes retain an explicit
+    unavailable source state, so stale or missing Source Ingest truth can
+    never be reported as a healthy connector list.
+    """
+    try:
+        return await _run_management_read(
+            store.get_source_connector_registry,
+            timeout_seconds=_management_data_sources_read_timeout_seconds(),
+            capacity=_MANAGEMENT_DATA_SOURCES_READ_SLOTS,
+            executor=_MANAGEMENT_DATA_SOURCES_READ_EXECUTOR,
+        )
+    except _ManagementReadSaturated:
+        return {
+            "source": "unavailable",
+            "connectors": [],
+            "provider_examples": [],
+            "policy_registry": None,
+            "financial_data_source_catalog": None,
+            "active_universe_policy": None,
+            "reason": "read_capacity_saturated",
+        }
+    except _ManagementReadTimeout:
+        return {
+            "source": "unavailable",
+            "connectors": [],
+            "provider_examples": [],
+            "policy_registry": None,
+            "financial_data_source_catalog": None,
+            "active_universe_policy": None,
+            "reason": "read_timeout",
+        }
 
 
 @app.get("/health")
@@ -30749,6 +30931,60 @@ def _list_persona_records() -> List[Dict[str, Any]]:
     return items
 
 
+@dataclass(frozen=True)
+class PersonaDirectorySnapshot:
+    tenant_id: str
+    snapshot_at: str
+    records_by_id: Dict[str, Dict[str, Any]]
+    catalog_defaults_by_id: Dict[str, Dict[str, Any]]
+
+
+def _get_persona_directory_snapshot(
+    tenant_id: Optional[str] = None,
+    *,
+    snapshot_at: Optional[str] = None,
+) -> PersonaDirectorySnapshot:
+    snapshot_timestamp = snapshot_at or utc_now()
+    clean_tenant = str(tenant_id or "").strip()
+    records_by_id: Dict[str, Dict[str, Any]] = {}
+    catalog_defaults_by_id: Dict[str, Dict[str, Any]] = {}
+
+    for raw in _list_persona_records():
+        if not isinstance(raw, dict):
+            continue
+        rec_tenant = _persona_record_tenant_id(raw)
+        if clean_tenant and rec_tenant not in {"", clean_tenant}:
+            continue
+        pid = str(raw.get("persona_id") or raw.get("id") or "").strip()
+        if pid:
+            records_by_id[pid] = raw
+
+    try:
+        defaults = read_store.list_personas(include_market_persona_defaults=True) or []
+    except Exception:
+        defaults = []
+
+    for default_record in defaults:
+        if not isinstance(default_record, dict):
+            continue
+        did = str(default_record.get("persona_id") or default_record.get("id") or "").strip()
+        if did and did not in records_by_id:
+            catalog_defaults_by_id[did] = {
+                **default_record,
+                "record_kind": "catalog_default",
+                "detail_available": False,
+                "admission_state": "not_admitted",
+            }
+
+    return PersonaDirectorySnapshot(
+        tenant_id=clean_tenant,
+        snapshot_at=snapshot_timestamp,
+        records_by_id=records_by_id,
+        catalog_defaults_by_id=catalog_defaults_by_id,
+    )
+
+
+
 _PERSONA_STRATEGY_MATCH_ALLOWED_ACTIONS = frozenset({
     "create_research_ticket",
     "promote_seed_candidate",
@@ -32647,12 +32883,37 @@ def _pm12_performance_attribution_sources() -> Dict[str, Any]:
         if _management_record_id(strategy, "strategy_id", "id")
     }
 
+    # A single telemetry-list projection is the canonical bounded source for
+    # this aggregate.  Do not issue one record read per runtime when that
+    # projection supplied rows.  The record lookup fallback is retained for
+    # older stores that expose no telemetry-list rows at all (including
+    # isolated legacy fixtures that only expose the historical record lookup).
     telemetry_by_runtime_id: Dict[str, Dict[str, Any]] = {}
+    try:
+        telemetry_summaries = list(read_store.list_telemetry_summaries() or [])
+    except Exception:
+        telemetry_summaries = []
+    has_bulk_telemetry_projection = bool(telemetry_summaries)
+    for telemetry in telemetry_summaries:
+        if not isinstance(telemetry, dict):
+            continue
+        runtime_id = _management_record_id(
+            telemetry,
+            "runtime_id",
+            "runtimeId",
+            "execution_runtime_id",
+            "id",
+        )
+        if runtime_id:
+            telemetry_by_runtime_id[runtime_id] = telemetry
+
     for runtime in runtime_bindings:
         runtime_id = _management_record_id(runtime, "runtime_id", "id", "binding_id")
         if not runtime_id:
             continue
-        telemetry = read_store.get_telemetry_summary(runtime_id)
+        telemetry = telemetry_by_runtime_id.get(runtime_id)
+        if telemetry is None and not has_bulk_telemetry_projection:
+            telemetry = read_store.get_telemetry_summary(runtime_id)
         if telemetry is not None:
             telemetry_by_runtime_id[runtime_id] = telemetry
 
@@ -43882,6 +44143,59 @@ def _mgmt_nl_extract_provider_answer(payload: Dict[str, Any]) -> Optional[str]:
     return _mgmt_nl_text_from_provider_value(payload)
 
 
+_MGMT_NL_COMPLETED_PROVIDER_STATES = {"completed", "ok", "success", "succeeded"}
+_MGMT_NL_PROVIDER_DEADLINE_DEFAULT_SECONDS = 45.0
+
+
+def _mgmt_nl_provider_deadline_seconds() -> float:
+    raw = os.getenv("PANTHEON_MANAGEMENT_NL_PROVIDER_DEADLINE_SECONDS")
+    if raw is None or not str(raw).strip():
+        return _MGMT_NL_PROVIDER_DEADLINE_DEFAULT_SECONDS
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return _MGMT_NL_PROVIDER_DEADLINE_DEFAULT_SECONDS
+    return min(300.0, max(0.1, value))
+
+
+def _mgmt_nl_provider_candidates(primary: str) -> List[str]:
+    configured: List[str] = [str(primary or "").strip().lower()]
+    for env_name in (
+        "PANTHEON_MANAGEMENT_NL_ASSISTANT_FALLBACK_PROVIDERS",
+        "PANTHEON_MGMT_NL_ASSISTANT_FALLBACK_PROVIDERS",
+    ):
+        raw = os.getenv(env_name, "")
+        configured.extend(item.strip().lower() for item in raw.split(","))
+    candidates: List[str] = []
+    for provider in configured:
+        if provider and provider not in candidates:
+            candidates.append(provider)
+    return candidates
+
+
+def _mgmt_nl_provider_attempt_summary(status: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "provider": status.get("provider"),
+        "status": status.get("status"),
+        "used": bool(status.get("used")),
+        "reason": status.get("reason"),
+        "run_id": status.get("run_id"),
+    }
+
+
+def _mgmt_nl_provider_degraded_reason(payload: Dict[str, Any]) -> str:
+    data = payload.get("data") if isinstance(payload, dict) else {}
+    output = data.get("output") if isinstance(data, dict) else {}
+    for source in (output, data, payload):
+        if not isinstance(source, dict):
+            continue
+        for key in ("error_code", "reason", "degraded_reason", "diagnostic_reason"):
+            value = str(source.get(key) or "").strip()
+            if value:
+                return value.upper()
+    return "PROVIDER_RESPONSE_DEGRADED"
+
+
 def _mgmt_nl_maybe_provider_answer(
     *,
     provider: str,
@@ -43896,6 +44210,74 @@ def _mgmt_nl_maybe_provider_answer(
     audit_id: Optional[str],
     allowed_action_kinds: Set[str],
     current_user_attachments: Optional[List[Dict[str, Any]]] = None,
+) -> Tuple[Optional[str], Dict[str, Any], List[Dict[str, Any]]]:
+    candidates = _mgmt_nl_provider_candidates(provider)
+    deadline_seconds = _mgmt_nl_provider_deadline_seconds()
+    deadline = time.monotonic() + deadline_seconds
+    attempts: List[Dict[str, Any]] = []
+    primary_status: Optional[Dict[str, Any]] = None
+
+    for attempt_index, candidate in enumerate(candidates):
+        answer, status, actions = _mgmt_nl_attempt_provider_answer(
+            provider=candidate,
+            question=question,
+            focus=focus,
+            identity=identity,
+            caller_tenant_id=caller_tenant_id,
+            session_id=session_id,
+            message_id=message_id,
+            trace_id=trace_id,
+            context_pack=context_pack,
+            audit_id=audit_id,
+            allowed_action_kinds=allowed_action_kinds,
+            current_user_attachments=current_user_attachments,
+            provider_deadline=deadline,
+            provider_attempt=attempt_index,
+        )
+        attempt_summary = _mgmt_nl_provider_attempt_summary(status)
+        attempts.append(attempt_summary)
+        if primary_status is None:
+            primary_status = status
+        if answer and status.get("used") is True:
+            status["attempted_providers"] = attempts
+            status["deadline_seconds"] = deadline_seconds
+            if attempt_index:
+                status["fallback"] = "provider_failover"
+                status["fallback_from"] = str(provider or "").strip().lower()
+                status["fallback_reason"] = primary_status.get("reason") if primary_status else None
+            return answer, status, actions
+        if str(status.get("status") or "").lower() == "disabled":
+            break
+        if time.monotonic() >= deadline:
+            break
+
+    terminal_status = dict(primary_status or _mgmt_nl_provider_status(
+        provider=provider,
+        enabled=True,
+        status="degraded",
+        reason="provider_deadline_exhausted",
+    ))
+    terminal_status["attempted_providers"] = attempts
+    terminal_status["deadline_seconds"] = deadline_seconds
+    return None, terminal_status, []
+
+
+def _mgmt_nl_attempt_provider_answer(
+    *,
+    provider: str,
+    question: str,
+    focus: str,
+    identity: OperatorIdentity,
+    caller_tenant_id: str,
+    session_id: str,
+    message_id: str,
+    trace_id: str,
+    context_pack: Dict[str, Any],
+    audit_id: Optional[str],
+    allowed_action_kinds: Set[str],
+    current_user_attachments: Optional[List[Dict[str, Any]]] = None,
+    provider_deadline: Optional[float] = None,
+    provider_attempt: int = 0,
 ) -> Tuple[Optional[str], Dict[str, Any], List[Dict[str, Any]]]:
     enabled = _mgmt_nl_provider_feature_enabled()
     if provider in {"none", "off", "disabled", "deterministic"}:
@@ -43953,7 +44335,15 @@ def _mgmt_nl_maybe_provider_answer(
             reason="unsupported_provider",
         ), []
 
-    run_id = trace_id
+    run_id = trace_id if provider_attempt == 0 else f"{trace_id}:fallback:{provider_attempt}"
+    if provider_deadline is not None and time.monotonic() >= provider_deadline:
+        return None, _mgmt_nl_provider_status(
+            provider=provider,
+            enabled=True,
+            status="degraded",
+            reason="provider_deadline_exhausted",
+            run_id=run_id,
+        ), []
     provider_mode = _mgmt_nl_provider_mode_from_context(context_pack)
     prompt = _mgmt_nl_provider_prompt(
         question=question,
@@ -44055,6 +44445,17 @@ def _mgmt_nl_maybe_provider_answer(
         "trace_id": run_id,
         "metadata": metadata,
     }
+    if provider_deadline is not None:
+        remaining_seconds = provider_deadline - time.monotonic()
+        if remaining_seconds <= 0:
+            return _provider_failure(
+                OpenClawOpsClientError(
+                    "Management AI provider deadline elapsed before invocation.",
+                    status_code=504,
+                    error_code="PROVIDER_DEADLINE_EXHAUSTED",
+                )
+            )
+        invoke_kwargs["timeout_seconds"] = remaining_seconds
     if multimodal_supported and multimodal_payload:
         invoke_kwargs["messages"] = multimodal_payload.get("messages")
         invoke_kwargs["attachments"] = multimodal_payload.get("attachments")
@@ -44086,26 +44487,53 @@ def _mgmt_nl_maybe_provider_answer(
                 "multimodal": multimodal_summary,
             }
         )
+        retry_kwargs: Dict[str, Any] = {
+            "provider": provider,
+            "mode": provider_mode,
+            "prompt": prompt,
+            "context_pack": context_pack,
+            "operator_id": identity.operator_id,
+            "trace_id": run_id,
+            "metadata": metadata,
+        }
+        if provider_deadline is not None:
+            remaining_seconds = provider_deadline - time.monotonic()
+            if remaining_seconds <= 0:
+                return _provider_failure(
+                    OpenClawOpsClientError(
+                        "Management AI provider deadline elapsed before multimodal retry.",
+                        status_code=504,
+                        error_code="PROVIDER_DEADLINE_EXHAUSTED",
+                    )
+                )
+            retry_kwargs["timeout_seconds"] = remaining_seconds
         try:
             provider_payload = OpenClawOpsClient().invoke_assistant_provider(
-                provider=provider,
-                mode=provider_mode,
-                prompt=prompt,
-                context_pack=context_pack,
-                operator_id=identity.operator_id,
-                trace_id=run_id,
-                metadata=metadata,
+                **retry_kwargs,
             )
         except OpenClawOpsClientError as retry_exc:
             return _provider_failure(retry_exc)
 
+    data = provider_payload.get("data") if isinstance(provider_payload, dict) else {}
+    provider_state = str((data or {}).get("status") or provider_payload.get("status") or "ok")
+    if provider_state.strip().lower() not in _MGMT_NL_COMPLETED_PROVIDER_STATES:
+        output = (data or {}).get("output") if isinstance(data, dict) else {}
+        message = ""
+        if isinstance(output, dict):
+            message = str(output.get("message") or output.get("diagnostic_message") or "").strip()
+        return _provider_failure(
+            OpenClawOpsClientError(
+                message or "Assistant provider returned a non-terminal answer state.",
+                status_code=200,
+                error_code=_mgmt_nl_provider_degraded_reason(provider_payload),
+                payload=provider_payload,
+            )
+        )
     answer = _mgmt_nl_extract_provider_answer(provider_payload)
     actions = _mgmt_nl_extract_provider_actions(
         provider_payload,
         allowed_action_kinds=allowed_action_kinds,
     )
-    data = provider_payload.get("data") if isinstance(provider_payload, dict) else {}
-    provider_state = str((data or {}).get("status") or provider_payload.get("status") or "ok")
     duration_ms = max(0, int((time.monotonic() - provider_started) * 1000))
     _management_ai_record_event(
         {
@@ -46695,11 +47123,8 @@ async def bff_list_personas(
     _require_read_role(identity)
     snapshot_at = utc_now()
     tenant_id = str(_bff_me_tenant_payload(identity, requested_tenant=None)["id"])
-    raw_personas = [
-        raw
-        for raw in _list_persona_records()
-        if _persona_record_tenant_id(raw) in {"", tenant_id}
-    ]
+    directory = _get_persona_directory_snapshot(tenant_id, snapshot_at=snapshot_at)
+    raw_personas = list(directory.records_by_id.values())
     if state:
         raw_personas = [
             raw for raw in raw_personas if _persona_record_projected_state(raw) == state
@@ -46708,16 +47133,24 @@ async def bff_list_personas(
         raw_personas = [
             raw for raw in raw_personas if _persona_record_archetype(raw) == archetype
         ]
-    total = len(raw_personas)
+    canonical_total = len(directory.records_by_id)
+    filtered_total = len(raw_personas)
+    catalog_default_total = len(directory.catalog_defaults_by_id)
     page_raw, next_page_token = _page_slice(raw_personas, page_token, page_size)
     page_items = await asyncio.to_thread(_project_persona_list_records, page_raw)
     return {
         "data": page_items,
         "items": page_items,
-        "page_info": {"next_page_token": next_page_token, "total": total},
+        "page_info": {
+            "next_page_token": next_page_token,
+            "total": filtered_total,
+            "canonical_total": canonical_total,
+            "filtered_total": filtered_total,
+            "catalog_default_total": catalog_default_total,
+        },
         "meta": _read_surface_meta(
             "personas", "persona_list",
-            snapshot_at=snapshot_at, total=total,
+            snapshot_at=snapshot_at, total=filtered_total,
         ),
     }
 
@@ -47450,37 +47883,6 @@ async def bff_create_paper_persona_bundle(
     )
 
 
-def _persona_catalog_fallback_record(persona_id: str) -> Optional[Dict[str, Any]]:
-    """Resolve a Fleet-visible persona when the direct detail store misses it."""
-    clean_id = str(persona_id or "").strip()
-    if not clean_id:
-        return None
-    for candidate in read_store.list_personas(include_market_persona_defaults=True):
-        candidate_id = str(candidate.get("persona_id") or candidate.get("id") or "").strip()
-        if candidate_id == clean_id:
-            return dict(candidate)
-    return None
-
-
-def _persona_catalog_fallback_surface(snapshot_at: str) -> Dict[str, Any]:
-    return {
-        "status": "degraded",
-        "source": "persona_catalog_list_fallback",
-        "note": (
-            "Resolved from the governed Persona catalog used by Persona Fleet because "
-            "the direct detail store did not return this list-visible identity."
-        ),
-        "staleness": {
-            "served_from": "persona_catalog_list_fallback",
-            "last_known_at": snapshot_at,
-        },
-        "observed_time": snapshot_at,
-        "freshness": "persona_catalog_list_fallback",
-        "coverage": 1.0,
-        "missing_bindings": False,
-    }
-
-
 def _persona_provisioning_authoritative_meta(raw: Mapping[str, Any]) -> Dict[str, Any]:
     metadata = raw.get("metadata")
     metadata = metadata if isinstance(metadata, Mapping) else {}
@@ -47545,32 +47947,20 @@ async def bff_get_persona(
     _require_read_role(identity)
     snapshot_at = utc_now()
     caller_tenant = str(_bff_me_tenant_payload(identity, requested_tenant=None)["id"])
-    overlay = _PERSONA_BFF_OVERLAY.get(persona_id)
-    if overlay and str(overlay.get("tenantId") or "") != caller_tenant:
-        overlay = None
-    raw = read_store.get_persona(persona_id)
-    if raw:
-        record_tenant = _persona_record_tenant_id(raw)
-        if record_tenant and record_tenant != caller_tenant:
-            raw = None
-            overlay = None
-    detail_surface = None
-    if not raw and not overlay:
-        raw = _persona_catalog_fallback_record(persona_id)
-        if raw and _persona_record_tenant_id(raw) not in {"", caller_tenant}:
-            raw = None
-        if raw:
-            detail_surface = _persona_catalog_fallback_surface(snapshot_at)
-    if not raw and not overlay:
+    directory = _get_persona_directory_snapshot(caller_tenant, snapshot_at=snapshot_at)
+    raw = directory.records_by_id.get(persona_id)
+    if not raw:
         raise _bff_error(
             404, ErrorCode.RESOURCE_NOT_FOUND,
             "Persona not found",
             f"Persona {persona_id} does not exist",
         )
-    base = raw or {"persona_id": persona_id, "name": (overlay or {}).get("name")}
+    overlay = _PERSONA_BFF_OVERLAY.get(persona_id)
+    if overlay and str(overlay.get("tenantId") or "") not in {"", caller_tenant}:
+        overlay = None
     dto = await asyncio.to_thread(
         lambda: _project_persona_dto(
-            base,
+            raw,
             overlay=overlay,
             routed_strategies=_routed_strategies_for_persona(persona_id),
         )
@@ -47585,7 +47975,6 @@ async def bff_get_persona(
     meta = _read_surface_meta(
         "personas", "persona_detail",
         snapshot_at=snapshot_at,
-        surface=detail_surface,
     )
     if containment:
         meta.setdefault("surfaces", {})["containment"] = _dataset_surface_status(
@@ -47758,12 +48147,9 @@ async def bff_patch_persona(
     return result
 
 
-def _ensure_persona_exists(persona_id: str) -> None:
-    if (
-        read_store.get_persona(persona_id)
-        or persona_id in _PERSONA_BFF_OVERLAY
-        or _persona_catalog_fallback_record(persona_id)
-    ):
+def _ensure_persona_exists(persona_id: str, caller_tenant: Optional[str] = None) -> None:
+    directory = _get_persona_directory_snapshot(caller_tenant)
+    if persona_id in directory.records_by_id:
         return
     raise _bff_error(
         404, ErrorCode.RESOURCE_NOT_FOUND,
@@ -48610,7 +48996,15 @@ def _pm12_runtime_session_resolution(
             runtime_aliases,
             authoritative_sessions=authoritative_sessions,
         )
-        if not sessions and any(
+        if not sessions and not authoritative_sessions:
+            sessions = []
+            for raw_session in read_store.get_sessions_for_persona(persona_id) or []:
+                if not isinstance(raw_session, dict):
+                    continue
+                session = dict(raw_session)
+                session.setdefault("session_authority", "persona_session_store")
+                sessions.append(session)
+        elif not sessions and any(
             isinstance(session, dict)
             and _pm12_session_runtime_aliases(session)
             for session in authoritative_sessions
@@ -48692,16 +49086,16 @@ def _pm12_persona_session_summary(persona_id: str) -> Dict[str, Any]:
         for alias in _pm12_runtime_identity_aliases(runtime)
     }
     if paper_runtime_aliases:
-        sessions = [
-            session
-            for session in sessions
-            if not _pm12_session_runtime_aliases(session).intersection(
-                paper_runtime_aliases
-            )
-        ]
-        sessions.extend(
-            _pm12_authoritative_paper_monitoring_sessions(paper_runtime_aliases)
-        )
+        authoritative = _pm12_authoritative_paper_monitoring_sessions(paper_runtime_aliases)
+        if authoritative:
+            sessions = [
+                session
+                for session in sessions
+                if not _pm12_session_runtime_aliases(session).intersection(
+                    paper_runtime_aliases
+                )
+            ]
+            sessions.extend(authoritative)
     active = [
         session
         for session in sessions
@@ -49191,8 +49585,12 @@ def _pm12_persona_telemetry_records(
     return records
 
 
-def _pm12_persona_telemetry_metrics(row: Dict[str, Any]) -> Dict[str, Any]:
-    telemetry_cache: Dict[str, Optional[Dict[str, Any]]] = {}
+def _pm12_persona_telemetry_metrics(
+    row: Dict[str, Any],
+    *,
+    telemetry_cache: Optional[Dict[str, Optional[Dict[str, Any]]]] = None,
+) -> Dict[str, Any]:
+    telemetry_cache = telemetry_cache if telemetry_cache is not None else {}
     runtime_ids = _pm12_persona_runtime_ids(row, telemetry_cache=telemetry_cache)
     records = [
         record
@@ -49520,9 +49918,18 @@ def _pm12_quarterly_ranking_items(
     rows: List[Dict[str, Any]],
     *,
     quarter_window: Dict[str, Any],
+    telemetry_cache: Optional[Dict[str, Optional[Dict[str, Any]]]] = None,
 ) -> List[Dict[str, Any]]:
+    def ranking_item(row: Dict[str, Any]) -> Dict[str, Any]:
+        if telemetry_cache is None:
+            return _pm12_persona_league_ranking_item(row)
+        return _pm12_persona_league_ranking_item(
+            row,
+            telemetry_cache=telemetry_cache,
+        )
+
     ranked = sorted(
-        (_pm12_persona_league_ranking_item(row) for row in rows),
+        (ranking_item(row) for row in rows),
         key=lambda item: (
             _management_number(item.get("overall_score")) or 0.0,
             str(item.get("persona_id") or ""),
@@ -52361,8 +52768,13 @@ def _pm12_persona_league_ranking_item(
     row: Dict[str, Any],
     *,
     metrics: Optional[Dict[str, Any]] = None,
+    telemetry_cache: Optional[Dict[str, Optional[Dict[str, Any]]]] = None,
 ) -> Dict[str, Any]:
-    metrics = metrics if isinstance(metrics, dict) else _pm12_persona_telemetry_metrics(row)
+    metrics = (
+        metrics
+        if isinstance(metrics, dict)
+        else _pm12_persona_telemetry_metrics(row, telemetry_cache=telemetry_cache)
+    )
     scores = _pm12_persona_league_scores(row, metrics)
     tier = _pm12_tier_for_score(scores["overall_score"])
     components = dict(scores)
@@ -54081,24 +54493,36 @@ def _ops_read_model_entry_for_persona(
     snapshot_at = utc_now()
     period_key = str(period or "").strip() or "latest"
 
-    fleet_payload = _persona_fleet_slim_list_payload(
-        snapshot_at=snapshot_at,
-        state=None,
-        health=None,
-        deployment_stage=None,
-        market_scope=None,
-        q=None,
-        page_token=None,
-        page_size=500,
+    # This endpoint describes one persona.  Building the full 500-row fleet
+    # just to recover its fallback identity/performance fields repeated all
+    # downstream fleet fan-out.  The canonical persona and league projections
+    # provide the same bounded fallback inputs without promoting them to
+    # formal attribution evidence.
+    league_entry = read_store.get_persona_league_entry(persona_id) or {}
+    persona_metadata = (
+        persona.get("metadata") if isinstance(persona.get("metadata"), dict) else {}
     )
-    fleet_row = next(
-        (
-            item
-            for item in fleet_payload.get("data", {}).get("items", [])
-            if str(item.get("persona_id") or "") == persona_id
+    fallback_performance = (
+        league_entry.get("performance_summary")
+        if isinstance(league_entry.get("performance_summary"), dict)
+        else persona_metadata.get("performance")
+        if isinstance(persona_metadata.get("performance"), dict)
+        else {}
+    )
+    fleet_row = {
+        "state": (
+            league_entry.get("state")
+            or persona.get("lifecycle_state")
+            or persona.get("status")
         ),
-        None,
-    ) or {}
+        "performance_summary": fallback_performance,
+        "runtime_id": league_entry.get("runtime_id"),
+        "paper_ledger_id": league_entry.get("paper_ledger_id"),
+        "capital_pool_id": league_entry.get("capital_pool_id"),
+        "league_rank": league_entry.get("rank") or league_entry.get("league_rank"),
+        "league_score": league_entry.get("score") or league_entry.get("league_score"),
+        "perf_delta": league_entry.get("perf_delta"),
+    }
 
     attribution_sources = _pm12_performance_attribution_sources()
     persona_facts = [
@@ -54171,9 +54595,6 @@ def _ops_read_model_entry_for_persona(
         source_row_count=len(pool_ids_seen),
     ))
 
-    fallback_performance: Dict[str, Any] = (
-        fleet_row.get("performance_summary") if isinstance(fleet_row.get("performance_summary"), dict) else {}
-    ) or {}
     if fleet_row:
         sources.append(SourceStatus(
             source_name="persona_fleet_summary",
@@ -54229,7 +54650,6 @@ def _ops_read_model_entry_for_persona(
         drawdown = ops_read_model_sanitize_metric(fallback_performance.get("max_drawdown"))
         sharpe = ops_read_model_sanitize_metric(fallback_performance.get("sharpe"))
 
-    league_entry = read_store.get_persona_league_entry(persona_id) or {}
     rank_value = league_entry.get("rank") or league_entry.get("league_rank") or fleet_row.get("league_rank")
     score_value = ops_read_model_sanitize_metric(
         league_entry.get("score") or league_entry.get("league_score") or fleet_row.get("league_score")
@@ -62889,7 +63309,13 @@ def _loop_health_response_meta(
 ) -> Dict[str, Any]:
     meta = dict(payload.get("meta") or {})
     snapshot_at = meta.get("snapshot_at") or utc_now()
-    item_count = len(payload.get("items") or ([payload.get("data")] if isinstance(payload.get("data"), dict) else []))
+    raw_items = payload.get("items") or ([payload.get("data")] if isinstance(payload.get("data"), dict) else [])
+    item_count = len(raw_items)
+    canonical_items = [
+        r for r in raw_items
+        if isinstance(r, dict) and r.get("classification") != "composite_overlay"
+    ]
+    target_count = len(canonical_items) if canonical_items else item_count
     registry_surface = {
         "status": "ok",
         "source": "bff_local_registry",
@@ -62902,7 +63328,7 @@ def _loop_health_response_meta(
         snapshot_at=snapshot_at,
         source=health_source if health_records_available else "missing",
     )
-    if item_count and accepted_controller_health_record_count >= item_count:
+    if target_count and accepted_controller_health_record_count >= target_count:
         loop_health_surface = {
             "status": "ok",
             "source": "bff_composed",
@@ -63028,9 +63454,78 @@ async def _async_loop_health_records(
             clean_id = str(loop_id).strip()
             if clean_id not in seen_loops:
                 merged_records.append(r)
+                seen_loops.add(clean_id)
 
-    health_available = db_available or fs_available
-    health_source = "controller_store" if db_available else fs_source
+    monitor = globals().get("downstream_health_monitor")
+    if monitor:
+        try:
+            loop12_rec = monitor.publish_loop_12_controller_truth()
+            if "bff_health_monitoring" not in seen_loops:
+                loop12_rec["_health_source"] = "bff_downstream_health_monitor"
+                merged_records.append(loop12_rec)
+                seen_loops.add("bff_health_monitoring")
+        except Exception as exc:
+            log.warning("Failed publishing Loop 12 truth in _async_loop_health_records: %s", exc)
+
+        try:
+            monitor_state = monitor.get_state()
+            targets_state = monitor_state.get("targets", {})
+            loop_target_map = {
+                "source_ingestion": ["source-ingest", "source-ingest-scheduler"],
+                "strategy_distillation": ["distillation"],
+                "alpha_replication": ["research-orchestrator", "research-worker-gateway"],
+                "persona_teaching": ["persona", "training-session"],
+                "agora_interaction_evidence": ["policy-learning"],
+                "human_imitation_shadow_evaluation": ["shadow-eval-scheduler"],
+                "consultation": ["consultation", "openclaw-gateway-adapter", "consultation-workflow-executor"],
+                "promotion_deployment": ["promotion", "deployment", "deployment-outbox-consumer"],
+                "capital_pool_execution": ["capital", "paper-fleet-reconciler", "paper-signal-producer"],
+                "telemetry_reconciliation": ["telemetry", "reconciliation-drift", "reconciliation-drift-consumer", "reconciliation-drift-scheduler", "reconciliation-drift-incident-listener"],
+                "evolution": ["evolution", "postmortems", "evolution-scheduler", "evolution-dispatch", "evolution-threshold-sweep"],
+                "bff_health_monitoring": ["runtime-manager", "governance"],
+            }
+            records_by_id = {str(r.get("loop_id") or r.get("id") or "").strip(): r for r in merged_records if isinstance(r, dict)}
+            for loop_id, mapped_targets in loop_target_map.items():
+                for t_name in mapped_targets:
+                    t_info = targets_state.get(t_name)
+                    if t_info and isinstance(t_info, dict) and t_info.get("ok") is False:
+                        fail_reason = t_info.get("failure_reason") or "degraded"
+                        target_summary = f"{t_name}: {fail_reason}"
+                        rec = records_by_id.get(loop_id)
+                        if rec is None:
+                            rec = {
+                                "loop_id": loop_id,
+                                "id": loop_id,
+                                "tenant_id": tenant_id,
+                                "environment": environment,
+                                "status": "degraded",
+                                "_health_source": "bff_downstream_health_monitor",
+                            }
+                            merged_records.append(rec)
+                            records_by_id[loop_id] = rec
+                        rec["downstream_actual_state"] = {
+                            "status": "degraded",
+                            "source": "bff_downstream_health_monitor",
+                            "authoritative": True,
+                            "reported_status": "degraded",
+                            "summary": target_summary,
+                            "checked_at": t_info.get("checked_at"),
+                        }
+                        rec["worker_health"] = {
+                            "ready": False,
+                            "ok": False,
+                            "status": "degraded",
+                            "reason": fail_reason,
+                            "worker_name": t_name,
+                        }
+                        rec["truth_note"] = target_summary
+                        break
+        except Exception as exc:
+            log.warning("Failed merging downstream monitor targets in _async_loop_health_records: %s", exc)
+
+    has_monitor_records = any(r.get("_health_source") == "bff_downstream_health_monitor" for r in merged_records)
+    health_available = db_available or fs_available or has_monitor_records
+    health_source = "controller_store" if db_available else (fs_source if fs_available else ("bff_downstream_health_monitor" if has_monitor_records else "missing"))
     return health_available, merged_records, health_source
 
 
@@ -63976,6 +64471,13 @@ async def sem_bff_version():
         "dev_login_enabled": _dev_login_enabled(),
         "mfa_required": _bool_from_env("PANTHEON_BFF_MFA_REQUIRED", default=False),
         "assistant_kernel_enabled": _bool_from_env("PANTHEON_ASSISTANT_KERNEL_ENABLED", default=False),
+        "trade_journey_reader_backend": os.getenv(
+            "PANTHEON_BFF_TRADE_JOURNEY_READER_BACKEND", "postgres"
+        ).strip().lower(),
+        "trade_journey_projection_schema": os.getenv(
+            "PANTHEON_BFF_TRADE_JOURNEY_PROJECTION_SCHEMA",
+            "trade_journey_projection",
+        ).strip(),
     }
 
     return {
@@ -64013,6 +64515,7 @@ async def sem_bff_health_alias():
     return _sem_bff_health_payload()
 
 
+@app.get("/readyz")
 @app.get("/bff/readyz")
 async def sem_bff_readiness_alias():
     payload = _sem_bff_health_payload()
@@ -66455,6 +66958,7 @@ def _project_persona_fleet_list_row(
 def _persona_fleet_slim_list_payload(
     *,
     snapshot_at: str,
+    tenant_id: Optional[str] = None,
     state: Optional[str],
     health: Optional[str],
     deployment_stage: Optional[str],
@@ -66467,22 +66971,42 @@ def _persona_fleet_slim_list_payload(
     # quarterly endpoint uses this same read path; doing it first prevents a
     # later degraded persona-service read from silently restoring league rank.
     quarter_window = _pm12_quarter_window(None, snapshot_at)
+    telemetry_cache: Dict[str, Optional[Dict[str, Any]]] = {}
+    try:
+        for telemetry in read_store.list_telemetry_summaries() or []:
+            if not isinstance(telemetry, dict):
+                continue
+            runtime_id = _management_record_id(
+                telemetry,
+                "runtime_id",
+                "runtimeId",
+                "execution_runtime_id",
+                "id",
+            )
+            if runtime_id:
+                telemetry_cache[runtime_id] = telemetry
+    except Exception:
+        telemetry_cache = {}
     paper_rankings = {
         str(item.get("persona_id") or item.get("id") or "").strip(): item
         for item in _pm12_quarterly_ranking_items(
             _pm12_persona_league_rows(state=None, archetype=None, q=""),
             quarter_window=quarter_window,
+            telemetry_cache=telemetry_cache,
         )
         if str(item.get("persona_id") or item.get("id") or "").strip()
     }
-    personas = read_store.list_personas(include_market_persona_defaults=True)
+    directory = _get_persona_directory_snapshot(tenant_id, snapshot_at=snapshot_at)
+    personas = list(directory.records_by_id.values())
+    canonical_total = len(directory.records_by_id)
+    catalog_default_total = len(directory.catalog_defaults_by_id)
     league = read_store.list_persona_league(include_market_persona_defaults=True)
     bindings = read_store.list_bindings(include_market_persona_defaults=True)
     runtimes = read_store.list_runtime_bindings(include_market_persona_defaults=True)
     pools = read_store.list_capital_pools(include_market_persona_defaults=True)
     incidents = read_store.list_incidents()
     evolution_decisions = list(read_store.list_evolution_decisions() or [])
-    context_defaults = _persona_fleet_context_defaults_by_market()
+    context_defaults = _persona_fleet_context_defaults_by_market(personas)
 
     league_by_persona = {
         str(item.get("persona_id") or item.get("id") or ""): item
@@ -66620,12 +67144,13 @@ def _persona_fleet_slim_list_payload(
             capital_pool_ids=capital_pool_ids,
             runtime_ids=runtime_ids,
         )
-        telemetry_summaries = [
-            summary
-            for runtime_id in sorted(runtime_ids)
-            for summary in [read_store.get_telemetry_summary(runtime_id)]
-            if summary
-        ]
+        telemetry_summaries = []
+        for runtime_id in sorted(runtime_ids):
+            if runtime_id not in telemetry_cache:
+                telemetry_cache[runtime_id] = read_store.get_telemetry_summary(runtime_id)
+            summary = telemetry_cache.get(runtime_id)
+            if summary:
+                telemetry_summaries.append(summary)
         row = _project_persona_fleet_list_row(
             persona=persona,
             league_entry=league_entry,
@@ -66732,6 +67257,9 @@ def _persona_fleet_slim_list_payload(
     summary = {
         "available_personas": available_personas,
         "total_personas": total_personas,
+        "canonical_total": canonical_total,
+        "filtered_total": total_personas,
+        "catalog_default_total": catalog_default_total,
         "returned_personas": len(page_items),
         "critical_personas": len([item for item in rows if item.get("health") == "critical"]),
         "degraded_personas": len([item for item in rows if item.get("health") == "degraded"]),
@@ -66773,6 +67301,9 @@ def _persona_fleet_slim_list_payload(
     page_info = {
         "next_page_token": next_page_token,
         "total": total_personas,
+        "canonical_total": canonical_total,
+        "filtered_total": total_personas,
+        "catalog_default_total": catalog_default_total,
         "page_size": page_size,
     }
     return {
@@ -66932,7 +67463,10 @@ async def bff_management_persona_fleet(
 ):
     identity = _extract_identity(authorization)
     _require_read_role(identity)
+    tenant_payload = _bff_me_tenant_payload(identity, requested_tenant=None)
+    tenant_id = str(tenant_payload.get("id") or "tenant-default")
     return _persona_fleet_slim_list_payload(
+        tenant_id=tenant_id,
         snapshot_at=utc_now(),
         state=state,
         health=health,
@@ -68586,7 +69120,7 @@ def _agora_ask_deterministic_fallback(prompt: str) -> str:
 def _assistant_provider_readiness() -> Dict[str, Any]:
     provider = _mgmt_nl_provider_name()
     try:
-        return OpenClawOpsClient().get_assistant_readiness(provider=provider)
+        return OpenClawOpsClient().get_assistant_readiness(provider=provider, auth_probe=True)
     except OpenClawOpsClientError as exc:
         return {
             "provider": provider,
@@ -68757,8 +69291,10 @@ app.include_router(
 
 _include_assistant_routes()
 
-# BFFGAP-DATASOURCES: data-source registry endpoint via isolated module
+# BFFGAP-DATASOURCES: data-source registry and management endpoints (SD-SRCM-03)
+from source_management_client import SourceManagementClient  # noqa: E402
 from console_gap.datasources import create_datasources_router  # noqa: E402
+source_management_client = SourceManagementClient()
 app.include_router(
     create_datasources_router(
         get_read_store=lambda: read_store,
@@ -68766,8 +69302,24 @@ app.include_router(
         require_read_role=_require_read_role,
         snapshot_meta=_snapshot_meta,
         utc_now=utc_now,
+        read_source_connector_registry=_read_management_source_connector_registry,
+        get_source_management_client=lambda: source_management_client,
+        require_operator_role=_require_operator_role,
+        bff_error=_bff_error,
     )
 )
+
+from management_read_models import create_management_read_models_router  # noqa: E402
+app.include_router(
+    create_management_read_models_router(
+        get_read_store=lambda: read_store,
+        extract_identity=_extract_identity,
+        require_read_role=_require_read_role,
+        snapshot_meta=_snapshot_meta,
+        utc_now=utc_now,
+    )
+)
+
 
 
 def _include_knowledge_routes() -> None:
@@ -68988,19 +69540,20 @@ def _resolve_agora_interaction_context_ref(
 
 # AG-BE-000: Agora BFF package router (must stay last to avoid route conflicts)
 from agora.router import create_agora_router as _create_agora_router  # noqa: E402
-app.include_router(
-    _create_agora_router(
-        extract_identity=_extract_identity,
-        require_read_role=_require_read_role,
-        require_write_role=_require_operator_role,
-        bff_error=_bff_error,
-        utc_now=utc_now,
-        get_read_store=lambda: read_store,
-        get_trade_journey_store=lambda: _trade_journeys.EVENT_STORE,
-        sync_servant_agent=lambda persona: _ensure_agora_servant_openclaw_agent(dict(persona)),
-        canonical_context_ref_resolver=_resolve_agora_interaction_context_ref,
-    )
+_agora_router = _create_agora_router(
+    extract_identity=_extract_identity,
+    require_read_role=_require_read_role,
+    require_write_role=_require_operator_role,
+    bff_error=_bff_error,
+    utc_now=utc_now,
+    get_read_store=lambda: read_store,
+    get_trade_journey_store=lambda: _trade_journeys.EVENT_STORE,
+    sync_servant_agent=lambda persona: _ensure_agora_servant_openclaw_agent(dict(persona)),
+    canonical_context_ref_resolver=_resolve_agora_interaction_context_ref,
 )
+app.include_router(_agora_router)
+interaction_lifecycle = _agora_router.interaction_lifecycle
+workshop_store = _agora_router.workshop_store
 
 
 if __name__ == "__main__":

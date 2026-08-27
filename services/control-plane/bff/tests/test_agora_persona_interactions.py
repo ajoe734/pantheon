@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 import main as bff_main
+from agora.interaction.worker import AgoraInteractionWorker
 from agora.strategy_workshop.store import MemoryWorkshopStore
 
 AUTH = {"Authorization": "Bearer interaction-user:operator", "Idempotency-Key": "idem-context-1"}
@@ -214,6 +215,11 @@ def test_typed_submission_is_idempotent_and_has_no_write_authority(monkeypatch):
     assert first.status_code == second.status_code == 202, first.text
     assert first.json()["data"] == second.json()["data"]
     assert first.json()["data"]["execution_authority"] == "none"
+    AgoraInteractionWorker(
+        lifecycle_store=bff_main.interaction_lifecycle,
+        workshop_store=bff_main.workshop_store,
+        read_store=bff_main.read_store,
+    ).run_once()
     events = c.get(f"/bff/agora/workshops/{resolved['workshop_id']}/events", headers=AUTH).json()["data"]
     cards = c.get(f"/bff/agora/workshops/{resolved['workshop_id']}/cards", headers=AUTH).json()["data"]
     assert len(events) == 3
@@ -233,6 +239,11 @@ def test_submission_same_key_different_body_conflicts_without_duplicate_side_eff
     assert c.post("/bff/agora/interactions", headers={**AUTH, "Idempotency-Key": key}, json=body).status_code == 202
     changed = {**body, "topic": "Different request"}
     assert c.post("/bff/agora/interactions", headers={**AUTH, "Idempotency-Key": key}, json=changed).status_code == 409
+    AgoraInteractionWorker(
+        lifecycle_store=bff_main.interaction_lifecycle,
+        workshop_store=bff_main.workshop_store,
+        read_store=bff_main.read_store,
+    ).run_once()
     events = c.get(f"/bff/agora/workshops/{resolved['workshop_id']}/events", headers=AUTH).json()["data"]
     assert [event["event_type"] for event in events] == [
         "opinion_requested", "provider_invocation_failed", "thread_closed"
@@ -262,7 +273,14 @@ def test_partial_side_effect_failure_replays_to_exactly_one_event_set(monkeypatc
         "topic": "Recover synthesis", "participant_persona_ids": ["ready"], "context_refs": context_payload()["context_refs"]}
     headers = {**AUTH, "Idempotency-Key": key}
     assert c.post("/bff/agora/interactions", headers=headers, json=body).status_code == 202
+    worker = AgoraInteractionWorker(
+        lifecycle_store=bff_main.interaction_lifecycle,
+        workshop_store=bff_main.workshop_store,
+        read_store=bff_main.read_store,
+    )
+    worker.run_once()
     assert c.post("/bff/agora/interactions:recover", headers=AUTH).status_code == 202
+    worker.run_once()
     events = c.get(f"/bff/agora/workshops/{resolved['workshop_id']}/events", headers=AUTH).json()["data"]
     assert [event["event_type"] for event in events] == [
         "opinion_requested", "provider_invocation_failed", "thread_closed"
@@ -289,6 +307,11 @@ def test_explicit_interaction_id_cannot_be_reused_for_different_content(monkeypa
         json={**body, "topic": "Conflicting topic"},
     )
     assert collision.status_code == 409
+    AgoraInteractionWorker(
+        lifecycle_store=bff_main.interaction_lifecycle,
+        workshop_store=bff_main.workshop_store,
+        read_store=bff_main.read_store,
+    ).run_once()
     events = c.get(f"/bff/agora/workshops/{resolved['workshop_id']}/events", headers=AUTH).json()["data"]
     assert len(events) == 3
 
@@ -323,6 +346,11 @@ def test_propose_action_collision_does_not_create_a_dangling_second_proposal(mon
     )
     assert revisions.status_code == 200
     assert len(revisions.json()["data"]) == 1
+    AgoraInteractionWorker(
+        lifecycle_store=bff_main.interaction_lifecycle,
+        workshop_store=bff_main.workshop_store,
+        read_store=bff_main.read_store,
+    ).run_once()
     cards = c.get(f"/bff/agora/workshops/{resolved['workshop_id']}/cards", headers=AUTH).json()["data"]
     assert len([card for card in cards if card["card_type"] == "governed_proposal"]) == 1
 
@@ -405,6 +433,12 @@ def test_propose_action_creates_canonical_governed_proposal_and_card(monkeypatch
     assert readback.status_code == 200, readback.text
     assert readback.headers["etag"] == data["proposal_etag"]
     assert readback.json()["data"]["available_approval_decision_refs"] == []
+
+    AgoraInteractionWorker(
+        lifecycle_store=bff_main.interaction_lifecycle,
+        workshop_store=bff_main.workshop_store,
+        read_store=bff_main.read_store,
+    ).run_once()
 
     cards = c.get(
         f"/bff/agora/workshops/{resolved['workshop_id']}/cards",

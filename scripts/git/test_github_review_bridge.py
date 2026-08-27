@@ -24,11 +24,13 @@ class FakeRunner:
         context_required: bool = True,
         actual_head: str = HEAD,
         dispatch_error: str = "",
+        pr_state: str = "OPEN",
     ) -> None:
         self.review_error = review_error
         self.context_required = context_required
         self.actual_head = actual_head
         self.dispatch_error = dispatch_error
+        self.pr_state = pr_state
         self.reviews: list[dict[str, Any]] = []
         self.statuses: list[dict[str, Any]] = []
         self.calls: list[tuple[list[str], Mapping[str, Any] | None]] = []
@@ -50,7 +52,7 @@ class FakeRunner:
             return {
                 "number": 4269,
                 "url": PR_URL,
-                "state": "OPEN",
+                "state": self.pr_state,
                 "headRefName": "task/AUDIT-001",
                 "headRefOid": self.actual_head,
                 "baseRefName": "dev",
@@ -462,7 +464,7 @@ class GitHubReviewBridgeTests(unittest.TestCase):
         runner = FakeRunner(actual_head="b" * 40)
 
         with self.assertRaisesRegex(
-            bridge.GitHubReviewBridgeError,
+            bridge.ReviewBindingMismatch,
             "no longer matches reviewed identity",
         ):
             bridge.bridge_review_decision(
@@ -481,6 +483,64 @@ class GitHubReviewBridgeTests(unittest.TestCase):
             if "--method" in command and "POST" in command
         ]
         self.assertEqual(mutation_calls, [])
+
+    def test_handoff_validator_uses_the_same_exact_pr_snapshot(self) -> None:
+        runner = FakeRunner()
+
+        validated = bridge.validate_review_binding(
+            repository=REPOSITORY,
+            binding=binding(),
+            runner=runner,
+        )
+
+        self.assertEqual(validated.head_sha, HEAD)
+        self.assertEqual(validated.pr, 4269)
+        mutation_calls = [
+            command
+            for command, _payload in runner.calls
+            if "--method" in command and "POST" in command
+        ]
+        self.assertEqual(mutation_calls, [])
+
+    def test_approve_succeeds_when_pr_already_merged(self) -> None:
+        """OPS-REVIEW-BRIDGE-MERGED-PR-STATE-20260820: a governed decision
+        commonly runs after the PR's own merge (auto-merge on the required
+        status, or a retried handoff/approve cycle), and the merged head is
+        still the exact reviewed identity. Rejecting it here forced repeated
+        manual Human/Ops handoff rebinding (e.g. PR #5019 on
+        L12-GAP-F05-L5-AGORA-OBSERVATION-20260818)."""
+
+        runner = FakeRunner(pr_state="MERGED")
+
+        result = bridge.bridge_review_decision(
+            repository=REPOSITORY,
+            task_id="AUDIT-001",
+            actor="Codex2",
+            decision="approve",
+            message="Already-merged PR, exact head still matches.",
+            binding=binding(),
+            runner=runner,
+        )
+
+        self.assertEqual(result.mode, "pull_request_review_and_required_status")
+        self.assertEqual(result.status_state, "success")
+
+    def test_approve_fails_when_pr_is_closed_unmerged(self) -> None:
+        runner = FakeRunner(pr_state="CLOSED")
+
+        with self.assertRaisesRegex(
+            bridge.GitHubReviewBridgeError,
+            "is not open or merged",
+        ):
+            bridge.bridge_review_decision(
+                repository=REPOSITORY,
+                task_id="AUDIT-001",
+                actor="Codex2",
+                decision="approve",
+                message="Abandoned PR.",
+                binding=binding(),
+                runner=runner,
+            )
 
     def test_approve_dispatches_canonical_review_gate_workflow(self) -> None:
         """SUP-REVIEW-GATE-DISPATCH-RETRIGGER-20260805: pushing the tag alone

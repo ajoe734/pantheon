@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import os
+import socket
 import shutil
 import subprocess
 import sys
@@ -305,8 +306,37 @@ class TestAssistantOpenClawProviderUnit(unittest.TestCase):
     def test_readiness_configured(self) -> None:
         provider = self._make_provider()
         info = provider.readiness()
+        self.assertFalse(info["ready"])
+        self.assertEqual(info["status"], "not_checked")
+        self.assertEqual(info["reason"], "answer_probe_not_run")
+
+    def test_readiness_auth_probe_requires_bounded_agent_answer(self) -> None:
+        captured: dict[str, object] = {}
+
+        def fake_run(cmd, **kwargs):
+            captured["cmd"] = list(cmd)
+            captured["timeout"] = kwargs["timeout"]
+
+            class R:
+                returncode = 0
+                stdout = TestAssistantOpenClawProviderUnit._agent_json(
+                    "PANTHEON_PROVIDER_READY"
+                )
+                stderr = ""
+
+            return R()
+
+        provider = self._make_provider(run_func=fake_run)
+        info = provider.readiness(auth_probe=True)
+
         self.assertTrue(info["ready"])
         self.assertEqual(info["status"], "ready")
+        self.assertEqual(info["answer_probe"]["status"], "completed")
+        self.assertEqual(info["answer_probe"]["deadline_seconds"], 20.0)
+        self.assertEqual(captured["timeout"], 20.0)
+        command = captured["cmd"]
+        self.assertEqual(command[1], "agent")
+        self.assertIn("PANTHEON_PROVIDER_READY", command[command.index("--message") + 1])
 
     @staticmethod
     def _agent_json(text: str) -> str:
@@ -421,10 +451,15 @@ class TestAssistantOpenClawProviderUnit(unittest.TestCase):
         self.assertEqual(env.get("OPENCLAW_STATE_DIR"), "/home/node/.openclaw")
         self.assertEqual(env.get("HOME"), "/home/node")
 
-    def test_invoke_oversized_prompt_fails_loudly(self) -> None:
-        """A prompt beyond the argv byte budget raises OPENCLAW_PROMPT_TOO_LARGE
-        instead of silently overflowing MAX_ARG_STRLEN or dropping the prompt."""
+    def test_invoke_oversized_prompt_uses_responses_http_transport(self) -> None:
+        """Large Management AI context uses the body-based Responses transport.
+
+        The complete prompt must be preserved; the CLI cannot safely accept it
+        as one argv value.  This prevents a BFF deterministic fallback caused
+        solely by the adapter's argv transport limit.
+        """
         calls: list = []
+        captured: dict = {}
 
         def fake_run(cmd, **kw):
             calls.append(cmd)
@@ -434,12 +469,58 @@ class TestAssistantOpenClawProviderUnit(unittest.TestCase):
                 stderr = ""
             return R()
 
+        class FakeResp:
+            def __iter__(self):
+                return iter([
+                    b'data: {"type":"response.output_text.done","text":"large provider answer"}\n',
+                    b'data: {"type":"response.completed"}\n',
+                    b"data: [DONE]\n",
+                ])
+
+            def close(self):
+                pass
+
+        def fake_urlopen(req, timeout=None):
+            captured["url"] = req.full_url
+            captured["body"] = req.data
+            return FakeResp()
+
         big_prompt = "x" * (96 * 1024 + 1)
         provider = self._make_provider(run_func=fake_run)
-        with self.assertRaises(OpenClawProviderError) as ctx:
-            provider.invoke(big_prompt, operator_id="op-1")
-        self.assertEqual(ctx.exception.error_code, "OPENCLAW_PROMPT_TOO_LARGE")
-        self.assertFalse(calls, "subprocess must not run for an oversized prompt")
+        with patch("urllib.request.urlopen", fake_urlopen):
+            result = provider.invoke(
+                big_prompt,
+                operator_id="op-1",
+                session_id="session-large-prompt",
+            )
+
+        self.assertFalse(calls, "CLI must not receive an oversized argv prompt")
+        self.assertEqual(captured["url"], "http://openclaw-gateway:18789/v1/responses")
+        body = json.loads(captured["body"].decode("utf-8"))
+        self.assertEqual(body["input"], big_prompt)
+        self.assertTrue(body["stream"])
+        self.assertEqual(body["user"], "session-large-prompt")
+        self.assertEqual(result.status, "completed")
+        self.assertEqual(result.output["transport"], "responses_http")
+        self.assertEqual(result.output["transport_reason"], "argv_prompt_exceeds_safe_limit")
+        self.assertEqual(
+            result.output["json_events"][0]["item"]["text"],
+            "large provider answer",
+        )
+
+    def test_oversized_prompt_unreachable_responses_is_typed(self) -> None:
+        """The normal invoke fallback keeps the Responses unreachable contract."""
+        import urllib.error
+
+        provider = self._make_provider(run_func=lambda *_args, **_kwargs: None)
+        with patch(
+            "urllib.request.urlopen",
+            side_effect=urllib.error.URLError(ConnectionRefusedError("refused")),
+        ), self.assertRaises(OpenClawProviderError) as ctx:
+            provider.invoke("x" * (96 * 1024 + 1), operator_id="op-1")
+
+        self.assertEqual(ctx.exception.error_code, "OPENCLAW_RESPONSES_UNREACHABLE")
+        self.assertEqual(ctx.exception.status_code, 503)
 
     def test_invoke_non_zero_exit_raises(self) -> None:
         def fake_run(cmd, **_kw):
@@ -536,6 +617,7 @@ class TestAssistantOpenClawProviderStream(unittest.TestCase):
             captured["url"] = req.full_url
             captured["body"] = req.data
             captured["auth"] = req.headers.get("Authorization")
+            captured["agent_id"] = dict(req.header_items()).get("X-openclaw-agent-id")
             return FakeResp()
 
         provider = self._provider()
@@ -546,9 +628,10 @@ class TestAssistantOpenClawProviderStream(unittest.TestCase):
         self.assertEqual(captured["url"], "http://openclaw-gateway:18789/v1/responses")
         self.assertEqual(captured["auth"], "Bearer test-token")
         body = json.loads(captured["body"].decode("utf-8"))
-        self.assertEqual(body["model"], "openclaw/main")
+        self.assertEqual(body["model"], "openclaw")
         self.assertTrue(body["stream"])
         self.assertEqual(body["user"], "sess-1")
+        self.assertEqual(captured["agent_id"], "main")
 
         deltas = [e["text"] for e in events if e["type"] == "delta"]
         done = [e for e in events if e["type"] == "done"]
@@ -569,6 +652,93 @@ class TestAssistantOpenClawProviderStream(unittest.TestCase):
             events = list(provider.stream("hi", operator_id="op-1"))
         self.assertEqual(events[-1]["type"], "error")
         self.assertEqual(events[-1]["error_code"], "OPENCLAW_RESPONSES_DISABLED")
+
+    def test_stream_completed_without_text_reports_empty_response(self) -> None:
+        from unittest import mock
+
+        class FakeResp:
+            def __iter__(self):
+                return iter([b'data: {"type":"response.completed"}\n'])
+
+            def close(self):
+                pass
+
+        provider = self._provider()
+        with mock.patch("urllib.request.urlopen", return_value=FakeResp()):
+            events = list(provider.stream("hi", operator_id="op-1"))
+
+        self.assertEqual(events[-1]["type"], "error")
+        self.assertEqual(events[-1]["error_code"], "OPENCLAW_RESPONSES_EMPTY")
+
+    def test_stream_uses_output_text_done_when_no_deltas_arrive(self) -> None:
+        from unittest import mock
+
+        class FakeResp:
+            def __iter__(self):
+                return iter([
+                    b'data: {"type":"response.output_text.done","text":"provider answer"}\n',
+                    b'data: {"type":"response.completed"}\n',
+                    b"data: [DONE]\n",
+                ])
+
+            def close(self):
+                pass
+
+        provider = self._provider()
+        with mock.patch("urllib.request.urlopen", return_value=FakeResp()):
+            events = list(provider.stream("hi", operator_id="op-1"))
+
+        done = [event for event in events if event["type"] == "done"]
+        self.assertEqual(len(done), 1)
+        self.assertEqual(done[0]["text"], "provider answer")
+        self.assertEqual(done[0]["transport"], "responses_http")
+
+    def test_stream_unreachable_transport_has_typed_failure(self) -> None:
+        import urllib.error
+        from unittest import mock
+
+        provider = self._provider()
+        with mock.patch(
+            "urllib.request.urlopen",
+            side_effect=urllib.error.URLError(ConnectionRefusedError("refused")),
+        ):
+            events = list(provider.stream("hi", operator_id="op-1"))
+
+        self.assertEqual(events[-1]["type"], "error")
+        self.assertEqual(events[-1]["error_code"], "OPENCLAW_RESPONSES_UNREACHABLE")
+        self.assertEqual(events[-1]["status_code"], 503)
+
+    def test_stream_timeout_transport_has_typed_failure(self) -> None:
+        import urllib.error
+        from unittest import mock
+
+        provider = self._provider()
+        with mock.patch(
+            "urllib.request.urlopen",
+            side_effect=urllib.error.URLError(socket.timeout("timed out")),
+        ):
+            events = list(provider.stream("hi", operator_id="op-1"))
+
+        self.assertEqual(events[-1]["type"], "error")
+        self.assertEqual(events[-1]["error_code"], "OPENCLAW_RESPONSES_TIMEOUT")
+        self.assertEqual(events[-1]["status_code"], 504)
+
+    def test_stream_done_marker_without_text_reports_empty_response(self) -> None:
+        from unittest import mock
+
+        class FakeResp:
+            def __iter__(self):
+                return iter([b"data: [DONE]\\n"])
+
+            def close(self):
+                pass
+
+        provider = self._provider()
+        with mock.patch("urllib.request.urlopen", return_value=FakeResp()):
+            events = list(provider.stream("hi", operator_id="op-1"))
+
+        self.assertEqual(events[-1]["type"], "error")
+        self.assertEqual(events[-1]["error_code"], "OPENCLAW_RESPONSES_EMPTY")
 
     def test_stream_requires_token(self) -> None:
         provider = AssistantOpenClawProvider(

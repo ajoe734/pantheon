@@ -82,15 +82,18 @@ def _loop_health_client(
             env_overrides["PANTHEON_BFF_LOOP_HEALTH_STORE"] = str(health_path)
 
         original_store = bff_main.read_store
+        original_monitor = getattr(bff_main, "downstream_health_monitor", None)
         bff_main.read_store = ReadSurfaceStore(
             str(snapshot_path),
             allow_local_snapshot_fallback=allow_snapshot_fallback,
         )
+        bff_main.downstream_health_monitor = None
         with patch.dict(os.environ, env_overrides, clear=False):
             try:
                 yield TestClient(bff_main.app, raise_server_exceptions=False)
             finally:
                 bff_main.read_store = original_store
+                bff_main.downstream_health_monitor = original_monitor
 
 
 def _truth_source(packet: Dict[str, Any], truth_level: str) -> Dict[str, Any]:
@@ -243,13 +246,20 @@ def test_loop_health_registry_only_lists_all_loops_without_live_claim(monkeypatc
     }
 
     source_loop = next(item for item in payload["items"] if item["loop_id"] == "source_ingestion")
-    assert source_loop["current_maturity"] == "api-only"
-    assert source_loop["target_maturity"] == "reconciled"
+    assert "current_maturity" not in source_loop
+    assert "target_maturity" not in source_loop
     # The catalog declares an implemented controller, so the absence of a
     # record is "unobserved", not "not_implemented" -- and still not live.
     assert source_loop["controller"]["status"] == "implemented"
     assert source_loop["controller_health"]["status"] == "unobserved"
     assert source_loop["controller_health"]["current_record_accepted"] is False
+    assert source_loop["runtime_maturity"] == {
+        "state": "unobserved",
+        "source": "missing",
+        "truth_level": "registry_metadata",
+        "current_record_accepted": False,
+        "reason": "record lacks accepted current controller-runtime provenance",
+    }
     assert source_loop["last_success"] is None
     assert source_loop["last_failure"] is None
 
@@ -387,7 +397,6 @@ def test_loop_health_archive_completion_cannot_create_controller_liveness(monkey
     source_loop = next(
         loop for loop in registry["loops"] if loop["loop_id"] == "source_ingestion"
     )
-    source_loop["maturity"]["current"] = "proven-live"
     source_loop["controller_contract"].update(
         {
             "status": "proven_live",
@@ -398,8 +407,6 @@ def test_loop_health_archive_completion_cannot_create_controller_liveness(monkey
             "liveness_metric": "last_heartbeat_at",
         }
     )
-    source_loop["evidence_profile"]["reconciled_live_proof"]["status"] = "present"
-    source_loop["evidence_profile"]["proven_live_evidence"]["status"] = "present"
     monkeypatch.setattr(loop_inventory_model, "_load_registry", lambda: registry)
     current_heartbeat = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     loop_health_store = {
@@ -451,7 +458,6 @@ def test_loop_health_rejects_conflicting_or_archive_only_runtime_provenance(
     source_loop = next(
         loop for loop in registry["loops"] if loop["loop_id"] == "source_ingestion"
     )
-    source_loop["maturity"]["current"] = "proven-live"
     source_loop["controller_contract"].update(
         {
             "status": "proven_live",
@@ -462,8 +468,6 @@ def test_loop_health_rejects_conflicting_or_archive_only_runtime_provenance(
             "liveness_metric": "last_heartbeat_at",
         }
     )
-    source_loop["evidence_profile"]["reconciled_live_proof"]["status"] = "present"
-    source_loop["evidence_profile"]["proven_live_evidence"]["status"] = "present"
     monkeypatch.setattr(loop_inventory_model, "_load_registry", lambda: registry)
     current_heartbeat = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     archive_ref = "ai-task-archive/tasks/LOOP-AUTO-BFF-004.json"
@@ -549,7 +553,6 @@ def test_loop_health_cannot_combine_lower_live_truth_with_higher_registry_claim(
     source_loop = next(
         loop for loop in registry["loops"] if loop["loop_id"] == "source_ingestion"
     )
-    source_loop["maturity"]["current"] = "proven-live"
     source_loop["controller_contract"].update(
         {
             "status": "proven_live",
@@ -560,8 +563,6 @@ def test_loop_health_cannot_combine_lower_live_truth_with_higher_registry_claim(
             "liveness_metric": "last_heartbeat_at",
         }
     )
-    source_loop["evidence_profile"]["reconciled_live_proof"]["status"] = "present"
-    source_loop["evidence_profile"]["proven_live_evidence"]["status"] = "present"
     monkeypatch.setattr(loop_inventory_model, "_load_registry", lambda: registry)
     current_heartbeat = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     loop_health_store = {
@@ -587,13 +588,14 @@ def test_loop_health_cannot_combine_lower_live_truth_with_higher_registry_claim(
     assert response.status_code == 200, response.text
     data = response.json()["data"]
     packet = data["evidence_packet"]
-    assert packet["highest_truth_level"] == "proven_live_evidence"
+    assert packet["highest_truth_level"] == "reconciled_live_proof"
     assert packet["operator_truth"]["truth_level"] == "reconciled_live_proof"
     assert packet["operator_truth"]["accepted_as_live"] is True
     assert packet["accepted_live_liveness"] is True
     assert packet["can_claim_reconciled"] is True
     assert packet["can_claim_proven_live"] is False
     assert data["controller_health"]["current_record_accepted"] is True
+    assert data["runtime_maturity"]["state"] == "reconciled"
     assert data["live_status"]["is_reconciled"] is True
     assert data["live_status"]["is_live"] is False
 
@@ -606,7 +608,6 @@ def test_loop_health_accepts_current_controller_runtime_only_when_catalog_admits
     bff_loop = next(
         loop for loop in registry["loops"] if loop["loop_id"] == "bff_health_monitoring"
     )
-    bff_loop["maturity"]["current"] = "reconciled"
     bff_loop["controller_contract"].update(
         {
             "status": "implemented",
@@ -617,7 +618,6 @@ def test_loop_health_accepts_current_controller_runtime_only_when_catalog_admits
             "liveness_metric": "last_heartbeat_at",
         }
     )
-    bff_loop["evidence_profile"]["reconciled_live_proof"]["status"] = "present"
     monkeypatch.setattr(loop_inventory_model, "_load_registry", lambda: registry)
     current_heartbeat = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     loop_health_store = {
@@ -689,7 +689,6 @@ def test_loop_health_rejects_runtime_record_from_wrong_controller_identity(
     bff_loop = next(
         loop for loop in registry["loops"] if loop["loop_id"] == "bff_health_monitoring"
     )
-    bff_loop["maturity"]["current"] = "reconciled"
     bff_loop["controller_contract"].update(
         {
             "status": "implemented",
@@ -700,7 +699,6 @@ def test_loop_health_rejects_runtime_record_from_wrong_controller_identity(
             "liveness_metric": "last_heartbeat_at",
         }
     )
-    bff_loop["evidence_profile"]["reconciled_live_proof"]["status"] = "present"
     monkeypatch.setattr(loop_inventory_model, "_load_registry", lambda: registry)
     current_heartbeat = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     loop_health_store = {
@@ -809,34 +807,24 @@ def test_every_canonical_loop_record_conforms_and_reads_back_tenant_scoped(
         assert packet["highest_truth_level"] == "reconciled_live_proof", loop_id
         assert packet["archived_task_completion_accepted"] is False, loop_id
 
-        # Nothing is promoted: the catalog does not admit any live claim yet.
-        assert packet["eligible_live_truth_levels"] == [], loop_id
-        assert packet["accepted_live_liveness"] is False, loop_id
-        assert packet["can_claim_reconciled"] is False, loop_id
+        # Current records, not catalog maturity/task claims, decide truth.
+        assert packet["accepted_live_liveness"] is True, loop_id
+        assert packet["can_claim_reconciled"] is True, loop_id
         assert packet["can_claim_proven_live"] is False, loop_id
-        assert packet["operator_truth"]["degraded"] is True, loop_id
+        assert packet["operator_truth"]["degraded"] is False, loop_id
         assert item["live_status"]["is_live"] is False, loop_id
-        assert item["live_status"]["is_reconciled"] is False, loop_id
+        assert item["live_status"]["is_reconciled"] is True, loop_id
 
-        contract_status = item["controller"]["status"]
-        if contract_status == "implemented":
-            # The record matches the catalog contract, so it is accepted as a
-            # current controller observation -- but still not as live truth.
-            assert packet["runtime_controller_record_qualified"] is True, loop_id
-            assert health["current_record_accepted"] is True, loop_id
-            assert health["status"] == "healthy", loop_id
-            assert health["source"] == "controller_store", loop_id
-            assert _truth_source(packet, "reconciled_live_proof")["operator_note"] == (
-                "The catalog maturity and controller contract do not admit this "
-                "live claim."
-            ), loop_id
-        else:
-            assert contract_status == "not_implemented", loop_id
-            assert health["current_record_accepted"] is False, loop_id
-            assert health["status"] == "not_implemented", loop_id
-            assert health["rejection_reason"] == (
-                "catalog controller contract is not implemented"
-            ), loop_id
+        # The record matches the stable controller contract and is current
+        # runtime truth; no catalog maturity/task field participates.
+        assert packet["runtime_controller_record_qualified"] is True, loop_id
+        assert health["current_record_accepted"] is True, loop_id
+        assert health["status"] == "healthy", loop_id
+        assert health["source"] == "controller_store", loop_id
+        assert _truth_source(packet, "reconciled_live_proof")["operator_note"] == (
+            "Accepted as live liveness proof."
+        ), loop_id
+        assert item["runtime_maturity"]["state"] == "reconciled", loop_id
 
     # The foreign-tenant record contributed nothing to this tenant's view.
     for item in payload["items"]:
@@ -904,10 +892,9 @@ def test_stale_and_contradicted_records_stay_unaccepted_for_every_loop(
             loop_id
         )
         assert item["controller_health"]["current_record_accepted"] is False, loop_id
-        if item["controller"]["status"] == "implemented":
-            assert item["controller_health"]["rejection_reason"] == (
-                "task archive completion is reference-only, not runtime evidence"
-            ), loop_id
+        assert item["controller_health"]["rejection_reason"] == (
+            "task archive completion is reference-only, not runtime evidence"
+        ), loop_id
 
     # Contradicted provenance: a record that declares two different evidence
     # bases is refused outright.  This case is served from the file store, so
@@ -949,10 +936,9 @@ def test_stale_and_contradicted_records_stay_unaccepted_for_every_loop(
         assert packet["runtime_controller_record_qualified"] is False, loop_id
         assert packet["accepted_live_liveness"] is False, loop_id
         assert item["controller_health"]["current_record_accepted"] is False, loop_id
-        if item["controller"]["status"] == "implemented":
-            assert item["controller_health"]["rejection_reason"] == (
-                "record declares conflicting evidence provenance"
-            ), loop_id
+        assert item["controller_health"]["rejection_reason"] == (
+            "record declares conflicting evidence provenance"
+        ), loop_id
 
 
 def test_loop_health_detail_unknown_id_is_404(monkeypatch) -> None:

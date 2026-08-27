@@ -133,6 +133,13 @@ def test_root_compose_wires_source_ingest_service_boundary() -> None:
     assert source_search_smoke_env["SOURCE_INGEST_URL"] == "http://source-ingest:8097"
     assert source_search_smoke_env["SEARCH_URL"] == "http://search-svc:8098"
     assert source_search_smoke_env["SOURCE_INGEST_EXTERNAL_FEED_HOST"] == "source-search-bounded-smoke"
+    assert source_search_smoke_env["PYTHONUNBUFFERED"] == "1"
+    assert source_search_smoke_env["SOURCE_SEARCH_SMOKE_TIMEOUT_SECONDS"] == (
+        "${SOURCE_SEARCH_SMOKE_TIMEOUT_SECONDS:-180}"
+    )
+    assert source_search_smoke_env["SOURCE_SEARCH_SMOKE_REQUEST_TIMEOUT_SECONDS"] == (
+        "${SOURCE_SEARCH_SMOKE_REQUEST_TIMEOUT_SECONDS:-15}"
+    )
     assert source_search_smoke["depends_on"]["source-ingest"]["condition"] == "service_healthy"
     assert source_search_smoke["depends_on"]["search-svc"]["condition"] == "service_healthy"
 
@@ -155,6 +162,9 @@ def test_root_compose_wires_source_ingest_service_boundary() -> None:
     bounded_smoke = (compose_path.parent / "scripts/smoke_source_search_bounded.py").read_text(encoding="utf-8")
     assert "suffix = uuid.uuid4().hex" in bounded_smoke
     assert "connector_ids = _run_scoped_connector_ids(suffix)" in bounded_smoke
+    assert '"SOURCE_SEARCH_SMOKE_TIMEOUT_SECONDS"' in bounded_smoke
+    assert '"SOURCE_SEARCH_SMOKE_REQUEST_TIMEOUT_SECONDS"' in bounded_smoke
+    assert "last_successful_checkpoint=" in bounded_smoke
     assert '"connector_id": "conn-bounded-' not in bounded_smoke
     assert '"mode": "static_records"' in bounded_smoke
     assert '"mode": "external_feed"' in bounded_smoke

@@ -329,11 +329,38 @@ class SourceChangeProposal:
     def reject(self, *, updated_at: str | None = None) -> "SourceChangeProposal":
         return self._transition(ProposalStatus.REJECTED, updated_at=updated_at)
 
-    def apply(self, *, change_ref: str | None = None, updated_at: str | None = None) -> "SourceChangeProposal":
+    def apply(
+        self,
+        *,
+        receipt: Any | None = None,
+        receipt_id: str | None = None,
+        change_ref: str | None = None,
+        updated_at: str | None = None,
+    ) -> "SourceChangeProposal":
+        if receipt is not None:
+            r_status = getattr(receipt, "status", None)
+            if hasattr(r_status, "value"):
+                r_status = r_status.value
+            elif isinstance(receipt, Mapping):
+                r_status = receipt.get("status")
+            if str(r_status) != "succeeded":
+                raise SourceChangeProposalError(
+                    f"Cannot apply proposal without a succeeded typed receipt; got status={r_status}"
+                )
+            r_id = getattr(receipt, "receipt_id", None) or (receipt.get("receipt_id") if isinstance(receipt, Mapping) else None)
+            if r_id:
+                receipt_id = str(r_id)
+
+        effective_ref = receipt_id or change_ref
         updated = self._transition(ProposalStatus.APPLIED, updated_at=updated_at)
-        if change_ref:
+        if effective_ref:
             lineage = dict(updated.lineage)
-            lineage["applied_change_refs"] = list(lineage.get("applied_change_refs") or []) + [change_ref]
+            refs = list(lineage.get("applied_change_refs") or [])
+            if effective_ref not in refs:
+                refs.append(effective_ref)
+            lineage["applied_change_refs"] = refs
+            if receipt_id:
+                lineage["receipt_id"] = receipt_id
             return SourceChangeProposal(
                 proposal_id=updated.proposal_id,
                 proposal_type=updated.proposal_type.value,
@@ -486,9 +513,16 @@ class SourceChangeProposalStore:
         self._persist(updated)
         return updated
 
-    def apply(self, proposal_id: str, *, change_ref: str | None = None) -> SourceChangeProposal:
+    def apply(
+        self,
+        proposal_id: str,
+        *,
+        receipt: Any | None = None,
+        receipt_id: str | None = None,
+        change_ref: str | None = None,
+    ) -> SourceChangeProposal:
         proposal = self._require_proposal(proposal_id)
-        updated = proposal.apply(change_ref=change_ref)
+        updated = proposal.apply(receipt=receipt, receipt_id=receipt_id, change_ref=change_ref)
         self._persist(updated)
         return updated
 

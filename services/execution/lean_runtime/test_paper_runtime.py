@@ -1420,65 +1420,22 @@ class PaperRuntimeServiceTest(unittest.TestCase):
         "os.environ",
         {"PANTHEON_LEGACY_JOURNEY_BFF_PUBLISH_ENABLED": "true"},
     )
-    def test_legacy_direct_journey_publisher_can_be_opted_in(self):
-        from unittest.mock import patch, MagicMock
+    def test_legacy_direct_journey_publisher_fails_closed_and_cannot_revive(self):
         signal = self._signal()
         signal["signal_id"] = "sig-12345"
         store = InMemoryPendingSignalStore([signal])
         telemetry = _FakeTelemetryEmitter()
-        service = PaperRuntimeService(
-            store=store,
-            identity=self._identity(),
-            runtime_manager_client=_FakeRuntimeManagerClient([self._binding()]),
-            telemetry_emitter=telemetry,
-            poll_interval_seconds=3600,
-            max_batch_size=10,
-        )
-
-        published_payloads = []
-        def fake_urlopen(req, timeout=None):
-            body = req.data.decode("utf-8")
-            published_payloads.append(json.loads(body))
-            resp = MagicMock()
-            resp.read.return_value = b'{"status":"ok"}'
-            return resp
-
-        with patch("urllib.request.urlopen", side_effect=fake_urlopen):
-            snapshot = service.drain_once()
-
-        events = [ev for payload in published_payloads for ev in payload]
-        stages = [ev["stage"] for ev in events]
-        self.assertIn("signal_generation", stages)
-        self.assertIn("trade_decision", stages)
-        self.assertIn("order_submission", stages)
-        self.assertIn("fill_management", stages)
-
-        sig_gen = next(ev for ev in events if ev["stage"] == "signal_generation")
-        self.assertEqual(sig_gen["journey_id"], "tj-sig-12345")
-        self.assertEqual(sig_gen["signal_id"], "sig-12345")
-        self.assertEqual(sig_gen["stage_status"], "succeeded")
-        self.assertEqual(sig_gen["source"], "runtime_legacy_direct")
-        self.assertEqual(sig_gen["sequence"], 1)
-
-        decision = next(ev for ev in events if ev["stage"] == "trade_decision")
-        self.assertEqual(decision["journey_id"], "tj-sig-12345")
-        self.assertEqual(decision["signal_id"], "sig-12345")
-        self.assertEqual(decision["sequence"], 2)
-
-        order = next(ev for ev in events if ev["stage"] == "order_submission")
-        self.assertEqual(order["journey_id"], "tj-sig-12345")
-        self.assertEqual(order["signal_id"], "sig-12345")
-        self.assertEqual(order["sequence"], 3)
-
-        fill = next(ev for ev in events if ev["stage"] == "fill_management")
-        self.assertEqual(fill["journey_id"], "tj-sig-12345")
-        self.assertEqual(fill["signal_id"], "sig-12345")
-        self.assertEqual(fill["sequence"], 4)
-
-        # Assert matching timestamps for the decision, order, fill chain
-        self.assertEqual(decision["occurred_at"], order["occurred_at"])
-        self.assertEqual(order["occurred_at"], fill["occurred_at"])
-        self.assertEqual(len({event["event_id"] for event in events}), len(events))
+        with self.assertRaises(RuntimeError) as ctx:
+            PaperRuntimeService(
+                store=store,
+                identity=self._identity(),
+                runtime_manager_client=_FakeRuntimeManagerClient([self._binding()]),
+                telemetry_emitter=telemetry,
+                poll_interval_seconds=3600,
+                max_batch_size=10,
+            )
+        self.assertIn("PANTHEON_LEGACY_JOURNEY_BFF_PUBLISH_ENABLED is retired", str(ctx.exception))
+        self.assertIn("/bff/management/trade-journeys/events", str(ctx.exception))
 
     def test_canonical_lifecycle_telemetry_preserves_identity_and_committed_position(self):
         from unittest.mock import MagicMock
@@ -2667,6 +2624,39 @@ class TestSubmitTaiwanBrokerOrder(unittest.TestCase):
                     events[0].metadata["reject_reason"],
                     "invalid_taiwan_broker_fill",
                 )
+
+
+class TestPaperRuntimeLifecycleCursor(unittest.TestCase):
+    def test_lifecycle_cursor_compaction(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            outbox_path = Path(tmpdir) / "lifecycle-outbox.json"
+            outbox = LifecycleTelemetryOutbox(outbox_path)
+            self.assertEqual(outbox.snapshot()["pending_count"], 0)
+            self.assertEqual(outbox.snapshot()["chain_count"], 0)
+
+    def test_paper_runtime_rejects_retired_legacy_journey_bff_publish(self):
+        identity = RuntimeIdentity.from_env(
+            {
+                "PANTHEON_RUNTIME_ROLE": "pantheon-paper-execution-runtime",
+                "PANTHEON_RUNTIME_MODE": "paper",
+                "PANTHEON_RUNTIME_ID": "rt-test",
+                "PANTHEON_RUNTIME_BINDING_ID": "bind-test",
+                "PANTHEON_DEPLOYMENT_STAGE": "paper",
+                "PANTHEON_RUNTIME_MANAGER_URL": "http://127.0.0.1:18000",
+                "PANTHEON_RUNTIME_MANAGER_TOKEN": "token",
+            }
+        )
+        for truthy_val in ["1", "true", "True", "yes", "YES"]:
+            with patch.dict(os.environ, {"PANTHEON_LEGACY_JOURNEY_BFF_PUBLISH_ENABLED": truthy_val}):
+                with self.assertRaises(RuntimeError) as ctx:
+                    PaperRuntimeService(
+                        store=InMemoryPendingSignalStore([]),
+                        identity=identity,
+                        runtime_manager_client=_FakeRuntimeManagerClient([]),
+                        telemetry_emitter=RuntimeTelemetryEmitter(identity, _FakeBindingResolver({})),
+                    )
+                self.assertIn("PANTHEON_LEGACY_JOURNEY_BFF_PUBLISH_ENABLED is retired", str(ctx.exception))
+                self.assertIn("/bff/management/trade-journeys/events", str(ctx.exception))
 
 
 if __name__ == "__main__":

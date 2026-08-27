@@ -5,11 +5,11 @@ Each cycle does two things against the policy-learning service:
   1. **durable Agora handoff intake** — claim unacknowledged dataset handoffs
      from the Agora BFF, hand each one to policy-learning's
      ``/api/policy-learning/agora-handoff`` endpoint, and acknowledge it once
-     ingestion is durable. This is the sole production intake path: the
-     direct Agora database scanner (``shadow-eval-tick`` discovery through
-     ``AgoraDatasetAuthority``) is no longer invoked from this scheduled
-     loop. ``run_tick``/``window_tick_id`` remain for direct/manual use of
-     the scanner-backed discovery endpoint; production no longer calls them.
+     ingestion is durable. This is the sole production intake path: automatic
+     database discovery (formerly ``discover_eligible_datasets``) has been
+     retired and deleted. ``run_tick``/``window_tick_id`` remain for
+     explicit-ref / manual invocation of ``/api/policy-learning/shadow-eval-tick``;
+     scheduled production intake no longer invokes them.
   2. ``worker/process``  — claim a batch of the resulting backlog under an
      expiring lease and run the shadow evaluation for the claimed candidates.
 
@@ -249,7 +249,7 @@ def run_tick(
     user_id: str | None = None,
     timeout_seconds: float = 30.0,
 ) -> dict[str, Any]:
-    """POST /api/policy-learning/shadow-eval-tick and return the response."""
+    """POST /api/policy-learning/shadow-eval-tick with explicit dataset_refs for manual invocation."""
     body: dict[str, Any] = {"eval_type": eval_type}
     if tick_id:
         body["tick_id"] = tick_id

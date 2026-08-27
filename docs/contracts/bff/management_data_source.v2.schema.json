@@ -1,0 +1,114 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://pantheon/management-data-source/v2",
+  "title": "Pantheon ManagementDataSource DTO v2",
+  "description": "Composed Management Data Source DTO exposed by BFF to Management frontend.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "source_instance_id",
+    "definition",
+    "instance",
+    "desired",
+    "observed",
+    "allowed_actions"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "enum": [
+        "management_data_source.v2"
+      ]
+    },
+    "source_instance_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "definition": {
+      "type": "object",
+      "description": "Deployed ConnectorDefinition representation."
+    },
+    "instance": {
+      "type": "object",
+      "description": "Canonical DataSourceEntry v2 representation."
+    },
+    "desired": {
+      "type": "object",
+      "description": "SourceDesiredState representation."
+    },
+    "observed": {
+      "type": "object",
+      "description": "SourceObservedState representation."
+    },
+    "allowed_actions": {
+      "type": "object",
+      "required": [
+        "canValidate",
+        "canCanary",
+        "canEnable",
+        "canDisable",
+        "canDegrade",
+        "canResume",
+        "canChangeSchedule",
+        "canReplace",
+        "canRetire",
+        "blockedReasons"
+      ],
+      "properties": {
+        "canValidate": {
+          "type": "boolean"
+        },
+        "canCanary": {
+          "type": "boolean"
+        },
+        "canEnable": {
+          "type": "boolean"
+        },
+        "canDisable": {
+          "type": "boolean"
+        },
+        "canDegrade": {
+          "type": "boolean"
+        },
+        "canResume": {
+          "type": "boolean"
+        },
+        "canChangeSchedule": {
+          "type": "boolean"
+        },
+        "canReplace": {
+          "type": "boolean"
+        },
+        "canRetire": {
+          "type": "boolean"
+        },
+        "blockedReasons": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "lineage_summary": {
+      "type": "object",
+      "properties": {
+        "evidence_count": {
+          "type": "integer"
+        },
+        "seed_count": {
+          "type": "integer"
+        },
+        "active_consumer_count": {
+          "type": "integer"
+        },
+        "search_indexed": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": false
+}

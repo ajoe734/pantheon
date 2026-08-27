@@ -1,0 +1,116 @@
+{
+  "schema_version": "pantheon.product_functional_closure.deployed_human_learning_evidence.v1",
+  "task": {
+    "id": "PFG-L12-HUMAN-E2E-LIVE-R2-20260821",
+    "title": "Recover post-merge dev deployment and hosted Human E2E proof",
+    "owner": "Antigravity2",
+    "reviewer": "Codex2",
+    "repository": "ajoe734/pantheon",
+    "base_branch": "dev",
+    "task_branch": "task/PFG-L12-HUMAN-E2E-LIVE-R2-20260821",
+    "review_file": "docs/deployment/evidence/product-functional-closure/PFG-L12-HUMAN-E2E-LIVE-R2-20260821/evidence.json"
+  },
+  "scope": {
+    "owned_layer": "Post-merge dev deployment verification, exact-SHA ancestry recording, hosted Human Learning E2E proof recovery (Loops 5-7), source scheduler/egress posture assertion, and E2E test harness secure auth resolution",
+    "not_changing": [
+      "Tenant runtime programs or business logic",
+      "Canonical downstream Agora, Policy Learning, Research, or Governance domain rules",
+      "Live broker, capital, or production authority"
+    ],
+    "composes_with": [
+      "PFG-L12-HUMAN-E2E-20260820",
+      "PFG-DEV-INTEGRATION-20260820"
+    ],
+    "changed_files": [
+      "tests/integration/l12/test_current_human_learning_deployed_e2e.py",
+      "docs/deployment/evidence/product-functional-closure/PFG-L12-HUMAN-E2E-LIVE-R2-20260821/README.md",
+      "docs/deployment/evidence/product-functional-closure/PFG-L12-HUMAN-E2E-LIVE-R2-20260821/deployed-run.json",
+      "docs/deployment/evidence/product-functional-closure/PFG-L12-HUMAN-E2E-LIVE-R2-20260821/evidence.json",
+      "docs/deployment/evidence/product-functional-closure/PFG-L12-HUMAN-E2E-LIVE-R2-20260821/evidence.sha256"
+    ]
+  },
+  "acceptance": {
+    "dev_deploy_exact_sha": {
+      "status": "passed",
+      "canonical_task_target_backend_sha": "bb83df12e3cec11de0f441850f08a179ddd7394a",
+      "canonical_task_target_frontend_sha": "8b5a7bbe868f9e3a56a4ed7baf818b642d57ba74",
+      "deployed_backend_dev_sha": "97945de7c5193baa9832f6c02674714d889577b9",
+      "deployed_frontend_dev_sha": "693d8612218e5ec6620c80ab7a16d3429e842f6c",
+      "backend_ancestry_verified": true,
+      "backend_ancestry_note": "bb83df12e3cec11de0f441850f08a179ddd7394a is direct ancestor of dev 97945de7c5193baa9832f6c02674714d889577b9 (via PRs #5127, #5128, #5130)",
+      "frontend_ancestry_verified": true,
+      "frontend_ancestry_note": "8b5a7bbe868f9e3a56a4ed7baf818b642d57ba74 is direct ancestor of dev 693d8612218e5ec6620c80ab7a16d3429e842f6c",
+      "workflow_run_id": "32554078801",
+      "workflow_name": "nonprod-deploy.yml",
+      "gate_run_id": "32555528892",
+      "gate_workflow_name": "pantheon-integration-gate.yml",
+      "pair_id": "98c7d8026ef9c396b211b9f34c716be15c0d22c2e55bca4fc0755a9405d38529"
+    },
+    "hosted_version_readback": {
+      "status": "passed",
+      "bff_version_url": "https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io/bff/version",
+      "fe_deployment_url": "https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io/deployment.json",
+      "readback_bff": {
+        "service": "operator-bff",
+        "version": "0.2.0",
+        "source_commit_sha": "97945de7c5193baa9832f6c02674714d889577b9",
+        "environment": "dev",
+        "auth_mode": "strict",
+        "dev_login_enabled": true,
+        "mfa_required": true
+      },
+      "readback_frontend": {
+        "app": "execute-plans",
+        "pairId": "98c7d8026ef9c396b211b9f34c716be15c0d22c2e55bca4fc0755a9405d38529",
+        "commit": "693d8612218e5ec6620c80ab7a16d3429e842f6c",
+        "bffCommit": "97945de7c5193baa9832f6c02674714d889577b9",
+        "deploymentState": "accepted"
+      }
+    },
+    "source_scheduler_and_egress_guard": {
+      "status": "passed",
+      "source_ingest_readyz_url": "http://127.0.0.1:18097/readyz",
+      "service": "pantheon-source-ingest",
+      "ready": true,
+      "provider_egress_attempted": false,
+      "source_search_posture_mode": "dev",
+      "external_egress": "deny",
+      "controller_mode": "reconcile_only",
+      "max_ticks": 0,
+      "scheduler_health": "healthy",
+      "verified_by_test": "test_deployed_source_posture_and_egress_readback"
+    },
+    "hosted_human_learning_e2e": {
+      "status": "passed",
+      "test_suite": "tests/integration/l12/test_current_human_learning_deployed_e2e.py",
+      "test_results": "6 passed in 108.18s",
+      "report_file": "docs/deployment/evidence/product-functional-closure/PFG-L12-HUMAN-E2E-LIVE-R2-20260821/deployed-run.json",
+      "identity_chain": {
+        "evidence_id": "ev-l12-hl-ca0d7c91e7",
+        "dataset_version_id": "dsv-f8e8c8877962d16a2b78e744",
+        "agora_handoff_id": "gh-548cb3ab684e61ce3f2d9533",
+        "candidate_id": "sic-f75c8789f3fc738e8d6c5c44d2ce320d",
+        "experiment_task_id": "rtask-exp-sic-f75c8789f3fc738e8d6c5c44d2ce320d",
+        "experiment_run_id": "rrun-exp-sic-f75c8789f3fc738e8d6c5c44d2ce320d",
+        "consult_request_id": "cr-l12-hl-ca0d7c91e7",
+        "memo_id": "mem-a80a5443702ea0decc57",
+        "governance_handoff_id": "gh-aa368b2f8fa94fdeaa09"
+      }
+    },
+    "restart_replay_identity_stable": {
+      "status": "passed",
+      "agora_policy_learning_replay": "idempotent_no_duplicate_candidates",
+      "consultation_governance_replay": "idempotent_no_duplicate_memos_or_handoffs"
+    }
+  },
+  "deployment": {
+    "target": "current dev Compose and hosted environment",
+    "status": "active_and_verified",
+    "hosted_pair": {
+      "backend_sha": "97945de7c5193baa9832f6c02674714d889577b9",
+      "frontend_sha": "693d8612218e5ec6620c80ab7a16d3429e842f6c",
+      "promotion_run_id": "32554078801",
+      "gate_run_id": "32555528892"
+    }
+  }
+}

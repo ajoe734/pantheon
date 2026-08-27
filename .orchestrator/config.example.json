@@ -7,7 +7,6 @@
     "state_file": ".orchestrator/state.json",
     "approval_queue": ".orchestrator/approval-queue.json",
     "sidecar_catalog": ".orchestrator/sidecar_catalog.json",
-    "github_bus_state": ".orchestrator/github-bus-state.json",
     "provider_capabilities": ".orchestrator/provider_capabilities.json",
     "claude_mcp_config": ".orchestrator/claude-approval-broker.mcp.json"
   },
@@ -88,17 +87,18 @@
     "auto_restore_enabled": false
   },
   "worker_worktrees": {
-    "enabled": true,
-    "root": "/tmp/pantheon-worker-worktrees",
-    "source_root": "",
-    "base_ref": "origin/dev",
-    "reuse_existing": true,
-    "execution_reasons": [
-      "owned_ready_dispatch",
-      "owned_in_progress_dispatch",
-      "owned_finalize_dispatch",
-      "review_ready_dispatch"
-    ]
+    "root": "/tmp/pantheon-worker-worktrees"
+  },
+  "coordination": {
+    "repositories": {
+      "pantheon": {
+        "repo": "your-github-owner/pantheon"
+      },
+      "execute_plans": {
+        "repo": "your-github-owner/execute-plans",
+        "local_path": "../code/execute-plans"
+      }
+    }
   },
   "worker_worktree_cleanup": {
     "enabled": true,
@@ -108,11 +108,7 @@
     "archive_root": "/tmp/pantheon-worker-worktree-archive",
     "archive_max_file_bytes": 20971520,
     "max_removals_per_tick": 25,
-    "base_branches": [
-      "dev",
-      "master",
-      "main"
-    ]
+    "orphan_prune_interval_seconds": 600
   },
   "worker_retry": {
     "enabled": true,
@@ -151,14 +147,6 @@
       "Claude": [
         "Codex"
       ],
-      "Gemini": [
-        "Codex",
-        "Claude"
-      ],
-      "Gemini2": [
-        "Codex",
-        "Claude"
-      ],
       "Codex": [
         "Claude"
       ],
@@ -170,14 +158,6 @@
     "reviewer_fallbacks": {
       "Claude": [
         "Codex"
-      ],
-      "Gemini": [
-        "Codex",
-        "Claude"
-      ],
-      "Gemini2": [
-        "Codex",
-        "Claude"
       ],
       "Codex": [
         "Claude"
@@ -191,58 +171,6 @@
   },
   "approvals": {
     "stale_pending_seconds": 1800
-  },
-  "github_bus": {
-    "enabled": true,
-    "command_timeout_seconds": 8,
-    "poll_interval_seconds": 30,
-    "repo": null,
-    "delivery_base_branches": {
-      "pantheon": "dev",
-      "execute_plans": "dev"
-    },
-    "offline_backoff_seconds": 300,
-    "auto_request_reviewers": true,
-    "close_resolved_issues": true,
-    "labels": {
-      "review": [
-        "pantheon-bus",
-        "pantheon-review"
-      ],
-      "ops": [
-        "pantheon-bus",
-        "pantheon-ops",
-        "approval-needed"
-      ],
-      "resolved": [
-        "resolved"
-      ]
-    },
-    "commands": [
-      "/approve",
-      "/deny",
-      "/retry",
-      "/recheck",
-      "/status"
-    ],
-    "reviewers": {
-      "Claude": [
-        "your-github-handle"
-      ],
-      "Gemini": [
-        "your-github-handle"
-      ],
-      "Codex": [
-        "your-github-handle"
-      ],
-      "Copilot": [
-        "your-github-handle"
-      ]
-    },
-    "templates": {
-      "ops_issue": ".orchestrator/templates/github_ops_issue.md",
-      "review_pr": ".orchestrator/templates/github_review_pr.md"
-    }
   },
   "schema": {
     "tasks_path": "tasks",
@@ -261,20 +189,6 @@
       "provider": "claude",
       "max_parallel": 3,
       "adapter": "claude_cli",
-      "wake_template": ".orchestrator/templates/wakeup.txt"
-    },
-    "gemini": {
-      "display_name": "Gemini",
-      "provider": "gemini",
-      "max_parallel": 1,
-      "adapter": "gemini",
-      "wake_template": ".orchestrator/templates/wakeup.txt"
-    },
-    "gemini2": {
-      "display_name": "Gemini2",
-      "provider": "gemini2",
-      "max_parallel": 1,
-      "adapter": "gemini",
       "wake_template": ".orchestrator/templates/wakeup.txt"
     },
     "codex": {
@@ -320,49 +234,6 @@
         "copilot_allow_dangerous_skip": false,
         "rule_default_mode": "acceptEdits",
         "disable_bypass_permissions": true
-      }
-    },
-    "gemini": {
-      "delivery_mode": "gemini",
-      "account": "gemini",
-      "gemini": {
-        "cli": "gemini",
-        "include_directories": true
-      },
-      "approval": {
-        "default_approval_mode": "auto_edit",
-        "workspace_agent_yolo_mode": false,
-        "enable_permanent_tool_approval": true,
-        "auto_add_to_policy_by_default": true,
-        "disable_yolo_mode": false,
-        "disable_always_allow": false
-      }
-    },
-    "gemini2": {
-      "delivery_mode": "gemini",
-      "account": "gemini2",
-      "gemini": {
-        "cli": ".orchestrator/bin/gemini2",
-        "config_home": "~/.gemini2",
-        "home": "~/.gemini2",
-        "include_directories": true,
-        "model": "gemini-2.5-flash-lite",
-        "output_format": "json",
-        "env": {
-          "GEMINI_CLI_TRUST_WORKSPACE": "true",
-          "GOOGLE_GENAI_USE_GCA": "true",
-          "GOOGLE_CLOUD_PROJECT": "YOUR_GEMINI_CODE_ASSIST_PROJECT",
-          "GOOGLE_CLOUD_PROJECT_ID": "YOUR_GEMINI_CODE_ASSIST_PROJECT",
-          "GOOGLE_CLOUD_LOCATION": "us-central1"
-        }
-      },
-      "approval": {
-        "default_approval_mode": "yolo",
-        "workspace_agent_yolo_mode": false,
-        "enable_permanent_tool_approval": true,
-        "auto_add_to_policy_by_default": true,
-        "disable_yolo_mode": false,
-        "disable_always_allow": false
       }
     },
     "codex": {
@@ -448,8 +319,6 @@
     "max_active_workers_per_task": 1,
     "max_concurrent_per_account": {
       "claude": 3,
-      "gemini": 1,
-      "gemini2": 1,
       "codex1": 4,
       "copilot": 1
     },

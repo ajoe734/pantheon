@@ -43,6 +43,7 @@ class DispatchBlockReason(str, Enum):
     ENDPOINT_RETRY_AFTER = "endpoint_retry_after"
     ACCOUNT_RETRY_AFTER = "account_retry_after"
     HEALTH_REFRESH_REQUIRED = "health_refresh_required"
+    RESOURCE_CAPACITY_REACHED = "resource_capacity_reached"
 
 
 @dataclass(frozen=True)
@@ -56,6 +57,7 @@ class TaskIntent:
     dependencies_satisfied: bool
     human_ops_hold: bool = False
     review_binding_current: bool = True
+    execution_resources: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -120,6 +122,8 @@ class AdmissionSnapshot:
     lane_reserved: Mapping[str, int] = field(default_factory=dict)
     account_reserved: Mapping[str, int] = field(default_factory=dict)
     account_limits: Mapping[str, int] = field(default_factory=dict)
+    resource_reserved: Mapping[str, int] = field(default_factory=dict)
+    resource_limits: Mapping[str, int] = field(default_factory=dict)
     reserved_endpoint_ids: frozenset[str] = frozenset()
     leased_task_ids: frozenset[str] = frozenset()
     pending_task_ids: frozenset[str] = frozenset()
@@ -372,6 +376,22 @@ def evaluate_dispatch_intent(
             task_reason,
             lane_id,
         )
+    for resource in intent.execution_resources:
+        resource_key = str(resource or "").strip().lower()
+        if not resource_key:
+            continue
+        limit_val = _mapping_value(snapshot.resource_limits, resource_key)
+        try:
+            normalized_limit = max(0, int(limit_val)) if limit_val is not None else 1
+        except (TypeError, ValueError):
+            normalized_limit = 1
+        if _count(snapshot.resource_reserved, resource_key) >= normalized_limit:
+            return DispatchDecision(
+                False,
+                DispatchBlockReason.RESOURCE_CAPACITY_REACHED,
+                task_reason,
+                lane_id,
+            )
 
     endpoints = lane.endpoints
     if requested_endpoint_id is not None:

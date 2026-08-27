@@ -11,6 +11,7 @@ from scripts.wait_for_bff_lifecycle_readiness import (
     classify_readiness,
     confirm_exact_target,
     endpoint_url,
+    exact_deployment_evidence,
     wait_for_readiness,
 )
 
@@ -101,6 +102,68 @@ def test_accepts_exact_ready_payload() -> None:
     assert observation is None
 
 
+def test_accepts_canonical_bff_ready_status_and_nested_controller() -> None:
+    canonical = payload(ready=True)
+    projector = canonical["dependencies"]["lifecycle_projector"]
+    projector["status"] = "ready"
+    projector["controller"] = {"status": "ready"}
+    del projector["controller_status"]
+    projector["freshness_age_seconds"] = 1.0
+    del projector["freshness"]
+
+    state, observation = classify_readiness(
+        200,
+        canonical,
+        expected_deployment_sha=SHA,
+    )
+
+    assert state == "ready"
+    assert observation is None
+
+
+def test_rejects_canonical_stale_freshness_age() -> None:
+    canonical = payload(ready=True)
+    projector = canonical["dependencies"]["lifecycle_projector"]
+    projector["status"] = "ready"
+    projector["controller"] = {"status": "ready"}
+    del projector["controller_status"]
+    projector["freshness_age_seconds"] = 301.0
+    del projector["freshness"]
+
+    state, observation = classify_readiness(
+        200,
+        canonical,
+        expected_deployment_sha=SHA,
+    )
+
+    assert state == "unavailable"
+    assert observation is None
+
+
+def test_exact_evidence_accepts_canonical_freshness_age() -> None:
+    canonical = payload(ready=True)
+    projector = canonical["dependencies"]["lifecycle_projector"]
+    projector["freshness_age_seconds"] = 1.0
+    del projector["freshness"]
+
+    assert exact_deployment_evidence(
+        canonical,
+        expected_deployment_sha=SHA,
+    ) == "exact"
+
+
+def test_exact_evidence_rejects_expired_canonical_freshness_age() -> None:
+    canonical = payload(ready=True)
+    projector = canonical["dependencies"]["lifecycle_projector"]
+    projector["freshness_age_seconds"] = 301.0
+    del projector["freshness"]
+
+    assert exact_deployment_evidence(
+        canonical,
+        expected_deployment_sha=SHA,
+    ) == "contradicted"
+
+
 def test_requires_two_consecutive_consistent_ready_samples() -> None:
     fake = FakeTime()
     inconsistent = payload(ready=True, checkpoint=9, source=10)
@@ -158,6 +221,41 @@ def test_http_200_checkpoint_behind_retained_high_is_not_ready() -> None:
     )
     assert state == "snapshot_inconsistent"
     assert observation is None
+
+
+def test_http_200_exact_deployment_before_first_projector_publish_is_retryable() -> None:
+    starting = payload(ready=True)
+    starting["dependencies"]["lifecycle_projector"]["freshness"] = {}
+    state, observation = classify_readiness(
+        200,
+        starting,
+        expected_deployment_sha=SHA,
+    )
+    assert state == "unavailable"
+    assert observation is None
+
+
+def test_http_200_startup_snapshot_can_converge_to_ready() -> None:
+    fake = FakeTime()
+    starting = payload(ready=True)
+    starting["dependencies"]["lifecycle_projector"]["freshness"]["stale"] = True
+    _, fetch = sequence_fetch(
+        [
+            (200, starting),
+            (200, payload(ready=True)),
+        ]
+    )
+    wait_for_readiness(
+        fetch,
+        expected_deployment_sha=SHA,
+        initial_timeout_seconds=3,
+        recovery_extension_seconds=4,
+        stalled_timeout_seconds=2,
+        poll_interval_seconds=1,
+        monotonic=fake.monotonic,
+        sleep=fake.sleep,
+    )
+    assert fake.value == 2
 
 
 def test_uses_bounded_extension_for_trusted_recovery() -> None:
@@ -639,7 +737,7 @@ def test_root_initial_readiness_uses_exact_waiter_before_residual_smoke() -> Non
     script = Path("scripts/deploy_nonprod_vm.sh").read_text()
     root = _component_block(script, "root", "bff")
     compose_up = (
-        "docker compose -p pantheon -f docker-compose.yml up -d --build"
+        "docker compose -p pantheon -f docker-compose.yml up -d"
     )
     helper_call = (
         "wait_for_exact_bff_lifecycle_readiness \\\n"
@@ -691,7 +789,8 @@ def test_bff_only_readiness_also_uses_exact_waiter() -> None:
     bff = _component_block(script, "bff", "exec")
     compose_up = (
         "docker compose -p pantheon -f docker-compose.yml "
-        "up -d --build --no-deps operator-bff loop-run-projector-scheduler"
+        "up -d --force-recreate --no-deps "
+        "operator-bff loop-run-projector-scheduler"
     )
     helper_call = (
         "wait_for_exact_bff_lifecycle_readiness \\\n"
@@ -748,3 +847,30 @@ def test_agora_restart_persistence_uses_exact_waiter_before_verify() -> None:
     assert "for _ in $(seq 1 30)" not in agora
     assert 'curl -fsS "${DEV_BFF_URL}/readyz"' not in agora
     assert agora.index(restart) < agora.index(waiter) < agora.index(verify)
+
+
+def test_transient_connection_reset_during_startup_converges_to_ready() -> None:
+    fake = FakeTime()
+    # Simulate connection reset / unreachable (0, None) during initial container startup,
+    # followed by recovering, and finally exact ready
+    _, fetch = sequence_fetch(
+        [
+            (0, None),  # connection reset / ECONNRESET
+            (0, None),  # connection reset / ECONNREFUSED
+            (503, payload(ready=False, checkpoint=8, source=10)),
+            (503, payload(ready=False, checkpoint=10, source=10)),
+            (200, payload(ready=True)),
+            (200, payload(ready=True, checkpoint=11, source=11)),
+        ]
+    )
+    wait_for_readiness(
+        fetch,
+        expected_deployment_sha=SHA,
+        initial_timeout_seconds=5,
+        recovery_extension_seconds=4,
+        stalled_timeout_seconds=2,
+        poll_interval_seconds=1,
+        monotonic=fake.monotonic,
+        sleep=fake.sleep,
+    )
+    assert fake.value == 5

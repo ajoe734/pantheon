@@ -12,7 +12,9 @@ import argparse
 import hashlib
 import json
 import os
+import shutil
 import signal
+import stat
 import subprocess
 import sys
 import time
@@ -24,6 +26,7 @@ from provision_live_supervisor_config import (
     build_live_config,
     ensure_approval_queue_marker,
     load_json_object,
+    parse_repository_source_roots,
     validated_immutable_command_root,
     validated_root,
     write_json_atomic,
@@ -101,6 +104,7 @@ def render_v2_config(
     status_root: Path,
     live_config_path: Path,
     python_executable: Path,
+    repository_source_roots: Mapping[str, Path | str] | None = None,
 ) -> tuple[dict[str, Any], dict[str, str]]:
     """Render a new V2 runtime config without using an incumbent overlay."""
 
@@ -113,6 +117,7 @@ def render_v2_config(
         status_root=status_root,
         live_config_path=live_config_path,
         python_executable=python_executable,
+        repository_source_roots=repository_source_roots,
     )
     _validate_authoritative_store(rendered)
     return rendered, identity
@@ -241,6 +246,195 @@ def _write_evidence(path: Path | None, result: Mapping[str, Any]) -> None:
     write_json_atomic(path, dict(result))
 
 
+def _sync_directory_tree(source: Path, dest: Path) -> None:
+    if dest.exists():
+        _make_tree_owner_writable(dest)
+        shutil.rmtree(dest)
+    if source.exists():
+        shutil.copytree(source, dest)
+        _make_tree_owner_writable(dest)
+
+
+def _make_tree_owner_writable(root: Path) -> None:
+    """Keep the coordination-root code mirror mutable after a sealed copy."""
+
+    if root.is_symlink() or not root.exists():
+        return
+    for current_root, dirnames, filenames in os.walk(root, topdown=False, followlinks=False):
+        current = Path(current_root)
+        for name in filenames:
+            path = current / name
+            if not path.is_symlink():
+                mode = stat.S_IMODE(path.stat(follow_symlinks=False).st_mode)
+                os.chmod(path, mode | stat.S_IWUSR, follow_symlinks=False)
+        for name in dirnames:
+            path = current / name
+            if not path.is_symlink():
+                mode = stat.S_IMODE(path.stat(follow_symlinks=False).st_mode)
+                os.chmod(
+                    path,
+                    mode | stat.S_IWUSR | stat.S_IXUSR,
+                    follow_symlinks=False,
+                )
+        mode = stat.S_IMODE(current.stat(follow_symlinks=False).st_mode)
+        os.chmod(
+            current,
+            mode | stat.S_IWUSR | stat.S_IXUSR,
+            follow_symlinks=False,
+        )
+
+
+def _sync_top_level_py_files(source_dir: Path, dest_dir: Path) -> None:
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    mode = stat.S_IMODE(dest_dir.stat(follow_symlinks=False).st_mode)
+    os.chmod(
+        dest_dir,
+        mode | stat.S_IWUSR | stat.S_IXUSR,
+        follow_symlinks=False,
+    )
+    wanted = {path.name for path in source_dir.glob("*.py")} if source_dir.exists() else set()
+    existing = {path.name for path in dest_dir.glob("*.py")}
+    for name in existing - wanted:
+        (dest_dir / name).unlink()
+    for name in wanted:
+        destination = dest_dir / name
+        shutil.copy2(source_dir / name, destination)
+        mode = stat.S_IMODE(destination.stat(follow_symlinks=False).st_mode)
+        os.chmod(destination, mode | stat.S_IWUSR, follow_symlinks=False)
+
+
+def seal_command_runtime(root: Path) -> dict[str, Any]:
+    """Remove write bits from one validated immutable command runtime.
+
+    Auto workers execute status commands from this tree but never need to
+    mutate it.  Sealing every non-symlink entry turns an accidental edit into
+    an immediate permission error instead of poisoning every later worker's
+    command-runtime integrity check.  Execute bits and all read bits are
+    preserved.
+    """
+
+    root = root.expanduser().absolute()
+    if root.is_symlink() or not root.is_dir():
+        raise ValueError(f"command runtime seal target must be a direct directory: {root}")
+    root = root.resolve()
+    changed_paths = 0
+    sealed_paths = 0
+    for current_root, dirnames, filenames in os.walk(root, topdown=False, followlinks=False):
+        current = Path(current_root)
+        for name in (*filenames, *dirnames):
+            path = current / name
+            if path.is_symlink():
+                continue
+            mode = stat.S_IMODE(path.stat(follow_symlinks=False).st_mode)
+            sealed_mode = mode & ~0o222
+            if mode != sealed_mode:
+                os.chmod(path, sealed_mode, follow_symlinks=False)
+                changed_paths += 1
+            sealed_paths += 1
+    root_mode = stat.S_IMODE(root.stat(follow_symlinks=False).st_mode)
+    sealed_root_mode = root_mode & ~0o222
+    if root_mode != sealed_root_mode:
+        os.chmod(root, sealed_root_mode, follow_symlinks=False)
+        changed_paths += 1
+    sealed_paths += 1
+    return {
+        "outcome": "sealed",
+        "root": str(root),
+        "sealed_paths": sealed_paths,
+        "changed_paths": changed_paths,
+    }
+
+
+def verify_worker_sandbox(root: Path) -> dict[str, Any]:
+    """Prove bubblewrap can enforce the provider's read-only runtime mount."""
+
+    binary = shutil.which("bwrap")
+    if not binary:
+        raise ValueError(
+            "bubblewrap (bwrap) is required before promoting a worker command runtime"
+        )
+    runtime_root = root.expanduser().resolve()
+    probe = subprocess.run(
+        [
+            binary,
+            "--die-with-parent",
+            "--unshare-pid",
+            "--bind",
+            "/",
+            "/",
+            "--dev-bind",
+            "/dev",
+            "/dev",
+            "--ro-bind",
+            str(runtime_root),
+            str(runtime_root),
+            "--proc",
+            "/proc",
+            "--",
+            "/bin/true",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=10,
+    )
+    if probe.returncode != 0:
+        detail = (probe.stderr or probe.stdout or "bubblewrap probe failed").strip()
+        raise ValueError(f"worker command-runtime sandbox is unavailable: {detail}")
+    return {
+        "outcome": "available",
+        "binary": str(Path(binary).resolve()),
+        "command_root": str(runtime_root),
+    }
+
+
+def sync_coordination_root_code(candidate_root: Path, status_root: Path) -> dict[str, Any]:
+    """Best-effort refresh of status_root's own governance-tool code.
+
+    status_root (coordination-root) is a stable worktree that also holds
+    live, locally-mutated task/activity/archive data
+    (ai-status.json, ai-task-archive/, current-work.md, .orchestrator/
+    state.json, .orchestrator/logs/, lock files, ...) which this must never
+    touch. Scope is therefore an explicit allowlist of pure-code paths this
+    directory's own scripts/ai-status.sh actually executes when invoked
+    without PANTHEON_COMMAND_ROOT (a bare manual Human/Ops command) --
+    anything not listed here is left alone, never inferred from a directory
+    scan, so a future data file added under an already-synced directory
+    can't be silently overwritten by widening the sweep without a matching
+    allowlist change.
+
+    Mirrors rather than only adds: a file removed from candidate_root's
+    scope is also removed from status_root's copy, so a promotion cannot
+    leave retired code behind.
+
+    Best-effort and independent of the supervisor replacement outcome: a
+    failure here must never fail or roll back an otherwise-successful
+    supervisor replacement. It only affects a bare manual Human/Ops
+    invocation of status_root/scripts/ai-status.sh -- real auto workers
+    always route through PANTHEON_COMMAND_ROOT (the exact candidate_root
+    this copies from), so they are unaffected either way.
+    """
+
+    result: dict[str, Any] = {"outcome": "skipped", "paths": []}
+    try:
+        _sync_directory_tree(candidate_root / "scripts", status_root / "scripts")
+        result["paths"].append("scripts")
+        _sync_top_level_py_files(
+            candidate_root / ".orchestrator", status_root / ".orchestrator"
+        )
+        result["paths"].append(".orchestrator/*.py")
+        _sync_directory_tree(
+            candidate_root / ".orchestrator" / "rewrite",
+            status_root / ".orchestrator" / "rewrite",
+        )
+        result["paths"].append(".orchestrator/rewrite")
+        result["outcome"] = "synced"
+    except Exception as exc:
+        result["outcome"] = "failed"
+        result["error"] = f"{type(exc).__name__}: {exc}"
+    return result
+
+
 def replace_supervisor(
     repo_root: Path,
     *,
@@ -249,6 +443,7 @@ def replace_supervisor(
     python_executable: Path,
     termination_timeout: float,
     evidence_path: Path | None = None,
+    repository_source_roots: Mapping[str, Path | str] | None = None,
 ) -> dict[str, Any]:
     """Stop old, install exact V2 config, then launch exact V2 source."""
 
@@ -259,6 +454,7 @@ def replace_supervisor(
         status_root=status_root,
         live_config_path=live_config_path,
         python_executable=python_executable,
+        repository_source_roots=repository_source_roots,
     )
     rendered_bytes = (json.dumps(rendered, indent=2, ensure_ascii=False) + "\n").encode("utf-8")
     approval_queue_value = rendered.get("paths", {}).get("approval_queue")
@@ -281,6 +477,17 @@ def replace_supervisor(
         "outcome": "failed",
     }
     try:
+        # The candidate is already identity- and cleanliness-validated above.
+        # Seal it before TERM so a failure cannot interrupt the incumbent, and
+        # so workers can only read the exact command source after launch.
+        result["command_runtime_seal"] = seal_command_runtime(Path(identity["root"]))
+        # The provider boundary is enforced by worker_runner, not by mode bits
+        # alone. Prove the host can create that namespace before TERM so a
+        # missing/disabled bubblewrap cannot replace a healthy incumbent with
+        # a supervisor that is unable to launch any worker safely.
+        result["worker_sandbox_preflight"] = verify_worker_sandbox(
+            Path(identity["root"])
+        )
         # Workers require this split-root marker before their adapter starts.
         # Creating it is idempotent and happens before TERM, so a malformed
         # coordination root cannot turn a healthy incumbent into an outage.
@@ -297,6 +504,20 @@ def replace_supervisor(
         )
         result["outcome"] = "launched"
         result["exit_code"] = 0
+        # Best-effort and fully self-contained: sync_coordination_root_code
+        # already catches its own errors, but this call site never lets an
+        # unexpected exception from it reach the replacement's own outcome
+        # or exit_code either, since the supervisor above already launched
+        # successfully.
+        try:
+            result["coordination_code_sync"] = sync_coordination_root_code(
+                Path(identity["root"]), status_root
+            )
+        except Exception as sync_exc:
+            result["coordination_code_sync"] = {
+                "outcome": "failed",
+                "error": f"{type(sync_exc).__name__}: {sync_exc}",
+            }
     except Exception as exc:
         result["error"] = f"{type(exc).__name__}: {exc}"
         result["exit_code"] = 1
@@ -312,6 +533,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--python", default=sys.executable)
     parser.add_argument("--termination-timeout", type=float, default=15.0)
     parser.add_argument("--evidence-path")
+    parser.add_argument(
+        "--repository-source-root",
+        action="append",
+        default=[],
+        metavar="REPOSITORY_ID=/ABSOLUTE/GIT/ROOT",
+        help="Render an absolute source checkout into coordination.repositories.",
+    )
     parser.add_argument("--promote", action="store_true", help="Stop and replace the runtime.")
     parser.add_argument("--discover-only", action="store_true", help="Render and validate only.")
     parser.add_argument("--json", action="store_true")
@@ -328,6 +556,9 @@ def main(argv: list[str] | None = None) -> int:
     live_config_path = _path(args.live_config)
     python_executable = _path(args.python)
     try:
+        repository_source_roots = parse_repository_source_roots(
+            args.repository_source_root
+        )
         if not python_executable.is_file():
             raise ValueError(f"python executable does not exist: {python_executable}")
         validated_root(status_root, label="status root", required=(".git", "ai-status.json"))
@@ -337,6 +568,7 @@ def main(argv: list[str] | None = None) -> int:
                 status_root=status_root,
                 live_config_path=live_config_path,
                 python_executable=python_executable,
+                repository_source_roots=repository_source_roots,
             )
             result: dict[str, Any] = {
                 "schema_version": 2,
@@ -346,6 +578,13 @@ def main(argv: list[str] | None = None) -> int:
                 "live_config": str(live_config_path),
                 "task_state_store": dict(rendered["task_state_store"]),
                 "supervisor_command": rendered["watchdog"]["supervisor_command"],
+                "repository_source_roots": {
+                    repository_id: str(entry.get("local_path"))
+                    for repository_id, entry in (
+                        (rendered.get("coordination") or {}).get("repositories") or {}
+                    ).items()
+                    if isinstance(entry, dict) and entry.get("local_path")
+                },
             }
         else:
             evidence_path = _path(args.evidence_path) if args.evidence_path else None
@@ -356,6 +595,7 @@ def main(argv: list[str] | None = None) -> int:
                 python_executable=python_executable,
                 termination_timeout=args.termination_timeout,
                 evidence_path=evidence_path,
+                repository_source_roots=repository_source_roots,
             )
     except (OSError, ValueError) as exc:
         result = {"outcome": "failed", "exit_code": 1, "error": f"{type(exc).__name__}: {exc}"}

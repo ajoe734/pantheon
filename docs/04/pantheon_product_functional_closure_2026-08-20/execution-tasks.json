@@ -1,0 +1,896 @@
+{
+  "schema": "pantheon.execution-task-catalog.v2",
+  "program_id": "pantheon-product-functional-closure-20260820",
+  "created_at": "2026-08-20T00:00:00Z",
+  "source": {
+    "document": "docs/04/pantheon_product_functional_closure_2026-08-20/01_CURRENT_PRODUCT_FUNCTION_GAP_2026-08-20.md",
+    "pantheon_base": "c50f9a3d1b00fc777a4dc787ccdc81a96b4c9cc8",
+    "execute_plans_base": "729baba8f21211074c5aa3983ecd1e79e59c8599",
+    "hosted_frontend": "729baba8f21211074c5aa3983ecd1e79e59c8599",
+    "hosted_manifest_bff": "e50af43ab253af80ae1e0c48f9cf5448368fb6ac",
+    "actual_hosted_bff": "26a4fd868d73e49d5a1b37232da189d7ac9bd949"
+  },
+  "dispatch_policy": {
+    "dispatcher": "pantheon-supervisor-only",
+    "materialization": "local-human-ops-canonical-cli",
+    "merge_targets": {
+      "pantheon": "dev",
+      "execute-plans": "dev"
+    },
+    "plan_freeze_required": true,
+    "source_dev_default": "reconcile_only",
+    "source_external_pull": "manual-bounded-one-tick-only",
+    "execution_environment": "dev-paper-only",
+    "no_live_capital": true,
+    "no_security_expansion": true,
+    "code_disposition_required": true,
+    "no_parallel_owner_or_store": true,
+    "no_lovable": true
+  },
+  "task_count": 27,
+  "tasks": [
+    {
+      "id": "PFG-PLAN-FREEZE-20260820",
+      "title": "Independently freeze the current product GAP, simplification plan, and execution catalog",
+      "summary": "Review the complete current-dev audit and freeze the exact 27-task functional closure plan before implementation begins.",
+      "repo": "pantheon",
+      "merge_target": "dev",
+      "phase": "W0-plan-freeze",
+      "owner": "Codex2",
+      "reviewer": "Antigravity2",
+      "depends_on": [],
+      "artifacts": [
+        "docs/04/pantheon_product_functional_closure_2026-08-20/",
+        "docs/deployment/evidence/product-functional-closure/PFG-PLAN-FREEZE-20260820/"
+      ],
+      "out_of_scope": ["product implementation", "runtime mutation", "deployment", "task-state mechanism changes"],
+      "acceptance": [
+        "Verify source, runtime, frontend, hosted identity, and canonical task dedup findings against the exact plan PR head.",
+        "Validate 27 unique task IDs, acyclic dependencies, repository boundaries, and ordered path overlaps.",
+        "Confirm Source dev remains manual bounded one-tick only and no security or live-capital work entered the catalog.",
+        "Review code disposition coverage, publish exact-head review evidence, and merge the plan PR to dev."
+      ],
+      "validation": ["JSON schema and DAG validation", "Markdown link and git diff checks", "exact-head independent review"],
+      "code_disposition": ["Confirm every implementation task has caller/disposition acceptance and no duplicate owner/store design."],
+      "required_artifacts": ["pull request", "merge SHA", "exact-head review evidence"],
+      "rollout": "Documentation and catalog only; completion releases implementation dependencies.",
+      "rollback": "Revert the documentation merge and leave product/runtime unchanged."
+    },
+    {
+      "id": "PFG-SOURCE-STATE-20260820",
+      "title": "Bound Source controller state growth and restore constant-cost readiness",
+      "summary": "Remove recursive controller readback persistence, migrate oversized state, and make readiness bounded without enabling provider egress.",
+      "repo": "pantheon",
+      "merge_target": "dev",
+      "phase": "W1-runtime-stability",
+      "owner": "Codex",
+      "reviewer": "Antigravity",
+      "depends_on": ["PFG-PLAN-FREEZE-20260820"],
+      "artifacts": [
+        "services/source_ingestion/controller_state.py",
+        "services/source_ingestion/controller_worker.py",
+        "services/source_ingestion/main.py",
+        "services/source_ingestion/tests/test_controller_worker.py",
+        "services/source_ingestion/tests/test_source_readiness_bounded.py",
+        "docs/deployment/evidence/product-functional-closure/PFG-SOURCE-STATE-20260820/"
+      ],
+      "out_of_scope": ["continuous provider pull", "new scheduler", "deleting SourceRecords", "larger VM sizing"],
+      "acceptance": [
+        "Controller state persists bounded identities, counters, cursor, and terminal summaries without embedding prior state or full pre/post readbacks.",
+        "Existing oversized state is migrated or safely rebuilt while preserving connector, schedule, and terminal identity truth.",
+        "Ready and health probes return within a fixed budget with at least 260 connectors and current journal volume.",
+        "Evidence identifies canonical owner/store/callers and retires the recursive projection without creating a second state store."
+      ],
+      "validation": ["growth test across at least 100 ticks", "restart/readback and checksum tests", "260-connector readiness budget test"],
+      "code_disposition": ["Keep controller_worker as sole owner; replace recursive projection; audit old health full-scan callers."],
+      "required_artifacts": ["pull request", "merge SHA", "code-disposition evidence", "validation evidence"],
+      "rollout": "Migrate state while controller remains reconcile-only, then restart Source API and verify bounded health.",
+      "rollback": "Stop controller and remain reconcile-only; preserve old state backup for read-only diagnosis."
+    },
+    {
+      "id": "PFG-PAPER-STATE-20260820",
+      "title": "Add bounded paper lifecycle cursors and reject non-executable fleet children",
+      "summary": "Stop repeated full-history lifecycle scans and prevent invalid RuntimeBindings from spawning resource-heavy paper workers.",
+      "repo": "pantheon",
+      "merge_target": "dev",
+      "phase": "W1-runtime-stability",
+      "owner": "Antigravity",
+      "reviewer": "Codex2",
+      "depends_on": ["PFG-PLAN-FREEZE-20260820"],
+      "artifacts": [
+        "services/execution/lean_runtime/paper_runtime.py",
+        "services/execution/lean_runtime/test_paper_runtime.py",
+        "services/execution/runtime-manager/paper_fleet_reconciler.py",
+        "services/execution/runtime-manager/test_paper_fleet_reconciler.py",
+        "docs/deployment/evidence/product-functional-closure/PFG-PAPER-STATE-20260820/"
+      ],
+      "out_of_scope": ["live broker", "new fleet service", "manual Runtime Manager JSON edits", "deleting unacknowledged lifecycle events"],
+      "acceptance": [
+        "Lifecycle processing uses durable cursor/ack and bounded compaction or an equivalent append store; a worker never rescans all acknowledged history.",
+        "Fleet admission does not spawn a child for a binding missing execution-required artifact projection and publishes a typed functional reason.",
+        "Restart and replay preserve exactly-once effects while state size remains bounded under repeated stale signals.",
+        "Evidence audits static paper runtime, smoke strategy, fleet owner, lifecycle store, and removes only replacement-proven full-scan paths."
+      ],
+      "validation": ["large-outbox performance regression test", "crash/restart cursor test", "invalid-binding no-spawn test"],
+      "code_disposition": ["Keep dynamic fleet as sole owner; classify static runtime and smoke strategy as explicit compatibility/test paths."],
+      "required_artifacts": ["pull request", "merge SHA", "code-disposition evidence", "validation evidence"],
+      "rollout": "Stop invalid children, migrate each lifecycle state, then restart only admitted workers.",
+      "rollback": "Pause fleet with durable cursor preserved; never restore unbounded full-history scanning."
+    },
+    {
+      "id": "PFG-FE-HONEST-LIVE-20260820",
+      "title": "Make strict-live frontend reads and writes honest",
+      "summary": "Remove production mock-completed mutations and silent seed fallback while retaining explicit demo/test fixtures.",
+      "repo": "execute-plans",
+      "merge_target": "dev",
+      "phase": "W1-frontend-truth",
+      "owner": "Codex2",
+      "reviewer": "Antigravity2",
+      "depends_on": ["PFG-PLAN-FREEZE-20260820"],
+      "artifacts": [
+        "execute-plans:src/lib/bff-v1/runActionSafe.ts",
+        "execute-plans:src/lib/bff-v1/writes.ts",
+        "execute-plans:src/lib/bff-v1/management.ts",
+        "execute-plans:src/lib/bff-v1/liveTransport.ts",
+        "execute-plans:src/lib/bff-v1/__tests__/",
+        "execute-plans:docs/deployment/evidence/PFG-FE-HONEST-LIVE-20260820/"
+      ],
+      "out_of_scope": ["enabling hosted real writes", "removing all fixtures", "new UI pages", "security redesign"],
+      "acceptance": [
+        "Strict-live with real writes disabled returns unavailable/disabled and never a completed receipt or success toast.",
+        "Strict-live HTTP or adapter contract mismatch remains typed unavailable/degraded and never invokes seedFn.",
+        "Explicit demo/test profile can still use fixtures without entering production chunks or transport selection.",
+        "Evidence inventories production callers across src/lib/bff and bff-v1 and records the consolidation target without a broad rewrite."
+      ],
+      "validation": ["write gate and management adapter tests", "production bundle import assertion", "contract mismatch UI tests"],
+      "code_disposition": ["Keep runActionSafe; remove mock success and strict-live seed fallback; retain mocks as explicit fixtures."],
+      "required_artifacts": ["pull request", "merge SHA", "code-disposition evidence", "validation evidence"],
+      "rollout": "Deploy as read-only strict-live behavior before enabling any real domain action.",
+      "rollback": "Disable actions and show unavailable; do not restore simulated completion."
+    },
+    {
+      "id": "PFG-RUNTIME-BINDING-R2-20260820",
+      "title": "Complete the normal Registry to executable RuntimeBinding contract",
+      "summary": "Carry immutable artifact storage identity and execution policy through normal owners instead of test-authored metadata.",
+      "repo": "pantheon",
+      "merge_target": "dev",
+      "phase": "W1-runtime-contract",
+      "owner": "Antigravity2",
+      "reviewer": "Codex",
+      "depends_on": ["PFG-PLAN-FREEZE-20260820", "PFG-PAPER-STATE-20260820"],
+      "artifacts": [
+        "services/deployment/",
+        "services/execution/runtime-manager/",
+        "services/execution/artifact_loader.py",
+        "services/registry/",
+        "docs/deployment/evidence/product-functional-closure/PFG-RUNTIME-BINDING-R2-20260820/"
+      ],
+      "out_of_scope": ["inline Object Store test dictionaries as product design", "new deployment dispatcher", "live capital", "manual binding storage edits"],
+      "acceptance": [
+        "Approved registry artifact ID/version/checksum/storage descriptor/interpreter and paper market policy reach DeploymentPlan and RuntimeBinding through normal commands.",
+        "Runtime Manager rejects active transition when the projection is missing, mismatched, or caller-authored without authority readback.",
+        "Canonical readback exposes the executable contract and downstream paper admission receipt.",
+        "Evidence proves reuse of existing registry/deployment/runtime owners and identifies any superseded metadata-only compatibility path."
+      ],
+      "validation": ["normal-command contract integration tests", "tamper/missing-field rejection", "restart/readback test"],
+      "code_disposition": ["Keep existing dispatcher, Runtime Manager, and loader; remove metadata shortcuts only after normal-path proof."],
+      "required_artifacts": ["pull request", "merge SHA", "code-disposition evidence", "validation evidence"],
+      "rollout": "Require the new contract for newly activated paper bindings; migrate old bindings in E2E task.",
+      "rollback": "Reject new activation and retain readable inactive plans; never accept incomplete active bindings."
+    },
+    {
+      "id": "PFG-SOURCE-SNAPSHOT-20260820",
+      "title": "Provide one canonical stored market snapshot contract for paper",
+      "summary": "Implement the Source-side contract already referenced by the paper producer using stored normalized data, not continuous external pulling.",
+      "repo": "pantheon",
+      "merge_target": "dev",
+      "phase": "W1-runtime-contract",
+      "owner": "Codex2",
+      "reviewer": "Antigravity",
+      "depends_on": ["PFG-PLAN-FREEZE-20260820", "PFG-SOURCE-STATE-20260820"],
+      "artifacts": [
+        "services/source_ingestion/main.py",
+        "services/source_ingestion/requirement_state.py",
+        "services/source_ingestion/tests/test_latest_market_snapshot.py",
+        "services/execution/lean_runtime/paper_signal_producer.py",
+        "services/execution/lean_runtime/test_paper_signal_producer.py",
+        "docs/deployment/evidence/product-functional-closure/PFG-SOURCE-SNAPSHOT-20260820/"
+      ],
+      "out_of_scope": ["new market-data service", "continuous provider connection", "fixed deployment-time closes", "live trading feed"],
+      "acceptance": [
+        "One canonical endpoint/query returns the latest stored normalized snapshot with symbol, snapshot ID, event time, lineage, and closes.",
+        "Paper producer selects it by RuntimeBinding policy and refuses stale/missing data with a typed reason.",
+        "Reading a snapshot performs zero provider egress and cannot start a scheduler.",
+        "Evidence audits all snapshot clients/providers and removes or aliases duplicate endpoint contracts to the single owner."
+      ],
+      "validation": ["Source endpoint contract tests", "producer integration and stale snapshot tests", "zero-egress assertion"],
+      "code_disposition": ["Use Source authority as sole snapshot owner; do not add a parallel feed or retain conflicting URL contracts."],
+      "required_artifacts": ["pull request", "merge SHA", "code-disposition evidence", "validation evidence"],
+      "rollout": "Serve stored snapshots read-only before paper workers consume them.",
+      "rollback": "Producer reports market_input_unavailable and emits no signal; no fallback to fixed closes."
+    },
+    {
+      "id": "PFG-AGORA-RECON-WORKER-20260820",
+      "title": "Wire Workshop messages to the existing reconstruction engine through a durable worker",
+      "summary": "Turn admitted Workshop conversation into durable reconstruction result and Registry draft without a second engine.",
+      "repo": "pantheon",
+      "merge_target": "dev",
+      "phase": "W1-agora-backend",
+      "owner": "Codex",
+      "reviewer": "Antigravity2",
+      "depends_on": ["PFG-PLAN-FREEZE-20260820"],
+      "artifacts": [
+        "services/control-plane/bff/agora/strategy_workshop/",
+        "services/control-plane/bff/agora/interaction/router.py",
+        "services/control-plane/bff/agora/interaction/runner.py",
+        "docs/deployment/evidence/product-functional-closure/PFG-AGORA-RECON-WORKER-20260820/"
+      ],
+      "out_of_scope": ["second reconstruction model", "frontend source", "inline provider work in HTTP", "new Registry authority"],
+      "acceptance": [
+        "Workshop message transaction durably admits one reconstruction job with conversation/version identity.",
+        "A leased worker invokes the existing reconstruction implementation, persists result, and creates or updates a canonical Registry draft.",
+        "Replay, stale result, crash, and restart preserve one effective result and next-best question.",
+        "Evidence inventories reconstruct endpoint/engine/callers and consolidates them into one worker path."
+      ],
+      "validation": ["outbox lease/crash tests", "replay/stale-version tests", "Registry draft readback"],
+      "code_disposition": ["Keep existing reconstruction algorithm and Workshop store; retire direct-only normal path after worker proof."],
+      "required_artifacts": ["pull request", "merge SHA", "code-disposition evidence", "validation evidence"],
+      "rollout": "Enable worker after its durable queue and Registry readback are healthy.",
+      "rollback": "Pause worker and retain admitted jobs; Workshop remains readable and explicitly pending."
+    },
+    {
+      "id": "PFG-AGORA-RESEARCH-CONSUMER-20260820",
+      "title": "Drain Agora Research outbox with the existing ResearchDispatcher",
+      "summary": "Add the missing production consumer for durable stages and candidate projection without creating another dispatcher.",
+      "repo": "pantheon",
+      "merge_target": "dev",
+      "phase": "W1-agora-backend",
+      "owner": "Antigravity",
+      "reviewer": "Codex2",
+      "depends_on": ["PFG-PLAN-FREEZE-20260820"],
+      "artifacts": [
+        "services/control-plane/bff/agora/research/",
+        "services/control-plane/bff/agora/research/dispatcher.py",
+        "docs/deployment/evidence/product-functional-closure/PFG-AGORA-RESEARCH-CONSUMER-20260820/"
+      ],
+      "out_of_scope": ["new quant engine", "fixture candidates in production", "frontend source", "second outbox"],
+      "acceptance": [
+        "A leased production consumer calls existing ResearchDispatcher.execute_stage for admitted outbox rows and persists ordered progress/results.",
+        "Real artifacts create lineage-backed candidates; unavailable inputs create an empty pool with explicit reasons, never default fixtures.",
+        "Duplicate delivery, partial failure, restart, and stale stage completion are idempotent.",
+        "Evidence identifies the previously test-only dispatcher and removes any facade-only success path made redundant by the consumer."
+      ],
+      "validation": ["lease and partial-effect failure tests", "real/empty candidate projection tests", "restart/readback"],
+      "code_disposition": ["Keep one dispatcher and one outbox; delete or fail-close facade-only completion after consumer proof."],
+      "required_artifacts": ["pull request", "merge SHA", "code-disposition evidence", "validation evidence"],
+      "rollout": "Enable adapters individually; unavailable adapters remain explicit degraded/empty.",
+      "rollback": "Pause consumer with backlog durable; never restore hard-coded candidates."
+    },
+    {
+      "id": "PFG-AGORA-PROJECTIONS-20260820",
+      "title": "Produce authoritative Agora pool, decision, widget, and performance projections",
+      "summary": "Connect existing candidate, trading-room, decision, telemetry, and performance stores with production producers.",
+      "repo": "pantheon",
+      "merge_target": "dev",
+      "phase": "W1-agora-backend",
+      "owner": "Antigravity2",
+      "reviewer": "Codex",
+      "depends_on": ["PFG-PLAN-FREEZE-20260820", "PFG-AGORA-RESEARCH-CONSUMER-20260820"],
+      "artifacts": [
+        "services/control-plane/bff/agora/trading_room/",
+        "services/control-plane/bff/agora/performance/",
+        "services/control-plane/bff/agora/candidate_decisions/",
+        "services/control-plane/bff/agora/research/router.py",
+        "services/control-plane/bff/agora/research/store.py",
+        "docs/deployment/evidence/product-functional-closure/PFG-AGORA-PROJECTIONS-20260820/"
+      ],
+      "out_of_scope": ["frontend source", "per-widget stores", "local React-only decisions", "fabricated performance"],
+      "acceptance": [
+        "Strategy/version resolves one current candidate pool and workspace identity; lens is a view recipe, not a pool ID.",
+        "Candidate review and domain outcomes produce durable decision events through existing store contracts.",
+        "Paper/telemetry outcomes produce performance rows, suggestions, and data for every active widget or explicit unavailable state.",
+        "Evidence inventories direct test-only store callers and establishes one production producer per projection without duplicate stores."
+      ],
+      "validation": ["pool/workspace identity tests", "decision producer replay tests", "performance/widget projection tests"],
+      "code_disposition": ["Keep existing stores; wire producers; do not create widget-local authorities."],
+      "required_artifacts": ["pull request", "merge SHA", "code-disposition evidence", "validation evidence"],
+      "rollout": "Publish projections behind existing Agora read contracts before frontend cutover.",
+      "rollback": "Stop producers and expose stale/unavailable; never synthesize rows."
+    },
+    {
+      "id": "PFG-MGMT-DOMAIN-ACTIONS-20260820",
+      "title": "Route Management commands to real domain owners and terminal readback",
+      "summary": "Replace generic admission-only success with explicit domain command routing for the existing production action call sites.",
+      "repo": "pantheon",
+      "merge_target": "dev",
+      "phase": "W1-management-backend",
+      "owner": "Codex2",
+      "reviewer": "Antigravity",
+      "depends_on": ["PFG-PLAN-FREEZE-20260820"],
+      "artifacts": [
+        "services/control-plane/bff/command_executor.py",
+        "services/control-plane/bff/command_adapters/",
+        "services/control-plane/bff/tests/test_management_domain_actions.py",
+        "docs/deployment/evidence/product-functional-closure/PFG-MGMT-DOMAIN-ACTIONS-20260820/"
+      ],
+      "out_of_scope": ["new domain services", "security policy redesign", "live trading actions", "frontend source"],
+      "acceptance": [
+        "Every current production Management action is mapped to an existing domain owner or explicitly unavailable; no generic fake completion remains.",
+        "Accepted commands expose command ID, domain receipt, terminal status, and authoritative readback or typed failure.",
+        "Idempotency and replay do not duplicate domain effects.",
+        "Evidence inventories all action kinds, owners, duplicate adapters, and removes admission-only paths only after route proof."
+      ],
+      "validation": ["action-to-owner contract matrix", "idempotency and terminal readback tests", "unavailable-action tests"],
+      "code_disposition": ["Keep command executor as router; reuse domain clients; do not implement mutations inside BFF."],
+      "required_artifacts": ["pull request", "merge SHA", "code-disposition evidence", "validation evidence"],
+      "rollout": "Enable paper/dev actions by domain after each owner readback passes.",
+      "rollback": "Mark affected action unavailable; do not return admitted as completed."
+    },
+    {
+      "id": "PFG-MGMT-READ-MODELS-20260820",
+      "title": "Expose real Formula, activity, paper telemetry, and postmortem read models",
+      "summary": "Complete the backend data contracts required to remove four synthetic Management surfaces.",
+      "repo": "pantheon",
+      "merge_target": "dev",
+      "phase": "W2-management-backend",
+      "owner": "Antigravity",
+      "reviewer": "Codex2",
+      "depends_on": ["PFG-PLAN-FREEZE-20260820", "PFG-MGMT-DOMAIN-ACTIONS-20260820"],
+      "artifacts": [
+        "services/control-plane/bff/main.py",
+        "services/control-plane/bff/management_read_models/",
+        "services/control-plane/bff/tests/test_management_real_read_models.py",
+        "docs/deployment/evidence/product-functional-closure/PFG-MGMT-READ-MODELS-20260820/"
+      ],
+      "out_of_scope": ["frontend source", "new analytics engine when an owner exists", "seed fallback", "new Management navigation"],
+      "acceptance": [
+        "Formula jobs expose admitted/running/terminal metrics and chart lineage from a real backend job owner.",
+        "Activity, strategy paper telemetry, and postmortem list/detail project canonical events/stores with typed empty/unavailable states.",
+        "All contracts include source identity, freshness, and degradation instead of static rows.",
+        "Evidence identifies existing read stores and consolidates overlapping BFF endpoints rather than creating parallel datasets."
+      ],
+      "validation": ["read-model contract tests", "empty/degraded behavior", "restart/freshness readback"],
+      "code_disposition": ["Reuse existing audit, telemetry, postmortem, and job owners; remove duplicate BFF projections after consumer migration."],
+      "required_artifacts": ["pull request", "merge SHA", "code-disposition evidence", "validation evidence"],
+      "rollout": "Publish read models before frontend removes synthetic data.",
+      "rollback": "Return typed unavailable/empty; never fall back to fixed rows."
+    },
+    {
+      "id": "PFG-MGMT-AI-PROVIDER-20260820",
+      "title": "Make Management AI return an actual provider answer with bounded degradation",
+      "summary": "Repair the existing OpenClaw-backed NL path so gateway reachability is not mistaken for answer readiness.",
+      "repo": "pantheon",
+      "merge_target": "dev",
+      "phase": "W2-management-ai",
+      "owner": "Codex",
+      "reviewer": "Antigravity2",
+      "depends_on": ["PFG-PLAN-FREEZE-20260820", "PFG-MGMT-READ-MODELS-20260820"],
+      "artifacts": [
+        "services/control-plane/bff/main.py",
+        "services/control-plane/bff/assistant/",
+        "services/control-plane/bff/assistant_conversation_store.py",
+        "services/control-plane/bff/tests/test_management_nl_assistant_provider.py",
+        "services/openclaw-gateway-adapter/",
+        "docs/deployment/evidence/product-functional-closure/PFG-MGMT-AI-PROVIDER-20260820/"
+      ],
+      "out_of_scope": ["development task creation through product BFF", "repo access", "security redesign", "source-writing repair"],
+      "acceptance": [
+        "Provider readiness reflects a successful bounded answer call, not only gateway connectivity.",
+        "Expired/unrefreshable provider session selects an already-configured functional fallback or returns typed degraded within the deadline.",
+        "Conversation persistence and correlation survive restart and do not duplicate assistant turns.",
+        "Evidence inventories provider adapters/fallbacks and keeps one Management NL orchestration path."
+      ],
+      "validation": ["real-provider dev smoke", "timeout/expired-session/fallback tests", "conversation replay/readback"],
+      "code_disposition": ["Keep existing NL endpoint and conversation store; consolidate provider readiness and remove misleading outer-only success."],
+      "required_artifacts": ["pull request", "merge SHA", "code-disposition evidence", "validation evidence"],
+      "rollout": "Enable provider only after bounded answer probe passes; retain explicit degraded state otherwise.",
+      "rollback": "Disable provider calls and keep persisted conversations readable; no synthetic answer."
+    },
+    {
+      "id": "PFG-SOURCE-MANUAL-ONCE-20260820",
+      "title": "Provide a safe bounded manual one-tick Source pull for dev acceptance",
+      "summary": "Keep dev external ingestion off by default and make test-time pull an explicit selected one-shot controller action.",
+      "repo": "pantheon",
+      "merge_target": "dev",
+      "phase": "W2-source-control",
+      "owner": "Antigravity2",
+      "reviewer": "Codex",
+      "depends_on": ["PFG-PLAN-FREEZE-20260820", "PFG-SOURCE-STATE-20260820"],
+      "artifacts": [
+        "services/source_ingestion/controller_worker.py",
+        "services/source_ingestion/tests/test_controller_worker_manual_once.py",
+        "scripts/source_ingest_scheduler_once.py",
+        "scripts/tests/test_source_ingest_scheduler_once.py",
+        "docs/operations/source-ingest-manual-one-shot.md",
+        "docs/deployment/evidence/product-functional-closure/PFG-SOURCE-MANUAL-ONCE-20260820/"
+      ],
+      "out_of_scope": ["always-on provider pull", "second scheduler daemon", "unbounded connector selection", "production ingestion policy"],
+      "acceptance": [
+        "Default dev controller mode remains reconcile_only and attempts zero provider egress.",
+        "Inspect and reuse or rebase the already-green PR #5064 candidate when its exact head remains compatible; do not create a second independent implementation.",
+        "An explicit command selects allowlisted connector IDs, runs exactly one bounded reconcile-and-pull tick, and exits with terminal readback.",
+        "Failure or completion cannot leave a recurring pull process; concurrent/replayed command is bounded and idempotent.",
+        "Evidence audits legacy scheduler utilities and consolidates the retained one-shot entrypoint onto the canonical controller."
+      ],
+      "validation": ["zero-egress default test", "one-tick selected connector test", "process exit and replay test"],
+      "code_disposition": ["Keep one controller; retain at most one one-shot utility; never restore scheduler_worker as normal daemon."],
+      "required_artifacts": ["pull request", "merge SHA", "code-disposition evidence", "validation evidence"],
+      "rollout": "Install command while scheduler remains stopped/reconcile-only; invoke only inside named acceptance runs.",
+      "rollback": "Remove/disable manual command and remain reconcile-only."
+    },
+    {
+      "id": "PFG-AGORA-FE-LIVE-20260820",
+      "title": "Connect the active Agora UI to real reconstruction, pools, decisions, and widgets",
+      "summary": "Replace fixed lens identity and page-local review state with existing authoritative BFF contracts.",
+      "repo": "execute-plans",
+      "merge_target": "dev",
+      "phase": "W2-agora-frontend",
+      "owner": "Codex2",
+      "reviewer": "Antigravity2",
+      "depends_on": [
+        "PFG-PLAN-FREEZE-20260820",
+        "PFG-FE-HONEST-LIVE-20260820",
+        "PFG-AGORA-RECON-WORKER-20260820",
+        "PFG-AGORA-RESEARCH-CONSUMER-20260820",
+        "PFG-AGORA-PROJECTIONS-20260820"
+      ],
+      "artifacts": [
+        "execute-plans:src/agora/pages/trading-room/TradingRoomPage.tsx",
+        "execute-plans:src/agora/components/CandidateReviewDrawer.tsx",
+        "execute-plans:src/agora/pages/strategy-workshop/",
+        "execute-plans:src/lib/bff-v1/agora/",
+        "execute-plans:docs/deployment/evidence/PFG-AGORA-FE-LIVE-20260820/"
+      ],
+      "out_of_scope": ["new candidate store", "local-only mutation", "fixture lenses in production", "backend source"],
+      "acceptance": [
+        "Workshop message shows durable reconstruction progress/result and canonical StrategySpec identity.",
+        "Trading Room resolves current pool/workspace and never passes lens-A..E as candidate pool ID.",
+        "Active review reuses the shared BFF-wired drawer already present on current dev, does not recreate stale PR #569 work, and readbacks decision; all widgets show real projection or explicit unavailable.",
+        "Evidence identifies and removes the page-local duplicate only after shared component journey proof."
+      ],
+      "validation": ["Agora component and contract tests", "pool/lens identity negative tests", "decision readback tests"],
+      "code_disposition": ["Adopt shared CandidateReviewDrawer; remove fixed production lenses and page-local duplicate after proof."],
+      "required_artifacts": ["pull request", "merge SHA", "code-disposition evidence", "validation evidence"],
+      "rollout": "Deploy against backend contracts in strict-live mode.",
+      "rollback": "Show pending/unavailable and keep records readable; no local fallback decisions."
+    },
+    {
+      "id": "PFG-MGMT-FE-REAL-20260820",
+      "title": "Replace synthetic Management panels with real read models and domain receipts",
+      "summary": "Wire Formula Studio, Activity Monitor, paper/live telemetry, postmortems, and action pages to canonical BFF truth.",
+      "repo": "execute-plans",
+      "merge_target": "dev",
+      "phase": "W2-management-frontend",
+      "owner": "Antigravity",
+      "reviewer": "Codex2",
+      "depends_on": [
+        "PFG-PLAN-FREEZE-20260820",
+        "PFG-FE-HONEST-LIVE-20260820",
+        "PFG-MGMT-DOMAIN-ACTIONS-20260820",
+        "PFG-MGMT-READ-MODELS-20260820"
+      ],
+      "artifacts": [
+        "execute-plans:src/management/pages/studios/FormulaStudio.tsx",
+        "execute-plans:src/management/components/detail/ActivityMonitor.tsx",
+        "execute-plans:src/management/components/detail/StrategyPaperLiveTab.tsx",
+        "execute-plans:src/management/pages/phase2/PostmortemLibrary.tsx",
+        "execute-plans:src/management/pages/",
+        "execute-plans:src/lib/bff-v1/management.ts",
+        "execute-plans:docs/deployment/evidence/PFG-MGMT-FE-REAL-20260820/"
+      ],
+      "out_of_scope": ["new navigation", "fixed chart generation", "fake jobs", "backend source"],
+      "acceptance": [
+        "Four named synthetic surfaces use real BFF contracts and render typed empty/degraded states without seed/hash/timer/static rows.",
+        "Action pages display admitted versus terminal accurately and refresh authoritative entity readback.",
+        "Read-only build disables unavailable actions without success toasts.",
+        "Evidence audits all production mock imports in the touched surfaces and removes replacement-proven code."
+      ],
+      "validation": ["page/component tests", "strict-live empty/degraded tests", "action receipt/readback tests"],
+      "code_disposition": ["Remove synthetic implementations after real contract proof; keep reusable rendering components and explicit test fixtures."],
+      "required_artifacts": ["pull request", "merge SHA", "code-disposition evidence", "validation evidence"],
+      "rollout": "Deploy strict-live with real writes disabled first, then enable only proven dev-paper actions.",
+      "rollback": "Show unavailable/empty; never restore synthetic live labels."
+    },
+    {
+      "id": "PFG-MGMT-AI-FE-ACTIONS-20260820",
+      "title": "Execute all declared Management AI UI actions through existing registries",
+      "summary": "Complete openDrawer, focusPanel, and confirmed runBffAction routing while preserving read-only kernel behavior.",
+      "repo": "execute-plans",
+      "merge_target": "dev",
+      "phase": "W2-management-ai-frontend",
+      "owner": "Antigravity2",
+      "reviewer": "Codex",
+      "depends_on": [
+        "PFG-PLAN-FREEZE-20260820",
+        "PFG-FE-HONEST-LIVE-20260820",
+        "PFG-MGMT-DOMAIN-ACTIONS-20260820",
+        "PFG-MGMT-AI-PROVIDER-20260820"
+      ],
+      "artifacts": [
+        "execute-plans:src/management/components/agent/uiActionRegistry.ts",
+        "execute-plans:src/management/components/agent/AgentPanelBody.tsx",
+        "execute-plans:src/management/components/agent/",
+        "execute-plans:src/management/components/write/",
+        "execute-plans:docs/deployment/evidence/PFG-MGMT-AI-FE-ACTIONS-20260820/"
+      ],
+      "out_of_scope": ["repo/filesystem tools", "development task creation", "bypassing confirmation", "new action bus"],
+      "acceptance": [
+        "All seven registered action kinds either execute through existing route/drawer/focus registries or return explicit unsupported.",
+        "runBffAction flows through existing confirmation and domain action receipt/readback, never direct mutation.",
+        "Provider answer action correlation persists and replay does not execute twice.",
+        "Evidence proves one UI action registry and removes duplicate switch/placeholder routes made redundant."
+      ],
+      "validation": ["UI action registry tests", "confirmation and replay tests", "unsupported action tests"],
+      "code_disposition": ["Keep existing registry and confirmation components; consolidate action switches rather than add a second dispatcher."],
+      "required_artifacts": ["pull request", "merge SHA", "code-disposition evidence", "validation evidence"],
+      "rollout": "Enable navigation actions first; enable dev-paper domain action only after backend terminal readback.",
+      "rollback": "Disable individual action with explicit reason; keep conversation usable."
+    },
+    {
+      "id": "PFG-MGMT-BFF-PERF-20260820",
+      "title": "Bound functional Management BFF read latency and payload cost",
+      "summary": "Remove repeated fan-out/full scans causing multi-second core Management reads without creating a general performance program.",
+      "repo": "pantheon",
+      "merge_target": "dev",
+      "phase": "W2-management-backend",
+      "owner": "Codex2",
+      "reviewer": "Antigravity",
+      "depends_on": ["PFG-PLAN-FREEZE-20260820", "PFG-MGMT-READ-MODELS-20260820", "PFG-MGMT-AI-PROVIDER-20260820"],
+      "artifacts": [
+        "services/control-plane/bff/management_read_models/",
+        "services/control-plane/bff/operations_read_model.py",
+        "services/control-plane/bff/tests/test_management_read_budget.py",
+        "docs/deployment/evidence/product-functional-closure/PFG-MGMT-BFF-PERF-20260820/"
+      ],
+      "out_of_scope": ["generic load-testing platform", "HA", "VM resize as fix", "dropping required truth fields"],
+      "acceptance": [
+        "Cockpit, persona fleet, and data-sources reads avoid repeated downstream/full-store work through bounded query/projection/caching semantics.",
+        "Freshness and degradation remain visible; cache cannot turn stale/missing source into healthy data.",
+        "A representative current dataset meets documented functional latency and payload budgets.",
+        "Evidence inventories duplicate queries/projections and removes redundant work rather than adding another cache authority."
+      ],
+      "validation": ["query-count and payload budget tests", "freshness/invalidation tests", "three-sample dev smoke"],
+      "code_disposition": ["Reuse canonical stores and BFF projections; consolidate duplicate fan-out and full scans."],
+      "required_artifacts": ["pull request", "merge SHA", "code-disposition evidence", "validation evidence"],
+      "rollout": "Enable bounded projections per endpoint and compare readback/freshness.",
+      "rollback": "Disable optimization while retaining typed degraded response; do not hide slow dependencies with seed data."
+    },
+    {
+      "id": "PFG-DEV-INTEGRATION-20260820",
+      "title": "Integrate repaired functional owners into one dev Compose topology",
+      "summary": "Own the only docker-compose change for this program and preserve manual-only Source plus paper-only execution.",
+      "repo": "pantheon",
+      "merge_target": "dev",
+      "phase": "W3-integration",
+      "owner": "Codex",
+      "reviewer": "Antigravity2",
+      "depends_on": [
+        "PFG-SOURCE-STATE-20260820",
+        "PFG-PAPER-STATE-20260820",
+        "PFG-RUNTIME-BINDING-R2-20260820",
+        "PFG-SOURCE-SNAPSHOT-20260820",
+        "PFG-AGORA-RECON-WORKER-20260820",
+        "PFG-AGORA-RESEARCH-CONSUMER-20260820",
+        "PFG-AGORA-PROJECTIONS-20260820",
+        "PFG-MGMT-DOMAIN-ACTIONS-20260820",
+        "PFG-MGMT-READ-MODELS-20260820",
+        "PFG-MGMT-AI-PROVIDER-20260820",
+        "PFG-SOURCE-MANUAL-ONCE-20260820"
+      ],
+      "artifacts": [
+        "docker-compose.yml",
+        "tests/integration/test_product_functional_compose_contract.py",
+        "docs/deployment/evidence/product-functional-closure/PFG-DEV-INTEGRATION-20260820/"
+      ],
+      "out_of_scope": ["component implementation", "continuous Source pull", "live broker", "production deployment"],
+      "acceptance": [
+        "Compose defaults Source to reconcile_only and exposes manual one-tick only through explicit operator command.",
+        "Reconstruction, Research consumer, paper admission/snapshot, Management reads/actions, and AI provider have exact owner URLs/state volumes/health wiring.",
+        "Only executable paper bindings can spawn and no live-capital service is enabled.",
+        "Evidence audits legacy profiles and removes only those with zero current caller after replacement topology proof."
+      ],
+      "validation": ["docker compose config", "focused topology contract tests", "service restart/readiness smoke"],
+      "code_disposition": ["Keep one Compose owner per domain; retire conflicting legacy profiles only after caller audit."],
+      "required_artifacts": ["pull request", "merge SHA", "code-disposition evidence", "validation evidence"],
+      "rollout": "Restart affected dev services in dependency order with Source pull disabled.",
+      "rollback": "Return to prior images/config while leaving Source scheduler stopped and paper/live capital disabled."
+    },
+    {
+      "id": "PFG-L12-RESEARCH-E2E-20260820",
+      "title": "Prove Loops 1 through 4 from one bounded manual Source pull",
+      "summary": "Run current deployed owners from one explicitly selected external pull through Distillation, Alpha, and Teaching.",
+      "repo": "pantheon",
+      "merge_target": "dev",
+      "phase": "W4-deployed-journey",
+      "owner": "Antigravity",
+      "reviewer": "Codex2",
+      "depends_on": ["PFG-DEV-INTEGRATION-20260820"],
+      "artifacts": [
+        "tests/integration/l12/test_current_research_loops_deployed_e2e.py",
+        "docs/deployment/evidence/product-functional-closure/PFG-L12-RESEARCH-E2E-20260820/"
+      ],
+      "out_of_scope": ["continuous pull", "manual downstream object creation", "in-process apps", "automatic repair tasks"],
+      "acceptance": [
+        "Test explicitly starts one selected bounded Source tick and proves the pull process exits or returns to reconcile-only.",
+        "The resulting SourceRecord naturally enters the existing Distillation queue and reaches Registry StrategySpec, Alpha run, and Teaching terminal/readback.",
+        "All identities originate inside the run; no prebuilt IDs, tmp stores, fake providers, or direct downstream inserts are accepted.",
+        "Evidence records last successful boundary, first failure, and confirms no duplicate Source/Distillation owner was introduced."
+      ],
+      "validation": ["deployed integration suite", "post-run zero-egress/process assertion", "identity lineage readback"],
+      "code_disposition": ["Reclassify any manual-downstream or misnamed component tests; retain useful fixtures outside closure gate."],
+      "required_artifacts": ["pull request", "merge SHA", "deployed run evidence", "code-disposition evidence"],
+      "rollout": "Run only in named dev acceptance window, then verify external pulling is off.",
+      "rollback": "Stop one-shot command and preserve partial records/report; do not keep retrying externally."
+    },
+    {
+      "id": "PFG-L12-HUMAN-E2E-20260820",
+      "title": "Prove deployed Loops 5 through 7 with real Agora, policy, Research, and Consultation owners",
+      "summary": "Replace in-process/fake proof with a durable current-dev human-learning journey.",
+      "repo": "pantheon",
+      "merge_target": "dev",
+      "phase": "W4-deployed-journey",
+      "owner": "Codex2",
+      "reviewer": "Antigravity",
+      "depends_on": [
+        "PFG-DEV-INTEGRATION-20260820",
+        "PFG-AGORA-RECON-WORKER-20260820",
+        "PFG-AGORA-RESEARCH-CONSUMER-20260820",
+        "PFG-AGORA-PROJECTIONS-20260820"
+      ],
+      "artifacts": [
+        "tests/integration/l12/test_current_human_learning_deployed_e2e.py",
+        "docs/deployment/evidence/product-functional-closure/PFG-L12-HUMAN-E2E-20260820/"
+      ],
+      "out_of_scope": ["in-process ASGI", "tmp authorities", "FakeOpenClawRiskProvider", "direct drainer calls"],
+      "acceptance": [
+        "One current-dev run creates Agora evidence/dataset, durable policy handoff, imitation candidate, Research receipt, Consultation memo, and Governance receipt.",
+        "Only deployed URLs/workers and durable stores are used; no fabricated terminal memo or direct store call is accepted.",
+        "Restart/replay preserves identities and no duplicate candidate/consult result appears.",
+        "Evidence confirms durable handoff is the sole automatic policy discovery path."
+      ],
+      "validation": ["deployed human-learning suite", "restart/replay", "provider and Governance readback"],
+      "code_disposition": ["Retain existing handoff drainer/executor; mark direct DB discovery for retirement after proof."],
+      "required_artifacts": ["pull request", "merge SHA", "deployed run evidence", "code-disposition evidence"],
+      "rollout": "Run against current dev provider and paper environment.",
+      "rollback": "Pause workers with durable backlog; never switch to fake provider."
+    },
+    {
+      "id": "PFG-L12-RUNTIME-E2E-20260820",
+      "title": "Prove deployed Loops 8 through 12 from normal approval and deployment",
+      "summary": "Create an executable binding through normal product commands and complete paper execution, telemetry, reconciliation, and evolution.",
+      "repo": "pantheon",
+      "merge_target": "dev",
+      "phase": "W4-deployed-journey",
+      "owner": "Antigravity2",
+      "reviewer": "Codex",
+      "depends_on": [
+        "PFG-DEV-INTEGRATION-20260820",
+        "PFG-PAPER-STATE-20260820",
+        "PFG-RUNTIME-BINDING-R2-20260820",
+        "PFG-SOURCE-SNAPSHOT-20260820"
+      ],
+      "artifacts": [
+        "tests/integration/l12/test_current_runtime_loops_deployed_e2e.py",
+        "docs/deployment/evidence/product-functional-closure/PFG-L12-RUNTIME-E2E-20260820/"
+      ],
+      "out_of_scope": ["inline artifact metadata", "fixed closes fixture", "manual JSON edits", "live broker/capital"],
+      "acceptance": [
+        "Normal approval/deployment creates an executable binding with authority-derived artifact projection and current stored snapshot policy.",
+        "Existing nine invalid bindings are retired/redeployed/migrated through canonical APIs before fleet acceptance.",
+        "One paper run produces signal, order, fill, position, heartbeat, telemetry, drift/incident, postmortem/evolution decision and downstream receipt.",
+        "Evidence proves bounded lifecycle cursor/resource behavior and no compatibility runtime or smoke strategy handled the product run."
+      ],
+      "validation": ["deployed runtime suite", "binding migration readback", "paper resource/state bound assertions"],
+      "code_disposition": ["Keep product E2E free of inline fixtures; classify isolated fixture tests separately."],
+      "required_artifacts": ["pull request", "merge SHA", "deployed run evidence", "code-disposition evidence"],
+      "rollout": "Retire invalid children, activate one executable paper binding, and observe full chain.",
+      "rollback": "Deactivate paper binding and preserve readback; no live execution fallback."
+    },
+    {
+      "id": "PFG-AGORA-JOURNEY-E2E-20260820",
+      "title": "Prove the complete Agora user journey in the active frontend",
+      "summary": "Drive Workshop through reconstruction, Research, Trading Room, decision, performance, learning, and consultation in strict-live UI.",
+      "repo": "execute-plans",
+      "merge_target": "dev",
+      "phase": "W4-browser-journey",
+      "owner": "Codex",
+      "reviewer": "Antigravity2",
+      "depends_on": ["PFG-AGORA-FE-LIVE-20260820", "PFG-L12-HUMAN-E2E-20260820"],
+      "artifacts": [
+        "execute-plans:e2e/agora-product-journey.spec.ts",
+        "execute-plans:src/agora/",
+        "execute-plans:docs/deployment/evidence/PFG-AGORA-JOURNEY-E2E-20260820/"
+      ],
+      "out_of_scope": ["seeded candidate pools", "mock transport", "local-only success", "Lovable hosting"],
+      "acceptance": [
+        "Browser creates all journey inputs and observes canonical IDs after every write from Workshop through Consultation.",
+        "Trading Room uses real pool/workspace and shared drawer; decision/performance survive reload.",
+        "No fixture, seed, prebuilt ID, or in-memory-only mutation appears in network or bundle evidence.",
+        "Evidence records any UI duplicate removed only after replacement journey passes."
+      ],
+      "validation": ["strict-live Playwright journey", "reload/restart readback", "network request provenance"],
+      "code_disposition": ["Confirm page-local drawer/fixed lens paths are no longer production callers."],
+      "required_artifacts": ["pull request", "merge SHA", "browser run evidence", "code-disposition evidence"],
+      "rollout": "Run against Pantheon-owned dev frontend/BFF candidate.",
+      "rollback": "Keep UI read-only/degraded; no mock fallback."
+    },
+    {
+      "id": "PFG-MGMT-JOURNEY-E2E-20260820",
+      "title": "Prove Management and Management AI real read/action journeys",
+      "summary": "Validate real data panels, domain receipts, provider answers, UI actions, and reload readback in strict-live mode.",
+      "repo": "execute-plans",
+      "merge_target": "dev",
+      "phase": "W4-browser-journey",
+      "owner": "Antigravity",
+      "reviewer": "Codex2",
+      "depends_on": [
+        "PFG-DEV-INTEGRATION-20260820",
+        "PFG-MGMT-FE-REAL-20260820",
+        "PFG-MGMT-AI-FE-ACTIONS-20260820",
+        "PFG-MGMT-BFF-PERF-20260820"
+      ],
+      "artifacts": [
+        "execute-plans:e2e/management-product-journey.spec.ts",
+        "execute-plans:e2e/management-ai-product-journey.spec.ts",
+        "execute-plans:docs/deployment/evidence/PFG-MGMT-JOURNEY-E2E-20260820/"
+      ],
+      "out_of_scope": ["security acceptance", "live capital action", "mock answers", "development task operations"],
+      "acceptance": [
+        "Formula, activity, paper telemetry, and postmortem pages show backend-origin data or typed unavailable without synthetic content.",
+        "A supported dev-paper action progresses admitted to domain terminal and remains after reload; read-only profile is honestly disabled.",
+        "Management AI returns an actual provider answer and executes navigation/drawer/focus plus one confirmed domain action exactly once.",
+        "Evidence includes latency samples, network provenance, and zero production seed imports for exercised surfaces."
+      ],
+      "validation": ["strict-live Playwright journeys", "reload/idempotency", "network and bundle provenance"],
+      "code_disposition": ["Confirm synthetic panels and duplicate UI action routes are no longer production paths."],
+      "required_artifacts": ["pull request", "merge SHA", "browser run evidence", "code-disposition evidence"],
+      "rollout": "Run against Pantheon-owned dev exact candidate with paper-only actions.",
+      "rollback": "Disable writes/provider actions and show typed unavailable; no simulated success."
+    },
+    {
+      "id": "PFG-L12-TRUTH-CROSSLOOP-20260820",
+      "title": "Project one stimulus-driven cross-loop run into current Management truth",
+      "summary": "Verify all twelve loop owners, worker failures, terminal outputs, and next receipts from newly generated identities.",
+      "repo": "pantheon",
+      "merge_target": "dev",
+      "phase": "W5-cross-loop-truth",
+      "owner": "Codex2",
+      "reviewer": "Antigravity",
+      "depends_on": [
+        "PFG-L12-RESEARCH-E2E-20260820",
+        "PFG-L12-HUMAN-E2E-20260820",
+        "PFG-L12-RUNTIME-E2E-20260820",
+        "L12-GAP-F06-BFF-FUNCTIONAL-HEALTH-20260818"
+      ],
+      "artifacts": [
+        "tests/integration/l12/test_current_cross_loop_deployed_e2e.py",
+        "services/control-plane/bff/loop_inventory.py",
+        "docs/deployment/evidence/product-functional-closure/PFG-L12-TRUTH-CROSSLOOP-20260820/"
+      ],
+      "out_of_scope": ["prebuilt-ID-only closure", "new loop state store", "task-state projection as product truth", "automatic repair tasks"],
+      "acceptance": [
+        "One run generates all source identities and proves owner trigger, terminal, authority readback, next receipt, and Management row for twelve loops.",
+        "Loops 8, 9, and 12 publish current owner observations and BFF attributes functional worker failure to the correct loop.",
+        "Static catalog provides only stable spec/owner contract; runtime maturity and health come from current records.",
+        "Evidence separates the retained prebuilt identity verifier from the stimulus-driven closure gate."
+      ],
+      "validation": ["stimulus-driven deployed suite", "Management loop-health identity assertions", "failure attribution test"],
+      "code_disposition": ["Keep loop-control/BFF monitor; remove static runtime/task claims and do not create a third truth store."],
+      "required_artifacts": ["pull request", "merge SHA", "deployed run evidence", "code-disposition evidence"],
+      "rollout": "Run after three domain suites and existing F06 are complete.",
+      "rollback": "Retain honest non-live/degraded rows and failure report; do not seed green state."
+    },
+    {
+      "id": "PFG-BE-CONSOLIDATE-20260820",
+      "title": "Retire replacement-proven backend duplicate owners and dead production paths",
+      "summary": "Apply the final caller audit to Source, paper, Agora, loop truth, and Management backend paths after journeys pass.",
+      "repo": "pantheon",
+      "merge_target": "dev",
+      "phase": "W5-simplification",
+      "owner": "Antigravity2",
+      "reviewer": "Codex",
+      "depends_on": [
+        "PFG-L12-TRUTH-CROSSLOOP-20260820",
+        "PFG-AGORA-JOURNEY-E2E-20260820",
+        "PFG-MGMT-JOURNEY-E2E-20260820"
+      ],
+      "dependency_tracks": {
+        "PFG-AGORA-JOURNEY-E2E-20260820": "functional"
+      },
+      "artifacts": [
+        "services/source_ingestion/scheduler_worker.py",
+        "scripts/source_ingest_scheduler_once.py",
+        "services/policy-learning/agora_dataset_authority.py",
+        "services/policy-learning/candidate_experiment_handoff.py",
+        "services/execution/lean_runtime/",
+        "docs/deployment/loop-catalog.registry.json",
+        "docs/deployment/evidence/product-functional-closure/PFG-BE-CONSOLIDATE-20260820/"
+      ],
+      "out_of_scope": ["broad unrelated cleanup", "removing useful test fixtures", "new architecture", "task-state tooling"],
+      "acceptance": [
+        "Caller/profile audit classifies every listed path keep, consolidate, retire-after-proof, or delete with evidence.",
+        "Automatic direct Agora dataset discovery, conflicting Source scheduler/profile, static paper runtime, full-scan lifecycle reader, and static loop runtime claims are removed when replacement proof exists.",
+        "Explicit manual Source one-shot and smoke/test fixtures remain clearly non-production when still needed.",
+        "All affected deployed/component journeys pass after deletion; no compatibility wrapper recreates the retired normal path."
+      ],
+      "validation": ["production caller/profile search", "affected unit/integration suites", "post-delete deployed journey rerun"],
+      "code_disposition": ["This task is the backend disposition closeout; uncertain live callers stay retained with an explicit follow-up reason, not guessed deletion."],
+      "required_artifacts": ["pull request", "merge SHA", "final code-disposition evidence", "post-delete validation evidence"],
+      "rollout": "Remove one replacement-proven path at a time and rerun its journey.",
+      "rollback": "Revert only the deletion commit if a real caller is found; do not restore duplicate authority design."
+    },
+    {
+      "id": "PFG-FE-CONSOLIDATE-20260820",
+      "title": "Retire replacement-proven frontend mock, duplicate, and legacy production paths",
+      "summary": "Finish caller-based consolidation across Agora, Management, bff-v1, and legacy BFF adapters after browser proof.",
+      "repo": "execute-plans",
+      "merge_target": "dev",
+      "phase": "W5-simplification",
+      "owner": "Codex",
+      "reviewer": "Antigravity2",
+      "depends_on": ["PFG-AGORA-JOURNEY-E2E-20260820", "PFG-MGMT-JOURNEY-E2E-20260820"],
+      "dependency_tracks": {
+        "PFG-AGORA-JOURNEY-E2E-20260820": "functional"
+      },
+      "artifacts": [
+        "execute-plans:src/agora/pages/trading-room/TradingRoomPage.tsx",
+        "execute-plans:src/agora/components/CandidateReviewDrawer.tsx",
+        "execute-plans:src/lib/bff/",
+        "execute-plans:src/lib/bff-v1/",
+        "execute-plans:src/management/",
+        "execute-plans:src/mocks/seed.ts",
+        "execute-plans:docs/deployment/evidence/PFG-FE-CONSOLIDATE-20260820/"
+      ],
+      "out_of_scope": ["deleting test/demo fixtures wholesale", "UI redesign", "unrelated legacy cleanup", "backend source"],
+      "acceptance": [
+        "Production caller audit proves no page-local review drawer, fixed lens identity, synthetic panel, mock completed write, or strict-live seed fallback remains.",
+        "Active adapters converge toward one canonical live path; legacy modules with test/demo callers only are explicitly isolated.",
+        "Production build contains no seed import for audited surfaces while test fixtures remain usable.",
+        "Agora and Management browser journeys pass after consolidation and no compatibility shim recreates fake success."
+      ],
+      "validation": ["production import/caller graph", "bundle assertion", "post-delete browser journey rerun"],
+      "code_disposition": ["This task is the frontend disposition closeout; retain only proven test/demo or active canonical paths."],
+      "required_artifacts": ["pull request", "merge SHA", "final code-disposition evidence", "post-delete validation evidence"],
+      "rollout": "Delete replacement-proven paths in small commits and rerun strict-live journeys.",
+      "rollback": "Revert the specific deletion if a real caller exists; never restore synthetic production truth."
+    },
+    {
+      "id": "PFG-HOSTED-ACCEPT-20260820",
+      "title": "Accept one exact current-dev Pantheon product pair",
+      "summary": "Deploy and prove the simplified product with exact FE/BFF identities, manual-only Source, paper-only execution, and no required skips.",
+      "repo": "pantheon",
+      "merge_target": "dev",
+      "phase": "W6-hosted-acceptance",
+      "owner": "Antigravity",
+      "reviewer": "Codex2",
+      "depends_on": [
+        "PFG-L12-TRUTH-CROSSLOOP-20260820",
+        "PFG-AGORA-JOURNEY-E2E-20260820",
+        "PFG-MGMT-JOURNEY-E2E-20260820",
+        "PFG-BE-CONSOLIDATE-20260820",
+        "PFG-FE-CONSOLIDATE-20260820"
+      ],
+      "dependency_tracks": {
+        "PFG-AGORA-JOURNEY-E2E-20260820": "hosted"
+      },
+      "artifacts": [
+        "scripts/verify_product_functional_closure.py",
+        "scripts/test_verify_product_functional_closure.py",
+        "docs/frontend/execute-plans-dev-hosting.md",
+        "docs/deployment/evidence/product-functional-closure/PFG-HOSTED-ACCEPT-20260820/"
+      ],
+      "out_of_scope": ["production deploy", "live broker/capital", "Lovable", "security certification"],
+      "acceptance": [
+        "Served deployment manifest names exact frontend and BFF SHAs and public /bff/version matches the declared BFF.",
+        "Source is reconcile-only before/after the named one-shot research run and has no recurring provider process.",
+        "Required L12, Agora, Management, and Management AI authenticated/browser journeys pass against the served pair with zero required skips.",
+        "Final evidence includes code disposition, runtime resource/readiness, all generated identities, and rollback-safe gate-before-switch proof."
+      ],
+      "validation": ["exact-version probes", "required hosted suites", "post-switch and rollback probe", "Source/paper runtime readback"],
+      "code_disposition": ["Verify removed duplicate/dead paths are absent from served commits and retained test/demo paths cannot be selected in production."],
+      "required_artifacts": ["pull request", "merge SHA", "hosted exact-pair evidence", "final code-disposition evidence"],
+      "rollout": "Build candidate from GitHub-visible dev commits, gate before symlink switch, then run post-switch acceptance.",
+      "rollback": "Switch to the previous known readable release if any exact-identity or journey gate fails."
+    }
+  ]
+}

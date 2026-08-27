@@ -1,0 +1,61 @@
+{
+  "schema_version": "pantheon.product_functional_closure.task_review.v1",
+  "task": {
+    "id": "PFG-CANDIDATE-AUTO-BINDING-20260824",
+    "title": "Bind bounded paper proof automatically to the served candidate",
+    "owner": "Antigravity2",
+    "reviewer": "Codex",
+    "status": "review_pending",
+    "repository": "ajoe734/pantheon",
+    "base_branch": "dev",
+    "task_branch": "task/PFG-CANDIDATE-AUTO-BINDING-20260824",
+    "review_file": "docs/deployment/evidence/product-functional-closure/PFG-CANDIDATE-AUTO-BINDING-20260824/evidence.json",
+    "evidence_cut_at": "2026-08-24"
+  },
+  "scope": {
+    "owned_layer": "Candidate and served manifest automatic pair_id binding in cross_repo_release_controller.py and nonprod-deploy.yml, removal of synthetic SHA256 pair_id generation from deploy-dev admission and coordinate-dev-release input override, fail-closed rejection of well-formed stale pair inputs, and execution-path contract test suite covering real execute-plans pair contract and workflow dispatch path",
+    "not_changing": [
+      "No execute-plans code or workflow changes",
+      "No product feature changes",
+      "No Source Ingestion external pull (remains reconcile-only / MAX_TICKS=0)",
+      "No live capital action (remains fail-closed / disabled)"
+    ],
+    "changed_files": [
+      ".github/workflows/nonprod-deploy.yml",
+      "scripts/cross_repo_release_controller.py",
+      "scripts/test_cross_repo_release_controller.py",
+      "docs/deployment/evidence/product-functional-closure/PFG-CANDIDATE-AUTO-BINDING-20260824/README.md",
+      "docs/deployment/evidence/product-functional-closure/PFG-CANDIDATE-AUTO-BINDING-20260824/evidence.json"
+    ],
+    "composes_with": [
+      "Dev nonprod deployment workflow (.github/workflows/nonprod-deploy.yml)",
+      "Cross-repo release controller (scripts/cross_repo_release_controller.py)",
+      "Agora compatibility gate and dev environment lease coordination"
+    ]
+  },
+  "behavioral_proof": {
+    "auto_binding": "Controller automatically derives immutable FE SHA, BFF SHA, and pair ID from the served deployment manifest post-switch (or immutable pair artifact) without requiring synthetic or manual pair input",
+    "stale_override_rejection": "Well-formed stale supplied pair inputs (including legacy SHA-only synthetic pair formula 0bbfd257a672dbeff45b693a65326915dd8bf92ef92c41e2b2826485fecbb408) are rejected fail-closed against canonical served pairId 98c7d8026ef9c396b211b9f34c716be15c0d22c2e55bca4fc0755a9405d38529",
+    "no_operator_gates": "Eliminates per-SHA operator prompt, proof-window acknowledgement, and operator-name gating",
+    "read_only_restoration": "On success, failure, cancellation, or expiry, read-only profile is cleanly restored and candidate identity is preserved",
+    "safe_defaults": "Source mode strictly reconcile-only, proof flags prohibit live capital"
+  },
+  "validation": {
+    "environment": "checkout-scoped .venv-pantheon; verified against real execute-plans pair contract",
+    "commands": [
+      {
+        "command": "pytest -v scripts/test_cross_repo_release_controller.py",
+        "result": "40 passed"
+      },
+      {
+        "command": "pytest -q scripts/test_agora_compat_manifest.py scripts/test_dev_environment_lease_deploy_contract.py scripts/test_cross_repo_release_controller.py",
+        "result": "264 passed"
+      }
+    ]
+  },
+  "review": {
+    "status": "pending_independent_review",
+    "reviewer_instruction": "Bind this already-committed manifest with AI_NAME=Codex REVIEW_FILE=docs/deployment/evidence/product-functional-closure/PFG-CANDIDATE-AUTO-BINDING-20260824/evidence.json through the governed approve command only after independently checking the exact PR head.",
+    "owner_claim": "Owner evidence is ready for independent review; this file makes no approval claim."
+  }
+}

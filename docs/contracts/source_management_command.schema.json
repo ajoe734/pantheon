@@ -1,0 +1,110 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://pantheon/source-management-command/v1",
+  "title": "Pantheon SourceManagementCommand",
+  "description": "Governed internal mutation command for data source instances.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "command_id",
+    "idempotency_key",
+    "command_type",
+    "source_instance_id",
+    "expected_revision",
+    "actor",
+    "reason",
+    "parameters",
+    "requested_at"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "enum": [
+        "source_management_command.v1"
+      ]
+    },
+    "command_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "idempotency_key": {
+      "type": "string",
+      "minLength": 1
+    },
+    "command_type": {
+      "type": "string",
+      "enum": [
+        "create",
+        "validate",
+        "canary",
+        "enable",
+        "disable",
+        "degrade",
+        "resume",
+        "change_schedule",
+        "replace",
+        "retire"
+      ]
+    },
+    "source_instance_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "expected_revision": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 0
+    },
+    "actor": {
+      "type": "object",
+      "required": [
+        "actor_type",
+        "actor_id"
+      ],
+      "properties": {
+        "actor_type": {
+          "type": "string",
+          "enum": [
+            "operator",
+            "admin",
+            "service",
+            "system",
+            "controller",
+            "human"
+          ]
+        },
+        "actor_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "roles": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": true
+    },
+    "reason": {
+      "type": "string",
+      "minLength": 1
+    },
+    "parameters": {
+      "type": "object"
+    },
+    "trace_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "requested_at": {
+      "type": "string",
+      "minLength": 1
+    }
+  },
+  "additionalProperties": false
+}

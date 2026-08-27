@@ -853,21 +853,15 @@ def test_management_persona_fleet_keeps_market_personas_with_live_dev_overlay_on
     data = response.json()["data"]
     rows = {item["persona_id"]: item for item in data["items"]}
     assert "persona-dev-probe" in rows
-    assert set(MARKET_PERSONAS.values()).issubset(rows)
-    assert data["summary"]["capital_summary"]["pool_count"] >= 3
+    assert not any(market_id in rows for market_id in MARKET_PERSONAS.values())
+    assert data["summary"]["total_personas"] == 1
+    assert data["summary"]["canonical_total"] == 1
+    assert data["summary"]["catalog_default_total"] > 0
     assert "capital_pools" not in data
     assert "persona_league" not in data
-    meta_surfaces = response.json()["meta"]["surfaces"]
-    assert meta_surfaces["persona_league"]["status"] == "ok"
-    assert meta_surfaces["persona_league"]["source"] == "composed_market_persona_defaults"
-
-    tw = rows["persona-tw-equity"]
-    assert tw["data_source_summary"]["state"] == "partial_readback"
-    assert tw["research_summary"]["stage"] == "management_review_linked"
-    assert tw["research_summary"]["current_project_count"] >= 1
 
 
-def test_fleet_visible_persona_detail_uses_governed_catalog_fallback() -> None:
+def test_unadmitted_catalog_defaults_do_not_fabricate_ghost_fleet_rows_or_detail() -> None:
     with tempfile.TemporaryDirectory() as td:
         store = ReadSurfaceStore(
             str(Path(td) / "read_surfaces.json"),
@@ -881,16 +875,13 @@ def test_fleet_visible_persona_detail_uses_governed_catalog_fallback() -> None:
 
     assert fleet.status_code == 200, fleet.text
     fleet_ids = {item["persona_id"] for item in fleet.json()["data"]["items"]}
-    assert "persona-crypto" in fleet_ids
+    assert "persona-crypto" not in fleet_ids
+    summary = fleet.json()["data"]["summary"]
+    assert summary["canonical_total"] == 0
+    assert summary["catalog_default_total"] > 0
 
-    assert detail.status_code == 200, detail.text
-    payload = detail.json()
-    assert payload["data"]["id"] == "persona-crypto"
-    assert payload["data"]["name"] == "Crypto Persona"
-    surface = payload["meta"]["surfaces"]["persona_detail"]
-    assert surface["status"] == "degraded"
-    assert surface["source"] == "persona_catalog_list_fallback"
-    assert surface["missing_bindings"] is False
+    assert detail.status_code == 404, detail.text
+    assert detail.json()["error"]["code"] == "RESOURCE_NOT_FOUND"
 
     assert unknown.status_code == 404, unknown.text
     assert unknown.json()["error"]["code"] == "RESOURCE_NOT_FOUND"

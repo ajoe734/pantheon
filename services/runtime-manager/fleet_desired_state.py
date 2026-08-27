@@ -24,8 +24,9 @@ or exclusion decisions can be audited without re-deriving the query logic.
 """
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
-from typing import Any, Dict, FrozenSet, List, Optional
+from typing import Any, Dict, FrozenSet, List, Mapping, Optional
 
 # ---------------------------------------------------------------------------
 # Fleet scope constants
@@ -42,7 +43,7 @@ FLEET_EXCLUDED_STATUSES: Dict[str, str] = {
     "paused": "draining",
 }
 
-_QUERY_VERSION = "1"
+_QUERY_VERSION = "2"
 
 
 class FleetDesiredStateQueryError(ValueError):
@@ -230,6 +231,72 @@ def _extract_allowed_scope(binding_dict: Dict[str, Any]) -> Optional[str]:
     return scope or None
 
 
+def _execution_projection_exclusion_reason(
+    binding_dict: Dict[str, Any],
+) -> Optional[str]:
+    """Return why an active managed binding cannot start product execution.
+
+    An authority attestation proves that Registry, Governance, and Capital
+    agreed on an artifact checksum. It does not repair an Object Store
+    projection that omitted the checksum consumed by ``ArtifactLoader``, and
+    it does not supply the market symbol consumed by Source Ingest. Fleet
+    readiness therefore validates those runtime inputs directly and fails
+    closed before counting the binding as desired.
+    """
+
+    required_fields = (
+        "binding_id",
+        "runtime_id",
+        "capital_pool_id",
+        "plan_id",
+        "artifact_id",
+        "artifact_version",
+        "persona_capital_binding_id",
+    )
+    for field in required_fields:
+        if not str(binding_dict.get(field) or "").strip():
+            return f"non_executable_missing_{field}"
+
+    metadata = binding_dict.get("metadata")
+    if not isinstance(metadata, Mapping):
+        return "non_executable_missing_runtime_metadata"
+
+    strategy_id = str(
+        binding_dict.get("strategy_id") or metadata.get("strategy_id") or ""
+    ).strip()
+    if not strategy_id:
+        return "non_executable_missing_strategy_id"
+
+    object_store = binding_dict.get("object_store") or metadata.get("object_store")
+    if not isinstance(object_store, Mapping):
+        return "non_executable_missing_artifact_store"
+
+    artifact_version = str(binding_dict.get("artifact_version") or "").strip()
+    metadata_key = f"openclaw/registry/{strategy_id}/{artifact_version}/metadata.json"
+    projected_metadata = object_store.get(metadata_key)
+    if isinstance(projected_metadata, str):
+        try:
+            projected_metadata = json.loads(projected_metadata)
+        except json.JSONDecodeError:
+            return "non_executable_invalid_artifact_metadata"
+    if not isinstance(projected_metadata, Mapping):
+        return "non_executable_missing_artifact_metadata"
+    if not str(projected_metadata.get("checksum") or "").strip():
+        return "non_executable_missing_artifact_checksum"
+
+    symbol = str(binding_dict.get("symbol") or metadata.get("symbol") or "").strip()
+    if not symbol:
+        return "non_executable_missing_market_symbol"
+
+    market_data_policy = (
+        binding_dict.get("market_data_policy") or metadata.get("market_data_policy")
+    )
+    if not isinstance(market_data_policy, Mapping):
+        return "non_executable_missing_market_data_policy"
+
+    return None
+
+
 def _policy_envelope_for(binding_dict: Dict[str, Any]) -> PolicyEnvelope:
     """Build a PolicyEnvelope for a RuntimeBinding dict."""
     stage = str(binding_dict.get("deployment_mode") or "")
@@ -251,6 +318,15 @@ def _policy_envelope_for(binding_dict: Dict[str, Any]) -> PolicyEnvelope:
             allowed_deployment_scope=allowed_scope,
             fleet_eligible=False,
             exclusion_reason=reason,
+        )
+
+    execution_reason = _execution_projection_exclusion_reason(binding_dict)
+    if execution_reason is not None:
+        return PolicyEnvelope(
+            stage=stage,
+            allowed_deployment_scope=allowed_scope,
+            fleet_eligible=False,
+            exclusion_reason=execution_reason,
         )
 
     return PolicyEnvelope(

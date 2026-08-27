@@ -49,6 +49,7 @@ from pydantic import BaseModel, Field
 
 from .operations import CanonicalOperationError, WorkshopCanonicalOperations
 from .reconstruction import StrategyReconstructionResult, reconstruct_strategy_from_events
+from .runner import run_reconstruction_worker
 from .store import WorkshopVersionProjectionConflict, make_workshop_store
 
 _CONTROL_PLANE_DIR = Path(__file__).resolve().parents[3]
@@ -2197,6 +2198,22 @@ def create_strategy_workshop_router(
             },
             utc_now_fn=utc_now,
         )
+        # Durably admits this conversation's reconstruction job by invoking
+        # the one worker path right after the message event is durably
+        # committed.  Best-effort: a reconstruction/Registry-draft hiccup
+        # must never fail message acceptance.  An explicit POST /reconstruct
+        # (same run_reconstruction_worker) recovers a missed or stale round.
+        try:
+            run_reconstruction_worker(
+                store=store,
+                canonical=canonical,
+                workshop_id=workshop_id,
+                tenant_id=scope.tenant_id,
+                user_id=scope.user_id,
+                session=store.get_session(workshop_id) or session,
+            )
+        except Exception:
+            pass
         return {
             "data": {"event_id": event["event_id"], "sequence_no": event["sequence_no"]},
             "meta": {
@@ -2579,28 +2596,28 @@ def create_strategy_workshop_router(
         authorization: Optional[str] = Header(default=None),
         x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
     ) -> Dict[str, Any]:
+        # Single worker path (AGORA-WORKSHOP-CORE-20260813 disposition): this
+        # endpoint and the message-post durable trigger both call
+        # run_reconstruction_worker, so replay/staleness/crash-restart
+        # semantics live in one place rather than being duplicated per caller.
         scope = _scope(authorization, x_tenant_id)
         session = _scoped_session(workshop_id, scope)
-        events = store.list_events(workshop_id)
-        sequence_no = max((int(e.get("sequence_no", 0)) for e in events), default=0)
-        messages_content: List[str] = []
-        for e in events:
-            if e.get("event_type") == "message":
-                msg = e.get("redacted_summary") or e.get("content") or ""
-                if msg:
-                    messages_content.append(str(msg))
-        result = reconstruct_strategy_from_events(
+        outcome = run_reconstruction_worker(
+            store=store,
+            canonical=canonical,
             workshop_id=workshop_id,
-            sequence_no=sequence_no,
-            events=events,
-            messages_content=messages_content,
+            tenant_id=scope.tenant_id,
+            user_id=scope.user_id,
+            session=session,
         )
         return {
-            "data": result.model_dump(),
+            "data": outcome["result"],
             "meta": {
                 "snapshot_at": utc_now(),
                 "capability": "agora.workshop.v1",
                 "audience": f"tenant:{scope.tenant_id}:user:{scope.user_id}",
+                "job_status": outcome["job_status"],
+                "registry_draft_ref": outcome.get("registry_draft_ref"),
             },
         }
 

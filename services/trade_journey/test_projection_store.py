@@ -11,6 +11,7 @@ import os
 import subprocess
 import sys
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from uuid import uuid4
@@ -20,6 +21,7 @@ import pytest
 from services.trade_journey.lifecycle_projector import STABLE_IDENTITY_FIELDS
 from services.trade_journey.materializer import IDENTIFIER_FIELDS
 from services.trade_journey.projection_store import (
+    DEFAULT_PROJECTION_TIMEOUT_SECONDS,
     BatchProjectionMutation,
     ConflictingDuplicateException,
     ConcurrentReceiptClaimException,
@@ -163,6 +165,15 @@ def test_projection_store_atomic_batch_transaction(postgres_dsn: str) -> None:
     assert receipt is not None
     assert receipt.disposition == "applied"
     assert receipt.journey_id == "j-1"
+    receipts = store.get_receipts(["missing", "evt-1", "evt-1"])
+    assert set(receipts) == {"evt-1"}
+    assert receipts["evt-1"].fingerprint == "fp-1"
+
+    aggregate_events = store.load_journey_stage_events_bulk(
+        [("tenant-a", "paper", "j-1"), ("tenant-a", "paper", "missing")]
+    )
+    assert len(aggregate_events[("tenant-a", "paper", "j-1")]) == 1
+    assert aggregate_events[("tenant-a", "paper", "missing")] == []
 
     resolved_journey = store.resolve_identity("tenant-a", "paper", "signal_id", "t-100")
     assert resolved_journey == "j-1"
@@ -943,8 +954,8 @@ def test_projection_store_overlapping_controllers_commit_shared_event_once(
             )
             query_text = query if isinstance(query, str) else query.as_string(self)
             if (
-                "SELECT fingerprint FROM" in query_text
-                and ".event_receipts WHERE event_id=%s" in query_text
+                "SELECT event_id, fingerprint FROM" in query_text
+                and ".event_receipts WHERE event_id = ANY(%s)" in query_text
             ):
                 thread_id = threading.get_ident()
                 with barrier_threads_lock:
@@ -1355,3 +1366,601 @@ def test_projection_store_indexed_explain_paths(postgres_dsn: str) -> None:
         assert "idx_loop_runs_tenant_env_updated_loop" in plan5
 
         cur.execute(f"DROP SCHEMA IF EXISTS {schema_name} CASCADE")
+
+
+def test_projection_store_driver_missing_fails_closed(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setitem(sys.modules, "psycopg", None)
+    with pytest.raises(RuntimeError, match="psycopg is required for ProjectionStore"):
+        ProjectionStore("postgresql://pantheon_app:pantheon_app@localhost:5432/pantheon", connect=None)
+
+
+def test_projection_store_default_connect_binds_psycopg() -> None:
+    import psycopg
+
+    store = ProjectionStore(
+        "postgresql://pantheon_app:pantheon_app@localhost:5432/pantheon",
+        connect=None,
+    )
+    assert store._connect is psycopg.connect
+
+
+def test_projection_store_timeout_configuration_and_validation() -> None:
+    dsn = "postgresql://pantheon_app:pantheon_app@localhost:5432/pantheon"
+    # Default timeouts
+    store = ProjectionStore(dsn, connect=lambda *a, **kw: None)
+    assert store.connect_timeout_seconds == DEFAULT_PROJECTION_TIMEOUT_SECONDS
+    assert store.statement_timeout_seconds == DEFAULT_PROJECTION_TIMEOUT_SECONDS
+    assert store.lock_timeout_seconds == DEFAULT_PROJECTION_TIMEOUT_SECONDS
+
+    # Base timeout setting all 3
+    store = ProjectionStore(dsn, timeout_seconds=5.0, connect=lambda *a, **kw: None)
+    assert store.connect_timeout_seconds == 5.0
+    assert store.statement_timeout_seconds == 5.0
+    assert store.lock_timeout_seconds == 5.0
+
+    # Specific overrides
+    store = ProjectionStore(
+        dsn,
+        timeout_seconds=5.0,
+        connect_timeout_seconds=2.0,
+        statement_timeout_seconds=3.0,
+        lock_timeout_seconds=4.0,
+        connect=lambda *a, **kw: None,
+    )
+    assert store.connect_timeout_seconds == 2.0
+    assert store.statement_timeout_seconds == 3.0
+    assert store.lock_timeout_seconds == 4.0
+
+    # Validation errors
+    for invalid in (0, -1, -0.5, True, False, "invalid", float("nan"), float("inf")):
+        with pytest.raises(ValueError):
+            ProjectionStore(dsn, timeout_seconds=invalid, connect=lambda *a, **kw: None)
+        with pytest.raises(ValueError):
+            ProjectionStore(dsn, connect_timeout_seconds=invalid, connect=lambda *a, **kw: None)
+        with pytest.raises(ValueError):
+            ProjectionStore(dsn, statement_timeout_seconds=invalid, connect=lambda *a, **kw: None)
+        with pytest.raises(ValueError):
+            ProjectionStore(dsn, lock_timeout_seconds=invalid, connect=lambda *a, **kw: None)
+
+
+def test_projection_store_statement_timeout_cancels_long_query(postgres_dsn: str) -> None:
+    import psycopg
+
+    schema_name = f"test_proj_{uuid4().hex[:8]}"
+    bootstrap_store = ProjectionStore(
+        postgres_dsn,
+        schema=schema_name,
+        bootstrap=True,
+    )
+    store = ProjectionStore(
+        postgres_dsn,
+        schema=schema_name,
+        statement_timeout_seconds=0.2,
+    )
+
+    # Executing a query exceeding statement timeout must raise QueryCanceled in < 1s
+    start_time = time.monotonic()
+    with pytest.raises(psycopg.errors.QueryCanceled):
+        with store._connect_db() as conn, conn.cursor() as cur:
+            cur.execute("SELECT pg_sleep(2.0)")
+    elapsed = time.monotonic() - start_time
+    assert elapsed < 1.5, f"statement timeout took too long: {elapsed}s"
+
+    with psycopg.connect(postgres_dsn) as conn, conn.cursor() as cur:
+        cur.execute(f"DROP SCHEMA IF EXISTS {schema_name} CASCADE")
+
+
+def test_projection_store_lock_timeout_cancels_blocked_lock(postgres_dsn: str) -> None:
+    import psycopg
+
+    schema_name = f"test_proj_{uuid4().hex[:8]}"
+    bootstrap_store = ProjectionStore(
+        postgres_dsn,
+        schema=schema_name,
+        bootstrap=True,
+    )
+    store = ProjectionStore(
+        postgres_dsn,
+        schema=schema_name,
+        lock_timeout_seconds=0.2,
+    )
+
+    # Thread 1 holds exclusive lock on controller row FOR UPDATE
+    lock_acquired = threading.Event()
+    release_lock = threading.Event()
+
+    def hold_row_lock():
+        with psycopg.connect(postgres_dsn) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"INSERT INTO {schema_name}.controller (controller_id, tenant_scope, environment_scope, checkpoint_seq, source_high_watermark, backlog_count, projection_revision, deployment_sha, mode, status, accepted_live) VALUES ('ctrl-block', 't-1', 'paper', 0, 0, 0, 0, 'sha1', 'live', 'ready', true)"
+                )
+            conn.commit()
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"SELECT * FROM {schema_name}.controller WHERE controller_id='ctrl-block' FOR UPDATE"
+                )
+                lock_acquired.set()
+                release_lock.wait(timeout=5.0)
+            conn.commit()
+
+    t = threading.Thread(target=hold_row_lock)
+    t.start()
+    assert lock_acquired.wait(timeout=5.0)
+
+    now = datetime.now(timezone.utc)
+    mutation = BatchProjectionMutation(
+        receipts=[
+            EventReceiptRow(
+                "evt-1", 1, "fp-1", "t-1", "paper", "j-1", "", "opened", now, "applied", 1
+            )
+        ],
+        journeys=[
+            JourneyRow(
+                "t-1", "paper", "j-1", "open", {"opened": True}, False, now, now, 1, 1
+            )
+        ],
+        source_high_watermark=1,
+    )
+
+    # Thread 2 tries to execute batch transaction for ctrl-block; should hit lock_timeout and raise LockNotAvailable / QueryCanceled
+    start_time = time.monotonic()
+    with pytest.raises((psycopg.errors.LockNotAvailable, psycopg.errors.QueryCanceled)):
+        store.execute_batch_transaction("ctrl-block", "t-1", "paper", mutation)
+    elapsed = time.monotonic() - start_time
+    assert elapsed < 1.5, f"lock timeout took too long: {elapsed}s"
+
+    release_lock.set()
+    t.join()
+
+    with psycopg.connect(postgres_dsn) as conn, conn.cursor() as cur:
+        cur.execute(f"DROP SCHEMA IF EXISTS {schema_name} CASCADE")
+
+
+def test_projection_store_connect_fallback_sets_timeouts_on_custom_connector(postgres_dsn: str) -> None:
+    import psycopg
+
+    def custom_connector(dsn):
+        # Only accepts dsn, raising TypeError if kwargs passed
+        return psycopg.connect(dsn)
+
+    store = ProjectionStore(
+        postgres_dsn,
+        connect=custom_connector,
+        statement_timeout_seconds=2.5,
+        lock_timeout_seconds=1.5,
+    )
+    with store._connect_db() as conn, conn.cursor() as cur:
+        cur.execute("SHOW statement_timeout")
+        assert cur.fetchone()[0] == "2500ms"
+        cur.execute("SHOW lock_timeout")
+        assert cur.fetchone()[0] == "1500ms"
+
+
+def test_projection_store_blocked_connect_timeout_on_fallback() -> None:
+    def blocked_custom_connector(dsn):
+        time.sleep(2.0)
+        return None
+
+    store = ProjectionStore(
+        "postgresql://unit/pantheon",
+        connect=blocked_custom_connector,
+        connect_timeout_seconds=0.1,
+    )
+    start_time = time.monotonic()
+    with pytest.raises(TimeoutError, match="timed out after 0.1s"):
+        store._connect_db()
+    elapsed = time.monotonic() - start_time
+    assert elapsed < 0.5, f"blocked fallback connector took too long: {elapsed}s"
+    assert elapsed >= 0.08, f"blocked fallback connector did not wait for timeout: {elapsed}s"
+
+
+def test_projection_store_blocked_connect_timeout_on_kwargs_connector() -> None:
+    def blocked_kwargs_connector(dsn, **kwargs):
+        time.sleep(2.0)
+        return None
+
+    store = ProjectionStore(
+        "postgresql://unit/pantheon",
+        connect=blocked_kwargs_connector,
+        connect_timeout_seconds=0.1,
+    )
+    start_time = time.monotonic()
+    with pytest.raises(TimeoutError, match="timed out after 0.1s"):
+        store._connect_db()
+    elapsed = time.monotonic() - start_time
+    assert elapsed < 0.5, f"blocked kwargs connector took too long: {elapsed}s"
+    assert elapsed >= 0.08, f"blocked kwargs connector did not wait for timeout: {elapsed}s"
+
+
+def test_projection_store_internal_type_error_not_swallowed_or_retried() -> None:
+    attempt_count = 0
+
+    def buggy_connector(dsn, **kwargs):
+        nonlocal attempt_count
+        attempt_count += 1
+        # Raises TypeError from internal computation, not keyword argument mismatch
+        raise TypeError("internal TypeError: unsupported operand type for +: 'int' and 'str'")
+
+    store = ProjectionStore(
+        "postgresql://unit/pantheon",
+        connect=buggy_connector,
+        connect_timeout_seconds=1.0,
+    )
+    with pytest.raises(TypeError, match="internal TypeError: unsupported operand type"):
+        store._connect_db()
+    assert attempt_count == 1, "buggy connector should not have been retried"
+
+
+def test_projection_store_internal_type_error_ambiguous_text_single_attempt() -> None:
+    attempt_count = 0
+
+    def buggy_connector(dsn, **kwargs):
+        nonlocal attempt_count
+        attempt_count += 1
+        # Ambiguous message containing 'takes' and 'positional argument'
+        raise TypeError("calculation takes too long with positional argument values")
+
+    store = ProjectionStore(
+        "postgresql://unit/pantheon",
+        connect=buggy_connector,
+        connect_timeout_seconds=1.0,
+    )
+    with pytest.raises(TypeError, match="calculation takes too long"):
+        store._connect_db()
+    assert attempt_count == 1, "connector with internal TypeError should have exactly 1 attempt"
+
+
+def test_projection_store_internal_type_error_nested_callee_single_attempt() -> None:
+    attempt_count = 0
+
+    def inner_helper(x):
+        raise TypeError(f"takes 0 positional arguments but 1 was given in {x}")
+
+    def buggy_connector(dsn, **kwargs):
+        nonlocal attempt_count
+        attempt_count += 1
+        return inner_helper("calc")
+
+    store = ProjectionStore(
+        "postgresql://unit/pantheon",
+        connect=buggy_connector,
+        connect_timeout_seconds=1.0,
+    )
+    with pytest.raises(TypeError, match="takes 0 positional arguments"):
+        store._connect_db()
+    assert attempt_count == 1, "nested callee TypeError should have exactly 1 attempt"
+
+
+def test_projection_store_blocked_connect_does_not_hang_process_exit() -> None:
+    script = """
+import sys
+import time
+from services.trade_journey.projection_store import ProjectionStore
+
+def blocked_connect(dsn, **kwargs):
+    time.sleep(60.0)
+    return None
+
+store = ProjectionStore(
+    "postgresql://unit/pantheon",
+    connect=blocked_connect,
+    connect_timeout_seconds=0.05,
+)
+try:
+    store._connect_db()
+except TimeoutError:
+    sys.exit(0)
+sys.exit(1)
+"""
+    start_time = time.monotonic()
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        capture_output=True,
+        text=True,
+        timeout=3.0,
+    )
+    elapsed = time.monotonic() - start_time
+    assert result.returncode == 0
+    assert elapsed < 2.0, f"process exit took too long: {elapsed}s"
+
+
+def test_projection_store_late_connection_is_closed_after_timeout() -> None:
+    closed_event = threading.Event()
+
+    class FakeConn:
+        def close(self):
+            closed_event.set()
+
+    def slow_connect(dsn, **kwargs):
+        time.sleep(0.15)
+        return FakeConn()
+
+    store = ProjectionStore(
+        "postgresql://unit/pantheon",
+        connect=slow_connect,
+        connect_timeout_seconds=0.05,
+    )
+    start_time = time.monotonic()
+    with pytest.raises(TimeoutError, match="timed out after 0.05s"):
+        store._connect_db()
+    elapsed = time.monotonic() - start_time
+    assert elapsed < 0.2
+    assert closed_event.wait(timeout=1.0), "late connection was not closed"
+
+
+def test_projection_store_connect_timeout_fails_within_deadline() -> None:
+    import psycopg
+
+    # Non-routable TEST-NET-1 IP address to simulate blocked/unreachable PostgreSQL connect
+    unreachable_dsn = "postgresql://pantheon_app:pantheon_app@192.0.2.1:5432/pantheon"
+    store = ProjectionStore(
+        unreachable_dsn,
+        connect_timeout_seconds=1.0,
+    )
+    start_time = time.monotonic()
+    with pytest.raises((psycopg.OperationalError, psycopg.errors.ConnectionTimeout, TimeoutError)):
+        store._connect_db()
+    elapsed = time.monotonic() - start_time
+    assert elapsed < 3.0, f"connect timeout took too long: {elapsed}s"
+
+
+def test_projection_store_connect_timeout_forwarded_and_enforced_on_connector() -> None:
+    captured_kwargs: dict[str, Any] = {}
+
+    def custom_connect(dsn, **kwargs):
+        captured_kwargs.update(kwargs)
+        raise TimeoutError("connection attempt timed out after deadline")
+
+    store = ProjectionStore(
+        "postgresql://unit/pantheon",
+        connect=custom_connect,
+        connect_timeout_seconds=2.4,
+        statement_timeout_seconds=4.0,
+        lock_timeout_seconds=3.0,
+    )
+    start_time = time.monotonic()
+    with pytest.raises(TimeoutError, match="connection attempt timed out after deadline"):
+        store._connect_db()
+    elapsed = time.monotonic() - start_time
+    assert elapsed < 1.0
+    assert captured_kwargs["connect_timeout"] == 3
+    assert "-c statement_timeout=4000" in captured_kwargs["options"]
+    assert "-c lock_timeout=3000" in captured_kwargs["options"]
+
+
+def test_projection_store_blocked_connect_error_propagation_on_fallback() -> None:
+    def failing_connect(dsn):
+        raise OSError("failed to connect to host: network unreachable")
+
+    store = ProjectionStore(
+        "postgresql://unit/pantheon",
+        connect=failing_connect,
+        connect_timeout_seconds=1.0,
+    )
+    with pytest.raises(OSError, match="network unreachable"):
+        store.get_controller_state("ctrl-1", "default", "paper")
+
+
+def test_projection_store_connect_fallback_closes_connection_on_setup_error() -> None:
+    close_called = False
+
+    class FailingCursor:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc_val, exc_tb):
+            return False
+
+        def execute(self, query):
+            raise RuntimeError("session SET statement_timeout failed")
+
+    class FakeConn:
+        def cursor(self):
+            return FailingCursor()
+
+        def close(self):
+            nonlocal close_called
+            close_called = True
+
+    def custom_connect(dsn):
+        # Positional-only connector to trigger fallback path
+        return FakeConn()
+
+    store = ProjectionStore(
+        "postgresql://unit/pantheon",
+        connect=custom_connect,
+        connect_timeout_seconds=1.0,
+    )
+    with pytest.raises(RuntimeError, match="session SET statement_timeout failed"):
+        store._connect_db()
+
+    assert close_called is True, "connection was not closed when session SET setup failed"
+
+
+def test_projection_store_connect_timeout_result_publication_race_closes_connection() -> None:
+    closed_event = threading.Event()
+    conn_created = threading.Event()
+    release_worker = threading.Event()
+
+    class FakeConn:
+        def __init__(self):
+            self.closed = False
+
+        def close(self):
+            self.closed = True
+            closed_event.set()
+
+    def racing_connect(dsn, **kwargs):
+        conn = FakeConn()
+        conn_created.set()
+        # Wait until the caller is past its deadline / caller has timed out
+        release_worker.wait(timeout=2.0)
+        return conn
+
+    store = ProjectionStore(
+        "postgresql://unit/pantheon",
+        connect=racing_connect,
+        connect_timeout_seconds=0.05,
+    )
+    start_time = time.monotonic()
+    with pytest.raises(TimeoutError, match="timed out after 0.05s"):
+        store._connect_db()
+    elapsed = time.monotonic() - start_time
+    assert elapsed < 0.5
+
+    # Release the worker after caller has timed out; worker should observe timed_out status atomically and close conn
+    release_worker.set()
+
+    assert closed_event.wait(timeout=1.0), "late connection leaked after timeout/result race"
+
+
+def test_projection_store_fallback_cursor_timeout_race_closes_connection() -> None:
+    closed_event = threading.Event()
+    cursor_executing = threading.Event()
+    release_cursor = threading.Event()
+
+    class ControlledCursor:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc_val, exc_tb):
+            return False
+
+        def execute(self, query):
+            cursor_executing.set()
+            release_cursor.wait(timeout=2.0)
+
+    class ControlledConn:
+        def __init__(self):
+            self.closed = False
+
+        def cursor(self):
+            return ControlledCursor()
+
+        def close(self):
+            self.closed = True
+            closed_event.set()
+
+    def positional_connect(dsn):
+        return ControlledConn()
+
+    store = ProjectionStore(
+        "postgresql://unit/pantheon",
+        connect=positional_connect,
+        connect_timeout_seconds=0.05,
+    )
+    start_time = time.monotonic()
+    with pytest.raises(TimeoutError, match="timed out after 0.05s"):
+        store._connect_db()
+    elapsed = time.monotonic() - start_time
+    assert elapsed < 0.5
+
+    # Release the cursor inside the worker after caller has timed out
+    release_cursor.set()
+
+    assert closed_event.wait(timeout=1.0), "fallback connection leaked after timeout race"
+
+
+def test_projection_store_connect_timeout_publication_race_controlled_interleaving(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    caller_ident = threading.get_ident()
+    caller_timed_out = threading.Event()
+    caller_entered_lock = threading.Event()
+    worker_published_success = threading.Event()
+
+    real_lock_factory = threading.Lock
+    real_event_factory = threading.Event
+
+    class ControlledEvent:
+        def __init__(self) -> None:
+            self._real = real_event_factory()
+
+        def wait(self, timeout: Any = None) -> bool:
+            res = self._real.wait(timeout=timeout)
+            if not res and threading.get_ident() == caller_ident:
+                caller_timed_out.set()
+            return res
+
+        def set(self) -> None:
+            self._real.set()
+
+        def is_set(self) -> bool:
+            return self._real.is_set()
+
+        def clear(self) -> None:
+            self._real.clear()
+
+    class ControlledLock:
+        def __init__(self) -> None:
+            self._real = real_lock_factory()
+
+        def acquire(self, blocking: bool = True, timeout: float = -1) -> bool:
+            current_ident = threading.get_ident()
+            if current_ident == caller_ident and caller_timed_out.is_set():
+                caller_entered_lock.set()
+                assert worker_published_success.wait(timeout=5.0), (
+                    "worker did not publish success in time"
+                )
+            return self._real.acquire(blocking, timeout)
+
+        def release(self) -> None:
+            current_ident = threading.get_ident()
+            self._real.release()
+            if current_ident != caller_ident and caller_timed_out.is_set():
+                worker_published_success.set()
+
+        def __enter__(self) -> bool:
+            return self.acquire()
+
+        def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
+            self.release()
+
+    monkeypatch.setattr("services.trade_journey.projection_store.threading.Lock", ControlledLock)
+    monkeypatch.setattr("services.trade_journey.projection_store.threading.Event", ControlledEvent)
+
+    close_started = threading.Event()
+    unblock_close = threading.Event()
+    close_finished = threading.Event()
+    close_thread_names: list[str] = []
+
+    class BlockingCloseConn:
+        def __init__(self) -> None:
+            self.closed = False
+
+        def close(self) -> None:
+            close_thread_names.append(threading.current_thread().name)
+            close_started.set()
+            unblock_close.wait(timeout=2.0)
+            self.closed = True
+            close_finished.set()
+
+    conn_instance = BlockingCloseConn()
+
+    def racing_connect(dsn: str, **kwargs: Any) -> BlockingCloseConn:
+        # Wait for caller to complete done.wait(timeout=0.01) and enter lock acquisition
+        assert caller_entered_lock.wait(timeout=5.0), "caller did not enter lock"
+        return conn_instance
+
+    store = ProjectionStore(
+        "postgresql://unit/pantheon",
+        connect=racing_connect,
+        connect_timeout_seconds=0.01,
+    )
+    start_time = time.monotonic()
+    with pytest.raises(TimeoutError, match="timed out after 0.01s"):
+        store._connect_db()
+    elapsed = time.monotonic() - start_time
+    assert elapsed < 0.2, f"caller was blocked on close: elapsed={elapsed:.3f}s"
+
+    # Prove that background cleanup is actively executing close() on the dedicated cleanup thread
+    assert close_started.wait(timeout=1.0), "background cleanup did not invoke close()"
+    assert close_thread_names == ["projection-store-conn-cleanup"], (
+        f"close executed on unexpected thread: {close_thread_names}"
+    )
+
+    # Unblock close() and verify clean completion
+    unblock_close.set()
+    assert close_finished.wait(timeout=1.0), "connection close was not completed"
+    assert conn_instance.closed is True

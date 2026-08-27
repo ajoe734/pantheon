@@ -11,8 +11,10 @@ set -euo pipefail
 DEV_ROOT="${1:-/home/lupin/pantheon-ci-deploy/dev-root}"
 LIVE_CONFIG="${2:-/home/lupin/pantheon-ci-deploy/runtime/live-supervisor-mainroot-config.json}"
 COORDINATION_ROOT="${3:-${PANTHEON_COORDINATION_ROOT:-/home/lupin/pantheon-ci-deploy/coordination-root}}"
+AUTHORITY_ENV_FILE="${4:-${PANTHEON_SUPERVISOR_VERIFIER_ENV_FILE:-/home/lupin/pantheon-ci-deploy/runtime/supervisor-authority-public.env}}"
 REF="${SYNC_REF:-origin/dev}"
 COMMAND_RUNTIME_PARENT="/home/lupin/pantheon-ci-deploy/command-runtimes"
+EXECUTE_PLANS_SOURCE_ROOT="${PANTHEON_EXECUTE_PLANS_SOURCE_ROOT:-/home/lupin/code/execute-plans}"
 COMMAND_RUNTIME_KEEP="${COMMAND_RUNTIME_KEEP:-5}"
 
 stamp() { date -u +%Y-%m-%dT%H:%M:%SZ; }
@@ -22,6 +24,8 @@ cd "$DEV_ROOT" || { log "FATAL: cannot cd $DEV_ROOT"; exit 1; }
 DEV_ROOT="$(pwd -P)"
 cd "$COORDINATION_ROOT" || { log "FATAL: cannot cd coordination root $COORDINATION_ROOT"; exit 1; }
 COORDINATION_ROOT="$(pwd -P)"
+cd "$EXECUTE_PLANS_SOURCE_ROOT" || { log "FATAL: cannot cd execute-plans source root $EXECUTE_PLANS_SOURCE_ROOT"; exit 1; }
+EXECUTE_PLANS_SOURCE_ROOT="$(pwd -P)"
 
 if [[ "$DEV_ROOT" == "$COORDINATION_ROOT" ]]; then
   log "FATAL: dev-root is staging and must not also be the coordination root"
@@ -41,6 +45,10 @@ fi
 
 if ! git -C "$DEV_ROOT" rev-parse --git-dir >/dev/null 2>&1; then
   log "FATAL: dev-root is not a Git checkout: $DEV_ROOT"
+  exit 1
+fi
+if ! git -C "$EXECUTE_PLANS_SOURCE_ROOT" rev-parse --git-dir >/dev/null 2>&1; then
+  log "FATAL: execute-plans source root is not a Git checkout: $EXECUTE_PLANS_SOURCE_ROOT"
   exit 1
 fi
 if ! git -C "$DEV_ROOT" fetch --quiet origin "$fetch_ref"; then
@@ -96,7 +104,10 @@ if [[ -f "$LIVE_CONFIG" && -f "$DEV_ROOT/scripts/check_config_drift.py" ]]; then
   if ! python3 "$DEV_ROOT/scripts/check_config_drift.py" \
     --repo-config "$DEV_ROOT/.orchestrator/config.json" \
     --live-config "$LIVE_CONFIG" \
-    --dev-root "$DEV_ROOT" --ref "$REF" --json >"$drift_report"; then
+    --dev-root "$DEV_ROOT" --ref "$REF" \
+    --repository-source-root "pantheon=$DEV_ROOT" \
+    --repository-source-root "execute_plans=$EXECUTE_PLANS_SOURCE_ROOT" \
+    --json >"$drift_report"; then
     config_drift=1
     log "CONFIG_DRIFT_REQUIRES_PROMOTION: $(tr '\n' ' ' <"$drift_report")"
   fi
@@ -201,9 +212,35 @@ fi
 log "replacing supervisor from explicit config identity=${active_root:-none} candidate=$candidate_root coordination=$COORDINATION_ROOT"
 if ! "$candidate_root/scripts/promote-supervisor-runtime.sh" \
   --promote --repo "$candidate_root" --status-root "$COORDINATION_ROOT" \
-  --live-config "$LIVE_CONFIG"; then
+  --live-config "$LIVE_CONFIG" \
+  --repository-source-root "pantheon=$DEV_ROOT" \
+  --repository-source-root "execute_plans=$EXECUTE_PLANS_SOURCE_ROOT"; then
   log "FATAL: supervisor replacement failed"
   exit 1
+fi
+
+# The systemd/cron watchdog is a separate, non-LLM safety net that restarts a
+# dead supervisor. Its unit hardcodes an absolute path into this exact
+# immutable command-runtimes/<sha> checkout, which is pruned over time -- so
+# without this step it silently goes stale on every promotion, and the
+# restart-if-dead safety net quietly stops working once that sha is gone.
+# Best-effort: a watchdog install problem must never block landing new
+# supervisor code, so failures here are logged, never fatal.
+if [[ -f "$candidate_root/scripts/supervisor_watchdog_install.py" ]]; then
+  if [[ -f "$AUTHORITY_ENV_FILE" && ! -L "$AUTHORITY_ENV_FILE" ]]; then
+    if python3 -B "$candidate_root/scripts/supervisor_watchdog_install.py" \
+      --repo "$candidate_root" \
+      --config "$LIVE_CONFIG" \
+      --authority-env-file "$AUTHORITY_ENV_FILE" \
+      --method auto \
+      --start-now; then
+      log "watchdog repointed at candidate=$candidate_root"
+    else
+      log "WARNING: watchdog repoint failed for candidate=$candidate_root -- supervisor code landed, but the restart-if-dead safety net may be stale until this is fixed"
+    fi
+  else
+    log "WARNING: watchdog authority env file missing or not a regular file ($AUTHORITY_ENV_FILE) -- skipped watchdog repoint"
+  fi
 fi
 
 prune_old_command_runtimes

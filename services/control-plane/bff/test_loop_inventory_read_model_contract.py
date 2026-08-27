@@ -227,21 +227,31 @@ def test_loop_inventory_list_exposes_sa21_catalog_for_operator_surfaces(monkeypa
     assert payload["meta"]["surfaces"]["loop_inventory"]["source"] == "bff_local_registry"
     assert payload["meta"]["surfaces"]["loop_inventory"]["truth_level"] == "registry_metadata"
     assert payload["meta"]["catalog"]["registry_ref"] == "docs/deployment/loop-catalog.registry.json"
+    assert payload["meta"]["catalog"]["runtime_projection_policy"]["catalog_role"] == (
+        "stable_loop_spec_and_owner_contract_only"
+    )
 
     source_ingestion = next(item for item in items if item["loop_id"] == "source_ingestion")
-    assert source_ingestion["current_maturity"] == "api-only"
-    assert source_ingestion["target_maturity"] == "reconciled"
     assert source_ingestion["owner"]["authoritative_write_owner"]
-    assert source_ingestion["evidence"]["registry_metadata"]["status"] == "present"
     assert source_ingestion["truth_source"]["level"] == "registry_metadata"
     assert source_ingestion["classification"] == "canonical"
+    for retired_runtime_field in (
+        "current_maturity",
+        "target_maturity",
+        "maturity",
+        "evidence",
+        "evidence_statuses",
+        "execution_tasks",
+        "maturity_projection",
+    ):
+        assert retired_runtime_field not in source_ingestion
 
     ooda_overlay = next(item for item in items if item["loop_id"] == "per_persona_ooda")
     assert ooda_overlay["classification"] == "composite_overlay"
     assert ooda_overlay["composed_of"]
     assert "capital_pool_execution" not in ooda_overlay["composed_of"]
     assert ooda_overlay["trigger_model"]["continuous"] is False
-    assert ooda_overlay["maturity_projection"]["archived_task_completion_accepted"] is False
+    assert "maturity_projection" not in ooda_overlay
 
 
 def test_loop_inventory_read_model_does_not_claim_live_without_present_live_evidence(monkeypatch) -> None:
@@ -258,7 +268,7 @@ def test_loop_inventory_read_model_does_not_claim_live_without_present_live_evid
         assert live_status["reason"] == "catalog metadata is not live liveness proof"
 
     capital_loop = next(item for item in response.json()["items"] if item["loop_id"] == "capital_pool_execution")
-    assert capital_loop["evidence"]["proven_live_evidence"]["status"] == "historical"
+    assert "evidence" not in capital_loop
     assert capital_loop["live_status"]["has_live_evidence"] is False
 
 
@@ -271,9 +281,9 @@ def test_loop_inventory_detail_returns_one_catalog_entry(monkeypatch) -> None:
     assert response.status_code == 200, response.text
     payload = response.json()
     assert payload["data"]["loop_id"] == "promotion_deployment"
-    assert payload["data"]["current_maturity"] == "api-only"
-    assert payload["data"]["target_maturity"] == "reconciled"
-    assert payload["data"]["evidence_statuses"]["registry_metadata"] == "present"
+    assert "current_maturity" not in payload["data"]
+    assert "target_maturity" not in payload["data"]
+    assert "evidence_statuses" not in payload["data"]
     assert payload["meta"]["catalog"]["catalog_id"] == "global-loop-catalog-2026-07-13"
 
 
@@ -394,24 +404,16 @@ def test_loop_catalog_controller_contract_matches_runtime_implementation() -> No
 
 
 def test_loop_catalog_stops_at_implemented_until_hosted_evidence_is_admitted() -> None:
-    """No committed loop may claim reconciled, proven-live, or live evidence."""
+    """No committed loop may claim a proven_live controller contract."""
 
     registry = loop_inventory_model._load_registry()
 
     for loop in registry["loops"] + registry["composite_overlays"]:
         loop_id = loop["loop_id"]
-        assert loop["maturity"]["current"] not in MATURITY_CEILING_FORBIDDEN, (
-            f"{loop_id} claims maturity {loop['maturity']['current']} without "
-            "admitted hosted evidence"
-        )
         assert (
             loop["controller_contract"]["status"]
             not in CONTROLLER_STATUS_CEILING_FORBIDDEN
         ), f"{loop_id} claims a proven_live controller contract"
-        for level in LIVE_EVIDENCE_LEVELS:
-            assert loop["evidence_profile"][level]["status"] != "present", (
-                f"{loop_id} marks {level} present in the static catalog"
-            )
 
 
 def test_loop_inventory_publishes_controller_contract_coverage(monkeypatch) -> None:
@@ -458,7 +460,6 @@ def test_loop_inventory_archive_completion_and_catalog_claim_do_not_create_liven
     monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "true")
     registry = deepcopy(loop_inventory_model._load_registry())
     source_loop = registry["loops"][0]
-    source_loop["maturity"]["current"] = "proven-live"
     source_loop["controller_contract"].update(
         {
             "status": "proven_live",
@@ -469,11 +470,6 @@ def test_loop_inventory_archive_completion_and_catalog_claim_do_not_create_liven
             "liveness_metric": "last_reconcile_at",
         }
     )
-    source_loop["evidence_profile"]["reconciled_live_proof"]["status"] = "present"
-    source_loop["evidence_profile"]["proven_live_evidence"]["status"] = "present"
-    for task_ref in source_loop["execution_tasks"]:
-        task_ref["terminal_status"] = "done"
-        task_ref["archive_ref"] = f"ai-task-archive/tasks/{task_ref['task_id']}.json"
     monkeypatch.setattr(loop_inventory_model, "_load_registry", lambda: registry)
     client = TestClient(bff_main.app, raise_server_exceptions=False)
 
@@ -481,9 +477,9 @@ def test_loop_inventory_archive_completion_and_catalog_claim_do_not_create_liven
 
     assert response.status_code == 200, response.text
     data = response.json()["data"]
-    assert data["current_maturity"] == "proven-live"
-    assert data["maturity_projection"]["task_completion_policy"] == "reference_only"
-    assert data["live_status"]["catalog_claim_eligible"] is True
+    assert "current_maturity" not in data
+    assert "maturity_projection" not in data
+    assert "execution_tasks" not in data
     assert data["live_status"]["has_live_evidence"] is False
     assert data["live_status"]["is_reconciled"] is False
     assert data["live_status"]["is_live"] is False

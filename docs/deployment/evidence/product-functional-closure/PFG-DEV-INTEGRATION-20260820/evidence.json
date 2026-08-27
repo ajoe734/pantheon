@@ -1,0 +1,115 @@
+{
+  "schema_version": "pantheon.product_functional_closure.dev_compose_integration_evidence.v1",
+  "task": {
+    "id": "PFG-DEV-INTEGRATION-20260820",
+    "title": "Integrate repaired functional owners into one dev Compose topology",
+    "owner": "Codex2",
+    "reviewer": "Antigravity2",
+    "review_file": "docs/deployment/evidence/product-functional-closure/PFG-DEV-INTEGRATION-20260820/evidence.json"
+  },
+  "scope": {
+    "owned_layer": "Root docker-compose dev topology and its focused integration contract",
+    "not_changing": [
+      "Component implementation or service ownership",
+      "Continuous Source provider pull",
+      "Live broker, live capital, or production deployment"
+    ],
+    "composes_with": [
+      "PFG-SOURCE-MANUAL-ONCE-20260820",
+      "PFG-SOURCE-SNAPSHOT-20260820",
+      "PFG-PAPER-STATE-20260820",
+      "PFG-RUNTIME-BINDING-R2-20260820",
+      "PFG-AGORA-RECON-WORKER-20260820",
+      "PFG-AGORA-RESEARCH-CONSUMER-20260820",
+      "PFG-MGMT-DOMAIN-ACTIONS-20260820",
+      "PFG-MGMT-READ-MODELS-20260820",
+      "PFG-MGMT-AI-PROVIDER-20260820"
+    ]
+  },
+  "topology_contract": {
+    "source_default": {
+      "scheduler_mode": "reconcile_only",
+      "scheduler_max_ticks": 0,
+      "manual_pull": "explicit docker compose run with SOURCE_INGEST_CONTROLLER_MAX_TICKS=1",
+      "snapshot_owner": "source-ingest",
+      "snapshot_state_path": "/data/source-ingest/latest_market_snapshots.jsonl"
+    },
+    "paper": {
+      "default_owner": "paper-fleet-reconciler",
+      "artifact_signal_source_url": "http://source-ingest:8097",
+      "static_runtime": "explicit static-paper-runtime compatibility profile only",
+      "live_broker_enabled": false,
+      "canary_execution_enabled": false
+    },
+    "agora_management_provider": {
+      "composition_owner": "operator-bff",
+      "research_orchestrator_url": "http://research-orchestrator-svc:8101",
+      "research_worker_gateway_url": "http://research-worker-gateway-svc:8103",
+      "consultation_url": "http://consultation-svc:8096",
+      "provider_adapter_url": "http://openclaw-gateway-adapter:8104",
+      "bff_state_volume": "bff-data:/data/bff"
+    }
+  },
+  "legacy_profile_audit": {
+    "replacement_topology_proved_by": "tests/integration/test_product_functional_compose_contract.py",
+    "retired_profiles": [],
+    "retained_profiles": [
+      {
+        "profile": "static-paper-runtime",
+        "current_callers": [
+          "services/execution/runtime-manager/test_paper_fleet_reconciler.py",
+          "scripts/deploy_nonprod_vm.sh explicit compatibility selection"
+        ],
+        "reason": "Explicit compatibility/test runtime; dynamic fleet remains the default owner."
+      },
+      {
+        "profile": "source-ingest-scheduler",
+        "current_callers": [
+          "scripts/deploy_nonprod_vm.sh bounded Source-refresh controls",
+          "services/source_ingestion/test_compose_activation.py"
+        ],
+        "reason": "Explicit Source-to-Agora projector operation; not a root-stack duplicate owner."
+      },
+      {
+        "profile": "openclaw",
+        "current_callers": [
+          "services/openclaw-gateway-adapter/test_compose_activation.py",
+          "docs/testing/full-suite-runbook.md"
+        ],
+        "reason": "Optional upstream gateway initialization path; adapter remains an honest degraded boundary when absent."
+      },
+      {
+        "profile": "smoke, activation-ready-smoke, source-search-bounded, dormant-smoke",
+        "reason": "Named validation-only profiles with current test or operator callers."
+      }
+    ]
+  },
+  "validation": {
+    "commands": [
+      "docker compose config -q",
+      ".venv-pantheon/bin/python3 -m pytest -q tests/integration/test_product_functional_compose_contract.py services/source_ingestion/test_compose_activation.py services/execution/runtime-manager/test_paper_fleet_reconciler.py services/control-plane/bff/tests/test_assistant_dev_compose_flags.py services/openclaw-gateway-adapter/test_compose_activation.py",
+      "POSTGRES_PORT=25432 SOURCE_INGEST_PORT=28097 docker compose -p pfgdevint20260821 up -d --build --wait source-ingest",
+      "curl --fail --silent --show-error http://127.0.0.1:28097/readyz"
+    ],
+    "results": {
+      "compose_config": "passed",
+      "focused_contract_and_owner_compose_suites": "58 passed in 21.74s",
+      "isolated_source_readiness": {
+        "status": "passed",
+        "ready": true,
+        "latest_market_snapshot_path": "/data/source-ingest/latest_market_snapshots.jsonl",
+        "temporary_containers_removed": true,
+        "temporary_named_volumes_retained": true
+      }
+    }
+  },
+  "review": {
+    "status": "pending_independent_review",
+    "required_focus": [
+      "Source remains manual-only and zero-egress by default",
+      "Artifact signal producer uses the canonical Source snapshot owner",
+      "No static or live-capital path becomes default",
+      "Legacy-profile audit does not retire a profile with a current caller"
+    ]
+  }
+}
