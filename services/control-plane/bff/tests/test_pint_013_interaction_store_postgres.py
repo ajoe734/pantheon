@@ -249,6 +249,7 @@ def test_restart_readback_preserves_committed_lifecycle_with_rpo_zero(
     timeline = restarted.timeline(interaction_id, "tenant-pint013", "operator-pint013")
     assert timeline is not None
     assert [item["outbox_id"] for item in timeline] == [
+        f"iob:interaction_queued:{interaction_id}",
         "outbox-rpo0-opinion",
         "outbox-rpo0-final",
     ]
@@ -430,7 +431,9 @@ def test_failed_outbox_dispatch_replays_after_restart_then_stays_completed(
 
     with pytest.raises(RuntimeError, match="temporarily unavailable"):
         first.drain_outbox(fail_dispatch)
-    assert attempted == [("sse", item["payload"])]
+    assert len(attempted) == 1
+    assert attempted[0][0] == "interaction_queued"
+    assert attempted[0][1]["interaction_id"] == interaction_id
 
     restarted = InteractionLifecycleStore(
         backend="postgres", dsn=first.dsn, schema=first.schema
@@ -438,16 +441,24 @@ def test_failed_outbox_dispatch_replays_after_restart_then_stays_completed(
     delivered: list[tuple[str, dict[str, Any]]] = []
     assert restarted.drain_outbox(
         lambda kind, payload: delivered.append((kind, payload))
-    ) == 1
-    assert delivered == [("sse", item["payload"])]
+    ) == 2
+    assert len(delivered) == 2
+    assert delivered[0][0] == "interaction_queued"
+    assert delivered[0][1]["interaction_id"] == interaction_id
+    assert delivered[1] == ("sse", item["payload"])
     assert restarted.drain_outbox(
         lambda kind, payload: delivered.append((kind, payload))
     ) == 0
-    assert delivered == [("sse", item["payload"])]
+    assert len(delivered) == 2
     timeline = restarted.timeline(interaction_id, "tenant-pint013", "operator-pint013")
     assert timeline is not None
+    assert len(timeline) == 2
+    assert timeline[0]["outbox_id"] == f"iob:interaction_queued:{interaction_id}"
     assert timeline[0]["state"] == "completed"
     assert timeline[0]["attempt"] == 2
+    assert timeline[1]["outbox_id"] == item["outbox_id"]
+    assert timeline[1]["state"] == "completed"
+    assert timeline[1]["attempt"] == 1
 
 
 def test_concurrent_retry_with_same_key_is_one_durable_command(
