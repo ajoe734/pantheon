@@ -10,9 +10,14 @@ import sys
 import threading
 from pathlib import Path
 
-# Add services/control-plane/bff to path
+# Add repository root and services/control-plane/bff to path
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "services" / "control-plane" / "bff"))
+for path in (
+    str(ROOT),
+    str(ROOT / "services" / "control-plane" / "bff"),
+):
+    if path not in sys.path:
+        sys.path.insert(0, path)
 
 from agora.governance.store import ProposalStore
 from agora.interaction.store import InteractionLifecycleStore
