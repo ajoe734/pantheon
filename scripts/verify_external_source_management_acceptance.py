@@ -962,11 +962,12 @@ class ExternalSourceManagementHostedAcceptanceVerifier:
             or not str(producer.get("workflow") or "").endswith("srcm-p1-mgmt-ui-hosted-acceptance.yml")
             or int(producer.get("run_id") or 0) <= 0
             or int(producer.get("run_attempt") or 0) <= 0
-            or str(producer.get("head_sha") or "") != self.config.expected_fe_sha
+            or not SHA40_RE.match(str(producer.get("head_sha") or ""))
+            or str(producer.get("served_frontend_sha") or "") != self.config.expected_fe_sha
         ):
             raise SourceManagementAcceptanceError(
                 "browser_evidence.invalid_capture_provenance",
-                "Browser evidence is missing exact workflow/run/head provenance",
+                "Browser evidence is missing exact workflow/run/head provenance or served FE identity",
             )
 
         har_rel = str(data.get("har_artifact") or "")

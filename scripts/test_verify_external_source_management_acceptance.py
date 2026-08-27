@@ -173,7 +173,8 @@ def _install_valid_browser_capture(bundle_dir: Path) -> None:
                 "workflow": ".github/workflows/srcm-p1-mgmt-ui-hosted-acceptance.yml",
                 "run_id": 32999900001,
                 "run_attempt": 1,
-                "head_sha": EXPECTED_FE_SHA,
+                "head_sha": "a" * 40,
+                "served_frontend_sha": EXPECTED_FE_SHA,
             },
         },
         "har_artifact": har_path.name,
@@ -729,6 +730,32 @@ def test_verify_browser_evidence_missing_journey(tmp_path: Path) -> None:
     with pytest.raises(SourceManagementAcceptanceError) as exc_info:
         verifier.run()
     assert exc_info.value.code == "browser_evidence.invalid_journey_count"
+
+
+def test_browser_evidence_runner_head_may_differ_from_served_frontend(tmp_path: Path) -> None:
+    evidence_dir = _setup_valid_bundle(tmp_path)
+
+    result = ExternalSourceManagementHostedAcceptanceVerifier(
+        AcceptanceConfig(evidence_dir=evidence_dir, offline_only=True)
+    ).run()
+
+    assert result.browser_evidence["status"] == "passed"
+
+
+def test_browser_evidence_served_frontend_mismatch_fails_closed(tmp_path: Path) -> None:
+    evidence_dir = _setup_valid_bundle(tmp_path)
+    browser_path = evidence_dir / "browser-evidence.json"
+    payload = json.loads(browser_path.read_text(encoding="utf-8"))
+    payload["capture"]["producer"]["served_frontend_sha"] = "b" * 40
+    browser_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    _bind_manifest_checksums(evidence_dir)
+
+    with pytest.raises(SourceManagementAcceptanceError) as exc_info:
+        ExternalSourceManagementHostedAcceptanceVerifier(
+            AcceptanceConfig(evidence_dir=evidence_dir, offline_only=True)
+        ).run()
+
+    assert exc_info.value.code == "browser_evidence.invalid_capture_provenance"
 
 
 def test_cli_main_success_and_output(tmp_path: Path) -> None:
