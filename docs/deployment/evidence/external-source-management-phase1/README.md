@@ -1,6 +1,6 @@
 # External Data Source Management Phase-1 Hosted Acceptance
 
-Status: **blocked / not accepted**
+Status: **blocked / bounded hosted tick failed**
 
 This directory is the task-scoped acceptance workspace for
 `SRCM-P1-HOSTED-ACCEPTANCE-20260824` (SD-SRCM-08). It does not currently
@@ -12,8 +12,8 @@ not be used as delivery evidence.
 
 | Component | Repository | Live commit | Evidence |
 |---|---|---|---|
-| BFF | `ajoe734/pantheon` | `63353e4b4de5df80ea9c9975e002ba95266a4bb8` | `GET /bff/version` |
-| Frontend | `ajoe734/execute-plans` | `c21df2cfdaf1781cdf6db517a57dc6c718e0e0f9` | `GET /deployment.json` |
+| BFF | `ajoe734/pantheon` | `3c79a185a97d920f41005bd41675433a046b6ece` | `GET /bff/version` |
+| Frontend | `ajoe734/execute-plans` | `b019b334f6810ab9c3ebc8b9b51b9b3cb3449a57` | `GET /deployment.json` |
 | Source definitions | `ajoe734/pantheon` | `40de8fcb1c69fad0bf5e54d4c0bd6e508c9162e0` | connector-definition readback |
 
 The frontend manifest and live BFF have zero SHA drift. The normal frontend
@@ -22,14 +22,21 @@ necessary prerequisites; they do not prove that the ten hosted journeys ran.
 
 ## Open blocker
 
-- No authorized bounded ten-journey write-proof run exists. Consequently there
-  is no unmocked Playwright workflow artifact, sanitized checksum-bound HAR, or
-  real per-journey screenshot. The served profile remains read-only. The last
-  2026-08-26 dev observation also predates this task's code correction and
-  records `source-ingest-scheduler` as `reconcile_only`, `MAX_TICKS=0`, and
-  `unless-stopped`; the corrected task branch defaults to one
-  `reconcile_only` tick with restart policy `no`, but that is implementation
-  evidence, not proof that the exact hosted candidate or journeys ran.
+- Human/Ops authorized one bounded `reconcile_and_pull` tick using only the
+  official public TWSE/TPEx connector. Workflow run
+  [33027147575](https://github.com/ajoe734/execute-plans/actions/runs/33027147575)
+  reached terminal readback after that exact tick and failed closed because the
+  shared Source environment already contained three unresolved DLQ entries.
+  No paid broker adapter was selected. Browser capture did not start, so there
+  is still no accepted HAR or per-journey screenshot.
+- The workflow restored the public FE to `read-only`, BFF/source command flags
+  to their effective disabled defaults, external egress to `deny`, and the
+  scheduler to stopped with restart policy `no`. Its follow-up manual
+  `reconcile_only` readback was itself rejected by an existing controller lease,
+  so the complete manual-one-shot acceptance posture is not proven.
+- The authorized provider tick has been consumed. Repeating it without a new
+  Human/Ops decision would violate the exactly-one scope. The immutable failure
+  summary is `hosted-write-proof-attempt-33027147575.json`.
 
 `browser-evidence.json` is intentionally a pending-capture manifest. The
 remaining JSON files are unaccepted candidate inputs retained for comparison;

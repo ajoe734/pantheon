@@ -3,9 +3,9 @@
   "task_id": "SRCM-P1-HOSTED-ACCEPTANCE-20260824",
   "program_id": "SRCM-PHASE1-20260824",
   "created_at": "2026-08-25T13:20:58Z",
-  "status": "blocked_hosted_browser_capture_absent",
+  "status": "blocked_bounded_tick_failed_on_preexisting_dlq",
   "verified_prerequisites": [
-    "Exact FE c21df2cfdaf1781cdf6db517a57dc6c718e0e0f9 and BFF 63353e4b4de5df80ea9c9975e002ba95266a4bb8 are served without manifest drift",
+    "Exact FE b019b334f6810ab9c3ebc8b9b51b9b3cb3449a57 and BFF 3c79a185a97d920f41005bd41675433a046b6ece are served without manifest drift",
     "Normal frontend deployment profile is read-only with VITE_BFF_REAL_WRITES=false",
     "BFF strict authentication posture and unauthenticated negative probes are active",
     "OpenClaw development remains phase 2 and outside product write authority"
@@ -64,17 +64,19 @@
     }
   },
   "blocking_requirements": [
+    "Resolve or formally disposition the three pre-existing Source DLQ entries that rejected the authorized exactly-one bounded tick",
+    "Obtain an explicit Human/Ops decision before any replacement provider tick; the current authorization has been consumed",
     "Run all ten journeys from a bounded write-proof Playwright workflow with no route interception",
     "Archive a sanitized checksum-bound HAR and non-placeholder screenshots for every journey",
     "Bind each browser journey to its concrete HAR entry and independently captured command receipt",
     "Restore read-only defaults and prove Source Ingestion manual one-shot reconcile_only posture after capture"
   ],
   "exact_pair": {
-    "backend_sha": "63353e4b4de5df80ea9c9975e002ba95266a4bb8",
-    "frontend_sha": "c21df2cfdaf1781cdf6db517a57dc6c718e0e0f9",
+    "backend_sha": "3c79a185a97d920f41005bd41675433a046b6ece",
+    "frontend_sha": "b019b334f6810ab9c3ebc8b9b51b9b3cb3449a57",
     "source_definitions_sha": "40de8fcb1c69fad0bf5e54d4c0bd6e508c9162e0",
-    "fe_manifest_bff_sha": "63353e4b4de5df80ea9c9975e002ba95266a4bb8",
-    "candidate_status": "accepted_read_only_pair_hosted_journeys_not_run",
+    "fe_manifest_bff_sha": "3c79a185a97d920f41005bd41675433a046b6ece",
+    "candidate_status": "accepted_read_only_pair_bounded_tick_failed_browser_journeys_not_run",
     "bff_url": "https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io",
     "fe_url": "https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io",
     "environment": "dev"
@@ -82,7 +84,7 @@
   "artifacts": {
     "deployment": {
       "path": "deployment.json",
-      "sha256": "ee14f8c8163f6895daddfb143aad28a018fe55fd065d98731631a6533a046860"
+      "sha256": "0d6c5ed02f12756e661aabacf22d860cdb629964d8d4d83989fca94802f28b1a"
     },
     "hosted_summary": {
       "path": "hosted-acceptance-summary.json",
@@ -103,6 +105,10 @@
     "migration_rollout": {
       "path": "migration-rollout-rollback.json",
       "sha256": "5449b8e8ce93dbb73e0f44638eeefffeb868aac44c25936a380b7d9694c3ab97"
+    },
+    "hosted_write_proof_attempt": {
+      "path": "hosted-write-proof-attempt-33027147575.json",
+      "sha256": "1028f2c2a4412c8986ff928908511ae89b563f838197d2fd93c80f0ee56e18b0"
     }
   }
 }
