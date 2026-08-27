@@ -139,6 +139,11 @@ scripts/human-ops-status.sh dependency-track \
   <task-id> <dependency-id> functional 'release independent functional lane'
 ```
 
+Use `terminal` in place of `functional` to remove a named-track override and
+restore the ordinary requirement that the dependency task itself be completed.
+This is an audited contract revision; it does not rewrite the producer's
+milestone history.
+
 The supervisor remains the only dispatcher. This is a completion projection,
 not a second queue or a bypass around review, artifact conflict, or hosted
 promotion gates.
