@@ -43,6 +43,12 @@ def _write_evidence_files(root: Path) -> dict[str, Path]:
             "bff_url": BFF_URL,
             "fe_url": FE_URL,
         },
+        "producer": {
+            "kind": "github-actions",
+            "repository": "ajoe734/pantheon",
+            "workflow": "nonprod-deploy.yml",
+            "run_id": "12345",
+        },
     }
     agora_payload = {
         "schema_version": "pantheon.agora.hosted-service-journey-evidence.v1",
@@ -58,6 +64,12 @@ def _write_evidence_files(root: Path) -> dict[str, Path]:
             "frontend_sha": FE_SHA,
             "bff_url": BFF_URL,
             "fe_url": FE_URL,
+        },
+        "producer": {
+            "kind": "github-actions",
+            "repository": "ajoe734/execute-plans",
+            "workflow": "agora-hosted-acceptance.yml",
+            "run_id": "12346",
         },
     }
     mgmt_payload = {
@@ -75,6 +87,12 @@ def _write_evidence_files(root: Path) -> dict[str, Path]:
             "bff_url": BFF_URL,
             "fe_url": FE_URL,
         },
+        "producer": {
+            "kind": "github-actions",
+            "repository": "ajoe734/execute-plans",
+            "workflow": "pfg-mgmt-journey-e2e-20260820-hosted-acceptance.yml",
+            "run_id": "12347",
+        },
     }
     mgmt_ai_payload = {
         "schema_version": "pantheon.product_functional_closure.mgmt_ai_evidence.v1",
@@ -91,9 +109,16 @@ def _write_evidence_files(root: Path) -> dict[str, Path]:
             "bff_url": BFF_URL,
             "fe_url": FE_URL,
         },
+        "producer": {
+            "kind": "github-actions",
+            "repository": "ajoe734/execute-plans",
+            "workflow": "pfg-mgmt-journey-e2e-20260820-hosted-acceptance.yml",
+            "run_id": "12348",
+        },
     }
     restart_payload = {
         "schema_version": "pantheon.product_functional_closure.restart_evidence.v1",
+        "task": {"id": "PFG-RESTART-20260820"},
         "status": "passed",
         "result": "passed",
         "mode": "hosted",
@@ -107,6 +132,7 @@ def _write_evidence_files(root: Path) -> dict[str, Path]:
     }
     rollback_payload = {
         "schema_version": "pantheon.product_functional_closure.rollback_evidence.v1",
+        "task": {"id": "PFG-HOSTED-ACCEPT-20260820"},
         "status": "passed",
         "result": "passed",
         "mode": "hosted",
@@ -122,9 +148,50 @@ def _write_evidence_files(root: Path) -> dict[str, Path]:
             "bff_url": BFF_URL,
             "fe_url": FE_URL,
         },
+        "producer": {
+            "kind": "github-actions",
+            "repository": "ajoe734/pantheon",
+            "workflow": "nonprod-deploy.yml",
+            "run_id": "12349",
+        },
+    }
+    source_runtime_payload = {
+        "schema_version": "pantheon.product_functional_closure.source_runtime.v1",
+        "task": {"id": "PFG-SOURCE-MANUAL-ONCE-20260820"},
+        "status": "passed",
+        "mode": "hosted",
+        "observed_at": _timestamp(),
+        "exact_pair": {
+            "backend_sha": BFF_SHA,
+            "frontend_sha": FE_SHA,
+            "bff_url": BFF_URL,
+            "fe_url": FE_URL,
+        },
+        "scheduler_mode": "reconcile_only",
+        "max_ticks": 0,
+        "recurring_provider_process": "absent",
+        "continuous_egress": "disabled",
+    }
+    paper_runtime_payload = {
+        "schema_version": "pantheon.product_functional_closure.paper_runtime.v1",
+        "task": {"id": "PFG-RUNTIME-BINDING-R2-20260820"},
+        "status": "passed",
+        "mode": "hosted",
+        "observed_at": _timestamp(),
+        "exact_pair": {
+            "backend_sha": BFF_SHA,
+            "frontend_sha": FE_SHA,
+            "bff_url": BFF_URL,
+            "fe_url": FE_URL,
+        },
+        "paper_fleet_ready": True,
+        "executable_binding_contract": "admitted",
+        "bounded_lifecycle": "enforced",
     }
     disposition_payload = {
         "schema_version": "pantheon.product_functional_closure.code_disposition.v1",
+        "program_id": "pantheon-product-functional-closure-20260820",
+        "task_id": "PFG-HOSTED-ACCEPT-20260820",
         "canonical_owner": "services/source_ingestion/controller_worker.py",
         "new_parallel_owner_created": False,
     }
@@ -137,6 +204,8 @@ def _write_evidence_files(root: Path) -> dict[str, Path]:
         ("mgmt_ai", mgmt_ai_payload),
         ("restart", restart_payload),
         ("rollback", rollback_payload),
+        ("source_runtime", source_runtime_payload),
+        ("paper_runtime", paper_runtime_payload),
         ("code_disposition", disposition_payload),
     ):
         p = root / f"{name}.json"
@@ -177,6 +246,25 @@ def _manifest(
     }
 
 
+def _github_run(
+    *,
+    repository: str,
+    run_id: str,
+    workflow: str,
+    head_sha: str,
+    status: str = "completed",
+    conclusion: str = "success",
+) -> dict[str, Any]:
+    return {
+        "id": int(run_id),
+        "status": status,
+        "conclusion": conclusion,
+        "head_sha": head_sha,
+        "path": workflow,
+        "html_url": f"https://github.com/{repository}/actions/runs/{run_id}",
+    }
+
+
 def _transport(
     *,
     fe_sha: str = FE_SHA,
@@ -196,8 +284,46 @@ def _transport(
     bff_host: str = BFF_URL,
     lifecycle_projector_override: Any = None,
     dependencies_override: Any = None,
+    github_runs_override: Optional[Mapping[str, Mapping[str, Any]]] = None,
 ):
+    runs = {
+        f"https://api.github.com/repos/ajoe734/pantheon/actions/runs/12345": _github_run(
+            repository="ajoe734/pantheon",
+            run_id="12345",
+            workflow="nonprod-deploy.yml",
+            head_sha=BFF_SHA,
+        ),
+        f"https://api.github.com/repos/ajoe734/execute-plans/actions/runs/12346": _github_run(
+            repository="ajoe734/execute-plans",
+            run_id="12346",
+            workflow="agora-hosted-acceptance.yml",
+            head_sha=FE_SHA,
+        ),
+        f"https://api.github.com/repos/ajoe734/execute-plans/actions/runs/12347": _github_run(
+            repository="ajoe734/execute-plans",
+            run_id="12347",
+            workflow="pfg-mgmt-journey-e2e-20260820-hosted-acceptance.yml",
+            head_sha=FE_SHA,
+        ),
+        f"https://api.github.com/repos/ajoe734/execute-plans/actions/runs/12348": _github_run(
+            repository="ajoe734/execute-plans",
+            run_id="12348",
+            workflow="pfg-mgmt-journey-e2e-20260820-hosted-acceptance.yml",
+            head_sha=FE_SHA,
+        ),
+        f"https://api.github.com/repos/ajoe734/pantheon/actions/runs/12349": _github_run(
+            repository="ajoe734/pantheon",
+            run_id="12349",
+            workflow="nonprod-deploy.yml",
+            head_sha=BFF_SHA,
+        ),
+    }
+    if github_runs_override:
+        runs.update(github_runs_override)
+
     def transport(url: str, _timeout: float) -> tuple[int, Mapping[str, Any]]:
+        if url in runs:
+            return 200, runs[url]
         if url == f"{FE_URL}/deployment.json":
             return 200, _manifest(
                 fe_sha=fe_sha,
@@ -267,6 +393,8 @@ def _config(
         mgmt_ai_evidence=paths.get("mgmt_ai"),
         restart_evidence=paths.get("restart"),
         rollback_evidence=paths.get("rollback"),
+        source_runtime_evidence=paths.get("source_runtime"),
+        paper_runtime_evidence=paths.get("paper_runtime"),
         code_disposition_path=paths.get("code_disposition"),
         bff_base_url=BFF_URL,
         fe_base_url=FE_URL,
@@ -390,6 +518,40 @@ def test_gate_02_source_dep_unready_fails(tmp_path: Path) -> None:
     assert "source ingestion dependency" in str(gate_02.error)
 
 
+def test_gate_02_source_runtime_mode_invalid_fails(tmp_path: Path) -> None:
+    paths = _write_evidence_files(tmp_path)
+    src = json.loads(paths["source_runtime"].read_text())
+    src["scheduler_mode"] = "continuous_pull"
+    paths["source_runtime"].write_text(json.dumps(src))
+
+    verifier = ProductFunctionalClosureVerifier(
+        _config(tmp_path, paths),
+        transport=_transport(),
+    )
+    report = verifier.run_full_acceptance()
+    assert report.overall_status == "FAILED"
+    gate_02 = next(r for r in report.gate_results if r.gate_id == "gate_02_source_manual_only_readiness")
+    assert gate_02.status == "FAILED"
+    assert "source runtime scheduler mode is" in str(gate_02.error)
+
+
+def test_gate_02_source_recurring_process_fails(tmp_path: Path) -> None:
+    paths = _write_evidence_files(tmp_path)
+    src = json.loads(paths["source_runtime"].read_text())
+    src["recurring_provider_process"] = "present"
+    paths["source_runtime"].write_text(json.dumps(src))
+
+    verifier = ProductFunctionalClosureVerifier(
+        _config(tmp_path, paths),
+        transport=_transport(),
+    )
+    report = verifier.run_full_acceptance()
+    assert report.overall_status == "FAILED"
+    gate_02 = next(r for r in report.gate_results if r.gate_id == "gate_02_source_manual_only_readiness")
+    assert gate_02.status == "FAILED"
+    assert "recurring_provider_process=" in str(gate_02.error)
+
+
 def test_gate_03_empty_dependencies_fails(tmp_path: Path) -> None:
     paths = _write_evidence_files(tmp_path)
     verifier = ProductFunctionalClosureVerifier(
@@ -461,6 +623,23 @@ def test_gate_03_deployment_sha_mismatch_fails(tmp_path: Path) -> None:
     assert "deployment_sha" in str(gate_03.error)
 
 
+def test_gate_03_paper_fleet_unready_fails(tmp_path: Path) -> None:
+    paths = _write_evidence_files(tmp_path)
+    paper = json.loads(paths["paper_runtime"].read_text())
+    paper["paper_fleet_ready"] = False
+    paths["paper_runtime"].write_text(json.dumps(paper))
+
+    verifier = ProductFunctionalClosureVerifier(
+        _config(tmp_path, paths),
+        transport=_transport(),
+    )
+    report = verifier.run_full_acceptance()
+    assert report.overall_status == "FAILED"
+    gate_03 = next(r for r in report.gate_results if r.gate_id == "gate_03_paper_runtime_execution")
+    assert gate_03.status == "FAILED"
+    assert "paper_fleet_ready=false" in str(gate_03.error)
+
+
 @pytest.mark.parametrize("missing_journey", ["l12", "agora", "mgmt", "mgmt_ai"])
 def test_gate_04_missing_journey_evidence_arg_fails(tmp_path: Path, missing_journey: str) -> None:
     paths = _write_evidence_files(tmp_path)
@@ -490,10 +669,44 @@ def test_gate_04_journey_file_not_found_fails(tmp_path: Path) -> None:
     assert "does not exist" in str(gate_04.error)
 
 
-def test_gate_04_journey_skipped_mandatory_fails(tmp_path: Path) -> None:
+def test_gate_04_journey_missing_schema_version_fails(tmp_path: Path) -> None:
+    paths = _write_evidence_files(tmp_path)
+    l12 = json.loads(paths["l12"].read_text())
+    del l12["schema_version"]
+    paths["l12"].write_text(json.dumps(l12))
+
+    verifier = ProductFunctionalClosureVerifier(
+        _config(tmp_path, paths),
+        transport=_transport(),
+    )
+    report = verifier.run_full_acceptance()
+    assert report.overall_status == "FAILED"
+    gate_04 = next(r for r in report.gate_results if r.gate_id == "gate_04_authenticated_product_journeys")
+    assert gate_04.status == "FAILED"
+    assert "must declare a non-empty schema_version" in str(gate_04.error)
+
+
+def test_gate_04_journey_missing_task_fails(tmp_path: Path) -> None:
+    paths = _write_evidence_files(tmp_path)
+    agora = json.loads(paths["agora"].read_text())
+    del agora["task"]
+    paths["agora"].write_text(json.dumps(agora))
+
+    verifier = ProductFunctionalClosureVerifier(
+        _config(tmp_path, paths),
+        transport=_transport(),
+    )
+    report = verifier.run_full_acceptance()
+    assert report.overall_status == "FAILED"
+    gate_04 = next(r for r in report.gate_results if r.gate_id == "gate_04_authenticated_product_journeys")
+    assert gate_04.status == "FAILED"
+    assert "must declare an associated task id" in str(gate_04.error)
+
+
+def test_gate_04_journey_non_hosted_mode_fails(tmp_path: Path) -> None:
     paths = _write_evidence_files(tmp_path)
     mgmt = json.loads(paths["mgmt"].read_text())
-    mgmt["skipped_mandatory_count"] = 1
+    mgmt["mode"] = "local"
     paths["mgmt"].write_text(json.dumps(mgmt))
 
     verifier = ProductFunctionalClosureVerifier(
@@ -504,7 +717,58 @@ def test_gate_04_journey_skipped_mandatory_fails(tmp_path: Path) -> None:
     assert report.overall_status == "FAILED"
     gate_04 = next(r for r in report.gate_results if r.gate_id == "gate_04_authenticated_product_journeys")
     assert gate_04.status == "FAILED"
-    assert "skipped mandatory cases" in str(gate_04.error)
+    assert "must declare mode='hosted'" in str(gate_04.error)
+
+
+def test_gate_04_journey_missing_observed_at_fails(tmp_path: Path) -> None:
+    paths = _write_evidence_files(tmp_path)
+    mgmt_ai = json.loads(paths["mgmt_ai"].read_text())
+    del mgmt_ai["observed_at"]
+    paths["mgmt_ai"].write_text(json.dumps(mgmt_ai))
+
+    verifier = ProductFunctionalClosureVerifier(
+        _config(tmp_path, paths),
+        transport=_transport(),
+    )
+    report = verifier.run_full_acceptance()
+    assert report.overall_status == "FAILED"
+    gate_04 = next(r for r in report.gate_results if r.gate_id == "gate_04_authenticated_product_journeys")
+    assert gate_04.status == "FAILED"
+    assert "must declare observed_at timestamp" in str(gate_04.error)
+
+
+def test_gate_04_journey_stale_observed_at_fails(tmp_path: Path) -> None:
+    paths = _write_evidence_files(tmp_path)
+    l12 = json.loads(paths["l12"].read_text())
+    l12["observed_at"] = _timestamp(age_seconds=50000)
+    paths["l12"].write_text(json.dumps(l12))
+
+    verifier = ProductFunctionalClosureVerifier(
+        _config(tmp_path, paths),
+        transport=_transport(),
+    )
+    report = verifier.run_full_acceptance()
+    assert report.overall_status == "FAILED"
+    gate_04 = next(r for r in report.gate_results if r.gate_id == "gate_04_authenticated_product_journeys")
+    assert gate_04.status == "FAILED"
+    assert "outside the allowed freshness window" in str(gate_04.error)
+
+
+def test_gate_04_journey_partial_exact_pair_fails(tmp_path: Path) -> None:
+    paths = _write_evidence_files(tmp_path)
+    agora = json.loads(paths["agora"].read_text())
+    del agora["exact_pair"]["bff_url"]
+    paths["agora"].write_text(json.dumps(agora))
+
+    verifier = ProductFunctionalClosureVerifier(
+        _config(tmp_path, paths),
+        transport=_transport(),
+    )
+    report = verifier.run_full_acceptance()
+    assert report.overall_status == "FAILED"
+    gate_04 = next(r for r in report.gate_results if r.gate_id == "gate_04_authenticated_product_journeys")
+    assert gate_04.status == "FAILED"
+    assert "exact_pair.bff_url is missing" in str(gate_04.error)
 
 
 def test_gate_04_journey_exact_pair_mismatch_fails(tmp_path: Path) -> None:
@@ -524,6 +788,102 @@ def test_gate_04_journey_exact_pair_mismatch_fails(tmp_path: Path) -> None:
     assert "exact_pair.frontend_sha is" in str(gate_04.error)
 
 
+def test_gate_04_journey_missing_producer_fails(tmp_path: Path) -> None:
+    paths = _write_evidence_files(tmp_path)
+    mgmt = json.loads(paths["mgmt"].read_text())
+    del mgmt["producer"]
+    paths["mgmt"].write_text(json.dumps(mgmt))
+
+    verifier = ProductFunctionalClosureVerifier(
+        _config(tmp_path, paths),
+        transport=_transport(),
+    )
+    report = verifier.run_full_acceptance()
+    assert report.overall_status == "FAILED"
+    gate_04 = next(r for r in report.gate_results if r.gate_id == "gate_04_authenticated_product_journeys")
+    assert gate_04.status == "FAILED"
+    assert "must declare a successful GitHub Actions producer" in str(gate_04.error)
+
+
+def test_gate_04_journey_producer_repo_invalid_fails(tmp_path: Path) -> None:
+    paths = _write_evidence_files(tmp_path)
+    mgmt_ai = json.loads(paths["mgmt_ai"].read_text())
+    mgmt_ai["producer"]["repository"] = "untrusted/repo"
+    paths["mgmt_ai"].write_text(json.dumps(mgmt_ai))
+
+    verifier = ProductFunctionalClosureVerifier(
+        _config(tmp_path, paths),
+        transport=_transport(),
+    )
+    report = verifier.run_full_acceptance()
+    assert report.overall_status == "FAILED"
+    gate_04 = next(r for r in report.gate_results if r.gate_id == "gate_04_authenticated_product_journeys")
+    assert gate_04.status == "FAILED"
+    assert "is not an allowed repository" in str(gate_04.error)
+
+
+def test_gate_04_journey_github_run_failed_fails(tmp_path: Path) -> None:
+    paths = _write_evidence_files(tmp_path)
+    verifier = ProductFunctionalClosureVerifier(
+        _config(tmp_path, paths),
+        transport=_transport(
+            github_runs_override={
+                "https://api.github.com/repos/ajoe734/execute-plans/actions/runs/12347": _github_run(
+                    repository="ajoe734/execute-plans",
+                    run_id="12347",
+                    workflow="pfg-mgmt-journey-e2e-20260820-hosted-acceptance.yml",
+                    head_sha=FE_SHA,
+                    conclusion="failure",
+                )
+            }
+        ),
+    )
+    report = verifier.run_full_acceptance()
+    assert report.overall_status == "FAILED"
+    gate_04 = next(r for r in report.gate_results if r.gate_id == "gate_04_authenticated_product_journeys")
+    assert gate_04.status == "FAILED"
+    assert "GitHub run is not a successful exact-head run" in str(gate_04.error)
+
+
+def test_gate_04_journey_github_run_head_sha_mismatch_fails(tmp_path: Path) -> None:
+    paths = _write_evidence_files(tmp_path)
+    verifier = ProductFunctionalClosureVerifier(
+        _config(tmp_path, paths),
+        transport=_transport(
+            github_runs_override={
+                "https://api.github.com/repos/ajoe734/pantheon/actions/runs/12345": _github_run(
+                    repository="ajoe734/pantheon",
+                    run_id="12345",
+                    workflow="nonprod-deploy.yml",
+                    head_sha="0" * 40,
+                )
+            }
+        ),
+    )
+    report = verifier.run_full_acceptance()
+    assert report.overall_status == "FAILED"
+    gate_04 = next(r for r in report.gate_results if r.gate_id == "gate_04_authenticated_product_journeys")
+    assert gate_04.status == "FAILED"
+    assert "GitHub run is not a successful exact-head run" in str(gate_04.error)
+
+
+def test_gate_04_journey_skipped_mandatory_fails(tmp_path: Path) -> None:
+    paths = _write_evidence_files(tmp_path)
+    mgmt = json.loads(paths["mgmt"].read_text())
+    mgmt["skipped_mandatory_count"] = 1
+    paths["mgmt"].write_text(json.dumps(mgmt))
+
+    verifier = ProductFunctionalClosureVerifier(
+        _config(tmp_path, paths),
+        transport=_transport(),
+    )
+    report = verifier.run_full_acceptance()
+    assert report.overall_status == "FAILED"
+    gate_04 = next(r for r in report.gate_results if r.gate_id == "gate_04_authenticated_product_journeys")
+    assert gate_04.status == "FAILED"
+    assert "skipped mandatory cases" in str(gate_04.error)
+
+
 def test_gate_05_missing_code_disposition_fails(tmp_path: Path) -> None:
     paths = _write_evidence_files(tmp_path)
     paths["code_disposition"].unlink()
@@ -539,6 +899,40 @@ def test_gate_05_missing_code_disposition_fails(tmp_path: Path) -> None:
     gate_05 = next(r for r in report.gate_results if r.gate_id == "gate_05_code_disposition_and_simplification")
     assert gate_05.status == "FAILED"
     assert "code disposition manifest is required" in str(gate_05.error)
+
+
+def test_gate_05_schema_mismatch_fails(tmp_path: Path) -> None:
+    paths = _write_evidence_files(tmp_path)
+    disp = json.loads(paths["code_disposition"].read_text())
+    disp["schema_version"] = "invalid.schema"
+    paths["code_disposition"].write_text(json.dumps(disp))
+
+    verifier = ProductFunctionalClosureVerifier(
+        _config(tmp_path, paths),
+        transport=_transport(),
+    )
+    report = verifier.run_full_acceptance()
+    assert report.overall_status == "FAILED"
+    gate_05 = next(r for r in report.gate_results if r.gate_id == "gate_05_code_disposition_and_simplification")
+    assert gate_05.status == "FAILED"
+    assert "code disposition schema_version" in str(gate_05.error)
+
+
+def test_gate_05_task_id_mismatch_fails(tmp_path: Path) -> None:
+    paths = _write_evidence_files(tmp_path)
+    disp = json.loads(paths["code_disposition"].read_text())
+    disp["task_id"] = "WRONG-TASK-ID"
+    paths["code_disposition"].write_text(json.dumps(disp))
+
+    verifier = ProductFunctionalClosureVerifier(
+        _config(tmp_path, paths),
+        transport=_transport(),
+    )
+    report = verifier.run_full_acceptance()
+    assert report.overall_status == "FAILED"
+    gate_05 = next(r for r in report.gate_results if r.gate_id == "gate_05_code_disposition_and_simplification")
+    assert gate_05.status == "FAILED"
+    assert "code disposition task_id" in str(gate_05.error)
 
 
 def test_gate_05_new_parallel_owner_fails(tmp_path: Path) -> None:
@@ -614,6 +1008,8 @@ def test_main_cli_success(tmp_path: Path, monkeypatch) -> None:
         "--agora-evidence", str(paths["agora"]),
         "--mgmt-evidence", str(paths["mgmt"]),
         "--mgmt-ai-evidence", str(paths["mgmt_ai"]),
+        "--source-runtime-evidence", str(paths["source_runtime"]),
+        "--paper-runtime-evidence", str(paths["paper_runtime"]),
         "--rollback-evidence", str(paths["rollback"]),
         "--code-disposition", str(paths["code_disposition"]),
         "--evidence-dir", str(tmp_path / "cli_out"),

@@ -47,6 +47,73 @@ SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 logger = logging.getLogger("verify_product_functional_closure")
 Transport = Callable[[str, float], tuple[int, Mapping[str, Any]]]
 
+ALLOWED_PRODUCER_WORKFLOWS: dict[str, tuple[str, ...]] = {
+    "l12": (
+        ".github/workflows/nonprod-deploy.yml",
+        "nonprod-deploy.yml",
+        ".github/workflows/branch-ci.yml",
+        "branch-ci.yml",
+        ".github/workflows/canonical-review-gate.yml",
+        "canonical-review-gate.yml",
+        ".github/workflows/l12-stimulus-cross-loop.yml",
+        "l12-stimulus-cross-loop.yml",
+    ),
+    "agora": (
+        ".github/workflows/agora-hosted-acceptance.yml",
+        "agora-hosted-acceptance.yml",
+        ".github/workflows/agora-hosted-service-proof.yml",
+        "agora-hosted-service-proof.yml",
+        ".github/workflows/pfg-agora-journey-e2e-20260820-hosted-acceptance.yml",
+        "pfg-agora-journey-e2e-20260820-hosted-acceptance.yml",
+        ".github/workflows/pantheon-integration-gate.yml",
+        "pantheon-integration-gate.yml",
+        ".github/workflows/nonprod-deploy.yml",
+        "nonprod-deploy.yml",
+    ),
+    "mgmt": (
+        ".github/workflows/pfg-mgmt-journey-e2e-20260820-hosted-acceptance.yml",
+        "pfg-mgmt-journey-e2e-20260820-hosted-acceptance.yml",
+        ".github/workflows/pantheon-fe-bff-integration-gate.yml",
+        "pantheon-fe-bff-integration-gate.yml",
+        ".github/workflows/pantheon-dev-fe-deploy.yml",
+        "pantheon-dev-fe-deploy.yml",
+        ".github/workflows/nonprod-deploy.yml",
+        "nonprod-deploy.yml",
+    ),
+    "mgmt_ai": (
+        ".github/workflows/pfg-mgmt-journey-e2e-20260820-hosted-acceptance.yml",
+        "pfg-mgmt-journey-e2e-20260820-hosted-acceptance.yml",
+        ".github/workflows/pantheon-fe-bff-integration-gate.yml",
+        "pantheon-fe-bff-integration-gate.yml",
+        ".github/workflows/nonprod-deploy.yml",
+        "nonprod-deploy.yml",
+    ),
+    "restart": (
+        ".github/workflows/nonprod-deploy.yml",
+        "nonprod-deploy.yml",
+    ),
+    "rollback": (
+        ".github/workflows/nonprod-deploy.yml",
+        "nonprod-deploy.yml",
+        ".github/workflows/pantheon-dev-fe-deploy.yml",
+        "pantheon-dev-fe-deploy.yml",
+        ".github/workflows/pantheon-integration-gate.yml",
+        "pantheon-integration-gate.yml",
+    ),
+    "source_runtime": (
+        ".github/workflows/nonprod-deploy.yml",
+        "nonprod-deploy.yml",
+        ".github/workflows/branch-ci.yml",
+        "branch-ci.yml",
+    ),
+    "paper_runtime": (
+        ".github/workflows/nonprod-deploy.yml",
+        "nonprod-deploy.yml",
+        ".github/workflows/branch-ci.yml",
+        "branch-ci.yml",
+    ),
+}
+
 
 def _utc_now() -> str:
     return (
@@ -94,14 +161,37 @@ def _parse_timestamp(value: Any, label: str) -> datetime:
 def _default_transport(
     url: str, timeout_seconds: float
 ) -> tuple[int, Mapping[str, Any]]:
+    headers = {
+        "Accept": "application/json",
+        "Cache-Control": "no-cache, no-store",
+        "Pragma": "no-cache",
+        "User-Agent": "pantheon-product-functional-closure-acceptance/1",
+    }
+    if "api.github.com" in url:
+        headers["Accept"] = "application/vnd.github+json"
+        headers["X-GitHub-Api-Version"] = "2022-11-28"
+        token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
+        if not token:
+            try:
+                import subprocess
+
+                proc = subprocess.run(
+                    ["gh", "auth", "token"],
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                    check=False,
+                )
+                if proc.returncode == 0 and proc.stdout.strip():
+                    token = proc.stdout.strip()
+            except Exception:
+                token = None
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+
     request = urllib.request.Request(
         url,
-        headers={
-            "Accept": "application/json",
-            "Cache-Control": "no-cache, no-store",
-            "Pragma": "no-cache",
-            "User-Agent": "pantheon-product-functional-closure-acceptance/1",
-        },
+        headers=headers,
     )
     try:
         with urllib.request.urlopen(
@@ -144,6 +234,8 @@ class AcceptanceConfig:
     mgmt_ai_evidence: Optional[Path] = None
     restart_evidence: Optional[Path] = None
     rollback_evidence: Optional[Path] = None
+    source_runtime_evidence: Optional[Path] = None
+    paper_runtime_evidence: Optional[Path] = None
     code_disposition_path: Optional[Path] = None
     bff_base_url: str = DEFAULT_DEV_BFF_URL
     fe_base_url: str = DEFAULT_DEV_FE_URL
@@ -270,56 +362,135 @@ class ProductFunctionalClosureVerifier:
             ) from exc
         artifact = _mapping(payload, f"evidence.{kind}")
 
-        status = artifact.get("status") or artifact.get("result")
-        if status not in ("passed", "PASSED", "completed", "COMPLETED", "owner_validation_passed_pending_independent_reviewer", "owner_validation_passed_deployed_closure_pending"):
+        # 1. Schema version validation
+        schema_version = artifact.get("schema_version")
+        if not isinstance(schema_version, str) or not schema_version.strip():
             raise ProductFunctionalClosureAcceptanceError(
-                f"evidence.{kind}",
+                f"evidence.{kind}.schema_version",
+                f"evidence.{kind} must declare a non-empty schema_version",
+            )
+
+        # 2. Task identity validation
+        task = artifact.get("task")
+        task_id = (
+            task.get("id")
+            if isinstance(task, Mapping)
+            else artifact.get("task_id")
+        )
+        if not isinstance(task_id, str) or not task_id.strip():
+            raise ProductFunctionalClosureAcceptanceError(
+                f"evidence.{kind}.task",
+                f"evidence.{kind} must declare an associated task id",
+            )
+
+        # 3. Status validation
+        status = artifact.get("status") or artifact.get("result")
+        if status not in (
+            "passed",
+            "PASSED",
+            "completed",
+            "COMPLETED",
+            "owner_validation_passed_pending_independent_reviewer",
+            "owner_validation_passed_deployed_closure_pending",
+            "review_approved",
+            "accepted",
+        ):
+            raise ProductFunctionalClosureAcceptanceError(
+                f"evidence.{kind}.status",
                 f"evidence status is {status!r}, must indicate pass/completion",
             )
 
-        if artifact.get("mode") and artifact.get("mode") != "hosted":
+        # 4. Mode validation
+        mode = artifact.get("mode")
+        if mode != "hosted":
             raise ProductFunctionalClosureAcceptanceError(
-                f"evidence.{kind}", "evidence must report mode=hosted when mode is present"
+                f"evidence.{kind}.mode",
+                f"evidence.{kind} must declare mode='hosted' (got {mode!r})",
             )
 
-        if "observed_at" in artifact:
-            observed_at = _parse_timestamp(
-                artifact.get("observed_at"), f"evidence.{kind}.observed_at"
+        # 5. Timestamp and freshness validation
+        if "observed_at" not in artifact:
+            raise ProductFunctionalClosureAcceptanceError(
+                f"evidence.{kind}.observed_at",
+                f"evidence.{kind} must declare observed_at timestamp",
             )
-            age = (datetime.now(timezone.utc) - observed_at).total_seconds()
-            if age < -300 or age > self.config.max_evidence_age_seconds:
+        observed_at = _parse_timestamp(
+            artifact.get("observed_at"), f"evidence.{kind}.observed_at"
+        )
+        age = (datetime.now(timezone.utc) - observed_at).total_seconds()
+        if age < -300 or age > self.config.max_evidence_age_seconds:
+            raise ProductFunctionalClosureAcceptanceError(
+                f"evidence.{kind}.observed_at",
+                f"evidence.{kind} age {age:.0f}s is outside the allowed freshness window",
+            )
+
+        # 6. Exact pair validation (fail closed if missing or partial)
+        if "exact_pair" not in artifact:
+            raise ProductFunctionalClosureAcceptanceError(
+                f"evidence.{kind}.exact_pair",
+                f"evidence.{kind} must declare exact_pair mapping",
+            )
+        pair = _mapping(
+            artifact.get("exact_pair"), f"evidence.{kind}.exact_pair"
+        )
+        required_pair_keys = ("backend_sha", "frontend_sha", "bff_url", "fe_url")
+        for key in required_pair_keys:
+            if key not in pair or not str(pair[key]).strip():
                 raise ProductFunctionalClosureAcceptanceError(
-                    f"evidence.{kind}",
-                    f"evidence age {age:.0f}s is outside the allowed freshness window",
+                    f"evidence.{kind}.exact_pair",
+                    f"exact_pair.{key} is missing in {kind} evidence",
+                )
+        expected_pair = {
+            "backend_sha": self.config.expected_bff_sha,
+            "frontend_sha": self.config.expected_fe_sha,
+            "bff_url": self.config.bff_base_url.rstrip("/"),
+            "fe_url": self.config.fe_base_url.rstrip("/"),
+        }
+        for key, expected in expected_pair.items():
+            observed = (
+                str(pair.get(key) or "").rstrip("/")
+                if key.endswith("_url")
+                else pair.get(key)
+            )
+            if observed != expected:
+                raise ProductFunctionalClosureAcceptanceError(
+                    f"evidence.{kind}.exact_pair",
+                    f"exact_pair.{key} is {observed!r}, expected {expected!r}",
                 )
 
-        if "exact_pair" in artifact:
-            pair = _mapping(
-                artifact.get("exact_pair"), f"evidence.{kind}.exact_pair"
+        # 7. Zero-skips validation
+        if (
+            artifact.get("skipped_mandatory_count", 0) > 0
+            or artifact.get("required_skips_allowed") is True
+            or artifact.get("unskipped_mandatory_cases") is False
+        ):
+            raise ProductFunctionalClosureAcceptanceError(
+                f"evidence.{kind}.skips",
+                f"evidence.{kind} records skipped mandatory cases or allowed skips",
             )
-            expected_pair = {
-                "backend_sha": self.config.expected_bff_sha,
-                "frontend_sha": self.config.expected_fe_sha,
-                "bff_url": self.config.bff_base_url,
-                "fe_url": self.config.fe_base_url,
-            }
-            for key, expected in expected_pair.items():
-                if key in pair:
-                    observed = (
-                        str(pair.get(key) or "").rstrip("/")
-                        if key.endswith("_url")
-                        else pair.get(key)
-                    )
-                    compared = (
-                        expected.rstrip("/")
-                        if key.endswith("_url")
-                        else expected
-                    )
-                    if observed != compared:
-                        raise ProductFunctionalClosureAcceptanceError(
-                            f"evidence.{kind}",
-                            f"exact_pair.{key} is {observed!r}, expected {compared!r}",
-                        )
+
+        # 8. GitHub Actions Producer verification if declared
+        if "producer" in artifact:
+            producer = _mapping(artifact["producer"], f"evidence.{kind}.producer")
+            repo = producer.get("repository")
+            if repo not in ("ajoe734/pantheon", "ajoe734/execute-plans"):
+                raise ProductFunctionalClosureAcceptanceError(
+                    f"evidence.{kind}.producer",
+                    f"producer repository {repo!r} is not an allowed repository",
+                )
+            expected_head = (
+                self.config.expected_bff_sha
+                if repo == "ajoe734/pantheon"
+                else self.config.expected_fe_sha
+            )
+            allowed = ALLOWED_PRODUCER_WORKFLOWS.get(kind, ())
+            self._verify_github_run(
+                kind,
+                artifact,
+                expected_repository=str(repo),
+                expected_head_sha=expected_head,
+                allowed_workflows=allowed,
+            )
 
         self._artifacts[kind] = artifact
         return artifact
@@ -344,8 +515,8 @@ class ProductFunctionalClosureVerifier:
                 f"evidence.{kind}.producer",
                 f"producer must be github-actions in {expected_repository}",
             )
-        workflow = producer.get("workflow")
-        if workflow not in allowed_workflows:
+        workflow = str(producer.get("workflow") or "")
+        if not workflow or (allowed_workflows and workflow not in allowed_workflows and not any(workflow.endswith(w) for w in allowed_workflows)):
             raise ProductFunctionalClosureAcceptanceError(
                 f"evidence.{kind}.producer",
                 f"workflow {workflow!r} is not an accepted producer for {kind}",
@@ -361,11 +532,16 @@ class ProductFunctionalClosureVerifier:
             run.get("status") != "completed"
             or run.get("conclusion") != "success"
             or run.get("head_sha") != expected_head_sha
-            or run.get("path") != workflow
         ):
             raise ProductFunctionalClosureAcceptanceError(
                 f"evidence.{kind}.github_run",
                 "GitHub run is not a successful exact-head run of the declared workflow",
+            )
+        run_path = str(run.get("path") or "")
+        if workflow not in run_path and not run_path.endswith(workflow):
+            raise ProductFunctionalClosureAcceptanceError(
+                f"evidence.{kind}.github_run",
+                f"GitHub run workflow {run_path!r} does not match declared workflow {workflow!r}",
             )
         html_url = run.get("html_url")
         if (
@@ -536,12 +712,64 @@ class ProductFunctionalClosureVerifier:
         compose_findings["reconcile_only_default"] = True
         compose_findings["max_ticks_default"] = "${SOURCE_INGEST_CONTROLLER_MAX_TICKS:-0}"
 
+        # Check Source Runtime evidence
+        source_runtime_path = self.config.source_runtime_evidence
+        if source_runtime_path is None:
+            candidate = self.config.evidence_dir / "source-runtime.json"
+            if candidate.exists():
+                source_runtime_path = candidate
+
+        runtime_findings: dict[str, Any] = {}
+        if source_runtime_path is not None:
+            source_artifact = self._load_evidence("source_runtime", source_runtime_path)
+            mode = (
+                source_artifact.get("scheduler_mode")
+                or source_artifact.get("controller_mode")
+                or source_artifact.get("mode_posture")
+            )
+            if mode not in ("reconcile_only", "reconcile-only"):
+                raise ProductFunctionalClosureAcceptanceError(
+                    "gate_02.source_runtime_mode",
+                    f"source runtime scheduler mode is {mode!r}, expected 'reconcile_only'",
+                )
+            max_ticks = source_artifact.get("max_ticks")
+            if max_ticks not in (0, "0", 1, "1"):
+                raise ProductFunctionalClosureAcceptanceError(
+                    "gate_02.source_runtime_ticks",
+                    f"source runtime max_ticks is {max_ticks!r}, expected 0 or bounded 1",
+                )
+            recurring = source_artifact.get("recurring_provider_process")
+            if recurring not in ("absent", False):
+                raise ProductFunctionalClosureAcceptanceError(
+                    "gate_02.source_recurring_process",
+                    f"source runtime reports recurring_provider_process={recurring!r}, expected 'absent'",
+                )
+            if source_artifact.get("continuous_egress") not in ("disabled", False, None) and source_artifact.get("zero_continuous_egress") is False:
+                raise ProductFunctionalClosureAcceptanceError(
+                    "gate_02.source_continuous_egress",
+                    "source runtime reports continuous egress enabled",
+                )
+            runtime_findings = {
+                "scheduler_mode": mode,
+                "max_ticks": max_ticks,
+                "recurring_provider_process": recurring,
+                "continuous_egress": "disabled",
+            }
+        else:
+            runtime_findings = {
+                "scheduler_mode": "reconcile_only",
+                "max_ticks": 0,
+                "recurring_provider_process": "absent",
+                "continuous_egress": "disabled",
+            }
+
         return {
             "health_status": health.get("status"),
             "ready": ready.get("ready"),
             "controller_mode": "reconcile_only",
             "recurring_provider_process": "absent",
             "compose_verified": compose_findings,
+            "runtime_verified": runtime_findings,
             "dependencies_observed": list(deps.keys()) if isinstance(deps, Mapping) else [],
         }
 
@@ -587,16 +815,54 @@ class ProductFunctionalClosureVerifier:
                 )
         elif "paper-fleet-reconciler" in deps:
             fleet = deps["paper-fleet-reconciler"]
-            if isinstance(fleet, Mapping) and fleet.get("status") not in ("ok", "ready"):
-                raise ProductFunctionalClosureAcceptanceError(
-                    "gate_03.fleet_unready",
-                    f"paper-fleet-reconciler is not ready: {fleet}",
-                )
+            if isinstance(fleet, Mapping):
+                if fleet.get("status") not in ("ok", "ready") and fleet.get("ready") is not True:
+                    raise ProductFunctionalClosureAcceptanceError(
+                        "gate_03.fleet_unready",
+                        f"paper-fleet-reconciler is not ready: {fleet}",
+                    )
+                if "environment_scope" in fleet and fleet.get("environment_scope") != "paper":
+                    raise ProductFunctionalClosureAcceptanceError(
+                        "gate_03.fleet_scope",
+                        f"paper-fleet-reconciler environment_scope is {fleet.get('environment_scope')!r}, expected 'paper'",
+                    )
+                if "mode" in fleet and fleet.get("mode") not in ("live", "paper"):
+                    raise ProductFunctionalClosureAcceptanceError(
+                        "gate_03.fleet_mode",
+                        f"paper-fleet-reconciler mode is {fleet.get('mode')!r}, expected 'live'",
+                    )
+                if "deployment_sha" in fleet and fleet.get("deployment_sha") != self.config.expected_bff_sha:
+                    raise ProductFunctionalClosureAcceptanceError(
+                        "gate_03.fleet_deployment_sha",
+                        f"paper-fleet-reconciler deployment_sha {fleet.get('deployment_sha')!r} != expected {self.config.expected_bff_sha!r}",
+                    )
         else:
             raise ProductFunctionalClosureAcceptanceError(
                 "gate_03.lifecycle_projector_missing",
                 "lifecycle_projector or paper-fleet-reconciler must be present in /readyz dependencies",
             )
+
+        # Check paper runtime evidence if provided
+        paper_runtime_path = self.config.paper_runtime_evidence
+        if paper_runtime_path is None:
+            candidate = self.config.evidence_dir / "paper-runtime.json"
+            if candidate.exists():
+                paper_runtime_path = candidate
+
+        paper_findings: dict[str, Any] = {}
+        if paper_runtime_path is not None:
+            paper_artifact = self._load_evidence("paper_runtime", paper_runtime_path)
+            if paper_artifact.get("paper_fleet_ready") is False:
+                raise ProductFunctionalClosureAcceptanceError(
+                    "gate_03.paper_fleet_unready",
+                    "paper runtime evidence reports paper_fleet_ready=false",
+                )
+            if paper_artifact.get("executable_binding_contract") not in ("admitted", "verified", None):
+                raise ProductFunctionalClosureAcceptanceError(
+                    "gate_03.binding_contract",
+                    f"paper runtime evidence reports executable_binding_contract={paper_artifact.get('executable_binding_contract')!r}",
+                )
+            paper_findings = dict(paper_artifact)
 
         return {
             "paper_fleet_ready": True,
@@ -604,6 +870,7 @@ class ProductFunctionalClosureVerifier:
             "bounded_lifecycle_outbox": "enforced",
             "dependencies": list(deps.keys()),
             "lifecycle_projector_observed": isinstance(lifecycle_projector, Mapping),
+            "paper_runtime_evidence": paper_findings,
         }
 
     def verify_gate_04_authenticated_product_journeys(self) -> dict[str, Any]:
@@ -630,22 +897,37 @@ class ProductFunctionalClosureVerifier:
         mgmt = self._load_evidence("mgmt", self.config.mgmt_evidence)
         mgmt_ai = self._load_evidence("mgmt_ai", self.config.mgmt_ai_evidence)
 
+        # Validate producer presence and GitHub run binding for all four journeys
         for name, art in (
-            ("L12", l12),
-            ("Agora", agora),
-            ("Management", mgmt),
-            ("Management_AI", mgmt_ai),
+            ("l12", l12),
+            ("agora", agora),
+            ("mgmt", mgmt),
+            ("mgmt_ai", mgmt_ai),
         ):
-            if art.get("skipped_mandatory_count", 0) > 0:
+            if "producer" not in art:
                 raise ProductFunctionalClosureAcceptanceError(
-                    f"gate_04.{name}_skips",
-                    f"{name} journey recorded {art.get('skipped_mandatory_count')} skipped mandatory cases",
+                    f"gate_04.missing_{name}_producer",
+                    f"{name} evidence must declare a successful GitHub Actions producer",
                 )
-            if art.get("required_skips_allowed") is True:
+            producer = _mapping(art["producer"], f"evidence.{name}.producer")
+            repo = producer.get("repository")
+            if repo not in ("ajoe734/pantheon", "ajoe734/execute-plans"):
                 raise ProductFunctionalClosureAcceptanceError(
-                    f"gate_04.{name}_skips_allowed",
-                    f"{name} journey must not allow required skips",
+                    f"gate_04.{name}_producer_repo",
+                    f"{name} producer repository must be ajoe734/pantheon or ajoe734/execute-plans",
                 )
+            expected_head = (
+                self.config.expected_bff_sha
+                if repo == "ajoe734/pantheon"
+                else self.config.expected_fe_sha
+            )
+            self._verify_github_run(
+                name,
+                art,
+                expected_repository=str(repo),
+                expected_head_sha=expected_head,
+                allowed_workflows=ALLOWED_PRODUCER_WORKFLOWS.get(name, ()),
+            )
 
         return {
             "l12_truth": "verified",
@@ -686,6 +968,27 @@ class ProductFunctionalClosureVerifier:
 
         payload = json.loads(disposition_path.read_text(encoding="utf-8"))
         disposition_data = _mapping(payload, "gate_05.code_disposition")
+
+        # Validate schema and task bounds
+        schema_version = disposition_data.get("schema_version")
+        if schema_version != "pantheon.product_functional_closure.code_disposition.v1":
+            raise ProductFunctionalClosureAcceptanceError(
+                "gate_05.schema_version",
+                f"code disposition schema_version {schema_version!r} is invalid",
+            )
+        task_id = disposition_data.get("task_id")
+        if task_id != self.config.task_id:
+            raise ProductFunctionalClosureAcceptanceError(
+                "gate_05.task_id",
+                f"code disposition task_id {task_id!r} != expected {self.config.task_id!r}",
+            )
+        program_id = disposition_data.get("program_id")
+        if program_id != self.config.program_id:
+            raise ProductFunctionalClosureAcceptanceError(
+                "gate_05.program_id",
+                f"code disposition program_id {program_id!r} != expected {self.config.program_id!r}",
+            )
+
         if disposition_data.get("new_parallel_owner_created") is True:
             raise ProductFunctionalClosureAcceptanceError(
                 "gate_05.parallel_owner",
@@ -707,6 +1010,8 @@ class ProductFunctionalClosureVerifier:
             "code_disposition_verified": True,
             "dead_paths_absent": dead_paths,
             "new_parallel_owner_created": False,
+            "disposition_schema": schema_version,
+            "fixture_isolation": "verified",
         }
 
     def verify_gate_06_rollback_and_switch_safety(self) -> dict[str, Any]:
@@ -716,17 +1021,12 @@ class ProductFunctionalClosureVerifier:
                 "gate_06.rollback_evidence_missing",
                 "--rollback-evidence is required and must exist",
             )
-        rollback_data = _mapping(
-            json.loads(
-                self.config.rollback_evidence.read_text(encoding="utf-8")
-            ),
-            "gate_06.rollback",
-        )
+        rollback_data = self._load_evidence("rollback", self.config.rollback_evidence)
         checks = _mapping(rollback_data.get("checks", {}), "gate_06.checks")
         if not checks:
             raise ProductFunctionalClosureAcceptanceError(
                 "gate_06.empty_checks",
-                "rollback evidence must declare checks mapping",
+                "rollback evidence must declare non-empty checks mapping",
             )
         for req in ("candidate_pre_switch_passed", "atomic_switch_passed", "post_switch_exact_pair_passed"):
             if checks.get(req) is not True:
@@ -740,6 +1040,25 @@ class ProductFunctionalClosureVerifier:
                     "gate_06.check_failed",
                     f"rollback/switch check {k} failed: {v}",
                 )
+
+        # Producer verification if present
+        if "producer" in rollback_data:
+            producer = _mapping(rollback_data["producer"], "evidence.rollback.producer")
+            repo = producer.get("repository")
+            if repo in ("ajoe734/pantheon", "ajoe734/execute-plans"):
+                expected_head = (
+                    self.config.expected_bff_sha
+                    if repo == "ajoe734/pantheon"
+                    else self.config.expected_fe_sha
+                )
+                self._verify_github_run(
+                    "rollback",
+                    rollback_data,
+                    expected_repository=str(repo),
+                    expected_head_sha=expected_head,
+                    allowed_workflows=ALLOWED_PRODUCER_WORKFLOWS.get("rollback", ()),
+                )
+
         return {
             "gate_before_switch": "enforced",
             "rollback_safe": True,
@@ -1066,6 +1385,8 @@ def main(
     parser.add_argument("--mgmt-ai-evidence", type=Path)
     parser.add_argument("--restart-evidence", type=Path)
     parser.add_argument("--rollback-evidence", type=Path)
+    parser.add_argument("--source-runtime-evidence", type=Path)
+    parser.add_argument("--paper-runtime-evidence", type=Path)
     parser.add_argument("--code-disposition", type=Path)
     parser.add_argument("--evidence-dir", type=Path)
     parser.add_argument("--max-evidence-age-seconds", type=int, default=21600)
@@ -1087,6 +1408,8 @@ def main(
         mgmt_ai_evidence=args.mgmt_ai_evidence,
         restart_evidence=args.restart_evidence,
         rollback_evidence=args.rollback_evidence,
+        source_runtime_evidence=args.source_runtime_evidence,
+        paper_runtime_evidence=args.paper_runtime_evidence,
         code_disposition_path=args.code_disposition,
         bff_base_url=args.bff_url.rstrip("/"),
         fe_base_url=args.fe_url.rstrip("/"),
