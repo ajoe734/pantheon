@@ -221,6 +221,7 @@ def validate_coordination_root(
     for path in (
         root / "ai-activity-log.jsonl",
         root / "current-work.md",
+        root / "dashboard-bundle.json",
         root / "docs-site",
         root / "docs-site" / "ai-status.json",
         root / "docs-site" / "current-work.md",
@@ -455,6 +456,7 @@ def _append_coordination_state_mounts(
         "ai-status.json",
         "ai-activity-log.jsonl",
         "current-work.md",
+        "dashboard-bundle.json",
         "docs-site",
         "ai-task-archive",
     }

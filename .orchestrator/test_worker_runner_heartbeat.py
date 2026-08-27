@@ -1553,6 +1553,9 @@ class TestCrossRepoLeasedWorktreeWriteBoundary(unittest.TestCase):
             )
             (central / "ai-activity-log.jsonl").write_text('{"event": "start"}\n')
             (central / "current-work.md").write_text("# Current Work\n")
+            (central / "dashboard-bundle.json").write_text(
+                json.dumps({"status": "current"}) + "\n"
+            )
 
             heartbeat = central / ".orchestrator" / "worker-runtime" / "heartbeats" / "run.json"
             status = central / ".orchestrator" / "worker-runtime" / "status" / "run.json"
@@ -1587,7 +1590,10 @@ class TestCrossRepoLeasedWorktreeWriteBoundary(unittest.TestCase):
                 "    f.write(json.dumps({'event': 'done'}) + '\\n')\n"
                 "# 3. Update current-work.md\n"
                 "(central / 'current-work.md').write_text('# Done\\n')\n"
-                "# 4. The derived projection lock is a governed writable file.\n"
+                "# 4. Update the top-level dashboard projection.\n"
+                "dashboard_path = central / 'dashboard-bundle.json'\n"
+                "dashboard_path.write_text(json.dumps({'status': 'updated'}) + '\\n')\n"
+                "# 5. The derived projection lock is a governed writable file.\n"
                 "lock_path = central / '.orchestrator' / 'status-derived-views.lock'\n"
                 "descriptor = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o600)\n"
                 "fcntl.flock(descriptor, fcntl.LOCK_EX)\n"
@@ -1624,6 +1630,10 @@ class TestCrossRepoLeasedWorktreeWriteBoundary(unittest.TestCase):
             self.assertEqual(updated_status["tasks"][0]["status"], "completed")
             self.assertIn('{"event": "done"}', (central / "ai-activity-log.jsonl").read_text())
             self.assertEqual((central / "current-work.md").read_text(), "# Done\n")
+            self.assertEqual(
+                json.loads((central / "dashboard-bundle.json").read_text()),
+                {"status": "updated"},
+            )
 
     @unittest.skipUnless(_FUNCTIONAL_BWRAP, "Functional bubblewrap with user namespace support is required for sandbox execution tests")
     def test_coordination_source_stays_read_only_with_atomic_status_parent(self):
