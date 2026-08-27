@@ -589,7 +589,7 @@ class InteractionLifecycleStore:
                 row = bucket.get(invocation_id)
                 if row is None:
                     raise RuntimeError("invocation completion has no claim")
-                
+
                 req = self._requests.get(interaction_id)
 
                 if lease_owner is not None:

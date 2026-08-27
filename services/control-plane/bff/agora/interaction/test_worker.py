@@ -879,4 +879,3 @@ def test_stale_worker_after_reclaim_preserves_new_owner_work(bff_client):
     assert len(final_detail["opinions"]) == 1
     assert "Worker B fast execution succeeded." in final_detail["opinions"][0]["rationale"]
     assert final_detail["synthesis"]["status"] == "recommendation"
-

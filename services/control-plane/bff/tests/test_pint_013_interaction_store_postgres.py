@@ -653,4 +653,3 @@ def test_postgres_stale_lease_holder_finalize_fenced_after_reclaim(
     assert final_req is not None
     assert final_req["status"] == "completed"
     assert final_req["synthesis"]["summary"] == "Worker B successfully completed synthesis"
-
