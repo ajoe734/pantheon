@@ -17,6 +17,7 @@ from collections import deque
 from copy import deepcopy
 from concurrent.futures import Executor, ThreadPoolExecutor
 from contextvars import ContextVar, copy_context
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from functools import partial, wraps
@@ -30930,6 +30931,60 @@ def _list_persona_records() -> List[Dict[str, Any]]:
     return items
 
 
+@dataclass(frozen=True)
+class PersonaDirectorySnapshot:
+    tenant_id: str
+    snapshot_at: str
+    records_by_id: Dict[str, Dict[str, Any]]
+    catalog_defaults_by_id: Dict[str, Dict[str, Any]]
+
+
+def _get_persona_directory_snapshot(
+    tenant_id: Optional[str] = None,
+    *,
+    snapshot_at: Optional[str] = None,
+) -> PersonaDirectorySnapshot:
+    snapshot_timestamp = snapshot_at or utc_now()
+    clean_tenant = str(tenant_id or "").strip()
+    records_by_id: Dict[str, Dict[str, Any]] = {}
+    catalog_defaults_by_id: Dict[str, Dict[str, Any]] = {}
+
+    for raw in _list_persona_records():
+        if not isinstance(raw, dict):
+            continue
+        rec_tenant = _persona_record_tenant_id(raw)
+        if clean_tenant and rec_tenant not in {"", clean_tenant}:
+            continue
+        pid = str(raw.get("persona_id") or raw.get("id") or "").strip()
+        if pid:
+            records_by_id[pid] = raw
+
+    try:
+        defaults = read_store.list_personas(include_market_persona_defaults=True) or []
+    except Exception:
+        defaults = []
+
+    for default_record in defaults:
+        if not isinstance(default_record, dict):
+            continue
+        did = str(default_record.get("persona_id") or default_record.get("id") or "").strip()
+        if did and did not in records_by_id:
+            catalog_defaults_by_id[did] = {
+                **default_record,
+                "record_kind": "catalog_default",
+                "detail_available": False,
+                "admission_state": "not_admitted",
+            }
+
+    return PersonaDirectorySnapshot(
+        tenant_id=clean_tenant,
+        snapshot_at=snapshot_timestamp,
+        records_by_id=records_by_id,
+        catalog_defaults_by_id=catalog_defaults_by_id,
+    )
+
+
+
 _PERSONA_STRATEGY_MATCH_ALLOWED_ACTIONS = frozenset({
     "create_research_ticket",
     "promote_seed_candidate",
@@ -47068,11 +47123,8 @@ async def bff_list_personas(
     _require_read_role(identity)
     snapshot_at = utc_now()
     tenant_id = str(_bff_me_tenant_payload(identity, requested_tenant=None)["id"])
-    raw_personas = [
-        raw
-        for raw in _list_persona_records()
-        if _persona_record_tenant_id(raw) in {"", tenant_id}
-    ]
+    directory = _get_persona_directory_snapshot(tenant_id, snapshot_at=snapshot_at)
+    raw_personas = list(directory.records_by_id.values())
     if state:
         raw_personas = [
             raw for raw in raw_personas if _persona_record_projected_state(raw) == state
@@ -47081,16 +47133,24 @@ async def bff_list_personas(
         raw_personas = [
             raw for raw in raw_personas if _persona_record_archetype(raw) == archetype
         ]
-    total = len(raw_personas)
+    canonical_total = len(directory.records_by_id)
+    filtered_total = len(raw_personas)
+    catalog_default_total = len(directory.catalog_defaults_by_id)
     page_raw, next_page_token = _page_slice(raw_personas, page_token, page_size)
     page_items = await asyncio.to_thread(_project_persona_list_records, page_raw)
     return {
         "data": page_items,
         "items": page_items,
-        "page_info": {"next_page_token": next_page_token, "total": total},
+        "page_info": {
+            "next_page_token": next_page_token,
+            "total": filtered_total,
+            "canonical_total": canonical_total,
+            "filtered_total": filtered_total,
+            "catalog_default_total": catalog_default_total,
+        },
         "meta": _read_surface_meta(
             "personas", "persona_list",
-            snapshot_at=snapshot_at, total=total,
+            snapshot_at=snapshot_at, total=filtered_total,
         ),
     }
 
@@ -47823,37 +47883,6 @@ async def bff_create_paper_persona_bundle(
     )
 
 
-def _persona_catalog_fallback_record(persona_id: str) -> Optional[Dict[str, Any]]:
-    """Resolve a Fleet-visible persona when the direct detail store misses it."""
-    clean_id = str(persona_id or "").strip()
-    if not clean_id:
-        return None
-    for candidate in read_store.list_personas(include_market_persona_defaults=True):
-        candidate_id = str(candidate.get("persona_id") or candidate.get("id") or "").strip()
-        if candidate_id == clean_id:
-            return dict(candidate)
-    return None
-
-
-def _persona_catalog_fallback_surface(snapshot_at: str) -> Dict[str, Any]:
-    return {
-        "status": "degraded",
-        "source": "persona_catalog_list_fallback",
-        "note": (
-            "Resolved from the governed Persona catalog used by Persona Fleet because "
-            "the direct detail store did not return this list-visible identity."
-        ),
-        "staleness": {
-            "served_from": "persona_catalog_list_fallback",
-            "last_known_at": snapshot_at,
-        },
-        "observed_time": snapshot_at,
-        "freshness": "persona_catalog_list_fallback",
-        "coverage": 1.0,
-        "missing_bindings": False,
-    }
-
-
 def _persona_provisioning_authoritative_meta(raw: Mapping[str, Any]) -> Dict[str, Any]:
     metadata = raw.get("metadata")
     metadata = metadata if isinstance(metadata, Mapping) else {}
@@ -47918,32 +47947,20 @@ async def bff_get_persona(
     _require_read_role(identity)
     snapshot_at = utc_now()
     caller_tenant = str(_bff_me_tenant_payload(identity, requested_tenant=None)["id"])
-    overlay = _PERSONA_BFF_OVERLAY.get(persona_id)
-    if overlay and str(overlay.get("tenantId") or "") != caller_tenant:
-        overlay = None
-    raw = read_store.get_persona(persona_id)
-    if raw:
-        record_tenant = _persona_record_tenant_id(raw)
-        if record_tenant and record_tenant != caller_tenant:
-            raw = None
-            overlay = None
-    detail_surface = None
-    if not raw and not overlay:
-        raw = _persona_catalog_fallback_record(persona_id)
-        if raw and _persona_record_tenant_id(raw) not in {"", caller_tenant}:
-            raw = None
-        if raw:
-            detail_surface = _persona_catalog_fallback_surface(snapshot_at)
-    if not raw and not overlay:
+    directory = _get_persona_directory_snapshot(caller_tenant, snapshot_at=snapshot_at)
+    raw = directory.records_by_id.get(persona_id)
+    if not raw:
         raise _bff_error(
             404, ErrorCode.RESOURCE_NOT_FOUND,
             "Persona not found",
             f"Persona {persona_id} does not exist",
         )
-    base = raw or {"persona_id": persona_id, "name": (overlay or {}).get("name")}
+    overlay = _PERSONA_BFF_OVERLAY.get(persona_id)
+    if overlay and str(overlay.get("tenantId") or "") not in {"", caller_tenant}:
+        overlay = None
     dto = await asyncio.to_thread(
         lambda: _project_persona_dto(
-            base,
+            raw,
             overlay=overlay,
             routed_strategies=_routed_strategies_for_persona(persona_id),
         )
@@ -47958,7 +47975,6 @@ async def bff_get_persona(
     meta = _read_surface_meta(
         "personas", "persona_detail",
         snapshot_at=snapshot_at,
-        surface=detail_surface,
     )
     if containment:
         meta.setdefault("surfaces", {})["containment"] = _dataset_surface_status(
@@ -48131,12 +48147,9 @@ async def bff_patch_persona(
     return result
 
 
-def _ensure_persona_exists(persona_id: str) -> None:
-    if (
-        read_store.get_persona(persona_id)
-        or persona_id in _PERSONA_BFF_OVERLAY
-        or _persona_catalog_fallback_record(persona_id)
-    ):
+def _ensure_persona_exists(persona_id: str, caller_tenant: Optional[str] = None) -> None:
+    directory = _get_persona_directory_snapshot(caller_tenant)
+    if persona_id in directory.records_by_id:
         return
     raise _bff_error(
         404, ErrorCode.RESOURCE_NOT_FOUND,
@@ -48983,7 +48996,15 @@ def _pm12_runtime_session_resolution(
             runtime_aliases,
             authoritative_sessions=authoritative_sessions,
         )
-        if not sessions and any(
+        if not sessions and not authoritative_sessions:
+            sessions = []
+            for raw_session in read_store.get_sessions_for_persona(persona_id) or []:
+                if not isinstance(raw_session, dict):
+                    continue
+                session = dict(raw_session)
+                session.setdefault("session_authority", "persona_session_store")
+                sessions.append(session)
+        elif not sessions and any(
             isinstance(session, dict)
             and _pm12_session_runtime_aliases(session)
             for session in authoritative_sessions
@@ -49065,16 +49086,16 @@ def _pm12_persona_session_summary(persona_id: str) -> Dict[str, Any]:
         for alias in _pm12_runtime_identity_aliases(runtime)
     }
     if paper_runtime_aliases:
-        sessions = [
-            session
-            for session in sessions
-            if not _pm12_session_runtime_aliases(session).intersection(
-                paper_runtime_aliases
-            )
-        ]
-        sessions.extend(
-            _pm12_authoritative_paper_monitoring_sessions(paper_runtime_aliases)
-        )
+        authoritative = _pm12_authoritative_paper_monitoring_sessions(paper_runtime_aliases)
+        if authoritative:
+            sessions = [
+                session
+                for session in sessions
+                if not _pm12_session_runtime_aliases(session).intersection(
+                    paper_runtime_aliases
+                )
+            ]
+            sessions.extend(authoritative)
     active = [
         session
         for session in sessions
@@ -66937,6 +66958,7 @@ def _project_persona_fleet_list_row(
 def _persona_fleet_slim_list_payload(
     *,
     snapshot_at: str,
+    tenant_id: Optional[str] = None,
     state: Optional[str],
     health: Optional[str],
     deployment_stage: Optional[str],
@@ -66974,7 +66996,10 @@ def _persona_fleet_slim_list_payload(
         )
         if str(item.get("persona_id") or item.get("id") or "").strip()
     }
-    personas = read_store.list_personas(include_market_persona_defaults=True)
+    directory = _get_persona_directory_snapshot(tenant_id, snapshot_at=snapshot_at)
+    personas = list(directory.records_by_id.values())
+    canonical_total = len(directory.records_by_id)
+    catalog_default_total = len(directory.catalog_defaults_by_id)
     league = read_store.list_persona_league(include_market_persona_defaults=True)
     bindings = read_store.list_bindings(include_market_persona_defaults=True)
     runtimes = read_store.list_runtime_bindings(include_market_persona_defaults=True)
@@ -67232,6 +67257,9 @@ def _persona_fleet_slim_list_payload(
     summary = {
         "available_personas": available_personas,
         "total_personas": total_personas,
+        "canonical_total": canonical_total,
+        "filtered_total": total_personas,
+        "catalog_default_total": catalog_default_total,
         "returned_personas": len(page_items),
         "critical_personas": len([item for item in rows if item.get("health") == "critical"]),
         "degraded_personas": len([item for item in rows if item.get("health") == "degraded"]),
@@ -67273,6 +67301,9 @@ def _persona_fleet_slim_list_payload(
     page_info = {
         "next_page_token": next_page_token,
         "total": total_personas,
+        "canonical_total": canonical_total,
+        "filtered_total": total_personas,
+        "catalog_default_total": catalog_default_total,
         "page_size": page_size,
     }
     return {
@@ -67432,7 +67463,10 @@ async def bff_management_persona_fleet(
 ):
     identity = _extract_identity(authorization)
     _require_read_role(identity)
+    tenant_payload = _bff_me_tenant_payload(identity, requested_tenant=None)
+    tenant_id = str(tenant_payload.get("id") or "tenant-default")
     return _persona_fleet_slim_list_payload(
+        tenant_id=tenant_id,
         snapshot_at=utc_now(),
         state=state,
         health=health,
