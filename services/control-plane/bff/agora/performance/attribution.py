@@ -285,6 +285,9 @@ def project_agora_performance_attribution_by_strategy(
         has_telemetry = False
         holding_count = 0
 
+        trade_ids: Set[str] = set()
+        fill_events_count = 0
+
         for proj in projs:
             identifiers = proj.snapshot.get("identifiers") or {}
             for r_id in identifiers.get("runtime_id") or []:
@@ -297,6 +300,15 @@ def project_agora_performance_attribution_by_strategy(
                 if str(p_id).strip():
                     persona_ids.add(str(p_id).strip())
 
+            proj_fills: Set[str] = set()
+            for f_id in (identifiers.get("fill_id") or []):
+                if str(f_id).strip():
+                    proj_fills.add(str(f_id).strip())
+            for b_id in (identifiers.get("broker_trade_id") or []):
+                if str(b_id).strip():
+                    proj_fills.add(str(b_id).strip())
+
+            proj_fill_events = 0
             for event in getattr(proj, "timeline", []) or []:
                 r_id = event.get("runtime_id")
                 if r_id and str(r_id).strip():
@@ -323,19 +335,29 @@ def project_agora_performance_attribution_by_strategy(
                     if "slippage_bps" in ev_metrics:
                         slippages.append(float(ev_metrics.get("slippage_bps") or 0.0))
 
-                fills = list(identifiers.get("fill_id") or []) + list(identifiers.get("broker_trade_id") or [])
-                if fills:
-                    total_trades += len(fills)
-                elif event.get("stage") == "fill_management":
-                    total_trades += 1
+                ev_fill = event.get("fill_id")
+                if ev_fill and str(ev_fill).strip():
+                    proj_fills.add(str(ev_fill).strip())
+                ev_trade = event.get("broker_trade_id")
+                if ev_trade and str(ev_trade).strip():
+                    proj_fills.add(str(ev_trade).strip())
+                if event.get("stage") == "fill_management":
+                    proj_fill_events += 1
 
                 ts = event.get("occurred_at") or event.get("updated_at")
                 if ts and (latest_ts is None or str(ts) > str(latest_ts)):
                     latest_ts = str(ts)
 
+            if proj_fills:
+                trade_ids.update(proj_fills)
+            else:
+                fill_events_count += proj_fill_events
+
             status = proj.snapshot.get("status")
             if status not in {"closed", "concluded", "failed", "cancelled", "expired"}:
                 holding_count += 1
+
+        total_trades = len(trade_ids) + fill_events_count
 
         if has_telemetry:
             all_telemetry_source_ids.update(runtime_ids)

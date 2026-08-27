@@ -916,3 +916,65 @@ def test_performance_attribution_3_strategies_pagination_advances_and_terminates
     assert strat_filter_camel.json()["data"]["items"][0]["dimension_key"] == "strat-02"
     assert strat_filter_camel.json()["data"]["items"] == strat_filter_snake.json()["data"]["items"]
 
+
+def test_performance_attribution_single_fill_across_multiple_stages_reports_one_trade(
+    tmp_path: Path,
+) -> None:
+    store = PerformanceSuggestionStore(str(tmp_path / "performance.db"))
+    # One projection with 4 timeline events spanning decision, submission, fill, reconciliation
+    # and a single fill_id="fill-001"
+    events = _events(user_id="alice", tenant_id="tenant-a")
+    assert len(events) == 4
+    for ev in events:
+        ev["strategy_id"] = "strategy-alpha"
+
+    client = TestClient(_app(store, _JourneyStore(events)))
+    response = client.get(
+        "/bff/agora/trading-room/performance-attribution/by-strategy",
+        headers=_headers(user="alice"),
+    )
+    assert response.status_code == 200, response.text
+    data = response.json()["data"]
+    assert len(data["items"]) == 1
+    # total_trades in row metrics and summary must be 1, not multiplied by 4 timeline events
+    assert data["items"][0]["metrics"]["total_trades"] == 1
+    assert data["summary"]["total_trades"] == 1
+
+
+def test_performance_attribution_deduplicates_trade_identifiers_across_multiple_projections(
+    tmp_path: Path,
+) -> None:
+    store = PerformanceSuggestionStore(str(tmp_path / "performance.db"))
+    events1 = _events(user_id="alice", tenant_id="tenant-a")
+    for ev in events1:
+        ev["strategy_id"] = "strategy-alpha"
+        ev["journey_id"] = "journey-001"
+        ev["fill_id"] = "fill-001"
+
+    events2 = _events(user_id="alice", tenant_id="tenant-a")
+    for i, ev in enumerate(events2):
+        ev["strategy_id"] = "strategy-alpha"
+        ev["journey_id"] = "journey-002"
+        ev["event_id"] = f"event-002-{i}"
+        ev["fill_id"] = "fill-001"  # Same fill_id across projections
+
+    events3 = _events(user_id="alice", tenant_id="tenant-a")
+    for i, ev in enumerate(events3):
+        ev["strategy_id"] = "strategy-alpha"
+        ev["journey_id"] = "journey-003"
+        ev["event_id"] = f"event-003-{i}"
+        ev["fill_id"] = "fill-002"  # Distinct fill_id
+
+    client = TestClient(_app(store, _JourneyStore(events1 + events2 + events3)))
+    response = client.get(
+        "/bff/agora/trading-room/performance-attribution/by-strategy",
+        headers=_headers(user="alice"),
+    )
+    assert response.status_code == 200, response.text
+    data = response.json()["data"]
+    assert len(data["items"]) == 1
+    # 2 distinct fills ("fill-001", "fill-002") across 3 multi-stage projections (12 events) -> total_trades == 2
+    assert data["items"][0]["metrics"]["total_trades"] == 2
+    assert data["summary"]["total_trades"] == 2
+
+
