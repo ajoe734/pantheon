@@ -190,6 +190,14 @@ def project_agora_performance_attribution_by_strategy(
     suggestion_store: Optional[Any] = None,
     utc_now: Callable[[], str],
 ) -> TradingRoomPerformanceAttributionEnvelope:
+    if period not in {"latest", "7d", "30d", "all"}:
+        raise ValueError(
+            f"Invalid period '{period}', expected one of ['latest', '7d', '30d', 'all']"
+        )
+    if page_size < 1 or page_size > 200:
+        raise ValueError(
+            f"Invalid page_size '{page_size}', must be between 1 and 200"
+        )
     snapshot_at = utc_now()
     now = _parse_timestamp(snapshot_at) or datetime.now(timezone.utc)
 

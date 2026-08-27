@@ -178,9 +178,9 @@ def create_performance_router(
         response_model=TradingRoomPerformanceAttributionEnvelope,
     )
     def get_agora_performance_attribution_by_strategy(
-        period: str = Query(default="latest"),
+        period: Literal["latest", "7d", "30d", "all"] = Query(default="latest"),
         page_size: int = Query(default=50, ge=1, le=200),
-        pageSize: Optional[int] = Query(default=None),
+        pageSize: Optional[int] = Query(default=None, ge=1, le=200),
         page_token: Optional[str] = Query(default=None),
         pageToken: Optional[str] = Query(default=None),
         strategy_id: Optional[str] = Query(default=None),

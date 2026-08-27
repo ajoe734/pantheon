@@ -33,8 +33,8 @@
     "no_order_route_proof_guaranteed": true
   },
   "validation": {
-    "performance_test_suite_passing": 18,
-    "agora_full_test_suite_passing": 197,
+    "performance_test_suite_passing": 21,
+    "agora_full_test_suite_passing": 200,
     "backend_routes_manifest_check_passing": true,
     "generate_backend_contract_bundle_check_passing": true
   }

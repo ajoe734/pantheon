@@ -772,3 +772,147 @@ def test_openapi_contains_attribution_contract(tmp_path: Path) -> None:
     assert attr_path in schema["paths"]
     assert schema["paths"][attr_path]["get"]["responses"]["200"]["content"]["application/json"]["schema"]["$ref"].endswith("/TradingRoomPerformanceAttributionEnvelope")
 
+
+def test_performance_attribution_rejects_unsupported_period_and_accepts_valid(tmp_path: Path) -> None:
+    store = PerformanceSuggestionStore(str(tmp_path / "performance.db"))
+    client = TestClient(_app(store, _JourneyStore()))
+
+    # Unsupported period must fail closed with 422 Unprocessable Entity
+    unsupported_resp = client.get(
+        "/bff/agora/trading-room/performance-attribution/by-strategy?period=unsupported",
+        headers=_headers(),
+    )
+    assert unsupported_resp.status_code == 422, unsupported_resp.text
+
+    invalid_resp = client.get(
+        "/bff/agora/trading-room/performance-attribution/by-strategy?period=1d",
+        headers=_headers(),
+    )
+    assert invalid_resp.status_code == 422, invalid_resp.text
+
+    # Valid periods defined in OpenAPI v1.13 enum must all be accepted (200)
+    for valid_period in ("latest", "7d", "30d", "all"):
+        resp = client.get(
+            f"/bff/agora/trading-room/performance-attribution/by-strategy?period={valid_period}",
+            headers=_headers(),
+        )
+        assert resp.status_code == 200, f"period={valid_period} failed: {resp.text}"
+        assert resp.json()["data"]["period"] == valid_period
+
+
+def test_performance_attribution_validates_page_size_and_aliases_identically(tmp_path: Path) -> None:
+    store = PerformanceSuggestionStore(str(tmp_path / "performance.db"))
+    workshop = _MockWorkshopStore(
+        sessions=[
+            {"workshop_id": f"ws-{i}", "strategy_id": f"strat-{i:02d}", "title": f"Strategy {i}", "user_id": "alice", "tenant_id": "tenant-a"}
+            for i in range(1, 4)
+        ]
+    )
+    client = TestClient(_app(store, _JourneyStore(), workshop_store=workshop))
+
+    # pageSize=0 and page_size=0 must both fail with 422
+    assert client.get(
+        "/bff/agora/trading-room/performance-attribution/by-strategy?pageSize=0",
+        headers=_headers(),
+    ).status_code == 422
+
+    assert client.get(
+        "/bff/agora/trading-room/performance-attribution/by-strategy?page_size=0",
+        headers=_headers(),
+    ).status_code == 422
+
+    # Negative and out-of-range pageSize / page_size must fail with 422
+    assert client.get(
+        "/bff/agora/trading-room/performance-attribution/by-strategy?pageSize=-1",
+        headers=_headers(),
+    ).status_code == 422
+
+    assert client.get(
+        "/bff/agora/trading-room/performance-attribution/by-strategy?page_size=-1",
+        headers=_headers(),
+    ).status_code == 422
+
+    assert client.get(
+        "/bff/agora/trading-room/performance-attribution/by-strategy?pageSize=201",
+        headers=_headers(),
+    ).status_code == 422
+
+    assert client.get(
+        "/bff/agora/trading-room/performance-attribution/by-strategy?page_size=201",
+        headers=_headers(),
+    ).status_code == 422
+
+    # Valid values accept and behave identically
+    resp_camel = client.get(
+        "/bff/agora/trading-room/performance-attribution/by-strategy?pageSize=2",
+        headers=_headers(),
+    )
+    resp_snake = client.get(
+        "/bff/agora/trading-room/performance-attribution/by-strategy?page_size=2",
+        headers=_headers(),
+    )
+    assert resp_camel.status_code == 200
+    assert resp_snake.status_code == 200
+    assert resp_camel.json()["data"]["items"] == resp_snake.json()["data"]["items"]
+    assert resp_camel.json()["page_info"]["page_size"] == 2
+    assert resp_snake.json()["page_info"]["page_size"] == 2
+
+
+def test_performance_attribution_3_strategies_pagination_advances_and_terminates(tmp_path: Path) -> None:
+    store = PerformanceSuggestionStore(str(tmp_path / "performance.db"))
+    workshop = _MockWorkshopStore(
+        sessions=[
+            {"workshop_id": f"ws-{i}", "strategy_id": f"strat-{i:02d}", "title": f"Strategy {i}", "user_id": "alice", "tenant_id": "tenant-a"}
+            for i in range(1, 4)
+        ]
+    )
+    client = TestClient(_app(store, _JourneyStore(), workshop_store=workshop))
+
+    # Page 1 with pageSize=2
+    p1 = client.get(
+        "/bff/agora/trading-room/performance-attribution/by-strategy?pageSize=2",
+        headers=_headers(),
+    )
+    assert p1.status_code == 200, p1.text
+    d1 = p1.json()["data"]
+    assert len(d1["items"]) == 2
+    assert p1.json()["page_info"]["total"] == 3
+    assert p1.json()["page_info"]["next_page_token"] == "offset-2"
+
+    # Page 2 with pageToken=offset-2 (camelCase)
+    p2 = client.get(
+        "/bff/agora/trading-room/performance-attribution/by-strategy?pageSize=2&pageToken=offset-2",
+        headers=_headers(),
+    )
+    assert p2.status_code == 200, p2.text
+    d2 = p2.json()["data"]
+    assert len(d2["items"]) == 1
+    assert p2.json()["page_info"]["total"] == 3
+    assert p2.json()["page_info"]["next_page_token"] is None
+
+    # Page 2 with page_token=offset-2 (snake_case)
+    p2_snake = client.get(
+        "/bff/agora/trading-room/performance-attribution/by-strategy?page_size=2&page_token=offset-2",
+        headers=_headers(),
+    )
+    assert p2_snake.status_code == 200, p2_snake.text
+    d2_snake = p2_snake.json()["data"]
+    assert len(d2_snake["items"]) == 1
+    assert d2_snake["items"] == d2["items"]
+    assert p2_snake.json()["page_info"]["next_page_token"] is None
+
+    # Verify strategyId and strategy_id aliases both work
+    strat_filter_camel = client.get(
+        "/bff/agora/trading-room/performance-attribution/by-strategy?strategyId=strat-02",
+        headers=_headers(),
+    )
+    strat_filter_snake = client.get(
+        "/bff/agora/trading-room/performance-attribution/by-strategy?strategy_id=strat-02",
+        headers=_headers(),
+    )
+    assert strat_filter_camel.status_code == 200
+    assert strat_filter_snake.status_code == 200
+    assert len(strat_filter_camel.json()["data"]["items"]) == 1
+    assert strat_filter_camel.json()["data"]["items"][0]["dimension_key"] == "strat-02"
+    assert strat_filter_camel.json()["data"]["items"] == strat_filter_snake.json()["data"]["items"]
+
