@@ -584,3 +584,299 @@ def test_degraded_status_on_partial_failure(bff_client):
     assert len(detail["opinions"]) == 1
     assert detail["synthesis"]["status"] == "degraded"
     assert worker.metrics["degraded_count"] == 1
+
+
+def test_stale_lease_holder_finish_invocation_fenced_after_reclaim():
+    store = InteractionLifecycleStore()
+    interaction_id = "ix-stale-invoke-test-1"
+    req_body = {
+        "interaction_id": interaction_id,
+        "tenant_id": "pantheon-dev",
+        "owner_user_id": "interaction-user",
+        "workshop_id": "ws-1",
+        "human_request": {"operator_id": "interaction-user", "request_text": "Stale invoke test"},
+        "created_at": "2026-08-27T00:00:00Z",
+        "updated_at": "2026-08-27T00:00:00Z",
+        "status": "queued",
+    }
+    store.create_request(
+        req_body,
+        idempotency_scope="pantheon-dev:interaction-user",
+        idempotency_key="key-stale-invoke-1",
+        fingerprint="fp-stale-invoke-1",
+        trace_id="tr-stale-invoke-1",
+    )
+    invocation = {
+        "invocation_id": "inv-stale-invoke-1",
+        "interaction_id": interaction_id,
+        "participant": {"persona_id": "risk-analyst", "display_name": "Risk Analyst"},
+        "provider_kind": "openclaw",
+        "status": "running",
+    }
+
+    # Worker A claims invocation with 1s lease
+    first_row, first_claimed = store.claim_invocation(
+        interaction_id, invocation, lease_owner="worker-A", lease_duration_seconds=1
+    )
+    assert first_claimed is True
+    assert first_row["lease_owner"] == "worker-A"
+    assert first_row["attempt"] == 1
+
+    # Simulate lease expiry for Worker A
+    with store._lock:
+        store._invocations[interaction_id]["inv-stale-invoke-1"]["lease_until"] = "2020-01-01T00:00:00Z"
+
+    # Worker B reclaims invocation
+    second_row, second_claimed = store.claim_invocation(
+        interaction_id, invocation, lease_owner="worker-B", lease_duration_seconds=300
+    )
+    assert second_claimed is True
+    assert second_row["lease_owner"] == "worker-B"
+    assert second_row["attempt"] == 2
+
+    # Stale Worker A attempts to finish invocation with a failure
+    failed_A = {
+        **invocation,
+        "status": "failed",
+        "completed_at": "2026-08-27T00:00:05Z",
+        "error": {"code": "stale_error", "retryable": False},
+    }
+    applied_A = store.finish_invocation(
+        interaction_id,
+        invocation=failed_A,
+        opinion=None,
+        error=failed_A["error"],
+        outbox=[],
+        lease_owner="worker-A",
+    )
+    assert applied_A is False
+
+    # Invocation in store must still be running under Worker B
+    with store._lock:
+        row_mid = store._invocations[interaction_id]["inv-stale-invoke-1"]
+        assert row_mid["status"] == "running"
+        assert row_mid["lease_owner"] == "worker-B"
+        assert row_mid["attempt"] == 2
+
+    # Worker B finishes invocation successfully
+    succeeded_B = {
+        **invocation,
+        "status": "succeeded",
+        "completed_at": "2026-08-27T00:00:06Z",
+    }
+    opinion_B = {
+        "opinion_id": "opn-B-1",
+        "conclusion": "support",
+        "rationale": "Worker B analysis succeeded",
+        "confidence": 0.9,
+    }
+    applied_B = store.finish_invocation(
+        interaction_id,
+        invocation=succeeded_B,
+        opinion=opinion_B,
+        error=None,
+        outbox=[],
+        lease_owner="worker-B",
+    )
+    assert applied_B is True
+
+    # State now reflects Worker B's work
+    detail = store.get(interaction_id, "pantheon-dev", "interaction-user")
+    assert detail is not None
+    assert detail["provider_invocations"][0]["status"] == "succeeded"
+    assert detail["opinions"][0]["opinion_id"] == "opn-B-1"
+
+
+def test_stale_lease_holder_finalize_fenced_after_reclaim():
+    store = InteractionLifecycleStore()
+    interaction_id = "ix-stale-finalize-test-1"
+    req_body = {
+        "interaction_id": interaction_id,
+        "tenant_id": "pantheon-dev",
+        "owner_user_id": "interaction-user",
+        "workshop_id": "ws-1",
+        "human_request": {"operator_id": "interaction-user", "request_text": "Stale finalize test"},
+        "created_at": "2026-08-27T00:00:00Z",
+        "updated_at": "2026-08-27T00:00:00Z",
+        "status": "queued",
+    }
+    store.create_request(
+        req_body,
+        idempotency_scope="pantheon-dev:interaction-user",
+        idempotency_key="key-stale-finalize-1",
+        fingerprint="fp-stale-finalize-1",
+        trace_id="tr-stale-finalize-1",
+    )
+
+    # Worker A claims interaction
+    claimed_A = store.claim_interaction(
+        lease_owner="worker-A",
+        lease_duration_seconds=1,
+        interaction_id=interaction_id,
+    )
+    assert claimed_A is not None
+    assert claimed_A["lease_owner"] == "worker-A"
+    assert claimed_A["status"] == "running"
+
+    # Expire Worker A lease
+    with store._lock:
+        store._requests[interaction_id]["lease_until"] = "2020-01-01T00:00:00Z"
+
+    # Worker B reclaims interaction
+    claimed_B = store.claim_interaction(
+        lease_owner="worker-B",
+        lease_duration_seconds=300,
+        interaction_id=interaction_id,
+    )
+    assert claimed_B is not None
+    assert claimed_B["lease_owner"] == "worker-B"
+    assert claimed_B["status"] == "running"
+
+    # Stale Worker A attempts to finalize as failed
+    applied_A = store.finalize(
+        interaction_id,
+        status="failed",
+        synthesis=None,
+        missing_participant_ids=["risk-analyst"],
+        degraded_participant_ids=[],
+        outbox=[],
+        lease_owner="worker-A",
+    )
+    assert applied_A is False
+
+    # Verify interaction is still running under Worker B
+    detail_mid = store.get(interaction_id, "pantheon-dev", "interaction-user")
+    assert detail_mid is not None
+    assert detail_mid["status"] == "running"
+    assert detail_mid["lease_owner"] == "worker-B"
+
+    # Worker B finalizes as completed
+    synthesis_B = {
+        "synthesis_id": "syn-B-1",
+        "status": "recommendation",
+        "summary": "Worker B completed synthesis",
+        "opinion_ids": ["opn-B-1"],
+    }
+    applied_B = store.finalize(
+        interaction_id,
+        status="completed",
+        synthesis=synthesis_B,
+        missing_participant_ids=[],
+        degraded_participant_ids=[],
+        outbox=[],
+        lease_owner="worker-B",
+    )
+    assert applied_B is True
+
+    # Verify record is completed with Worker B synthesis and not failed
+    final_detail = store.get(interaction_id, "pantheon-dev", "interaction-user")
+    assert final_detail is not None
+    assert final_detail["status"] == "completed"
+    assert final_detail["synthesis"]["summary"] == "Worker B completed synthesis"
+
+
+def test_stale_worker_after_reclaim_preserves_new_owner_work(bff_client):
+    """Full worker-level test reproducing A claiming a 1s lease, B reclaiming, and stale A finalizing."""
+    barrier_A_started = threading.Event()
+    barrier_B_done = threading.Event()
+
+    calls_A = []
+    calls_B = []
+
+    def slow_invoke_A(*args, **kwargs):
+        calls_A.append(kwargs)
+        barrier_A_started.set()
+        # Wait until Worker B has claimed and completed
+        barrier_B_done.wait(timeout=5.0)
+        # Return a failed or erroneous response from stale Worker A
+        raise OpenClawOpsClientError("stale worker execution failed", status_code=500, error_code="STALE_WORKER_ERROR")
+
+    def fast_invoke_B(*args, **kwargs):
+        calls_B.append(kwargs)
+        import json
+        opinion_data = {
+            "conclusion": "support",
+            "rationale": "Worker B fast execution succeeded.",
+            "confidence": 0.95,
+            "uncertainty": [],
+            "risks": [],
+            "invalidation_conditions": [],
+            "evidence_refs": [],
+            "recommended_measures": [],
+        }
+        return {
+            "status": "completed",
+            "output": {
+                "request_id": f"resp-worker-B-{uuid.uuid4().hex[:8]}",
+                "agent_id": str(kwargs.get("agent_id") or "mock-agent"),
+                "json_events": [{"item": {"text": json.dumps(opinion_data)}}],
+            },
+        }
+
+    client_factory_A, _ = _make_mock_client(invoke_fn=slow_invoke_A)
+    client_factory_B, _ = _make_mock_client(invoke_fn=fast_invoke_B)
+
+    submit_resp, _ = _submit_interaction(bff_client, personas=("risk-analyst",))
+    interaction_id = submit_resp.json()["data"]["interaction_id"]
+
+    worker_A = AgoraInteractionWorker(
+        lifecycle_store=bff_main.interaction_lifecycle,
+        workshop_store=bff_main.workshop_store,
+        read_store=bff_main.read_store,
+        client_factory=client_factory_A,
+        worker_id="worker-A-stale",
+        lease_duration_seconds=1,
+    )
+    worker_B = AgoraInteractionWorker(
+        lifecycle_store=bff_main.interaction_lifecycle,
+        workshop_store=bff_main.workshop_store,
+        read_store=bff_main.read_store,
+        client_factory=client_factory_B,
+        worker_id="worker-B-reclaim",
+        lease_duration_seconds=300,
+    )
+
+    thread_A_error = []
+    def run_worker_A():
+        try:
+            worker_A.run_once(limit=1)
+        except Exception as e:
+            thread_A_error.append(e)
+
+    thread_A = threading.Thread(target=run_worker_A, daemon=True)
+    thread_A.start()
+
+    # Wait until Worker A is inside its provider call
+    assert barrier_A_started.wait(timeout=3.0)
+
+    # Force Worker A lease to expire in the store
+    store = bff_main.interaction_lifecycle
+    with store._lock:
+        store._requests[interaction_id]["lease_until"] = "2020-01-01T00:00:00Z"
+        for inv_row in store._invocations.get(interaction_id, {}).values():
+            inv_row["lease_until"] = "2020-01-01T00:00:00Z"
+
+    # Worker B now claims and processes the interaction
+    processed_B = worker_B.run_once(limit=1)
+    assert processed_B == 1
+    assert len(calls_B) == 1
+
+    # Verify that Worker B set status to completed
+    detail_B = store.get(interaction_id, "pantheon-dev", "interaction-user")
+    assert detail_B is not None
+    assert detail_B["status"] == "completed"
+    assert len(detail_B["opinions"]) == 1
+    assert "Worker B fast execution succeeded." in detail_B["opinions"][0]["rationale"]
+
+    # Release Worker A to resume and try to finalize
+    barrier_B_done.set()
+    thread_A.join(timeout=3.0)
+
+    # Verify that record remains completed and was NOT overwritten to failed by stale Worker A
+    final_detail = store.get(interaction_id, "pantheon-dev", "interaction-user")
+    assert final_detail is not None
+    assert final_detail["status"] == "completed"
+    assert len(final_detail["opinions"]) == 1
+    assert "Worker B fast execution succeeded." in final_detail["opinions"][0]["rationale"]
+    assert final_detail["synthesis"]["status"] == "recommendation"
+

@@ -12,13 +12,15 @@
     "restart preserves terminal readback unconditionally against durable backend",
     "invocation claims strictly reject active unexpired leases",
     "interaction lease is renewed and held during provider execution loop",
-    "concurrent pre-expiry workers execute provider exactly once"
+    "concurrent pre-expiry workers execute provider exactly once",
+    "stale lease holders are fenced out on invocation completion and interaction finalization",
+    "reclaim after lease expiry preserves new owner results against late stale writes"
   ],
   "verification": {
-    "test_worker": "pytest -v services/control-plane/bff/agora/interaction/test_worker.py (8 passed)",
+    "test_worker": "pytest -v services/control-plane/bff/agora/interaction/test_worker.py (11 passed)",
     "persona_interactions": "pytest -v services/control-plane/bff/tests/test_agora_persona_interactions.py (13 passed)",
     "durable_interactions": "pytest -v services/control-plane/bff/tests/test_pint_013_durable_interactions.py (37 passed)",
-    "total_suite": "58 passed across primary interaction worker suites"
+    "total_suite": "61 passed across primary interaction worker suites"
   },
   "deliverables": [
     "services/control-plane/bff/agora/interaction/store.py",
@@ -26,6 +28,7 @@
     "services/control-plane/bff/agora/interaction/router.py",
     "services/control-plane/bff/agora/interaction/worker.py",
     "services/control-plane/bff/agora/interaction/test_worker.py",
+    "services/control-plane/bff/tests/test_pint_013_interaction_store_postgres.py",
     "scripts/run_agora_interaction_worker.py",
     "docker-compose.yml"
   ]

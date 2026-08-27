@@ -577,42 +577,91 @@ class InteractionLifecycleStore:
         opinion: Optional[Dict[str, Any]],
         error: Optional[Dict[str, Any]],
         outbox: List[Dict[str, Any]],
-    ) -> None:
+        lease_owner: Optional[str] = None,
+    ) -> bool:
         invocation_id = str(invocation["invocation_id"])
         status = str(invocation["status"])
         if status not in {"succeeded", "failed"}:
             raise ValueError("terminal invocation status is required")
         if self.backend == "memory":
             with self._lock:
-                row = self._invocations[interaction_id][invocation_id]
-                if row["status"] in {"succeeded", "failed"}:
-                    if row["invocation"] != invocation or row["opinion"] != opinion:
-                        raise InteractionConflict("terminal invocation cannot be overwritten")
-                    return
-                row.update({"status": status, "invocation": copy.deepcopy(invocation),
-                            "opinion": copy.deepcopy(opinion), "error": copy.deepcopy(error), "lease_owner": None, "lease_until": None})
+                bucket = self._invocations.get(interaction_id, {})
+                row = bucket.get(invocation_id)
+                if row is None:
+                    raise RuntimeError("invocation completion has no claim")
+                
+                req = self._requests.get(interaction_id)
+
+                if lease_owner is not None:
+                    if row.get("lease_owner") is not None and row.get("lease_owner") != lease_owner:
+                        return False
+                    if req and req.get("lease_owner") is not None and req.get("lease_owner") != lease_owner:
+                        return False
+                    if row["status"] in {"succeeded", "failed"}:
+                        if row["invocation"] != invocation or row["opinion"] != opinion:
+                            return False
+                        return True
+                else:
+                    if row["status"] in {"succeeded", "failed"}:
+                        if row["invocation"] != invocation or row["opinion"] != opinion:
+                            raise InteractionConflict("terminal invocation cannot be overwritten")
+                        return True
+
+                row.update({
+                    "status": status,
+                    "invocation": copy.deepcopy(invocation),
+                    "opinion": copy.deepcopy(opinion),
+                    "error": copy.deepcopy(error),
+                    "lease_owner": None,
+                    "lease_until": None,
+                })
                 for item in outbox:
                     self._enqueue_locked(interaction_id, item)
                 self._audit_locked(interaction_id, f"audit:{invocation_id}:{status}", {
-                    "audit_id": f"audit:{invocation_id}:{status}", "action": f"provider_invocation_{status}",
-                    "provider_invocation_id": invocation_id, "persona_id": invocation["participant"]["persona_id"],
-                    "occurred_at": invocation.get("completed_at") or _now(), "error": error,
+                    "audit_id": f"audit:{invocation_id}:{status}",
+                    "action": f"provider_invocation_{status}",
+                    "provider_invocation_id": invocation_id,
+                    "persona_id": invocation["participant"]["persona_id"],
+                    "occurred_at": invocation.get("completed_at") or _now(),
+                    "error": error,
                 })
                 self._persist_locked()
-            return
+                return True
+
         with self._connect() as conn:
             current = conn.execute(
-                f"SELECT status,invocation_json,opinion_json FROM {self._invocation_table} "
+                f"SELECT status,invocation_json,opinion_json,lease_owner FROM {self._invocation_table} "
                 "WHERE interaction_id=%s AND invocation_id=%s FOR UPDATE", (interaction_id, invocation_id),
             ).fetchone()
             if current is None:
                 raise RuntimeError("invocation completion has no claim")
-            if current[0] in {"succeeded", "failed"}:
-                if _decode(current[1]) != invocation or (
-                    _decode(current[2]) if current[2] is not None else None
-                ) != opinion:
-                    raise InteractionConflict("terminal invocation cannot be overwritten")
-                return
+
+            current_status = current[0]
+            current_lease_owner = current[3]
+
+            if lease_owner is not None:
+                if current_lease_owner is not None and current_lease_owner != lease_owner:
+                    return False
+                req_row = conn.execute(
+                    f"SELECT lease_owner FROM {self._request_table} WHERE interaction_id=%s FOR UPDATE",
+                    (interaction_id,),
+                ).fetchone()
+                if req_row and req_row[0] is not None and req_row[0] != lease_owner:
+                    return False
+                if current_status in {"succeeded", "failed"}:
+                    if _decode(current[1]) != invocation or (
+                        _decode(current[2]) if current[2] is not None else None
+                    ) != opinion:
+                        return False
+                    return True
+            else:
+                if current_status in {"succeeded", "failed"}:
+                    if _decode(current[1]) != invocation or (
+                        _decode(current[2]) if current[2] is not None else None
+                    ) != opinion:
+                        raise InteractionConflict("terminal invocation cannot be overwritten")
+                    return True
+
             conn.execute(
                 f"UPDATE {self._invocation_table} SET status=%s,lease_owner=NULL,lease_until=NULL,"
                 "invocation_json=%s::jsonb,opinion_json=%s::jsonb,error_json=%s::jsonb,updated_at=now() "
@@ -627,6 +676,7 @@ class InteractionLifecycleStore:
                 "provider_invocation_id": invocation_id, "persona_id": invocation["participant"]["persona_id"],
                 "occurred_at": invocation.get("completed_at") or _now(), "error": error,
             })
+            return True
 
     def finalize(
         self,
@@ -637,33 +687,62 @@ class InteractionLifecycleStore:
         missing_participant_ids: List[str],
         degraded_participant_ids: List[str],
         outbox: List[Dict[str, Any]],
-    ) -> None:
+        lease_owner: Optional[str] = None,
+    ) -> bool:
         if status not in {"completed", "degraded", "failed"}:
             raise ValueError("invalid terminal interaction status")
         if self.backend == "memory":
             with self._lock:
+                request = self._requests.get(interaction_id)
+                if request is None:
+                    raise KeyError(interaction_id)
+
+                if lease_owner is not None:
+                    if request.get("lease_owner") is not None and request.get("lease_owner") != lease_owner:
+                        return False
+                    if request.get("status") in {"completed", "degraded", "failed"}:
+                        return False
+
                 self._syntheses[interaction_id] = copy.deepcopy(synthesis)
-                request = self._requests[interaction_id]
-                request.update({"status": status, "missing_participant_ids": list(missing_participant_ids),
-                                "degraded_participant_ids": list(degraded_participant_ids), "updated_at": _now()})
+                request.update({
+                    "status": status,
+                    "lease_owner": None,
+                    "lease_until": None,
+                    "missing_participant_ids": list(missing_participant_ids),
+                    "degraded_participant_ids": list(degraded_participant_ids),
+                    "updated_at": _now(),
+                })
                 for item in outbox:
                     self._enqueue_locked(interaction_id, item)
                 attempt = int(request.get("retry_count", 0))
                 audit_id = f"audit:{interaction_id}:attempt:{attempt}:final:{status}"
                 self._audit_locked(interaction_id, audit_id, {
-                    "audit_id": audit_id, "action": "interaction_finalized", "attempt": attempt,
-                    "status": status, "occurred_at": request["updated_at"],
+                    "audit_id": audit_id,
+                    "action": "interaction_finalized",
+                    "attempt": attempt,
+                    "status": status,
+                    "occurred_at": request["updated_at"],
                 })
                 self._persist_locked()
-            return
+                return True
+
         with self._connect() as conn:
             request_row = conn.execute(
-                f"SELECT retry_count FROM {self._request_table} WHERE interaction_id=%s FOR UPDATE",
+                f"SELECT retry_count, lease_owner, status FROM {self._request_table} WHERE interaction_id=%s FOR UPDATE",
                 (interaction_id,),
             ).fetchone()
             if request_row is None:
                 raise KeyError(interaction_id)
             attempt = int(request_row[0])
+            current_lease_owner = request_row[1]
+            current_status = request_row[2]
+
+            if lease_owner is not None:
+                if current_lease_owner is not None and current_lease_owner != lease_owner:
+                    return False
+                if current_status in {"completed", "degraded", "failed"}:
+                    return False
+
             conn.execute(
                 f"INSERT INTO {self._synthesis_table} "
                 "(interaction_id,synthesis_json,missing_participant_ids,degraded_participant_ids) "
@@ -674,16 +753,20 @@ class InteractionLifecycleStore:
                  json.dumps(degraded_participant_ids)),
             )
             conn.execute(
-                f"UPDATE {self._request_table} SET status=%s,updated_at=now() WHERE interaction_id=%s",
+                f"UPDATE {self._request_table} SET status=%s,lease_owner=NULL,lease_until=NULL,updated_at=now() WHERE interaction_id=%s",
                 (status, interaction_id),
             )
             for item in outbox:
                 self._enqueue_pg(conn, interaction_id, item)
             audit_id = f"audit:{interaction_id}:attempt:{attempt}:final:{status}"
             self._insert_audit_pg(conn, interaction_id, audit_id, {
-                "audit_id": audit_id, "action": "interaction_finalized", "attempt": attempt,
-                "status": status, "occurred_at": _now(),
+                "audit_id": audit_id,
+                "action": "interaction_finalized",
+                "attempt": attempt,
+                "status": status,
+                "occurred_at": _now(),
             })
+            return True
 
     def prepare_retry(
         self,

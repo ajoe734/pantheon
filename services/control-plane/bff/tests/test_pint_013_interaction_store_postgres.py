@@ -493,3 +493,153 @@ def test_concurrent_retry_with_same_key_is_one_durable_command(
     assert loaded["audit_refs"].count(
         "audit:retry:interaction-retry-race:retry-race-key"
     ) == 1
+
+
+def test_postgres_stale_lease_holder_finish_invocation_fenced_after_reclaim(
+    postgres_stores: tuple[InteractionLifecycleStore, InteractionLifecycleStore],
+) -> None:
+    first, second = postgres_stores
+    interaction_id = "interaction-pg-stale-invoke"
+    _create(first, interaction_id)
+    invocation = _invocation(interaction_id)
+
+    # Worker A claims invocation
+    first_claim, claimed = first.claim_invocation(
+        interaction_id, invocation, lease_owner="worker-A", lease_duration_seconds=1
+    )
+    assert claimed is True
+    assert first_claim["lease_owner"] == "worker-A"
+    assert first_claim["attempt"] == 1
+
+    # Expire Worker A lease
+    with first._connect() as conn:
+        conn.execute(
+            f"UPDATE {first._invocation_table} "
+            "SET lease_until=now()-interval '1 second' WHERE invocation_id=%s",
+            (invocation["invocation_id"],),
+        )
+
+    # Worker B reclaims invocation
+    second_claim, reclaimed = second.claim_invocation(
+        interaction_id, invocation, lease_owner="worker-B", lease_duration_seconds=300
+    )
+    assert reclaimed is True
+    assert second_claim["lease_owner"] == "worker-B"
+    assert second_claim["attempt"] == 2
+
+    # Stale Worker A attempts to finish invocation with failure
+    failed_A = {
+        **invocation,
+        "status": "failed",
+        "completed_at": _now(),
+        "error": {"code": "stale_error", "retryable": False},
+    }
+    applied_A = first.finish_invocation(
+        interaction_id,
+        invocation=failed_A,
+        opinion=None,
+        error=failed_A["error"],
+        outbox=[],
+        lease_owner="worker-A",
+    )
+    assert applied_A is False
+
+    # Verify Worker B's active lease is preserved
+    inv_row = second.get(interaction_id, "tenant-pint013", "operator-pint013")
+    assert inv_row is not None
+    assert inv_row["provider_invocations"][0]["status"] == "running"
+
+    # Worker B finishes invocation with success
+    succeeded_B = {
+        **invocation,
+        "status": "succeeded",
+        "completed_at": _now(),
+    }
+    opinion_B = {"opinion_id": "opinion-B", "persona_id": "risk-critic"}
+    applied_B = second.finish_invocation(
+        interaction_id,
+        invocation=succeeded_B,
+        opinion=opinion_B,
+        error=None,
+        outbox=[],
+        lease_owner="worker-B",
+    )
+    assert applied_B is True
+
+    # Verify final state matches Worker B's work
+    loaded = first.get(interaction_id, "tenant-pint013", "operator-pint013")
+    assert loaded is not None
+    assert loaded["provider_invocations"][0]["status"] == "succeeded"
+    assert loaded["opinions"][0]["opinion_id"] == "opinion-B"
+
+
+def test_postgres_stale_lease_holder_finalize_fenced_after_reclaim(
+    postgres_stores: tuple[InteractionLifecycleStore, InteractionLifecycleStore],
+) -> None:
+    first, second = postgres_stores
+    interaction_id = "interaction-pg-stale-finalize"
+    _create(first, interaction_id)
+
+    # Worker A claims interaction
+    claimed_A = first.claim_interaction(
+        lease_owner="worker-A",
+        lease_duration_seconds=1,
+        interaction_id=interaction_id,
+    )
+    assert claimed_A is not None
+    assert claimed_A["lease_owner"] == "worker-A"
+
+    # Expire Worker A lease
+    with first._connect() as conn:
+        conn.execute(
+            f"UPDATE {first._request_table} "
+            "SET lease_until=now()-interval '1 second' WHERE interaction_id=%s",
+            (interaction_id,),
+        )
+
+    # Worker B reclaims interaction
+    claimed_B = second.claim_interaction(
+        lease_owner="worker-B",
+        lease_duration_seconds=300,
+        interaction_id=interaction_id,
+    )
+    assert claimed_B is not None
+    assert claimed_B["lease_owner"] == "worker-B"
+
+    # Stale Worker A attempts to finalize as failed
+    applied_A = first.finalize(
+        interaction_id,
+        status="failed",
+        synthesis=None,
+        missing_participant_ids=["risk-critic"],
+        degraded_participant_ids=[],
+        outbox=[],
+        lease_owner="worker-A",
+    )
+    assert applied_A is False
+
+    # Verify interaction record is still running under Worker B
+    req_mid = second.get(interaction_id, "tenant-pint013", "operator-pint013")
+    assert req_mid is not None
+    assert req_mid["status"] == "running"
+    assert req_mid["lease_owner"] == "worker-B"
+
+    # Worker B finalizes as completed
+    synthesis_B = {"summary": "Worker B successfully completed synthesis"}
+    applied_B = second.finalize(
+        interaction_id,
+        status="completed",
+        synthesis=synthesis_B,
+        missing_participant_ids=[],
+        degraded_participant_ids=[],
+        outbox=[],
+        lease_owner="worker-B",
+    )
+    assert applied_B is True
+
+    # Verify final record is completed with Worker B's synthesis
+    final_req = first.get(interaction_id, "tenant-pint013", "operator-pint013")
+    assert final_req is not None
+    assert final_req["status"] == "completed"
+    assert final_req["synthesis"]["summary"] == "Worker B successfully completed synthesis"
+

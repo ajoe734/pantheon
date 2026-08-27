@@ -476,16 +476,18 @@ def run_selected_persona_interaction(
                 "trace_id": trace_id,
             }
             if lifecycle_store is not None:
-                lifecycle_store.finish_invocation(
+                applied = lifecycle_store.finish_invocation(
                     interaction_id,
                     invocation=invocation,
                     opinion=opinion,
                     error=None,
                     outbox=[_outbox("workshop_event", event_id, opinion_event)],
+                    lease_owner=lease_owner,
                 )
-                _best_effort_drain(lifecycle_store, workshop_store)
-                if lease_owner:
-                    lifecycle_store.heartbeat_interaction(interaction_id, lease_owner=lease_owner)
+                if applied:
+                    _best_effort_drain(lifecycle_store, workshop_store)
+                    if lease_owner:
+                        lifecycle_store.heartbeat_interaction(interaction_id, lease_owner=lease_owner)
             else:
                 workshop_store.create_event(opinion_event)
         except Exception as exc:  # noqa: BLE001
@@ -531,7 +533,7 @@ def run_selected_persona_interaction(
                 },
             }
             if lifecycle_store is not None:
-                lifecycle_store.finish_invocation(
+                applied = lifecycle_store.finish_invocation(
                     interaction_id,
                     invocation=invocation,
                     opinion=None,
@@ -540,10 +542,12 @@ def run_selected_persona_interaction(
                         _outbox("workshop_event", event_id, failed_event),
                         _outbox("workshop_sse", event_id, failed_sse),
                     ],
+                    lease_owner=lease_owner,
                 )
-                _best_effort_drain(lifecycle_store, workshop_store)
-                if lease_owner:
-                    lifecycle_store.heartbeat_interaction(interaction_id, lease_owner=lease_owner)
+                if applied:
+                    _best_effort_drain(lifecycle_store, workshop_store)
+                    if lease_owner:
+                        lifecycle_store.heartbeat_interaction(interaction_id, lease_owner=lease_owner)
             else:
                 workshop_store.create_event(failed_event)
                 _ws_publish(workshop_id, "workshop.openclaw.degraded", failed_sse["data"])
@@ -655,7 +659,7 @@ def run_selected_persona_interaction(
         },
     }
     if lifecycle_store is not None:
-        lifecycle_store.finalize(
+        applied = lifecycle_store.finalize(
             interaction_id,
             status=final_status,
             synthesis=synthesis,
@@ -666,8 +670,10 @@ def run_selected_persona_interaction(
                 _outbox("workshop_card", workshop_card["card_id"], workshop_card),
                 _outbox("workshop_sse", closed_event_id, completed_sse),
             ],
+            lease_owner=lease_owner,
         )
-        _best_effort_drain(lifecycle_store, workshop_store)
+        if applied:
+            _best_effort_drain(lifecycle_store, workshop_store)
     else:
         workshop_store.create_event(closed_event)
         workshop_store.record_workshop_card(workshop_card)
