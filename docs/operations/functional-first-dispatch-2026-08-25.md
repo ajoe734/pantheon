@@ -25,6 +25,11 @@ into a track with `dependency_tracks`. A track is satisfied only by an
 audited `completion_tracks.<track>.status=done` record; a task's ordinary
 `done` status is not inferred as functional or hosted proof.
 
+When a producer leaves the active board, its terminal fact retains the
+bounded `functional`/`hosted` track statuses (status and timestamp only). This
+keeps track-dependent consumers deterministic without reopening or reading an
+archive snapshot; detailed evidence and narrative remain in the archive.
+
 `operator-live/write-proof` is an external hosted evidence item. If its
 credential is unavailable, the track records `external_wait`; the supervisor
 continues functional dispatch and never enables capital writes to bypass it.
