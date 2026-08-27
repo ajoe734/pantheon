@@ -902,22 +902,35 @@ class TestCrossRepoLeasedWorktreeWriteBoundary(unittest.TestCase):
             ws_idx = sandbox_args.index(str(worktree.resolve()))
             self.assertEqual(sandbox_args[ws_idx - 1], "--bind")
 
-            # 4. Verify ai-status.json in central is mounted --bind (read-write)
-            status_idx = sandbox_args.index(str((central / "ai-status.json").resolve()))
-            self.assertEqual(sandbox_args[status_idx - 1], "--bind")
+            # 4. The coordination parent is writable so ai-status.json can be
+            # replaced atomically through a same-directory temporary file.
+            central_indices = [
+                index
+                for index, value in enumerate(sandbox_args)
+                if value == str(central.resolve())
+            ]
+            self.assertEqual(len(central_indices), 2)
+            self.assertEqual(sandbox_args[central_indices[0] - 1], "--bind")
+            self.assertEqual(
+                sandbox_args[central_indices[0] + 1], str(central.resolve())
+            )
+
+            # Existing non-governed source remains a protected mountpoint.
+            source_idx = sandbox_args.index(str((central / "services").resolve()))
+            self.assertEqual(sandbox_args[source_idx - 1], "--ro-bind")
 
             # 5. Runtime admission is an existing governed state interface,
             # not a reason to make the coordination source tree writable.
             runtime_lock_idx = sandbox_args.index(str(runtime_admission_lock.resolve()))
             self.assertEqual(sandbox_args[runtime_lock_idx - 1], "--bind")
 
-            # 6. Verify shared repos and central root are NOT mounted --bind
+            # 6. Verify shared repos and command runtime are NOT mounted --bind
             bound_rw_paths = [
                 sandbox_args[i + 1]
                 for i, arg in enumerate(sandbox_args)
                 if arg == "--bind" and i + 1 < len(sandbox_args)
             ]
-            self.assertNotIn(str(central.resolve()), bound_rw_paths)
+            self.assertIn(str(central.resolve()), bound_rw_paths)
             self.assertNotIn(str(shared_pantheon.resolve()), bound_rw_paths)
             self.assertNotIn(str(shared_ep.resolve()), bound_rw_paths)
             self.assertNotIn(str(command_root.resolve()), bound_rw_paths)
@@ -1522,13 +1535,18 @@ class TestCrossRepoLeasedWorktreeWriteBoundary(unittest.TestCase):
             env.update(_command_runtime_env(command_root))
 
             program = (
-                "import json, sys, pathlib\n"
+                "import json, os, sys, pathlib, tempfile\n"
                 "central = pathlib.Path(sys.argv[1])\n"
-                "# 1. Update ai-status.json\n"
+                "# 1. Atomically replace ai-status.json through its parent.\n"
                 "status_path = central / 'ai-status.json'\n"
                 "data = json.loads(status_path.read_text())\n"
                 "data['tasks'][0]['status'] = 'completed'\n"
-                "status_path.write_text(json.dumps(data) + '\\n')\n"
+                "with tempfile.NamedTemporaryFile('w', dir=central, delete=False) as handle:\n"
+                "    handle.write(json.dumps(data) + '\\n')\n"
+                "    handle.flush()\n"
+                "    os.fsync(handle.fileno())\n"
+                "    temp_path = pathlib.Path(handle.name)\n"
+                "os.replace(temp_path, status_path)\n"
                 "# 2. Append to ai-activity-log.jsonl\n"
                 "log_path = central / 'ai-activity-log.jsonl'\n"
                 "with log_path.open('a') as f:\n"
@@ -1566,6 +1584,60 @@ class TestCrossRepoLeasedWorktreeWriteBoundary(unittest.TestCase):
             self.assertEqual(updated_status["tasks"][0]["status"], "completed")
             self.assertIn('{"event": "done"}', (central / "ai-activity-log.jsonl").read_text())
             self.assertEqual((central / "current-work.md").read_text(), "# Done\n")
+
+    @unittest.skipUnless(_FUNCTIONAL_BWRAP, "Functional bubblewrap with user namespace support is required for sandbox execution tests")
+    def test_coordination_source_stays_read_only_with_atomic_status_parent(self):
+        with tempfile.TemporaryDirectory(prefix="worker-runner-status-source-ro-") as temp_dir:
+            root = Path(temp_dir)
+            central = root / "central"
+            command_root = root / "command-runtime"
+            worktree = root / "execute-plans-worktree"
+            _init_repo(central)
+            _init_repo(command_root)
+            _init_repo(worktree)
+            _write_status(central)
+            source = central / "services" / "api.py"
+            source.parent.mkdir(parents=True)
+            source.write_text("API = 1\n", encoding="utf-8")
+
+            heartbeat = central / ".orchestrator" / "worker-runtime" / "heartbeats" / "run.json"
+            status = central / ".orchestrator" / "worker-runtime" / "status" / "run.json"
+            env = os.environ.copy()
+            for key in list(env):
+                if key.startswith("PANTHEON_COMMAND_"):
+                    env.pop(key)
+            env.update({
+                "PANTHEON_STATUS_ROOT": str(central),
+                "PANTHEON_WORKTREE_ROOT": str(worktree),
+                "ORCH_WORKSPACE_PATH": str(worktree),
+            })
+            env.update(_command_runtime_env(command_root))
+
+            proc = subprocess.run(
+                [
+                    sys.executable,
+                    _P,
+                    "--run-id",
+                    "antigravity-20260827T000000Z-source-ro-test",
+                    "--heartbeat-path",
+                    str(heartbeat),
+                    "--status-path",
+                    str(status),
+                    "--",
+                    sys.executable,
+                    "-c",
+                    "import pathlib,sys; pathlib.Path(sys.argv[1]).write_text('API = 2\\n')",
+                    str(source),
+                ],
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=20,
+                check=False,
+            )
+
+            self.assertNotEqual(proc.returncode, 0, proc.stderr + proc.stdout)
+            self.assertEqual(source.read_text(encoding="utf-8"), "API = 1\n")
 
 
 if __name__ == "__main__":

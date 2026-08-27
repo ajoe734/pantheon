@@ -396,6 +396,43 @@ def _append_task_store_mounts(bwrap_cmd: list[str], raw_event_log: str) -> None:
         bwrap_cmd.extend(["--ro-bind", str(sibling), str(sibling)])
 
 
+def _append_coordination_state_mounts(
+    bwrap_cmd: list[str], coordination_root: Path
+) -> None:
+    """Expose atomic status projections while keeping repository source read-only."""
+
+    root = coordination_root.absolute()
+    symlink = _first_symlink_component(root)
+    if symlink is not None or root.is_symlink():
+        raise RuntimeError(
+            f"coordination root cannot contain a symlink: {symlink or root}"
+        )
+    if not root.is_dir():
+        raise RuntimeError(f"coordination root is unavailable: {root}")
+
+    # ai_status.save_state() deliberately writes a same-directory temporary
+    # file and atomically replaces ai-status.json.  Binding only the existing
+    # file makes that rename fail with EROFS.  Reopen the stable parent, then
+    # cover every existing non-governed sibling with a read-only mount.  The
+    # remaining writable top-level names are projection/audit surfaces only;
+    # source, Git metadata, scripts, services, and all other repository content
+    # remain protected mountpoints.
+    writable_top_level_names = {
+        "ai-status.json",
+        "ai-activity-log.jsonl",
+        "current-work.md",
+        "docs-site",
+        "ai-task-archive",
+    }
+    bwrap_cmd.extend(["--bind", str(root), str(root)])
+    for sibling in sorted(root.iterdir(), key=lambda item: item.name):
+        if sibling.name in writable_top_level_names:
+            continue
+        if sibling.is_symlink():
+            raise RuntimeError(f"coordination sibling cannot be a symlink: {sibling}")
+        bwrap_cmd.extend(["--ro-bind", str(sibling), str(sibling)])
+
+
 def bind_worker_sandbox(
     command: list[str],
     command_root: Path,
@@ -513,12 +550,8 @@ def bind_worker_sandbox(
 
     # 7. Governed coordination state interfaces
     if coord_resolved and (ws_resolved is None or coord_resolved != ws_resolved):
+        _append_coordination_state_mounts(bwrap_cmd, coord_resolved)
         governed_candidates = [
-            coord_resolved / "ai-status.json",
-            coord_resolved / "ai-activity-log.jsonl",
-            coord_resolved / "current-work.md",
-            coord_resolved / "docs-site",
-            coord_resolved / "ai-task-archive",
             coord_resolved / ".orchestrator" / "state.json",
             coord_resolved / ".orchestrator" / "approval-queue.json",
             coord_resolved / ".orchestrator" / "runtime-admission.lock",
