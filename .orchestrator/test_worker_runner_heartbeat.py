@@ -863,6 +863,9 @@ class TestCrossRepoLeasedWorktreeWriteBoundary(unittest.TestCase):
             _init_repo(shared_ep)
             _write_status(central)
 
+            runtime_admission_lock = central / ".orchestrator" / "runtime-admission.lock"
+            runtime_admission_lock.touch()
+
             # Create code subdirectories in central
             (central / "services").mkdir(parents=True, exist_ok=True)
             (central / "services" / "api.py").write_text("API=1\n")
@@ -903,7 +906,12 @@ class TestCrossRepoLeasedWorktreeWriteBoundary(unittest.TestCase):
             status_idx = sandbox_args.index(str((central / "ai-status.json").resolve()))
             self.assertEqual(sandbox_args[status_idx - 1], "--bind")
 
-            # 5. Verify shared repos and central root are NOT mounted --bind
+            # 5. Runtime admission is an existing governed state interface,
+            # not a reason to make the coordination source tree writable.
+            runtime_lock_idx = sandbox_args.index(str(runtime_admission_lock.resolve()))
+            self.assertEqual(sandbox_args[runtime_lock_idx - 1], "--bind")
+
+            # 6. Verify shared repos and central root are NOT mounted --bind
             bound_rw_paths = [
                 sandbox_args[i + 1]
                 for i, arg in enumerate(sandbox_args)

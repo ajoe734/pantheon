@@ -383,6 +383,7 @@ def bind_worker_sandbox(
             coord_resolved / "ai-task-archive",
             coord_resolved / ".orchestrator" / "state.json",
             coord_resolved / ".orchestrator" / "approval-queue.json",
+            coord_resolved / ".orchestrator" / "runtime-admission.lock",
             coord_resolved / ".orchestrator" / "task-state.lock",
             coord_resolved / ".orchestrator" / "activity-audit.lock",
             coord_resolved / ".orchestrator" / "worker-runtime",
