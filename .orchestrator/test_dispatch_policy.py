@@ -15,11 +15,40 @@ from dispatch_policy import (
     REASON_REVIEW_READY,
     dispatch_reason_priority,
     is_execution_dispatch_reason,
+    is_operator_exact_head_acceptance,
     normalize_execution_resources,
     normalized_status_set,
     ready_dispatch_settings,
     task_execution_resources,
 )
+
+
+def operator_accepted_task(**overrides):
+    head_sha = "b" * 40
+    task = {
+        "id": "ABC-001",
+        "status": "review_approved",
+        "review_binding": {
+            "pr": 100,
+            "head_sha": head_sha,
+            "head_branch": "task/ABC-001",
+            "base": "dev",
+        },
+        "operator_acceptance": {
+            "pr": 100,
+            "head_sha": head_sha,
+            "head_branch": "task/ABC-001",
+            "base": "dev",
+            "decision": "operator-accept",
+            "actor": "Human/Ops",
+            "mode": "operator_exact_head",
+            "operator_acceptance_proof_ref": (
+                "refs/tags/pantheon-review/operator-accept/" + head_sha
+            ),
+        },
+    }
+    task.update(overrides)
+    return task
 
 
 @pytest.mark.parametrize(
@@ -50,6 +79,33 @@ def test_dispatch_reason_priority_cases(reason: str | None, expected: int | None
 )
 def test_is_execution_dispatch_reason_cases(reason: str | None, expected: bool) -> None:
     assert is_execution_dispatch_reason(reason) is expected
+
+
+def test_operator_exact_head_acceptance_is_a_non_worker_lane() -> None:
+    assert is_operator_exact_head_acceptance(operator_accepted_task()) is True
+
+
+@pytest.mark.parametrize(
+    "task",
+    [
+        operator_accepted_task(status="in_progress"),
+        operator_accepted_task(operator_acceptance={}),
+        operator_accepted_task(
+            operator_acceptance={
+                **operator_accepted_task()["operator_acceptance"],
+                "actor": "Codex",
+            }
+        ),
+        operator_accepted_task(
+            operator_acceptance={
+                **operator_accepted_task()["operator_acceptance"],
+                "head_sha": "c" * 40,
+            }
+        ),
+    ],
+)
+def test_malformed_operator_acceptance_does_not_suppress_dispatch(task) -> None:
+    assert is_operator_exact_head_acceptance(task) is False
 
 
 def test_ready_dispatch_settings_current_defaults() -> None:

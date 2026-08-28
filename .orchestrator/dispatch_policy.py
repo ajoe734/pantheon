@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import Any, Mapping
 
 REASON_REVIEW_READY = "review_ready_dispatch"
@@ -51,6 +52,53 @@ DEFAULT_MAX_ACTIVE_WORKERS_PER_TASK = 1
 DEFAULT_EXECUTION_RESOURCE_LIMITS: dict[str, int] = {"pantheon-dev": 1}
 ALLOWLISTED_EXECUTION_RESOURCES: frozenset[str] = frozenset({"pantheon-dev"})
 KNOWN_EXECUTION_RESOURCES: frozenset[str] = ALLOWLISTED_EXECUTION_RESOURCES
+_OID_RE = re.compile(r"^[0-9a-f]{40}$")
+_OPERATOR_ACCEPTANCE_PROOF_PREFIX = "refs/tags/pantheon-review/operator-accept/"
+
+
+def is_operator_exact_head_acceptance(task: Mapping[str, Any] | None) -> bool:
+    """Return whether a task is in the non-worker Human/Ops integration lane.
+
+    The authoritative validation and audit write live in ``ai_status.py``.
+    The scheduler must not import that command runtime just to decide whether
+    it should launch a worker, so it repeats only the immutable-shape checks
+    needed to suppress owner-finalization dispatch. A malformed or partial
+    record deliberately returns ``False`` and therefore cannot suppress the
+    ordinary lifecycle.
+    """
+
+    if not isinstance(task, Mapping):
+        return False
+    if str(task.get("status") or "").strip().lower() != "review_approved":
+        return False
+    binding = task.get("review_binding")
+    acceptance = task.get("operator_acceptance")
+    if not isinstance(binding, Mapping) or not isinstance(acceptance, Mapping):
+        return False
+    head_sha = str(binding.get("head_sha") or "").strip().lower()
+    if not _OID_RE.fullmatch(head_sha):
+        return False
+    try:
+        binding_pr = int(binding.get("pr") or 0)
+        acceptance_pr = int(acceptance.get("pr") or 0)
+    except (TypeError, ValueError):
+        return False
+    if binding_pr <= 0 or acceptance_pr != binding_pr:
+        return False
+    if (
+        str(acceptance.get("mode") or "").strip() != "operator_exact_head"
+        or str(acceptance.get("decision") or "").strip() != "operator-accept"
+        or str(acceptance.get("actor") or "").strip() != "Human/Ops"
+        or str(acceptance.get("head_sha") or "").strip().lower() != head_sha
+    ):
+        return False
+    for field in ("head_branch", "base"):
+        if str(acceptance.get(field) or "").strip() != str(binding.get(field) or "").strip():
+            return False
+    return (
+        str(acceptance.get("operator_acceptance_proof_ref") or "").strip()
+        == f"{_OPERATOR_ACCEPTANCE_PROOF_PREFIX}{head_sha}"
+    )
 
 
 def normalize_execution_resources(
