@@ -2062,11 +2062,11 @@ services:
     stop_grace_period: 30s
     build:
       context: .
-      dockerfile: services/execution/runtime-manager/Dockerfile
+      dockerfile: services/paper_fleet_reconciler/Dockerfile
       args:
         GIT_SHA: ${GIT_SHA:-unknown}
     restart: unless-stopped
-    command: ["python", "services/execution/runtime-manager/paper_fleet_reconciler.py"]
+    command: ["python", "services/paper_fleet_reconciler/paper_fleet_reconciler.py"]
     environment:
       PORT: "8011"
       PANTHEON_RUNTIME_MANAGER_URL: http://runtime-manager:8081

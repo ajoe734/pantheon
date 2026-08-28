@@ -1,25 +1,16 @@
-from __future__ import annotations
-
-import importlib.util as _ilu
-import sys as _sys
 import unittest
-from pathlib import Path
 
-_MODULE_PATH = Path(__file__).with_name("kill_switch_controller.py")
-_SPEC = _ilu.spec_from_file_location("kill_switch_controller", _MODULE_PATH)
-_MOD = _ilu.module_from_spec(_SPEC)
-_sys.modules["kill_switch_controller"] = _MOD
-_SPEC.loader.exec_module(_MOD)
-
-EmergencyClass = _MOD.EmergencyClass
-EmergencyTrigger = _MOD.EmergencyTrigger
-FAST_PATH_DISPATCH_CHANNEL = _MOD.FAST_PATH_DISPATCH_CHANNEL
-HardTriggerReason = _MOD.HardTriggerReason
-KillSwitchActionType = _MOD.KillSwitchActionType
-KillSwitchController = _MOD.KillSwitchController
-KillSwitchError = _MOD.KillSwitchError
-SafeModeState = _MOD.SafeModeState
-SoftTriggerReason = _MOD.SoftTriggerReason
+from services.runtime_manager.kill_switch_controller import (
+    EmergencyClass,
+    EmergencyTrigger,
+    FAST_PATH_DISPATCH_CHANNEL,
+    HardTriggerReason,
+    KillSwitchActionType,
+    KillSwitchController,
+    KillSwitchError,
+    SafeModeState,
+    SoftTriggerReason,
+)
 
 
 class TestKillSwitchController(unittest.TestCase):

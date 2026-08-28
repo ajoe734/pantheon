@@ -6,7 +6,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PYTHONPATH=/workspace
 
-COPY services/execution/runtime-manager/requirements.txt /tmp/requirements.txt
+COPY services/paper_fleet_reconciler/requirements.txt /tmp/requirements.txt
 RUN pip install --no-cache-dir -r /tmp/requirements.txt
 
 COPY . /workspace
@@ -18,4 +18,4 @@ LABEL org.opencontainers.image.revision=$GIT_SHA
 
 EXPOSE 8011
 
-CMD ["python", "services/execution/runtime-manager/paper_fleet_reconciler.py"]
+CMD ["python", "services/paper_fleet_reconciler/paper_fleet_reconciler.py"]
