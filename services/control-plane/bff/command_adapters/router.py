@@ -73,7 +73,7 @@ except ImportError:
 log = logging.getLogger(__name__)
 
 _ACTIONS_TO_COMMANDS_SOURCE_ROUTE = "POST /bff/actions/{entityType}/{entityId}/{actionId}"
-_CANONICAL_ACTIONS_ROUTE = "POST /bff/actions/{type}/{id}/{action}"
+_CANONICAL_ACTIONS_ROUTE = "/bff/actions/{type}/{id}/{action}"
 _FINAL_COMMAND_ROUTE = "POST /bff/v1/commands"
 
 _ACTION_ADAPTER_ENTITY_SPECS: Dict[str, Dict[str, Any]] = {
@@ -569,12 +569,13 @@ def create_action_command_router(
             },
         }
 
-        if command_store is not None:
-            if hasattr(command_store, "append_command"):
-                command_store.append_command(record)
-            elif hasattr(command_store, "_update_commands"):
-                existing = command_store._get_all_commands() if hasattr(command_store, "_get_all_commands") else []
-                command_store._update_commands(existing + [record])
+        _cmd_store = command_store() if callable(command_store) else command_store
+        if _cmd_store is not None:
+            if hasattr(_cmd_store, "append_command"):
+                _cmd_store.append_command(record)
+            elif hasattr(_cmd_store, "_update_commands"):
+                existing = _cmd_store._get_all_commands() if hasattr(_cmd_store, "_get_all_commands") else []
+                _cmd_store._update_commands(existing + [record])
 
         if dispatch_command is not None:
             dispatch_command(cmd_id, command_payload["command"], params, auth_token=authorization, mfa_token=x_mfa_token)

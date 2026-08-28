@@ -12916,7 +12916,7 @@ class ReadSurfaceStore:
         timestamp = created_at or _utc_now_rfc3339()
         import uuid as _uuid
         exp_id = f"exp-bff-{timestamp[:10].replace('-','')}-{_uuid.uuid4().hex[:8]}"
-        return self.create_research_experiment(
+        created = self.create_research_experiment(
             ticket_id=f"ticket-{exp_id}",
             experiment_name=name,
             strategy_selector=params.get("strategy_selector") if params else {},
@@ -12924,6 +12924,7 @@ class ReadSurfaceStore:
             run_config=params.get("run_config", {"mode": "paper"}) if params else {"mode": "paper"},
             launch_context={},
         )
+        return self._project_experiment_bff(created)
 
     @staticmethod
     def _project_experiment_bff(experiment: Dict[str, Any]) -> Dict[str, Any]:
