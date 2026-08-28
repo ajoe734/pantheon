@@ -232,6 +232,37 @@ class GitHubReviewBridgeTests(unittest.TestCase):
                 runner=FakeRunner(),
             )
 
+    def test_operator_acceptance_records_frozen_and_current_base_evidence(self) -> None:
+        frozen = bridge.validate_review_admission(
+            repository=REPOSITORY,
+            binding=binding(),
+            review_file="docs/evidence/AUDIT-001/evidence.json",
+            runner=FakeRunner(),
+        ).as_dict()
+        current = bridge.revalidate_review_admission(
+            repository=REPOSITORY,
+            delivery_binding=frozen,
+            allow_base_advance=True,
+            runner=FakeRunner(
+                base_sha="e" * 40,
+                compare_status="diverged",
+                behind_by=2,
+            ),
+        )
+
+        result = bridge.bridge_operator_acceptance(
+            repository=REPOSITORY,
+            task_id="AUDIT-001",
+            actor="Human/Ops",
+            message="Operator accepts a frozen exact head after a linear base advance.",
+            binding=frozen,
+            current_admission=current,
+            runner=FakeRunner(),
+        )
+
+        self.assertEqual(result["frozen_base_sha"], "c" * 40)
+        self.assertEqual(result["current_base_sha"], "e" * 40)
+
     def test_result_evidence_validator_rejects_head_drift(self) -> None:
         runner = FakeRunner()
         result = bridge.bridge_review_decision(
