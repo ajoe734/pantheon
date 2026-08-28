@@ -344,6 +344,21 @@ def _extract_verify_exact_component_deployment_func() -> str:
     return script_text[start : end + 2]
 
 
+def _write_mock_git(bin_dir: Path, sha: str) -> None:
+    mock_git = bin_dir / "git"
+    mock_git.write_text(
+        f"""#!/usr/bin/env bash
+if [[ "$1" == "rev-parse" && "$2" == "HEAD" ]]; then
+  echo "{sha}"
+  exit 0
+fi
+exit 2
+""",
+        encoding="utf-8",
+    )
+    mock_git.chmod(0o755)
+
+
 def test_verify_exact_component_deployment_execution_end_to_end(tmp_path: Path) -> None:
     """Execute verify_exact_component_deployment end to end with mock docker and verify receipt generation."""
     import json
@@ -357,7 +372,9 @@ def test_verify_exact_component_deployment_execution_end_to_end(tmp_path: Path) 
         """#!/usr/bin/env bash
 if [[ "$1" == "compose" ]]; then
   svc="${@: -1}"
-  if [[ "$svc" == "operator-bff" ]]; then
+  if [[ " $* " == *" images -q "* ]]; then
+    echo "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  elif [[ "$svc" == "operator-bff" ]]; then
     echo "cid_bff_1"
   elif [[ "$svc" == "agora-interaction-worker" ]]; then
     echo "cid_agora_1"
@@ -377,6 +394,8 @@ elif [[ "$1" == "inspect" ]]; then
     echo "healthy"
   elif [[ "$fmt" == "{{.Config.Image}}" ]]; then
     echo "pantheon-bff:latest"
+  elif [[ "$fmt" == "{{.Image}}" ]]; then
+    echo "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
   elif [[ "$fmt" == *"org.opencontainers.image.revision"* ]]; then
     echo "7a9674ea259bbac883e42f3ee217b3e8f68170fe"
   elif [[ "$fmt" == *"{{json .Config.Cmd}}"* ]]; then
@@ -387,6 +406,7 @@ fi
         encoding="utf-8",
     )
     mock_docker.chmod(0o755)
+    _write_mock_git(bin_dir, "7a9674ea259bbac883e42f3ee217b3e8f68170fe")
 
     receipt_path = tmp_path / "receipts" / "backend-components-receipt.json"
     runner_script = tmp_path / "run_verifier.sh"
@@ -449,6 +469,9 @@ verify_exact_component_deployment operator-bff agora-interaction-worker loop-run
         assert s_info["status"] == "running"
         assert s_info["health"] == "healthy"
         assert s_info["matches_expected_sha"] is True
+        assert s_info["matches_expected_image"] is True
+        assert s_info["image_id"] == s_info["compose_image_id"]
+        assert s_info["source_revision"] == receipt_data["expected_sha"]
 
 
 def test_verify_exact_component_deployment_missing_service_fails(tmp_path: Path) -> None:
@@ -469,6 +492,7 @@ fi
         encoding="utf-8",
     )
     mock_docker.chmod(0o755)
+    _write_mock_git(bin_dir, "7a9674ea259bbac883e42f3ee217b3e8f68170fe")
 
     receipt_path = tmp_path / "backend-components-receipt.json"
     runner_script = tmp_path / "run_verifier_missing.sh"
@@ -522,7 +546,11 @@ def test_verify_exact_component_deployment_unhealthy_or_mismatched_sha_fails(tmp
     mock_docker.write_text(
         """#!/usr/bin/env bash
 if [[ "$1" == "compose" ]]; then
-  echo "cid_test_1"
+  if [[ " $* " == *" images -q "* ]]; then
+    echo "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  else
+    echo "cid_test_1"
+  fi
 elif [[ "$1" == "inspect" ]]; then
   fmt="$3"
   if [[ "$fmt" == "{{.State.Status}}" ]]; then
@@ -533,6 +561,8 @@ elif [[ "$1" == "inspect" ]]; then
     echo "unhealthy"
   elif [[ "$fmt" == "{{.Config.Image}}" ]]; then
     echo "pantheon-bff:latest"
+  elif [[ "$fmt" == "{{.Image}}" ]]; then
+    echo "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
   elif [[ "$fmt" == *"org.opencontainers.image.revision"* ]]; then
     echo "wrong_sha_00000000000000000000000000000000"
   elif [[ "$fmt" == *"{{json .Config.Cmd}}"* ]]; then
@@ -543,6 +573,7 @@ fi
         encoding="utf-8",
     )
     mock_docker.chmod(0o755)
+    _write_mock_git(bin_dir, "7a9674ea259bbac883e42f3ee217b3e8f68170fe")
 
     receipt_path = tmp_path / "backend-components-receipt.json"
     runner_script = tmp_path / "run_verifier_unhealthy.sh"
@@ -593,7 +624,11 @@ def test_verify_exact_component_receipt_write_failure_reaches_rollback_caller(
     mock_docker.write_text(
         """#!/usr/bin/env bash
 if [[ "$1" == "compose" ]]; then
-  echo "cid_bff_1"
+  if [[ " $* " == *" images -q "* ]]; then
+    echo "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+  else
+    echo "cid_bff_1"
+  fi
 elif [[ "$1" == "inspect" ]]; then
   fmt="$3"
   if [[ "$fmt" == "{{.State.Status}}" ]]; then
@@ -604,6 +639,8 @@ elif [[ "$1" == "inspect" ]]; then
     echo "healthy"
   elif [[ "$fmt" == "{{.Config.Image}}" ]]; then
     echo "pantheon-bff:latest"
+  elif [[ "$fmt" == "{{.Image}}" ]]; then
+    echo "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
   elif [[ "$fmt" == *"org.opencontainers.image.revision"* ]]; then
     echo "7a9674ea259bbac883e42f3ee217b3e8f68170fe"
   elif [[ "$fmt" == *"{{json .Config.Cmd}}"* ]]; then
@@ -614,6 +651,7 @@ fi
         encoding="utf-8",
     )
     mock_docker.chmod(0o755)
+    _write_mock_git(bin_dir, "7a9674ea259bbac883e42f3ee217b3e8f68170fe")
 
     non_directory = tmp_path / "not-a-directory"
     non_directory.write_text("blocks mkdir", encoding="utf-8")

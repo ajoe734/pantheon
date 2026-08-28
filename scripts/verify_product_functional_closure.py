@@ -43,6 +43,7 @@ DEFAULT_EVIDENCE_DIR = (
 
 SHA40_RE = re.compile(r"^[0-9a-f]{40}$")
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+OCI_IMAGE_ID_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 BACKEND_COMPONENT_RECEIPT_SCHEMA = (
     "pantheon.deployment.backend_required_components_receipt.v1"
 )
@@ -752,6 +753,11 @@ class ProductFunctionalClosureVerifier:
                 "gate_01.backend_components_sha",
                 f"backend components receipt SHA {receipt_expected_sha!r} != expected {self.config.expected_bff_sha}",
             )
+        if backend_components_data.get("deploy_source_sha") != self.config.expected_bff_sha:
+            raise ProductFunctionalClosureAcceptanceError(
+                "gate_01.backend_components_deploy_source_sha",
+                "backend components receipt deploy_source_sha does not match the expected BFF SHA",
+            )
         deployment_component = backend_components_data.get("deployment_component")
         if deployment_component not in {"root", "bff"}:
             raise ProductFunctionalClosureAcceptanceError(
@@ -866,16 +872,57 @@ class ProductFunctionalClosureVerifier:
                     f"gate_01.backend_components.{svc_name}.health",
                     f"service {svc_name} health is {health!r}, must be healthy or explicitly not_configured",
                 )
+            image_id = svc_dict.get("image_id")
+            compose_image_id = svc_dict.get("compose_image_id")
+            if not isinstance(image_id, str) or not OCI_IMAGE_ID_RE.fullmatch(image_id):
+                raise ProductFunctionalClosureAcceptanceError(
+                    f"gate_01.backend_components.{svc_name}.image_id",
+                    f"service {svc_name} has invalid container image ID {image_id!r}",
+                )
+            if compose_image_id != image_id:
+                raise ProductFunctionalClosureAcceptanceError(
+                    f"gate_01.backend_components.{svc_name}.compose_image_id",
+                    f"service {svc_name} Compose image ID {compose_image_id!r} != container image ID {image_id!r}",
+                )
+            if svc_dict.get("matches_expected_image") is not True:
+                raise ProductFunctionalClosureAcceptanceError(
+                    f"gate_01.backend_components.{svc_name}.matches_expected_image",
+                    f"service {svc_name} does not declare matches_expected_image=true",
+                )
+            if svc_dict.get("source_revision") != self.config.expected_bff_sha:
+                raise ProductFunctionalClosureAcceptanceError(
+                    f"gate_01.backend_components.{svc_name}.source_revision",
+                    f"service {svc_name} source_revision does not match the expected BFF SHA",
+                )
+            source_identity_method = svc_dict.get("source_identity_method")
+            if source_identity_method not in {
+                "oci_revision",
+                "deploy_checkout_and_compose_image_id",
+            }:
+                raise ProductFunctionalClosureAcceptanceError(
+                    f"gate_01.backend_components.{svc_name}.source_identity_method",
+                    f"service {svc_name} has unsupported source identity method {source_identity_method!r}",
+                )
             rev = svc_dict.get("image_revision")
-            if rev != self.config.expected_bff_sha:
+            if rev is not None and rev != self.config.expected_bff_sha:
                 raise ProductFunctionalClosureAcceptanceError(
                     f"gate_01.backend_components.{svc_name}.revision",
                     f"service {svc_name} image revision {rev!r} != expected {self.config.expected_bff_sha}",
                 )
-            if svc_dict.get("matches_expected_sha") is not True:
+            if source_identity_method == "oci_revision" and (
+                rev != self.config.expected_bff_sha
+                or svc_dict.get("matches_expected_sha") is not True
+            ):
                 raise ProductFunctionalClosureAcceptanceError(
                     f"gate_01.backend_components.{svc_name}.matches_expected_sha",
-                    f"service {svc_name} does not declare matches_expected_sha=true",
+                    f"service {svc_name} OCI revision does not prove the expected BFF SHA",
+                )
+            if source_identity_method == "deploy_checkout_and_compose_image_id" and (
+                rev is not None or svc_dict.get("matches_expected_sha") is not None
+            ):
+                raise ProductFunctionalClosureAcceptanceError(
+                    f"gate_01.backend_components.{svc_name}.matches_expected_sha",
+                    f"service {svc_name} fallback source identity must not claim an OCI revision match",
                 )
             restart_count = svc_dict.get("restart_count")
             if type(restart_count) is not int or restart_count != 0:

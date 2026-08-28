@@ -61,7 +61,7 @@
     "reopened_reason": "The prior writer could swallow receipt failures, dirty the managed deploy worktree, emit passed receipts for incomplete service sets, and exit past the rollback caller.",
     "receipt_default_path": "$HOME/pantheon-ci-deploy/deployment-receipts/<environment>/<component>/backend-components-receipt.json",
     "receipt_write_contract": "git-external atomic replace; directory/write/serialization failures return non-zero to the deployment rollback caller",
-    "receipt_identity_contract": "exact frontend and backend SHAs, deployment environment/component, complete required_services set, per-service container/image/command identity, exact OCI revision, zero restart count, and explicit verification failure lists",
+    "receipt_identity_contract": "exact frontend and backend SHAs, deployment checkout HEAD, deployment environment/component, complete required_services set, per-service container/image/command identity, exact container-to-Compose OCI image ID, exact OCI revision when embedded, zero restart count, and explicit verification failure lists",
     "hosted_acceptance_status": "not rerun for repaired head; a real deployment must generate the runtime receipt",
     "historical_operator_accepted_head": "1f6f6fc7b12611345218e347e8daa7f6328ef503",
     "historical_acceptance_applies_to_repaired_head": false

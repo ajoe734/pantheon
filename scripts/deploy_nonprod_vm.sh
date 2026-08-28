@@ -2323,7 +2323,7 @@ verify_exact_component_deployment() {
   local receipt_root="${PANTHEON_DEPLOY_RECEIPT_ROOT:-${HOME}/pantheon-ci-deploy/deployment-receipts}"
   local receipt_path="${PANTHEON_BACKEND_COMPONENTS_RECEIPT_PATH:-${receipt_root}/${deploy_environment}/${deploy_component}/backend-components-receipt.json}"
   local missing=() restarting=() unhealthy=() wrong_sha=() duplicates=() identity_errors=()
-  local now
+  local now deploy_checkout_sha
   now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
   if (( ${#target_services[@]} == 0 )); then
@@ -2336,6 +2336,11 @@ verify_exact_component_deployment() {
   fi
   if [[ ! "$expected_frontend_sha" =~ ^[0-9a-f]{40}$ ]]; then
     printf '[remote-deploy] exact component verification requires a full frontend SHA (got %s)\n' "${expected_frontend_sha:-empty}" >&2
+    return 1
+  fi
+  deploy_checkout_sha="$(git rev-parse HEAD 2>/dev/null || true)"
+  if [[ "$deploy_checkout_sha" != "$expected_sha" ]]; then
+    printf '[remote-deploy] deploy checkout SHA %s does not match expected backend SHA %s\n' "${deploy_checkout_sha:-missing}" "$expected_sha" >&2
     return 1
   fi
 
@@ -2351,7 +2356,7 @@ verify_exact_component_deployment() {
 
   info "verifying exact deployment and running state for ${#target_services[@]} component(s); expected_sha=${expected_sha}"
 
-  local container_ids container_id status restart_count health image image_rev cmd entry_json
+  local container_ids container_id status restart_count health image image_id compose_image_id image_rev cmd entry_json
   local receipt_entries=()
 
   # Bounded stabilization loop for services starting up
@@ -2385,6 +2390,8 @@ verify_exact_component_deployment() {
       restart_count="$(docker inspect --format '{{.RestartCount}}' "$container_id" 2>/dev/null || true)"
       health="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}not_configured{{end}}' "$container_id" 2>/dev/null || true)"
       image="$(docker inspect --format '{{.Config.Image}}' "$container_id" 2>/dev/null || true)"
+      image_id="$(docker inspect --format '{{.Image}}' "$container_id" 2>/dev/null || true)"
+      compose_image_id="$(docker compose -p pantheon -f docker-compose.yml images -q "$service" 2>/dev/null || true)"
       image_rev="$(docker inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$container_id" 2>/dev/null || true)"
       cmd="$(docker inspect --format '{{json .Config.Cmd}}' "$container_id" 2>/dev/null || true)"
 
@@ -2402,13 +2409,21 @@ verify_exact_component_deployment() {
       if [[ -z "$image" ]]; then
         identity_errors+=("${service}: image identity is missing")
       fi
-      if [[ "$image_rev" != "$expected_sha" ]]; then
+      if [[ ! "$image_id" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+        identity_errors+=("${service}: container image ID is invalid (${image_id:-missing})")
+      fi
+      if [[ ! "$compose_image_id" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+        identity_errors+=("${service}: Compose image ID is invalid (${compose_image_id:-missing})")
+      elif [[ "$image_id" != "$compose_image_id" ]]; then
+        identity_errors+=("${service}: container image ID ${image_id:-missing} != Compose image ID ${compose_image_id}")
+      fi
+      if [[ -n "$image_rev" && "$image_rev" != "<no value>" && "$image_rev" != "unknown" && "$image_rev" != "$expected_sha" ]]; then
         wrong_sha+=("${service}: image_rev=${image_rev:-missing} != expected=${expected_sha}")
       fi
 
       if ! entry_json="$(python3 -c '
 import json, sys
-service, cid, img, rev, stat, rcount, hlth, cmd_json, exp_sha = sys.argv[1:10]
+service, cid, img, image_id, compose_image_id, rev, stat, rcount, hlth, cmd_json, exp_sha = sys.argv[1:12]
 try:
     cmd_val = json.loads(cmd_json)
 except Exception as exc:
@@ -2421,14 +2436,19 @@ print(json.dumps({
     "service": service,
     "container_id": cid,
     "image": img,
-    "image_revision": rev,
+    "image_id": image_id,
+    "compose_image_id": compose_image_id,
+    "image_revision": rev if rev not in ("", "<no value>", "unknown") else None,
+    "source_revision": exp_sha,
+    "source_identity_method": "oci_revision" if rev == exp_sha else "deploy_checkout_and_compose_image_id",
     "status": stat,
     "restart_count": int(rcount),
     "health": hlth,
     "command": cmd_val,
-    "matches_expected_sha": rev == exp_sha,
+    "matches_expected_sha": rev == exp_sha if rev not in ("", "<no value>", "unknown") else None,
+    "matches_expected_image": image_id == compose_image_id,
 }))
-' "$service" "$container_id" "$image" "$image_rev" "$status" "$restart_count" "$health" "$cmd" "$expected_sha")"; then
+' "$service" "$container_id" "$image" "$image_id" "$compose_image_id" "$image_rev" "$status" "$restart_count" "$health" "$cmd" "$expected_sha")"; then
         identity_errors+=("${service}: receipt identity serialization failed")
         continue
       fi
@@ -2518,6 +2538,7 @@ receipt = {
     "mode": "hosted",
     "observed_at": now,
     "expected_sha": backend_sha,
+    "deploy_source_sha": backend_sha,
     "deployment_environment": deploy_environment,
     "deployment_component": deploy_component,
     "unskipped_mandatory_cases": True,
