@@ -10,16 +10,30 @@
 
 ---
 
-## 1. Executive Summary & Objective
+## 1. Executive Summary & Global Baseline
 
 This document establishes the authoritative ownership mapping and partition boundary for the **Research, Knowledge, Memory, Search, and Source** domain across the Pantheon BFF read surface.
 
+### 1.1 Executable Global BFF Baseline
+To provide complete architectural context across `services/control-plane/bff/main.py`, AST analysis establishes the executable global baseline across all domains:
+- **Direct `read_store` Member References:** Exactly **598** AST member attribute references (`ast.Attribute` where `node.value.id == "read_store"`).
+- **Distinct Member Names:** Exactly **202** distinct member attribute names accessed across `read_store`.
+- **Direct Call Expressions:** Exactly **595** direct AST `Call` expressions (`read_store.<method>(...)`).
+- **Callable Non-Call References:** Exactly **3** instances where `read_store.<attr>` is referenced as a callable object without immediate call syntax (lines 25370, 45027, 45051).
+- **Lexical vs. Executable Scope:** Lexical regex analysis (`read_store\.[a-zA-Z0-9_]+`) yields 600 occurrences across 203 names; the delta (2 occurrences / 1 name) represents comment/docstring-only coverage.
+
+### 1.2 Research Domain Partition Objective & Scope
 As part of the legacy `ReadSurfaceStore` decoupling and migration to typed domain ports, this inventory:
 1. Catalogs every member call and access in `services/control-plane/bff/main.py` belonging to Research, Knowledge Workbench, Institutional Memory, Search, and Source Ingestion.
-2. Classifies each call as a **Read** (query) or **Write** (mutation/command) operation and identifies its target typed domain port or command-owner service destination.
+2. Classifies each call as a **Read** (query) or **Write** (mutation/command) operation and identifies its target typed domain port or command-owner service destination:
+   - **82 Total Read Operations:** 68 direct/attribute read references (67 direct Calls + 1 callable reference at line 45027), 1 legacy `getattr` read at line 23754, and 13 research `dataset_source` Calls.
+   - **6 Write Operations:** State-mutating commands directly served by `DefaultResearchKnowledgeSourcePort`.
+   - **88 Total Domain Operations** across `main.py`.
 3. Evaluates narrow domain API coverage and confirms 100% interface parity with `ResearchKnowledgeSourcePort` without introducing generic delegation, compatibility fallback layers, or product code modifications.
 4. Accounts for all static `read_store.dataset_source(...)` access sites (37 total across `main.py`), categorizing the 13 research-owned sites and explicitly partitioning the 24 excluded cross-domain metadata calls.
-5. Documents the single legacy compatibility access `getattr(read_store, "get_insight_card", None)` at `main.py:23754`, proving that the typed port method exists and provides direct replacement.
+5. Classifies both dynamic `getattr(read_store, ...)` access sites in `main.py`:
+   - Line 23754: legacy domain compatibility lookup `getattr(read_store, "get_insight_card", None)`.
+   - Line 62356: generic cross-domain dynamic lookup `getattr(read_store, "dataset_source", None)` in SEM helper `_sem_read_records`.
 6. Demonstrates strict non-overlap and mutual exclusion against the other 5 domain ownership partitions.
 
 ---
@@ -106,11 +120,15 @@ The domain port `ResearchKnowledgeSourcePort` in `services/control-plane/bff/dom
 
 ---
 
-## 4. Comprehensive Inventory of `main.py` Call Sites (75 Member Accesses)
+## 4. Comprehensive Inventory of `main.py` Call Sites (75 Member Access Sites)
 
-An AST scan of `services/control-plane/bff/main.py` identifies **75 member access sites** accessing non-metadata methods belonging to the Research, Knowledge, Memory, Search, and Source domain across **37 distinct method names** (covering 37 of the 39 methods on `ResearchKnowledgeSourcePort`; together with the 13 research-owned `dataset_source` calls in §5.1, 38 of 39 port methods are accessed, leaving only `dataset_surface_status` unused in `main.py`).
+An AST scan of `services/control-plane/bff/main.py` identifies **75 member access sites** accessing non-metadata methods belonging to the Research, Knowledge, Memory, Search, and Source domain:
+- **74 direct/attribute member accesses** (`read_store.<attr>`):
+  - **68 read references:** 67 direct `Call` expressions (`read_store.<method>(...)`) and 1 callable reference at `main.py:45027` (`read_store.list_evidence_refs` passed to `asyncio.to_thread`).
+  - **6 write calls:** state-mutating member calls (`create_research_ticket`, `patch_research_ticket`, `create_research_experiment`, `cancel_research_experiment`, `create_research_note`).
+- **1 legacy `getattr` read access** at `main.py:23754` (`getattr(read_store, "get_insight_card", None)` in `_agora_get_insight`).
 
-*Note on Line 23754:* `main.py:23754` accesses `get_insight_card` via `getattr(read_store, "get_insight_card", None)` as a legacy defensive compatibility check in `_agora_get_insight`. The typed method `ResearchKnowledgeSourcePort.get_insight_card` exists and is fully implemented, allowing direct replacement during port cutover.
+Across these 75 sites, 37 distinct method names on `ResearchKnowledgeSourcePort` are accessed (covering 37 of the 39 methods on `ResearchKnowledgeSourcePort`; together with the 13 research-owned `dataset_source` calls in §5.1, 38 of 39 port methods are accessed, leaving only `dataset_surface_status` unused in `main.py`).
 
 | Line # | Member Method | Enclosing Function | Route / Context | Type | Target Domain Port / Command Destination |
 |---|---|---|---|---|---|
@@ -169,7 +187,7 @@ An AST scan of `services/control-plane/bff/main.py` identifies **75 member acces
 | 31050 | `list_strategy_specs` | `_list_strategy_spec_match_candidates` | `(internal helper)` | **Read** | `ResearchKnowledgeSourcePort.list_strategy_specs` |
 | 31058 | `get_strategy_spec_detail` | `_list_strategy_spec_match_candidates` | `(internal helper)` | **Read** | `ResearchKnowledgeSourcePort.get_strategy_spec_detail` |
 | 31301 | `create_research_ticket` | `_persona_strategy_match_action_response` | `(internal helper)` | **Write** | `DefaultResearchKnowledgeSourcePort.create_research_ticket (services/control-plane/bff/domain_ports/research_knowledge_source.py:1751)` |
-| 45027 | `list_evidence_refs` | `bff_management_nl_ask` | `POST /bff/management/nl/ask` | **Read** | `ResearchKnowledgeSourcePort.list_evidence_refs` |
+| 45027 | `list_evidence_refs` | `bff_management_nl_ask` | `POST /bff/management/nl/ask` (callable ref in `asyncio.to_thread`) | **Read** | `ResearchKnowledgeSourcePort.list_evidence_refs` |
 | 45988 | `get_strategy_spec_detail` | `bff_list_strategies` | `GET /bff/strategies` | **Read** | `ResearchKnowledgeSourcePort.get_strategy_spec_detail` |
 | 46075 | `get_strategy_spec` | `bff_get_strategy` | `GET /bff/strategies/{strategy_id}` | **Read** | `ResearchKnowledgeSourcePort.get_strategy_spec` |
 | 46083 | `get_strategy_spec_detail` | `bff_get_strategy` | `GET /bff/strategies/{strategy_id}` | **Read** | `ResearchKnowledgeSourcePort.get_strategy_spec_detail` |
@@ -263,8 +281,15 @@ The 24 non-research `read_store.dataset_source(...)` call sites belong exclusive
 
 ## 6. Read vs Write Classification & Verified Owner Mapping
 
-### A. Read Operations (69 Direct/Attribute Member Calls + 1 Legacy `getattr` Access + 13 Dataset Source Calls = 83 Total Read Sites)
+The domain operations across `main.py` are strictly partitioned into 82 Read operations and 6 Write operations (88 total domain interaction sites):
+
+### A. Read Operations (68 Direct/Attribute Read References + 1 Legacy getattr Read + 13 Research Dataset Source Calls = 82 Total Read Sites)
 - **Classification:** Strict Queries (Idempotent, Side-Effect Free).
+- **Read Subtotals:**
+  - **68 Direct/Attribute Read References:** 67 direct AST `Call` expressions (`read_store.<method>(...)`) plus 1 callable reference at `main.py:45027` (`read_store.list_evidence_refs` passed as a callable target to `asyncio.to_thread`).
+  - **1 Legacy `getattr` Read Reference:** Line 23754 (`getattr(read_store, "get_insight_card", None)` in `_agora_get_insight`).
+  - **13 Research-Owned `dataset_source` Calls:** Line locations detailed in §5.1.
+  - **Total Reads = 68 + 1 + 13 = 82.**
 - **Resolution Strategy:** Directly served by `ResearchKnowledgeSourcePort` methods.
 - **Underlying Authoritative Stores & Port Implementation:**
   - `evidence_refs`: `services/knowledge/evidence/repository.py` (`JsonlEvidenceRepository` / `InMemoryEvidenceRepository`).
@@ -293,19 +318,27 @@ The 6 write call sites in `main.py` perform state mutations:
 
 ---
 
-## 7. Narrow Domain API Gap Analysis & Legacy Access Patterns
+## 7. Narrow Domain API Gap Analysis & Dynamic Access Classification
 
-### Verification Findings:
+### 7.1 Verification Findings & Complete Interface Coverage
 1. **Zero Missing Domain APIs:** Every one of the 37 distinct non-metadata member methods (and 38 total accessed methods including `dataset_source`) called in `services/control-plane/bff/main.py` is fully implemented and tested on `ResearchKnowledgeSourcePort` and `DefaultResearchKnowledgeSourcePort`. Across the 39 methods defined in `ResearchKnowledgeSourcePort`:
    - 37 non-metadata domain methods are actively accessed across 75 member sites in `main.py` (74 direct/attribute call sites and 1 legacy `getattr` access site).
    - 1 shared metadata method (`dataset_source`) is actively accessed across 13 research-owned call sites in `main.py` (out of 37 total static `read_store.dataset_source` sites across all domains).
    - 1 method (`dataset_surface_status`) is defined on the port interface for structured dataset status reporting but is currently not directly invoked in `main.py`.
-2. **Legacy `getattr` Compatibility Access Pattern:**
-   - Static inspection reveals that `main.py:23754` uses `getattr(read_store, "get_insight_card", None)` in `_agora_get_insight` as a legacy defensive compatibility check before falling back to `read_store.list_agora_insights()`.
-   - The typed port method `ResearchKnowledgeSourcePort.get_insight_card(insight_id: Optional[str]) -> Optional[Dict[str, Any]]` exists, is fully defined in the port contract, and is tested with 100% pass rate in `DefaultResearchKnowledgeSourcePort` (`services/control-plane/bff/domain_ports/research_knowledge_source.py`).
-   - During subsequent port cutover, this legacy `getattr` pattern can be replaced directly with the typed port method `port.get_insight_card(insight_id)`.
-   - Aside from this single legacy compatibility site, there is zero generic dynamic delegation, fallback dictionary reflection, or proxying required.
-3. **Strict Type Safety:** All signatures return typed DTO dictionaries or lists adhering to OpenAPI schema requirements.
+2. **Strict Type Safety:** All signatures return typed DTO dictionaries or lists adhering to OpenAPI schema requirements.
+
+### 7.2 Classification of Dynamic `getattr(read_store, ...)` Access Sites in `main.py`
+Static inspection of all `getattr(read_store, ...)` patterns across `main.py` identifies two distinct sites relevant to research operations and metadata:
+
+1. **Domain-Specific Legacy Compatibility Access (`main.py:23754`):**
+   - **Code:** `getattr(read_store, "get_insight_card", None)` in `_agora_get_insight`.
+   - **Classification:** Domain-specific read query on `insight_cards`.
+   - **Resolution:** The typed port method `ResearchKnowledgeSourcePort.get_insight_card(insight_id: Optional[str]) -> Optional[Dict[str, Any]]` exists, is fully defined in the port contract, and is tested with 100% pass rate in `DefaultResearchKnowledgeSourcePort`. During port cutover, this legacy `getattr` pattern can be replaced directly with `port.get_insight_card(insight_id)`.
+
+2. **Generic Dynamic Cross-Domain SEM Helper (`main.py:62356`):**
+   - **Code:** `source_fn = getattr(read_store, "dataset_source", None)` in `_sem_read_records(dataset: str)`.
+   - **Classification:** Generic cross-domain SEM dataset dispatch / fallback reader helper (infrastructure utility, not domain-specific business logic).
+   - **Resolution:** When SEM endpoints query research datasets (such as `research_artifacts` or `research_analyses`), `dataset_source` is dynamically evaluated. `ResearchKnowledgeSourcePort` already implements `dataset_source`, ensuring full compatibility when `read_store` is replaced by domain ports. Generic reflection will be cleanly retired upon unified port container cutover.
 
 ---
 
@@ -322,5 +355,5 @@ The port implementation and cutover verification were validated via automated te
 
 This inventory provides the immutable baseline for the upcoming `main.py` port cutover phase:
 - Callers in `main.py` can be refactored to consume `ports.research_knowledge_source` or the unified `read_surface_ports` container directly.
-- The boundary between Read queries and Command writes is clearly delineated.
+- The boundary between Read queries and Command writes is clearly delineated (82 reads vs 6 writes).
 - Mutual exclusion with all companion ownership maps (`ACG-RS-TRAINING-*`, `ACG-RS-CAPITAL-*`, `ACG-RS-LIFECYCLE-*`, `ACG-RS-OPERATIONS-*`, `ACG-RS-OODA-*`) is formally established.
