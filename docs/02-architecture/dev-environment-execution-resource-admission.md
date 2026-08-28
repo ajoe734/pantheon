@@ -56,7 +56,9 @@ To prevent race conditions and scheduler drift, the exact same pure admission pr
 
 ### 2.4 Sole Deploy Lease Preservation
 
-`scripts/dev_environment_lease.py` remains the authoritative runtime/deploy lease on the host. Pre-dispatch execution resource admission acts as an orchestrator-level concurrency gate; it **does not introduce a secondary filesystem lock**, maintaining clear domain boundaries.
+`scripts/dev_environment_lease.py` remains the authoritative runtime/deploy lease on the host. Pre-dispatch execution resource admission is only an orchestrator-level capacity hint; it **does not introduce a secondary filesystem lock**.
+
+The isolated Compose harness also participates in that same GitHub CAS lease before it touches Docker. It attempts a non-waiting `qualification` acquisition and returns retryable exit code `75` when a deployment or another qualification already owns the environment. On success it holds the lease through pre-clean, migration, provision, proof, and teardown, then releases the exact owner. This closes the gap between scheduler admission and actual VM execution without creating another lock domain.
 
 ### 2.5 Pre-Dispatch External Wait Handling
 

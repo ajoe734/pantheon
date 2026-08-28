@@ -14,10 +14,12 @@ This harness coordinates the complete reproducible proof for Loops 8 through 12:
 from __future__ import annotations
 
 import argparse
+import atexit
 import hashlib
 import json
 import os
 import secrets
+import signal
 import subprocess
 import sys
 import tempfile
@@ -28,6 +30,11 @@ import urllib.request
 from pathlib import Path
 from typing import Any, Mapping
 
+try:
+    from scripts import dev_environment_lease
+except ModuleNotFoundError:  # Direct ``python scripts/...`` invocation.
+    import dev_environment_lease  # type: ignore[no-redef]
+
 TASK_ID = "PFG-L12-RUNTIME-E2E-20260820"
 MAIN_NEGATIVE_BINDING_ID = "rb-51f84b3169d745e4b34fcf80f0bc5f3c"
 MAIN_NEGATIVE_ARTIFACT_ID = "artifact-l12-missing-checksum-758b9d2a75"
@@ -36,6 +43,8 @@ DEFAULT_COMPOSE_PROJECT = "l12currentruntimee2e"
 WORKER_TASK_ID_ENV = "ORCH_TASK_ID"
 WORKER_EXECUTION_RESOURCES_ENV = "ORCH_TASK_EXECUTION_RESOURCES"
 PANTHEON_DEV_EXECUTION_RESOURCE = "pantheon-dev"
+DEV_ENVIRONMENT_LEASE_TTL_SECONDS = 300
+DEV_ENVIRONMENT_LEASE_INTERVAL_SECONDS = 30
 DEFAULT_EVIDENCE_DEST = (
     REPO_ROOT
     / "docs"
@@ -297,6 +306,150 @@ def _validate_supervised_compose_admission(
         )
 
 
+class DevEnvironmentLeaseBusy(RuntimeError):
+    """The shared dev environment is currently owned by another workflow."""
+
+
+class DevEnvironmentLeaseLost(RuntimeError):
+    """The harness lost its shared dev environment lease while it was running."""
+
+
+def _lease_token_from_github_cli() -> str:
+    """Read an existing VM GitHub CLI credential without printing or persisting it."""
+
+    token = str(os.environ.get(dev_environment_lease.TOKEN_ENV) or "").strip()
+    if token:
+        return token
+    result = subprocess.run(
+        ["gh", "auth", "token"],
+        check=False,
+        capture_output=True,
+        text=True,
+        env={
+            key: value
+            for key, value in os.environ.items()
+            if key != dev_environment_lease.TOKEN_ENV
+        },
+    )
+    if result.returncode != 0:
+        raise dev_environment_lease.LeaseError(
+            "shared dev lease requires GitHub CLI authentication on the worker host"
+        )
+    token = result.stdout.strip()
+    if not token:
+        raise dev_environment_lease.LeaseError(
+            "GitHub CLI returned an empty token for the shared dev lease"
+        )
+    return token
+
+
+class _DevEnvironmentLeaseSession:
+    """One worker-owned session of the existing cross-repository dev lease."""
+
+    def __init__(self, *, compose_project: str) -> None:
+        self._closed = False
+        self._heartbeat: subprocess.Popen[str] | None = None
+        self._previous_sigterm_handler = signal.getsignal(signal.SIGTERM)
+        self._temporary = tempfile.TemporaryDirectory(prefix="pantheon-l12-dev-lease-")
+        temporary_root = Path(self._temporary.name)
+        self._state_file = temporary_root / "state.json"
+        self._failure_file = temporary_root / "heartbeat-failure.json"
+        self._shutdown_file = temporary_root / "heartbeat-shutdown.json"
+        token = _lease_token_from_github_cli()
+        self._manager = dev_environment_lease.LeaseManager(
+            dev_environment_lease.GitHubClient(token),
+            repository=dev_environment_lease.DEFAULT_REPOSITORY,
+            branch=dev_environment_lease.DEFAULT_BRANCH,
+            path=dev_environment_lease.DEFAULT_PATH,
+            resource=dev_environment_lease.DEFAULT_RESOURCE,
+        )
+        task_id = str(os.environ.get(WORKER_TASK_ID_ENV) or "manual").strip() or "manual"
+        owner = f"l12-compose:{task_id}:{compose_project}:{os.getpid()}:{secrets.token_hex(6)}"
+        try:
+            state, content_sha, _ = self._manager.acquire(
+                mode="qualification",
+                owner=owner,
+                ttl_seconds=DEV_ENVIRONMENT_LEASE_TTL_SECONDS,
+                wait_seconds=0,
+                poll_seconds=1.0,
+                expected_backend_sha="",
+                run_url="",
+            )
+        except dev_environment_lease.LeaseBusy as exc:
+            self._temporary.cleanup()
+            raise DevEnvironmentLeaseBusy(str(exc)) from exc
+        try:
+            dev_environment_lease.atomic_write_json(
+                self._state_file,
+                dev_environment_lease.public_state(state, content_sha=content_sha),
+                0o600,
+            )
+            heartbeat_command = [
+                sys.executable,
+                str(REPO_ROOT / "scripts" / "dev_environment_lease.py"),
+                "heartbeat-loop",
+                "--state-file",
+                str(self._state_file),
+                "--ttl-seconds",
+                str(DEV_ENVIRONMENT_LEASE_TTL_SECONDS),
+                "--interval-seconds",
+                str(DEV_ENVIRONMENT_LEASE_INTERVAL_SECONDS),
+                "--failure-json-out",
+                str(self._failure_file),
+                "--shutdown-json-out",
+                str(self._shutdown_file),
+                "--token-stdin",
+                "--parent-pid",
+                str(os.getpid()),
+            ]
+            self._heartbeat = subprocess.Popen(
+                heartbeat_command,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                text=True,
+            )
+            assert self._heartbeat.stdin is not None
+            self._heartbeat.stdin.write(f"{token}\n")
+            self._heartbeat.stdin.close()
+            signal.signal(signal.SIGTERM, self._handle_lease_loss)
+        except Exception:
+            # Acquisition has completed by this point, so a startup failure
+            # must release the same owner rather than wait for lease expiry.
+            self.close()
+            raise
+
+    @staticmethod
+    def _handle_lease_loss(_signum: int, _frame: Any) -> None:
+        raise DevEnvironmentLeaseLost("shared dev environment lease heartbeat was lost")
+
+    def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        signal.signal(signal.SIGTERM, self._previous_sigterm_handler)
+        if self._heartbeat is not None and self._heartbeat.poll() is None:
+            self._heartbeat.send_signal(signal.SIGTERM)
+            try:
+                self._heartbeat.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                self._heartbeat.kill()
+                self._heartbeat.wait(timeout=5)
+        try:
+            local = dev_environment_lease.read_json_file(
+                self._state_file,
+                "worker dev environment lease state",
+            )
+            self._manager.release(local)
+        except (OSError, dev_environment_lease.LeaseError) as exc:
+            print(
+                f"[!] Could not release shared dev environment lease: {exc}",
+                file=sys.stderr,
+            )
+        finally:
+            self._temporary.cleanup()
+
+
 def _ensure_main_negative_binding_retired(
     runtime_url: str,
     token: str,
@@ -419,7 +572,7 @@ def _augment_report(
             os.unlink(temporary)
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--compose-project",
@@ -494,7 +647,7 @@ def main() -> int:
         action="store_true",
         help="Debug only: do not tear down services provisioned by this invocation",
     )
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     if args.compose_project == "pantheon":
         parser.error("the deployed proof must not provision or tear down the shared pantheon project")
@@ -514,6 +667,22 @@ def main() -> int:
         )
     except ValueError as exc:
         parser.error(str(exc))
+
+    if args.provision_services or args.down:
+        try:
+            lease_session = _DevEnvironmentLeaseSession(
+                compose_project=args.compose_project
+            )
+        except DevEnvironmentLeaseBusy as exc:
+            print(f"[-] Shared dev environment is busy: {exc}", file=sys.stderr)
+            return 75
+        except (OSError, dev_environment_lease.LeaseError) as exc:
+            print(f"[-] Shared dev environment lease failed: {exc}", file=sys.stderr)
+            return 78
+        # Keep one CAS lease over pre-clean, migration, Docker provision, test,
+        # and teardown.  Kernel process exit is the fallback; atexit performs
+        # the normal exact-owner release on every regular return path below.
+        atexit.register(lease_session.close)
 
     compose_files = args.compose_files or [str(REPO_ROOT / "docker-compose.yml")]
 
