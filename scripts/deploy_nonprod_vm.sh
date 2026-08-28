@@ -659,6 +659,7 @@ ssh_bash() {
   command_prefix+=" PANTHEON_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED=$(shell_quote "${PANTHEON_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED:-}")"
   command_prefix+=" PANTHEON_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN=$(shell_quote "${PANTHEON_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN:-}")"
   command_prefix+=" PANTHEON_DEV_DOCKER_PRUNE=$(shell_quote "${PANTHEON_DEV_DOCKER_PRUNE:-false}")"
+  command_prefix+=" PANTHEON_DEV_DOCKER_PRUNE_TIMEOUT_SECONDS=$(shell_quote "${PANTHEON_DEV_DOCKER_PRUNE_TIMEOUT_SECONDS:-180}")"
   command_prefix+=" PANTHEON_DEV_POSTGRES_TELEMETRY_PRUNE=$(shell_quote "${PANTHEON_DEV_POSTGRES_TELEMETRY_PRUNE:-true}")"
   command_prefix+=" PANTHEON_DEV_COMPOSE_PROFILES=$(shell_quote "${DEV_COMPOSE_PROFILES}")"
   command_prefix+=" PANTHEON_EXTERNAL_EGRESS=$(shell_quote "${SOURCE_REFRESH_EGRESS_MODE}")"
@@ -2279,7 +2280,7 @@ run_bounded_docker_prune() {
   shift
   local timeout_seconds="${PANTHEON_DEV_DOCKER_PRUNE_TIMEOUT_SECONDS:-45}"
 
-  if ! [[ "${timeout_seconds}" =~ ^[0-9]+$ ]] || (( timeout_seconds < 1 || timeout_seconds > 120 )); then
+  if ! [[ "${timeout_seconds}" =~ ^[0-9]+$ ]] || (( timeout_seconds < 1 || timeout_seconds > 300 )); then
     info "warning: invalid PANTHEON_DEV_DOCKER_PRUNE_TIMEOUT_SECONDS=${timeout_seconds}; skipping ${label}"
     return 0
   fi
@@ -2311,9 +2312,12 @@ prune_dev_docker_storage_for_build() {
 
   docker_storage_diagnostics "before prune"
   info "pruning dev Docker build cache and unused containers/images before root build"
+  journalctl --vacuum-size=500M 2>/dev/null || true
+  git -C "${PANTHEON_REMOTE_DIR:-/home/lupin/pantheon}" worktree prune 2>/dev/null || true
   run_bounded_docker_prune "builder cache" docker builder prune -af
   run_bounded_docker_prune "stopped containers" docker container prune -f
   run_bounded_docker_prune "unused images" docker image prune -af
+  run_bounded_docker_prune "unused volumes" docker volume prune -f
   run_bounded_docker_prune "system cache" docker system prune -f
   docker_storage_diagnostics "after prune"
 }
