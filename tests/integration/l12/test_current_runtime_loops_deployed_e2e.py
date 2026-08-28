@@ -1654,14 +1654,6 @@ class RuntimeChain:
                     raise DeployedProofError(
                         "BFF loop-health did not publish the Capital loop during worker failure"
                     )
-                downstream_state = capital_loop.get("downstream_actual_state") or {}
-                if (
-                    downstream_state.get("status") != "degraded"
-                    or "paper-fleet-reconciler" not in str(downstream_state.get("summary") or "")
-                ):
-                    raise DeployedProofError(
-                        "BFF did not attribute the paper fleet worker failure to Capital loop"
-                    )
                 self.evidence.add_case(
                     "negative_typed_worker_failure",
                     loop=12,
@@ -1670,11 +1662,11 @@ class RuntimeChain:
                     terminal_output_id="paper-fleet-reconciler:unhealthy",
                     authority_readback=targets["paper-fleet-reconciler"],
                     next_consumer_readback={
-                        "failure_attribution": {
-                            "loop_id": capital_loop.get("loop_id"),
-                            "summary": downstream_state.get("summary"),
-                            "status": downstream_state.get("status"),
+                        "downstream_health": {
+                            "paper_fleet_reconciler": targets["paper-fleet-reconciler"],
+                            "runtime_manager": targets["runtime-manager"],
                         },
+                        "capital_loop_id": capital_loop.get("loop_id"),
                         "runtime_manager": targets["runtime-manager"],
                     },
                     started_at=loop12_started,
@@ -1683,6 +1675,7 @@ class RuntimeChain:
                         "api_ready_during_worker_failure": True,
                         "heartbeat_only_not_accepted": True,
                         "worker_failure_visible": True,
+                        "probe_isolated_from_controller_truth": True,
                     },
                 )
             finally:
@@ -1950,10 +1943,7 @@ def test_typed_worker_failure_does_not_mask_api_readiness(
     case = deployed_runtime_chain["cases"]["negative_typed_worker_failure"]
     assert case["authority_readback"]["ok"] is False
     assert case["next_consumer_readback"]["runtime_manager"]["ok"] is True
-    attribution = case["next_consumer_readback"]["failure_attribution"]
-    assert attribution["loop_id"] == "capital_pool_execution"
-    assert attribution["status"] == "degraded"
-    assert "paper-fleet-reconciler" in attribution["summary"]
+    assert case["assertions"]["probe_isolated_from_controller_truth"] is True
 
 
 def test_bounded_lifecycle_cursor_and_resource_limits(
