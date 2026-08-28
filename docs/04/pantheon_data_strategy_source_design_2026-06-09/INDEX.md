@@ -26,3 +26,12 @@ discovery.
   derived seeds half (EPIC DATASTRAT-IDS), with the safety-first ordering rule.
 - `CLOSEOUT_DATASTRAT_IDS_007.md` — owner closeout for the IDS-007
   negative-memory matcher safety guard.
+
+## Phase-1 External Data Source Management (2026-08-24)
+
+- See [`docs/04/pantheon_external_data_source_management_2026-08-24/INDEX.md`](../pantheon_external_data_source_management_2026-08-24/INDEX.md)
+  for the canonical Phase-1 source inventory, connector definitions, durable
+  source-management commands/store, governed search, reviewed memory writeback,
+  and qualified acceptance (`SRCM-PHASE1-20260824`, SD-SRCM-01 ~ SD-SRCM-08).
+  Functional closure is accepted; browser/HAR, credential, strict-auth, and
+  full exact-pair hosted proof remain explicitly unclaimed follow-ups.

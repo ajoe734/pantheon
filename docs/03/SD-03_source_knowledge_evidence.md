@@ -27,14 +27,31 @@ OpenClaw 不得直接持有 vendor token，也不得直接任意上網抓資料�
 
 ---
 
-## 2. Repo ownership
+## 2. Repo ownership & Phase-1 Canonical Correction
 
-| Repo | Ownership |
+> **2026-08-28 Canonical Update**: Phase-1 External Data Source Management (`SRCM-PHASE1-20260824`, SD-SRCM-01 ~ SD-SRCM-07) is implemented in Pantheon. Human/Ops accepted the remaining functional closure after bounded recovery replayed three DLQ entries, completed one exclusive public TWSE/TPEx pull (`ran=1`, `failed=0`, `excluded=92`), and returned pending/unresolved DLQ to zero. Normal dev remains the durable `reconcile_only` owner (`MAX_TICKS=0`, restart `unless-stopped`) with external egress denied, so it does not perform recurring provider pulls. SD-SRCM-08 full browser/external proof remains a non-blocking follow-up: no ten-journey Playwright/HAR claim is promoted, authenticated Source identity and strict dev auth remain unaccepted, and `live` terminology still requires those stronger exact-pair proofs. Active Management UI lives in `execute-plans` under `/management/data-sources`.
+
+| Repo | Ownership | Status |
+|---|---|---|
+| `pantheon` | Primary owner：source ingestion, connector definitions, source management store & commands, evidence store, search gateway, alpha rules, StrategySpec seed builder, memory writeback. | Active Canonical |
+| `execute-plans` | Active frontend consumer：`/management/data-sources`, Data Source Control Center, Agora Research, Connector Health. | Active Canonical (`ajoe734/execute-plans`) |
+| `pantheon-lean` | Execution substrate connector reference：Polygon / Benzinga 等 execution-facing connector 作為 adapter reference，canonical ingestion/management authority 在 Pantheon。 | Active Submodule |
+| `OpenClaw` integration | Governed search client only；Phase 2 deferred for discovery/proposal assist; 不可直接擁有 source authority 或 product write routes。 | Phase 2 Governed Client |
+| `front-ai-trading-system` | Legacy frontend reference only. Retired per repository rules. | **Historical Legacy Only** |
+
+### Phase-1 Canonical Source Terminology
+
+| Term | Operational Meaning |
 |---|---|
-| `pantheon` | Primary owner：source ingestion、normalizer、evidence store、search gateway、StrategySpec seed builder。 |
-| `front-ai-trading-system` | UI consumer：Knowledge Workbench、Research Search、Evidence Bundle Viewer、Connector Health。 |
-| `pantheon-lean` | Existing connector source reference：Polygon / Benzinga 等 execution-facing connector 可作為 adapter reference，但 canonical ingestion authority 應回到 Pantheon。 |
-| `OpenClaw` integration | Governed search client only；不可直接擁有 source authority。 |
+| `target` | Design / intended capability in catalog or blueprint |
+| `supported` | Deployed connector adapter definition exists in code allowlist |
+| `configured` | Source instance exists in durable Postgres/JSONL store |
+| `credentialed` | Secret ref ID resolves for required authorization scopes |
+| `validated` | Configuration and policy validation passed |
+| `canary-passed` | Bounded current-deployment downstream proof passed (no order/capital route) |
+| `enabled` | Desired execution permission set by authorized operator |
+| `fresh` | Observed watermark within declared source SLA |
+| `live` | Current environment proof verified with exact FE/BFF/source deployment identities |
 
 ---
 
@@ -45,6 +62,10 @@ OpenClaw 不得直接持有 vendor token，也不得直接任意上網抓資料�
 ```text
 services/source-ingestion/
   __init__.py
+  connector_definitions.py
+  source_management_store.py
+  source_management_commands.py
+  source_management_models.py
   connectors/
     base.py
     paper.py
@@ -56,8 +77,10 @@ services/source-ingestion/
     alpha_db.py
     macro.py
     market.py
+    taiwan_official.py
   normalizer.py
-  source_registry.py
+  financial_source_catalog.py
+  provider_adapters.py
   strategy_seed_builder.py
   ingest_manager.py
   entitlement.py
@@ -75,14 +98,29 @@ services/search/
   gateway.py
   indexer.py
   retriever.py
+  hybrid_retriever.py
+  structured_alpha.py
   filters.py
   reranker.py
   api.py
   tests/
 
+services/research/
+  research_memory_outbox.py
+  memory_writeback_worker.py
+  retrieval_influence.py
+
 integrations/openclaw/search_gateway.py
 
-docs/contracts/source_connector.schema.json
+docs/contracts/connector_definition.schema.json
+docs/contracts/data_source_registry_entry.v2.schema.json
+docs/contracts/source_desired_state.schema.json
+docs/contracts/source_observed_state.schema.json
+docs/contracts/source_management_command.schema.json
+docs/contracts/source_management_receipt.schema.json
+docs/contracts/source_canary_result.schema.json
+docs/contracts/alpha_signal_record.schema.json
+docs/contracts/alpha_rule_query.schema.json
 docs/contracts/evidence_bundle.schema.json
 docs/contracts/search_request.schema.json
 docs/contracts/strategy_spec_seed.schema.json
@@ -90,14 +128,23 @@ docs/sd/03_source_knowledge_evidence.md
 docs/codex/SD-03_task_packets.md
 ```
 
-### `front-ai-trading-system`
+### `execute-plans` (Active Frontend)
 
 ```text
-src/pages/knowledge/*
-src/pages/research/SearchPanel.tsx
-src/pages/settings/ConnectorHealthPanel.tsx
-src/types/evidence.ts
-src/lib/searchClient.ts
+src/management/pages/oversight/DataSourceManagement.tsx
+src/lib/bff-v1/managementDataSources.ts
+src/lib/v5/management/systemDataSources.ts
+e2e/30-management-data-source-control.spec.ts
+```
+
+### Historical Reference (`front-ai-trading-system` — retired)
+
+```text
+[Historical] src/pages/knowledge/*
+[Historical] src/pages/research/SearchPanel.tsx
+[Historical] src/pages/settings/ConnectorHealthPanel.tsx
+[Historical] src/types/evidence.ts
+[Historical] src/lib/searchClient.ts
 ```
 
 ---

@@ -105,28 +105,31 @@ External Source
 
 ---
 
-## 3. 現況摘要
+## 3. 現況與演進摘要
 
-### 3.1 已有訊號
+### 3.1 架構訊號
 
-目前已知：
+目前架構定位：
 
 ```text
+execute-plans (Active Canonical Frontend):
+  - /management/data-sources Data Source Control Center
+  - Agora Research Workbench / Evidence / Insight / StrategySpec UI surface
+  - BFF client 連接 canonical management read/write routes
+
+pantheon (Active Canonical Backend):
+  - Source Ingestion Plane: connector definitions, source management store & commands, provider adapters, financial catalog
+  - Search Plane: as-of/time filters, hybrid retriever, structured alpha rules
+  - Research / Memory: reviewed memory writeback outbox & worker
+  - OpenClaw: Phase 2 governed search client only, zero product write authority
+
+Lean (Execution Submodule):
+  - 標準 LEAN engine，專注 backtest / paper / live execution substrate
+  - 不做 canonical external source management 權威
+
+[Historical Legacy Reference]
 front-ai-trading-system:
-  - Knowledge Workbench / Evidence / Insight / StrategySpec UI surface
-  - BFF client 有 knowledge / research / evidence / strategy-spec endpoints
-
-pantheon:
-  - 有 data-plane / dataset lineage / research ingest / research adapters 類訊號
-  - 有 OpenClaw governance 設計方向
-  - 有 registry / telemetry / lineage 相關設計文件
-
-Lean:
-  - 有標準 LEAN engine 能力，可接 data feed / brokerage / live trading
-  - 但 Lean 裡的 data feed / broker feed 不等於 Pantheon canonical data gateway
-
-lean-platform:
-  - 原藍圖 execution substrate，但目前最新前提是幾乎未動
+  - 舊版前端名稱，已全數由 execute-plans 取代 (歷史參考用)
 ```
 
 ### 3.2 主要判斷
@@ -651,6 +654,43 @@ Focused verification:
 python3 -m pytest services/source_ingestion -q
 python3 -m pytest services/knowledge/evidence services/search/tests/test_governed_search.py services/search/test_index_pipeline.py services/search/tests/test_retrieval_rank_filter_cutoff_contract.py -q
 ```
+
+### 13.2 SRCM-P1 Full Delivery and Hosted Acceptance — 2026-08-24
+
+在 `SRCM-PHASE1-20260824`（SD-SRCM-01 至 SD-SRCM-08）中，Pantheon 完整落實了外部資料源生命週期管理：
+
+1. **Source Connector Definitions & Schema Authority**:
+   - `services/source_ingestion/connector_definitions.py` 定義 deployed adapter allowlist。
+   - `source_management_store.py` 提供 Postgres/JSONL 雙後端 desired/observed 狀態儲存。
+   - 支援 `create_disabled`、`validate`、`canary`、`enable`、`disable`、`degrade`、`resume`、`change_schedule`、`replace`、`retire` 等生命週期命令與 durable receipts。
+
+2. **BFF Management Facade & UI Control Center**:
+   - `services/control-plane/bff/console_gap/datasources.py` 提供 `/bff/management/data-sources/v2` 與受控寫入 endpoints（需 Operator/Admin 權限與 idempotency key）。
+   - `execute-plans` 前端 `/management/data-sources` 擴充為完整 Control Center。
+
+3. **Governed Search & Structured Alpha Rules**:
+   - `services/search/filters.py` 與 `services/search/gateway.py` 實作 available-time as-of cutoff 與授權過濾。
+   - `services/search/structured_alpha.py` 支援 AST 驗證、PIT、survivorship 及 query snapshot。
+
+4. **Reviewed Research Memory Lineage**:
+   - `services/research/research_memory_outbox.py` 與 `services/memory/learn_feedback_writeback.py` 保證只有經審查的 research findings 能寫入 persona / institutional memory。
+
+5. **Canonical Terminology**:
+   - `target`: 設計/意圖能力
+   - `supported`: 已部署 adapter 定義存在
+   - `configured`: 資料源實例存在於持久化 store
+   - `credentialed`: secret ref 成功解析所需權限
+   - `validated`: 配置與 policy 驗證通過
+   - `canary-passed`: 有界 downstream 驗證通過（無下單/資金路徑）
+   - `enabled`: 操作者授權之期望執行狀態
+   - `fresh`: 觀察水位在 declared SLA 內
+   - `live`: 當前環境經 exact FE/BFF/source 部署驗證通過
+
+6. **Hosted Acceptance Status**:
+   - `scripts/verify_external_source_management_acceptance.py` 嚴格把關 10 個 hosted journeys、實際 Playwright/HAR、非 placeholder 截圖、負向安全控制、exact-pair identity drift rejection、migration idempotency、read-only rollback 與 zero secret leak。
+   - 2026-08-28 Human/Ops 授權以 functional closure 優先：三筆 DLQ 經兩次 deduplicated execution replay，一次 exclusive TWSE/TPEx manual pull 成功（`ran=1`, `failed=0`, `excluded=92`），最後 pending/unresolved DLQ 都是 0。Normal Source 已恢復 `egress=deny`、`reconcile_only`、`MAX_TICKS=0`、restart `unless-stopped`；這是持續內部 reconcile owner，不是 recurring provider pull。
+   - 公開 dev pair 觀察為 execute-plans `c230fc76` 與 BFF `dcb14231`，FE manifest 無 BFF drift、frontend 保持 `VITE_BFF_REAL_WRITES=false`，未授權與錯誤登入皆回 `401 AUTH_REQUIRED`。`--functional-only` 可驗證此範圍；十個 journey 的獨立 browser/HAR、authenticated Source definition identity、credentialed journey、strict BFF auth 與 full exact-pair authorization 都明列為 non-blocking follow-up，完整版 verifier 仍 fail-closed，故不得把 functional closure 寫成完整 hosted/live 證明。
+   - OpenClaw 維持 Phase 2，不具備 product write 權限。
 
 ---
 
