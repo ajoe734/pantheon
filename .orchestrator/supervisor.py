@@ -5556,6 +5556,34 @@ def worker_completed_after_responsibility_transition(
     return task_current_dispatch_responsibility(config, task) != dispatched_role
 
 
+def complete_worker_after_responsibility_transition(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    worker: dict[str, Any],
+    *,
+    message: str,
+    last_event_at: str | None = None,
+) -> None:
+    """Close a successful run whose canonical responsibility already moved."""
+
+    worker["status"] = "completed"
+    worker["last_event_at"] = last_event_at or utc_now()
+    worker.pop("last_error", None)
+    finalize_queue_event_record(config, state, worker, "completed")
+    write_activity_log(
+        config,
+        {
+            "type": "worker_completed",
+            "provider": worker.get("provider"),
+            "task_id": worker.get("task_id"),
+            "message": message,
+            "worker_run_id": worker.get("run_id"),
+            "pr_url": worker.get("pr_url"),
+            "session_url": worker.get("session_url"),
+        },
+    )
+
+
 def worker_heartbeat_is_stale(config: dict[str, Any], worker: dict[str, Any], now: datetime | None = None) -> bool:
     settings = worker_runtime_settings(config)
     heartbeat_dt = _parse_iso_utc(str(worker.get("last_heartbeat_at") or ""))
@@ -11152,24 +11180,14 @@ def poll_workers(
             if missing_process and worker_completed_after_responsibility_transition(
                 config, worker, task
             ):
-                worker["status"] = "completed"
-                worker["last_event_at"] = utc_now()
-                worker.pop("last_error", None)
-                finalize_queue_event_record(config, state, worker, "completed")
-                write_activity_log(
+                complete_worker_after_responsibility_transition(
                     config,
-                    {
-                        "type": "worker_completed",
-                        "provider": worker.get("provider"),
-                        "task_id": worker.get("task_id"),
-                        "message": (
-                            "Worker runner succeeded and canonical task responsibility "
-                            "already advanced to its successor lane."
-                        ),
-                        "worker_run_id": worker.get("run_id"),
-                        "pr_url": worker.get("pr_url"),
-                        "session_url": worker.get("session_url"),
-                    },
+                    state,
+                    worker,
+                    message=(
+                        "Worker runner succeeded and canonical task responsibility "
+                        "already advanced to its successor lane."
+                    ),
                 )
                 changed = True
                 continue
@@ -13155,6 +13173,28 @@ def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> 
             else "Worker process missing during supervisor boot reconciliation."
         )
         task = task_map.get(str(worker.get("task_id") or ""))
+        # A supervisor restart can observe the owner process only after it has
+        # successfully handed the task to review.  This is the same condition
+        # handled in the ordinary polling path: the dead PID is historical,
+        # not a lost lease.  Re-check it here before creating a recovery
+        # receipt, otherwise every restart briefly fences an already-valid
+        # handoff and wastes a recovery cycle.
+        if missing_process and worker_completed_after_responsibility_transition(
+            config, worker, task
+        ):
+            complete_worker_after_responsibility_transition(
+                config,
+                state,
+                worker,
+                message=(
+                    "Worker runner succeeded and canonical task responsibility "
+                    "already advanced to its successor lane during supervisor "
+                    "boot reconciliation."
+                ),
+                last_event_at=worker.get("runner_finished_at"),
+            )
+            changed = True
+            continue
         handoff_status = canonical_worker_terminal_status(
             config,
             worker,
