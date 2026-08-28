@@ -5462,6 +5462,94 @@ def worker_lease_requires_work_progress(config: dict[str, Any]) -> bool:
     return bool(supervisor_settings.get("lease_requires_work_progress", True))
 
 
+def worker_provider_print_timeout_seconds(
+    config: dict[str, Any], worker: Mapping[str, Any]
+) -> float | None:
+    """Return the bounded CLI runtime for a provider, if it declares one.
+
+    Active subprocess CPU/I/O is only safe as a lease-progress fallback when
+    the worker has an independently enforced provider deadline.  Keeping this
+    bound derived from the adapter's ``print_timeout`` makes the provider
+    configuration the single source of truth instead of introducing another
+    timeout that can drift from the launched command.
+    """
+
+    provider = str(worker.get("provider") or "").strip()
+    providers = config.get("providers")
+    provider_config = providers.get(provider) if isinstance(providers, dict) else None
+    adapter_config = (
+        provider_config.get("antigravity")
+        if isinstance(provider_config, dict)
+        else None
+    )
+    raw_timeout = (
+        str(adapter_config.get("print_timeout") or "").strip().lower()
+        if isinstance(adapter_config, dict)
+        else ""
+    )
+    match = re.fullmatch(r"(?P<value>\d+(?:\.\d+)?)(?P<unit>[smhd])", raw_timeout)
+    if match is None:
+        return None
+    multipliers = {"s": 1.0, "m": 60.0, "h": 3600.0, "d": 86400.0}
+    seconds = float(match.group("value")) * multipliers[match.group("unit")]
+    return seconds if seconds > 0 else None
+
+
+def worker_meaningful_progress_is_fresh(
+    config: dict[str, Any], worker: Mapping[str, Any], now: datetime
+) -> bool:
+    settings = worker_runtime_settings(config)
+    latest_progress = _parse_iso_utc(str(worker.get("last_work_progress_at") or ""))
+    if latest_progress is None:
+        latest_progress = _parse_iso_utc(
+            str(worker.get("lease_acquired_at") or worker.get("started_at") or "")
+        )
+    if latest_progress is None:
+        return False
+    return rewrite_worker_lifecycle.lease_progress_is_fresh(
+        last_progress_epoch=latest_progress.timestamp(),
+        now_epoch=now.timestamp(),
+        stall_seconds=float(settings.get("work_progress_stale_seconds", 360)),
+    )
+
+
+def worker_active_process_lease_deadline(
+    config: dict[str, Any], worker: Mapping[str, Any]
+) -> datetime | None:
+    timeout_seconds = worker_provider_print_timeout_seconds(config, worker)
+    started_at = _parse_iso_utc(
+        str(worker.get("lease_acquired_at") or worker.get("started_at") or "")
+    )
+    if timeout_seconds is None or started_at is None:
+        return None
+    return started_at + timedelta(seconds=timeout_seconds)
+
+
+def worker_active_process_lease_is_fresh(
+    config: dict[str, Any], worker: Mapping[str, Any], now: datetime
+) -> bool:
+    """Allow a bounded active child process to keep a healthy lease alive.
+
+    Provider output and commits are still the preferred progress signals.  A
+    quiet test process can use this fallback only while its process tree keeps
+    advancing, its provider has a configured hard timeout, and that deadline
+    has not passed.  A provider without a timeout never receives this grace.
+    """
+
+    deadline = worker_active_process_lease_deadline(config, worker)
+    if deadline is None or now >= deadline:
+        return False
+    last_activity = _parse_iso_utc(str(worker.get("last_active_process_at") or ""))
+    if last_activity is None:
+        return False
+    settings = worker_runtime_settings(config)
+    return rewrite_worker_lifecycle.lease_progress_is_fresh(
+        last_progress_epoch=last_activity.timestamp(),
+        now_epoch=now.timestamp(),
+        stall_seconds=float(settings.get("work_progress_stale_seconds", 360)),
+    )
+
+
 def worker_lease_progress_is_fresh(
     config: dict[str, Any],
     worker: dict[str, Any],
@@ -5480,21 +5568,9 @@ def worker_lease_progress_is_fresh(
     # work-progress dimension is exempted.
     if str(worker.get("status") or "") in {"waiting_approval", "suspended_approval"}:
         return True
-    # Lease renewal is tied to meaningful provider output or an observed
-    # commit/worktree change. Log mtime, heartbeat, CPU, and I/O are health
-    # signals only; none proves that the worker made task progress.
-    latest_progress = _parse_iso_utc(str(worker.get("last_work_progress_at") or ""))
-    if latest_progress is None:
-        latest_progress = _parse_iso_utc(
-            str(worker.get("lease_acquired_at") or worker.get("started_at") or "")
-        )
-    if latest_progress is None:
-        return False
-    return rewrite_worker_lifecycle.lease_progress_is_fresh(
-        last_progress_epoch=(latest_progress.timestamp() if latest_progress else None),
-        now_epoch=now_dt.timestamp(),
-        stall_seconds=float(settings.get("work_progress_stale_seconds", 360)),
-    )
+    if worker_meaningful_progress_is_fresh(config, worker, now_dt):
+        return True
+    return worker_active_process_lease_is_fresh(config, worker, now_dt)
 
 
 def worker_lease_can_renew(
@@ -5517,6 +5593,16 @@ def worker_lease_is_expired(config: dict[str, Any], worker: dict[str, Any], now:
     if lease_expires_at is None:
         return False
     now_dt = now or datetime.now(timezone.utc)
+    # Do not wait for a previously renewed short lease to elapse after the
+    # provider deadline.  This is the hard stop that prevents active CPU/I/O
+    # alone from keeping a wedged provider process alive indefinitely.
+    deadline = worker_active_process_lease_deadline(config, worker)
+    if (
+        deadline is not None
+        and now_dt >= deadline
+        and not worker_meaningful_progress_is_fresh(config, worker, now_dt)
+    ):
+        return True
     return now_dt > lease_expires_at.astimezone(timezone.utc) and not worker_lease_can_renew(
         config,
         worker,
@@ -9992,11 +10078,16 @@ def poll_worker_observation_stage(
             worker,
             now,
         )
-        # Process-tree activity is retained as diagnostic telemetry only. It
-        # must not renew a work lease or reset the meaningful-progress stall
-        # clock; otherwise a wedged AGY process can live forever on CPU/I/O.
+        # An active subprocess is allowed to keep a lease only through its
+        # provider-configured hard deadline.  The bounded timestamp below is
+        # deliberately separate from semantic provider/commit progress.
         if process_activity_advanced and not heartbeat_fresh:
             process_activity_advanced = False
+        elif process_activity_advanced:
+            worker["last_active_process_at"] = (
+                now.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+            )
+            changed = True
 
     if (
         alive
