@@ -1474,7 +1474,17 @@ def _verified_claude_policy(config: dict[str, Any]) -> dict[str, Any]:
 
 
 def _verified_claude_hooks() -> dict[str, Any]:
-    broker_path = ROOT / ".orchestrator" / "permission_broker.py"
+    # Claude settings outlive one promoted command runtime.  Resolve the
+    # broker through the supervisor-issued immutable runtime at hook execution
+    # time instead of pinning the settings file to whichever shared checkout
+    # happened to generate it.  The fixed ROOT fallback preserves deliberate
+    # non-worker/local use where no promoted runtime binding exists.
+    fallback_root = str(ROOT).replace('"', '\\"')
+    broker_path = (
+        '"${PANTHEON_COMMAND_ROOT:-'
+        f'{fallback_root}'
+        '}/.orchestrator/permission_broker.py"'
+    )
     command = f"python3 {broker_path} hook"
     hook = lambda event: [{"hooks": [{"type": "command", "command": f"{command} {event}", "shell": "bash"}]}]
     return {

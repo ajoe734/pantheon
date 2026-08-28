@@ -1,0 +1,29 @@
+{
+  "schema_version": "pantheon.paper_runtime.acceptance_evidence.v1",
+  "task": {
+    "id": "PFG-HOSTED-CURRENT-DEV-CLOSEOUT-20260828"
+  },
+  "mode": "hosted",
+  "status": "passed",
+  "observed_at": "2026-08-28T06:16:00Z",
+  "exact_pair": {
+    "backend_sha": "dcb14231d29f08f1646a4ee962b83fd2d4b67560",
+    "frontend_sha": "c230fc76bef78fc297135152f2acba690314bb9d",
+    "bff_url": "https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io",
+    "fe_url": "https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io"
+  },
+  "paper_fleet_ready": true,
+  "executable_binding_contract": "admitted",
+  "environment_scope": "paper",
+  "deployment_sha": "dcb14231d29f08f1646a4ee962b83fd2d4b67560",
+  "bounded_lifecycle": "enforced",
+  "skipped_mandatory_count": 0,
+  "required_skips_allowed": false,
+  "unskipped_mandatory_cases": true,
+  "producer": {
+    "kind": "github-actions",
+    "repository": "ajoe734/pantheon",
+    "workflow": ".github/workflows/nonprod-deploy.yml",
+    "run_id": "33144815565"
+  }
+}

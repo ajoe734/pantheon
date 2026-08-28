@@ -1,0 +1,165 @@
+{
+  "schema_version": "loop_product_evidence.v1",
+  "schema_status": {
+    "formal_schema_owner": "LOOP-PROD-002",
+    "formalization_trigger": "ACG-LOOP-PROJECTION-20260828 owner review-evidence gate.",
+    "note": "Owner-authored fix manifest for the Management loop-health projection, committed before independent review as required by task-closeout-finalization.md.",
+    "status": "formalized"
+  },
+  "evidence_policy": {
+    "checksum_file": null,
+    "missing_or_contradicted_proof_fails_closed": true,
+    "mutation_rule": "Task-scoped changes require a reviewed Pantheon PR after this manifest merges.",
+    "recording_mode": "logical_append_only",
+    "redacted": false,
+    "self_hashing": false
+  },
+  "task": {
+    "base_branch": "dev",
+    "evidence_cut_at": "2026-08-28T04:01:24Z",
+    "evidence_cut_semantics": "Owner implementation committed on task/ACG-LOOP-PROJECTION-20260828 against dev tip ec42776affddabe72b3a8b1bcedd2db9292cf3a7; not yet merged or independently reviewed.",
+    "id": "ACG-LOOP-PROJECTION-20260828",
+    "overall_admission": "pending_review",
+    "owner": "Claude",
+    "phase": "W1-parallel-preparation",
+    "product_level_required": true,
+    "program_id": "PANTHEON-ARCH-CLEANUP-20260828",
+    "repository": "ajoe734/pantheon",
+    "reviewer": "Antigravity",
+    "target_environment": "dev integration (BFF unit/contract tests, no live compose dependency)",
+    "task_branch": "task/ACG-LOOP-PROJECTION-20260828",
+    "title": "Make Management loop health a pure twelve-row projection",
+    "design_unit": "ACG-04-PROJECTION",
+    "matrix_items": ["ACG-04-003", "ACG-04-005", "ACG-04-006", "ACG-04-008", "ACG-04-009"],
+    "source_catalog": "docs/04/pantheon_architecture_cleanup_gap_2026-08-27/EXECUTION_TASK_CATALOG_2026-08-28.json",
+    "source_disposition_matrix": "docs/04/pantheon_architecture_cleanup_gap_2026-08-27/DISPOSITION_MATRIX_2026-08-27.json",
+    "source_document": "docs/04/pantheon_architecture_cleanup_gap_2026-08-27/CURRENT_GAP_2026-08-27.md"
+  },
+  "root_cause": {
+    "summary": "GET /bff/v5/loop-health combined four authorities into one array: static catalog metadata, LoopControllerStore rows, a BFF local snapshot fallback (read_store.list_loop_health_records), and DownstreamHealthMonitor synthesis/mutation performed inline inside the read request (including a read-side call to publish_loop_12_controller_truth() and a loop_target_map block that could manufacture or override rows for Loops 1-11 from BFF dependency probes). The response array also mixed the one composite overlay (per_persona_ooda) into the same items list as the twelve canonical loops, so the unit contract expected 13 rows.",
+    "candidates_ruled_out": [
+      "Rewriting loop_inventory.py's admission logic from scratch: the existing truth-level/evidence-basis/controller-record admission machinery in loop_inventory.py already implements most of the required predicates (evidence basis, runtime refs, heartbeat freshness, controller-health status); only two concrete admission gaps needed fixing, not a rewrite.",
+      "A second, independent validator alongside loop_inventory.py: the disposition matrix explicitly forbids this (ACG-04-003 gate: 'No second validator'); the fix instead completes admission inside the existing loop_inventory projection."
+    ],
+    "confirmed_cause": "main.py's _async_loop_health_records (lines ~63404-63529 pre-fix) merged read_store fs-snapshot records into current truth, called downstream_health_monitor.publish_loop_12_controller_truth() synchronously inside the GET handler, and ran a loop_target_map block that could inject or mutate rows for Loops 1-11 from dependency-probe state -- all inside a read request. Separately, loop_inventory.py's controller-name admission predicate had a permissive fallback ('accept any nonblank reported name when the catalog declares no controller identity'), which is the concrete 'second, permissive validator' layered on top of the catalog contract that the disposition matrix calls out for removal."
+  },
+  "fix": {
+    "implementation_changed_files": [
+      "services/control-plane/bff/loop_inventory.py",
+      "services/control-plane/bff/main.py",
+      "services/control-plane/bff/management_read_models/loop_truth.py"
+    ],
+    "evidence_changed_files": [
+      "docs/deployment/evidence/twelve-loop-gap/ACG-LOOP-PROJECTION-20260828/evidence.json",
+      "docs/deployment/evidence/twelve-loop-gap/ACG-LOOP-PROJECTION-20260828/README.md"
+    ],
+    "test_changed_files": [
+      "services/control-plane/bff/test_loop_health_read_model_contract.py"
+    ],
+    "changes": [
+      "Added services/control-plane/bff/management_read_models/loop_truth.py: a new pure projection module whose only job is to join LoopControllerStore records with the catalog (via loop_inventory) and return exactly the twelve canonical loop-health rows. It never reads a BFF local snapshot and never triggers a controller-runtime publish.",
+      "loop_inventory.py: added _canonical_registry_entries() and switched list_loop_health_entries()/get_loop_health_entry() to use it instead of _registry_entries(), so the loop-health read model itself -- not just its caller -- can only ever produce the twelve canonical rows; the composite overlay is no longer reachable through this read model at all.",
+      "loop_inventory.py: fixed the permissive controller-name admission rule in _runtime_controller_record_qualified -- a blank catalog controller_name can no longer be satisfied by any nonblank reported name; only an exact match against a catalog-declared identity qualifies.",
+      "loop_inventory.py: added a new admission requirement that desired_state_presence.authoritative and downstream_actual_state.authoritative both be true before a controller record can qualify as current truth (completes the 'authoritative desired and downstream actual state' predicate from the disposition matrix, ACG-04-003).",
+      "main.py: deleted _loop_health_store_records() and _async_loop_health_records() (the fs-snapshot merge, the read-side publish_loop_12_controller_truth() call, and the loop_target_map cross-loop manufacture/override block). bff_v5_loop_health and bff_v5_loop_health_detail now call management_read_models.loop_truth.fetch_controller_store_health_records()/fetch_canonical_loop_health() instead, which read only LoopControllerStore.",
+      "main.py: _loop_health_response_meta now exposes the composite overlay separately as meta.composite_overlay_inventory (sourced from list_loop_inventory_entries(), filtered to classification == composite_overlay) instead of inside items."
+    ],
+    "not_changing": "services/control-plane/bff/downstream_health_monitor.py required no functional change: its own code has no cross-loop manufacture logic (that lived entirely in main.py's now-deleted _async_loop_health_records); it already publishes Loop 12 controller truth exclusively from its own background _probe_all() cycle, not from any read path. services/loop-control/ (LoopControllerStore, project_controller_record_to_bff) and services/control-plane/bff/read_store.py (ReadSurfaceStore.list/get_loop_health_records) are out of this task's declared artifact scope and are left in place; read_store's loop_health methods simply have no remaining caller in the current-truth path.",
+    "owned_layer": "The loop-health/loop-inventory read-model projection and its BFF route wiring for the current-truth path only (services/control-plane/bff/loop_inventory.py, management_read_models/loop_truth.py, and the two loop-health/loop-inventory route handlers plus their shared helpers in main.py). Not owned: the broader SD-6.1 'extract to a dedicated Management loop router' refactor, ReadSurfaceStore's snapshot methods themselves, and the nine not-yet-implemented Loop 4-12 controller writers (ACG-04-004/007, a sibling task ACG-LOOP-CONTRACTS-20260828)."
+  },
+  "scope_deferral": {
+    "note": "ACG-04-003 (MERGE) also calls for an exact-deployed-SHA admission check and controller-specific heartbeat cadence (replacing the single fixed 900s freshness window). Both are deliberately deferred out of this task: neither is required by this task's own acceptance array (loop-health returns exactly twelve rows; current truth comes only from LoopControllerStore joined with catalog metadata; GET performs no writes and no cross-loop manufacture; overlay is separate), and the catalog registry does not yet declare a per-controller cadence field or a deployed-SHA source for the nine not-yet-implemented controllers -- inventing one here would risk exactly the 'no new facade or truth store' the cleanup program forbids. This is recorded as follow-up scope for ACG-LOOP-CONTRACTS-20260828 or a dedicated admission-hardening task, not silently dropped."
+  },
+  "known_regressions_out_of_scope": {
+    "note": "architecture_cleanup_rules.functional_failure_requires_gap_report_before_repair_task: removing the fs-snapshot merge (ACG-04-005) and the downstream-monitor cross-loop manufacture block (ACG-04-008) -- both explicitly mandated REMOVE dispositions for this task -- breaks tests in two files that are NOT in this task's declared artifact_conflict_guard.artifact_scope and were therefore left unmodified, per scope discipline. These are documented here as a known, deliberate consequence rather than silently patched or worked around.",
+    "files": [
+      {
+        "path": "services/control-plane/bff/test_current_twelve_owner_truth.py",
+        "failing_tests": [
+          "TestDegradedAndUnobservedProjection::test_controller_identity_mismatch_is_rejected",
+          "TestWorkerFunctionalHealthOverridesProcessReadyz::test_loop_health_read_model_rejects_record_with_degraded_worker_health",
+          "TestTaskArchiveLivenessRejection::test_task_archive_only_refs_are_rejected_from_live_proof",
+          "TestAllTwelveProductLoopsRuntimeObservations::test_all_twelve_canonical_loops_accept_positive_runtime_observation",
+          "TestAllTwelveProductLoopsRuntimeObservations::test_all_twelve_loops_detail_endpoints",
+          "TestAllTwelveProductLoopsRuntimeObservations::test_all_twelve_loops_reject_negative_degraded_worker_health",
+          "TestAllTwelveProductLoopsRuntimeObservations::test_all_twelve_loops_reject_negative_archive_only_refs",
+          "TestOverlayExclusion::test_composite_overlay_per_persona_ooda_rejects_direct_controller_record",
+          "TestBffDownstreamWorkerFailureAttribution::test_downstream_health_prober_attributes_failures_to_loops_8_9_12"
+        ],
+        "reason": "The entire suite injects fixtures exclusively through the PANTHEON_BFF_LOOP_HEALTH_STORE fs-snapshot file (its own _scoped_health_client helper), which is exactly the local-snapshot ingestion route ACG-04-005 removes from current truth. With that route gone, every test in this file that exercises the live endpoint sees no health record at all instead of its injected fixture.",
+        "recommended_follow_up": "Migrate this suite's fixtures to a LoopControllerStore-backed mock (the pattern already used by _controller_store_client in test_loop_health_read_model_contract.py) or retire it if its coverage is now fully subsumed by test_loop_health_read_model_contract.py's DB-store-based tests."
+      },
+      {
+        "path": "services/control-plane/bff/test_bff_v5_loop_sentinel_contract.py",
+        "failing_tests": [
+          "test_worker_functional_health_probing_and_paper_signal_producer_attribution"
+        ],
+        "reason": "Asserts that a degraded paper-signal-producer worker health file causes GET /bff/v5/loop-health's capital_pool_execution row to show downstream_actual_state.status == 'degraded'. That behavior is exactly the loop_target_map cross-loop manufacture/override this task removes per ACG-04-008 ('Probe failure cannot change canonical controller rows'); component probe failures remain visible only at /bff/v5/downstream-health, which this test does not check.",
+        "recommended_follow_up": "Update this test to assert the new, correct behavior: GET /bff/v5/downstream-health still reports the degraded paper-signal-producer probe, while GET /bff/v5/loop-health's capital_pool_execution row is unaffected by it."
+      }
+    ],
+    "verified_pre_existing_failures_excluded": {
+      "note": "The following failures were confirmed present on dev tip ec42776affddabe72b3a8b1bcedd2db9292cf3a7 BEFORE this task's changes (verified via git stash / re-run) and are therefore NOT part of this task's regression set.",
+      "files": [
+        "services/control-plane/bff/test_bff_v5_loop_sentinel_contract.py (7 pre-existing loop-runs failures)",
+        "services/control-plane/bff/test_loop_auto_bff004_cross_loop_drill.py::TestDrill1SourceToHealth::test_loop_health_endpoint_does_not_promote_historical_drill_fixture",
+        "services/control-plane/bff/test_bff_downstream_health_monitor.py (3 pre-existing failures unrelated to loop-health)"
+      ]
+    }
+  },
+  "validation": {
+    "commands": [
+      {
+        "command": "/home/lupin/pantheon/.venv/bin/python -m pytest -q services/control-plane/bff/test_loop_inventory_read_model_contract.py services/control-plane/bff/test_loop_health_read_model_contract.py",
+        "conclusion": "All 25 tests pass, including the rewritten twelve-canonical-row, overlay-separation, LoopControllerStore-only-truth, and admission-predicate-tightening assertions.",
+        "result": "pass"
+      },
+      {
+        "command": "python3 -c \"import ast; ast.parse(open('services/control-plane/bff/main.py').read())\" && python3 -c \"import ast; ast.parse(open('services/control-plane/bff/loop_inventory.py').read())\"",
+        "conclusion": "exit 0 for both files",
+        "result": "pass"
+      },
+      {
+        "command": "/home/lupin/pantheon/.venv/bin/python -c \"import sys; sys.path.insert(0, 'services/control-plane/bff'); import main\"",
+        "conclusion": "main.py imports cleanly after removing _loop_health_store_records/_async_loop_health_records and wiring in management_read_models.loop_truth",
+        "result": "pass"
+      },
+      {
+        "command": "/home/lupin/pantheon/.venv/bin/python -m pytest -q services/control-plane/bff/test_current_twelve_owner_truth.py services/control-plane/bff/test_bff_v5_loop_sentinel_contract.py services/control-plane/bff/test_loop_auto_bff004_cross_loop_drill.py services/control-plane/bff/test_downstream_health_monitor.py services/control-plane/bff/test_bff_downstream_health_monitor.py",
+        "conclusion": "21 failed / 89 passed after this task's changes vs. 11 failed / 99 passed on dev tip before this task's changes (verified via git stash). The 10 additional failures are exactly and only the out-of-scope regressions documented in known_regressions_out_of_scope above; no other test in these files regressed.",
+        "result": "documented regression, out of declared artifact scope"
+      }
+    ],
+    "validated_at": "2026-08-28T04:01:24Z",
+    "validated_base_sha": "ec42776affddabe72b3a8b1bcedd2db9292cf3a7"
+  },
+  "acceptance": {
+    "items": [
+      {
+        "criterion": "loop-health returns exactly twelve canonical rows",
+        "status": "pass",
+        "evidence": "loop_inventory.list_loop_health_entries()/get_loop_health_entry() now iterate only _canonical_registry_entries() (registry['loops'], never composite_overlays); test_loop_health_registry_only_lists_all_loops_without_live_claim asserts len(items) == 12 and the exact twelve loop_ids, with no composite_overlay classification present."
+      },
+      {
+        "criterion": "current truth comes only from LoopControllerStore joined with catalog metadata",
+        "status": "pass",
+        "evidence": "management_read_models/loop_truth.py's fetch_controller_store_health_records() is the only source main.py's loop-health routes call; it reads exclusively from LoopControllerStore (via services.loop-control) and returns nothing when DATABASE_URL is unset. The fs-snapshot merge and downstream-monitor synthesis previously merged into main.py's _async_loop_health_records are deleted, not just bypassed."
+      },
+      {
+        "criterion": "GET loop-health performs no writes and monitor cannot manufacture cross-loop rows",
+        "status": "pass",
+        "evidence": "The read-side monitor.publish_loop_12_controller_truth() call and the loop_target_map block (which could inject/override rows for Loops 1-11 from downstream probe state) are deleted from main.py's loop-health handlers. DownstreamHealthMonitor already publishes Loop 12 truth exclusively from its own background _probe_all() cycle (downstream_health_monitor.py line ~1840), which this task did not need to change."
+      },
+      {
+        "criterion": "overlay is separately named noncanonical inventory data",
+        "status": "pass",
+        "evidence": "_loop_health_response_meta now sets meta.composite_overlay_inventory from list_loop_inventory_entries() filtered to classification == 'composite_overlay', instead of appending it to items. test_loop_health_registry_only_lists_all_loops_without_live_claim asserts payload['meta']['composite_overlay_inventory'] == [the per_persona_ooda entry] and that it is absent from items."
+      }
+    ]
+  },
+  "deployment": {
+    "applicable": false,
+    "reason": "This task changes BFF read-model/route code only; it does not change runtime topology, database schema, or deployment profile wiring. No live compose deployment step is required to validate it.",
+    "environment": "dev integration (unit/contract tests only)"
+  }
+}

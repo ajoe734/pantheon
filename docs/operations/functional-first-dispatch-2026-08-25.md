@@ -25,6 +25,11 @@ into a track with `dependency_tracks`. A track is satisfied only by an
 audited `completion_tracks.<track>.status=done` record; a task's ordinary
 `done` status is not inferred as functional or hosted proof.
 
+When a producer leaves the active board, its terminal fact retains the
+bounded `functional`/`hosted` track statuses (status and timestamp only). This
+keeps track-dependent consumers deterministic without reopening or reading an
+archive snapshot; detailed evidence and narrative remain in the archive.
+
 `operator-live/write-proof` is an external hosted evidence item. If its
 credential is unavailable, the track records `external_wait`; the supervisor
 continues functional dispatch and never enables capital writes to bypass it.
@@ -53,6 +58,10 @@ their original terminal semantics; no duplicate or superseding task is created.
 The migration is applied to the live TaskStore only through the audited
 `dependency-track` command after this tooling change is promoted. Workers then
 record verified milestones with the `milestone` command and evidence paths.
+Human/Ops may set the track to `terminal` to remove a named-track override and
+restore the ordinary completed-task dependency contract. The canonical task
+stores no `terminal` override value; absence remains the backward-compatible
+representation.
 
 ## Environment rule
 

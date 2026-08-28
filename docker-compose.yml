@@ -1420,6 +1420,42 @@ services:
       retries: 10
       start_period: 5s
 
+  agora-interaction-worker:
+    stop_grace_period: 30s
+    build:
+      context: .
+      dockerfile: services/control-plane/bff/Dockerfile
+      args:
+        GIT_SHA: ${GIT_SHA:-unknown}
+        BUILD_TIME: ${BUILD_TIME:-unknown}
+    command: ["python", "scripts/run_agora_interaction_worker.py"]
+    restart: unless-stopped
+    environment:
+      BFF_DATA_DIR: /data/bff
+      DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
+      AGORA_WORKSHOP_STORE_BACKEND: ${AGORA_WORKSHOP_STORE_BACKEND:-postgres}
+      AGORA_WORKSHOP_STORE_DSN: ${AGORA_WORKSHOP_STORE_DSN:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
+      AGORA_WORKSHOP_STORE_SCHEMA: ${AGORA_WORKSHOP_STORE_SCHEMA:-agora}
+      AGORA_GOVERNANCE_STORE_BACKEND: ${AGORA_GOVERNANCE_STORE_BACKEND:-postgres}
+      AGORA_GOVERNANCE_STORE_DSN: ${AGORA_GOVERNANCE_STORE_DSN:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
+      AGORA_GOVERNANCE_STORE_SCHEMA: ${AGORA_GOVERNANCE_STORE_SCHEMA:-agora}
+      PANTHEON_ENV: ${PANTHEON_ENV:-dev}
+      PANTHEON_TENANT_ID: ${PANTHEON_TENANT_ID:-default}
+      PANTHEON_AGORA_WORKER_ID: agora-interaction-worker
+    volumes:
+      - bff-data:/data/bff
+    depends_on:
+      postgres:
+        condition: service_healthy
+      operator-bff:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "scripts/run_agora_interaction_worker.py", "--healthcheck"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+
   loop-run-projector-scheduler:
     # Preserve the legacy service key so deploys replace the snapshot cron
     # instead of leaving a second writer.  The implementation is now the
@@ -2033,11 +2069,11 @@ services:
     stop_grace_period: 30s
     build:
       context: .
-      dockerfile: services/execution/runtime-manager/Dockerfile
+      dockerfile: services/paper_fleet_reconciler/Dockerfile
       args:
         GIT_SHA: ${GIT_SHA:-unknown}
     restart: unless-stopped
-    command: ["python", "services/execution/runtime-manager/paper_fleet_reconciler.py"]
+    command: ["python", "services/paper_fleet_reconciler/paper_fleet_reconciler.py"]
     environment:
       PORT: "8011"
       PANTHEON_RUNTIME_MANAGER_URL: http://runtime-manager:8081
@@ -2054,6 +2090,7 @@ services:
       PANTHEON_PERFORMANCE_MARK_MAX_AGE_SECONDS: ${PANTHEON_PERFORMANCE_MARK_MAX_AGE_SECONDS:-172800}
       PANTHEON_PERFORMANCE_STATE_ROOT: /data/runtime/paper-performance
       SIGNAL_STORE_URL: redis://signal-store:6379
+      WORKER_SCRIPT_PATH: services/execution/lean_runtime/paper_runtime.py
     volumes:
       - runtime-data:/data/runtime
     depends_on:

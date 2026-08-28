@@ -34,6 +34,9 @@ TERMINAL_STATUS_DONE = "done"
 TERMINAL_OUTCOME_COMPLETED = "completed"
 TERMINAL_OUTCOME_SUPERSEDED = "superseded"
 COMPLETION_TRACKS = frozenset({"functional", "hosted"})
+COMPLETION_TRACK_STATUSES = frozenset(
+    {"pending", "in_progress", "done", "external_wait"}
+)
 DEFAULT_RECENT_LIMIT = 20
 ARCHIVE_CORRECTION_VERSION = 1
 STATUS_ARCHIVE_OUTBOX_SCHEMA_VERSION = 2
@@ -181,6 +184,39 @@ def is_terminal_task(task: dict[str, Any] | None) -> bool:
 
 def task_satisfies_dependency(task: dict[str, Any] | None) -> bool:
     return is_terminal_task(task) and terminal_outcome_for(task) != TERMINAL_OUTCOME_SUPERSEDED
+
+
+def compact_completion_tracks(value: object) -> dict[str, dict[str, str]]:
+    """Keep completion-track status when a terminal task leaves the active board.
+
+    ``terminal_facts`` are intentionally much smaller than archived task
+    snapshots, but a consumer may depend on a named ``functional`` or
+    ``hosted`` track.  Dropping that status turns an already-recorded milestone
+    into ``pending`` forever once the producer is archived.  Preserve only the
+    bounded status/timestamp fields needed by the scheduler; evidence and
+    narrative remain in the immutable archive snapshot.
+    """
+
+    if value in (None, {}):
+        return {}
+    if not isinstance(value, Mapping):
+        raise RuntimeError("completion_tracks must be an object")
+    compact: dict[str, dict[str, str]] = {}
+    for raw_track, raw_record in value.items():
+        track = str(raw_track or "").strip().lower()
+        if track not in COMPLETION_TRACKS:
+            raise RuntimeError(f"completion track is invalid: {raw_track}")
+        if not isinstance(raw_record, Mapping):
+            raise RuntimeError(f"completion track {track} is invalid")
+        status = str(raw_record.get("status") or "pending").strip().lower()
+        if status not in COMPLETION_TRACK_STATUSES:
+            raise RuntimeError(f"completion track {track} status is invalid: {status}")
+        record = {"status": status}
+        updated_at = str(raw_record.get("updated_at") or "").strip()
+        if updated_at:
+            record["updated_at"] = updated_at
+        compact[track] = record
+    return compact
 
 
 def dependency_track_for(task: Mapping[str, Any] | None, dependency_id: str) -> str | None:
@@ -1160,24 +1196,30 @@ class TaskResolver:
                 for task in (active_tasks or [])
                 if isinstance(task, dict) and normalize_task_id(task.get("id"))
             }
-        self._terminal_facts = {
-            normalize_task_id(task_id): {
-                "id": normalize_task_id(task_id),
+        self._terminal_facts = {}
+        for task_id, fact in (terminal_facts or {}).items():
+            normalized_id = normalize_task_id(task_id)
+            if (
+                not normalized_id
+                or not isinstance(fact, Mapping)
+                or str(fact.get("status") or "done").strip().lower() != "done"
+                or str(fact.get("terminal_outcome") or "completed").strip().lower()
+                not in {TERMINAL_OUTCOME_COMPLETED, TERMINAL_OUTCOME_SUPERSEDED}
+            ):
+                continue
+            record: dict[str, Any] = {
+                "id": normalized_id,
                 "status": "done",
-                "terminal_outcome": str(fact.get("terminal_outcome") or "completed"),
-                **(
-                    {"generation": fact["generation"]}
-                    if isinstance(fact.get("generation"), int)
-                    else {}
-                ),
+                "terminal_outcome": str(
+                    fact.get("terminal_outcome") or "completed"
+                ).strip().lower(),
             }
-            for task_id, fact in (terminal_facts or {}).items()
-            if normalize_task_id(task_id)
-            and isinstance(fact, Mapping)
-            and str(fact.get("status") or "done").strip().lower() == "done"
-            and str(fact.get("terminal_outcome") or "completed").strip().lower()
-            in {TERMINAL_OUTCOME_COMPLETED, TERMINAL_OUTCOME_SUPERSEDED}
-        }
+            if isinstance(fact.get("generation"), int):
+                record["generation"] = fact["generation"]
+            tracks = compact_completion_tracks(fact.get("completion_tracks"))
+            if tracks:
+                record["completion_tracks"] = tracks
+            self._terminal_facts[normalized_id] = record
         self._allow_archive_lookup = bool(allow_archive_lookup)
         if archive_tasks_dir is not None:
             self._archive_tasks_dir = Path(archive_tasks_dir).expanduser().resolve()

@@ -148,8 +148,14 @@ class StateTableTests(unittest.TestCase):
         self.assertEqual(task_machine.transition("review", "reopen"), TaskState.IN_PROGRESS)
         self.assertEqual(task_machine.transition("review_approved", "done"), TaskState.DONE)
 
-    def test_blocked_may_only_resume_through_reopen(self) -> None:
+    def test_blocked_reopen_returns_to_implementation(self) -> None:
         self.assertEqual(task_machine.transition("blocked", "reopen"), TaskState.IN_PROGRESS)
+
+    def test_blocked_reviewed_integration_may_resume_without_reopening_work(self) -> None:
+        self.assertEqual(
+            task_machine.transition("blocked", "resume_integration"),
+            TaskState.REVIEW_APPROVED,
+        )
 
     def test_illegal_direct_overwrites_fail_closed(self) -> None:
         illegal = [

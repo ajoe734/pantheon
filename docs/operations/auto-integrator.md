@@ -44,6 +44,11 @@ canonical review_approved task -> clean task PR into dev -> local rebase smoke -
   ensures only one integrator process executes at a time.
 - **Fail-closed checks**: Draft PRs, missing PRs, CI failures, rebase conflicts, or head drift
   produce an `INTEGRATION-UNBLOCK-*` task to assign the blocker back to the owner/reviewer.
+- **Environment-only recovery**: If a task was already exactly approved and was blocked solely
+  because the integrator could not acquire its writable lock or Git worktree, local Human/Ops may
+  run `ai-status.sh resume_integration <task-id> <message>`. It accepts only a blocked task whose
+  pull-request delivery binding, review binding, and GitHub approval evidence still match. It does
+  not approve or merge anything; the next integrator pass rechecks the live PR head and CI.
 
 ## CLI Usage
 

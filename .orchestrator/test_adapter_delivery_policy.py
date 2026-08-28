@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import sys
 import tempfile
@@ -31,8 +32,17 @@ class AdapterDeliveryPolicyTests(unittest.TestCase):
             },
         )
         self._task_state_env.start()
+        self._status_command_env = mock.patch(
+            "common.status_command_runtime_env",
+            return_value={
+                "PANTHEON_COMMAND_ROOT": "/tmp/mock-command-root",
+                "PANTHEON_COMMAND_RUNTIME_SHA": "mocksha",
+            },
+        )
+        self._status_command_env.start()
 
     def tearDown(self) -> None:
+        self._status_command_env.stop()
         self._task_state_env.stop()
 
     def test_codex_alias_sets_agent_identity_env(self) -> None:
@@ -65,6 +75,7 @@ class AdapterDeliveryPolicyTests(unittest.TestCase):
                 message="wake",
                 task_id="T-REVIEW",
                 reason="review_ready_dispatch",
+                metadata={"execution_resources": ["pantheon-dev"]},
             )
             adapter = CodexAdapter(config=config, provider_capabilities={})
             fake_process = mock.Mock(pid=1234)
@@ -91,6 +102,7 @@ class AdapterDeliveryPolicyTests(unittest.TestCase):
         self.assertEqual(env["ORCH_PROVIDER"], "codex2")
         self.assertEqual(env["ORCH_TASK_ID"], "T-REVIEW")
         self.assertEqual(env["ORCH_REASON"], "review_ready_dispatch")
+        self.assertEqual(env["ORCH_TASK_EXECUTION_RESOURCES"], '["pantheon-dev"]')
         self.assertEqual(env["OPENAI_API_KEY"], "codex2-key")
         self.assertEqual(env["CODEX_HOME"], os.path.expanduser("~/.codex2"))
         self.assertNotIn("CODEX_THREAD_ID", env)
@@ -348,6 +360,59 @@ class AdapterDeliveryPolicyTests(unittest.TestCase):
         self.assertEqual(result.command[result.command.index("--model") + 1], "sonnet")
         self.assertIn("--effort", result.command)
         self.assertEqual(result.command[result.command.index("--effort") + 1], "medium")
+
+    def test_claude_runtime_uses_explicit_promoted_worker_settings(self) -> None:
+        config = {
+            "paths": {"status_file": "ai-status.json"},
+            "providers": {
+                "claude": {
+                    "runtime": {
+                        "cli": ".orchestrator/bin/claude",
+                        "output_format": "stream-json",
+                    },
+                }
+            },
+        }
+        request = DeliveryRequest(
+            agent_id="claude",
+            provider="claude",
+            delivery_mode="claude_cli",
+            message="wake",
+        )
+        adapter = ClaudeCLIAdapter(config=config, provider_capabilities={})
+        fake_process = mock.Mock(pid=1234)
+
+        with (
+            mock.patch(
+                "adapters.claude_cli._configured_claude_cli",
+                return_value=".orchestrator/bin/claude",
+            ),
+            mock.patch("adapters.claude_cli._claude_auth_ready", return_value=True),
+            mock.patch(
+                "adapters.claude_cli.spawn_background_process",
+                return_value=(fake_process, Path("/tmp/claude.log")),
+            ),
+        ):
+            result = adapter.deliver(request)
+
+        self.assertTrue(result.ok)
+        source_index = result.command.index("--setting-sources")
+        self.assertEqual(result.command[source_index + 1], "user")
+        settings_index = result.command.index("--settings")
+        settings = json.loads(result.command[settings_index + 1])
+        hook_commands = [
+            hook["command"]
+            for event_entries in settings["hooks"].values()
+            for entry in event_entries
+            for hook in entry["hooks"]
+        ]
+        self.assertTrue(hook_commands)
+        self.assertTrue(
+            all("${PANTHEON_COMMAND_ROOT:-" in command for command in hook_commands)
+        )
+        self.assertTrue(
+            all("/home/lupin/pantheon/.orchestrator" not in command for command in hook_commands)
+        )
 
     def test_claude_runtime_auto_permission_does_not_require_retired_provider_cache(self) -> None:
         config = {

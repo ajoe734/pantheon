@@ -17,6 +17,7 @@ from collections import deque
 from copy import deepcopy
 from concurrent.futures import Executor, ThreadPoolExecutor
 from contextvars import ContextVar, copy_context
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from functools import partial, wraps
@@ -197,13 +198,12 @@ from loop_inventory import (
     LoopHealthListEnvelope,
     LoopInventoryDetailEnvelope,
     LoopInventoryListEnvelope,
-    get_loop_health_entry,
     get_loop_inventory_entry,
-    list_loop_health_entries,
     list_loop_inventory_entries,
     loop_inventory_meta,
     truth_label_payload,
 )
+from management_read_models import loop_truth
 from operations_read_model import (
     DataConfidence,
     OperationsReadModelEnvelope,
@@ -1572,6 +1572,19 @@ def _extract_identity(
     session_cookie: Optional[str] = None,
 ) -> OperatorIdentity:
     if _bff_auth_stub_enabled():
+        if authorization and authorization.startswith("Bearer "):
+            raw = authorization[len("Bearer "):].strip()
+            if raw.count(".") == 2:
+                try:
+                    return _extract_identity_jwt(authorization, mfa_token=mfa_token)
+                except Exception:
+                    pass
+        if not authorization and session_cookie:
+            try:
+                identity = _extract_identity_jwt(f"Bearer {session_cookie}", mfa_token=mfa_token)
+                return identity.model_copy(update={"token_kind": "cookie"})
+            except Exception:
+                pass
         return _extract_identity_stub(authorization)
     # Cookie session: treat cookie value as a bearer token when no Authorization header present.
     if not authorization and session_cookie:
@@ -7373,11 +7386,15 @@ async def bff_auth_readiness(
         and interaction_capability_ready
         and verifier_ready
     )
+    # Auth readiness is a local-authority decision: it must not be gated by
+    # OpenClaw provider health. Provider status is still probed and surfaced
+    # for observability, but a provider outage or probe failure must never
+    # flip a validly authenticated strict session to not-ready.
     provider = _safe_provider_readiness()
     provider_ready = bool(provider["ready"])
     return {
         "data": {
-            "ready": auth_ready and provider_ready,
+            "ready": auth_ready,
             "authReady": auth_ready,
             "providerReady": provider_ready,
             "sourceCommitSha": _bff_source_commit(),
@@ -30926,6 +30943,60 @@ def _list_persona_records() -> List[Dict[str, Any]]:
     return items
 
 
+@dataclass(frozen=True)
+class PersonaDirectorySnapshot:
+    tenant_id: str
+    snapshot_at: str
+    records_by_id: Dict[str, Dict[str, Any]]
+    catalog_defaults_by_id: Dict[str, Dict[str, Any]]
+
+
+def _get_persona_directory_snapshot(
+    tenant_id: Optional[str] = None,
+    *,
+    snapshot_at: Optional[str] = None,
+) -> PersonaDirectorySnapshot:
+    snapshot_timestamp = snapshot_at or utc_now()
+    clean_tenant = str(tenant_id or "").strip()
+    records_by_id: Dict[str, Dict[str, Any]] = {}
+    catalog_defaults_by_id: Dict[str, Dict[str, Any]] = {}
+
+    for raw in _list_persona_records():
+        if not isinstance(raw, dict):
+            continue
+        rec_tenant = _persona_record_tenant_id(raw)
+        if clean_tenant and rec_tenant not in {"", clean_tenant}:
+            continue
+        pid = str(raw.get("persona_id") or raw.get("id") or "").strip()
+        if pid:
+            records_by_id[pid] = raw
+
+    try:
+        defaults = read_store.list_personas(include_market_persona_defaults=True) or []
+    except Exception:
+        defaults = []
+
+    for default_record in defaults:
+        if not isinstance(default_record, dict):
+            continue
+        did = str(default_record.get("persona_id") or default_record.get("id") or "").strip()
+        if did and did not in records_by_id:
+            catalog_defaults_by_id[did] = {
+                **default_record,
+                "record_kind": "catalog_default",
+                "detail_available": False,
+                "admission_state": "not_admitted",
+            }
+
+    return PersonaDirectorySnapshot(
+        tenant_id=clean_tenant,
+        snapshot_at=snapshot_timestamp,
+        records_by_id=records_by_id,
+        catalog_defaults_by_id=catalog_defaults_by_id,
+    )
+
+
+
 _PERSONA_STRATEGY_MATCH_ALLOWED_ACTIONS = frozenset({
     "create_research_ticket",
     "promote_seed_candidate",
@@ -47064,11 +47135,8 @@ async def bff_list_personas(
     _require_read_role(identity)
     snapshot_at = utc_now()
     tenant_id = str(_bff_me_tenant_payload(identity, requested_tenant=None)["id"])
-    raw_personas = [
-        raw
-        for raw in _list_persona_records()
-        if _persona_record_tenant_id(raw) in {"", tenant_id}
-    ]
+    directory = _get_persona_directory_snapshot(tenant_id, snapshot_at=snapshot_at)
+    raw_personas = list(directory.records_by_id.values())
     if state:
         raw_personas = [
             raw for raw in raw_personas if _persona_record_projected_state(raw) == state
@@ -47077,16 +47145,24 @@ async def bff_list_personas(
         raw_personas = [
             raw for raw in raw_personas if _persona_record_archetype(raw) == archetype
         ]
-    total = len(raw_personas)
+    canonical_total = len(directory.records_by_id)
+    filtered_total = len(raw_personas)
+    catalog_default_total = len(directory.catalog_defaults_by_id)
     page_raw, next_page_token = _page_slice(raw_personas, page_token, page_size)
     page_items = await asyncio.to_thread(_project_persona_list_records, page_raw)
     return {
         "data": page_items,
         "items": page_items,
-        "page_info": {"next_page_token": next_page_token, "total": total},
+        "page_info": {
+            "next_page_token": next_page_token,
+            "total": filtered_total,
+            "canonical_total": canonical_total,
+            "filtered_total": filtered_total,
+            "catalog_default_total": catalog_default_total,
+        },
         "meta": _read_surface_meta(
             "personas", "persona_list",
-            snapshot_at=snapshot_at, total=total,
+            snapshot_at=snapshot_at, total=filtered_total,
         ),
     }
 
@@ -47819,37 +47895,6 @@ async def bff_create_paper_persona_bundle(
     )
 
 
-def _persona_catalog_fallback_record(persona_id: str) -> Optional[Dict[str, Any]]:
-    """Resolve a Fleet-visible persona when the direct detail store misses it."""
-    clean_id = str(persona_id or "").strip()
-    if not clean_id:
-        return None
-    for candidate in read_store.list_personas(include_market_persona_defaults=True):
-        candidate_id = str(candidate.get("persona_id") or candidate.get("id") or "").strip()
-        if candidate_id == clean_id:
-            return dict(candidate)
-    return None
-
-
-def _persona_catalog_fallback_surface(snapshot_at: str) -> Dict[str, Any]:
-    return {
-        "status": "degraded",
-        "source": "persona_catalog_list_fallback",
-        "note": (
-            "Resolved from the governed Persona catalog used by Persona Fleet because "
-            "the direct detail store did not return this list-visible identity."
-        ),
-        "staleness": {
-            "served_from": "persona_catalog_list_fallback",
-            "last_known_at": snapshot_at,
-        },
-        "observed_time": snapshot_at,
-        "freshness": "persona_catalog_list_fallback",
-        "coverage": 1.0,
-        "missing_bindings": False,
-    }
-
-
 def _persona_provisioning_authoritative_meta(raw: Mapping[str, Any]) -> Dict[str, Any]:
     metadata = raw.get("metadata")
     metadata = metadata if isinstance(metadata, Mapping) else {}
@@ -47914,32 +47959,20 @@ async def bff_get_persona(
     _require_read_role(identity)
     snapshot_at = utc_now()
     caller_tenant = str(_bff_me_tenant_payload(identity, requested_tenant=None)["id"])
-    overlay = _PERSONA_BFF_OVERLAY.get(persona_id)
-    if overlay and str(overlay.get("tenantId") or "") != caller_tenant:
-        overlay = None
-    raw = read_store.get_persona(persona_id)
-    if raw:
-        record_tenant = _persona_record_tenant_id(raw)
-        if record_tenant and record_tenant != caller_tenant:
-            raw = None
-            overlay = None
-    detail_surface = None
-    if not raw and not overlay:
-        raw = _persona_catalog_fallback_record(persona_id)
-        if raw and _persona_record_tenant_id(raw) not in {"", caller_tenant}:
-            raw = None
-        if raw:
-            detail_surface = _persona_catalog_fallback_surface(snapshot_at)
-    if not raw and not overlay:
+    directory = _get_persona_directory_snapshot(caller_tenant, snapshot_at=snapshot_at)
+    raw = directory.records_by_id.get(persona_id)
+    if not raw:
         raise _bff_error(
             404, ErrorCode.RESOURCE_NOT_FOUND,
             "Persona not found",
             f"Persona {persona_id} does not exist",
         )
-    base = raw or {"persona_id": persona_id, "name": (overlay or {}).get("name")}
+    overlay = _PERSONA_BFF_OVERLAY.get(persona_id)
+    if overlay and str(overlay.get("tenantId") or "") not in {"", caller_tenant}:
+        overlay = None
     dto = await asyncio.to_thread(
         lambda: _project_persona_dto(
-            base,
+            raw,
             overlay=overlay,
             routed_strategies=_routed_strategies_for_persona(persona_id),
         )
@@ -47954,7 +47987,6 @@ async def bff_get_persona(
     meta = _read_surface_meta(
         "personas", "persona_detail",
         snapshot_at=snapshot_at,
-        surface=detail_surface,
     )
     if containment:
         meta.setdefault("surfaces", {})["containment"] = _dataset_surface_status(
@@ -48127,12 +48159,9 @@ async def bff_patch_persona(
     return result
 
 
-def _ensure_persona_exists(persona_id: str) -> None:
-    if (
-        read_store.get_persona(persona_id)
-        or persona_id in _PERSONA_BFF_OVERLAY
-        or _persona_catalog_fallback_record(persona_id)
-    ):
+def _ensure_persona_exists(persona_id: str, caller_tenant: Optional[str] = None) -> None:
+    directory = _get_persona_directory_snapshot(caller_tenant)
+    if persona_id in directory.records_by_id:
         return
     raise _bff_error(
         404, ErrorCode.RESOURCE_NOT_FOUND,
@@ -48979,7 +49008,15 @@ def _pm12_runtime_session_resolution(
             runtime_aliases,
             authoritative_sessions=authoritative_sessions,
         )
-        if not sessions and any(
+        if not sessions and not authoritative_sessions:
+            sessions = []
+            for raw_session in read_store.get_sessions_for_persona(persona_id) or []:
+                if not isinstance(raw_session, dict):
+                    continue
+                session = dict(raw_session)
+                session.setdefault("session_authority", "persona_session_store")
+                sessions.append(session)
+        elif not sessions and any(
             isinstance(session, dict)
             and _pm12_session_runtime_aliases(session)
             for session in authoritative_sessions
@@ -49061,16 +49098,16 @@ def _pm12_persona_session_summary(persona_id: str) -> Dict[str, Any]:
         for alias in _pm12_runtime_identity_aliases(runtime)
     }
     if paper_runtime_aliases:
-        sessions = [
-            session
-            for session in sessions
-            if not _pm12_session_runtime_aliases(session).intersection(
-                paper_runtime_aliases
-            )
-        ]
-        sessions.extend(
-            _pm12_authoritative_paper_monitoring_sessions(paper_runtime_aliases)
-        )
+        authoritative = _pm12_authoritative_paper_monitoring_sessions(paper_runtime_aliases)
+        if authoritative:
+            sessions = [
+                session
+                for session in sessions
+                if not _pm12_session_runtime_aliases(session).intersection(
+                    paper_runtime_aliases
+                )
+            ]
+            sessions.extend(authoritative)
     active = [
         session
         for session in sessions
@@ -63168,22 +63205,6 @@ def _loop_inventory_response_meta(payload: Dict[str, Any]) -> Dict[str, Any]:
     return payload
 
 
-def _loop_health_store_records(
-    tenant_id: str,
-    environment: str,
-) -> Tuple[bool, List[Dict[str, Any]], str]:
-    available, records = read_store.list_loop_health_records()
-    source = read_store.dataset_source("loop_health") if available else "missing"
-    scoped_records = [
-        record
-        for record in records
-        if isinstance(record, dict)
-        and str(record.get("tenant_id") or "").strip() == tenant_id
-        and str(record.get("environment") or "").strip() == environment
-    ]
-    return bool(available and scoped_records), scoped_records, source
-
-
 def _authenticated_loop_truth_scope(
     identity: OperatorIdentity,
     *,
@@ -63332,6 +63353,14 @@ def _loop_health_response_meta(
     surfaces["loop_health_snapshots"] = snapshot_surface
     catalog_meta = loop_inventory_meta()
     meta["catalog"] = catalog_meta
+    # The canonical loop-health array is exactly twelve rows; a composite
+    # overlay such as ``per_persona_ooda`` is noncanonical catalog inventory
+    # and is surfaced here separately instead of inside `items`.
+    meta["composite_overlay_inventory"] = [
+        item
+        for item in list_loop_inventory_entries()
+        if item.get("classification") == "composite_overlay"
+    ]
     meta["truth_labels"] = truth_label_payload()
     meta["truth_source_policy"] = {
         "accepted_live_source_types": ["live_truth"],
@@ -63376,135 +63405,6 @@ async def bff_v5_loop_inventory(
     return _loop_inventory_response_meta(payload)
 
 
-async def _async_loop_health_records(
-    *,
-    tenant_id: str,
-    environment: str,
-) -> Tuple[bool, List[Dict[str, Any]], str]:
-    fs_available, fs_records, fs_source = _loop_health_store_records(
-        tenant_id,
-        environment,
-    )
-    for r in fs_records:
-        if isinstance(r, dict):
-            r["_health_source"] = fs_source
-
-    dsn = os.environ.get("DATABASE_URL")
-    db_records = []
-    db_available = False
-    if dsn:
-        try:
-            import importlib
-            loop_control = importlib.import_module("services.loop-control")
-            LoopControllerStore = loop_control.LoopControllerStore
-            project_controller_record_to_bff = loop_control.project_controller_record_to_bff
-            store = LoopControllerStore(dsn)
-            records = await store.list_records(tenant_id, environment)
-            records = [
-                record
-                for record in records
-                if str(record.get("tenant_id") or "").strip() == tenant_id
-                and str(record.get("environment") or "").strip() == environment
-            ]
-            if records:
-                db_records = [project_controller_record_to_bff(r) for r in records]
-                for r in db_records:
-                    r["_health_source"] = "controller_store"
-                db_available = True
-        except Exception as e:
-            log.warning(f"Failed to load loop health from database: {e}. Falling back to file store.")
-
-    merged_records = []
-    seen_loops = set()
-
-    for r in db_records:
-        loop_id = r.get("loop_id") or r.get("id")
-        if loop_id:
-            merged_records.append(r)
-            seen_loops.add(str(loop_id).strip())
-
-    for r in fs_records:
-        loop_id = r.get("loop_id") or r.get("id")
-        if loop_id:
-            clean_id = str(loop_id).strip()
-            if clean_id not in seen_loops:
-                merged_records.append(r)
-                seen_loops.add(clean_id)
-
-    monitor = globals().get("downstream_health_monitor")
-    if monitor:
-        try:
-            loop12_rec = monitor.publish_loop_12_controller_truth()
-            if "bff_health_monitoring" not in seen_loops:
-                loop12_rec["_health_source"] = "bff_downstream_health_monitor"
-                merged_records.append(loop12_rec)
-                seen_loops.add("bff_health_monitoring")
-        except Exception as exc:
-            log.warning("Failed publishing Loop 12 truth in _async_loop_health_records: %s", exc)
-
-        try:
-            monitor_state = monitor.get_state()
-            targets_state = monitor_state.get("targets", {})
-            loop_target_map = {
-                "source_ingestion": ["source-ingest", "source-ingest-scheduler"],
-                "strategy_distillation": ["distillation"],
-                "alpha_replication": ["research-orchestrator", "research-worker-gateway"],
-                "persona_teaching": ["persona", "training-session"],
-                "agora_interaction_evidence": ["policy-learning"],
-                "human_imitation_shadow_evaluation": ["shadow-eval-scheduler"],
-                "consultation": ["consultation", "openclaw-gateway-adapter", "consultation-workflow-executor"],
-                "promotion_deployment": ["promotion", "deployment", "deployment-outbox-consumer"],
-                "capital_pool_execution": ["capital", "paper-fleet-reconciler", "paper-signal-producer"],
-                "telemetry_reconciliation": ["telemetry", "reconciliation-drift", "reconciliation-drift-consumer", "reconciliation-drift-scheduler", "reconciliation-drift-incident-listener"],
-                "evolution": ["evolution", "postmortems", "evolution-scheduler", "evolution-dispatch", "evolution-threshold-sweep"],
-                "bff_health_monitoring": ["runtime-manager", "governance"],
-            }
-            records_by_id = {str(r.get("loop_id") or r.get("id") or "").strip(): r for r in merged_records if isinstance(r, dict)}
-            for loop_id, mapped_targets in loop_target_map.items():
-                for t_name in mapped_targets:
-                    t_info = targets_state.get(t_name)
-                    if t_info and isinstance(t_info, dict) and t_info.get("ok") is False:
-                        fail_reason = t_info.get("failure_reason") or "degraded"
-                        target_summary = f"{t_name}: {fail_reason}"
-                        rec = records_by_id.get(loop_id)
-                        if rec is None:
-                            rec = {
-                                "loop_id": loop_id,
-                                "id": loop_id,
-                                "tenant_id": tenant_id,
-                                "environment": environment,
-                                "status": "degraded",
-                                "_health_source": "bff_downstream_health_monitor",
-                            }
-                            merged_records.append(rec)
-                            records_by_id[loop_id] = rec
-                        rec["downstream_actual_state"] = {
-                            "status": "degraded",
-                            "source": "bff_downstream_health_monitor",
-                            "authoritative": True,
-                            "reported_status": "degraded",
-                            "summary": target_summary,
-                            "checked_at": t_info.get("checked_at"),
-                        }
-                        rec["worker_health"] = {
-                            "ready": False,
-                            "ok": False,
-                            "status": "degraded",
-                            "reason": fail_reason,
-                            "worker_name": t_name,
-                        }
-                        rec["truth_note"] = target_summary
-                        break
-        except Exception as exc:
-            log.warning("Failed merging downstream monitor targets in _async_loop_health_records: %s", exc)
-
-    has_monitor_records = any(r.get("_health_source") == "bff_downstream_health_monitor" for r in merged_records)
-    health_available = db_available or fs_available or has_monitor_records
-    health_source = "controller_store" if db_available else (fs_source if fs_available else ("bff_downstream_health_monitor" if has_monitor_records else "missing"))
-    return health_available, merged_records, health_source
-
-
-
 @app.get("/bff/v5/loop-health", response_model=LoopHealthListEnvelope)
 async def bff_v5_loop_health(
     authorization: Optional[str] = Header(default=None),
@@ -63519,11 +63419,12 @@ async def bff_v5_loop_health(
         requested_tenant=x_tenant_id,
         requested_environment=environment,
     )
-    health_available, health_records, health_source = await _async_loop_health_records(
-        tenant_id=tenant_id,
-        environment=effective_environment,
+    health_available, health_records = await loop_truth.fetch_controller_store_health_records(
+        tenant_id,
+        effective_environment,
     )
-    records = list_loop_health_entries(
+    health_source = "controller_store" if health_available else "missing"
+    records = loop_truth.project_canonical_loop_health(
         health_records,
         health_source=health_source,
     )
@@ -63563,12 +63464,13 @@ async def bff_v5_loop_health_detail(
         requested_tenant=x_tenant_id,
         requested_environment=environment,
     )
-    health_available, health_records, health_source = await _async_loop_health_records(
-        tenant_id=tenant_id,
-        environment=effective_environment,
+    health_available, health_records = await loop_truth.fetch_controller_store_health_records(
+        tenant_id,
+        effective_environment,
     )
+    health_source = "controller_store" if health_available else "missing"
     payload = _sem_final_registry_detail(
-        get_loop_health_entry(
+        loop_truth.project_canonical_loop_health_entry(
             loop_id,
             health_records,
             health_source=health_source,
@@ -66933,6 +66835,7 @@ def _project_persona_fleet_list_row(
 def _persona_fleet_slim_list_payload(
     *,
     snapshot_at: str,
+    tenant_id: Optional[str] = None,
     state: Optional[str],
     health: Optional[str],
     deployment_stage: Optional[str],
@@ -66970,7 +66873,10 @@ def _persona_fleet_slim_list_payload(
         )
         if str(item.get("persona_id") or item.get("id") or "").strip()
     }
-    personas = read_store.list_personas(include_market_persona_defaults=True)
+    directory = _get_persona_directory_snapshot(tenant_id, snapshot_at=snapshot_at)
+    personas = list(directory.records_by_id.values())
+    canonical_total = len(directory.records_by_id)
+    catalog_default_total = len(directory.catalog_defaults_by_id)
     league = read_store.list_persona_league(include_market_persona_defaults=True)
     bindings = read_store.list_bindings(include_market_persona_defaults=True)
     runtimes = read_store.list_runtime_bindings(include_market_persona_defaults=True)
@@ -67228,6 +67134,9 @@ def _persona_fleet_slim_list_payload(
     summary = {
         "available_personas": available_personas,
         "total_personas": total_personas,
+        "canonical_total": canonical_total,
+        "filtered_total": total_personas,
+        "catalog_default_total": catalog_default_total,
         "returned_personas": len(page_items),
         "critical_personas": len([item for item in rows if item.get("health") == "critical"]),
         "degraded_personas": len([item for item in rows if item.get("health") == "degraded"]),
@@ -67269,6 +67178,9 @@ def _persona_fleet_slim_list_payload(
     page_info = {
         "next_page_token": next_page_token,
         "total": total_personas,
+        "canonical_total": canonical_total,
+        "filtered_total": total_personas,
+        "catalog_default_total": catalog_default_total,
         "page_size": page_size,
     }
     return {
@@ -67428,7 +67340,10 @@ async def bff_management_persona_fleet(
 ):
     identity = _extract_identity(authorization)
     _require_read_role(identity)
+    tenant_payload = _bff_me_tenant_payload(identity, requested_tenant=None)
+    tenant_id = str(tenant_payload.get("id") or "tenant-default")
     return _persona_fleet_slim_list_payload(
+        tenant_id=tenant_id,
         snapshot_at=utc_now(),
         state=state,
         health=health,
@@ -69502,19 +69417,20 @@ def _resolve_agora_interaction_context_ref(
 
 # AG-BE-000: Agora BFF package router (must stay last to avoid route conflicts)
 from agora.router import create_agora_router as _create_agora_router  # noqa: E402
-app.include_router(
-    _create_agora_router(
-        extract_identity=_extract_identity,
-        require_read_role=_require_read_role,
-        require_write_role=_require_operator_role,
-        bff_error=_bff_error,
-        utc_now=utc_now,
-        get_read_store=lambda: read_store,
-        get_trade_journey_store=lambda: _trade_journeys.EVENT_STORE,
-        sync_servant_agent=lambda persona: _ensure_agora_servant_openclaw_agent(dict(persona)),
-        canonical_context_ref_resolver=_resolve_agora_interaction_context_ref,
-    )
+_agora_router = _create_agora_router(
+    extract_identity=_extract_identity,
+    require_read_role=_require_read_role,
+    require_write_role=_require_operator_role,
+    bff_error=_bff_error,
+    utc_now=utc_now,
+    get_read_store=lambda: read_store,
+    get_trade_journey_store=lambda: _trade_journeys.EVENT_STORE,
+    sync_servant_agent=lambda persona: _ensure_agora_servant_openclaw_agent(dict(persona)),
+    canonical_context_ref_resolver=_resolve_agora_interaction_context_ref,
 )
+app.include_router(_agora_router)
+interaction_lifecycle = _agora_router.interaction_lifecycle
+workshop_store = _agora_router.workshop_store
 
 
 if __name__ == "__main__":

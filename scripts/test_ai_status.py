@@ -991,6 +991,17 @@ class StatusCommandLeaseValidationTests(unittest.TestCase):
                     )
             self.assertEqual(ai_status.current_actor(), "Human/Ops")
 
+    def test_local_human_ops_allows_exact_reviewed_integration_resume(self) -> None:
+        with mock.patch.dict(
+            os.environ,
+            {ai_status.LOCAL_HUMAN_OPS_ENV: "1"},
+            clear=True,
+        ):
+            ai_status.validate_active_status_command_lease(
+                "resume_integration",
+                [self.task_id, "recover writable auto-integrator execution"],
+            )
+
     def test_rejects_expired_run_lease(self) -> None:
         with self.assertRaisesRegex(RuntimeError, "status command lease .* is expired"):
             self._validate(
@@ -3981,6 +3992,161 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
         self.assertEqual(task["status"], "review_approved")
         self.assertNotIn("terminal_outcome", task)
 
+    def test_reconcile_merged_done_accepts_human_ops_tooling_delivery(self) -> None:
+        task = self.state["tasks"][0]
+        task["status"] = "blocked"
+        task["task_class"] = "development_tooling"
+        delivery = {
+            "reconciled_from_tooling_delivery": True,
+            "delivery_class": "development_tooling",
+            "commit": "a" * 40,
+        }
+        with (
+            mock.patch.dict(
+                os.environ,
+                {
+                    "AI_NAME": "Human/Ops",
+                    "RECONCILE_DELIVERY_CLASS": "development_tooling",
+                },
+                clear=False,
+            ),
+            mock.patch.object(
+                ai_status,
+                "validate_merged_tooling_done",
+                return_value=delivery,
+            ),
+            mock.patch.object(
+                ai_status,
+                "validate_protected_closeout_transition",
+            ) as protected,
+            mock.patch.object(ai_status, "load_archived_snapshot", return_value=None),
+        ):
+            _command_reconcile_merged_done(
+                self.state,
+                ["REG-002", "Operator-authorized tooling delivery reconciled."],
+            )
+
+        terminal = ai_status.get_task(self.state, "REG-002")
+        self.assertEqual(terminal["status"], "done")
+        self.assertEqual(terminal["terminal_outcome"], "completed")
+        self.assertTrue(terminal["delivery"]["reconciled_from_tooling_delivery"])
+        protected.assert_not_called()
+
+    def test_reconcile_merged_done_tooling_mode_rejects_product_task(self) -> None:
+        task = self.state["tasks"][0]
+        task["status"] = "blocked"
+        task["task_class"] = "product"
+        with (
+            mock.patch.dict(
+                os.environ,
+                {
+                    "AI_NAME": "Human/Ops",
+                    "RECONCILE_DELIVERY_CLASS": "development_tooling",
+                },
+                clear=False,
+            ),
+            self.assertRaisesRegex(SystemExit, "task_class=development_tooling"),
+        ):
+            _command_reconcile_merged_done(
+                self.state,
+                ["REG-002", "Invalid product tooling reconcile."],
+            )
+
+    def test_reconcile_merged_done_tooling_mode_rejects_reviewer(self) -> None:
+        task = self.state["tasks"][0]
+        task["status"] = "blocked"
+        task["task_class"] = "development_tooling"
+        with (
+            mock.patch.dict(
+                os.environ,
+                {
+                    "AI_NAME": "Claude",
+                    "RECONCILE_DELIVERY_CLASS": "development_tooling",
+                },
+                clear=False,
+            ),
+            self.assertRaisesRegex(SystemExit, "Only Human/Ops"),
+        ):
+            _command_reconcile_merged_done(
+                self.state,
+                ["REG-002", "Reviewer cannot use direct tooling reconcile."],
+            )
+
+    def test_validate_merged_tooling_done_binds_task_id(self) -> None:
+        task = {
+            "id": "REG-002",
+            "task_class": "development_tooling",
+        }
+        delivery = {
+            "repository_id": "pantheon",
+            "repository_slug": "ajoe734/pantheon",
+            "repository_path": "/tmp/pantheon",
+            "commit": "a" * 40,
+            "merge_target_ref": "origin/dev",
+            "merge_target_sha": "b" * 40,
+            "head_merged_to_target": True,
+        }
+        with (
+            mock.patch.object(
+                ai_status,
+                "_validated_reconcile_delivery",
+                return_value=delivery,
+            ),
+            mock.patch.object(
+                ai_status,
+                "run_git_command",
+                return_value="Merge delivery without matching task",
+            ),
+            self.assertRaisesRegex(SystemExit, "does not bind the task id"),
+        ):
+            ai_status.validate_merged_tooling_done(task)
+
+        with (
+            mock.patch.object(
+                ai_status,
+                "_validated_reconcile_delivery",
+                return_value=delivery,
+            ),
+            mock.patch.object(
+                ai_status,
+                "run_git_command",
+                return_value="REG-002: merged tooling delivery",
+            ),
+        ):
+            result = ai_status.validate_merged_tooling_done(task)
+
+        self.assertTrue(result["reconciled_from_tooling_delivery"])
+        self.assertEqual(result["commit"], "a" * 40)
+
+    def test_validate_merged_tooling_done_rejects_task_id_substring(self) -> None:
+        task = {
+            "id": "REG-002",
+            "task_class": "development_tooling",
+        }
+        delivery = {
+            "repository_id": "pantheon",
+            "repository_slug": "ajoe734/pantheon",
+            "repository_path": "/tmp/pantheon",
+            "commit": "a" * 40,
+            "merge_target_ref": "origin/dev",
+            "merge_target_sha": "b" * 40,
+            "head_merged_to_target": True,
+        }
+        with (
+            mock.patch.object(
+                ai_status,
+                "_validated_reconcile_delivery",
+                return_value=delivery,
+            ),
+            mock.patch.object(
+                ai_status,
+                "run_git_command",
+                return_value="REG-002-UNRELATED: another task",
+            ),
+            self.assertRaisesRegex(SystemExit, "does not bind the task id"),
+        ):
+            ai_status.validate_merged_tooling_done(task)
+
     def _init_repo(self, root: Path, *, remote: str, files: dict[str, str]) -> str:
         root.mkdir(parents=True)
         subprocess.run(["git", "init", "-b", "dev"], cwd=root, check=True, capture_output=True)
@@ -4939,6 +5105,85 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
         self.assertFalse(
             [handoff for handoff in self.state["handoffs"] if handoff["status"] != "done"]
         )
+
+    def test_human_ops_resume_integration_preserves_matching_approved_pr(self) -> None:
+        task = self.state["tasks"][0]
+        task["status"] = "blocked"
+        task["waiting_for"] = "Human/Ops"
+        self._set_pr_delivery_binding(pr=4269, head_sha="a" * 40)
+        task[ai_status.APPROVAL_BINDING_KEY] = {
+            field: task[ai_status.DELIVERY_BINDING_KEY][field]
+            for field in ("pr", "head_sha", "head_branch", "base")
+        }
+        task[ai_status.GITHUB_REVIEW_BRIDGE_KEY] = {
+            **task[ai_status.APPROVAL_BINDING_KEY],
+            "decision": "approve",
+            "mode": "required_commit_status",
+            "status_id": 101,
+            "status_context": ai_status.GITHUB_CANONICAL_REVIEW_CONTEXT,
+            "status_state": "success",
+        }
+        self.state["blockers"] = [
+            {
+                "task_id": "REG-002",
+                "owner": "Codex",
+                "waiting_for": "Human/Ops",
+                "message": "Integrator mount is read-only",
+                "status": "open",
+                "created_at": "2026-04-06T15:00:00Z",
+            }
+        ]
+        frozen_delivery = deepcopy(task[ai_status.DELIVERY_BINDING_KEY])
+        frozen_approval = deepcopy(task[ai_status.APPROVAL_BINDING_KEY])
+
+        with (
+            mock.patch.dict(os.environ, {"AI_NAME": "Human/Ops"}, clear=False),
+            mock.patch.object(ai_status, "append_log"),
+        ):
+            ai_status.command_resume_integration(
+                self.state,
+                ["REG-002", "Resume exact reviewed PR through the writable integrator."],
+            )
+
+        self.assertEqual(task["status"], "review_approved")
+        self.assertNotIn("waiting_for", task)
+        self.assertEqual(task[ai_status.DELIVERY_BINDING_KEY], frozen_delivery)
+        self.assertEqual(task[ai_status.APPROVAL_BINDING_KEY], frozen_approval)
+        self.assertEqual(self.state["blockers"][0]["status"], "resolved")
+
+    def test_resume_integration_rejects_missing_exact_approval_without_mutation(self) -> None:
+        task = self.state["tasks"][0]
+        task["status"] = "blocked"
+        task["waiting_for"] = "Human/Ops"
+        self._set_pr_delivery_binding(pr=4269, head_sha="a" * 40)
+
+        with (
+            mock.patch.dict(os.environ, {"AI_NAME": "Human/Ops"}, clear=False),
+            self.assertRaisesRegex(SystemExit, "exact review binding"),
+        ):
+            ai_status.command_resume_integration(
+                self.state,
+                ["REG-002", "Do not resume without evidence."],
+            )
+
+        self.assertEqual(task["status"], "blocked")
+        self.assertEqual(task["waiting_for"], "Human/Ops")
+
+    def test_resume_integration_requires_local_human_ops(self) -> None:
+        task = self.state["tasks"][0]
+        task["status"] = "blocked"
+        task["waiting_for"] = "Human/Ops"
+
+        with (
+            mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False),
+            self.assertRaisesRegex(SystemExit, "Only local Human/Ops"),
+        ):
+            ai_status.command_resume_integration(
+                self.state,
+                ["REG-002", "A worker cannot restore its own approval."],
+            )
+
+        self.assertEqual(task["status"], "blocked")
 
     def test_task_without_dependencies_keeps_plain_human_blocker(self) -> None:
         with mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False):
@@ -7097,6 +7342,48 @@ class ArchiveWorkflowTests(unittest.TestCase):
         self.assertEqual(resolved["status"], "done")
         self.assertTrue(resolver.dependency_satisfied("REG-100"))
 
+    def test_terminal_facts_preserve_compact_completion_track_status(self) -> None:
+        terminal = deepcopy(self.state["tasks"][0])
+        terminal.update(
+            {
+                "status": "done",
+                "terminal_outcome": "completed",
+                "generation": 3,
+                "completion_tracks": {
+                    "functional": {
+                        "status": "done",
+                        "evidence": ["paper-proof.json"],
+                    },
+                    "hosted": {
+                        "status": "external_wait",
+                        "message": "awaiting governed hosted run",
+                    },
+                },
+            }
+        )
+        self.state["tasks"] = [self.state["tasks"][1]]
+
+        ai_status.record_terminal_fact(
+            self.state,
+            terminal,
+            recorded_at="2026-04-14T02:01:00Z",
+        )
+
+        fact = self.state[ai_status.TERMINAL_FACTS_KEY]["REG-100"]
+        self.assertEqual(
+            fact["completion_tracks"],
+            {
+                "functional": {"status": "done"},
+                "hosted": {"status": "external_wait"},
+            },
+        )
+        resolver = ai_status.task_resolver(self.state)
+        resolved = resolver.get("REG-100")
+        self.assertEqual(
+            resolved["completion_tracks"]["hosted"]["status"],
+            "external_wait",
+        )
+
     def test_reopen_rejects_archived_task(self) -> None:
         self.state["tasks"] = []
         self.state[ai_status.TERMINAL_FACTS_KEY] = {
@@ -7523,6 +7810,95 @@ class ArchiveWorkflowTests(unittest.TestCase):
                 "status_task_lock_busy",
             )
             self.assertEqual(status_file.read_bytes(), before)
+
+
+class DependencyTrackCommandTests(unittest.TestCase):
+    def setUp(self) -> None:
+        _setup_test_isolation(self)
+        self.state = {
+            "agents": [],
+            "tasks": [
+                {
+                    "id": "CONSUMER",
+                    "title": "Consumer task",
+                    "status": "todo",
+                    "owner": "Codex",
+                    "reviewer": "Claude",
+                    "depends_on": ["PRODUCER"],
+                    "dependency_tracks": {"PRODUCER": "hosted"},
+                    "last_update": "2026-08-27T00:00:00Z",
+                }
+            ],
+            "handoffs": [],
+            "blockers": [],
+        }
+
+    def tearDown(self) -> None:
+        _teardown_test_isolation(self)
+
+    def test_terminal_track_removes_named_override_and_audits_revision(self) -> None:
+        with mock.patch.dict(os.environ, {"AI_NAME": "Human/Ops"}, clear=False):
+            ai_status.command_dependency_track(
+                self.state,
+                [
+                    "CONSUMER",
+                    "PRODUCER",
+                    "terminal",
+                    "Restore ordinary terminal dependency semantics",
+                ],
+            )
+
+        task = ai_status.get_task(self.state, "CONSUMER")
+        self.assertEqual(task["dependency_tracks"], {})
+        self.assertEqual(
+            task["contract_revision"],
+            {
+                "kind": "dependency_track",
+                "dependency_id": "PRODUCER",
+                "previous": "hosted",
+                "current": "terminal",
+                "reason": "Restore ordinary terminal dependency semantics",
+                "updated_at": task["last_update"],
+                "updated_by": "Human/Ops",
+            },
+        )
+        events = [
+            json.loads(line)
+            for line in self._test_log_file.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        revision = next(
+            event for event in events if event.get("type") == "dependency_track_revised"
+        )
+        self.assertEqual(revision["previous"], "hosted")
+        self.assertEqual(revision["track"], "terminal")
+
+    def test_terminal_track_is_idempotent_when_override_is_absent(self) -> None:
+        task = ai_status.get_task(self.state, "CONSUMER")
+        task["dependency_tracks"] = {}
+
+        with mock.patch.dict(os.environ, {"AI_NAME": "Human/Ops"}, clear=False):
+            ai_status.command_dependency_track(
+                self.state,
+                ["CONSUMER", "PRODUCER", "terminal", "Keep terminal semantics"],
+            )
+
+        self.assertEqual(task["dependency_tracks"], {})
+        self.assertIsNone(task["contract_revision"]["previous"])
+        self.assertEqual(task["contract_revision"]["current"], "terminal")
+
+    def test_dependency_track_rejects_unknown_track(self) -> None:
+        with (
+            mock.patch.dict(os.environ, {"AI_NAME": "Human/Ops"}, clear=False),
+            self.assertRaisesRegex(
+                SystemExit,
+                "Dependency track must be functional, hosted, or terminal",
+            ),
+        ):
+            ai_status.command_dependency_track(
+                self.state,
+                ["CONSUMER", "PRODUCER", "operator-live", "Invalid override"],
+            )
 
 
 class SidecarTaskTests(unittest.TestCase):

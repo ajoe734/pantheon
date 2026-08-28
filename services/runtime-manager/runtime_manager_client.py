@@ -31,8 +31,11 @@ _REPO_ROOT = str(Path(__file__).resolve().parents[2])
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
-from service import RuntimeManagerError, RuntimeManagerService  # noqa: E402
-from runtime_binding import RuntimeBindingError  # noqa: E402
+from services.runtime_manager import (
+    RuntimeBindingError,
+    RuntimeManagerError,
+    RuntimeManagerService,
+)
 from services.runtime_auth import resolve_runtime_manager_auth  # noqa: E402
 
 

@@ -15,6 +15,7 @@ AUTHORITY_ENV_FILE="${4:-${PANTHEON_SUPERVISOR_VERIFIER_ENV_FILE:-/home/lupin/pa
 REF="${SYNC_REF:-origin/dev}"
 COMMAND_RUNTIME_PARENT="/home/lupin/pantheon-ci-deploy/command-runtimes"
 EXECUTE_PLANS_SOURCE_ROOT="${PANTHEON_EXECUTE_PLANS_SOURCE_ROOT:-/home/lupin/code/execute-plans}"
+COMMAND_RUNTIME_KEEP="${COMMAND_RUNTIME_KEEP:-5}"
 
 stamp() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 log() { echo "[sync-dev-root $(stamp)] $*"; }
@@ -97,6 +98,23 @@ print(entries[0].parent.parent.resolve())
 PY
 }
 
+install_auto_integrator() {
+  local runtime_root="$1"
+  local installer="${runtime_root}/scripts/auto_integrator_install.py"
+  if [[ ! -f "$installer" ]]; then
+    log "WARNING: auto-integrator installer missing from runtime=$runtime_root"
+    return 0
+  fi
+  if python3 -B "$installer" \
+    --repo "$runtime_root" \
+    --status-root "$COORDINATION_ROOT" \
+    --config-file "$LIVE_CONFIG"; then
+    log "auto-integrator repointed at runtime=$runtime_root config=$LIVE_CONFIG"
+  else
+    log "WARNING: auto-integrator install failed for runtime=$runtime_root -- reviewed PRs will remain open until the supervisor-owned integration lane is restored"
+  fi
+}
+
 config_drift=0
 if [[ -f "$LIVE_CONFIG" && -f "$DEV_ROOT/scripts/check_config_drift.py" ]]; then
   drift_report="$(mktemp)"
@@ -113,8 +131,24 @@ if [[ -f "$LIVE_CONFIG" && -f "$DEV_ROOT/scripts/check_config_drift.py" ]]; then
   rm -f -- "$drift_report"
 fi
 
+prune_old_command_runtimes() {
+  local prune_script="${DEV_ROOT}/scripts/prune_command_runtimes.py"
+  if [[ ! -f "$prune_script" ]]; then
+    return 0
+  fi
+  if ! python3 -B "$prune_script" \
+    --parent "$COMMAND_RUNTIME_PARENT" \
+    --live-config "$LIVE_CONFIG" \
+    --status-root "$COORDINATION_ROOT" \
+    --keep "$COMMAND_RUNTIME_KEEP"; then
+    log "WARN: command-runtimes prune failed (non-fatal, promotion unaffected)"
+  fi
+}
+
 active_root="$(current_command_root 2>/dev/null || true)"
 if [[ "$active_root" == "$candidate_root" && "$config_drift" -eq 0 ]]; then
+  install_auto_integrator "$candidate_root"
+  prune_old_command_runtimes
   log "done (staging=$DEV_ROOT coordination=$COORDINATION_ROOT promotion=no-op-current-runtime)"
   exit 0
 fi
@@ -227,4 +261,7 @@ if [[ -f "$candidate_root/scripts/supervisor_watchdog_install.py" ]]; then
   fi
 fi
 
+install_auto_integrator "$candidate_root"
+
+prune_old_command_runtimes
 log "done (staging=$DEV_ROOT coordination=$COORDINATION_ROOT promotion=replaced)"

@@ -38,7 +38,9 @@ def create_knowledge_router(
     *,
     extract_identity: ExtractIdentity,
     require_read_role: RequireReadRole,
-    read_store_getter: ReadStoreGetter,
+    read_store_getter: Optional[ReadStoreGetter] = None,
+    port: Optional[Any] = None,
+    port_getter: Optional[Callable[[], Any]] = None,
     utc_now: UtcNow,
     dataset_surface_status: DatasetSurfaceStatus,
 ) -> APIRouter:
@@ -59,7 +61,14 @@ def create_knowledge_router(
         require_read_role(identity)
 
         snapshot_at = utc_now()
-        store = read_store_getter()
+        if port is not None:
+            store = port
+        elif port_getter is not None:
+            store = port_getter()
+        elif read_store_getter is not None:
+            store = read_store_getter()
+        else:
+            raise RuntimeError("Either port, port_getter, or read_store_getter must be provided.")
         items, surfaces, source_counts = _collect_knowledge_items(
             store,
             snapshot_at=snapshot_at,

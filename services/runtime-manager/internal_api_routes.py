@@ -100,7 +100,7 @@ class _DictBackedRecord(SimpleNamespace):
 
 def _build_outcome_namespace(result: Dict[str, Any]) -> SimpleNamespace:
     """Reconstruct a ``KillSwitchOutcome``-shaped object from a service result."""
-    from kill_switch_controller import SafeModeState  # noqa: WPS433 — local import
+    from services.runtime_manager import SafeModeState  # noqa: WPS433 — local import
 
     command_dict = dict(result.get("command", {}) or {})
     audit_dict = dict(result.get("audit_entry", {}) or {})
@@ -207,7 +207,7 @@ def register_internal_api_routes(
     Idempotent: re-registration is suppressed by a module-level flag so test
     harnesses that re-import `main` do not duplicate routes.
     """
-    import kill_switch_controller as ksc
+    import services.runtime_manager.kill_switch_controller as ksc
     from services.control_plane.internal import internal_api as legacy
 
     legacy._runtime_manager_client = _InProcessRuntimeManagerAdapter(get_service)

@@ -188,6 +188,7 @@ LOCAL_HUMAN_OPS_ACTIONS = frozenset(
         "dependency-track",
         "execution-resource",
         "reopen",
+        "resume_integration",
         "note",
         "reconcile_merged_done",
         "supersede",
@@ -1870,12 +1871,18 @@ def _terminal_fact_for_task(
         raise RuntimeError(f"terminal task has invalid generation: {task_id}") from exc
     if not task_id or not outcome or generation < 1:
         raise RuntimeError(f"terminal task cannot produce a dependency fact: {task_id}")
-    return {
+    fact = {
         "status": "done",
         "terminal_outcome": outcome,
         "generation": generation,
         "recorded_at": str(recorded_at or iso_now()),
     }
+    tracks = task_archive_module.compact_completion_tracks(
+        task.get("completion_tracks")
+    )
+    if tracks:
+        fact["completion_tracks"] = tracks
+    return fact
 
 
 def normalize_terminal_facts(state: dict[str, Any]) -> None:
@@ -1909,12 +1916,18 @@ def normalize_terminal_facts(state: dict[str, Any]) -> None:
             or not recorded_at
         ):
             raise RuntimeError(f"terminal fact has invalid lifecycle data: {task_id}")
-        normalized[task_id] = {
+        fact = {
             "status": "done",
             "terminal_outcome": outcome,
             "generation": generation,
             "recorded_at": recorded_at,
         }
+        tracks = task_archive_module.compact_completion_tracks(
+            raw_fact.get("completion_tracks")
+        )
+        if tracks:
+            fact["completion_tracks"] = tracks
+        normalized[task_id] = fact
     state[TERMINAL_FACTS_KEY] = normalized
 
 
@@ -1932,13 +1945,19 @@ def record_terminal_fact(
     facts = state[TERMINAL_FACTS_KEY]
     existing = facts.get(task_id)
     if existing is not None:
-        if {
-            key: existing.get(key)
-            for key in ("status", "terminal_outcome", "generation")
-        } != {
-            key: candidate[key]
-            for key in ("status", "terminal_outcome", "generation")
-        }:
+        existing_identity = {
+            "status": existing.get("status"),
+            "terminal_outcome": existing.get("terminal_outcome"),
+            "generation": existing.get("generation"),
+            "completion_tracks": existing.get("completion_tracks") or {},
+        }
+        candidate_identity = {
+            "status": candidate.get("status"),
+            "terminal_outcome": candidate.get("terminal_outcome"),
+            "generation": candidate.get("generation"),
+            "completion_tracks": candidate.get("completion_tracks") or {},
+        }
+        if existing_identity != candidate_identity:
             raise RuntimeError(f"terminal fact conflicts with existing TaskStore fact: {task_id}")
         return deepcopy(existing)
     facts[task_id] = candidate
@@ -5786,7 +5805,7 @@ def command_dependency_track(state: dict[str, Any], args: list[str]) -> None:
     if len(args) < 4:
         raise SystemExit(
             "Usage: dependency-track <task-id> <dependency-id> "
-            "<functional|hosted> <reason>"
+            "<functional|hosted|terminal> <reason>"
         )
     task_id, dependency_id, track, reason = (
         args[0],
@@ -5796,8 +5815,8 @@ def command_dependency_track(state: dict[str, Any], args: list[str]) -> None:
     )
     if current_actor() != "Human/Ops":
         raise SystemExit("Only Human/Ops can revise dependency tracks")
-    if track not in {"functional", "hosted"}:
-        raise SystemExit("Dependency track must be functional or hosted")
+    if track not in {"functional", "hosted", "terminal"}:
+        raise SystemExit("Dependency track must be functional, hosted, or terminal")
     task = get_task(state, task_id)
     if task is None:
         raise SystemExit(f"Unknown task: {task_id}")
@@ -5819,7 +5838,14 @@ def command_dependency_track(state: dict[str, Any], args: list[str]) -> None:
     if not isinstance(tracks, dict):
         raise SystemExit(f"Task {task_id} dependency_tracks is invalid")
     previous = tracks.get(dependency_id)
-    tracks[dependency_id] = track
+    if track == "terminal":
+        # ``dependency_tracks`` stores named milestone overrides only.  An
+        # absent entry is the canonical terminal-task dependency contract, so
+        # restoring that contract removes the override instead of persisting
+        # a third value that older readers would reject.
+        tracks.pop(dependency_id, None)
+    else:
+        tracks[dependency_id] = track
     task["contract_revision"] = {
         "kind": "dependency_track",
         "dependency_id": dependency_id,
@@ -6003,6 +6029,76 @@ def command_reopen(state: dict[str, Any], args: list[str]) -> None:
                 if binding_mismatch
                 else {}
             ),
+        }
+    )
+
+
+def command_resume_integration(state: dict[str, Any], args: list[str]) -> None:
+    """Restore a blocked, exactly-reviewed PR to integration eligibility.
+
+    ``reopen`` means the implementation is no longer accepted and therefore
+    intentionally clears its frozen delivery binding. It must not be used for
+    a transient failure in the serialized integrator itself: doing so loses a
+    valid exact-head approval and creates an avoidable second review cycle.
+
+    This recovery command is deliberately narrower. Only local Human/Ops can
+    use it, only from ``blocked``, and only when the stored PR delivery,
+    review, and GitHub bridge evidence still identify the same approved head.
+    The auto-integrator independently re-reads the live PR, checks, and gate
+    before it can merge anything.
+    """
+
+    if len(args) < 2:
+        raise SystemExit("Usage: resume_integration <task-id> <message>")
+    task_id, message = args[0], args[1]
+    if current_actor() != "Human/Ops":
+        raise SystemExit("Only local Human/Ops may resume a blocked reviewed integration")
+    task = get_task(state, task_id)
+    if task is None:
+        raise SystemExit(f"Unknown task: {task_id}")
+
+    validate_task_lifecycle_transition(task, "resume_integration")
+    delivery = task.get(DELIVERY_BINDING_KEY)
+    approval = task.get(APPROVAL_BINDING_KEY)
+    if not isinstance(delivery, Mapping) or str(delivery.get("kind") or "") != "pull_request":
+        raise SystemExit(
+            f"{task_id} cannot resume integration without a pull-request delivery binding"
+        )
+    if not isinstance(approval, Mapping):
+        raise SystemExit(
+            f"{task_id} cannot resume integration without an exact review binding"
+        )
+    for field in ("pr", "head_sha", "head_branch", "base"):
+        if str(delivery.get(field) or "").strip() != str(approval.get(field) or "").strip():
+            raise SystemExit(
+                f"{task_id} cannot resume integration: delivery and review {field} differ"
+            )
+    if not github_review_bridge_evidence_matches(task):
+        raise SystemExit(
+            f"{task_id} cannot resume integration without matching GitHub approval evidence"
+        )
+
+    timestamp = iso_now()
+    apply_task_lifecycle_transition(task, "resume_integration")
+    task["last_update"] = timestamp
+    task["next"] = message
+    task.pop("waiting_for", None)
+    mark_blockers_resolved(state, task_id)
+    ensure_review_finalize_handoff(
+        state,
+        task,
+        from_agent=canonical_agent_name(task.get("reviewer")),
+        timestamp=timestamp,
+        message=message,
+    )
+    append_log(
+        {
+            "ts": timestamp,
+            "agent": "Human/Ops",
+            "type": "integration_resumed",
+            "task_id": task_id,
+            "message": message,
+            **local_human_ops_audit_fields(),
         }
     )
 
@@ -6712,6 +6808,91 @@ def _verified_done_reviewer_reassignment(
     }
 
 
+def _validated_reconcile_delivery(task: dict[str, Any]) -> dict[str, Any]:
+    """Return one exact task-scoped delivery already merged to its dev ref."""
+
+    config = load_config()
+    try:
+        repository_id = validate_task_repository_scope(config, task)
+    except (ValueError, RuntimeError) as exc:
+        raise SystemExit(f"Cannot reconcile task: {exc}") from exc
+    repository_slug_value = repository_slug(config, repository_id)
+    if not repository_slug_value:
+        raise SystemExit("Cannot reconcile task: a single delivery repository is required.")
+    requested_slug = normalize_github_repo_slug(
+        _required_reconcile_env("RECONCILE_DELIVERY_REPOSITORY")
+    )
+    expected_slug = normalize_github_repo_slug(repository_slug_value)
+    if requested_slug != expected_slug:
+        raise SystemExit(
+            "Cannot reconcile task: delivery repository does not match task artifacts "
+            f"({requested_slug} != {expected_slug})."
+        )
+    delivery_root = _validated_git_root(
+        _required_reconcile_env("RECONCILE_DELIVERY_ROOT"),
+        label="RECONCILE_DELIVERY_ROOT",
+    )
+    actual_slug = normalize_github_repo_slug(
+        run_git_command(
+            ["remote", "get-url", "origin"],
+            cwd=delivery_root,
+            failure_message="Cannot reconcile task: delivery origin remote is unavailable.",
+        )
+    )
+    if actual_slug != expected_slug:
+        raise SystemExit(
+            "Cannot reconcile task: delivery checkout origin does not match task artifacts "
+            f"({actual_slug} != {expected_slug})."
+        )
+    delivery_target_ref = str(
+        os.environ.get("RECONCILE_DELIVERY_TARGET_REF") or "origin/dev"
+    ).strip()
+    delivery_commit, delivery_target_sha = _merged_commit(
+        delivery_root,
+        _required_reconcile_env("RECONCILE_DELIVERY_COMMIT"),
+        delivery_target_ref,
+        label="delivery",
+    )
+    return {
+        "repository_id": repository_id,
+        "repository_slug": expected_slug,
+        "repository_path": str(delivery_root),
+        "commit": delivery_commit,
+        "merge_target_ref": delivery_target_ref,
+        "merge_target_sha": delivery_target_sha,
+        "head_merged_to_target": True,
+    }
+
+
+def validate_merged_tooling_done(task: dict[str, Any]) -> dict[str, Any]:
+    """Validate Human/Ops direct delivery for one development-tooling task."""
+
+    task_id = str(task.get("id") or "").strip()
+    if str(task.get("task_class") or "").strip() != "development_tooling":
+        raise SystemExit(
+            "Cannot reconcile task: direct tooling delivery requires "
+            "task_class=development_tooling."
+        )
+    delivery = _validated_reconcile_delivery(task)
+    commit_message = run_git_command(
+        ["show", "-s", "--format=%B", delivery["commit"]],
+        cwd=Path(delivery["repository_path"]),
+        failure_message="Cannot reconcile task: tooling delivery commit message is unavailable.",
+    )
+    task_id_pattern = rf"(?<![A-Za-z0-9_-]){re.escape(task_id)}(?![A-Za-z0-9_-])"
+    if not task_id or re.search(task_id_pattern, commit_message) is None:
+        raise SystemExit(
+            "Cannot reconcile task: tooling delivery commit does not bind the task id."
+        )
+    return {
+        "recorded_at": iso_now(),
+        "reconciled_from_tooling_delivery": True,
+        "delivery_class": "development_tooling",
+        "operator_authorized": True,
+        **delivery,
+    }
+
+
 def validate_merged_done_evidence(task: dict[str, Any]) -> dict[str, Any]:
     """Validate immutable, dev-merged review and delivery evidence.
 
@@ -6828,48 +7009,10 @@ def validate_merged_done_evidence(task: dict[str, Any]) -> dict[str, Any]:
             current_reviewer=reviewer,
         )
 
-    config = load_config()
-    try:
-        repository_id = validate_task_repository_scope(config, task)
-    except (ValueError, RuntimeError) as exc:
-        raise SystemExit(f"Cannot reconcile task: {exc}") from exc
-    repository_slug_value = repository_slug(config, repository_id)
-    if not repository_slug_value:
-        raise SystemExit("Cannot reconcile task: a single delivery repository is required.")
-    requested_slug = normalize_github_repo_slug(
-        _required_reconcile_env("RECONCILE_DELIVERY_REPOSITORY")
-    )
-    expected_slug = normalize_github_repo_slug(repository_slug_value)
-    if requested_slug != expected_slug:
-        raise SystemExit(
-            "Cannot reconcile task: delivery repository does not match task artifacts "
-            f"({requested_slug} != {expected_slug})."
-        )
-    delivery_root = _validated_git_root(
-        _required_reconcile_env("RECONCILE_DELIVERY_ROOT"),
-        label="RECONCILE_DELIVERY_ROOT",
-    )
-    actual_slug = normalize_github_repo_slug(
-        run_git_command(
-            ["remote", "get-url", "origin"],
-            cwd=delivery_root,
-            failure_message="Cannot reconcile task: delivery origin remote is unavailable.",
-        )
-    )
-    if actual_slug != expected_slug:
-        raise SystemExit(
-            "Cannot reconcile task: delivery checkout origin does not match task artifacts "
-            f"({actual_slug} != {expected_slug})."
-        )
-    delivery_target_ref = str(
-        os.environ.get("RECONCILE_DELIVERY_TARGET_REF") or "origin/dev"
-    ).strip()
-    delivery_commit, delivery_target_sha = _merged_commit(
-        delivery_root,
-        _required_reconcile_env("RECONCILE_DELIVERY_COMMIT"),
-        delivery_target_ref,
-        label="delivery",
-    )
+    delivery = _validated_reconcile_delivery(task)
+    expected_slug = str(delivery["repository_slug"])
+    delivery_root = Path(delivery["repository_path"])
+    delivery_commit = str(delivery["commit"])
     if expected_slug not in evidence_text or delivery_commit not in evidence_text:
         raise SystemExit(
             "Cannot reconcile task: merged review evidence does not cite the verified "
@@ -6879,13 +7022,7 @@ def validate_merged_done_evidence(task: dict[str, Any]) -> dict[str, Any]:
     return {
         "recorded_at": iso_now(),
         "reconciled_from_merged_evidence": True,
-        "repository_id": repository_id,
-        "repository_slug": expected_slug,
-        "repository_path": str(delivery_root),
-        "commit": delivery_commit,
-        "merge_target_ref": delivery_target_ref,
-        "merge_target_sha": delivery_target_sha,
-        "head_merged_to_target": True,
+        **delivery,
         "review_evidence": {
             "file": evidence_posix,
             "commit": evidence_commit,
@@ -7685,13 +7822,28 @@ def prepare_external_mutation_preflight(
                 "task to done"
             )
         validate_task_lifecycle_transition(task, "reconcile_done")
-        delivery = validate_merged_done_evidence(task)
-        verdict_ref = validate_protected_closeout_transition(
-            task,
-            transition="done",
-            consume=True,
-            transition_actor=actor,
-        )
+        delivery_class = str(
+            os.environ.get("RECONCILE_DELIVERY_CLASS") or ""
+        ).strip()
+        if delivery_class:
+            if delivery_class != "development_tooling":
+                raise SystemExit(
+                    "RECONCILE_DELIVERY_CLASS must be development_tooling when set"
+                )
+            if actor != "Human/Ops":
+                raise SystemExit(
+                    "Only Human/Ops may reconcile direct development-tooling delivery"
+                )
+            delivery = validate_merged_tooling_done(task)
+            verdict_ref = None
+        else:
+            delivery = validate_merged_done_evidence(task)
+            verdict_ref = validate_protected_closeout_transition(
+                task,
+                transition="done",
+                consume=True,
+                transition_actor=actor,
+            )
         payload.update(
             {
                 "delivery": deepcopy(delivery),
@@ -9332,6 +9484,7 @@ def main(argv: list[str]) -> int:
         "dependency-track": command_dependency_track,
         "execution-resource": command_execution_resource,
         "reopen": command_reopen,
+        "resume_integration": command_resume_integration,
         "handoff": command_handoff,
         "blocker": command_blocker,
         "done": command_done,

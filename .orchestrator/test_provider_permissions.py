@@ -17,13 +17,60 @@ from provider_permissions import ROOT, _verified_claude_hooks
 
 
 class ProviderPermissionsTest(unittest.TestCase):
-    def test_verified_claude_hooks_use_absolute_broker_path(self) -> None:
-        expected = str(Path(ROOT) / ".orchestrator" / "permission_broker.py")
+    def test_verified_claude_hooks_follow_promoted_command_runtime(self) -> None:
         hooks = _verified_claude_hooks()
         for entries in hooks.values():
             command = entries[0]["hooks"][0]["command"]
-            self.assertIn(expected, command)
-            self.assertTrue(command.startswith("python3 /"))
+            self.assertIn("${PANTHEON_COMMAND_ROOT:-", command)
+            self.assertIn("/.orchestrator/permission_broker.py", command)
+            self.assertTrue(command.startswith('python3 "'))
+
+    def test_broker_runtime_config_separates_code_and_governance_roots(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="permission-broker-status-") as temp_dir:
+            status_root = Path(temp_dir).resolve()
+            immutable_config = {
+                "paths": {
+                    "status_file": "ai-status.json",
+                    "state_file": ".orchestrator/state.json",
+                    "approval_queue": ".orchestrator/approval-queue.json",
+                },
+                "permission_broker": {"allowed_workspace_roots": ["."]},
+            }
+            with (
+                mock.patch.object(permission_broker, "load_config", return_value=immutable_config),
+                mock.patch.dict(
+                    os.environ,
+                    {"PANTHEON_STATUS_ROOT": str(status_root)},
+                    clear=False,
+                ),
+            ):
+                config = permission_broker.load_broker_runtime_config()
+
+            self.assertEqual(
+                config["paths"]["state_file"],
+                str(status_root / ".orchestrator" / "state.json"),
+            )
+            self.assertEqual(
+                config["paths"]["approval_queue"],
+                str(status_root / ".orchestrator" / "approval-queue.json"),
+            )
+            self.assertEqual(
+                config["permission_broker"],
+                immutable_config["permission_broker"],
+            )
+            self.assertEqual(immutable_config["paths"]["state_file"], ".orchestrator/state.json")
+
+    def test_broker_runtime_config_rejects_relative_status_root(self) -> None:
+        with (
+            mock.patch.object(permission_broker, "load_config", return_value={"paths": {}}),
+            mock.patch.dict(
+                os.environ,
+                {"PANTHEON_STATUS_ROOT": "relative/status-root"},
+                clear=False,
+            ),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "must be absolute"):
+                permission_broker.load_broker_runtime_config()
 
     def test_toolsearch_is_auto_allowed(self) -> None:
         evaluation = permission_broker.evaluate_tool_request("ToolSearch", {}, {})

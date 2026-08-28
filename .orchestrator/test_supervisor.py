@@ -134,8 +134,8 @@ class V2StartupCacheTests(unittest.TestCase):
             with mock.patch.object(supervisor, "load_status", return_value={"tasks": []}):
                 self.assertFalse(supervisor.reconcile_runtime_on_boot(config, state))
 
-    def test_schedule_missing_process_retry_does_not_raise_without_state_param(self) -> None:
-        """schedule_missing_process_retry must accept state, not close over a
+    def test_schedule_reconstructable_worker_retry_does_not_raise_without_state_param(self) -> None:
+        """schedule_reconstructable_worker_retry must accept state, not close over a
         caller-scope name of the same spelling.
 
         It calls request_for_worker(config, state, worker), which requires an
@@ -165,14 +165,14 @@ class V2StartupCacheTests(unittest.TestCase):
             },
         }
 
-        result = supervisor.schedule_missing_process_retry(
+        result = supervisor.schedule_reconstructable_worker_retry(
             config, state, worker, "worker process missing"
         )
 
         self.assertTrue(result)
         self.assertEqual(worker.get("status"), "retry_backoff")
 
-    def test_missing_process_retry_honors_canonical_explicit_hold(self) -> None:
+    def test_reconstructable_worker_retry_honors_canonical_explicit_hold(self) -> None:
         config = config_fixture()
         task = task_fixture(status="blocked")
         task["waiting_for"] = "Human/Ops"
@@ -202,7 +202,7 @@ class V2StartupCacheTests(unittest.TestCase):
             "request_for_worker",
             side_effect=AssertionError("explicit hold must stop before retry reconstruction"),
         ):
-            result = supervisor.schedule_missing_process_retry(
+            result = supervisor.schedule_reconstructable_worker_retry(
                 config,
                 state,
                 worker,
@@ -212,6 +212,28 @@ class V2StartupCacheTests(unittest.TestCase):
             )
 
         self.assertFalse(result)
+        self.assertNotIn("status", worker)
+
+    def test_reconstructable_worker_retry_stops_at_total_retry_budget(self) -> None:
+        config = config_fixture()
+        config["worker_retry"] = {"enabled": True, "max_attempts": 1}
+        state = {"workers": {}, "queue": {"events": {}}}
+        worker = {
+            "provider": "codex",
+            "retry_count": 1,
+            "request_snapshot": {
+                "agent_id": "codex",
+                "provider": "codex",
+                "delivery_mode": "codex",
+                "message": "wake",
+            },
+        }
+
+        self.assertFalse(
+            supervisor.schedule_reconstructable_worker_retry(
+                config, state, worker, "worker lease expired"
+            )
+        )
         self.assertNotIn("status", worker)
 
     def test_boot_reconciliation_completes_worker_on_explicit_task_hold(self) -> None:
@@ -247,7 +269,7 @@ class V2StartupCacheTests(unittest.TestCase):
             mock.patch.object(supervisor, "write_activity_log") as activity,
             mock.patch.object(
                 supervisor,
-                "schedule_missing_process_retry",
+                "schedule_reconstructable_worker_retry",
                 side_effect=AssertionError("explicit canonical hold must not retry"),
             ),
         ):
@@ -260,6 +282,42 @@ class V2StartupCacheTests(unittest.TestCase):
             activity.call_args.args[1]["type"],
             "worker_completed_on_explicit_task_hold",
         )
+
+    def test_boot_reconciliation_retries_expired_lease_from_original_intent(self) -> None:
+        config = config_fixture()
+        task = task_fixture(status="in_progress")
+        status = {"tasks": [task], "blockers": []}
+        worker = {
+            "run_id": "run-expired-boot",
+            "status": "running",
+            "task_id": "TASK-1",
+            "provider": "codex",
+            "agent_id": "codex",
+            "pid": 4242,
+            "request_snapshot": {
+                "agent_id": "codex",
+                "provider": "codex",
+                "delivery_mode": "codex",
+                "message": "resume exact intent",
+            },
+        }
+        state = {"workers": {"run-expired-boot": worker}, "queue": {"events": {}}}
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "update_worker_runtime_markers", return_value=False),
+            mock.patch.object(supervisor, "pid_is_alive", return_value=True),
+            mock.patch.object(supervisor, "worker_lease_is_expired", return_value=True),
+            mock.patch.object(supervisor, "terminate_worker_pid", return_value=True),
+            mock.patch.object(supervisor, "canonical_worker_terminal_status", return_value=None),
+            mock.patch.object(supervisor, "worker_runner_succeeded", return_value=False),
+            mock.patch.object(supervisor, "detect_worker_failure", return_value=None),
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            self.assertTrue(supervisor.reconcile_runtime_on_boot(config, state))
+
+        self.assertEqual(worker["status"], "retry_backoff")
+        self.assertEqual(worker["retry_count"], 1)
 
     def test_command_runtime_health_failure_is_one_global_dispatch_hold(self) -> None:
         config = config_fixture()
@@ -308,6 +366,98 @@ class V2StartupCacheTests(unittest.TestCase):
                 child,
                 resolver,
                 {"done"},
+            )
+            )
+
+    def test_terminal_fact_completion_track_is_preserved_for_dispatch(self) -> None:
+        config = config_fixture()
+        child = task_fixture(
+            task_id="CHILD-HOSTED",
+            status="in_progress",
+            depends_on=["MERGED-LEGACY"],
+        )
+        child["dependency_tracks"] = {"MERGED-LEGACY": "hosted"}
+        status = {
+            "tasks": [child],
+            "terminal_facts": {
+                "MERGED-LEGACY": {
+                    "status": "done",
+                    "terminal_outcome": "completed",
+                    "generation": 4,
+                    "recorded_at": "2026-08-14T00:00:00Z",
+                    "completion_tracks": {
+                        "hosted": {
+                            "status": "done",
+                            "updated_at": "2026-08-15T00:00:00Z",
+                        }
+                    },
+                }
+            },
+        }
+
+        task_map = supervisor.task_index_from_status(config, status)
+        resolver = supervisor.task_resolver_for_config(config, task_map)
+
+        self.assertEqual(
+            resolver.get("MERGED-LEGACY")["completion_tracks"]["hosted"]["status"],
+            "done",
+        )
+        self.assertTrue(
+            supervisor.dependencies_satisfied(
+                child,
+                resolver,
+                {"done"},
+            )
+        )
+        self.assertEqual(
+            supervisor.task_execution_dispatch_candidate(
+                config,
+                child,
+                "Codex",
+                resolver,
+            ),
+            (supervisor.REASON_OWNED_IN_PROGRESS, 2),
+        )
+
+    def test_terminal_fact_external_wait_does_not_release_dispatch(self) -> None:
+        config = config_fixture()
+        child = task_fixture(
+            task_id="CHILD-HOSTED-WAIT",
+            status="in_progress",
+            depends_on=["MERGED-LEGACY"],
+        )
+        child["dependency_tracks"] = {"MERGED-LEGACY": "hosted"}
+        status = {
+            "tasks": [child],
+            "terminal_facts": {
+                "MERGED-LEGACY": {
+                    "status": "done",
+                    "terminal_outcome": "completed",
+                    "generation": 4,
+                    "recorded_at": "2026-08-14T00:00:00Z",
+                    "completion_tracks": {
+                        "hosted": {"status": "external_wait"},
+                    },
+                }
+            },
+        }
+
+        task_map = supervisor.task_index_from_status(config, status)
+        resolver = supervisor.task_resolver_for_config(config, task_map)
+
+        self.assertFalse(
+            supervisor.dependencies_satisfied(
+                child,
+                resolver,
+                {"done"},
+            )
+        )
+        self.assertIsNone(
+            supervisor.task_execution_dispatch_candidate(
+                config,
+                child,
+                "Codex",
+                resolver,
             )
         )
 
@@ -1698,6 +1848,20 @@ class SharedPlannerContractTests(unittest.TestCase):
         decision = planner_decision(self.config, task, status=status)
 
         self.assertFalse(decision["eligible"])
+
+    def test_removing_named_track_restores_terminal_dependency_admission(self) -> None:
+        dependency = task_fixture("DEP", status="done")
+        task = task_fixture(depends_on=["DEP"])
+        task["dependency_tracks"] = {"DEP": "hosted"}
+        status = {"tasks": [task, dependency]}
+
+        self.assertFalse(planner_decision(self.config, task, status=status)["eligible"])
+
+        task["dependency_tracks"].pop("DEP")
+        decision = planner_decision(self.config, task, status=status)
+
+        self.assertTrue(decision["eligible"])
+        self.assertEqual(decision["reason"], supervisor.REASON_OWNED_READY)
 
     def test_planner_consumes_terminal_facts_from_authoritative_projection(self) -> None:
         task = task_fixture(
@@ -5028,6 +5192,119 @@ class WorkerLeaseApprovalWaitProgressTests(unittest.TestCase):
             )
 
         self.assertEqual(outcome, {"changed": False, "alive": True, "stop": True})
+
+    def test_live_expired_lease_reuses_reconstructable_retry(self) -> None:
+        config = config_fixture()
+        task = task_fixture(status="in_progress")
+        status = {"tasks": [task], "blockers": []}
+        worker = {
+            "run_id": "run-expired",
+            "status": "running",
+            "task_id": "TASK-1",
+            "provider": "codex",
+            "agent_id": "codex",
+            "queue_event_id": "evt-expired",
+        }
+        state = {
+            "workers": {"run-expired": worker},
+            "queue": {"events": {"evt-expired": {"status": "started"}}},
+        }
+        observation = {
+            "changed": False,
+            "alive": True,
+            "meaningful_progress_advanced": False,
+            "commit_progress_advanced": False,
+            "lease_expired": True,
+            "stop": True,
+        }
+
+        with (
+            mock.patch.object(supervisor, "load_approval_state", return_value={}),
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "retry_due_workers", return_value=False),
+            mock.patch.object(supervisor, "recent_governance_activity_events", return_value=[]),
+            mock.patch.object(
+                supervisor, "poll_worker_orphan_stage", return_value={"changed": False, "stop": False}
+            ),
+            mock.patch.object(supervisor, "poll_worker_observation_stage", return_value=observation),
+            mock.patch.object(supervisor, "record_delivery_health_for_reaped_worker", return_value=None),
+            mock.patch.object(supervisor, "worker_lease_requires_work_progress", return_value=True),
+            mock.patch.object(supervisor, "worker_lease_progress_is_fresh", return_value=False),
+            mock.patch.object(supervisor, "schedule_reconstructable_worker_retry", return_value=True) as retry,
+            mock.patch.object(supervisor, "write_activity_log"),
+            mock.patch.object(supervisor, "cleanup_inactive_worker_worktrees", return_value=False),
+            mock.patch.object(supervisor, "record_worker_runtime_measurement"),
+        ):
+            self.assertTrue(supervisor.poll_workers(config, state))
+
+        retry.assert_called_once_with(
+            config,
+            state,
+            worker,
+            "Worker lease expired after observed work progress became stale.",
+            status=status,
+            task=task,
+        )
+
+    def test_live_expired_lease_without_recovery_is_terminal_not_orphaned(self) -> None:
+        config = config_fixture()
+        task = task_fixture(status="in_progress")
+        status = {"tasks": [task], "blockers": []}
+        worker = {
+            "run_id": "run-expired-terminal",
+            "status": "running",
+            "task_id": "TASK-1",
+            "provider": "codex",
+            "agent_id": "codex",
+            "queue_event_id": "evt-expired-terminal",
+        }
+        record = {
+            "intent": {
+                "event_id": "evt-expired-terminal",
+                "task_id": "TASK-1",
+                "task_generation": 1,
+                "event_key": "expired-lease-terminal-v1",
+                "reason": supervisor.REASON_OWNED_READY,
+                "target_agent": "codex",
+            },
+            "status": "started",
+        }
+        state = {
+            "workers": {"run-expired-terminal": worker},
+            "queue": {"events": {"evt-expired-terminal": record}},
+        }
+        observation = {
+            "changed": False,
+            "alive": True,
+            "meaningful_progress_advanced": False,
+            "commit_progress_advanced": False,
+            "lease_expired": True,
+            "stop": True,
+        }
+
+        with (
+            mock.patch.object(supervisor, "load_approval_state", return_value={}),
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "retry_due_workers", return_value=False),
+            mock.patch.object(supervisor, "recent_governance_activity_events", return_value=[]),
+            mock.patch.object(
+                supervisor, "poll_worker_orphan_stage", return_value={"changed": False, "stop": False}
+            ),
+            mock.patch.object(supervisor, "poll_worker_observation_stage", return_value=observation),
+            mock.patch.object(supervisor, "record_delivery_health_for_reaped_worker", return_value=None),
+            mock.patch.object(supervisor, "worker_lease_requires_work_progress", return_value=True),
+            mock.patch.object(supervisor, "worker_lease_progress_is_fresh", return_value=False),
+            mock.patch.object(supervisor, "schedule_reconstructable_worker_retry", return_value=False),
+            mock.patch.object(supervisor, "record_retry_exhausted_worker_terminal_outcome") as terminal,
+            mock.patch.object(supervisor, "write_activity_log"),
+            mock.patch.object(supervisor, "cleanup_inactive_worker_worktrees", return_value=False),
+            mock.patch.object(supervisor, "record_worker_runtime_measurement"),
+        ):
+            self.assertTrue(supervisor.poll_workers(config, state))
+
+        self.assertEqual(worker["status"], "failed")
+        self.assertEqual(record["status"], "failed")
+        terminal.assert_called_once()
 
 
 class ProviderStreamLifecycleTests(unittest.TestCase):

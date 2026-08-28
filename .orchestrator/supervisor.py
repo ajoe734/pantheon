@@ -102,6 +102,7 @@ from runtime_state import (
 )
 from task_archive import (
     TaskResolver,
+    compact_completion_tracks,
     completion_track_status,
     dependency_satisfied_for,
     dependency_track_for,
@@ -2008,6 +2009,16 @@ def build_request(
     logical_agent = agent_config_for(config, event["target_agent"])
     agent = agent_config_for(config, agent_id_override or event["target_agent"])
     metadata = dict(event.get("metadata", {}) or {})
+    event_task = event.get("task")
+    if isinstance(event_task, Mapping):
+        # The admission planner already owns resource validation and capacity
+        # reservation.  Carry that exact declaration to the spawned worker so
+        # a runtime harness can reject an undeclared shared-VM action before it
+        # starts Docker services.
+        metadata.setdefault(
+            "execution_resources",
+            task_execution_resources(event_task),
+        )
     dispatch_event_key = str(event.get("event_key") or "").strip()
     if dispatch_event_key:
         metadata.setdefault("dispatch_event_key", dispatch_event_key)
@@ -10006,34 +10017,20 @@ def poll_worker_observation_stage(
             # it turns a normal deferred-termination observation into a
             # supervisor-wide KeyError and skips worker reconciliation.
             return {"changed": changed, "alive": alive, "stop": True}
-        worker["status"] = "failed"
-        # Classify the expired signal before recording this failure event:
-        # last_event_at is a fallback work-progress timestamp, so advancing it
-        # first would relabel stale progress as a stale heartbeat.
-        worker["last_error"] = (
-            record_delivery_health_for_reaped_worker(config, state, worker)
-            or (
-                "Worker lease expired after observed work progress became stale."
-                if worker_lease_requires_work_progress(config)
-                and not worker_lease_progress_is_fresh(config, worker, now)
-                else "Worker lease expired after heartbeat became stale."
-            )
-        )
-        worker["last_event_at"] = utc_now()
-        write_activity_log(
-            config,
-            {
-                "type": "worker_failed",
-                "provider": worker.get("provider"),
-                "task_id": worker.get("task_id"),
-                "message": worker["last_error"],
-                "worker_run_id": worker.get("run_id"),
-            },
-        )
-        finalize_queue_event_record(config, state, worker, "failed", worker["last_error"])
-        poll_counts["expired_lease_workers_failed"] += 1
-        changed = True
-        stop = True
+        # The poll driver owns the durable terminal transition after the
+        # process is reaped. It can reuse the one bounded retry path, or write
+        # a canonical blocked outcome when the exact intent is unrecoverable.
+        # Finalising the queue here previously stranded an ``in_progress``
+        # task with no runnable worker.
+        return {
+            "changed": changed,
+            "alive": alive,
+            "meaningful_progress_advanced": meaningful_progress_advanced,
+            "commit_progress_advanced": commit_progress_advanced,
+            "process_activity_advanced": process_activity_advanced,
+            "lease_expired": True,
+            "stop": True,
+        }
 
     return {
         "changed": changed,
@@ -10766,7 +10763,8 @@ def poll_workers(
 ) -> bool:
     changed = False
     approval_state = load_approval_state(config)
-    task_map = task_index_from_status(config, load_status(config))
+    status_snapshot = load_status(config)
+    task_map = task_index_from_status(config, status_snapshot)
     valid_queue_event_ids = set(state.get("queue", {}).get("events", {}))
     redispatch_statuses = redispatch_candidate_statuses(config)
     active_worker_statuses = {str(value) for value in ready_dispatch_settings(config).get("active_worker_statuses", [])}
@@ -10791,6 +10789,7 @@ def poll_workers(
         "commit_progress_updates": 0,
         "lease_refreshes": 0,
         "expired_lease_workers_failed": 0,
+        "expired_lease_workers_retried": 0,
     }
     workers = state.setdefault("workers", {})
     if workers and not activity_events:
@@ -10824,6 +10823,92 @@ def poll_workers(
             or observation.get("commit_progress_advanced")
         )
         if observation["stop"]:
+            if observation.get("lease_expired"):
+                reason = (
+                    record_delivery_health_for_reaped_worker(config, state, worker)
+                    or (
+                        "Worker lease expired after observed work progress became stale."
+                        if worker_lease_requires_work_progress(config)
+                        and not worker_lease_progress_is_fresh(config, worker, now)
+                        else "Worker lease expired after heartbeat became stale."
+                    )
+                )
+                task = task_map.get(str(worker.get("task_id") or ""))
+                if (
+                    isinstance(task, Mapping)
+                    and str(task.get("status") or "").strip().lower() == "blocked"
+                    and task_has_explicit_recovery_hold(status_snapshot, task)
+                ):
+                    worker["status"] = "completed"
+                    worker["last_event_at"] = utc_now()
+                    worker.pop("last_error", None)
+                    finalize_queue_event_record(config, state, worker, "completed")
+                    write_activity_log(
+                        config,
+                        {
+                            "type": "worker_completed_on_explicit_task_hold",
+                            "provider": worker.get("provider"),
+                            "task_id": worker.get("task_id"),
+                            "message": (
+                                "Expired worker lease ended after the canonical task entered "
+                                "an explicit blocked hold; automatic retry suppressed."
+                            ),
+                            "worker_run_id": worker.get("run_id"),
+                            "waiting_for": task.get("waiting_for"),
+                        },
+                    )
+                    changed = True
+                elif schedule_reconstructable_worker_retry(
+                    config,
+                    state,
+                    worker,
+                    reason,
+                    status=status_snapshot,
+                    task=task,
+                ):
+                    write_activity_log(
+                        config,
+                        {
+                            "type": "worker_retry_scheduled",
+                            "provider": worker.get("provider"),
+                            "task_id": worker.get("task_id"),
+                            "message": (
+                                "Expired worker lease returned to the bounded recovery path; "
+                                f"retry {worker.get('retry_count')} scheduled at "
+                                f"{worker.get('next_retry_at')}: {reason}"
+                            ),
+                            "worker_run_id": worker.get("run_id"),
+                            "next_retry_at": worker.get("next_retry_at"),
+                            "reason": reason,
+                            "outcome": "retry",
+                        },
+                    )
+                    poll_counts["expired_lease_workers_retried"] += 1
+                    changed = True
+                else:
+                    worker["status"] = "failed"
+                    worker["last_error"] = reason
+                    worker["last_event_at"] = utc_now()
+                    finalize_queue_event_record(config, state, worker, "failed", reason)
+                    record_retry_exhausted_worker_terminal_outcome(
+                        config,
+                        worker,
+                        reason=reason,
+                    )
+                    write_activity_log(
+                        config,
+                        {
+                            "type": "worker_failed",
+                            "provider": worker.get("provider"),
+                            "task_id": worker.get("task_id"),
+                            "message": reason,
+                            "worker_run_id": worker.get("run_id"),
+                            "reason": reason,
+                            "outcome": "terminal_failure",
+                        },
+                    )
+                    poll_counts["expired_lease_workers_failed"] += 1
+                    changed = True
             continue
         assignment = poll_worker_assignment_stage(
             config,
@@ -10888,7 +10973,10 @@ def poll_workers(
         state,
         "poll_workers",
         poll_counts,
-        emit_activity=bool(poll_counts["expired_lease_workers_failed"]),
+        emit_activity=bool(
+            poll_counts["expired_lease_workers_failed"]
+            or poll_counts["expired_lease_workers_retried"]
+        ),
     )
     return changed
 
@@ -11597,7 +11685,7 @@ def worker_retry_attempt_index(worker: dict[str, Any]) -> int:
     )
 
 
-def schedule_missing_process_retry(
+def schedule_reconstructable_worker_retry(
     config: dict[str, Any],
     state: dict[str, Any],
     worker: dict[str, Any],
@@ -11606,7 +11694,7 @@ def schedule_missing_process_retry(
     status: Mapping[str, Any] | None = None,
     task: Mapping[str, Any] | None = None,
 ) -> bool:
-    """Schedule a reconstructable missing-process retry within its total budget."""
+    """Schedule a bounded retry whenever the original delivery intent remains reconstructable."""
 
     if (
         isinstance(status, Mapping)
@@ -11845,6 +11933,8 @@ def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> 
         "missing_process_workers_reassigned": 0,
         "missing_process_tasks_blocked": 0,
         "expired_lease_workers_failed": 0,
+        "expired_lease_workers_retried": 0,
+        "expired_lease_tasks_blocked": 0,
         "started_queue_records_requeued": 0,
         "started_queue_records_failed": 0,
         "stale_queue_records_completed": 0,
@@ -11978,7 +12068,7 @@ def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> 
             )
             if failure_kind in {"transient", "capacity", "capacity_retryable"}:
                 retry_reason = failure_summary.get("summary") or detected_reason
-                if missing_process and schedule_missing_process_retry(
+                if (missing_process or expired_lease) and schedule_reconstructable_worker_retry(
                     config,
                     state,
                     worker,
@@ -12006,7 +12096,10 @@ def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> 
                             "outcome": "retry",
                         },
                     )
-                    counts["missing_process_workers_retried"] += 1
+                    if expired_lease:
+                        counts["expired_lease_workers_retried"] += 1
+                    else:
+                        counts["missing_process_workers_retried"] += 1
                     changed = True
                     continue
             reason = failure_summary.get("summary") or detected_reason
@@ -12020,8 +12113,8 @@ def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> 
                 failure_kind=failure_kind,
             )
 
-        if missing_process:
-            if schedule_missing_process_retry(
+        if missing_process or expired_lease:
+            if schedule_reconstructable_worker_retry(
                 config,
                 state,
                 worker,
@@ -12036,7 +12129,9 @@ def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> 
                         "provider": worker.get("provider"),
                         "task_id": worker.get("task_id"),
                         "message": (
-                            "Missing worker process found during boot reconciliation; "
+                            "Expired worker lease" if expired_lease else "Missing worker process"
+                        ) + (
+                            " found during boot reconciliation; "
                             f"retry {worker.get('retry_count')} scheduled at "
                             f"{worker.get('next_retry_at')}: {reason}"
                         ),
@@ -12046,7 +12141,12 @@ def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> 
                         "outcome": "retry",
                     },
                 )
-                counts["missing_process_workers_retried"] += 1
+                if expired_lease:
+                    counts["expired_lease_workers_retried"] = counts.get(
+                        "expired_lease_workers_retried", 0
+                    ) + 1
+                else:
+                    counts["missing_process_workers_retried"] += 1
                 changed = True
                 continue
 
@@ -12056,6 +12156,14 @@ def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> 
         finalize_queue_event_record(config, state, worker, "failed", reason)
         if expired_lease:
             counts["expired_lease_workers_failed"] += 1
+            if record_retry_exhausted_worker_terminal_outcome(
+                config,
+                worker,
+                reason=reason,
+            ):
+                counts["expired_lease_tasks_blocked"] = counts.get(
+                    "expired_lease_tasks_blocked", 0
+                ) + 1
         else:
             counts["missing_process_workers_failed"] += 1
             if record_missing_worker_terminal_outcome(
@@ -12126,6 +12234,8 @@ def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> 
             "missing_process_workers_reassigned",
             "missing_process_tasks_blocked",
             "expired_lease_workers_failed",
+            "expired_lease_workers_retried",
+            "expired_lease_tasks_blocked",
             "started_queue_records_requeued",
             "started_queue_records_failed",
             "stale_queue_records_completed",
@@ -12406,12 +12516,16 @@ def task_index_from_status(config: dict[str, Any], status: dict[str, Any]) -> di
             or int(raw_fact["generation"]) < 1
         ):
             raise RuntimeError(f"canonical terminal fact is invalid: {task_id}")
-        tasks[task_id] = {
+        terminal_task = {
             "id": task_id,
             "status": "done",
             "terminal_outcome": raw_fact["terminal_outcome"],
             "generation": raw_fact["generation"],
         }
+        tracks = compact_completion_tracks(raw_fact.get("completion_tracks"))
+        if tracks:
+            terminal_task["completion_tracks"] = tracks
+        tasks[task_id] = terminal_task
     return tasks
 
 
@@ -12838,6 +12952,7 @@ def ready_dispatch_signature(
                 task, activity_events=activity_events, config=config
             ),
             "reviewer": task.get("reviewer"),
+            "execution_resources": task_execution_resources(task),
             "status": task.get("status"),
             "task_generation": task_generation(task),
             "task_id": task.get("id"),
@@ -12873,6 +12988,7 @@ def build_dispatch_event(
         "artifacts": list(task.get("artifacts", []) or []),
         "next": task.get("next"),
         "depends_on": dependencies,
+        "execution_resources": task_execution_resources(task),
         "dependency_truth": [
             {
                 "task_id": dependency_id,

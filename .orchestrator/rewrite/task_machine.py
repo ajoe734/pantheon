@@ -31,6 +31,7 @@ class TaskAction(enum.Enum):
     HANDOFF = "handoff"
     APPROVE = "approve"
     REOPEN = "reopen"
+    RESUME_INTEGRATION = "resume_integration"
     DONE = "done"
     BLOCK = "block"
     SUPERSEDE = "supersede"
@@ -413,6 +414,12 @@ _COMMAND_TRANSITIONS: dict[tuple[TaskState, TaskAction], TaskState] = {
     (TaskState.REVIEW, TaskAction.REOPEN): TaskState.IN_PROGRESS,
     (TaskState.REVIEW_APPROVED, TaskAction.REOPEN): TaskState.IN_PROGRESS,
     (TaskState.BLOCKED, TaskAction.REOPEN): TaskState.IN_PROGRESS,
+    # A reviewed PR can be blocked by the integration environment itself
+    # (for example, a read-only worker mount that cannot take the serialized
+    # integrator lock). This deliberately does not reopen implementation: it
+    # restores the prior reviewed state only through the Human/Ops command
+    # which proves the exact delivery and review bindings still agree.
+    (TaskState.BLOCKED, TaskAction.RESUME_INTEGRATION): TaskState.REVIEW_APPROVED,
     (TaskState.REVIEW_APPROVED, TaskAction.DONE): TaskState.DONE,
 }
 

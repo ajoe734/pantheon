@@ -99,6 +99,7 @@ APPROVED_STATUSES = {"review_approved", "done"}
 #: `assign` rebinds owner/reviewer identity after the fact.
 REVOCATION_EVENT_TYPES = {"reopen", "blocker", "assign"}
 APPROVAL_EVENT_TYPE = "review_approved"
+INTEGRATION_RESUME_EVENT_TYPE = "integration_resumed"
 #: A `note` is normally commentary, but PRs #4225 and #4222 were merged while
 #: exact-head "do not merge" / "changes required" notes stood in the audit.
 #: A note carrying one of these markers revokes an approval.  This signal can
@@ -623,6 +624,7 @@ def load_approval_record(
 
     approval: ApprovalRecord | None = None
     revocation: tuple[str, str, str] | None = None
+    non_resumable_revocation_seen = False
     for event in events:
         if not isinstance(event, Mapping):
             continue
@@ -646,6 +648,7 @@ def load_approval_record(
                 binding_error=binding_error,
             )
             revocation = None
+            non_resumable_revocation_seen = False
             continue
         if approval is None:
             continue
@@ -655,6 +658,8 @@ def load_approval_record(
                 timestamp_text,
                 event_type,
             )
+            if event_type != "blocker":
+                non_resumable_revocation_seen = True
             continue
         if event_type in REVOCATION_NOTE_TYPES and _is_rejection_note(event.get("message")):
             revocation = (
@@ -662,6 +667,22 @@ def load_approval_record(
                 timestamp_text,
                 f"{event_type}:do_not_merge",
             )
+            non_resumable_revocation_seen = True
+            continue
+        if (
+            event_type == INTEGRATION_RESUME_EVENT_TYPE
+            and revocation is not None
+            and revocation[2] == "blocker"
+            and not non_resumable_revocation_seen
+            and str(event.get("agent") or "").strip() == "Human/Ops"
+            and str(event.get("operator_mode") or "").strip() == "local_human_ops"
+        ):
+            # A worker-side integration-environment blocker does not invalidate
+            # the reviewed head. Human/Ops may clear only that revocation after
+            # command_resume_integration has revalidated the immutable PR,
+            # review, and GitHub bridge bindings. Reviewer reopen/rejection,
+            # reassignment, and do-not-merge notes remain non-resumable.
+            revocation = None
 
     if approval is None:
         return ApprovalRecord(task_id=task_id)

@@ -350,6 +350,38 @@ class TestExtractIdentityDispatch:
         assert identity.operator_id == "op-admin"
         assert identity.mfa_verified is True
 
+    def test_stub_env_accepts_valid_jwt(self):
+        token = _make_jwt(sub="op-dev-login", roles=["operator", "admin"])
+        with patch.dict(
+            os.environ,
+            {
+                **_BFF_ENV,
+                "PANTHEON_BFF_AUTH_STUB": "true",
+                "PANTHEON_BFF_AUTH_MODE": "permissive",
+            },
+            clear=False,
+        ):
+            identity = _extract_identity(f"Bearer {token}")
+        assert identity.operator_id == "op-dev-login"
+        assert "operator" in identity.roles
+        assert "admin" in identity.roles
+
+    def test_stub_env_accepts_cookie_jwt(self):
+        token = _make_jwt(sub="op-cookie-user", roles=["viewer"])
+        with patch.dict(
+            os.environ,
+            {
+                **_BFF_ENV,
+                "PANTHEON_BFF_AUTH_STUB": "true",
+                "PANTHEON_BFF_AUTH_MODE": "permissive",
+            },
+            clear=False,
+        ):
+            identity = _extract_identity(None, session_cookie=token)
+        assert identity.operator_id == "op-cookie-user"
+        assert identity.roles == ["viewer"]
+        assert identity.token_kind == "cookie"
+
     def test_no_stub_env_routes_to_jwt(self):
         from fastapi import HTTPException
         with patch.dict(
