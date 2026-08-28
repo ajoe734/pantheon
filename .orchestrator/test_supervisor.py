@@ -2014,6 +2014,34 @@ class SharedPlannerContractTests(unittest.TestCase):
         accepted = planner_decision(self.config, task, target="Codex2")
         self.assertTrue(accepted["eligible"])
 
+    def test_operator_exact_head_acceptance_never_dispatches_owner_finalize(self) -> None:
+        task = task_fixture(status="review_approved")
+        delivery = review_admission_binding()
+        binding = {
+            key: delivery[key]
+            for key in ("pr", "head_sha", "head_branch", "base")
+        }
+        task["delivery_binding"] = delivery
+        task["review_binding"] = binding
+        task["operator_acceptance"] = {
+            **binding,
+            "decision": "operator-accept",
+            "actor": "Human/Ops",
+            "mode": "operator_exact_head",
+            "operator_acceptance_proof_ref": (
+                "refs/tags/pantheon-review/operator-accept/" + binding["head_sha"]
+            ),
+        }
+
+        self.assertIsNone(
+            supervisor.task_execution_dispatch_candidate(
+                self.config,
+                task,
+                "Codex",
+                {"TASK-1": task},
+            )
+        )
+
     def test_pending_review_intent_blocks_shared_dispatch_until_cleared(self) -> None:
         task = task_fixture(status="review", reviewer="Codex2")
         task["delivery_binding"] = review_admission_binding()

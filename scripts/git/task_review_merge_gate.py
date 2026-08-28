@@ -7,14 +7,19 @@ asks this module one question before it hands merge authority to GitHub:
     may `task/<TASK-ID>` merge into the delivery branch right now?
 
 The answer is derived from canonical task state only -- the task row in
-`ai-status.json` under the bound status root plus the immutable
-`review_approved` record in the activity audit.  Nothing in the PR itself, no
-label, and no helper flag can open the gate.
+`ai-status.json` under the bound status root plus an immutable acceptance
+record in the activity audit. Normally that is a `review_approved` record
+from the assigned independent reviewer. The only distinct path is an explicit,
+exact-head `operator_accepted` record created by the local Human/Ops command:
+it has its own immutable operator proof and is never relabeled as reviewer
+evidence. Nothing in the PR itself, no label, and no helper flag can open the
+gate.
 
 Failure modes fail closed.  A missing task row, an unreadable status root, an
 ambiguous PR selection, an unknown head, an unparseable timestamp, a reviewer
-identity that does not match the canonical row, or a head that moved after the
-approval all resolve to "do not merge, do not enable auto-merge".
+identity that does not match the canonical row, an invalid operator proof, or
+a head that moved after acceptance all resolve to "do not merge, do not enable
+auto-merge".
 
 Two policies exist:
 
@@ -65,7 +70,7 @@ exact identities against the PR standing now.  A timestamp comparison alone was
 not enough: approving head `bbbb...` and then replacing the PR head with an
 *older* commit `cccc...` -- committed before the approval, so "not newer than
 the approval" still held -- opened the gate for a head no reviewer ever saw.
-An approval that carries no binding is unusable, not permissive.
+An acceptance that carries no binding is unusable, not permissive.
 """
 
 from __future__ import annotations
@@ -99,6 +104,12 @@ APPROVED_STATUSES = {"review_approved", "done"}
 #: `assign` rebinds owner/reviewer identity after the fact.
 REVOCATION_EVENT_TYPES = {"reopen", "blocker", "assign"}
 APPROVAL_EVENT_TYPE = "review_approved"
+OPERATOR_ACCEPTANCE_EVENT_TYPE = "operator_accepted"
+APPROVAL_KIND_REVIEWER = "independent_review"
+APPROVAL_KIND_OPERATOR = "operator_exact_head"
+OPERATOR_ACCEPTANCE_KEY = "operator_acceptance"
+OPERATOR_ACCEPTANCE_DECISION = "operator-accept"
+OPERATOR_ACCEPTANCE_PROOF_PREFIX = "refs/tags/pantheon-review/operator-accept/"
 INTEGRATION_RESUME_EVENT_TYPE = "integration_resumed"
 #: A `note` is normally commentary, but PRs #4225 and #4222 were merged while
 #: exact-head "do not merge" / "changes required" notes stood in the audit.
@@ -138,6 +149,7 @@ ACTIVITY_ARCHIVE_SUBDIR = Path("archive") / "logs"
 ACTIVITY_LEGACY_ARCHIVE_SUBDIR = Path(".orchestrator") / "logs" / "activity-log-archive"
 
 OID_RE = re.compile(r"^[0-9a-f]{40}$")
+REPOSITORY_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 #: Key carrying the reviewed PR identity on a `review_approved` audit event and
 #: on the canonical task row.  `scripts/ai_status.py::command_approve` writes
 #: it; nothing else may.
@@ -435,9 +447,10 @@ def load_task_contract(
 
 @dataclass(frozen=True)
 class ApprovalRecord:
-    """The last `review_approved` audit event and anything that revoked it."""
+    """The last exact-head acceptance audit event and any later revocation."""
 
     task_id: str
+    authority: str = APPROVAL_KIND_REVIEWER
     reviewer: str = ""
     approved_at: datetime | None = None
     approved_at_text: str = ""
@@ -461,6 +474,12 @@ class ApprovalRecord:
         return bool(self.revocation_type)
 
     @property
+    def is_operator_acceptance(self) -> bool:
+        """True only for the separately-audited Human/Ops acceptance path."""
+
+        return self.authority == APPROVAL_KIND_OPERATOR
+
+    @property
     def binding_present(self) -> bool:
         """True only when the approval names the PR, head, and base it covers.
 
@@ -478,6 +497,7 @@ class ApprovalRecord:
     def as_dict(self) -> dict[str, Any]:
         return {
             "task_id": self.task_id,
+            "authority": self.authority,
             "reviewer": self.reviewer,
             "approved_at": self.approved_at_text,
             "revoked_by": self.revoked_by,
@@ -545,6 +565,59 @@ def parse_approval_binding(event: Mapping[str, Any]) -> tuple[dict[str, Any], st
         },
         "",
     )
+
+
+def validate_operator_acceptance_event(
+    event: Mapping[str, Any],
+    binding: Mapping[str, Any],
+) -> str:
+    """Validate the local shape of a distinct Human/Ops acceptance event.
+
+    The status command already validates and publishes this evidence before
+    writing the audit event. The merge gate repeats the structural checks so an
+    arbitrary `operator_accepted` log line cannot stand in for independent
+    review. This remains separate from reviewer evidence: its result is
+    reported as operator acceptance, never as a reviewer approval.
+    """
+
+    if str(event.get("agent") or "").strip() != "Human/Ops":
+        return "operator_accepted event was not recorded by Human/Ops"
+    evidence = event.get(OPERATOR_ACCEPTANCE_KEY)
+    if not isinstance(evidence, Mapping):
+        return "operator_accepted event carries no operator_acceptance object"
+
+    repository = str(evidence.get("repository") or "").strip()
+    if not REPOSITORY_RE.fullmatch(repository):
+        return "operator acceptance carries an invalid repository"
+    if str(evidence.get("decision") or "").strip() != OPERATOR_ACCEPTANCE_DECISION:
+        return "operator acceptance carries an invalid decision"
+    if str(evidence.get("actor") or "").strip() != "Human/Ops":
+        return "operator acceptance actor is not Human/Ops"
+    if str(evidence.get("mode") or "").strip() != APPROVAL_KIND_OPERATOR:
+        return "operator acceptance carries an invalid mode"
+
+    evidence_pr = normalize_pr_number(evidence.get("pr"))
+    if evidence_pr != binding.get("pr"):
+        return "operator acceptance PR does not match its review binding"
+    evidence_head = str(evidence.get("head_sha") or "").strip().lower()
+    if not OID_RE.match(evidence_head) or evidence_head != binding.get("head_sha"):
+        return "operator acceptance head does not match its review binding"
+    for field in ("head_branch", "base"):
+        if str(evidence.get(field) or "").strip() != str(binding.get(field) or "").strip():
+            return f"operator acceptance {field} does not match its review binding"
+    expected_proof = f"{OPERATOR_ACCEPTANCE_PROOF_PREFIX}{evidence_head}"
+    if str(evidence.get("operator_acceptance_proof_ref") or "").strip() != expected_proof:
+        return "operator acceptance proof ref does not match its exact head"
+
+    frozen_base_sha = str(evidence.get("frozen_base_sha") or "").strip().lower()
+    current_base_sha = str(evidence.get("current_base_sha") or "").strip().lower()
+    if bool(frozen_base_sha) != bool(current_base_sha):
+        return "operator acceptance base evidence is incomplete"
+    if frozen_base_sha and (
+        not OID_RE.match(frozen_base_sha) or not OID_RE.match(current_base_sha)
+    ):
+        return "operator acceptance base evidence is not a commit oid"
+    return ""
 
 
 def _is_rejection_note(message: Any) -> bool:
@@ -632,11 +705,19 @@ def load_approval_record(
             continue
         event_type = str(event.get("type") or "").strip()
         timestamp_text = str(event.get("ts") or "").strip()
-        if event_type == APPROVAL_EVENT_TYPE:
+        if event_type in {APPROVAL_EVENT_TYPE, OPERATOR_ACCEPTANCE_EVENT_TYPE}:
             approved_at = parse_timestamp(timestamp_text)
             binding, binding_error = parse_approval_binding(event)
+            authority = (
+                APPROVAL_KIND_OPERATOR
+                if event_type == OPERATOR_ACCEPTANCE_EVENT_TYPE
+                else APPROVAL_KIND_REVIEWER
+            )
+            if not binding_error and authority == APPROVAL_KIND_OPERATOR:
+                binding_error = validate_operator_acceptance_event(event, binding)
             approval = ApprovalRecord(
                 task_id=task_id,
+                authority=authority,
                 reviewer=str(event.get("agent") or "").strip(),
                 approved_at=approved_at,
                 approved_at_text=timestamp_text,
@@ -690,6 +771,7 @@ def load_approval_record(
         return approval
     return ApprovalRecord(
         task_id=approval.task_id,
+        authority=approval.authority,
         reviewer=approval.reviewer,
         approved_at=approval.approved_at,
         approved_at_text=approval.approved_at_text,
@@ -942,7 +1024,7 @@ def evaluate_gate(
         )
 
     if approval is None or not approval.present:
-        detail = f"no review_approved audit record exists for {contract.task_id}"
+        detail = f"no exact-head acceptance audit record exists for {contract.task_id}"
         if approval is not None and approval.scan_error:
             detail = f"{detail} ({approval.scan_error})"
         return block(contract, approval, "approval_record_missing", detail, head_oid=head_oid)
@@ -954,7 +1036,10 @@ def evaluate_gate(
             f"activity audit could not be read for {contract.task_id}: {approval.scan_error}",
             head_oid=head_oid,
         )
-    if normalize_agent(approval.reviewer) != normalize_agent(contract.reviewer):
+    if (
+        not approval.is_operator_acceptance
+        and normalize_agent(approval.reviewer) != normalize_agent(contract.reviewer)
+    ):
         return block(
             contract,
             approval,
@@ -973,7 +1058,7 @@ def evaluate_gate(
             head_oid=head_oid,
         )
 
-    # The approval must name what it approved.  Timestamps alone cannot tell an
+    # The acceptance must name what it accepted. Timestamps alone cannot tell an
     # unchanged head from a head that was swapped for an older commit, so the
     # recorded PR identity is compared exactly before anything else is trusted.
     if approval.binding_error:
@@ -981,7 +1066,8 @@ def evaluate_gate(
             contract,
             approval,
             "approval_binding_unusable",
-            f"the review_approved record for {contract.task_id} carries an unusable "
+            f"the {'operator_accepted' if approval.is_operator_acceptance else 'review_approved'} "
+            f"record for {contract.task_id} carries an unusable "
             f"binding: {approval.binding_error}",
             head_oid=head_oid,
         )
@@ -990,14 +1076,14 @@ def evaluate_gate(
             contract,
             approval,
             "approval_head_binding_missing",
-            f"the review_approved record for {contract.task_id} names no PR, head sha, "
-            "and base branch; an unbound approval cannot prove which commit was "
-            "reviewed. Re-approve with REVIEW_PR and REVIEW_HEAD_SHA set to the "
-            "exact reviewed head",
+            f"the {'operator_accepted' if approval.is_operator_acceptance else 'review_approved'} "
+            f"record for {contract.task_id} names no PR, head sha, and base branch; "
+            "an unbound acceptance cannot prove which commit was accepted",
             head_oid=head_oid,
         )
     carried_task_brief_only = (
-        approval.approved_head_sha != head_oid
+        not approval.is_operator_acceptance
+        and approval.approved_head_sha != head_oid
         and isinstance(task_brief_carry_forward, Mapping)
         and task_brief_carry_forward.get("kind") == "task_brief_only_successor"
         and str(task_brief_carry_forward.get("approved_head_sha") or "").strip().lower()
@@ -1013,12 +1099,17 @@ def evaluate_gate(
         )
     )
     if approval.approved_head_sha != head_oid and not carried_task_brief_only:
+        acceptance_actor = (
+            "Human/Ops operator acceptance"
+            if approval.is_operator_acceptance
+            else f"reviewer {contract.reviewer}"
+        )
         return block(
             contract,
             approval,
             "approval_head_mismatch",
-            f"reviewer {contract.reviewer} approved head {approval.approved_head_sha} "
-            f"but the PR head is {head_oid}; this exact commit was never reviewed",
+            f"{acceptance_actor} covers head {approval.approved_head_sha} but the PR "
+            f"head is {head_oid}; this exact commit was never accepted",
             head_oid=head_oid,
         )
     pr_number = normalize_pr_number(pr.get("number"))
@@ -1124,6 +1215,8 @@ def evaluate_gate(
         reason=(
             "task_brief_only_approval_carried_forward"
             if carried_task_brief_only
+            else "exact_head_operator_accepted"
+            if approval.is_operator_acceptance
             else "exact_head_approved"
         ),
         detail=(
@@ -1135,10 +1228,20 @@ def evaluate_gate(
             )
             if carried_task_brief_only
             else (
-                f"reviewer {contract.reviewer} approved {contract.task_id} at "
-                f"{approval.approved_at_text}, bound to PR #{approval.approved_pr_number} "
-                f"head {approval.approved_head_sha} onto {approval.approved_base_branch}; "
-                "that is exactly the head standing now"
+                (
+                    f"Human/Ops recorded a distinct operator exact-head acceptance for "
+                    f"{contract.task_id} at {approval.approved_at_text}, bound to "
+                    f"PR #{approval.approved_pr_number} head {approval.approved_head_sha} "
+                    f"onto {approval.approved_base_branch}; that is exactly the head "
+                    "standing now"
+                )
+                if approval.is_operator_acceptance
+                else (
+                    f"reviewer {contract.reviewer} approved {contract.task_id} at "
+                    f"{approval.approved_at_text}, bound to PR #{approval.approved_pr_number} "
+                    f"head {approval.approved_head_sha} onto {approval.approved_base_branch}; "
+                    "that is exactly the head standing now"
+                )
             )
         ),
         head_oid=head_oid,
