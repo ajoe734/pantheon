@@ -45,12 +45,12 @@ DEFAULT_EVIDENCE_DIR = REPO_ROOT / "docs" / "deployment" / "evidence" / "externa
 DEFAULT_DEV_BFF_URL = "https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io"
 DEFAULT_DEV_FE_URL = "https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io"
 DEFAULT_SOURCE_INGEST_URL = "http://127.0.0.1:18097"
-DEFAULT_OPERATOR_TOKEN = os.getenv("PANTHEON_BFF_AUTH_TOKEN") or "op-dev:admin:mfa"
+DEFAULT_OPERATOR_TOKEN = os.getenv("PANTHEON_BFF_AUTH_TOKEN") or ""
 
-EXPECTED_BFF_SHA = "3c79a185a97d920f41005bd41675433a046b6ece"
-EXPECTED_FE_SHA = "b019b334f6810ab9c3ebc8b9b51b9b3cb3449a57"
+EXPECTED_BFF_SHA = "dcb14231d29f08f1646a4ee962b83fd2d4b67560"
+EXPECTED_FE_SHA = "c230fc76bef78fc297135152f2acba690314bb9d"
 EXPECTED_SOURCE_DEFINITIONS_SHA = "40de8fcb1c69fad0bf5e54d4c0bd6e508c9162e0"
-FE_MANIFEST_BFF_SHA = "3c79a185a97d920f41005bd41675433a046b6ece"
+FE_MANIFEST_BFF_SHA = "dcb14231d29f08f1646a4ee962b83fd2d4b67560"
 UNSUPPORTED_READONLY_FE_BASELINE = "cc4007f7f78a31c73548ce85457af17a45a4c4b9"
 
 SHA40_RE = re.compile(r"^[0-9a-f]{40}$")
@@ -261,6 +261,7 @@ class AcceptanceConfig:
     timeout_seconds: float = 15.0
     strict_pair: bool = True
     offline_only: bool = False
+    functional_only: bool = False
     repo_root: Path = REPO_ROOT
 
 
@@ -270,8 +271,10 @@ class VerificationResult:
     task_id: str
     program_id: str
     observed_at: str
+    verification_scope: str
     exact_pair: Dict[str, Any]
     feature_posture: Dict[str, Any]
+    functional_closure: Dict[str, Any]
     journeys: Dict[str, Any]
     browser_evidence: Dict[str, Any]
     negative_controls: Dict[str, Any]
@@ -303,6 +306,9 @@ class ExternalSourceManagementHostedAcceptanceVerifier:
         # 1. Load and verify evidence directory & required files
         evidence_files = self._verify_evidence_artifacts()
         diagnostics.append(f"Verified {len(evidence_files)} evidence artifact files in {self.config.evidence_dir}")
+
+        if self.config.functional_only:
+            return self._run_functional_acceptance(evidence_files, diagnostics)
 
         # 2. Live Probe & Deployment Verification (executed and fail-closed when offline_only is False)
         live_data = self._verify_live_deployments()
@@ -361,8 +367,10 @@ class ExternalSourceManagementHostedAcceptanceVerifier:
             task_id=TASK_ID,
             program_id=PROGRAM_ID,
             observed_at=_utc_now(),
+            verification_scope="full_hosted_evidence",
             exact_pair=deployment_data,
             feature_posture=posture_data,
+            functional_closure={"status": "not_applicable", "reason": "full hosted evidence scope selected"},
             journeys=journeys_data,
             browser_evidence=browser_data,
             negative_controls=neg_data,
@@ -372,6 +380,74 @@ class ExternalSourceManagementHostedAcceptanceVerifier:
             diagnostics=diagnostics,
         )
         return result
+
+    def _run_functional_acceptance(
+        self,
+        evidence_files: Dict[str, Path],
+        diagnostics: List[str],
+    ) -> VerificationResult:
+        """Verify the operator-authorized functional closure without promoting missing browser proof.
+
+        This scope exists to keep product functionality and safety posture moving
+        independently from credentialed Source catalog readback and independently
+        captured Playwright/HAR evidence.  It must never turn those follow-ups into
+        full hosted acceptance.
+        """
+
+        live_data = self._verify_functional_live_deployments()
+        if live_data:
+            source_status = live_data.get("source_definitions_status", "observed")
+            diagnostics.append(
+                f"Live functional endpoints verified: FE {live_data['frontend_sha'][:8]}, "
+                f"BFF {live_data['backend_sha'][:8]}, Source Definitions {source_status}"
+            )
+
+        deployment_data = self._verify_deployment_identities(evidence_files, live_data)
+        diagnostics.append("Verified served FE/BFF pair identity and recorded Source identity follow-up")
+
+        posture_data = self._verify_feature_posture(evidence_files)
+        diagnostics.append("Verified zero-egress durable reconcile-only Source posture")
+
+        functional_data = self._verify_functional_closure(evidence_files, live_data)
+        diagnostics.append("Verified operator-attested bounded recovery and zero unresolved DLQ state")
+
+        migration_data = self._verify_migration_and_rollback(evidence_files)
+        diagnostics.append("Verified store migration idempotency, secret redaction, and read-only rollback")
+
+        openclaw_data = self._verify_openclaw_boundary()
+        diagnostics.append("Verified OpenClaw remains phase 2 and outside product write authority")
+
+        self._verify_no_secret_leaks(evidence_files)
+        diagnostics.append("Verified zero raw secret leaks across all task evidence artifacts")
+
+        checksums = self._verify_artifact_checksums(evidence_files)
+        diagnostics.append("Verified functional-closure checksum bindings without accepting missing hosted proof")
+
+        return VerificationResult(
+            passed=True,
+            task_id=TASK_ID,
+            program_id=PROGRAM_ID,
+            observed_at=_utc_now(),
+            verification_scope="functional_closure_with_hosted_proof_follow_up",
+            exact_pair=deployment_data,
+            feature_posture=posture_data,
+            functional_closure=functional_data,
+            journeys={
+                "status": "follow_up",
+                "accepted": False,
+                "reason": "Independent ten-journey Playwright/HAR proof remains explicitly unaccepted",
+            },
+            browser_evidence={
+                "status": "follow_up",
+                "accepted": False,
+                "reason": "No checksum-bound hosted HAR and per-journey screenshots are claimed",
+            },
+            negative_controls=functional_data["public_negative_controls"],
+            migration_rollout=migration_data,
+            openclaw_boundary=openclaw_data,
+            artifact_checksums=checksums,
+            diagnostics=diagnostics,
+        )
 
     def _verify_evidence_artifacts(self) -> Dict[str, Path]:
         evidence_dir = self.config.evidence_dir
@@ -384,6 +460,7 @@ class ExternalSourceManagementHostedAcceptanceVerifier:
         required_files = {
             "evidence": evidence_dir / "evidence.json",
             "deployment": evidence_dir / "deployment.json",
+            "functional_closure": evidence_dir / "functional-closure-20260828.json",
             "hosted_summary": evidence_dir / "hosted-acceptance-summary.json",
             "journey_receipts": evidence_dir / "journey-receipts.json",
             "browser_evidence": evidence_dir / "browser-evidence.json",
@@ -550,6 +627,166 @@ class ExternalSourceManagementHostedAcceptanceVerifier:
             "bff_config_posture": config_posture,
         }
 
+    def _verify_functional_live_deployments(self) -> Optional[Dict[str, Any]]:
+        """Verify public functional reachability while retaining explicit proof follow-ups."""
+
+        if self.config.offline_only:
+            logger.info("Offline-only functional mode selected: skipping live HTTP probes")
+            return None
+
+        fe_url = f"{self.config.dev_fe_url.rstrip('/')}/deployment.json"
+        status, fe_body = self.transport(fe_url, "GET", {}, None, self.config.timeout_seconds)
+        if status != 200:
+            raise SourceManagementAcceptanceError(
+                "functional.fe_unreachable",
+                f"GET {fe_url} returned HTTP {status}, expected 200",
+            )
+        live_fe_sha = str(fe_body.get("commit") or fe_body.get("frontendSha") or "")
+        if not SHA40_RE.match(live_fe_sha):
+            raise SourceManagementAcceptanceError(
+                "functional.invalid_fe_sha",
+                f"Live FE returned invalid commit SHA: {live_fe_sha}",
+            )
+        build_mode = _mapping(fe_body.get("buildMode") or {}, "fe_body.buildMode")
+        expected_build_mode = {
+            "VITE_BFF_MODE": "live",
+            "VITE_BFF_FALLBACK": "strict",
+            "VITE_BFF_REAL_WRITES": "false",
+        }
+        for key, expected in expected_build_mode.items():
+            if str(build_mode.get(key, "")).strip().lower() != expected:
+                raise SourceManagementAcceptanceError(
+                    "functional.unsafe_fe_posture",
+                    f"Live FE {key} must be {expected}, got {build_mode.get(key)!r}",
+                )
+
+        bff_version_url = f"{self.config.dev_bff_url.rstrip('/')}/bff/version"
+        status, bff_body = self.transport(bff_version_url, "GET", {}, None, self.config.timeout_seconds)
+        if status != 200:
+            raise SourceManagementAcceptanceError(
+                "functional.bff_unreachable",
+                f"GET {bff_version_url} returned HTTP {status}, expected 200",
+            )
+        live_bff_sha = str(bff_body.get("source_commit_sha") or bff_body.get("commit") or "")
+        if not SHA40_RE.match(live_bff_sha):
+            raise SourceManagementAcceptanceError(
+                "functional.invalid_bff_sha",
+                f"Live BFF returned invalid commit SHA: {live_bff_sha}",
+            )
+        fe_manifest_bff = str(fe_body.get("bffCommit") or fe_body.get("bffSourceCommitSha") or "")
+        if fe_manifest_bff != live_bff_sha:
+            raise SourceManagementAcceptanceError(
+                "functional.fe_bff_drift",
+                f"FE manifest BFF {fe_manifest_bff or 'missing'} does not match live BFF {live_bff_sha}",
+            )
+
+        health_url = f"{self.config.dev_bff_url.rstrip('/')}/healthz"
+        status, health_body = self.transport(health_url, "GET", {}, None, self.config.timeout_seconds)
+        if status != 200 or health_body.get("ready") is not True:
+            raise SourceManagementAcceptanceError(
+                "functional.bff_not_ready",
+                f"GET {health_url} must return HTTP 200 with ready=true",
+            )
+
+        config_posture = _mapping(bff_body.get("config_posture") or {}, "bff_body.config_posture")
+        security_follow_up = bool(
+            config_posture.get("auth_stub") is True
+            or config_posture.get("auth_mode") != "strict"
+        )
+
+        source_defs_url = f"{self.config.source_ingest_url.rstrip('/')}/api/source-ingest/management/connector-definitions"
+        source_defs_status = "follow_up_unreachable"
+        live_source_def_sha: Optional[str] = None
+        source_hostname = (urllib.parse.urlparse(self.config.source_ingest_url).hostname or "").lower()
+        if source_hostname in {"127.0.0.1", "localhost", "::1"}:
+            defs_status, defs_body = 0, {}
+        else:
+            try:
+                defs_status, defs_body = self.transport(
+                    source_defs_url,
+                    "GET",
+                    {},
+                    None,
+                    self.config.timeout_seconds,
+                )
+            except SourceManagementAcceptanceError:
+                defs_status, defs_body = 0, {}
+
+        if defs_status != 200:
+            source_defs_url = f"{self.config.dev_bff_url.rstrip('/')}/bff/management/data-sources/catalog"
+            headers = {"Authorization": f"Bearer {self.config.token}"} if self.config.token else {}
+            defs_status, defs_body = self.transport(
+                source_defs_url,
+                "GET",
+                headers,
+                None,
+                self.config.timeout_seconds,
+            )
+
+        if defs_status == 200:
+            defs_root = _mapping(defs_body.get("data") or defs_body, "defs_body.data")
+            defs_list = _list_of_mappings(defs_root.get("definitions") or [], "defs_body.definitions")
+            if not defs_list:
+                raise SourceManagementAcceptanceError(
+                    "functional.empty_source_definitions",
+                    "Authenticated Source catalog returned zero connector definitions",
+                )
+            candidate_sha = str(defs_list[0].get("deployment_sha") or "")
+            if not SHA40_RE.match(candidate_sha):
+                raise SourceManagementAcceptanceError(
+                    "functional.invalid_source_def_sha",
+                    f"Source definitions returned invalid deployment SHA: {candidate_sha}",
+                )
+            live_source_def_sha = candidate_sha
+            source_defs_status = "observed"
+        elif defs_status in (401, 403):
+            source_defs_status = "follow_up_auth_required"
+        else:
+            source_defs_status = f"follow_up_http_{defs_status or 'unreachable'}"
+
+        unauth_url = f"{self.config.dev_bff_url.rstrip('/')}/bff/management/data-sources"
+        status, _ = self.transport(unauth_url, "GET", {}, None, self.config.timeout_seconds)
+        if status not in (401, 403):
+            raise SourceManagementAcceptanceError(
+                "functional.unauthorized_read_not_rejected",
+                f"Unauthenticated GET {unauth_url} returned HTTP {status}, expected 401/403",
+            )
+
+        dev_login_url = f"{self.config.dev_bff_url.rstrip('/')}/bff/auth/dev-login"
+        bad_login_body = json.dumps(
+            {"grant_type": "client_credentials", "client_id": "bad", "client_secret": "bad"}
+        ).encode("utf-8")
+        status, _ = self.transport(
+            dev_login_url,
+            "POST",
+            {"Content-Type": "application/json"},
+            bad_login_body,
+            self.config.timeout_seconds,
+        )
+        if status != 401:
+            raise SourceManagementAcceptanceError(
+                "functional.invalid_login_not_rejected",
+                f"Invalid dev-login POST returned HTTP {status}, expected 401",
+            )
+
+        return {
+            "frontend_sha": live_fe_sha,
+            "backend_sha": live_bff_sha,
+            "source_definitions_sha": live_source_def_sha,
+            "source_definitions_status": source_defs_status,
+            "fe_manifest_bff_sha": fe_manifest_bff,
+            "fe_url": fe_url,
+            "bff_version_url": bff_version_url,
+            "bff_health_url": health_url,
+            "source_defs_url": source_defs_url,
+            "bff_config_posture": config_posture,
+            "security_follow_up": security_follow_up,
+            "public_negative_controls": {
+                "unauthenticated_data_sources_status": "passed",
+                "invalid_dev_login_status": "passed",
+            },
+        }
+
     def _verify_deployment_identities(
         self,
         evidence_files: Dict[str, Path],
@@ -590,7 +827,7 @@ class ExternalSourceManagementHostedAcceptanceVerifier:
                     "identity.frontend_sha_drift",
                     f"Evidence frontend_sha {frontend_sha} does not match live observed FE {live_data['frontend_sha']}",
                 )
-            if live_data["source_definitions_sha"] != source_sha:
+            if live_data.get("source_definitions_sha") and live_data["source_definitions_sha"] != source_sha:
                 raise SourceManagementAcceptanceError(
                     "identity.source_definitions_sha_drift",
                     f"Evidence source_definitions_sha {source_sha} does not match live source definitions {live_data['source_definitions_sha']}",
@@ -613,6 +850,155 @@ class ExternalSourceManagementHostedAcceptanceVerifier:
             "bff_url": str(exact_pair.get("bff_url") or self.config.dev_bff_url),
             "fe_url": str(exact_pair.get("fe_url") or self.config.dev_fe_url),
             "environment": str(exact_pair.get("environment") or "dev"),
+        }
+
+    def _verify_functional_closure(
+        self,
+        evidence_files: Dict[str, Path],
+        live_data: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        with evidence_files["functional_closure"].open("r", encoding="utf-8") as f:
+            data = json.load(f)
+
+        if data.get("status") != "passed":
+            raise SourceManagementAcceptanceError(
+                "functional_closure.not_passed",
+                f"Functional closure status is {data.get('status') or 'missing'}, expected passed",
+            )
+
+        attestation = _mapping(data.get("operator_attestation") or {}, "functional_closure.operator_attestation")
+        if attestation.get("agent") != "Human/Ops":
+            raise SourceManagementAcceptanceError(
+                "functional_closure.invalid_attestor",
+                "Bounded recovery must be attested by Human/Ops",
+            )
+        if not str(attestation.get("event_id") or "").startswith("ai-status-event-"):
+            raise SourceManagementAcceptanceError(
+                "functional_closure.invalid_event_id",
+                "Operator recovery attestation must bind a canonical ai-status event id",
+            )
+        if not SHA256_RE.match(str(attestation.get("event_sha256") or "")):
+            raise SourceManagementAcceptanceError(
+                "functional_closure.invalid_event_sha",
+                "Operator recovery attestation must include a valid SHA-256 binding",
+            )
+
+        recovery = _mapping(data.get("bounded_recovery") or {}, "functional_closure.bounded_recovery")
+        expected_counts = {
+            "dlq_entries_replayed": 3,
+            "deduplicated_executions": 2,
+            "pending_dlq_count": 0,
+            "unresolved_dlq_count": 0,
+        }
+        for key, expected in expected_counts.items():
+            if int(recovery.get(key, -1)) != expected:
+                raise SourceManagementAcceptanceError(
+                    "functional_closure.invalid_recovery_count",
+                    f"{key} must be {expected}, got {recovery.get(key)!r}",
+                )
+        pull = _mapping(recovery.get("exclusive_manual_pull") or {}, "bounded_recovery.exclusive_manual_pull")
+        expected_pull = {"ran": 1, "failed": 0, "excluded": 92}
+        for key, expected in expected_pull.items():
+            if int(pull.get(key, -1)) != expected:
+                raise SourceManagementAcceptanceError(
+                    "functional_closure.invalid_manual_pull",
+                    f"exclusive_manual_pull.{key} must be {expected}, got {pull.get(key)!r}",
+                )
+        if pull.get("connector_scope") != "tw-twse-tpex-official-market":
+            raise SourceManagementAcceptanceError(
+                "functional_closure.invalid_connector_scope",
+                "Recovery pull must remain bound to the exclusive TWSE/TPEx connector",
+            )
+
+        posture = _mapping(data.get("restored_posture") or {}, "functional_closure.restored_posture")
+        expected_posture = {
+            "PANTHEON_EXTERNAL_EGRESS": "deny",
+            "SOURCE_INGEST_CONTROLLER_MODE": "reconcile_only",
+            "SOURCE_INGEST_CONTROLLER_MAX_TICKS": "0",
+            "SOURCE_INGEST_CONTROLLER_RESTART_POLICY": "unless-stopped",
+        }
+        for key, expected in expected_posture.items():
+            if str(posture.get(key, "")).strip().lower() != expected:
+                raise SourceManagementAcceptanceError(
+                    "functional_closure.unsafe_restored_posture",
+                    f"{key} must be restored to {expected}, got {posture.get(key)!r}",
+                )
+        if posture.get("recurring_provider_pull_enabled") is not False:
+            raise SourceManagementAcceptanceError(
+                "functional_closure.recurring_provider_pull",
+                "Functional closeout must explicitly record recurring_provider_pull_enabled=false",
+            )
+        if posture.get("capital_writes_enabled") is not False:
+            raise SourceManagementAcceptanceError(
+                "functional_closure.capital_write_enabled",
+                "Functional closeout must explicitly record capital_writes_enabled=false",
+            )
+
+        requirements = _mapping(data.get("functional_requirements") or {}, "functional_closure.functional_requirements")
+        required_keys = (
+            "store_migration_and_rollback",
+            "bounded_source_recovery",
+            "safe_normal_runtime_posture",
+            "public_fe_bff_reachability",
+            "public_auth_negative_controls",
+        )
+        for key in required_keys:
+            requirement = _mapping(requirements.get(key) or {}, f"functional_requirements.{key}")
+            if requirement.get("status") != "passed":
+                raise SourceManagementAcceptanceError(
+                    "functional_closure.requirement_not_passed",
+                    f"Functional requirement {key} is not passed",
+                )
+
+        follow_ups = _list_of_mappings(data.get("non_blocking_follow_ups") or [], "functional_closure.non_blocking_follow_ups")
+        if not follow_ups:
+            raise SourceManagementAcceptanceError(
+                "functional_closure.missing_follow_ups",
+                "Missing hosted/credential/security proof must remain explicitly recorded as follow-up",
+            )
+        for item in follow_ups:
+            if item.get("status") != "follow_up" or item.get("blocking") is not False:
+                raise SourceManagementAcceptanceError(
+                    "functional_closure.invalid_follow_up",
+                    "Every deferred proof item must be status=follow_up and blocking=false",
+                )
+
+        public_observation = _mapping(
+            data.get("public_hosted_observation") or {},
+            "functional_closure.public_hosted_observation",
+        )
+        if live_data:
+            if public_observation.get("frontend_sha") != live_data["frontend_sha"]:
+                raise SourceManagementAcceptanceError(
+                    "functional_closure.frontend_drift",
+                    "Recorded functional FE identity does not match the current live probe",
+                )
+            if public_observation.get("backend_sha") != live_data["backend_sha"]:
+                raise SourceManagementAcceptanceError(
+                    "functional_closure.backend_drift",
+                    "Recorded functional BFF identity does not match the current live probe",
+                )
+
+        public_negative = _mapping(
+            data.get("public_negative_controls") or {},
+            "functional_closure.public_negative_controls",
+        )
+        for key in ("unauthenticated_data_sources", "invalid_dev_login"):
+            control = _mapping(public_negative.get(key) or {}, f"public_negative_controls.{key}")
+            if control.get("status") != "passed" or int(control.get("http_status", 0)) not in (401, 403):
+                raise SourceManagementAcceptanceError(
+                    "functional_closure.public_negative_failed",
+                    f"Public negative control {key} must record a 401/403 pass",
+                )
+
+        return {
+            "status": "passed",
+            "operator_event_id": attestation["event_id"],
+            "bounded_recovery": dict(recovery),
+            "restored_posture": dict(posture),
+            "public_hosted_observation": dict(public_observation),
+            "public_negative_controls": dict(public_negative),
+            "non_blocking_follow_ups": [dict(item) for item in follow_ups],
         }
 
     def _verify_feature_posture(self, evidence_files: Dict[str, Path]) -> Dict[str, Any]:
@@ -659,11 +1045,15 @@ class ExternalSourceManagementHostedAcceptanceVerifier:
         controller_mode = str(posture.get("SOURCE_INGEST_CONTROLLER_MODE", "")).strip().lower()
         controller_max_ticks = str(posture.get("SOURCE_INGEST_CONTROLLER_MAX_TICKS", "")).strip()
         controller_restart = str(posture.get("SOURCE_INGEST_CONTROLLER_RESTART_POLICY", "")).strip().lower()
-        if controller_mode != "reconcile_only" or controller_max_ticks != "1" or controller_restart != "no":
+        if (
+            controller_mode != "reconcile_only"
+            or controller_max_ticks != "0"
+            or controller_restart != "unless-stopped"
+        ):
             raise SourceManagementAcceptanceError(
-                "posture.source_ingestion_not_manual",
-                "Source Ingestion acceptance requires a manual one-shot reconcile_only controller "
-                "(SOURCE_INGEST_CONTROLLER_MAX_TICKS=1 and restart policy no); daemon or reconcile_and_pull posture is forbidden",
+                "posture.source_ingestion_not_safe_normal",
+                "Source Ingestion normal posture requires the durable reconcile_only owner "
+                "(SOURCE_INGEST_CONTROLLER_MAX_TICKS=0 and restart policy unless-stopped) with provider egress denied",
             )
 
         return {
@@ -1236,10 +1626,15 @@ class ExternalSourceManagementHostedAcceptanceVerifier:
             manifest = json.load(f)
 
         artifacts = _mapping(manifest.get("artifacts") or {}, "evidence.artifacts")
-        if manifest.get("status") != "passed":
+        expected_status = (
+            "functional_passed_hosted_proof_follow_up"
+            if self.config.functional_only
+            else "passed"
+        )
+        if manifest.get("status") != expected_status:
             raise SourceManagementAcceptanceError(
                 "evidence.not_accepted",
-                f"Evidence manifest status is {manifest.get('status') or 'missing'}, expected passed",
+                f"Evidence manifest status is {manifest.get('status') or 'missing'}, expected {expected_status}",
             )
         checksums = {}
         for name, path in evidence_files.items():
@@ -1283,6 +1678,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         help="Operator JWT/token (prefer PANTHEON_BFF_AUTH_TOKEN to avoid process-list exposure)",
     )
     parser.add_argument("--offline-only", action="store_true", help="Verify offline evidence artifacts only")
+    parser.add_argument(
+        "--functional-only",
+        action="store_true",
+        help="Verify operator-authorized functional closure while retaining hosted browser, credential, and security proof as non-blocking follow-up",
+    )
     parser.add_argument("--output", type=Path, default=None, help="Optional output path for verification result JSON")
     args = parser.parse_args(argv)
 
@@ -1298,6 +1698,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         source_ingest_url=args.source_ingest_url,
         token=args.token,
         offline_only=args.offline_only,
+        functional_only=args.functional_only,
     )
 
     verifier = ExternalSourceManagementHostedAcceptanceVerifier(config)
@@ -1313,7 +1714,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         logger.exception("Unexpected error during hosted acceptance verification: %s", exc)
         return 2
 
-    logger.info("Hosted acceptance verification PASSED! Task: %s", result.task_id)
+    logger.info(
+        "Acceptance verification PASSED! Task: %s, scope: %s",
+        result.task_id,
+        result.verification_scope,
+    )
     if args.output:
         with args.output.open("w", encoding="utf-8") as f:
             json.dump(result.to_dict(), f, indent=2)

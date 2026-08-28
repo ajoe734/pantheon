@@ -320,8 +320,9 @@ it.
 
 ### 7.4 Safe dev posture is being mistaken for missing capability or live proof
 
-`PANTHEON_EXTERNAL_EGRESS=deny`, an empty host allowlist, and a single
-non-restarting `reconcile_only` tick are intentional dev defaults. Phase 1
+`PANTHEON_EXTERNAL_EGRESS=deny`, an empty host allowlist, and the durable
+`reconcile_only/MAX_TICKS=0` owner are intentional dev defaults. This owner
+reconciles internal desired state continuously but performs no provider pull. Phase 1
 must retain safe bounded activation while making the operating mode visible.
 The explicit provider-pull profile must require one bounded
 `reconcile_and_pull` run plus exact connector and host allowlists. It must not

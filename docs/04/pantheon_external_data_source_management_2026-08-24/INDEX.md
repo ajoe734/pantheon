@@ -66,7 +66,8 @@ Pantheon checkout.
 | Provider Adapter Coverage | `SRCM-P1-PROVIDER-COVERAGE-20260824` | SD-SRCM-05 | Done (PR #5201) |
 | Governed Search & Alpha | `SRCM-P1-SEARCH-ALPHA-20260824` | SD-SRCM-06 | Done (PR #5198) |
 | Reviewed Memory Writeback | `SRCM-P1-MEMORY-WRITEBACK-20260824` | SD-SRCM-07 | Done (PR #5207) |
-| Hosted Acceptance & Closeout | `SRCM-P1-HOSTED-ACCEPTANCE-20260824` | SD-SRCM-08 | Blocked: default dev code is corrected to a non-restarting one-tick `reconcile_only` controller, but the exact hosted candidate has no authorized bounded ten-journey Playwright/HAR proof |
+| Hosted Acceptance & Closeout | `SRCM-P1-HOSTED-ACCEPTANCE-20260824` | SD-SRCM-08 | Functional closure passed after bounded Source recovery; normal dev is zero-egress `reconcile_only/MAX_TICKS=0`. Browser/HAR, credential, strict-auth, and full exact-pair proof remain non-blocking follow-up and are not claimed as hosted/live acceptance. |
 
 - **Hosted Acceptance Evidence Package**: [`docs/deployment/evidence/external-source-management-phase1/`](../../deployment/evidence/external-source-management-phase1/)
-- **Verification Script**: `python3 scripts/verify_external_source_management_acceptance.py` (intentionally fails closed until real capture replaces the pending manifest)
+- **Functional Verification**: `python3 scripts/verify_external_source_management_acceptance.py --functional-only` (passes only the operator-authorized functional scope)
+- **Full Hosted Verification**: `python3 scripts/verify_external_source_management_acceptance.py` (intentionally fails closed until real capture replaces the pending manifest)

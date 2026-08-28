@@ -8,13 +8,14 @@
     "execution_mode": "hosted",
     "capture_profile": null,
     "route_interception_count": null,
-    "frontend_sha": "c21df2cfdaf1781cdf6db517a57dc6c718e0e0f9",
-    "backend_sha": "63353e4b4de5df80ea9c9975e002ba95266a4bb8",
+    "frontend_sha": "c230fc76bef78fc297135152f2acba690314bb9d",
+    "backend_sha": "dcb14231d29f08f1646a4ee962b83fd2d4b67560",
     "normal_profile_restored": "read-only",
     "vite_bff_real_writes_default": "false",
-    "source_ingestion_posture": "reconcile_only_daemon_observed_not_manual",
+    "source_ingestion_posture": "reconcile_only_max_ticks_0_egress_deny",
     "producer": null,
-    "blocking_reason": "No independently captured ten-journey Playwright/HAR artifact exists. The served FE is read-only and the Source Ingestion controller was observed as a long-running reconcile_only daemon (max_ticks=0); bounded write-proof authority and manual one-shot posture are required before capture."
+    "blocking_reason": null,
+    "follow_up_reason": "Functional closure does not promote a browser claim. No independently captured ten-journey Playwright/HAR artifact exists; credentialed, security, exact-pair, and hosted external proof remain non-blocking follow-up under the 2026-08-28 Human/Ops scope."
   },
   "har_artifact": null,
   "har_sha256": null,

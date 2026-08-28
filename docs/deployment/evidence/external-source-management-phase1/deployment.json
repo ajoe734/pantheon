@@ -3,12 +3,15 @@
   "task_id": "SRCM-P1-HOSTED-ACCEPTANCE-20260824",
   "program_id": "SRCM-PHASE1-20260824",
   "created_at": "2026-08-25T13:20:58Z",
+  "updated_at": "2026-08-28T15:23:39Z",
   "exact_pair": {
-    "backend_sha": "3c79a185a97d920f41005bd41675433a046b6ece",
-    "frontend_sha": "b019b334f6810ab9c3ebc8b9b51b9b3cb3449a57",
+    "backend_sha": "dcb14231d29f08f1646a4ee962b83fd2d4b67560",
+    "frontend_sha": "c230fc76bef78fc297135152f2acba690314bb9d",
     "source_definitions_sha": "40de8fcb1c69fad0bf5e54d4c0bd6e508c9162e0",
-    "fe_manifest_bff_sha": "3c79a185a97d920f41005bd41675433a046b6ece",
-    "candidate_status": "accepted_read_only_pair_bounded_tick_failed_browser_journeys_not_run",
+    "source_definitions_identity_status": "follow_up_auth_required_last_observed_sha_retained",
+    "fe_manifest_bff_sha": "dcb14231d29f08f1646a4ee962b83fd2d4b67560",
+    "candidate_status": "functional_passed_hosted_proof_follow_up",
+    "drift_status": "source_identity_follow_up",
     "bff_url": "https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io",
     "fe_url": "https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io",
     "environment": "dev"
@@ -22,7 +25,7 @@
     "SOURCE_INGEST_CONTROLLER_MODE": "reconcile_only",
     "SOURCE_INGEST_CONTROLLER_MAX_TICKS": "0",
     "SOURCE_INGEST_CONTROLLER_RESTART_POLICY": "unless-stopped",
-    "source_ingestion_runtime_observed_at": "2026-08-26T08:55:00Z",
+    "source_ingestion_runtime_observed_at": "2026-08-28T15:18:12Z",
     "rollback_read_only_default": true
   },
   "target_repositories": {

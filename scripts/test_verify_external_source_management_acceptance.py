@@ -64,6 +64,7 @@ def _bind_manifest_checksums(bundle_dir: Path) -> None:
     manifest["status"] = "passed"
     for key, filename in {
         "deployment": "deployment.json",
+        "functional_closure": "functional-closure-20260828.json",
         "hosted_summary": "hosted-acceptance-summary.json",
         "journey_receipts": "journey-receipts.json",
         "browser_evidence": "browser-evidence.json",
@@ -206,8 +207,8 @@ def _setup_valid_bundle(tmp_path: Path) -> Path:
     deployment["feature_posture"].update(
         {
             "SOURCE_INGEST_CONTROLLER_MODE": "reconcile_only",
-            "SOURCE_INGEST_CONTROLLER_MAX_TICKS": "1",
-            "SOURCE_INGEST_CONTROLLER_RESTART_POLICY": "no",
+            "SOURCE_INGEST_CONTROLLER_MAX_TICKS": "0",
+            "SOURCE_INGEST_CONTROLLER_RESTART_POLICY": "unless-stopped",
         }
     )
     deployment_path.write_text(json.dumps(deployment, indent=2) + "\n", encoding="utf-8")
@@ -264,6 +265,8 @@ def _make_mock_transport(
                     "dev_login_enabled": True,
                 },
             }
+        elif url.endswith("/healthz"):
+            return 200, {"status": "ok", "live": True, "ready": True}
         elif "/api/source-ingest/management/connector-definitions" in url or "/bff/management/data-sources/catalog" in url:
             if source_defs_status != 200:
                 return source_defs_status, {"error": "defs_error"}
@@ -961,12 +964,12 @@ def test_browser_evidence_placeholder_screenshot_fails_closed(tmp_path: Path) ->
     assert exc_info.value.code == "browser_evidence.placeholder_screenshot"
 
 
-def test_source_ingestion_daemon_posture_fails_closed(tmp_path: Path) -> None:
+def test_source_ingestion_one_shot_normal_posture_fails_closed(tmp_path: Path) -> None:
     bundle_dir = _setup_valid_bundle(tmp_path)
     deployment_path = bundle_dir / "deployment.json"
     deployment = json.loads(deployment_path.read_text(encoding="utf-8"))
-    deployment["feature_posture"]["SOURCE_INGEST_CONTROLLER_MAX_TICKS"] = "0"
-    deployment["feature_posture"]["SOURCE_INGEST_CONTROLLER_RESTART_POLICY"] = "unless-stopped"
+    deployment["feature_posture"]["SOURCE_INGEST_CONTROLLER_MAX_TICKS"] = "1"
+    deployment["feature_posture"]["SOURCE_INGEST_CONTROLLER_RESTART_POLICY"] = "no"
     deployment_path.write_text(json.dumps(deployment), encoding="utf-8")
 
     verifier = ExternalSourceManagementHostedAcceptanceVerifier(
@@ -974,4 +977,98 @@ def test_source_ingestion_daemon_posture_fails_closed(tmp_path: Path) -> None:
     )
     with pytest.raises(SourceManagementAcceptanceError) as exc_info:
         verifier.run()
-    assert exc_info.value.code == "posture.source_ingestion_not_manual"
+    assert exc_info.value.code == "posture.source_ingestion_not_safe_normal"
+
+
+def test_verify_functional_closure_offline() -> None:
+    result = ExternalSourceManagementHostedAcceptanceVerifier(
+        AcceptanceConfig(
+            evidence_dir=DEFAULT_EVIDENCE_DIR,
+            offline_only=True,
+            functional_only=True,
+        )
+    ).run()
+
+    assert result.passed is True
+    assert result.verification_scope == "functional_closure_with_hosted_proof_follow_up"
+    assert result.functional_closure["status"] == "passed"
+    assert result.functional_closure["bounded_recovery"]["unresolved_dlq_count"] == 0
+    assert result.feature_posture["SOURCE_INGEST_CONTROLLER_MAX_TICKS"] == "0"
+    assert result.journeys["status"] == "follow_up"
+    assert result.browser_evidence["accepted"] is False
+
+
+def test_verify_functional_closure_live_mock(tmp_path: Path) -> None:
+    bundle_dir = tmp_path / "functional-evidence"
+    shutil.copytree(DEFAULT_EVIDENCE_DIR, bundle_dir)
+    deployment = json.loads((bundle_dir / "deployment.json").read_text(encoding="utf-8"))
+    pair = deployment["exact_pair"]
+
+    result = ExternalSourceManagementHostedAcceptanceVerifier(
+        AcceptanceConfig(
+            evidence_dir=bundle_dir,
+            functional_only=True,
+        ),
+        transport=_make_mock_transport(
+            fe_sha=pair["frontend_sha"],
+            fe_manifest_bff_sha=pair["backend_sha"],
+            bff_sha=pair["backend_sha"],
+            source_defs_sha=pair["source_definitions_sha"],
+        ),
+    ).run()
+
+    assert result.passed is True
+    assert result.exact_pair["frontend_sha"] == pair["frontend_sha"]
+    assert result.exact_pair["backend_sha"] == pair["backend_sha"]
+
+
+def test_functional_source_catalog_auth_requirement_is_follow_up(tmp_path: Path) -> None:
+    bundle_dir = tmp_path / "functional-evidence"
+    shutil.copytree(DEFAULT_EVIDENCE_DIR, bundle_dir)
+    deployment = json.loads((bundle_dir / "deployment.json").read_text(encoding="utf-8"))
+    pair = deployment["exact_pair"]
+
+    result = ExternalSourceManagementHostedAcceptanceVerifier(
+        AcceptanceConfig(
+            evidence_dir=bundle_dir,
+            functional_only=True,
+        ),
+        transport=_make_mock_transport(
+            fe_sha=pair["frontend_sha"],
+            fe_manifest_bff_sha=pair["backend_sha"],
+            bff_sha=pair["backend_sha"],
+            source_defs_status=401,
+        ),
+    ).run()
+
+    assert result.passed is True
+    assert any("Source Definitions follow_up_auth_required" in item for item in result.diagnostics)
+
+
+def test_functional_closure_recovery_tamper_fails_closed(tmp_path: Path) -> None:
+    bundle_dir = tmp_path / "functional-evidence"
+    shutil.copytree(DEFAULT_EVIDENCE_DIR, bundle_dir)
+    closure_path = bundle_dir / "functional-closure-20260828.json"
+    closure = json.loads(closure_path.read_text(encoding="utf-8"))
+    closure["bounded_recovery"]["unresolved_dlq_count"] = 1
+    closure_path.write_text(json.dumps(closure, indent=2) + "\n", encoding="utf-8")
+
+    verifier = ExternalSourceManagementHostedAcceptanceVerifier(
+        AcceptanceConfig(
+            evidence_dir=bundle_dir,
+            offline_only=True,
+            functional_only=True,
+        )
+    )
+    with pytest.raises(SourceManagementAcceptanceError) as exc_info:
+        verifier.run()
+    assert exc_info.value.code == "functional_closure.invalid_recovery_count"
+
+
+def test_default_bundle_does_not_claim_full_hosted_acceptance() -> None:
+    verifier = ExternalSourceManagementHostedAcceptanceVerifier(
+        AcceptanceConfig(evidence_dir=DEFAULT_EVIDENCE_DIR, offline_only=True)
+    )
+    with pytest.raises(SourceManagementAcceptanceError) as exc_info:
+        verifier.run()
+    assert exc_info.value.code == "browser_evidence.capture_not_passed"

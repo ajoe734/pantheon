@@ -1,0 +1,135 @@
+{
+  "schema_version": "pantheon.external-source-management.functional-closure.v1",
+  "task_id": "SRCM-P1-HOSTED-ACCEPTANCE-20260824",
+  "program_id": "SRCM-PHASE1-20260824",
+  "observed_at": "2026-08-28T15:23:39Z",
+  "status": "passed",
+  "acceptance_scope": "functional_closure_with_hosted_proof_follow_up",
+  "operator_attestation": {
+    "agent": "Human/Ops",
+    "timestamp": "2026-08-28T15:18:12Z",
+    "event_id": "ai-status-event-5262d75351f9da151b523e544ef9750161f252b65770c7dd4fa43a1f0d9fd047",
+    "event_sha256": "915776f863051ded88630a781919b915d855443d5356d79613401b5baa1c3d23",
+    "source": "canonical task-scoped ai-activity event",
+    "operator_scope": "Prioritize functional closure; retain credential, security, exact-pair authorization, and hosted external proof as non-blocking follow-up."
+  },
+  "bounded_recovery": {
+    "status": "passed",
+    "dlq_entries_replayed": 3,
+    "deduplicated_executions": 2,
+    "exclusive_manual_pull": {
+      "connector_scope": "tw-twse-tpex-official-market",
+      "ran": 1,
+      "failed": 0,
+      "excluded": 92
+    },
+    "pending_dlq_count": 0,
+    "unresolved_dlq_count": 0,
+    "additional_provider_pull_performed_by_closeout": false
+  },
+  "restored_posture": {
+    "PANTHEON_EXTERNAL_EGRESS": "deny",
+    "PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS": "",
+    "SOURCE_INGEST_CONTROLLER_MODE": "reconcile_only",
+    "SOURCE_INGEST_CONTROLLER_MAX_TICKS": "0",
+    "SOURCE_INGEST_CONTROLLER_RESTART_POLICY": "unless-stopped",
+    "SOURCE_MANAGEMENT_COMMANDS_ENABLED": "0",
+    "PANTHEON_BFF_SOURCE_MANAGEMENT_COMMANDS_ENABLED": "0",
+    "VITE_BFF_REAL_WRITES": "false",
+    "recurring_provider_pull_enabled": false,
+    "capital_writes_enabled": false
+  },
+  "public_hosted_observation": {
+    "frontend_url": "https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io",
+    "backend_url": "https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io",
+    "frontend_sha": "c230fc76bef78fc297135152f2acba690314bb9d",
+    "backend_sha": "dcb14231d29f08f1646a4ee962b83fd2d4b67560",
+    "fe_manifest_bff_sha": "dcb14231d29f08f1646a4ee962b83fd2d4b67560",
+    "frontend_http_status": 200,
+    "backend_health_http_status": 200,
+    "backend_ready": true,
+    "build_mode": {
+      "VITE_BFF_MODE": "live",
+      "VITE_BFF_FALLBACK": "strict",
+      "VITE_BFF_REAL_WRITES": "false",
+      "VITE_BFF_ALLOW_DEV_STUB_WRITES": "false"
+    },
+    "source_definitions_identity_status": "follow_up_auth_required",
+    "bff_security_posture_status": "follow_up_permissive_dev_auth"
+  },
+  "public_negative_controls": {
+    "unauthenticated_data_sources": {
+      "status": "passed",
+      "method": "GET",
+      "path": "/bff/management/data-sources",
+      "http_status": 401,
+      "error_code": "AUTH_REQUIRED"
+    },
+    "invalid_dev_login": {
+      "status": "passed",
+      "method": "POST",
+      "path": "/bff/auth/dev-login",
+      "http_status": 401,
+      "error_code": "AUTH_REQUIRED"
+    }
+  },
+  "functional_requirements": {
+    "store_migration_and_rollback": {
+      "status": "passed",
+      "evidence": "migration-rollout-rollback.json plus focused repository contract tests"
+    },
+    "bounded_source_recovery": {
+      "status": "passed",
+      "evidence": "Human/Ops canonical recovery event with zero pending and unresolved DLQ"
+    },
+    "safe_normal_runtime_posture": {
+      "status": "passed",
+      "evidence": "egress deny plus durable reconcile_only max_ticks=0 owner; no recurring provider pull"
+    },
+    "public_fe_bff_reachability": {
+      "status": "passed",
+      "evidence": "public deployment.json, BFF version, and BFF healthz probes"
+    },
+    "public_auth_negative_controls": {
+      "status": "passed",
+      "evidence": "unauthenticated data-source read and invalid dev-login both rejected"
+    }
+  },
+  "non_blocking_follow_ups": [
+    {
+      "id": "hosted_browser_har",
+      "status": "follow_up",
+      "blocking": false,
+      "accepted": false,
+      "reason": "No independently captured ten-journey Playwright run, sanitized HAR, or per-journey screenshots are claimed."
+    },
+    {
+      "id": "authenticated_source_catalog_identity",
+      "status": "follow_up",
+      "blocking": false,
+      "accepted": false,
+      "reason": "The public Source port is not exposed and the BFF catalog requires an operator credential."
+    },
+    {
+      "id": "strict_bff_security_posture",
+      "status": "follow_up",
+      "blocking": false,
+      "accepted": false,
+      "reason": "The live BFF version reports permissive dev auth with auth_stub enabled; functional scope records but does not waive this security follow-up."
+    },
+    {
+      "id": "credentialed_source_journey",
+      "status": "follow_up",
+      "blocking": false,
+      "accepted": false,
+      "reason": "No credentialed provider journey is promoted to accepted proof by this closeout."
+    },
+    {
+      "id": "full_exact_pair_authorization",
+      "status": "follow_up",
+      "blocking": false,
+      "accepted": false,
+      "reason": "The publicly observed FE/BFF pair is recorded for reachability only, not promoted to full Source/browser acceptance authority."
+    }
+  ]
+}
