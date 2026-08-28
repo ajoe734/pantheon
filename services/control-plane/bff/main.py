@@ -67744,115 +67744,33 @@ app.include_router(_create_alpha_factory_router(
     utc_now=utc_now,
 ))
 
-# -- Jobs (read_store narrow ports) ------------------------------------------
-
-@app.get("/bff/jobs")
-async def bff_list_jobs(
-    status: Optional[str] = None,
-    job_type: Optional[str] = None,
-    page_token: Optional[str] = None,
-    page_size: int = Query(default=20, ge=1, le=200),
-    authorization: Optional[str] = Header(default=None),
-):
-    """BFF: job list using narrow port read_store.list_jobs_bff."""
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-    snapshot_at = utc_now()
-    jobs = list(_GOV_BFF_JOB_OVERLAY.values()) or read_store.list_jobs_bff(status=status, job_type=job_type)
-    if status:
-        jobs = [j for j in jobs if j.get("status") == status]
-    if job_type:
-        jobs = [j for j in jobs if j.get("job_type") == job_type]
-    total = len(jobs)
-    page_items, next_page_token = _page_slice(jobs, page_token, page_size)
-    return {
-        "items": page_items,
-        "data": page_items,
-        "page_info": {"next_page_token": next_page_token, "total": total},
-        "meta": _read_surface_meta("jobs", "job_list", snapshot_at=snapshot_at, total=total),
-    }
-
-
-@app.get("/bff/jobs/{job_id}")
-async def bff_get_job(
-    job_id: str,
-    authorization: Optional[str] = Header(default=None),
-):
-    """BFF: job detail using narrow port read_store.get_job_bff."""
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-    snapshot_at = utc_now()
-    job = _GOV_BFF_JOB_OVERLAY.get(job_id) or read_store.get_job_bff(job_id)
-    if not job:
-        surface = _dataset_surface_status("jobs", snapshot_at=snapshot_at)
-        _raise_if_read_surface_unavailable(surface, label="Job")
-        raise _bff_error(
-            404, ErrorCode.RESOURCE_NOT_FOUND,
-            "Job not found",
-            f"Job {job_id} does not exist",
-        )
-    return {
-        "data": job,
-        "meta": _read_surface_meta("jobs", "job_detail", snapshot_at=snapshot_at),
-    }
-
-
-@app.get("/bff/jobs/{job_id}/logs")
-async def bff_get_job_logs(
-    job_id: str,
-    authorization: Optional[str] = Header(default=None),
-):
-    """BFF: job logs using narrow port read_store.get_job_logs_bff."""
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-    snapshot_at = utc_now()
-    job = _GOV_BFF_JOB_OVERLAY.get(job_id) or read_store.get_job_bff(job_id)
-    if not job:
-        raise _bff_error(
-            404, ErrorCode.RESOURCE_NOT_FOUND,
-            "Job not found",
-            f"Job {job_id} does not exist",
-        )
-    logs = job.get("logs") if isinstance(job, dict) and "logs" in job else read_store.get_job_logs_bff(job_id)
-    return {
-        "job_id": job_id,
-        "status": job.get("status") if isinstance(job, dict) else "unknown",
-        "logs": logs,
-        "data": logs,
-        "meta": _read_surface_meta("jobs", "job_logs", snapshot_at=snapshot_at),
-    }
-
-
-@app.post("/bff/jobs/{job_id}/actions/{action_id}", status_code=202)
-async def bff_job_action(
-    job_id: str,
-    action_id: str,
-    payload: Dict[str, Any] = Body(default_factory=dict),
-    authorization: Optional[str] = Header(default=None),
-    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
-):
-    """BFF: job action."""
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-    _reject_body_idempotency_key(payload)
-    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
-    job = _GOV_BFF_JOB_OVERLAY.get(job_id) or read_store.get_job_bff(job_id)
-    if not job:
-        raise _bff_error(
-            404, ErrorCode.RESOURCE_NOT_FOUND,
-            "Job not found",
-            f"Job {job_id} does not exist",
-        )
-    return _evol_exp_bff_action_command(
-        entity_type=ObjectType.JOB,
-        entity_id=job_id,
-        action_id=action_id,
-        resolved_key=resolved_key,
-        identity=identity,
-        payload=payload,
-        command_type=CommandType.JOB_ACTION,
+# ACG-01-002: Jobs canonical router
+from jobs.router import create_jobs_router as _create_jobs_router
+app.include_router(
+    _create_jobs_router(
+        get_read_store=lambda: read_store,
+        extract_identity=_extract_identity,
+        require_read_role=_require_read_role,
+        bff_error=_bff_error,
+        utc_now=utc_now,
+        page_slice=_page_slice,
+        read_surface_meta=_read_surface_meta,
+        dataset_surface_status=_dataset_surface_status,
+        raise_if_read_surface_unavailable=_raise_if_read_surface_unavailable,
+        get_job_overlay=lambda: _GOV_BFF_JOB_OVERLAY,
+        reject_body_idempotency_key=_reject_body_idempotency_key,
+        resolve_final_idempotency_key=_resolve_final_idempotency_key,
+        submit_job_action=lambda job_id, action_id, resolved_key, identity, payload: _evol_exp_bff_action_command(
+            entity_type=ObjectType.JOB,
+            entity_id=job_id,
+            action_id=action_id,
+            resolved_key=resolved_key,
+            identity=identity,
+            payload=payload,
+            command_type=CommandType.JOB_ACTION,
+        ),
     )
+)
 
 
 async def bff_events_stream_alias(
