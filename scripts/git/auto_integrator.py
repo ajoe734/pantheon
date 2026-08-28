@@ -55,6 +55,12 @@ DEFAULT_CONFIG = ROOT / ".orchestrator" / "config.json"
 DEFAULT_STATUS = ROOT / "ai-status.json"
 DEFAULT_DEV_BRANCH = "dev"
 DEFAULT_TASK_PREFIX = "task/"
+DISPOSABLE_MERGE_IDENTITY = (
+    "-c",
+    "user.name=Pantheon Auto Integrator",
+    "-c",
+    "user.email=pantheon-auto-integrator@noreply.local",
+)
 DEFAULT_LOCK = ".orchestrator/auto-integrator.lock"
 DEFAULT_MERGE_METHOD = "merge"
 DEFAULT_LIVE_CONFIG = Path(
@@ -1507,7 +1513,13 @@ def run_rebase_smoke(
             runner.run(["git", "worktree", "add", "--detach", str(worktree), exact_head], cwd=root)
             try:
                 merge = runner.run(
-                    ["git", "merge", "--no-edit", f"origin/{candidate.target_branch}"],
+                    [
+                        "git",
+                        *DISPOSABLE_MERGE_IDENTITY,
+                        "merge",
+                        "--no-edit",
+                        f"origin/{candidate.target_branch}",
+                    ],
                     cwd=worktree,
                     check=False,
                 )
@@ -2810,25 +2822,6 @@ def integrate_candidate(
             runner.commands[:],
         )
 
-    if rebase_status == "exact_head_verified_clean":
-        # The disposable combination passed smoke, but the live PR is not yet
-        # directly mergeable. The canonical runner will not create a queue or
-        # rewrite its exact head to make it eligible.
-        detail = (
-            f"PR #{number}'s exact head {decision.head_oid} merges cleanly in the "
-            f"disposable smoke worktree but is behind {candidate.target_branch}; "
-            "owner refreshes the task head before direct integration."
-        )
-        return IntegrationResult(
-            candidate.task_id,
-            "waiting",
-            detail,
-            number,
-            url,
-            dry_run=not execute,
-            commands=runner.commands[:],
-        )
-
     if pushed:
         detail = (
             f"Internal safety error: integration attempted to rewrite {candidate.branch}; "
@@ -2935,9 +2928,19 @@ def integrate_candidate(
 
     if not execute:
         if gated:
+            authority = str(decision.approval.get("authority") or "").strip()
+            accepted_by = (
+                f"accepted by Human/Ops at {decision.approved_at} through its distinct "
+                "exact-head operator acceptance"
+                if authority == "operator_exact_head"
+                else (
+                    f"approved by {decision.contract.get('reviewer')} at "
+                    f"{decision.approved_at}"
+                )
+            )
             detail = (
-                f"Dry-run: PR #{number} is green, {rebase_status}, and approved by "
-                f"{decision.contract.get('reviewer')} at {decision.approved_at} for exact head "
+                f"Dry-run: PR #{number} is green, {rebase_status}, and {accepted_by} "
+                f"for exact head "
                 f"{decision.head_oid}; would merge that exact head."
             )
         else:
