@@ -98,6 +98,23 @@ print(entries[0].parent.parent.resolve())
 PY
 }
 
+install_auto_integrator() {
+  local runtime_root="$1"
+  local installer="${runtime_root}/scripts/auto_integrator_install.py"
+  if [[ ! -f "$installer" ]]; then
+    log "WARNING: auto-integrator installer missing from runtime=$runtime_root"
+    return 0
+  fi
+  if python3 -B "$installer" \
+    --repo "$runtime_root" \
+    --status-root "$COORDINATION_ROOT" \
+    --config-file "$LIVE_CONFIG"; then
+    log "auto-integrator repointed at runtime=$runtime_root config=$LIVE_CONFIG"
+  else
+    log "WARNING: auto-integrator install failed for runtime=$runtime_root -- reviewed PRs will remain open until the supervisor-owned integration lane is restored"
+  fi
+}
+
 config_drift=0
 if [[ -f "$LIVE_CONFIG" && -f "$DEV_ROOT/scripts/check_config_drift.py" ]]; then
   drift_report="$(mktemp)"
@@ -130,6 +147,7 @@ prune_old_command_runtimes() {
 
 active_root="$(current_command_root 2>/dev/null || true)"
 if [[ "$active_root" == "$candidate_root" && "$config_drift" -eq 0 ]]; then
+  install_auto_integrator "$candidate_root"
   prune_old_command_runtimes
   log "done (staging=$DEV_ROOT coordination=$COORDINATION_ROOT promotion=no-op-current-runtime)"
   exit 0
@@ -242,6 +260,8 @@ if [[ -f "$candidate_root/scripts/supervisor_watchdog_install.py" ]]; then
     log "WARNING: watchdog authority env file missing or not a regular file ($AUTHORITY_ENV_FILE) -- skipped watchdog repoint"
   fi
 fi
+
+install_auto_integrator "$candidate_root"
 
 prune_old_command_runtimes
 log "done (staging=$DEV_ROOT coordination=$COORDINATION_ROOT promotion=replaced)"
