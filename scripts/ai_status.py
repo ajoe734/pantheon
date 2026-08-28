@@ -5994,6 +5994,7 @@ def command_reopen(state: dict[str, Any], args: list[str]) -> None:
     # handoff must freeze the new deliverable instead of reusing this head.
     task.pop(DELIVERY_BINDING_KEY, None)
     task.pop(APPROVAL_BINDING_KEY, None)
+    task.pop("review_file", None)
     if github_review_bridge:
         task[GITHUB_REVIEW_BRIDGE_KEY] = dict(github_review_bridge)
     else:
@@ -6120,11 +6121,19 @@ def command_handoff(state: dict[str, Any], args: list[str]) -> None:
             f"{task_id} handoff target must match the assigned reviewer ({task.get('reviewer')}); reassign reviewer first if needed"
         )
     binding = resolve_handoff_delivery_binding(task, load_config())
+    manifest = binding.get("evidence_manifest")
+    if binding.get("kind") == "pull_request" and (
+        not isinstance(manifest, Mapping)
+        or not str(manifest.get("path") or "").strip()
+    ):
+        raise SystemExit(f"{task_id} review admission returned no evidence manifest identity")
     timestamp = iso_now()
     apply_task_lifecycle_transition(task, "handoff")
     task["last_update"] = timestamp
     task["next"] = message
     task[DELIVERY_BINDING_KEY] = deepcopy(binding)
+    if isinstance(manifest, Mapping):
+        task["review_file"] = str(manifest["path"])
     mark_handoffs_done_for_actor(state, task_id, actor)
     mark_blockers_resolved(state, task_id)
     state.setdefault("handoffs", []).append(
@@ -6145,6 +6154,11 @@ def command_handoff(state: dict[str, Any], args: list[str]) -> None:
             "task_id": task_id,
             "message": f"Handoff to {to_agent}: {message}",
             DELIVERY_BINDING_KEY: deepcopy(binding),
+            **(
+                {"review_file": str(manifest["path"])}
+                if isinstance(manifest, Mapping)
+                else {}
+            ),
         }
     )
 
@@ -7183,6 +7197,7 @@ APPROVAL_BINDING_KEY = "review_binding"
 GITHUB_REVIEW_BRIDGE_KEY = "github_review_bridge"
 APPROVAL_HEAD_SHA_RE = re.compile(r"^[0-9a-fA-F]{40}$")
 DEFAULT_APPROVAL_BASE_BRANCH = "dev"
+REQUIRED_REVIEW_MERGE_METHOD = "MERGE"
 GITHUB_CANONICAL_REVIEW_CONTEXT = "Pantheon canonical review gate"
 GITHUB_REVIEW_MODES = {
     "pull_request_review",
@@ -7232,8 +7247,10 @@ def validate_handoff_pr_delivery_binding(
     task: Mapping[str, Any],
     config: dict[str, Any],
     binding: Mapping[str, Any],
+    *,
+    review_file: str | None = None,
 ) -> dict[str, Any]:
-    """Return a PR binding only after the shared GitHub validator accepts it."""
+    """Return the one complete review-admission binding, or fail closed."""
 
     task_id = str(task.get("id") or "").strip()
     normalized = _validated_pr_binding(binding, task_id)
@@ -7251,21 +7268,28 @@ def validate_handoff_pr_delivery_binding(
             f"GitHub slug for {task_id or '?'}"
         )
     github_review_bridge = _github_review_bridge_module()
+    manifest_path = (
+        str(review_file).strip()
+        if review_file is not None
+        else os.environ.get("REVIEW_FILE", "").strip()
+    )
+    if not manifest_path:
+        raise SystemExit(
+            f"PR handoff requires REVIEW_FILE for {task_id or '?'}; the evidence "
+            "manifest must be committed in the exact PR head before review"
+        )
     try:
-        validated = github_review_bridge.validate_review_binding(
+        validated = github_review_bridge.validate_review_admission(
             repository=repository_slug_value,
             binding=normalized,
+            review_file=manifest_path,
+            required_merge_method=REQUIRED_REVIEW_MERGE_METHOD,
         )
     except github_review_bridge.GitHubReviewBridgeError as exc:
         raise SystemExit(
             f"GitHub rejected the proposed delivery binding for {task_id or '?'}: {exc}"
         ) from exc
-    return {
-        "pr": validated.pr,
-        "head_sha": validated.head_sha,
-        "head_branch": validated.head_branch,
-        "base": validated.base,
-    }
+    return dict(validated.as_dict())
 
 
 def _discover_open_pull_request_for_branch(
@@ -7331,9 +7355,9 @@ def resolve_handoff_delivery_binding(
 ) -> dict[str, Any]:
     """Create the one delivery contract before a task becomes reviewable.
 
-    A PR task receives a full exact-head identity.  A task with no PR receives
-    a hash of its declared artifact/acceptance contract.  Both are persisted on
-    the task at handoff, eliminating the old late discovery at approval.
+    A PR task receives one exact-head identity plus immutable manifest,
+    current-base, and merge-method evidence. A genuinely non-PR task retains
+    the explicit artifact contract path; it never gains PR merge authority.
     """
 
     task_id = str(task.get("id") or "").strip()
@@ -7368,7 +7392,12 @@ def resolve_handoff_delivery_binding(
         )
         return {
             "kind": "pull_request",
-            **validate_handoff_pr_delivery_binding(task, config, candidate),
+            **validate_handoff_pr_delivery_binding(
+                task,
+                config,
+                candidate,
+                review_file=os.environ.get("REVIEW_FILE", ""),
+            ),
         }
 
     if requires_pr_delivery_binding(task):
@@ -7388,12 +7417,16 @@ def resolve_handoff_delivery_binding(
         if discovered:
             return {
                 "kind": "pull_request",
-                **_validated_pr_binding(
-                    {**discovered, "head_branch": head_branch, "base": base_branch},
-                    task_id,
+                **validate_handoff_pr_delivery_binding(
+                    task,
+                    config,
+                    _validated_pr_binding(
+                        {**discovered, "head_branch": head_branch, "base": base_branch},
+                        task_id,
+                    ),
+                    review_file=os.environ.get("REVIEW_FILE", ""),
                 ),
             }
-
     contract = _delivery_contract_payload(task)
     return {
         "kind": "artifact_contract",
@@ -7707,13 +7740,48 @@ def prepare_external_mutation_preflight(
             )
         validate_task_lifecycle_transition(task, "approve")
         review_notes = parse_delimited_env("REVIEW_NOTES_ZH")
-        review_file = os.environ.get("REVIEW_FILE", "").strip()
+        requested_review_file = os.environ.get("REVIEW_FILE", "").strip()
+        delivery = task.get(DELIVERY_BINDING_KEY)
+        frozen_manifest = (
+            delivery.get("evidence_manifest")
+            if isinstance(delivery, Mapping)
+            else None
+        )
+        frozen_review_file = (
+            str(frozen_manifest.get("path") or "").strip()
+            if isinstance(frozen_manifest, Mapping)
+            else ""
+        )
+        if (
+            requested_review_file
+            and frozen_review_file
+            and requested_review_file != frozen_review_file
+        ):
+            raise SystemExit(
+                f"{task_id}: REVIEW_FILE={requested_review_file!r} differs from the "
+                f"manifest frozen at handoff ({frozen_review_file!r}); reopen and "
+                "hand off the intended exact delivery"
+            )
+        review_file = frozen_review_file or requested_review_file
         config = load_config()
         try:
             repository_id = validate_task_repository_scope(config, task)
         except (ValueError, RuntimeError) as exc:
             raise SystemExit(f"Cannot approve task {task_id}: {exc}") from exc
         repository_slug_value = repository_slug(config, repository_id)
+        if isinstance(delivery, Mapping) and delivery.get("kind") == "pull_request":
+            github_review_bridge = _github_review_bridge_module()
+            try:
+                github_review_bridge.revalidate_review_admission(
+                    repository=repository_slug_value,
+                    delivery_binding=delivery,
+                )
+            except github_review_bridge.GitHubReviewBridgeError as exc:
+                raise SystemExit(
+                    f"Cannot approve task {task_id}: review admission is missing or "
+                    f"stale: {exc}. Reopen, refresh the branch, and hand off the new "
+                    "exact head."
+                ) from exc
         binding = resolve_approval_binding(task)
         validate_delivery_binding_for_approval(task, binding)
         if review_file and binding and (

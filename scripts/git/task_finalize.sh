@@ -15,9 +15,9 @@
 # helper. `scripts/git/task_review_merge_gate.py` resolves the policy:
 #
 #   review_before_merge (default, and forced for any task with an independent
-#     reviewer) -- the PR is opened with auto-merge OFF. The exact assigned
-#     reviewer approves the exact PR head, then the canonical supervisor
-#     integration runner merges it.
+#     reviewer) -- the PR is opened with auto-merge OFF. The owner freezes the
+#     exact PR/head/manifest at handoff; the assigned reviewer approves it, then
+#     the canonical supervisor integration runner merges it.
 #
 #   merge_then_review -- the canonical runner may honor this policy, but this
 #     helper still leaves auto-merge OFF and never issues a merge request.
@@ -219,14 +219,16 @@ if [[ -n "$PR_URL" ]]; then
   echo "  $PR_URL"
 fi
 if [[ "$MERGE_POLICY" != "merge_then_review" ]]; then
-  # The approval has to name this exact head: the gate compares the recorded
-  # binding against the PR standing at merge time, so an unbound approval
-  # cannot land the PR.
+  # The owner must freeze this exact head and its committed evidence manifest
+  # before the reviewer can be dispatched. Approval consumes that binding.
   PR_NUMBER=$(gh pr view "$PR_TARGET" --json number -q '.number' 2>/dev/null || echo "")
   HEAD_SHA=$(git rev-parse HEAD)
-  echo "  next: assigned reviewer approves this exact head with"
-  echo "        AI_NAME=<reviewer> REVIEW_PR=${PR_NUMBER:-<pr-number>} REVIEW_HEAD_SHA=$HEAD_SHA \\"
-  echo "          \"\$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh\" approve $TASK_ID \"<review evidence>\""
+  echo "  next: owner admits this exact delivery for review with"
+  echo "        AI_NAME=<owner> REVIEW_PR=${PR_NUMBER:-<pr-number>} REVIEW_HEAD_SHA=$HEAD_SHA \\"
+  echo "          REVIEW_FILE=<repo-relative-evidence-manifest> \\"
+  echo "          \"\$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh\" handoff $TASK_ID <reviewer> \"<ready for review>\""
+  echo "        reviewer then approves the frozen delivery with"
+  echo "          AI_NAME=<reviewer> \"\$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh\" approve $TASK_ID \"<review evidence>\""
   echo "        the canonical supervisor integration runner will then evaluate it"
 else
   echo "  next: canonical supervisor integration runner evaluates merge-then-review policy"

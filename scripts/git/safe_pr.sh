@@ -22,9 +22,10 @@
 #   6. gh pr create --base dev --head task/<TASK-ID>
 #   7. resolve the canonical merge policy via
 #      scripts/git/task_review_merge_gate.py, but leave auto-merge off for every
-#      policy; only the canonical supervisor integration runner may merge
-#   8. wait for the supervisor integration runner to merge before running
-#      scripts/ai-status.sh done
+#      policy; for review-before-merge, the owner admits the exact PR/head/
+#      manifest and the assigned reviewer approves that frozen delivery
+#   8. wait for the canonical supervisor integration runner to merge before
+#      running scripts/ai-status.sh done
 #
 # Output is intentionally short: each step prints a single PASS / FAIL line.
 # Long sub-command output is captured into /tmp/safe-pr-<TASK-ID>.log so
@@ -273,10 +274,13 @@ echo "DONE — task $TASK_ID on $TASK_BRANCH"
 echo "  PR: https://github.com/ajoe734/pantheon/pull/${EXISTING_PR:-?}"
 echo "  log: $LOG"
 if [[ "$MERGE_POLICY" != "merge_then_review" ]]; then
-  # An approval that does not name this PR and head cannot open the gate.
-  echo "  next: assigned reviewer approves this exact head with"
-  echo "        AI_NAME=<reviewer> REVIEW_PR=${EXISTING_PR:-<pr-number>} REVIEW_HEAD_SHA=$(git rev-parse HEAD) \\"
-  echo "          \"\$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh\" approve $TASK_ID \"<review evidence>\""
+  # Handoff freezes the PR/head/manifest before reviewer dispatch.
+  echo "  next: owner admits this exact delivery for review with"
+  echo "        AI_NAME=<owner> REVIEW_PR=${EXISTING_PR:-<pr-number>} REVIEW_HEAD_SHA=$(git rev-parse HEAD) \\"
+  echo "          REVIEW_FILE=<repo-relative-evidence-manifest> \\"
+  echo "          \"\$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh\" handoff $TASK_ID <reviewer> \"<ready for review>\""
+  echo "        reviewer then approves the frozen delivery with"
+  echo "          AI_NAME=<reviewer> \"\$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh\" approve $TASK_ID \"<review evidence>\""
   echo "        the canonical supervisor integration runner will then evaluate it"
 else
   echo "  next: canonical supervisor integration runner evaluates merge-then-review policy"

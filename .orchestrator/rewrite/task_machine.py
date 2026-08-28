@@ -102,12 +102,19 @@ def delivery_binding_is_current(task: Mapping[str, object]) -> bool:
     kind = str(binding.get("kind") or "").strip()
     if kind == "pull_request":
         raw_pr = str(binding.get("pr") or "").strip().lstrip("#")
+        manifest = binding.get("evidence_manifest")
         return (
             raw_pr.isdigit()
             and int(raw_pr) > 0
             and _is_hex(binding.get("head_sha"), 40)
             and bool(str(binding.get("head_branch") or "").strip())
             and bool(str(binding.get("base") or "").strip())
+            and _is_hex(binding.get("base_sha"), 40)
+            and str(binding.get("required_merge_method") or "").strip().upper()
+            == "MERGE"
+            and isinstance(manifest, Mapping)
+            and bool(str(manifest.get("path") or "").strip())
+            and _is_hex(manifest.get("blob_sha"), 40)
         )
     if kind == "artifact_contract":
         contract = delivery_contract_payload(task)

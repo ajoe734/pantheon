@@ -722,6 +722,26 @@ def task_fixture(
     return result
 
 
+def review_admission_binding(
+    task_id: str = "TASK-1",
+    *,
+    head_sha: str = "a" * 40,
+) -> dict[str, object]:
+    return {
+        "kind": "pull_request",
+        "pr": 42,
+        "head_sha": head_sha,
+        "head_branch": f"task/{task_id}",
+        "base": "dev",
+        "base_sha": "b" * 40,
+        "required_merge_method": "MERGE",
+        "evidence_manifest": {
+            "path": f"docs/evidence/{task_id}/evidence.json",
+            "blob_sha": "c" * 40,
+        },
+    }
+
+
 def provider_report_fixture(*, ready: bool = True, checked_at: str | None = None) -> dict[str, object]:
     checked = checked_at or supervisor.utc_now()
     providers: dict[str, object] = {}
@@ -1790,13 +1810,7 @@ class SharedPlannerContractTests(unittest.TestCase):
 
     def test_reviewer_review_is_dispatchable(self) -> None:
         task = task_fixture(status="review")
-        task["delivery_binding"] = {
-            "kind": "pull_request",
-            "pr": 42,
-            "head_sha": "a" * 40,
-            "head_branch": "task/TASK-1",
-            "base": "dev",
-        }
+        task["delivery_binding"] = review_admission_binding()
         decision = planner_decision(self.config, task, target="Codex2")
         self.assertTrue(decision["eligible"])
         self.assertEqual(decision["reason"], supervisor.REASON_REVIEW_READY)
@@ -2062,13 +2076,7 @@ class SharedPlannerContractTests(unittest.TestCase):
         self.assertFalse(rejected["eligible"])
         self.assertEqual(rejected["first_blocking_gate"], "task_not_dispatchable")
 
-        task["delivery_binding"] = {
-            "kind": "pull_request",
-            "pr": 42,
-            "head_sha": "a" * 40,
-            "head_branch": "task/TASK-1",
-            "base": "dev",
-        }
+        task["delivery_binding"] = review_admission_binding()
         accepted = planner_decision(self.config, task, target="Codex2")
         self.assertTrue(accepted["eligible"])
 
@@ -2080,13 +2088,7 @@ class SharedPlannerContractTests(unittest.TestCase):
         # proof the binding was never resolved -- it must stay retryable,
         # not get permanently stranded.
         task = task_fixture(status="review", reviewer="Codex2")
-        task["delivery_binding"] = {
-            "kind": "pull_request",
-            "pr": 42,
-            "head_sha": "a" * 40,
-            "head_branch": "task/TASK-1",
-            "base": "dev",
-        }
+        task["delivery_binding"] = review_admission_binding()
         event = supervisor.build_dispatch_event(
             task,
             "Codex2",
@@ -2103,10 +2105,7 @@ class SharedPlannerContractTests(unittest.TestCase):
         retried = planner_decision(self.config, task, state=state, target="Codex2")
         self.assertTrue(retried["eligible"])
 
-        task["delivery_binding"] = {
-            **task["delivery_binding"],
-            "head_sha": "b" * 40,
-        }
+        task["delivery_binding"] = review_admission_binding(head_sha="d" * 40)
         accepted = planner_decision(self.config, task, state=state, target="Codex2")
         self.assertTrue(accepted["eligible"])
 
@@ -2115,13 +2114,7 @@ class SharedPlannerContractTests(unittest.TestCase):
         # so an already-queued (non-terminal) intent needs a direct
         # evaluate_dispatch_candidate() call to exercise duplicate_event.
         task = task_fixture(status="review", reviewer="Codex2")
-        task["delivery_binding"] = {
-            "kind": "pull_request",
-            "pr": 42,
-            "head_sha": "a" * 40,
-            "head_branch": "task/TASK-1",
-            "base": "dev",
-        }
+        task["delivery_binding"] = review_admission_binding()
         event = supervisor.build_dispatch_event(
             task,
             "Codex2",
@@ -2167,13 +2160,7 @@ class SharedPlannerContractTests(unittest.TestCase):
         # attempt still feeds seen_event_keys, so the same cooldown gate that
         # protects owned dispatch reasons applies to review too.
         task = task_fixture(status="review", reviewer="Codex2")
-        task["delivery_binding"] = {
-            "kind": "pull_request",
-            "pr": 42,
-            "head_sha": "a" * 40,
-            "head_branch": "task/TASK-1",
-            "base": "dev",
-        }
+        task["delivery_binding"] = review_admission_binding()
         event = supervisor.build_dispatch_event(
             task,
             "Codex2",
@@ -3510,7 +3497,6 @@ class AccountHealthAndRecoveryContractTests(unittest.TestCase):
             "reconcile_failure_loops",
             "reconcile_queue_records",
             "reconcile_queue_intents",
-            "reconcile_ownerless_in_progress_tasks",
             "maybe_auto_commit_archive",
         )
         patches = [
@@ -3524,7 +3510,6 @@ class AccountHealthAndRecoveryContractTests(unittest.TestCase):
             patches[3],
             patches[4],
             patches[5],
-            patches[6],
         ):
             self.assertTrue(
                 supervisor.apply_post_dispatch_maintenance(
@@ -3734,13 +3719,7 @@ class AccountHealthAndRecoveryContractTests(unittest.TestCase):
 
     def test_terminal_pending_intent_does_not_block_reviewer_reassignment(self) -> None:
         task = task_fixture(status="review", owner="Human/Ops", reviewer="Codex")
-        task["delivery_binding"] = {
-            "kind": "pull_request",
-            "pr": 42,
-            "head_sha": "a" * 40,
-            "head_branch": "task/TASK-1",
-            "base": "dev",
-        }
+        task["delivery_binding"] = review_admission_binding()
         event = supervisor.build_dispatch_event(
             task,
             "Codex",
@@ -5104,7 +5083,7 @@ class RuntimeAndFailureSemanticsTests(unittest.TestCase):
                     ast.unparse(node.value.value.func),
                     "rewrite_task_machine.transition",
                 )
-        self.assertEqual(len(writes), 5)
+        self.assertEqual(len(writes), 4)
 
     def test_file_worktree_quarantine_is_not_task_state(self) -> None:
         source = inspect.getsource(supervisor._quarantine_incomplete_worker_path)

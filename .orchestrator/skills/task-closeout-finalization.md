@@ -1,7 +1,7 @@
 # Task Closeout Finalization Spec
 
 Status: active operating rule for execution tasks
-Last updated: 2026-08-21 (non-retryable governance holds)
+Last updated: 2026-08-28 (review-admission delivery binding)
 
 This spec applies when a task is in `review_approved` or a worker is
 dispatched with `owned_finalize_dispatch`.
@@ -21,15 +21,39 @@ field.
 
 **This is now a hard precondition, not a preference** (tightened
 2026-08-04, SUP-REVIEW-PIPELINE-INTEGRITY-20260804): the review evidence
-manifest must already be committed and present in the PR diff *before* a
-reviewer is asked to approve. The reviewer binds it during approval:
+manifest must already be committed at the exact PR head *before* the task may
+enter `review`. The owner binds it during handoff together with the exact PR
+and head:
+
+```bash
+AI_NAME=<Owner> \
+REVIEW_PR=<pr-number> \
+REVIEW_HEAD_SHA=<40-hex-head-oid> \
+REVIEW_FILE=<repo-relative-task-evidence-path> \
+"$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh" handoff \
+  "$TASK" <Reviewer> "<delivery ready for independent review>"
+```
+
+Handoff fails without changing task state unless the manifest is a committed
+file at that exact head, the head contains the current base, no GitHub
+auto-merge request is armed, and the required merge method is `MERGE`. The
+canonical delivery binding freezes the base SHA, merge method, manifest path,
+and manifest blob SHA. A reopened task must repeat this handoff for its new
+delivery; no supervisor recovery path may synthesize a `review` row.
+
+The reviewer approves the frozen delivery. `REVIEW_FILE` may be omitted or may
+repeat the exact frozen path; it cannot replace it:
 
 ```bash
 AI_NAME=<Reviewer> \
-REVIEW_FILE=<repo-relative-task-evidence-path> \
 "$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh" approve \
   "$TASK" "<specific independent review evidence>"
 ```
+
+Approval revalidates the frozen manifest and current base. If the base moved
+to a commit the immutable head does not already contain, approval fails closed;
+the owner must refresh the branch, update the exact-head evidence, reopen when
+needed, and hand off again.
 
 Before owner closeout, inspect the canonical row through the governed command
 root, not the worktree's possibly stale `ai-status.json`:
@@ -43,25 +67,12 @@ approval to satisfy this rule at `done` time. A commit added post-approval
 changes the PR head SHA, which invalidates the exact-head approval binding in
 `scripts/git/task_review_merge_gate.py` and forces a full new independent
 review cycle for a change that only added bookkeeping -- this is precisely
-the livelock diagnosed in SUP-REVIEW-PIPELINE-INTEGRITY-20260804. If the
-reviewer approved without recording `review_file` because a manifest was
-already committed and reviewed but not bound to the field, the owner may bind
-that same already-committed, already-reviewed manifest while running `done`
-without creating a new commit. This is an explicit path supported by
-`scripts/ai_status.py`; it is not permission to invent new evidence, write a
-manifest for the first time at closeout, replace the reviewed artifact, or
-edit generated status files:
-
-```bash
-AI_NAME=<Owner> \
-REVIEW_FILE=<repo-relative-task-evidence-path> \
-"$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh" done \
-  "$TASK" "<checkpoint message>"
-```
-
-If no evidence manifest was committed before review started, stop and get a
-fresh review of a commit that includes one -- do not paper over the gap with
-a post-approval evidence commit.
+the livelock diagnosed in SUP-REVIEW-PIPELINE-INTEGRITY-20260804. For PR
+deliveries, a missing `review_file` after handoff is an invalid legacy row,
+not a closeout input. Reopen and hand off a fresh exact-head delivery; do not
+bind or replace the manifest at `done`. If no evidence manifest was committed
+before review started, stop and get a fresh review of a commit that includes
+one.
 
 ## Non-Retryable Governance Gate Rule
 
@@ -112,8 +123,8 @@ review decision before using it.
 1. Re-read the task brief, reviewer approval, and touched artifacts.
    - Run the governed `show` command above and confirm `review_file` names the
      committed, reviewed task evidence manifest.
-   - If `review_file` is absent, select the exact reviewed manifest now and
-     carry it in `REVIEW_FILE` on the final `done` command.
+   - For a PR delivery, if `review_file` is absent, reopen and repeat the owner
+     handoff with the exact PR, head, and manifest. Do not repair it at `done`.
 2. Confirm the approved scope is still true in the current worktree.
 3. Update task-specific records when needed: review notes, acceptance
    packet, handoff packet, evidence note, or narrow docs that describe
@@ -135,16 +146,16 @@ review decision before using it.
 7. Create the task PR (see § Per-Task PR Flow below) whenever the task
    changed repo files, then wait for it to merge into the target branch.
 8. Run
-   `AI_NAME=<Owner> REVIEW_FILE=<evidence-path> "$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh" done <task-id> "<checkpoint message>"`
-   only after the PR is merged when the canonical row does not already contain
-   `review_file`. If it is already present, omit `REVIEW_FILE` and preserve the
-   reviewer-bound path. An open PR, auto-merge enabled, or green checks are not
-   sufficient.
+   `AI_NAME=<Owner> "$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh" done <task-id> "<checkpoint message>"`
+   only after the supervisor integrator merged the exact approved head. The
+   handoff-bound `review_file` must already be present. An open PR, an armed
+   auto-merge request, or green checks are not sufficient.
 
 ## Per-Task PR Flow (mandatory)
 
-Pantheon's branch model is **per-task ephemeral branches** with PR
-auto-merge into `dev`. Permanent `worker/<name>` branches are retired.
+Pantheon's branch model is **per-task ephemeral branches** with PR delivery
+into `dev`. Permanent `worker/<name>` branches are retired. For ordinary
+independently reviewed tasks, only the supervisor integration runner merges.
 
 The full safe sequence for any task that produces commits:
 
@@ -162,14 +173,28 @@ python3 scripts/git/worker_commit.py \
   --scope <path1> <path2> ... \
   --index-file /tmp/git-index-task-$TASK
 
-# 3. Push and open PR with auto-merge.
+# 3. Push and open the PR. Review-before-merge keeps auto-merge off.
 ./scripts/git/task_finalize.sh "$TASK"
 
-# 4. Wait until GitHub reports the PR merged into dev, inspect the canonical
-#    row, then run done with the reviewed evidence manifest when needed.
+# 4. Owner freezes the exact PR/head/manifest and hands off to the assigned
+#    reviewer. Obtain PR and full head oid from GitHub after finalize.
+AI_NAME=<Owner> \
+REVIEW_PR=<pr-number> \
+REVIEW_HEAD_SHA=<40-hex-head-oid> \
+REVIEW_FILE=<repo-relative-task-evidence-path> \
+"$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh" handoff \
+  "$TASK" <Reviewer> "Ready for exact-head review"
+
+# 5. Reviewer approves the already-frozen delivery. The supervisor integration
+#    runner performs the MERGE after approval; no worker arms auto-merge.
+AI_NAME=<Reviewer> \
+"$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh" approve \
+  "$TASK" "<specific independent review evidence>"
+
+# 6. After GitHub reports that exact head merged into dev, inspect canonical
+#    state and close out without replacing the frozen manifest.
 "$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh" show "$TASK"
 AI_NAME=<Owner> \
-REVIEW_FILE=<repo-relative-task-evidence-path> \
 "$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh" done \
   "$TASK" "<checkpoint message>"
 ```
@@ -389,17 +414,20 @@ enforces this by verifying the task branch HEAD is an ancestor of the
 target branch before it updates `ai-status.json` or archives the task.
 
 - Default: after the task-scoped commit, push the `task/<TASK-ID>`
-  branch and open a PR via `task_finalize.sh`. Wait for GitHub to merge
-  that PR, then run `scripts/ai-status.sh done`.
+  branch and open a PR via `task_finalize.sh`. Complete owner admission and
+  reviewer approval, wait for the supervisor integrator to merge that PR,
+  then run `scripts/ai-status.sh done`.
 - `dev` and `master` are branch-protected: a direct `git push` to
   either will be rejected by GitHub. Workers must always go through PR
-  + auto-merge.
+  delivery; they do not arm auto-merge for an independently reviewed task.
 - `task/<TASK-ID>` branches are auto-deleted by GitHub when the PR
   merges. If a PR fails CI, the task branch stays for the worker (or
   chair-review) to push a fix commit; do **not** force-push to recover
   unless explicitly authorized.
-- If the PR is `BEHIND`, failing checks, or otherwise still open, leave
-  the task in `review_approved`; refresh or repair the PR branch first.
+- If the PR is `BEHIND`, owner handoff fails before `review`. Refresh the PR
+  branch and repeat admission. If checks fail after approval, leave the task in
+  `review_approved` while the approved head remains immutable and repair only
+  through a reopen/new-head review cycle.
 - Never use `--force`, `--mirror`, `--delete`, `--all`, or `--tags`
   pushes as routine closeout.
 

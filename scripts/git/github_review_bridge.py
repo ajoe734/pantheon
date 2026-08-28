@@ -57,6 +57,7 @@ STATUS_STATES = {
 }
 REPO_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 OID_RE = re.compile(r"^[0-9a-f]{40}$")
+REQUIRED_REVIEW_MERGE_METHOD = "MERGE"
 TASK_BRIEF_PREFIX = ".orchestrator/task-briefs/"
 # GitHub's commit-files response is bounded. A closeout record should be a
 # tiny one-file successor. Request the largest supported page, then reject a
@@ -158,6 +159,34 @@ class ReviewBinding:
         if not base:
             raise GitHubReviewBridgeError("review binding requires a base branch")
         return cls(pr=pr, head_sha=head_sha, head_branch=head_branch, base=base)
+
+
+@dataclass(frozen=True)
+class ReviewAdmissionBinding:
+    """Immutable delivery facts required before a task may enter review."""
+
+    pr: int
+    head_sha: str
+    head_branch: str
+    base: str
+    base_sha: str
+    required_merge_method: str
+    manifest_path: str
+    manifest_blob_sha: str
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "pr": self.pr,
+            "head_sha": self.head_sha,
+            "head_branch": self.head_branch,
+            "base": self.base,
+            "base_sha": self.base_sha,
+            "required_merge_method": self.required_merge_method,
+            "evidence_manifest": {
+                "path": self.manifest_path,
+                "blob_sha": self.manifest_blob_sha,
+            },
+        }
 
 
 @dataclass(frozen=True)
@@ -558,7 +587,8 @@ def _pr_snapshot(
             "--repo",
             repository,
             "--json",
-            "number,url,state,headRefName,headRefOid,baseRefName",
+            "number,url,state,headRefName,headRefOid,baseRefName,baseRefOid,"
+            "isDraft,mergeStateStatus,autoMergeRequest",
         ]
     )
     if not isinstance(payload, Mapping):
@@ -583,6 +613,187 @@ def _pr_snapshot(
             + "; ".join(mismatches)
         )
     return dict(payload)
+
+
+def _review_manifest_identity(
+    runner: JsonRunner,
+    *,
+    repository: str,
+    head_sha: str,
+    review_file: str,
+) -> tuple[str, str]:
+    raw_path = str(review_file or "").strip()
+    path = raw_path.rstrip("/")
+    if (
+        not path
+        or raw_path.startswith("/")
+        or path in {".", ".."}
+        or path.startswith("../")
+        or "/../" in f"/{path}/"
+    ):
+        raise GitHubReviewBridgeError(
+            "review admission requires a repository-relative REVIEW_FILE"
+        )
+    payload = runner.run_json(
+        [
+            "gh",
+            "api",
+            f"repos/{repository}/contents/{quote(path, safe='/')}?ref={head_sha}",
+        ]
+    )
+    if not isinstance(payload, Mapping) or str(payload.get("type") or "") != "file":
+        raise GitHubReviewBridgeError(
+            f"REVIEW_FILE={path!r} is not a committed file at head {head_sha}"
+        )
+    blob_sha = str(payload.get("sha") or "").strip().lower()
+    if not OID_RE.fullmatch(blob_sha):
+        raise GitHubReviewBridgeError(
+            f"REVIEW_FILE={path!r} has no immutable Git blob identity at head {head_sha}"
+        )
+    return path, blob_sha
+
+
+def validate_review_admission(
+    *,
+    repository: str,
+    binding: Mapping[str, Any] | ReviewBinding,
+    review_file: str,
+    required_merge_method: str = REQUIRED_REVIEW_MERGE_METHOD,
+    runner: JsonRunner | None = None,
+) -> ReviewAdmissionBinding:
+    """Fail closed before a canonical task is allowed to enter ``review``.
+
+    This is deliberately stricter than :func:`validate_review_binding`, which
+    also supports an approval retry after a PR has merged. Review admission
+    requires an open, current delivery whose evidence and merge policy can be
+    frozen before any lifecycle mutation occurs.
+    """
+
+    repository = _require_repository_slug(repository)
+    normalized = (
+        binding
+        if isinstance(binding, ReviewBinding)
+        else ReviewBinding.from_mapping(binding)
+    )
+    method = str(required_merge_method or "").strip().upper()
+    if method != REQUIRED_REVIEW_MERGE_METHOD:
+        raise GitHubReviewBridgeError("review admission requires merge method MERGE")
+    client = runner or GhJsonRunner()
+    snapshot = _pr_snapshot(client, repository=repository, binding=normalized)
+    if str(snapshot.get("state") or "").strip().upper() != "OPEN":
+        raise GitHubReviewBridgeError(
+            f"GitHub PR #{normalized.pr} must be open before review admission"
+        )
+    if bool(snapshot.get("isDraft")):
+        raise GitHubReviewBridgeError(
+            f"GitHub PR #{normalized.pr} is a draft and cannot enter review"
+        )
+
+    auto_merge = snapshot.get("autoMergeRequest")
+    if auto_merge:
+        armed_method = (
+            str(auto_merge.get("mergeMethod") or "").strip().upper()
+            if isinstance(auto_merge, Mapping)
+            else "UNKNOWN"
+        )
+        raise GitHubReviewBridgeError(
+            f"GitHub PR #{normalized.pr} already has armed auto-merge "
+            f"({armed_method or 'UNKNOWN'}); supervisor integration owns every merge"
+        )
+
+    merge_state = str(snapshot.get("mergeStateStatus") or "").strip().upper()
+    if merge_state == "BEHIND":
+        raise GitHubReviewBridgeError(
+            f"GitHub PR #{normalized.pr} is BEHIND {normalized.base}; refresh it before review"
+        )
+    base_sha = str(snapshot.get("baseRefOid") or "").strip().lower()
+    if not OID_RE.fullmatch(base_sha):
+        raise GitHubReviewBridgeError(
+            f"GitHub PR #{normalized.pr} has no current base SHA for {normalized.base}"
+        )
+    comparison = client.run_json(
+        [
+            "gh",
+            "api",
+            f"repos/{repository}/compare/{base_sha}...{normalized.head_sha}",
+        ]
+    )
+    if not isinstance(comparison, Mapping):
+        raise GitHubReviewBridgeError(
+            f"GitHub PR #{normalized.pr} base ancestry is unavailable"
+        )
+    compare_status = str(comparison.get("status") or "").strip().lower()
+    try:
+        behind_by = int(comparison.get("behind_by") or 0)
+    except (TypeError, ValueError) as exc:
+        raise GitHubReviewBridgeError(
+            f"GitHub PR #{normalized.pr} has invalid base ancestry evidence"
+        ) from exc
+    if compare_status not in {"ahead", "identical"} or behind_by != 0:
+        raise GitHubReviewBridgeError(
+            f"GitHub PR #{normalized.pr} head does not contain current base "
+            f"{base_sha} (status={compare_status or 'unknown'}, behind_by={behind_by})"
+        )
+
+    manifest_path, manifest_blob_sha = _review_manifest_identity(
+        client,
+        repository=repository,
+        head_sha=normalized.head_sha,
+        review_file=review_file,
+    )
+    return ReviewAdmissionBinding(
+        pr=normalized.pr,
+        head_sha=normalized.head_sha,
+        head_branch=normalized.head_branch,
+        base=normalized.base,
+        base_sha=base_sha,
+        required_merge_method=method,
+        manifest_path=manifest_path,
+        manifest_blob_sha=manifest_blob_sha,
+    )
+
+
+def revalidate_review_admission(
+    *,
+    repository: str,
+    delivery_binding: Mapping[str, Any],
+    runner: JsonRunner | None = None,
+) -> ReviewAdmissionBinding:
+    """Recheck a frozen admission before approval can unlock integration.
+
+    The current base may equal the frozen base or move to another commit which
+    the immutable reviewed head already contains. Any ordinary base advance
+    makes the ancestry check fail and requires refresh plus a new handoff.
+    """
+
+    manifest = delivery_binding.get("evidence_manifest")
+    if not isinstance(manifest, Mapping):
+        raise GitHubReviewBridgeError("delivery binding has no frozen evidence manifest")
+    frozen_path = str(manifest.get("path") or "").strip()
+    frozen_blob_sha = str(manifest.get("blob_sha") or "").strip().lower()
+    frozen_base_sha = str(delivery_binding.get("base_sha") or "").strip().lower()
+    frozen_method = str(
+        delivery_binding.get("required_merge_method") or ""
+    ).strip().upper()
+    if (
+        not frozen_path
+        or not OID_RE.fullmatch(frozen_blob_sha)
+        or not OID_RE.fullmatch(frozen_base_sha)
+        or frozen_method != REQUIRED_REVIEW_MERGE_METHOD
+    ):
+        raise GitHubReviewBridgeError("delivery binding has incomplete review admission evidence")
+    current = validate_review_admission(
+        repository=repository,
+        binding=delivery_binding,
+        review_file=frozen_path,
+        required_merge_method=frozen_method,
+        runner=runner,
+    )
+    if current.manifest_blob_sha != frozen_blob_sha:
+        raise GitHubReviewBridgeError(
+            "review evidence manifest blob differs from the handoff admission"
+        )
+    return current
 
 
 def validate_review_binding(

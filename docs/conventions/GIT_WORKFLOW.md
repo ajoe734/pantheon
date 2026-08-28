@@ -1,6 +1,6 @@
 # Pantheon Git Workflow
 
-Status: canonical · Owner: chair-review · Last reviewed: 2026-05-17
+Status: canonical · Owner: chair-review · Last reviewed: 2026-08-28
 
 Operational source of truth for Pantheon branching, per-task PR flow,
 nightly publish, promote to master, hotfixes, and CI gates. If anything
@@ -134,13 +134,32 @@ or PR field can open it.
 | row declares `merge_policy: merge_then_review` **and** requires no independent review | `merge_then_review` | opens the PR with auto-merge **off**; the canonical runner alone evaluates and merges it |
 | task row missing, unreadable, or gate error | `review_before_merge` | fail closed: auto-merge is never enabled |
 
-Under `review_before_merge` the approval must name the exact head it
-covers, and the merge is performed afterwards by the integrator:
+Under `review_before_merge`, the owner first freezes the exact delivery at
+handoff. The committed evidence manifest, current base SHA, and required
+`MERGE` method become part of the canonical delivery binding. Handoff rejects
+an armed auto-merge request or a head which does not contain the current base,
+without changing task state:
 
 ```bash
-AI_NAME=<reviewer> REVIEW_PR=<pr-number> REVIEW_HEAD_SHA=<40-hex head oid> \
-  "$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh" approve <TASK-ID> "<review evidence>"
+AI_NAME=<owner> \
+REVIEW_PR=<pr-number> \
+REVIEW_HEAD_SHA=<40-hex-head-oid> \
+REVIEW_FILE=<repo-relative-evidence-manifest> \
+  "$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh" handoff \
+  <TASK-ID> <reviewer> "<ready for exact-head review>"
+
+AI_NAME=<reviewer> \
+  "$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh" approve \
+  <TASK-ID> "<review evidence>"
 ```
+
+`handoff` records the PR number, exact head SHA, expected base (`REVIEW_BASE`,
+default `dev`), head branch, current base SHA, `MERGE` requirement, and manifest
+path/blob SHA. `approve` consumes that frozen binding and cannot replace it.
+It also revalidates the current base: if `dev` advanced to a commit the exact
+head does not already contain, the owner refreshes and re-hands off before a
+review can be approved. The gate compares the approved identity against the PR
+standing at merge time.
 
 No owner or reviewer merge command follows approval. The scheduled canonical
 supervisor integration runner discovers the approved row and performs the
@@ -151,15 +170,6 @@ discovers the active `in_progress`/`review` row without fabricating a
 `review_approved` event. It resolves the canonical policy again against the
 live PR before it can merge; assigning an independent reviewer converts the
 row back to the gated review-before-merge path.
-
-`approve` records that PR number, head sha, expected base (`REVIEW_BASE`,
-default `dev`) and head branch as a `review_binding` on both the immutable
-`review_approved` audit event and the task row; `task_finalize.sh` and
-`safe_pr.sh` print the command with the values already filled in. The gate
-compares each identity against the PR standing at merge time. An approval
-that carries no binding cannot open the gate — the merge blocks with
-`approval_head_binding_missing` and the reviewer re-approves naming the
-head.
 
 The integrator merges only the exact head the assigned reviewer approved
 (`gh pr merge --match-head-commit <oid>`), never enables auto-merge, and
