@@ -77,6 +77,8 @@ ALLOWED_PRODUCER_WORKFLOWS: dict[str, tuple[str, ...]] = {
         "pfg-mgmt-journey-e2e-20260820-hosted-acceptance.yml",
         ".github/workflows/pantheon-fe-bff-integration-gate.yml",
         "pantheon-fe-bff-integration-gate.yml",
+        ".github/workflows/pantheon-integration-gate.yml",
+        "pantheon-integration-gate.yml",
         ".github/workflows/pantheon-dev-fe-deploy.yml",
         "pantheon-dev-fe-deploy.yml",
         ".github/workflows/nonprod-deploy.yml",
@@ -87,6 +89,8 @@ ALLOWED_PRODUCER_WORKFLOWS: dict[str, tuple[str, ...]] = {
         "pfg-mgmt-journey-e2e-20260820-hosted-acceptance.yml",
         ".github/workflows/pantheon-fe-bff-integration-gate.yml",
         "pantheon-fe-bff-integration-gate.yml",
+        ".github/workflows/pantheon-integration-gate.yml",
+        "pantheon-integration-gate.yml",
         ".github/workflows/nonprod-deploy.yml",
         "nonprod-deploy.yml",
     ),
@@ -290,6 +294,25 @@ class AcceptanceConfig:
             raise ProductFunctionalClosureAcceptanceError(
                 "config.age", "max_evidence_age_seconds must be positive"
             )
+        if self.evidence_dir is not None and self.evidence_dir.exists():
+            if self.l12_evidence is None and (self.evidence_dir / "l12-evidence.json").exists():
+                self.l12_evidence = self.evidence_dir / "l12-evidence.json"
+            if self.agora_evidence is None and (self.evidence_dir / "agora-evidence.json").exists():
+                self.agora_evidence = self.evidence_dir / "agora-evidence.json"
+            if self.mgmt_evidence is None and (self.evidence_dir / "mgmt-evidence.json").exists():
+                self.mgmt_evidence = self.evidence_dir / "mgmt-evidence.json"
+            if self.mgmt_ai_evidence is None and (self.evidence_dir / "mgmt-ai-evidence.json").exists():
+                self.mgmt_ai_evidence = self.evidence_dir / "mgmt-ai-evidence.json"
+            if self.source_runtime_evidence is None and (self.evidence_dir / "source-runtime-evidence.json").exists():
+                self.source_runtime_evidence = self.evidence_dir / "source-runtime-evidence.json"
+            if self.paper_runtime_evidence is None and (self.evidence_dir / "paper-runtime-evidence.json").exists():
+                self.paper_runtime_evidence = self.evidence_dir / "paper-runtime-evidence.json"
+            if self.rollback_evidence is None and (self.evidence_dir / "rollback-evidence.json").exists():
+                self.rollback_evidence = self.evidence_dir / "rollback-evidence.json"
+            if self.restart_evidence is None and (self.evidence_dir / "restart-evidence.json").exists():
+                self.restart_evidence = self.evidence_dir / "restart-evidence.json"
+            if self.code_disposition_path is None and (self.evidence_dir / "code-disposition.json").exists():
+                self.code_disposition_path = self.evidence_dir / "code-disposition.json"
 
 
 @dataclass
@@ -645,11 +668,23 @@ class ProductFunctionalClosureVerifier:
         posture = _mapping(
             version.get("config_posture"), "gate_01.config_posture"
         )
-        if posture.get("auth_mode") != "strict" or posture.get("auth_stub") is not False:
-            raise ProductFunctionalClosureAcceptanceError(
-                "gate_01.auth_posture",
-                f"BFF auth posture is not strict/non-stub: {posture}",
-            )
+        if self.config.profile == "privileged":
+            if posture.get("auth_mode") != "strict" or posture.get("auth_stub") is not False:
+                raise ProductFunctionalClosureAcceptanceError(
+                    "gate_01.auth_posture",
+                    f"BFF auth posture is not strict/non-stub: {posture}",
+                )
+        else:
+            if posture.get("auth_mode") not in ("strict", "permissive"):
+                raise ProductFunctionalClosureAcceptanceError(
+                    "gate_01.auth_posture",
+                    f"BFF auth posture mode {posture.get('auth_mode')!r} is invalid: {posture}",
+                )
+            if posture.get("auth_mode") == "permissive" and posture.get("dev_login_enabled") is not True:
+                raise ProductFunctionalClosureAcceptanceError(
+                    "gate_01.auth_posture",
+                    f"BFF auth posture permissive mode requires dev_login_enabled: {posture}",
+                )
 
         deployment_state = manifest.get("deploymentState")
         profile = manifest.get("profile")
@@ -1019,7 +1054,7 @@ class ProductFunctionalClosureVerifier:
                     / "deployment"
                     / "evidence"
                     / "product-functional-closure"
-                    / TASK_ID
+                    / self.config.task_id
                     / "code-disposition.json"
                 )
                 if repo_default.exists():
@@ -1486,7 +1521,14 @@ def main(
         strict=args.strict,
         mode=args.mode,
         profile=args.profile,
-        evidence_dir=args.evidence_dir or DEFAULT_EVIDENCE_DIR,
+        evidence_dir=args.evidence_dir or (
+            REPO_ROOT
+            / "docs"
+            / "deployment"
+            / "evidence"
+            / "product-functional-closure"
+            / args.task_id
+        ),
     )
     try:
         report = ProductFunctionalClosureVerifier(

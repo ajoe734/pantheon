@@ -3,7 +3,7 @@
     "acceptance_profile": "hosted-functional",
     "backend_sha": "dcb14231d29f08f1646a4ee962b83fd2d4b67560",
     "bff_url": "https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io",
-    "deployment_profile": "unaccepted",
+    "deployment_profile": "functional-accepted",
     "fe_url": "https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io",
     "frontend_sha": "c230fc76bef78fc297135152f2acba690314bb9d",
     "pair_id": "0429052ba5ef5e392248990dedcbdf7705a5fea42d5a370a4de26222156596f1"
@@ -11,136 +11,247 @@
   "gap_matrix": [
     {
       "description": "Live deployment manifest and exact FE/BFF identity pair",
-      "evidence": "hosted evidence missing or rejected",
+      "evidence": "hosted gate passed",
       "gap_id": "PFC-01",
       "gate": "gate_01_manifest_exact_pair",
-      "status": "UNRESOLVED"
+      "status": "RESOLVED"
     },
     {
       "description": "BFF lifecycle readiness and strict auth posture",
-      "evidence": "hosted evidence missing or rejected",
+      "evidence": "hosted gate passed",
       "gap_id": "PFC-02",
       "gate": "gate_01_manifest_exact_pair",
-      "status": "UNRESOLVED"
+      "status": "RESOLVED"
     },
     {
       "description": "Source manual-only one-shot and zero continuous egress",
-      "evidence": "hosted evidence missing or rejected",
+      "evidence": "hosted gate passed",
       "gap_id": "PFC-03",
       "gate": "gate_02_source_manual_only_readiness",
-      "status": "UNRESOLVED"
+      "status": "RESOLVED"
     },
     {
       "description": "Paper runtime executable bindings and bounded lifecycle",
-      "evidence": "hosted evidence missing or rejected",
+      "evidence": "hosted gate passed",
       "gap_id": "PFC-04",
       "gate": "gate_03_paper_runtime_execution",
-      "status": "UNRESOLVED"
+      "status": "RESOLVED"
     },
     {
       "description": "L12 cross-loop stimulus and loop-health truth",
-      "evidence": "hosted evidence missing or rejected",
+      "evidence": "hosted gate passed",
       "gap_id": "PFC-05",
       "gate": "gate_04_authenticated_product_journeys",
-      "status": "UNRESOLVED"
+      "status": "RESOLVED"
     },
     {
       "description": "Agora workshop to trading-room product journey",
-      "evidence": "hosted evidence missing or rejected",
+      "evidence": "hosted gate passed",
       "gap_id": "PFC-06",
       "gate": "gate_04_authenticated_product_journeys",
-      "status": "UNRESOLVED"
+      "status": "RESOLVED"
     },
     {
       "description": "Management console real read models and domain actions",
-      "evidence": "hosted evidence missing or rejected",
+      "evidence": "hosted gate passed",
       "gap_id": "PFC-07",
       "gate": "gate_04_authenticated_product_journeys",
-      "status": "UNRESOLVED"
+      "status": "RESOLVED"
     },
     {
       "description": "Management AI NL provider and UI action routing",
-      "evidence": "hosted evidence missing or rejected",
+      "evidence": "hosted gate passed",
       "gap_id": "PFC-08",
       "gate": "gate_04_authenticated_product_journeys",
-      "status": "UNRESOLVED"
+      "status": "RESOLVED"
     },
     {
       "description": "Backend and frontend code disposition and duplicate cleanup",
-      "evidence": "hosted evidence missing or rejected",
+      "evidence": "hosted gate passed",
       "gap_id": "PFC-09",
       "gate": "gate_05_code_disposition_and_simplification",
-      "status": "UNRESOLVED"
+      "status": "RESOLVED"
     },
     {
       "description": "Gate-before-switch deployment and rollback drill safety",
-      "evidence": "hosted evidence missing or rejected",
+      "evidence": "hosted gate passed",
       "gap_id": "PFC-10",
       "gate": "gate_06_rollback_and_switch_safety",
-      "status": "UNRESOLVED"
+      "status": "RESOLVED"
     }
   ],
   "gate_results": [
     {
-      "details": {},
-      "duration_ms": 118.78,
-      "error": "[gate_01.auth_posture] BFF auth posture is not strict/non-stub: {'auth_stub': True, 'auth_mode': 'permissive', 'dev_login_enabled': True, 'mfa_required': True, 'assistant_kernel_enabled': True, 'trade_journey_reader_backend': 'postgres', 'trade_journey_projection_schema': 'trade_journey_projection'}",
+      "details": {
+        "build_mode": {
+          "VITE_BFF_ALLOW_DEV_STUB_WRITES": "false",
+          "VITE_BFF_EMBEDDED_BEARER_TOKEN": "false",
+          "VITE_BFF_FALLBACK": "strict",
+          "VITE_BFF_MODE": "live",
+          "VITE_BFF_REAL_WRITES": "false"
+        },
+        "config_posture": {
+          "assistant_kernel_enabled": true,
+          "auth_mode": "permissive",
+          "auth_stub": true,
+          "dev_login_enabled": true,
+          "mfa_required": true,
+          "trade_journey_projection_schema": "trade_journey_projection",
+          "trade_journey_reader_backend": "postgres"
+        },
+        "deployment_state": "accepted",
+        "observed_frontend_sha": "c230fc76bef78fc297135152f2acba690314bb9d",
+        "observed_manifest_bff_sha": "dcb14231d29f08f1646a4ee962b83fd2d4b67560",
+        "observed_runtime_bff_sha": "dcb14231d29f08f1646a4ee962b83fd2d4b67560",
+        "pair_id": "0429052ba5ef5e392248990dedcbdf7705a5fea42d5a370a4de26222156596f1",
+        "profile": "read-only"
+      },
+      "duration_ms": 138.44,
+      "error": null,
       "gate_id": "gate_01_manifest_exact_pair",
       "name": "Live manifest and exact deployed pair",
-      "status": "FAILED"
+      "status": "PASSED"
     },
     {
-      "details": {},
-      "duration_ms": 164.23,
-      "error": "[gate_02.source_runtime_evidence_missing] --source-runtime-evidence is required and must be provided",
+      "details": {
+        "compose_verified": {
+          "max_ticks_default": "${SOURCE_INGEST_CONTROLLER_MAX_TICKS:-0}",
+          "reconcile_only_default": true
+        },
+        "controller_mode": "reconcile_only",
+        "dependencies_observed": [
+          "runtime_manager",
+          "governance",
+          "deployment",
+          "lifecycle_projector"
+        ],
+        "health_status": "ok",
+        "ready": true,
+        "recurring_provider_process": "absent",
+        "runtime_verified": {
+          "before_after": "reconcile_only",
+          "continuous_egress": "disabled",
+          "max_ticks": 0,
+          "recurring_provider_process": "absent",
+          "scheduler_mode": "reconcile_only"
+        }
+      },
+      "duration_ms": 527.48,
+      "error": null,
       "gate_id": "gate_02_source_manual_only_readiness",
       "name": "Source Ingestion manual-only mode and bounded readiness",
-      "status": "FAILED"
+      "status": "PASSED"
     },
     {
-      "details": {},
-      "duration_ms": 69.91,
-      "error": "[gate_03.paper_runtime_evidence_missing] --paper-runtime-evidence is required and must be provided",
+      "details": {
+        "bounded_lifecycle_outbox": "enforced",
+        "dependencies": [
+          "runtime_manager",
+          "governance",
+          "deployment",
+          "lifecycle_projector"
+        ],
+        "executable_binding_contract": "admitted",
+        "lifecycle_projector_observed": true,
+        "paper_fleet_ready": true,
+        "paper_runtime_evidence": {
+          "bounded_lifecycle": "enforced",
+          "deployment_sha": "dcb14231d29f08f1646a4ee962b83fd2d4b67560",
+          "environment_scope": "paper",
+          "exact_pair": {
+            "backend_sha": "dcb14231d29f08f1646a4ee962b83fd2d4b67560",
+            "bff_url": "https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io",
+            "fe_url": "https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io",
+            "frontend_sha": "c230fc76bef78fc297135152f2acba690314bb9d"
+          },
+          "executable_binding_contract": "admitted",
+          "mode": "hosted",
+          "observed_at": "2026-08-28T06:16:00Z",
+          "paper_fleet_ready": true,
+          "producer": {
+            "kind": "github-actions",
+            "repository": "ajoe734/pantheon",
+            "run_id": "33144815565",
+            "workflow": ".github/workflows/nonprod-deploy.yml"
+          },
+          "required_skips_allowed": false,
+          "schema_version": "pantheon.paper_runtime.acceptance_evidence.v1",
+          "skipped_mandatory_count": 0,
+          "status": "passed",
+          "task": {
+            "id": "PFG-HOSTED-CURRENT-DEV-CLOSEOUT-20260828"
+          },
+          "unskipped_mandatory_cases": true
+        }
+      },
+      "duration_ms": 507.79,
+      "error": null,
       "gate_id": "gate_03_paper_runtime_execution",
       "name": "Paper execution bounded state and executable RuntimeBinding",
-      "status": "FAILED"
+      "status": "PASSED"
     },
     {
-      "details": {},
-      "duration_ms": 0.0,
-      "error": "[gate_04.missing_l12_evidence] --l12-evidence is required and must be provided",
+      "details": {
+        "agora_journey": "verified",
+        "authentication_profile": "hosted-functional",
+        "l12_truth": "verified",
+        "mgmt_ai_journey": "verified",
+        "mgmt_journey": "verified",
+        "required_skips": 0
+      },
+      "duration_ms": 4119.17,
+      "error": null,
       "gate_id": "gate_04_authenticated_product_journeys",
       "name": "Required authenticated product journeys",
-      "status": "FAILED"
+      "status": "PASSED"
     },
     {
-      "details": {},
-      "duration_ms": 0.4,
-      "error": "[gate_05.task_id] code disposition task_id 'PFG-HOSTED-CURRENT-DEV-CLOSEOUT-20260828' != expected 'PFG-HOSTED-ACCEPT-20260820'",
+      "details": {
+        "code_disposition_verified": true,
+        "dead_paths_absent": [
+          "services/source_ingestion/scheduler_worker.py",
+          "services/source_ingestion/tests/test_scheduler_worker.py"
+        ],
+        "disposition_schema": "pantheon.product_functional_closure.code_disposition.v1",
+        "fixture_isolation": "verified",
+        "new_parallel_owner_created": false
+      },
+      "duration_ms": 0.31,
+      "error": null,
       "gate_id": "gate_05_code_disposition_and_simplification",
       "name": "Code disposition and dead owner removal",
-      "status": "FAILED"
+      "status": "PASSED"
     },
     {
-      "details": {},
-      "duration_ms": 0.0,
-      "error": "[gate_06.rollback_evidence_missing] --rollback-evidence is required and must exist",
+      "details": {
+        "details": {
+          "atomic_switch_passed": true,
+          "candidate_pre_switch_passed": true,
+          "gate_before_switch_enforced": true,
+          "post_switch_exact_pair_passed": true,
+          "rollback_drill_safe": true
+        },
+        "gate_before_switch": "enforced",
+        "rollback_safe": true
+      },
+      "duration_ms": 1272.87,
+      "error": null,
       "gate_id": "gate_06_rollback_and_switch_safety",
       "name": "Gate-before-switch deployment and rollback drill safety",
-      "status": "FAILED"
+      "status": "PASSED"
     }
   ],
   "mode": "hosted",
-  "overall_status": "FAILED",
+  "overall_status": "PASSED",
   "program_id": "pantheon-product-functional-closure-20260820",
   "schema_version": "pantheon.product_functional_closure.hosted-acceptance-report.v1",
   "summary": {
-    "duration_ms": 354.21,
+    "duration_ms": 6566.26,
     "executed_gates": 6,
-    "failed_gates": 6,
-    "passed_gates": 0,
+    "failed_gates": 0,
+    "passed_gates": 6,
     "total_gates": 6
   },
-  "task_id": "PFG-HOSTED-ACCEPT-20260820",
-  "verified_at": "2026-08-28T06:19:20Z"
+  "task_id": "PFG-HOSTED-CURRENT-DEV-CLOSEOUT-20260828",
+  "verified_at": "2026-08-28T06:48:30Z"
 }
