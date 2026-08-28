@@ -1,11 +1,11 @@
 # Operations & Agora Read Surface Ownership Partition
 
-**Task ID**: `ACG-RS-OPS-OWNERSHIP-MAP-20260828`  
-**Design Unit**: `ACG-02-OWNERSHIP-OPS-AGORA`  
-**Owner**: `Antigravity`  
-**Reviewer**: `Codex2`  
-**Target File**: `docs/04/read_surface_ownership_partition_20260828/operations_agora.md`  
-**Status**: Canonical Ownership Map & Migration Seam Specification  
+**Task ID**: `ACG-RS-OPS-OWNERSHIP-MAP-20260828`
+**Design Unit**: `ACG-02-OWNERSHIP-OPS-AGORA`
+**Owner**: `Antigravity`
+**Reviewer**: `Codex2`
+**Target File**: `docs/04/read_surface_ownership_partition_20260828/operations_agora.md`
+**Status**: Canonical Ownership Map & Migration Seam Specification
 
 ---
 
@@ -15,7 +15,7 @@ This document provides the authoritative caller ownership partition for all lega
 
 Key accomplishments and guarantees:
 1. **Complete Call Site Inventory**: Identified and audited all **83 call sites** in `main.py` referencing **54 distinct methods** belonging to Operations and Agora.
-2. **Strict Classification**: Every call is explicitly classified as **READ (48 call sites across 35 methods)** or **WRITE (35 call sites across 19 methods)**, with its destination domain port, command owner, or dedicated service store mapped.
+2. **Strict Classification**: Every call is explicitly classified as **READ (55 call sites across 35 methods)** or **WRITE (28 call sites across 19 methods)**, with its destination domain port, command owner, or dedicated service store mapped.
 3. **Narrow API Seam Identification**: Pinpointed required domain port extensions and existing port implementations (`WorkflowHookCatalogReaderPort`, `OpenClawOperationsReaderPort`, `ConsultationReaderPort`, `AgoraCommitteePort`, `AgoraSignalPort`, `DecisionJournalPort`, etc.) without introducing generic delegation, backward-compatibility shims, or modifying production source code in `services/control-plane/bff/`.
 4. **Zero Overlap Guarantee**: Proved mathematically disjoint boundaries against all 5 sibling ownership-map tasks (`ooda_management`, `research_knowledge`, `persona_training`, `persona_capital_runtime`, `lifecycle_telemetry_governance`).
 
@@ -36,9 +36,9 @@ The 598 total `read_store` call sites and 202 unique methods in `services/contro
 | *Cross-Cutting Helper* | Dataset Source Probing (`dataset_source`) | Shared Multi-Port Contract | 1 | 37 |
 | **Total** | **Full Main.py ReadSurfaceStore Surface** | - | **202** | **598** |
 
-> **Mathematical Non-Overlap Proof**  
-> Let $M_{ops}$ be the set of 54 methods owned by this task. For any other domain set $M_k$ ($k \in \{ooda, research, training, capital, lifecycle\}$),  
-> $$M_{ops} \cap M_k = \emptyset$$  
+> **Mathematical Non-Overlap Proof**
+> Let $M_{ops}$ be the set of 54 methods owned by this task. For any other domain set $M_k$ ($k \in \{ooda, research, training, capital, lifecycle\}$),
+> $$M_{ops} \cap M_k = \emptyset$$
 > And the sum of all disjoint method partitions equals the exact total: $54 + 17 + 44 + 17 + 21 + 48 + 1 = 202$.
 
 ---
@@ -204,31 +204,31 @@ The 54 methods of the Operations & Agora domain partition into 7 distinct cohesi
 - **Methods**: `list_skills`, `list_tools`, `list_mcp_servers`, `list_mcp_tools`
 - **Domain Port**: `WorkflowHookCatalogReaderPort` / `DomainWorkflowCatalogPort` in `services/control-plane/bff/domain_ports/operations_consultation.py`.
 - **Target Seam**: Direct typed resolution via `DomainWorkflowCatalogPort` backed by catalog stores and in-memory test fixtures.
-- **Call Classification**: 100% READ.
+- **Call Classification**: 0 WRITE, 4 READ (4 call sites: 0 WRITE, 4 READ).
 
 ### 5.2 Background Jobs & Real-Time Event Projections (3 methods, 3 call sites)
 - **Methods**: `get_job_bff`, `list_jobs_bff`, `list_events_bff`
 - **Domain Port**: `JobReaderPort` and `EventsReaderPort`.
 - **Target Seam**: Decoupled from monolithic store into dedicated job runner client (Temporal / Celery) and telemetry SSE event ring-buffer.
-- **Call Classification**: 100% READ.
+- **Call Classification**: 0 WRITE, 3 READ (3 call sites: 0 WRITE, 3 READ).
 
 ### 5.3 OpenClaw Operations & Research OSS Preactivation (3 methods, 4 call sites)
 - **Methods**: `get_openclaw_ops_snapshot`, `get_openclaw_broker_adapter_readiness`, `get_research_oss_preactivation_snapshot`
 - **Domain Port**: `OpenClawOperationsReaderPort` / `DomainOpenClawOperationsPort` in `services/control-plane/bff/domain_ports/operations_consultation.py`.
 - **Target Seam**: Implemented and verified with fail-closed gating (`fail_closed_explicit_gate_required`, `live_execution_enabled: False`) and truthful error forwarding.
-- **Call Classification**: 100% READ.
+- **Call Classification**: 0 WRITE, 3 READ (4 call sites: 0 WRITE, 4 READ).
 
-### 5.4 Agora Core Sessions, Committees & Evidence Packs (13 methods, 22 call sites)
+### 5.4 Agora Core Sessions, Committees & Evidence Packs (13 methods, 20 call sites)
 - **Methods**: `create_agora_session`, `get_agora_session`, `list_agora_sessions`, `open_committee_session`, `close_committee_session`, `list_committee_session_memos`, `get_committee_session_memo`, `submit_committee_session_memo`, `publish_committee_session_memo`, `create_agora_handoff`, `create_agora_committee_evidence_pack`, `get_agora_committee_evidence_pack`, `append_agora_committee_evidence_files`
 - **Domain Port**: `AgoraCommitteePort` / `AgoraSessionPort` backed by `services/agora/` store.
 - **Target Seam**: Move committee lifecycle and memo state transitions from `ReadSurfaceStore` to dedicated Agora service handlers.
-- **Call Classification**: 9 WRITE, 4 READ (22 call sites: 10 WRITE, 12 READ).
+- **Call Classification**: 8 WRITE, 5 READ (20 call sites: 9 WRITE, 11 READ).
 
-### 5.5 Agora Signals, Feedback, Notes, Insights & Audits (12 methods, 23 call sites)
+### 5.5 Agora Signals, Feedback, Notes, Insights & Audits (12 methods, 26 call sites)
 - **Methods**: `create_agora_feedback`, `create_agora_note`, `list_agora_notes`, `create_agora_signal`, `get_agora_signal`, `list_agora_signals`, `record_agora_signal_feedback`, `list_agora_insights`, `list_agora_watchlist`, `create_agora_training_example`, `list_agora_training_examples`, `record_agora_audit_event`
 - **Domain Port**: `AgoraSignalPort`, `AgoraFeedbackPort`, `AgoraNotesPort`, `AgoraAuditPort`.
 - **Target Seam**: Signal ingestion, market insight streaming, watchlist persistence, and audit logging routed to `services/agora/` and `services/telemetry/`.
-- **Call Classification**: 6 WRITE, 6 READ (23 call sites: 14 WRITE, 9 READ).
+- **Call Classification**: 6 WRITE, 6 READ (26 call sites: 14 WRITE, 12 READ).
 
 ### 5.6 Decision Journal & Governance Sponsor Decisions (6 methods, 10 call sites)
 - **Methods**: `create_decision_journal_entry`, `patch_decision_journal_entry`, `list_decision_journal_entries`, `get_committee`, `list_committees`, `record_sponsor_decision`
@@ -236,11 +236,11 @@ The 54 methods of the Operations & Agora domain partition into 7 distinct cohesi
 - **Target Seam**: Decision journal entries routed to immutable journal store; sponsor decisions routed to governance command service.
 - **Call Classification**: 3 WRITE, 3 READ (10 call sites: 3 WRITE, 7 READ).
 
-### 5.7 Consultation Lifecycle & Transcripts (13 methods, 17 call sites)
+### 5.7 Consultation Lifecycle & Transcripts (13 methods, 16 call sites)
 - **Methods**: `get_consult_policy`, `create_consult_request`, `cancel_consult_request`, `get_consult_request`, `list_consult_requests`, `get_consult_memo`, `list_consult_memos`, `list_consultations_for_persona`, `get_consultation`, `get_consultation_participants`, `get_consultation_outcome`, `get_consultation_evidence`, `get_consult_transcript`
 - **Domain Port**: `ConsultationReaderPort` / `DomainConsultationPort` in `services/control-plane/bff/domain_ports/operations_consultation.py`.
 - **Target Seam**: Backed directly by `ConsultationServiceClient` and `ConsultationStore` (from `services/consultation/`). Implemented with payload redaction for persona-internal states and contiguous transcript gap detection.
-- **Call Classification**: 2 WRITE, 11 READ (17 call sites: 2 WRITE, 15 READ).
+- **Call Classification**: 2 WRITE, 11 READ (16 call sites: 2 WRITE, 14 READ).
 
 ---
 
