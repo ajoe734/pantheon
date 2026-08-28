@@ -785,7 +785,8 @@ def check_task(task: dict[str, Any]) -> list[str]:
     if "No panel-only closure" in non_goals and not review_file_path:
         gaps.append(
             "non_goal 'No panel-only closure' requires a review_file with controller "
-            "liveness evidence (set REVIEW_FILE=<evidence-path> during approve)"
+            "liveness evidence (freeze REVIEW_FILE=<evidence-path> during PR handoff; "
+            "artifact-only tasks may bind it during approve)"
         )
 
     # Gap 2: fixture/seed signals in review notes.
@@ -807,7 +808,8 @@ def check_task(task: dict[str, Any]) -> list[str]:
         suffix = " ..." if len(proof_required) > 2 else ""
         gaps.append(
             f"proof_required ({sample}{suffix}) but no review_file was recorded — "
-            "reviewer must set REVIEW_FILE=<evidence-path> during approve"
+            "reopen and freeze REVIEW_FILE=<evidence-path> during PR handoff "
+            "(artifact-only tasks may bind it during approve)"
         )
 
     if product_level_required and not review_file_path:

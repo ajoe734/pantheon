@@ -54,6 +54,10 @@ def default_state() -> dict[str, Any]:
             "events": {},
         },
         "workers": {},
+        # Canonical receipt authority lives in TaskStore.  This bounded cache
+        # binds its current rows to queue/worker runtime ids for restart
+        # adoption without inventing a second recovery authority.
+        "worker_recovery_receipts": {},
         "worker_worktrees": {
             "leases": {},
         },
@@ -184,6 +188,10 @@ def normalize_v2_runtime_cache(raw: Any) -> dict[str, Any]:
     state["queue"]["version"] = 2
     state["queue"]["events"] = normalized_queue_events
     state.setdefault("workers", {})
+    recovery_receipts = state.get("worker_recovery_receipts")
+    state["worker_recovery_receipts"] = (
+        recovery_receipts if isinstance(recovery_receipts, dict) else {}
+    )
     for run_id, worker in state["workers"].items():
         if not isinstance(worker, dict):
             raise RuntimeStateSchemaError(f"runtime cache worker {run_id} is not an object")

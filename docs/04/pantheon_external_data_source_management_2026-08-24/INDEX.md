@@ -55,3 +55,19 @@ source changes.
 The frontend remains a separate repository. All `execute-plans/...` paths in
 this package refer to `ajoe734/execute-plans`; none may be created inside a
 Pantheon checkout.
+
+## Phase-1 Delivery & Hosted Acceptance Status
+
+| Work Package | Task ID | Spec Section | Delivery Outcome |
+|---|---|---|---|
+| Command Engine & Store | `SRCM-P1-SOURCE-COMMANDS-20260824` | SD-SRCM-01/02 | Done (PR #5197) |
+| BFF Management Facade | `SRCM-P1-BFF-FACADE-20260824` | SD-SRCM-03 | Done (PR #5202) |
+| Management Control UI | `SRCM-P1-MGMT-UI-20260824` | SD-SRCM-04 | Done (`execute-plans`) |
+| Provider Adapter Coverage | `SRCM-P1-PROVIDER-COVERAGE-20260824` | SD-SRCM-05 | Done (PR #5201) |
+| Governed Search & Alpha | `SRCM-P1-SEARCH-ALPHA-20260824` | SD-SRCM-06 | Done (PR #5198) |
+| Reviewed Memory Writeback | `SRCM-P1-MEMORY-WRITEBACK-20260824` | SD-SRCM-07 | Done (PR #5207) |
+| Hosted Acceptance & Closeout | `SRCM-P1-HOSTED-ACCEPTANCE-20260824` | SD-SRCM-08 | Functional closure passed after bounded Source recovery; normal dev is zero-egress `reconcile_only/MAX_TICKS=0`. Browser/HAR, credential, strict-auth, and full exact-pair proof remain non-blocking follow-up and are not claimed as hosted/live acceptance. |
+
+- **Hosted Acceptance Evidence Package**: [`docs/deployment/evidence/external-source-management-phase1/`](../../deployment/evidence/external-source-management-phase1/)
+- **Functional Verification**: `python3 scripts/verify_external_source_management_acceptance.py --functional-only` (passes only the operator-authorized functional scope)
+- **Full Hosted Verification**: `python3 scripts/verify_external_source_management_acceptance.py` (intentionally fails closed until real capture replaces the pending manifest)

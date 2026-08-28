@@ -73,6 +73,12 @@ class DeliveryBindingTests(unittest.TestCase):
                 "head_sha": "a" * 40,
                 "head_branch": "task/TASK-1",
                 "base": "dev",
+                "base_sha": "b" * 40,
+                "required_merge_method": "MERGE",
+                "evidence_manifest": {
+                    "path": "docs/evidence/TASK-1/evidence.json",
+                    "blob_sha": "c" * 40,
+                },
             },
         }
         self.assertTrue(task_machine.delivery_binding_is_current(task))
@@ -83,6 +89,19 @@ class DeliveryBindingTests(unittest.TestCase):
         task["delivery_binding"]["head_sha"] = "short"
         self.assertFalse(task_machine.delivery_binding_is_current(task))
         self.assertIsNone(task_machine.delivery_binding_digest(task))
+
+    def test_pull_request_binding_rejects_legacy_identity_without_admission(self) -> None:
+        task = {
+            "id": "TASK-1",
+            "delivery_binding": {
+                "kind": "pull_request",
+                "pr": 42,
+                "head_sha": "a" * 40,
+                "head_branch": "task/TASK-1",
+                "base": "dev",
+            },
+        }
+        self.assertFalse(task_machine.delivery_binding_is_current(task))
 
     def test_artifact_binding_is_invalidated_by_contract_change(self) -> None:
         task = {
@@ -148,8 +167,14 @@ class StateTableTests(unittest.TestCase):
         self.assertEqual(task_machine.transition("review", "reopen"), TaskState.IN_PROGRESS)
         self.assertEqual(task_machine.transition("review_approved", "done"), TaskState.DONE)
 
-    def test_blocked_may_only_resume_through_reopen(self) -> None:
+    def test_blocked_reopen_returns_to_implementation(self) -> None:
         self.assertEqual(task_machine.transition("blocked", "reopen"), TaskState.IN_PROGRESS)
+
+    def test_blocked_reviewed_integration_may_resume_without_reopening_work(self) -> None:
+        self.assertEqual(
+            task_machine.transition("blocked", "resume_integration"),
+            TaskState.REVIEW_APPROVED,
+        )
 
     def test_illegal_direct_overwrites_fail_closed(self) -> None:
         illegal = [

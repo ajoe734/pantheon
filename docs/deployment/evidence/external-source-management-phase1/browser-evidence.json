@@ -1,0 +1,24 @@
+{
+  "schema_version": "pantheon.external-source-management.browser-evidence.v2",
+  "task_id": "SRCM-P1-HOSTED-ACCEPTANCE-20260824",
+  "program_id": "SRCM-PHASE1-20260824",
+  "capture": {
+    "status": "not_run",
+    "runner": null,
+    "execution_mode": "hosted",
+    "capture_profile": null,
+    "route_interception_count": null,
+    "frontend_sha": "c230fc76bef78fc297135152f2acba690314bb9d",
+    "backend_sha": "dcb14231d29f08f1646a4ee962b83fd2d4b67560",
+    "normal_profile_restored": "read-only",
+    "vite_bff_real_writes_default": "false",
+    "source_ingestion_posture": "reconcile_only_max_ticks_0_egress_deny",
+    "producer": null,
+    "blocking_reason": null,
+    "follow_up_reason": "Functional closure does not promote a browser claim. No independently captured ten-journey Playwright/HAR artifact exists; credentialed, security, exact-pair, and hosted external proof remain non-blocking follow-up under the 2026-08-28 Human/Ops scope."
+  },
+  "har_artifact": null,
+  "har_sha256": null,
+  "browser_journeys_count": 0,
+  "browser_journeys": []
+}

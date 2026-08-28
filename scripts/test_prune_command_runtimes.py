@@ -79,6 +79,40 @@ def test_plan_deletions_ignores_non_sha_entries(tmp_path: Path) -> None:
     assert delete == []
 
 
+def test_integration_prune_keeps_root_referenced_by_live_config(tmp_path: Path) -> None:
+    repository_parent = tmp_path / "integration-runtimes" / "pantheon"
+    repository_parent.mkdir(parents=True)
+    _make_sha_dir(repository_parent, SHA_A, mtime=1)
+    _make_sha_dir(repository_parent, SHA_B, mtime=2)
+    _make_sha_dir(repository_parent, SHA_C, mtime=3)
+    live_config = tmp_path / "live.json"
+    live_config.write_text(
+        json.dumps(
+            {
+                "coordination": {
+                    "repositories": {
+                        "pantheon": {
+                            "integration_path": str(repository_parent / SHA_A)
+                        }
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    live_roots = prune._live_integration_roots(live_config)
+    delete, retain = prune.plan_deletions(
+        repository_parent,
+        keep=1,
+        live_root=None,
+        leased_roots=live_roots,
+    )
+
+    assert {path.name for path in retain} == {SHA_A, SHA_C}
+    assert {path.name for path in delete} == {SHA_B}
+
+
 def test_unseal_and_delete_removes_readonly_checkout(tmp_path: Path) -> None:
     parent = tmp_path / "command-runtimes"
     parent.mkdir()
@@ -164,6 +198,39 @@ def test_main_dry_run_does_not_delete(tmp_path: Path, capsys: pytest.CaptureFixt
     payload = json.loads(capsys.readouterr().out)
     assert payload["deleted"] == []
     assert Path(payload["planned"][0]).name == SHA_A
+
+
+def test_prune_skips_without_inspection_or_deletion_while_runner_is_active(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    parent = tmp_path / "command-runtimes"
+    parent.mkdir()
+    victim = _make_sha_dir(parent, SHA_A, mtime=1)
+    status_root = tmp_path / "coordination"
+    status_root.mkdir()
+    live_config = tmp_path / "missing-live.json"
+    lock_path = status_root / prune.auto_integrator.DEFAULT_LOCK
+
+    with prune.auto_integrator.lock_file(lock_path):
+        rc = prune.main(
+            [
+                "--parent",
+                str(parent),
+                "--live-config",
+                str(live_config),
+                "--status-root",
+                str(status_root),
+                "--keep",
+                "1",
+                "--json",
+            ]
+        )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert rc == 0
+    assert payload["skipped"] is True
+    assert payload["reason"] == "integration_lock_held"
+    assert victim.exists()
 
 
 def test_main_deletes_and_keeps_live_and_leased(tmp_path: Path) -> None:

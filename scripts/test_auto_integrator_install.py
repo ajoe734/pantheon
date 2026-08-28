@@ -14,11 +14,13 @@ class AutoIntegratorInstallTests(unittest.TestCase):
         line = auto_integrator_install.render_cron_line(
             Path("/repo/dev-root"),
             Path("/repo/status-root"),
+            Path("/repo/runtime/live.json"),
             interval="*/5 * * * *",
         )
 
         self.assertTrue(line.startswith("*/5 * * * * cd /repo/dev-root"))
         self.assertIn("PANTHEON_STATUS_ROOT=/repo/status-root", line)
+        self.assertIn("PANTHEON_AUTO_INTEGRATOR_CONFIG=/repo/runtime/live.json", line)
         self.assertIn("bash scripts/run-auto-integrator.sh", line)
         self.assertIn("/repo/status-root/.orchestrator/logs/auto-integrator-cron.log", line)
         self.assertTrue(line.endswith("# pantheon-auto-integrator"))
@@ -27,10 +29,26 @@ class AutoIntegratorInstallTests(unittest.TestCase):
         line = auto_integrator_install.render_cron_line(
             Path("/repo/dev root"),
             Path("/repo/status root"),
+            Path("/repo/runtime config/live.json"),
         )
 
         self.assertIn("cd '/repo/dev root'", line)
         self.assertIn("PANTHEON_STATUS_ROOT='/repo/status root'", line)
+        self.assertIn(
+            "PANTHEON_AUTO_INTEGRATOR_CONFIG='/repo/runtime config/live.json'",
+            line,
+        )
+
+    def test_default_config_remains_status_root_template(self) -> None:
+        line = auto_integrator_install.render_cron_line(
+            Path("/repo/dev-root"),
+            Path("/repo/status-root"),
+        )
+
+        self.assertIn(
+            "PANTHEON_AUTO_INTEGRATOR_CONFIG=/repo/status-root/.orchestrator/config.json",
+            line,
+        )
 
 
 if __name__ == "__main__":

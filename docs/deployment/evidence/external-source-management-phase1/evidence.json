@@ -1,0 +1,136 @@
+{
+  "schema_version": "pantheon.external-source-management.evidence-manifest.v1",
+  "task_id": "SRCM-P1-HOSTED-ACCEPTANCE-20260824",
+  "program_id": "SRCM-PHASE1-20260824",
+  "created_at": "2026-08-25T13:20:58Z",
+  "updated_at": "2026-08-28T15:23:39Z",
+  "status": "functional_passed_hosted_proof_follow_up",
+  "verified_prerequisites": [
+    "Served FE c230fc76bef78fc297135152f2acba690314bb9d and BFF dcb14231d29f08f1646a4ee962b83fd2d4b67560 are reachable without FE/BFF manifest drift",
+    "Normal frontend deployment profile is read-only with VITE_BFF_REAL_WRITES=false",
+    "Unauthenticated data-source reads and invalid dev-login attempts return AUTH_REQUIRED",
+    "Human/Ops attested bounded recovery with pending and unresolved DLQ counts at zero",
+    "OpenClaw development remains phase 2 and outside product write authority"
+  ],
+  "implementation_correction": {
+    "status": "functional_verified_hosted_proof_follow_up",
+    "default_controller_mode": "reconcile_only",
+    "default_max_ticks": "0",
+    "default_restart_policy": "unless-stopped",
+    "default_external_egress": "deny",
+    "explicit_profile_mode": "reconcile_and_pull",
+    "explicit_profile_max_ticks": "1",
+    "explicit_profile_requires_exact_connector_and_host_allowlists": true,
+    "capital_writes_enabled": false,
+    "recurring_provider_pull_enabled": false,
+    "functional_closure_claimed": true,
+    "hosted_acceptance_claimed": false,
+    "validation": {
+      "focused_contract_tests": {
+        "status": "passed",
+        "count": 294,
+        "passed": 293,
+        "skipped": 1,
+        "scope": [
+          "scripts/test_verify_external_source_management_acceptance.py",
+          "scripts/test_deploy_nonprod_vm.py",
+          "scripts/test_source_ingest_deploy_diagnostics_contract.py",
+          "scripts/test_dev_environment_lease_deploy_contract.py",
+          "scripts/test_current_l12_compose_wiring.py",
+          "services/source_ingestion/test_compose_activation.py",
+          "tests/integration/test_product_functional_compose_contract.py"
+        ]
+      },
+      "default_compose_render": {
+        "status": "passed",
+        "mode": "reconcile_only",
+        "max_ticks": "0",
+        "restart_policy": "unless-stopped",
+        "external_egress": "deny",
+        "profile_projector_present": false
+      },
+      "explicit_profile_render": {
+        "status": "passed",
+        "mode": "reconcile_and_pull",
+        "max_ticks": "1",
+        "restart_policy": "no",
+        "external_egress": "allowlist",
+        "profile_projector_present": true
+      },
+      "official_functional_offline_verifier": {
+        "status": "passed",
+        "scope": "functional_closure_with_hosted_proof_follow_up"
+      },
+      "official_functional_live_verifier": {
+        "status": "passed",
+        "source_definitions_status": "follow_up_auth_required"
+      },
+      "official_full_hosted_verifier": {
+        "status": "failed_closed",
+        "code": "browser_evidence.capture_not_passed"
+      }
+    }
+  },
+  "resolved_recovery": {
+    "dlq_entries_replayed": 3,
+    "deduplicated_executions": 2,
+    "manual_pull": "ran=1 failed=0 excluded=92",
+    "pending_dlq_count": 0,
+    "unresolved_dlq_count": 0,
+    "restored_egress": "deny",
+    "restored_controller": "reconcile_only/max_ticks=0"
+  },
+  "non_blocking_follow_ups": [
+    "Run all ten journeys from a bounded write-proof Playwright workflow with no route interception",
+    "Archive a sanitized checksum-bound HAR and non-placeholder screenshots for every journey",
+    "Bind each browser journey to its concrete HAR entry and independently captured command receipt",
+    "Capture authenticated Source catalog identity and credentialed-provider evidence",
+    "Move the dev BFF from permissive auth_stub posture to independently verified strict authentication",
+    "Obtain full exact-pair authorization before promoting any hosted external acceptance claim"
+  ],
+  "exact_pair": {
+    "backend_sha": "dcb14231d29f08f1646a4ee962b83fd2d4b67560",
+    "frontend_sha": "c230fc76bef78fc297135152f2acba690314bb9d",
+    "source_definitions_sha": "40de8fcb1c69fad0bf5e54d4c0bd6e508c9162e0",
+    "source_definitions_identity_status": "follow_up_auth_required_last_observed_sha_retained",
+    "fe_manifest_bff_sha": "dcb14231d29f08f1646a4ee962b83fd2d4b67560",
+    "candidate_status": "functional_passed_hosted_proof_follow_up",
+    "bff_url": "https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io",
+    "fe_url": "https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io",
+    "environment": "dev"
+  },
+  "artifacts": {
+    "deployment": {
+      "path": "deployment.json",
+      "sha256": "d03276b283ed258b50a7f5b06819654d38f96b2b3844f1c0a7d50f18e20f72c7"
+    },
+    "functional_closure": {
+      "path": "functional-closure-20260828.json",
+      "sha256": "467f30ec460ab66d8cac47c22a6a8bec98f8beb5040ceea7ecf1d5b74db670f1"
+    },
+    "hosted_summary": {
+      "path": "hosted-acceptance-summary.json",
+      "sha256": "7340910e3b799e016d6bfd28a74d81b048bc5b416713c91f1fbf18389a273b27"
+    },
+    "journey_receipts": {
+      "path": "journey-receipts.json",
+      "sha256": "0b7baa4f713eee94ef165cec85c92b5d09a0c373fa03a5095139197e766fa5f0"
+    },
+    "browser_evidence": {
+      "path": "browser-evidence.json",
+      "sha256": "b59a461225def4988c22a6c6849f9d090fe96d7d918b9b6c5103d877f58e06a6"
+    },
+    "negative_controls": {
+      "path": "negative-controls.json",
+      "sha256": "0d5ec11f802f53628ad91386131ef17e03cf446f2ad4f63e57c81a9b89cc0de6"
+    },
+    "migration_rollout": {
+      "path": "migration-rollout-rollback.json",
+      "sha256": "5449b8e8ce93dbb73e0f44638eeefffeb868aac44c25936a380b7d9694c3ab97"
+    },
+    "hosted_write_proof_attempt": {
+      "path": "hosted-write-proof-attempt-33027147575.json",
+      "sha256": "1028f2c2a4412c8986ff928908511ae89b563f838197d2fd93c80f0ee56e18b0"
+    }
+  }
+}

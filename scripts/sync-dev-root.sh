@@ -14,6 +14,7 @@ COORDINATION_ROOT="${3:-${PANTHEON_COORDINATION_ROOT:-/home/lupin/pantheon-ci-de
 AUTHORITY_ENV_FILE="${4:-${PANTHEON_SUPERVISOR_VERIFIER_ENV_FILE:-/home/lupin/pantheon-ci-deploy/runtime/supervisor-authority-public.env}}"
 REF="${SYNC_REF:-origin/dev}"
 COMMAND_RUNTIME_PARENT="/home/lupin/pantheon-ci-deploy/command-runtimes"
+INTEGRATION_RUNTIME_PARENT="${PANTHEON_INTEGRATION_RUNTIME_PARENT:-/home/lupin/pantheon-ci-deploy/integration-runtimes}"
 EXECUTE_PLANS_SOURCE_ROOT="${PANTHEON_EXECUTE_PLANS_SOURCE_ROOT:-/home/lupin/code/execute-plans}"
 COMMAND_RUNTIME_KEEP="${COMMAND_RUNTIME_KEEP:-5}"
 
@@ -55,6 +56,11 @@ if ! git -C "$DEV_ROOT" fetch --quiet origin "$fetch_ref"; then
   log "FATAL: fetch $REF failed in $DEV_ROOT"
   exit 1
 fi
+if ! git -C "$EXECUTE_PLANS_SOURCE_ROOT" fetch --quiet origin \
+  "dev:refs/remotes/origin/dev"; then
+  log "FATAL: fetch origin/dev failed in $EXECUTE_PLANS_SOURCE_ROOT"
+  exit 1
+fi
 
 behind="$(git -C "$DEV_ROOT" rev-list --count "HEAD..$REF" 2>/dev/null || echo '?')"
 head_before="$(git -C "$DEV_ROOT" rev-parse --short HEAD)"
@@ -75,6 +81,128 @@ if [[ ! "$target_sha" =~ ^[0-9a-f]{40}$ ]]; then
   exit 1
 fi
 candidate_root="${COMMAND_RUNTIME_PARENT}/${target_sha}"
+execute_plans_sha="$(git -C "$EXECUTE_PLANS_SOURCE_ROOT" rev-parse origin/dev)"
+if [[ ! "$execute_plans_sha" =~ ^[0-9a-f]{40}$ ]]; then
+  log "FATAL: execute-plans origin/dev did not resolve to a lowercase full SHA: $execute_plans_sha"
+  exit 1
+fi
+pantheon_integration_root="${INTEGRATION_RUNTIME_PARENT}/pantheon/${target_sha}"
+execute_plans_integration_root="${INTEGRATION_RUNTIME_PARENT}/execute_plans/${execute_plans_sha}"
+
+materialize_integration_runtime() {
+  local repository_id="$1" source_root="$2" destination="$3" sha="$4" branch="$5"
+  local repository_parent temporary_parent runtime origin_url fetched_sha common_dir
+  repository_parent="${INTEGRATION_RUNTIME_PARENT}/${repository_id}"
+  if ! python3 - "$repository_parent" "$repository_id" <<'PY'
+import re
+import stat
+import sys
+from pathlib import Path
+
+parent = Path(sys.argv[1])
+repository_id = sys.argv[2]
+if not re.fullmatch(r"[a-z][a-z0-9_]*", repository_id):
+    raise SystemExit(f"invalid integration repository id: {repository_id}")
+if not parent.is_absolute() or any(part in {".", ".."} for part in parent.parts):
+    raise SystemExit(f"integration runtime parent must be canonical absolute path: {parent}")
+for component in (parent, *parent.parents):
+    if component.is_symlink():
+        raise SystemExit(f"integration runtime parent contains symlink component: {component}")
+parent.mkdir(parents=True, exist_ok=True)
+if not parent.is_dir() or stat.S_ISLNK(parent.lstat().st_mode):
+    raise SystemExit(f"integration runtime parent is not a direct directory: {parent}")
+PY
+  then
+    return 1
+  fi
+  if [[ -L "$destination" ]]; then
+    log "ERROR: integration runtime destination is a symlink: $destination"
+    return 1
+  fi
+  origin_url="$(git -C "$source_root" config --get remote.origin.url)"
+  if [[ -z "$origin_url" ]]; then
+    log "ERROR: repository source has no origin URL: $source_root"
+    return 1
+  fi
+  if [[ ! -e "$destination" ]]; then
+    if ! temporary_parent="$(mktemp -d "${repository_parent}/.integration-materialize-${sha}.XXXXXX")"; then
+      return 1
+    fi
+    runtime="${temporary_parent}/runtime"
+    if ! git clone --quiet --no-local --no-checkout "$source_root" "$runtime"; then
+      rm -rf -- "$temporary_parent"
+      return 1
+    fi
+    if ! git -C "$runtime" remote set-url origin "$origin_url" \
+      || ! git -C "$runtime" fetch --quiet --no-tags origin \
+        "+refs/heads/${branch}:refs/remotes/origin/${branch}"; then
+      rm -rf -- "$temporary_parent"
+      return 1
+    fi
+    fetched_sha="$(git -C "$runtime" rev-parse "origin/${branch}")"
+    if [[ "$fetched_sha" != "$sha" ]] \
+      || ! git -C "$runtime" checkout --quiet --detach "$sha"; then
+      rm -rf -- "$temporary_parent"
+      return 1
+    fi
+    if ! python3 - "$runtime" "$destination" "$repository_parent" <<'PY'
+import ctypes
+import errno
+import os
+import sys
+from pathlib import Path
+
+source, destination, parent = map(Path, sys.argv[1:])
+libc = ctypes.CDLL(None, use_errno=True)
+renameat2 = libc.renameat2
+renameat2.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_uint]
+renameat2.restype = ctypes.c_int
+if renameat2(-100, os.fsencode(source), -100, os.fsencode(destination), 1) != 0:
+    error = ctypes.get_errno()
+    if error != errno.EEXIST:
+        raise OSError(error, os.strerror(error), destination)
+fd = os.open(parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+try:
+    os.fsync(fd)
+finally:
+    os.close(fd)
+PY
+    then
+      rm -rf -- "$temporary_parent"
+      return 1
+    fi
+    rm -rf -- "$temporary_parent"
+  fi
+
+  fetched_sha="$(git -C "$destination" rev-parse HEAD 2>/dev/null || true)"
+  common_dir="$(git -C "$destination" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
+  if [[ "$fetched_sha" != "$sha" ]] \
+    || [[ "$(git -C "$destination" rev-parse --show-toplevel 2>/dev/null || true)" != "$destination" ]] \
+    || [[ "$common_dir" != "$destination/.git" ]] \
+    || git -C "$destination" symbolic-ref -q HEAD >/dev/null 2>&1 \
+    || [[ -n "$(git -C "$destination" status --porcelain --untracked-files=all 2>/dev/null)" ]] \
+    || [[ "$(git -C "$destination" config --get remote.origin.url 2>/dev/null || true)" != "$origin_url" ]]; then
+    log "ERROR: integration runtime identity/cleanliness validation failed: $destination"
+    return 1
+  fi
+  local checkout_probe common_probe
+  checkout_probe="$(mktemp "$destination/.integration-write-probe.XXXXXX")" \
+    || { log "ERROR: integration checkout is not writable: $destination"; return 1; }
+  common_probe="$(mktemp "$common_dir/.integration-write-probe.XXXXXX")" \
+    || { rm -f -- "$checkout_probe"; log "ERROR: integration common-dir is not writable: $common_dir"; return 1; }
+  rm -f -- "$checkout_probe" "$common_probe"
+}
+
+if ! materialize_integration_runtime \
+  "pantheon" "$DEV_ROOT" "$pantheon_integration_root" "$target_sha" "${REF#origin/}"; then
+  log "FATAL: Pantheon integration runtime materialization failed: $pantheon_integration_root"
+  exit 1
+fi
+if ! materialize_integration_runtime \
+  "execute_plans" "$EXECUTE_PLANS_SOURCE_ROOT" "$execute_plans_integration_root" "$execute_plans_sha" "dev"; then
+  log "FATAL: execute-plans integration runtime materialization failed: $execute_plans_integration_root"
+  exit 1
+fi
 
 current_command_root() {
   python3 - "$LIVE_CONFIG" <<'PY'
@@ -98,6 +226,23 @@ print(entries[0].parent.parent.resolve())
 PY
 }
 
+install_auto_integrator() {
+  local runtime_root="$1"
+  local installer="${runtime_root}/scripts/auto_integrator_install.py"
+  if [[ ! -f "$installer" ]]; then
+    log "WARNING: auto-integrator installer missing from runtime=$runtime_root"
+    return 0
+  fi
+  if python3 -B "$installer" \
+    --repo "$runtime_root" \
+    --status-root "$COORDINATION_ROOT" \
+    --config-file "$LIVE_CONFIG"; then
+    log "auto-integrator repointed at runtime=$runtime_root config=$LIVE_CONFIG"
+  else
+    log "WARNING: auto-integrator install failed for runtime=$runtime_root -- reviewed PRs will remain open until the supervisor-owned integration lane is restored"
+  fi
+}
+
 config_drift=0
 if [[ -f "$LIVE_CONFIG" && -f "$DEV_ROOT/scripts/check_config_drift.py" ]]; then
   drift_report="$(mktemp)"
@@ -107,6 +252,8 @@ if [[ -f "$LIVE_CONFIG" && -f "$DEV_ROOT/scripts/check_config_drift.py" ]]; then
     --dev-root "$DEV_ROOT" --ref "$REF" \
     --repository-source-root "pantheon=$DEV_ROOT" \
     --repository-source-root "execute_plans=$EXECUTE_PLANS_SOURCE_ROOT" \
+    --repository-integration-root "pantheon=$pantheon_integration_root" \
+    --repository-integration-root "execute_plans=$execute_plans_integration_root" \
     --json >"$drift_report"; then
     config_drift=1
     log "CONFIG_DRIFT_REQUIRES_PROMOTION: $(tr '\n' ' ' <"$drift_report")"
@@ -121,6 +268,7 @@ prune_old_command_runtimes() {
   fi
   if ! python3 -B "$prune_script" \
     --parent "$COMMAND_RUNTIME_PARENT" \
+    --integration-parent "$INTEGRATION_RUNTIME_PARENT" \
     --live-config "$LIVE_CONFIG" \
     --status-root "$COORDINATION_ROOT" \
     --keep "$COMMAND_RUNTIME_KEEP"; then
@@ -130,6 +278,7 @@ prune_old_command_runtimes() {
 
 active_root="$(current_command_root 2>/dev/null || true)"
 if [[ "$active_root" == "$candidate_root" && "$config_drift" -eq 0 ]]; then
+  install_auto_integrator "$candidate_root"
   prune_old_command_runtimes
   log "done (staging=$DEV_ROOT coordination=$COORDINATION_ROOT promotion=no-op-current-runtime)"
   exit 0
@@ -214,7 +363,9 @@ if ! "$candidate_root/scripts/promote-supervisor-runtime.sh" \
   --promote --repo "$candidate_root" --status-root "$COORDINATION_ROOT" \
   --live-config "$LIVE_CONFIG" \
   --repository-source-root "pantheon=$DEV_ROOT" \
-  --repository-source-root "execute_plans=$EXECUTE_PLANS_SOURCE_ROOT"; then
+  --repository-source-root "execute_plans=$EXECUTE_PLANS_SOURCE_ROOT" \
+  --repository-integration-root "pantheon=$pantheon_integration_root" \
+  --repository-integration-root "execute_plans=$execute_plans_integration_root"; then
   log "FATAL: supervisor replacement failed"
   exit 1
 fi
@@ -242,6 +393,8 @@ if [[ -f "$candidate_root/scripts/supervisor_watchdog_install.py" ]]; then
     log "WARNING: watchdog authority env file missing or not a regular file ($AUTHORITY_ENV_FILE) -- skipped watchdog repoint"
   fi
 fi
+
+install_auto_integrator "$candidate_root"
 
 prune_old_command_runtimes
 log "done (staging=$DEV_ROOT coordination=$COORDINATION_ROOT promotion=replaced)"

@@ -1,0 +1,88 @@
+{
+  "schema_version": "pantheon.external-source-management.hosted-write-proof-attempt.v1",
+  "task_id": "SRCM-P1-HOSTED-ACCEPTANCE-20260824",
+  "program_id": "SRCM-PHASE1-20260824",
+  "observed_at": "2026-08-27T00:34:15Z",
+  "status": "blocked_terminal_readback",
+  "workflow": {
+    "repository": "ajoe734/execute-plans",
+    "workflow": ".github/workflows/srcm-p1-mgmt-ui-hosted-acceptance.yml",
+    "run_id": 33027147575,
+    "run_attempt": 1,
+    "head_sha": "5c8ae18dbbcfc5abbc0ebc83609376eb2daf2e97",
+    "url": "https://github.com/ajoe734/execute-plans/actions/runs/33027147575"
+  },
+  "qualification_lease": {
+    "lease_id": "285c4266-7cd9-4d84-a469-a43acbd8aa06",
+    "owner": "SRCM-P1-HOSTED-ACCEPTANCE-20260824/Codex",
+    "mode": "qualification",
+    "expected_backend_sha": "3c79a185a97d920f41005bd41675433a046b6ece",
+    "run_url": "https://github.com/ajoe734/pantheon/pull/5238",
+    "artifact_sha256": "f1771d55d51a901447f7ddaa8bc307858d45548f7ad927f5e67f8b87e3625251"
+  },
+  "exact_pair": {
+    "frontend_sha": "b019b334f6810ab9c3ebc8b9b51b9b3cb3449a57",
+    "backend_sha": "3c79a185a97d920f41005bd41675433a046b6ece",
+    "source_definitions_sha": "40de8fcb1c69fad0bf5e54d4c0bd6e508c9162e0",
+    "source_definition_count": 24,
+    "source_identity_artifact_sha256": "c90fd8b746d599a6bba288674278856c7c6f085fb8b87c9fb93a8ba8f1058a94"
+  },
+  "bounded_tick": {
+    "mode": "reconcile_and_pull",
+    "max_ticks": 1,
+    "exclusive_connector_ids": [
+      "tw-twse-tpex-official-market"
+    ],
+    "force_connector_ids": [
+      "tw-twse-tpex-official-market"
+    ],
+    "allowed_hosts": [
+      "openapi.twse.com.tw",
+      "www.tpex.org.tw"
+    ],
+    "paid_broker_adapters_invoked": false,
+    "provider_attempt_reached_terminal_readback": true,
+    "provider_egress_attempted": true,
+    "provider_egress_attempted_evidence": "Inferred from the reviewed reconcile_and_pull control flow reaching post-schedule terminal readback; the command failed before emitting its success JSON.",
+    "outcome": "failed",
+    "failure_stage": "actual_readback",
+    "failure": "authoritative source readback has 3 unresolved dead-letter entries",
+    "rerun_permitted_under_current_authorization": false
+  },
+  "browser_capture": {
+    "started": false,
+    "journeys_completed": 0,
+    "reason": "The workflow stopped before switching to write-proof browser capture because the bounded tick failed closed."
+  },
+  "restoration": {
+    "frontend_profile": "read-only",
+    "vite_bff_real_writes": "false",
+    "frontend_sha": "b019b334f6810ab9c3ebc8b9b51b9b3cb3449a57",
+    "backend_sha": "3c79a185a97d920f41005bd41675433a046b6ece",
+    "source_management_commands_effective": "0",
+    "bff_source_management_commands_effective": "0",
+    "external_egress": "deny",
+    "scheduler_restart_policy": "no",
+    "scheduler_running": false,
+    "runtime_posture_artifact_sha256": "9d837491f15cc9b57bcba9a1dbac965b3f116d21f52f1388bc1436acffb3c854",
+    "manual_reconcile_only_result": "failed_controller_lease_conflict",
+    "manual_reconcile_only_accepted": false
+  },
+  "verifier_results": {
+    "offline_only": {
+      "exit_code": 1,
+      "error_code": "posture.source_ingestion_not_manual"
+    },
+    "live": {
+      "exit_code": 1,
+      "exact_fe_bff_source_identity_probes_completed": true,
+      "error_code": "posture.source_ingestion_not_manual"
+    }
+  },
+  "blocking_decision": {
+    "classification": "external",
+    "reason": "The exactly-one authorized provider tick has already run and failed on pre-existing DLQ state. A second provider tick would exceed the authorization, while the browser/HAR proof cannot be accepted without a clean bounded runtime window.",
+    "required_actor": "Human/Ops",
+    "required_action": "Resolve or formally disposition the three pre-existing DLQ entries and decide whether a replacement single-tick authorization may be issued."
+  }
+}

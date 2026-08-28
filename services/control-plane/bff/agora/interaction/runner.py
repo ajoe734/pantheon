@@ -37,7 +37,7 @@ def _outbox(kind: str, identity: str, payload: Dict[str, Any]) -> Dict[str, Any]
 
 def drain_interaction_outbox(store: InteractionLifecycleStore, workshop_store: Any) -> int:
     """Idempotently project durable interaction outbox rows to Workshop views."""
-    from agora.strategy_workshop.router import _ws_publish
+    from agora.strategy_workshop.events import _ws_publish
 
     def dispatch(kind: str, payload: Dict[str, Any]) -> None:
         if kind == "workshop_event":
@@ -221,7 +221,7 @@ def run_selected_persona_interaction(
     lease_owner: Optional[str] = None,
     lease_duration_seconds: int = 300,
 ) -> Dict[str, Any]:
-    from agora.strategy_workshop.router import _ws_publish
+    from agora.strategy_workshop.events import _ws_publish
 
     frozen: List[tuple[Dict[str, Any], Dict[str, Any], Dict[str, Any]]] = []
     if frozen_participants is not None:

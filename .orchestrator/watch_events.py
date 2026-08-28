@@ -175,6 +175,11 @@ def _queue_delivery_event_locked(
             "task": prepared.get("task") or {},
         },
     }
+    for lineage_key in ("review_requeue_intent_id", "recovery_receipt_id"):
+        lineage_value = str(prepared.get(lineage_key) or "").strip()
+        if lineage_value:
+            queue_payload[lineage_key] = lineage_value
+            queue_payload["metadata"][lineage_key] = lineage_value
     if not store_queue_event(state, queue_payload):
         return False
     write_activity_log(

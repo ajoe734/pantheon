@@ -1179,8 +1179,7 @@ def test_dev_root_deploy_builds_candidate_before_mutating_active_runtime() -> No
 
 
 def test_dev_root_source_ingestion_controller_mode_defaults_to_reconcile_only() -> None:
-    """Source ingestion controller must default to reconcile_only with unless-stopped
-    restart policy and no continuous external provider pull."""
+    """Source ingestion defaults to the zero-egress durable reconcile-only owner."""
     deploy_script = DEPLOY.read_text(encoding="utf-8")
     compose_yaml = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
 

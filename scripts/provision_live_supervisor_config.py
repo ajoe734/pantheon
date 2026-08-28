@@ -26,6 +26,11 @@ from typing import Any, Mapping
 # rejects.  The command is short-lived, so keep bytecode writes disabled for
 # its entire lifetime, including imports performed by the verifier.
 sys.dont_write_bytecode = True
+GIT_SCRIPTS_DIR = Path(__file__).resolve().parent / "git"
+if str(GIT_SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(GIT_SCRIPTS_DIR))
+
+import auto_integrator  # noqa: E402  (shared stable integration lock)
 
 
 WATCHDOG_RUNTIME_PATH_DEFAULTS = {
@@ -141,6 +146,33 @@ def parse_repository_source_roots(values: list[str] | None) -> dict[str, Path]:
     return roots
 
 
+def parse_repository_integration_roots(values: list[str] | None) -> dict[str, Path]:
+    """Parse repeatable dedicated integration checkout roots."""
+
+    roots: dict[str, Path] = {}
+    for raw_value in values or []:
+        repository_id, separator, raw_path = str(raw_value).partition("=")
+        repository_id = repository_id.strip()
+        raw_path = raw_path.strip()
+        if (
+            not separator
+            or not re.fullmatch(r"[a-z][a-z0-9_]*", repository_id)
+            or not raw_path
+        ):
+            raise ValueError(
+                "repository integration root must use "
+                "repository_id=/absolute/git/root"
+            )
+        candidate = Path(os.path.expanduser(raw_path))
+        if not candidate.is_absolute():
+            raise ValueError(
+                f"repository integration root for {repository_id} must be "
+                f"absolute: {raw_path}"
+            )
+        roots[repository_id] = candidate
+    return roots
+
+
 def _validated_repository_source_root(repository_id: str, raw_root: Path) -> Path:
     source_root = raw_root.expanduser().absolute()
     symlink = first_symlink_component(source_root)
@@ -203,6 +235,143 @@ def apply_repository_source_roots(
             )
         entry["local_path"] = str(source_root)
         applied[normalized_id] = str(source_root)
+    return applied
+
+
+def _probe_directory_writable(path: Path, *, label: str) -> None:
+    try:
+        fd, probe_name = tempfile.mkstemp(prefix=".integration-write-probe-", dir=path)
+        os.close(fd)
+        Path(probe_name).unlink()
+    except OSError as exc:
+        raise ValueError(f"{label} is not writable: {path}") from exc
+
+
+def _validated_repository_integration_root(
+    repository_id: str,
+    raw_root: Path,
+) -> Path:
+    """Prove a standalone clean clone can safely own integration mutations."""
+
+    root = _validated_repository_source_root(repository_id, raw_root)
+    try:
+        head = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=root,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        common_raw = subprocess.run(
+            ["git", "rev-parse", "--git-common-dir"],
+            cwd=root,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        detached = subprocess.run(
+            ["git", "symbolic-ref", "-q", "HEAD"],
+            cwd=root,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        dirty = subprocess.run(
+            ["git", "status", "--porcelain", "--untracked-files=all"],
+            cwd=root,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        origin = subprocess.run(
+            ["git", "remote", "get-url", "origin"],
+            cwd=root,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+    except subprocess.CalledProcessError as exc:
+        raise ValueError(
+            f"repository integration root for {repository_id} has unusable Git metadata"
+        ) from exc
+    if not re.fullmatch(r"[0-9a-f]{40}", head) or root.name != head:
+        raise ValueError(
+            f"repository integration root for {repository_id} must be versioned "
+            "by its exact HEAD"
+        )
+    if detached.returncode == 0:
+        raise ValueError(
+            f"repository integration root for {repository_id} must use detached HEAD"
+        )
+    if dirty:
+        raise ValueError(
+            f"repository integration root for {repository_id} must be clean"
+        )
+    if not origin:
+        raise ValueError(
+            f"repository integration root for {repository_id} has no origin remote"
+        )
+    common = Path(common_raw)
+    if not common.is_absolute():
+        common = root / common
+    common = common.resolve()
+    expected_common = (root / ".git").resolve()
+    if common != expected_common or not common.is_dir():
+        raise ValueError(
+            f"repository integration root for {repository_id} must be a standalone clone"
+        )
+    _probe_directory_writable(root, label=f"repository integration checkout for {repository_id}")
+    _probe_directory_writable(common, label=f"repository integration common-dir for {repository_id}")
+    try:
+        subprocess.run(
+            ["git", "fetch", "--quiet", "--no-tags", "origin"],
+            cwd=root,
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
+        raise ValueError(
+            f"repository integration root for {repository_id} cannot fetch origin"
+        ) from exc
+    return root
+
+
+def apply_repository_integration_roots(
+    rendered: dict[str, Any],
+    repository_integration_roots: Mapping[str, Path | str] | None,
+) -> dict[str, str]:
+    """Render validated dedicated merge-owner checkouts into the live registry."""
+
+    applied: dict[str, str] = {}
+    if not repository_integration_roots:
+        return applied
+    coordination = rendered.setdefault("coordination", {})
+    if not isinstance(coordination, dict):
+        raise ValueError("coordination config must be a JSON object")
+    repository_config = coordination.setdefault("repositories", {})
+    if not isinstance(repository_config, dict):
+        raise ValueError("coordination.repositories must be a JSON object")
+    for repository_id, raw_root in repository_integration_roots.items():
+        normalized_id = str(repository_id or "").strip()
+        if not re.fullmatch(r"[a-z][a-z0-9_]*", normalized_id):
+            raise ValueError(f"invalid repository integration id: {repository_id!r}")
+        if normalized_id not in repository_config:
+            raise ValueError(
+                f"repository integration root has no registry entry: {normalized_id}"
+            )
+        entry = repository_config[normalized_id]
+        if not isinstance(entry, dict):
+            raise ValueError(
+                f"coordination.repositories.{normalized_id} must be a JSON object"
+            )
+        integration_root = _validated_repository_integration_root(
+            normalized_id,
+            Path(raw_root),
+        )
+        entry["integration_path"] = str(integration_root)
+        applied[normalized_id] = str(integration_root)
     return applied
 
 
@@ -284,6 +453,7 @@ def build_live_config(
     live_config_path: Path,
     python_executable: Path,
     repository_source_roots: Mapping[str, Path | str] | None = None,
+    repository_integration_roots: Mapping[str, Path | str] | None = None,
 ) -> dict[str, Any]:
     # The live file is a deployment projection, never a policy overlay.  In
     # particular, carrying keys that are merely absent from the candidate
@@ -299,6 +469,7 @@ def build_live_config(
     rendered = copy.deepcopy(repo_config)
     validate_provider_accounts(rendered)
     apply_repository_source_roots(rendered, repository_source_roots)
+    apply_repository_integration_roots(rendered, repository_integration_roots)
     apply_task_state_store(
         repo_config,
         rendered,
@@ -516,6 +687,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Render one deployment-owned repository source root into coordination.repositories.",
     )
     parser.add_argument(
+        "--repository-integration-root",
+        action="append",
+        default=[],
+        metavar="REPOSITORY_ID=/ABSOLUTE/GIT/ROOT",
+        help="Render one dedicated clean merge checkout into coordination.repositories.",
+    )
+    parser.add_argument(
         "--validate-command-root-only",
         action="store_true",
         help="Validate immutable command runtime identity without writing state.",
@@ -529,7 +707,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return args
 
 
-def main(argv: list[str] | None = None) -> int:
+def _main_locked(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     try:
         command_identity = validated_immutable_command_root(Path(args.command_root))
@@ -579,6 +757,9 @@ def main(argv: list[str] | None = None) -> int:
             repository_source_roots=parse_repository_source_roots(
                 args.repository_source_root
             ),
+            repository_integration_roots=parse_repository_integration_roots(
+                args.repository_integration_root
+            ),
         )
         if existing is not None and rendered != existing:
             raise ValueError(
@@ -614,6 +795,13 @@ def main(argv: list[str] | None = None) -> int:
             ).items()
             if isinstance(entry, dict) and entry.get("local_path")
         },
+        "repository_integration_roots": {
+            repository_id: str(entry.get("integration_path"))
+            for repository_id, entry in (
+                (rendered.get("coordination") or {}).get("repositories") or {}
+            ).items()
+            if isinstance(entry, dict) and entry.get("integration_path")
+        },
     }
     if args.json:
         print(json.dumps(summary, indent=2, sort_keys=True))
@@ -624,6 +812,25 @@ def main(argv: list[str] | None = None) -> int:
             f"config={live_config_path} config_created={str(config_created).lower()}"
         )
     return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    probe = argparse.ArgumentParser(add_help=False)
+    probe.add_argument("--status-root")
+    probe.add_argument("--validate-command-root-only", action="store_true")
+    known, _ = probe.parse_known_args(argv)
+    if known.validate_command_root_only or not known.status_root:
+        return _main_locked(argv)
+    lock_path = (
+        Path(known.status_root).expanduser().absolute()
+        / auto_integrator.DEFAULT_LOCK
+    )
+    try:
+        with auto_integrator.lock_file(lock_path):
+            return _main_locked(argv)
+    except auto_integrator.IntegrationLockError as exc:
+        print(f"live supervisor config provisioning failed: {exc}", file=sys.stderr)
+        return 2
 
 
 if __name__ == "__main__":
