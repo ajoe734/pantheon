@@ -153,6 +153,7 @@ ARCHIVE_RECEIPTS_KEY = "archive_receipts"
 ARCHIVE_RECEIPT_SCHEMA_VERSION = 1
 REVIEW_REQUEUE_INTENT_KEY = "review_requeue_intent"
 REVIEW_REQUEUE_INTENT_SCHEMA_VERSION = 1
+WORKER_RECOVERY_TASK_KEY = "worker_recovery"
 SUPERVISOR_DISPATCH_BATCH_SCHEMA_VERSION = 1
 SUPERVISOR_DISPATCH_BATCH_MAX_MUTATIONS = 64
 SUPERVISOR_DISPATCH_BATCH_COMMAND = "supervisor-dispatch-batch"
@@ -2634,6 +2635,33 @@ def task_assignment_generation(task: Mapping[str, Any] | None) -> int:
             f"Task {task.get('id') or '?'} has invalid assignment generation"
         )
     return value
+
+
+def task_has_active_worker_recovery(task: Mapping[str, Any] | None) -> bool:
+    """Fail closed while supervisor-owned lost-lease recovery is unresolved."""
+
+    pointer = (task or {}).get(WORKER_RECOVERY_TASK_KEY)
+    if not isinstance(pointer, Mapping):
+        return False
+    receipt_id = str(pointer.get("receipt_id") or "").strip()
+    status = str(pointer.get("status") or "").strip()
+    if not receipt_id or status not in {"pending", "reassigned"}:
+        return False
+    generation_key = (
+        "fence_generation" if status == "pending" else "replacement_generation"
+    )
+    raw_authority_generation = pointer.get(generation_key)
+    if (
+        raw_authority_generation in (None, "")
+        or isinstance(raw_authority_generation, bool)
+    ):
+        return True
+    try:
+        authority_generation = int(raw_authority_generation)
+        current_generation = task_assignment_generation(task)
+    except (TypeError, ValueError, RuntimeError):
+        return True
+    return authority_generation == current_generation
 
 
 def validate_bound_status_command_task_authority(
@@ -5576,6 +5604,11 @@ def command_assign(state: dict[str, Any], args: list[str]) -> bool | None:
             raise SystemExit(
                 "Only Human/Ops may change an existing task assignment."
             )
+        if task_has_active_worker_recovery(task):
+            raise SystemExit(
+                f"Task {task_id} has active supervisor worker recovery; wait for "
+                "that receipt to materialize or reach a durable hold before reassignment."
+            )
         assignment_reason = (
             os.environ.get("TASK_ASSIGN_REASON", "").strip()
             or os.environ.get("HUMAN_OPS_REASON", "").strip()
@@ -6007,7 +6040,10 @@ def command_reopen(state: dict[str, Any], args: list[str]) -> None:
     }
     requeue_intent = {
         **requeue_basis,
-        "intent_id": "review-requeue-" + _canonical_json_sha256(requeue_basis),
+        # Timestamp/task content can repeat within one second after an earlier
+        # reopen completes. A fresh cryptographic nonce prevents an old durable
+        # queue row from becoming indistinguishable from this new intent.
+        "intent_id": "review-requeue-" + os.urandom(32).hex(),
         "status": "pending",
     }
     # The canonical task row and its activity outbox are committed by the same

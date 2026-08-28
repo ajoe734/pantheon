@@ -8490,10 +8490,12 @@ def _worker_recovery_activity_event(
     event_type: str,
     timestamp: str,
     message: str,
+    event_identity: str | None = None,
 ) -> dict[str, Any]:
     receipt_id = str(receipt.get("receipt_id") or "").strip()
+    identity_suffix = f"-{event_identity}" if event_identity else ""
     return {
-        "event_id": f"supervisor-{event_type}-{receipt_id}",
+        "event_id": f"supervisor-{event_type}-{receipt_id}{identity_suffix}",
         "ts": timestamp,
         "agent": "Orchestrator",
         "type": event_type,
@@ -8551,29 +8553,34 @@ def _prune_worker_recovery_receipts(
     receipts = status.get(WORKER_RECOVERY_RECEIPTS_KEY)
     if not isinstance(receipts, dict) or len(receipts) <= MAX_WORKER_RECOVERY_RECEIPTS:
         return
-    protected = {
-        receipt_id
-        for receipt_id, receipt in receipts.items()
-        if isinstance(receipt, Mapping)
-        and str(receipt.get("status") or "") in {"pending", "reassigned"}
-    }
-    protected.add(current_receipt_id)
-    terminal = sorted(
-        (
+    protected = {current_receipt_id} if current_receipt_id in receipts else set()
+    for task in status.get("tasks", []) or []:
+        pointer = task.get(WORKER_RECOVERY_TASK_KEY)
+        if not isinstance(pointer, Mapping):
+            continue
+        receipt_id = str(pointer.get("receipt_id") or "")
+        receipt = receipts.get(receipt_id)
+        pointer_status = str(pointer.get("status") or "")
+        if (
             receipt_id
-            for receipt_id, receipt in receipts.items()
-            if receipt_id not in protected
+            and pointer_status in {"pending", "reassigned"}
             and isinstance(receipt, Mapping)
-            and str(receipt.get("status") or "")
-            in {"materialized", "held", "resolved"}
-        ),
+            and str(receipt.get("status") or "") == pointer_status
+        ):
+            protected.add(receipt_id)
+    prunable = sorted(
+        (receipt_id for receipt_id in receipts if receipt_id not in protected),
         key=lambda receipt_id: (
-            str((receipts.get(receipt_id) or {}).get("detected_at") or ""),
+            str(
+                (receipts.get(receipt_id) or {}).get("detected_at") or ""
+                if isinstance(receipts.get(receipt_id), Mapping)
+                else ""
+            ),
             receipt_id,
         ),
     )
-    while len(receipts) > MAX_WORKER_RECOVERY_RECEIPTS and terminal:
-        removed = terminal.pop(0)
+    while len(receipts) > MAX_WORKER_RECOVERY_RECEIPTS and prunable:
+        removed = prunable.pop(0)
         receipts.pop(removed, None)
         for task in status.get("tasks", []) or []:
             pointer = task.get(WORKER_RECOVERY_TASK_KEY)
@@ -9021,6 +9028,114 @@ def mark_worker_recovery_materialized(
             expected_generation=task_generation,
             queue_event_id=queue_event_id,
             worker_run_id=worker_run_id,
+        )
+    if not applied:
+        return False
+    sync_status_pipeline(config)
+    return True
+
+
+def _rearm_worker_recovery_receipt_locked(
+    config: dict[str, Any],
+    *,
+    receipt_id: str,
+    task_id: str,
+    expected_generation: int,
+    reason: str,
+) -> bool:
+    """Return an unmaterialized replacement to its typed pending fence."""
+
+    status = load_status(config)
+    if status.get("status_activity_outbox") not in (None, {}, []):
+        return False
+    task = task_index_from_status(config, status).get(task_id)
+    if task is None or task_generation(task) != expected_generation:
+        return False
+    receipt = _canonical_worker_recovery_receipt(status, task)
+    if receipt is None or str(receipt.get("receipt_id") or "") != receipt_id:
+        return False
+    replacement = receipt.get("replacement")
+    try:
+        replacement_generation = int(
+            (replacement or {}).get("task_generation") or 0
+        )
+    except (AttributeError, TypeError, ValueError):
+        return False
+    if (
+        str(receipt.get("status") or "") != "reassigned"
+        or not isinstance(replacement, Mapping)
+        or replacement_generation != expected_generation
+    ):
+        return False
+
+    timestamp = utc_now()
+    history = receipt.get("replacement_history")
+    history = list(history) if isinstance(history, list) else []
+    history.append(
+        {
+            **deepcopy(dict(replacement)),
+            "retired_at": timestamp,
+            "retired_reason": reason,
+        }
+    )
+    receipt.update(
+        {
+            "status": "pending",
+            "fence_generation": expected_generation,
+            "last_attempt_at": timestamp,
+            "replacement": None,
+            "replacement_history": history,
+        }
+    )
+    receipts = status.get(WORKER_RECOVERY_RECEIPTS_KEY)
+    if not isinstance(receipts, dict):
+        return False
+    receipts[receipt_id] = deepcopy(receipt)
+    task[WORKER_RECOVERY_TASK_KEY] = _worker_recovery_pointer(receipt)
+    task["last_update"] = timestamp
+    task["next"] = (
+        f"Supervisor retained lost-lease fence {receipt_id} after an "
+        f"unmaterialized replacement became unavailable: {reason}"
+    )
+    event = _worker_recovery_activity_event(
+        receipt,
+        event_type="worker_lost_lease_recovery_retry_pending",
+        timestamp=timestamp,
+        message=str(task["next"]),
+        # One receipt may exhaust more than one replacement generation. Keep
+        # each retry transaction independently idempotent in the activity log.
+        event_identity=f"generation-{expected_generation}-attempt-{len(history)}",
+    )
+    composed = _compose_status_activity_outbox(
+        status.get("status_activity_outbox"), event
+    )
+    if composed is None:
+        return False
+    status["status_activity_outbox"] = composed
+    write_status(config, status, source="supervisor-worker-recovery-retry")
+    return True
+
+
+def rearm_worker_recovery_receipt(
+    config: dict[str, Any],
+    *,
+    receipt_id: str,
+    task_id: str,
+    task_generation: int,
+    reason: str,
+) -> bool:
+    status_path = config_path(config, "status_file")
+    with canonical_task_state_lock_file(
+        status_path,
+        shared=False,
+        nonblocking=False,
+    ):
+        applied = _rearm_worker_recovery_receipt_locked(
+            config,
+            receipt_id=receipt_id,
+            task_id=task_id,
+            expected_generation=task_generation,
+            reason=reason,
         )
     if not applied:
         return False
@@ -11538,6 +11653,7 @@ def _reset_queue_record_for_redispatch(record: dict[str, Any], *, reason: str) -
         "lease_expires_at",
         "lease_released_at",
         "last_wait_reason",
+        "run_id",
     ):
         record.pop(key, None)
 
@@ -11752,13 +11868,21 @@ def worker_recovery_assignment_pair(
     settings = worker_reassignment_settings(config)
     owner = canonical_agent_name(config, str(task.get("owner") or ""))
     reviewer = canonical_agent_name(config, str(task.get("reviewer") or ""))
+    previous = receipt.get("previous")
+    previous = previous if isinstance(previous, Mapping) else {}
+    previous_owner = canonical_agent_name(
+        config, str(previous.get("owner") or "")
+    )
+    previous_reviewer = canonical_agent_name(
+        config, str(previous.get("reviewer") or "")
+    )
     role = str(receipt.get("recovery_role") or "owner")
     lost_agent = str((receipt.get("worker") or {}).get("agent") or "")
     if role == "reviewer":
         reviewer_candidates = reassignment_candidate_order(
             config,
             settings.get("reviewer_fallbacks", {}) or {},
-            roots=[reviewer, owner],
+            roots=[reviewer, owner, previous_reviewer, previous_owner],
             exclude={reviewer, owner, lost_agent},
         )
         for candidate_reviewer in reviewer_candidates:
@@ -11786,7 +11910,7 @@ def worker_recovery_assignment_pair(
     owner_candidates = reassignment_candidate_order(
         config,
         settings.get("owner_fallbacks", {}) or {},
-        roots=[owner],
+        roots=[owner, previous_owner],
         exclude={owner, lost_agent},
     )
     for candidate_owner in owner_candidates:
@@ -11816,10 +11940,124 @@ def _adopt_worker_recovery_receipt(
     receipt_id = str(receipt.get("receipt_id") or "")
     receipts = state.setdefault(WORKER_RECOVERY_RECEIPTS_KEY, {})
     normalized = deepcopy(dict(receipt))
-    if receipts.get(receipt_id) == normalized:
+    existing = receipts.get(receipt_id)
+    # Runtime reservation fields are a projection of the exact canonical
+    # reassignment, not competing authority. Preserve them while receipt,
+    # replacement identity, and generation still match so every poll does not
+    # erase and recreate the same queue reservation.
+    if (
+        isinstance(existing, Mapping)
+        and str(normalized.get("status") or "") == "reassigned"
+        and str(existing.get("status") or "") == "reassigned"
+    ):
+        canonical_replacement = normalized.get("replacement")
+        runtime_replacement = existing.get("replacement")
+        if (
+            isinstance(canonical_replacement, dict)
+            and isinstance(runtime_replacement, Mapping)
+            and all(
+                canonical_replacement.get(key) == runtime_replacement.get(key)
+                for key in ("agent", "owner", "reviewer", "task_generation")
+            )
+        ):
+            queue_event_id = str(runtime_replacement.get("queue_event_id") or "")
+            if queue_event_id and not canonical_replacement.get("queue_event_id"):
+                canonical_replacement["queue_event_id"] = queue_event_id
+            runtime_status = str(existing.get("runtime_status") or "")
+            if runtime_status:
+                normalized["runtime_status"] = runtime_status
+    if existing == normalized:
         return False
     receipts[receipt_id] = normalized
     return True
+
+
+def reserve_worker_recovery_replacement(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    status: dict[str, Any],
+    task: dict[str, Any],
+    receipt: Mapping[str, Any],
+) -> bool:
+    """Reserve the exact reassigned receipt/generation without another CAS."""
+
+    if str(receipt.get("status") or "") != "reassigned":
+        return False
+    receipt_id = str(receipt.get("receipt_id") or "").strip()
+    replacement = receipt.get("replacement")
+    pointer = task.get(WORKER_RECOVERY_TASK_KEY)
+    if not isinstance(replacement, Mapping) or not isinstance(pointer, Mapping):
+        return False
+    generation = task_generation(task)
+    try:
+        replacement_generation = int(replacement.get("task_generation") or 0)
+        pointer_generation = int(pointer.get("replacement_generation") or 0)
+    except (TypeError, ValueError):
+        return False
+    if (
+        not receipt_id
+        or str(pointer.get("receipt_id") or "") != receipt_id
+        or str(pointer.get("status") or "") != "reassigned"
+        or replacement_generation != generation
+        or pointer_generation != generation
+    ):
+        return False
+    role = str(receipt.get("recovery_role") or "owner")
+    target_agent = str(
+        replacement.get("agent")
+        or (
+            replacement.get("reviewer")
+            if role == "reviewer"
+            else replacement.get("owner")
+        )
+        or ""
+    )
+    if not target_agent:
+        return False
+    task_map = task_index_from_status(config, status)
+    resolver = task_resolver_for_config(config, task_map)
+    candidate = task_execution_dispatch_candidate(
+        config,
+        task,
+        target_agent,
+        resolver,
+    )
+    if candidate is None:
+        return False
+    activity_events = recent_governance_activity_events(config)
+    event = build_dispatch_event(
+        task,
+        target_agent,
+        candidate[0],
+        resolver,
+        activity_events=activity_events,
+        config=config,
+    )
+    if (
+        str(event.get("recovery_receipt_id") or "") != receipt_id
+        or int(event.get("task_generation") or 0) != generation
+    ):
+        return False
+    active_statuses = normalized_status_set(
+        ready_dispatch_settings(config).get("active_worker_statuses"), []
+    )
+    live_total = sum(
+        1
+        for worker in (state.get("workers") or {}).values()
+        if isinstance(worker, Mapping)
+        and str(worker.get("status") or "") in active_statuses
+    )
+    return reserve_dispatch_plan(
+        config,
+        state,
+        {
+            "planned_at": utc_now(),
+            "events": [event],
+            "dispatch_cursor": None,
+            "live_total": live_total,
+        },
+        activity_events=activity_events,
+    )
 
 
 def _fence_lost_worker_runtime(
@@ -11975,10 +12213,11 @@ def recover_lost_worker_lease(
         worker["lease_fenced_at"] = worker.get("lease_fenced_at") or utc_now()
         finalize_queue_event_record(config, state, worker, "completed")
         return True
-    held = (
-        str(task.get("status") or "").strip().lower() == "blocked"
-        and task_has_explicit_recovery_hold(status, task)
-    )
+    # A blocked lifecycle is already a durable no-dispatch decision regardless
+    # of whether legacy rows carry waiting_for/blocker/handoff detail. Record
+    # the lost lease as held and release the active recovery fence; after the
+    # block is resolved the normal planner/availability lane owns continuation.
+    held = str(task.get("status") or "").strip().lower() == "blocked"
     receipt = build_lost_lease_receipt(
         config,
         worker,
@@ -12078,6 +12317,15 @@ def reconcile_pending_worker_recoveries(
 
     status = load_status(config)
     changed = False
+    if status.get("status_activity_outbox") not in (None, {}, []):
+        # Recovery receipts in held/reassigned/materialized states do not enter
+        # the pending reassignment helper. Drain their interrupted canonical
+        # activity transaction here so every receipt status is restart-safe.
+        sync_status_pipeline(config)
+        status = load_status(config)
+        if status.get("status_activity_outbox") not in (None, {}, []):
+            return False
+        changed = True
     limit = int(
         worker_reassignment_settings(config).get("max_reassignments_per_cycle", 4)
         or 4
@@ -12092,28 +12340,56 @@ def reconcile_pending_worker_recoveries(
         changed = _adopt_worker_recovery_receipt(state, receipt) or changed
         if str(receipt.get("status") or "") == "reassigned":
             receipt_id = str(receipt.get("receipt_id") or "")
-            replacement_worker = next(
-                (
-                    worker
-                    for worker in (state.get("workers") or {}).values()
-                    if isinstance(worker, Mapping)
-                    and str(worker.get("recovery_receipt_id") or "") == receipt_id
-                    and str(worker.get("queue_event_id") or "")
+            task_id = str(task.get("id") or "")
+            generation = task_generation(task)
+            replacement_worker = None
+            for worker in (state.get("workers") or {}).values():
+                if not isinstance(worker, Mapping):
+                    continue
+                try:
+                    worker_generation = int(worker.get("task_generation") or 0)
+                except (TypeError, ValueError):
+                    continue
+                worker_queue_event_id = str(worker.get("queue_event_id") or "")
+                queue_record = (
+                    (state.get("queue") or {}).get("events") or {}
+                ).get(worker_queue_event_id)
+                queue_intent = (
+                    queue_record.get("intent")
+                    if isinstance(queue_record, Mapping)
+                    else None
+                )
+                try:
+                    queue_generation = int(
+                        (queue_intent or {}).get("task_generation") or 0
+                    )
+                except (AttributeError, TypeError, ValueError):
+                    continue
+                if (
+                    str(worker.get("recovery_receipt_id") or "") == receipt_id
+                    and str(worker.get("task_id") or "") == task_id
+                    and worker_generation == generation
+                    and isinstance(queue_intent, Mapping)
+                    and str(queue_intent.get("recovery_receipt_id") or "")
+                    == receipt_id
+                    and str(queue_intent.get("task_id") or "") == task_id
+                    and queue_generation == generation
+                    and worker_queue_event_id
                     and str(worker.get("run_id") or "")
-                ),
-                None,
-            )
+                ):
+                    replacement_worker = worker
+                    break
             if replacement_worker is not None and mark_worker_recovery_materialized(
                 config,
                 receipt_id=receipt_id,
-                task_id=str(task.get("id") or ""),
-                task_generation=task_generation(task),
+                task_id=task_id,
+                task_generation=generation,
                 queue_event_id=str(replacement_worker.get("queue_event_id") or ""),
                 worker_run_id=str(replacement_worker.get("run_id") or ""),
             ):
                 status = load_status(config)
                 refreshed_task = task_index_from_status(config, status).get(
-                    str(task.get("id") or "")
+                    task_id
                 )
                 refreshed = (
                     _canonical_worker_recovery_receipt(status, refreshed_task)
@@ -12124,6 +12400,142 @@ def reconcile_pending_worker_recoveries(
                     changed = _adopt_worker_recovery_receipt(state, refreshed) or changed
                 changed = True
                 continue
+
+            replacement_records: list[tuple[str, dict[str, Any]]] = []
+            for raw_event_id, raw_record in (
+                (state.get("queue") or {}).get("events") or {}
+            ).items():
+                if not isinstance(raw_record, dict):
+                    continue
+                intent = raw_record.get("intent")
+                if not isinstance(intent, Mapping):
+                    continue
+                try:
+                    intent_generation = int(intent.get("task_generation") or 0)
+                except (TypeError, ValueError):
+                    continue
+                if (
+                    str(intent.get("recovery_receipt_id") or "") == receipt_id
+                    and str(intent.get("task_id") or "") == task_id
+                    and intent_generation == generation
+                ):
+                    replacement_records.append((str(raw_event_id), raw_record))
+
+            # Do not count this receipt's own reservation against the lane
+            # whose health/capacity we are re-evaluating.
+            retry_state = deepcopy(state)
+            retry_queue = (retry_state.get("queue") or {}).get("events") or {}
+            if isinstance(retry_queue, dict):
+                for event_id, _record in replacement_records:
+                    retry_queue.pop(event_id, None)
+            replacement = receipt.get("replacement")
+            replacement = replacement if isinstance(replacement, Mapping) else {}
+            role = str(receipt.get("recovery_role") or "owner")
+            replacement_target = str(
+                replacement.get("agent")
+                or (
+                    replacement.get("reviewer")
+                    if role == "reviewer"
+                    else replacement.get("owner")
+                )
+                or ""
+            )
+            replacement_has_capacity = bool(
+                replacement_target
+                and _worker_recovery_candidate_has_capacity(
+                    config,
+                    retry_state,
+                    status,
+                    task,
+                    owner=str(replacement.get("owner") or task.get("owner") or ""),
+                    reviewer=str(
+                        replacement.get("reviewer") or task.get("reviewer") or ""
+                    ),
+                    target_agent=replacement_target,
+                )
+            )
+            alternate_pair = (
+                None
+                if replacement_has_capacity
+                else worker_recovery_assignment_pair(
+                    config, retry_state, status, task, receipt
+                )
+            )
+            current_pair = (
+                str(replacement.get("owner") or ""),
+                str(replacement.get("reviewer") or ""),
+            )
+            if (
+                alternate_pair is not None
+                and alternate_pair != current_pair
+                and attempted < limit
+            ):
+                reason = (
+                    f"replacement lane {replacement_target or '(unknown)'} lost "
+                    "dispatch health or capacity before worker materialization"
+                )
+                if rearm_worker_recovery_receipt(
+                    config,
+                    receipt_id=receipt_id,
+                    task_id=task_id,
+                    task_generation=generation,
+                    reason=reason,
+                ):
+                    for _event_id, record in replacement_records:
+                        record["status"] = "completed"
+                        record["processed_at"] = utc_now()
+                        record["skip_reason"] = (
+                            "worker_recovery_replacement_superseded"
+                        )
+                        record["recovery_status"] = "superseded"
+                    status = load_status(config)
+                    refreshed_task = task_index_from_status(config, status).get(task_id)
+                    refreshed = (
+                        _canonical_worker_recovery_receipt(status, refreshed_task)
+                        if refreshed_task is not None
+                        else None
+                    )
+                    if refreshed_task is not None and refreshed is not None:
+                        attempted += 1
+                        changed = (
+                            attempt_worker_recovery_reassignment(
+                                config,
+                                state,
+                                status,
+                                refreshed_task,
+                                refreshed,
+                            )
+                            or changed
+                        )
+                    changed = True
+                    status = load_status(config)
+                    continue
+
+            # If the replacement lane is viable again, retry the exact durable
+            # runtime intent and reserve it from the typed recovery path. This
+            # preserves the receipt and replacement generation; it never asks
+            # a generic assignment lane to mutate canonical authority.
+            if replacement_has_capacity:
+                for _event_id, record in replacement_records:
+                    if str(record.get("status") or "") != "queued":
+                        _reset_queue_record_for_redispatch(
+                            record,
+                            reason=(
+                                "lost-lease replacement did not materialize; "
+                                "retrying exact durable intent"
+                            ),
+                        )
+                        changed = True
+                changed = (
+                    reserve_worker_recovery_replacement(
+                        config,
+                        state,
+                        status,
+                        task,
+                        receipt,
+                    )
+                    or changed
+                )
         if str(receipt.get("status") or "") != "pending" or attempted >= limit:
             continue
         attempted += 1
@@ -13337,6 +13749,15 @@ def reconcile_review_requeue_materializations(
         return False
     status = load_status(config)
     changed = False
+    if status.get("status_activity_outbox") not in (None, {}, []):
+        # A materialized reopen acknowledgement may have committed just before
+        # activity publication failed. Retry the existing canonical pipeline
+        # even though there is no longer a pending intent for the scanner.
+        sync_status_pipeline(config)
+        status = load_status(config)
+        if status.get("status_activity_outbox") not in (None, {}, []):
+            return False
+        changed = True
     for task in status.get("tasks", []) or []:
         if not isinstance(task, Mapping):
             continue

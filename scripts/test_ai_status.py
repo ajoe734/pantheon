@@ -5559,6 +5559,31 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
         self.assertEqual(pending[0]["from"], "Claude")
         self.assertEqual(pending[0]["to"], "Codex")
 
+    def test_same_second_reopens_receive_distinct_nonce_intents(self) -> None:
+        task = self.state["tasks"][0]
+        task["status"] = "review"
+        timestamp = "2026-08-28T12:00:00Z"
+        with (
+            mock.patch.dict(os.environ, {"AI_NAME": "Claude"}, clear=False),
+            mock.patch.object(ai_status, "iso_now", return_value=timestamp),
+            mock.patch.object(
+                ai_status.os,
+                "urandom",
+                side_effect=[b"\x01" * 32, b"\x02" * 32],
+            ),
+        ):
+            _command_reopen(self.state, ["REG-002", "Repeatable review reason"])
+            first = deepcopy(task[ai_status.REVIEW_REQUEUE_INTENT_KEY])
+            task["status"] = "review"
+            _command_reopen(self.state, ["REG-002", "Repeatable review reason"])
+            second = deepcopy(task[ai_status.REVIEW_REQUEUE_INTENT_KEY])
+
+        self.assertEqual(first["reopened_at"], second["reopened_at"])
+        self.assertEqual(first["reason"], second["reason"])
+        self.assertNotEqual(first["intent_id"], second["intent_id"])
+        self.assertEqual(first["intent_id"], "review-requeue-" + "01" * 32)
+        self.assertEqual(second["intent_id"], "review-requeue-" + "02" * 32)
+
     def test_reviewer_reopen_bridges_existing_exact_head_rejection(self) -> None:
         binding = {
             "pr": 4269,
@@ -9321,6 +9346,39 @@ class SidecarTaskTests(unittest.TestCase):
         updated = ai_status.get_task(self.state, "REOPEN-REASSIGN-001")
         self.assertEqual(updated["generation"], 2)
         self.assertNotIn(ai_status.REVIEW_REQUEUE_INTENT_KEY, updated)
+
+    def test_human_ops_assignment_rejects_active_worker_recovery(self) -> None:
+        task = {
+            "id": "ACTIVE-RECOVERY-ASSIGN-001",
+            "status": "in_progress",
+            "owner": "Codex",
+            "reviewer": "Codex2",
+            "generation": 2,
+            ai_status.WORKER_RECOVERY_TASK_KEY: {
+                "receipt_id": "lost-lease-active",
+                "status": "pending",
+                "task_generation": 1,
+                "fence_generation": 2,
+                "replacement_generation": None,
+            },
+        }
+        self.state["tasks"].append(task)
+        before = deepcopy(task)
+
+        with (
+            mock.patch.dict(
+                os.environ,
+                {"AI_NAME": "Human/Ops", "TASK_ASSIGN_REASON": "operator recall"},
+                clear=False,
+            ),
+            self.assertRaisesRegex(SystemExit, "active supervisor worker recovery"),
+        ):
+            ai_status.command_assign(
+                self.state,
+                ["ACTIVE-RECOVERY-ASSIGN-001", "Claude", "Codex2"],
+            )
+
+        self.assertEqual(task, before)
 
     def test_human_ops_recall_cannot_change_admitted_contract_metadata(self) -> None:
         self.state["tasks"].append(
