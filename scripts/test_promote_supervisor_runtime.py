@@ -491,18 +491,26 @@ def test_sync_coordination_root_code_updates_code_and_preserves_data(tmp_path: P
     status_root = tmp_path / "status"
     (candidate / "scripts").mkdir(parents=True)
     (candidate / ".orchestrator" / "rewrite").mkdir(parents=True)
+    (candidate / ".orchestrator" / "development_bridge").mkdir()
     (candidate / "scripts" / "ai_status.py").write_text("# new version\n", encoding="utf-8")
     (candidate / ".orchestrator" / "common.py").write_text("# new common\n", encoding="utf-8")
     (candidate / ".orchestrator" / "rewrite" / "task_machine.py").write_text(
         "# new task_machine\n", encoding="utf-8"
     )
+    (candidate / ".orchestrator" / "development_bridge" / "dev_bridge_models.py").write_text(
+        "# new bridge model\n", encoding="utf-8"
+    )
 
     (status_root / "scripts").mkdir(parents=True)
     (status_root / ".orchestrator" / "rewrite").mkdir(parents=True)
+    (status_root / ".orchestrator" / "development_bridge").mkdir()
     (status_root / "scripts" / "ai_status.py").write_text("# stale version\n", encoding="utf-8")
     (status_root / ".orchestrator" / "common.py").write_text("# stale common\n", encoding="utf-8")
     (status_root / ".orchestrator" / "rewrite" / "task_machine.py").write_text(
         "# stale task_machine\n", encoding="utf-8"
+    )
+    (status_root / ".orchestrator" / "development_bridge" / "dev_bridge_models.py").write_text(
+        "# stale bridge model\n", encoding="utf-8"
     )
     live_status = json.dumps({"tasks": [{"id": "REG-1", "status": "in_progress"}]})
     (status_root / "ai-status.json").write_text(live_status, encoding="utf-8")
@@ -512,7 +520,12 @@ def test_sync_coordination_root_code_updates_code_and_preserves_data(tmp_path: P
     result = promotion.sync_coordination_root_code(candidate, status_root)
 
     assert result["outcome"] == "synced"
-    assert result["paths"] == ["scripts", ".orchestrator/*.py", ".orchestrator/rewrite"]
+    assert result["paths"] == [
+        "scripts",
+        ".orchestrator/*.py",
+        ".orchestrator/rewrite",
+        ".orchestrator/development_bridge",
+    ]
     assert (status_root / "scripts" / "ai_status.py").read_text(encoding="utf-8") == "# new version\n"
     assert stat.S_IMODE((status_root / "scripts" / "ai_status.py").stat().st_mode) & stat.S_IWUSR
     assert stat.S_IMODE((status_root / "scripts").stat().st_mode) & stat.S_IWUSR
@@ -520,6 +533,9 @@ def test_sync_coordination_root_code_updates_code_and_preserves_data(tmp_path: P
     assert (
         status_root / ".orchestrator" / "rewrite" / "task_machine.py"
     ).read_text(encoding="utf-8") == "# new task_machine\n"
+    assert (
+        status_root / ".orchestrator" / "development_bridge" / "dev_bridge_models.py"
+    ).read_text(encoding="utf-8") == "# new bridge model\n"
     # Live data must be byte-for-byte untouched.
     assert (status_root / "ai-status.json").read_text(encoding="utf-8") == live_status
     assert (status_root / ".orchestrator" / "state.json").read_text(encoding="utf-8") == '{"live": true}\n'
@@ -530,15 +546,23 @@ def test_sync_coordination_root_code_removes_retired_files(tmp_path: Path) -> No
     status_root = tmp_path / "status"
     (candidate / "scripts").mkdir(parents=True)
     (candidate / ".orchestrator" / "rewrite").mkdir(parents=True)
+    (candidate / ".orchestrator" / "development_bridge").mkdir()
     (candidate / "scripts" / "kept.py").write_text("# kept\n", encoding="utf-8")
+    (candidate / ".orchestrator" / "development_bridge" / "kept.py").write_text(
+        "# kept bridge\n", encoding="utf-8"
+    )
 
     (status_root / "scripts").mkdir(parents=True)
     (status_root / ".orchestrator" / "rewrite").mkdir(parents=True)
+    (status_root / ".orchestrator" / "development_bridge").mkdir()
     (status_root / "scripts" / "kept.py").write_text("# stale\n", encoding="utf-8")
     (status_root / "scripts" / "retired_script.py").write_text("# should be removed\n", encoding="utf-8")
     (status_root / ".orchestrator" / "retired_top_level.py").write_text("# gone\n", encoding="utf-8")
     (status_root / ".orchestrator" / "rewrite" / "retired_module.py").write_text(
         "# gone too\n", encoding="utf-8"
+    )
+    (status_root / ".orchestrator" / "development_bridge" / "retired_bridge.py").write_text(
+        "# gone bridge\n", encoding="utf-8"
     )
 
     result = promotion.sync_coordination_root_code(candidate, status_root)
@@ -547,6 +571,9 @@ def test_sync_coordination_root_code_removes_retired_files(tmp_path: Path) -> No
     assert not (status_root / "scripts" / "retired_script.py").exists()
     assert not (status_root / ".orchestrator" / "retired_top_level.py").exists()
     assert not (status_root / ".orchestrator" / "rewrite" / "retired_module.py").exists()
+    assert not (
+        status_root / ".orchestrator" / "development_bridge" / "retired_bridge.py"
+    ).exists()
     assert (status_root / "scripts" / "kept.py").read_text(encoding="utf-8") == "# kept\n"
 
 

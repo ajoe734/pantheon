@@ -485,10 +485,10 @@ def sync_coordination_root_code(candidate_root: Path, status_root: Path) -> dict
 
     Best-effort and independent of the supervisor replacement outcome: a
     failure here must never fail or roll back an otherwise-successful
-    supervisor replacement. It only affects a bare manual Human/Ops
-    invocation of status_root/scripts/ai-status.sh -- real auto workers
-    always route through PANTHEON_COMMAND_ROOT (the exact candidate_root
-    this copies from), so they are unaffected either way.
+    supervisor replacement. The supervisor dynamically imports the local
+    development_bridge package while draining governed task packets, so that
+    pure-code package is also explicitly synchronized. It must not lag the
+    exact candidate runtime or signer/model compatibility can diverge.
     """
 
     result: dict[str, Any] = {"outcome": "skipped", "paths": []}
@@ -504,6 +504,13 @@ def sync_coordination_root_code(candidate_root: Path, status_root: Path) -> dict
             status_root / ".orchestrator" / "rewrite",
         )
         result["paths"].append(".orchestrator/rewrite")
+        bridge_source = candidate_root / ".orchestrator" / "development_bridge"
+        if bridge_source.is_dir():
+            _sync_directory_tree(
+                bridge_source,
+                status_root / ".orchestrator" / "development_bridge",
+            )
+            result["paths"].append(".orchestrator/development_bridge")
         result["outcome"] = "synced"
     except Exception as exc:
         result["outcome"] = "failed"
