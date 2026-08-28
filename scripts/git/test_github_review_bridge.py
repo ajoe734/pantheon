@@ -42,6 +42,7 @@ class FakeRunner:
         workflow_id: int = 842691579,
         workflow_path: str = ".github/workflows/canonical-review-gate.yml",
         workflow_name: str = "Canonical Review Gate",
+        dispatch_requires_delivery_class: bool = False,
     ) -> None:
         self.review_error = review_error
         self.context_required = context_required
@@ -73,6 +74,7 @@ class FakeRunner:
         self.workflow_id = workflow_id
         self.workflow_path = workflow_path
         self.workflow_name = workflow_name
+        self.dispatch_requires_delivery_class = dispatch_requires_delivery_class
         self.reviews: list[dict[str, Any]] = []
         self.statuses: list[dict[str, Any]] = []
         self.calls: list[tuple[list[str], Mapping[str, Any] | None]] = []
@@ -206,6 +208,14 @@ class FakeRunner:
             if self.dispatch_error:
                 raise bridge.GitHubReviewBridgeError(self.dispatch_error)
             assert payload is not None
+            if (
+                self.dispatch_requires_delivery_class
+                and bridge.WORKFLOW_DISPATCH_DELIVERY_CLASS_INPUT
+                not in payload.get("inputs", {})
+            ):
+                raise bridge.GitHubReviewBridgeError(
+                    "gh: Required input 'delivery_class' not provided (HTTP 422)"
+                )
             self.dispatches.append(dict(payload))
             return None
         raise AssertionError(f"unexpected fake gh call: {command}")
@@ -1099,6 +1109,7 @@ class GitHubReviewBridgeTests(unittest.TestCase):
             workflow_id=342891579,
             workflow_path=".github/workflows/pantheon-canonical-review-gate.yml",
             workflow_name="Pantheon canonical review gate",
+            dispatch_requires_delivery_class=True,
         )
         bridge.bridge_operator_acceptance(
             repository=REPOSITORY,
@@ -1114,7 +1125,43 @@ class GitHubReviewBridgeTests(unittest.TestCase):
             for command, _payload in runner.calls
             if "actions/workflows/342891579/dispatches" in " ".join(command)
         ]
-        self.assertEqual(len(dispatched), 1)
+        self.assertEqual(len(dispatched), 2)
+        self.assertEqual(
+            runner.dispatches,
+            [
+                {
+                    "ref": "dev",
+                    "inputs": {
+                        "head_ref": "task/AUDIT-001",
+                        "head_sha": HEAD,
+                        "delivery_class": "product",
+                    },
+                }
+            ],
+        )
+
+    def test_operator_acceptance_does_not_retry_unknown_required_input(self) -> None:
+        runner = FakeRunner(
+            dispatch_error="gh: Required input 'unexpected' not provided (HTTP 422)"
+        )
+
+        with self.assertRaisesRegex(bridge.GitHubReviewBridgeError, "unexpected"):
+            bridge.bridge_operator_acceptance(
+                repository=REPOSITORY,
+                task_id="AUDIT-001",
+                actor="Human/Ops",
+                message="Do not guess unknown workflow inputs.",
+                binding=binding(),
+                runner=runner,
+            )
+
+        dispatches = [
+            command
+            for command, _payload in runner.calls
+            if "/actions/workflows/" in " ".join(command)
+            and "/dispatches" in " ".join(command)
+        ]
+        self.assertEqual(len(dispatches), 1)
 
     def test_reopen_does_not_dispatch_canonical_review_gate_workflow(self) -> None:
         runner = FakeRunner(
