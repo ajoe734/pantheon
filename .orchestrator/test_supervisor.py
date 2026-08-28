@@ -5778,6 +5778,52 @@ class DurableWorkerRecoveryTests(unittest.TestCase):
                 first_id,
             )
 
+    def test_pending_recovery_is_released_after_responsibility_moves_to_review(self) -> None:
+        state = self._state(healthy=False)
+        worker = self._worker()
+        receipt = supervisor.build_lost_lease_receipt(
+            self.config,
+            worker,
+            self.task,
+            reason_kind="worker_process_missing",
+            reason="worker disappeared",
+        )
+        with mock.patch.object(
+            supervisor, "sync_status_pipeline", side_effect=self._drain_status_outbox
+        ):
+            self.assertTrue(
+                supervisor.persist_worker_recovery_receipt(
+                    self.config,
+                    receipt,
+                    expected_owner="Codex",
+                    expected_reviewer="Codex2",
+                    expected_status="in_progress",
+                    expected_generation=1,
+                )
+            )
+            handed_off = supervisor.load_status(self.config)
+            handed_off_task = handed_off["tasks"][0]
+            handed_off_task["status"] = "review"
+            supervisor.write_status(
+                self.config, handed_off, source="test-owner-handoff"
+            )
+
+            self.assertTrue(
+                supervisor.reconcile_pending_worker_recoveries(self.config, state)
+            )
+
+        resolved = supervisor.load_status(self.config)
+        resolved_task = resolved["tasks"][0]
+        resolved_receipt = resolved[supervisor.WORKER_RECOVERY_RECEIPTS_KEY][
+            receipt["receipt_id"]
+        ]
+        self.assertEqual(resolved_task["status"], "review")
+        self.assertEqual(resolved_task["generation"], 2)
+        self.assertEqual((resolved_task["owner"], resolved_task["reviewer"]), ("Codex", "Codex2"))
+        self.assertNotIn(supervisor.WORKER_RECOVERY_TASK_KEY, resolved_task)
+        self.assertEqual(resolved_receipt["status"], "resolved")
+        self.assertNotIn(receipt["receipt_id"], state[supervisor.WORKER_RECOVERY_RECEIPTS_KEY])
+
 
 class RuntimeAndFailureSemanticsTests(unittest.TestCase):
     @staticmethod
@@ -6466,6 +6512,95 @@ class WorkerLeaseApprovalWaitProgressTests(unittest.TestCase):
 
         recover.assert_called_once()
         terminal.assert_not_called()
+
+    def test_successful_dead_owner_after_handoff_reaps_without_lost_lease(self) -> None:
+        config = config_fixture()
+        task = task_fixture(status="review")
+        worker = RuntimeAndFailureSemanticsTests._owner_worker(generation=1)
+        worker.update({"runner_status": "completed", "exit_code": 0})
+        state = {
+            "workers": {"run-owner": worker},
+            "queue": {
+                "events": {
+                    "evt-owner": {
+                        "status": "started",
+                        "intent": {"event_id": "evt-owner"},
+                    }
+                }
+            },
+        }
+        observation = {
+            "changed": False,
+            "alive": False,
+            "meaningful_progress_advanced": False,
+            "commit_progress_advanced": False,
+            "lease_expired": False,
+            "stop": True,
+        }
+
+        with (
+            mock.patch.object(supervisor, "load_approval_state", return_value={}),
+            mock.patch.object(supervisor, "load_status", return_value={"tasks": [task]}),
+            mock.patch.object(supervisor, "retry_due_workers", return_value=False),
+            mock.patch.object(supervisor, "recent_governance_activity_events", return_value=[]),
+            mock.patch.object(
+                supervisor, "poll_worker_orphan_stage", return_value={"changed": False, "stop": False}
+            ),
+            mock.patch.object(supervisor, "poll_worker_observation_stage", return_value=observation),
+            mock.patch.object(supervisor, "recover_lost_worker_lease") as recover,
+            mock.patch.object(supervisor, "reconcile_pending_worker_recoveries", return_value=False),
+            mock.patch.object(supervisor, "write_activity_log"),
+            mock.patch.object(supervisor, "record_worker_runtime_measurement"),
+        ):
+            self.assertTrue(supervisor.poll_workers(config, state))
+
+        recover.assert_not_called()
+        self.assertEqual(worker["status"], "completed")
+        self.assertEqual(state["queue"]["events"]["evt-owner"]["status"], "completed")
+
+    def test_successful_dead_owner_without_handoff_keeps_lost_lease_recovery(self) -> None:
+        config = config_fixture()
+        task = task_fixture(status="in_progress")
+        worker = RuntimeAndFailureSemanticsTests._owner_worker(generation=1)
+        worker.update({"runner_status": "completed", "exit_code": 0})
+        state = {
+            "workers": {"run-owner": worker},
+            "queue": {
+                "events": {
+                    "evt-owner": {
+                        "status": "started",
+                        "intent": {"event_id": "evt-owner"},
+                    }
+                }
+            },
+        }
+        observation = {
+            "changed": False,
+            "alive": False,
+            "meaningful_progress_advanced": False,
+            "commit_progress_advanced": False,
+            "lease_expired": False,
+            "stop": True,
+        }
+
+        with (
+            mock.patch.object(supervisor, "load_approval_state", return_value={}),
+            mock.patch.object(supervisor, "load_status", return_value={"tasks": [task]}),
+            mock.patch.object(supervisor, "retry_due_workers", return_value=False),
+            mock.patch.object(supervisor, "recent_governance_activity_events", return_value=[]),
+            mock.patch.object(
+                supervisor, "poll_worker_orphan_stage", return_value={"changed": False, "stop": False}
+            ),
+            mock.patch.object(supervisor, "poll_worker_observation_stage", return_value=observation),
+            mock.patch.object(supervisor, "recover_lost_worker_lease", return_value=True) as recover,
+            mock.patch.object(supervisor, "reconcile_pending_worker_recoveries", return_value=False),
+            mock.patch.object(supervisor, "write_activity_log"),
+            mock.patch.object(supervisor, "record_worker_runtime_measurement"),
+        ):
+            self.assertTrue(supervisor.poll_workers(config, state))
+
+        recover.assert_called_once()
+        self.assertEqual(worker["status"], "running")
 
 
 class ProviderStreamLifecycleTests(unittest.TestCase):

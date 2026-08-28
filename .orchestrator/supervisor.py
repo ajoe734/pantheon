@@ -5496,6 +5496,66 @@ def worker_runner_succeeded(worker: dict[str, Any]) -> bool:
     return exit_code == 0 and not worker.get("runner_signal")
 
 
+def worker_dispatch_responsibility(worker: Mapping[str, Any]) -> str | None:
+    """Return the task lane that was assigned to this worker run.
+
+    The dispatch reason is captured with the worker request and is therefore
+    stable even after the task has advanced to its next lifecycle phase.
+    """
+
+    dispatch_reason = str(
+        (worker.get("request_snapshot") or {}).get("reason") or ""
+    ).strip()
+    if dispatch_reason == REASON_REVIEW_READY:
+        return "reviewer"
+    if dispatch_reason in {
+        REASON_OWNED_READY,
+        REASON_OWNED_IN_PROGRESS,
+        REASON_OWNED_FINALIZE,
+    }:
+        return "owner"
+    return None
+
+
+def task_current_dispatch_responsibility(
+    config: dict[str, Any], task: Mapping[str, Any]
+) -> str | None:
+    """Return the lane currently responsible for an open task lifecycle phase."""
+
+    settings = ready_dispatch_settings(config)
+    task_status = str(task.get("status") or "").strip().lower()
+    if task_status in normalized_status_set(settings.get("review_statuses"), ["review"]):
+        return "reviewer"
+    if task_status in (
+        normalized_status_set(settings.get("owned_statuses"), ["todo", "in_progress"])
+        | normalized_status_set(settings.get("finalize_statuses"), ["review_approved"])
+    ):
+        return "owner"
+    return None
+
+
+def worker_completed_after_responsibility_transition(
+    config: dict[str, Any],
+    worker: Mapping[str, Any],
+    task: Mapping[str, Any] | None,
+) -> bool:
+    """Whether a successful exited worker already handed responsibility onward.
+
+    This is intentionally narrower than a task completion proof.  It does
+    not approve product delivery or infer a lifecycle event.  It only prevents
+    a dead worker that reported success from creating a lost-lease recovery
+    fence after canonical task state has already moved to another lane (or a
+    terminal state).
+    """
+
+    if not isinstance(task, Mapping) or not worker_runner_succeeded(dict(worker)):
+        return False
+    dispatched_role = worker_dispatch_responsibility(worker)
+    if dispatched_role is None:
+        return False
+    return task_current_dispatch_responsibility(config, task) != dispatched_role
+
+
 def worker_heartbeat_is_stale(config: dict[str, Any], worker: dict[str, Any], now: datetime | None = None) -> bool:
     settings = worker_runtime_settings(config)
     heartbeat_dt = _parse_iso_utc(str(worker.get("last_heartbeat_at") or ""))
@@ -8856,6 +8916,116 @@ def persist_worker_recovery_receipt(
     return sync_status_pipeline(config)
 
 
+def worker_recovery_responsibility_is_obsolete(
+    config: dict[str, Any],
+    task: Mapping[str, Any],
+    receipt: Mapping[str, Any],
+) -> bool:
+    """Whether a pending recovery no longer owns the task's current lane."""
+
+    recovery_role = str(receipt.get("recovery_role") or "").strip()
+    if recovery_role not in {"owner", "reviewer"}:
+        return False
+    return task_current_dispatch_responsibility(config, task) != recovery_role
+
+
+def _resolve_obsolete_worker_recovery_receipt_locked(
+    config: dict[str, Any],
+    *,
+    receipt_id: str,
+    task_id: str,
+) -> bool:
+    """Release a pending fence after canonical responsibility moved onward.
+
+    A recovery receipt protects reassignment while its lane remains current.
+    Once canonical state has moved to another lane, retaining that fence only
+    blocks the successor.  This transaction changes receipt bookkeeping and
+    emits an auditable event; it deliberately leaves task status, assignment,
+    and generation untouched.
+    """
+
+    status = load_status(config)
+    if status.get("status_activity_outbox") not in (None, {}, []):
+        return False
+    task = task_index_from_status(config, status).get(task_id)
+    if task is None:
+        return False
+    receipt = _canonical_worker_recovery_receipt(status, task)
+    if (
+        receipt is None
+        or str(receipt.get("receipt_id") or "") != receipt_id
+        or str(receipt.get("status") or "") != "pending"
+        or not worker_recovery_responsibility_is_obsolete(config, task, receipt)
+    ):
+        return False
+
+    timestamp = utc_now()
+    previous_role = str(receipt.get("recovery_role") or "owner")
+    current_role = task_current_dispatch_responsibility(config, task)
+    receipt.update(
+        {
+            "status": "resolved",
+            "resolved_at": timestamp,
+            "resolved_reason": (
+                "canonical task responsibility moved from "
+                f"{previous_role} to {current_role or 'terminal/non-dispatch'}"
+            ),
+        }
+    )
+    receipts = status.get(WORKER_RECOVERY_RECEIPTS_KEY)
+    if not isinstance(receipts, dict):
+        return False
+    receipts[receipt_id] = deepcopy(receipt)
+    task.pop(WORKER_RECOVERY_TASK_KEY, None)
+    task["last_update"] = timestamp
+    task["next"] = (
+        f"Supervisor released stale lost-lease fence {receipt_id}: "
+        f"canonical responsibility moved from {previous_role} to "
+        f"{current_role or 'terminal/non-dispatch'}.")
+    event = _worker_recovery_activity_event(
+        receipt,
+        event_type="worker_lost_lease_recovery_resolved",
+        timestamp=timestamp,
+        message=str(task["next"]),
+    )
+    composed = _compose_status_activity_outbox(
+        status.get("status_activity_outbox"), event
+    )
+    if composed is None:
+        return False
+    status["status_activity_outbox"] = composed
+    _prune_worker_recovery_receipts(status, current_receipt_id=receipt_id)
+    write_status(config, status, source="supervisor-worker-recovery-resolved")
+    return True
+
+
+def resolve_obsolete_worker_recovery_receipt(
+    config: dict[str, Any],
+    *,
+    receipt_id: str,
+    task_id: str,
+) -> bool:
+    """Atomically release a recovery fence made obsolete by a handoff."""
+
+    if not receipt_id or not task_id:
+        return False
+    status_path = config_path(config, "status_file")
+    with canonical_task_state_lock_file(
+        status_path,
+        shared=False,
+        nonblocking=False,
+    ):
+        applied = _resolve_obsolete_worker_recovery_receipt_locked(
+            config,
+            receipt_id=receipt_id,
+            task_id=task_id,
+        )
+    if not applied:
+        return False
+    sync_status_pipeline(config)
+    return True
+
+
 def _persist_task_reassignment_locked(
     config: dict[str, Any],
     *,
@@ -10979,6 +11149,30 @@ def poll_workers(
         )
         if lease_expired or missing_process:
             task = task_map.get(str(worker.get("task_id") or ""))
+            if missing_process and worker_completed_after_responsibility_transition(
+                config, worker, task
+            ):
+                worker["status"] = "completed"
+                worker["last_event_at"] = utc_now()
+                worker.pop("last_error", None)
+                finalize_queue_event_record(config, state, worker, "completed")
+                write_activity_log(
+                    config,
+                    {
+                        "type": "worker_completed",
+                        "provider": worker.get("provider"),
+                        "task_id": worker.get("task_id"),
+                        "message": (
+                            "Worker runner succeeded and canonical task responsibility "
+                            "already advanced to its successor lane."
+                        ),
+                        "worker_run_id": worker.get("run_id"),
+                        "pr_url": worker.get("pr_url"),
+                        "session_url": worker.get("session_url"),
+                    },
+                )
+                changed = True
+                continue
             terminal = canonical_worker_terminal_status(
                 config,
                 worker,
@@ -12487,6 +12681,21 @@ def reconcile_pending_worker_recoveries(
         if receipt is None:
             continue
         changed = _adopt_worker_recovery_receipt(state, receipt) or changed
+        if (
+            str(receipt.get("status") or "") == "pending"
+            and worker_recovery_responsibility_is_obsolete(config, task, receipt)
+        ):
+            if resolve_obsolete_worker_recovery_receipt(
+                config,
+                receipt_id=str(receipt.get("receipt_id") or ""),
+                task_id=str(task.get("id") or ""),
+            ):
+                runtime_receipts = state.get(WORKER_RECOVERY_RECEIPTS_KEY)
+                if isinstance(runtime_receipts, dict):
+                    runtime_receipts.pop(str(receipt.get("receipt_id") or ""), None)
+                changed = True
+                status = load_status(config)
+            continue
         if str(receipt.get("status") or "") == "reassigned":
             receipt_id = str(receipt.get("receipt_id") or "")
             task_id = str(task.get("id") or "")
