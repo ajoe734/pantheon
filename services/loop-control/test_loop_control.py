@@ -17,6 +17,7 @@ conformance_module = importlib.import_module("services.loop-control.conformance"
 CANONICAL_LOOP_IDS = conformance_module.CANONICAL_LOOP_IDS
 CONTROLLER_RECORD_FIELDS = conformance_module.CONTROLLER_RECORD_FIELDS
 assert_controller_record_conforms = conformance_module.assert_controller_record_conforms
+ControllerRecordConformanceError = conformance_module.ControllerRecordConformanceError
 
 
 @pytest.mark.asyncio
@@ -522,3 +523,169 @@ def test_all_twelve_loops_share_the_complete_controller_contract(loop_id):
 
     assert set(CONTROLLER_RECORD_FIELDS) == set(record)
     assert_controller_record_conforms(record)
+
+
+def test_loop_12_payload_satisfies_shared_conformance():
+    now = datetime.now(timezone.utc)
+    loop_12_record = {
+        "loop_id": "bff_health_monitoring",
+        "tenant_id": "default",
+        "environment": "dev",
+        "controller_id": "bff_downstream_health_monitor-inst1",
+        "controller_name": "bff_downstream_health_monitor",
+        "deployment_sha": "sha-loop12-conforming",
+        "desired_state_query": "SELECT count(*) FROM bff_downstream_health_targets",
+        "actual_state_query": "SELECT count(*) FROM downstream_health_probe_state WHERE ok=1",
+        "desired_state": {
+            "present": True,
+            "source": "bff-downstream-health-config",
+            "checked_at": now,
+            "probe_targets_count": 12,
+        },
+        "downstream_actual_state": {
+            "status": "ready",
+            "source": "bff-downstream-health-probes",
+            "checked_at": now,
+            "healthy_targets_count": 12,
+            "total_targets_count": 12,
+        },
+        "last_heartbeat_at": now,
+        "last_tick_at": now,
+        "last_success_at": now,
+        "last_failure_at": None,
+        "last_failure_reason": None,
+        "last_repair_at": None,
+        "last_repair_reason": None,
+        "backlog": 0,
+        "lag": 0,
+        "dlq_count": 0,
+        "evidence_refs": ["services/control-plane/bff/downstream_health_monitor.py"],
+        "truth_level": "reconciled_live_proof",
+        "lease_token": "fence-loop12",
+        "lease_expires_at": now + timedelta(seconds=60),
+        "payload": {
+            "probe_targets": ["runtime-manager", "paper-fleet-reconciler"],
+        },
+    }
+
+    assert_controller_record_conforms(loop_12_record)
+
+
+def test_nonconforming_loop_12_payload_rejected_by_store_and_conformance():
+    now = datetime.now(timezone.utc)
+    # Nonconforming payload lacking required boolean 'present' in desired_state
+    nonconforming_record = {
+        "loop_id": "bff_health_monitoring",
+        "tenant_id": "default",
+        "environment": "dev",
+        "controller_id": "bff_downstream_health_monitor-inst1",
+        "controller_name": "bff_downstream_health_monitor",
+        "deployment_sha": "sha-loop12-nonconforming",
+        "desired_state_query": "SELECT count(*) FROM bff_downstream_health_targets",
+        "actual_state_query": "SELECT count(*) FROM downstream_health_probe_state WHERE ok=1",
+        "desired_state": {
+            # missing present: bool
+            "probe_targets_count": 12,
+        },
+        "downstream_actual_state": {
+            "status": "ready",
+            "checked_at": now.isoformat(),
+        },
+        "last_heartbeat_at": now.isoformat(),
+        "last_tick_at": now.isoformat(),
+        "last_success_at": now.isoformat(),
+        "last_failure_at": None,
+        "last_failure_reason": None,
+        "last_repair_at": None,
+        "last_repair_reason": None,
+        "backlog": 0,
+        "lag": 0,
+        "dlq_count": 0,
+        "evidence_refs": ["services/control-plane/bff/downstream_health_monitor.py"],
+        "truth_level": "reconciled_live_proof",
+        "lease_token": "fence-loop12",
+        "lease_expires_at": (now + timedelta(seconds=60)).isoformat(),
+        "payload": {},
+    }
+
+    with pytest.raises(ControllerRecordConformanceError):
+        assert_controller_record_conforms(nonconforming_record)
+
+
+@pytest.mark.asyncio
+async def test_monitor_probe_cannot_mutate_another_loop_controller_record(
+    loop_control_db_dsn,
+):
+    """Ensure Loop 12 writer cannot overwrite Loop 9 (capital_pool_execution) record."""
+    store = LoopControllerStore(loop_control_db_dsn)
+    now = datetime.now(timezone.utc)
+
+    # 1. Capital loop publishes its genuine record
+    capital_writer = LoopControllerWriter(
+        loop_control_db_dsn,
+        tenant_id="default",
+        environment="test",
+        controller_id="capital-controller-1",
+        controller_name="capital-pool-execution-controller",
+        deployment_sha="sha-capital-real",
+        lease_token="capital-fence-token",
+        lease_duration_seconds=60,
+    )
+    await capital_writer.record_heartbeat(
+        loop_id="capital_pool_execution",
+        truth_level="reconciled_live_proof",
+        desired_state={
+            "present": True,
+            "source": "capital-runtime-binding-store",
+            "checked_at": now,
+        },
+        downstream_actual_state={
+            "status": "running",
+            "source": "paper-fleet-worker-status",
+            "checked_at": now,
+        },
+        evidence_refs=["runtime:capital:active"],
+    )
+
+    # 2. Monitor Loop 12 publishes its own record for bff_health_monitoring
+    monitor_writer = LoopControllerWriter(
+        loop_control_db_dsn,
+        tenant_id="default",
+        environment="test",
+        controller_id="bff-monitor-instance-1",
+        controller_name="bff_downstream_health_monitor",
+        deployment_sha="sha-bff-real",
+        lease_token="monitor-fence-token",
+        lease_duration_seconds=60,
+    )
+    await monitor_writer.record_heartbeat(
+        loop_id="bff_health_monitoring",
+        truth_level="reconciled_live_proof",
+        desired_state={
+            "present": True,
+            "source": "bff-downstream-health-config",
+            "checked_at": now,
+        },
+        downstream_actual_state={
+            "status": "degraded",
+            "source": "bff-downstream-health-probes",
+            "checked_at": now,
+        },
+        evidence_refs=["runtime:bff:probes"],
+    )
+
+    # 3. Verify capital_pool_execution record is completely untouched by monitor
+    capital_rec = await store.get_record("capital_pool_execution", "default", "test")
+    assert capital_rec is not None
+    assert capital_rec["controller_id"] == "capital-controller-1"
+    assert capital_rec["controller_name"] == "capital-pool-execution-controller"
+    assert capital_rec["downstream_actual_state"]["status"] == "running"
+    assert capital_rec["evidence_refs"] == ["runtime:capital:active"]
+
+    # 4. Monitor writer cannot hijack capital_pool_execution with a foreign lease token
+    with pytest.raises(ControllerLeaseConflict):
+        await monitor_writer.record_failure(
+            loop_id="capital_pool_execution",
+            reason="downstream probe failed on paper-fleet-reconciler",
+        )
+
