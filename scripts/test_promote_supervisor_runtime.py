@@ -28,6 +28,9 @@ def _command_runtime_parent(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
             "command_root": str(Path(root).resolve()),
         },
     )
+    monkeypatch.setenv(
+        "BRIDGE_SIGNING_PUBLIC_KEYS_JSON", '{"test-key":"public-test-key"}'
+    )
     yield
     # Promotion deliberately makes command runtimes read-only. Restore owner
     # write/traverse permission so pytest can remove its temporary directory.
@@ -252,6 +255,57 @@ def test_launch_detaches_supervisor_output_from_the_calling_terminal(
     assert captured["stderr"] == subprocess.STDOUT
     assert log_path.read_bytes() == b"launched\n"
     assert log_path.stat().st_mode & 0o777 == 0o600
+
+
+def test_launch_uses_public_authority_file_and_strips_private_signing_authority(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+    authority_env = tmp_path / "supervisor-authority-public.env"
+    authority_env.write_text(
+        "BRIDGE_SIGNING_PUBLIC_KEYS_JSON='{\"promoted\":\"public-key\"}'\n",
+        encoding="utf-8",
+    )
+    authority_env.chmod(0o600)
+    monkeypatch.setenv("BRIDGE_SIGNING_PRIVATE_KEY", "must-not-reach-supervisor")
+    monkeypatch.setattr(
+        promotion.subprocess,
+        "Popen",
+        lambda _argv, **kwargs: captured.update(kwargs) or SimpleNamespace(pid=42),
+    )
+
+    promotion.launch_v2_supervisor(
+        {"watchdog": {"supervisor_command": ["python3", "supervisor.py"]}},
+        identity={
+            "root": str(tmp_path),
+            "head": "a" * 40,
+            "repository": "https://github.com/ajoe734/pantheon.git",
+        },
+        status_root=tmp_path,
+        authority_env_file=authority_env,
+    )
+
+    environment = captured["env"]
+    assert isinstance(environment, dict)
+    assert environment["BRIDGE_SIGNING_PUBLIC_KEYS_JSON"] == '{"promoted":"public-key"}'
+    assert "BRIDGE_SIGNING_PRIVATE_KEY" not in environment
+
+
+def test_launch_rejects_invalid_public_authority_file(tmp_path: Path) -> None:
+    authority_env = tmp_path / "supervisor-authority-public.env"
+    authority_env.write_text("BRIDGE_SIGNING_PRIVATE_KEY='no'\n", encoding="utf-8")
+    authority_env.chmod(0o600)
+
+    with pytest.raises(ValueError, match="invalid public supervisor authority entry"):
+        promotion.supervisor_launch_environment({}, authority_env_file=authority_env)
+
+
+def test_launch_rejects_a_missing_verifier_map(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("BRIDGE_SIGNING_PUBLIC_KEYS_JSON")
+
+    with pytest.raises(ValueError, match="BRIDGE_SIGNING_PUBLIC_KEYS_JSON must be valid JSON"):
+        promotion.supervisor_launch_environment({})
 
 
 def test_replace_has_only_stop_install_launch_and_never_rolls_back(
