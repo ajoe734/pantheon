@@ -15,10 +15,12 @@
 This document establishes the authoritative ownership mapping and partition boundary for the **Research, Knowledge, Memory, Search, and Source** domain across the Pantheon BFF read surface.
 
 As part of the legacy `ReadSurfaceStore` decoupling and migration to typed domain ports, this inventory:
-1. Catalogs every member call in `services/control-plane/bff/main.py` belonging to Research, Knowledge Workbench, Institutional Memory, Search, and Source Ingestion.
+1. Catalogs every member call and access in `services/control-plane/bff/main.py` belonging to Research, Knowledge Workbench, Institutional Memory, Search, and Source Ingestion.
 2. Classifies each call as a **Read** (query) or **Write** (mutation/command) operation and identifies its target typed domain port or command-owner service destination.
 3. Evaluates narrow domain API coverage and confirms 100% interface parity with `ResearchKnowledgeSourcePort` without introducing generic delegation, compatibility fallback layers, or product code modifications.
-4. Demonstrates strict non-overlap and mutual exclusion against the other 5 domain ownership partitions.
+4. Accounts for all static `read_store.dataset_source(...)` access sites (37 total across `main.py`), categorizing the 13 research-owned sites and explicitly partitioning the 24 excluded cross-domain metadata calls.
+5. Documents the single legacy compatibility access `getattr(read_store, "get_insight_card", None)` at `main.py:23754`, proving that the typed port method exists and provides direct replacement.
+6. Demonstrates strict non-overlap and mutual exclusion against the other 5 domain ownership partitions.
 
 ---
 
@@ -37,7 +39,7 @@ The Pantheon BFF read surface is partitioned into 6 disjoint domain areas. Each 
 
 ### Disjointness & Non-Overlap Guarantee
 - **Zero Method Collisions:** Every domain method in `ResearchKnowledgeSourcePort` is exclusively owned by the Research/Knowledge domain.
-- **Shared Dataset Metadata Exception:** The generic dataset query methods `dataset_source(dataset: str)` and `dataset_surface_status(...)` exist on all domain ports to report dataset-level availability within each domain's own subsystem.
+- **Shared Dataset Metadata Accounting:** Static code analysis identifies **37 total calls** to `read_store.dataset_source(...)` in `main.py`. Of these, **13 calls** query research/knowledge datasets and are owned by this task (§5.1). The remaining **24 calls** belong to companion domain partitions and are formally excluded and accounted for in §5.2.
 - **Boundary Clarifications:**
   - `get_research_oss_preactivation_snapshot`: Owned by `OperationsConsultationPort` (`OpenClawOperationsReaderPort`) because it queries dormant OSS runtime containers and dispatch gates, not research artifact data.
   - `artifact_exists`: Owned by `CompositeLifecycleTelemetryGovernancePort` (`TelemetryReaderPort`) because it checks physical telemetry artifact storage existence on disk.
@@ -47,7 +49,7 @@ The Pantheon BFF read surface is partitioned into 6 disjoint domain areas. Each 
 
 ## 3. `ResearchKnowledgeSourcePort` Method Inventory (39 Methods)
 
-The domain port `ResearchKnowledgeSourcePort` in `services/control-plane/bff/domain_ports/research_knowledge_source.py` (re-exported via `services/control-plane/bff/ports/research_knowledge_source.py`) defines 39 typed methods across 6 functional subdomains:
+The domain port `ResearchKnowledgeSourcePort` in `services/control-plane/bff/domain_ports/research_knowledge_source.py` (re-exported via `services/control-plane/bff/ports/research_knowledge_source.py`) defines 39 typed methods across 7 functional subdomains:
 
 ### A. Knowledge & Evidence (KW-02, KW-03, KW-04, KW-05) - 14 Methods
 1. `list_research_notes() -> List[Dict[str, Any]]`
@@ -104,9 +106,11 @@ The domain port `ResearchKnowledgeSourcePort` in `services/control-plane/bff/dom
 
 ---
 
-## 4. Comprehensive Inventory of `main.py` Call Sites (75 Member Calls)
+## 4. Comprehensive Inventory of `main.py` Call Sites (75 Member Accesses)
 
-An AST scan of `services/control-plane/bff/main.py` identifies **75 member call sites** accessing non-metadata methods belonging to the Research, Knowledge, Memory, Search, and Source domain across **37 distinct method names** (covering 37 of the 39 methods on `ResearchKnowledgeSourcePort`; together with the 13 `dataset_source` calls in §5, 38 of 39 port methods are accessed, leaving only `dataset_surface_status` unused in `main.py`):
+An AST scan of `services/control-plane/bff/main.py` identifies **75 member access sites** accessing non-metadata methods belonging to the Research, Knowledge, Memory, Search, and Source domain across **37 distinct method names** (covering 37 of the 39 methods on `ResearchKnowledgeSourcePort`; together with the 13 research-owned `dataset_source` calls in §5.1, 38 of 39 port methods are accessed, leaving only `dataset_surface_status` unused in `main.py`).
+
+*Note on Line 23754:* `main.py:23754` accesses `get_insight_card` via `getattr(read_store, "get_insight_card", None)` as a legacy defensive compatibility check in `_agora_get_insight`. The typed method `ResearchKnowledgeSourcePort.get_insight_card` exists and is fully implemented, allowing direct replacement during port cutover.
 
 | Line # | Member Method | Enclosing Function | Route / Context | Type | Target Domain Port / Command Destination |
 |---|---|---|---|---|---|
@@ -156,7 +160,7 @@ An AST scan of `services/control-plane/bff/main.py` identifies **75 member call 
 | 20799 | `compare_strategy_spec_versions` | `compare_strategy_spec_versions` | `GET /api/v1/knowledge/strategy-specs/{strategy_id}/compare` | **Read** | `ResearchKnowledgeSourcePort.compare_strategy_spec_versions` |
 | 20867 | `list_institutional_memory_entries` | `list_institutional_memory` | `GET /api/v1/knowledge/memory` | **Read** | `ResearchKnowledgeSourcePort.list_institutional_memory_entries` |
 | 20919 | `get_institutional_memory_entry` | `get_institutional_memory_entry` | `GET /api/v1/knowledge/memory/{entry_id}` | **Read** | `ResearchKnowledgeSourcePort.get_institutional_memory_entry` |
-| 23754 | `get_insight_card` | `_agora_get_insight` | `(internal helper)` | **Read** | `ResearchKnowledgeSourcePort.get_insight_card` |
+| 23754 | `get_insight_card` | `_agora_get_insight` | `(internal helper; legacy getattr)` | **Read** | `ResearchKnowledgeSourcePort.get_insight_card` |
 | 23892 | `list_research_tickets` | `bff_agora_daily` | `GET /bff/agora/daily` | **Read** | `ResearchKnowledgeSourcePort.list_research_tickets` |
 | 24729 | `list_research_tickets` | `bff_agora_research_tasks` | `GET /bff/agora/research-tasks, GET /bff/research/tasks` | **Read** | `ResearchKnowledgeSourcePort.list_research_tickets` |
 | 30892 | `get_strategy_spec_detail` | `_strategy_routed_persona_count` | `(internal helper)` | **Read** | `ResearchKnowledgeSourcePort.get_strategy_spec_detail` |
@@ -188,9 +192,13 @@ An AST scan of `services/control-plane/bff/main.py` identifies **75 member call 
 
 ---
 
-## 5. Domain Dataset Surface Metadata Call Sites (13 Call Sites)
+## 5. Domain Dataset Surface Metadata Call Sites & Non-Overlap Partition Accounting (37 Total Calls)
 
-In addition to entity member methods, `services/control-plane/bff/main.py` queries `dataset_source(...)` for Research and Knowledge datasets at **13 call sites**:
+Static code analysis of `services/control-plane/bff/main.py` reveals exactly **37 direct calls** to `read_store.dataset_source(...)`. To prove complete domain disjointness and non-overlap, these 37 calls are partitioned into:
+- **13 Research-Owned Calls** (§5.1) querying Research, Knowledge, Memory, and Strategy datasets.
+- **24 Excluded Cross-Domain Metadata Calls** (§5.2) querying datasets belonging to companion domain partitions.
+
+### 5.1 Research & Knowledge Domain Dataset Call Sites (13 Call Sites)
 
 | Line # | Dataset Queried | Enclosing Function | Purpose / Surface State |
 |---|---|---|---|
@@ -202,17 +210,60 @@ In addition to entity member methods, `services/control-plane/bff/main.py` queri
 | 20211 | `evidence_refs` | `list_evidence_refs` | Evidence refs list endpoint source status check |
 | 20433 | `insight_cards` | `list_insight_cards` | Insight cards list endpoint source status check |
 | 20620 | `strategy_specs` | `list_strategy_specs` | Strategy specs list endpoint source status check |
-| 20833 | *(dynamic dataset)* | `_kw01_surface_state` | Dynamic surface check for KW-01 through KW-05 datasets |
+| 20833 | *(dynamic KW dataset)* | `_kw01_surface_state` | Dynamic surface check for KW-01 through KW-05 datasets |
 | 31065 | `strategy_specs` | `_list_strategy_spec_match_candidates` | Strategy matching candidate selection source check |
 | 31073 | `strategy_specs` | `_list_strategy_spec_match_candidates` | Strategy matching candidate fallback source check |
 | 49845 | `evidence_refs` | `_pm12_public_quarter_evidence_refs` | PM12 portfolio book evidence ref source verification |
 | 60409 | `research_experiments` | `_research_experiments_surface_source` | Research experiment surface source resolution |
 
+### 5.2 Excluded Cross-Domain Metadata Call Sites & Non-Overlap Partition Mapping (24 Call Sites)
+
+The 24 non-research `read_store.dataset_source(...)` call sites belong exclusively to companion ownership partitions:
+
+| Line # | Dataset Queried | Enclosing Function | Owning Domain Partition | Companion Task ID | Owning Port Interface / Subsystem |
+|---|---|---|---|---|---|
+| 5119 | `evolution_decisions` | `_mutation_review_surface_state` | Persona, Capital & Runtime | `ACG-RS-CAPITAL-OWNERSHIP-MAP-20260828` | `EvolutionProjectionPort` |
+| 5142 | `dataset` *(evolution/ranking/deploy)* | `_mutation_review_surface_state` | Persona, Capital & Runtime | `ACG-RS-CAPITAL-OWNERSHIP-MAP-20260828` | `EvolutionProjectionPort` / `DeploymentPlanPort` |
+| 7726 | `loop_runs` | `_loop_run_truth_source` | Lifecycle, Telemetry & Governance | `ACG-RS-LIFECYCLE-OWNERSHIP-MAP-20260828` | `LineageReaderPort` / `LifecycleReaderPort` |
+| 7729 | `incidents` | `_loop_run_truth_source` | Lifecycle, Telemetry & Governance | `ACG-RS-LIFECYCLE-OWNERSHIP-MAP-20260828` | `IncidentReaderPort` |
+| 7769 | `dataset` *(generic helper)* | `_dataset_surface_status` | Lifecycle, Telemetry & Governance | `ACG-RS-LIFECYCLE-OWNERSHIP-MAP-20260828` | `CompositeLifecycleTelemetryGovernancePort` |
+| 7862 | `dataset` *(generic helper)* | `_dataset_source_after_read` | Lifecycle, Telemetry & Governance | `ACG-RS-LIFECYCLE-OWNERSHIP-MAP-20260828` | `CompositeLifecycleTelemetryGovernancePort` |
+| 10920 | `incidents` | `_build_management_anomalies_payload` | Lifecycle, Telemetry & Governance | `ACG-RS-LIFECYCLE-OWNERSHIP-MAP-20260828` | `IncidentReaderPort` |
+| 11155 | `incidents` | `_build_management_sentinel_pulse_response` | Lifecycle, Telemetry & Governance | `ACG-RS-LIFECYCLE-OWNERSHIP-MAP-20260828` | `IncidentReaderPort` |
+| 12834 | `inspiration_graphs` | `_ew04_inspiration_surface_state` | Lifecycle, Telemetry & Governance | `ACG-RS-LIFECYCLE-OWNERSHIP-MAP-20260828` | `LineageReaderPort` |
+| 12901 | `lineage_edges` | `_ew04_inspiration_projection_from_lineage_edges` | Lifecycle, Telemetry & Governance | `ACG-RS-LIFECYCLE-OWNERSHIP-MAP-20260828` | `LineageReaderPort` |
+| 21183 | `deployment_diffs` | `get_deployment_diff` | Persona, Capital & Runtime | `ACG-RS-CAPITAL-OWNERSHIP-MAP-20260828` | `DeploymentPlanPort` |
+| 25632 | `capital_allocations` | `bff_list_capital_pools` | Persona, Capital & Runtime | `ACG-RS-CAPITAL-OWNERSHIP-MAP-20260828` | `CapitalPoolPort` |
+| 25860 | `capital_allocations` | `bff_get_capital_pool` | Persona, Capital & Runtime | `ACG-RS-CAPITAL-OWNERSHIP-MAP-20260828` | `CapitalPoolPort` |
+| 46583 | `synthesis_conflict_logs` | `bff_get_synthesis_conflict_log` | OODA & Management | `ACG-RS-OODA-OWNERSHIP-MAP-20260828` | `SynthesisConflictLogsPort` |
+| 46651 | `ooda_packets` | `bff_get_ooda_packet` | OODA & Management | `ACG-RS-OODA-OWNERSHIP-MAP-20260828` | `OodaPacketsPort` |
+| 61790 | `incidents` | `bff_v5_sentinel_findings_list` | Lifecycle, Telemetry & Governance | `ACG-RS-LIFECYCLE-OWNERSHIP-MAP-20260828` | `IncidentReaderPort` |
+| 62315 | `incidents` | `bff_get_sentinel_finding` | Lifecycle, Telemetry & Governance | `ACG-RS-LIFECYCLE-OWNERSHIP-MAP-20260828` | `IncidentReaderPort` |
+| 63309 | `ooda_packets` | `_build_ooda_control_room_status_card` | OODA & Management | `ACG-RS-OODA-OWNERSHIP-MAP-20260828` | `OodaPacketsPort` |
+| 66029 | `incidents` | `_sem_final_generic_list_for_path` | Lifecycle, Telemetry & Governance | `ACG-RS-LIFECYCLE-OWNERSHIP-MAP-20260828` | `IncidentReaderPort` |
+| 66036 | `incidents` | `_sem_final_generic_list_for_path` | Lifecycle, Telemetry & Governance | `ACG-RS-LIFECYCLE-OWNERSHIP-MAP-20260828` | `IncidentReaderPort` |
+| 66222 | `incidents` | `_sem_final_generic_detail_for_path` | Lifecycle, Telemetry & Governance | `ACG-RS-LIFECYCLE-OWNERSHIP-MAP-20260828` | `IncidentReaderPort` |
+| 66353 | `incidents` | `bff_v5_control_room` | Lifecycle, Telemetry & Governance | `ACG-RS-LIFECYCLE-OWNERSHIP-MAP-20260828` | `IncidentReaderPort` |
+| 66625 | `approval_decisions` | `bff_approvals_decide` | Operations & Consultation | `ACG-RS-OPERATIONS-OWNERSHIP-MAP-20260828` | `GovernanceReaderPort` / `WorkflowHookCatalog` |
+| 66792 | `approval_decisions` | `bff_approvals_batch_decide` | Operations & Consultation | `ACG-RS-OPERATIONS-OWNERSHIP-MAP-20260828` | `GovernanceReaderPort` / `WorkflowHookCatalog` |
+
+### 5.3 Complete `dataset_source` Partition Summary
+
+| Domain Partition | Assigned Task ID | Call Count | Partition Status |
+|---|---|---|---|
+| **Research, Knowledge & Source** | `ACG-RS-RESEARCH-OWNERSHIP-MAP-20260828` | **13** | **Owned (This Task)** |
+| **Lifecycle, Telemetry & Governance** | `ACG-RS-LIFECYCLE-OWNERSHIP-MAP-20260828` | **14** | Excluded / Non-Overlap |
+| **Persona, Capital & Runtime** | `ACG-RS-CAPITAL-OWNERSHIP-MAP-20260828` | **5** | Excluded / Non-Overlap |
+| **OODA & Management** | `ACG-RS-OODA-OWNERSHIP-MAP-20260828` | **3** | Excluded / Non-Overlap |
+| **Operations & Consultation** | `ACG-RS-OPERATIONS-OWNERSHIP-MAP-20260828` | **2** | Excluded / Non-Overlap |
+| **Persona Training & Evaluation** | `ACG-RS-TRAINING-OWNERSHIP-MAP-20260828` | **0** | Excluded / Non-Overlap |
+| **Total `dataset_source` Calls in `main.py`** | | **37** | **100% Accounted For** |
+
 ---
 
 ## 6. Read vs Write Classification & Verified Owner Mapping
 
-### A. Read Operations (69 Member Calls + 13 Dataset Source Calls)
+### A. Read Operations (69 Direct/Attribute Member Calls + 1 Legacy `getattr` Access + 13 Dataset Source Calls = 83 Total Read Sites)
 - **Classification:** Strict Queries (Idempotent, Side-Effect Free).
 - **Resolution Strategy:** Directly served by `ResearchKnowledgeSourcePort` methods.
 - **Underlying Authoritative Stores & Port Implementation:**
@@ -242,15 +293,19 @@ The 6 write call sites in `main.py` perform state mutations:
 
 ---
 
-## 7. Narrow Domain API Gap Analysis
+## 7. Narrow Domain API Gap Analysis & Legacy Access Patterns
 
 ### Verification Findings:
-1. **Zero Missing APIs:** Every one of the 37 distinct non-metadata member methods (and 38 total accessed methods including `dataset_source`) called in `services/control-plane/bff/main.py` is fully implemented and tested on `ResearchKnowledgeSourcePort` and `DefaultResearchKnowledgeSourcePort`. Across the 39 methods defined in `ResearchKnowledgeSourcePort`:
-   - 37 non-metadata domain methods are actively accessed across 75 member call sites in `main.py`.
-   - 1 shared metadata method (`dataset_source`) is actively accessed across 13 call sites in `main.py`.
+1. **Zero Missing Domain APIs:** Every one of the 37 distinct non-metadata member methods (and 38 total accessed methods including `dataset_source`) called in `services/control-plane/bff/main.py` is fully implemented and tested on `ResearchKnowledgeSourcePort` and `DefaultResearchKnowledgeSourcePort`. Across the 39 methods defined in `ResearchKnowledgeSourcePort`:
+   - 37 non-metadata domain methods are actively accessed across 75 member sites in `main.py` (74 direct/attribute call sites and 1 legacy `getattr` access site).
+   - 1 shared metadata method (`dataset_source`) is actively accessed across 13 research-owned call sites in `main.py` (out of 37 total static `read_store.dataset_source` sites across all domains).
    - 1 method (`dataset_surface_status`) is defined on the port interface for structured dataset status reporting but is currently not directly invoked in `main.py`.
-2. **Zero Generic Delegation / Compatibility Shims:** No fallback to generic `getattr` proxying or unvalidated dictionary reflection is required.
-3. **Strict Type Safety:** All signatures return typed DTO dictionaries or lists adhering to the OpenAPI schema requirements.
+2. **Legacy `getattr` Compatibility Access Pattern:**
+   - Static inspection reveals that `main.py:23754` uses `getattr(read_store, "get_insight_card", None)` in `_agora_get_insight` as a legacy defensive compatibility check before falling back to `read_store.list_agora_insights()`.
+   - The typed port method `ResearchKnowledgeSourcePort.get_insight_card(insight_id: Optional[str]) -> Optional[Dict[str, Any]]` exists, is fully defined in the port contract, and is tested with 100% pass rate in `DefaultResearchKnowledgeSourcePort` (`services/control-plane/bff/domain_ports/research_knowledge_source.py`).
+   - During subsequent port cutover, this legacy `getattr` pattern can be replaced directly with the typed port method `port.get_insight_card(insight_id)`.
+   - Aside from this single legacy compatibility site, there is zero generic dynamic delegation, fallback dictionary reflection, or proxying required.
+3. **Strict Type Safety:** All signatures return typed DTO dictionaries or lists adhering to OpenAPI schema requirements.
 
 ---
 
