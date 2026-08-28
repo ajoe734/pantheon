@@ -111,6 +111,7 @@ DEV_MANAGEMENT_AI_DATABASE_URL="${DEV_MANAGEMENT_AI_DATABASE_URL:-}"
 DEV_MANAGEMENT_AI_ATTACH_BUCKET="${DEV_MANAGEMENT_AI_ATTACH_BUCKET:-}"
 DEV_MANAGEMENT_AI_ATTACH_LOCATION="${DEV_MANAGEMENT_AI_ATTACH_LOCATION:-asia-east1}"
 PANTHEON_DEV_DOCKER_PRUNE="${PANTHEON_DEV_DOCKER_PRUNE:-false}"
+PANTHEON_DEV_DOCKER_PRUNE_TIMEOUT_SECONDS="${PANTHEON_DEV_DOCKER_PRUNE_TIMEOUT_SECONDS:-120}"
 PANTHEON_DEV_POSTGRES_TELEMETRY_PRUNE="${PANTHEON_DEV_POSTGRES_TELEMETRY_PRUNE:-true}"
 DEV_COMPOSE_PROFILES="${PANTHEON_DEV_COMPOSE_PROFILES:-}"
 SOURCE_REFRESH_EGRESS_MODE="${PANTHEON_EXTERNAL_EGRESS:-deny}"
@@ -659,6 +660,7 @@ ssh_bash() {
   command_prefix+=" PANTHEON_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED=$(shell_quote "${PANTHEON_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED:-}")"
   command_prefix+=" PANTHEON_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN=$(shell_quote "${PANTHEON_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN:-}")"
   command_prefix+=" PANTHEON_DEV_DOCKER_PRUNE=$(shell_quote "${PANTHEON_DEV_DOCKER_PRUNE:-false}")"
+  command_prefix+=" PANTHEON_DEV_DOCKER_PRUNE_TIMEOUT_SECONDS=$(shell_quote "${PANTHEON_DEV_DOCKER_PRUNE_TIMEOUT_SECONDS:-120}")"
   command_prefix+=" PANTHEON_DEV_POSTGRES_TELEMETRY_PRUNE=$(shell_quote "${PANTHEON_DEV_POSTGRES_TELEMETRY_PRUNE:-true}")"
   command_prefix+=" PANTHEON_DEV_COMPOSE_PROFILES=$(shell_quote "${DEV_COMPOSE_PROFILES}")"
   command_prefix+=" PANTHEON_EXTERNAL_EGRESS=$(shell_quote "${SOURCE_REFRESH_EGRESS_MODE}")"
@@ -2277,9 +2279,9 @@ docker_storage_diagnostics() {
 run_bounded_docker_prune() {
   local label="$1"
   shift
-  local timeout_seconds="${PANTHEON_DEV_DOCKER_PRUNE_TIMEOUT_SECONDS:-45}"
+  local timeout_seconds="${PANTHEON_DEV_DOCKER_PRUNE_TIMEOUT_SECONDS:-120}"
 
-  if ! [[ "${timeout_seconds}" =~ ^[0-9]+$ ]] || (( timeout_seconds < 1 || timeout_seconds > 120 )); then
+  if ! [[ "${timeout_seconds}" =~ ^[0-9]+$ ]] || (( timeout_seconds < 1 || timeout_seconds > 300 )); then
     info "warning: invalid PANTHEON_DEV_DOCKER_PRUNE_TIMEOUT_SECONDS=${timeout_seconds}; skipping ${label}"
     return 0
   fi
@@ -2289,13 +2291,24 @@ run_bounded_docker_prune() {
   fi
 
   info "running bounded Docker maintenance: ${label} (timeout=${timeout_seconds}s)"
-  if timeout --signal=TERM --kill-after=10s "${timeout_seconds}s" "$@"; then
+  local attempt=1
+  local max_attempts=3
+  while (( attempt <= max_attempts )); do
+    local output
+    if output="$(timeout --signal=TERM --kill-after=10s "${timeout_seconds}s" "$@" 2>&1)"; then
+      [[ -n "$output" ]] && info "${output}"
+      return 0
+    fi
+    local status=$?
+    if [[ "$output" =~ "a prune operation is already running" ]] && (( attempt < max_attempts )); then
+      info "warning: ${label} reported a prune operation is already running; waiting 10s before retry (attempt ${attempt}/${max_attempts})"
+      sleep 10
+      (( attempt++ ))
+      continue
+    fi
+    info "warning: ${label} exited with status ${status}; continuing deployment"
     return 0
-  fi
-
-  local status=$?
-  info "warning: ${label} exited with status ${status}; continuing deployment"
-  return 0
+  done
 }
 
 prune_dev_docker_storage_for_build() {
@@ -2311,6 +2324,7 @@ prune_dev_docker_storage_for_build() {
 
   docker_storage_diagnostics "before prune"
   info "pruning dev Docker build cache and unused containers/images before root build"
+  run_bounded_docker_prune "system cache" docker system prune -af --volumes=false
   run_bounded_docker_prune "builder cache" docker builder prune -af
   run_bounded_docker_prune "stopped containers" docker container prune -f
   run_bounded_docker_prune "unused images" docker image prune -af

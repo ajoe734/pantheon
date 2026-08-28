@@ -861,6 +861,7 @@ jobs:
           DEV_MANAGEMENT_AI_ATTACH_LOCATION: ${{ vars.DEV_MANAGEMENT_AI_ATTACH_LOCATION || 'asia-east1' }}
           DEV_PPL_ALLOC_009_DEV_PROOF_ENABLED: ${{ env.PPL_ALLOC_009_DEV_PROOF_ENABLED }}
           PANTHEON_DEV_DOCKER_PRUNE: ${{ vars.PANTHEON_DEV_DOCKER_PRUNE || 'true' }}
+          PANTHEON_DEV_DOCKER_PRUNE_TIMEOUT_SECONDS: ${{ vars.PANTHEON_DEV_DOCKER_PRUNE_TIMEOUT_SECONDS || '120' }}
           DEV_DEPLOY_DEADLINE_SECONDS: ${{ vars.DEV_DEPLOY_DEADLINE_SECONDS || '1200' }}
           PANTHEON_DEV_ROLLBACK_BACKEND_SHA: ${{ steps.rollback_baseline.outputs.sha }}
           TARGET_SHA: ${{ steps.target.outputs.sha }}
@@ -2059,6 +2060,7 @@ jobs:
           DEV_MANAGEMENT_AI_ATTACH_LOCATION: ${{ vars.DEV_MANAGEMENT_AI_ATTACH_LOCATION || 'asia-east1' }}
           DEV_PPL_ALLOC_009_DEV_PROOF_ENABLED: ${{ inputs.ppl_alloc_009_dev_proof_enabled }}
           PANTHEON_DEV_DOCKER_PRUNE: ${{ vars.PANTHEON_DEV_DOCKER_PRUNE || 'true' }}
+          PANTHEON_DEV_DOCKER_PRUNE_TIMEOUT_SECONDS: ${{ vars.PANTHEON_DEV_DOCKER_PRUNE_TIMEOUT_SECONDS || '120' }}
         shell: /bin/bash --noprofile --norc -euo pipefail {0}
         run: bash .target/scripts/compensate_cross_repo_release.sh
 
