@@ -6032,6 +6032,76 @@ def command_reopen(state: dict[str, Any], args: list[str]) -> None:
     )
 
 
+def command_resume_integration(state: dict[str, Any], args: list[str]) -> None:
+    """Restore a blocked, exactly-reviewed PR to integration eligibility.
+
+    ``reopen`` means the implementation is no longer accepted and therefore
+    intentionally clears its frozen delivery binding. It must not be used for
+    a transient failure in the serialized integrator itself: doing so loses a
+    valid exact-head approval and creates an avoidable second review cycle.
+
+    This recovery command is deliberately narrower. Only local Human/Ops can
+    use it, only from ``blocked``, and only when the stored PR delivery,
+    review, and GitHub bridge evidence still identify the same approved head.
+    The auto-integrator independently re-reads the live PR, checks, and gate
+    before it can merge anything.
+    """
+
+    if len(args) < 2:
+        raise SystemExit("Usage: resume_integration <task-id> <message>")
+    task_id, message = args[0], args[1]
+    if current_actor() != "Human/Ops":
+        raise SystemExit("Only local Human/Ops may resume a blocked reviewed integration")
+    task = get_task(state, task_id)
+    if task is None:
+        raise SystemExit(f"Unknown task: {task_id}")
+
+    validate_task_lifecycle_transition(task, "resume_integration")
+    delivery = task.get(DELIVERY_BINDING_KEY)
+    approval = task.get(APPROVAL_BINDING_KEY)
+    if not isinstance(delivery, Mapping) or str(delivery.get("kind") or "") != "pull_request":
+        raise SystemExit(
+            f"{task_id} cannot resume integration without a pull-request delivery binding"
+        )
+    if not isinstance(approval, Mapping):
+        raise SystemExit(
+            f"{task_id} cannot resume integration without an exact review binding"
+        )
+    for field in ("pr", "head_sha", "head_branch", "base"):
+        if str(delivery.get(field) or "").strip() != str(approval.get(field) or "").strip():
+            raise SystemExit(
+                f"{task_id} cannot resume integration: delivery and review {field} differ"
+            )
+    if not github_review_bridge_evidence_matches(task):
+        raise SystemExit(
+            f"{task_id} cannot resume integration without matching GitHub approval evidence"
+        )
+
+    timestamp = iso_now()
+    apply_task_lifecycle_transition(task, "resume_integration")
+    task["last_update"] = timestamp
+    task["next"] = message
+    task.pop("waiting_for", None)
+    mark_blockers_resolved(state, task_id)
+    ensure_review_finalize_handoff(
+        state,
+        task,
+        from_agent=canonical_agent_name(task.get("reviewer")),
+        timestamp=timestamp,
+        message=message,
+    )
+    append_log(
+        {
+            "ts": timestamp,
+            "agent": "Human/Ops",
+            "type": "integration_resumed",
+            "task_id": task_id,
+            "message": message,
+            **local_human_ops_audit_fields(),
+        }
+    )
+
+
 def command_handoff(state: dict[str, Any], args: list[str]) -> None:
     if len(args) < 3:
         raise SystemExit("Usage: handoff <task-id> <to-agent> <message>")
@@ -9413,6 +9483,7 @@ def main(argv: list[str]) -> int:
         "dependency-track": command_dependency_track,
         "execution-resource": command_execution_resource,
         "reopen": command_reopen,
+        "resume_integration": command_resume_integration,
         "handoff": command_handoff,
         "blocker": command_blocker,
         "done": command_done,
