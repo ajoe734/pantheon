@@ -2624,6 +2624,13 @@ class DurableQueueContractTests(unittest.TestCase):
             )
             self.assertIsNotNone(decision)
             self.assertTrue(decision.eligible)
+            self.assertIsNone(
+                supervisor.stale_dispatch_skip_message(
+                    config,
+                    queued[0],
+                    supervisor.task_index_from_status(config, latest),
+                )
+            )
 
             # Runtime seen keys are bounded cache state, not the durable
             # exactly-once authority. Losing both queue history and the old
