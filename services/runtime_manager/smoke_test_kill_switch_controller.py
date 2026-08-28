@@ -1,27 +1,26 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
-import importlib.util as _ilu
 import math
 import sys
 import time
 from pathlib import Path
 
-_MODULE_PATH = Path(__file__).with_name("kill_switch_controller.py")
-_SPEC = _ilu.spec_from_file_location("kill_switch_controller", _MODULE_PATH)
-_MOD = _ilu.module_from_spec(_SPEC)
-sys.modules["kill_switch_controller"] = _MOD
-_SPEC.loader.exec_module(_MOD)
+_REPO_ROOT = str(Path(__file__).resolve().parent.parent.parent)
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
 
-EmergencyTrigger = _MOD.EmergencyTrigger
-FAST_PATH_BENCHMARK_ITERATIONS = _MOD.FAST_PATH_BENCHMARK_ITERATIONS
-FAST_PATH_DISPATCH_CHANNEL = _MOD.FAST_PATH_DISPATCH_CHANNEL
-FAST_PATH_LATENCY_TARGET_MS = _MOD.FAST_PATH_LATENCY_TARGET_MS
-HardTriggerReason = _MOD.HardTriggerReason
-KillSwitchActionType = _MOD.KillSwitchActionType
-KillSwitchController = _MOD.KillSwitchController
-SafeModeState = _MOD.SafeModeState
-SoftTriggerReason = _MOD.SoftTriggerReason
+from services.runtime_manager.kill_switch_controller import (
+    EmergencyTrigger,
+    FAST_PATH_BENCHMARK_ITERATIONS,
+    FAST_PATH_DISPATCH_CHANNEL,
+    FAST_PATH_LATENCY_TARGET_MS,
+    HardTriggerReason,
+    KillSwitchActionType,
+    KillSwitchController,
+    SafeModeState,
+    SoftTriggerReason,
+)
 
 PASS = "\033[32mPASS\033[0m"
 FAIL = "\033[31mFAIL\033[0m"

@@ -17,32 +17,15 @@ from typing import Any, Dict
 
 import pytest
 
-# ---------------------------------------------------------------------------
-# Load sibling module via importlib (hyphenated directory path)
-# ---------------------------------------------------------------------------
-
-_HERE = Path(__file__).parent
-
-
-def _load(name: str) -> Any:
-    if name in sys.modules:
-        return sys.modules[name]
-    spec = _ilu.spec_from_file_location(name, _HERE / f"{name}.py")
-    mod = _ilu.module_from_spec(spec)
-    sys.modules[name] = mod
-    spec.loader.exec_module(mod)
-    return mod
-
-
-_rb = _load("runtime_binding")
-
-RuntimeBinding = _rb.RuntimeBinding
-RuntimeBindingError = _rb.RuntimeBindingError
-RuntimeBindingStatus = _rb.RuntimeBindingStatus
-DeploymentMode = _rb.DeploymentMode
-RollbackActionType = _rb.RollbackActionType
-RuntimeBindingStore = _rb.RuntimeBindingStore
-validate_binding = _rb.validate_binding
+from services.runtime_manager.runtime_binding import (
+    DeploymentMode,
+    RollbackActionType,
+    RuntimeBinding,
+    RuntimeBindingError,
+    RuntimeBindingStatus,
+    RuntimeBindingStore,
+    validate_binding,
+)
 
 
 # ---------------------------------------------------------------------------

@@ -1,10 +1,12 @@
 # Pantheon Architecture Cleanup GAP / SA / SD — 2026-08-27
 
-Status: **code-first architecture cleanup baseline; planning only**
+Status: **code-first architecture cleanup baseline approved; execution catalog added
+2026-08-28 and gated by independent plan freeze**
 
 Scope: Pantheon product backend, the separate `execute-plans` frontend, Management
-loop truth, and dev deployment verification. This package does not implement the
-cleanup and does not materialize supervisor execution tasks.
+loop truth, and dev deployment verification. The 2026-08-27 files remain the
+planning baseline and do not implement cleanup. The operator later authorized task
+materialization; the 2026-08-28 execution catalog records that separate decision.
 
 ## Purpose
 
@@ -57,13 +59,21 @@ proof that a newer root-stack worker is healthy.
    generated later.
 4. [`DISPOSITION_MATRIX_2026-08-27.json`](DISPOSITION_MATRIX_2026-08-27.json) —
    machine-readable planning inventory. It is not a canonical task packet.
+5. [`EXECUTION_DAG_2026-08-28.md`](EXECUTION_DAG_2026-08-28.md) — the complete
+   parallel DAG, exclusive hot-file owners, existing-task reconciliation, and
+   materialization boundary.
+6. [`EXECUTION_TASK_CATALOG_2026-08-28.json`](EXECUTION_TASK_CATALOG_2026-08-28.json)
+   — exact contracts for one plan-freeze task and 28 execution/integration tasks.
+   Canonical task authority remains the V2 TaskStore after Human/Ops materialization;
+   this file is the immutable reviewed source catalog.
 
 ## Non-goals
 
 - no new product feature;
 - no security-hardening program;
 - no new compatibility façade, read-store wrapper, or alternate truth database;
-- no task-state, supervisor, or auto-worker mutation;
+- no task-state mutation from the original 2026-08-27 planning delivery; the later
+  2026-08-28 catalog is materialized only through governed local tooling;
 - no claim that all twelve functional loops are closed; and
 - no deletion based only on file size or a name containing `legacy`, `stub`, or
   `compat`.

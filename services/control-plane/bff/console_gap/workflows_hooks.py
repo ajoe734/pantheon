@@ -130,13 +130,21 @@ def _list_response(
 
 def create_workflows_hooks_router(
     *,
-    read_store_provider: ReadStoreProvider,
+    read_store_provider: Optional[ReadStoreProvider] = None,
+    workflow_hook_port: Optional[Any] = None,
     extract_identity: ExtractIdentity,
     require_read_role: RequireReadRole,
     snapshot_now: Optional[SnapshotNow] = None,
 ) -> APIRouter:
     router = APIRouter(tags=["automation-registry"])
     now = snapshot_now or _utc_now
+
+    def _resolve_store() -> Any:
+        if workflow_hook_port is not None:
+            return workflow_hook_port() if callable(workflow_hook_port) else workflow_hook_port
+        if read_store_provider is not None:
+            return read_store_provider()
+        raise RuntimeError("Neither workflow_hook_port nor read_store_provider was configured.")
 
     @router.get(
         "/bff/workflows",
@@ -151,7 +159,7 @@ def create_workflows_hooks_router(
     ) -> Dict[str, Any]:
         identity = extract_identity(authorization)
         require_read_role(identity)
-        store = read_store_provider()
+        store = _resolve_store()
         return _list_response(
             store=store,
             dataset="workflow_templates",
@@ -175,7 +183,7 @@ def create_workflows_hooks_router(
     ) -> Dict[str, Any]:
         identity = extract_identity(authorization)
         require_read_role(identity)
-        store = read_store_provider()
+        store = _resolve_store()
         return _list_response(
             store=store,
             dataset="hook_registry",

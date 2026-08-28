@@ -23,8 +23,6 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-_EXEC_RUNTIME_MANAGER_DIR = REPO_ROOT / "services" / "execution" / "runtime-manager"
-
 FIXTURE_PATH = Path(__file__).with_name("fixtures") / "deployment_plan_for_runtime.json"
 
 
@@ -41,32 +39,11 @@ def _lean_submodule_available() -> bool:
 
 _LEAN_AVAILABLE = _lean_submodule_available()
 
-
-def _load_module_from_path(module_name: str, file_path: Path):
-    """Load a module from a filesystem path, bypassing hyphenated-directory import limits."""
-    if module_name in sys.modules:
-        return sys.modules[module_name]
-    spec = _ilu.spec_from_file_location(module_name, file_path)
-    mod = _ilu.module_from_spec(spec)
-    sys.modules[module_name] = mod
-    spec.loader.exec_module(mod)
-    return mod
-
-
-def _ensure_runtime_manager_modules():
-    """Pre-load runtime_binding and kill_switch_controller so runtime_manager resolves them."""
-    for name in ("runtime_binding", "kill_switch_controller"):
-        _load_module_from_path(name, _EXEC_RUNTIME_MANAGER_DIR / f"{name}.py")
-    return _load_module_from_path("runtime_manager", _EXEC_RUNTIME_MANAGER_DIR / "runtime_manager.py")
-
-
-_rm_mod = _ensure_runtime_manager_modules()
-
-RuntimeBindingStore = sys.modules["runtime_binding"].RuntimeBindingStore
-RuntimeBindingStatus = sys.modules["runtime_binding"].RuntimeBindingStatus
-RuntimeManager = _rm_mod.RuntimeManager
-DeployRuntimeRequest = _rm_mod.DeployRuntimeRequest
-
+from services.runtime_manager import (
+    RuntimeBindingStatus,
+    RuntimeBindingStore,
+    RuntimeManagerService,
+)
 from services.execution.lean_runtime.smoke_algorithm import (  # noqa: E402
     SMOKE_CAPITAL_POOL_ID,
     SMOKE_PERSONA_CAPITAL_BINDING_ID,
@@ -100,22 +77,21 @@ def test_runtime_manager_binds_deployment_plan_paper() -> None:
     """Runtime Manager creates an active paper RuntimeBinding from the fixture DeploymentPlan."""
     plan = _load_fixture()
 
-    store = RuntimeBindingStore()
-    manager = RuntimeManager(store)
-
-    request = DeployRuntimeRequest(
-        plan_id=plan["plan_id"],
-        persona_capital_binding_id=SMOKE_PERSONA_CAPITAL_BINDING_ID,
-        runtime_id="rt-ooda-e2e-005-paper-001",
-        capital_pool_id=plan["capital_pool_id"],
-        artifact_id=plan["artifact_id"],
-        artifact_version=plan["artifact_version"],
-        deployment_mode=plan["target_stage"],
-        plan_status=plan["status"],
-    )
-
-    outcome = manager.deploy(request)
-    binding = outcome.binding
+    service = RuntimeManagerService()
+    binding = service.deploy({
+        "plan_id": plan["plan_id"],
+        "plan_status": plan["status"],
+        "target_stage": plan["target_stage"],
+        "artifact_id": plan["artifact_id"],
+        "artifact_version": plan["artifact_version"],
+        "capital_pool_id": plan["capital_pool_id"],
+        "persona_capital_binding_id": SMOKE_PERSONA_CAPITAL_BINDING_ID,
+        "persona_capital_binding_status": "active",
+        "allowed_deployment_scope": "paper",
+        "loader_checks_passed": True,
+        "runtime_id": "rt-ooda-e2e-005-paper-001",
+        "strategy_id": plan.get("strategy_id"),
+    })
 
     assert binding.deployment_mode == "paper", f"expected paper, got {binding.deployment_mode}"
     assert binding.artifact_id == plan["artifact_id"]
@@ -125,7 +101,7 @@ def test_runtime_manager_binds_deployment_plan_paper() -> None:
     assert binding.persona_capital_binding_id == SMOKE_PERSONA_CAPITAL_BINDING_ID
     assert binding.status == RuntimeBindingStatus.ACTIVE.value
 
-    retrieved = store.get(binding.binding_id)
+    retrieved = service.store.get(binding.binding_id)
     assert retrieved is not None
     assert retrieved.deployment_mode == "paper"
 
@@ -189,21 +165,21 @@ def test_e2e_fixture_binding_runtime_context_identity() -> None:
     """
     plan = _load_fixture()
 
-    store = RuntimeBindingStore()
-    manager = RuntimeManager(store)
-
-    request = DeployRuntimeRequest(
-        plan_id=plan["plan_id"],
-        persona_capital_binding_id=SMOKE_PERSONA_CAPITAL_BINDING_ID,
-        runtime_id="rt-ooda-e2e-005-identity-001",
-        capital_pool_id=plan["capital_pool_id"],
-        artifact_id=plan["artifact_id"],
-        artifact_version=plan["artifact_version"],
-        deployment_mode=plan["target_stage"],
-        plan_status=plan["status"],
-    )
-    outcome = manager.deploy(request)
-    binding = outcome.binding
+    service = RuntimeManagerService()
+    binding = service.deploy({
+        "plan_id": plan["plan_id"],
+        "plan_status": plan["status"],
+        "target_stage": plan["target_stage"],
+        "artifact_id": plan["artifact_id"],
+        "artifact_version": plan["artifact_version"],
+        "capital_pool_id": plan["capital_pool_id"],
+        "persona_capital_binding_id": SMOKE_PERSONA_CAPITAL_BINDING_ID,
+        "persona_capital_binding_status": "active",
+        "allowed_deployment_scope": "paper",
+        "loader_checks_passed": True,
+        "runtime_id": "rt-ooda-e2e-005-identity-001",
+        "strategy_id": plan.get("strategy_id"),
+    })
 
     result = run_algorithm_smoke_from_binding(plan, binding)
 

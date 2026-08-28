@@ -2062,11 +2062,11 @@ services:
     stop_grace_period: 30s
     build:
       context: .
-      dockerfile: services/execution/runtime-manager/Dockerfile
+      dockerfile: services/paper_fleet_reconciler/Dockerfile
       args:
         GIT_SHA: ${GIT_SHA:-unknown}
     restart: unless-stopped
-    command: ["python", "services/execution/runtime-manager/paper_fleet_reconciler.py"]
+    command: ["python", "services/paper_fleet_reconciler/paper_fleet_reconciler.py"]
     environment:
       PORT: "8011"
       PANTHEON_RUNTIME_MANAGER_URL: http://runtime-manager:8081
@@ -2083,6 +2083,7 @@ services:
       PANTHEON_PERFORMANCE_MARK_MAX_AGE_SECONDS: ${PANTHEON_PERFORMANCE_MARK_MAX_AGE_SECONDS:-172800}
       PANTHEON_PERFORMANCE_STATE_ROOT: /data/runtime/paper-performance
       SIGNAL_STORE_URL: redis://signal-store:6379
+      WORKER_SCRIPT_PATH: services/execution/lean_runtime/paper_runtime.py
     volumes:
       - runtime-data:/data/runtime
     depends_on:

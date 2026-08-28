@@ -10,11 +10,17 @@ import sys
 import threading
 from pathlib import Path
 
-# Add services/control-plane/bff to path
+# Add repository root and services/control-plane/bff to path
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "services" / "control-plane" / "bff"))
+for path in (
+    str(ROOT),
+    str(ROOT / "services" / "control-plane" / "bff"),
+):
+    if path not in sys.path:
+        sys.path.insert(0, path)
 
 from agora.governance.store import ProposalStore
+from agora.interaction.persona_client import build_canonical_persona_client
 from agora.interaction.store import InteractionLifecycleStore
 from agora.interaction.worker import AgoraInteractionWorker
 from agora.strategy_workshop.store import MemoryWorkshopStore, PostgresWorkshopStore
@@ -36,6 +42,15 @@ def main() -> int:
     args = parser.parse_args()
 
     if args.healthcheck:
+        # A healthcheck must not return before required dependency factories
+        # are proven constructible. It skips the long-running loop and any
+        # live database mutation, but a Persona discovery client that cannot
+        # be built is a real startup failure, not something to hide.
+        try:
+            build_canonical_persona_client()
+        except Exception:
+            logger.exception("Healthcheck failed: could not construct required Persona discovery client")
+            return 1
         logger.info("Healthcheck OK")
         return 0
 
@@ -63,17 +78,10 @@ def main() -> int:
     proposal_store = ProposalStore(backend=gov_backend, dsn=gov_dsn, schema=gov_schema)
     lifecycle_store = InteractionLifecycleStore(backend=gov_backend, dsn=gov_dsn, schema=gov_schema)
 
-    # ReadStore for Persona discovery
-    try:
-        from store import FastBffReadStore
-        read_store = FastBffReadStore()
-    except Exception:
-        class MinimalReadStore:
-            def list_personas(self, **kwargs):
-                return []
-            def get_capability_snapshot(self, snapshot_id):
-                return None
-        read_store = MinimalReadStore()
+    # Persona discovery is a required dependency: if the canonical client
+    # cannot be constructed, startup fails rather than substituting an
+    # always-empty implementation.
+    read_store = build_canonical_persona_client()
 
     tenant_id = args.tenant_id or os.getenv("PANTHEON_TENANT_ID")
 

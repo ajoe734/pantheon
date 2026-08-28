@@ -2009,6 +2009,16 @@ def build_request(
     logical_agent = agent_config_for(config, event["target_agent"])
     agent = agent_config_for(config, agent_id_override or event["target_agent"])
     metadata = dict(event.get("metadata", {}) or {})
+    event_task = event.get("task")
+    if isinstance(event_task, Mapping):
+        # The admission planner already owns resource validation and capacity
+        # reservation.  Carry that exact declaration to the spawned worker so
+        # a runtime harness can reject an undeclared shared-VM action before it
+        # starts Docker services.
+        metadata.setdefault(
+            "execution_resources",
+            task_execution_resources(event_task),
+        )
     dispatch_event_key = str(event.get("event_key") or "").strip()
     if dispatch_event_key:
         metadata.setdefault("dispatch_event_key", dispatch_event_key)
@@ -12843,6 +12853,7 @@ def ready_dispatch_signature(
                 task, activity_events=activity_events, config=config
             ),
             "reviewer": task.get("reviewer"),
+            "execution_resources": task_execution_resources(task),
             "status": task.get("status"),
             "task_generation": task_generation(task),
             "task_id": task.get("id"),
@@ -12878,6 +12889,7 @@ def build_dispatch_event(
         "artifacts": list(task.get("artifacts", []) or []),
         "next": task.get("next"),
         "depends_on": dependencies,
+        "execution_resources": task_execution_resources(task),
         "dependency_truth": [
             {
                 "task_id": dependency_id,

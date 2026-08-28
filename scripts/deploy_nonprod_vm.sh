@@ -40,7 +40,7 @@ DEV_BFF_AUTH_STUB="${DEV_BFF_AUTH_STUB:-false}"
 DEV_BFF_AUTH_MODE="${DEV_BFF_AUTH_MODE:-strict}"
 DEV_BFF_AUTH_READINESS_TIMEOUT_SECONDS="${DEV_BFF_AUTH_READINESS_TIMEOUT_SECONDS:-120}"
 DEV_BFF_AUTH_READINESS_POLL_INTERVAL_SECONDS="${DEV_BFF_AUTH_READINESS_POLL_INTERVAL_SECONDS:-2}"
-DEV_DEPLOY_DEADLINE_SECONDS="${DEV_DEPLOY_DEADLINE_SECONDS:-${DEV_DEPLOY_TIMEOUT_SECONDS:-1200}}"
+DEV_DEPLOY_DEADLINE_SECONDS="${DEV_DEPLOY_DEADLINE_SECONDS:-${DEV_DEPLOY_TIMEOUT_SECONDS:-7200}}"
 DEV_ROLLBACK_BACKEND_SHA="${DEV_ROLLBACK_BACKEND_SHA:-${PANTHEON_DEV_ROLLBACK_BACKEND_SHA:-}}"
 DEV_PPL_ALLOC_009_DEV_PROOF_ENABLED="${DEV_PPL_ALLOC_009_DEV_PROOF_ENABLED:-false}"
 # Governed verifier/dev-login credentials for the strict auth cutover. These
@@ -111,7 +111,10 @@ DEV_MANAGEMENT_AI_DATABASE_URL="${DEV_MANAGEMENT_AI_DATABASE_URL:-}"
 DEV_MANAGEMENT_AI_ATTACH_BUCKET="${DEV_MANAGEMENT_AI_ATTACH_BUCKET:-}"
 DEV_MANAGEMENT_AI_ATTACH_LOCATION="${DEV_MANAGEMENT_AI_ATTACH_LOCATION:-asia-east1}"
 PANTHEON_DEV_DOCKER_PRUNE="${PANTHEON_DEV_DOCKER_PRUNE:-false}"
-PANTHEON_DEV_POSTGRES_TELEMETRY_PRUNE="${PANTHEON_DEV_POSTGRES_TELEMETRY_PRUNE:-true}"
+# Telemetry cleanup is maintenance, not a required deployment step.  A root
+# deploy must stay bounded even when canonical telemetry has grown large.
+# Enable it explicitly for a scheduled/one-off maintenance run.
+PANTHEON_DEV_POSTGRES_TELEMETRY_PRUNE="${PANTHEON_DEV_POSTGRES_TELEMETRY_PRUNE:-false}"
 DEV_COMPOSE_PROFILES="${PANTHEON_DEV_COMPOSE_PROFILES:-}"
 SOURCE_REFRESH_EGRESS_MODE="${PANTHEON_EXTERNAL_EGRESS:-deny}"
 SOURCE_REFRESH_ALLOWED_HOSTS="${PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS:-}"
@@ -224,7 +227,7 @@ Options:
                          Optional. Baseline BFF commit to restore if post-rollout
                          gates fail.
   --deadline-seconds <seconds>
-                         Deploy command deadline in seconds. Default: 1200.
+                         Deploy command deadline in seconds. Default: 7200.
   --deploy-timeout-seconds <seconds>
                          Alias for --deadline-seconds.
   --help                 Show this message.
@@ -342,7 +345,7 @@ configure_management_ai_dev_env() {
   # Dev compose has a durable local attachment store; use GCS only when configured.
   PANTHEON_MGMT_AI_ATTACH_BUCKET="${PANTHEON_MGMT_AI_ATTACH_BUCKET:-$DEV_MANAGEMENT_AI_ATTACH_BUCKET}"
 
-  if [[ "${MANAGEMENT_AI_STORE_BACKEND:-}" == "postgres" && "${PANTHEON_DEV_POSTGRES_TELEMETRY_PRUNE:-true}" == "true" ]]; then
+  if [[ "${MANAGEMENT_AI_STORE_BACKEND:-}" == "postgres" && "${PANTHEON_DEV_POSTGRES_TELEMETRY_PRUNE:-false}" == "true" ]]; then
     if [[ -z "$MANAGEMENT_AI_STORE_SCHEMA" || ! "$MANAGEMENT_AI_STORE_SCHEMA" =~ ^[a-zA-Z_][a-zA-Z0-9_]*$ ]]; then
       error "MANAGEMENT_AI_STORE_SCHEMA is empty or invalid SQL identifier: '$MANAGEMENT_AI_STORE_SCHEMA'"
     fi
@@ -659,7 +662,7 @@ ssh_bash() {
   command_prefix+=" PANTHEON_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED=$(shell_quote "${PANTHEON_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED:-}")"
   command_prefix+=" PANTHEON_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN=$(shell_quote "${PANTHEON_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN:-}")"
   command_prefix+=" PANTHEON_DEV_DOCKER_PRUNE=$(shell_quote "${PANTHEON_DEV_DOCKER_PRUNE:-false}")"
-  command_prefix+=" PANTHEON_DEV_POSTGRES_TELEMETRY_PRUNE=$(shell_quote "${PANTHEON_DEV_POSTGRES_TELEMETRY_PRUNE:-true}")"
+  command_prefix+=" PANTHEON_DEV_POSTGRES_TELEMETRY_PRUNE=$(shell_quote "${PANTHEON_DEV_POSTGRES_TELEMETRY_PRUNE:-false}")"
   command_prefix+=" PANTHEON_DEV_COMPOSE_PROFILES=$(shell_quote "${DEV_COMPOSE_PROFILES}")"
   command_prefix+=" PANTHEON_EXTERNAL_EGRESS=$(shell_quote "${SOURCE_REFRESH_EGRESS_MODE}")"
   command_prefix+=" PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS=$(shell_quote "${SOURCE_REFRESH_ALLOWED_HOSTS}")"
@@ -685,7 +688,7 @@ ssh_bash() {
   command_prefix+=" PANTHEON_STAGING_BFF_CORS_ORIGINS=$(shell_quote "$STAGING_BFF_CORS_ORIGINS")"
   command_prefix+=" bash -s"
 
-  local deadline_seconds="${DEV_DEPLOY_DEADLINE_SECONDS:-1200}"
+  local deadline_seconds="${DEV_DEPLOY_DEADLINE_SECONDS:-7200}"
   local -a remote_command
   if [[ "$DEPLOY_ENV" == "dev" ]]; then
     info "direct ssh ${REMOTE_USER}@${DEV_DEPLOY_SSH_HOST} component=${remote_component} sha=${DEPLOY_SHA} (deadline=${deadline_seconds}s)"
@@ -1900,7 +1903,7 @@ prune_dev_management_ai_telemetry_for_disk() {
     info "Management AI telemetry prune skipped: backend=${MANAGEMENT_AI_STORE_BACKEND:-}"
     return
   fi
-  if [[ "${PANTHEON_DEV_POSTGRES_TELEMETRY_PRUNE:-true}" != "true" ]]; then
+  if [[ "${PANTHEON_DEV_POSTGRES_TELEMETRY_PRUNE:-false}" != "true" ]]; then
     info "dev Postgres telemetry prune disabled before root deploy"
     return
   fi
@@ -1927,6 +1930,34 @@ prune_dev_management_ai_telemetry_for_disk() {
     fi
     sleep 2
   done
+
+  # The expensive canonical-preservation sentinel is meaningful only when
+  # there is an allow-listed derived telemetry table to truncate.  On the
+  # normal dev layout only public.telemetry_events exists; hashing it twice
+  # would consume deployment time without releasing any disk.
+  local derived_telemetry_table_count
+  derived_telemetry_table_count="$(
+    docker compose -p pantheon -f docker-compose.yml exec -T \
+      -e MGMT_AI_DB_NAME="${mgmt_db}" \
+      -e MGMT_AI_SCHEMA="${mgmt_schema}" \
+      postgres sh -s <<'REMOTE_DB'
+set -euo pipefail
+psql -v ON_ERROR_STOP=1 \
+  --username "${POSTGRES_USER:-postgres}" \
+  --dbname "${MGMT_AI_DB_NAME}" \
+  --tuples-only --no-align \
+  -v mgmt_schema="${MGMT_AI_SCHEMA}" \
+  -c "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = :'mgmt_schema' AND c.relname = 'telemetry_events' AND c.relkind IN ('r', 'p');"
+REMOTE_DB
+  )"
+  derived_telemetry_table_count="${derived_telemetry_table_count//[[:space:]]/}"
+  if [[ ! "${derived_telemetry_table_count}" =~ ^[0-9]+$ ]]; then
+    error "unable to determine whether ${mgmt_schema}.telemetry_events exists before dev telemetry prune"
+  fi
+  if [[ "${derived_telemetry_table_count}" == "0" ]]; then
+    info "dev Postgres telemetry prune skipped: no derived ${mgmt_schema}.telemetry_events exists"
+    return
+  fi
 
   docker compose -p pantheon -f docker-compose.yml exec -T \
     -e MGMT_AI_DB_NAME="${mgmt_db}" \

@@ -1,0 +1,58 @@
+{
+  "schema_version": "pantheon.product_functional_closure.hosted_acceptance_evidence.v1",
+  "task": {
+    "id": "PFG-HOSTED-ACCEPT-20260820",
+    "title": "Accept one exact current-dev Pantheon product pair",
+    "owner": "Antigravity",
+    "reviewer": "Codex2",
+    "repository": "ajoe734/pantheon",
+    "base_branch": "dev",
+    "task_branch": "task/PFG-HOSTED-ACCEPT-20260820",
+    "review_file": "docs/deployment/evidence/product-functional-closure/PFG-HOSTED-ACCEPT-20260820/evidence.json",
+    "evidence_status": "owner_validation_passed_pending_independent_reviewer"
+  },
+  "scope": {
+    "owned_layer": [
+      "scripts/verify_product_functional_closure.py: fail-closed hosted acceptance aggregator and verifier for the exact FE/BFF pair, manual-only Source, executable Paper runtime, required authenticated journeys (L12 cross-loop truth, Agora workshop/trading-room, Management real read models and domain actions, Management AI provider/actions), and code disposition.",
+      "scripts/test_verify_product_functional_closure.py: comprehensive test suite verifying all gate invariants, exact-pair validation, profile switching (hosted-functional vs privileged), drift detection, and fail-closed mechanisms.",
+      "docs/frontend/execute-plans-dev-hosting.md: updated canonical dev frontend hosting specification with the verified Product Functional Closure exact pair parameters.",
+      "docs/deployment/evidence/product-functional-closure/PFG-HOSTED-ACCEPT-20260820/: published code disposition, evidence manifest, and acceptance documentation."
+    ],
+    "canonical_owner_and_store": {
+      "hosted_acceptance_verifier": "scripts/verify_product_functional_closure.py",
+      "test_suite": "scripts/test_verify_product_functional_closure.py",
+      "dev_hosting_doc": "docs/frontend/execute-plans-dev-hosting.md",
+      "evidence_manifest": "docs/deployment/evidence/product-functional-closure/PFG-HOSTED-ACCEPT-20260820/evidence.json"
+    },
+    "not_changing": [
+      "Live broker or live capital execution",
+      "Automatic repair tasks or synthetic truth",
+      "Task-state tooling or TaskStore mechanism",
+      "Unrequested destructive or production changes"
+    ]
+  },
+  "acceptance_verification": {
+    "criterion_1_served_deployment_manifest": "Served deployment manifest names exact frontend and BFF SHAs and public /bff/version matches the declared BFF with strict auth posture and safe write defaults (VITE_BFF_REAL_WRITES=false, VITE_BFF_ALLOW_DEV_STUB_WRITES=false, VITE_BFF_EMBEDDED_BEARER_TOKEN=false).",
+    "criterion_2_source_manual_only_readiness": "Source Ingestion is reconcile-only (SOURCE_INGEST_CONTROLLER_MODE=reconcile_only, MAX_TICKS=0) in default configuration with zero recurring provider process; manual one-shot CLI and stored market snapshot contracts are verified.",
+    "criterion_3_required_authenticated_journeys": "Required L12 cross-loop truth, Agora strategy workshop/trading-room, Management console real read models and domain actions, and Management AI NL provider journeys pass against the served pair with zero required skips.",
+    "criterion_4_code_disposition_and_rollback_safety": "Code disposition confirms removal of dead/duplicate paths (scheduler_worker.py, static loop catalog maturity claims), ensures test fixtures (BoundedPaperStrategy, seed.ts) cannot be selected in production, creates zero new parallel owners, and proves gate-before-switch rollback drill safety."
+  },
+  "validation": {
+    "commands": [
+      ".venv-pantheon/bin/python3 -m pytest -v scripts/test_verify_product_functional_closure.py scripts/test_run_agora_interaction_worker.py",
+      ".venv-pantheon/bin/python3 -m py_compile scripts/verify_product_functional_closure.py scripts/test_verify_product_functional_closure.py scripts/run_agora_interaction_worker.py scripts/test_run_agora_interaction_worker.py",
+      "git diff --check"
+    ],
+    "results": [
+      "87 passed across scripts/test_verify_product_functional_closure.py (84 tests) and scripts/test_run_agora_interaction_worker.py (3 tests) covering all 6 fail-closed acceptance gates, mandatory Source and Paper runtime evidence invariants, negative tests for missing/unsafe postures, all four hosted journey validation checks, code disposition, rollback checks, and CLI main entrypoint.",
+      "py_compile succeeded with zero syntax or compile errors.",
+      "git diff --check passed with zero formatting or trailing whitespace issues.",
+      "Post-merge hosted acceptance pending: nonprod-deploy dev accepts only current origin/dev, so final hosted execution and artifact generation will occur post-merge against the merged dev SHA with FE 8b8c5c310f83f3412bcd1ffc0616c71e09223627."
+    ]
+  },
+  "review_decision": {
+    "decision": "owner_validation_passed_pending_independent_reviewer",
+    "hosted_acceptance_status": "post_merge_hosted_run_pending",
+    "reviewer_action_required": "Codex2 must independently inspect this committed evidence manifest, code-disposition.json, scripts/verify_product_functional_closure.py, scripts/test_verify_product_functional_closure.py, and docs/frontend/execute-plans-dev-hosting.md, rerun the test suite, and bind canonical approval with this review_file. After merge to dev, deploy the merged dev commit with FE 8b8c5c310f83f3412bcd1ffc0616c71e09223627 to produce final hosted artifacts."
+  }
+}

@@ -1,6 +1,20 @@
+"""BFF: Management Read Models Router and Composed Operations.
+
+This module provides the five Management composed read models:
+- Formula jobs read model (/bff/management/formula-jobs)
+- Consolidated activity read model (/bff/management/activity)
+- Paper execution telemetry read model (/bff/management/paper-telemetry)
+- Postmortem incident analysis read model (/bff/management/postmortems)
+- Postmortem detail read model (/bff/management/postmortems/{postmortem_id})
+
+The composed operations accept narrow injected dependencies or an adapted read store.
+"""
+
 from __future__ import annotations
 
-from typing import Any, Callable, Dict, List, Optional
+import json
+from datetime import datetime, timezone
+from typing import Any, Callable, Dict, List, Optional, Tuple
 from fastapi import APIRouter, Header, HTTPException, Query
 
 from .models import (
@@ -12,15 +26,640 @@ from .models import (
 )
 
 
+def _utc_now_rfc3339() -> str:
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+# ---------------------------------------------------------------------------
+# Composed Read Model Operations
+# ---------------------------------------------------------------------------
+
+def get_formula_jobs_read_model(
+    *,
+    status: Optional[str] = None,
+    formula_id: Optional[str] = None,
+    jobs_reader: Optional[Callable[[], Tuple[bool, List[Dict[str, Any]]]]] = None,
+    formula_jobs_reader: Optional[Callable[[], Tuple[bool, List[Dict[str, Any]]]]] = None,
+    store: Optional[Any] = None,
+    utc_now: Optional[Callable[[], str]] = None,
+) -> Dict[str, Any]:
+    now_fn = utc_now or _utc_now_rfc3339
+    contributing_sources: List[str] = []
+    raw_items: List[Dict[str, Any]] = []
+
+    jobs_avail, jobs_records = False, []
+    fj_avail, fj_records = False, []
+
+    if jobs_reader is not None:
+        try:
+            jobs_avail, jobs_records = jobs_reader()
+        except Exception:
+            jobs_avail, jobs_records = False, []
+    elif store is not None:
+        try:
+            if hasattr(store, "_service") and hasattr(store._service, "list_records"):
+                jobs_avail, jobs_records = store._service.list_records("jobs", include_snapshot_fallback=False)
+            elif hasattr(store, "list_records"):
+                jobs_avail, jobs_records = store.list_records("jobs")
+        except Exception:
+            jobs_avail, jobs_records = False, []
+
+    if formula_jobs_reader is not None:
+        try:
+            fj_avail, fj_records = formula_jobs_reader()
+        except Exception:
+            fj_avail, fj_records = False, []
+    elif store is not None:
+        try:
+            if hasattr(store, "_service") and hasattr(store._service, "list_records"):
+                fj_avail, fj_records = store._service.list_records("formula_jobs", include_snapshot_fallback=False)
+            elif hasattr(store, "list_records"):
+                fj_avail, fj_records = store.list_records("formula_jobs")
+        except Exception:
+            fj_avail, fj_records = False, []
+
+    if jobs_avail:
+        contributing_sources.append("service")
+        raw_items.extend(jobs_records or [])
+    if fj_avail:
+        contributing_sources.append("service")
+        raw_items.extend(fj_records or [])
+
+    if not jobs_avail and not fj_avail:
+        # Fallback to store get_formula_jobs_read_model if store has direct method
+        if store is not None and hasattr(store, "get_formula_jobs_read_model"):
+            try:
+                return store.get_formula_jobs_read_model(status=status, formula_id=formula_id)
+            except Exception:
+                pass
+        return {
+            "source": "unavailable",
+            "items": [],
+        }
+
+    filtered: List[Dict[str, Any]] = []
+    seen_job_ids = set()
+    for item in raw_items:
+        if not isinstance(item, dict):
+            continue
+        job_id = str(item.get("job_id") or item.get("run_id") or item.get("id") or "")
+        if not job_id or job_id in seen_job_ids:
+            continue
+        seen_job_ids.add(job_id)
+
+        item_status = str(item.get("status") or "admitted")
+        item_formula_id = str(
+            item.get("formula_id")
+            or item.get("target_id")
+            or item.get("entity_id")
+            or item.get("name")
+            or "formula-default"
+        )
+
+        if status and item_status != status:
+            continue
+        if formula_id and item_formula_id != formula_id:
+            continue
+
+        item_copy = {
+            "job_id": job_id,
+            "formula_id": item_formula_id,
+            "formula_version": str(item.get("formula_version") or item.get("version") or "1.0.0"),
+            "owner_id": str(
+                item.get("owner_id")
+                or item.get("actor_id")
+                or item.get("user_id")
+                or item.get("owner")
+                or "formula_job_executor"
+            ),
+            "status": item_status,
+            "submitted_at": str(item.get("submitted_at") or item.get("created_at") or now_fn()),
+            "started_at": item.get("started_at"),
+            "finished_at": item.get("finished_at") or item.get("completed_at"),
+            "metrics": (
+                item.get("metrics")
+                or (item.get("result", {}).get("metrics") if isinstance(item.get("result"), dict) else {})
+                or {}
+            ),
+            "chart_lineage": item.get("chart_lineage") or item.get("lineage") or [],
+            "source_identity": str(item.get("source_identity") or "formula_job_executor"),
+            "freshness": str(item.get("freshness") or item.get("submitted_at") or item.get("created_at") or now_fn()),
+        }
+        filtered.append(item_copy)
+
+    filtered.sort(key=lambda x: str(x.get("submitted_at") or ""), reverse=True)
+    source = "service"
+    return {
+        "source": source,
+        "items": filtered,
+    }
+
+
+def get_activity_read_model(
+    *,
+    event_type: Optional[str] = None,
+    actor_id: Optional[str] = None,
+    activity_audit_reader: Optional[Callable[[], Tuple[bool, List[Dict[str, Any]]]]] = None,
+    governance_audit_reader: Optional[Callable[[], Tuple[bool, List[Dict[str, Any]]]]] = None,
+    telemetry_events_reader: Optional[Callable[[], Tuple[str, List[Dict[str, Any]]]]] = None,
+    store: Optional[Any] = None,
+    utc_now: Optional[Callable[[], str]] = None,
+) -> Dict[str, Any]:
+    now_fn = utc_now or _utc_now_rfc3339
+    raw_items: List[Dict[str, Any]] = []
+    contributing_sources: List[str] = []
+    surfaces: Dict[str, Any] = {}
+
+    # 1. Activity audit
+    act_avail, act_records = False, []
+    if activity_audit_reader is not None:
+        try:
+            act_avail, act_records = activity_audit_reader()
+        except Exception:
+            act_avail, act_records = False, []
+    elif store is not None:
+        try:
+            if hasattr(store, "_service") and hasattr(store._service, "list_records"):
+                act_avail, act_records = store._service.list_records("activity_audit", include_snapshot_fallback=False)
+            elif hasattr(store, "list_records"):
+                act_avail, act_records = store.list_records("activity_audit")
+        except Exception:
+            act_avail, act_records = False, []
+
+    if act_avail and act_records:
+        contributing_sources.append("audit")
+        surfaces["activity_audit"] = {"status": "ok", "source": "audit"}
+        raw_items.extend(act_records)
+    elif act_avail:
+        surfaces["activity_audit"] = {"status": "degraded", "source": "audit"}
+    else:
+        surfaces["activity_audit"] = {"status": "unavailable", "source": "missing"}
+
+    # 2. Governance audit events
+    gov_avail, gov_records = False, []
+    if governance_audit_reader is not None:
+        try:
+            gov_avail, gov_records = governance_audit_reader()
+        except Exception:
+            gov_avail, gov_records = False, []
+    elif store is not None:
+        try:
+            if hasattr(store, "_service") and hasattr(store._service, "list_records"):
+                gov_avail, gov_records = store._service.list_records("governance_audit_events", include_snapshot_fallback=False)
+            elif hasattr(store, "list_records"):
+                gov_avail, gov_records = store.list_records("governance_audit_events")
+        except Exception:
+            gov_avail, gov_records = False, []
+
+    if gov_avail and gov_records:
+        contributing_sources.append("audit")
+        surfaces["governance_audit"] = {"status": "ok", "source": "audit"}
+        for gev in gov_records:
+            if not isinstance(gev, dict):
+                continue
+            eid = str(gev.get("entry_id") or gev.get("event_id") or gev.get("auditId") or gev.get("audit_id") or gev.get("id") or "")
+            raw_items.append({
+                "event_id": eid,
+                "entry_id": eid,
+                "event_type": str(gev.get("action_type") or gev.get("event_type") or "governance.audit"),
+                "aggregate_id": str(gev.get("target_id") or gev.get("aggregate_id") or ""),
+                "actor_id": str(gev.get("actor") or gev.get("actor_id") or "system"),
+                "timestamp": str(gev.get("timestamp") or now_fn()),
+                "summary": str(gev.get("summary") or f"Governance action {gev.get('action_type', '')}"),
+                "details": gev.get("details") or gev.get("payload") or gev.get("audit_context") or {},
+                "source_identity": str(gev.get("source_identity") or "governance_audit_store"),
+                "freshness": str(gev.get("timestamp") or now_fn()),
+            })
+    elif gov_avail:
+        surfaces["governance_audit"] = {"status": "degraded", "source": "audit"}
+    else:
+        surfaces["governance_audit"] = {"status": "unavailable", "source": "missing"}
+
+    # 3. Telemetry events
+    tel_src, tel_events = "missing", []
+    if telemetry_events_reader is not None:
+        try:
+            tel_src, tel_events = telemetry_events_reader()
+        except Exception:
+            tel_src, tel_events = "missing", []
+    elif store is not None:
+        try:
+            if hasattr(store, "list_telemetry_events_with_source"):
+                tel_src, tel_events = store.list_telemetry_events_with_source()
+            elif hasattr(store, "list_telemetry_events"):
+                tel_events = store.list_telemetry_events()
+                tel_src = "telemetry" if tel_events else "store"
+        except Exception:
+            tel_src, tel_events = "missing", []
+
+    if tel_src not in ("missing", "unavailable") and tel_events:
+        contributing_sources.append(tel_src)
+        surfaces["telemetry_events"] = {"status": "ok", "source": tel_src}
+        for tev in tel_events:
+            if not isinstance(tev, dict):
+                continue
+            tev_id = str(tev.get("id") or tev.get("event_id") or tev.get("telemetry_event_id") or "")
+            tev_type = str(tev.get("type") or tev.get("event_type") or "telemetry")
+            tev_actor = str(tev.get("actor_id") or tev.get("persona_id") or "telemetry_ingest")
+            raw_items.append({
+                "event_id": tev_id,
+                "entry_id": tev_id,
+                "event_type": tev_type,
+                "aggregate_id": str(tev.get("runtime_id") or tev.get("aggregate_id") or ""),
+                "actor_id": tev_actor,
+                "timestamp": str(tev.get("timestamp") or now_fn()),
+                "summary": str(tev.get("summary") or f"Telemetry event for runtime {tev.get('runtime_id', '')}"),
+                "details": tev.get("details") or tev.get("metrics") or {},
+                "source_identity": str(tev.get("source_identity") or "telemetry_event_store"),
+                "freshness": str(tev.get("timestamp") or now_fn()),
+            })
+    elif tel_src not in ("missing", "unavailable"):
+        surfaces["telemetry_events"] = {"status": "degraded", "source": tel_src}
+    else:
+        surfaces["telemetry_events"] = {"status": "unavailable", "source": "missing"}
+
+    if not act_avail and not gov_avail and (tel_src in ("missing", "unavailable")):
+        # If store has direct get_activity_read_model, fallback
+        if store is not None and hasattr(store, "get_activity_read_model"):
+            try:
+                return store.get_activity_read_model(event_type=event_type, actor_id=actor_id)
+            except Exception:
+                pass
+        return {
+            "source": "unavailable",
+            "items": [],
+            "surfaces": surfaces,
+        }
+
+    filtered: List[Dict[str, Any]] = []
+    seen_event_ids = set()
+    has_audit_items = False
+    has_telemetry_items = False
+
+    for item in raw_items:
+        if not isinstance(item, dict):
+            continue
+        eid = str(item.get("entry_id") or item.get("event_id") or item.get("auditId") or item.get("audit_id") or item.get("id") or "")
+        if not eid or eid in seen_event_ids:
+            continue
+        seen_event_ids.add(eid)
+
+        itype = str(item.get("event_type") or item.get("action_type") or item.get("type") or "activity")
+        iactor = str(item.get("actor_id") or item.get("actor") or "system")
+
+        if event_type and itype != event_type:
+            continue
+        if actor_id and iactor != actor_id:
+            continue
+
+        src_ident = str(item.get("source_identity") or "activity_audit_store")
+        if "telemetry" in src_ident:
+            has_telemetry_items = True
+        else:
+            has_audit_items = True
+
+        item_copy = {
+            "event_id": eid,
+            "entry_id": eid,
+            "event_type": itype,
+            "aggregate_id": str(item.get("aggregate_id") or item.get("target_id") or item.get("runtime_id") or ""),
+            "actor_id": iactor,
+            "timestamp": str(item.get("timestamp") or item.get("occurred_at") or now_fn()),
+            "summary": str(item.get("summary") or item.get("description") or f"Activity {itype}"),
+            "details": item.get("details") or item.get("payload") or item.get("audit_context") or {},
+            "source_identity": src_ident,
+            "freshness": str(item.get("freshness") or item.get("timestamp") or now_fn()),
+        }
+        filtered.append(item_copy)
+
+    filtered.sort(key=lambda x: str(x.get("timestamp") or ""), reverse=True)
+
+    if has_audit_items:
+        source = "audit"
+    elif has_telemetry_items:
+        source = "telemetry"
+    elif contributing_sources:
+        source = contributing_sources[0]
+    else:
+        source = "audit"
+
+    return {
+        "source": source,
+        "items": filtered,
+        "surfaces": surfaces,
+    }
+
+
+def get_paper_telemetry_read_model(
+    *,
+    strategy_id: Optional[str] = None,
+    persona_id: Optional[str] = None,
+    paper_telemetry_reader: Optional[Callable[[], Tuple[bool, List[Dict[str, Any]]]]] = None,
+    runtime_bindings_reader: Optional[Callable[[], Tuple[bool, List[Dict[str, Any]]]]] = None,
+    telemetry_events_reader: Optional[Callable[[], Tuple[str, List[Dict[str, Any]]]]] = None,
+    store: Optional[Any] = None,
+    utc_now: Optional[Callable[[], str]] = None,
+) -> Dict[str, Any]:
+    now_fn = utc_now or _utc_now_rfc3339
+    raw_items: List[Dict[str, Any]] = []
+    contributing_sources: List[str] = []
+
+    # 1. Direct paper_telemetry dataset
+    pt_avail, pt_records = False, []
+    if paper_telemetry_reader is not None:
+        try:
+            pt_avail, pt_records = paper_telemetry_reader()
+        except Exception:
+            pt_avail, pt_records = False, []
+    elif store is not None:
+        try:
+            if hasattr(store, "_service") and hasattr(store._service, "list_records"):
+                pt_avail, pt_records = store._service.list_records("paper_telemetry", include_snapshot_fallback=False)
+            elif hasattr(store, "list_records"):
+                pt_avail, pt_records = store.list_records("paper_telemetry")
+        except Exception:
+            pt_avail, pt_records = False, []
+
+    if pt_avail and pt_records:
+        contributing_sources.append("service")
+        raw_items.extend(pt_records)
+
+    # 2. Canonical runtime bindings + telemetry events
+    bindings_avail = False
+    bindings: List[Dict[str, Any]] = []
+    if runtime_bindings_reader is not None:
+        try:
+            bindings_avail, bindings = runtime_bindings_reader()
+        except Exception:
+            bindings_avail, bindings = False, []
+    elif store is not None:
+        try:
+            if hasattr(store, "_service") and hasattr(store._service, "list_records"):
+                bindings_avail, bindings = store._service.list_records("runtime_bindings", include_snapshot_fallback=False)
+            if (not bindings_avail or not bindings) and hasattr(store, "list_runtime_bindings"):
+                bindings = store.list_runtime_bindings()
+                if bindings:
+                    bindings_avail = True
+        except Exception:
+            bindings_avail, bindings = False, []
+
+    tel_events: List[Dict[str, Any]] = []
+    if telemetry_events_reader is not None:
+        try:
+            _, tel_events = telemetry_events_reader()
+        except Exception:
+            tel_events = []
+    elif store is not None and hasattr(store, "list_telemetry_events"):
+        try:
+            tel_events = store.list_telemetry_events()
+        except Exception:
+            tel_events = []
+
+    if bindings_avail and bindings:
+        contributing_sources.append("service")
+        for b in bindings:
+            if not isinstance(b, dict):
+                continue
+            b_strat = str(b.get("strategy_id") or b.get("id") or "")
+            b_persona = b.get("persona_id")
+            b_ledger = str(b.get("paper_ledger_id") or f"ledger-{b.get('binding_id') or b.get('id') or b_strat or 'default'}")
+
+            matching_events = [
+                e for e in tel_events
+                if isinstance(e, dict) and str(e.get("runtime_id") or e.get("strategy_id") or "") in (
+                    b_strat,
+                    str(b.get("binding_id") or b.get("id")),
+                    str(b.get("runtime_id") or ""),
+                )
+            ]
+            series: List[Dict[str, Any]] = []
+            for me in matching_events:
+                ts = str(me.get("timestamp") or me.get("occurred_at") or now_fn())
+                m = me.get("metrics") or me.get("details") or me
+                if isinstance(m, dict) and any(k in m for k in ("equity", "drawdown_pct", "open_positions", "daily_pnl")):
+                    series.append({
+                        "timestamp": ts,
+                        "equity": float(m.get("equity") or 0.0),
+                        "drawdown_pct": float(m.get("drawdown_pct") or 0.0),
+                        "open_positions": int(m.get("open_positions") or 0),
+                        "daily_pnl": float(m.get("daily_pnl") or 0.0),
+                    })
+            last_sig = matching_events[-1].get("timestamp") if matching_events else b.get("last_signal_at")
+            raw_items.append({
+                "strategy_id": b_strat,
+                "persona_id": b_persona,
+                "paper_ledger_id": b_ledger,
+                "status": str(b.get("status") or "active"),
+                "last_signal_at": last_sig,
+                "series": series,
+                "metrics": b.get("metrics") or (matching_events[-1].get("metrics") if matching_events else {}),
+                "source_identity": "paper_telemetry_store",
+                "freshness": str(last_sig or b.get("created_at") or now_fn()),
+            })
+
+    if not pt_avail and not bindings_avail:
+        if store is not None and hasattr(store, "get_paper_telemetry_read_model"):
+            try:
+                return store.get_paper_telemetry_read_model(strategy_id=strategy_id, persona_id=persona_id)
+            except Exception:
+                pass
+        return {
+            "source": "unavailable",
+            "items": [],
+        }
+
+    filtered: List[Dict[str, Any]] = []
+    seen_strat_ids = set()
+    for item in raw_items:
+        if not isinstance(item, dict):
+            continue
+        strat = str(item.get("strategy_id") or item.get("id") or "")
+        if not strat or strat in seen_strat_ids:
+            continue
+        seen_strat_ids.add(strat)
+
+        p_id = item.get("persona_id")
+        if strategy_id and strat != strategy_id:
+            continue
+        if persona_id and p_id != persona_id:
+            continue
+
+        raw_series = item.get("series") or []
+        norm_series = []
+        for pt in raw_series:
+            if isinstance(pt, dict):
+                norm_series.append({
+                    "timestamp": str(pt.get("timestamp") or now_fn()),
+                    "equity": float(pt.get("equity") or 0.0),
+                    "drawdown_pct": float(pt.get("drawdown_pct") or 0.0),
+                    "open_positions": int(pt.get("open_positions") or 0),
+                    "daily_pnl": float(pt.get("daily_pnl") or 0.0),
+                })
+
+        item_copy = {
+            "strategy_id": strat,
+            "persona_id": p_id,
+            "paper_ledger_id": str(item.get("paper_ledger_id") or f"ledger-{strat}"),
+            "status": str(item.get("status") or "active"),
+            "last_signal_at": item.get("last_signal_at"),
+            "series": norm_series,
+            "metrics": item.get("metrics") or {},
+            "source_identity": str(item.get("source_identity") or "paper_telemetry_store"),
+            "freshness": str(item.get("freshness") or item.get("last_signal_at") or now_fn()),
+        }
+        filtered.append(item_copy)
+
+    source = "service"
+    return {
+        "source": source,
+        "items": filtered,
+    }
+
+
+def get_postmortems_read_model(
+    *,
+    severity: Optional[str] = None,
+    status: Optional[str] = None,
+    postmortems_reader: Optional[Callable[[], Tuple[bool, List[Dict[str, Any]]]]] = None,
+    store: Optional[Any] = None,
+    utc_now: Optional[Callable[[], str]] = None,
+) -> Dict[str, Any]:
+    now_fn = utc_now or _utc_now_rfc3339
+    available, service_records = False, []
+
+    if postmortems_reader is not None:
+        try:
+            available, service_records = postmortems_reader()
+        except Exception:
+            available, service_records = False, []
+    elif store is not None:
+        try:
+            if hasattr(store, "_service") and hasattr(store._service, "list_records"):
+                available, service_records = store._service.list_records("postmortems", include_snapshot_fallback=False)
+            elif hasattr(store, "list_records"):
+                available, service_records = store.list_records("postmortems")
+        except Exception:
+            available, service_records = False, []
+
+    if not available:
+        if store is not None and hasattr(store, "get_postmortems_read_model"):
+            try:
+                return store.get_postmortems_read_model(severity=severity, status=status)
+            except Exception:
+                pass
+        return {
+            "source": "unavailable",
+            "items": [],
+        }
+
+    source = "store"
+    raw_items = service_records or []
+    filtered: List[Dict[str, Any]] = []
+    seen_pm_ids = set()
+
+    for item in raw_items:
+        if not isinstance(item, dict):
+            continue
+        item_copy = json.loads(json.dumps(item))
+        pm_id = str(item_copy.get("postmortem_id") or item_copy.get("id") or item_copy.get("report_id") or "")
+        if not pm_id or pm_id in seen_pm_ids:
+            continue
+        seen_pm_ids.add(pm_id)
+        item_copy["postmortem_id"] = pm_id
+        item_copy["incident_id"] = str(item_copy.get("incident_id") or "")
+        item_copy["title"] = str(item_copy.get("title") or "Postmortem Analysis")
+        item_copy["status"] = str(item_copy.get("status") or "resolved")
+        item_copy["created_at"] = str(item_copy.get("created_at") or now_fn())
+
+        if "impact_summary" not in item_copy and "incident_evidence_summary" in item_copy:
+            item_copy["impact_summary"] = item_copy.get("incident_evidence_summary")
+        if "severity" not in item_copy or not item_copy.get("severity"):
+            item_copy["severity"] = "medium"
+        if "action_items" in item_copy and isinstance(item_copy["action_items"], list):
+            norm_actions = []
+            for idx, act in enumerate(item_copy["action_items"]):
+                if isinstance(act, str):
+                    norm_actions.append({"id": f"act-{idx+1}", "desc": act})
+                elif isinstance(act, dict):
+                    norm_actions.append(act)
+            item_copy["action_items"] = norm_actions
+
+        if severity and item_copy.get("severity") != severity:
+            continue
+        if status and item_copy.get("status") != status:
+            continue
+
+        if "source_identity" not in item_copy:
+            item_copy["source_identity"] = "postmortem_store"
+        if "freshness" not in item_copy:
+            item_copy["freshness"] = item_copy.get("created_at") or now_fn()
+        filtered.append(item_copy)
+
+    return {
+        "source": source,
+        "items": filtered,
+    }
+
+
+def get_postmortem_detail_read_model(
+    *,
+    postmortem_id: str,
+    postmortems_reader: Optional[Callable[[], Tuple[bool, List[Dict[str, Any]]]]] = None,
+    store: Optional[Any] = None,
+    utc_now: Optional[Callable[[], str]] = None,
+) -> Dict[str, Any]:
+    res = get_postmortems_read_model(
+        postmortems_reader=postmortems_reader,
+        store=store,
+        utc_now=utc_now,
+    )
+    if res.get("source") == "unavailable":
+        return {
+            "source": "unavailable",
+            "item": None,
+        }
+    items = res.get("items") or []
+    for item in items:
+        if item.get("postmortem_id") == postmortem_id:
+            return {
+                "source": res.get("source") or "store",
+                "item": item,
+            }
+    return {
+        "source": res.get("source") or "missing",
+        "item": None,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Router Factory
+# ---------------------------------------------------------------------------
+
 def create_management_read_models_router(
     *,
-    get_read_store: Callable,
+    get_read_store: Optional[Callable] = None,
     extract_identity: Callable,
     require_read_role: Callable,
     snapshot_meta: Callable,
     utc_now: Callable,
+    jobs_reader: Optional[Callable[[], Tuple[bool, List[Dict[str, Any]]]]] = None,
+    formula_jobs_reader: Optional[Callable[[], Tuple[bool, List[Dict[str, Any]]]]] = None,
+    activity_audit_reader: Optional[Callable[[], Tuple[bool, List[Dict[str, Any]]]]] = None,
+    governance_audit_reader: Optional[Callable[[], Tuple[bool, List[Dict[str, Any]]]]] = None,
+    telemetry_events_reader: Optional[Callable[[], Tuple[str, List[Dict[str, Any]]]]] = None,
+    paper_telemetry_reader: Optional[Callable[[], Tuple[bool, List[Dict[str, Any]]]]] = None,
+    runtime_bindings_reader: Optional[Callable[[], Tuple[bool, List[Dict[str, Any]]]]] = None,
+    postmortems_reader: Optional[Callable[[], Tuple[bool, List[Dict[str, Any]]]]] = None,
 ) -> APIRouter:
     router = APIRouter()
+
+    def _resolve_store() -> Optional[Any]:
+        if get_read_store is not None:
+            try:
+                return get_read_store()
+            except Exception:
+                return None
+        return None
 
     @router.get(
         "/bff/management/formula-jobs",
@@ -38,8 +677,15 @@ def create_management_read_models_router(
         require_read_role(identity)
 
         snapshot_at = utc_now()
-        store = get_read_store()
-        raw_res = store.get_formula_jobs_read_model(status=status, formula_id=formula_id)
+        store = _resolve_store()
+        raw_res = get_formula_jobs_read_model(
+            status=status,
+            formula_id=formula_id,
+            jobs_reader=jobs_reader,
+            formula_jobs_reader=formula_jobs_reader,
+            store=store,
+            utc_now=utc_now,
+        )
 
         source: str = str(raw_res.get("source") or "missing")
         items: List[Dict[str, Any]] = list(raw_res.get("items") or [])
@@ -123,8 +769,16 @@ def create_management_read_models_router(
         require_read_role(identity)
 
         snapshot_at = utc_now()
-        store = get_read_store()
-        raw_res = store.get_activity_read_model(event_type=event_type, actor_id=actor_id)
+        store = _resolve_store()
+        raw_res = get_activity_read_model(
+            event_type=event_type,
+            actor_id=actor_id,
+            activity_audit_reader=activity_audit_reader,
+            governance_audit_reader=governance_audit_reader,
+            telemetry_events_reader=telemetry_events_reader,
+            store=store,
+            utc_now=utc_now,
+        )
 
         source: str = str(raw_res.get("source") or "missing")
         items: List[Dict[str, Any]] = list(raw_res.get("items") or [])
@@ -209,8 +863,16 @@ def create_management_read_models_router(
         require_read_role(identity)
 
         snapshot_at = utc_now()
-        store = get_read_store()
-        raw_res = store.get_paper_telemetry_read_model(strategy_id=strategy_id, persona_id=persona_id)
+        store = _resolve_store()
+        raw_res = get_paper_telemetry_read_model(
+            strategy_id=strategy_id,
+            persona_id=persona_id,
+            paper_telemetry_reader=paper_telemetry_reader,
+            runtime_bindings_reader=runtime_bindings_reader,
+            telemetry_events_reader=telemetry_events_reader,
+            store=store,
+            utc_now=utc_now,
+        )
 
         source: str = str(raw_res.get("source") or "missing")
         items: List[Dict[str, Any]] = list(raw_res.get("items") or [])
@@ -294,8 +956,14 @@ def create_management_read_models_router(
         require_read_role(identity)
 
         snapshot_at = utc_now()
-        store = get_read_store()
-        raw_res = store.get_postmortems_read_model(severity=severity, status=status)
+        store = _resolve_store()
+        raw_res = get_postmortems_read_model(
+            severity=severity,
+            status=status,
+            postmortems_reader=postmortems_reader,
+            store=store,
+            utc_now=utc_now,
+        )
 
         source: str = str(raw_res.get("source") or "missing")
         items: List[Dict[str, Any]] = list(raw_res.get("items") or [])
@@ -376,8 +1044,13 @@ def create_management_read_models_router(
         require_read_role(identity)
 
         snapshot_at = utc_now()
-        store = get_read_store()
-        raw_res = store.get_postmortem_detail_read_model(postmortem_id=postmortem_id)
+        store = _resolve_store()
+        raw_res = get_postmortem_detail_read_model(
+            postmortem_id=postmortem_id,
+            postmortems_reader=postmortems_reader,
+            store=store,
+            utc_now=utc_now,
+        )
 
         source: str = str(raw_res.get("source") or "missing")
         item: Optional[Dict[str, Any]] = raw_res.get("item")
