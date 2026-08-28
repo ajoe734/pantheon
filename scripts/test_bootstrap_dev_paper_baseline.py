@@ -20,6 +20,12 @@ DEV_ENV = {
     "PANTHEON_BFF_OIDC_CLIENT_SECRET": "operator-secret",
 }
 
+PERMISSIVE_DEV_ENV = {
+    **DEV_ENV,
+    "PANTHEON_BFF_AUTH_MODE": "permissive",
+    "PANTHEON_BFF_AUTH_STUB": "true",
+}
+
 
 def _run(**overrides):
     params = {
@@ -120,12 +126,39 @@ def test_replays_one_idempotent_request_until_authoritative_readback() -> None:
     assert first_create.kwargs["headers"]["Authorization"] == "Bearer short-lived"
 
 
+def test_allows_permissive_stub_for_dev_paper_functional_closure() -> None:
+    responses = [
+        (200, {"access_token": "short-lived", "meta": {"identity": "operator_a"}}),
+        (
+            201,
+            {
+                "data": {"id": "persona-1", "state": "paper_running", "capitalMode": "paper"},
+                "meta": {
+                    "provisioning_state": "succeeded",
+                    "provisioning_step": "authoritative_readback_complete",
+                    "runtime_id": "rt-1",
+                    "runtime_binding_id": "rb-1",
+                    "deployment_plan_id": "plan-1",
+                    "live_capital_side_effects": False,
+                },
+            },
+        ),
+    ]
+
+    with patch.dict(os.environ, PERMISSIVE_DEV_ENV, clear=True), patch.object(
+        bootstrap, "_post_json", side_effect=responses
+    ):
+        result = _run()
+
+    assert result["status"] == "ok"
+    assert result["capital_mode"] == "paper"
+
+
 @pytest.mark.parametrize(
     ("env_update", "message"),
     [
         ({"PANTHEON_ENV": "staging-live"}, "PANTHEON_ENV=dev"),
-        ({"PANTHEON_BFF_AUTH_STUB": "true"}, "strict BFF auth"),
-        ({"PANTHEON_BFF_AUTH_MODE": "permissive"}, "strict BFF auth"),
+        ({"PANTHEON_BFF_AUTH_MODE": "disabled"}, "supported BFF auth mode"),
         ({"PANTHEON_LIVE_BROKER_ENABLED": "true"}, "live broker enabled"),
         (
             {"PANTHEON_CANARY_EXECUTION_ENABLED": "true"},
