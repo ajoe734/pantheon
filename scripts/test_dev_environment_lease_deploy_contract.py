@@ -1172,8 +1172,8 @@ def test_dev_root_deploy_builds_candidate_before_mutating_active_runtime() -> No
 
     bff_section = deploy_script.split("case \"${PANTHEON_DEPLOY_COMPONENT}\" in", 1)[1].split("\n  bff)", 1)[1].split(";;", 1)[0]
     bff_export_sha_idx = bff_section.index('export GIT_SHA="${PANTHEON_DEPLOY_SHA}"')
-    bff_build_idx = bff_section.index("docker compose -p pantheon -f docker-compose.yml build operator-bff loop-run-projector-scheduler")
-    bff_up_idx = bff_section.index("docker compose -p pantheon -f docker-compose.yml up -d --force-recreate --no-deps operator-bff loop-run-projector-scheduler")
+    bff_build_idx = bff_section.index("docker compose -p pantheon -f docker-compose.yml build operator-bff agora-interaction-worker loop-run-projector-scheduler")
+    bff_up_idx = bff_section.index("docker compose -p pantheon -f docker-compose.yml up -d --force-recreate --no-deps operator-bff agora-interaction-worker loop-run-projector-scheduler")
     assert bff_export_sha_idx < bff_build_idx < bff_up_idx
     assert 'GIT_SHA="${PANTHEON_DEPLOY_SHA}"' in bff_section[:bff_up_idx]
 
@@ -1300,10 +1300,11 @@ def test_validate_required_loop_workers_logic() -> None:
     array_lines = deploy_script.split("REQUIRED_LOOP_WORKERS=(", 1)[1].split(")", 1)[0].splitlines()
     required = [line.split("#")[0].strip() for line in array_lines if line.split("#")[0].strip()]
 
-    assert len(required) == 27
+    assert len(required) == 28
     assert "source-ingest" in required
     assert "operator-bff" in required
     assert "paper-fleet-reconciler" in required
+    assert "agora-interaction-worker" in required
 
     # Verify duplicate worker detection logic
     forbidden_lines = deploy_script.split("FORBIDDEN_DUPLICATE_WORKERS=(", 1)[1].split(")", 1)[0].splitlines()

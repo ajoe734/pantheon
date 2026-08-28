@@ -200,6 +200,102 @@ def _write_evidence_files(root: Path) -> dict[str, Path]:
         "new_parallel_owner_created": False,
     }
 
+    backend_components_payload = {
+        "schema_version": "pantheon.deployment.backend_required_components_receipt.v1",
+        "task": {"id": "ACG-DEPLOY-EXACT-GATES-20260828"},
+        "task_id": "ACG-DEPLOY-EXACT-GATES-20260828",
+        "status": "passed",
+        "result": "passed",
+        "mode": "hosted",
+        "observed_at": _timestamp(),
+        "expected_sha": BFF_SHA,
+        "deploy_source_sha": BFF_SHA,
+        "deployment_environment": "dev",
+        "deployment_component": "bff",
+        "required_services": [
+            "operator-bff",
+            "agora-interaction-worker",
+            "loop-run-projector-scheduler",
+        ],
+        "total_services": 3,
+        "services": {
+            "operator-bff": {
+                "service": "operator-bff",
+                "container_id": "c1",
+                "image": "pantheon-operator-bff",
+                "image_id": "sha256:" + "1" * 64,
+                "compose_image_id": "sha256:" + "1" * 64,
+                "image_revision": BFF_SHA,
+                "source_revision": BFF_SHA,
+                "source_identity_method": "oci_revision",
+                "status": "running",
+                "restart_count": 0,
+                "health": "healthy",
+                "command": ["python", "-m", "services.control-plane.bff.main"],
+                "matches_expected_sha": True,
+                "matches_expected_image": True,
+            },
+            "agora-interaction-worker": {
+                "service": "agora-interaction-worker",
+                "container_id": "c2",
+                "image": "pantheon-operator-bff",
+                "image_id": "sha256:" + "2" * 64,
+                "compose_image_id": "sha256:" + "2" * 64,
+                "image_revision": BFF_SHA,
+                "source_revision": BFF_SHA,
+                "source_identity_method": "oci_revision",
+                "status": "running",
+                "restart_count": 0,
+                "health": "healthy",
+                "command": ["python", "scripts/run_agora_interaction_worker.py"],
+                "matches_expected_sha": True,
+                "matches_expected_image": True,
+            },
+            "loop-run-projector-scheduler": {
+                "service": "loop-run-projector-scheduler",
+                "container_id": "c3",
+                "image": "pantheon-operator-bff",
+                "image_id": "sha256:" + "3" * 64,
+                "compose_image_id": "sha256:" + "3" * 64,
+                "image_revision": None,
+                "source_revision": BFF_SHA,
+                "source_identity_method": "deploy_checkout_and_compose_image_id",
+                "status": "running",
+                "restart_count": 0,
+                "health": "healthy",
+                "command": [
+                    "python",
+                    "scripts/run_loop_run_projector_scheduler.py",
+                ],
+                "matches_expected_sha": None,
+                "matches_expected_image": True,
+            },
+        },
+        "verification_failures": {
+            "missing": [],
+            "duplicates": [],
+            "not_running_or_restarted": [],
+            "unhealthy": [],
+            "wrong_sha": [],
+            "identity_errors": [],
+        },
+        "all_passed": True,
+        "unskipped_mandatory_cases": True,
+        "skipped_mandatory_count": 0,
+        "exact_pair": {
+            "backend_sha": BFF_SHA,
+            "frontend_sha": FE_SHA,
+            "bff_url": BFF_URL,
+            "fe_url": FE_URL,
+        },
+        "producer": {
+            "kind": "github-actions",
+            "repository": "ajoe734/pantheon",
+            "workflow": "nonprod-deploy.yml",
+            "run_id": "12353",
+        },
+    }
+
     paths: dict[str, Path] = {}
     for name, payload in (
         ("l12", l12_payload),
@@ -210,6 +306,7 @@ def _write_evidence_files(root: Path) -> dict[str, Path]:
         ("rollback", rollback_payload),
         ("source_runtime", source_runtime_payload),
         ("paper_runtime", paper_runtime_payload),
+        ("backend_components", backend_components_payload),
         ("code_disposition", disposition_payload),
     ):
         p = root / f"{name}.json"
@@ -322,6 +419,12 @@ def _transport(
             workflow="nonprod-deploy.yml",
             head_sha=BFF_SHA,
         ),
+        f"https://api.github.com/repos/ajoe734/pantheon/actions/runs/12353": _github_run(
+            repository="ajoe734/pantheon",
+            run_id="12353",
+            workflow="nonprod-deploy.yml",
+            head_sha=BFF_SHA,
+        ),
     }
     if github_runs_override:
         runs.update(github_runs_override)
@@ -404,6 +507,7 @@ def _config(
         rollback_evidence=paths.get("rollback"),
         source_runtime_evidence=paths.get("source_runtime"),
         paper_runtime_evidence=paths.get("paper_runtime"),
+        backend_components_evidence=paths.get("backend_components"),
         code_disposition_path=paths.get("code_disposition"),
         bff_base_url=BFF_URL,
         fe_base_url=FE_URL,
@@ -1471,6 +1575,7 @@ def test_main_cli_success(tmp_path: Path, monkeypatch) -> None:
         "--mgmt-ai-evidence", str(paths["mgmt_ai"]),
         "--source-runtime-evidence", str(paths["source_runtime"]),
         "--paper-runtime-evidence", str(paths["paper_runtime"]),
+        "--backend-components-evidence", str(paths["backend_components"]),
         "--rollback-evidence", str(paths["rollback"]),
         "--code-disposition", str(paths["code_disposition"]),
         "--evidence-dir", str(tmp_path / "cli_out"),
@@ -1482,3 +1587,207 @@ def test_main_cli_success(tmp_path: Path, monkeypatch) -> None:
     )
     rc = main()
     assert rc == 0
+
+
+def test_gate_01_backend_components_happy_path(tmp_path: Path) -> None:
+    paths = _write_evidence_files(tmp_path)
+    verifier = ProductFunctionalClosureVerifier(
+        _config(tmp_path, paths),
+        transport=_transport(),
+    )
+    report = verifier.run_full_acceptance()
+    assert report.overall_status == "PASSED"
+    gate_01 = next(r for r in report.gate_results if r.gate_id == "gate_01_manifest_exact_pair")
+    assert gate_01.status == "PASSED"
+    assert "backend_components" in gate_01.details
+    assert gate_01.details["backend_components"]["all_running"] is True
+    assert gate_01.details["backend_components"]["verified_services_count"] == 3
+    assert gate_01.details["backend_components"]["required_services_count"] == 3
+
+
+def test_gate_01_backend_components_missing_file_fails(tmp_path: Path) -> None:
+    paths = _write_evidence_files(tmp_path)
+    paths["backend_components"].unlink()
+    verifier = ProductFunctionalClosureVerifier(
+        _config(tmp_path, paths),
+        transport=_transport(),
+    )
+    report = verifier.run_full_acceptance()
+    assert report.overall_status == "FAILED"
+    gate_01 = next(r for r in report.gate_results if r.gate_id == "gate_01_manifest_exact_pair")
+    assert gate_01.status == "FAILED"
+    assert "does not exist" in str(gate_01.error)
+
+
+def test_gate_01_backend_components_invalid_schema_fails(tmp_path: Path) -> None:
+    paths = _write_evidence_files(tmp_path)
+    bc = json.loads(paths["backend_components"].read_text())
+    bc["schema_version"] = "invalid.schema.v1"
+    paths["backend_components"].write_text(json.dumps(bc))
+
+    verifier = ProductFunctionalClosureVerifier(
+        _config(tmp_path, paths),
+        transport=_transport(),
+    )
+    report = verifier.run_full_acceptance()
+    assert report.overall_status == "FAILED"
+    gate_01 = next(r for r in report.gate_results if r.gate_id == "gate_01_manifest_exact_pair")
+    assert gate_01.status == "FAILED"
+    assert "invalid backend components receipt schema" in str(gate_01.error)
+
+
+def test_gate_01_backend_components_expected_sha_mismatch_fails(tmp_path: Path) -> None:
+    paths = _write_evidence_files(tmp_path)
+    bc = json.loads(paths["backend_components"].read_text())
+    bc["expected_sha"] = "0" * 40
+    paths["backend_components"].write_text(json.dumps(bc))
+
+    verifier = ProductFunctionalClosureVerifier(
+        _config(tmp_path, paths),
+        transport=_transport(),
+    )
+    report = verifier.run_full_acceptance()
+    assert report.overall_status == "FAILED"
+    gate_01 = next(r for r in report.gate_results if r.gate_id == "gate_01_manifest_exact_pair")
+    assert gate_01.status == "FAILED"
+    assert "backend components receipt SHA" in str(gate_01.error)
+
+
+def test_gate_01_backend_components_empty_services_fails(tmp_path: Path) -> None:
+    paths = _write_evidence_files(tmp_path)
+    bc = json.loads(paths["backend_components"].read_text())
+    bc["services"] = {}
+    paths["backend_components"].write_text(json.dumps(bc))
+
+    verifier = ProductFunctionalClosureVerifier(
+        _config(tmp_path, paths),
+        transport=_transport(),
+    )
+    report = verifier.run_full_acceptance()
+    assert report.overall_status == "FAILED"
+    gate_01 = next(r for r in report.gate_results if r.gate_id == "gate_01_manifest_exact_pair")
+    assert gate_01.status == "FAILED"
+    assert "declares empty services map" in str(gate_01.error)
+
+
+def test_gate_01_backend_components_missing_required_services_fails(tmp_path: Path) -> None:
+    paths = _write_evidence_files(tmp_path)
+    bc = json.loads(paths["backend_components"].read_text())
+    del bc["required_services"]
+    paths["backend_components"].write_text(json.dumps(bc))
+
+    verifier = ProductFunctionalClosureVerifier(
+        _config(tmp_path, paths),
+        transport=_transport(),
+    )
+    report = verifier.run_full_acceptance()
+    assert report.overall_status == "FAILED"
+    gate_01 = next(r for r in report.gate_results if r.gate_id == "gate_01_manifest_exact_pair")
+    assert gate_01.status == "FAILED"
+    assert "non-empty required_services list" in str(gate_01.error)
+
+
+def test_gate_01_backend_components_incomplete_service_map_fails(tmp_path: Path) -> None:
+    paths = _write_evidence_files(tmp_path)
+    bc = json.loads(paths["backend_components"].read_text())
+    del bc["services"]["loop-run-projector-scheduler"]
+    bc["total_services"] = 2
+    paths["backend_components"].write_text(json.dumps(bc))
+
+    verifier = ProductFunctionalClosureVerifier(
+        _config(tmp_path, paths),
+        transport=_transport(),
+    )
+    report = verifier.run_full_acceptance()
+    assert report.overall_status == "FAILED"
+    gate_01 = next(r for r in report.gate_results if r.gate_id == "gate_01_manifest_exact_pair")
+    assert gate_01.status == "FAILED"
+    assert "service set is incomplete or unexpected" in str(gate_01.error)
+
+
+def test_gate_01_backend_components_missing_identity_fails(tmp_path: Path) -> None:
+    paths = _write_evidence_files(tmp_path)
+    bc = json.loads(paths["backend_components"].read_text())
+    del bc["services"]["operator-bff"]["container_id"]
+    paths["backend_components"].write_text(json.dumps(bc))
+
+    verifier = ProductFunctionalClosureVerifier(
+        _config(tmp_path, paths),
+        transport=_transport(),
+    )
+    report = verifier.run_full_acceptance()
+    assert report.overall_status == "FAILED"
+    gate_01 = next(r for r in report.gate_results if r.gate_id == "gate_01_manifest_exact_pair")
+    assert gate_01.status == "FAILED"
+    assert "missing container_id identity" in str(gate_01.error)
+
+
+def test_gate_01_backend_components_service_not_running_fails(tmp_path: Path) -> None:
+    paths = _write_evidence_files(tmp_path)
+    bc = json.loads(paths["backend_components"].read_text())
+    bc["services"]["agora-interaction-worker"]["status"] = "restarting"
+    paths["backend_components"].write_text(json.dumps(bc))
+
+    verifier = ProductFunctionalClosureVerifier(
+        _config(tmp_path, paths),
+        transport=_transport(),
+    )
+    report = verifier.run_full_acceptance()
+    assert report.overall_status == "FAILED"
+    gate_01 = next(r for r in report.gate_results if r.gate_id == "gate_01_manifest_exact_pair")
+    assert gate_01.status == "FAILED"
+    assert "agora-interaction-worker status is 'restarting', must be 'running'" in str(gate_01.error)
+
+
+def test_gate_01_backend_components_service_unhealthy_fails(tmp_path: Path) -> None:
+    paths = _write_evidence_files(tmp_path)
+    bc = json.loads(paths["backend_components"].read_text())
+    bc["services"]["operator-bff"]["health"] = "unhealthy"
+    paths["backend_components"].write_text(json.dumps(bc))
+
+    verifier = ProductFunctionalClosureVerifier(
+        _config(tmp_path, paths),
+        transport=_transport(),
+    )
+    report = verifier.run_full_acceptance()
+    assert report.overall_status == "FAILED"
+    gate_01 = next(r for r in report.gate_results if r.gate_id == "gate_01_manifest_exact_pair")
+    assert gate_01.status == "FAILED"
+    assert "operator-bff health is 'unhealthy'" in str(gate_01.error)
+
+
+def test_gate_01_backend_components_service_wrong_revision_fails(tmp_path: Path) -> None:
+    paths = _write_evidence_files(tmp_path)
+    bc = json.loads(paths["backend_components"].read_text())
+    bc["services"]["agora-interaction-worker"]["image_revision"] = "f" * 40
+    paths["backend_components"].write_text(json.dumps(bc))
+
+    verifier = ProductFunctionalClosureVerifier(
+        _config(tmp_path, paths),
+        transport=_transport(),
+    )
+    report = verifier.run_full_acceptance()
+    assert report.overall_status == "FAILED"
+    gate_01 = next(r for r in report.gate_results if r.gate_id == "gate_01_manifest_exact_pair")
+    assert gate_01.status == "FAILED"
+    assert "agora-interaction-worker image revision" in str(gate_01.error)
+
+
+def test_gate_01_backend_components_absent_from_discovery_and_config_fails(tmp_path: Path) -> None:
+    """Proves Gate 01 fails closed when backend components receipt is entirely absent from config and auto-discovery."""
+    paths = _write_evidence_files(tmp_path)
+    paths["backend_components"].unlink()
+    del paths["backend_components"]
+
+    config = _config(tmp_path, paths)
+    assert config.backend_components_evidence is None
+
+    verifier = ProductFunctionalClosureVerifier(
+        config,
+        transport=_transport(),
+    )
+    report = verifier.run_full_acceptance()
+    assert report.overall_status == "FAILED"
+    gate_01 = next(r for r in report.gate_results if r.gate_id == "gate_01_manifest_exact_pair")
+    assert gate_01.status == "FAILED"
+    assert "--backend-components-evidence is required and must be provided" in str(gate_01.error)
