@@ -754,24 +754,15 @@ def _review_manifest_identity(
     return path, blob_sha
 
 
-def validate_review_admission(
+def _validate_pr_admission_metadata(
     *,
     repository: str,
     binding: Mapping[str, Any] | ReviewBinding,
-    review_file: str,
     required_merge_method: str = REQUIRED_REVIEW_MERGE_METHOD,
     allow_base_advance: bool = False,
     frozen_base_sha: str = "",
     runner: JsonRunner | None = None,
-) -> ReviewAdmissionBinding:
-    """Fail closed before a canonical task is allowed to enter ``review``.
-
-    This is deliberately stricter than :func:`validate_review_binding`, which
-    also supports an approval retry after a PR has merged. Review admission
-    requires an open, current delivery whose evidence and merge policy can be
-    frozen before any lifecycle mutation occurs.
-    """
-
+) -> tuple[ReviewBinding, str, str, JsonRunner]:
     repository = _require_repository_slug(repository)
     normalized = (
         binding
@@ -872,7 +863,35 @@ def validate_review_admission(
                 f"advance of frozen base {frozen_base_sha} "
                 f"(status={advance_status or 'unknown'}, behind_by={advance_behind_by})"
             )
+    return normalized, method, base_sha, client
 
+
+def validate_review_admission(
+    *,
+    repository: str,
+    binding: Mapping[str, Any] | ReviewBinding,
+    review_file: str,
+    required_merge_method: str = REQUIRED_REVIEW_MERGE_METHOD,
+    allow_base_advance: bool = False,
+    frozen_base_sha: str = "",
+    runner: JsonRunner | None = None,
+) -> ReviewAdmissionBinding:
+    """Fail closed before a canonical task is allowed to enter ``review``.
+
+    This is deliberately stricter than :func:`validate_review_binding`, which
+    also supports an approval retry after a PR has merged. Review admission
+    requires an open, current delivery whose evidence and merge policy can be
+    frozen before any lifecycle mutation occurs.
+    """
+
+    normalized, method, base_sha, client = _validate_pr_admission_metadata(
+        repository=repository,
+        binding=binding,
+        required_merge_method=required_merge_method,
+        allow_base_advance=allow_base_advance,
+        frozen_base_sha=frozen_base_sha,
+        runner=runner,
+    )
     manifest_path, manifest_blob_sha = _review_manifest_identity(
         client,
         repository=repository,
@@ -890,6 +909,42 @@ def validate_review_admission(
         required_merge_method=method,
         manifest_path=manifest_path,
         manifest_blob_sha=manifest_blob_sha,
+    )
+
+
+def rehabilitate_operator_admission(
+    *,
+    repository: str,
+    binding: Mapping[str, Any] | ReviewBinding,
+    required_merge_method: str = REQUIRED_REVIEW_MERGE_METHOD,
+    allow_base_advance: bool = False,
+    frozen_base_sha: str = "",
+    runner: JsonRunner | None = None,
+) -> ReviewAdmissionBinding:
+    """Validate and rehabilitate a legacy PR delivery for Human/Ops operator acceptance.
+
+    Rehabilitates the minimal delivery binding by verifying the PR's exact
+    identity, open state, and base ancestry on GitHub without requiring or
+    fabricating an evidence manifest.
+    """
+
+    normalized, method, base_sha, _ = _validate_pr_admission_metadata(
+        repository=repository,
+        binding=binding,
+        required_merge_method=required_merge_method,
+        allow_base_advance=allow_base_advance,
+        frozen_base_sha=frozen_base_sha,
+        runner=runner,
+    )
+    return ReviewAdmissionBinding(
+        pr=normalized.pr,
+        head_sha=normalized.head_sha,
+        head_branch=normalized.head_branch,
+        base=normalized.base,
+        base_sha=base_sha,
+        required_merge_method=method,
+        manifest_path=None,
+        manifest_blob_sha=None,
     )
 
 
@@ -937,6 +992,42 @@ def revalidate_review_admission(
             "review evidence manifest blob differs from the handoff admission"
         )
     return current
+
+
+def revalidate_operator_admission(
+    *,
+    repository: str,
+    delivery_binding: Mapping[str, Any],
+    allow_base_advance: bool = True,
+    runner: JsonRunner | None = None,
+) -> ReviewAdmissionBinding:
+    """Recheck a delivery binding before Human/Ops operator acceptance.
+
+    If a frozen evidence manifest is present, it is revalidated. If absent
+    (rehabilitated legacy PR row), admission is rechecked without manifest
+    evidence.
+    """
+
+    manifest = delivery_binding.get("evidence_manifest")
+    if isinstance(manifest, Mapping) and str(manifest.get("path") or "").strip():
+        return revalidate_review_admission(
+            repository=repository,
+            delivery_binding=delivery_binding,
+            allow_base_advance=allow_base_advance,
+            runner=runner,
+        )
+    frozen_base_sha = str(delivery_binding.get("base_sha") or "").strip().lower()
+    frozen_method = str(
+        delivery_binding.get("required_merge_method") or REQUIRED_REVIEW_MERGE_METHOD
+    ).strip().upper()
+    return rehabilitate_operator_admission(
+        repository=repository,
+        binding=delivery_binding,
+        required_merge_method=frozen_method,
+        allow_base_advance=allow_base_advance,
+        frozen_base_sha=frozen_base_sha,
+        runner=runner,
+    )
 
 
 def validate_review_binding(
@@ -1373,7 +1464,10 @@ def validate_operator_acceptance_evidence(
         if (
             not OID_RE.fullmatch(frozen_base_sha)
             or not OID_RE.fullmatch(current_base_sha)
-            or frozen_base_sha != expected_frozen_base_sha
+            or (
+                expected_frozen_base_sha
+                and frozen_base_sha != expected_frozen_base_sha
+            )
         ):
             raise GitHubReviewBridgeError("operator acceptance base evidence mismatch")
     return dict(value)

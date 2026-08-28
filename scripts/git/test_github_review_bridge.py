@@ -23,6 +23,7 @@ class FakeRunner:
         review_error: str = "",
         context_required: bool = True,
         actual_head: str = HEAD,
+        head_branch: str = "task/AUDIT-001",
         dispatch_error: str = "",
         pr_state: str = "OPEN",
         merge_state: str = "CLEAN",
@@ -42,6 +43,7 @@ class FakeRunner:
         self.review_error = review_error
         self.context_required = context_required
         self.actual_head = actual_head
+        self.head_branch = head_branch
         self.dispatch_error = dispatch_error
         self.pr_state = pr_state
         self.merge_state = merge_state
@@ -87,7 +89,7 @@ class FakeRunner:
                 "number": 4269,
                 "url": PR_URL,
                 "state": self.pr_state,
-                "headRefName": "task/AUDIT-001",
+                "headRefName": self.head_branch,
                 "headRefOid": self.actual_head,
                 "baseRefName": "dev",
                 "isDraft": self.is_draft,
@@ -929,6 +931,75 @@ class GitHubReviewBridgeTests(unittest.TestCase):
                 delivery_binding=binding(),
                 runner=FakeRunner(),
             )
+
+    def test_rehabilitate_operator_admission_reconstructs_minimal_binding_without_manifest(self) -> None:
+        runner = FakeRunner()
+        admission = bridge.rehabilitate_operator_admission(
+            repository=REPOSITORY,
+            binding=binding(),
+            runner=runner,
+        )
+        self.assertEqual(admission.pr, 4269)
+        self.assertEqual(admission.head_sha, HEAD)
+        self.assertEqual(admission.head_branch, "task/AUDIT-001")
+        self.assertEqual(admission.base, "dev")
+        self.assertEqual(admission.base_sha, "c" * 40)
+        self.assertEqual(admission.required_merge_method, "MERGE")
+        self.assertIsNone(admission.manifest_path)
+        self.assertIsNone(admission.manifest_blob_sha)
+
+    def test_rehabilitate_operator_admission_rejects_closed_pr(self) -> None:
+        with self.assertRaisesRegex(
+            bridge.ReviewBindingMismatch, "closed, expected open"
+        ):
+            bridge.rehabilitate_operator_admission(
+                repository=REPOSITORY,
+                binding=binding(),
+                runner=FakeRunner(pr_state="CLOSED"),
+            )
+
+    def test_rehabilitate_operator_admission_rejects_head_mismatch(self) -> None:
+        with self.assertRaisesRegex(
+            bridge.ReviewBindingMismatch, "head .* != .*"
+        ):
+            bridge.rehabilitate_operator_admission(
+                repository=REPOSITORY,
+                binding=binding(),
+                runner=FakeRunner(actual_head="f" * 40),
+            )
+
+    def test_rehabilitate_operator_admission_rejects_changed_branch(self) -> None:
+        with self.assertRaisesRegex(
+            bridge.ReviewBindingMismatch, "branch .* != .*"
+        ):
+            bridge.rehabilitate_operator_admission(
+                repository=REPOSITORY,
+                binding=binding(),
+                runner=FakeRunner(head_branch="feature/other"),
+            )
+
+    def test_revalidate_operator_admission_revalidates_legacy_delivery_without_manifest(self) -> None:
+        legacy_binding = {
+            "kind": "pull_request",
+            "pr": 4269,
+            "head_sha": HEAD,
+            "head_branch": "task/AUDIT-001",
+            "base": "dev",
+            "base_sha": "c" * 40,
+            "required_merge_method": "MERGE",
+        }
+        current = bridge.revalidate_operator_admission(
+            repository=REPOSITORY,
+            delivery_binding=legacy_binding,
+            allow_base_advance=True,
+            runner=FakeRunner(
+                base_sha="e" * 40,
+                compare_status="diverged",
+                behind_by=2,
+            ),
+        )
+        self.assertEqual(current.base_sha, "e" * 40)
+        self.assertIsNone(current.manifest_path)
 
     def test_review_approval_allows_new_base_already_contained_in_head(self) -> None:
         frozen = bridge.validate_review_admission(
