@@ -5095,6 +5095,85 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
             [handoff for handoff in self.state["handoffs"] if handoff["status"] != "done"]
         )
 
+    def test_human_ops_resume_integration_preserves_matching_approved_pr(self) -> None:
+        task = self.state["tasks"][0]
+        task["status"] = "blocked"
+        task["waiting_for"] = "Human/Ops"
+        self._set_pr_delivery_binding(pr=4269, head_sha="a" * 40)
+        task[ai_status.APPROVAL_BINDING_KEY] = {
+            field: task[ai_status.DELIVERY_BINDING_KEY][field]
+            for field in ("pr", "head_sha", "head_branch", "base")
+        }
+        task[ai_status.GITHUB_REVIEW_BRIDGE_KEY] = {
+            **task[ai_status.APPROVAL_BINDING_KEY],
+            "decision": "approve",
+            "mode": "required_commit_status",
+            "status_id": 101,
+            "status_context": ai_status.GITHUB_CANONICAL_REVIEW_CONTEXT,
+            "status_state": "success",
+        }
+        self.state["blockers"] = [
+            {
+                "task_id": "REG-002",
+                "owner": "Codex",
+                "waiting_for": "Human/Ops",
+                "message": "Integrator mount is read-only",
+                "status": "open",
+                "created_at": "2026-04-06T15:00:00Z",
+            }
+        ]
+        frozen_delivery = deepcopy(task[ai_status.DELIVERY_BINDING_KEY])
+        frozen_approval = deepcopy(task[ai_status.APPROVAL_BINDING_KEY])
+
+        with (
+            mock.patch.dict(os.environ, {"AI_NAME": "Human/Ops"}, clear=False),
+            mock.patch.object(ai_status, "append_log"),
+        ):
+            ai_status.command_resume_integration(
+                self.state,
+                ["REG-002", "Resume exact reviewed PR through the writable integrator."],
+            )
+
+        self.assertEqual(task["status"], "review_approved")
+        self.assertNotIn("waiting_for", task)
+        self.assertEqual(task[ai_status.DELIVERY_BINDING_KEY], frozen_delivery)
+        self.assertEqual(task[ai_status.APPROVAL_BINDING_KEY], frozen_approval)
+        self.assertEqual(self.state["blockers"][0]["status"], "resolved")
+
+    def test_resume_integration_rejects_missing_exact_approval_without_mutation(self) -> None:
+        task = self.state["tasks"][0]
+        task["status"] = "blocked"
+        task["waiting_for"] = "Human/Ops"
+        self._set_pr_delivery_binding(pr=4269, head_sha="a" * 40)
+
+        with (
+            mock.patch.dict(os.environ, {"AI_NAME": "Human/Ops"}, clear=False),
+            self.assertRaisesRegex(SystemExit, "exact review binding"),
+        ):
+            ai_status.command_resume_integration(
+                self.state,
+                ["REG-002", "Do not resume without evidence."],
+            )
+
+        self.assertEqual(task["status"], "blocked")
+        self.assertEqual(task["waiting_for"], "Human/Ops")
+
+    def test_resume_integration_requires_local_human_ops(self) -> None:
+        task = self.state["tasks"][0]
+        task["status"] = "blocked"
+        task["waiting_for"] = "Human/Ops"
+
+        with (
+            mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False),
+            self.assertRaisesRegex(SystemExit, "Only local Human/Ops"),
+        ):
+            ai_status.command_resume_integration(
+                self.state,
+                ["REG-002", "A worker cannot restore its own approval."],
+            )
+
+        self.assertEqual(task["status"], "blocked")
+
     def test_task_without_dependencies_keeps_plain_human_blocker(self) -> None:
         with mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False):
             ai_status.command_blocker(
