@@ -120,6 +120,14 @@ ALLOWED_PRODUCER_WORKFLOWS: dict[str, tuple[str, ...]] = {
         ".github/workflows/branch-ci.yml",
         "branch-ci.yml",
     ),
+    "backend_components": (
+        ".github/workflows/nonprod-deploy.yml",
+        "nonprod-deploy.yml",
+        ".github/workflows/branch-ci.yml",
+        "branch-ci.yml",
+        ".github/workflows/pantheon-integration-gate.yml",
+        "pantheon-integration-gate.yml",
+    ),
 }
 
 
@@ -244,6 +252,7 @@ class AcceptanceConfig:
     rollback_evidence: Optional[Path] = None
     source_runtime_evidence: Optional[Path] = None
     paper_runtime_evidence: Optional[Path] = None
+    backend_components_evidence: Optional[Path] = None
     code_disposition_path: Optional[Path] = None
     bff_base_url: str = DEFAULT_DEV_BFF_URL
     fe_base_url: str = DEFAULT_DEV_FE_URL
@@ -307,6 +316,15 @@ class AcceptanceConfig:
                 self.source_runtime_evidence = self.evidence_dir / "source-runtime-evidence.json"
             if self.paper_runtime_evidence is None and (self.evidence_dir / "paper-runtime-evidence.json").exists():
                 self.paper_runtime_evidence = self.evidence_dir / "paper-runtime-evidence.json"
+            if self.backend_components_evidence is None:
+                for cand in (
+                    "backend-components-evidence.json",
+                    "backend-components-receipt.json",
+                    "backend-required-components-receipt.json",
+                ):
+                    if (self.evidence_dir / cand).exists():
+                        self.backend_components_evidence = self.evidence_dir / cand
+                        break
             if self.rollback_evidence is None and (self.evidence_dir / "rollback-evidence.json").exists():
                 self.rollback_evidence = self.evidence_dir / "rollback-evidence.json"
             if self.restart_evidence is None and (self.evidence_dir / "restart-evidence.json").exists():
@@ -694,7 +712,70 @@ class ProductFunctionalClosureVerifier:
                 f"deploymentState={deployment_state!r}, profile={profile!r} is not accepted read-only",
             )
 
-        return {
+        backend_components_result = None
+        if self.config.backend_components_evidence is not None:
+            backend_components_data = self._load_evidence(
+                "backend_components", self.config.backend_components_evidence
+            )
+            schema = backend_components_data.get("schema_version")
+            if not schema or not isinstance(schema, str) or "backend_required_components_receipt" not in schema:
+                raise ProductFunctionalClosureAcceptanceError(
+                    "gate_01.backend_components_schema",
+                    f"invalid backend components receipt schema: {schema!r}",
+                )
+            receipt_expected_sha = backend_components_data.get("expected_sha")
+            if (
+                receipt_expected_sha
+                and receipt_expected_sha not in ("unknown", "")
+                and receipt_expected_sha != self.config.expected_bff_sha
+            ):
+                raise ProductFunctionalClosureAcceptanceError(
+                    "gate_01.backend_components_sha",
+                    f"backend components receipt SHA {receipt_expected_sha!r} != expected {self.config.expected_bff_sha}",
+                )
+            services_map = _mapping(
+                backend_components_data.get("services", {}),
+                "gate_01.backend_components.services",
+            )
+            if not services_map:
+                raise ProductFunctionalClosureAcceptanceError(
+                    "gate_01.backend_components_empty",
+                    "backend components receipt declares empty services map",
+                )
+            for svc_name, svc_info in services_map.items():
+                svc_dict = _mapping(
+                    svc_info, f"gate_01.backend_components.{svc_name}"
+                )
+                status = svc_dict.get("status")
+                if status != "running":
+                    raise ProductFunctionalClosureAcceptanceError(
+                        f"gate_01.backend_components.{svc_name}.status",
+                        f"service {svc_name} status is {status!r}, must be 'running'",
+                    )
+                health = svc_dict.get("health")
+                if health == "unhealthy":
+                    raise ProductFunctionalClosureAcceptanceError(
+                        f"gate_01.backend_components.{svc_name}.health",
+                        f"service {svc_name} is unhealthy",
+                    )
+                rev = svc_dict.get("image_revision")
+                if (
+                    rev
+                    and rev not in ("unknown", "<no value>", "")
+                    and rev != self.config.expected_bff_sha
+                ):
+                    raise ProductFunctionalClosureAcceptanceError(
+                        f"gate_01.backend_components.{svc_name}.revision",
+                        f"service {svc_name} image revision {rev!r} != expected {self.config.expected_bff_sha}",
+                    )
+            backend_components_result = {
+                "verified_services_count": len(services_map),
+                "all_running": True,
+                "receipt_observed_at": backend_components_data.get("observed_at"),
+                "services": list(services_map.keys()),
+            }
+
+        result_payload = {
             "observed_frontend_sha": fe_sha,
             "observed_manifest_bff_sha": manifest_bff_sha,
             "observed_runtime_bff_sha": runtime_bff_sha,
@@ -704,6 +785,9 @@ class ProductFunctionalClosureVerifier:
             "build_mode": build,
             "config_posture": posture,
         }
+        if backend_components_result is not None:
+            result_payload["backend_components"] = backend_components_result
+        return result_payload
 
     def verify_gate_02_source_manual_only_readiness(self) -> dict[str, Any]:
         """Gate 02: Verify Source Ingestion manual-only mode and bounded readiness."""
@@ -1488,6 +1572,12 @@ def main(
     parser.add_argument("--rollback-evidence", type=Path)
     parser.add_argument("--source-runtime-evidence", type=Path)
     parser.add_argument("--paper-runtime-evidence", type=Path)
+    parser.add_argument(
+        "--backend-components-evidence",
+        "--backend-components-receipt",
+        type=Path,
+        dest="backend_components_evidence",
+    )
     parser.add_argument("--code-disposition", type=Path)
     parser.add_argument("--evidence-dir", type=Path)
     parser.add_argument("--max-evidence-age-seconds", type=int, default=21600)
@@ -1513,6 +1603,7 @@ def main(
         rollback_evidence=args.rollback_evidence,
         source_runtime_evidence=args.source_runtime_evidence,
         paper_runtime_evidence=args.paper_runtime_evidence,
+        backend_components_evidence=args.backend_components_evidence,
         code_disposition_path=args.code_disposition,
         bff_base_url=args.bff_url.rstrip("/"),
         fe_base_url=args.fe_url.rstrip("/"),

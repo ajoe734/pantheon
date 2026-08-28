@@ -1,0 +1,65 @@
+{
+  "task_id": "ACG-DEPLOY-EXACT-GATES-20260828",
+  "title": "Make required-service deployment exact and rollback-safe",
+  "program_id": "PANTHEON-ARCH-CLEANUP-20260828",
+  "design_unit": "ACG-09-DEPLOY-EXACT-GATES",
+  "matrix_items": [
+    "ACG-09-005",
+    "ACG-09-006",
+    "ACG-09-007",
+    "ACG-09-008",
+    "ACG-09-009"
+  ],
+  "artifacts": [
+    "docker-compose.yml",
+    "scripts/deploy_nonprod_vm.sh",
+    "scripts/test_deploy_nonprod_vm.py",
+    "scripts/test_dev_environment_lease_deploy_contract.py",
+    "scripts/verify_product_functional_closure.py",
+    "scripts/test_verify_product_functional_closure.py",
+    "docs/deployment/evidence/architecture-cleanup/ACG-DEPLOY-EXACT-GATES-20260828/backend-components-receipt.json",
+    "docs/deployment/evidence/architecture-cleanup/ACG-DEPLOY-EXACT-GATES-20260828/code-disposition.json",
+    "docs/deployment/evidence/architecture-cleanup/ACG-DEPLOY-EXACT-GATES-20260828/README.md"
+  ],
+  "disposition_summary": {
+    "ACG-09-005": {
+      "artifact": "Compose worker command and healthcheck",
+      "disposition": "MIGRATE",
+      "canonical_owner": "same validated package entrypoint (scripts/run_agora_interaction_worker.py)",
+      "action": "Point command and healthcheck at one executable and verify imports before success.",
+      "gate": "Container remains running/healthy with restart count stable at zero."
+    },
+    "ACG-09-006": {
+      "artifact": "REQUIRED_LOOP_WORKERS manifest omission",
+      "disposition": "MIGRATE",
+      "canonical_owner": "deployment required-service manifest",
+      "action": "Add Agora interaction worker under Loop 5.",
+      "gate": "Deployment contract fails when the worker is missing."
+    },
+    "ACG-09-007": {
+      "artifact": "BFF-only build/recreate/rollback service set",
+      "disposition": "MIGRATE",
+      "canonical_owner": "BFF component delivery",
+      "action": "Include every BFF-image-owned persistent process, including Agora interaction worker.",
+      "gate": "Deploy and rollback change/restore the same exact service set."
+    },
+    "ACG-09-008": {
+      "artifact": "root and BFF deployment verification",
+      "disposition": "MERGE",
+      "canonical_owner": "one reusable exact-component verifier",
+      "action": "Check service existence, unique active container, running/health state, command and OCI revision.",
+      "gate": "Fixture contracts and live dev verification reject missing, restarting, unhealthy or wrong-SHA services."
+    },
+    "ACG-09-009": {
+      "artifact": "hosted acceptance based only on FE/BFF pair",
+      "disposition": "MIGRATE",
+      "canonical_owner": "pair receipt plus backend required-component receipt",
+      "action": "Block acceptance until the exact required-component gate passes while retaining FE/BFF pair identity.",
+      "gate": "A broken required worker makes the candidate unaccepted."
+    }
+  },
+  "verification": {
+    "command": ".venv-pantheon/bin/python -m pytest scripts/test_deploy_nonprod_vm.py scripts/test_verify_product_functional_closure.py scripts/test_dev_environment_lease_deploy_contract.py -q",
+    "result": "all passed (113 in deploy/verify tests, 209 in lease deploy contract tests)"
+  }
+}

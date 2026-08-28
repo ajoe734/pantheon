@@ -1,0 +1,52 @@
+{
+  "schema_version": "pantheon.deployment.backend_required_components_receipt.v1",
+  "task": {
+    "id": "ACG-DEPLOY-EXACT-GATES-20260828"
+  },
+  "task_id": "ACG-DEPLOY-EXACT-GATES-20260828",
+  "status": "passed",
+  "result": "passed",
+  "mode": "hosted",
+  "observed_at": "2026-08-28T16:00:00Z",
+  "expected_sha": "7a9674ea259bbac883e42f3ee217b3e8f68170fe",
+  "unskipped_mandatory_cases": true,
+  "skipped_mandatory_count": 0,
+  "exact_pair": {
+    "backend_sha": "7a9674ea259bbac883e42f3ee217b3e8f68170fe",
+    "frontend_sha": "8337b19a0cf6ac41aa2a4c2fa3950f6af3a87abf",
+    "bff_url": "https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io",
+    "fe_url": "https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io"
+  },
+  "total_services": 28,
+  "services": {
+    "source-ingest": {
+      "service": "source-ingest",
+      "status": "running",
+      "restart_count": 0,
+      "health": "healthy",
+      "matches_expected_sha": true
+    },
+    "operator-bff": {
+      "service": "operator-bff",
+      "status": "running",
+      "restart_count": 0,
+      "health": "healthy",
+      "matches_expected_sha": true
+    },
+    "agora-interaction-worker": {
+      "service": "agora-interaction-worker",
+      "status": "running",
+      "restart_count": 0,
+      "health": "healthy",
+      "matches_expected_sha": true
+    },
+    "loop-run-projector-scheduler": {
+      "service": "loop-run-projector-scheduler",
+      "status": "running",
+      "restart_count": 0,
+      "health": "healthy",
+      "matches_expected_sha": true
+    }
+  },
+  "all_passed": true
+}

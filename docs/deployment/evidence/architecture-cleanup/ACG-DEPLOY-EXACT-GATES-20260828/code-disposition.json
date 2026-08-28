@@ -1,0 +1,39 @@
+{
+  "schema_version": "pantheon.product_functional_closure.code_disposition.v1",
+  "program_id": "PANTHEON-ARCH-CLEANUP-20260828",
+  "task_id": "ACG-DEPLOY-EXACT-GATES-20260828",
+  "canonical_owner": "scripts/deploy_nonprod_vm.sh",
+  "new_parallel_owner_created": false,
+  "disposition_items": [
+    {
+      "id": "ACG-09-005",
+      "artifact": "docker-compose.yml",
+      "disposition": "MIGRATE",
+      "canonical_owner": "same validated package entrypoint (scripts/run_agora_interaction_worker.py)"
+    },
+    {
+      "id": "ACG-09-006",
+      "artifact": "REQUIRED_LOOP_WORKERS manifest in scripts/deploy_nonprod_vm.sh",
+      "disposition": "MIGRATE",
+      "canonical_owner": "deployment required-service manifest"
+    },
+    {
+      "id": "ACG-09-007",
+      "artifact": "BFF component delivery in scripts/deploy_nonprod_vm.sh",
+      "disposition": "MIGRATE",
+      "canonical_owner": "BFF component delivery (operator-bff, agora-interaction-worker, loop-run-projector-scheduler)"
+    },
+    {
+      "id": "ACG-09-008",
+      "artifact": "verify_exact_component_deployment in scripts/deploy_nonprod_vm.sh",
+      "disposition": "MERGE",
+      "canonical_owner": "one reusable exact-component verifier"
+    },
+    {
+      "id": "ACG-09-009",
+      "artifact": "scripts/verify_product_functional_closure.py",
+      "disposition": "MIGRATE",
+      "canonical_owner": "pair receipt plus backend required-component receipt"
+    }
+  ]
+}

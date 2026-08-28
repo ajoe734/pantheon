@@ -265,3 +265,65 @@ def test_postgres_db_behavior_vacuum_succeeds_without_enospc() -> None:
             await conn.close()
 
     asyncio.run(_test())
+
+
+def test_agora_interaction_worker_compose_entrypoint_and_healthcheck() -> None:
+    """agora-interaction-worker in docker-compose.yml must point command and healthcheck at scripts/run_agora_interaction_worker.py."""
+    content = COMPOSE_PATH.read_text(encoding="utf-8")
+    compose_data = yaml.safe_load(content)
+    services = compose_data.get("services", {})
+    worker = services.get("agora-interaction-worker")
+    assert worker is not None, "agora-interaction-worker service must be defined in docker-compose.yml"
+
+    build_info = worker.get("build", {})
+    assert build_info.get("dockerfile") == "services/control-plane/bff/Dockerfile"
+    assert worker.get("command") == ["python", "scripts/run_agora_interaction_worker.py"]
+
+    healthcheck = worker.get("healthcheck", {})
+    assert healthcheck.get("test") == [
+        "CMD",
+        "python",
+        "scripts/run_agora_interaction_worker.py",
+        "--healthcheck",
+    ]
+    assert worker.get("restart") == "unless-stopped"
+
+
+def test_required_loop_workers_includes_agora_interaction_worker() -> None:
+    """REQUIRED_LOOP_WORKERS in deploy_nonprod_vm.sh must include agora-interaction-worker."""
+    deploy_script = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    array_lines = deploy_script.split("REQUIRED_LOOP_WORKERS=(", 1)[1].split(")", 1)[0].splitlines()
+    required = [line.split("#")[0].strip() for line in array_lines if line.split("#")[0].strip()]
+
+    assert len(required) == 28
+    assert "agora-interaction-worker" in required
+    assert "policy-learning-svc" in required
+    assert "operator-bff" in required
+    assert "loop-run-projector-scheduler" in required
+
+
+def test_bff_deployment_service_set_includes_agora_interaction_worker() -> None:
+    """BFF deployment build, recreate, and rollback in deploy_nonprod_vm.sh must include agora-interaction-worker."""
+    deploy_script = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+
+    # Rollback must include all 3 BFF-owned persistent processes
+    assert "docker compose -p pantheon -f docker-compose.yml up -d --build --force-recreate --no-deps operator-bff agora-interaction-worker loop-run-projector-scheduler" in deploy_script
+
+    # BFF Phase 2 build must build all 3 services
+    assert "docker compose -p pantheon -f docker-compose.yml build operator-bff agora-interaction-worker loop-run-projector-scheduler" in deploy_script
+
+    # BFF Phase 3 recreate must recreate all 3 services
+    assert "docker compose -p pantheon -f docker-compose.yml up -d --force-recreate --no-deps operator-bff agora-interaction-worker loop-run-projector-scheduler" in deploy_script
+
+    # BFF Phase 4 verification must verify all 3 services
+    assert "verify_exact_component_deployment operator-bff agora-interaction-worker loop-run-projector-scheduler" in deploy_script
+
+
+def test_verify_exact_component_deployment_function_contract() -> None:
+    """deploy_nonprod_vm.sh must define verify_exact_component_deployment checking status, health, and OCI revision."""
+    deploy_script = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    assert "verify_exact_component_deployment()" in deploy_script
+    assert "org.opencontainers.image.revision" in deploy_script
+    assert "backend_required_components_receipt" in deploy_script
+    assert "duplicate containers found for required singleton service" in deploy_script
+
