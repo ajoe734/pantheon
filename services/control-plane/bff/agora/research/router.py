@@ -1140,7 +1140,7 @@ def publish_research_progress(
     phase: str = "running",
     utc_now_fn: Optional[Callable[[], str]] = None,
 ) -> str:
-    from agora.strategy_workshop.router import _ws_publish  # noqa: PLC0415
+    from agora.strategy_workshop.events import _ws_publish  # noqa: PLC0415
     return _ws_publish(
         workshop_id,
         "research.run.progress",
@@ -1160,7 +1160,7 @@ def publish_openclaw_degraded(
     *,
     utc_now_fn: Optional[Callable[[], str]] = None,
 ) -> str:
-    from agora.strategy_workshop.router import _ws_publish  # noqa: PLC0415
+    from agora.strategy_workshop.events import _ws_publish  # noqa: PLC0415
     return _ws_publish(
         workshop_id,
         "workshop.openclaw.degraded",
@@ -1450,7 +1450,7 @@ def create_research_router(
         return plan
 
     def _publish_research_event(workshop_id: str, event_type: str, data: Dict[str, Any]) -> None:
-        from agora.strategy_workshop.router import _ws_publish  # noqa: PLC0415
+        from agora.strategy_workshop.events import _ws_publish  # noqa: PLC0415
         _ws_publish(workshop_id, event_type, data, utc_now_fn=utc_now)
 
     def _validate_pool_filter(pool_filter: Dict[str, Any]) -> None:
