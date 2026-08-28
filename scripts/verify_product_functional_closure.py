@@ -1453,6 +1453,7 @@ def main(
     parser.add_argument("--evidence-dir", type=Path)
     parser.add_argument("--max-evidence-age-seconds", type=int, default=21600)
     parser.add_argument("--request-timeout-seconds", type=float, default=15.0)
+    parser.add_argument("--task-id", default=TASK_ID)
     parser.add_argument("--strict", action="store_true")
     parser.add_argument("--verbose", action="store_true")
     args = parser.parse_args(argv)
@@ -1464,6 +1465,7 @@ def main(
     config = AcceptanceConfig(
         expected_bff_sha=args.expected_bff_sha,
         expected_fe_sha=args.expected_fe_sha,
+        task_id=args.task_id,
         l12_evidence=args.l12_evidence,
         agora_evidence=args.agora_evidence,
         mgmt_evidence=args.mgmt_evidence,
