@@ -17,7 +17,8 @@ canonical contract requires independent review the integrator merges only the
 exact head the assigned reviewer approved, never enables GitHub auto-merge,
 never force-pushes a rebase over the reviewed head, and actively revokes an
 auto-merge request it finds on an unapproved gated PR.  Tasks whose canonical
-contract permits merge-then-review keep the previous integration behavior.
+contract permits merge-then-review are held to the same exact-head checks,
+smoke validation, and synchronous merge authority.
 
 The default mode is dry-run. Pass `--execute` to mutate git/GitHub/task state.
 """
@@ -108,6 +109,7 @@ class TaskCandidate:
     repository_slug: str = "ajoe734/pantheon"
     repository_root: Path = ROOT
     target_branch: str = DEFAULT_DEV_BRANCH
+    dedicated_integration_path: bool = False
     scope_error: str | None = None
     raw_task: Mapping[str, Any] = field(default_factory=dict)
 
@@ -297,6 +299,16 @@ class IntegrationLockError(AutoIntegratorError):
 
 class IntegrationLockHeld(IntegrationLockError):
     """Another live canonical integration runner owns the lock."""
+
+
+class FinalMergeRevalidationError(AutoIntegratorError):
+    """Live canonical state or PR state changed after smoke validation."""
+
+    def __init__(self, reason: str, detail: str, *, waiting: bool = False) -> None:
+        super().__init__(detail)
+        self.reason = reason
+        self.detail = detail
+        self.waiting = waiting
 
 
 class AmbiguousPullRequests(AutoIntegratorError):
@@ -527,6 +539,7 @@ def integration_candidates(
         repo_slug = "ajoe734/pantheon"
         repo_root = ROOT
         target_branch = DEFAULT_DEV_BRANCH
+        dedicated_integration_path = False
 
         try:
             repo_id = multi_repo_registry.validate_task_repository_scope(config_dict, raw)
@@ -538,11 +551,27 @@ def integration_candidates(
                 str(resolved_repo.get("default_branch") or DEFAULT_DEV_BRANCH).strip()
                 or DEFAULT_DEV_BRANCH
             )
-            configured_path = multi_repo_registry.repository_configured_local_path(
-                config_dict, repo_id
-            )
+            integration_path_raw = str(
+                resolved_repo.get("integration_path") or ""
+            ).strip()
+            dedicated_integration_path = bool(integration_path_raw)
+            if integration_path_raw:
+                configured_path = Path(integration_path_raw).expanduser()
+                if not configured_path.is_absolute():
+                    scope_error = (
+                        f"Repository `{repo_id}` integration_path must be absolute"
+                    )
+                    configured_path = None
+            else:
+                configured_path = multi_repo_registry.repository_configured_local_path(
+                    config_dict, repo_id
+                )
             if configured_path is None:
-                scope_error = f"Repository `{repo_id}` has no configured local_path"
+                if scope_error is None:
+                    scope_error = (
+                        f"Repository `{repo_id}` has no configured integration_path "
+                        "or local_path"
+                    )
             else:
                 repo_root = configured_path.resolve(strict=False)
         except (ValueError, RuntimeError) as exc:
@@ -561,6 +590,7 @@ def integration_candidates(
                     repository_slug=repo_slug,
                     repository_root=repo_root,
                     target_branch=target_branch,
+                    dedicated_integration_path=dedicated_integration_path,
                     scope_error=scope_error,
                     raw_task=dict(raw),
                 ),
@@ -587,6 +617,25 @@ def post_merge_task_handoff(candidate: TaskCandidate) -> str:
         f"left {candidate.task_id} at canonical status {status} "
         "for post-merge review/finalization"
     )
+
+
+def is_active_merge_then_review(candidate: TaskCandidate) -> bool:
+    status = str(candidate.raw_task.get("status") or "").strip().lower()
+    contract = review_gate.contract_from_task_row(candidate.raw_task)
+    return (
+        status in {"in_progress", "review"}
+        and contract.policy == review_gate.POLICY_MERGE_THEN_REVIEW
+        and contract.declaration_honored
+    )
+
+
+def result_consumes_run_capacity(
+    candidate: TaskCandidate, result: IntegrationResult
+) -> bool:
+    """Count actionable work, not observations that cannot mutate this pass."""
+
+    del candidate
+    return result.action not in {"waiting", "not_ready", "already_merged"}
 
 
 def normalize_github_repo_slug(value: str | None) -> str:
@@ -1035,6 +1084,32 @@ def _lock_owner_detail(metadata: Mapping[str, Any]) -> str:
     return "owner metadata unavailable"
 
 
+def _lock_path_matches_handle(lock_path: Path, handle: Any) -> bool:
+    """Return whether ``lock_path`` still names the inode held by ``handle``.
+
+    The pre-flock integrator used an ``O_EXCL`` sentinel which it unlinked on
+    exit.  During a rolling migration a new runner can open that legacy inode
+    immediately before the legacy owner unlinks it.  A flock on the now
+    unlinked inode does not exclude another runner which recreates the path, so
+    every successful acquisition must prove that the pathname and descriptor
+    still identify the same inode before it can become merge owner.
+    """
+
+    try:
+        opened = os.fstat(handle.fileno())
+        current = os.stat(lock_path)
+    except OSError:
+        return False
+    return (opened.st_dev, opened.st_ino) == (current.st_dev, current.st_ino)
+
+
+def _release_lock_handle(handle: Any) -> None:
+    try:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+    finally:
+        handle.close()
+
+
 @contextmanager
 def lock_file(lock_path: Path, *, enabled: bool = True) -> Iterator[None]:
     """Hold the integration lock with kernel lifetime and durable owner metadata.
@@ -1058,90 +1133,114 @@ def lock_file(lock_path: Path, *, enabled: bool = True) -> Iterator[None]:
         raise IntegrationLockError(
             f"auto-integrator lock parent is not writable: {lock_path.parent}"
         )
-    try:
-        fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR, 0o600)
-    except OSError as exc:
-        raise IntegrationLockError(
-            f"cannot open auto-integrator lock {lock_path}: {exc}"
-        ) from exc
-
-    handle = os.fdopen(fd, "r+", encoding="utf-8")
-    acquired = False
+    handle: Any | None = None
     owner_metadata: dict[str, Any] = {}
-    try:
+    while handle is None:
         try:
-            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-            acquired = True
+            fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR, 0o600)
         except OSError as exc:
-            if exc.errno not in {errno.EACCES, errno.EAGAIN}:
-                raise IntegrationLockError(
-                    f"cannot acquire auto-integrator lock {lock_path}: {exc}"
+            raise IntegrationLockError(
+                f"cannot open auto-integrator lock {lock_path}: {exc}"
+            ) from exc
+
+        candidate_handle = os.fdopen(fd, "r+", encoding="utf-8")
+        try:
+            try:
+                fcntl.flock(
+                    candidate_handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB
+                )
+            except OSError as exc:
+                if exc.errno not in {errno.EACCES, errno.EAGAIN}:
+                    raise IntegrationLockError(
+                        f"cannot acquire auto-integrator lock {lock_path}: {exc}"
+                    ) from exc
+                metadata = _read_lock_metadata(candidate_handle)
+                raise IntegrationLockHeld(
+                    f"auto-integrator lock is already held: {lock_path} "
+                    f"({_lock_owner_detail(metadata)})"
                 ) from exc
-            metadata = _read_lock_metadata(handle)
-            raise IntegrationLockHeld(
-                f"auto-integrator lock is already held: {lock_path} "
-                f"({_lock_owner_detail(metadata)})"
-            ) from exc
 
-        previous = _read_lock_metadata(handle)
-        try:
-            previous_pid = int(previous.get("pid") or 0)
-        except (TypeError, ValueError):
-            previous_pid = 0
-        previous_state = str(previous.get("state") or "held").strip().lower()
-        if previous and previous_state == "invalid":
-            raise IntegrationLockError(
-                f"auto-integrator lock metadata is corrupt: {lock_path}"
-            )
-        if (
-            previous
-            and previous_state != "released"
-            and _pid_is_alive(previous_pid)
-        ):
-            # Compatibility with the legacy O_EXCL sentinel: an old runner can
-            # still be active without holding flock. Refuse to steal it.
-            raise IntegrationLockHeld(
-                f"auto-integrator legacy lock has a live owner: {lock_path} "
-                f"({_lock_owner_detail(previous)})"
-            )
-        if previous and previous_state != "released" and previous_pid <= 0:
-            raise IntegrationLockError(
-                f"auto-integrator lock metadata has no recoverable owner PID: {lock_path}"
-            )
+            if not _lock_path_matches_handle(lock_path, candidate_handle):
+                # A legacy owner unlinked the sentinel after this descriptor was
+                # opened. Never become merge owner on an unreachable inode.
+                _release_lock_handle(candidate_handle)
+                continue
 
-        owner_metadata = {
-            "schema": LOCK_SCHEMA,
-            "state": "held",
-            "owner": "supervisor_integration_runner",
-            "owner_id": f"{os.uname().nodename}:{os.getpid()}:{time.time_ns()}",
-            "pid": os.getpid(),
-            "created_at": int(time.time()),
-        }
-        if previous and previous_state != "released":
-            owner_metadata["recovered_from"] = previous
-        try:
-            _write_lock_metadata(handle, owner_metadata)
-        except OSError as exc:
-            raise IntegrationLockError(
-                f"cannot write auto-integrator lock metadata {lock_path}: {exc}"
-            ) from exc
+            previous = _read_lock_metadata(candidate_handle)
+            try:
+                previous_pid = int(previous.get("pid") or 0)
+            except (TypeError, ValueError):
+                previous_pid = 0
+            previous_state = str(previous.get("state") or "held").strip().lower()
+            if previous and previous_state == "invalid":
+                raise IntegrationLockError(
+                    f"auto-integrator lock metadata is corrupt: {lock_path}"
+                )
+            if (
+                previous
+                and previous_state != "released"
+                and _pid_is_alive(previous_pid)
+            ):
+                # Compatibility with the legacy O_EXCL sentinel: an old runner
+                # can still be active without holding flock. Refuse to steal it.
+                raise IntegrationLockHeld(
+                    f"auto-integrator legacy lock has a live owner: {lock_path} "
+                    f"({_lock_owner_detail(previous)})"
+                )
+            if previous and previous_state != "released" and previous_pid <= 0:
+                raise IntegrationLockError(
+                    f"auto-integrator lock metadata has no recoverable owner PID: {lock_path}"
+                )
+
+            # A legacy owner removes its sentinel before exiting. Recheck after
+            # the PID observation so that its unlink cannot strand our flock on
+            # the old inode while another runner locks a recreated path.
+            if not _lock_path_matches_handle(lock_path, candidate_handle):
+                _release_lock_handle(candidate_handle)
+                continue
+
+            owner_metadata = {
+                "schema": LOCK_SCHEMA,
+                "state": "held",
+                "owner": "supervisor_integration_runner",
+                "owner_id": f"{os.uname().nodename}:{os.getpid()}:{time.time_ns()}",
+                "pid": os.getpid(),
+                "created_at": int(time.time()),
+            }
+            if previous and previous_state != "released":
+                owner_metadata["recovered_from"] = previous
+            try:
+                _write_lock_metadata(candidate_handle, owner_metadata)
+            except OSError as exc:
+                raise IntegrationLockError(
+                    f"cannot write auto-integrator lock metadata {lock_path}: {exc}"
+                ) from exc
+            if not _lock_path_matches_handle(lock_path, candidate_handle):
+                _release_lock_handle(candidate_handle)
+                owner_metadata = {}
+                continue
+            handle = candidate_handle
+        except Exception:
+            if not candidate_handle.closed:
+                _release_lock_handle(candidate_handle)
+            raise
+
+    try:
         yield
     finally:
-        if acquired:
-            if owner_metadata:
-                released = {
-                    **owner_metadata,
-                    "state": "released",
-                    "released_at": int(time.time()),
-                }
-                try:
-                    _write_lock_metadata(handle, released)
-                except OSError:
-                    # Kernel unlock still happens; a later runner can recover
-                    # the stale held metadata after this process exits.
-                    pass
-            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
-        handle.close()
+        if owner_metadata:
+            released = {
+                **owner_metadata,
+                "state": "released",
+                "released_at": int(time.time()),
+            }
+            try:
+                _write_lock_metadata(handle, released)
+            except OSError:
+                # Kernel unlock still happens; a later runner can recover the
+                # stale held metadata after this process exits.
+                pass
+        _release_lock_handle(handle)
 
 
 def fetch_refs(candidate: TaskCandidate, runner: CommandRunner, *, root: Path) -> None:
@@ -1205,15 +1304,10 @@ def run_rebase_smoke(
                 finally:
                     runner.run(["git", "worktree", "remove", "--force", str(worktree)], cwd=root, check=False)
 
-        # The approved head is behind dev. Under review-before-merge the head
-        # itself must never move (rebasing would produce a commit no reviewer
-        # saw), but that does not mean the PR has to sit and wait for the
-        # branch to happen to catch up on its own -- a home-grown merge queue
-        # (SUP-GATED-PR-EXACT-HEAD-QUEUE-MERGE-20260805): merge the current
-        # dev tip into a disposable worktree seeded from the exact reviewed
-        # head, never push it, and only merge for real (via `gh pr merge
-        # --match-head-commit`, which leaves the reviewed commit untouched)
-        # once that ephemeral combination is proven conflict-free and green.
+        # The exact head is behind dev. Exercise the combined tree only to
+        # distinguish a true conflict from ordinary staleness. The result is
+        # never pushed or queued; the owner must refresh the task branch before
+        # a later pass can issue a synchronous exact-head merge.
         with tempfile.TemporaryDirectory(prefix=f"pantheon-integrate-{candidate.task_id}-") as tmp:
             worktree = Path(tmp)
             runner.run(["git", "worktree", "add", "--detach", str(worktree), exact_head], cwd=root)
@@ -1263,20 +1357,33 @@ def run_rebase_smoke(
 
 
 def merge_command(
+    candidate: TaskCandidate,
     number: int,
-    settings: Settings,
     *,
-    auto: bool,
-    match_head_commit: str = "",
+    exact_head: str,
 ) -> list[str]:
-    args = ["gh", "pr", "merge", str(number), "--merge"]
-    if auto:
-        args.append("--auto")
-    if match_head_commit:
-        # GitHub refuses the merge if the head moved between the gate decision
-        # and this call, which closes the concurrent-finalize race.
-        args.extend(["--match-head-commit", match_head_commit])
-    return args
+    slug = normalize_github_repo_slug(candidate.repository_slug)
+    if len(slug.split("/")) != 2 or any(
+        not part or part in {".", ".."} for part in slug.split("/")
+    ):
+        raise ValueError("direct task merge requires a canonical owner/repository slug")
+    exact_head = str(exact_head or "").strip().lower()
+    if not review_gate.OID_RE.fullmatch(exact_head):
+        raise ValueError("direct task merge requires an exact 40-hex head commit")
+    # The REST endpoint is synchronous and the `sha` field is an optimistic
+    # concurrency guard. Unlike `gh pr merge`, it cannot silently hand merge
+    # authority to auto-merge or a repository merge queue.
+    return [
+        "gh",
+        "api",
+        "--method",
+        "PUT",
+        f"repos/{slug}/pulls/{number}/merge",
+        "-f",
+        f"sha={exact_head}",
+        "-f",
+        f"merge_method={DEFAULT_MERGE_METHOD}",
+    ]
 
 
 def disable_auto_merge(
@@ -1331,6 +1438,164 @@ def read_auto_merge_request(
 
 def has_auto_merge_request(pr: Mapping[str, Any]) -> bool:
     return pr.get("autoMergeRequest") is not None
+
+
+def _decision_status_is_eligible(decision: review_gate.GateDecision) -> bool:
+    status = str(decision.contract.get("status") or "").strip().lower()
+    if decision.policy == review_gate.POLICY_MERGE_THEN_REVIEW:
+        return status in {"in_progress", "review"}
+    return status == "review_approved"
+
+
+def revalidate_before_merge(
+    candidate: TaskCandidate,
+    settings: Settings,
+    runner: CommandRunner,
+    *,
+    root: Path,
+    status_root: Path,
+    canonical_state_file: Path | None,
+    prior_gate: ReviewGate,
+    prior_decision: review_gate.GateDecision,
+    prior_pr_number: int | None,
+    execute: bool,
+) -> tuple[Mapping[str, Any], review_gate.GateDecision, CheckSummary]:
+    """Re-read canonical authority and the exact live PR immediately before merge."""
+
+    if canonical_state_file is None:
+        fresh_state = prior_gate.state
+    else:
+        try:
+            fresh_state = load_json(canonical_state_file, {})
+        except (OSError, json.JSONDecodeError) as exc:
+            raise FinalMergeRevalidationError(
+                "canonical-state-refresh-failed",
+                f"Cannot refresh canonical task state before merge: {exc}",
+            ) from exc
+    if not isinstance(fresh_state, Mapping):
+        raise FinalMergeRevalidationError(
+            "canonical-state-refresh-failed",
+            "Canonical task state is not a JSON object at final merge revalidation.",
+        )
+
+    fresh_gate = ReviewGate(
+        status_root=status_root,
+        state=fresh_state,
+        # Unit tests inject immutable audit fixtures. Production leaves this as
+        # None, causing the gate to re-read the canonical audit on every call.
+        events=prior_gate.events,
+    )
+    try:
+        fresh_pr = fetch_pr_for_task(candidate, settings, runner, root=root)
+    except (AmbiguousPullRequests, CommandFailure, AutoIntegratorError, OSError) as exc:
+        raise FinalMergeRevalidationError(
+            "final-pr-refresh-failed",
+            f"Cannot refresh the exact task PR before merge: {exc}",
+        ) from exc
+    if fresh_pr is None:
+        raise FinalMergeRevalidationError(
+            "final-pr-missing",
+            "The task PR is no longer open at final merge revalidation.",
+        )
+    fresh_number = pr_number(fresh_pr)
+    if fresh_number != prior_pr_number:
+        raise FinalMergeRevalidationError(
+            "final-pr-changed",
+            f"Task PR changed from #{prior_pr_number} to #{fresh_number} during integration.",
+        )
+    problem = validate_pr(candidate, fresh_pr, settings)
+    if problem:
+        raise FinalMergeRevalidationError(
+            f"final-{problem.replace('_', '-')}",
+            f"PR #{fresh_number} failed final validation: {problem}.",
+        )
+
+    fresh_carry_forward = fresh_gate.task_brief_carry_forward(
+        candidate, fresh_pr, runner, root=root
+    )
+    fresh_decision = fresh_gate.decide(
+        candidate,
+        fresh_pr,
+        settings,
+        task_brief_carry_forward=fresh_carry_forward,
+    )
+    if not fresh_decision.allow_merge or not _decision_status_is_eligible(
+        fresh_decision
+    ):
+        raise FinalMergeRevalidationError(
+            "final-review-gate-changed",
+            f"Canonical merge authority changed during integration: "
+            f"{fresh_decision.reason} - {fresh_decision.detail}.",
+        )
+    for field_name in ("policy", "owner", "reviewer"):
+        prior_value = (
+            prior_decision.policy
+            if field_name == "policy"
+            else str(prior_decision.contract.get(field_name) or "")
+        )
+        fresh_value = (
+            fresh_decision.policy
+            if field_name == "policy"
+            else str(fresh_decision.contract.get(field_name) or "")
+        )
+        if fresh_value != prior_value:
+            raise FinalMergeRevalidationError(
+                "final-review-contract-changed",
+                f"Canonical task {field_name} changed during integration "
+                f"({prior_value!r} -> {fresh_value!r}).",
+            )
+
+    prior_head = str(prior_decision.head_oid or "").strip().lower()
+    fresh_head = str(fresh_decision.head_oid or "").strip().lower()
+    if not review_gate.OID_RE.fullmatch(prior_head) or fresh_head != prior_head:
+        raise FinalMergeRevalidationError(
+            "final-head-changed",
+            f"PR #{fresh_number} head changed during gate/check/smoke validation "
+            f"({prior_head or 'missing'} -> {fresh_head or 'missing'}).",
+        )
+
+    if has_auto_merge_request(fresh_pr):
+        if not execute:
+            raise FinalMergeRevalidationError(
+                "final-auto-merge-armed",
+                f"PR #{fresh_number} still has an auto-merge request at final revalidation.",
+            )
+        disable_auto_merge(fresh_number, runner, root=root, execute=True)
+        try:
+            live_request = read_auto_merge_request(fresh_number, runner, root=root)
+        except AutoIntegratorError as exc:
+            raise FinalMergeRevalidationError(
+                "final-auto-merge-revocation-failed", str(exc)
+            ) from exc
+        if live_request is not None:
+            raise FinalMergeRevalidationError(
+                "final-auto-merge-revocation-failed",
+                f"PR #{fresh_number} still has an auto-merge request after final revocation.",
+            )
+        fresh_pr = {**fresh_pr, "autoMergeRequest": None}
+
+    fresh_checks = summarize_status_rollup(fresh_pr.get("statusCheckRollup"))
+    if fresh_checks.state == "red":
+        raise FinalMergeRevalidationError(
+            "final-ci-red",
+            f"PR #{fresh_number} checks changed to failing: "
+            f"{', '.join(fresh_checks.failing)}.",
+        )
+    if fresh_checks.state in {"pending", "empty"}:
+        raise FinalMergeRevalidationError(
+            "final-ci-not-green",
+            f"PR #{fresh_number} checks changed to {fresh_checks.state}.",
+            waiting=True,
+        )
+    fresh_merge_state = normalize_state(fresh_pr.get("mergeStateStatus"))
+    if fresh_merge_state and fresh_merge_state not in ALLOWED_DIRECT_MERGE_STATES:
+        raise FinalMergeRevalidationError(
+            "final-merge-state-not-direct",
+            f"PR #{fresh_number} final mergeStateStatus={fresh_merge_state}; "
+            "refusing an auto-merge or merge-queue handoff.",
+            waiting=True,
+        )
+    return fresh_pr, fresh_decision, fresh_checks
 
 
 def unblock_task_id(task_id: str, reason: str) -> str:
@@ -1507,7 +1772,9 @@ def integrate_candidate(
     *,
     root: Path | None = None,
     status_root: Path | None = None,
+    canonical_state_file: Path | None = None,
     execute: bool = False,
+    require_dedicated_integration_path: bool = False,
     open_unblock: bool = True,
     extra_smoke_commands: Sequence[str] = (),
     gate: ReviewGate | None = None,
@@ -1515,6 +1782,34 @@ def integrate_candidate(
     gate = gate or ReviewGate()
     status_root_dir = status_root if status_root is not None else gate.status_root
     target_root = root if root is not None else candidate.repository_root
+
+    if require_dedicated_integration_path and not candidate.dedicated_integration_path:
+        detail = (
+            f"Cannot integrate {candidate.task_id}: repository `{candidate.repository_id}` "
+            "has no explicit integration_path; live execution may not use its "
+            "worker/source local_path as the merge checkout."
+        )
+        unblock = (
+            open_unblock_task(
+                candidate,
+                "missing-dedicated-integration-path",
+                detail,
+                settings,
+                runner,
+                root=status_root_dir,
+                execute=execute,
+            )
+            if open_unblock
+            else None
+        )
+        return IntegrationResult(
+            candidate.task_id,
+            "blocked",
+            detail,
+            unblock_task_id=unblock,
+            dry_run=not execute,
+            commands=runner.commands[:],
+        )
 
     if candidate.scope_error:
         detail = f"Cannot integrate {candidate.task_id}: {candidate.scope_error}."
@@ -1781,6 +2076,14 @@ def integrate_candidate(
             )
 
         detail = f"No open or merged PR found for {candidate.branch} -> {candidate.target_branch}."
+        if is_active_merge_then_review(candidate):
+            return IntegrationResult(
+                candidate.task_id,
+                "not_ready",
+                f"{detail} Active merge-then-review work has not submitted a PR yet.",
+                dry_run=not execute,
+                commands=runner.commands[:],
+            )
         unblock = (
             open_unblock_task(
                 candidate,
@@ -1847,6 +2150,20 @@ def integrate_candidate(
         task_brief_carry_forward=carry_forward,
     )
     gated = decision.policy == review_gate.POLICY_REVIEW_BEFORE_MERGE
+    if not review_gate.OID_RE.fullmatch(str(decision.head_oid or "").strip()):
+        detail = (
+            f"PR #{number} gate decision does not bind a valid exact head; "
+            "refusing gate/check/smoke validation on a branch ref."
+        )
+        return IntegrationResult(
+            candidate.task_id,
+            "blocked",
+            detail,
+            number,
+            url,
+            dry_run=not execute,
+            commands=runner.commands[:],
+        )
     # A gated PR must never hold an auto-merge request, whatever the gate went
     # on to decide and whatever GitHub currently thinks of its merge state. PR
     # #4201 sat BEHIND with auto-merge armed and no approval: only the stale
@@ -1854,7 +2171,7 @@ def integrate_candidate(
     # caught up. Revoke first, then classify.
     revocation_command_succeeded = False
     revocation_read_error = ""
-    revocation_attempted = gated and has_auto_merge_request(pr)
+    revocation_attempted = has_auto_merge_request(pr)
     if revocation_attempted:
         revocation_command_succeeded = disable_auto_merge(
             number, runner, root=target_root, execute=execute
@@ -1912,9 +2229,9 @@ def integrate_candidate(
         # unavailable or still shows the merge grant armed. The command's exit
         # status is diagnostic only: a zero can leave the grant armed, while a
         # nonzero can race with another actor that already turned it off.
-        # Proceeding would emit a direct `--match-head-commit` merge while
-        # GitHub may independently hold authority to land whatever head stands
-        # next. Stop before any merge call is emitted.
+        # Proceeding would emit a synchronous REST merge while GitHub may
+        # independently hold authority to land whatever head stands next.
+        # Stop before any merge call is emitted.
         if revocation_read_error:
             reason = revocation_read_error
         elif not revocation_command_succeeded:
@@ -2105,10 +2422,10 @@ def integrate_candidate(
             root=target_root,
             execute=execute,
             extra_smoke_commands=extra_smoke_commands,
-            # A gated PR may never be force-pushed: replacing the head would
-            # discard the exact commit the reviewer approved.
-            allow_push=not gated,
-            exact_head=decision.head_oid if gated else "",
+            # Every policy is bound to the exact PR head whose gate/checks are
+            # being evaluated. The sole merge owner never rewrites task heads.
+            allow_push=False,
+            exact_head=decision.head_oid,
         )
     except CommandFailure as exc:
         detail = f"Local smoke or git command failed for PR #{number}: {exc.output.strip() or exc.args_rendered}"
@@ -2162,7 +2479,7 @@ def integrate_candidate(
             runner.commands[:],
         )
 
-    if gated and rebase_status == "exact_head_missing":
+    if rebase_status == "exact_head_missing":
         detail = (
             f"PR #{number} passed the review gate without an exact approved head; "
             "refusing to smoke or merge an unbound branch ref."
@@ -2191,12 +2508,11 @@ def integrate_candidate(
             runner.commands[:],
         )
 
-    if gated and rebase_status == "rebase_required":
-        # Landing this PR needs a new head, and no reviewer has seen that head.
+    if rebase_status == "rebase_required":
         detail = (
             f"PR #{number} needs a refreshed head to land on {candidate.target_branch}; "
-            f"the approval of {decision.head_oid} would not cover it. "
-            "Owner refreshes the branch and the assigned reviewer re-approves the new head."
+            f"the integrator will not rewrite exact head {decision.head_oid}. "
+            "Owner refreshes the branch before another integration pass."
         )
         return IntegrationResult(
             candidate.task_id,
@@ -2208,13 +2524,13 @@ def integrate_candidate(
             commands=runner.commands[:],
         )
 
-    if gated and rebase_status == "exact_head_merge_conflict":
+    if rebase_status == "exact_head_merge_conflict":
         # A real conflict, not mere staleness: merging the current dev tip
         # into the approved head does not apply cleanly. Rebasing to fix it
         # would move the head past what the reviewer saw, so this genuinely
         # needs the owner, not another wait cycle.
         detail = (
-            f"PR #{number}'s approved head {decision.head_oid} no longer merges cleanly "
+            f"PR #{number}'s evaluated head {decision.head_oid} no longer merges cleanly "
             f"with {candidate.target_branch}; a real conflict, not just staleness. "
             "Owner resolves it (new commit, new review) rather than waiting it out."
         )
@@ -2242,11 +2558,79 @@ def integrate_candidate(
             runner.commands[:],
         )
 
-    # SUP-GATED-PR-EXACT-HEAD-QUEUE-MERGE-20260805: the approved head was
-    # behind dev, but a disposable local merge of the current dev tip into it
-    # was conflict-free and passed smoke -- safe to merge via the unchanged
-    # reviewed commit despite mergeStateStatus reporting BEHIND below.
-    verified_behind = gated and rebase_status == "exact_head_verified_clean"
+    if rebase_status == "exact_head_verified_clean":
+        # The disposable combination passed smoke, but the live PR is not yet
+        # directly mergeable. The canonical runner will not create a queue or
+        # rewrite its exact head to make it eligible.
+        detail = (
+            f"PR #{number}'s exact head {decision.head_oid} merges cleanly in the "
+            f"disposable smoke worktree but is behind {candidate.target_branch}; "
+            "owner refreshes the task head before direct integration."
+        )
+        return IntegrationResult(
+            candidate.task_id,
+            "waiting",
+            detail,
+            number,
+            url,
+            dry_run=not execute,
+            commands=runner.commands[:],
+        )
+
+    if pushed:
+        detail = (
+            f"Internal safety error: integration attempted to rewrite {candidate.branch}; "
+            "refusing any auto-merge handoff."
+        )
+        return IntegrationResult(
+            candidate.task_id,
+            "blocked",
+            detail,
+            number,
+            url,
+            dry_run=not execute,
+            commands=runner.commands[:],
+        )
+
+    try:
+        pr, decision, checks = revalidate_before_merge(
+            candidate,
+            settings,
+            runner,
+            root=target_root,
+            status_root=status_root_dir,
+            canonical_state_file=canonical_state_file,
+            prior_gate=gate,
+            prior_decision=decision,
+            prior_pr_number=number,
+            execute=execute,
+        )
+    except FinalMergeRevalidationError as exc:
+        action = "waiting" if exc.waiting else "blocked"
+        detail = f"PR #{number} failed final merge revalidation: {exc.detail}"
+        unblock = (
+            open_unblock_task(
+                candidate,
+                exc.reason,
+                detail,
+                settings,
+                runner,
+                root=status_root_dir,
+                execute=execute,
+            )
+            if action == "blocked" and open_unblock
+            else None
+        )
+        return IntegrationResult(
+            candidate.task_id,
+            action,
+            detail,
+            number,
+            url,
+            unblock,
+            not execute,
+            runner.commands[:],
+        )
 
     if not execute:
         if gated:
@@ -2256,7 +2640,11 @@ def integrate_candidate(
                 f"{decision.head_oid}; would merge that exact head."
             )
         else:
-            detail = f"Dry-run: PR #{number} is green and {rebase_status}; would merge or enable auto-merge."
+            detail = (
+                f"Dry-run: PR #{number} is green, {rebase_status}, and its "
+                f"merge-then-review contract still permits exact head {decision.head_oid}; "
+                "would merge that exact head directly."
+            )
         detail += ignored_diagnostic_note(checks)
         return IntegrationResult(
             candidate.task_id,
@@ -2268,69 +2656,37 @@ def integrate_candidate(
             commands=runner.commands[:],
         )
 
-    if pushed:
-        runner.run(merge_command(number or 0, settings, auto=True), cwd=target_root)
-        detail = f"Rebased {candidate.branch}, pushed updated head, and enabled auto-merge on PR #{number}."
-        return IntegrationResult(
-            candidate.task_id,
-            "auto_merge_enabled",
-            detail,
-            number,
-            url,
-            dry_run=False,
-            commands=runner.commands[:],
+    merge_proc = runner.run(
+        merge_command(candidate, number or 0, exact_head=decision.head_oid),
+        cwd=target_root,
+        check=False,
+    )
+    try:
+        merge_payload = json.loads(merge_proc.stdout or "{}")
+    except json.JSONDecodeError:
+        merge_payload = {}
+    merged_synchronously = (
+        merge_proc.returncode == 0
+        and isinstance(merge_payload, Mapping)
+        and merge_payload.get("merged") is True
+    )
+    if not merged_synchronously:
+        api_message = ""
+        if isinstance(merge_payload, Mapping):
+            api_message = str(merge_payload.get("message") or "").strip()
+        api_message = (
+            api_message
+            or merge_proc.stderr.strip()
+            or "GitHub did not return merged=true"
         )
-
-    merge_state = normalize_state(pr.get("mergeStateStatus"))
-    if merge_state and merge_state not in ALLOWED_DIRECT_MERGE_STATES and not verified_behind:
-        detail = f"PR #{number} is green but mergeStateStatus={merge_state}; waiting instead of merging."
+        detail = (
+            f"PR #{number}'s synchronous exact-head merge was refused: {api_message}. "
+            "No auto-merge or merge-queue request was created; retry after the "
+            "repository becomes directly mergeable."
+        )
         return IntegrationResult(
             candidate.task_id,
             "waiting",
-            detail,
-            number,
-            url,
-            dry_run=False,
-            commands=runner.commands[:],
-        )
-    runner.run(
-        merge_command(
-            number or 0,
-            settings,
-            auto=False,
-            match_head_commit=decision.head_oid if gated else "",
-        ),
-        cwd=target_root,
-    )
-    # `gh pr merge` on a branch that requires a merge queue does not merge
-    # synchronously: a request whose checks have already passed is *added to
-    # the queue* instead (see `gh pr merge --help`), and lands whenever the
-    # queue processes it -- which can be seconds or minutes later, and is not
-    # guaranteed to complete before this process exits. Re-check the actual
-    # state before treating the merge as done; do not call reconcile_done for
-    # a merge that has not landed. SUP-MERGE-QUEUE-AWARE-INTEGRATOR-20260804.
-    post_merge_pr = gh_json(
-        runner,
-        ["pr", "view", str(number), "--json", PR_DETAIL_FIELDS],
-        cwd=target_root,
-    )
-    post_merge_pr = enrich_pr_status_rollup(post_merge_pr, runner, root=target_root)
-    if (
-        not isinstance(post_merge_pr, Mapping)
-        or str(post_merge_pr.get("state") or "").upper() != "MERGED"
-    ):
-        # Not a failure: the merge request was accepted (directly or into the
-        # queue) and simply has not landed within this process's lifetime.
-        # The next auto-integrator pass finds this PR through the existing
-        # "already merged" fallback above (fetch_pr_for_task(..., state=
-        # "merged")) once GitHub actually reports it MERGED.
-        detail = (
-            f"PR #{number}'s merge was requested but has not landed yet (queued or pending); "
-            "will re-check next pass."
-        )
-        return IntegrationResult(
-            candidate.task_id,
-            "queued_for_merge",
             detail,
             number,
             url,
@@ -2422,10 +2778,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         with lock_file(settings.lock_path, enabled=not args.no_lock):
             # Candidate selection and repository preflight happen while the same
-            # lock that owns merge is held. A queued runner therefore cannot carry
-            # stale canonical state across another runner's merge.
+            # lock that owns merge is held. A contending runner therefore cannot
+            # carry stale canonical state across another runner's merge.
             state = load_json(status_file, {})
-            candidates = integration_candidates(
+            discovered_candidates = integration_candidates(
                 state,
                 config=config_dict,
                 task_branch_prefix=settings.task_branch_prefix,
@@ -2433,24 +2789,30 @@ def main(argv: Sequence[str] | None = None) -> int:
                 status_root=status_root,
             )
             max_tasks = max(1, int(settings.max_tasks_per_run))
-            candidates = candidates[:max_tasks]
             # The review gate reads canonical state from the same root that supplied
             # the candidates, so status file and audit can never disagree by binding.
             gate = ReviewGate(status_root=status_root, state=state)
-            for candidate in candidates:
-                results.append(
-                    integrate_candidate(
-                        candidate,
-                        settings,
-                        runner,
-                        root=candidate.repository_root,
-                        status_root=status_root,
-                        execute=args.execute,
-                        open_unblock=not args.no_open_unblock,
-                        extra_smoke_commands=smoke_commands,
-                        gate=gate,
-                    )
+            actionable_count = 0
+            for candidate in discovered_candidates:
+                candidates.append(candidate)
+                result = integrate_candidate(
+                    candidate,
+                    settings,
+                    runner,
+                    root=candidate.repository_root,
+                    status_root=status_root,
+                    canonical_state_file=status_file,
+                    execute=args.execute,
+                    require_dedicated_integration_path=args.execute,
+                    open_unblock=not args.no_open_unblock,
+                    extra_smoke_commands=smoke_commands,
+                    gate=gate,
                 )
+                results.append(result)
+                if result_consumes_run_capacity(candidate, result):
+                    actionable_count += 1
+                    if actionable_count >= max_tasks:
+                        break
     except IntegrationLockHeld as exc:
         payload = {
             "dry_run": not args.execute,
@@ -2497,7 +2859,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(f"- {result.task_id}: {result.action}{suffix} - {result.detail}")
     if any(result.action == "blocked" for result in results):
         return 2
-    if any(result.action in {"waiting", "auto_merge_enabled", "queued_for_merge"} for result in results):
+    if any(result.action == "waiting" for result in results):
         return 1
     return 0
 

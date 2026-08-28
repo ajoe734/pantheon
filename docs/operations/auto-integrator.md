@@ -8,7 +8,7 @@ the gap between a canonically eligible task and its PR landing in `dev`.
 
 ```text
 review_approved exact-head task OR active permitted merge_then_review task
--> clean task PR into dev -> local rebase smoke -> canonical-runner merge
+-> clean task PR into dev -> immutable exact-head smoke -> synchronous REST merge
 -> leave canonical task status unchanged for its downstream lifecycle
 ```
 
@@ -27,7 +27,8 @@ review_approved exact-head task OR active permitted merge_then_review task
 2. **Review Gate Enforced**:
    - Merge authority is governed by `scripts/git/task_review_merge_gate.py`.
    - For tasks requiring independent review, only the exact head approved by the assigned
-     reviewer can be merged (`--match-head-commit`).
+     reviewer can be merged. The REST merge request carries that SHA as its
+     optimistic-concurrency guard.
    - Standing auto-merge requests on gated PRs are actively revoked before evaluation.
 
 3. **Owner-Finalize Handoff (No Unauthorized `done` Mutation)**:
@@ -55,12 +56,17 @@ review_approved exact-head task OR active permitted merge_then_review task
   owner is never displaced. An overlapping scheduled pass exits successfully
   with `reason=integration_lock_held` (and the same machine-readable JSON
   reason under `--json`); corrupt or unusable lock state exits nonzero.
-- **Writable clean checkout**: while holding that lock, the runner verifies the
-  registered checkout and Git common dir are writable and the worktree is
-  clean before reading or merging a PR.
+- **Dedicated writable clean checkout**: live `--execute` requires an explicit
+  `coordination.repositories.<id>.integration_path`; `local_path` remains the
+  worker/source checkout and is only a dry-run/test fallback. Promotion
+  atomically installs versioned standalone clones for Pantheon and
+  `execute_plans`. While holding the lock, the runner verifies the selected
+  checkout and Git common dir are writable and the worktree is clean.
 - **Sole task merge owner**: `task_finalize.sh`, `safe_pr.sh`, workers, and
   reviewers may push/open/revoke, but never merge or enable auto-merge. Only
-  the scheduled canonical supervisor integration runner uses `--execute`.
+  the scheduled canonical supervisor integration runner uses `--execute`; it
+  calls the synchronous pull-request REST merge endpoint with the exact head
+  and accepts only a response containing `merged: true`.
 - **Fail-closed checks**: Draft PRs, missing PRs, CI failures, rebase conflicts, or head drift
   produce an `INTEGRATION-UNBLOCK-*` task to assign the blocker back to the owner/reviewer.
 - **Environment-only recovery**: If a task was already exactly approved and was blocked solely

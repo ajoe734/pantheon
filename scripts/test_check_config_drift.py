@@ -7,6 +7,7 @@ from pathlib import Path
 from check_config_drift import (
     DEFAULT_INTENTIONAL_OVERRIDES,
     find_drift,
+    find_repository_integration_drift,
     find_repository_source_drift,
     get_dotted,
     set_dotted,
@@ -31,6 +32,35 @@ def test_repository_source_root_drift_requires_promotion() -> None:
             "repository_id": "execute_plans",
             "expected_local_path": "/code/execute-plans",
             "live_local_path": None,
+        },
+    ]
+
+
+def test_repository_integration_root_drift_requires_promotion() -> None:
+    report = find_repository_integration_drift(
+        {
+            "coordination": {
+                "repositories": {
+                    "pantheon": {"integration_path": "/integration/pantheon/old"}
+                }
+            }
+        },
+        {
+            "pantheon": "/integration/pantheon/new",
+            "execute_plans": "/integration/execute_plans/head",
+        },
+    )
+
+    assert report == [
+        {
+            "repository_id": "pantheon",
+            "expected_integration_path": "/integration/pantheon/new",
+            "live_integration_path": "/integration/pantheon/old",
+        },
+        {
+            "repository_id": "execute_plans",
+            "expected_integration_path": "/integration/execute_plans/head",
+            "live_integration_path": None,
         },
     ]
 

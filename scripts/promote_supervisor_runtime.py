@@ -26,6 +26,7 @@ from provision_live_supervisor_config import (
     build_live_config,
     ensure_approval_queue_marker,
     load_json_object,
+    parse_repository_integration_roots,
     parse_repository_source_roots,
     validated_immutable_command_root,
     validated_root,
@@ -105,6 +106,7 @@ def render_v2_config(
     live_config_path: Path,
     python_executable: Path,
     repository_source_roots: Mapping[str, Path | str] | None = None,
+    repository_integration_roots: Mapping[str, Path | str] | None = None,
 ) -> tuple[dict[str, Any], dict[str, str]]:
     """Render a new V2 runtime config without using an incumbent overlay."""
 
@@ -118,6 +120,7 @@ def render_v2_config(
         live_config_path=live_config_path,
         python_executable=python_executable,
         repository_source_roots=repository_source_roots,
+        repository_integration_roots=repository_integration_roots,
     )
     _validate_authoritative_store(rendered)
     return rendered, identity
@@ -444,6 +447,7 @@ def replace_supervisor(
     termination_timeout: float,
     evidence_path: Path | None = None,
     repository_source_roots: Mapping[str, Path | str] | None = None,
+    repository_integration_roots: Mapping[str, Path | str] | None = None,
 ) -> dict[str, Any]:
     """Stop old, install exact V2 config, then launch exact V2 source."""
 
@@ -455,6 +459,7 @@ def replace_supervisor(
         live_config_path=live_config_path,
         python_executable=python_executable,
         repository_source_roots=repository_source_roots,
+        repository_integration_roots=repository_integration_roots,
     )
     rendered_bytes = (json.dumps(rendered, indent=2, ensure_ascii=False) + "\n").encode("utf-8")
     approval_queue_value = rendered.get("paths", {}).get("approval_queue")
@@ -470,6 +475,20 @@ def replace_supervisor(
         "live_config": str(live_config_path),
         "config_sha256": _sha256(rendered_bytes),
         "task_state_store": dict(rendered["task_state_store"]),
+        "repository_source_roots": {
+            repository_id: str(entry.get("local_path"))
+            for repository_id, entry in (
+                (rendered.get("coordination") or {}).get("repositories") or {}
+            ).items()
+            if isinstance(entry, dict) and entry.get("local_path")
+        },
+        "repository_integration_roots": {
+            repository_id: str(entry.get("integration_path"))
+            for repository_id, entry in (
+                (rendered.get("coordination") or {}).get("repositories") or {}
+            ).items()
+            if isinstance(entry, dict) and entry.get("integration_path")
+        },
         "approval_queue": str(approval_queue_path),
         "incumbent_pid_file": str(incumbent_pid_path),
         "stopped_pid": None,
@@ -540,6 +559,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         metavar="REPOSITORY_ID=/ABSOLUTE/GIT/ROOT",
         help="Render an absolute source checkout into coordination.repositories.",
     )
+    parser.add_argument(
+        "--repository-integration-root",
+        action="append",
+        default=[],
+        metavar="REPOSITORY_ID=/ABSOLUTE/GIT/ROOT",
+        help="Render a dedicated clean merge checkout into coordination.repositories.",
+    )
     parser.add_argument("--promote", action="store_true", help="Stop and replace the runtime.")
     parser.add_argument("--discover-only", action="store_true", help="Render and validate only.")
     parser.add_argument("--json", action="store_true")
@@ -559,6 +585,9 @@ def main(argv: list[str] | None = None) -> int:
         repository_source_roots = parse_repository_source_roots(
             args.repository_source_root
         )
+        repository_integration_roots = parse_repository_integration_roots(
+            args.repository_integration_root
+        )
         if not python_executable.is_file():
             raise ValueError(f"python executable does not exist: {python_executable}")
         validated_root(status_root, label="status root", required=(".git", "ai-status.json"))
@@ -569,6 +598,7 @@ def main(argv: list[str] | None = None) -> int:
                 live_config_path=live_config_path,
                 python_executable=python_executable,
                 repository_source_roots=repository_source_roots,
+                repository_integration_roots=repository_integration_roots,
             )
             result: dict[str, Any] = {
                 "schema_version": 2,
@@ -585,6 +615,13 @@ def main(argv: list[str] | None = None) -> int:
                     ).items()
                     if isinstance(entry, dict) and entry.get("local_path")
                 },
+                "repository_integration_roots": {
+                    repository_id: str(entry.get("integration_path"))
+                    for repository_id, entry in (
+                        (rendered.get("coordination") or {}).get("repositories") or {}
+                    ).items()
+                    if isinstance(entry, dict) and entry.get("integration_path")
+                },
             }
         else:
             evidence_path = _path(args.evidence_path) if args.evidence_path else None
@@ -596,6 +633,7 @@ def main(argv: list[str] | None = None) -> int:
                 termination_timeout=args.termination_timeout,
                 evidence_path=evidence_path,
                 repository_source_roots=repository_source_roots,
+                repository_integration_roots=repository_integration_roots,
             )
     except (OSError, ValueError) as exc:
         result = {"outcome": "failed", "exit_code": 1, "error": f"{type(exc).__name__}: {exc}"}

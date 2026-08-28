@@ -69,12 +69,11 @@ review_approved task OR active canonical merge_then_review task
   optional diagnostic checks fail) is recognized as an eligible merge state when
   all required status checks pass.
 - Merge authority is delegated to `scripts/git/task_review_merge_gate.py`.
-  For a task whose canonical contract requires independent review the
-  integrator merges only the exact reviewer-approved head, never enables
-  GitHub auto-merge, never force-pushes a rebase over the reviewed head, and
-  revokes an auto-merge request it finds on a gated PR — including on the
-  approved path, since a standing request would outlive the merge and arm the
-  next push (the PR #4227 shape).
+  Every policy is pinned to the exact PR head used for its gate, checks, and
+  smoke. The integrator never enables GitHub auto-merge, never rewrites that
+  head, and revokes any standing auto-merge request before proceeding. A
+  review-before-merge task additionally requires that exact head's canonical
+  reviewer approval.
 - Two open PRs claiming the same task branch fail closed instead of resolving
   to the first row.
 - If the open PR is already gone because GitHub merged it, the integrator
@@ -87,15 +86,20 @@ review_approved task OR active canonical merge_then_review task
 
 ## Merge Flow
 
-For each eligible task, capped by `max_tasks_per_run`:
+For each eligible task, capped by `max_tasks_per_run` after observational
+`waiting`, `not_ready`, and `already_merged` results are skipped:
 
 1. Read the task row from canonical `ai-status.json` (`PANTHEON_STATUS_ROOT` or `--status-file`)
-   and resolve repository scope (`repository_id`, `repository_slug`, `repository_root`, `target_branch`).
+   and resolve repository scope (`repository_id`, `repository_slug`,
+   dedicated `integration_path`, `target_branch`). Live execution refuses a
+   repository without an explicit integration path.
 2. Find the open PR for `task/<TASK-ID>` into the candidate's `target_branch` within `repository_root`.
 3. If no open PR exists, check for a merged PR from the same head/base whose
    merge commit is already in `origin/<target-branch>`; if found, report `already_merged`
    and leave the task in `review_approved` for owner finalization.
-4. If no open or already-merged PR exists, create a missing-PR unblock task in `PANTHEON_STATUS_ROOT`.
+4. If an active merge-then-review row has not opened a PR yet, report
+   `not_ready` and continue scanning. Other missing-PR cases create an unblock
+   task in `PANTHEON_STATUS_ROOT`.
 5. Evaluate the review-before-merge gate against this exact PR head. Any
    pending auto-merge request on a gated PR is revoked here, before the CI and
    merge-state probes, whatever the gate decided - a PR that ends up `waiting`
@@ -108,19 +112,16 @@ For each eligible task, capped by `max_tasks_per_run`:
    emitted - approval of this head does not make it safe to merge alongside a
    standing grant.
 7. Require green GitHub status rollup.
-8. Fetch `origin/<target-branch>` and the task branch in `repository_root`.
-9. Create a temporary detached worktree for the task branch.
-10. Rebase that worktree onto `origin/<target-branch>`.
-11. Run configured smoke commands.
-12. Merge-then-review tasks only: if the rebase changed the task branch and
-    `--execute` is active, push with `--force-with-lease` and enable
-    auto-merge so CI can re-run. A gated task branch is never pushed; if it
-    needs a refreshed head the result is `waiting` and the owner must rebase
-    and obtain a new approval for the new head.
-13. If no push was needed and the PR is still mergeable, run `gh pr merge`,
-    with `--match-head-commit <approved-oid>` for a gated task so a concurrent
-    finalize cannot slip a different head into the merge.
-14. After merge, preserve canonical task status. A review-before-merge row
+8. Fetch `origin/<target-branch>` and the task branch in the dedicated
+   integration checkout.
+9. Create a temporary detached worktree at the gate decision's exact head and
+   run configured smoke commands. The integrator never pushes or rewrites it.
+10. Reload canonical state into a fresh `ReviewGate`, refetch the PR, and
+    require unchanged policy, owner, reviewer, head, and green checks.
+11. Call the synchronous GitHub REST merge endpoint with `sha=<exact-head>`
+    and `merge_method=merge`. Only `merged: true` is success; every refusal is
+    waiting/blocked and never becomes an auto-merge or queue request.
+12. After merge, preserve canonical task status. A review-before-merge row
     remains `review_approved` for supervisor `owned_finalize_dispatch`; an
     active merge-then-review row proceeds through its post-merge review/finalize
     lifecycle. The integrator never mutates canonical task state to `done`.

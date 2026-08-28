@@ -172,7 +172,8 @@ live PR before it can merge; assigning an independent reviewer converts the
 row back to the gated review-before-merge path.
 
 The integrator merges only the exact head the assigned reviewer approved
-(`gh pr merge --match-head-commit <oid>`), never enables auto-merge, and
+(synchronous `PUT /repos/<owner>/<repo>/pulls/<n>/merge` with `sha=<oid>`),
+accepts only `merged: true`, never enables auto-merge, and
 never force-pushes a rebase over the reviewed head. Reviewer rejection, a
 head change after approval, a head *replaced* with an older commit, an
 approval by anyone other than the assigned reviewer, missing canonical
@@ -285,11 +286,11 @@ Pantheon implementation:
   and launches auto workers from that isolated cwd while routing
   `ai-status.sh` updates back to the supervisor root with
   `PANTHEON_STATUS_ROOT`
-- the single `coordination.repositories.<id>.local_path` registry entry owns
-  each writable source checkout. Promotion renders the deployment's absolute
-  source roots there (`dev-root` for Pantheon and the canonical external
-  checkout for `execute_plans`); status/activity paths are never inferred as
-  git source roots
+- `coordination.repositories.<id>.local_path` continues to own each worker
+  source checkout. Promotion separately renders an explicit
+  `integration_path` pointing at a versioned, clean, standalone writable clone
+  used only by the merge owner. Pantheon and `execute_plans` each receive their
+  own clone; status/activity paths are never inferred as Git source roots
 - before each dispatch cycle, Worker Manager fetches each selected
   repository's `origin/<default_branch>` once, resolves one exact SHA, and
   records that SHA on every worker lease created in the cycle. A reused task
