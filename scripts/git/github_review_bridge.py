@@ -596,7 +596,7 @@ def _pr_snapshot(
             "--repo",
             repository,
             "--json",
-            "number,url,state,headRefName,headRefOid,baseRefName,baseRefOid,"
+            "number,url,state,headRefName,headRefOid,baseRefName,"
             "isDraft,mergeStateStatus,autoMergeRequest",
         ]
     )
@@ -627,6 +627,39 @@ def _pr_snapshot(
             + "; ".join(mismatches)
         )
     return dict(payload)
+
+
+def _current_base_ref_sha(
+    runner: JsonRunner,
+    *,
+    repository: str,
+    base: str,
+    pr: int,
+) -> str:
+    """Resolve the current base commit through the stable REST ref endpoint.
+
+    ``gh pr view --json`` is convenient for PR identity but its supported
+    GraphQL-field set varies by CLI version.  In particular, gh 2.45 does not
+    accept ``baseRefOid``.  The Git Data REST endpoint is available on that
+    version and gives us the same commit identity without weakening the
+    ancestry check that follows.
+    """
+
+    ref = quote(str(base or "").strip(), safe="")
+    payload = runner.run_json(
+        ["gh", "api", f"repos/{repository}/git/ref/heads/{ref}"]
+    )
+    object_payload = payload.get("object") if isinstance(payload, Mapping) else None
+    base_sha = (
+        str(object_payload.get("sha") or "").strip().lower()
+        if isinstance(object_payload, Mapping)
+        else ""
+    )
+    if not OID_RE.fullmatch(base_sha):
+        raise GitHubReviewBridgeError(
+            f"GitHub PR #{pr} has no current base SHA for {base}"
+        )
+    return base_sha
 
 
 def _review_manifest_identity(
@@ -774,11 +807,12 @@ def validate_review_admission(
         raise GitHubReviewBridgeError(
             f"GitHub PR #{normalized.pr} is BEHIND {normalized.base}; refresh it before review"
         )
-    base_sha = str(snapshot.get("baseRefOid") or "").strip().lower()
-    if not OID_RE.fullmatch(base_sha):
-        raise GitHubReviewBridgeError(
-            f"GitHub PR #{normalized.pr} has no current base SHA for {normalized.base}"
-        )
+    base_sha = _current_base_ref_sha(
+        client,
+        repository=repository,
+        base=normalized.base,
+        pr=normalized.pr,
+    )
     comparison = client.run_json(
         [
             "gh",

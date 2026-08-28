@@ -86,11 +86,12 @@ class FakeRunner:
                 "headRefName": "task/AUDIT-001",
                 "headRefOid": self.actual_head,
                 "baseRefName": "dev",
-                "baseRefOid": self.base_sha,
                 "isDraft": self.is_draft,
                 "mergeStateStatus": self.merge_state,
                 "autoMergeRequest": self.auto_merge_request,
             }
+        if joined == f"gh api repos/{REPOSITORY}/git/ref/heads/dev":
+            return {"ref": "refs/heads/dev", "object": {"sha": self.base_sha, "type": "commit"}}
         if joined == (
             f"gh api repos/{REPOSITORY}/compare/{self.base_sha}...{self.actual_head}"
         ):
@@ -606,11 +607,12 @@ class GitHubReviewBridgeTests(unittest.TestCase):
         self.assertEqual(mutation_calls, [])
 
     def test_review_admission_freezes_manifest_base_and_merge_method(self) -> None:
+        runner = FakeRunner()
         admitted = bridge.validate_review_admission(
             repository=REPOSITORY,
             binding=binding(),
             review_file="docs/evidence/AUDIT-001/evidence.json",
-            runner=FakeRunner(),
+            runner=runner,
         )
 
         self.assertEqual(
@@ -624,6 +626,33 @@ class GitHubReviewBridgeTests(unittest.TestCase):
                     "blob_sha": "d" * 40,
                 },
             },
+        )
+        pr_view = next(command for command, _payload in runner.calls if command[:3] == ["gh", "pr", "view"])
+        self.assertNotIn("baseRefOid", pr_view[-1])
+        self.assertIn(
+            ["gh", "api", f"repos/{REPOSITORY}/git/ref/heads/dev"],
+            [command for command, _payload in runner.calls],
+        )
+
+    def test_review_admission_rejects_invalid_base_ref_response(self) -> None:
+        runner = FakeRunner(base_sha="not-a-commit")
+
+        with self.assertRaisesRegex(
+            bridge.GitHubReviewBridgeError, "has no current base SHA"
+        ):
+            bridge.validate_review_admission(
+                repository=REPOSITORY,
+                binding=binding(),
+                review_file="docs/evidence/AUDIT-001/evidence.json",
+                runner=runner,
+            )
+
+        self.assertFalse(
+            [
+                command
+                for command, _payload in runner.calls
+                if "/compare/" in " ".join(command)
+            ]
         )
 
     def test_review_admission_rejects_missing_committed_manifest(self) -> None:
