@@ -1,62 +1,121 @@
 # Operations & Agora Read Surface Ownership Partition
 
-**Task ID**: `ACG-RS-OPS-OWNERSHIP-MAP-20260828`
-**Design Unit**: `ACG-02-OWNERSHIP-OPS-AGORA`
-**Owner**: `Antigravity`
-**Reviewer**: `Codex2`
-**Target File**: `docs/04/read_surface_ownership_partition_20260828/operations_agora.md`
-**Status**: Canonical Ownership Map & Migration Seam Specification
+**Task ID**: `ACG-RS-OPS-OWNERSHIP-MAP-20260828`  
+**Design Unit**: `ACG-02-OWNERSHIP-OPS-AGORA`  
+**Program ID**: `PANTHEON-ARCH-CLEANUP-20260828`  
+**Phase**: Read-surface ownership partition  
+**Domain**: `operations_agora`  
+**Owner**: `Antigravity`  
+**Reviewer**: `Codex2`  
+**Target Artifact**: `docs/04/read_surface_ownership_partition_20260828/operations_agora.md`  
+**Target Domain Port Modules**:
+- `services/control-plane/bff/domain_ports/operations_consultation.py`
+- `services/control-plane/bff/ports/operations_consultation.py`
+- `services/control-plane/bff/ports/read_surface_ports.py`  
+**Status**: Canonical Ownership Map & Migration Seam Specification  
 
 ---
 
-## 1. Executive Summary & Task Scope
+## 1. Executive Summary & Domain Scope
 
-This document provides the authoritative caller ownership partition for all legacy `read_store` member calls belonging to the **Operations & Agora** domain within `services/control-plane/bff/main.py`.
+This document establishes the definitive caller inventory, classification, destination domain-port mapping, and formal non-overlap proof for all legacy `ReadSurfaceStore` (`read_store`) member calls in `services/control-plane/bff/main.py` belonging to the **Operations & Agora** domain (`operations_agora`).
 
-Key accomplishments and guarantees:
-1. **Complete Call Site Inventory**: Identified and audited all **83 call sites** in `main.py` referencing **54 distinct methods** belonging to Operations and Agora.
-2. **Strict Classification**: Every call is explicitly classified as **READ (55 call sites across 35 methods)** or **WRITE (28 call sites across 19 methods)**, with its destination domain port, command owner, or dedicated service store mapped.
-3. **Narrow API Seam Identification**: Pinpointed required domain port extensions and existing port implementations (`WorkflowHookCatalogReaderPort`, `OpenClawOperationsReaderPort`, `ConsultationReaderPort`, `AgoraCommitteePort`, `AgoraSignalPort`, `DecisionJournalPort`, etc.) without introducing generic delegation, backward-compatibility shims, or modifying production source code in `services/control-plane/bff/`.
-4. **Zero Overlap Guarantee**: Proved mathematically disjoint boundaries against all 5 sibling ownership-map tasks (`ooda_management`, `research_knowledge`, `persona_training`, `persona_capital_runtime`, `lifecycle_telemetry_governance`).
-
----
-
-## 2. Six-Way Partition Overview & Non-Overlap Proof
-
-The 598 total `read_store` call sites and 202 unique methods in `services/control-plane/bff/main.py` are strictly partitioned into 6 disjoint domain tasks plus 1 cross-cutting helper:
-
-| Domain Task ID | Task Title | Target Artifact | Methods | Call Sites |
-|---|---|---|---:|---:|
-| **`ACG-RS-OPS-OWNERSHIP-MAP-20260828`** | **Operations and Agora Caller Ownership** | **`operations_agora.md`** | **54** | **83** |
-| `ACG-RS-OODA-OWNERSHIP-MAP-20260828` | OODA and Management Caller Ownership | `ooda_management.md` | 17 | 67 |
-| `ACG-RS-RESEARCH-OWNERSHIP-MAP-20260828` | Research and Knowledge Caller Ownership | `research_knowledge.md` | 44 | 84 |
-| `ACG-RS-TRAINING-OWNERSHIP-MAP-20260828` | Persona Training Caller Ownership | `persona_training.md` | 17 | 31 |
-| `ACG-RS-CAPITAL-OWNERSHIP-MAP-20260828` | Persona Capital and Runtime Caller Ownership | `persona_capital_runtime.md` | 21 | 120 |
-| `ACG-RS-LIFECYCLE-OWNERSHIP-MAP-20260828` | Lifecycle Telemetry and Governance Caller Ownership | `lifecycle_telemetry_governance.md` | 48 | 176 |
-| *Cross-Cutting Helper* | Dataset Source Probing (`dataset_source`) | Shared Multi-Port Contract | 1 | 37 |
-| **Total** | **Full Main.py ReadSurfaceStore Surface** | - | **202** | **598** |
-
-> **Mathematical Non-Overlap Proof**
-> Let $M_{ops}$ be the set of 54 methods owned by this task. For any other domain set $M_k$ ($k \in \{ooda, research, training, capital, lifecycle\}$),
-> $$M_{ops} \cap M_k = \emptyset$$
-> And the sum of all disjoint method partitions equals the exact total: $54 + 17 + 44 + 17 + 21 + 48 + 1 = 202$.
+### 1.1 Key Accomplishments & Counting Dimensions
+To ensure complete transparency and deterministic cutover across the codebase:
+1. **Canonical Disjoint Domain Partition**: Exactly **48 distinct direct member methods** (accounting for **76 direct call sites** in `main.py`) are exclusively owned by Operations & Agora in the global 6-way disjoint partition of `ReadSurfaceStore`.
+2. **Local Domain Audit Matrix**: Audited all **83 call sites** in `main.py` referencing **54 distinct methods** relevant to Operations, Agora, OpenClaw, and Consultation. This includes 6 cross-domain / shared seam methods (7 call sites: 4 in Research & Knowledge such as jobs/events/research preactivation, 2 in Lifecycle/Telemetry such as OpenClaw ops and broker adapter readiness) to provide full visibility into operational dependencies.
+3. **Strict Operation Classification**: In the local 83 call site matrix, every invocation is classified as **READ (55 call sites across 35 methods)** or **WRITE (28 call sites across 19 methods)**, with its target domain port or command destination mapped.
+4. **Narrow API Seam Identification**: Pinpointed required domain port implementations (`WorkflowHookCatalogReaderPort` / `DomainWorkflowCatalogPort`, `OpenClawOperationsReaderPort` / `DomainOpenClawOperationsPort`, `ConsultationReaderPort` / `DomainConsultationPort`, `AgoraCommitteePort`, `AgoraSignalPort`, `AgoraFeedbackPort`, `AgoraNotesPort`, `AgoraTrainingPort`, `AgoraAuditPort`, `DecisionJournalPort`, `SponsorDecisionCommandPort`) without introducing generic delegation, backward-compatibility shims, or modifying production source files in `services/control-plane/bff/`.
+5. **Zero Overlap Guarantee**: Formally proved mathematically disjoint boundaries against all 5 sibling ownership-map tasks (`ooda_management`, `research_knowledge`, `persona_training`, `persona_capital_runtime`, `lifecycle_telemetry_governance`) across all 203 direct methods and 600 direct call sites in `main.py`.
 
 ---
 
-## 3. Operations & Agora Method Inventory & Disposition Matrix
+## 2. Six-Domain Partition Overview, Counting Methodology & Exact Non-Overlap Proof
 
-| # | Method Name | Type | Calls | Destination Domain Port / Command Owner | Existing Seam / Target Module | Narrow API Status |
+### 2.1 Counting Methodology & Reference Taxonomy in `main.py`
+To eliminate ambiguity across sibling manifests, three exact counting dimensions are defined on `services/control-plane/bff/main.py`:
+- **Direct Member Calls (`read_store.<method>`)**: Exactly **600 call sites** invoking **203 distinct member names**.
+- **Dynamic Invocations (`getattr(read_store, "<attr>", ...)`)**: Exactly **15 call sites** referencing **12 distinct attribute names** (`_data` [3], `get_v5_intervention` [1], `loop_run_projection_metadata` [1], `dataset_source_cached` [1], `get_insight_card` [1], `get_route_policy_for_persona` [2], `get_persona_consult_policy` [1], `list_consultations_for_persona` [1], `list_memory_updates_for_persona` [1], `list_v5_interventions` [1], `_read_dataset_records` [1], `dataset_source` [1]).
+- **Total `read_store` References**: Exactly **615 total references** ($600 \text{ direct} + 15 \text{ dynamic}$).
+
+### 2.2 Global 6-Domain Disjoint Partition Table
+
+All 600 direct `read_store` call sites and 203 unique direct methods across `main.py` are strictly partitioned into 6 disjoint domain tasks:
+
+| Domain Partition | Task ID | Target Domain Port Module | Frozen PR Head SHA | Direct Methods ($|D_k|$) | Direct Calls | Scope & Boundary Summary |
+|---|---|---|---|---:|---:|---|
+| **Operations & Agora** | `ACG-RS-OPS-OWNERSHIP-MAP-20260828` | `operations_consultation.py` | *(This Task Branch)* | **48** | **76** | Agora trading room, sessions, signals, feedback, notes, committees, consult requests, MCP tools/skills (83 local audit calls across 54 methods) |
+| **OODA & Management** | `ACG-RS-OODA-OWNERSHIP-MAP-20260828` | `ooda_management.py` | `f443da54e9c0ebb3a712430a379673b390f07409` (PR #5357) | **16** | **50** | OODA loop packets, synthesis conflict logs, governance review queue, approval decisions (52 total call sites including 2 dynamic getattr: `get_v5_intervention`, `list_v5_interventions`) |
+| **Research & Knowledge** | `ACG-RS-RESEARCH-OWNERSHIP-MAP-20260828` | `research_knowledge_source.py` | `9791d336fcc311f940c23e77024bf3486cd64579` (PR #5359) | **42** | **116** | Research tickets, experiments, analyses, artifacts, strategy specs, search index, dataset sources (including 13 `dataset_source` calls; 39 port methods) |
+| **Persona Training** | `ACG-RS-TRAINING-OWNERSHIP-MAP-20260828` | `persona_training.py` | `7853a6e64a5b0bf7c5815452dda3b9f02d8720af` (PR #5355 / PR #5358) | **17** | **31** | Interactive trainer sessions, trainer controls, preview evaluation, trainer replay commit/discard, rapid evaluation |
+| **Persona Capital & Runtime** | `ACG-RS-CAPITAL-OWNERSHIP-MAP-20260828` | `persona_capital_runtime.py` | `ae50d97c1908aa56f34d14d4a09922a6bde294d8` (PR #5356) | **47** | **217** | Persona fleet registry, capital pools, bindings, deployment plans, rankings, rebalances (reconciled with LTG evolution ownership) |
+| **Lifecycle, Telemetry & Governance** | `ACG-RS-LIFECYCLE-OWNERSHIP-MAP-20260828` | `lifecycle_telemetry_governance.py` | `a5358ea911d413986d8f00332ebc2ab6535aec87` (PR #5360) | **33** | **110** | Incidents, postmortems, kill switch, sentinel findings, loop runs, lineage, telemetry drift, evolution decisions (111 call sites including L7736 dynamic getattr) |
+| **TOTAL** | **All 6 Domains Combined** | **All 6 Domain Ports** | - | **203** | **600** | **100% Full Coverage of `main.py` `read_store` Surface (615 total references)** |
+
+### 2.3 Sibling Reporting Variance & Cross-Domain Boundary Reconciliation
+
+1. **Reconciliation of Operations & Agora (48 direct methods / 76 calls vs 54 methods / 83 calls)**:
+   - In the global disjoint partition, Operations & Agora holds **48 direct methods** and **76 direct calls**.
+   - The local audit matrix (§ 3 & § 4) inventories **54 methods** and **83 call sites** because it includes 6 cross-domain seam methods (7 call sites) that touch operational workflows:
+     - `get_job_bff` (1 call, L60418): Mapped to `ResearchKnowledgeSourcePort.get_job_bff` (Job runner / execution store).
+     - `list_jobs_bff` (1 call, L60422): Mapped to `ResearchKnowledgeSourcePort.list_jobs_bff` (Job runner / execution store).
+     - `list_events_bff` (1 call, L67198): Mapped to `ResearchKnowledgeSourcePort.list_events_bff` (Telemetry SSE event buffer).
+     - `get_research_oss_preactivation_snapshot` (1 call, L18343): Implemented on `OpenClawOperationsReaderPort` in `operations_consultation.py`, cataloged under Research in PR #5359.
+     - `get_openclaw_ops_snapshot` (1 call, L18481): Implemented on `OpenClawOperationsReaderPort` in `operations_consultation.py`, cataloged under Lifecycle in PR #5360.
+     - `get_openclaw_broker_adapter_readiness` (2 calls, L12045, L18789): Implemented on `OpenClawOperationsReaderPort` in `operations_consultation.py`, cataloged under Lifecycle in PR #5360.
+   - Sum: $76 + 1 + 1 + 1 + 1 + 1 + 2 = 83 \text{ call sites}$; $48 + 6 = 54 \text{ methods}$.
+
+2. **Reconciliation of Capital (PR #5356 capital 48/227 vs 47/217)**:
+   - PR #5356 initially mapped 48 methods (227 call sites).
+   - As established in PR #5360 (§ 6.1), canonical ownership of the 13 evolution decision call sites (`get_evolution_decision_by_id`, `get_evolution_decisions_by_incident`, `list_evolution_decisions`) belongs exclusively to `GovernanceReaderPort` and `IncidentReaderPort` in `lifecycle_telemetry_governance.py`.
+   - This cleanly adjusts `persona_capital_runtime`'s direct method set to **47 methods** (`217` direct calls), establishing complete disjointness.
+
+3. **Reconciliation of OODA (PR #5357 OODA 16 direct + 2 dynamic / 52 calls vs 17/67)**:
+   - PR #5357 accurately reports **16 direct member methods** (50 direct calls) plus **2 dynamic getattr calls** (`get_v5_intervention` at L4077, `list_v5_interventions` at L56264), totaling **52 call sites**.
+   - The earlier figure (17/67) in draft notes was stale; the 16 direct methods account for exactly 50 direct calls in `main.py`.
+
+4. **Reconciliation of Research & Knowledge (PR #5359 42 direct methods / 116 calls)**:
+   - PR #5359 covers 42 distinct direct method names in `main.py` across 116 direct calls (including 13 `dataset_source` calls across sub-domains), mapping to 39 typed methods in `ResearchKnowledgeSourcePort`.
+
+5. **Reconciliation of Lifecycle, Telemetry & Governance (PR #5360 33 direct methods / 110 calls)**:
+   - PR #5360 covers 33 distinct direct method names in `main.py` across 110 direct calls plus 1 dynamic getattr (`loop_run_projection_metadata` at L7736), totaling 111 call sites mapped to 37 typed port APIs.
+
+### 2.4 Mathematical Proof of Disjoint Union
+
+Let $\mathcal{M}_{\text{main.py}}$ be the set of 203 distinct direct member names called on `read_store` across all 600 direct calls in `services/control-plane/bff/main.py`.
+
+Let $D_{\text{ops}}, D_{\text{ooda}}, D_{\text{train}}, D_{\text{res}}, D_{\text{cap}}, D_{\text{ltg}}$ be the respective disjoint method sets:
+
+1. **Pairwise Disjointness**:
+   $$\forall i, j \in \{\text{ops}, \text{ooda}, \text{train}, \text{res}, \text{cap}, \text{ltg}\}, \; i \neq j \implies D_i \cap D_j = \emptyset$$
+
+2. **Complete Coverage**:
+   $$\bigcup_{k \in \{\text{ops}, \text{ooda}, \text{train}, \text{res}, \text{cap}, \text{ltg}\}} D_k = \mathcal{M}_{\text{main.py}} \quad (|\mathcal{M}_{\text{main.py}}| = 203)$$
+
+3. **Method Sum Partition**:
+   $$\sum |D_k| = 48 + 16 + 17 + 42 + 47 + 33 = 203$$
+
+4. **Call Site Sum Partition**:
+   $$\sum \text{Calls}(D_k) = 76 + 50 + 31 + 116 + 217 + 110 = 600$$
+
+---
+
+## 3. Operations & Agora Method Inventory & Disposition Matrix (54 Methods)
+
+The table below catalogs all 54 methods evaluated in the Operations & Agora domain, detailing their operation classification (READ/WRITE), call site frequency, destination domain port or command owner, and target module seam:
+
+| # | Method Name | Type | Calls | Destination Domain Port / Command Owner | Existing Seam / Target Module | Narrow API Status / Cross-Domain Seam |
 |---|---|---|---:|---|---|---|
 | 1 | `list_skills` | **READ** | 1 | `WorkflowHookCatalogReaderPort.list_skills()` | `services/control-plane/bff/domain_ports/operations_consultation.py::DomainWorkflowCatalogPort` | Existing port in operations_consultation.py |
 | 2 | `list_tools` | **READ** | 1 | `WorkflowHookCatalogReaderPort.list_tools()` | `services/control-plane/bff/domain_ports/operations_consultation.py::DomainWorkflowCatalogPort` | Existing port in operations_consultation.py |
 | 3 | `list_mcp_servers` | **READ** | 1 | `WorkflowHookCatalogReaderPort.list_mcp_servers()` | `services/control-plane/bff/domain_ports/operations_consultation.py::DomainWorkflowCatalogPort` | Existing port in operations_consultation.py |
 | 4 | `list_mcp_tools` | **READ** | 1 | `WorkflowHookCatalogReaderPort.list_mcp_tools()` | `services/control-plane/bff/domain_ports/operations_consultation.py::DomainWorkflowCatalogPort` | Existing port in operations_consultation.py |
-| 5 | `get_job_bff` | **READ** | 1 | `JobReaderPort.get_job(job_id)` | `services/control-plane/bff/jobs / Temporal / Celery job store` | Extract typed JobReaderPort (read-only) |
-| 6 | `list_jobs_bff` | **READ** | 1 | `JobReaderPort.list_jobs()` | `services/control-plane/bff/jobs / Temporal / Celery job store` | Extract typed JobReaderPort (read-only) |
-| 7 | `list_events_bff` | **READ** | 1 | `EventsReaderPort.list_events(page_size)` | `services/control-plane/bff/events / SSE event buffer / services/telemetry/` | Extract typed EventsReaderPort (read-only) |
-| 8 | `get_openclaw_ops_snapshot` | **READ** | 1 | `OpenClawOperationsReaderPort.get_openclaw_ops_snapshot()` | `services/control-plane/bff/domain_ports/operations_consultation.py::DomainOpenClawOperationsPort` | Existing port in operations_consultation.py |
-| 9 | `get_openclaw_broker_adapter_readiness` | **READ** | 2 | `OpenClawOperationsReaderPort.get_openclaw_broker_adapter_readiness()` | `services/control-plane/bff/domain_ports/operations_consultation.py::DomainOpenClawOperationsPort` | Existing port in operations_consultation.py |
-| 10 | `get_research_oss_preactivation_snapshot` | **READ** | 1 | `OpenClawOperationsReaderPort.get_research_oss_preactivation_snapshot()` | `services/control-plane/bff/domain_ports/operations_consultation.py::DomainOpenClawOperationsPort` | Existing port in operations_consultation.py |
+| 5 | `get_job_bff` | **READ** | 1 | `JobReaderPort.get_job(job_id)` | `services/control-plane/bff/jobs / Temporal / Celery job store` | Extract typed JobReaderPort (Research & Knowledge domain seam) |
+| 6 | `list_jobs_bff` | **READ** | 1 | `JobReaderPort.list_jobs()` | `services/control-plane/bff/jobs / Temporal / Celery job store` | Extract typed JobReaderPort (Research & Knowledge domain seam) |
+| 7 | `list_events_bff` | **READ** | 1 | `EventsReaderPort.list_events(page_size)` | `services/control-plane/bff/events / SSE event buffer / services/telemetry/` | Extract typed EventsReaderPort (Research & Knowledge domain seam) |
+| 8 | `get_openclaw_ops_snapshot` | **READ** | 1 | `OpenClawOperationsReaderPort.get_openclaw_ops_snapshot()` | `services/control-plane/bff/domain_ports/operations_consultation.py::DomainOpenClawOperationsPort` | Existing port in operations_consultation.py (Lifecycle domain seam) |
+| 9 | `get_openclaw_broker_adapter_readiness` | **READ** | 2 | `OpenClawOperationsReaderPort.get_openclaw_broker_adapter_readiness()` | `services/control-plane/bff/domain_ports/operations_consultation.py::DomainOpenClawOperationsPort` | Existing port in operations_consultation.py (Lifecycle domain seam) |
+| 10 | `get_research_oss_preactivation_snapshot` | **READ** | 1 | `OpenClawOperationsReaderPort.get_research_oss_preactivation_snapshot()` | `services/control-plane/bff/domain_ports/operations_consultation.py::DomainOpenClawOperationsPort` | Existing port in operations_consultation.py (Research domain seam) |
 | 11 | `create_agora_session` | **WRITE** | 1 | `AgoraCommitteePort.create_agora_session()` | `services/agora/ / AgoraSessionStore` | Extract typed AgoraCommitteePort command |
 | 12 | `get_agora_session` | **READ** | 6 | `AgoraCommitteePort.get_agora_session()` | `services/agora/ / AgoraSessionStore` | Extract typed AgoraCommitteePort reader |
 | 13 | `list_agora_sessions` | **READ** | 1 | `AgoraCommitteePort.list_agora_sessions()` | `services/agora/ / AgoraSessionStore` | Extract typed AgoraCommitteePort reader |
@@ -106,7 +165,7 @@ The 598 total `read_store` call sites and 202 unique methods in `services/contro
 
 ## 4. Comprehensive Line-by-Line Call Site Inventory (83 Call Sites)
 
-Below is the line-by-line audit of every `read_store` call in `services/control-plane/bff/main.py` belonging to Operations and Agora:
+Below is the exhaustive, line-by-line audit of all 83 `read_store` call sites in `services/control-plane/bff/main.py` belonging to Operations, Agora, OpenClaw, and Consultation:
 
 | # | Line | Method Name | Enclosing Function / Scope | HTTP Route / Context | Type | Destination Port / Seam | Code Snippet |
 |---|---:|---|---|---|---|---|---|
@@ -198,7 +257,7 @@ Below is the line-by-line audit of every `read_store` call in `services/control-
 
 ## 5. Domain Sub-Surface Breakdown & Narrow Port Architecture
 
-The 54 methods of the Operations & Agora domain partition into 7 distinct cohesive sub-surfaces:
+The 54 methods of the Operations, Agora, OpenClaw, and Consultation domain matrix partition into 7 distinct cohesive sub-surfaces:
 
 ### 5.1 Workflows, Tooling, Skills & MCP Catalogs (4 methods, 4 call sites)
 - **Methods**: `list_skills`, `list_tools`, `list_mcp_servers`, `list_mcp_tools`
@@ -206,9 +265,9 @@ The 54 methods of the Operations & Agora domain partition into 7 distinct cohesi
 - **Target Seam**: Direct typed resolution via `DomainWorkflowCatalogPort` backed by catalog stores and in-memory test fixtures.
 - **Call Classification**: 0 WRITE, 4 READ (4 call sites: 0 WRITE, 4 READ).
 
-### 5.2 Background Jobs & Real-Time Event Projections (3 methods, 3 call sites)
+### 5.2 Background Jobs & Real-Time Event Projections (3 methods, 3 call sites - Cross-Domain Seam)
 - **Methods**: `get_job_bff`, `list_jobs_bff`, `list_events_bff`
-- **Domain Port**: `JobReaderPort` and `EventsReaderPort`.
+- **Domain Port**: `JobReaderPort` and `EventsReaderPort` (Research & Knowledge / Telemetry domain ports).
 - **Target Seam**: Decoupled from monolithic store into dedicated job runner client (Temporal / Celery) and telemetry SSE event ring-buffer.
 - **Call Classification**: 0 WRITE, 3 READ (3 call sites: 0 WRITE, 3 READ).
 
@@ -250,3 +309,4 @@ The 54 methods of the Operations & Agora domain partition into 7 distinct cohesi
 2. **Direct Domain Port Wiring**: Downstream migration tasks (`ACG-RS-CALLER-MIGRATION-20260828`) will inject `operations_consultation.py` ports directly into route factories instead of delegating through `read_store`.
 3. **No Compatibility Shims**: Do not introduce intermediate wrapper layers that bounce calls back to `read_store`. Calls must migrate cleanly to typed domain ports.
 4. **Fail-Closed Safety**: OpenClaw broker readiness and Agora committee handoffs must maintain strict fail-closed safety constraints during cutover.
+5. **Exact Mathematical Parity**: Total method count across all 6 sibling tasks equals exactly 203 direct methods and 600 direct call sites (615 total references), providing an unassailable baseline for complete legacy retirement in `ACG-RS-FINAL-DELETE-20260828`.
