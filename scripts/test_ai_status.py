@@ -119,6 +119,10 @@ def _command_approve(state: dict[str, Any], args: list[str]) -> None:
     _execute_external_mutation_command("approve", state, args)
 
 
+def _command_handoff(state: dict[str, Any], args: list[str]) -> None:
+    _execute_external_mutation_command("handoff", state, args)
+
+
 def _command_reopen(state: dict[str, Any], args: list[str]) -> None:
     _execute_external_mutation_command("reopen", state, args)
 
@@ -147,6 +151,7 @@ def _execute_external_mutation_command(
         raise SystemExit(f"Unknown task: {task_id}")
     preflight = ai_status.prepare_external_mutation_preflight(command, task, args)
     functions = {
+        "handoff": ai_status.command_handoff,
         "approve": ai_status.command_approve,
         "reopen": ai_status.command_reopen,
         "done": ai_status.command_done,
@@ -2317,6 +2322,12 @@ class StatusRootRoutingTests(unittest.TestCase):
                 encoding="utf-8",
             )
 
+            fake_bin = root / "fake-bin"
+            fake_bin.mkdir()
+            fake_gh = fake_bin / "gh"
+            fake_gh.write_text("#!/bin/sh\nprintf '[]\\n'\n", encoding="utf-8")
+            fake_gh.chmod(0o755)
+
             env = os.environ.copy()
             env.update(
                 {
@@ -2338,6 +2349,7 @@ class StatusRootRoutingTests(unittest.TestCase):
                         central,
                         task_state_event_log,
                     ),
+                    "PATH": f"{fake_bin}:{env.get('PATH', '')}",
                 }
             )
 
@@ -2867,6 +2879,7 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
         self._real_review_evidence_file_committed = (
             ai_status.review_evidence_file_committed
         )
+        self._real_pr_discovery = ai_status._discover_open_pull_request_for_branch
         self._revalidate_review_admission_patcher = mock.patch.object(
             self._review_bridge,
             "revalidate_review_admission",
@@ -2876,8 +2889,14 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
             "review_evidence_file_committed",
             return_value=True,
         )
+        self._pr_discovery_patcher = mock.patch.object(
+            ai_status,
+            "_discover_open_pull_request_for_branch",
+            return_value=ai_status.OpenPullRequestDiscovery(pr=None),
+        )
         self._revalidate_review_admission_patcher.start()
         self._review_evidence_committed_patcher.start()
+        self._pr_discovery_patcher.start()
 
     @staticmethod
     def _review_admission_binding(
@@ -2895,6 +2914,7 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
         }
 
     def tearDown(self) -> None:
+        self._pr_discovery_patcher.stop()
         self._review_evidence_committed_patcher.stop()
         self._revalidate_review_admission_patcher.stop()
         _teardown_test_isolation(self)
@@ -2998,6 +3018,23 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
         ):
             ai_status.command_approve(self.state, ["REG-002", "Approved."])
 
+    def test_handoff_command_has_no_inline_network_fallback(self) -> None:
+        self.state["tasks"][0]["status"] = "in_progress"
+        with (
+            mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False),
+            mock.patch.object(
+                ai_status,
+                "resolve_handoff_delivery_binding",
+                side_effect=AssertionError("network preflight ran under mutation"),
+            ) as resolve,
+            self.assertRaisesRegex(RuntimeError, "lock-free external mutation preflight"),
+        ):
+            ai_status.command_handoff(
+                self.state,
+                ["REG-002", "Claude", "Review the exact delivery."],
+            )
+        resolve.assert_not_called()
+
     def test_external_preflight_task_digest_is_a_short_locked_cas(self) -> None:
         with (
             mock.patch.dict(os.environ, {"AI_NAME": "Claude"}, clear=False),
@@ -3063,6 +3100,187 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
 
         self.assertEqual(result["task_id"], "REG-002")
         external.assert_called_once()
+
+    def test_handoff_admission_runs_without_exclusive_task_lock(self) -> None:
+        task = self.state["tasks"][0]
+        task["status"] = "in_progress"
+        task["required_artifacts"] = ["pull request"]
+        lock_state = {"shared": False, "exclusive": False}
+        review_file = "docs/evidence/REG-002/evidence.json"
+
+        @contextlib.contextmanager
+        def task_lock(*, shared: bool):
+            key = "shared" if shared else "exclusive"
+            lock_state[key] = True
+            try:
+                yield
+            finally:
+                lock_state[key] = False
+
+        def admit(_task, _config, binding, **_kwargs):
+            self.assertFalse(lock_state["shared"])
+            self.assertFalse(lock_state["exclusive"])
+            return self._review_admission_binding(binding, review_file)
+
+        with (
+            mock.patch.dict(
+                os.environ,
+                {
+                    "AI_NAME": "Codex",
+                    "ORCH_RUN_ID": "",
+                    "REVIEW_PR": "4820",
+                    "REVIEW_HEAD_SHA": "a" * 40,
+                    "REVIEW_FILE": review_file,
+                },
+                clear=False,
+            ),
+            mock.patch.object(ai_status, "canonical_task_state_lock", side_effect=task_lock),
+            mock.patch.object(
+                ai_status,
+                "authoritative_task_state_transaction",
+                return_value=contextlib.nullcontext(),
+            ),
+            mock.patch.object(ai_status, "load_state", return_value=self.state),
+            mock.patch.object(ai_status, "validate_active_status_command_lease"),
+            mock.patch.object(
+                ai_status,
+                "validate_handoff_pr_delivery_binding",
+                side_effect=admit,
+            ) as admission,
+        ):
+            preflight = ai_status.canonical_external_mutation_preflight(
+                "handoff",
+                ["REG-002", "Claude", "Review exact head."],
+            )
+
+        self.assertEqual(preflight[ai_status.DELIVERY_BINDING_KEY]["pr"], 4820)
+        admission.assert_called_once()
+
+    def test_failed_handoff_admission_never_recovers_pending_outboxes(self) -> None:
+        task = self.state["tasks"][0]
+        task["status"] = "in_progress"
+        task["required_artifacts"] = ["pull request"]
+        pending_state = deepcopy(self.state)
+        pending_state[ai_status.STATUS_ARCHIVE_OUTBOX_KEY] = {
+            "schema_version": 1,
+            "transaction_id": "pending-archive",
+            "snapshots": [],
+        }
+        pending_state[ai_status.STATUS_ACTIVITY_OUTBOX_KEY] = {
+            "schema_version": 1,
+            "transaction_id": "pending-activity",
+            "events": [],
+        }
+        before_state = deepcopy(pending_state)
+        before_status = self._test_status_file.read_bytes()
+        before_log = self._test_log_file.read_bytes()
+        lock_modes: list[bool] = []
+
+        @contextlib.contextmanager
+        def task_lock(*, shared: bool):
+            lock_modes.append(shared)
+            yield
+
+        with (
+            mock.patch.dict(
+                os.environ,
+                {
+                    "AI_NAME": "Codex",
+                    "ORCH_RUN_ID": "",
+                    "REVIEW_PR": "4820",
+                    "REVIEW_HEAD_SHA": "a" * 40,
+                    "REVIEW_FILE": "docs/evidence/REG-002/evidence.json",
+                },
+                clear=False,
+            ),
+            mock.patch.object(ai_status, "validate_status_command_runtime_binding"),
+            mock.patch.object(ai_status, "validate_status_root_binding"),
+            mock.patch.object(ai_status, "runtime_state_lock", return_value=contextlib.nullcontext()),
+            mock.patch.object(ai_status, "canonical_task_state_lock", side_effect=task_lock),
+            mock.patch.object(
+                ai_status,
+                "authoritative_task_state_transaction",
+                return_value=contextlib.nullcontext(),
+            ),
+            mock.patch.object(ai_status, "load_state", return_value=pending_state),
+            mock.patch.object(ai_status, "validate_active_status_command_lease"),
+            mock.patch.object(
+                ai_status,
+                "validate_handoff_pr_delivery_binding",
+                side_effect=SystemExit("admission rejected"),
+            ),
+            mock.patch.object(ai_status, "recover_status_archive_outbox") as archive_recovery,
+            mock.patch.object(ai_status, "recover_status_activity_outbox") as activity_recovery,
+            mock.patch.object(ai_status, "save_state") as save_state,
+            mock.patch.object(ai_status, "append_state_commit") as state_commit,
+            mock.patch.object(ai_status, "sync_all") as sync_all,
+            self.assertRaisesRegex(SystemExit, "admission rejected"),
+        ):
+            ai_status.main(
+                ["ai_status.py", "handoff", "REG-002", "Claude", "Review exact head."]
+            )
+
+        self.assertEqual(lock_modes, [True])
+        self.assertEqual(pending_state, before_state)
+        self.assertEqual(self._test_status_file.read_bytes(), before_status)
+        self.assertEqual(self._test_log_file.read_bytes(), before_log)
+        archive_recovery.assert_not_called()
+        activity_recovery.assert_not_called()
+        save_state.assert_not_called()
+        state_commit.assert_not_called()
+        sync_all.assert_not_called()
+
+    def test_handoff_cas_failure_precedes_pending_outbox_recovery(self) -> None:
+        task = self.state["tasks"][0]
+        task["status"] = "in_progress"
+        preflight = {
+            "command": "handoff",
+            "task_id": "REG-002",
+            "task_digest": ai_status.task_mutation_cas_digest(task),
+            ai_status.DELIVERY_BINDING_KEY: deepcopy(task[ai_status.DELIVERY_BINDING_KEY]),
+        }
+        task["next"] = "concurrent canonical change"
+        self.state[ai_status.STATUS_ACTIVITY_OUTBOX_KEY] = {
+            "schema_version": 1,
+            "transaction_id": "pending-activity",
+            "events": [],
+        }
+
+        with (
+            mock.patch.dict(
+                os.environ,
+                {"AI_NAME": "Codex", "ORCH_RUN_ID": ""},
+                clear=False,
+            ),
+            mock.patch.object(ai_status, "validate_status_command_runtime_binding"),
+            mock.patch.object(ai_status, "validate_status_root_binding"),
+            mock.patch.object(
+                ai_status,
+                "canonical_external_mutation_preflight",
+                return_value=preflight,
+            ),
+            mock.patch.object(ai_status, "load_config", return_value={}),
+            mock.patch.object(ai_status, "runtime_state_lock", return_value=contextlib.nullcontext()),
+            mock.patch.object(ai_status, "canonical_task_state_lock", return_value=contextlib.nullcontext()),
+            mock.patch.object(
+                ai_status,
+                "authoritative_task_state_transaction",
+                return_value=contextlib.nullcontext(),
+            ),
+            mock.patch.object(ai_status, "load_state", return_value=self.state),
+            mock.patch.object(ai_status, "validate_active_status_command_lease"),
+            mock.patch.object(ai_status, "recover_status_archive_outbox") as archive_recovery,
+            mock.patch.object(ai_status, "recover_status_activity_outbox") as activity_recovery,
+            mock.patch.object(ai_status, "sync_all") as sync_all,
+            self.assertRaisesRegex(SystemExit, "changed after external review evidence"),
+        ):
+            ai_status.main(
+                ["ai_status.py", "handoff", "REG-002", "Claude", "Review exact head."]
+            )
+
+        archive_recovery.assert_not_called()
+        activity_recovery.assert_not_called()
+        sync_all.assert_not_called()
 
     def _approval_events(self) -> list[dict]:
         lines = self._test_log_file.read_text(encoding="utf-8").splitlines()
@@ -3329,7 +3547,7 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
         task["source_ref"] = {"pr": 4218, "head_sha": "c" * 40}
         with (
             mock.patch.dict(os.environ, {"AI_NAME": "Claude"}, clear=False),
-            self.assertRaisesRegex(SystemExit, "no handoff delivery binding"),
+            self.assertRaisesRegex(SystemExit, "legacy or incomplete PR delivery"),
         ):
             _command_approve(self.state, ["REG-002", "Approved."])
 
@@ -3355,7 +3573,7 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
                 "revalidate_review_admission",
                 side_effect=self._real_revalidate_review_admission,
             ),
-            self.assertRaisesRegex(SystemExit, "missing or stale"),
+            self.assertRaisesRegex(SystemExit, "legacy or incomplete PR delivery"),
         ):
             _command_approve(self.state, ["REG-002", "Legacy binding is incomplete."])
 
@@ -3723,7 +3941,7 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
             (
                 "todo",
                 "Codex",
-                lambda: ai_status.command_handoff(
+                lambda: _command_handoff(
                     self.state, ["REG-002", "Claude", "Illegal handoff"]
                 ),
                 "cannot handoff",
@@ -3824,20 +4042,16 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
         with (
             mock.patch.dict(os.environ, {"AI_NAME": "Codex", "REVIEW_FILE": review_file}, clear=False),
             mock.patch.object(ai_status, "review_evidence_file_committed", return_value=False) as check,
-            self.assertRaisesRegex(SystemExit, "was not present at"),
+            self.assertRaisesRegex(SystemExit, "legacy or incomplete PR delivery"),
         ):
             _command_done(self.state, ["REG-002", "Owner adds evidence post-approval"])
 
-        check.assert_called_once_with(
-            repository=mock.ANY,
-            head_sha="b" * 40,
-            review_file=review_file,
-        )
+        check.assert_not_called()
         # The task must not have silently accepted the unverified manifest.
         self.assertEqual(ai_status.get_task(self.state, "REG-002")["status"], "review_approved")
         self.assertNotIn("review_file", ai_status.get_task(self.state, "REG-002"))
 
-    def test_done_accepts_review_file_present_at_the_approved_head(self) -> None:
+    def test_done_rejects_legacy_pr_review_file_even_when_present_at_approved_head(self) -> None:
         task = self.state["tasks"][0]
         task["status"] = "review_approved"
         task.pop("review_file", None)
@@ -3854,12 +4068,69 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
             mock.patch.object(ai_status, "review_evidence_file_committed", return_value=True),
             mock.patch.object(ai_status, "collect_done_delivery_metadata", return_value={}),
             mock.patch.object(ai_status, "load_archived_snapshot", return_value=None),
+            self.assertRaisesRegex(SystemExit, "reopen and re-handoff"),
         ):
             _command_done(self.state, ["REG-002", "Owner binds the already-reviewed manifest"])
 
-        archive_task = self.state[ai_status.STATUS_ARCHIVE_OUTBOX_KEY]["snapshots"][0]["task"]
-        self.assertEqual(archive_task["status"], "done")
-        self.assertEqual(archive_task["review_file"], review_file)
+        self.assertEqual(task["status"], "review_approved")
+        self.assertNotIn(ai_status.STATUS_ARCHIVE_OUTBOX_KEY, self.state)
+
+    def test_done_rejects_required_pr_hidden_behind_artifact_binding(self) -> None:
+        task = self.state["tasks"][0]
+        task["status"] = "review_approved"
+        task["required_artifacts"] = ["pull request", "merge sha"]
+        self._set_artifact_delivery_binding(task)
+
+        with (
+            mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False),
+            self.assertRaisesRegex(SystemExit, "reopen and re-handoff"),
+        ):
+            _command_done(self.state, ["REG-002", "Do not bypass PR admission."])
+
+        self.assertEqual(task["status"], "review_approved")
+        self.assertNotIn(ai_status.STATUS_ARCHIVE_OUTBOX_KEY, self.state)
+
+    def test_done_rejects_unbound_task_when_open_pr_is_discovered(self) -> None:
+        task = self.state["tasks"][0]
+        task["status"] = "review_approved"
+        task.pop(ai_status.DELIVERY_BINDING_KEY, None)
+
+        with (
+            mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False),
+            mock.patch.object(
+                ai_status,
+                "_discover_open_pull_request_for_branch",
+                return_value=ai_status.OpenPullRequestDiscovery(
+                    pr=4820,
+                    head_sha="a" * 40,
+                ),
+            ) as discover,
+            self.assertRaisesRegex(SystemExit, "reopen and re-handoff"),
+        ):
+            _command_done(self.state, ["REG-002", "Do not hide the open PR."])
+
+        discover.assert_called_once()
+        self.assertEqual(task["status"], "review_approved")
+        self.assertNotIn(ai_status.STATUS_ARCHIVE_OUTBOX_KEY, self.state)
+
+    def test_done_accepts_complete_handoff_frozen_pr_binding(self) -> None:
+        task = self.state["tasks"][0]
+        task["status"] = "review_approved"
+        self._set_pr_delivery_binding(pr=4820, head_sha="a" * 40, task=task)
+
+        with (
+            mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False),
+            mock.patch.object(ai_status, "collect_done_delivery_metadata", return_value={}),
+            mock.patch.object(ai_status, "load_archived_snapshot", return_value=None),
+        ):
+            _command_done(self.state, ["REG-002", "Finalize the frozen PR delivery."])
+
+        archived = self.state[ai_status.STATUS_ARCHIVE_OUTBOX_KEY]["snapshots"][0]["task"]
+        self.assertEqual(archived["status"], "done")
+        self.assertEqual(
+            archived["review_file"],
+            "docs/evidence/REG-002/evidence.json",
+        )
 
     def test_approve_refuses_a_review_file_not_present_at_the_reviewed_head(self) -> None:
         review_file = ".orchestrator/task-briefs/reg_002_review.md"
@@ -4748,19 +5019,19 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
     def test_handoff_must_go_from_owner_to_reviewer(self) -> None:
         with mock.patch.dict(os.environ, {"AI_NAME": "Claude"}, clear=False):
             with self.assertRaises(SystemExit):
-                ai_status.command_handoff(self.state, ["REG-002", "Claude", "Wrong actor"])
+                _command_handoff(self.state, ["REG-002", "Claude", "Wrong actor"])
 
         with (
             mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False),
             mock.patch.object(ai_status, "load_archived_snapshot", return_value=None),
         ):
             with self.assertRaises(SystemExit):
-                ai_status.command_handoff(self.state, ["REG-002", "Claude2", "Wrong reviewer"])
+                _command_handoff(self.state, ["REG-002", "Claude2", "Wrong reviewer"])
 
         self.state["tasks"][0]["failure_streak"] = 2
         self.state["tasks"][0]["status"] = "in_progress"
         with mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False):
-            ai_status.command_handoff(self.state, ["REG-002", "Claude", "Ready for review"])
+            _command_handoff(self.state, ["REG-002", "Claude", "Ready for review"])
 
         self.assertEqual(self.state["tasks"][0]["status"], "review")
         self.assertNotIn("failure_streak", self.state["tasks"][0])
@@ -4772,7 +5043,7 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
     def test_artifact_contract_approval_survives_reassignment_generation_bump(self) -> None:
         self.state["tasks"][0]["status"] = "in_progress"
         with mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False):
-            ai_status.command_handoff(self.state, ["REG-002", "Claude", "Ready for review"])
+            _command_handoff(self.state, ["REG-002", "Claude", "Ready for review"])
 
         task = self.state["tasks"][0]
         binding = task[ai_status.DELIVERY_BINDING_KEY]
@@ -4806,7 +5077,7 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
                 binding, review_file
             ),
         ):
-            ai_status.command_handoff(
+            _command_handoff(
                 self.state,
                 ["REG-002", "Claude", "Review the frozen delivery head."],
             )
@@ -4855,7 +5126,7 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
             mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False),
             self.assertRaisesRegex(SystemExit, "requires a PR delivery binding"),
         ):
-            ai_status.command_handoff(
+            _command_handoff(
                 self.state,
                 ["REG-002", "Claude", "Do not freeze historical provenance."],
             )
@@ -4875,7 +5146,9 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
             mock.patch.object(
                 ai_status,
                 "_discover_open_pull_request_for_branch",
-                return_value={"pr": 4820, "head_sha": "a" * 40},
+                return_value=ai_status.OpenPullRequestDiscovery(
+                    pr=4820, head_sha="a" * 40
+                ),
             ) as discover,
             mock.patch.object(
                 ai_status,
@@ -4885,7 +5158,7 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
                 ),
             ) as validate,
         ):
-            ai_status.command_handoff(
+            _command_handoff(
                 self.state,
                 ["REG-002", "Claude", "Opened the PR before handing off."],
             )
@@ -4933,7 +5206,7 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
             ),
             self.assertRaisesRegex(SystemExit, "requires REVIEW_FILE"),
         ):
-            ai_status.command_handoff(
+            _command_handoff(
                 self.state,
                 ["REG-002", "Claude", "Manifest is missing."],
             )
@@ -4971,7 +5244,7 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
                     ),
                     self.assertRaisesRegex(SystemExit, "GitHub rejected"),
                 ):
-                    ai_status.command_handoff(
+                    _command_handoff(
                         self.state,
                         ["REG-002", "Claude", "Admission must fail closed."],
                     )
@@ -4985,16 +5258,69 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
         with (
             mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False),
             mock.patch.object(
-                ai_status, "_discover_open_pull_request_for_branch", return_value=None
+                ai_status,
+                "_discover_open_pull_request_for_branch",
+                return_value=ai_status.OpenPullRequestDiscovery(pr=None),
             ),
         ):
-            ai_status.command_handoff(
+            _command_handoff(
                 self.state,
                 ["REG-002", "Claude", "No PR exists for this delivery."],
             )
         self.assertEqual(
             task[ai_status.DELIVERY_BINDING_KEY]["kind"], "artifact_contract"
         )
+
+    def test_open_pr_discovery_only_treats_valid_empty_list_as_no_pr(self) -> None:
+        completed = subprocess.CompletedProcess
+        cases = (
+            (completed([], 1, stdout="[]", stderr="gh failed"), "gh exited 1"),
+            (completed([], 0, stdout="", stderr=""), "empty response"),
+            (completed([], 0, stdout="not-json", stderr=""), "invalid JSON"),
+            (completed([], 0, stdout="{}", stderr=""), "non-list"),
+            (
+                completed(
+                    [],
+                    0,
+                    stdout=json.dumps(
+                        [
+                            {"number": 1, "head": {"sha": "a" * 40}},
+                            {"number": 2, "head": {"sha": "b" * 40}},
+                        ]
+                    ),
+                    stderr="",
+                ),
+                "2 open pull requests",
+            ),
+            (
+                completed([], 0, stdout='[{"number": 1}]', stderr=""),
+                "incomplete pull-request identity",
+            ),
+        )
+        for result, error in cases:
+            with (
+                self.subTest(error=error),
+                mock.patch.object(subprocess, "run", return_value=result),
+                self.assertRaisesRegex(SystemExit, error),
+            ):
+                self._real_pr_discovery(
+                    repository="ajoe734/pantheon",
+                    head_branch="task/REG-002",
+                    base="dev",
+                )
+
+        with mock.patch.object(
+            subprocess,
+            "run",
+            return_value=completed([], 0, stdout="[]", stderr=""),
+        ):
+            discovery = self._real_pr_discovery(
+                repository="ajoe734/pantheon",
+                head_branch="task/REG-002",
+                base="dev",
+            )
+        self.assertFalse(discovery.found)
+        self.assertIsNone(discovery.pr)
 
     def test_handoff_verifies_explicit_review_pr_without_discovery(self) -> None:
         task = self.state["tasks"][0]
@@ -5014,7 +5340,9 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
             mock.patch.object(
                 ai_status,
                 "_discover_open_pull_request_for_branch",
-                return_value={"pr": 4820, "head_sha": "a" * 40},
+                return_value=ai_status.OpenPullRequestDiscovery(
+                    pr=4820, head_sha="a" * 40
+                ),
             ) as discover,
             mock.patch.object(
                 ai_status,
@@ -5024,7 +5352,7 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
                 ),
             ) as validate,
         ):
-            ai_status.command_handoff(
+            _command_handoff(
                 self.state,
                 ["REG-002", "Claude", "Explicit binding wins."],
             )
@@ -5049,7 +5377,7 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
             ),
             self.assertRaisesRegex(SystemExit, "GitHub head mismatch"),
         ):
-            ai_status.command_handoff(
+            _command_handoff(
                 self.state,
                 ["REG-002", "Claude", "Do not persist an invented head."],
             )
@@ -5182,7 +5510,7 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
             mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False),
             self.assertRaisesRegex(SystemExit, "conflicting repository scope"),
         ):
-            ai_status.command_handoff(
+            _command_handoff(
                 self.state,
                 ["REG-002", "Claude", "Conflicting repo handoff should fail"],
             )
@@ -5194,7 +5522,7 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
             mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False),
             self.assertRaisesRegex(SystemExit, "ambiguous multi-repository target_repo"),
         ):
-            ai_status.command_handoff(
+            _command_handoff(
                 self.state,
                 ["REG-002", "Claude", "Ambiguous repo handoff should fail"],
             )
@@ -5206,7 +5534,7 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
             mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False),
             self.assertRaisesRegex(SystemExit, "unrecognized target_repo"),
         ):
-            ai_status.command_handoff(
+            _command_handoff(
                 self.state,
                 ["REG-002", "Claude", "Unknown repo handoff should fail"],
             )
@@ -5612,7 +5940,10 @@ class DiscoverOpenPullRequestForBranchTests(unittest.TestCase):
             result = ai_status._discover_open_pull_request_for_branch(
                 repository="ajoe734/pantheon", head_branch="task/REG-002", base="dev"
             )
-        self.assertEqual(result, {"pr": 4820, "head_sha": "a" * 40})
+        self.assertEqual(
+            result,
+            ai_status.OpenPullRequestDiscovery(pr=4820, head_sha="a" * 40),
+        )
 
     def test_returns_none_when_no_open_pr(self) -> None:
         with mock.patch.object(
@@ -5621,46 +5952,52 @@ class DiscoverOpenPullRequestForBranchTests(unittest.TestCase):
             result = ai_status._discover_open_pull_request_for_branch(
                 repository="ajoe734/pantheon", head_branch="task/REG-002", base="dev"
             )
-        self.assertIsNone(result)
+        self.assertEqual(result, ai_status.OpenPullRequestDiscovery(pr=None))
 
-    def test_returns_none_on_ambiguous_matches(self) -> None:
+    def test_fails_closed_on_ambiguous_matches(self) -> None:
         payload = json.dumps(
             [
                 {"number": 1, "head": {"sha": "a" * 40}},
                 {"number": 2, "head": {"sha": "b" * 40}},
             ]
         )
-        with mock.patch.object(
-            ai_status.subprocess, "run", return_value=self._completed(stdout=payload)
+        with (
+            mock.patch.object(
+                ai_status.subprocess, "run", return_value=self._completed(stdout=payload)
+            ),
+            self.assertRaisesRegex(SystemExit, "2 open pull requests"),
         ):
-            result = ai_status._discover_open_pull_request_for_branch(
+            ai_status._discover_open_pull_request_for_branch(
                 repository="ajoe734/pantheon", head_branch="task/REG-002", base="dev"
             )
-        self.assertIsNone(result)
 
-    def test_returns_none_on_gh_failure(self) -> None:
-        with mock.patch.object(
-            ai_status.subprocess, "run", return_value=self._completed(returncode=1)
+    def test_fails_closed_on_gh_failure(self) -> None:
+        with (
+            mock.patch.object(
+                ai_status.subprocess, "run", return_value=self._completed(returncode=1)
+            ),
+            self.assertRaisesRegex(SystemExit, "gh exited 1"),
         ):
-            result = ai_status._discover_open_pull_request_for_branch(
+            ai_status._discover_open_pull_request_for_branch(
                 repository="ajoe734/pantheon", head_branch="task/REG-002", base="dev"
             )
-        self.assertIsNone(result)
 
-    def test_returns_none_on_malformed_json(self) -> None:
-        with mock.patch.object(
-            ai_status.subprocess, "run", return_value=self._completed(stdout="not json")
+    def test_fails_closed_on_malformed_json(self) -> None:
+        with (
+            mock.patch.object(
+                ai_status.subprocess, "run", return_value=self._completed(stdout="not json")
+            ),
+            self.assertRaisesRegex(SystemExit, "invalid JSON"),
         ):
-            result = ai_status._discover_open_pull_request_for_branch(
+            ai_status._discover_open_pull_request_for_branch(
                 repository="ajoe734/pantheon", head_branch="task/REG-002", base="dev"
             )
-        self.assertIsNone(result)
 
-    def test_returns_none_without_owner_slash_repo(self) -> None:
-        result = ai_status._discover_open_pull_request_for_branch(
-            repository="pantheon", head_branch="task/REG-002", base="dev"
-        )
-        self.assertIsNone(result)
+    def test_fails_closed_without_owner_slash_repo(self) -> None:
+        with self.assertRaisesRegex(SystemExit, "invalid repository slug"):
+            ai_status._discover_open_pull_request_for_branch(
+                repository="pantheon", head_branch="task/REG-002", base="dev"
+            )
 
 
 class SupervisorReassignmentEventIdCompatibilityTests(unittest.TestCase):

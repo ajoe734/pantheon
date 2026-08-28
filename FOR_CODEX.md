@@ -61,8 +61,8 @@ Use the script, not manual Markdown edits:
 AI_NAME=Codex bash scripts/ai-status.sh start P1-001 "Started SignalStoreClient contract work"
 AI_NAME=Codex bash scripts/ai-status.sh progress P1-001 "Drafted interface and storage naming"
 AI_NAME=Codex bash scripts/ai-status.sh blocker P1-001 "Need deployment constraints from Gemini" Gemini
-AI_NAME=Codex bash scripts/ai-status.sh handoff P1-001 Gemini "SignalStoreClient contract ready for review"
-AI_NAME=Codex REVIEW_FILE=path/to/review.md REVIEW_NOTES_ZH="路由契約一致||可交回 owner 收尾" bash scripts/ai-status.sh approve P4-001 "Review approved and handed back for owner finalization"
+AI_NAME=Codex REVIEW_PR="$PR_NUMBER" REVIEW_HEAD_SHA="$PR_HEAD_SHA" REVIEW_FILE=path/to/review.md bash scripts/ai-status.sh handoff P1-001 Gemini "Exact PR head and manifest ready for review"
+AI_NAME=Codex REVIEW_NOTES_ZH="路由契約一致||可交回 owner 收尾" bash scripts/ai-status.sh approve P4-001 "Review approved and handed back for owner finalization"
 AI_NAME=Codex bash scripts/ai-status.sh done P1-001 "Owner finalized approved contract and locked it for downstream work"
 ```
 

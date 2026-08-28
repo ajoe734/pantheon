@@ -17,6 +17,7 @@ import tempfile
 import urllib.parse
 from contextlib import contextmanager
 from copy import deepcopy
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path, PurePosixPath
 from threading import local
@@ -6144,7 +6145,8 @@ def command_handoff(state: dict[str, Any], args: list[str]) -> None:
         raise SystemExit(
             f"{task_id} handoff target must match the assigned reviewer ({task.get('reviewer')}); reassign reviewer first if needed"
         )
-    binding = resolve_handoff_delivery_binding(task, load_config())
+    preflight = consume_external_mutation_preflight("handoff", task)
+    binding = dict(preflight.get(DELIVERY_BINDING_KEY) or {})
     manifest = binding.get("evidence_manifest")
     if binding.get("kind") == "pull_request" and (
         not isinstance(manifest, Mapping)
@@ -7317,10 +7319,22 @@ def validate_handoff_pr_delivery_binding(
     return dict(validated.as_dict())
 
 
+@dataclass(frozen=True)
+class OpenPullRequestDiscovery:
+    """Typed result that distinguishes a confirmed absence from a found PR."""
+
+    pr: int | None
+    head_sha: str = ""
+
+    @property
+    def found(self) -> bool:
+        return self.pr is not None
+
+
 def _discover_open_pull_request_for_branch(
     *, repository: str, head_branch: str, base: str
-) -> dict[str, Any] | None:
-    """Return the exact open PR for a branch pair, if exactly one exists.
+) -> OpenPullRequestDiscovery:
+    """Return one exact open PR or a positive confirmation that none exists.
 
     Handoff is the one place delivery identity may be discovered -- review
     must never infer it (see resolve_approval_binding). A task with no
@@ -7331,48 +7345,86 @@ def _discover_open_pull_request_for_branch(
     kind), permanently blocking the PR on branch protection with no way out
     except reopen+re-handoff.
 
-    Any failure (missing repo config, gh error, ambiguous match) returns
-    None so the caller falls through to its existing artifact_contract path
-    -- this only adds a positive match, never blocks or changes behavior
-    for a task that genuinely has no open PR.
+    Only a valid empty GitHub response means ``no pull request``. Command
+    failures, invalid payloads, and ambiguous matches fail closed so a real PR
+    can never be silently downgraded to an artifact-only review contract.
     """
 
     owner, _, _ = repository.partition("/")
     if not owner or "/" not in repository:
-        return None
-    result = subprocess.run(
-        [
-            "gh", "api", f"repos/{repository}/pulls",
-            "--method", "GET",
-            "-f", f"head={owner}:{head_branch}",
-            "-f", f"base={base}",
-            "-f", "state=open",
-        ],
-        cwd=ROOT,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if result.returncode != 0 or not result.stdout.strip():
-        return None
+        raise SystemExit(
+            f"Cannot discover pull requests for invalid repository slug {repository!r}"
+        )
+    try:
+        result = subprocess.run(
+            [
+                "gh", "api", f"repos/{repository}/pulls",
+                "--method", "GET",
+                "-f", f"head={owner}:{head_branch}",
+                "-f", f"base={base}",
+                "-f", "state=open",
+            ],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=15,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise SystemExit(
+            f"Cannot determine whether {head_branch} has an open PR in "
+            f"{repository}: {exc}"
+        ) from exc
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout).strip()
+        raise SystemExit(
+            f"Cannot determine whether {head_branch} has an open PR in "
+            f"{repository}: gh exited {result.returncode}"
+            + (f": {detail}" if detail else "")
+        )
+    if not result.stdout.strip():
+        raise SystemExit(
+            f"Cannot determine whether {head_branch} has an open PR in "
+            f"{repository}: GitHub returned an empty response"
+        )
     try:
         payload = json.loads(result.stdout)
-    except json.JSONDecodeError:
-        return None
-    if not isinstance(payload, list) or len(payload) != 1:
-        return None
+    except json.JSONDecodeError as exc:
+        raise SystemExit(
+            f"Cannot determine whether {head_branch} has an open PR in "
+            f"{repository}: GitHub returned invalid JSON"
+        ) from exc
+    if not isinstance(payload, list):
+        raise SystemExit(
+            f"Cannot determine whether {head_branch} has an open PR in "
+            f"{repository}: GitHub returned a non-list payload"
+        )
+    if not payload:
+        return OpenPullRequestDiscovery(pr=None)
+    if len(payload) != 1:
+        raise SystemExit(
+            f"Cannot determine the delivery PR for {head_branch} in {repository}: "
+            f"GitHub returned {len(payload)} open pull requests"
+        )
     pr = payload[0]
     if not isinstance(pr, dict):
-        return None
+        raise SystemExit(
+            f"Cannot determine the delivery PR for {head_branch} in {repository}: "
+            "GitHub returned an invalid pull-request row"
+        )
     number = pr.get("number")
-    head_sha = str((pr.get("head") or {}).get("sha") or "")
+    head = pr.get("head")
+    head_sha = str(head.get("sha") or "") if isinstance(head, Mapping) else ""
     if (
         not isinstance(number, int)
         or number <= 0
         or not APPROVAL_HEAD_SHA_RE.fullmatch(head_sha)
     ):
-        return None
-    return {"pr": number, "head_sha": head_sha.lower()}
+        raise SystemExit(
+            f"Cannot determine the delivery PR for {head_branch} in {repository}: "
+            "GitHub returned an incomplete pull-request identity"
+        )
+    return OpenPullRequestDiscovery(pr=number, head_sha=head_sha.lower())
 
 
 def resolve_handoff_delivery_binding(
@@ -7433,25 +7485,35 @@ def resolve_handoff_delivery_binding(
         )
 
     repository_slug_value = repository_slug(config, repository_id)
-    if repository_slug_value:
-        discovered = _discover_open_pull_request_for_branch(
-            repository=repository_slug_value,
-            head_branch=head_branch,
-            base=base_branch,
+    if not repository_slug_value:
+        raise SystemExit(
+            f"Handoff cannot determine whether {task_id or '?'} has a PR without "
+            "a configured GitHub repository slug"
         )
-        if discovered:
-            return {
-                "kind": "pull_request",
-                **validate_handoff_pr_delivery_binding(
-                    task,
-                    config,
-                    _validated_pr_binding(
-                        {**discovered, "head_branch": head_branch, "base": base_branch},
-                        task_id,
-                    ),
-                    review_file=os.environ.get("REVIEW_FILE", ""),
+    discovered = _discover_open_pull_request_for_branch(
+        repository=repository_slug_value,
+        head_branch=head_branch,
+        base=base_branch,
+    )
+    if discovered.found:
+        assert discovered.pr is not None
+        return {
+            "kind": "pull_request",
+            **validate_handoff_pr_delivery_binding(
+                task,
+                config,
+                _validated_pr_binding(
+                    {
+                        "pr": discovered.pr,
+                        "head_sha": discovered.head_sha,
+                        "head_branch": head_branch,
+                        "base": base_branch,
+                    },
+                    task_id,
                 ),
-            }
+                review_file=os.environ.get("REVIEW_FILE", ""),
+            ),
+        }
     contract = _delivery_contract_payload(task)
     return {
         "kind": "artifact_contract",
@@ -7588,6 +7650,135 @@ def requires_pr_delivery_binding(task: Mapping[str, Any]) -> bool:
     return False
 
 
+_PULL_REQUEST_URL_RE = re.compile(r"https?://[^\s]+/pull/\d+(?:\b|/)", re.IGNORECASE)
+_LEGACY_PULL_REQUEST_FIELDS = frozenset(
+    {
+        "pr",
+        "pr_number",
+        "pr_url",
+        "pull_request",
+        "pull_request_number",
+        "pull_request_url",
+    }
+)
+
+
+def _mapping_has_pull_request_identity(value: Mapping[str, Any]) -> bool:
+    kind = str(value.get("kind") or value.get("type") or "").strip().casefold()
+    if kind in {"pr", "pull_request", "pull request"}:
+        return True
+    for key in _LEGACY_PULL_REQUEST_FIELDS:
+        if key in value:
+            return True
+    for key in ("url", "html_url"):
+        if _PULL_REQUEST_URL_RE.search(str(value.get(key) or "")):
+            return True
+    return False
+
+
+def pull_request_delivery_reason(task: Mapping[str, Any]) -> str:
+    """Return why a task is known to be PR-backed, including legacy rows."""
+
+    delivery = task.get(DELIVERY_BINDING_KEY)
+    if isinstance(delivery, Mapping) and str(delivery.get("kind") or "") == "pull_request":
+        return DELIVERY_BINDING_KEY
+    if requires_pr_delivery_binding(task):
+        return "required_artifacts"
+    for key in (APPROVAL_BINDING_KEY, GITHUB_REVIEW_BRIDGE_KEY):
+        value = task.get(key)
+        if isinstance(value, Mapping):
+            return key
+    for key in ("source_ref", "github", "delivery"):
+        value = task.get(key)
+        if isinstance(value, Mapping) and _mapping_has_pull_request_identity(value):
+            return key
+    return ""
+
+
+def _legacy_delivery_branch_pair(task: Mapping[str, Any]) -> tuple[str, str]:
+    task_id = str(task.get("id") or "").strip()
+    for key in (
+        DELIVERY_BINDING_KEY,
+        APPROVAL_BINDING_KEY,
+        GITHUB_REVIEW_BRIDGE_KEY,
+        "github",
+        "source_ref",
+    ):
+        value = task.get(key)
+        if not isinstance(value, Mapping):
+            continue
+        head_branch = str(value.get("head_branch") or "").strip()
+        base = str(value.get("base") or "").strip()
+        if head_branch:
+            return head_branch, base or DEFAULT_APPROVAL_BASE_BRANCH
+    return f"task/{task_id}", DEFAULT_APPROVAL_BASE_BRANCH
+
+
+def review_gate_delivery_kind(
+    task: Mapping[str, Any], config: dict[str, Any]
+) -> tuple[str, str]:
+    """Classify review/closeout delivery without downgrading uncertain PRs."""
+
+    reason = pull_request_delivery_reason(task)
+    if reason:
+        return "pull_request", reason
+    delivery = task.get(DELIVERY_BINDING_KEY)
+    if isinstance(delivery, Mapping) and str(delivery.get("kind") or "") == "artifact_contract":
+        return "artifact_contract", DELIVERY_BINDING_KEY
+
+    task_id = str(task.get("id") or "").strip()
+    try:
+        repository_id = validate_task_repository_scope(config, dict(task))
+    except (ValueError, RuntimeError) as exc:
+        raise SystemExit(
+            f"Cannot determine delivery kind for {task_id or '?'}: {exc}"
+        ) from exc
+    repository_slug_value = repository_slug(config, repository_id)
+    if not repository_slug_value:
+        raise SystemExit(
+            f"Cannot determine delivery kind for {task_id or '?'} without a "
+            "configured GitHub repository slug"
+        )
+    head_branch, base = _legacy_delivery_branch_pair(task)
+    discovered = _discover_open_pull_request_for_branch(
+        repository=repository_slug_value,
+        head_branch=head_branch,
+        base=base,
+    )
+    if discovered.found:
+        return "pull_request", "open_pull_request"
+    return "artifact_contract", "confirmed_no_open_pull_request"
+
+
+def require_current_pr_delivery_binding(
+    task: Mapping[str, Any], *, action: str
+) -> Mapping[str, Any]:
+    """Require the complete handoff-frozen PR and manifest for review/closeout."""
+
+    task_id = str(task.get("id") or "task").strip()
+    delivery = task.get(DELIVERY_BINDING_KEY)
+    if (
+        not isinstance(delivery, Mapping)
+        or str(delivery.get("kind") or "") != "pull_request"
+        or not task_machine.delivery_binding_is_current(task)
+    ):
+        raise SystemExit(
+            f"{task_id} has legacy or incomplete PR delivery evidence and cannot "
+            f"{action}; reopen and re-handoff the exact PR head, current base, "
+            "merge method, and evidence manifest first"
+        )
+    manifest = delivery.get("evidence_manifest")
+    assert isinstance(manifest, Mapping)
+    frozen_review_file = str(manifest.get("path") or "").strip()
+    task_review_file = str(task.get("review_file") or "").strip()
+    if not task_review_file or task_review_file != frozen_review_file:
+        raise SystemExit(
+            f"{task_id} has legacy or incomplete PR evidence-manifest binding and "
+            f"cannot {action}; reopen and re-handoff the exact PR delivery first"
+        )
+    return delivery
+
+
 def review_evidence_file_committed(
     *, repository: str, head_sha: str, review_file: str
 ) -> bool:
@@ -7598,13 +7789,10 @@ def review_evidence_file_committed(
     head, or the head at approval time) is not guaranteed to be fetched into
     the local checkout at command-run time.
 
-    SUP-REVIEW-EVIDENCE-BINDING-ENFORCEMENT-20260804: this is what makes the
-    "owner may bind the same already committed and reviewed manifest" fallback
-    in task-closeout-finalization.md actually true instead of merely
-    documented. Without it, `done` accepted any REVIEW_FILE string at face
-    value, including one that only exists in a commit added *after* approval
-    -- exactly the SHA-shifting, re-review-forcing loop diagnosed in
-    SUP-REVIEW-PIPELINE-INTEGRITY-20260804.
+    PR delivery now freezes the manifest at handoff and never calls this helper
+    from `done`; a missing PR manifest is an invalid legacy row that must be
+    reopened and handed off again. This helper remains for the artifact-only
+    approval/closeout compatibility path.
     """
     review_file = (review_file or "").strip().lstrip("/")
     if not repository or not head_sha or not review_file:
@@ -7704,7 +7892,7 @@ def github_review_bridge_evidence_matches(task: Mapping[str, Any]) -> bool:
 
 
 EXTERNAL_MUTATION_COMMANDS = frozenset(
-    {"approve", "reopen", "done", "reconcile_merged_done"}
+    {"handoff", "approve", "reopen", "done", "reconcile_merged_done"}
 )
 
 
@@ -7744,9 +7932,16 @@ def prepare_external_mutation_preflight(
 
     if command not in EXTERNAL_MUTATION_COMMANDS:
         raise RuntimeError(f"unsupported external mutation preflight: {command}")
-    if len(args) < 2:
-        raise SystemExit(f"Usage: {command} <task-id> <message>")
-    task_id, message = args[0], args[1]
+    minimum_args = 3 if command == "handoff" else 2
+    if len(args) < minimum_args:
+        usage = (
+            "handoff <task-id> <to-agent> <message>"
+            if command == "handoff"
+            else f"{command} <task-id> <message>"
+        )
+        raise SystemExit(f"Usage: {usage}")
+    task_id = args[0]
+    message = args[2] if command == "handoff" else args[1]
     if str(task.get("id") or "") != task_id:
         raise SystemExit(f"Unknown task: {task_id}")
     actor = current_actor()
@@ -7758,6 +7953,31 @@ def prepare_external_mutation_preflight(
         "task_digest": digest,
     }
 
+    if command == "handoff":
+        to_agent = canonical_agent_name(args[1])
+        ensure_agent(to_agent)
+        if canonical_agent_name(task.get("owner")) != actor:
+            raise SystemExit(
+                f"Only the owner ({task.get('owner')}) can hand off {task_id} for review"
+            )
+        if canonical_agent_name(task.get("reviewer")) != to_agent:
+            raise SystemExit(
+                f"{task_id} handoff target must match the assigned reviewer "
+                f"({task.get('reviewer')}); reassign reviewer first if needed"
+            )
+        validate_task_lifecycle_transition(task, "handoff")
+        binding = resolve_handoff_delivery_binding(task, load_config())
+        manifest = binding.get("evidence_manifest")
+        if binding.get("kind") == "pull_request" and (
+            not isinstance(manifest, Mapping)
+            or not str(manifest.get("path") or "").strip()
+        ):
+            raise SystemExit(
+                f"{task_id} review admission returned no evidence manifest identity"
+            )
+        payload[DELIVERY_BINDING_KEY] = deepcopy(binding)
+        return payload
+
     if command == "approve":
         if canonical_agent_name(task.get("reviewer")) != actor:
             raise SystemExit(
@@ -7766,7 +7986,11 @@ def prepare_external_mutation_preflight(
         validate_task_lifecycle_transition(task, "approve")
         review_notes = parse_delimited_env("REVIEW_NOTES_ZH")
         requested_review_file = os.environ.get("REVIEW_FILE", "").strip()
+        config = load_config()
+        delivery_kind, delivery_reason = review_gate_delivery_kind(task, config)
         delivery = task.get(DELIVERY_BINDING_KEY)
+        if delivery_kind == "pull_request":
+            delivery = require_current_pr_delivery_binding(task, action="approve")
         frozen_manifest = (
             delivery.get("evidence_manifest")
             if isinstance(delivery, Mapping)
@@ -7788,13 +8012,12 @@ def prepare_external_mutation_preflight(
                 "hand off the intended exact delivery"
             )
         review_file = frozen_review_file or requested_review_file
-        config = load_config()
         try:
             repository_id = validate_task_repository_scope(config, task)
         except (ValueError, RuntimeError) as exc:
             raise SystemExit(f"Cannot approve task {task_id}: {exc}") from exc
         repository_slug_value = repository_slug(config, repository_id)
-        if isinstance(delivery, Mapping) and delivery.get("kind") == "pull_request":
+        if delivery_kind == "pull_request":
             github_review_bridge = _github_review_bridge_module()
             try:
                 github_review_bridge.revalidate_review_admission(
@@ -7856,6 +8079,8 @@ def prepare_external_mutation_preflight(
                 APPROVAL_BINDING_KEY: dict(binding),
                 GITHUB_REVIEW_BRIDGE_KEY: dict(bridge_result),
                 "protected_closeout_verdict": deepcopy(verdict_ref),
+                "delivery_kind": delivery_kind,
+                "delivery_kind_reason": delivery_reason,
             }
         )
         return payload
@@ -7951,7 +8176,23 @@ def prepare_external_mutation_preflight(
         )
     validate_task_lifecycle_transition(task, "done")
     candidate = deepcopy(task)
-    done_review_file = os.environ.get("REVIEW_FILE", "").strip()
+    config = load_config()
+    delivery_kind, delivery_reason = review_gate_delivery_kind(candidate, config)
+    if delivery_kind == "pull_request":
+        delivery = require_current_pr_delivery_binding(candidate, action="finalize")
+        frozen_manifest = delivery["evidence_manifest"]
+        assert isinstance(frozen_manifest, Mapping)
+        frozen_review_file = str(frozen_manifest.get("path") or "").strip()
+        done_review_file = os.environ.get("REVIEW_FILE", "").strip()
+        if done_review_file and done_review_file != frozen_review_file:
+            raise SystemExit(
+                f"{task_id}: REVIEW_FILE={done_review_file!r} differs from the "
+                f"manifest frozen at handoff ({frozen_review_file!r}); reopen and "
+                "re-handoff the intended exact PR delivery"
+            )
+        done_review_file = ""
+    else:
+        done_review_file = os.environ.get("REVIEW_FILE", "").strip()
     if done_review_file and not candidate.get("review_file"):
         approved_head_sha = str(
             (candidate.get(APPROVAL_BINDING_KEY) or {}).get("head_sha") or ""
@@ -7991,6 +8232,8 @@ def prepare_external_mutation_preflight(
             "review_file": done_review_file if not task.get("review_file") else "",
             "delivery": deepcopy(delivery),
             "protected_closeout_verdict": deepcopy(verdict_ref),
+            "delivery_kind": delivery_kind,
+            "delivery_kind_reason": delivery_reason,
         }
     )
     return payload
@@ -8014,12 +8257,13 @@ def bound_external_mutation_preflight(
             _EXTERNAL_MUTATION_PREFLIGHT_LOCAL.value = previous
 
 
-def consume_external_mutation_preflight(
-    command: str, task: Mapping[str, Any]
+def validate_external_mutation_preflight(
+    command: str,
+    task: Mapping[str, Any],
+    value: Mapping[str, Any] | None,
 ) -> dict[str, Any]:
-    """Validate prepared external evidence under the canonical write lock."""
+    """CAS-check prepared external evidence before any canonical mutation."""
 
-    value = getattr(_EXTERNAL_MUTATION_PREFLIGHT_LOCAL, "value", None)
     if not isinstance(value, Mapping):
         raise RuntimeError(
             f"{command} requires lock-free external mutation preflight"
@@ -8036,6 +8280,15 @@ def consume_external_mutation_preflight(
             f"discarding stale {command} result and requiring a fresh attempt"
         )
     return deepcopy(dict(value))
+
+
+def consume_external_mutation_preflight(
+    command: str, task: Mapping[str, Any]
+) -> dict[str, Any]:
+    """Consume evidence already CAS-checked under the canonical write lock."""
+
+    value = getattr(_EXTERNAL_MUTATION_PREFLIGHT_LOCAL, "value", None)
+    return validate_external_mutation_preflight(command, task, value)
 
 
 def command_approve(state: dict[str, Any], args: list[str]) -> None:
@@ -9889,6 +10142,16 @@ def main(argv: list[str]) -> int:
 
     def run_mutation() -> dict[str, Any] | None:
         state = load_state()
+        if external_preflight is not None:
+            task_id = args[0] if args else ""
+            task = get_task(state, task_id)
+            if task is None:
+                raise SystemExit(f"Unknown task: {task_id}")
+            validate_external_mutation_preflight(
+                command,
+                task,
+                external_preflight,
+            )
         if local_human_ops_requested():
             dev_bridge_replay_ledger(state)
         validate_bound_status_command_task_authority(state, command, args)

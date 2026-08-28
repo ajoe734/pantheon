@@ -36,7 +36,7 @@ task/<TASK-ID>  ── ephemeral, auto-deleted by GitHub when PR merges
 | Type        | Naming                                | Lifetime          | Writer                                |
 |-------------|---------------------------------------|-------------------|---------------------------------------|
 | canonical   | `master`                              | permanent         | PR auto-merge only (promote / hotfix) |
-| integration | `dev`                                 | permanent         | task PR: canonical supervisor integration runner; hotfix: explicit hotfix lane |
+| integration | `dev`                                 | permanent         | canonical exact-head supervisor runner (task); explicit policy lane for hotfix/tooling |
 | task        | `task/<TASK-ID>`                      | minutes to hours  | one autoworker / human; PR + auto-delete |
 | publish     | `publish/v<YYYY>.<MM>.<DD>.<N>`       | permanent (snapshot) | nightly cron after release-state discipline; immutable after cut |
 | hotfix      | `hotfix/<topic>`                      | < 24 h            | one author; dual-PR (master + dev)    |

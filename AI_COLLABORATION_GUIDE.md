@@ -415,14 +415,20 @@ Use the status script instead of manually editing multiple Markdown tables.
 AI_NAME=Codex ./scripts/ai-status.sh assign <task-id> <owner> <reviewer> "Optional title"
 AI_NAME=Codex ./scripts/ai-status.sh start <task-id> "Started implementation"
 AI_NAME=Codex ./scripts/ai-status.sh progress <task-id> "Finished contract draft"
-AI_NAME=Codex ./scripts/ai-status.sh handoff <task-id> Gemini "Please review the payload shape"
-AI_NAME=Gemini REVIEW_FILE=path/to/review.md REVIEW_NOTES_ZH="審查通過||後續追蹤事項" ./scripts/ai-status.sh approve <task-id> "Review approved and returned to the owner for finalization"
+AI_NAME=Codex REVIEW_PR="$PR_NUMBER" REVIEW_HEAD_SHA="$PR_HEAD_SHA" REVIEW_FILE=path/to/review.md ./scripts/ai-status.sh handoff <task-id> Gemini "Please review the exact PR head and frozen evidence manifest"
+AI_NAME=Gemini REVIEW_NOTES_ZH="審查通過||後續追蹤事項" ./scripts/ai-status.sh approve <task-id> "Review approved and returned to the owner for finalization"
 AI_NAME=Codex ./scripts/ai-status.sh progress <task-id> "Owner picked up the approved task for final checks"
 AI_NAME=Codex ./scripts/ai-status.sh blocker <task-id> "Waiting for broker decision" Gemini
 AI_NAME=Codex ./scripts/ai-status.sh done <task-id> "Owner finalized approved task and closed it"
 AI_NAME=Codex ./scripts/ai-status.sh supersede <task-id> "Superseded by the accepted execution slice; retire this legacy lane." <replacement-task-id>
 ./scripts/sync-state.sh
 ```
+
+For PR delivery, the owner supplies the PR number, full head SHA, and already
+committed evidence manifest at `handoff`; admission freezes that exact identity.
+The reviewer approves the frozen binding and does not add or replace
+`REVIEW_FILE`. A legacy PR row missing this binding must be reopened and handed
+off again. Genuinely artifact-only tasks retain their artifact-contract path.
 
 Planning commands:
 

@@ -53,8 +53,8 @@ Use the script, not manual Markdown edits:
 AI_NAME=Claude bash scripts/ai-status.sh start P3-001 "Started execution-plane contract draft"
 AI_NAME=Claude bash scripts/ai-status.sh progress P3-001 "Drafted signal consumer edge cases"
 AI_NAME=Claude bash scripts/ai-status.sh blocker P3-001 "Waiting for signal schema" Gemini
-AI_NAME=Claude bash scripts/ai-status.sh handoff P4-001 Codex "Please review routing contract assumptions"
-AI_NAME=Claude REVIEW_FILE=path/to/review.md REVIEW_NOTES_ZH="審查通過||待 owner 收尾" bash scripts/ai-status.sh approve P4-001 "Review approved and returned to owner for finalization"
+AI_NAME=Claude REVIEW_PR="$PR_NUMBER" REVIEW_HEAD_SHA="$PR_HEAD_SHA" REVIEW_FILE=path/to/review.md bash scripts/ai-status.sh handoff P4-001 Codex "Please review the exact PR head and manifest"
+AI_NAME=Claude REVIEW_NOTES_ZH="審查通過||待 owner 收尾" bash scripts/ai-status.sh approve P4-001 "Review approved and returned to owner for finalization"
 AI_NAME=Claude bash scripts/ai-status.sh done P3-001 "Owner finalized approved execution-plane work"
 ```
 

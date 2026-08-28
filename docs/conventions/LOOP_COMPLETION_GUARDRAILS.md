@@ -35,10 +35,13 @@ A task is subject to these guardrails when it has **any** of:
 
 Before a loop-autopilot task may move to `done` the following must be true:
 
-1. **A `review_file` must be present.**  The reviewer sets this field by running
-   the `approve` command with `REVIEW_FILE=<evidence-path>`.  The file should
-   be a real evidence artifact such as a smoke test log, a replay record, or a
-   linked acceptance note — not a panel screenshot or a fixture listing.
+1. **A `review_file` must be present.**  For PR delivery, the owner commits the
+   evidence manifest and supplies `REVIEW_FILE=<evidence-path>` together with
+   the exact PR/head identity at `handoff`; admission freezes the file before
+   review begins. The reviewer verifies that binding at `approve` and does not
+   add or replace it. Genuinely artifact-only tasks retain the existing
+   approve-time evidence path. The file should be real controller evidence,
+   not a panel screenshot or fixture listing.
 
 2. **Review notes must not contain fixture/seed-as-proof language.**  Phrases
    such as `"fixture only"`, `"seed only"`, `"panel only"`, `"panel copy"`, or
@@ -47,8 +50,8 @@ Before a loop-autopilot task may move to `done` the following must be true:
 
 3. **`proof_required` tasks must have a linked evidence file.**  When the task
    lists `proof_required` items (unit tests, contract tests, smoke tests, replay
-   evidence), the reviewer must reference an evidence artifact via `REVIEW_FILE`
-   before the owner can close.
+   evidence), the frozen handoff (or artifact-only approval) must reference an
+   evidence artifact via `REVIEW_FILE` before the owner can close.
 
 ## Enforcement Points
 
@@ -86,12 +89,16 @@ reviewing a loop-autopilot task the reviewer must:
 
 1. Verify that real controller liveness evidence exists (not just a route or
    fixture).
-2. Set `REVIEW_FILE=<path-to-evidence>` when running the `approve` command.
+2. Verify that the canonical `review_file` matches the manifest frozen at the
+   owner handoff; never add or replace it during PR approval.
 3. Not approve a task whose only artifact is a panel screenshot, a seed file,
    or a stub route registration.
 
 ```bash
+AI_NAME="$OWNER" REVIEW_PR="$PR_NUMBER" REVIEW_HEAD_SHA="$PR_HEAD_SHA" \
 REVIEW_FILE=docs/deployment/evidence/loop-auto-002-smoke.md \
+./scripts/ai-status.sh handoff LOOP-AUTO-002 Codex "Exact PR evidence ready"
+
 REVIEW_NOTES_ZH="Controller liveness confirmed via smoke run" \
 AI_NAME=Codex ./scripts/ai-status.sh approve LOOP-AUTO-002 "Evidence verified"
 ```
@@ -100,10 +107,13 @@ AI_NAME=Codex ./scripts/ai-status.sh approve LOOP-AUTO-002 "Evidence verified"
 
 After receiving `review_approved`, the owner verifies:
 
-1. The `review_file` field is set in the task record.
+1. The `review_file` field still matches the PR manifest frozen at handoff.
 2. The proof listed in `proof_required` is reachable from the linked evidence.
 3. Runs `python3 scripts/loop_done_guardrail.py --task-id <ID>` as a final
    pre-check before calling `done`.
+
+If a PR-backed row lacks that frozen binding, reopen and re-handoff it. Do not
+use `approve` or `done` to repair a legacy row.
 
 ## Evidence Quality Levels
 
