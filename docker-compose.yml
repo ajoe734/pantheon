@@ -2083,6 +2083,7 @@ services:
       PANTHEON_PERFORMANCE_MARK_MAX_AGE_SECONDS: ${PANTHEON_PERFORMANCE_MARK_MAX_AGE_SECONDS:-172800}
       PANTHEON_PERFORMANCE_STATE_ROOT: /data/runtime/paper-performance
       SIGNAL_STORE_URL: redis://signal-store:6379
+      WORKER_SCRIPT_PATH: services/execution/lean_runtime/paper_runtime.py
     volumes:
       - runtime-data:/data/runtime
     depends_on:
