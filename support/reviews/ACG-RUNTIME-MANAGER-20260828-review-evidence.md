@@ -31,13 +31,14 @@ Consolidated Runtime Manager onto the deployed service and importable execution 
 
 ## 2. Verification Results
 
-All unit, integration, and E2E suites pass deterministically:
+All unit, integration, E2E suites, and CI Stage 0 matrix gates pass deterministically:
 
-- `pytest services/runtime_manager/ services/runtime-manager/ services/paper_fleet_reconciler/ tests/e2e/test_deployment_plan_to_paper_run.py tests/e2e/test_allocation_policy_to_paper_run.py services/deployment/test_promote_pipeline.py scripts/test_paper_runtime_topology_contract.py -q`:
-  `364 passed, 7 skipped, 5 warnings, 3 subtests passed`
+- `python3 scripts/ci_stage0.py validate`: `All 22 targets valid, wave 1 inventory matching`
+- `pytest services/runtime_manager/ services/runtime-manager/ services/paper_fleet_reconciler/ tests/e2e/test_deployment_plan_to_paper_run.py tests/e2e/test_allocation_policy_to_paper_run.py services/deployment/test_promote_pipeline.py scripts/test_paper_runtime_topology_contract.py scripts/test_ci_stage0.py -q`:
+  `371 passed, 7 skipped, 5 warnings`
 - `pytest services/execution/lean_runtime/test_signal_isolation.py`: `43 passed`
-- `python3 services/runtime_manager/smoke_test_runtime_binding.py`: `All checks passed`
-- `python3 services/runtime_manager/smoke_test_kill_switch_controller.py`: `All checks passed`
+- `python3 services/runtime_manager/smoke_test_runtime_binding.py`: `10/10 test groups passed (ALL PASS)`
+- `python3 services/runtime_manager/smoke_test_kill_switch_controller.py`: `4/4 test groups passed (ALL PASS)`
 
 ## 3. Modified & Moved Files Inventory
 
@@ -49,6 +50,11 @@ All unit, integration, and E2E suites pass deterministically:
 - Deleted duplicate execution manager:
   - `services/execution/runtime-manager/runtime_manager.py`
   - `services/execution/runtime-manager/test_runtime_manager_risk_policy.py`
+- Updated CI stage 0 matrix and deployment documentation:
+  - `.github/pantheon-stage0-matrix.json`: updated baseline commands and `runtime-manager` target paths to `services/runtime_manager` and `services/runtime-manager`
+  - `Pantheon_GCP_GitHub_Docker_正式部署與環境設計_v2.md`: updated Wave 1 table and path references
+  - `BINDING_AND_DEPLOYMENT_SEMANTICS.md`: updated contract and artifact paths
+  - `GOLDEN_REPLAY_SCENARIO_AND_RUNBOOK.md`: updated schema and artifact paths
 - Updated callers and HTTP integration:
   - `services/runtime-manager/main.py`, `service.py`, `runtime_manager_client.py`, `internal_api_routes.py`, `test_runtime_manager.py`, `test_runtime_hardening.py`, `test_internal_api_routes.py`, `smoke_test.py`
   - `services/control-plane/internal/internal_api.py`

@@ -410,7 +410,7 @@ allowed_deployment_scope 約束 deployment_mode 的上限
 | `DeploymentPlan` / `DeploymentSaga` | `services/deployment/` | `8095` | `services/deployment/contract.md` |
 | `PersonaCapitalBinding` / `CapitalPool` | `services/capital/` | `8092` | `services/capital/contract.md` |
 | `EvolutionDecision` | `services/evolution/` | `8093` | `services/control-plane/governance/evolution_decision.contract.md` |
-| `RuntimeBinding` 寫入與 operator command 派遣 | `services/runtime-manager/` | `8081` | `services/execution/runtime-manager/contract.md` |
+| `RuntimeBinding` 寫入與 operator command 派遣 | `services/runtime-manager/` | `8081` | `services/runtime_manager/contract.md` |
 
 家族契約的單一摘要文件：`services/control-plane/governance/service_family_contract.md`。
 任何 cross-service 邊界調整必須先更新該文件，再更新個別 service 的 contract.md。
@@ -577,8 +577,8 @@ BFF (`services/control-plane/bff/`) 的長期合法 read path 必須命中上面
 
 | Artifact | 說明 |
 |---|---|
-| `services/execution/runtime-manager/runtime_binding.py` | Python platform object — `RuntimeBinding`、`RuntimeBindingStore`、validation |
-| `services/execution/runtime-manager/runtime_binding.schema.json` | Machine-readable JSON schema（含 `persona_capital_binding_id`） |
-| `services/execution/runtime-manager/contract.md` | Runtime Manager write authority 完整契約 |
-| `services/execution/runtime-manager/authority_matrix.md` | Write authority matrix（RUN-001A support slice） |
-| `services/execution/runtime-manager/rollback_action_matrix.md` | Rollback action execution matrix（RUN-001A support slice） |
+| `services/runtime_manager/runtime_binding.py` | Python platform object — `RuntimeBinding`、`RuntimeBindingStore`、validation |
+| `services/runtime_manager/runtime_binding.schema.json` | Machine-readable JSON schema（含 `persona_capital_binding_id`） |
+| `services/runtime_manager/contract.md` | Runtime Manager write authority 完整契約 |
+| `services/runtime_manager/authority_matrix.md` | Write authority matrix（RUN-001A support slice） |
+| `services/runtime_manager/rollback_action_matrix.md` | Rollback action execution matrix（RUN-001A support slice） |
