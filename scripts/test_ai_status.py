@@ -991,6 +991,17 @@ class StatusCommandLeaseValidationTests(unittest.TestCase):
                     )
             self.assertEqual(ai_status.current_actor(), "Human/Ops")
 
+    def test_local_human_ops_allows_exact_reviewed_integration_resume(self) -> None:
+        with mock.patch.dict(
+            os.environ,
+            {ai_status.LOCAL_HUMAN_OPS_ENV: "1"},
+            clear=True,
+        ):
+            ai_status.validate_active_status_command_lease(
+                "resume_integration",
+                [self.task_id, "recover writable auto-integrator execution"],
+            )
+
     def test_rejects_expired_run_lease(self) -> None:
         with self.assertRaisesRegex(RuntimeError, "status command lease .* is expired"):
             self._validate(

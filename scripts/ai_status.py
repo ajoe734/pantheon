@@ -188,6 +188,7 @@ LOCAL_HUMAN_OPS_ACTIONS = frozenset(
         "dependency-track",
         "execution-resource",
         "reopen",
+        "resume_integration",
         "note",
         "reconcile_merged_done",
         "supersede",
