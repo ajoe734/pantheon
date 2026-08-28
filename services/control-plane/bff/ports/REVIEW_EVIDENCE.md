@@ -45,8 +45,7 @@ Cut over narrow read-surface ports away from `ReadSurfaceStore` delegation to re
   - `services/control-plane/bff/ports/persona_training.py`
   - `services/control-plane/bff/ports/read_surface_ports.py`
   - `services/control-plane/bff/ports/research_knowledge_source.py`
+  - `services/control-plane/bff/ports/REVIEW_EVIDENCE.md`
   - `services/control-plane/bff/tests/test_read_surface_port_cutover.py`
-  - `support/reviews/ACG-RS-PORT-CUTOVER-20260828-review-evidence.md`
-  - `docs/deployment/evidence/architecture-cleanup/ACG-RS-PORT-CUTOVER-20260828/evidence.json`
 - Modified:
   - None (zero edits to existing files, honoring scope guards).
