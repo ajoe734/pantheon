@@ -1,0 +1,17 @@
+{
+  "task_id": "SUP-AUTO-INTEGRATOR-DEDICATED-ROOT-20260828",
+  "status": "review",
+  "owner": "Claude",
+  "reviewer": "Codex2",
+  "summary": "Fix run-auto-integrator.sh so --execute mode no longer overrides auto_integrator.py's promoted DEFAULT_LIVE_CONFIG with the repo-committed .orchestrator/config.json template (which has no per-repository integration_path). PANTHEON_LIVE_SUPERVISOR_CONFIG is now only exported when the caller explicitly sets PANTHEON_AUTO_INTEGRATOR_CONFIG, so an un-overridden --execute run correctly binds to the promoted live-supervisor-mainroot-config.json and its configured dedicated integration_path checkout instead of silently falling back to the shared dev-root checkout. Dry-run mode is unchanged.",
+  "scope": [
+    "scripts/run-auto-integrator.sh",
+    "scripts/test_run_auto_integrator.py"
+  ],
+  "verification": [
+    "python3 -m pytest scripts/test_run_auto_integrator.py scripts/test_auto_integrator_install.py scripts/git/test_auto_integrator.py -q (95 passed, 5 subtests passed)",
+    "bash -n scripts/run-auto-integrator.sh",
+    "python3 -m py_compile scripts/git/auto_integrator.py scripts/git/test_auto_integrator.py scripts/test_run_auto_integrator.py",
+    "git diff --check"
+  ]
+}
