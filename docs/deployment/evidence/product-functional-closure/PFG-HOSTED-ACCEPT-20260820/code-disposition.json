@@ -1,0 +1,40 @@
+{
+  "schema_version": "pantheon.product_functional_closure.code_disposition.v1",
+  "program_id": "pantheon-product-functional-closure-20260820",
+  "task_id": "PFG-HOSTED-ACCEPT-20260820",
+  "canonical_owner": "scripts/verify_product_functional_closure.py (Product Functional Closure Hosted Acceptance Verifier)",
+  "stores_and_queues": [
+    "docs/deployment/evidence/product-functional-closure/PFG-HOSTED-ACCEPT-20260820/evidence.json",
+    "docs/deployment/evidence/product-functional-closure/PFG-HOSTED-ACCEPT-20260820/code-disposition.json"
+  ],
+  "production_callers": [
+    "scripts/verify_product_functional_closure.py -> live HTTPS endpoints & exact-head evidence reports",
+    "scripts/test_verify_product_functional_closure.py -> scripts/verify_product_functional_closure.py"
+  ],
+  "duplicate_paths": [
+    "Simulated hosted acceptance runners or in-process stubs attempting to claim hosted closure"
+  ],
+  "retired_after_proof": [
+    "Confirmed absent legacy source ingestion scheduler_worker.py and its unit test",
+    "Confirmed absent static loop catalog maturity/task claims in loop-catalog.registry.json",
+    "Confirmed non-production demo/test fixtures (BoundedPaperStrategy, src/mocks/seed.ts) cannot be selected in production"
+  ],
+  "retained_with_reason": [
+    {
+      "component": "scripts/verify_product_functional_closure.py",
+      "disposition": "keep",
+      "reason": "Canonical fail-closed hosted acceptance aggregator and verifier for product functional closure exact pair."
+    },
+    {
+      "component": "scripts/test_verify_product_functional_closure.py",
+      "disposition": "keep",
+      "reason": "Comprehensive unit and contract test suite for the product functional closure verifier."
+    },
+    {
+      "component": "docs/frontend/execute-plans-dev-hosting.md",
+      "disposition": "keep",
+      "reason": "Canonical dev frontend hosting specification and historical deployment record."
+    }
+  ],
+  "new_parallel_owner_created": false
+}

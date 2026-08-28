@@ -66,6 +66,26 @@ def _ensure_kill_switch_imported():
     global _SafeModeState, _KillSwitchError, _HardTriggerReason, _SoftTriggerReason
     if _KillSwitchController is not None:
         return
+    try:
+        from services.runtime_manager import (
+            KillSwitchController as _KSC,
+            EmergencyTrigger as _ET,
+            KillSwitchActionType as _KSAT,
+            SafeModeState as _SMS,
+            KillSwitchError as _KSE,
+            HardTriggerReason as _HTR,
+            SoftTriggerReason as _STR,
+        )
+        _KillSwitchController = _KSC
+        _EmergencyTrigger = _ET
+        _KillSwitchActionType = _KSAT
+        _SafeModeState = _SMS
+        _KillSwitchError = _KSE
+        _HardTriggerReason = _HTR
+        _SoftTriggerReason = _STR
+        return
+    except (ImportError, ModuleNotFoundError):
+        pass
     import importlib.util
     spec = importlib.util.spec_from_file_location("kill_switch_controller", _KILL_SWITCH_MODULE_PATH)
     if spec is None or spec.loader is None:

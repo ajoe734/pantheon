@@ -62,9 +62,9 @@ from services.execution.market_snapshot_admission import (
 )
 
 _HERE = Path(__file__).resolve().parent
-_REPO_ROOT = _HERE.parents[2]
+_REPO_ROOT = _HERE.parent.parent
 _DEFAULT_WORKER_SCRIPT = str(
-    _HERE.parent / "lean_runtime" / "paper_runtime.py"
+    _HERE.parent / "execution" / "lean_runtime" / "paper_runtime.py"
 )
 
 log = logging.getLogger(__name__)

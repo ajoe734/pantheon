@@ -15,29 +15,25 @@ from unittest import mock
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 SERVICE_DIR = Path(__file__).resolve().parent
-EXEC_RUNTIME_DIR = REPO_ROOT / "services" / "execution" / "runtime-manager"
-
-os.environ["PANTHEON_EXEC_RUNTIME_MANAGER_DIR"] = str(EXEC_RUNTIME_DIR)
-
-for path in (SERVICE_DIR, EXEC_RUNTIME_DIR):
+for path in (REPO_ROOT, SERVICE_DIR):
     path_str = str(path)
     if path_str not in sys.path:
         sys.path.insert(0, path_str)
 
 from runtime_manager_client import RuntimeManagerClient, RuntimeManagerClientError
-from service import RuntimeManagerError, RuntimeManagerService
-
-EXEC_RUNTIME_DIR_STR = str(EXEC_RUNTIME_DIR)
-if EXEC_RUNTIME_DIR_STR not in sys.path:
-    sys.path.insert(0, EXEC_RUNTIME_DIR_STR)
-
-from kill_switch_controller import (  # noqa: E402
+from services.runtime_manager import (
     FAST_PATH_BENCHMARK_ITERATIONS,
     FAST_PATH_LATENCY_TARGET_MS,
     EmergencyTrigger,
     HardTriggerReason,
     KillSwitchActionType,
     KillSwitchController,
+    RuntimeBinding,
+    RuntimeBindingError,
+    RuntimeBindingStatus,
+    RuntimeBindingStore,
+    RuntimeManagerError,
+    RuntimeManagerService,
     SafeModeState,
     SoftTriggerReason,
 )
@@ -1368,7 +1364,7 @@ class KillSwitchControllerUnitTests(unittest.TestCase):
         self.assertEqual(outcome.command.action_type, "liquidate")
 
     def test_replace_action_requires_fallback_artifact(self):
-        from kill_switch_controller import KillSwitchError
+        from services.runtime_manager import KillSwitchError
         with self.assertRaises(KillSwitchError):
             self.controller.dispatch(
                 self._hard_trigger(),

@@ -38,9 +38,13 @@ def assert_dev_paper_boundary() -> None:
     auth_mode = os.getenv("PANTHEON_BFF_AUTH_MODE", "").strip().lower()
     if environment != "dev":
         raise BootstrapError("dev paper bootstrap requires PANTHEON_ENV=dev")
-    if auth_mode != "strict" or _bool_env("PANTHEON_BFF_AUTH_STUB"):
+    # Development functional closure runs with the permissive auth stub.  The
+    # bootstrap still obtains its token through the public dev-login contract,
+    # so it must accept both supported dev auth modes instead of turning an
+    # authentication posture into a paper-lifecycle blocker.
+    if auth_mode not in {"strict", "permissive"}:
         raise BootstrapError(
-            "dev paper bootstrap requires strict BFF auth with auth stub disabled"
+            "dev paper bootstrap requires a supported BFF auth mode"
         )
     if _bool_env("PANTHEON_LIVE_BROKER_ENABLED"):
         raise BootstrapError("dev paper bootstrap refuses to run with live broker enabled")

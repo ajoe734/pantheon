@@ -7,6 +7,7 @@ import os
 import shutil
 import socket
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -18,9 +19,15 @@ from types import SimpleNamespace
 from typing import Any, Dict, List, Optional
 from unittest.mock import MagicMock, patch
 
+REPO_ROOT = Path(__file__).resolve().parents[2]
+SERVICE_DIR = Path(__file__).resolve().parent
+for _p in (REPO_ROOT, SERVICE_DIR):
+    if str(_p) not in sys.path:
+        sys.path.insert(0, str(_p))
+
 
 def _unit_leader_store():
-    from paper_fleet_reconciler import InMemoryFencedLeaderStore
+    from services.paper_fleet_reconciler.paper_fleet_reconciler import InMemoryFencedLeaderStore
 
     return InMemoryFencedLeaderStore()
 
@@ -457,7 +464,7 @@ class TestPaperPerformanceComposeWiring(unittest.TestCase):
     def test_fleet_and_static_runtimes_use_canonical_mark_source_and_state_volume(self) -> None:
         import yaml
 
-        compose_path = Path(__file__).resolve().parents[3] / "docker-compose.yml"
+        compose_path = REPO_ROOT / "docker-compose.yml"
         services = yaml.safe_load(compose_path.read_text(encoding="utf-8"))["services"]
 
         fleet = services["paper-fleet-reconciler"]
@@ -1652,8 +1659,8 @@ class TestPaperFleetStaleSessionAdmissionAndResume(unittest.TestCase):
         *,
         source_snapshot: Optional[Dict[str, Any]] = None,
     ) -> Tuple[Any, Any]:
-        from runtime_binding import RuntimeBinding, RuntimeBindingStore
-        from paper_fleet_reconciler import PaperFleetReconciler
+        from services.runtime_manager.runtime_binding import RuntimeBinding, RuntimeBindingStore
+        from services.paper_fleet_reconciler.paper_fleet_reconciler import PaperFleetReconciler
 
         store = RuntimeBindingStore()
         known = {

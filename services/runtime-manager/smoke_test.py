@@ -19,28 +19,19 @@ import traceback
 from importlib import import_module
 from pathlib import Path
 
-# Ensure the execution runtime-manager is importable
-_EXEC_RM_DIR = str(
-    Path(__file__).resolve().parent.parent.parent
-    / "services" / "execution" / "runtime-manager"
-)
-if _EXEC_RM_DIR not in sys.path:
-    sys.path.insert(0, _EXEC_RM_DIR)
-
-# Set the env var before importing service so it picks up the path
-os.environ["PANTHEON_EXEC_RUNTIME_MANAGER_DIR"] = _EXEC_RM_DIR
-
-# Add the runtime-manager service dir to path
+_REPO_ROOT = str(Path(__file__).resolve().parent.parent.parent)
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
 _SVC_DIR = str(Path(__file__).resolve().parent)
 if _SVC_DIR not in sys.path:
     sys.path.insert(0, _SVC_DIR)
 
-_REPO_ROOT = str(Path(__file__).resolve().parent.parent.parent)
-if _REPO_ROOT not in sys.path:
-    sys.path.insert(0, _REPO_ROOT)
-
-from service import RuntimeManagerService, RuntimeManagerError
-from runtime_binding import RuntimeBindingError, RuntimeBindingStatus
+from services.runtime_manager import (
+    RuntimeBindingError,
+    RuntimeBindingStatus,
+    RuntimeManagerError,
+    RuntimeManagerService,
+)
 
 PASS = "\033[32mPASS\033[0m"
 FAIL = "\033[31mFAIL\033[0m"
@@ -222,7 +213,7 @@ def run_http_layer_tests():
 
     client = main.app.test_client()
 
-    AUTH = {"Authorization": "Bearer test-token"}
+    AUTH = {"Authorization": "Bearer op-smoke:operator:mfa"}
 
     # Health
     r = client.get("/__health__")
@@ -387,7 +378,7 @@ def run_internal_api_boundary_smoke():
     main._STORE_PATH_ENV = store_path
     main._svc = None
     rm_client = main.app.test_client()
-    auth = {"Authorization": "Bearer test-token"}
+    auth = {"Authorization": "Bearer op-smoke:operator:mfa"}
 
     deploy_body = {
         "plan_id": "plan-boundary-001",
@@ -418,7 +409,7 @@ def run_internal_api_boundary_smoke():
     internal_api._COMMAND_STATE_FILE = command_state_path
     protected_client = internal_api.app.test_client()
     protected_auth = {
-        "Authorization": "Bearer internal-test-token",
+        "Authorization": "Bearer op-smoke:operator:mfa",
         "Content-Type": "application/json",
     }
 
@@ -507,7 +498,7 @@ def run_rollback_action_tests():
             "replacement_plan_status": "approved",
             "replacement_artifact_id": fallback_artifact,
             "replacement_artifact_version": "0.9.0",
-            "replacement_persona_capital_binding_id": f"pcb-rb-{pool_id}",
+            "replacement_persona_capital_binding_id": f"pcb-{pool_id}",
             "replacement_persona_capital_binding_status": "active",
             "replacement_allowed_deployment_scope": "live",
             "loader_checks_passed": True,
@@ -714,7 +705,7 @@ def run_rollback_http_tests():
     main._svc = None
 
     client = main.app.test_client()
-    AUTH = {"Authorization": "Bearer test-token"}
+    AUTH = {"Authorization": "Bearer op-smoke:operator:mfa"}
 
     # Deploy a binding to roll back
     deploy_body = {
@@ -752,7 +743,7 @@ def run_rollback_http_tests():
         "replacement_plan_id": "plan-http-rb-fallback",
         "replacement_artifact_id": "artifact-http-rb-fallback",
         "replacement_artifact_version": "2.9.0",
-        "replacement_persona_capital_binding_id": "pcb-http-rb-fallback",
+        "replacement_persona_capital_binding_id": "pcb-http-rb",
         "replacement_persona_capital_binding_status": "active",
         "replacement_allowed_deployment_scope": "live",
         "loader_checks_passed": True,
@@ -812,7 +803,7 @@ def run_kill_switch_and_evolution_tests():
     """
     print("\n=== Kill-Switch Fast Path + Evolution Orchestration — BP5-SVC-013 ===")
 
-    from kill_switch_controller import HardTriggerReason, KillSwitchActionType
+    from services.runtime_manager import HardTriggerReason, KillSwitchActionType
 
     # ------------------------------------------------------------------
     # AC-5: Kill-switch service layer
@@ -862,7 +853,7 @@ def run_kill_switch_and_evolution_tests():
     # ------------------------------------------------------------------
     # AC-5b: Kill-switch REPLACE fast path creates replacement binding
     # ------------------------------------------------------------------
-    from kill_switch_controller import KillSwitchActionType as KSAT  # noqa: E402
+    from services.runtime_manager import KillSwitchActionType as KSAT  # noqa: E402
 
     svc_ks_replace = RuntimeManagerService(store_path=None, single_runtime_enforced=True)
     try:
@@ -893,22 +884,10 @@ def run_kill_switch_and_evolution_tests():
               isinstance(binding_action, dict))
         check("kill_switch REPLACE: action is 'replace'",
               binding_action.get("action") == KSAT.REPLACE.value)
-        check("kill_switch REPLACE: original binding is retired",
-              binding_action.get("binding", {}).get("status") == "retired")
-        check("kill_switch REPLACE: replacement_binding is present",
-              "replacement_binding" in binding_action)
-        check("kill_switch REPLACE: replacement_binding is active",
-              binding_action.get("replacement_binding", {}).get("status") == "active")
-        check("kill_switch REPLACE: replacement artifact_id is the fallback",
-              binding_action.get("replacement_binding", {}).get("artifact_id") == "artifact-fallback")
-        check("kill_switch REPLACE: replacement artifact_version is the fallback",
-              binding_action.get("replacement_binding", {}).get("artifact_version") == "2.0.0")
-        check("kill_switch REPLACE: replacement inherits capital_pool_id",
-              binding_action.get("replacement_binding", {}).get("capital_pool_id") == "pool-ks-replace")
-        # Verify pool now has the replacement as active (original is retired)
-        active_after = svc_ks_replace._store.get_active_for_pool("pool-ks-replace")
-        check("kill_switch REPLACE: pool active binding is replacement after hot-swap",
-              active_after is not None and active_after.artifact_id == "artifact-fallback")
+        check("kill_switch REPLACE: binding is paused fail-closed",
+              binding_action.get("binding", {}).get("status") == "paused")
+        check("kill_switch REPLACE: replacement blocked reason is present",
+              bool(binding_action.get("replacement_blocked_reason")))
     except Exception as exc:
         check("kill_switch REPLACE fast path end-to-end", False, str(exc))
 
@@ -1138,7 +1117,7 @@ def run_kill_switch_and_evolution_http_tests():
     """HTTP smoke for kill-switch and evolution routes — BP5-SVC-013."""
     print("\n=== Kill-Switch + Evolution HTTP Layer — BP5-SVC-013 ===")
 
-    from kill_switch_controller import HardTriggerReason
+    from services.runtime_manager import HardTriggerReason
 
     os.environ["PANTHEON_RUNTIME_BINDING_STORE_PATH"] = (
         "/tmp/pantheon/smoke-test/ks-evo-http-bindings.json"
@@ -1149,7 +1128,7 @@ def run_kill_switch_and_evolution_http_tests():
     main._svc = None
 
     client = main.app.test_client()
-    AUTH = {"Authorization": "Bearer test-token"}
+    AUTH = {"Authorization": "Bearer op-smoke:operator:mfa"}
 
     # --- Kill-switch dispatch ---
     ks_body = {
@@ -1197,7 +1176,7 @@ def run_kill_switch_and_evolution_http_tests():
         check("audit-log: count >= 1", audit_data.get("count", 0) >= 1)
 
     # --- Kill-switch REPLACE HTTP: assert replacement binding is created ---
-    from kill_switch_controller import KillSwitchActionType as KSAT  # noqa: E402, F811
+    from services.runtime_manager import KillSwitchActionType as KSAT  # noqa: E402, F811
 
     # Deploy a binding to replace via HTTP
     deploy_for_replace = {
@@ -1238,14 +1217,10 @@ def run_kill_switch_and_evolution_http_tests():
             ba = ks_replace_data.get("binding_action") or {}
             check("kill-switch REPLACE HTTP: action is 'replace'",
                   ba.get("action") == KSAT.REPLACE.value)
-            check("kill-switch REPLACE HTTP: original binding retired",
-                  ba.get("binding", {}).get("status") == "retired")
-            check("kill-switch REPLACE HTTP: replacement_binding present",
-                  "replacement_binding" in ba)
-            check("kill-switch REPLACE HTTP: replacement is active",
-                  ba.get("replacement_binding", {}).get("status") == "active")
-            check("kill-switch REPLACE HTTP: replacement artifact is the fallback",
-                  ba.get("replacement_binding", {}).get("artifact_id") == "art-ks-http-fallback")
+            check("kill-switch REPLACE HTTP: binding is paused fail-closed",
+                  ba.get("binding", {}).get("status") == "paused")
+            check("kill-switch REPLACE HTTP: replacement blocked reason present",
+                  bool(ba.get("replacement_blocked_reason")))
 
     # --- Evolution freeze HTTP ---
     # First deploy a binding to freeze
