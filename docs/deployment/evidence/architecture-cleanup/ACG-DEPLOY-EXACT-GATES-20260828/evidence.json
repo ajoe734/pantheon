@@ -17,7 +17,6 @@
     "scripts/test_dev_environment_lease_deploy_contract.py",
     "scripts/verify_product_functional_closure.py",
     "scripts/test_verify_product_functional_closure.py",
-    "docs/deployment/evidence/architecture-cleanup/ACG-DEPLOY-EXACT-GATES-20260828/backend-components-receipt.json",
     "docs/deployment/evidence/architecture-cleanup/ACG-DEPLOY-EXACT-GATES-20260828/code-disposition.json",
     "docs/deployment/evidence/architecture-cleanup/ACG-DEPLOY-EXACT-GATES-20260828/README.md"
   ],
@@ -58,8 +57,24 @@
       "gate": "A broken required worker makes the candidate unaccepted."
     }
   },
+  "functional_repair": {
+    "reopened_reason": "The prior writer could swallow receipt failures, dirty the managed deploy worktree, emit passed receipts for incomplete service sets, and exit past the rollback caller.",
+    "receipt_default_path": "$HOME/pantheon-ci-deploy/deployment-receipts/<environment>/<component>/backend-components-receipt.json",
+    "receipt_write_contract": "git-external atomic replace; directory/write/serialization failures return non-zero to the deployment rollback caller",
+    "receipt_identity_contract": "exact frontend and backend SHAs, deployment environment/component, complete required_services set, per-service container/image/command identity, exact OCI revision, zero restart count, and explicit verification failure lists",
+    "hosted_acceptance_status": "not rerun for repaired head; a real deployment must generate the runtime receipt",
+    "historical_operator_accepted_head": "1f6f6fc7b12611345218e347e8daa7f6328ef503",
+    "historical_acceptance_applies_to_repaired_head": false
+  },
   "verification": {
     "command": ".venv-pantheon/bin/python -m pytest scripts/test_deploy_nonprod_vm.py scripts/test_verify_product_functional_closure.py scripts/test_dev_environment_lease_deploy_contract.py -q",
-    "result": "all passed (118 in deploy/verify tests, 209 in lease deploy contract tests; total 327 tests)"
+    "result": "330 passed, 1 skipped",
+    "focused_command": ".venv-pantheon/bin/python -m pytest -q scripts/test_deploy_nonprod_vm.py -k 'verify_exact_component' scripts/test_verify_product_functional_closure.py -k 'backend_components'",
+    "focused_result": "12 passed, 110 deselected",
+    "syntax_commands": [
+      "bash -n scripts/deploy_nonprod_vm.sh",
+      "python3 -m py_compile scripts/verify_product_functional_closure.py scripts/test_deploy_nonprod_vm.py scripts/test_verify_product_functional_closure.py",
+      "git diff --check"
+    ]
   }
 }
