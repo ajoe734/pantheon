@@ -128,13 +128,12 @@ if [[ "${SOURCE_REFRESH_SELECTED}" == "true" ]]; then
   SOURCE_REFRESH_MAX_TICKS="${SOURCE_INGEST_CONTROLLER_MAX_TICKS:-1}"
   SOURCE_REFRESH_RESTART_POLICY="no"
 else
-  # The default dev controller performs one reconcile-only tick and exits.
-  # Provider egress stays available only through the explicit bounded profile
-  # above, so neither path maintains a continuous external-pull connection.
+  # The default owner is a durable internal reconciler. Provider egress stays
+  # available only through the explicit bounded profile above.
   SOURCE_REFRESH_CONTROLLER_MODE="reconcile_only"
   SOURCE_REFRESH_TRUTH_LEVEL="scheduled_tick"
-  SOURCE_REFRESH_MAX_TICKS="1"
-  SOURCE_REFRESH_RESTART_POLICY="no"
+  SOURCE_REFRESH_MAX_TICKS="0"
+  SOURCE_REFRESH_RESTART_POLICY="unless-stopped"
 fi
 SOURCE_REFRESH_MAX_CONCURRENCY="${SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY:-1}"
 SOURCE_REFRESH_MAX_RECORDS="${SOURCE_INGEST_MAX_RECORDS:-100}"
@@ -795,10 +794,10 @@ validate_source_refresh_profile() {
       || error "default source-ingest owner must use reconcile_only mode"
     [[ "${SOURCE_INGEST_CONTROLLER_TRUTH_LEVEL:-}" == "scheduled_tick" ]] \
       || error "default source-ingest owner must use scheduled_tick truth"
-    [[ "${SOURCE_INGEST_CONTROLLER_MAX_TICKS:-}" == "1" ]] \
-      || error "default source-ingest controller must run exactly one reconcile-only tick"
-    [[ "${SOURCE_INGEST_CONTROLLER_RESTART_POLICY:-}" == "no" ]] \
-      || error "default source-ingest controller must not restart after its one-shot reconcile"
+    [[ "${SOURCE_INGEST_CONTROLLER_MAX_TICKS:-}" == "0" ]] \
+      || error "default source-ingest owner must remain unbounded"
+    [[ "${SOURCE_INGEST_CONTROLLER_RESTART_POLICY:-}" == "unless-stopped" ]] \
+      || error "default source-ingest owner must use unless-stopped restart policy"
     return 0
   fi
 

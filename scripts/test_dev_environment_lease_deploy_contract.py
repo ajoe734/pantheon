@@ -1179,18 +1179,18 @@ def test_dev_root_deploy_builds_candidate_before_mutating_active_runtime() -> No
 
 
 def test_dev_root_source_ingestion_controller_mode_defaults_to_reconcile_only() -> None:
-    """Source ingestion defaults to a non-restarting reconcile-only one-shot."""
+    """Source ingestion defaults to the zero-egress durable reconcile-only owner."""
     deploy_script = DEPLOY.read_text(encoding="utf-8")
     compose_yaml = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
 
     assert 'SOURCE_INGEST_CONTROLLER_MODE: ${SOURCE_INGEST_CONTROLLER_MODE:-reconcile_only}' in compose_yaml
-    assert 'SOURCE_INGEST_CONTROLLER_MAX_TICKS: ${SOURCE_INGEST_CONTROLLER_MAX_TICKS:-1}' in compose_yaml
-    assert 'restart: "${SOURCE_INGEST_CONTROLLER_RESTART_POLICY:-no}"' in compose_yaml
+    assert 'SOURCE_INGEST_CONTROLLER_MAX_TICKS: ${SOURCE_INGEST_CONTROLLER_MAX_TICKS:-0}' in compose_yaml
+    assert 'restart: "${SOURCE_INGEST_CONTROLLER_RESTART_POLICY:-unless-stopped}"' in compose_yaml
 
     assert 'SOURCE_REFRESH_CONTROLLER_MODE="reconcile_only"' in deploy_script
     assert 'SOURCE_REFRESH_TRUTH_LEVEL="scheduled_tick"' in deploy_script
-    assert 'SOURCE_REFRESH_MAX_TICKS="1"' in deploy_script
-    assert 'SOURCE_REFRESH_RESTART_POLICY="no"' in deploy_script
+    assert 'SOURCE_REFRESH_MAX_TICKS="0"' in deploy_script
+    assert 'SOURCE_REFRESH_RESTART_POLICY="unless-stopped"' in deploy_script
 
 
 def test_dev_root_phase_failure_prevents_release_admission_and_switch() -> None:
