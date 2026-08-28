@@ -209,7 +209,14 @@ def _write_evidence_files(root: Path) -> dict[str, Path]:
         "mode": "hosted",
         "observed_at": _timestamp(),
         "expected_sha": BFF_SHA,
-        "total_services": 2,
+        "deployment_environment": "dev",
+        "deployment_component": "bff",
+        "required_services": [
+            "operator-bff",
+            "agora-interaction-worker",
+            "loop-run-projector-scheduler",
+        ],
+        "total_services": 3,
         "services": {
             "operator-bff": {
                 "service": "operator-bff",
@@ -233,6 +240,28 @@ def _write_evidence_files(root: Path) -> dict[str, Path]:
                 "command": ["python", "scripts/run_agora_interaction_worker.py"],
                 "matches_expected_sha": True,
             },
+            "loop-run-projector-scheduler": {
+                "service": "loop-run-projector-scheduler",
+                "container_id": "c3",
+                "image": "pantheon-operator-bff",
+                "image_revision": BFF_SHA,
+                "status": "running",
+                "restart_count": 0,
+                "health": "healthy",
+                "command": [
+                    "python",
+                    "scripts/run_loop_run_projector_scheduler.py",
+                ],
+                "matches_expected_sha": True,
+            },
+        },
+        "verification_failures": {
+            "missing": [],
+            "duplicates": [],
+            "not_running_or_restarted": [],
+            "unhealthy": [],
+            "wrong_sha": [],
+            "identity_errors": [],
         },
         "all_passed": True,
         "unskipped_mandatory_cases": True,
@@ -1556,7 +1585,8 @@ def test_gate_01_backend_components_happy_path(tmp_path: Path) -> None:
     assert gate_01.status == "PASSED"
     assert "backend_components" in gate_01.details
     assert gate_01.details["backend_components"]["all_running"] is True
-    assert gate_01.details["backend_components"]["verified_services_count"] == 2
+    assert gate_01.details["backend_components"]["verified_services_count"] == 3
+    assert gate_01.details["backend_components"]["required_services_count"] == 3
 
 
 def test_gate_01_backend_components_missing_file_fails(tmp_path: Path) -> None:
@@ -1624,6 +1654,58 @@ def test_gate_01_backend_components_empty_services_fails(tmp_path: Path) -> None
     assert "declares empty services map" in str(gate_01.error)
 
 
+def test_gate_01_backend_components_missing_required_services_fails(tmp_path: Path) -> None:
+    paths = _write_evidence_files(tmp_path)
+    bc = json.loads(paths["backend_components"].read_text())
+    del bc["required_services"]
+    paths["backend_components"].write_text(json.dumps(bc))
+
+    verifier = ProductFunctionalClosureVerifier(
+        _config(tmp_path, paths),
+        transport=_transport(),
+    )
+    report = verifier.run_full_acceptance()
+    assert report.overall_status == "FAILED"
+    gate_01 = next(r for r in report.gate_results if r.gate_id == "gate_01_manifest_exact_pair")
+    assert gate_01.status == "FAILED"
+    assert "non-empty required_services list" in str(gate_01.error)
+
+
+def test_gate_01_backend_components_incomplete_service_map_fails(tmp_path: Path) -> None:
+    paths = _write_evidence_files(tmp_path)
+    bc = json.loads(paths["backend_components"].read_text())
+    del bc["services"]["loop-run-projector-scheduler"]
+    bc["total_services"] = 2
+    paths["backend_components"].write_text(json.dumps(bc))
+
+    verifier = ProductFunctionalClosureVerifier(
+        _config(tmp_path, paths),
+        transport=_transport(),
+    )
+    report = verifier.run_full_acceptance()
+    assert report.overall_status == "FAILED"
+    gate_01 = next(r for r in report.gate_results if r.gate_id == "gate_01_manifest_exact_pair")
+    assert gate_01.status == "FAILED"
+    assert "service set is incomplete or unexpected" in str(gate_01.error)
+
+
+def test_gate_01_backend_components_missing_identity_fails(tmp_path: Path) -> None:
+    paths = _write_evidence_files(tmp_path)
+    bc = json.loads(paths["backend_components"].read_text())
+    del bc["services"]["operator-bff"]["container_id"]
+    paths["backend_components"].write_text(json.dumps(bc))
+
+    verifier = ProductFunctionalClosureVerifier(
+        _config(tmp_path, paths),
+        transport=_transport(),
+    )
+    report = verifier.run_full_acceptance()
+    assert report.overall_status == "FAILED"
+    gate_01 = next(r for r in report.gate_results if r.gate_id == "gate_01_manifest_exact_pair")
+    assert gate_01.status == "FAILED"
+    assert "missing container_id identity" in str(gate_01.error)
+
+
 def test_gate_01_backend_components_service_not_running_fails(tmp_path: Path) -> None:
     paths = _write_evidence_files(tmp_path)
     bc = json.loads(paths["backend_components"].read_text())
@@ -1655,7 +1737,7 @@ def test_gate_01_backend_components_service_unhealthy_fails(tmp_path: Path) -> N
     assert report.overall_status == "FAILED"
     gate_01 = next(r for r in report.gate_results if r.gate_id == "gate_01_manifest_exact_pair")
     assert gate_01.status == "FAILED"
-    assert "operator-bff is unhealthy" in str(gate_01.error)
+    assert "operator-bff health is 'unhealthy'" in str(gate_01.error)
 
 
 def test_gate_01_backend_components_service_wrong_revision_fails(tmp_path: Path) -> None:
@@ -1693,5 +1775,3 @@ def test_gate_01_backend_components_absent_from_discovery_and_config_fails(tmp_p
     gate_01 = next(r for r in report.gate_results if r.gate_id == "gate_01_manifest_exact_pair")
     assert gate_01.status == "FAILED"
     assert "--backend-components-evidence is required and must be provided" in str(gate_01.error)
-
-

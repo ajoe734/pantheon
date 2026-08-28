@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 import subprocess
 from pathlib import Path
@@ -326,6 +327,9 @@ def test_verify_exact_component_deployment_function_contract() -> None:
     assert "org.opencontainers.image.revision" in deploy_script
     assert "backend_required_components_receipt" in deploy_script
     assert "duplicate containers found for required singleton service" in deploy_script
+    assert "pantheon-ci-deploy/deployment-receipts" in deploy_script
+    assert "unable to atomically write backend component receipt" in deploy_script
+    assert "PANTHEON_DEV_FRONTEND_SHA=$(shell_quote" in deploy_script
 
 
 def _extract_verify_exact_component_deployment_func() -> str:
@@ -399,7 +403,9 @@ export PANTHEON_BACKEND_COMPONENTS_RECEIPT_PATH="{receipt_path}"
 export PANTHEON_DEV_FRONTEND_SHA="8337b19a0cf6ac41aa2a4c2fa3950f6af3a87abf"
 export PANTHEON_BFF_BASE_URL="https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io"
 export PANTHEON_FE_BASE_URL="https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io"
-expected_sha="7a9674ea259bbac883e42f3ee217b3e8f68170fe"
+export PANTHEON_DEPLOY_ENV="dev"
+export PANTHEON_DEPLOY_COMPONENT="bff"
+export GIT_SHA="7a9674ea259bbac883e42f3ee217b3e8f68170fe"
 
 verify_exact_component_deployment operator-bff agora-interaction-worker loop-run-projector-scheduler
 """,
@@ -428,12 +434,17 @@ verify_exact_component_deployment operator-bff agora-interaction-worker loop-run
     assert receipt_data["expected_sha"] == "7a9674ea259bbac883e42f3ee217b3e8f68170fe"
     assert receipt_data["exact_pair"]["frontend_sha"] == "8337b19a0cf6ac41aa2a4c2fa3950f6af3a87abf"
     assert receipt_data["exact_pair"]["backend_sha"] == "7a9674ea259bbac883e42f3ee217b3e8f68170fe"
+    assert receipt_data["deployment_environment"] == "dev"
+    assert receipt_data["deployment_component"] == "bff"
     assert receipt_data["total_services"] == 3
-    assert set(receipt_data["services"].keys()) == {
+    expected_services = {
         "operator-bff",
         "agora-interaction-worker",
         "loop-run-projector-scheduler",
     }
+    assert set(receipt_data["required_services"]) == expected_services
+    assert set(receipt_data["services"].keys()) == expected_services
+    assert all(not entries for entries in receipt_data["verification_failures"].values())
     for s_name, s_info in receipt_data["services"].items():
         assert s_info["status"] == "running"
         assert s_info["health"] == "healthy"
@@ -471,7 +482,8 @@ error() {{ echo "[error] $*" >&2; exit 1; }}
 
 export PATH="{bin_dir}:$PATH"
 export PANTHEON_BACKEND_COMPONENTS_RECEIPT_PATH="{receipt_path}"
-expected_sha="7a9674ea259bbac883e42f3ee217b3e8f68170fe"
+export PANTHEON_DEV_FRONTEND_SHA="8337b19a0cf6ac41aa2a4c2fa3950f6af3a87abf"
+export GIT_SHA="7a9674ea259bbac883e42f3ee217b3e8f68170fe"
 
 verify_exact_component_deployment missing-worker
 """,
@@ -492,6 +504,11 @@ verify_exact_component_deployment missing-worker
     )
     assert proc.returncode != 0
     assert "required component(s) missing: missing-worker" in proc.stderr
+    receipt_data = json.loads(receipt_path.read_text(encoding="utf-8"))
+    assert receipt_data["status"] == "failed"
+    assert receipt_data["all_passed"] is False
+    assert receipt_data["required_services"] == ["missing-worker"]
+    assert receipt_data["verification_failures"]["missing"] == ["missing-worker"]
 
 
 def test_verify_exact_component_deployment_unhealthy_or_mismatched_sha_fails(tmp_path: Path) -> None:
@@ -539,7 +556,8 @@ error() {{ echo "[error] $*" >&2; exit 1; }}
 
 export PATH="{bin_dir}:$PATH"
 export PANTHEON_BACKEND_COMPONENTS_RECEIPT_PATH="{receipt_path}"
-expected_sha="7a9674ea259bbac883e42f3ee217b3e8f68170fe"
+export PANTHEON_DEV_FRONTEND_SHA="8337b19a0cf6ac41aa2a4c2fa3950f6af3a87abf"
+export GIT_SHA="7a9674ea259bbac883e42f3ee217b3e8f68170fe"
 
 verify_exact_component_deployment agora-interaction-worker
 """,
@@ -562,3 +580,76 @@ verify_exact_component_deployment agora-interaction-worker
     assert "required component(s) unhealthy" in proc.stderr or "mismatched image revision" in proc.stderr
 
 
+def test_verify_exact_component_receipt_write_failure_reaches_rollback_caller(
+    tmp_path: Path,
+) -> None:
+    """A receipt write failure must return non-zero instead of exiting past the rollback caller."""
+    import os
+
+    func_def = _extract_verify_exact_component_deployment_func()
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    mock_docker = bin_dir / "docker"
+    mock_docker.write_text(
+        """#!/usr/bin/env bash
+if [[ "$1" == "compose" ]]; then
+  echo "cid_bff_1"
+elif [[ "$1" == "inspect" ]]; then
+  fmt="$3"
+  if [[ "$fmt" == "{{.State.Status}}" ]]; then
+    echo "running"
+  elif [[ "$fmt" == "{{.RestartCount}}" ]]; then
+    echo "0"
+  elif [[ "$fmt" == *"{{.State.Health.Status}}"* ]]; then
+    echo "healthy"
+  elif [[ "$fmt" == "{{.Config.Image}}" ]]; then
+    echo "pantheon-bff:latest"
+  elif [[ "$fmt" == *"org.opencontainers.image.revision"* ]]; then
+    echo "7a9674ea259bbac883e42f3ee217b3e8f68170fe"
+  elif [[ "$fmt" == *"{{json .Config.Cmd}}"* ]]; then
+    echo '["python", "-m", "services.control_plane.bff.main"]'
+  fi
+fi
+""",
+        encoding="utf-8",
+    )
+    mock_docker.chmod(0o755)
+
+    non_directory = tmp_path / "not-a-directory"
+    non_directory.write_text("blocks mkdir", encoding="utf-8")
+    receipt_path = non_directory / "backend-components-receipt.json"
+    rollback_marker = tmp_path / "rollback-called"
+    runner_script = tmp_path / "run_verifier_write_failure.sh"
+    runner_script.write_text(
+        f"""#!/usr/bin/env bash
+set -euo pipefail
+info() {{ echo "[info] $*"; }}
+error() {{ echo "[error] $*" >&2; exit 1; }}
+
+{func_def}
+
+export PATH="{bin_dir}:$PATH"
+export PANTHEON_BACKEND_COMPONENTS_RECEIPT_PATH="{receipt_path}"
+export PANTHEON_DEV_FRONTEND_SHA="8337b19a0cf6ac41aa2a4c2fa3950f6af3a87abf"
+export GIT_SHA="7a9674ea259bbac883e42f3ee217b3e8f68170fe"
+
+verify_exact_component_deployment operator-bff || printf 'rollback\n' >"{rollback_marker}"
+test -f "{rollback_marker}"
+""",
+        encoding="utf-8",
+    )
+    runner_script.chmod(0o755)
+
+    env = dict(os.environ)
+    env["PATH"] = f"{bin_dir}:{env.get('PATH', '')}"
+    proc = subprocess.run(
+        ["bash", str(runner_script)],
+        capture_output=True,
+        text=True,
+        check=False,
+        cwd=tmp_path,
+        env=env,
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert rollback_marker.read_text(encoding="utf-8") == "rollback\n"
+    assert "unable to create backend component receipt directory" in proc.stderr

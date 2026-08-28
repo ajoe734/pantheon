@@ -604,6 +604,9 @@ ssh_bash() {
   command_prefix+=" PANTHEON_DEPLOY_PROJECT_ID=$(shell_quote "$PROJECT_ID")"
   command_prefix+=" PANTHEON_REMOTE_DIR=$(shell_quote "$remote_dir")"
   command_prefix+=" PANTHEON_DEPLOY_WORKTREE_ROOT=$(shell_quote "${PANTHEON_DEPLOY_WORKTREE_ROOT:-}")"
+  command_prefix+=" PANTHEON_DEPLOY_RECEIPT_ROOT=$(shell_quote "${PANTHEON_DEPLOY_RECEIPT_ROOT:-}")"
+  command_prefix+=" PANTHEON_BACKEND_COMPONENTS_RECEIPT_PATH=$(shell_quote "${PANTHEON_BACKEND_COMPONENTS_RECEIPT_PATH:-}")"
+  command_prefix+=" PANTHEON_DEV_FRONTEND_SHA=$(shell_quote "${PANTHEON_DEV_FRONTEND_SHA:-${FRONTEND_SHA:-}}")"
   command_prefix+=" PANTHEON_DEV_ROLLBACK_BACKEND_SHA=$(shell_quote "${DEV_ROLLBACK_BACKEND_SHA:-}")"
   command_prefix+=" PANTHEON_GITHUB_TOKEN=$(shell_quote "${GITHUB_TOKEN:-}")"
   command_prefix+=" PANTHEON_ALLOW_DIRTY_DEPLOY=$(shell_quote "$ALLOW_DIRTY")"
@@ -2311,9 +2314,15 @@ assert int(payload.get("total_sweeps_run") or 0) >= 1
 
 verify_exact_component_deployment() {
   local target_services=("$@")
-  local expected_sha="${GIT_SHA:-${PANTHEON_DEPLOY_SHA:-${DEPLOY_SHA:-${expected_sha:-}}}}"
-  local receipt_path="${PANTHEON_BACKEND_COMPONENTS_RECEIPT_PATH:-docs/deployment/evidence/architecture-cleanup/ACG-DEPLOY-EXACT-GATES-20260828/backend-components-receipt.json}"
-  local missing=() restarting=() unhealthy=() wrong_sha=() duplicates=()
+  local expected_sha="${GIT_SHA:-${PANTHEON_DEPLOY_SHA:-${DEPLOY_SHA:-}}}"
+  local expected_frontend_sha="${PANTHEON_DEV_FRONTEND_SHA:-${PANTHEON_FE_SHA:-}}"
+  local deploy_environment="${PANTHEON_DEPLOY_ENV:-dev}"
+  local deploy_component="${PANTHEON_DEPLOY_COMPONENT:-root}"
+  local bff_url="${PANTHEON_BFF_BASE_URL:-https://${PANTHEON_DEV_BFF_PUBLIC_HOST:-pantheon-lupin-dev-bff.35.201.204.12.sslip.io}}"
+  local fe_url="${PANTHEON_FE_BASE_URL:-https://${PANTHEON_DEV_FE_PUBLIC_HOST:-pantheon-lupin-dev-fe.35.201.204.12.sslip.io}}"
+  local receipt_root="${PANTHEON_DEPLOY_RECEIPT_ROOT:-${HOME}/pantheon-ci-deploy/deployment-receipts}"
+  local receipt_path="${PANTHEON_BACKEND_COMPONENTS_RECEIPT_PATH:-${receipt_root}/${deploy_environment}/${deploy_component}/backend-components-receipt.json}"
+  local missing=() restarting=() unhealthy=() wrong_sha=() duplicates=() identity_errors=()
   local now
   now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
@@ -2321,19 +2330,39 @@ verify_exact_component_deployment() {
     target_services=("${REQUIRED_LOOP_WORKERS[@]}")
   fi
 
-  info "verifying exact deployment and running state for ${#target_services[@]} component(s); expected_sha=${expected_sha:-unknown}"
+  if [[ ! "$expected_sha" =~ ^[0-9a-f]{40}$ ]]; then
+    printf '[remote-deploy] exact component verification requires a full backend SHA (got %s)\n' "${expected_sha:-empty}" >&2
+    return 1
+  fi
+  if [[ ! "$expected_frontend_sha" =~ ^[0-9a-f]{40}$ ]]; then
+    printf '[remote-deploy] exact component verification requires a full frontend SHA (got %s)\n' "${expected_frontend_sha:-empty}" >&2
+    return 1
+  fi
 
-  local service container_ids container_id status restart_count health image image_rev cmd
+  local service
+  declare -A seen_target_services=()
+  for service in "${target_services[@]}"; do
+    if [[ -z "$service" || -n "${seen_target_services[$service]:-}" ]]; then
+      printf '[remote-deploy] exact component verification received an empty or duplicate service name: %s\n' "${service:-<empty>}" >&2
+      return 1
+    fi
+    seen_target_services["$service"]=1
+  done
+
+  info "verifying exact deployment and running state for ${#target_services[@]} component(s); expected_sha=${expected_sha}"
+
+  local container_ids container_id status restart_count health image image_rev cmd entry_json
   local receipt_entries=()
 
   # Bounded stabilization loop for services starting up
-  local attempt max_attempts=15 all_settled=false
+  local attempt max_attempts=15
   for attempt in $(seq 1 $max_attempts); do
     missing=()
     duplicates=()
     restarting=()
     unhealthy=()
     wrong_sha=()
+    identity_errors=()
     receipt_entries=()
     local has_starting=false
 
@@ -2353,105 +2382,196 @@ verify_exact_component_deployment() {
       container_id="$(head -n1 <<<"$container_ids" | tr -d ' ')"
 
       status="$(docker inspect --format '{{.State.Status}}' "$container_id" 2>/dev/null || true)"
-      restart_count="$(docker inspect --format '{{.RestartCount}}' "$container_id" 2>/dev/null || echo 0)"
-      health="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}not_configured{{end}}' "$container_id" 2>/dev/null || echo unknown)"
+      restart_count="$(docker inspect --format '{{.RestartCount}}' "$container_id" 2>/dev/null || true)"
+      health="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}not_configured{{end}}' "$container_id" 2>/dev/null || true)"
       image="$(docker inspect --format '{{.Config.Image}}' "$container_id" 2>/dev/null || true)"
       image_rev="$(docker inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$container_id" 2>/dev/null || true)"
-      cmd="$(docker inspect --format '{{json .Config.Cmd}}' "$container_id" 2>/dev/null || echo '[]')"
+      cmd="$(docker inspect --format '{{json .Config.Cmd}}' "$container_id" 2>/dev/null || true)"
 
       if [[ "$status" != "running" ]]; then
         restarting+=("${service}: status=${status}, restart_count=${restart_count}")
       fi
+      if [[ ! "$restart_count" =~ ^[0-9]+$ || "$restart_count" != "0" ]]; then
+        restarting+=("${service}: restart_count=${restart_count:-unknown}")
+      fi
       if [[ "$health" == "starting" ]]; then
         has_starting=true
-      elif [[ "$health" == "unhealthy" ]]; then
+      elif [[ "$health" != "healthy" && "$health" != "not_configured" ]]; then
         unhealthy+=("${service}: health=${health}")
       fi
-      if [[ -n "$expected_sha" && "$expected_sha" != "unknown" ]]; then
-        if [[ -n "$image_rev" && "$image_rev" != "<no value>" && "$image_rev" != "unknown" && "$image_rev" != "$expected_sha" ]]; then
-          wrong_sha+=("${service}: image_rev=${image_rev} != expected=${expected_sha}")
-        fi
+      if [[ -z "$image" ]]; then
+        identity_errors+=("${service}: image identity is missing")
+      fi
+      if [[ "$image_rev" != "$expected_sha" ]]; then
+        wrong_sha+=("${service}: image_rev=${image_rev:-missing} != expected=${expected_sha}")
       fi
 
-      receipt_entries+=("$(python3 -c '
+      if ! entry_json="$(python3 -c '
 import json, sys
 service, cid, img, rev, stat, rcount, hlth, cmd_json, exp_sha = sys.argv[1:10]
 try:
     cmd_val = json.loads(cmd_json)
-except Exception:
-    cmd_val = cmd_json
+except Exception as exc:
+    raise SystemExit(f"invalid command JSON for {service}: {exc}")
+if not cmd_val:
+    raise SystemExit(f"empty command identity for {service}")
+if not rcount.isdigit():
+    raise SystemExit(f"invalid restart count for {service}: {rcount!r}")
 print(json.dumps({
     "service": service,
     "container_id": cid,
     "image": img,
     "image_revision": rev,
     "status": stat,
-    "restart_count": int(rcount) if rcount.isdigit() else 0,
+    "restart_count": int(rcount),
     "health": hlth,
     "command": cmd_val,
-    "matches_expected_sha": (rev == exp_sha) if exp_sha not in ("", "unknown") and rev not in ("", "<no value>", "unknown") else True
+    "matches_expected_sha": rev == exp_sha,
 }))
-' "$service" "$container_id" "$image" "$image_rev" "$status" "$restart_count" "$health" "$cmd" "$expected_sha")")
+' "$service" "$container_id" "$image" "$image_rev" "$status" "$restart_count" "$health" "$cmd" "$expected_sha")"; then
+        identity_errors+=("${service}: receipt identity serialization failed")
+        continue
+      fi
+      receipt_entries+=("$entry_json")
     done
 
     if [[ "$has_starting" == "true" ]] && (( attempt < max_attempts )); then
       sleep 2
       continue
     fi
-    all_settled=true
     break
   done
 
-  # Write receipt
-  mkdir -p "$(dirname "$receipt_path")" 2>/dev/null || true
-  python3 -c '
-import json, os, sys
-now, exp_sha, out_path = sys.argv[1:4]
-entries = [json.loads(line) for line in sys.argv[4:] if line.strip()]
+  if (( ${#receipt_entries[@]} != ${#target_services[@]} )); then
+    identity_errors+=("receipt entries=${#receipt_entries[@]} required=${#target_services[@]}")
+  fi
+
+  local verification_status="passed"
+  if (( ${#missing[@]} > 0 || ${#duplicates[@]} > 0 || ${#restarting[@]} > 0 || ${#unhealthy[@]} > 0 || ${#wrong_sha[@]} > 0 || ${#identity_errors[@]} > 0 )); then
+    verification_status="failed"
+  fi
+
+  local required_services_json receipt_entries_json failures_json
+  required_services_json="$(printf '%s\n' "${target_services[@]}" | python3 -c 'import json,sys; print(json.dumps([line.rstrip("\n") for line in sys.stdin if line.rstrip("\n")]))')" \
+    || { printf '[remote-deploy] unable to serialize required service identities\n' >&2; return 1; }
+  receipt_entries_json="$(printf '%s\n' "${receipt_entries[@]}" | python3 -c 'import json,sys; print(json.dumps([json.loads(line) for line in sys.stdin if line.strip()]))')" \
+    || { printf '[remote-deploy] unable to serialize component receipt entries\n' >&2; return 1; }
+  failures_json="$(python3 -c '
+import json, sys
+keys = ("missing", "duplicates", "not_running_or_restarted", "unhealthy", "wrong_sha", "identity_errors")
+values = [json.loads(value) for value in sys.argv[1:]]
+print(json.dumps(dict(zip(keys, values))))
+' \
+    "$(printf '%s\n' "${missing[@]}" | python3 -c 'import json,sys; print(json.dumps([line.rstrip("\n") for line in sys.stdin if line.rstrip("\n")]))')" \
+    "$(printf '%s\n' "${duplicates[@]}" | python3 -c 'import json,sys; print(json.dumps([line.rstrip("\n") for line in sys.stdin if line.rstrip("\n")]))')" \
+    "$(printf '%s\n' "${restarting[@]}" | python3 -c 'import json,sys; print(json.dumps([line.rstrip("\n") for line in sys.stdin if line.rstrip("\n")]))')" \
+    "$(printf '%s\n' "${unhealthy[@]}" | python3 -c 'import json,sys; print(json.dumps([line.rstrip("\n") for line in sys.stdin if line.rstrip("\n")]))')" \
+    "$(printf '%s\n' "${wrong_sha[@]}" | python3 -c 'import json,sys; print(json.dumps([line.rstrip("\n") for line in sys.stdin if line.rstrip("\n")]))')" \
+    "$(printf '%s\n' "${identity_errors[@]}" | python3 -c 'import json,sys; print(json.dumps([line.rstrip("\n") for line in sys.stdin if line.rstrip("\n")]))')")" \
+    || { printf '[remote-deploy] unable to serialize component verification failures\n' >&2; return 1; }
+
+  if ! mkdir -p -- "$(dirname "$receipt_path")"; then
+    printf '[remote-deploy] unable to create backend component receipt directory: %s\n' "$(dirname "$receipt_path")" >&2
+    return 1
+  fi
+  if ! python3 - \
+    "$now" "$expected_sha" "$expected_frontend_sha" "$bff_url" "$fe_url" \
+    "$deploy_environment" "$deploy_component" "$verification_status" "$receipt_path" \
+    "$required_services_json" "$receipt_entries_json" "$failures_json" <<'PY'
+import json
+import os
+import sys
+from pathlib import Path
+
+(
+    now,
+    backend_sha,
+    frontend_sha,
+    bff_url,
+    fe_url,
+    deploy_environment,
+    deploy_component,
+    verification_status,
+    output_value,
+    required_services_json,
+    entries_json,
+    failures_json,
+) = sys.argv[1:]
+required_services = json.loads(required_services_json)
+entries = json.loads(entries_json)
+failures = json.loads(failures_json)
+services = {entry["service"]: entry for entry in entries}
+if len(services) != len(entries):
+    raise SystemExit("component receipt contains duplicate service entries")
+complete = set(services) == set(required_services) and len(required_services) == len(entries)
+all_passed = verification_status == "passed" and complete and not any(failures.values())
+if verification_status == "passed" and not all_passed:
+    raise SystemExit("component receipt cannot record passed status with incomplete evidence")
 receipt = {
     "schema_version": "pantheon.deployment.backend_required_components_receipt.v1",
     "task": {
         "id": "ACG-DEPLOY-EXACT-GATES-20260828"
     },
     "task_id": "ACG-DEPLOY-EXACT-GATES-20260828",
-    "status": "passed" if (len(entries) > 0 and len(sys.argv) > 4) else "failed",
-    "result": "passed" if (len(entries) > 0 and len(sys.argv) > 4) else "failed",
+    "status": verification_status,
+    "result": verification_status,
     "mode": "hosted",
     "observed_at": now,
-    "expected_sha": exp_sha,
+    "expected_sha": backend_sha,
+    "deployment_environment": deploy_environment,
+    "deployment_component": deploy_component,
     "unskipped_mandatory_cases": True,
     "skipped_mandatory_count": 0,
     "exact_pair": {
-        "backend_sha": exp_sha,
-        "frontend_sha": os.environ.get("PANTHEON_DEV_FRONTEND_SHA") or os.environ.get("PANTHEON_FE_SHA") or exp_sha,
-        "bff_url": os.environ.get("PANTHEON_BFF_BASE_URL", "https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io"),
-        "fe_url": os.environ.get("PANTHEON_FE_BASE_URL", "https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io"),
+        "backend_sha": backend_sha,
+        "frontend_sha": frontend_sha,
+        "bff_url": bff_url,
+        "fe_url": fe_url,
     },
+    "required_services": required_services,
     "total_services": len(entries),
-    "services": {e["service"]: e for e in entries},
-    "all_passed": (len(entries) > 0 and len(sys.argv) > 4)
+    "services": services,
+    "verification_failures": failures,
+    "all_passed": all_passed,
 }
+output_path = Path(output_value)
+temporary_path = output_path.with_name(f".{output_path.name}.tmp.{os.getpid()}")
 try:
-    with open(out_path, "w", encoding="utf-8") as f:
-        json.dump(receipt, f, indent=2)
-except Exception as e:
-    pass
-' "$now" "$expected_sha" "$receipt_path" "${receipt_entries[@]}" || true
+    with temporary_path.open("x", encoding="utf-8") as handle:
+        json.dump(receipt, handle, indent=2, sort_keys=True)
+        handle.write("\n")
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.replace(temporary_path, output_path)
+finally:
+    temporary_path.unlink(missing_ok=True)
+PY
+  then
+    printf '[remote-deploy] unable to atomically write backend component receipt: %s\n' "$receipt_path" >&2
+    return 1
+  fi
+  info "backend component receipt written atomically outside the deploy worktree: ${receipt_path}"
 
   if (( ${#missing[@]} > 0 )); then
-    error "required component(s) missing: ${missing[*]}"
+    printf '[remote-deploy] required component(s) missing: %s\n' "${missing[*]}" >&2
   fi
   if (( ${#duplicates[@]} > 0 )); then
-    error "duplicate containers found for required singleton service(s): ${duplicates[*]}"
+    printf '[remote-deploy] duplicate containers found for required singleton service(s): %s\n' "${duplicates[*]}" >&2
   fi
   if (( ${#restarting[@]} > 0 )); then
-    error "required component(s) not in running state: ${restarting[*]}"
+    printf '[remote-deploy] required component(s) not in stable running state: %s\n' "${restarting[*]}" >&2
   fi
   if (( ${#unhealthy[@]} > 0 )); then
-    error "required component(s) unhealthy: ${unhealthy[*]}"
+    printf '[remote-deploy] required component(s) unhealthy or unknown: %s\n' "${unhealthy[*]}" >&2
   fi
   if (( ${#wrong_sha[@]} > 0 )); then
-    error "required component(s) have mismatched image revision: ${wrong_sha[*]}"
+    printf '[remote-deploy] required component(s) have missing or mismatched image revision: %s\n' "${wrong_sha[*]}" >&2
+  fi
+  if (( ${#identity_errors[@]} > 0 )); then
+    printf '[remote-deploy] required component identity evidence is incomplete: %s\n' "${identity_errors[*]}" >&2
+  fi
+  if [[ "$verification_status" != "passed" ]]; then
+    return 1
   fi
 
   info "exact component verification passed for ${#target_services[@]} service(s)"

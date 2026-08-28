@@ -43,6 +43,26 @@ DEFAULT_EVIDENCE_DIR = (
 
 SHA40_RE = re.compile(r"^[0-9a-f]{40}$")
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+BACKEND_COMPONENT_RECEIPT_SCHEMA = (
+    "pantheon.deployment.backend_required_components_receipt.v1"
+)
+BFF_IMAGE_REQUIRED_COMPONENTS = frozenset(
+    {
+        "operator-bff",
+        "agora-interaction-worker",
+        "loop-run-projector-scheduler",
+    }
+)
+BACKEND_COMPONENT_FAILURE_KEYS = frozenset(
+    {
+        "missing",
+        "duplicates",
+        "not_running_or_restarted",
+        "unhealthy",
+        "wrong_sha",
+        "identity_errors",
+    }
+)
 
 logger = logging.getLogger("verify_product_functional_closure")
 Transport = Callable[[str, float], tuple[int, Mapping[str, Any]]]
@@ -721,21 +741,56 @@ class ProductFunctionalClosureVerifier:
             "backend_components", self.config.backend_components_evidence
         )
         schema = backend_components_data.get("schema_version")
-        if not schema or not isinstance(schema, str) or "backend_required_components_receipt" not in schema:
+        if schema != BACKEND_COMPONENT_RECEIPT_SCHEMA:
             raise ProductFunctionalClosureAcceptanceError(
                 "gate_01.backend_components_schema",
                 f"invalid backend components receipt schema: {schema!r}",
             )
         receipt_expected_sha = backend_components_data.get("expected_sha")
-        if (
-            receipt_expected_sha
-            and receipt_expected_sha not in ("unknown", "")
-            and receipt_expected_sha != self.config.expected_bff_sha
-        ):
+        if receipt_expected_sha != self.config.expected_bff_sha:
             raise ProductFunctionalClosureAcceptanceError(
                 "gate_01.backend_components_sha",
                 f"backend components receipt SHA {receipt_expected_sha!r} != expected {self.config.expected_bff_sha}",
             )
+        deployment_component = backend_components_data.get("deployment_component")
+        if deployment_component not in {"root", "bff"}:
+            raise ProductFunctionalClosureAcceptanceError(
+                "gate_01.backend_components_deployment_component",
+                "backend components receipt must bind deployment_component to 'root' or 'bff'",
+            )
+        if backend_components_data.get("all_passed") is not True:
+            raise ProductFunctionalClosureAcceptanceError(
+                "gate_01.backend_components_all_passed",
+                "backend components receipt does not declare all_passed=true",
+            )
+
+        required_services_value = backend_components_data.get("required_services")
+        if not isinstance(required_services_value, list) or not required_services_value:
+            raise ProductFunctionalClosureAcceptanceError(
+                "gate_01.backend_components_required_services",
+                "backend components receipt must declare a non-empty required_services list",
+            )
+        if any(not isinstance(item, str) or not item for item in required_services_value):
+            raise ProductFunctionalClosureAcceptanceError(
+                "gate_01.backend_components_required_services",
+                "backend components receipt required_services contains an empty or non-string identity",
+            )
+        required_services = set(required_services_value)
+        if len(required_services) != len(required_services_value):
+            raise ProductFunctionalClosureAcceptanceError(
+                "gate_01.backend_components_required_services",
+                "backend components receipt required_services contains duplicates",
+            )
+        missing_bff_components = sorted(
+            BFF_IMAGE_REQUIRED_COMPONENTS - required_services
+        )
+        if missing_bff_components:
+            raise ProductFunctionalClosureAcceptanceError(
+                "gate_01.backend_components_required_services",
+                "backend components receipt omits required BFF-image component(s): "
+                + ", ".join(missing_bff_components),
+            )
+
         services_map = _mapping(
             backend_components_data.get("services", {}),
             "gate_01.backend_components.services",
@@ -745,10 +800,60 @@ class ProductFunctionalClosureVerifier:
                 "gate_01.backend_components_empty",
                 "backend components receipt declares empty services map",
             )
+        observed_services = set(services_map)
+        if observed_services != required_services:
+            missing_services = sorted(required_services - observed_services)
+            unexpected_services = sorted(observed_services - required_services)
+            raise ProductFunctionalClosureAcceptanceError(
+                "gate_01.backend_components_incomplete",
+                "backend components receipt service set is incomplete or unexpected: "
+                f"missing={missing_services}, unexpected={unexpected_services}",
+            )
+        total_services = backend_components_data.get("total_services")
+        if type(total_services) is not int or total_services != len(required_services):
+            raise ProductFunctionalClosureAcceptanceError(
+                "gate_01.backend_components_total_services",
+                f"backend components receipt total_services={total_services!r} "
+                f"does not match required service count {len(required_services)}",
+            )
+
+        failures = _mapping(
+            backend_components_data.get("verification_failures"),
+            "gate_01.backend_components.verification_failures",
+        )
+        if set(failures) != BACKEND_COMPONENT_FAILURE_KEYS:
+            raise ProductFunctionalClosureAcceptanceError(
+                "gate_01.backend_components_verification_failures",
+                "backend components receipt verification_failures keys are incomplete",
+            )
+        for failure_kind, failure_entries in failures.items():
+            if not isinstance(failure_entries, list):
+                raise ProductFunctionalClosureAcceptanceError(
+                    "gate_01.backend_components_verification_failures",
+                    f"verification_failures.{failure_kind} must be a list",
+                )
+            if failure_entries:
+                raise ProductFunctionalClosureAcceptanceError(
+                    "gate_01.backend_components_verification_failures",
+                    f"verification_failures.{failure_kind} is not empty: {failure_entries}",
+                )
+
         for svc_name, svc_info in services_map.items():
             svc_dict = _mapping(
                 svc_info, f"gate_01.backend_components.{svc_name}"
             )
+            if svc_dict.get("service") != svc_name:
+                raise ProductFunctionalClosureAcceptanceError(
+                    f"gate_01.backend_components.{svc_name}.service",
+                    f"service identity {svc_dict.get('service')!r} does not match key {svc_name!r}",
+                )
+            for identity_field in ("container_id", "image"):
+                identity_value = svc_dict.get(identity_field)
+                if not isinstance(identity_value, str) or not identity_value:
+                    raise ProductFunctionalClosureAcceptanceError(
+                        f"gate_01.backend_components.{svc_name}.{identity_field}",
+                        f"service {svc_name} is missing {identity_field} identity",
+                    )
             status = svc_dict.get("status")
             if status != "running":
                 raise ProductFunctionalClosureAcceptanceError(
@@ -756,25 +861,40 @@ class ProductFunctionalClosureVerifier:
                     f"service {svc_name} status is {status!r}, must be 'running'",
                 )
             health = svc_dict.get("health")
-            if health == "unhealthy":
+            if health not in {"healthy", "not_configured"}:
                 raise ProductFunctionalClosureAcceptanceError(
                     f"gate_01.backend_components.{svc_name}.health",
-                    f"service {svc_name} is unhealthy",
+                    f"service {svc_name} health is {health!r}, must be healthy or explicitly not_configured",
                 )
             rev = svc_dict.get("image_revision")
-            if (
-                rev
-                and rev not in ("unknown", "<no value>", "")
-                and rev != self.config.expected_bff_sha
-            ):
+            if rev != self.config.expected_bff_sha:
                 raise ProductFunctionalClosureAcceptanceError(
                     f"gate_01.backend_components.{svc_name}.revision",
                     f"service {svc_name} image revision {rev!r} != expected {self.config.expected_bff_sha}",
                 )
+            if svc_dict.get("matches_expected_sha") is not True:
+                raise ProductFunctionalClosureAcceptanceError(
+                    f"gate_01.backend_components.{svc_name}.matches_expected_sha",
+                    f"service {svc_name} does not declare matches_expected_sha=true",
+                )
+            restart_count = svc_dict.get("restart_count")
+            if type(restart_count) is not int or restart_count != 0:
+                raise ProductFunctionalClosureAcceptanceError(
+                    f"gate_01.backend_components.{svc_name}.restart_count",
+                    f"service {svc_name} restart_count is {restart_count!r}, must be 0",
+                )
+            command = svc_dict.get("command")
+            if not isinstance(command, (list, str)) or not command:
+                raise ProductFunctionalClosureAcceptanceError(
+                    f"gate_01.backend_components.{svc_name}.command",
+                    f"service {svc_name} is missing command identity",
+                )
         backend_components_result = {
             "verified_services_count": len(services_map),
+            "required_services_count": len(required_services),
             "all_running": True,
             "receipt_observed_at": backend_components_data.get("observed_at"),
+            "deployment_component": deployment_component,
             "services": list(services_map.keys()),
         }
 
