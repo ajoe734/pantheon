@@ -44,6 +44,7 @@ from .api_models import (
     SourceCommandRequestBody,
     SourceRecordBody,
     SourceRecordIngestRequest,
+    SourceUpdateRuleBody,
     StrictBaseModel,
     TriggerIngestJobRequest,
     UpsertHealthRequest,
@@ -72,7 +73,6 @@ from .pipeline import (
     compact_bulk_market_record,
     notify_search_index_refresh,
 )
-from .process_lock import exclusive_file_lock
 from .registry.llm_proposal_adapter import LLMSourceProposalAdapter
 from .registry.proposals import SourceChangeProposalStore
 from .requirement_state import (
@@ -264,13 +264,7 @@ def run_scheduled_connectors(
     request: RunScheduledRequest | None = None,
     authorization: str | None = None,
 ) -> dict[str, Any]:
-    with runtime.source_execution_lock:
-        if any(runtime._is_controller_owned(config.connector) for config in runtime.connector_store.list_configs()):
-            runtime._require_controller_authorization(
-                authorization,
-                operation="controller-owned scheduled source execution",
-            )
-        return runtime.pipeline.run_scheduled_connectors(request)
+    return runtime.run_scheduled_connectors(request, authorization=authorization)
 
 
 def _run_scheduled_connectors(
@@ -284,20 +278,7 @@ def reconcile_persona_source_provisioning(
     request: PersonaSourceProvisioningRequest,
     authorization: str | None = None,
 ) -> dict[str, Any]:
-    if not request.dry_run:
-        runtime._require_controller_authorization(
-            authorization,
-            operation="source reconciliation mutation",
-        )
-        with exclusive_file_lock(
-            runtime.RECONCILE_TRANSACTION_LOCK_PATH,
-            runtime.authoritative_reconcile_lock,
-        ):
-            runtime.requirement_snapshot_store.reload()
-            runtime.connector_store.reload()
-            runtime.schedule_config_store.reload()
-            return runtime._persona_source_provisioning_payload(request)
-    return runtime._persona_source_provisioning_payload(request)
+    return runtime.reconcile_persona_source_provisioning(request, authorization=authorization)
 
 
 __all__ = [

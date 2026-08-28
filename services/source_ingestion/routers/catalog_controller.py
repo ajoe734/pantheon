@@ -25,7 +25,6 @@ from ..api_models import (
 from ..connectors import ConnectorStatus, SourceEvidenceError
 from ..controller_state import ControllerStateError
 from ..financial_source_catalog import financial_data_source_catalog_payload
-from ..process_lock import exclusive_file_lock
 from ..requirement_state import RequirementStateError
 
 if TYPE_CHECKING:
@@ -54,20 +53,7 @@ def create_catalog_controller_router(runtime: SourceIngestionRuntime) -> APIRout
         authorization: str | None = Header(default=None),
     ) -> dict[str, Any]:
         try:
-            if not request.dry_run:
-                runtime._require_controller_authorization(
-                    authorization,
-                    operation="source reconciliation mutation",
-                )
-                with exclusive_file_lock(
-                    runtime.RECONCILE_TRANSACTION_LOCK_PATH,
-                    runtime.authoritative_reconcile_lock,
-                ):
-                    runtime.requirement_snapshot_store.reload()
-                    runtime.connector_store.reload()
-                    runtime.schedule_config_store.reload()
-                    return runtime._persona_source_provisioning_payload(request)
-            return runtime._persona_source_provisioning_payload(request)
+            return runtime.reconcile_persona_source_provisioning(request, authorization=authorization)
         except (SourceEvidenceError, RequirementStateError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 

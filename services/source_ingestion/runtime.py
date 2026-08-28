@@ -126,6 +126,7 @@ from .api_models import (
     ConfigureConnectorRequest,
     ConfiguredFetchBody,
     PersonaSourceProvisioningRequest,
+    RunScheduledRequest,
     SetConnectorLifecycleRequest,
     TriggerIngestJobRequest,
 )
@@ -1641,6 +1642,39 @@ class SourceIngestionRuntime:
 
     def _proposal_to_response(self, proposal: SourceChangeProposal) -> dict[str, Any]:
         return proposal.to_dict()
+
+    def run_scheduled_connectors(
+        self,
+        request: RunScheduledRequest | None = None,
+        authorization: str | None = None,
+    ) -> dict[str, Any]:
+        with self.source_execution_lock:
+            if any(self._is_controller_owned(config.connector) for config in self.connector_store.list_configs()):
+                self._require_controller_authorization(
+                    authorization,
+                    operation="controller-owned scheduled source execution",
+                )
+            return self.pipeline.run_scheduled_connectors(request)
+
+    def reconcile_persona_source_provisioning(
+        self,
+        request: PersonaSourceProvisioningRequest,
+        authorization: str | None = None,
+    ) -> dict[str, Any]:
+        if not request.dry_run:
+            self._require_controller_authorization(
+                authorization,
+                operation="source reconciliation mutation",
+            )
+            with exclusive_file_lock(
+                self.RECONCILE_TRANSACTION_LOCK_PATH,
+                self.authoritative_reconcile_lock,
+            ):
+                self.requirement_snapshot_store.reload()
+                self.connector_store.reload()
+                self.schedule_config_store.reload()
+                return self._persona_source_provisioning_payload(request)
+        return self._persona_source_provisioning_payload(request)
 
 
 def create_runtime(data_dir: Path | None = None, module: Any = None) -> SourceIngestionRuntime:

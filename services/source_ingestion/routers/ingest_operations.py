@@ -386,13 +386,7 @@ def create_ingest_operations_router(runtime: SourceIngestionRuntime) -> APIRoute
         request: RunScheduledRequest | None = None,
         authorization: str | None = Header(default=None),
     ) -> dict[str, Any]:
-        with runtime.source_execution_lock:
-            if any(runtime._is_controller_owned(config.connector) for config in runtime.connector_store.list_configs()):
-                runtime._require_controller_authorization(
-                    authorization,
-                    operation="controller-owned scheduled source execution",
-                )
-            return runtime.pipeline.run_scheduled_connectors(request)
+        return runtime.run_scheduled_connectors(request, authorization=authorization)
 
     @router.get("/api/source-ingest/audit")
     def list_audit() -> dict[str, Any]:
