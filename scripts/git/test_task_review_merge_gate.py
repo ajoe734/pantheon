@@ -71,6 +71,37 @@ def approval_event(**overrides: Any) -> dict[str, Any]:
     return event
 
 
+def operator_acceptance_event(**overrides: Any) -> dict[str, Any]:
+    """A distinct Human/Ops exact-head acceptance, never reviewer evidence."""
+
+    binding = dict(overrides.pop("review_binding", approval_binding()))
+    evidence = {
+        "repository": "ajoe734/pantheon",
+        "pr": binding["pr"],
+        "head_sha": binding["head_sha"],
+        "head_branch": binding["head_branch"],
+        "base": binding["base"],
+        "decision": "operator-accept",
+        "actor": "Human/Ops",
+        "mode": "operator_exact_head",
+        "operator_acceptance_proof_ref": (
+            "refs/tags/pantheon-review/operator-accept/" + binding["head_sha"]
+        ),
+    }
+    evidence.update(overrides.pop("operator_acceptance", {}))
+    event = {
+        "ts": "2026-07-26T12:00:00Z",
+        "agent": "Human/Ops",
+        "type": "operator_accepted",
+        "task_id": "ABC-001",
+        "message": "Human/Ops accepted this exact head.",
+        "review_binding": binding,
+        "operator_acceptance": evidence,
+    }
+    event.update(overrides)
+    return event
+
+
 def exact_head_rest_merge(head: str = "b" * 40) -> list[str]:
     return [
         "gh",
@@ -208,6 +239,60 @@ class ApprovedPathTests(unittest.TestCase):
         decision = decide(events=[approval_event(agent="claude")])
 
         self.assertTrue(decision.allow_merge)
+
+
+class OperatorExactHeadAcceptanceTests(unittest.TestCase):
+    def test_exact_head_operator_acceptance_allows_merge_without_relabeling_reviewer(self) -> None:
+        decision = decide(events=[operator_acceptance_event()])
+
+        self.assertTrue(decision.allow_merge)
+        self.assertFalse(decision.allow_auto_merge)
+        self.assertEqual(decision.reason, "exact_head_operator_accepted")
+        self.assertEqual(decision.approval["authority"], "operator_exact_head")
+        self.assertEqual(decision.approval["reviewer"], "Human/Ops")
+        self.assertIn("distinct operator exact-head acceptance", decision.detail)
+
+    def test_operator_acceptance_from_non_human_ops_cannot_replace_review(self) -> None:
+        decision = decide(events=[operator_acceptance_event(agent="Codex")])
+
+        self.assertFalse(decision.allow_merge)
+        self.assertEqual(decision.reason, "approval_binding_unusable")
+        self.assertIn("not recorded by Human/Ops", decision.detail)
+
+    def test_operator_acceptance_proof_for_another_head_is_refused(self) -> None:
+        decision = decide(
+            events=[
+                operator_acceptance_event(
+                    operator_acceptance={
+                        "operator_acceptance_proof_ref": (
+                            "refs/tags/pantheon-review/operator-accept/" + "c" * 40
+                        )
+                    }
+                )
+            ]
+        )
+
+        self.assertFalse(decision.allow_merge)
+        self.assertEqual(decision.reason, "approval_binding_unusable")
+        self.assertIn("proof ref does not match", decision.detail)
+
+    def test_operator_acceptance_recovers_after_environment_blocker_resume(self) -> None:
+        decision = decide(
+            events=[
+                operator_acceptance_event(),
+                {
+                    "ts": "2026-07-26T12:30:00Z",
+                    "agent": "AutoIntegrator",
+                    "type": "blocker",
+                    "task_id": "ABC-001",
+                    "message": "temporary integration environment failure",
+                },
+                integration_resume_event(),
+            ]
+        )
+
+        self.assertTrue(decision.allow_merge)
+        self.assertEqual(decision.reason, "exact_head_operator_accepted")
 
     def test_declared_exact_head_must_match_the_pr_head(self) -> None:
         decision = decide(tasks=[task_row(github={"head_sha": "c" * 40})])

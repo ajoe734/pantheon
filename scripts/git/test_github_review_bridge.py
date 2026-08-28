@@ -30,6 +30,8 @@ class FakeRunner:
         base_sha: str = "c" * 40,
         compare_status: str = "ahead",
         behind_by: int = 0,
+        base_advance_status: str = "ahead",
+        base_advance_behind_by: int = 0,
         manifest_payload: Mapping[str, Any] | None = None,
         base_manifest_payload: Mapping[str, Any] | None = None,
         base_manifest_missing: bool = False,
@@ -47,6 +49,8 @@ class FakeRunner:
         self.base_sha = base_sha
         self.compare_status = compare_status
         self.behind_by = behind_by
+        self.base_advance_status = base_advance_status
+        self.base_advance_behind_by = base_advance_behind_by
         self.manifest_payload = (
             dict(manifest_payload)
             if manifest_payload is not None
@@ -96,6 +100,13 @@ class FakeRunner:
             f"gh api repos/{REPOSITORY}/compare/{self.base_sha}...{self.actual_head}"
         ):
             return {"status": self.compare_status, "behind_by": self.behind_by}
+        if joined == (
+            f"gh api repos/{REPOSITORY}/compare/{'c' * 40}...{self.base_sha}"
+        ):
+            return {
+                "status": self.base_advance_status,
+                "behind_by": self.base_advance_behind_by,
+            }
         if joined.startswith(f"gh api repos/{REPOSITORY}/contents/"):
             if joined.endswith(f"?ref={self.base_sha}"):
                 if self.base_manifest_missing:
@@ -190,6 +201,68 @@ def binding() -> dict[str, Any]:
 
 
 class GitHubReviewBridgeTests(unittest.TestCase):
+    def test_operator_acceptance_publishes_distinct_exact_head_proof_without_review(self) -> None:
+        runner = FakeRunner()
+        result = bridge.bridge_operator_acceptance(
+            repository=REPOSITORY,
+            task_id="AUDIT-001",
+            actor="Human/Ops",
+            message="Operator accepts this exact head without another reviewer pass.",
+            binding=binding(),
+            runner=runner,
+        )
+
+        self.assertEqual(result["mode"], "operator_exact_head")
+        self.assertEqual(result["decision"], bridge.OPERATOR_ACCEPT)
+        self.assertEqual(runner.reviews, [])
+        self.assertEqual(
+            result["operator_acceptance_proof_ref"],
+            f"refs/tags/pantheon-review/operator-accept/{HEAD}",
+        )
+        self.assertEqual(len(runner.dispatches), 1)
+
+    def test_operator_acceptance_rejects_non_operator_actor(self) -> None:
+        with self.assertRaisesRegex(bridge.GitHubReviewBridgeError, "Human/Ops"):
+            bridge.bridge_operator_acceptance(
+                repository=REPOSITORY,
+                task_id="AUDIT-001",
+                actor="Claude",
+                message="Not an operator acceptance.",
+                binding=binding(),
+                runner=FakeRunner(),
+            )
+
+    def test_operator_acceptance_records_frozen_and_current_base_evidence(self) -> None:
+        frozen = bridge.validate_review_admission(
+            repository=REPOSITORY,
+            binding=binding(),
+            review_file="docs/evidence/AUDIT-001/evidence.json",
+            runner=FakeRunner(),
+        ).as_dict()
+        current = bridge.revalidate_review_admission(
+            repository=REPOSITORY,
+            delivery_binding=frozen,
+            allow_base_advance=True,
+            runner=FakeRunner(
+                base_sha="e" * 40,
+                compare_status="diverged",
+                behind_by=2,
+            ),
+        )
+
+        result = bridge.bridge_operator_acceptance(
+            repository=REPOSITORY,
+            task_id="AUDIT-001",
+            actor="Human/Ops",
+            message="Operator accepts a frozen exact head after a linear base advance.",
+            binding=frozen,
+            current_admission=current,
+            runner=FakeRunner(),
+        )
+
+        self.assertEqual(result["frozen_base_sha"], "c" * 40)
+        self.assertEqual(result["current_base_sha"], "e" * 40)
+
     def test_result_evidence_validator_rejects_head_drift(self) -> None:
         runner = FakeRunner()
         result = bridge.bridge_review_decision(
@@ -799,6 +872,51 @@ class GitHubReviewBridgeTests(unittest.TestCase):
                     base_sha="e" * 40,
                     compare_status="diverged",
                     behind_by=1,
+                ),
+            )
+
+    def test_operator_acceptance_allows_a_linear_base_advance(self) -> None:
+        frozen = bridge.validate_review_admission(
+            repository=REPOSITORY,
+            binding=binding(),
+            review_file="docs/evidence/AUDIT-001/evidence.json",
+            runner=FakeRunner(),
+        ).as_dict()
+
+        current = bridge.revalidate_review_admission(
+            repository=REPOSITORY,
+            delivery_binding=frozen,
+            allow_base_advance=True,
+            runner=FakeRunner(
+                base_sha="e" * 40,
+                compare_status="diverged",
+                behind_by=2,
+            ),
+        )
+
+        self.assertEqual(current.base_sha, "e" * 40)
+
+    def test_operator_acceptance_rejects_a_non_linear_base_advance(self) -> None:
+        frozen = bridge.validate_review_admission(
+            repository=REPOSITORY,
+            binding=binding(),
+            review_file="docs/evidence/AUDIT-001/evidence.json",
+            runner=FakeRunner(),
+        ).as_dict()
+
+        with self.assertRaisesRegex(
+            bridge.GitHubReviewBridgeError, "not a linear advance"
+        ):
+            bridge.revalidate_review_admission(
+                repository=REPOSITORY,
+                delivery_binding=frozen,
+                allow_base_advance=True,
+                runner=FakeRunner(
+                    base_sha="e" * 40,
+                    compare_status="diverged",
+                    behind_by=2,
+                    base_advance_status="diverged",
+                    base_advance_behind_by=1,
                 ),
             )
 

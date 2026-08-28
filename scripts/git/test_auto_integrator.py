@@ -179,9 +179,9 @@ class FakeRunner(auto_integrator.CommandRunner):
             return completed(command)
         if command[:3] == ["git", "merge-base", "--is-ancestor"]:
             return completed(command, returncode=self.merge_base_returncode)
-        if command[:2] == ["git", "merge"] and "--abort" not in command:
+        if command[:1] == ["git"] and "merge" in command and "--abort" not in command:
             return completed(command, returncode=self.ephemeral_merge_returncode)
-        if command[:3] == ["git", "merge", "--abort"]:
+        if command[:1] == ["git"] and "merge" in command and "--abort" in command:
             return completed(command)
         if command[:3] == ["git", "worktree", "add"]:
             return completed(command)
@@ -309,6 +309,50 @@ def approved_gate(task_id: str = "ABC-001", pr_number: int = 44) -> auto_integra
                     "head_sha": APPROVED_HEAD,
                     "head_branch": f"task/{task_id}",
                     "base": "dev",
+                },
+            }
+        ],
+    )
+
+
+def operator_accepted_gate(
+    task_id: str = "ABC-001", pr_number: int = 44
+) -> auto_integrator.ReviewGate:
+    binding = {
+        "pr": pr_number,
+        "head_sha": APPROVED_HEAD,
+        "head_branch": f"task/{task_id}",
+        "base": "dev",
+    }
+    return auto_integrator.ReviewGate(
+        state={
+            "tasks": [
+                {
+                    "id": task_id,
+                    "title": "Ready",
+                    "status": "review_approved",
+                    "owner": "Codex",
+                    "reviewer": "Claude",
+                }
+            ]
+        },
+        events=[
+            {
+                "ts": "2026-06-12T00:45:00Z",
+                "agent": "Human/Ops",
+                "type": "operator_accepted",
+                "task_id": task_id,
+                "message": "Human/Ops accepted this exact head.",
+                "review_binding": binding,
+                "operator_acceptance": {
+                    "repository": "ajoe734/pantheon",
+                    **binding,
+                    "decision": "operator-accept",
+                    "actor": "Human/Ops",
+                    "mode": "operator_exact_head",
+                    "operator_acceptance_proof_ref": (
+                        "refs/tags/pantheon-review/operator-accept/" + APPROVED_HEAD
+                    ),
                 },
             }
         ],
@@ -1308,6 +1352,26 @@ class IntegrationPlanTests(unittest.TestCase):
         self.assertIn(["sh", "-lc", "true"], runner.commands)
         self.assertFalse(any(command[:3] == ["gh", "pr", "merge"] for command in runner.commands))
 
+    def test_dry_run_reports_operator_acceptance_without_calling_it_reviewer_approval(self) -> None:
+        candidate = auto_integrator.TaskCandidate(
+            task_id="ABC-001",
+            title="Ready",
+            owner="Codex",
+            reviewer="Claude",
+            branch="task/ABC-001",
+        )
+        result = auto_integrator.integrate_candidate(
+            candidate,
+            auto_integrator.Settings(smoke_commands=("true",)),
+            FakeRunner(pr=green_pr()),
+            execute=False,
+            gate=operator_accepted_gate(),
+        )
+
+        self.assertEqual(result.action, "would_merge")
+        self.assertIn("accepted by Human/Ops", result.detail)
+        self.assertNotIn("approved by Claude", result.detail)
+
     def test_red_checks_open_unblock_in_execute_mode(self) -> None:
         candidate = auto_integrator.TaskCandidate(
             task_id="ABC-001",
@@ -1376,6 +1440,46 @@ class IntegrationPlanTests(unittest.TestCase):
         )
         self.assertFalse(any(command[:3] == ["gh", "pr", "merge"] for command in runner.commands))
 
+    def test_clean_disposable_exact_head_merge_uses_scoped_identity_and_lands_head(self) -> None:
+        candidate = auto_integrator.TaskCandidate(
+            task_id="ABC-001",
+            title="Ready",
+            owner="Codex",
+            reviewer="Claude",
+            branch="task/ABC-001",
+        )
+        runner = FakeRunner(pr=green_pr(), merge_base_returncode=1)
+
+        result = auto_integrator.integrate_candidate(
+            candidate,
+            auto_integrator.Settings(smoke_commands=("true",)),
+            runner,
+            execute=True,
+            gate=approved_gate(),
+        )
+
+        self.assertEqual(result.action, "merged")
+        merge_commands = [
+            command
+            for command in runner.commands
+            if command[:1] == ["git"] and "merge" in command and "--abort" not in command
+        ]
+        self.assertEqual(len(merge_commands), 1)
+        self.assertEqual(
+            merge_commands[0][:5],
+            [
+                "git",
+                "-c",
+                "user.name=Pantheon Auto Integrator",
+                "-c",
+                "user.email=pantheon-auto-integrator@noreply.local",
+            ],
+        )
+        self.assertIn("--no-edit", merge_commands[0])
+        self.assertTrue(
+            any(command[:4] == ["gh", "api", "--method", "PUT"] for command in runner.commands)
+        )
+
     def test_execute_merges_when_rest_endpoint_returns_merged_true(self) -> None:
         """After merging an exact approved head, the integrator leaves the task
         review_approved for supervisor owned_finalize dispatch and never calls
@@ -1409,6 +1513,24 @@ class IntegrationPlanTests(unittest.TestCase):
         self.assertFalse(
             any("scripts/ai_status.py" in " ".join(command) and "assign" in command for command in runner.commands)
         )
+
+    def test_operator_exact_head_merge_never_claims_reviewer_or_owner_finalization(self) -> None:
+        candidate = auto_integrator.TaskCandidate(
+            task_id="ABC-001",
+            title="Ready",
+            owner="Codex",
+            reviewer="Claude",
+            branch="task/ABC-001",
+            raw_task={
+                "status": "review_approved",
+                "operator_acceptance": {"mode": "operator_exact_head"},
+            },
+        )
+
+        detail = auto_integrator.post_merge_task_handoff(candidate)
+
+        self.assertIn("Human/Ops exact-head closeout", detail)
+        self.assertIn("no owner finalization", detail)
 
     def test_final_revalidation_blocks_when_canonical_reviewer_changes(self) -> None:
         candidate = auto_integrator.TaskCandidate(

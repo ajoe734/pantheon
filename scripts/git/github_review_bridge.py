@@ -43,6 +43,11 @@ REVIEW_PROOF_TAG_PREFIX = "pantheon-review"
 APPROVE = "approve"
 REOPEN = "reopen"
 DECISIONS = {APPROVE, REOPEN}
+# This is deliberately not a review decision.  It is an explicit Human/Ops
+# acceptance of the current immutable PR head when an operator has chosen not
+# to consume another reviewer pass.  Keeping its tag name distinct prevents a
+# later reader from mistaking it for independent review evidence.
+OPERATOR_ACCEPT = "operator-accept"
 REVIEW_STATES = {
     APPROVE: "APPROVED",
     REOPEN: "CHANGES_REQUESTED",
@@ -755,6 +760,8 @@ def validate_review_admission(
     binding: Mapping[str, Any] | ReviewBinding,
     review_file: str,
     required_merge_method: str = REQUIRED_REVIEW_MERGE_METHOD,
+    allow_base_advance: bool = False,
+    frozen_base_sha: str = "",
     runner: JsonRunner | None = None,
 ) -> ReviewAdmissionBinding:
     """Fail closed before a canonical task is allowed to enter ``review``.
@@ -831,11 +838,40 @@ def validate_review_admission(
         raise GitHubReviewBridgeError(
             f"GitHub PR #{normalized.pr} has invalid base ancestry evidence"
         ) from exc
-    if compare_status not in {"ahead", "identical"} or behind_by != 0:
-        raise GitHubReviewBridgeError(
-            f"GitHub PR #{normalized.pr} head does not contain current base "
-            f"{base_sha} (status={compare_status or 'unknown'}, behind_by={behind_by})"
+    current_base_is_contained = (
+        compare_status in {"ahead", "identical"} and behind_by == 0
+    )
+    if not current_base_is_contained:
+        frozen_base_sha = str(frozen_base_sha or "").strip().lower()
+        if not allow_base_advance or not OID_RE.fullmatch(frozen_base_sha):
+            raise GitHubReviewBridgeError(
+                f"GitHub PR #{normalized.pr} head does not contain current base "
+                f"{base_sha} (status={compare_status or 'unknown'}, behind_by={behind_by})"
+            )
+        advance = client.run_json(
+            [
+                "gh",
+                "api",
+                f"repos/{repository}/compare/{frozen_base_sha}...{base_sha}",
+            ]
         )
+        if not isinstance(advance, Mapping):
+            raise GitHubReviewBridgeError(
+                f"GitHub PR #{normalized.pr} frozen-base advance evidence is unavailable"
+            )
+        advance_status = str(advance.get("status") or "").strip().lower()
+        try:
+            advance_behind_by = int(advance.get("behind_by") or 0)
+        except (TypeError, ValueError) as exc:
+            raise GitHubReviewBridgeError(
+                f"GitHub PR #{normalized.pr} has invalid frozen-base advance evidence"
+            ) from exc
+        if advance_status not in {"ahead", "identical"} or advance_behind_by != 0:
+            raise GitHubReviewBridgeError(
+                f"GitHub PR #{normalized.pr} current base {base_sha} is not a linear "
+                f"advance of frozen base {frozen_base_sha} "
+                f"(status={advance_status or 'unknown'}, behind_by={advance_behind_by})"
+            )
 
     manifest_path, manifest_blob_sha = _review_manifest_identity(
         client,
@@ -861,6 +897,7 @@ def revalidate_review_admission(
     *,
     repository: str,
     delivery_binding: Mapping[str, Any],
+    allow_base_advance: bool = False,
     runner: JsonRunner | None = None,
 ) -> ReviewAdmissionBinding:
     """Recheck a frozen admission before approval can unlock integration.
@@ -891,6 +928,8 @@ def revalidate_review_admission(
         binding=delivery_binding,
         review_file=frozen_path,
         required_merge_method=frozen_method,
+        allow_base_advance=allow_base_advance,
+        frozen_base_sha=frozen_base_sha,
         runner=runner,
     )
     if current.manifest_blob_sha != frozen_blob_sha:
@@ -1124,6 +1163,12 @@ def review_proof_tag_name(*, decision: str, head_sha: str) -> str:
     return f"{REVIEW_PROOF_TAG_PREFIX}/{decision}/{head_sha}"
 
 
+def operator_acceptance_proof_tag_name(*, head_sha: str) -> str:
+    """Return the exact-head proof ref name for a Human/Ops acceptance."""
+
+    return review_proof_tag_name(decision=OPERATOR_ACCEPT, head_sha=head_sha)
+
+
 def _push_review_proof_tag(
     runner: JsonRunner,
     *,
@@ -1266,6 +1311,163 @@ def _dispatch_canonical_review_gate_workflow(
     except GitHubReviewBridgeError:
         if required:
             raise
+
+
+def validate_operator_acceptance_evidence(
+    value: Mapping[str, Any],
+    *,
+    repository: str,
+    actor: str,
+    binding: Mapping[str, Any] | ReviewBinding,
+    intent_nonce: str | None = None,
+) -> dict[str, Any]:
+    """Validate one durable, non-review Human/Ops exact-head acceptance.
+
+    This is intentionally separate from ``validate_result_evidence``: a
+    reviewer bridge result and an operator acceptance have different
+    authority.  Treating the latter as a reviewer result would make the
+    audit trail lie about what happened.
+    """
+
+    repository = _require_repository_slug(repository)
+    accepted = binding if isinstance(binding, ReviewBinding) else ReviewBinding.from_mapping(binding)
+    expected = {
+        "repository": repository,
+        "pr": accepted.pr,
+        "head_sha": accepted.head_sha,
+        "head_branch": accepted.head_branch,
+        "base": accepted.base,
+        "decision": OPERATOR_ACCEPT,
+        "actor": "Human/Ops",
+        "mode": "operator_exact_head",
+    }
+    try:
+        observed_pr = int(value.get("pr") or 0)
+    except (TypeError, ValueError) as exc:
+        raise GitHubReviewBridgeError("operator acceptance has an invalid PR number") from exc
+    observed = {
+        "repository": str(value.get("repository") or "").strip(),
+        "pr": observed_pr,
+        "head_sha": str(value.get("head_sha") or "").strip().lower(),
+        "head_branch": str(value.get("head_branch") or "").strip(),
+        "base": str(value.get("base") or "").strip(),
+        "decision": str(value.get("decision") or "").strip(),
+        "actor": str(value.get("actor") or "").strip(),
+        "mode": str(value.get("mode") or "").strip(),
+    }
+    if actor != "Human/Ops" or observed != expected:
+        raise GitHubReviewBridgeError(
+            f"operator acceptance exact-head mismatch: expected={expected!r} observed={observed!r}"
+        )
+    if intent_nonce is not None and str(value.get("intent_nonce") or "") != intent_nonce:
+        raise GitHubReviewBridgeError("operator acceptance intent nonce mismatch")
+    expected_ref = f"refs/tags/{operator_acceptance_proof_tag_name(head_sha=accepted.head_sha)}"
+    if str(value.get("operator_acceptance_proof_ref") or "").strip() != expected_ref:
+        raise GitHubReviewBridgeError("operator acceptance proof ref mismatch")
+    frozen_base_sha = str(value.get("frozen_base_sha") or "").strip().lower()
+    current_base_sha = str(value.get("current_base_sha") or "").strip().lower()
+    if frozen_base_sha or current_base_sha:
+        expected_frozen_base_sha = str(
+            binding.get("base_sha") if isinstance(binding, Mapping) else ""
+        ).strip().lower()
+        if (
+            not OID_RE.fullmatch(frozen_base_sha)
+            or not OID_RE.fullmatch(current_base_sha)
+            or frozen_base_sha != expected_frozen_base_sha
+        ):
+            raise GitHubReviewBridgeError("operator acceptance base evidence mismatch")
+    return dict(value)
+
+
+def bridge_operator_acceptance(
+    *,
+    repository: str,
+    task_id: str,
+    actor: str,
+    message: str,
+    binding: Mapping[str, Any] | ReviewBinding,
+    intent_nonce: str = "",
+    current_admission: ReviewAdmissionBinding | None = None,
+    runner: JsonRunner | None = None,
+) -> dict[str, Any]:
+    """Publish an operator acceptance proof without creating a PR review.
+
+    The caller has already revalidated the frozen review-admission binding.
+    We still verify the PR's current exact identity before the GitHub write,
+    then publish a distinct tag and re-dispatch the gate from the base branch.
+    """
+
+    repository = _require_repository_slug(repository)
+    task_id = str(task_id or "").strip()
+    if not task_id:
+        raise GitHubReviewBridgeError("operator acceptance requires a task id")
+    if actor != "Human/Ops":
+        raise GitHubReviewBridgeError("operator acceptance requires Human/Ops")
+    normalized = binding if isinstance(binding, ReviewBinding) else ReviewBinding.from_mapping(binding)
+    nonce = str(intent_nonce or "").strip().lower()
+    if nonce and not re.fullmatch(r"[0-9a-f]{32}", nonce):
+        raise GitHubReviewBridgeError("operator acceptance intent nonce must be 32 lowercase hex")
+    client = runner or GhJsonRunner()
+    snapshot = _pr_snapshot(
+        client,
+        repository=repository,
+        binding=normalized,
+        allowed_states=frozenset({"OPEN"}),
+    )
+    proof = _push_review_proof_tag(
+        client,
+        repository=repository,
+        binding=normalized,
+        task_id=task_id,
+        actor=actor,
+        decision=OPERATOR_ACCEPT,
+        message=message,
+    )
+    _dispatch_canonical_review_gate_workflow(
+        client,
+        repository=repository,
+        binding=normalized,
+        required=True,
+    )
+    result = {
+        "repository": repository,
+        "pr": normalized.pr,
+        "head_sha": normalized.head_sha,
+        "head_branch": normalized.head_branch,
+        "base": normalized.base,
+        "decision": OPERATOR_ACCEPT,
+        "actor": actor,
+        "mode": "operator_exact_head",
+        "operator_acceptance_proof_ref": str(proof.get("ref") or "") or None,
+        "pr_url": str(snapshot.get("url") or "") or None,
+        "recorded_at": _utc_now(),
+        "intent_nonce": nonce,
+    }
+    if current_admission is not None:
+        frozen_base_sha = (
+            str(binding.get("base_sha") or "").strip().lower()
+            if isinstance(binding, Mapping)
+            else ""
+        )
+        if not OID_RE.fullmatch(frozen_base_sha):
+            raise GitHubReviewBridgeError(
+                "operator acceptance requires frozen base evidence"
+            )
+        result.update(
+            {
+                "frozen_base_sha": frozen_base_sha,
+                "current_base_sha": current_admission.base_sha,
+            }
+        )
+    result = {key: value for key, value in result.items() if value not in (None, "")}
+    validate_operator_acceptance_evidence(
+        result,
+        repository=repository,
+        actor=actor,
+        binding=binding,
+        intent_nonce=nonce if nonce else None,
+    )
+    return result
 
 
 def bridge_review_decision(

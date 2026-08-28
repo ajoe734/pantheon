@@ -71,6 +71,7 @@ from dispatch_policy import (
     REASON_REVIEW_READY,
     dispatch_reason_priority,
     is_execution_dispatch_reason,
+    is_operator_exact_head_acceptance,
     normalized_status_set,
     ready_dispatch_settings,
     task_execution_resources,
@@ -13340,6 +13341,11 @@ def task_execution_dispatch_candidate(
         # let the ordinary planner redispatch the incumbent while fallback
         # eligibility/capacity is still unresolved.
         return None
+    if is_operator_exact_head_acceptance(task):
+        # Human/Ops exact-head acceptance is consumed by serialized
+        # integration. It is not an owner-closeout job, so dispatching a
+        # worker here only creates a futile finalize/recovery loop.
+        return None
     raw_requeue = task.get(REVIEW_REQUEUE_INTENT_KEY)
     requeue_record = task_review_requeue_record(task)
     if raw_requeue is not None and requeue_record is None:
@@ -13967,7 +13973,13 @@ def ready_dispatch_signature(
     activity_events: list[dict[str, Any]] | None = None,
     config: dict[str, Any] | None = None,
 ) -> str:
-    requeue_intent = task_review_requeue_intent(task)
+    # A review-requeue event is reserved while the canonical outbox record is
+    # ``pending``, then the exact same record is acknowledged as
+    # ``materialized``.  Its intent id is part of the reserved event identity,
+    # so it must remain part of a late freshness check after acknowledgement.
+    # Otherwise the checker recomputes a different key and discards the one
+    # durable event before it can launch a worker.
+    requeue_intent = task_review_requeue_record(task)
     return json.dumps(
         {
             "delivery_binding_digest": rewrite_task_machine.delivery_binding_digest(task),
