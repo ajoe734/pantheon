@@ -1,0 +1,64 @@
+{
+  "schema_version": "pantheon.product_functional_closure.acceptance_report.v1",
+  "program_id": "pantheon-product-functional-closure-20260820",
+  "task_id": "PFG-HOSTED-CURRENT-DEV-CLOSEOUT-20260828",
+  "overall_status": "passed",
+  "evaluated_at": "2026-08-28T02:45:00Z",
+  "admitted_exact_pair": {
+    "backend_repo": "ajoe734/pantheon",
+    "backend_branch": "dev",
+    "backend_sha": "a09bd00818f06fbafd4f67a8d39f88fe6881fae6",
+    "frontend_repo": "ajoe734/execute-plans",
+    "frontend_branch": "dev",
+    "frontend_sha": "97aa1c4b5234c595d0f5502f7785383479851318",
+    "frontend_merge_pr": "https://github.com/ajoe734/execute-plans/pull/681",
+    "frontend_merge_commit": "97aa1c4b5234c595d0f5502f7785383479851318",
+    "bff_url": "https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io",
+    "fe_url": "https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io"
+  },
+  "deployment_execution": {
+    "workflow": ".github/workflows/nonprod-deploy.yml",
+    "run_id": "33136122613",
+    "run_url": "https://github.com/ajoe734/pantheon/actions/runs/33136122613",
+    "bounded_admission": true,
+    "ref_change_re_resolution_count": 0,
+    "max_re_resolutions_allowed": 1
+  },
+  "gates": {
+    "gate_01_public_exact_pair_identity": "passed",
+    "gate_02_source_ingestion_reconcile_only_closure": "passed",
+    "gate_03_paper_runtime_binding_and_readiness": "passed",
+    "gate_04_authenticated_product_journeys": "passed",
+    "gate_05_code_disposition_and_simplification": "passed",
+    "gate_06_rollback_and_switch_safety": "passed"
+  },
+  "journeys": {
+    "desktop_l12_cross_loop_truth": {
+      "status": "passed",
+      "skips": 0
+    },
+    "desktop_agora_strategy_workshop_and_trading_room": {
+      "status": "passed",
+      "skips": 0
+    },
+    "desktop_management_console_read_models": {
+      "status": "passed",
+      "skips": 0
+    },
+    "desktop_management_ai_nl_provider": {
+      "status": "passed",
+      "skips": 0
+    }
+  },
+  "required_skips": 0,
+  "dead_paths_absent": [
+    "services/source_ingestion/scheduler_worker.py",
+    "services/source_ingestion/tests/test_scheduler_worker.py"
+  ],
+  "runtime_closure": {
+    "source_ingest_mode": "reconcile_only",
+    "source_max_ticks": 0,
+    "paper_fleet_ready": true,
+    "bounded_lifecycle": "enforced"
+  }
+}
