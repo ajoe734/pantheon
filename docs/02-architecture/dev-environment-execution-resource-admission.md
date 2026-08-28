@@ -24,6 +24,13 @@ execution_resources:
 - Current allowlist: `{"pantheon-dev"}`.
 - Tasks without execution resources (`execution_resources: []` or omitted) are pure worktree-only tasks and are never constrained by execution resource gates.
 - Tasks specifying unknown or unallowlisted resources are rejected at assignment and materialization time.
+- A supervisor-owned task that runs an isolated Docker Compose harness with
+  `--provision-services` or `--down` must also declare `pantheon-dev`.  The
+  harness receives that declaration from the existing supervisor delivery
+  metadata and rejects an undeclared VM/Docker action before it touches Docker.
+  It also rejects `--preserve-provisioned-stack` for supervised workers, so a
+  completed or failed task cannot leave a competing stack behind.  Direct,
+  non-supervisor local debugging remains available and uses no hidden lock.
 
 ### 2.2 Pre-Dispatch Capacity Reservation (Capacity 1)
 

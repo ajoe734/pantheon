@@ -75,6 +75,7 @@ class AdapterDeliveryPolicyTests(unittest.TestCase):
                 message="wake",
                 task_id="T-REVIEW",
                 reason="review_ready_dispatch",
+                metadata={"execution_resources": ["pantheon-dev"]},
             )
             adapter = CodexAdapter(config=config, provider_capabilities={})
             fake_process = mock.Mock(pid=1234)
@@ -101,6 +102,7 @@ class AdapterDeliveryPolicyTests(unittest.TestCase):
         self.assertEqual(env["ORCH_PROVIDER"], "codex2")
         self.assertEqual(env["ORCH_TASK_ID"], "T-REVIEW")
         self.assertEqual(env["ORCH_REASON"], "review_ready_dispatch")
+        self.assertEqual(env["ORCH_TASK_EXECUTION_RESOURCES"], '["pantheon-dev"]')
         self.assertEqual(env["OPENAI_API_KEY"], "codex2-key")
         self.assertEqual(env["CODEX_HOME"], os.path.expanduser("~/.codex2"))
         self.assertNotIn("CODEX_THREAD_ID", env)
