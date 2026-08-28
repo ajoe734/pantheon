@@ -137,6 +137,46 @@ class TestStaticRegressionReadSurfacePorts(unittest.TestCase):
                 f"ReadSurfacePorts must not recreate local overlay persistence ({attr})",
             )
 
+    def test_main_py_all_read_store_attributes_are_inventoried_and_mapped(self) -> None:
+        """Prove that all 202 read_store attributes in main.py are inventoried and mapped or isolated."""
+        main_py = BFF_DIR / "main.py"
+        self.assertTrue(main_py.exists(), f"main.py not found at {main_py}")
+        tree = ast.parse(main_py.read_text(encoding="utf-8"), filename=str(main_py))
+
+        read_store_attrs: set[str] = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Attribute):
+                if isinstance(node.value, ast.Name) and node.value.id == "read_store":
+                    read_store_attrs.add(node.attr)
+
+        self.assertGreater(len(read_store_attrs), 100, "Expected >100 read_store attributes in main.py")
+
+        ports_instance = create_read_surface_ports()
+        mutation_prefixes = (
+            "append_", "create_", "update_", "patch_", "put_", "record_",
+            "open_", "close_", "submit_", "publish_", "discard_", "commit_",
+        )
+
+        unmapped: list[str] = []
+        mapped_reads: list[str] = []
+        isolated_mutations: list[str] = []
+
+        for attr in sorted(read_store_attrs):
+            if any(attr.startswith(pre) for pre in mutation_prefixes):
+                isolated_mutations.append(attr)
+            elif hasattr(ports_instance, attr):
+                mapped_reads.append(attr)
+            else:
+                unmapped.append(attr)
+
+        self.assertEqual(
+            unmapped,
+            [],
+            f"Found unmapped read_store attributes in main.py without domain port mapping: {unmapped}",
+        )
+        self.assertGreaterEqual(len(mapped_reads), 160)
+        self.assertGreaterEqual(len(isolated_mutations), 35)
+
 
 class TestAgoraPersonaClientMigration(unittest.TestCase):
     """Verifies that Agora persona_client.build_canonical_persona_client satisfies PersonaReadPort."""

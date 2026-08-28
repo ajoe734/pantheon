@@ -622,6 +622,170 @@ class ReadSurfacePorts:
             return self.lifecycle_telemetry_governance.trade_journey_projection_reader()
         return None
 
+    # -------------------------------------------------------------------------
+    # Domain-Owned Read Projections
+    # -------------------------------------------------------------------------
+    def get_ranking_formula(self, formula_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        if not formula_id:
+            return None
+        if hasattr(self.persona_capital_runtime, "get_ranking_formula"):
+            return self.persona_capital_runtime.get_ranking_formula(formula_id)
+        for formula in self.persona_capital_runtime.list_ranking_formulas():
+            if formula.get("formula_id") == formula_id or formula.get("id") == formula_id:
+                return formula
+        return None
+
+    def get_ranking_snapshot(self, ranking_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        if not ranking_id:
+            return None
+        return self.persona_capital_runtime.get_ranking(ranking_id)
+
+    def get_allocation_evaluation(self, alloc_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        if not alloc_id:
+            return None
+        for item in self.persona_capital_runtime.list_capital_allocations():
+            if item.get("id") == alloc_id or item.get("allocation_id") == alloc_id:
+                return item
+        return None
+
+    def get_approval_decision(self, decision_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        if not decision_id:
+            return None
+        for item in self.ooda_management.list_approval_queue_items():
+            if item.get("decision_id") == decision_id or item.get("id") == decision_id:
+                return item
+        return None
+
+    def list_approval_decisions(self, **kwargs: Any) -> List[Dict[str, Any]]:
+        return self.ooda_management.list_approval_queue_items(**kwargs)
+
+    def get_review_summary(self, **kwargs: Any) -> Dict[str, Any]:
+        return self.ooda_management.get_surface_status(**kwargs)
+
+    def get_route_policy_for_persona(self, persona_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        if not persona_id:
+            return None
+        for policy in self.operations_consultation.list_route_policies():
+            if policy.get("persona_id") == persona_id or policy.get("id") == persona_id:
+                return policy
+        return None
+
+    def get_consult_policy(self, **kwargs: Any) -> Optional[Dict[str, Any]]:
+        rules = self.operations_consultation.list_consult_rules(**kwargs)
+        return rules[0] if rules else None
+
+    def get_allowed_actions(self, **kwargs: Any) -> List[str]:
+        return [
+            p.get("action")
+            for p in self.operations_consultation.list_governance_permissions(**kwargs)
+            if isinstance(p, dict) and p.get("action")
+        ]
+
+    def get_persona_allowed_actions(self, persona_id: Optional[str], **kwargs: Any) -> List[str]:
+        return self.get_allowed_actions(**kwargs)
+
+    def get_rollbacks(self, runtime_id: Optional[str] = None) -> List[Dict[str, Any]]:
+        _, runs = self.lifecycle_telemetry_governance.list_loop_runs()
+        if runtime_id:
+            return [r for r in runs if r.get("runtime_id") == runtime_id]
+        return runs
+
+    def list_all_rollbacks(self, **kwargs: Any) -> List[Dict[str, Any]]:
+        return self.get_rollbacks()
+
+    def list_authoritative_paper_runtime_monitoring_sessions(self) -> List[Dict[str, Any]]:
+        return self.lifecycle_telemetry_governance.list_paper_live_drift_reports()
+
+    def list_paper_runtime_monitoring_sessions(self) -> List[Dict[str, Any]]:
+        return self.lifecycle_telemetry_governance.list_paper_live_drift_reports()
+
+    def get_paper_runtime_monitoring_session(self, session_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        if not session_id:
+            return None
+        for s in self.lifecycle_telemetry_governance.list_paper_live_drift_reports():
+            if s.get("session_id") == session_id or s.get("id") == session_id:
+                return s
+        return None
+
+    def get_latest_run(self, **kwargs: Any) -> Optional[Dict[str, Any]]:
+        _, runs = self.lifecycle_telemetry_governance.list_loop_runs()
+        return runs[0] if runs else None
+
+    def get_experiment_bff(self, exp_id: str) -> Optional[Dict[str, Any]]:
+        return self.research_knowledge_source.get_research_experiment(exp_id)
+
+    def get_job_bff(self, job_id: str) -> Optional[Dict[str, Any]]:
+        return self.research_knowledge_source.get_research_ticket(job_id)
+
+    def list_jobs_bff(self, **kwargs: Any) -> List[Dict[str, Any]]:
+        return self.research_knowledge_source.list_research_tickets(**kwargs)
+
+    def list_events_bff(self, **kwargs: Any) -> List[Dict[str, Any]]:
+        return self.lifecycle_telemetry_governance.list_telemetry_events(**kwargs)
+
+    def get_session(self, session_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        return self.persona_training.get_trainer_session(session_id)
+
+    def get_sessions_for_persona(self, persona_id: str) -> List[Dict[str, Any]]:
+        return self.persona_training.list_persona_sessions(persona_id)
+
+    def list_sessions_for_persona(self, persona_id: str, **kwargs: Any) -> List[Dict[str, Any]]:
+        return self.persona_training.list_persona_sessions(persona_id, **kwargs)
+
+    def get_teaching_sessions_for_persona(self, persona_id: str) -> List[Dict[str, Any]]:
+        return self.persona_training.list_persona_teaching_sessions(persona_id)
+
+    def list_teaching_sessions_for_persona(self, persona_id: str, **kwargs: Any) -> List[Dict[str, Any]]:
+        return self.persona_training.list_persona_teaching_sessions(persona_id, **kwargs)
+
+    def build_trainer_preview_unavailable(self, session_id: str, **kwargs: Any) -> Optional[Dict[str, Any]]:
+        return self.persona_training.get_trainer_preview(session_id, **kwargs)
+
+    def list_decision_journal_entries(self, **kwargs: Any) -> List[Dict[str, Any]]:
+        return self.research_knowledge_source.list_research_notes(**kwargs)
+
+    def list_registry_entries(self, **kwargs: Any) -> List[Dict[str, Any]]:
+        return self.research_knowledge_source.list_data_sources(**kwargs)
+
+    def list_committees(self, **kwargs: Any) -> List[Dict[str, Any]]:
+        return self.operations_consultation.list_workflow_templates(**kwargs)
+
+    def get_committee(self, committee_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        return self.operations_consultation.get_consult_request(committee_id or "")
+
+    def list_committee_session_memos(self, **kwargs: Any) -> List[Dict[str, Any]]:
+        return self.operations_consultation.list_consult_memos(**kwargs)
+
+    def get_committee_session_memo(self, memo_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        return self.operations_consultation.get_consult_memo(memo_id)
+
+    def list_agora_insights(self, **kwargs: Any) -> List[Dict[str, Any]]:
+        return self.research_knowledge_source.list_insight_cards(**kwargs)
+
+    def list_agora_notes(self, **kwargs: Any) -> List[Dict[str, Any]]:
+        return self.research_knowledge_source.list_research_notes(**kwargs)
+
+    def list_agora_sessions(self, **kwargs: Any) -> List[Dict[str, Any]]:
+        return self.operations_consultation.list_consult_requests(**kwargs)
+
+    def list_agora_signals(self, **kwargs: Any) -> List[Dict[str, Any]]:
+        return self.research_knowledge_source.list_evidence_refs(**kwargs)
+
+    def list_agora_training_examples(self, **kwargs: Any) -> List[Dict[str, Any]]:
+        return self.persona_training.list_trainer_replays(**kwargs)
+
+    def list_agora_watchlist(self, **kwargs: Any) -> List[Dict[str, Any]]:
+        return self.persona_capital_runtime.list_personas(**kwargs)
+
+    def get_agora_session(self, session_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        return self.operations_consultation.get_consult_request(session_id or "")
+
+    def get_agora_signal(self, signal_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        return self.research_knowledge_source.get_evidence_ref(signal_id or "")
+
+    def get_agora_committee_evidence_pack(self, session_id: Optional[str]) -> List[Dict[str, Any]]:
+        return self.operations_consultation.get_consultation_evidence(session_id or "")
+
 
 def create_read_surface_ports(
     *,
