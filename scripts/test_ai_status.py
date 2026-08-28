@@ -3935,6 +3935,8 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
             "operator_acceptance_proof_ref": (
                 f"refs/tags/pantheon-review/operator-accept/{'b' * 40}"
             ),
+            "frozen_base_sha": "c" * 40,
+            "current_base_sha": "e" * 40,
         }
         preflight = {
             "command": "operator_accept",
@@ -3967,6 +3969,32 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
         self.assertTrue(
             all(item.get("status") == "done" for item in self.state["handoffs"])
         )
+
+    def test_operator_acceptance_rejects_delivery_identity_mismatch(self) -> None:
+        self._set_pr_delivery_binding(pr=4218, head_sha="b" * 40)
+        task = self.state["tasks"][0]
+        task[ai_status.APPROVAL_BINDING_KEY] = {
+            "pr": 4218,
+            "head_sha": "b" * 40,
+            "head_branch": "task/REG-002",
+            "base": "dev",
+        }
+        task[ai_status.OPERATOR_ACCEPTANCE_KEY] = {
+            "repository": "ajoe734/pantheon",
+            "pr": 4218,
+            "head_sha": "b" * 40,
+            "head_branch": "task/REG-002",
+            "base": "dev",
+            "decision": "operator-accept",
+            "actor": "Human/Ops",
+            "mode": "operator_exact_head",
+            "operator_acceptance_proof_ref": (
+                f"refs/tags/pantheon-review/operator-accept/{'b' * 40}"
+            ),
+        }
+        task[ai_status.DELIVERY_BINDING_KEY]["head_sha"] = "a" * 40
+
+        self.assertFalse(ai_status.operator_acceptance_evidence_matches(task))
 
     def test_operator_acceptance_never_recreates_owner_finalizer_handoff(self) -> None:
         task = self.state["tasks"][0]

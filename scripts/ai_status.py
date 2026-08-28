@@ -8195,13 +8195,29 @@ def operator_acceptance_evidence_matches(task: Mapping[str, Any]) -> bool:
     evidence = task.get(OPERATOR_ACCEPTANCE_KEY)
     if not isinstance(binding, Mapping) or not isinstance(evidence, Mapping):
         return False
+    # Operator acceptance records frozen-base evidence from the immutable PR
+    # delivery binding.  The review binding intentionally contains only the
+    # PR identity used by ordinary reviewer workflows, so pass the frozen base
+    # through from the delivery binding without relaxing any of the shared
+    # PR/head/branch/base equality checks.
+    bridge_binding = dict(binding)
+    delivery = task.get(DELIVERY_BINDING_KEY)
+    if isinstance(delivery, Mapping):
+        for field in ("pr", "head_sha", "head_branch", "base"):
+            if str(delivery.get(field) or "").strip() != str(
+                binding.get(field) or ""
+            ).strip():
+                return False
+        frozen_base_sha = str(delivery.get("base_sha") or "").strip().lower()
+        if frozen_base_sha:
+            bridge_binding["base_sha"] = frozen_base_sha
     bridge = _github_review_bridge_module()
     try:
         bridge.validate_operator_acceptance_evidence(
             evidence,
             repository=str(evidence.get("repository") or "").strip(),
             actor="Human/Ops",
-            binding=binding,
+            binding=bridge_binding,
             intent_nonce=(
                 str(evidence.get("intent_nonce") or "").strip() or None
             ),
