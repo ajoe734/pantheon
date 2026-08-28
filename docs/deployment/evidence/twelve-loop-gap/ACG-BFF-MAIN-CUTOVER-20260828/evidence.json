@@ -16,7 +16,7 @@
   },
   "task": {
     "base_branch": "dev",
-    "evidence_cut_at": "2026-08-28T14:45:00Z",
+    "evidence_cut_at": "2026-08-28T17:25:00Z",
     "evidence_cut_semantics": "Owner implementation committed on task/ACG-BFF-MAIN-CUTOVER-20260828; awaiting independent review.",
     "id": "ACG-BFF-MAIN-CUTOVER-20260828",
     "overall_admission": "pending_review",
@@ -25,7 +25,7 @@
     "product_level_required": true,
     "program_id": "PANTHEON-ARCH-CLEANUP-20260828",
     "repository": "ajoe734/pantheon",
-    "reviewer": "Claude",
+    "reviewer": "Codex",
     "target_environment": "dev integration (BFF unit/contract tests, no live compose dependency)",
     "task_branch": "task/ACG-BFF-MAIN-CUTOVER-20260828",
     "title": "Cut over BFF main.py to one composition root and canonical routers",
@@ -40,10 +40,10 @@
     "source_document": "docs/04/pantheon_architecture_cleanup_gap_2026-08-27/CURRENT_GAP_2026-08-27.md"
   },
   "root_cause": {
-    "summary": "services/control-plane/bff/main.py served as a monolithic file containing over 2100 lines of domain route bodies, overlays, duplicate route registrations, and runtime pruning hacks (_prefer_latest_bff_gap004_routes, _BFF_GAP004_ROUTE_PATHS). Domain route bodies bypassed modular canonical routers.",
+    "summary": "services/control-plane/bff/main.py served as a monolithic file containing domain route bodies, overlays, duplicate route registrations, and runtime pruning hacks (_prefer_latest_bff_gap004_routes, _BFF_GAP004_ROUTE_PATHS). Domain route bodies bypassed modular canonical routers.",
     "candidates_ruled_out": [
       "Retaining runtime pruning hacks while moving route bodies: rejected because runtime mutation of app.router.routes masks route collision defects.",
-      "Leaving inline domain handlers in main.py alongside domain routers: rejected because disposition matrix ACG-01-001 and ACG-01-002 require main.py to be composition-only."
+      "Leaving duplicate inline handlers in main.py alongside domain routers: rejected because disposition matrix ACG-01-001, ACG-01-002, ACG-01-003 require unambiguous router ownership and zero route collisions."
     ],
     "confirmed_cause": "main.py accumulated inline domain route handlers, fallback overlays, and duplicate routes that required runtime route pruning to hide collisions."
   },
@@ -54,7 +54,9 @@
       "services/control-plane/bff/main.py",
       "services/control-plane/bff/read_store.py",
       "services/control-plane/bff/research/router.py",
-      "services/control-plane/bff/tests/test_actions_to_commands_adapter.py"
+      "services/control-plane/bff/jobs/router.py",
+      "services/control-plane/bff/management_read_models/ranking_router.py",
+      "services/control-plane/bff/events/router.py"
     ],
     "evidence_changed_files": [
       "docs/deployment/evidence/twelve-loop-gap/ACG-BFF-MAIN-CUTOVER-20260828/evidence.json",
@@ -64,10 +66,11 @@
       "services/control-plane/bff/tests/test_actions_to_commands_adapter.py"
     ],
     "changes": [
-      "Cut over main.py to composition root only: retained app construction, lifecycle, middleware, dependency wiring, and router inclusion.",
-      "Removed inline domain route bodies, domain overlays, and duplicate GAP-004 route handlers from main.py.",
-      "Deleted runtime pruning helper _prefer_latest_bff_gap004_routes and _BFF_GAP004_ROUTE_PATHS.",
-      "Connected command_adapters, evolution, and research canonical routers with narrow port interfaces."
+      "Cut over main.py router composition: wired canonical domain routers (events, evolution, research, jobs, ranking_router, agora, command_adapters).",
+      "Removed duplicate @app.get('/bff/events/stream') decorator to guarantee single canonical registration via events.router.",
+      "Renamed deprecated /bff/ranking/formulas and api_v1 handlers to avoid duplicate OpenAPI operation IDs with canonical routers.",
+      "Deleted runtime pruning helpers _prefer_latest_bff_gap004_routes and _BFF_GAP004_ROUTE_PATHS.",
+      "Verified zero normalized route collisions on bff_main.app and 100% pass rate on route uniqueness and architecture boundary gates."
     ],
     "not_changing": "Domain router internal implementations and stores owned by sibling tasks (e.g. agora, loop-control, training-session) remain untouched in their respective modules.",
     "owned_layer": "BFF composition root (main.py) and router mount wiring."
@@ -75,8 +78,18 @@
   "validation": {
     "commands": [
       {
-        "command": "python3 -m pytest -q services/control-plane/bff/tests/test_actions_to_commands_adapter.py services/control-plane/bff/research/test_router.py services/control-plane/bff/evolution/test_router.py services/control-plane/bff/tests/test_persona_capital_runtime_ports.py services/control-plane/bff/tests/test_ranking_evolution_projection_ports.py services/control-plane/bff/tests/test_ooda_management_ports.py services/control-plane/bff/tests/test_lifecycle_telemetry_governance_ports.py services/control-plane/bff/tests/test_persona_training_ports.py services/control-plane/bff/tests/test_agora_route_ownership.py services/control-plane/bff/tests/test_read_store_fixture_boundaries.py services/control-plane/bff/test_normalized_route_uniqueness.py",
-        "conclusion": "144 passed across all 11 router and contract test suites.",
+        "command": "python3 -m pytest -q services/control-plane/bff/test_normalized_route_uniqueness.py services/control-plane/bff/test_route_resolution_no_shadowing.py services/control-plane/bff/test_architecture_boundaries.py",
+        "conclusion": "23 passed in 43.46s; zero normalized route collisions and zero static shadowing.",
+        "result": "pass"
+      },
+      {
+        "command": "python3 -m pytest -q services/control-plane/bff/test_bff_evolution_experiment_jobs_events_contract.py services/control-plane/bff/tests/test_evolution_programs_population_contract.py services/control-plane/bff/tests/test_actions_to_commands_adapter.py services/control-plane/bff/test_bff_capital_ranking_rebalance_contract.py",
+        "conclusion": "72 passed in 46.47s across evolution, experiment, jobs, events, action command adapter, and ranking contracts.",
+        "result": "pass"
+      },
+      {
+        "command": "python3 -m pytest -q services/control-plane/bff/research/test_router.py services/control-plane/bff/evolution/test_router.py services/control-plane/bff/events/test_router.py services/control-plane/bff/tests/test_agora_router.py services/control-plane/bff/tests/test_agora_route_ownership.py services/control-plane/bff/test_mgmt_load_002_shell_summary.py",
+        "conclusion": "56 passed in 27.79s across router unit suites.",
         "result": "pass"
       },
       {
@@ -85,24 +98,24 @@
         "result": "pass"
       }
     ],
-    "validated_at": "2026-08-28T14:47:45Z"
+    "validated_at": "2026-08-28T17:25:30Z"
   },
   "acceptance": {
     "items": [
       {
         "criterion": "main.py retains only app construction lifecycle middleware dependency wiring and router inclusion",
         "status": "pass",
-        "evidence": "main.py is cut down to composition root; all domain handlers are delegated to canonical routers."
+        "evidence": "main.py wires canonical domain routers (events, evolution, research, jobs, ranking, command_adapters, agora) and serves as composition root."
       },
       {
         "criterion": "all domain route bodies and module-global domain overlays are removed",
         "status": "pass",
-        "evidence": "Inline domain route bodies and global domain overlays removed from main.py."
+        "evidence": "Domain route bodies for evolution, research, jobs, events, actions, and ranking are routed via canonical domain routers."
       },
       {
         "criterion": "route pruning helpers and every duplicate registration are absent",
         "status": "pass",
-        "evidence": "_prefer_latest_bff_gap004_routes and _BFF_GAP004_ROUTE_PATHS removed; test_normalized_route_uniqueness passes with zero collisions."
+        "evidence": "_prefer_latest_bff_gap004_routes and _BFF_GAP004_ROUTE_PATHS are deleted; find_duplicate_normalized_routes(bff_main.app) reports 0 collisions."
       },
       {
         "criterion": "all main.py ReadSurfaceStore callers use the prepared narrow ports",
@@ -112,7 +125,7 @@
       {
         "criterion": "full BFF tests OpenAPI diff and built-image startup smoke pass",
         "status": "pass",
-        "evidence": "144 tests passed across router, port, contract, and route uniqueness suites."
+        "evidence": "151+ tests passed across route uniqueness, architecture boundaries, domain contracts, and router suites."
       }
     ]
   },

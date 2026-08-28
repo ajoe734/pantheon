@@ -19675,7 +19675,7 @@ async def launch_experiment(
 
 
 @app.get("/api/v1/experiments")
-async def list_experiments(
+async def api_v1_list_experiments(
     ticket_id: Optional[str] = None,
     status: Optional[str] = None,
     page_token: Optional[str] = None,
@@ -19730,7 +19730,7 @@ async def list_experiments(
 
 
 @app.get("/api/v1/experiments/{experiment_id}")
-async def get_experiment(
+async def api_v1_get_experiment(
     experiment_id: str,
     authorization: Optional[str] = Header(default=None),
 ):
@@ -25977,7 +25977,7 @@ async def bff_capital_pool_action(
 # -- Ranking formulas BFF ----------------------------------------------------
 
 @app.get("/bff/ranking/formulas")
-async def bff_list_ranking_formulas(
+async def bff_deprecated_list_ranking_formulas(
     status: Optional[str] = None,
     page_token: Optional[str] = None,
     page_size: int = Query(default=20, ge=1, le=200),
@@ -26005,7 +26005,7 @@ async def bff_list_ranking_formulas(
 
 
 @app.post("/bff/ranking/formulas", status_code=201)
-async def bff_create_ranking_formula(
+async def bff_deprecated_create_ranking_formula(
     payload: Dict[str, Any] = Body(default_factory=dict),
     authorization: Optional[str] = Header(default=None),
     idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
@@ -26047,7 +26047,7 @@ async def bff_create_ranking_formula(
 
 
 @app.get("/bff/ranking/formulas/{formula_id}")
-async def bff_get_ranking_formula(
+async def bff_deprecated_get_ranking_formula(
     formula_id: str,
     authorization: Optional[str] = Header(default=None),
 ):
@@ -26076,7 +26076,7 @@ async def bff_get_ranking_formula(
 
 
 @app.patch("/bff/ranking/formulas/{formula_id}")
-async def bff_patch_ranking_formula(
+async def bff_deprecated_patch_ranking_formula(
     formula_id: str,
     payload: Dict[str, Any] = Body(default_factory=dict),
     authorization: Optional[str] = Header(default=None),
@@ -26125,7 +26125,7 @@ async def bff_patch_ranking_formula(
 
 
 @app.post("/bff/ranking/formulas/{formula_id}/actions/{action_id}", status_code=202)
-async def bff_ranking_formula_action(
+async def bff_deprecated_ranking_formula_action(
     formula_id: str,
     action_id: str,
     payload: Dict[str, Any] = Body(default_factory=dict),
@@ -56983,7 +56983,6 @@ async def _frontend_bff_event_stream(channels: tuple[str, ...]) -> AsyncGenerato
         )
 
 
-@app.get("/bff/events/stream")
 async def stream_bff_events(
     channels: Optional[str] = Query(default=None),
     channel: Optional[str] = Query(default=None),
