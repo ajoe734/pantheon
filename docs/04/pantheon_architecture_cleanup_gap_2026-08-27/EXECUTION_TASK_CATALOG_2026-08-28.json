@@ -1,0 +1,896 @@
+{
+  "schema_version": 1,
+  "program_id": "PANTHEON-ARCH-CLEANUP-20260828",
+  "materialization_id": "ARCH-CLEANUP-MATERIALIZE-20260828",
+  "status": "ready_for_plan_freeze",
+  "source": {
+    "plan_pull_request": 5277,
+    "plan_head_sha": "3f041ad26b496e6c03b94de53c7331a5b7532064",
+    "plan_merge_sha": "aeaa0af5707fc85c8baa32cfa2f4d10f368e3b81",
+    "materialization_base_sha": "d1697f5de815880de015a3bb8498a5b7ed1f0e43",
+    "backend_audit_sha": "f4a14b29789d6a0e53d64df066042c53bb6c5534",
+    "frontend_audit_sha": "6766ebe4c95153c019b206cc6326a5a0d9771138",
+    "gap_document": "docs/04/pantheon_architecture_cleanup_gap_2026-08-27/CURRENT_GAP_2026-08-27.md",
+    "system_analysis": "docs/04/pantheon_architecture_cleanup_gap_2026-08-27/SA_ARCHITECTURE_CLEANUP_2026-08-27.md",
+    "system_design": "docs/04/pantheon_architecture_cleanup_gap_2026-08-27/SD_ARCHITECTURE_CLEANUP_2026-08-27.md",
+    "disposition_matrix": "docs/04/pantheon_architecture_cleanup_gap_2026-08-27/DISPOSITION_MATRIX_2026-08-27.json"
+  },
+  "rules": {
+    "latest_dev_preflight": true,
+    "owner_reviewer_must_differ": true,
+    "implementation_starts_after_plan_freeze": true,
+    "no_new_facade_or_truth_store": true,
+    "move_and_delete_same_delivery_unit": true,
+    "functional_failure_requires_gap_report_before_repair_task": true,
+    "hot_files": {
+      "services/control-plane/bff/main.py": "ACG-BFF-MAIN-CUTOVER-20260828",
+      "services/control-plane/bff/read_store.py": "ACG-RS-FINAL-DELETE-20260828",
+      "execute-plans:src/lib/bff-v1/index.ts": "ACG-FE-INTEGRATION-20260828",
+      "services/source_ingestion/main.py": "ACG-SOURCE-INGESTION-20260828",
+      "docker-compose.yml": "ACG-DEPLOY-EXACT-GATES-20260828"
+    }
+  },
+  "known_serial_conflicts": [
+    {
+      "task_id": "PFG-HOSTED-ACCEPT-20260820",
+      "reason": "PR #5287 modifies the Agora interaction worker launcher outside its broad canonical artifact list",
+      "resolution": "ACG-ENTRYPOINT-WORKER-20260828 depends on terminal completion and re-audits the landed launcher"
+    },
+    {
+      "task_id": "SRCM-P1-HOSTED-ACCEPTANCE-20260824",
+      "reason": "the active task canonically owns docker-compose.yml",
+      "resolution": "ACG-DEPLOY-EXACT-GATES-20260828 depends on terminal completion and is the sole later Compose owner"
+    }
+  ],
+  "plan_freeze_task": {
+    "id": "ARCH-CLEANUP-PLAN-FREEZE-20260828",
+    "title": "Freeze the architecture cleanup execution catalog and DAG",
+    "summary_zh": "獨立審查並合併 102 項 architecture cleanup disposition 對應的 execution catalog；不實作產品程式。",
+    "phase": "W0-plan-freeze",
+    "owner": "Antigravity",
+    "reviewer": "Claude",
+    "target_repo": "pantheon",
+    "depends_on": [],
+    "artifacts": [
+      "docs/04/pantheon_architecture_cleanup_gap_2026-08-27/INDEX.md",
+      "docs/04/pantheon_architecture_cleanup_gap_2026-08-27/EXECUTION_DAG_2026-08-28.md",
+      "docs/04/pantheon_architecture_cleanup_gap_2026-08-27/EXECUTION_TASK_CATALOG_2026-08-28.json"
+    ],
+    "acceptance": [
+      "catalog contains exactly 28 execution tasks plus this plan-freeze task",
+      "all 102 disposition IDs are mapped exactly once",
+      "DAG is acyclic and every dependency resolves",
+      "artifact scopes have one owner or an explicit serialized overlap",
+      "independent exact-head review passes and the catalog merges to dev without product code changes"
+    ],
+    "matrix_items": [],
+    "priority": 0,
+    "wave": 0,
+    "design_unit": "PLAN-FREEZE",
+    "allowed_overlap_task_ids": []
+  },
+  "tasks": [
+    {
+      "id": "ACG-BE-GUARDS-20260828",
+      "title": "Add backend architecture characterization and route uniqueness gates",
+      "summary_zh": "建立 normalized route uniqueness 與 composition boundary gate；不搬 route body。",
+      "phase": "W1-parallel-preparation",
+      "owner": "Antigravity",
+      "reviewer": "Claude",
+      "target_repo": "pantheon",
+      "depends_on": ["ARCH-CLEANUP-PLAN-FREEZE-20260828"],
+      "artifacts": [
+        "services/control-plane/bff/test_route_resolution_no_shadowing.py",
+        "services/control-plane/bff/test_normalized_route_uniqueness.py",
+        "services/control-plane/bff/test_architecture_boundaries.py"
+      ],
+      "acceptance": [
+        "constructed FastAPI app has zero duplicate normalized method and path registrations",
+        "OpenAPI operation IDs are unique",
+        "failure output names every competing owner and source location",
+        "gate has no hard-coded duplicate allowlist"
+      ],
+      "matrix_items": ["ACG-01-013"],
+      "priority": 1,
+      "wave": 1,
+      "design_unit": "ACG-00-BE",
+      "allowed_overlap_task_ids": []
+    },
+    {
+      "id": "ACG-BFF-EVOEXP-PREP-20260828",
+      "title": "Prepare canonical Evolution and Experiment routers",
+      "summary_zh": "把 Evolution 與 Experiment 重複實作合併到 durable owner router；不修改 main.py。",
+      "phase": "W1-parallel-preparation",
+      "owner": "Claude",
+      "reviewer": "Antigravity",
+      "target_repo": "pantheon",
+      "depends_on": ["ARCH-CLEANUP-PLAN-FREEZE-20260828"],
+      "artifacts": [
+        "services/control-plane/bff/evolution/",
+        "services/control-plane/bff/research/",
+        "services/control-plane/bff/command_adapters/evolution_adapter.py",
+        "services/control-plane/bff/test_bff_evolution_experiment_jobs_events_contract.py",
+        "services/control-plane/bff/tests/test_evolution_programs_population_contract.py"
+      ],
+      "acceptance": [
+        "one prepared router contract exists for Evolution programs and actions",
+        "one prepared durable Experiment router replaces process overlays",
+        "current envelopes filters pagination and validation remain characterized",
+        "task does not modify main.py or read_store.py"
+      ],
+      "matrix_items": ["ACG-01-006", "ACG-01-007", "ACG-01-008", "ACG-01-009"],
+      "priority": 1,
+      "wave": 1,
+      "design_unit": "ACG-01-EVOEXP",
+      "allowed_overlap_task_ids": []
+    },
+    {
+      "id": "ACG-BFF-EVENT-ACTION-PREP-20260828",
+      "title": "Prepare canonical Events action-command and ranking routers",
+      "summary_zh": "收斂 Events list/SSE、generic action command 與 ranking formula handlers；不修改 main.py。",
+      "phase": "W1-parallel-preparation",
+      "owner": "Antigravity2",
+      "reviewer": "Claude2",
+      "target_repo": "pantheon",
+      "depends_on": ["ARCH-CLEANUP-PLAN-FREEZE-20260828"],
+      "artifacts": [
+        "services/control-plane/bff/events/",
+        "services/control-plane/bff/command_adapters/router.py",
+        "services/control-plane/bff/management_read_models/ranking_router.py",
+        "services/control-plane/bff/tests/test_actions_to_commands_adapter.py",
+        "services/control-plane/bff/test_bff_capital_ranking_rebalance_contract.py"
+      ],
+      "acceptance": [
+        "one authenticated Events list and SSE implementation preserves replay and reconnect",
+        "one action command adapter owns the generic action route behavior",
+        "ranking formula validation idempotency and persistence remain durable",
+        "task does not modify main.py or read_store.py"
+      ],
+      "matrix_items": ["ACG-01-004", "ACG-01-005", "ACG-01-011", "ACG-01-012"],
+      "priority": 1,
+      "wave": 1,
+      "design_unit": "ACG-01-EVENT-ACTION",
+      "allowed_overlap_task_ids": []
+    },
+    {
+      "id": "ACG-RS-FOUNDATION-20260828",
+      "title": "Inventory ReadSurfaceStore callers and extract test-only fixtures",
+      "summary_zh": "建立 457 methods caller inventory、typed fake 與 fixture boundary；不修改 read_store.py。",
+      "phase": "W1-parallel-preparation",
+      "owner": "Claude2",
+      "reviewer": "Antigravity2",
+      "target_repo": "pantheon",
+      "depends_on": ["ARCH-CLEANUP-PLAN-FREEZE-20260828"],
+      "artifacts": [
+        "services/control-plane/bff/tests/read_store_migration_inventory.json",
+        "services/control-plane/bff/tests/read_store_fixtures.py",
+        "services/control-plane/bff/tests/test_read_store_fixture_boundaries.py",
+        "docs/deployment/evidence/architecture-cleanup/ACG-RS-FOUNDATION-20260828/"
+      ],
+      "acceptance": [
+        "all 457 methods record production callers test callers source owner and target disposition",
+        "required combined fixtures move to explicit test-only factories without copying them into product code",
+        "generic snapshot datasets are retained only with named typed owners",
+        "task does not modify main.py or read_store.py"
+      ],
+      "matrix_items": ["ACG-02-001", "ACG-02-002", "ACG-02-003", "ACG-02-004", "ACG-02-005"],
+      "priority": 2,
+      "wave": 1,
+      "design_unit": "ACG-02-FOUNDATION",
+      "allowed_overlap_task_ids": []
+    },
+    {
+      "id": "ACG-RS-OPS-CONSULT-20260828",
+      "title": "Prepare Operations OpenClaw and Consultation typed read ports",
+      "summary_zh": "把 workflow/catalog、OpenClaw 與 Consultation reads 收斂到既有 focused providers。",
+      "phase": "W1-parallel-preparation",
+      "owner": "Antigravity",
+      "reviewer": "Claude",
+      "target_repo": "pantheon",
+      "depends_on": ["ARCH-CLEANUP-PLAN-FREEZE-20260828"],
+      "artifacts": [
+        "services/control-plane/bff/console_gap/workflows_hooks.py",
+        "services/control-plane/bff/domain_ports/operations_consultation.py",
+        "services/consultation/",
+        "services/control-plane/bff/tests/test_operations_consultation_ports.py"
+      ],
+      "acceptance": [
+        "workflow and catalog routes call focused providers",
+        "OpenClaw reads use the existing operations client with truthful errors",
+        "Consultation reads use ConsultationServiceClient and ConsultationStore",
+        "no cross-domain string-dispatched client or replacement facade is introduced"
+      ],
+      "matrix_items": ["ACG-02-006", "ACG-02-007", "ACG-02-008"],
+      "priority": 2,
+      "wave": 1,
+      "design_unit": "ACG-02-OPS-CONSULT",
+      "allowed_overlap_task_ids": []
+    },
+    {
+      "id": "ACG-RS-PERSONA-CAPITAL-20260828",
+      "title": "Prepare Persona Capital Deployment Runtime and ranking typed ports",
+      "summary_zh": "將 Persona、Capital、Deployment、Runtime 與 ranking projections 導向既有 owner。",
+      "phase": "W1-parallel-preparation",
+      "owner": "Claude",
+      "reviewer": "Antigravity",
+      "target_repo": "pantheon",
+      "depends_on": ["ARCH-CLEANUP-PLAN-FREEZE-20260828"],
+      "artifacts": [
+        "services/control-plane/bff/domain_ports/persona_capital_runtime.py",
+        "services/control-plane/bff/tests/test_persona_capital_runtime_ports.py",
+        "services/control-plane/bff/tests/test_ranking_evolution_projection_ports.py"
+      ],
+      "acceptance": [
+        "Persona Capital Deployment and Runtime reads use narrow existing owner contracts",
+        "foreign-domain mutations route through their canonical command APIs",
+        "ranking and Evolution projections have explicit BFF ownership only where required",
+        "task does not modify runtime-manager implementations main.py or read_store.py"
+      ],
+      "matrix_items": ["ACG-02-011", "ACG-02-012"],
+      "priority": 2,
+      "wave": 1,
+      "design_unit": "ACG-02-PERSONA-CAPITAL",
+      "allowed_overlap_task_ids": []
+    },
+    {
+      "id": "ACG-RS-OODA-MGMT-20260828",
+      "title": "Prepare OODA compatibility queues and Management read-model ports",
+      "summary_zh": "將 OODA、intervention、review queues 與五個 Management reads 收斂至既有 owners。",
+      "phase": "W1-parallel-preparation",
+      "owner": "Antigravity2",
+      "reviewer": "Claude2",
+      "target_repo": "pantheon",
+      "depends_on": ["ARCH-CLEANUP-PLAN-FREEZE-20260828"],
+      "artifacts": [
+        "services/control-plane/bff/domain_ports/ooda_management.py",
+        "services/control-plane/bff/management_read_models/models.py",
+        "services/control-plane/bff/management_read_models/router.py",
+        "services/control-plane/bff/tests/test_ooda_management_ports.py"
+      ],
+      "acceptance": [
+        "OODA and intervention reads use the existing OODA store",
+        "review queues are explicit Management compositions rather than generic datasets",
+        "five Management read models receive narrow injected dependencies",
+        "task does not modify main.py or read_store.py"
+      ],
+      "matrix_items": ["ACG-02-013", "ACG-02-018"],
+      "priority": 2,
+      "wave": 1,
+      "design_unit": "ACG-02-OODA-MGMT",
+      "allowed_overlap_task_ids": []
+    },
+    {
+      "id": "ACG-RS-RESEARCH-SOURCE-20260828",
+      "title": "Prepare Research Knowledge Memory Search and Source typed ports",
+      "summary_zh": "將 Research、Knowledge、Memory、Search、Source reads 收斂至既有 durable owners。",
+      "phase": "W1-parallel-preparation",
+      "owner": "Claude2",
+      "reviewer": "Antigravity2",
+      "target_repo": "pantheon",
+      "depends_on": ["ARCH-CLEANUP-PLAN-FREEZE-20260828"],
+      "artifacts": [
+        "services/control-plane/bff/domain_ports/research_knowledge_source.py",
+        "services/control-plane/bff/console_gap/knowledge.py",
+        "services/control-plane/bff/tests/test_research_knowledge_source_ports.py"
+      ],
+      "acceptance": [
+        "Research Knowledge Memory Search and Source reads use existing typed clients or stores",
+        "process-local experiment and job overlays are not recreated",
+        "missing owners return typed unavailable or degraded",
+        "task does not modify Source Ingestion main.py BFF main.py or read_store.py"
+      ],
+      "matrix_items": ["ACG-02-014"],
+      "priority": 2,
+      "wave": 1,
+      "design_unit": "ACG-02-RESEARCH-SOURCE",
+      "allowed_overlap_task_ids": []
+    },
+    {
+      "id": "ACG-RS-LIFECYCLE-GOV-20260828",
+      "title": "Prepare Lifecycle Telemetry Incident Governance and Lineage typed ports",
+      "summary_zh": "將 lifecycle、telemetry、incident、governance、lineage reads 收斂至既有 owners。",
+      "phase": "W1-parallel-preparation",
+      "owner": "Antigravity",
+      "reviewer": "Claude",
+      "target_repo": "pantheon",
+      "depends_on": ["ARCH-CLEANUP-PLAN-FREEZE-20260828"],
+      "artifacts": [
+        "services/control-plane/bff/domain_ports/lifecycle_telemetry_governance.py",
+        "services/control-plane/bff/tests/test_lifecycle_telemetry_governance_ports.py"
+      ],
+      "acceptance": [
+        "incident postmortem lineage governance and telemetry reads use domain stores",
+        "cross-domain composition lives only in named Management or Operations read models",
+        "exact identity and freshness semantics remain characterized",
+        "task does not modify main.py or read_store.py"
+      ],
+      "matrix_items": ["ACG-02-015"],
+      "priority": 2,
+      "wave": 1,
+      "design_unit": "ACG-02-LIFECYCLE-GOV",
+      "allowed_overlap_task_ids": []
+    },
+    {
+      "id": "ACG-RS-PERSONA-TRAIN-20260828",
+      "title": "Prepare Persona Training replay and rapid-evaluation typed ports",
+      "summary_zh": "將 Persona、Training、replay 與 rapid-evaluation reads 收斂至既有 service/store。",
+      "phase": "W1-parallel-preparation",
+      "owner": "Claude",
+      "reviewer": "Antigravity",
+      "target_repo": "pantheon",
+      "depends_on": ["ARCH-CLEANUP-PLAN-FREEZE-20260828"],
+      "artifacts": [
+        "services/control-plane/bff/domain_ports/persona_training.py",
+        "services/control-plane/bff/tests/test_persona_training_ports.py",
+        "services/training-session/tests/test_bff_typed_port_contract.py"
+      ],
+      "acceptance": [
+        "Persona and Training reads use Persona Registry and Training Session service",
+        "trainer replay uses the existing Training Session owner",
+        "rapid evaluation is assigned to Training or Research by caller evidence",
+        "task does not modify main.py or read_store.py"
+      ],
+      "matrix_items": ["ACG-02-016", "ACG-02-017"],
+      "priority": 2,
+      "wave": 1,
+      "design_unit": "ACG-02-PERSONA-TRAIN",
+      "allowed_overlap_task_ids": []
+    },
+    {
+      "id": "ACG-LOOP-CONTRACTS-20260828",
+      "title": "Complete the twelve canonical loop controller contracts and writers",
+      "summary_zh": "完成 12 個 loop stable contract 與 conforming writers；不得由 monitor 偽造 controller truth。",
+      "phase": "W1-parallel-preparation",
+      "owner": "Antigravity2",
+      "reviewer": "Claude2",
+      "target_repo": "pantheon",
+      "depends_on": ["ARCH-CLEANUP-PLAN-FREEZE-20260828"],
+      "artifacts": [
+        "docs/deployment/loop-catalog.registry.json",
+        "services/loop-control/",
+        "tests/integration/l12/test_current_runtime_loops_deployed_e2e.py"
+      ],
+      "acceptance": [
+        "catalog exposes exactly twelve stable loop identities and expected controller contracts",
+        "every implemented loop publishes through LoopControllerWriter with exact controller and deployment identity",
+        "Loop 12 payload satisfies shared conformance",
+        "no monitor probe is treated as another loop controller record"
+      ],
+      "matrix_items": ["ACG-04-001", "ACG-04-002", "ACG-04-004", "ACG-04-007"],
+      "priority": 4,
+      "wave": 1,
+      "design_unit": "ACG-04-CONTRACTS",
+      "allowed_overlap_task_ids": []
+    },
+    {
+      "id": "ACG-LOOP-PROJECTION-20260828",
+      "title": "Make Management loop health a pure twelve-row projection",
+      "summary_zh": "以 catalog＋LoopControllerStore 建立唯一 loop truth projection；移除 snapshot、read-side write 與 monitor synthesis。",
+      "phase": "W1-parallel-preparation",
+      "owner": "Claude2",
+      "reviewer": "Antigravity2",
+      "target_repo": "pantheon",
+      "depends_on": ["ARCH-CLEANUP-PLAN-FREEZE-20260828"],
+      "artifacts": [
+        "services/control-plane/bff/loop_inventory.py",
+        "services/control-plane/bff/downstream_health_monitor.py",
+        "services/control-plane/bff/management_read_models/loop_truth.py",
+        "services/control-plane/bff/test_loop_inventory_read_model_contract.py",
+        "services/control-plane/bff/test_loop_health_read_model_contract.py"
+      ],
+      "acceptance": [
+        "loop-health returns exactly twelve canonical rows",
+        "current truth comes only from LoopControllerStore joined with catalog metadata",
+        "GET loop-health performs no writes and monitor cannot manufacture cross-loop rows",
+        "overlay is separately named noncanonical inventory data"
+      ],
+      "matrix_items": ["ACG-04-003", "ACG-04-005", "ACG-04-006", "ACG-04-008", "ACG-04-009"],
+      "priority": 4,
+      "wave": 1,
+      "design_unit": "ACG-04-PROJECTION",
+      "allowed_overlap_task_ids": []
+    },
+    {
+      "id": "ACG-RUNTIME-MANAGER-20260828",
+      "title": "Consolidate Runtime Manager onto the deployed service and execution kernel",
+      "summary_zh": "保留 deployed RuntimeManagerService 與 importable kernel；刪除 duplicate manager 並搬 E2E callers。",
+      "phase": "W1-parallel-preparation",
+      "owner": "Antigravity",
+      "reviewer": "Claude",
+      "target_repo": "pantheon",
+      "depends_on": ["ARCH-CLEANUP-PLAN-FREEZE-20260828"],
+      "artifacts": [
+        "services/runtime-manager/",
+        "services/execution/runtime-manager/",
+        "tests/e2e/test_deployment_plan_to_paper_run.py",
+        "tests/e2e/test_allocation_policy_to_paper_run.py"
+      ],
+      "acceptance": [
+        "RuntimeManagerService is the sole deployed mutation state machine",
+        "execution runtime-control primitives are importable without a second manager",
+        "E2E tests exercise the deployed owner or real HTTP client",
+        "paper fleet reconciler keeps its behavior under an explicit worker identity"
+      ],
+      "matrix_items": ["ACG-05-001", "ACG-05-002", "ACG-05-003", "ACG-05-004", "ACG-05-005", "ACG-05-006"],
+      "priority": 5,
+      "wave": 1,
+      "design_unit": "ACG-05",
+      "allowed_overlap_task_ids": []
+    },
+    {
+      "id": "ACG-WORKSHOP-BE-20260828",
+      "title": "Decompose the Workshop backend and consolidate Agora persistence",
+      "summary_zh": "拆 Workshop router/store public modules；合併 Postgres bootstrap 並清除 Agora duplicate handlers。",
+      "phase": "W1-parallel-preparation",
+      "owner": "Claude",
+      "reviewer": "Antigravity",
+      "target_repo": "pantheon",
+      "depends_on": ["ARCH-CLEANUP-PLAN-FREEZE-20260828"],
+      "artifacts": [
+        "services/control-plane/bff/agora/strategy_workshop/",
+        "services/control-plane/bff/agora/router.py",
+        "services/control-plane/bff/agora/interaction/runner.py",
+        "services/control-plane/bff/agora/research/router.py",
+        "services/control-plane/bff/tests/test_agora_route_ownership.py"
+      ],
+      "acceptance": [
+        "Workshop has public events stream and readiness modules with no cross-router private imports",
+        "session version execution and stream subrouters preserve one canonical route each",
+        "PostgresWorkshopStore is the sole production Workshop persistence owner",
+        "Agora signal feedback journal and detail generic duplicates are removed from prepared ownership",
+        "MemoryWorkshopStore remains test-only"
+      ],
+      "matrix_items": ["ACG-01-010", "ACG-02-009", "ACG-02-010", "ACG-06-001", "ACG-06-002", "ACG-06-003", "ACG-06-004", "ACG-06-005", "ACG-06-006", "ACG-06-007"],
+      "priority": 6,
+      "wave": 1,
+      "design_unit": "ACG-06-BE",
+      "allowed_overlap_task_ids": []
+    },
+    {
+      "id": "ACG-SOURCE-INGESTION-20260828",
+      "title": "Split Source Ingestion into one app factory pipeline and five routers",
+      "summary_zh": "將 Source Ingestion main.py 收斂成 composition root；模型、pipeline 與五類 routes 搬到 focused modules。",
+      "phase": "W1-parallel-preparation",
+      "owner": "Antigravity2",
+      "reviewer": "Claude2",
+      "target_repo": "pantheon",
+      "depends_on": ["ARCH-CLEANUP-PLAN-FREEZE-20260828"],
+      "artifacts": ["services/source_ingestion/"],
+      "acceptance": [
+        "main.py contains only app composition lifecycle and health or version wiring",
+        "one ingest application operation owns run-job and trigger post-processing",
+        "27 API models and 68 handlers move into five focused router families",
+        "original bodies are deleted in the same delivery and existing domain helpers are reused",
+        "Source Ingestion unit integration and container smoke tests pass"
+      ],
+      "matrix_items": ["ACG-07-001", "ACG-07-002", "ACG-07-003", "ACG-07-004", "ACG-07-005", "ACG-07-006"],
+      "priority": 7,
+      "wave": 1,
+      "design_unit": "ACG-07",
+      "allowed_overlap_task_ids": []
+    },
+    {
+      "id": "ACG-ENTRYPOINT-WORKER-20260828",
+      "title": "Repair the Agora interaction worker package entrypoint truthfully",
+      "summary_zh": "在 PFG launcher 交付後重審並修正 package import、Persona client 與 empty fallback；不改 Compose。",
+      "phase": "W1-serialized-existing-owner",
+      "owner": "Claude2",
+      "reviewer": "Antigravity2",
+      "target_repo": "pantheon",
+      "depends_on": ["ARCH-CLEANUP-PLAN-FREEZE-20260828", "PFG-HOSTED-ACCEPT-20260820"],
+      "artifacts": [
+        "scripts/run_agora_interaction_worker.py",
+        "scripts/test_run_agora_interaction_worker.py",
+        "services/control-plane/bff/agora/interaction/persona_client.py"
+      ],
+      "acceptance": [
+        "task first re-audits the exact launcher landed by PFG-HOSTED-ACCEPT-20260820",
+        "launcher works from repository root container workdir and arbitrary cwd",
+        "Persona discovery uses a typed canonical client and missing dependency fails truthfully",
+        "nonexistent FastBffReadStore and catch-all empty fallback are absent",
+        "task does not modify docker-compose.yml or deployment workflows"
+      ],
+      "matrix_items": ["ACG-09-001", "ACG-09-002", "ACG-09-003", "ACG-09-004"],
+      "priority": 9,
+      "wave": 1,
+      "design_unit": "ACG-09-ENTRYPOINT",
+      "allowed_overlap_task_ids": []
+    },
+    {
+      "id": "ACG-DEPLOY-EXACT-GATES-20260828",
+      "title": "Make required-service deployment exact and rollback-safe",
+      "summary_zh": "在 SRCM 釋放 Compose 後由單一 owner 更新 worker command、required manifest、component verifier 與 receipts。",
+      "phase": "W3-serialized-deployment",
+      "owner": "Antigravity",
+      "reviewer": "Claude",
+      "target_repo": "pantheon",
+      "depends_on": ["ARCH-CLEANUP-PLAN-FREEZE-20260828", "ACG-ENTRYPOINT-WORKER-20260828", "PFG-HOSTED-ACCEPT-20260820", "SRCM-P1-HOSTED-ACCEPTANCE-20260824"],
+      "artifacts": [
+        "docker-compose.yml",
+        "scripts/deploy_nonprod_vm.sh",
+        "scripts/test_deploy_nonprod_vm.py",
+        "scripts/verify_product_functional_closure.py",
+        "scripts/test_verify_product_functional_closure.py",
+        "docs/deployment/evidence/architecture-cleanup/ACG-DEPLOY-EXACT-GATES-20260828/"
+      ],
+      "acceptance": [
+        "Compose worker command and healthcheck use the same validated package entrypoint",
+        "required-service manifest includes every shipped persistent worker",
+        "one reusable verifier checks exact OCI and source identities before switch",
+        "BFF component build recreate rollback and acceptance use the same required service set",
+        "hosted receipt binds FE BFF and backend required-component identities"
+      ],
+      "matrix_items": ["ACG-09-005", "ACG-09-006", "ACG-09-007", "ACG-09-008", "ACG-09-009"],
+      "priority": 9,
+      "wave": 3,
+      "design_unit": "ACG-09-DEPLOY",
+      "allowed_overlap_task_ids": ["PFG-HOSTED-ACCEPT-20260820", "SRCM-P1-HOSTED-ACCEPTANCE-20260824"]
+    },
+    {
+      "id": "ACG-FE-DEPGRAPH-20260828",
+      "title": "Break frontend API SCCs and add a production import graph gate",
+      "summary_zh": "修正 bff-v1 runtime/type cycles 與 self-barrel imports；不進行 53 caller 全面搬遷。",
+      "phase": "W1-parallel-preparation",
+      "owner": "Claude",
+      "reviewer": "Antigravity",
+      "target_repo": "execute-plans",
+      "depends_on": ["ARCH-CLEANUP-PLAN-FREEZE-20260828"],
+      "artifacts": [
+        "execute-plans:src/lib/bff-v1/runActionSafe.ts",
+        "execute-plans:src/lib/bff-v1/client.ts",
+        "execute-plans:src/lib/bff-v1/liveStatus.ts",
+        "execute-plans:src/lib/bff-v1/runtimeEnv.ts",
+        "execute-plans:src/lib/bff-v1/dto.ts",
+        "execute-plans:src/lib/bff-v1/managementConsoleReads.ts",
+        "execute-plans:src/lib/bff-v1/managementDataSources.ts",
+        "execute-plans:src/lib/bff-v1/__tests__/productionImportGraph.test.ts"
+      ],
+      "acceptance": [
+        "production runtime SCC count is zero",
+        "audited type-only SCC count is zero",
+        "bff-v1 implementation modules never import their public barrel",
+        "graph gate prints the shortest offending cycle and ignores tests generated files and build output",
+        "no new transport or shared-types wrapper is introduced"
+      ],
+      "matrix_items": ["ACG-03-001", "ACG-03-003", "ACG-03-004", "ACG-03-007", "ACG-03-008"],
+      "priority": 3,
+      "wave": 1,
+      "design_unit": "ACG-03-GRAPH",
+      "allowed_overlap_task_ids": []
+    },
+    {
+      "id": "ACG-FE-TRANSPORT-WRITES-20260828",
+      "title": "Consolidate frontend reads writes and strict-live behavior into bff-v1",
+      "summary_zh": "把 legacy liveRead/client/runAction/commandClient 與 mock-success writes 收斂至既有 bff-v1 owners。",
+      "phase": "W2-canonical-client-consolidation",
+      "owner": "Antigravity2",
+      "reviewer": "Claude2",
+      "target_repo": "execute-plans",
+      "depends_on": ["ARCH-CLEANUP-PLAN-FREEZE-20260828", "ACG-FE-DEPGRAPH-20260828"],
+      "artifacts": [
+        "execute-plans:src/lib/bff/liveRead.ts",
+        "execute-plans:src/lib/bff/liveTransport.ts",
+        "execute-plans:src/lib/bff/client.ts",
+        "execute-plans:src/lib/bff/runAction.ts",
+        "execute-plans:src/lib/bff/commandClient.ts",
+        "execute-plans:src/lib/bff/mutations.ts",
+        "execute-plans:src/lib/bff/writeOverlay.ts",
+        "execute-plans:src/lib/bff/persistence.ts",
+        "execute-plans:src/lib/bff-v1/writes.ts",
+        "execute-plans:src/lib/bff-v1/writeFallback.ts",
+        "execute-plans:src/lib/bff-v1/liveTransport.ts",
+        "execute-plans:src/main.tsx"
+      ],
+      "acceptance": [
+        "bff-v1 is the sole production transport status and write owner",
+        "local overlay success and unconditional production mock bootstrap are unreachable",
+        "strict-live failures remain typed unavailable or failed",
+        "OODA and command actions use focused bff-v1 domain clients",
+        "old implementation files are deleted only after caller count reaches zero"
+      ],
+      "matrix_items": ["ACG-03-002", "ACG-03-005", "ACG-03-010", "ACG-03-011", "ACG-03-012", "ACG-03-013"],
+      "priority": 3,
+      "wave": 2,
+      "design_unit": "ACG-03-TRANSPORT-WRITES",
+      "allowed_overlap_task_ids": []
+    },
+    {
+      "id": "ACG-FE-REALTIME-V5-20260828",
+      "title": "Consolidate frontend realtime and V5 network ownership",
+      "summary_zh": "將 realtime side effects 搬到 bff-v1 SSE；bff-v1/v5 保留 live API 而 v5 僅保留 pure transforms。",
+      "phase": "W1-parallel-preparation",
+      "owner": "Claude2",
+      "reviewer": "Antigravity2",
+      "target_repo": "execute-plans",
+      "depends_on": ["ARCH-CLEANUP-PLAN-FREEZE-20260828"],
+      "artifacts": [
+        "execute-plans:src/lib/bff/realtime.ts",
+        "execute-plans:src/lib/bff/v5.ts",
+        "execute-plans:src/lib/bff-v1/sse/bridge.ts",
+        "execute-plans:src/lib/bff-v1/sse/liveSse.ts",
+        "execute-plans:src/lib/bff-v1/v5.ts",
+        "execute-plans:src/lib/v5/events.ts",
+        "execute-plans:src/lib/v5/management/rankingGovernance.ts",
+        "execute-plans:src/lib/v5/management/systemDataSources.ts"
+      ],
+      "acceptance": [
+        "all realtime emit and subscribe behavior is owned by existing bff-v1 SSE modules",
+        "bff-v1/v5 is the sole live V5 API owner",
+        "src/lib/v5 has no network auth mutation or transport import",
+        "SSE replay reconnect and event DTO contracts pass"
+      ],
+      "matrix_items": ["ACG-03-006", "ACG-03-014", "ACG-03-015"],
+      "priority": 3,
+      "wave": 1,
+      "design_unit": "ACG-03-REALTIME-V5",
+      "allowed_overlap_task_ids": []
+    },
+    {
+      "id": "ACG-FE-LEGACY-DRAIN-20260828",
+      "title": "Drain all production legacy bff and seed-accessor callers",
+      "summary_zh": "將 53 個 production legacy callers 按 domain 搬到既有 bff-v1 clients；刪除零 caller legacy modules。",
+      "phase": "W2-caller-switch",
+      "owner": "Antigravity",
+      "reviewer": "Claude",
+      "target_repo": "execute-plans",
+      "depends_on": ["ARCH-CLEANUP-PLAN-FREEZE-20260828", "ACG-FE-TRANSPORT-WRITES-20260828", "ACG-FE-REALTIME-V5-20260828", "ACG-FE-LOOP-TRUTH-20260828"],
+      "artifacts": [
+        "execute-plans:src/components/detail/",
+        "execute-plans:src/pages/",
+        "execute-plans:src/components/management/",
+        "execute-plans:src/lib/bff-v1/legacy.ts",
+        "execute-plans:src/lib/bff-v1/seed.ts",
+        "execute-plans:src/lib/bff/types.ts"
+      ],
+      "acceptance": [
+        "all 53 audited production legacy consumers use typed bff-v1 domain clients",
+        "production imports from legacy bff implementations are zero",
+        "legacy.ts seed.ts and old barrels are deleted only after zero-caller proof",
+        "bff/types is replaced by generated or domain contracts per family rather than broad mechanical relocation",
+        "no forwarding compatibility facade remains"
+      ],
+      "matrix_items": ["ACG-03-009", "ACG-03-016"],
+      "priority": 3,
+      "wave": 2,
+      "design_unit": "ACG-03-LEGACY-DRAIN",
+      "allowed_overlap_task_ids": ["ACG-FE-LOOP-TRUTH-20260828"]
+    },
+    {
+      "id": "ACG-FE-LOOP-TRUTH-20260828",
+      "title": "Align Management UI with the canonical nested loop truth contract",
+      "summary_zh": "移除 stale maturity 與 top-level truth expectations；正確顯示 exactly twelve runtime rows。",
+      "phase": "W1-parallel-preparation",
+      "owner": "Claude",
+      "reviewer": "Antigravity",
+      "target_repo": "execute-plans",
+      "depends_on": ["ARCH-CLEANUP-PLAN-FREEZE-20260828"],
+      "artifacts": [
+        "execute-plans:src/lib/bff-v1/loopTruthTypes.ts",
+        "execute-plans:src/components/management/LoopTruthView.tsx",
+        "execute-plans:src/components/management/LoopTruthView.test.tsx",
+        "execute-plans:src/management/pages/v5/V5Pages.tsx"
+      ],
+      "acceptance": [
+        "UI reads runtime_maturity and nested accepted operator truth from the backend contract",
+        "stale current_maturity target_maturity and top-level operator_truth_source fields are absent",
+        "accepted backend rows count as live while absent or rejected rows are explicitly degraded",
+        "canonical loop collection contains exactly twelve IDs and excludes the composite overlay"
+      ],
+      "matrix_items": ["ACG-04-010"],
+      "priority": 4,
+      "wave": 1,
+      "design_unit": "ACG-04-FE",
+      "allowed_overlap_task_ids": ["ACG-FE-LEGACY-DRAIN-20260828"]
+    },
+    {
+      "id": "ACG-FE-WORKSHOP-20260828",
+      "title": "Make Workshop URL-owned and split durable receipts from Persona interaction",
+      "summary_zh": "拆 Workshop list/session page；移除 local selection 與 duplicate GET；分開 durable Workshop 與 optional Persona receipts。",
+      "phase": "W1-parallel-preparation",
+      "owner": "Antigravity2",
+      "reviewer": "Claude2",
+      "target_repo": "execute-plans",
+      "depends_on": ["ARCH-CLEANUP-PLAN-FREEZE-20260828"],
+      "artifacts": [
+        "execute-plans:src/routes/agora.tsx",
+        "execute-plans:src/agora/pages/strategy-workshop/StrategyWorkshopPage.tsx",
+        "execute-plans:src/agora/pages/strategy-workshop/WorkshopListView.tsx",
+        "execute-plans:src/agora/pages/strategy-workshop/WorkshopSessionView.tsx",
+        "execute-plans:src/agora/TradingDeskLayout.tsx",
+        "execute-plans:src/lib/bff-v1/agora/workshops.ts",
+        "execute-plans:e2e/agora-product-journey.spec.ts",
+        "execute-plans:e2e/agora-strategy-workshop-hosted.spec.ts"
+      ],
+      "acceptance": [
+        "deep link refresh and browser navigation restore one URL-selected Workshop session",
+        "one session load performs one canonical Workshop projection GET",
+        "ETag post durable readback reconstruction and optional Persona actions have distinct truthful receipts",
+        "Persona failure never relabels a durable Workshop message as failed",
+        "SSE lifecycle does not reconnect on every event and no new Workshop store or client wrapper exists"
+      ],
+      "matrix_items": ["ACG-06-008", "ACG-06-009", "ACG-06-010", "ACG-06-011", "ACG-06-012"],
+      "priority": 6,
+      "wave": 1,
+      "design_unit": "ACG-06-FE",
+      "allowed_overlap_task_ids": []
+    },
+    {
+      "id": "ACG-FE-DEAD-NL-20260828",
+      "title": "Remove dead frontend NL consoles stubs and fixed responders",
+      "summary_zh": "刪除 zero-caller NL/stub surfaces；保留 active Management AI provider path。",
+      "phase": "W1-parallel-preparation",
+      "owner": "Claude2",
+      "reviewer": "Antigravity2",
+      "target_repo": "execute-plans",
+      "depends_on": ["ARCH-CLEANUP-PLAN-FREEZE-20260828"],
+      "artifacts": [
+        "execute-plans:src/management/components/nl/NlAssistantDrawer.tsx",
+        "execute-plans:src/management/pages/oversight/NlConsole.tsx",
+        "execute-plans:src/management/pages/oversight/_stubs.tsx",
+        "execute-plans:src/lib/bff-v1/managementNl.ts",
+        "execute-plans:src/lib/v5/management/nl.ts",
+        "execute-plans:src/lib/v5/management/index.ts",
+        "execute-plans:src/management/hooks/useManagementNlContext.ts",
+        "execute-plans:.env.example",
+        "execute-plans:src/i18n/locales/"
+      ],
+      "acceptance": [
+        "dead NL drawer console stub barrel and fixed responder have zero production symbols routes and chunks",
+        "ManagementNlContext remains only in the active hook or existing Management AI snapshot type",
+        "managementAi AgentPanelBody FloatingAgentPanel and live ask route remain functional",
+        "zero-caller Agora helper modules are deleted only with generated or test contract proof"
+      ],
+      "matrix_items": ["ACG-08-001", "ACG-08-002", "ACG-08-003", "ACG-08-004", "ACG-08-005", "ACG-08-006", "ACG-08-007", "ACG-08-008", "ACG-08-009"],
+      "priority": 8,
+      "wave": 1,
+      "design_unit": "ACG-08",
+      "allowed_overlap_task_ids": []
+    },
+    {
+      "id": "ACG-BFF-MAIN-CUTOVER-20260828",
+      "title": "Cut over BFF main.py to one composition root and canonical routers",
+      "summary_zh": "由唯一 main.py owner 接入所有 prepared routers/ports；刪除 route bodies、overlays、duplicates 與 pruning hack。",
+      "phase": "W2-hot-file-cutover",
+      "owner": "Antigravity",
+      "reviewer": "Claude",
+      "target_repo": "pantheon",
+      "depends_on": [
+        "ARCH-CLEANUP-PLAN-FREEZE-20260828",
+        "ACG-BE-GUARDS-20260828",
+        "ACG-BFF-EVOEXP-PREP-20260828",
+        "ACG-BFF-EVENT-ACTION-PREP-20260828",
+        "ACG-RS-FOUNDATION-20260828",
+        "ACG-RS-OPS-CONSULT-20260828",
+        "ACG-RS-PERSONA-CAPITAL-20260828",
+        "ACG-RS-OODA-MGMT-20260828",
+        "ACG-RS-RESEARCH-SOURCE-20260828",
+        "ACG-RS-LIFECYCLE-GOV-20260828",
+        "ACG-RS-PERSONA-TRAIN-20260828",
+        "ACG-LOOP-CONTRACTS-20260828",
+        "ACG-LOOP-PROJECTION-20260828",
+        "ACG-RUNTIME-MANAGER-20260828",
+        "ACG-WORKSHOP-BE-20260828"
+      ],
+      "artifacts": ["services/control-plane/bff/main.py"],
+      "acceptance": [
+        "main.py retains only app construction lifecycle middleware dependency wiring and router inclusion",
+        "all domain route bodies and module-global domain overlays are removed",
+        "route pruning helpers and every duplicate registration are absent",
+        "all main.py ReadSurfaceStore callers use the prepared narrow ports",
+        "full BFF tests OpenAPI diff and built-image startup smoke pass"
+      ],
+      "matrix_items": ["ACG-01-001", "ACG-01-002", "ACG-01-003"],
+      "priority": 1,
+      "wave": 2,
+      "design_unit": "ACG-01-MAIN-CUTOVER",
+      "allowed_overlap_task_ids": []
+    },
+    {
+      "id": "ACG-RS-FINAL-DELETE-20260828",
+      "title": "Delete ReadSurfaceStore and its production fixture and fallback mechanisms",
+      "summary_zh": "由唯一 read_store.py owner 清除 dead/verified methods、fixture fallback、generic adapters 與最終 God class。",
+      "phase": "W3-hot-file-deletion",
+      "owner": "Claude",
+      "reviewer": "Antigravity",
+      "target_repo": "pantheon",
+      "depends_on": [
+        "ARCH-CLEANUP-PLAN-FREEZE-20260828",
+        "ACG-BFF-MAIN-CUTOVER-20260828",
+        "ACG-RS-FOUNDATION-20260828",
+        "ACG-RS-OPS-CONSULT-20260828",
+        "ACG-RS-PERSONA-CAPITAL-20260828",
+        "ACG-RS-OODA-MGMT-20260828",
+        "ACG-RS-RESEARCH-SOURCE-20260828",
+        "ACG-RS-LIFECYCLE-GOV-20260828",
+        "ACG-RS-PERSONA-TRAIN-20260828",
+        "ACG-WORKSHOP-BE-20260828"
+      ],
+      "artifacts": [
+        "services/control-plane/bff/read_store.py",
+        "services/control-plane/bff/tests/test_read_store_final_deletion.py"
+      ],
+      "acceptance": [
+        "production imports and constructors of ReadSurfaceStore are zero",
+        "confirmed dead methods and verified no-owner methods are deleted",
+        "product source cannot load default fixture packs or local snapshot success",
+        "generic dataset and service arbitration adapters remain only for named proven contracts or are deleted",
+        "missing canonical owners return truthful unavailable or degraded"
+      ],
+      "matrix_items": ["ACG-02-019", "ACG-02-020", "ACG-02-021"],
+      "priority": 2,
+      "wave": 3,
+      "design_unit": "ACG-02-FINAL",
+      "allowed_overlap_task_ids": []
+    },
+    {
+      "id": "ACG-FE-INTEGRATION-20260828",
+      "title": "Integrate frontend API barrel cleanup and run complete frontend acceptance",
+      "summary_zh": "由唯一 bff-v1 index owner 完成 exports、全套 FE tests/build 與 strict hosted contract；不重做 lane implementation。",
+      "phase": "W3-hot-file-integration",
+      "owner": "Antigravity2",
+      "reviewer": "Claude2",
+      "target_repo": "execute-plans",
+      "depends_on": [
+        "ARCH-CLEANUP-PLAN-FREEZE-20260828",
+        "ACG-FE-DEPGRAPH-20260828",
+        "ACG-FE-TRANSPORT-WRITES-20260828",
+        "ACG-FE-REALTIME-V5-20260828",
+        "ACG-FE-LEGACY-DRAIN-20260828",
+        "ACG-FE-LOOP-TRUTH-20260828",
+        "ACG-FE-WORKSHOP-20260828",
+        "ACG-FE-DEAD-NL-20260828"
+      ],
+      "artifacts": [
+        "execute-plans:src/lib/bff-v1/index.ts",
+        "execute-plans:docs/deployment/evidence/ACG-FE-INTEGRATION-20260828/"
+      ],
+      "acceptance": [
+        "typecheck lint unit contract and production build all pass",
+        "runtime and type SCC counts are zero and no forbidden inverse import remains",
+        "production chunks contain no seed overlay fixed NL responder or synthetic write success",
+        "Workshop Management loop truth and active Management AI journeys pass",
+        "hosted smoke binds exact FE and BFF identities with live mode strict fallback and safe write defaults"
+      ],
+      "matrix_items": [],
+      "priority": 3,
+      "wave": 3,
+      "design_unit": "ACG-03-INTEGRATION",
+      "allowed_overlap_task_ids": []
+    },
+    {
+      "id": "ACG-INTEGRATION-E2E-20260828",
+      "title": "Prove architecture cleanup functional closure across twelve loops and Management",
+      "summary_zh": "執行 backend/frontend/container/12-loop/Management/Agora/cross-loop/exact deployment acceptance；失敗先出 GAP report。",
+      "phase": "W4-cross-system-acceptance",
+      "owner": "Claude2",
+      "reviewer": "Antigravity2",
+      "target_repo": "pantheon",
+      "depends_on": [
+        "ARCH-CLEANUP-PLAN-FREEZE-20260828",
+        "ACG-BFF-MAIN-CUTOVER-20260828",
+        "ACG-RS-FINAL-DELETE-20260828",
+        "ACG-RUNTIME-MANAGER-20260828",
+        "ACG-SOURCE-INGESTION-20260828",
+        "ACG-DEPLOY-EXACT-GATES-20260828",
+        "ACG-FE-INTEGRATION-20260828"
+      ],
+      "artifacts": [
+        "scripts/verify_architecture_cleanup_closure.py",
+        "scripts/test_verify_architecture_cleanup_closure.py",
+        "docs/deployment/evidence/architecture-cleanup/ACG-INTEGRATION-E2E-20260828/"
+      ],
+      "acceptance": [
+        "backend compile import route uniqueness and focused domain suites pass",
+        "Runtime Manager Source Ingestion Workshop BFF and frontend full suites pass",
+        "current twelve-loop Management Agora and cross-loop exact-identity journeys pass without counted skips",
+        "exact component deployment restart readback hosted UI and rollback-safe restore pass",
+        "any failure produces an owning-path GAP report before any repair fallback route or alternate store task is created"
+      ],
+      "matrix_items": [],
+      "priority": 10,
+      "wave": 4,
+      "design_unit": "ACG-10",
+      "allowed_overlap_task_ids": []
+    }
+  ]
+}
