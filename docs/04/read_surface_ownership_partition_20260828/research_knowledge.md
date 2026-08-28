@@ -106,7 +106,7 @@ The domain port `ResearchKnowledgeSourcePort` in `services/control-plane/bff/dom
 
 ## 4. Comprehensive Inventory of `main.py` Call Sites (75 Member Calls)
 
-An AST scan of `services/control-plane/bff/main.py` identifies **75 member call sites** accessing methods belonging to the Research, Knowledge, Memory, Search, and Source domain across 26 distinct method names:
+An AST scan of `services/control-plane/bff/main.py` identifies **75 member call sites** accessing non-metadata methods belonging to the Research, Knowledge, Memory, Search, and Source domain across **37 distinct method names** (covering 37 of the 39 methods on `ResearchKnowledgeSourcePort`; together with the 13 `dataset_source` calls in §5, 38 of 39 port methods are accessed, leaving only `dataset_surface_status` unused in `main.py`):
 
 | Line # | Member Method | Enclosing Function | Route / Context | Type | Target Domain Port / Command Destination |
 |---|---|---|---|---|---|
@@ -240,7 +240,10 @@ The 6 write call sites in `main.py` perform state mutations:
 ## 7. Narrow Domain API Gap Analysis
 
 ### Verification Findings:
-1. **Zero Missing APIs:** Every one of the 26 distinct member methods called in `services/control-plane/bff/main.py` is fully implemented and tested on `ResearchKnowledgeSourcePort` and `DefaultResearchKnowledgeSourcePort`.
+1. **Zero Missing APIs:** Every one of the 37 distinct non-metadata member methods (and 38 total accessed methods including `dataset_source`) called in `services/control-plane/bff/main.py` is fully implemented and tested on `ResearchKnowledgeSourcePort` and `DefaultResearchKnowledgeSourcePort`. Across the 39 methods defined in `ResearchKnowledgeSourcePort`:
+   - 37 non-metadata domain methods are actively accessed across 75 member call sites in `main.py`.
+   - 1 shared metadata method (`dataset_source`) is actively accessed across 13 call sites in `main.py`.
+   - 1 method (`dataset_surface_status`) is defined on the port interface for structured dataset status reporting but is currently not directly invoked in `main.py`.
 2. **Zero Generic Delegation / Compatibility Shims:** No fallback to generic `getattr` proxying or unvalidated dictionary reflection is required.
 3. **Strict Type Safety:** All signatures return typed DTO dictionaries or lists adhering to the OpenAPI schema requirements.
 
