@@ -35,6 +35,11 @@ from typing import Mapping
 SCRIPTS_DIR = Path(__file__).resolve().parent
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
+GIT_SCRIPTS_DIR = SCRIPTS_DIR / "git"
+if str(GIT_SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(GIT_SCRIPTS_DIR))
+
+import auto_integrator  # noqa: E402  (shared stable integration lock)
 
 DEFAULT_COMMAND_RUNTIME_PARENT = Path("/home/lupin/pantheon-ci-deploy/command-runtimes")
 DEFAULT_INTEGRATION_RUNTIME_PARENT = Path(
@@ -162,7 +167,7 @@ def plan_deletions(
     return delete, retain
 
 
-def main(argv: list[str] | None = None) -> int:
+def _main_locked(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--parent", default=str(DEFAULT_COMMAND_RUNTIME_PARENT))
     parser.add_argument(
@@ -243,6 +248,40 @@ def main(argv: list[str] | None = None) -> int:
             f"(live={live_root or 'unknown'}, leased={len(leased_roots)})"
         )
     return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    # Parse only the lock binding first; all live-config reads, planning and
+    # deletion happen after the same stable EX lock used by the merge owner.
+    probe = argparse.ArgumentParser(add_help=False)
+    probe.add_argument("--status-root")
+    probe.add_argument("--json", action="store_true")
+    known, _ = probe.parse_known_args(argv)
+    if not known.status_root:
+        return _main_locked(argv)
+    lock_path = (
+        Path(known.status_root).expanduser().resolve()
+        / auto_integrator.DEFAULT_LOCK
+    )
+    try:
+        with auto_integrator.lock_file(lock_path):
+            return _main_locked(argv)
+    except auto_integrator.IntegrationLockHeld as exc:
+        payload = {
+            "skipped": True,
+            "reason": "integration_lock_held",
+            "detail": str(exc),
+            "deleted": [],
+            "integration_deleted": [],
+        }
+        if known.json:
+            print(json.dumps(payload, indent=2, sort_keys=True))
+        else:
+            print(f"prune_command_runtimes: skipped active integration runner ({exc})")
+        return 0
+    except auto_integrator.IntegrationLockError as exc:
+        print(f"prune_command_runtimes: integration lock error: {exc}", file=sys.stderr)
+        return 2
 
 
 if __name__ == "__main__":

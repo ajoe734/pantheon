@@ -47,6 +47,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / ".orchestrator"))
 import task_review_merge_gate as review_gate  # noqa: E402  (local helper module)
 import github_review_bridge  # noqa: E402  (local helper module)
 import multi_repo_registry  # noqa: E402  (orchestrator module)
+import common as orchestrator_common  # noqa: E402  (canonical lock helpers)
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -56,6 +57,11 @@ DEFAULT_DEV_BRANCH = "dev"
 DEFAULT_TASK_PREFIX = "task/"
 DEFAULT_LOCK = ".orchestrator/auto-integrator.lock"
 DEFAULT_MERGE_METHOD = "merge"
+DEFAULT_LIVE_CONFIG = Path(
+    "/home/lupin/pantheon-ci-deploy/runtime/live-supervisor-mainroot-config.json"
+)
+LIVE_CONFIG_ENV = "PANTHEON_LIVE_SUPERVISOR_CONFIG"
+FINAL_MERGE_TIMEOUT_SECONDS = 60.0
 LOCK_SCHEMA = "pantheon-auto-integrator-lock/v2"
 SUCCESS_VALUES = {"SUCCESS", "SUCCESSFUL", "PASSED", "PASS", "SKIPPED", "NEUTRAL"}
 PENDING_VALUES = {
@@ -311,6 +317,10 @@ class FinalMergeRevalidationError(AutoIntegratorError):
         self.waiting = waiting
 
 
+class ExecuteAuthorityError(AutoIntegratorError):
+    """The live runner is not bound to its promoted runtime/config identity."""
+
+
 class AmbiguousPullRequests(AutoIntegratorError):
     """More than one open PR claims the same exact task branch."""
 
@@ -333,6 +343,7 @@ class CommandFailure(AutoIntegratorError):
 class CommandRunner:
     def __init__(self) -> None:
         self.commands: list[list[str]] = []
+        self.default_timeout: float | None = None
 
     def run(
         self,
@@ -341,6 +352,7 @@ class CommandRunner:
         cwd: Path = ROOT,
         check: bool = True,
         env: Mapping[str, str] | None = None,
+        timeout: float | None = None,
     ) -> subprocess.CompletedProcess[str]:
         command = [str(arg) for arg in args]
         self.commands.append(command)
@@ -351,7 +363,10 @@ class CommandRunner:
                 env=dict(env) if env is not None else None,
                 capture_output=True,
                 text=True,
+                timeout=timeout if timeout is not None else self.default_timeout,
             )
+        except subprocess.TimeoutExpired:
+            raise
         except OSError as exc:
             if check:
                 raise CommandFailure(command, 127, str(exc)) from exc
@@ -367,6 +382,7 @@ class CommandRunner:
         cwd: Path,
         check: bool = True,
         env: Mapping[str, str] | None = None,
+        timeout: float | None = None,
     ) -> subprocess.CompletedProcess[str]:
         self.commands.append(["sh", "-lc", command])
         try:
@@ -377,7 +393,10 @@ class CommandRunner:
                 env=dict(env) if env is not None else None,
                 capture_output=True,
                 text=True,
+                timeout=timeout if timeout is not None else self.default_timeout,
             )
+        except subprocess.TimeoutExpired:
+            raise
         except OSError as exc:
             if check:
                 raise CommandFailure(["sh", "-lc", command], 127, str(exc)) from exc
@@ -385,6 +404,18 @@ class CommandRunner:
         if check and result.returncode != 0:
             raise CommandFailure(command, result.returncode, result.stderr or result.stdout)
         return result
+
+
+@contextmanager
+def bounded_runner_timeout(
+    runner: CommandRunner, timeout_seconds: float
+) -> Iterator[None]:
+    previous = runner.default_timeout
+    runner.default_timeout = timeout_seconds
+    try:
+        yield
+    finally:
+        runner.default_timeout = previous
 
 
 class GitHubJsonCommandRunner:
@@ -486,6 +517,87 @@ def load_settings(path: Path | None = None, *, status_root: Path | None = None) 
         unblock_owner=str(auto.get("unblock_owner") or "").strip() or None,
         unblock_reviewer=str(auto.get("unblock_reviewer") or "").strip() or None,
     )
+
+
+def resolve_execute_authority(
+    live_config_path: Path,
+    runner: CommandRunner,
+    *,
+    command_root: Path = ROOT,
+) -> tuple[Path, Path, Settings, dict[str, Any]]:
+    """Bind live execution to one promoted command runtime and status plane."""
+
+    requested = live_config_path.expanduser().absolute()
+    if requested.is_symlink() or not requested.is_file():
+        raise ExecuteAuthorityError(
+            f"live supervisor config must be a regular non-symlink file: {requested}"
+        )
+    config_path = requested.resolve()
+    try:
+        payload = load_json(config_path, {})
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ExecuteAuthorityError(f"cannot read live supervisor config: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise ExecuteAuthorityError("live supervisor config must be a JSON object")
+
+    watchdog = payload.get("watchdog")
+    command = watchdog.get("supervisor_command") if isinstance(watchdog, Mapping) else None
+    if not isinstance(command, list) or not all(isinstance(item, str) for item in command):
+        raise ExecuteAuthorityError("live config watchdog.supervisor_command is missing")
+    supervisor_entries = [
+        Path(item) for item in command if Path(item).name == "supervisor.py"
+    ]
+    if len(supervisor_entries) != 1 or not supervisor_entries[0].is_absolute():
+        raise ExecuteAuthorityError(
+            "live watchdog must name exactly one absolute supervisor.py"
+        )
+    promoted_root = supervisor_entries[0].parent.parent.resolve()
+    actual_root = command_root.resolve()
+    expected_supervisor = actual_root / ".orchestrator" / "supervisor.py"
+    if promoted_root != actual_root or supervisor_entries[0].resolve() != expected_supervisor:
+        raise ExecuteAuthorityError(
+            f"auto-integrator command root is not the promoted watchdog root ({actual_root} != {promoted_root})"
+        )
+    config_indexes = [index for index, item in enumerate(command) if item == "--config"]
+    if len(config_indexes) != 1 or config_indexes[0] + 1 >= len(command):
+        raise ExecuteAuthorityError("live watchdog must bind exactly one --config path")
+    watchdog_config = Path(command[config_indexes[0] + 1]).expanduser()
+    if not watchdog_config.is_absolute() or watchdog_config.resolve() != config_path:
+        raise ExecuteAuthorityError(
+            "auto-integrator live config differs from watchdog --config authority"
+        )
+
+    head_proc = runner.run(["git", "rev-parse", "HEAD"], cwd=actual_root, check=False)
+    head = head_proc.stdout.strip().lower()
+    if (
+        head_proc.returncode != 0
+        or not review_gate.OID_RE.fullmatch(head)
+        or actual_root.name.lower() != head
+    ):
+        raise ExecuteAuthorityError(
+            f"promoted command runtime must be versioned as command-runtimes/<HEAD> ({actual_root.name} != {head or 'missing'})"
+        )
+
+    paths = payload.get("paths")
+    raw_status = paths.get("status_file") if isinstance(paths, Mapping) else None
+    status_file = Path(str(raw_status or "")).expanduser()
+    if not status_file.is_absolute() or status_file.name != "ai-status.json":
+        raise ExecuteAuthorityError(
+            "live config paths.status_file must be an absolute canonical ai-status.json"
+        )
+    if status_file.is_symlink() or not status_file.is_file():
+        raise ExecuteAuthorityError(
+            f"canonical status file must be a regular non-symlink file: {status_file}"
+        )
+    status_file = status_file.resolve()
+    status_root = status_file.parent
+    settings = load_settings(config_path, status_root=status_root)
+    canonical_lock = (status_root / DEFAULT_LOCK).resolve()
+    if settings.lock_path.resolve() != canonical_lock:
+        raise ExecuteAuthorityError(
+            f"live auto-integrator lock must be canonical ({settings.lock_path} != {canonical_lock})"
+        )
+    return status_file, status_root, settings, payload
 
 
 def integration_candidates(
@@ -635,7 +747,7 @@ def result_consumes_run_capacity(
     """Count actionable work, not observations that cannot mutate this pass."""
 
     del candidate
-    return result.action not in {"waiting", "not_ready", "already_merged"}
+    return result.action in {"merged", "would_merge"}
 
 
 def normalize_github_repo_slug(value: str | None) -> str:
@@ -882,6 +994,10 @@ query($owner: String!, $repo: String!, $number: Int!) {
                 key = (typename, name_key)
                 result[key] = result.get(key, False) or is_req
         return result
+    except subprocess.TimeoutExpired:
+        # A final authority-window timeout must abort the merge, never be
+        # downgraded to "requiredness unavailable".
+        raise
     except Exception:
         return {}
 
@@ -1110,6 +1226,73 @@ def _release_lock_handle(handle: Any) -> None:
         handle.close()
 
 
+def _new_lock_owner_metadata() -> dict[str, Any]:
+    return {
+        "schema": LOCK_SCHEMA,
+        "state": "held",
+        "owner": "supervisor_integration_runner",
+        "owner_id": f"{os.uname().nodename}:{os.getpid()}:{time.time_ns()}",
+        "pid": os.getpid(),
+        "created_at": int(time.time()),
+    }
+
+
+def _publish_new_lock(
+    lock_path: Path,
+) -> tuple[Any, dict[str, Any]] | None:
+    """Publish a fully initialized, already-flocked inode without replacement.
+
+    A creator must never expose the empty inode produced by ``O_CREAT``.  The
+    private inode is locked and durably initialized first, then a hard link is
+    used as the no-replace publication primitive.  Losing the link race simply
+    means reopening the winning stable pathname on the next loop iteration.
+    """
+
+    fd, temporary_name = tempfile.mkstemp(
+        prefix=f".{lock_path.name}.publish-", dir=lock_path.parent
+    )
+    temporary_path = Path(temporary_name)
+    handle = os.fdopen(fd, "r+", encoding="utf-8")
+    published = False
+    try:
+        os.chmod(temporary_path, 0o600)
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        metadata = _new_lock_owner_metadata()
+        _write_lock_metadata(handle, metadata)
+        try:
+            os.link(temporary_path, lock_path)
+        except FileExistsError:
+            return None
+        published = True
+        if not _lock_path_matches_handle(lock_path, handle):
+            raise IntegrationLockError(
+                f"published auto-integrator lock inode changed: {lock_path}"
+            )
+        try:
+            parent_fd = os.open(lock_path.parent, os.O_RDONLY)
+            try:
+                os.fsync(parent_fd)
+            finally:
+                os.close(parent_fd)
+        except OSError:
+            # Metadata is already fsynced and the link operation is atomic.
+            # Some filesystems do not permit fsync on directories.
+            pass
+        return handle, metadata
+    except OSError as exc:
+        raise IntegrationLockError(
+            f"cannot publish auto-integrator lock {lock_path}: {exc}"
+        ) from exc
+    finally:
+        try:
+            temporary_path.unlink()
+        except FileNotFoundError:
+            pass
+        if not published or not _lock_path_matches_handle(lock_path, handle):
+            if not handle.closed:
+                _release_lock_handle(handle)
+
+
 @contextmanager
 def lock_file(lock_path: Path, *, enabled: bool = True) -> Iterator[None]:
     """Hold the integration lock with kernel lifetime and durable owner metadata.
@@ -1136,8 +1319,15 @@ def lock_file(lock_path: Path, *, enabled: bool = True) -> Iterator[None]:
     handle: Any | None = None
     owner_metadata: dict[str, Any] = {}
     while handle is None:
+        created = _publish_new_lock(lock_path)
+        if created is not None:
+            handle, owner_metadata = created
+            break
         try:
-            fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR, 0o600)
+            flags = os.O_RDWR
+            if hasattr(os, "O_NOFOLLOW"):
+                flags |= os.O_NOFOLLOW
+            fd = os.open(str(lock_path), flags)
         except OSError as exc:
             raise IntegrationLockError(
                 f"cannot open auto-integrator lock {lock_path}: {exc}"
@@ -1154,10 +1344,9 @@ def lock_file(lock_path: Path, *, enabled: bool = True) -> Iterator[None]:
                     raise IntegrationLockError(
                         f"cannot acquire auto-integrator lock {lock_path}: {exc}"
                     ) from exc
-                metadata = _read_lock_metadata(candidate_handle)
                 raise IntegrationLockHeld(
                     f"auto-integrator lock is already held: {lock_path} "
-                    f"({_lock_owner_detail(metadata)})"
+                    "(owner metadata is protected by the active flock)"
                 ) from exc
 
             if not _lock_path_matches_handle(lock_path, candidate_handle):
@@ -1167,6 +1356,10 @@ def lock_file(lock_path: Path, *, enabled: bool = True) -> Iterator[None]:
                 continue
 
             previous = _read_lock_metadata(candidate_handle)
+            if not previous:
+                raise IntegrationLockError(
+                    f"auto-integrator lock metadata is empty: {lock_path}"
+                )
             try:
                 previous_pid = int(previous.get("pid") or 0)
             except (TypeError, ValueError):
@@ -1199,14 +1392,7 @@ def lock_file(lock_path: Path, *, enabled: bool = True) -> Iterator[None]:
                 _release_lock_handle(candidate_handle)
                 continue
 
-            owner_metadata = {
-                "schema": LOCK_SCHEMA,
-                "state": "held",
-                "owner": "supervisor_integration_runner",
-                "owner_id": f"{os.uname().nodename}:{os.getpid()}:{time.time_ns()}",
-                "pid": os.getpid(),
-                "created_at": int(time.time()),
-            }
+            owner_metadata = _new_lock_owner_metadata()
             if previous and previous_state != "released":
                 owner_metadata["recovered_from"] = previous
             try:
@@ -1458,7 +1644,6 @@ def revalidate_before_merge(
     prior_gate: ReviewGate,
     prior_decision: review_gate.GateDecision,
     prior_pr_number: int | None,
-    execute: bool,
 ) -> tuple[Mapping[str, Any], review_gate.GateDecision, CheckSummary]:
     """Re-read canonical authority and the exact live PR immediately before merge."""
 
@@ -1555,24 +1740,14 @@ def revalidate_before_merge(
         )
 
     if has_auto_merge_request(fresh_pr):
-        if not execute:
-            raise FinalMergeRevalidationError(
-                "final-auto-merge-armed",
-                f"PR #{fresh_number} still has an auto-merge request at final revalidation.",
-            )
-        disable_auto_merge(fresh_number, runner, root=root, execute=True)
-        try:
-            live_request = read_auto_merge_request(fresh_number, runner, root=root)
-        except AutoIntegratorError as exc:
-            raise FinalMergeRevalidationError(
-                "final-auto-merge-revocation-failed", str(exc)
-            ) from exc
-        if live_request is not None:
-            raise FinalMergeRevalidationError(
-                "final-auto-merge-revocation-failed",
-                f"PR #{fresh_number} still has an auto-merge request after final revocation.",
-            )
-        fresh_pr = {**fresh_pr, "autoMergeRequest": None}
+        # Revocation, when needed, happens before smoke. Never mutate GitHub
+        # authority while holding the canonical state/audit read locks. A new
+        # request appearing in the final window is an authority change and the
+        # safe outcome is to block after releasing those locks.
+        raise FinalMergeRevalidationError(
+            "final-auto-merge-armed",
+            f"PR #{fresh_number} has an auto-merge request at final revalidation.",
+        )
 
     fresh_checks = summarize_status_rollup(fresh_pr.get("statusCheckRollup"))
     if fresh_checks.state == "red":
@@ -1596,6 +1771,37 @@ def revalidate_before_merge(
             waiting=True,
         )
     return fresh_pr, fresh_decision, fresh_checks
+
+
+@contextmanager
+def final_authority_read_locks(
+    *,
+    execute: bool,
+    canonical_state_file: Path | None,
+    status_root: Path,
+) -> Iterator[None]:
+    """Freeze task-state then approval-audit authority for final merge."""
+
+    if not execute:
+        yield
+        return
+    state_file = canonical_state_file or status_root / "ai-status.json"
+    activity_file = status_root / review_gate.ACTIVITY_LOG_NAME
+    try:
+        with orchestrator_common.canonical_task_state_lock_file(
+            state_file, shared=True
+        ):
+            with orchestrator_common.activity_audit_lock_file(
+                activity_file, shared=True
+            ):
+                yield
+    except FinalMergeRevalidationError:
+        raise
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise FinalMergeRevalidationError(
+            "canonical-authority-lock-failed",
+            f"Cannot freeze canonical task/review authority before merge: {exc}",
+        ) from exc
 
 
 def unblock_task_id(task_id: str, reason: str) -> str:
@@ -1667,6 +1873,8 @@ def preflight_repository(
     candidate: TaskCandidate,
     runner: CommandRunner,
     target_root: Path,
+    *,
+    require_standalone_integration: bool = False,
 ) -> tuple[str, str] | None:
     if not target_root.is_absolute():
         return (
@@ -1696,6 +1904,30 @@ def preflight_repository(
                 )
         except OSError:
             pass
+    if require_standalone_integration:
+        head_proc = runner.run(
+            ["git", "rev-parse", "HEAD"], cwd=target_root, check=False
+        )
+        head = head_proc.stdout.strip().lower()
+        if (
+            head_proc.returncode != 0
+            or not review_gate.OID_RE.fullmatch(head)
+            or target_root.name.lower() != head
+        ):
+            return (
+                "integration-checkout-identity-mismatch",
+                f"Cannot integrate {candidate.task_id}: dedicated integration root must be named for its exact HEAD ({target_root.name} != {head or 'missing'}).",
+            )
+        symbolic_proc = runner.run(
+            ["git", "symbolic-ref", "-q", "HEAD"],
+            cwd=target_root,
+            check=False,
+        )
+        if symbolic_proc.returncode == 0:
+            return (
+                "integration-checkout-not-detached",
+                f"Cannot integrate {candidate.task_id}: dedicated integration root must have detached HEAD: {target_root}.",
+            )
     if check_fs and not _directory_is_writable(target_root):
         return (
             "repository-checkout-not-writable",
@@ -1714,6 +1946,13 @@ def preflight_repository(
     if not common_dir.is_absolute():
         common_dir = target_root / common_dir
     common_dir = common_dir.resolve(strict=False)
+    if require_standalone_integration:
+        expected_common = (target_root / ".git").resolve(strict=False)
+        if common_dir != expected_common or (check_fs and not expected_common.is_dir()):
+            return (
+                "integration-checkout-not-standalone",
+                f"Cannot integrate {candidate.task_id}: dedicated integration root must own its standalone .git directory ({common_dir} != {expected_common}).",
+            )
     if check_fs and (
         not common_dir.is_dir() or not _directory_is_writable(common_dir)
     ):
@@ -1835,7 +2074,12 @@ def integrate_candidate(
             commands=runner.commands[:],
         )
 
-    preflight_error = preflight_repository(candidate, runner, target_root)
+    preflight_error = preflight_repository(
+        candidate,
+        runner,
+        target_root,
+        require_standalone_integration=require_dedicated_integration_path,
+    )
     if preflight_error:
         reason, detail = preflight_error
         unblock = (
@@ -2592,20 +2836,39 @@ def integrate_candidate(
             commands=runner.commands[:],
         )
 
+    merge_proc: subprocess.CompletedProcess[str] | None = None
     try:
-        pr, decision, checks = revalidate_before_merge(
-            candidate,
-            settings,
-            runner,
-            root=target_root,
-            status_root=status_root_dir,
-            canonical_state_file=canonical_state_file,
-            prior_gate=gate,
-            prior_decision=decision,
-            prior_pr_number=number,
+        # Lock order is outer auto-integrator EX, then task-state SH, then
+        # activity-audit SH. The live PR refresh, fresh gate/check readback and
+        # synchronous exact-head merge are one indivisible authority window.
+        with final_authority_read_locks(
             execute=execute,
-        )
+            canonical_state_file=canonical_state_file,
+            status_root=status_root_dir,
+        ):
+            with bounded_runner_timeout(runner, FINAL_MERGE_TIMEOUT_SECONDS):
+                pr, decision, checks = revalidate_before_merge(
+                    candidate,
+                    settings,
+                    runner,
+                    root=target_root,
+                    status_root=status_root_dir,
+                    canonical_state_file=canonical_state_file,
+                    prior_gate=gate,
+                    prior_decision=decision,
+                    prior_pr_number=number,
+                )
+                if execute:
+                    merge_proc = runner.run(
+                        merge_command(
+                            candidate, number or 0, exact_head=decision.head_oid
+                        ),
+                        cwd=target_root,
+                        check=False,
+                        timeout=FINAL_MERGE_TIMEOUT_SECONDS,
+                    )
     except FinalMergeRevalidationError as exc:
+        # Canonical locks have exited before any task-state mutation below.
         action = "waiting" if exc.waiting else "blocked"
         detail = f"PR #{number} failed final merge revalidation: {exc.detail}"
         unblock = (
@@ -2629,6 +2892,36 @@ def integrate_candidate(
             url,
             unblock,
             not execute,
+            runner.commands[:],
+        )
+    except subprocess.TimeoutExpired:
+        detail = (
+            f"PR #{number}'s final authority refresh or synchronous exact-head "
+            f"REST merge timed out after "
+            f"{FINAL_MERGE_TIMEOUT_SECONDS:g}s; its outcome is unknown and must "
+            "be refreshed before any retry."
+        )
+        unblock = (
+            open_unblock_task(
+                candidate,
+                "final-authority-timeout",
+                detail,
+                settings,
+                runner,
+                root=status_root_dir,
+                execute=execute,
+            )
+            if open_unblock
+            else None
+        )
+        return IntegrationResult(
+            candidate.task_id,
+            "blocked",
+            detail,
+            number,
+            url,
+            unblock,
+            False,
             runner.commands[:],
         )
 
@@ -2656,11 +2949,8 @@ def integrate_candidate(
             commands=runner.commands[:],
         )
 
-    merge_proc = runner.run(
-        merge_command(candidate, number or 0, exact_head=decision.head_oid),
-        cwd=target_root,
-        check=False,
-    )
+    if merge_proc is None:
+        raise AutoIntegratorError("live merge returned without a REST response")
     try:
         merge_payload = json.loads(merge_proc.stdout or "{}")
     except json.JSONDecodeError:
@@ -2749,29 +3039,47 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.execute and args.no_lock:
         parser.error("--execute requires the integration lock; --no-lock is dry-run test-only")
-    if args.status_file is not None:
-        status_file = args.status_file.resolve()
-        status_root = status_file.parent
+    if args.execute and (args.status_file is not None or args.config_file is not None):
+        parser.error(
+            "--execute rejects --status-file/--config-file overrides; live authority comes from the promoted watchdog config"
+        )
+    if args.execute and (args.skip_smoke or args.smoke_command):
+        parser.error(
+            "--execute rejects --skip-smoke/--smoke-command overrides; required smoke comes from the promoted live config"
+        )
+    runner = CommandRunner()
+    if args.execute:
+        live_config_raw = str(os.environ.get(LIVE_CONFIG_ENV) or "").strip()
+        live_config_path = (
+            Path(live_config_raw) if live_config_raw else DEFAULT_LIVE_CONFIG
+        )
+        try:
+            status_file, status_root, settings, config_dict = resolve_execute_authority(
+                live_config_path, runner, command_root=ROOT
+            )
+        except (ExecuteAuthorityError, OSError, ValueError) as exc:
+            parser.error(f"live execute authority binding failed: {exc}")
     else:
-        status_root = review_gate.resolve_status_root()
-        status_file = status_root / "ai-status.json"
-
-    if args.config_file is not None:
-        config_path = args.config_file.resolve()
-    else:
-        status_config = status_root / ".orchestrator" / "config.json"
-        config_path = status_config if status_config.exists() else DEFAULT_CONFIG
-
-    settings = load_settings(config_path, status_root=status_root)
+        if args.status_file is not None:
+            status_file = args.status_file.resolve()
+            status_root = status_file.parent
+        else:
+            status_root = review_gate.resolve_status_root()
+            status_file = status_root / "ai-status.json"
+        if args.config_file is not None:
+            config_path = args.config_file.resolve()
+        else:
+            status_config = status_root / ".orchestrator" / "config.json"
+            config_path = status_config if status_config.exists() else DEFAULT_CONFIG
+        settings = load_settings(config_path, status_root=status_root)
+        config_dict = load_json(config_path, {})
+        if not isinstance(config_dict, dict):
+            config_dict = {}
     if args.max_tasks is not None:
         settings = Settings(**{**settings.__dict__, "max_tasks_per_run": args.max_tasks})
-    config_dict = load_json(config_path, {})
-    if not isinstance(config_dict, dict):
-        config_dict = {}
     paths = dict(config_dict.get("paths") or {})
     paths["status_file"] = str(status_file.resolve())
     config_dict["paths"] = paths
-    runner = CommandRunner()
     smoke_commands = tuple() if args.skip_smoke else tuple(args.smoke_command) or settings.smoke_commands
     results: list[IntegrationResult] = []
     candidates: list[TaskCandidate] = []

@@ -26,6 +26,11 @@ from typing import Any, Mapping
 # rejects.  The command is short-lived, so keep bytecode writes disabled for
 # its entire lifetime, including imports performed by the verifier.
 sys.dont_write_bytecode = True
+GIT_SCRIPTS_DIR = Path(__file__).resolve().parent / "git"
+if str(GIT_SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(GIT_SCRIPTS_DIR))
+
+import auto_integrator  # noqa: E402  (shared stable integration lock)
 
 
 WATCHDOG_RUNTIME_PATH_DEFAULTS = {
@@ -702,7 +707,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return args
 
 
-def main(argv: list[str] | None = None) -> int:
+def _main_locked(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     try:
         command_identity = validated_immutable_command_root(Path(args.command_root))
@@ -807,6 +812,25 @@ def main(argv: list[str] | None = None) -> int:
             f"config={live_config_path} config_created={str(config_created).lower()}"
         )
     return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    probe = argparse.ArgumentParser(add_help=False)
+    probe.add_argument("--status-root")
+    probe.add_argument("--validate-command-root-only", action="store_true")
+    known, _ = probe.parse_known_args(argv)
+    if known.validate_command_root_only or not known.status_root:
+        return _main_locked(argv)
+    lock_path = (
+        Path(known.status_root).expanduser().absolute()
+        / auto_integrator.DEFAULT_LOCK
+    )
+    try:
+        with auto_integrator.lock_file(lock_path):
+            return _main_locked(argv)
+    except auto_integrator.IntegrationLockError as exc:
+        print(f"live supervisor config provisioning failed: {exc}", file=sys.stderr)
+        return 2
 
 
 if __name__ == "__main__":

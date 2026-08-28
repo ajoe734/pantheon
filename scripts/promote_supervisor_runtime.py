@@ -22,6 +22,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping
 
+GIT_SCRIPTS_DIR = Path(__file__).resolve().parent / "git"
+if str(GIT_SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(GIT_SCRIPTS_DIR))
+
+import auto_integrator  # noqa: E402  (shared stable integration lock)
+
 from provision_live_supervisor_config import (
     build_live_config,
     ensure_approval_queue_marker,
@@ -438,7 +444,7 @@ def sync_coordination_root_code(candidate_root: Path, status_root: Path) -> dict
     return result
 
 
-def replace_supervisor(
+def _replace_supervisor_locked(
     repo_root: Path,
     *,
     status_root: Path,
@@ -496,20 +502,10 @@ def replace_supervisor(
         "outcome": "failed",
     }
     try:
-        # The candidate is already identity- and cleanliness-validated above.
-        # Seal it before TERM so a failure cannot interrupt the incumbent, and
-        # so workers can only read the exact command source after launch.
         result["command_runtime_seal"] = seal_command_runtime(Path(identity["root"]))
-        # The provider boundary is enforced by worker_runner, not by mode bits
-        # alone. Prove the host can create that namespace before TERM so a
-        # missing/disabled bubblewrap cannot replace a healthy incumbent with
-        # a supervisor that is unable to launch any worker safely.
         result["worker_sandbox_preflight"] = verify_worker_sandbox(
             Path(identity["root"])
         )
-        # Workers require this split-root marker before their adapter starts.
-        # Creating it is idempotent and happens before TERM, so a malformed
-        # coordination root cannot turn a healthy incumbent into an outage.
         ensure_approval_queue_marker(approval_queue_path)
         stopped_pid = stop_existing_supervisor(
             incumbent_pid_path, timeout_seconds=termination_timeout
@@ -523,11 +519,6 @@ def replace_supervisor(
         )
         result["outcome"] = "launched"
         result["exit_code"] = 0
-        # Best-effort and fully self-contained: sync_coordination_root_code
-        # already catches its own errors, but this call site never lets an
-        # unexpected exception from it reach the replacement's own outcome
-        # or exit_code either, since the supervisor above already launched
-        # successfully.
         try:
             result["coordination_code_sync"] = sync_coordination_root_code(
                 Path(identity["root"]), status_root
@@ -542,6 +533,32 @@ def replace_supervisor(
         result["exit_code"] = 1
     _write_evidence(evidence_path, result)
     return result
+
+
+def replace_supervisor(
+    repo_root: Path,
+    *,
+    status_root: Path,
+    live_config_path: Path,
+    python_executable: Path,
+    termination_timeout: float,
+    evidence_path: Path | None = None,
+    repository_source_roots: Mapping[str, Path | str] | None = None,
+    repository_integration_roots: Mapping[str, Path | str] | None = None,
+) -> dict[str, Any]:
+    """Validate and switch config while excluding the canonical merge owner."""
+
+    with auto_integrator.lock_file(status_root / auto_integrator.DEFAULT_LOCK):
+        return _replace_supervisor_locked(
+            repo_root,
+            status_root=status_root,
+            live_config_path=live_config_path,
+            python_executable=python_executable,
+            termination_timeout=termination_timeout,
+            evidence_path=evidence_path,
+            repository_source_roots=repository_source_roots,
+            repository_integration_roots=repository_integration_roots,
+        )
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -635,7 +652,7 @@ def main(argv: list[str] | None = None) -> int:
                 repository_source_roots=repository_source_roots,
                 repository_integration_roots=repository_integration_roots,
             )
-    except (OSError, ValueError) as exc:
+    except (OSError, ValueError, auto_integrator.IntegrationLockError) as exc:
         result = {"outcome": "failed", "exit_code": 1, "error": f"{type(exc).__name__}: {exc}"}
     if args.json:
         print(json.dumps(result, indent=2, sort_keys=True))

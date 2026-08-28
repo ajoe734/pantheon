@@ -7,6 +7,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 from unittest import mock
@@ -43,6 +44,8 @@ class FakeRunner(auto_integrator.CommandRunner):
         git_status_output: str = "",
         origin_remote_returncode: int = 0,
         origin_remote_slug: str | None = None,
+        git_head: str = "abc123",
+        symbolic_ref_returncode: int = 1,
     ) -> None:
         super().__init__()
         self.pr = dict(pr) if pr is not None else None
@@ -61,6 +64,8 @@ class FakeRunner(auto_integrator.CommandRunner):
         self.git_status_output = git_status_output
         self.origin_remote_returncode = origin_remote_returncode
         self.origin_remote_slug = origin_remote_slug
+        self.git_head = git_head
+        self.symbolic_ref_returncode = symbolic_ref_returncode
         # SUP-GATED-PR-EXACT-HEAD-QUEUE-MERGE-20260805: outcome of the
         # disposable `git merge origin/dev` test-merge run against a behind
         # gated PR's exact reviewed head. 0 = clean (default); non-zero
@@ -91,7 +96,9 @@ class FakeRunner(auto_integrator.CommandRunner):
         cwd: Path = auto_integrator.ROOT,
         check: bool = True,
         env: Mapping[str, str] | None = None,
+        timeout: float | None = None,
     ):
+        del timeout
         command = [str(arg) for arg in args]
         self.commands.append(command)
         joined = " ".join(command)
@@ -209,7 +216,9 @@ class FakeRunner(auto_integrator.CommandRunner):
                 slug = "ajoe734/pantheon"
             return completed(command, stdout=f"https://github.com/{slug}.git\n")
         if command[:3] == ["git", "rev-parse", "HEAD"]:
-            return completed(command, stdout="abc123\n")
+            return completed(command, stdout=f"{self.git_head}\n")
+        if command[:3] == ["git", "symbolic-ref", "-q"]:
+            return completed(command, returncode=self.symbolic_ref_returncode)
         if command[:2] == ["git", "rebase"] and "--abort" not in command:
             return completed(command, returncode=self.rebase_returncode)
         if command[:3] == ["git", "worktree", "remove"]:
@@ -374,6 +383,9 @@ class CandidateSelectionTests(unittest.TestCase):
 
     def test_pending_first_candidate_does_not_starve_ready_second_candidate(self) -> None:
         self._assert_observation_does_not_consume_limit("waiting")
+
+    def test_blocked_first_candidate_does_not_starve_ready_second_candidate(self) -> None:
+        self._assert_observation_does_not_consume_limit("blocked")
 
     def _assert_observation_does_not_consume_limit(self, first_action: str) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -676,10 +688,80 @@ class GitHubJsonCommandRunnerTests(unittest.TestCase):
 
 class IntegrationPlanTests(unittest.TestCase):
 
+    def test_merge_owner_contract_is_task_dev_not_release_promotion(self) -> None:
+        contract = (REPO_ROOT / "scripts/git/auto_integrator_contract.md").read_text(
+            encoding="utf-8"
+        )
+        release_runner = (REPO_ROOT / "scripts/git/publish_promote.py").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("canonical `task/* -> dev` integration", contract)
+        self.assertIn("separate release authority", contract)
+        self.assertIn("def request_verified_auto_merge", release_runner)
+        self.assertIn('["gh", "pr", "merge", promote_branch, "--auto", "--merge"]', release_runner)
+
     def test_execute_cannot_bypass_integration_lock(self) -> None:
         with self.assertRaises(SystemExit) as raised:
             auto_integrator.main(["--execute", "--no-lock"])
         self.assertEqual(raised.exception.code, 2)
+
+    def test_execute_cannot_override_promoted_smoke_policy(self) -> None:
+        for override in (["--skip-smoke"], ["--smoke-command", "true"]):
+            with self.subTest(override=override), self.assertRaises(SystemExit) as raised:
+                auto_integrator.main(["--execute", *override])
+            self.assertEqual(raised.exception.code, 2)
+
+    def test_execute_authority_binds_watchdog_runtime_status_and_lock(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            head = "b" * 40
+            command_root = root / "command-runtimes" / head
+            command_root.mkdir(parents=True)
+            status_root = root / "status"
+            (status_root / ".orchestrator").mkdir(parents=True)
+            status_file = status_root / "ai-status.json"
+            status_file.write_text('{"tasks": []}\n', encoding="utf-8")
+            live_config = root / "runtime" / "live.json"
+            live_config.parent.mkdir()
+            payload = {
+                "paths": {"status_file": str(status_file)},
+                "watchdog": {
+                    "supervisor_command": [
+                        sys.executable,
+                        str(command_root / ".orchestrator" / "supervisor.py"),
+                        "--config",
+                        str(live_config),
+                    ]
+                },
+                "branch_workflow": {
+                    "auto_integrator": {
+                        "lock_file": ".orchestrator/auto-integrator.lock"
+                    }
+                },
+            }
+            live_config.write_text(json.dumps(payload), encoding="utf-8")
+            runner = FakeRunner(git_head=head)
+
+            resolved = auto_integrator.resolve_execute_authority(
+                live_config, runner, command_root=command_root
+            )
+            self.assertEqual(resolved[0], status_file)
+            self.assertEqual(
+                resolved[2].lock_path.resolve(),
+                (status_root / auto_integrator.DEFAULT_LOCK).resolve(),
+            )
+
+            forged = json.loads(json.dumps(payload))
+            forged["branch_workflow"]["auto_integrator"]["lock_file"] = str(
+                root / "private.lock"
+            )
+            live_config.write_text(json.dumps(forged), encoding="utf-8")
+            with self.assertRaisesRegex(
+                auto_integrator.ExecuteAuthorityError, "lock must be canonical"
+            ):
+                auto_integrator.resolve_execute_authority(
+                    live_config, runner, command_root=command_root
+                )
 
     def test_live_execute_requires_explicit_dedicated_integration_path(self) -> None:
         candidate = auto_integrator.TaskCandidate(
@@ -707,81 +789,106 @@ class IntegrationPlanTests(unittest.TestCase):
         self.assertIn("no explicit integration_path", result.detail)
         self.assertEqual(runner.commands, [])
 
-    def test_main_execute_does_not_fallback_to_worker_local_path(self) -> None:
+    def test_execute_preflight_rejects_linked_worktree_common_dir(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             root = Path(tmp_dir)
-            repository_root = root / "worker-source"
-            repository_root.mkdir()
+            source = root / "source"
+            source.mkdir()
+            subprocess.run(["git", "init", "-b", "dev"], cwd=source, check=True, capture_output=True)
+            subprocess.run(["git", "config", "user.email", "test@example.invalid"], cwd=source, check=True)
+            subprocess.run(["git", "config", "user.name", "Test"], cwd=source, check=True)
+            (source / "README").write_text("test\n", encoding="utf-8")
+            subprocess.run(["git", "add", "README"], cwd=source, check=True)
+            subprocess.run(["git", "commit", "-m", "test"], cwd=source, check=True, capture_output=True)
+            head = subprocess.run(
+                ["git", "rev-parse", "HEAD"], cwd=source, check=True, capture_output=True, text=True
+            ).stdout.strip()
+            linked = root / head
             subprocess.run(
-                ["git", "init", "-b", "dev", str(repository_root)],
+                ["git", "worktree", "add", "--detach", str(linked), head],
+                cwd=source,
                 check=True,
                 capture_output=True,
             )
+            candidate = auto_integrator.TaskCandidate(
+                "ABC-001", "Ready", "Codex", "Claude", "task/ABC-001",
+                repository_root=linked,
+                dedicated_integration_path=True,
+            )
+
+            problem = auto_integrator.preflight_repository(
+                candidate,
+                auto_integrator.CommandRunner(),
+                linked,
+                require_standalone_integration=True,
+            )
+            self.assertEqual(problem[0], "integration-checkout-not-standalone")
+
+    def test_execute_preflight_accepts_two_standalone_versioned_clones(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            for repository_id, slug in (
+                ("pantheon", "ajoe734/pantheon"),
+                ("execute_plans", "ajoe734/execute-plans"),
+            ):
+                source = root / f"{repository_id}-source"
+                source.mkdir()
+                subprocess.run(["git", "init", "-b", "dev"], cwd=source, check=True, capture_output=True)
+                subprocess.run(["git", "config", "user.email", "test@example.invalid"], cwd=source, check=True)
+                subprocess.run(["git", "config", "user.name", "Test"], cwd=source, check=True)
+                (source / "README").write_text(repository_id + "\n", encoding="utf-8")
+                subprocess.run(["git", "add", "README"], cwd=source, check=True)
+                subprocess.run(["git", "commit", "-m", "test"], cwd=source, check=True, capture_output=True)
+                head = subprocess.run(
+                    ["git", "rev-parse", "HEAD"], cwd=source, check=True, capture_output=True, text=True
+                ).stdout.strip()
+                destination_parent = root / f"{repository_id}-integration"
+                destination_parent.mkdir()
+                destination = destination_parent / head
+                subprocess.run(
+                    ["git", "clone", "--no-local", str(source), str(destination)],
+                    check=True,
+                    capture_output=True,
+                )
+                subprocess.run(["git", "checkout", "--detach", head], cwd=destination, check=True, capture_output=True)
+                candidate = auto_integrator.TaskCandidate(
+                    repository_id + "-TASK", "Ready", "Codex", "Claude", "task/TASK",
+                    repository_id=repository_id,
+                    repository_slug=slug,
+                    repository_root=destination,
+                    dedicated_integration_path=True,
+                )
+                self.assertIsNone(
+                    auto_integrator.preflight_repository(
+                        candidate,
+                        auto_integrator.CommandRunner(),
+                        destination,
+                        require_standalone_integration=True,
+                    )
+                )
+
+    def test_main_execute_rejects_cli_status_and_config_authority_overrides(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
             status_file = root / "ai-status.json"
             config_file = root / "config.json"
-            lock_path = root / "auto-integrator.lock"
-            status_file.write_text(
-                json.dumps(
-                    {
-                        "tasks": [
-                            {
-                                "id": "ABC-001",
-                                "title": "Ready",
-                                "status": "in_progress",
-                                "owner": "Codex",
-                                "reviewer": "Codex",
-                                "merge_policy": "merge_then_review",
-                            }
-                        ]
-                    }
-                ),
-                encoding="utf-8",
-            )
-            config_file.write_text(
-                json.dumps(
-                    {
-                        "coordination": {
-                            "repositories": {
-                                "pantheon": {"local_path": str(repository_root)}
-                            }
-                        },
-                        "branch_workflow": {
-                            "auto_integrator": {"lock_file": str(lock_path)}
-                        },
-                    }
-                ),
-                encoding="utf-8",
-            )
-            runner = FakeRunner(pr=green_pr(), check_filesystem_paths=True)
-            output = io.StringIO()
-            with mock.patch.object(
-                auto_integrator, "CommandRunner", return_value=runner
-            ), mock.patch("sys.stdout", output):
-                returncode = auto_integrator.main(
+            with self.assertRaises(SystemExit) as raised:
+                auto_integrator.main(
                     [
                         "--execute",
-                        "--no-open-unblock",
                         "--status-file",
                         str(status_file),
                         "--config-file",
                         str(config_file),
-                        "--json",
                     ]
                 )
-
-            payload = json.loads(output.getvalue())
-            self.assertEqual(returncode, 2)
-            self.assertEqual(payload["results"][0]["action"], "blocked")
-            self.assertIn(
-                "no explicit integration_path", payload["results"][0]["detail"]
-            )
-            self.assertEqual(runner.commands, [])
+            self.assertEqual(raised.exception.code, 2)
 
     def test_merge_then_review_open_pr_flows_through_locked_runner_to_merge(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             root = Path(tmp_dir)
             coordination_root = root / "coordination"
-            repository_root = root / "pantheon"
+            repository_root = root / APPROVED_HEAD
             coordination_root.mkdir()
             subprocess.run(
                 ["git", "init", "-b", "dev", str(repository_root)],
@@ -832,21 +939,32 @@ class IntegrationPlanTests(unittest.TestCase):
                 + "\n",
                 encoding="utf-8",
             )
-            runner = FakeRunner(pr=green_pr(), check_filesystem_paths=True)
+            runner = FakeRunner(
+                pr=green_pr(),
+                check_filesystem_paths=True,
+                git_head=APPROVED_HEAD,
+            )
             output = io.StringIO()
 
             with mock.patch.object(
                 auto_integrator, "CommandRunner", return_value=runner
+            ), mock.patch.object(
+                auto_integrator,
+                "resolve_execute_authority",
+                return_value=(
+                    status_file,
+                    coordination_root,
+                    auto_integrator.Settings(
+                        lock_path=lock_path,
+                        max_tasks_per_run=1,
+                        smoke_commands=("true",),
+                    ),
+                    json.loads(config_file.read_text(encoding="utf-8")),
+                ),
             ), mock.patch("sys.stdout", output):
                 returncode = auto_integrator.main(
                     [
                         "--execute",
-                        "--status-file",
-                        str(status_file),
-                        "--config-file",
-                        str(config_file),
-                        "--smoke-command",
-                        "true",
                         "--json",
                     ]
                 )
@@ -1366,6 +1484,96 @@ class IntegrationPlanTests(unittest.TestCase):
         self.assertFalse(
             any(command[:4] == ["gh", "api", "--method", "PUT"] for command in runner.commands)
         )
+
+    def test_final_github_timeouts_release_authority_locks_before_unblock(self) -> None:
+        matchers = {
+            "list": lambda command: command[:3] == ["gh", "pr", "list"],
+            "view": lambda command: command[:3] == ["gh", "pr", "view"],
+            "graphql": lambda command: command[:3] == ["gh", "api", "graphql"],
+        }
+
+        for label, matcher in matchers.items():
+            with self.subTest(operation=label), tempfile.TemporaryDirectory() as tmp_dir:
+                class TimeoutRunner(FakeRunner):
+                    def run(self, args: Sequence[str], **kwargs: Any):  # type: ignore[override]
+                        command = [str(item) for item in args]
+                        if self.default_timeout is not None and matcher(command):
+                            self.commands.append(command)
+                            raise subprocess.TimeoutExpired(command, self.default_timeout)
+                        return super().run(args, **kwargs)
+
+                status_root = Path(tmp_dir)
+                state_file = status_root / "ai-status.json"
+                state_file.write_text(
+                    json.dumps(approved_gate().state) + "\n", encoding="utf-8"
+                )
+                timed_pr = green_pr()
+                if label == "graphql":
+                    timed_pr["url"] = "https://github.com/ajoe734/pantheon/pull/44"
+                runner = TimeoutRunner(pr=timed_pr)
+                events: list[str] = []
+                held = {"task": False, "activity": False}
+
+                @contextmanager
+                def task_lock(*_args: Any, **_kwargs: Any):
+                    held["task"] = True
+                    events.append("task_enter")
+                    try:
+                        yield
+                    finally:
+                        events.append("task_exit")
+                        held["task"] = False
+
+                @contextmanager
+                def activity_lock(*_args: Any, **_kwargs: Any):
+                    self.assertTrue(held["task"])
+                    held["activity"] = True
+                    events.append("activity_enter")
+                    try:
+                        yield
+                    finally:
+                        events.append("activity_exit")
+                        held["activity"] = False
+
+                def unblock(*_args: Any, **_kwargs: Any) -> str:
+                    self.assertFalse(held["task"] or held["activity"])
+                    events.append("unblock")
+                    return "UNBLOCK"
+
+                with mock.patch.object(
+                    auto_integrator.orchestrator_common,
+                    "canonical_task_state_lock_file",
+                    task_lock,
+                ), mock.patch.object(
+                    auto_integrator.orchestrator_common,
+                    "activity_audit_lock_file",
+                    activity_lock,
+                ), mock.patch.object(
+                    auto_integrator, "open_unblock_task", side_effect=unblock
+                ):
+                    result = auto_integrator.integrate_candidate(
+                        auto_integrator.TaskCandidate(
+                            task_id="ABC-001",
+                            title="Ready",
+                            owner="Codex",
+                            reviewer="Claude",
+                            branch="task/ABC-001",
+                        ),
+                        auto_integrator.Settings(smoke_commands=("true",)),
+                        runner,
+                        status_root=status_root,
+                        canonical_state_file=state_file,
+                        execute=True,
+                        gate=approved_gate(),
+                    )
+
+                self.assertEqual(result.action, "blocked")
+                self.assertEqual(result.unblock_task_id, "UNBLOCK")
+                self.assertEqual(
+                    events,
+                    ["task_enter", "activity_enter", "activity_exit", "task_exit", "unblock"],
+                )
+                self.assertIsNone(runner.default_timeout)
 
     def test_execute_waits_when_rest_endpoint_refuses_direct_merge(self) -> None:
         """A refusal never turns into a merge queue or auto-merge request."""
@@ -2485,6 +2693,62 @@ class CrossRepoIntegrationTests(unittest.TestCase):
 
 
 class IntegrationLockTests(unittest.TestCase):
+    def test_existing_empty_lock_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            lock_path = Path(tmp_dir) / "auto-integrator.lock"
+            lock_path.touch()
+            with self.assertRaisesRegex(
+                auto_integrator.IntegrationLockError, "metadata is empty"
+            ):
+                with auto_integrator.lock_file(lock_path):
+                    self.fail("empty pre-existing lock was accepted")
+
+    def test_first_publish_exposes_only_complete_locked_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            lock_path = Path(tmp_dir) / "auto-integrator.lock"
+            real_link = os.link
+            observed: list[dict[str, Any]] = []
+
+            def observe_publish(source: object, destination: object) -> None:
+                real_link(source, destination)
+                observed.append(json.loads(lock_path.read_text(encoding="utf-8")))
+
+            with mock.patch.object(auto_integrator.os, "link", side_effect=observe_publish):
+                with auto_integrator.lock_file(lock_path):
+                    pass
+
+            self.assertEqual(len(observed), 1)
+            self.assertEqual(observed[0]["schema"], auto_integrator.LOCK_SCHEMA)
+            self.assertEqual(observed[0]["state"], "held")
+            self.assertEqual(observed[0]["pid"], os.getpid())
+
+    def test_separate_process_cannot_share_merge_owner_lock(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            lock_path = Path(tmp_dir) / "auto-integrator.lock"
+            script = (
+                "import sys; from pathlib import Path; "
+                "from scripts.git.auto_integrator import lock_file; "
+                f"p=Path({str(lock_path)!r}); "
+                "ctx=lock_file(p); ctx.__enter__(); print('ready', flush=True); "
+                "sys.stdin.readline(); ctx.__exit__(None,None,None)"
+            )
+            child = subprocess.Popen(
+                [sys.executable, "-c", script],
+                cwd=REPO_ROOT,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+            try:
+                self.assertEqual(child.stdout.readline().strip(), "ready")
+                with self.assertRaises(auto_integrator.IntegrationLockHeld):
+                    with auto_integrator.lock_file(lock_path):
+                        self.fail("separate process shared merge authority")
+            finally:
+                child.communicate("release\n", timeout=5)
+            self.assertEqual(child.returncode, 0)
+
     def test_main_reports_active_lock_as_machine_readable_skip(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             root = Path(tmp_dir)
@@ -2608,7 +2872,17 @@ class IntegrationLockTests(unittest.TestCase):
     def test_legacy_unlink_recreate_race_retries_on_the_path_inode(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             lock_path = Path(tmp_dir) / "auto-integrator.lock"
-            lock_path.write_text("{}\n", encoding="utf-8")
+            lock_path.write_text(
+                json.dumps(
+                    {
+                        "schema": auto_integrator.LOCK_SCHEMA,
+                        "state": "released",
+                        "pid": 2_147_483_647,
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
             real_read = auto_integrator._read_lock_metadata
             reads = 0
             first_inode = 0
@@ -2630,7 +2904,11 @@ class IntegrationLockTests(unittest.TestCase):
                         + "\n",
                         encoding="utf-8",
                     )
-                    return {}
+                    return {
+                        "schema": auto_integrator.LOCK_SCHEMA,
+                        "state": "released",
+                        "pid": 2_147_483_647,
+                    }
                 return real_read(handle)
 
             with mock.patch.object(

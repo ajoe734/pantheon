@@ -148,8 +148,9 @@ Optional settings live under `.orchestrator/config.json`:
 ```
 
 If no smoke commands are configured, the integrator still performs the rebase
-probe and PR status checks. Operators can pass `--smoke-command` on the CLI to
-override the config for one run.
+probe and PR status checks. `--smoke-command` and `--skip-smoke` are dry-run
+diagnostics only; live execution accepts smoke policy only from the promoted
+watchdog config.
 
 ## Read-only CLI
 
@@ -165,9 +166,10 @@ An isolated test may add `--no-lock`; production execution rejects
 ## Scheduled Runner
 
 `scripts/run-auto-integrator.sh` is the supervisor-owned cron wrapper. It
-defaults to `--execute --max-tasks 1` and passes the canonical status/config
-paths into the Python integrator. Workers and PR helpers do not invoke this
-executing entry point.
+defaults to `--execute --max-tasks 1`. The Python integrator derives canonical
+status/config/lock authority from that live config's watchdog command and the
+versioned command-runtime root; execute-mode CLI path overrides are rejected.
+Workers and PR helpers do not invoke this executing entry point.
 
 Use `AUTO_INTEGRATOR_DRY_RUN=1` for a non-mutating scheduled smoke and
 `AUTO_INTEGRATOR_MAX_TASKS=<n>` to override the default one-task limit.
@@ -189,4 +191,7 @@ minutes by default, and writes logs to
 - No automatic conflict resolution.
 - No admin merge or branch-protection bypass.
 - No broad batching; first version is intentionally serialized.
-- No publish/master promotion. That remains owned by `publish_promote.py`.
+- No publish/master promotion. “Sole task merge owner” is deliberately scoped
+  to canonical `task/* -> dev` integration. `publish_promote.py` remains the
+  separate release authority for `promote/* -> master` and may request its
+  protected release auto-merge; it cannot be used as a task-PR merge path.

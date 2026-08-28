@@ -10,12 +10,16 @@ cd "$ROOT_DIR"
 
 ARGS=(
   --max-tasks "$MAX_TASKS"
-  --status-file "$STATUS_ROOT/ai-status.json"
-  --config-file "$CONFIG_FILE"
 )
 
 if [[ "${AUTO_INTEGRATOR_DRY_RUN:-0}" != "1" ]]; then
   ARGS=(--execute "${ARGS[@]}")
+else
+  ARGS+=(
+    --status-file "$STATUS_ROOT/ai-status.json"
+    --config-file "$CONFIG_FILE"
+  )
 fi
 
+export PANTHEON_LIVE_SUPERVISOR_CONFIG="$CONFIG_FILE"
 exec python3 "$ROOT_DIR/scripts/git/auto_integrator.py" "${ARGS[@]}" "$@"
