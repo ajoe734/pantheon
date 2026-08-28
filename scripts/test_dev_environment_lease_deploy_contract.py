@@ -116,7 +116,7 @@ def test_payloads_must_come_from_their_protected_delivery_branches() -> None:
     assert '"${sha}" != "${trusted_ref}"' in dev
     assert '"${GITHUB_REF}" != "refs/heads/dev"' in dev
     assert '"${GITHUB_SHA}" != "${sha}"' in dev
-    assert "Out-of-order execute-plans candidate rejected" in dev
+    assert "current execute-plans dev moved" in dev
     assert "fetch-depth: 0" in staging
     assert "refs/remotes/origin/master" in staging
     assert 'git merge-base --is-ancestor "${sha}" "${trusted_ref}"' in staging
