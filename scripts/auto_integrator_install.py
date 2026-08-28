@@ -21,14 +21,30 @@ def status_root_from(value: str | None, repo_root: Path) -> Path:
     return Path(value).expanduser().resolve() if value else repo_root
 
 
-def render_cron_line(repo_root: Path, status_root: Path, *, interval: str = DEFAULT_INTERVAL) -> str:
+def config_file_from(value: str | None, status_root: Path) -> Path:
+    return (
+        Path(value).expanduser().resolve()
+        if value
+        else status_root / ".orchestrator" / "config.json"
+    )
+
+
+def render_cron_line(
+    repo_root: Path,
+    status_root: Path,
+    config_file: Path | None = None,
+    *,
+    interval: str = DEFAULT_INTERVAL,
+) -> str:
     repo = shlex.quote(str(repo_root))
     status = shlex.quote(str(status_root))
+    config = shlex.quote(str(config_file or status_root / ".orchestrator" / "config.json"))
     log_dir = shlex.quote(str(status_root / ".orchestrator" / "logs"))
     log_file = shlex.quote(str(status_root / ".orchestrator" / "logs" / "auto-integrator-cron.log"))
     return (
         f"{interval} cd {repo} && mkdir -p {log_dir} && "
-        f"PANTHEON_STATUS_ROOT={status} bash scripts/run-auto-integrator.sh "
+        f"PANTHEON_STATUS_ROOT={status} PANTHEON_AUTO_INTEGRATOR_CONFIG={config} "
+        f"bash scripts/run-auto-integrator.sh "
         f">> {log_file} 2>&1 {CRON_TAG}"
     )
 
@@ -51,8 +67,20 @@ def write_crontab(lines: list[str], *, dry_run: bool) -> None:
     subprocess.run(["crontab", "-"], input=content, text=True, check=True)
 
 
-def install_cron(repo_root: Path, status_root: Path, *, interval: str, dry_run: bool) -> None:
-    line = render_cron_line(repo_root, status_root, interval=interval)
+def install_cron(
+    repo_root: Path,
+    status_root: Path,
+    config_file: Path,
+    *,
+    interval: str,
+    dry_run: bool,
+) -> None:
+    line = render_cron_line(
+        repo_root,
+        status_root,
+        config_file,
+        interval=interval,
+    )
     existing = [raw for raw in current_crontab() if CRON_TAG not in raw]
     write_crontab([*existing, line], dry_run=dry_run)
     print(f"installed cron auto-integrator entry: {CRON_TAG}")
@@ -77,6 +105,14 @@ def parse_args() -> argparse.Namespace:
         default=DEFAULT_INTERVAL,
         help="Cron schedule prefix. Defaults to every five minutes.",
     )
+    parser.add_argument(
+        "--config-file",
+        default=None,
+        help=(
+            "Rendered live supervisor config used for repository ownership. "
+            "Defaults to <status-root>/.orchestrator/config.json."
+        ),
+    )
     parser.add_argument("--dry-run", action="store_true", help="Print intended crontab without applying it.")
     parser.add_argument("--uninstall", action="store_true", help="Remove the auto-integrator crontab entry.")
     return parser.parse_args()
@@ -86,6 +122,7 @@ def main() -> int:
     args = parse_args()
     repo_root = repo_root_from(args.repo)
     status_root = status_root_from(args.status_root, repo_root)
+    config_file = config_file_from(args.config_file, status_root)
     if not args.uninstall and not (repo_root / "scripts" / "run-auto-integrator.sh").exists():
         print(f"not a Pantheon repo root, missing scripts/run-auto-integrator.sh: {repo_root}")
         return 2
@@ -93,7 +130,13 @@ def main() -> int:
         if args.uninstall:
             uninstall_cron(dry_run=args.dry_run)
         else:
-            install_cron(repo_root, status_root, interval=args.interval, dry_run=args.dry_run)
+            install_cron(
+                repo_root,
+                status_root,
+                config_file,
+                interval=args.interval,
+                dry_run=args.dry_run,
+            )
     except subprocess.CalledProcessError as exc:
         print(f"auto-integrator persistence command failed: {exc}")
         return exc.returncode or 1

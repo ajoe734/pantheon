@@ -71,6 +71,19 @@ def approval_event(**overrides: Any) -> dict[str, Any]:
     return event
 
 
+def integration_resume_event(**overrides: Any) -> dict[str, Any]:
+    event = {
+        "ts": "2026-07-26T13:00:00Z",
+        "agent": "Human/Ops",
+        "type": "integration_resumed",
+        "task_id": "ABC-001",
+        "message": "Resume exact reviewed PR after writable integrator recovery.",
+        "operator_mode": "local_human_ops",
+    }
+    event.update(overrides)
+    return event
+
+
 #: The PR identities `command_approve` would stamp on the live-regression
 #: approvals below. The PR numbers, shas and branches are the recorded ones;
 #: only the binding wrapper is new, because on 2026-07-26 nothing recorded it.
@@ -452,6 +465,67 @@ class FailClosedTests(unittest.TestCase):
                     "task_id": "ABC-001",
                     "message": "Assigned ABC-001 to Codex with reviewer Codex2",
                 },
+            ]
+        )
+
+        self.assertFalse(decision.allow_merge)
+        self.assertEqual(decision.reason, "approval_revoked")
+
+    def test_local_human_ops_resume_clears_only_a_later_blocker_revocation(self) -> None:
+        decision = decide(
+            events=[
+                approval_event(),
+                {
+                    "ts": "2026-07-26T12:30:00Z",
+                    "agent": "Codex",
+                    "type": "blocker",
+                    "task_id": "ABC-001",
+                    "message": "Integrator lock is read-only in the worker sandbox.",
+                },
+                integration_resume_event(),
+            ]
+        )
+
+        self.assertTrue(decision.allow_merge)
+        self.assertEqual(decision.reason, "exact_head_approved")
+
+    def test_resume_without_local_human_ops_marker_does_not_clear_blocker(self) -> None:
+        decision = decide(
+            events=[
+                approval_event(),
+                {
+                    "ts": "2026-07-26T12:30:00Z",
+                    "agent": "Codex",
+                    "type": "blocker",
+                    "task_id": "ABC-001",
+                    "message": "Integrator lock is read-only.",
+                },
+                integration_resume_event(operator_mode=""),
+            ]
+        )
+
+        self.assertFalse(decision.allow_merge)
+        self.assertEqual(decision.reason, "approval_revoked")
+
+    def test_resume_cannot_clear_reviewer_reopen_hidden_by_later_blocker(self) -> None:
+        decision = decide(
+            events=[
+                approval_event(),
+                {
+                    "ts": "2026-07-26T12:15:00Z",
+                    "agent": "Claude",
+                    "type": "reopen",
+                    "task_id": "ABC-001",
+                    "message": "Changes required in the implementation.",
+                },
+                {
+                    "ts": "2026-07-26T12:30:00Z",
+                    "agent": "Codex",
+                    "type": "blocker",
+                    "task_id": "ABC-001",
+                    "message": "Integrator is unavailable.",
+                },
+                integration_resume_event(),
             ]
         )
 
