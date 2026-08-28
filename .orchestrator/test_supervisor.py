@@ -1819,6 +1819,87 @@ class SharedPlannerContractTests(unittest.TestCase):
         self.assertTrue(decision["eligible"])
         self.assertEqual(decision["reason"], supervisor.REASON_REVIEW_READY)
 
+    def test_same_cycle_review_planning_uses_distinct_available_worker_slots(self) -> None:
+        """A pure plan must reserve its first selected endpoint in memory.
+
+        Otherwise two review intents created in one scheduler tick both bind to
+        ``codex2_1``; the second is rejected as ``endpoint_busy`` during
+        reservation even though ``codex2_2`` is idle.
+        """
+
+        self.config["agents"]["codex2"]["worker_slots"] = [
+            "codex2_1",
+            "codex2_2",
+        ]
+        for slot in ("codex2_1", "codex2_2"):
+            self.config["agents"][slot] = {
+                "id": slot,
+                "display_name": "Codex2",
+                "provider": "codex2",
+                "adapter": "codex",
+                "dispatch_slot_for": "codex2",
+                "slot_id": slot.replace("_", "-"),
+            }
+        first = task_fixture("REVIEW-1", status="review")
+        first["delivery_binding"] = review_admission_binding("REVIEW-1")
+        second = task_fixture("REVIEW-2", status="review")
+        second["delivery_binding"] = review_admission_binding("REVIEW-2")
+        state = with_healthy_delivery_health(
+            self.config,
+            {"workers": {}, "queue": {"events": {}}, "seen_event_keys": {}},
+        )
+        planned: list[dict[str, object]] = []
+
+        changed = supervisor.dispatch_ready_tasks(
+            self.config,
+            state,
+            agent_ids_override=["codex2"],
+            status_snapshot={"tasks": [first, second]},
+            queue_events_snapshot=[],
+            live_total_snapshot=0,
+            event_sink=lambda _config, event: planned.append(event) or True,
+        )
+
+        self.assertTrue(changed)
+        self.assertEqual([event["task_id"] for event in planned], ["REVIEW-1", "REVIEW-2"])
+        self.assertEqual(
+            [event["delivery_endpoint_id"] for event in planned],
+            ["codex2_1", "codex2_2"],
+        )
+
+    def test_same_cycle_review_planning_does_not_overcommit_one_worker_slot(self) -> None:
+        self.config["agents"]["codex2"]["worker_slots"] = ["codex2_1"]
+        self.config["agents"]["codex2_1"] = {
+            "id": "codex2_1",
+            "display_name": "Codex2",
+            "provider": "codex2",
+            "adapter": "codex",
+            "dispatch_slot_for": "codex2",
+            "slot_id": "codex2-1",
+        }
+        first = task_fixture("REVIEW-1", status="review")
+        first["delivery_binding"] = review_admission_binding("REVIEW-1")
+        second = task_fixture("REVIEW-2", status="review")
+        second["delivery_binding"] = review_admission_binding("REVIEW-2")
+        state = with_healthy_delivery_health(
+            self.config,
+            {"workers": {}, "queue": {"events": {}}, "seen_event_keys": {}},
+        )
+        planned: list[dict[str, object]] = []
+
+        supervisor.dispatch_ready_tasks(
+            self.config,
+            state,
+            agent_ids_override=["codex2"],
+            status_snapshot={"tasks": [first, second]},
+            queue_events_snapshot=[],
+            live_total_snapshot=0,
+            event_sink=lambda _config, event: planned.append(event) or True,
+        )
+
+        self.assertEqual([event["task_id"] for event in planned], ["REVIEW-1"])
+        self.assertEqual(planned[0]["delivery_endpoint_id"], "codex2_1")
+
     def test_dependency_must_be_done(self) -> None:
         task = task_fixture(depends_on=["DEP"])
         status = {"tasks": [task, task_fixture("DEP", status="in_progress")]}
