@@ -628,3 +628,102 @@ def test_read_store_rankings_empty_by_default() -> None:
         )
         assert store.list_rankings() == []
         assert store.get_ranking("nonexistent") is None
+
+
+# ---------------------------------------------------------------------------
+# Dedicated Ranking Router (ACG-01-012)
+# ---------------------------------------------------------------------------
+
+def test_ranking_router_routes_uniqueness() -> None:
+    from fastapi import FastAPI
+    from management_read_models.ranking_router import create_ranking_formulas_router
+
+    router = create_ranking_formulas_router()
+    app = FastAPI()
+    app.include_router(router)
+
+    routes = [(getattr(r, "methods", set()), getattr(r, "path", "")) for r in router.routes]
+    list_routes = [r for r in routes if r[1] == "/bff/ranking-formulas" and "GET" in r[0]]
+    detail_routes = [r for r in routes if r[1] == "/bff/ranking-formulas/{formula_id}" and "GET" in r[0]]
+    create_routes = [r for r in routes if r[1] == "/bff/ranking-formulas" and "POST" in r[0]]
+    patch_routes = [r for r in routes if r[1] == "/bff/ranking-formulas/{formula_id}" and "PATCH" in r[0]]
+
+    assert len(list_routes) == 1
+    assert len(detail_routes) == 1
+    assert len(create_routes) == 1
+    assert len(patch_routes) == 1
+    assert len(router.routes) == 4
+
+
+def test_ranking_router_standalone_crud_and_idempotency() -> None:
+    from fastapi import FastAPI
+    from management_read_models.ranking_router import create_ranking_formulas_router
+
+    with tempfile.TemporaryDirectory() as td:
+        store = ReadSurfaceStore(
+            os.path.join(td, "read_surfaces.json"),
+            allow_local_snapshot_fallback=True,
+        )
+        router = create_ranking_formulas_router(get_read_store=lambda: store)
+        app = FastAPI()
+        app.include_router(router)
+        client = TestClient(app)
+
+        # 1. Create formula
+        create_payload = {
+            "name": "Alpha Momentum Formula",
+            "description": "Momentum ranking formula",
+            "params": {"window": 20, "factor": "momentum"},
+        }
+        create_headers = {**HEADERS, "Idempotency-Key": "rf-acg-001"}
+        resp = client.post("/bff/ranking-formulas", json=create_payload, headers=create_headers)
+        assert resp.status_code == 201, resp.text
+        created = resp.json()["data"]
+        formula_id = created["formula_id"]
+        assert created["name"] == "Alpha Momentum Formula"
+
+        # 2. Replay same request with same idempotency key
+        replay_resp = client.post("/bff/ranking-formulas", json=create_payload, headers=create_headers)
+        assert replay_resp.status_code == 201
+        assert replay_resp.json()["data"]["formula_id"] == formula_id
+
+        # 3. Get detail
+        get_resp = client.get(f"/bff/ranking-formulas/{formula_id}", headers=HEADERS)
+        assert get_resp.status_code == 200
+        assert get_resp.json()["data"]["name"] == "Alpha Momentum Formula"
+
+        # 4. List formulas
+        list_resp = client.get("/bff/ranking-formulas", headers=HEADERS)
+        assert list_resp.status_code == 200
+        assert len(list_resp.json()["data"]) == 1
+
+        # 5. Patch formula
+        patch_resp = client.patch(
+            f"/bff/ranking-formulas/{formula_id}",
+            json={"status": "inactive", "description": "Updated description"},
+            headers=HEADERS,
+        )
+        assert patch_resp.status_code == 200
+        assert patch_resp.json()["data"]["status"] == "inactive"
+        assert patch_resp.json()["data"]["description"] == "Updated description"
+
+        # 6. Reject body idempotency key
+        body_key_resp = client.post(
+            "/bff/ranking-formulas",
+            json={"name": "Bad Key Formula", "idempotencyKey": "bad-key"},
+            headers=HEADERS,
+        )
+        assert body_key_resp.status_code == 400
+
+        # 7. Require name
+        no_name_resp = client.post(
+            "/bff/ranking-formulas",
+            json={"description": "No name"},
+            headers={**HEADERS, "Idempotency-Key": "rf-acg-noname"},
+        )
+        assert no_name_resp.status_code == 422
+
+        # 8. 404 on unknown formula id
+        not_found_resp = client.get("/bff/ranking-formulas/rf-unknown-999", headers=HEADERS)
+        assert not_found_resp.status_code == 404
+
