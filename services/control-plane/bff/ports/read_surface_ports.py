@@ -138,6 +138,36 @@ class ReadSurfacePorts:
         self.lifecycle_telemetry_governance = lifecycle_telemetry_governance or create_lifecycle_telemetry_governance_port()
         self.persona_training = persona_training or PersonaTrainingDomainPort()
 
+    def __getattr__(self, name: str) -> Any:
+        for port in (
+            self.operations_consultation,
+            self.persona_capital_runtime,
+            self.ooda_management,
+            self.research_knowledge_source,
+            self.lifecycle_telemetry_governance,
+            self.persona_training,
+        ):
+            if hasattr(port, name):
+                return getattr(port, name)
+        raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}'")
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        if name in (
+            "operations_consultation",
+            "persona_capital_runtime",
+            "ooda_management",
+            "research_knowledge_source",
+            "lifecycle_telemetry_governance",
+            "persona_training",
+        ):
+            super().__setattr__(name, value)
+            return
+        if name == "_trade_journey_projection_reader_override":
+            if hasattr(self, "lifecycle_telemetry_governance") and hasattr(self.lifecycle_telemetry_governance, "lifecycle"):
+                setattr(self.lifecycle_telemetry_governance.lifecycle, "_projection_reader_override", value)
+                setattr(self.lifecycle_telemetry_governance, "_projection_reader_override", value)
+        super().__setattr__(name, value)
+
     # -------------------------------------------------------------------------
     # Surface Status & Diagnostics
     # -------------------------------------------------------------------------
@@ -572,6 +602,26 @@ class ReadSurfacePorts:
     def get_rapid_eval(self, eval_id: Optional[str], **kwargs: Any) -> Optional[Dict[str, Any]]:
         return self.persona_training.get_rapid_eval(eval_id, **kwargs)
 
+    def get_capability_snapshot(self, snapshot_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        if hasattr(self.persona_training, "get_capability_snapshot"):
+            return self.persona_training.get_capability_snapshot(snapshot_id)
+        return None
+
+    def get_capability_snapshot_for_persona(self, persona_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        if hasattr(self.persona_training, "get_capability_snapshot_for_persona"):
+            return self.persona_training.get_capability_snapshot_for_persona(persona_id)
+        if persona_id and hasattr(self.persona_training, "get_persona_capabilities"):
+            return self.persona_training.get_persona_capabilities(persona_id)
+        return None
+
+    def trade_journey_projection_reader(self) -> Any:
+        override = getattr(self, "_trade_journey_projection_reader_override", None)
+        if override is not None:
+            return override
+        if hasattr(self.lifecycle_telemetry_governance, "trade_journey_projection_reader"):
+            return self.lifecycle_telemetry_governance.trade_journey_projection_reader()
+        return None
+
 
 def create_read_surface_ports(
     *,
@@ -607,7 +657,25 @@ def create_in_memory_read_surface_ports(
     """Factory creating an in-memory test double ReadSurfacePorts instance."""
     ops_port = create_in_memory_operations_consultation_port(**(operations_consultation_kwargs or {}))
     pcr_port = create_in_memory_persona_capital_runtime_port(**(persona_capital_runtime_kwargs or {}))
-    ooda_port = OodaManagementDomainPort(**(ooda_management_kwargs or {}))
+    ooda_kw = dict(ooda_management_kwargs or {})
+    if any(k in ooda_kw for k in ("ooda_packets", "interventions", "synthesis_conflict_logs", "governance_review_queue_items", "approval_queue_items", "deployment_diffs")):
+        ooda_p = OodaPacketsPort(records_provider=lambda: list(ooda_kw.get("ooda_packets") or []))
+        int_p = InterventionsPort(records_provider=lambda: list(ooda_kw.get("interventions") or []))
+        scl_p = SynthesisConflictLogsPort(records_provider=lambda: list(ooda_kw.get("synthesis_conflict_logs") or []))
+        rq_p = ManagementReviewQueuePort(
+            deployment_plans_reader=lambda: list(ooda_kw.get("deployment_plans") or []),
+            evolution_decisions_reader=lambda: list(ooda_kw.get("evolution_decisions") or []),
+            approval_decisions_reader=lambda: list(ooda_kw.get("approval_decisions") or []),
+            deployment_diffs_reader=lambda pid: (ooda_kw.get("deployment_diffs") or {}).get(pid),
+        )
+        ooda_port = OodaManagementDomainPort(
+            ooda_port=ooda_p,
+            interventions_port=int_p,
+            synthesis_conflict_logs_port=scl_p,
+            review_queue_port=rq_p,
+        )
+    else:
+        ooda_port = OodaManagementDomainPort(**ooda_kw)
     rks_port = DefaultResearchKnowledgeSourcePort(**(research_knowledge_source_kwargs or {}))
     ltg_port = create_in_memory_lifecycle_telemetry_governance_port(**(lifecycle_telemetry_governance_kwargs or {}))
     pt_port = PersonaTrainingDomainPort(**(persona_training_kwargs or {}))
