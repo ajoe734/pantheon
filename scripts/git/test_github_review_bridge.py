@@ -190,6 +190,37 @@ def binding() -> dict[str, Any]:
 
 
 class GitHubReviewBridgeTests(unittest.TestCase):
+    def test_operator_acceptance_publishes_distinct_exact_head_proof_without_review(self) -> None:
+        runner = FakeRunner()
+        result = bridge.bridge_operator_acceptance(
+            repository=REPOSITORY,
+            task_id="AUDIT-001",
+            actor="Human/Ops",
+            message="Operator accepts this exact head without another reviewer pass.",
+            binding=binding(),
+            runner=runner,
+        )
+
+        self.assertEqual(result["mode"], "operator_exact_head")
+        self.assertEqual(result["decision"], bridge.OPERATOR_ACCEPT)
+        self.assertEqual(runner.reviews, [])
+        self.assertEqual(
+            result["operator_acceptance_proof_ref"],
+            f"refs/tags/pantheon-review/operator-accept/{HEAD}",
+        )
+        self.assertEqual(len(runner.dispatches), 1)
+
+    def test_operator_acceptance_rejects_non_operator_actor(self) -> None:
+        with self.assertRaisesRegex(bridge.GitHubReviewBridgeError, "Human/Ops"):
+            bridge.bridge_operator_acceptance(
+                repository=REPOSITORY,
+                task_id="AUDIT-001",
+                actor="Claude",
+                message="Not an operator acceptance.",
+                binding=binding(),
+                runner=FakeRunner(),
+            )
+
     def test_result_evidence_validator_rejects_head_drift(self) -> None:
         runner = FakeRunner()
         result = bridge.bridge_review_decision(

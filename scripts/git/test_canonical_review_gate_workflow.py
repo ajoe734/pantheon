@@ -124,6 +124,17 @@ class BuildStatusPayloadTests(unittest.TestCase):
         self.assertEqual(payload["state"], "success")
         self.assertIn("SUP-X", payload["description"])
 
+    def test_task_branch_with_operator_acceptance_at_this_head_succeeds(self) -> None:
+        ref = f"refs/tags/pantheon-review/operator-accept/{HEAD}"
+        payload = gate_ci.build_status_payload(
+            head_ref="task/SUP-X",
+            repository=REPOSITORY,
+            head_sha=HEAD,
+            lookup=_lookup({(REPOSITORY, ref): {"ref": ref}}),
+        )
+        self.assertEqual(payload["state"], "success")
+        self.assertIn("Human/Ops", payload["description"])
+
     def test_proof_tag_at_a_different_head_does_not_count(self) -> None:
         """This is the exact-head-binding property: a new commit after
         approval must not silently keep passing on the strength of an old
