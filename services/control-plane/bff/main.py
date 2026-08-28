@@ -1572,6 +1572,19 @@ def _extract_identity(
     session_cookie: Optional[str] = None,
 ) -> OperatorIdentity:
     if _bff_auth_stub_enabled():
+        if authorization and authorization.startswith("Bearer "):
+            raw = authorization[len("Bearer "):].strip()
+            if raw.count(".") == 2:
+                try:
+                    return _extract_identity_jwt(authorization, mfa_token=mfa_token)
+                except Exception:
+                    pass
+        if not authorization and session_cookie:
+            try:
+                identity = _extract_identity_jwt(f"Bearer {session_cookie}", mfa_token=mfa_token)
+                return identity.model_copy(update={"token_kind": "cookie"})
+            except Exception:
+                pass
         return _extract_identity_stub(authorization)
     # Cookie session: treat cookie value as a bearer token when no Authorization header present.
     if not authorization and session_cookie:
