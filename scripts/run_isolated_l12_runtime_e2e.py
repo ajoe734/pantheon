@@ -33,6 +33,9 @@ MAIN_NEGATIVE_BINDING_ID = "rb-51f84b3169d745e4b34fcf80f0bc5f3c"
 MAIN_NEGATIVE_ARTIFACT_ID = "artifact-l12-missing-checksum-758b9d2a75"
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_COMPOSE_PROJECT = "l12currentruntimee2e"
+WORKER_TASK_ID_ENV = "ORCH_TASK_ID"
+WORKER_EXECUTION_RESOURCES_ENV = "ORCH_TASK_EXECUTION_RESOURCES"
+PANTHEON_DEV_EXECUTION_RESOURCE = "pantheon-dev"
 DEFAULT_EVIDENCE_DEST = (
     REPO_ROOT
     / "docs"
@@ -221,6 +224,77 @@ def _teardown_project(
         "remaining_container_ids": remaining,
         "zero_project_containers": process.returncode == 0 and not remaining,
     }
+
+
+def _supervised_execution_resources(
+    environment: Mapping[str, str] | None = None,
+) -> tuple[str, set[str]] | None:
+    """Return the supervisor task and its declared resources, if any.
+
+    A direct developer invocation intentionally has no ``ORCH_TASK_ID`` and
+    stays available for local debugging.  A supervisor worker, however, must
+    carry an explicit resource declaration; treating a missing declaration as
+    an empty list would reintroduce the bypass this guard closes.
+    """
+
+    source = environment if environment is not None else os.environ
+    task_id = str(source.get(WORKER_TASK_ID_ENV) or "").strip()
+    if not task_id:
+        return None
+    raw = source.get(WORKER_EXECUTION_RESOURCES_ENV)
+    if raw is None:
+        raise ValueError(
+            f"supervised task {task_id!r} is missing {WORKER_EXECUTION_RESOURCES_ENV}"
+        )
+    try:
+        decoded = json.loads(raw)
+    except (TypeError, json.JSONDecodeError) as exc:
+        raise ValueError(
+            f"supervised task {task_id!r} has invalid {WORKER_EXECUTION_RESOURCES_ENV}"
+        ) from exc
+    if not isinstance(decoded, list) or not all(
+        isinstance(item, str) and item.strip() for item in decoded
+    ):
+        raise ValueError(
+            f"supervised task {task_id!r} has invalid {WORKER_EXECUTION_RESOURCES_ENV}"
+        )
+    resources = {item.strip().lower() for item in decoded}
+    if len(resources) != len(decoded):
+        raise ValueError(
+            f"supervised task {task_id!r} has duplicate {WORKER_EXECUTION_RESOURCES_ENV}"
+        )
+    return task_id, resources
+
+
+def _validate_supervised_compose_admission(
+    supervised_task: tuple[str, set[str]] | None,
+    *,
+    provision_services: bool,
+    teardown: bool,
+    preserve_provisioned_stack: bool,
+) -> None:
+    """Require the existing scheduler resource for worker-owned Compose I/O.
+
+    This deliberately introduces no filesystem lock and no new scheduler.  It
+    only prevents a worker from bypassing the already capacity-one
+    ``pantheon-dev`` admission by starting or tearing down Docker services
+    from an unannotated task.
+    """
+
+    if supervised_task is None:
+        return
+    task_id, resources = supervised_task
+    if (provision_services or teardown) and PANTHEON_DEV_EXECUTION_RESOURCE not in resources:
+        raise ValueError(
+            f"supervised task {task_id!r} must declare execution_resources "
+            f"including {PANTHEON_DEV_EXECUTION_RESOURCE!r} before it may "
+            "provision or tear down isolated Compose services"
+        )
+    if provision_services and preserve_provisioned_stack:
+        raise ValueError(
+            f"supervised task {task_id!r} cannot preserve provisioned Compose "
+            "services; worker-owned stacks must tear down in the same invocation"
+        )
 
 
 def _ensure_main_negative_binding_retired(
@@ -431,6 +505,15 @@ def main() -> int:
             "--sync-evidence requires task-scoped teardown; remove "
             "--preserve-provisioned-stack"
         )
+    try:
+        _validate_supervised_compose_admission(
+            _supervised_execution_resources(),
+            provision_services=args.provision_services,
+            teardown=args.down,
+            preserve_provisioned_stack=args.preserve_provisioned_stack,
+        )
+    except ValueError as exc:
+        parser.error(str(exc))
 
     compose_files = args.compose_files or [str(REPO_ROOT / "docker-compose.yml")]
 
