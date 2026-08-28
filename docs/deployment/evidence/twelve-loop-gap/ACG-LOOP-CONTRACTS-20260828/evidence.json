@@ -1,7 +1,7 @@
 {
   "task_id": "ACG-LOOP-CONTRACTS-20260828",
   "owner": "Antigravity2",
-  "reviewer": "Claude2",
+  "reviewer": "Claude",
   "status": "review_ready",
   "summary": "Completed the twelve canonical loop controller contracts and conforming writer validations, ensured Loop 12 payload satisfies shared conformance, and verified that monitor probes cannot mutate or synthesize loop controller records.",
   "artifacts": [
