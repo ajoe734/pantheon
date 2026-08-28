@@ -1587,7 +1587,10 @@ def evaluate_task_delivery_admission(
             task_resolver,
             normalized_status_set(settings.get("dependency_done_statuses"), ["done"]),
         ),
-        human_ops_hold=bool(str(task.get("waiting_for") or "").strip()),
+        human_ops_hold=bool(
+            str(task.get("waiting_for") or "").strip()
+            or task.get("review_decision_intent") not in (None, {}, [])
+        ),
         review_binding_current=rewrite_task_machine.delivery_binding_is_current(task),
         execution_resources=tuple(task_execution_resources(task)),
     )
@@ -13251,6 +13254,11 @@ def task_execution_dispatch_candidate(
     if raw_requeue is not None and requeue_record is None:
         # A malformed canonical outbox row must never degrade into an ordinary
         # in-progress poll that can bypass its idempotency contract.
+        return None
+    if task.get("review_decision_intent") not in (None, {}, []):
+        # A crash between canonical reservation and GitHub/finalize leaves a
+        # durable mutation fence. No owner/reviewer worker may race that exact
+        # decision; only the same ai-status command may replay its nonce.
         return None
     dispatch_settings = settings or ready_dispatch_settings(config)
     review_statuses = normalized_status_set(

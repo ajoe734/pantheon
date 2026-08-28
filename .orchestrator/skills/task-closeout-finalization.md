@@ -35,11 +35,19 @@ REVIEW_FILE=<repo-relative-task-evidence-path> \
 ```
 
 Handoff fails without changing task state unless the manifest is a committed
-file at that exact head, the head contains the current base, no GitHub
+file at that exact head, its repository-relative path is declared by (or below
+a directory declared by) the task's `artifacts` contract, and its blob is new
+or different from the exact base. If base contents are unavailable, only the
+exact path/blob in the PR-files response can substitute for that comparison.
+The head must contain the current base, no GitHub
 auto-merge request is armed, and the required merge method is `MERGE`. The
 canonical delivery binding freezes the base SHA, merge method, manifest path,
 and manifest blob SHA. A reopened task must repeat this handoff for its new
 delivery; no supervisor recovery path may synthesize a `review` row.
+
+Discovery is `state=all`: a matching open, merged, or closed PR prevents an
+artifact-only downgrade. A legacy `review`/`review_approved` row without one
+current frozen binding is unknown and must be reopened/re-handed off.
 
 The reviewer approves the frozen delivery. `REVIEW_FILE` may be omitted or may
 repeat the exact frozen path; it cannot replace it:
@@ -54,6 +62,17 @@ Approval revalidates the frozen manifest and current base. If the base moved
 to a commit the immutable head does not already contain, approval fails closed;
 the owner must refresh the branch, update the exact-head evidence, reopen when
 needed, and hand off again.
+
+For a PR, `approve` and reviewer `reopen` are two-phase. The first canonical
+commit reserves `review_decision_intent` with a nonce, actor, exact binding, and
+task digest; GitHub I/O happens with no canonical/runtime lock; the final commit
+CAS-checks the same intent, records evidence and transition, then clears it.
+After a crash or partial GitHub failure, rerun the exact same actor/command/
+message so the nonce is replayed. While pending, all other task mutations and
+supervisor dispatch are blocked. A review/status/proof tag without the matching
+canonical intent is not merge authority. A read-only second admission failure
+before any GitHub write safely clears the reservation. Normal approval accepts
+only an `OPEN` live PR; use `reconcile_merged_done` for an accepted merged PR.
 
 Before owner closeout, inspect the canonical row through the governed command
 root, not the worktree's possibly stale `ai-status.json`:
@@ -334,7 +353,7 @@ The command fails closed unless all of the following are true:
 - the evidence file is tracked, byte-identical to the supplied Pantheon commit,
   and that commit is an ancestor of Pantheon `origin/dev`;
 - the evidence binds the exact task id, owner, reviewer, and
-  `review_approved` status from the canonical row;
+`review_approved` status from the canonical row;
 - if the canonical reviewer changed after approval, the activity audit contains
   an exact `task_reassigned` event whose timestamp and message still match the
   task row and whose owner did not change;
@@ -377,11 +396,12 @@ task's PR merged before the assigned reviewer finished an independent review
 (for example the delivery repository's required-status-check for Pantheon
 review was never actually satisfiable, or the PR was merged by an identity
 that bypasses branch protection), and the reviewer's real verdict is
-**reject**. `reopen` requires the bound GitHub PR to still be open
-(`scripts/git/github_review_bridge.py` fails closed with
-`GitHub PR #<N> is not open`), so it cannot record a reject against an
-already-merged head. Do not treat that failure as permission to hand-edit
-state, bypass the bridge, or silently drop the review.
+**reject**. The GitHub reject write requires the bound PR to remain open. If
+the exact binding is already merged/closed, `reopen` may use its definitive
+identity-mismatch recovery to remove canonical review/merge authority and
+return the row to implementation, but it records no GitHub reject evidence.
+Do not treat the absent GitHub write as proof that the stray merge was undone,
+or as permission to hand-edit state or silently drop the review findings.
 
 The task's own pure lifecycle already has the correct exit for this:
 `supersede` is legal directly from `review` (`.orchestrator/rewrite/task_machine.py`)
@@ -394,11 +414,12 @@ AI_NAME=<Reviewer or Owner or Human/Ops> \
   [<replacement-task-id>]
 ```
 
-Run this instead of retrying `reopen` once the bridge reports the PR is not
-open. Record the actual defects found in the message (they are real review
-evidence, not discarded) and, when the fix is nontrivial, open a replacement
-task and pass its id so the defects have somewhere to land. This does not
-retroactively fix the stray merge -- if the merged head shipped a real
+Use `supersede` when the lane itself is obsolete and should terminate rather
+than return to implementation; otherwise use the governed `reopen` mismatch
+recovery. Record the actual defects found in either message (they are real
+review evidence, not discarded) and, when the fix is nontrivial, open a
+replacement task so the defects have somewhere to land. Neither path
+retroactively fixes the stray merge -- if the merged head shipped a real
 defect, that is a separate closeout/rollback decision for the owner or
 Human/Ops, not something this command resolves. It only unblocks the
 stranded canonical row so the fleet dispatcher stops treating it as pending

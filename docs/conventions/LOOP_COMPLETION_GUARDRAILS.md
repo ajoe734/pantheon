@@ -90,7 +90,8 @@ reviewing a loop-autopilot task the reviewer must:
 1. Verify that real controller liveness evidence exists (not just a route or
    fixture).
 2. Verify that the canonical `review_file` matches the manifest frozen at the
-   owner handoff; never add or replace it during PR approval.
+   owner handoff; it must be a task-contract artifact changed from the exact
+   base, and must never be added or replaced during PR approval.
 3. Not approve a task whose only artifact is a panel screenshot, a seed file,
    or a stub route registration.
 

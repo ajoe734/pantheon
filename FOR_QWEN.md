@@ -54,7 +54,7 @@ Use the script, not manual Markdown edits:
 AI_NAME=Qwen bash scripts/ai-status.sh start <task-id> "Started implementation"
 AI_NAME=Qwen bash scripts/ai-status.sh progress <task-id> "Updated implementation details"
 AI_NAME=Qwen bash scripts/ai-status.sh blocker <task-id> "Need another lane to confirm a dependency" Codex
-AI_NAME=Qwen REVIEW_PR="$PR_NUMBER" REVIEW_HEAD_SHA="$PR_HEAD_SHA" REVIEW_FILE=path/to/review.md bash scripts/ai-status.sh handoff <task-id> Claude "Exact PR head and manifest are ready for review"
+AI_NAME=Qwen REVIEW_PR="$PR_NUMBER" REVIEW_HEAD_SHA="$PR_HEAD_SHA" REVIEW_FILE=path/declared-in-task-artifacts/evidence.json bash scripts/ai-status.sh handoff <task-id> Claude "Exact PR head and manifest are ready for review"
 AI_NAME=Qwen REVIEW_NOTES_ZH="審查通過||回到 owner 收尾" bash scripts/ai-status.sh approve <task-id> "Review approved and returned to the owner for finalization"
 AI_NAME=Qwen bash scripts/ai-status.sh done <task-id> "Owner finalized approved task and closed it"
 ```

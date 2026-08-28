@@ -206,6 +206,7 @@ class BridgeResult:
     review_proof_ref: str | None
     pr_url: str
     recorded_at: str
+    intent_nonce: str = ""
     review_error: str = ""
 
     def as_dict(self) -> dict[str, Any]:
@@ -225,6 +226,7 @@ class BridgeResult:
             "review_proof_ref": self.review_proof_ref,
             "pr_url": self.pr_url,
             "recorded_at": self.recorded_at,
+            "intent_nonce": self.intent_nonce,
         }
         if self.review_error:
             payload["review_error"] = self.review_error
@@ -238,6 +240,7 @@ def validate_result_evidence(
     actor: str,
     decision: str,
     binding: Mapping[str, Any] | ReviewBinding,
+    intent_nonce: str | None = None,
 ) -> dict[str, Any]:
     """Validate the durable exact-head evidence returned by the bridge.
 
@@ -279,6 +282,8 @@ def validate_result_evidence(
         raise GitHubReviewBridgeError(
             f"bridge result exact-head mismatch: expected={expected!r} observed={observed!r}"
         )
+    if intent_nonce is not None and str(value.get("intent_nonce") or "") != intent_nonce:
+        raise GitHubReviewBridgeError("bridge result intent nonce mismatch")
 
     mode = str(value.get("mode") or "").strip()
     review_recorded = bool(value.get("github_review_id"))
@@ -549,10 +554,12 @@ def _review_marker(
     actor: str,
     decision: str,
     head_sha: str,
+    intent_nonce: str = "",
 ) -> str:
     return (
         "<!-- pantheon-review-bridge "
-        f"task={task_id} actor={actor} decision={decision} head={head_sha} -->"
+        f"task={task_id} actor={actor} decision={decision} head={head_sha}"
+        f"{f' intent={intent_nonce}' if intent_nonce else ''} -->"
     )
 
 
@@ -563,12 +570,13 @@ def _review_body(
     decision: str,
     head_sha: str,
     message: str,
+    intent_nonce: str = "",
 ) -> str:
     verdict = "approved" if decision == APPROVE else "requested changes"
     return (
         f"Pantheon governed reviewer `{actor}` {verdict} for task `{task_id}` "
         f"at exact head `{head_sha}`.\n\n{message.strip()}\n\n"
-        f"{_review_marker(task_id=task_id, actor=actor, decision=decision, head_sha=head_sha)}"
+        f"{_review_marker(task_id=task_id, actor=actor, decision=decision, head_sha=head_sha, intent_nonce=intent_nonce)}"
     ).strip()
 
 
@@ -577,6 +585,7 @@ def _pr_snapshot(
     *,
     repository: str,
     binding: ReviewBinding,
+    allowed_states: frozenset[str] = frozenset({"OPEN", "MERGED"}),
 ) -> dict[str, Any]:
     payload = runner.run_json(
         [
@@ -595,8 +604,13 @@ def _pr_snapshot(
         raise GitHubReviewBridgeError(f"GitHub PR #{binding.pr} metadata is unavailable")
     if int(payload.get("number") or 0) != binding.pr:
         raise ReviewBindingMismatch(f"GitHub returned the wrong PR for #{binding.pr}")
-    if str(payload.get("state") or "").upper() not in {"OPEN", "MERGED"}:
-        raise ReviewBindingMismatch(f"GitHub PR #{binding.pr} is not open or merged")
+    actual_state = str(payload.get("state") or "").upper()
+    if actual_state not in allowed_states:
+        expected = " or ".join(sorted(state.lower() for state in allowed_states))
+        raise ReviewBindingMismatch(
+            f"GitHub PR #{binding.pr} is {actual_state.lower() or 'unknown'}, "
+            f"expected {expected}"
+        )
     actual_head = str(payload.get("headRefOid") or "").strip().lower()
     actual_branch = str(payload.get("headRefName") or "").strip()
     actual_base = str(payload.get("baseRefName") or "").strip()
@@ -620,6 +634,8 @@ def _review_manifest_identity(
     *,
     repository: str,
     head_sha: str,
+    base_sha: str,
+    pr: int,
     review_file: str,
 ) -> tuple[str, str]:
     raw_path = str(review_file or "").strip()
@@ -650,6 +666,53 @@ def _review_manifest_identity(
         raise GitHubReviewBridgeError(
             f"REVIEW_FILE={path!r} has no immutable Git blob identity at head {head_sha}"
         )
+    base_endpoint = (
+        f"repos/{repository}/contents/{quote(path, safe='/')}?ref={base_sha}"
+    )
+
+    def exact_pr_file_change() -> bool:
+        files = runner.run_json(
+            ["gh", "api", f"repos/{repository}/pulls/{pr}/files?per_page=100"]
+        )
+        return isinstance(files, list) and any(
+            isinstance(item, Mapping)
+            and str(item.get("filename") or "") == path
+            and str(item.get("sha") or "").strip().lower() == blob_sha
+            and str(item.get("status") or "").strip().lower()
+            in {"added", "modified", "renamed"}
+            for item in files
+        )
+
+    try:
+        base_payload = runner.run_json(["gh", "api", base_endpoint])
+    except GitHubReviewBridgeError as exc:
+        detail = str(exc).casefold()
+        if "not found" in detail or "404" in detail:
+            return path, blob_sha
+        if not exact_pr_file_change():
+            raise GitHubReviewBridgeError(
+                f"REVIEW_FILE={path!r} has no exact PR-file change evidence"
+            ) from exc
+        return path, blob_sha
+    if not isinstance(base_payload, Mapping) or str(base_payload.get("type") or "") != "file":
+        if exact_pr_file_change():
+            return path, blob_sha
+        raise GitHubReviewBridgeError(
+            f"REVIEW_FILE={path!r} has malformed base contents and no exact "
+            "PR-file change evidence"
+        )
+    base_blob_sha = str(base_payload.get("sha") or "").strip().lower()
+    if not OID_RE.fullmatch(base_blob_sha):
+        if exact_pr_file_change():
+            return path, blob_sha
+        raise GitHubReviewBridgeError(
+            f"REVIEW_FILE={path!r} has invalid base blob identity at {base_sha} "
+            "and no exact PR-file change evidence"
+        )
+    if base_blob_sha == blob_sha:
+        raise GitHubReviewBridgeError(
+            f"REVIEW_FILE={path!r} is unchanged from the exact base {base_sha}"
+        )
     return path, blob_sha
 
 
@@ -679,7 +742,12 @@ def validate_review_admission(
     if method != REQUIRED_REVIEW_MERGE_METHOD:
         raise GitHubReviewBridgeError("review admission requires merge method MERGE")
     client = runner or GhJsonRunner()
-    snapshot = _pr_snapshot(client, repository=repository, binding=normalized)
+    snapshot = _pr_snapshot(
+        client,
+        repository=repository,
+        binding=normalized,
+        allowed_states=frozenset({"OPEN"}),
+    )
     if str(snapshot.get("state") or "").strip().upper() != "OPEN":
         raise GitHubReviewBridgeError(
             f"GitHub PR #{normalized.pr} must be open before review admission"
@@ -739,6 +807,8 @@ def validate_review_admission(
         client,
         repository=repository,
         head_sha=normalized.head_sha,
+        base_sha=base_sha,
+        pr=normalized.pr,
         review_file=review_file,
     )
     return ReviewAdmissionBinding(
@@ -1172,6 +1242,7 @@ def bridge_review_decision(
     decision: str,
     message: str,
     binding: Mapping[str, Any] | ReviewBinding,
+    intent_nonce: str = "",
     runner: JsonRunner | None = None,
 ) -> BridgeResult:
     """Record one governed decision on the exact GitHub PR head."""
@@ -1188,6 +1259,9 @@ def bridge_review_decision(
         raise GitHubReviewBridgeError(
             f"GitHub review bridge decision must be one of {sorted(DECISIONS)}"
         )
+    intent_nonce = str(intent_nonce or "").strip().lower()
+    if intent_nonce and not re.fullmatch(r"[0-9a-f]{32}", intent_nonce):
+        raise GitHubReviewBridgeError("review intent nonce must be 32 lowercase hex")
     normalized_binding = (
         binding
         if isinstance(binding, ReviewBinding)
@@ -1198,6 +1272,7 @@ def bridge_review_decision(
         runner,
         repository=repository,
         binding=normalized_binding,
+        allowed_states=frozenset({"OPEN"}),
     )
     pr_url = str(pr.get("url") or "").strip()
     marker = _review_marker(
@@ -1205,6 +1280,7 @@ def bridge_review_decision(
         actor=actor,
         decision=decision,
         head_sha=normalized_binding.head_sha,
+        intent_nonce=intent_nonce,
     )
     body = _review_body(
         task_id=task_id,
@@ -1212,6 +1288,7 @@ def bridge_review_decision(
         decision=decision,
         head_sha=normalized_binding.head_sha,
         message=message,
+        intent_nonce=intent_nonce,
     )
 
     review: dict[str, Any] | None = None
@@ -1249,7 +1326,11 @@ def bridge_review_decision(
             task_id=task_id,
             actor=actor,
             decision=decision,
-            target_url=pr_url,
+            target_url=(
+                f"{pr_url}#pantheon-review-intent-{intent_nonce}"
+                if intent_nonce
+                else pr_url
+            ),
         )
 
     # Deliberately unchanged from the pre-tag contract: this still requires
@@ -1317,6 +1398,7 @@ def bridge_review_decision(
         review_proof_ref=review_proof_ref,
         pr_url=pr_url,
         recorded_at=_utc_now(),
+        intent_nonce=intent_nonce,
         review_error=review_error if review is None else "",
     )
     validate_result_evidence(
@@ -1325,6 +1407,7 @@ def bridge_review_decision(
         actor=actor,
         decision=decision,
         binding=normalized_binding,
+        intent_nonce=intent_nonce if intent_nonce else None,
     )
     return result
 
@@ -1342,6 +1425,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--head-sha", required=True)
     parser.add_argument("--head-branch", required=True)
     parser.add_argument("--base", required=True)
+    parser.add_argument("--intent-nonce", default="")
     return parser
 
 
@@ -1359,6 +1443,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             "head_branch": args.head_branch,
             "base": args.base,
         },
+        intent_nonce=args.intent_nonce,
     )
     print(json.dumps(result.as_dict(), indent=2, sort_keys=True))
     return 0

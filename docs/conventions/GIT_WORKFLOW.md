@@ -144,7 +144,7 @@ without changing task state:
 AI_NAME=<owner> \
 REVIEW_PR=<pr-number> \
 REVIEW_HEAD_SHA=<40-hex-head-oid> \
-REVIEW_FILE=<repo-relative-evidence-manifest> \
+REVIEW_FILE=<task-artifact-contract-relative-evidence-manifest> \
   "$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh" handoff \
   <TASK-ID> <reviewer> "<ready for exact-head review>"
 
@@ -155,11 +155,19 @@ AI_NAME=<reviewer> \
 
 `handoff` records the PR number, exact head SHA, expected base (`REVIEW_BASE`,
 default `dev`), head branch, current base SHA, `MERGE` requirement, and manifest
-path/blob SHA. `approve` consumes that frozen binding and cannot replace it.
+path/blob SHA. The path must be authorized by the task's `artifacts` contract
+and the blob must be absent from or different on the exact base (or have an
+exact matching PR-files change row). PR discovery uses `state=all`; a closed or
+merged match is not an artifact-only delivery. `approve` consumes that frozen
+binding and cannot replace it.
 It also revalidates the current base: if `dev` advanced to a commit the exact
 head does not already contain, the owner refreshes and re-hands off before a
-review can be approved. The gate compares the approved identity against the PR
-standing at merge time.
+review can be approved. Approval/reviewer-reopen GitHub writes run from a
+canonical pending intent outside the TaskStore lock; the same nonce is replayed
+after a crash, and every competing task mutation or dispatch remains fenced
+until finalization. The approval bridge accepts only an `OPEN` second snapshot;
+`MERGED` is handled only by explicit reconciliation. The gate compares the
+approved identity against the PR standing at merge time.
 
 No owner or reviewer merge command follows approval. The scheduled canonical
 supervisor integration runner discovers the approved row and performs the

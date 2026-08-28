@@ -2014,6 +2014,39 @@ class SharedPlannerContractTests(unittest.TestCase):
         accepted = planner_decision(self.config, task, target="Codex2")
         self.assertTrue(accepted["eligible"])
 
+    def test_pending_review_intent_blocks_shared_dispatch_until_cleared(self) -> None:
+        task = task_fixture(status="review", reviewer="Codex2")
+        task["delivery_binding"] = review_admission_binding()
+        task["review_decision_intent"] = {
+            "schema_version": 1,
+            "nonce": "1" * 32,
+            "command": "approve",
+        }
+
+        rejected = planner_decision(self.config, task, target="Codex2")
+        self.assertFalse(rejected["eligible"])
+        self.assertEqual(rejected["first_blocking_gate"], "human_hold")
+        self.assertIsNone(
+            supervisor.task_execution_dispatch_candidate(
+                self.config,
+                task,
+                "Codex2",
+                {"TASK-1": task},
+            )
+        )
+
+        task.pop("review_decision_intent")
+        accepted = planner_decision(self.config, task, target="Codex2")
+        self.assertTrue(accepted["eligible"])
+        self.assertIsNotNone(
+            supervisor.task_execution_dispatch_candidate(
+                self.config,
+                task,
+                "Codex2",
+                {"TASK-1": task},
+            )
+        )
+
     def test_review_binding_retries_after_a_terminal_attempt_left_no_verdict(self) -> None:
         # A reviewer worker can exit (crash, timeout, silent no-op) without
         # ever calling approve/reopen. Since a real verdict necessarily
