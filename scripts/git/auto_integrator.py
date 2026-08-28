@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
-"""Conservative serialized integrator for reviewed task PRs.
+"""Conservative serialized integrator for canonical task PRs.
 
-The auto-integrator closes the gap between a task reaching `review_approved`
-and its PR actually landing in `dev`. It is intentionally narrow:
+The auto-integrator closes the gap between a task becoming integration-eligible
+and its PR actually landing in `dev`. Eligibility means either an exact
+`review_approved` task or an active task whose canonical contract explicitly
+permits merge-then-review. It is intentionally narrow:
 
 * one process at a time via `.orchestrator/auto-integrator.lock`;
 * only `review_approved` tasks with `task/<TASK-ID>` PRs into `dev`;
@@ -23,6 +25,8 @@ The default mode is dry-run. Pass `--execute` to mutate git/GitHub/task state.
 from __future__ import annotations
 
 import argparse
+import errno
+import fcntl
 import json
 import os
 import shlex
@@ -51,6 +55,7 @@ DEFAULT_DEV_BRANCH = "dev"
 DEFAULT_TASK_PREFIX = "task/"
 DEFAULT_LOCK = ".orchestrator/auto-integrator.lock"
 DEFAULT_MERGE_METHOD = "merge"
+LOCK_SCHEMA = "pantheon-auto-integrator-lock/v2"
 SUCCESS_VALUES = {"SUCCESS", "SUCCESSFUL", "PASSED", "PASS", "SKIPPED", "NEUTRAL"}
 PENDING_VALUES = {
     "PENDING",
@@ -286,6 +291,14 @@ class AutoIntegratorError(RuntimeError):
     """Base auto-integrator failure."""
 
 
+class IntegrationLockError(AutoIntegratorError):
+    """The canonical integration lock cannot be used safely."""
+
+
+class IntegrationLockHeld(IntegrationLockError):
+    """Another live canonical integration runner owns the lock."""
+
+
 class AmbiguousPullRequests(AutoIntegratorError):
     """More than one open PR claims the same exact task branch."""
 
@@ -463,7 +476,7 @@ def load_settings(path: Path | None = None, *, status_root: Path | None = None) 
     )
 
 
-def review_approved_candidates(
+def integration_candidates(
     state: Mapping[str, Any],
     *,
     config: Mapping[str, Any] | None = None,
@@ -471,8 +484,17 @@ def review_approved_candidates(
     only_task_id: str | None = None,
     status_root: Path | None = None,
 ) -> list[TaskCandidate]:
+    """Select rows that the canonical runner may evaluate under its lock.
+
+    Review-before-merge rows enter only after exact-head approval. The legacy
+    merge-then-review lane enters while active because its PR helper no longer
+    grants merge authority directly. Policy resolution here is only a narrow
+    admission filter; ``ReviewGate`` resolves the same canonical row again
+    against the live PR immediately before any merge operation.
+    """
+
     tasks = state.get("tasks") if isinstance(state.get("tasks"), list) else []
-    candidates: list[TaskCandidate] = []
+    candidates: list[tuple[int, TaskCandidate]] = []
     config_dict = dict(config) if isinstance(config, Mapping) else {}
     resolved_status_root = review_gate.resolve_status_root(status_root)
     paths = dict(config_dict.get("paths") or {})
@@ -485,7 +507,15 @@ def review_approved_candidates(
         task_id = str(raw.get("id") or "").strip()
         if not task_id or (only_task_id and task_id != only_task_id):
             continue
-        if str(raw.get("status") or "").strip().lower() != "review_approved":
+        status = str(raw.get("status") or "").strip().lower()
+        is_review_approved = status == "review_approved"
+        contract = review_gate.contract_from_task_row(raw)
+        is_active_merge_then_review = (
+            status in {"in_progress", "review"}
+            and contract.policy == review_gate.POLICY_MERGE_THEN_REVIEW
+            and contract.declaration_honored
+        )
+        if not (is_review_approved or is_active_merge_then_review):
             continue
         owner = str(raw.get("owner") or "").strip()
         reviewer = str(raw.get("reviewer") or "").strip()
@@ -519,25 +549,44 @@ def review_approved_candidates(
             scope_error = str(exc)
 
         candidates.append(
-            TaskCandidate(
-                task_id=task_id,
-                title=str(raw.get("title") or task_id).strip(),
-                owner=owner,
-                reviewer=reviewer,
-                branch=f"{task_branch_prefix}{task_id}",
-                repository_id=repo_id,
-                repository_slug=repo_slug,
-                repository_root=repo_root,
-                target_branch=target_branch,
-                scope_error=scope_error,
-                raw_task=dict(raw),
+            (
+                0 if is_review_approved else 1,
+                TaskCandidate(
+                    task_id=task_id,
+                    title=str(raw.get("title") or task_id).strip(),
+                    owner=owner,
+                    reviewer=reviewer,
+                    branch=f"{task_branch_prefix}{task_id}",
+                    repository_id=repo_id,
+                    repository_slug=repo_slug,
+                    repository_root=repo_root,
+                    target_branch=target_branch,
+                    scope_error=scope_error,
+                    raw_task=dict(raw),
+                ),
             )
         )
-    return candidates
+    # Exact-head approvals are already waiting to land, so they cannot be
+    # starved by an earlier active merge-then-review row whose PR is not open
+    # yet. Python's stable sort preserves canonical row order within each lane.
+    candidates.sort(key=lambda item: item[0])
+    return [candidate for _, candidate in candidates]
 
 
 def normalize_state(value: Any) -> str:
     return str(value or "").strip().upper().replace("-", "_")
+
+
+def post_merge_task_handoff(candidate: TaskCandidate) -> str:
+    status = str(candidate.raw_task.get("status") or "").strip().lower()
+    if not status or status == "review_approved":
+        return (
+            f"left {candidate.task_id} in review_approved for owner finalization"
+        )
+    return (
+        f"left {candidate.task_id} at canonical status {status} "
+        "for post-merge review/finalization"
+    )
 
 
 def normalize_github_repo_slug(value: str | None) -> str:
@@ -922,25 +971,177 @@ def target_contains_commit(
     return result.returncode == 0
 
 
+def _directory_is_writable(path: Path) -> bool:
+    """Prove a directory can create and remove a file, not merely mode-check it."""
+
+    fd: int | None = None
+    probe_path: str | None = None
+    try:
+        fd, probe_path = tempfile.mkstemp(prefix=".pantheon-integrator-write-", dir=path)
+        return True
+    except OSError:
+        return False
+    finally:
+        if fd is not None:
+            os.close(fd)
+        if probe_path is not None:
+            try:
+                os.unlink(probe_path)
+            except FileNotFoundError:
+                pass
+
+
+def _pid_is_alive(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def _read_lock_metadata(handle: Any) -> dict[str, Any]:
+    handle.seek(0)
+    raw = handle.read().strip()
+    if not raw:
+        return {}
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError:
+        return {"state": "invalid", "raw": raw[:200]}
+    return dict(payload) if isinstance(payload, Mapping) else {"state": "invalid"}
+
+
+def _write_lock_metadata(handle: Any, payload: Mapping[str, Any]) -> None:
+    handle.seek(0)
+    handle.truncate()
+    json.dump(dict(payload), handle, sort_keys=True)
+    handle.write("\n")
+    handle.flush()
+    os.fsync(handle.fileno())
+
+
+def _lock_owner_detail(metadata: Mapping[str, Any]) -> str:
+    try:
+        pid = int(metadata.get("pid") or 0)
+    except (TypeError, ValueError):
+        pid = 0
+    if pid > 0:
+        state = "alive" if _pid_is_alive(pid) else "not alive"
+        return f"pid={pid} ({state}), owner={metadata.get('owner_id') or 'legacy'}"
+    return "owner metadata unavailable"
+
+
 @contextmanager
 def lock_file(lock_path: Path, *, enabled: bool = True) -> Iterator[None]:
+    """Hold the integration lock with kernel lifetime and durable owner metadata.
+
+    ``flock`` releases automatically if the runner disappears. The on-disk
+    metadata makes contention diagnosable and lets a later runner record that
+    it recovered a legacy/dead-owner sentinel without ever stealing a live
+    kernel lock.
+    """
+
     if not enabled:
         yield
         return
-    lock_path.parent.mkdir(parents=True, exist_ok=True)
     try:
-        fd = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-    except FileExistsError as exc:
-        raise AutoIntegratorError(f"auto-integrator lock is already held: {lock_path}") from exc
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        raise IntegrationLockError(
+            f"cannot create auto-integrator lock parent {lock_path.parent}: {exc}"
+        ) from exc
+    if not lock_path.parent.is_dir() or not _directory_is_writable(lock_path.parent):
+        raise IntegrationLockError(
+            f"auto-integrator lock parent is not writable: {lock_path.parent}"
+        )
     try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            handle.write(json.dumps({"pid": os.getpid(), "created_at": int(time.time())}) + "\n")
+        fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR, 0o600)
+    except OSError as exc:
+        raise IntegrationLockError(
+            f"cannot open auto-integrator lock {lock_path}: {exc}"
+        ) from exc
+
+    handle = os.fdopen(fd, "r+", encoding="utf-8")
+    acquired = False
+    owner_metadata: dict[str, Any] = {}
+    try:
+        try:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            acquired = True
+        except OSError as exc:
+            if exc.errno not in {errno.EACCES, errno.EAGAIN}:
+                raise IntegrationLockError(
+                    f"cannot acquire auto-integrator lock {lock_path}: {exc}"
+                ) from exc
+            metadata = _read_lock_metadata(handle)
+            raise IntegrationLockHeld(
+                f"auto-integrator lock is already held: {lock_path} "
+                f"({_lock_owner_detail(metadata)})"
+            ) from exc
+
+        previous = _read_lock_metadata(handle)
+        try:
+            previous_pid = int(previous.get("pid") or 0)
+        except (TypeError, ValueError):
+            previous_pid = 0
+        previous_state = str(previous.get("state") or "held").strip().lower()
+        if previous and previous_state == "invalid":
+            raise IntegrationLockError(
+                f"auto-integrator lock metadata is corrupt: {lock_path}"
+            )
+        if (
+            previous
+            and previous_state != "released"
+            and _pid_is_alive(previous_pid)
+        ):
+            # Compatibility with the legacy O_EXCL sentinel: an old runner can
+            # still be active without holding flock. Refuse to steal it.
+            raise IntegrationLockHeld(
+                f"auto-integrator legacy lock has a live owner: {lock_path} "
+                f"({_lock_owner_detail(previous)})"
+            )
+        if previous and previous_state != "released" and previous_pid <= 0:
+            raise IntegrationLockError(
+                f"auto-integrator lock metadata has no recoverable owner PID: {lock_path}"
+            )
+
+        owner_metadata = {
+            "schema": LOCK_SCHEMA,
+            "state": "held",
+            "owner": "supervisor_integration_runner",
+            "owner_id": f"{os.uname().nodename}:{os.getpid()}:{time.time_ns()}",
+            "pid": os.getpid(),
+            "created_at": int(time.time()),
+        }
+        if previous and previous_state != "released":
+            owner_metadata["recovered_from"] = previous
+        try:
+            _write_lock_metadata(handle, owner_metadata)
+        except OSError as exc:
+            raise IntegrationLockError(
+                f"cannot write auto-integrator lock metadata {lock_path}: {exc}"
+            ) from exc
         yield
     finally:
-        try:
-            lock_path.unlink()
-        except FileNotFoundError:
-            pass
+        if acquired:
+            if owner_metadata:
+                released = {
+                    **owner_metadata,
+                    "state": "released",
+                    "released_at": int(time.time()),
+                }
+                try:
+                    _write_lock_metadata(handle, released)
+                except OSError:
+                    # Kernel unlock still happens; a later runner can recover
+                    # the stale held metadata after this process exits.
+                    pass
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        handle.close()
 
 
 def fetch_refs(candidate: TaskCandidate, runner: CommandRunner, *, root: Path) -> None:
@@ -1230,6 +1431,48 @@ def preflight_repository(
                 )
         except OSError:
             pass
+    if check_fs and not _directory_is_writable(target_root):
+        return (
+            "repository-checkout-not-writable",
+            f"Cannot integrate {candidate.task_id}: repository checkout is not writable: {target_root}.",
+        )
+    common_proc = runner.run(
+        ["git", "rev-parse", "--git-common-dir"], cwd=target_root, check=False
+    )
+    common_raw = common_proc.stdout.strip()
+    if common_proc.returncode != 0 or not common_raw:
+        return (
+            "invalid-git-common-dir",
+            f"Cannot integrate {candidate.task_id}: git common dir is unavailable for {target_root}.",
+        )
+    common_dir = Path(common_raw)
+    if not common_dir.is_absolute():
+        common_dir = target_root / common_dir
+    common_dir = common_dir.resolve(strict=False)
+    if check_fs and (
+        not common_dir.is_dir() or not _directory_is_writable(common_dir)
+    ):
+        return (
+            "git-common-dir-not-writable",
+            f"Cannot integrate {candidate.task_id}: git common dir is not writable: {common_dir}.",
+        )
+    status_proc = runner.run(
+        ["git", "status", "--porcelain=v1", "--untracked-files=all"],
+        cwd=target_root,
+        check=False,
+    )
+    if status_proc.returncode != 0:
+        return (
+            "repository-status-unavailable",
+            f"Cannot integrate {candidate.task_id}: repository status is unavailable for {target_root}.",
+        )
+    dirty = status_proc.stdout.strip()
+    if dirty:
+        first_entry = dirty.splitlines()[0][:200]
+        return (
+            "dirty-repository-checkout",
+            f"Cannot integrate {candidate.task_id}: repository checkout is not clean ({first_entry}).",
+        )
     expected_slug = normalize_github_repo_slug(candidate.repository_slug)
     if not expected_slug:
         return (
@@ -1489,7 +1732,7 @@ def integrate_candidate(
             if not execute:
                 detail = (
                     f"Dry-run: PR #{number} is already merged into {candidate.target_branch}; "
-                    f"left {candidate.task_id} in review_approved for owner finalization."
+                    f"{post_merge_task_handoff(candidate)}."
                 )
                 return IntegrationResult(
                     candidate.task_id,
@@ -1525,7 +1768,7 @@ def integrate_candidate(
                 )
             detail = (
                 f"PR #{number} is already merged into {candidate.target_branch}; "
-                f"left {candidate.task_id} in review_approved for owner finalization."
+                f"{post_merge_task_handoff(candidate)}."
             )
             return IntegrationResult(
                 candidate.task_id,
@@ -2097,12 +2340,12 @@ def integrate_candidate(
     if gated:
         detail = (
             f"Merged the reviewer-approved head {decision.head_oid} of PR #{number} into "
-            f"{candidate.target_branch}; left {candidate.task_id} in review_approved for owner finalization."
+            f"{candidate.target_branch}; {post_merge_task_handoff(candidate)}."
         )
     else:
         detail = (
             f"Merged PR #{number} into {candidate.target_branch}; "
-            f"left {candidate.task_id} in review_approved for owner finalization."
+            f"{post_merge_task_handoff(candidate)}."
         )
     detail += ignored_diagnostic_note(checks)
     return IntegrationResult(
@@ -2135,14 +2378,21 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-tasks", type=int, help="Override max tasks per run.")
     parser.add_argument("--smoke-command", action="append", default=[], help="Extra or replacement smoke command.")
     parser.add_argument("--skip-smoke", action="store_true", help="Do not run configured smoke commands.")
-    parser.add_argument("--no-lock", action="store_true", help="Skip the integration lock. Intended for tests only.")
+    parser.add_argument(
+        "--no-lock",
+        action="store_true",
+        help="Skip the integration lock for isolated dry-run tests only; incompatible with --execute.",
+    )
     parser.add_argument("--no-open-unblock", action="store_true", help="Do not create unblock tasks for blockers.")
     parser.add_argument("--json", action="store_true", help="Print JSON result.")
     return parser
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    if args.execute and args.no_lock:
+        parser.error("--execute requires the integration lock; --no-lock is dry-run test-only")
     if args.status_file is not None:
         status_file = args.status_file.resolve()
         status_root = status_file.parent
@@ -2159,43 +2409,79 @@ def main(argv: Sequence[str] | None = None) -> int:
     settings = load_settings(config_path, status_root=status_root)
     if args.max_tasks is not None:
         settings = Settings(**{**settings.__dict__, "max_tasks_per_run": args.max_tasks})
-    state = load_json(status_file, {})
     config_dict = load_json(config_path, {})
     if not isinstance(config_dict, dict):
         config_dict = {}
     paths = dict(config_dict.get("paths") or {})
     paths["status_file"] = str(status_file.resolve())
     config_dict["paths"] = paths
-    candidates = review_approved_candidates(
-        state,
-        config=config_dict,
-        task_branch_prefix=settings.task_branch_prefix,
-        only_task_id=args.task_id,
-        status_root=status_root,
-    )
-    max_tasks = max(1, int(settings.max_tasks_per_run))
-    candidates = candidates[:max_tasks]
     runner = CommandRunner()
     smoke_commands = tuple() if args.skip_smoke else tuple(args.smoke_command) or settings.smoke_commands
-    # The review gate reads canonical state from the same root that supplied
-    # the candidates, so status file and audit can never disagree by binding.
-    gate = ReviewGate(status_root=status_root, state=state)
     results: list[IntegrationResult] = []
-    with lock_file(settings.lock_path, enabled=not args.no_lock):
-        for candidate in candidates:
-            results.append(
-                integrate_candidate(
-                    candidate,
-                    settings,
-                    runner,
-                    root=candidate.repository_root,
-                    status_root=status_root,
-                    execute=args.execute,
-                    open_unblock=not args.no_open_unblock,
-                    extra_smoke_commands=smoke_commands,
-                    gate=gate,
-                )
+    candidates: list[TaskCandidate] = []
+    try:
+        with lock_file(settings.lock_path, enabled=not args.no_lock):
+            # Candidate selection and repository preflight happen while the same
+            # lock that owns merge is held. A queued runner therefore cannot carry
+            # stale canonical state across another runner's merge.
+            state = load_json(status_file, {})
+            candidates = integration_candidates(
+                state,
+                config=config_dict,
+                task_branch_prefix=settings.task_branch_prefix,
+                only_task_id=args.task_id,
+                status_root=status_root,
             )
+            max_tasks = max(1, int(settings.max_tasks_per_run))
+            candidates = candidates[:max_tasks]
+            # The review gate reads canonical state from the same root that supplied
+            # the candidates, so status file and audit can never disagree by binding.
+            gate = ReviewGate(status_root=status_root, state=state)
+            for candidate in candidates:
+                results.append(
+                    integrate_candidate(
+                        candidate,
+                        settings,
+                        runner,
+                        root=candidate.repository_root,
+                        status_root=status_root,
+                        execute=args.execute,
+                        open_unblock=not args.no_open_unblock,
+                        extra_smoke_commands=smoke_commands,
+                        gate=gate,
+                    )
+                )
+    except IntegrationLockHeld as exc:
+        payload = {
+            "dry_run": not args.execute,
+            "candidate_count": 0,
+            "results": [],
+            "skipped": True,
+            "reason": "integration_lock_held",
+            "detail": str(exc),
+        }
+        if args.json:
+            print(json.dumps(payload, indent=2, sort_keys=True))
+        else:
+            print(f"auto-integrator skipped reason=integration_lock_held - {exc}")
+        return 0
+    except IntegrationLockError as exc:
+        payload = {
+            "dry_run": not args.execute,
+            "candidate_count": 0,
+            "results": [],
+            "skipped": False,
+            "reason": "integration_lock_error",
+            "detail": str(exc),
+        }
+        if args.json:
+            print(json.dumps(payload, indent=2, sort_keys=True))
+        else:
+            print(
+                f"auto-integrator failed reason=integration_lock_error - {exc}",
+                file=sys.stderr,
+            )
+        return 2
 
     payload = {
         "dry_run": not args.execute,

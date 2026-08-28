@@ -21,10 +21,10 @@
 #   5. git push -u origin task/<TASK-ID>
 #   6. gh pr create --base dev --head task/<TASK-ID>
 #   7. resolve the canonical merge policy via
-#      scripts/git/task_review_merge_gate.py; enable --auto --merge only when
-#      the canonical task contract permits merge-then-review, otherwise leave
-#      auto-merge off until the assigned reviewer approves this exact head
-#   8. wait for the PR to merge before running scripts/ai-status.sh done
+#      scripts/git/task_review_merge_gate.py, but leave auto-merge off for every
+#      policy; only the canonical supervisor integration runner may merge
+#   8. wait for the supervisor integration runner to merge before running
+#      scripts/ai-status.sh done
 #
 # Output is intentionally short: each step prints a single PASS / FAIL line.
 # Long sub-command output is captured into /tmp/safe-pr-<TASK-ID>.log so
@@ -210,7 +210,7 @@ if [[ "$LOOKUP_RC" -ne 0 ]]; then
   fail "cannot resolve existing PR; refusing to push"
 fi
 
-if [[ "$MERGE_POLICY" == "review_before_merge" && -n "$EXISTING_PR" ]]; then
+if [[ -n "$EXISTING_PR" ]]; then
   step "pre-push revoke"
   ensure_auto_merge_off "$EXISTING_PR" "before push"
 fi
@@ -220,11 +220,11 @@ step "push task branch"
 if git push -u origin "$TASK_BRANCH" >>"$LOG" 2>&1; then ok "pushed"; else fail "push failed"; fi
 
 if [[ "$DO_PR" -eq 0 ]]; then
-  if [[ "$MERGE_POLICY" == "review_before_merge" && -n "$EXISTING_PR" ]]; then
+  if [[ -n "$EXISTING_PR" ]]; then
     step "post-push verify"
     ensure_auto_merge_off "$EXISTING_PR" "after push"
   fi
-  echo "(--no-pr: skipping PR create + auto-merge)"
+  echo "(--no-pr: skipping PR create)"
   exit 0
 fi
 
@@ -241,10 +241,6 @@ PR_CREATE_ARGS=(
   --title "$TITLE"
   --body-file "$PR_BODY"
 )
-if [[ "$MERGE_POLICY" == "merge_then_review" ]]; then
-  PR_CREATE_ARGS+=(--label auto-merge)
-fi
-
 if [[ -n "$EXISTING_PR" ]]; then
   ok "PR #$EXISTING_PR already open"
 else
@@ -264,18 +260,11 @@ else
   fi
 fi
 
-# --- 8. Merge authority (non-fatal if repo doesn't allow auto-merge)
-if [[ "$MERGE_POLICY" == "merge_then_review" ]]; then
-  step "enable auto-merge"
-  if gh pr merge "$EXISTING_PR" --auto --merge >>"$LOG" 2>&1; then
-    ok "auto-merge enabled on PR #$EXISTING_PR"
-  else
-    echo "⚠ auto-merge not enabled (check repo setting \`allow_auto_merge\`); PR is still open"
-  fi
-else
-  step "withhold auto-merge"
-  ensure_auto_merge_off "$EXISTING_PR" "after push/open"
-fi
+# --- 8. Submit to the sole merge owner. This helper may revoke a stale grant,
+# but it never creates one and never issues a merge request.
+step "submit integration"
+ensure_auto_merge_off "$EXISTING_PR" "after push/open"
+ok "PR #$EXISTING_PR left for canonical supervisor integration runner"
 
 trap - ERR
 
@@ -288,6 +277,8 @@ if [[ "$MERGE_POLICY" != "merge_then_review" ]]; then
   echo "  next: assigned reviewer approves this exact head with"
   echo "        AI_NAME=<reviewer> REVIEW_PR=${EXISTING_PR:-<pr-number>} REVIEW_HEAD_SHA=$(git rev-parse HEAD) \\"
   echo "          \"\$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh\" approve $TASK_ID \"<review evidence>\""
-  echo "        then python3 scripts/git/auto_integrator.py --execute --task-id $TASK_ID"
+  echo "        the canonical supervisor integration runner will then evaluate it"
+else
+  echo "  next: canonical supervisor integration runner evaluates merge-then-review policy"
 fi
 echo "  wait for the PR to merge before running scripts/ai-status.sh done"

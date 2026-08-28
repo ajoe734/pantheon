@@ -2434,15 +2434,32 @@ class TaskFinalizeShellTests(unittest.TestCase):
         self.assertIn("auto-merge remains armed", proc.stderr)
         self.assertNotIn("open with auto-merge disabled", proc.stdout)
 
-    def test_merge_then_review_task_still_enables_auto_merge(self) -> None:
+    def test_merge_then_review_task_is_submitted_without_auto_merge(self) -> None:
         proc, calls = self._run_finalize(
             task_row(id="ABC-001", status="in_progress", reviewer="Codex", merge_policy="merge_then_review")
         )
 
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
-        self.assertIn("--label auto-merge", calls)
-        self.assertIn("pr merge task/ABC-001 --auto --merge", calls)
+        self.assertNotIn("--label auto-merge", calls)
+        self.assertNotIn("--auto --merge", calls)
         self.assertNotIn("--disable-auto", calls)
+        self.assertIn("canonical supervisor integration runner", proc.stdout)
+
+    def test_safe_pr_merge_then_review_is_submitted_without_auto_merge(self) -> None:
+        proc, calls = self._run_safe_pr(
+            task_row(
+                id="ABC-001",
+                status="in_progress",
+                reviewer="Codex",
+                merge_policy="merge_then_review",
+            )
+        )
+
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertNotIn("--label auto-merge", calls)
+        self.assertNotIn("--auto --merge", calls)
+        self.assertNotIn("--disable-auto", calls)
+        self.assertIn("canonical supervisor integration runner", proc.stdout)
 
     def test_safe_pr_revokes_a_standing_request_and_verifies_it_off(self) -> None:
         proc, calls = self._run_safe_pr(

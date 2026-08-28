@@ -21,6 +21,7 @@ __pycache__/
 .orchestrator/runtime-admission.lock
 .orchestrator/task-state.lock
 .orchestrator/activity-audit.lock
+.orchestrator/auto-integrator.lock
 .orchestrator/runtime-lock-verifier-policy.json
 .orchestrator/runtime-task-audit-lock-capability.json
 .orchestrator/event-queue.jsonl

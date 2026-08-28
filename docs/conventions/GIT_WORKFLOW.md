@@ -36,7 +36,7 @@ task/<TASK-ID>  ── ephemeral, auto-deleted by GitHub when PR merges
 | Type        | Naming                                | Lifetime          | Writer                                |
 |-------------|---------------------------------------|-------------------|---------------------------------------|
 | canonical   | `master`                              | permanent         | PR auto-merge only (promote / hotfix) |
-| integration | `dev`                                 | permanent         | PR auto-merge only (task / hotfix)    |
+| integration | `dev`                                 | permanent         | task PR: canonical supervisor integration runner; hotfix: explicit hotfix lane |
 | task        | `task/<TASK-ID>`                      | minutes to hours  | one autoworker / human; PR + auto-delete |
 | publish     | `publish/v<YYYY>.<MM>.<DD>.<N>`       | permanent (snapshot) | nightly cron after release-state discipline; immutable after cut |
 | hotfix      | `hotfix/<topic>`                      | < 24 h            | one author; dual-PR (master + dev)    |
@@ -118,7 +118,8 @@ gh pr create --base dev --head task/<TASK-ID> \
 ```
 
 Merge and **auto-delete of the `task/<TASK-ID>` branch** still happen on
-GitHub, but only once both CI and the review gate are satisfied.
+GitHub, but only the canonical supervisor integration runner requests the
+merge after CI and the review gate are satisfied.
 
 #### 2.3.1 Review-before-merge gate
 
@@ -130,7 +131,7 @@ or PR field can open it.
 | Canonical contract | Policy | What the helper does |
 |--------------------|--------|----------------------|
 | independent reviewer assigned (the normal task) | `review_before_merge` | opens the PR with auto-merge **off** and revokes any auto-merge request found on the head |
-| row declares `merge_policy: merge_then_review` **and** requires no independent review | `merge_then_review` | `--label auto-merge` + `gh pr merge --auto --merge`, unchanged |
+| row declares `merge_policy: merge_then_review` **and** requires no independent review | `merge_then_review` | opens the PR with auto-merge **off**; the canonical runner alone evaluates and merges it |
 | task row missing, unreadable, or gate error | `review_before_merge` | fail closed: auto-merge is never enabled |
 
 Under `review_before_merge` the approval must name the exact head it
@@ -139,8 +140,17 @@ covers, and the merge is performed afterwards by the integrator:
 ```bash
 AI_NAME=<reviewer> REVIEW_PR=<pr-number> REVIEW_HEAD_SHA=<40-hex head oid> \
   "$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh" approve <TASK-ID> "<review evidence>"
-python3 scripts/git/auto_integrator.py --execute --task-id <TASK-ID>
 ```
+
+No owner or reviewer merge command follows approval. The scheduled canonical
+supervisor integration runner discovers the approved row and performs the
+locked merge pass.
+
+For a contract that genuinely permits `merge_then_review`, the same runner
+discovers the active `in_progress`/`review` row without fabricating a
+`review_approved` event. It resolves the canonical policy again against the
+live PR before it can merge; assigning an independent reviewer converts the
+row back to the gated review-before-merge path.
 
 `approve` records that PR number, head sha, expected base (`REVIEW_BASE`,
 default `dev`) and head branch as a `review_binding` on both the immutable
@@ -201,9 +211,9 @@ reviewer's `review_approved` record does. An explicit `do not merge` /
 `changes required` note in the activity audit revokes a standing approval,
 the same as a `reopen` or `blocker`.
 
-The gate binds every repository path to merge: `task_finalize.sh`,
-`safe_pr.sh`, `auto_integrator.py`, auto-merge creation, and auto-merge
-finalization. It cannot stop a human holding the GitHub credential from
+`task_finalize.sh` and `safe_pr.sh` only push/open PRs and revoke stale grants;
+`auto_integrator.py` is the sole task merge entry point. The gate covers its
+merge and any auto-merge finalization. It cannot stop a human holding the GitHub credential from
 pressing merge in the web UI — that would need branch protection to require
 a review — but no Pantheon tooling grants the authority, and the canonical
 state at merge time stays auditable.
