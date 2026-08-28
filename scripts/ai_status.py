@@ -5611,6 +5611,10 @@ def command_assign(state: dict[str, Any], args: list[str]) -> bool | None:
             task["summary_zh"] = summary_zh
         if metadata:
             task.update(metadata)
+        # Reassignment creates a new delivery generation. The audit log keeps
+        # the prior reopen lineage, while its generation-bound queue outbox row
+        # must not survive and fail closed against the replacement.
+        task.pop(REVIEW_REQUEUE_INTENT_KEY, None)
         task["last_update"] = timestamp
         task["next"] = assignment_next or "Ownership updated"
 

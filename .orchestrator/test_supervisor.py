@@ -134,108 +134,6 @@ class V2StartupCacheTests(unittest.TestCase):
             with mock.patch.object(supervisor, "load_status", return_value={"tasks": []}):
                 self.assertFalse(supervisor.reconcile_runtime_on_boot(config, state))
 
-    def test_schedule_reconstructable_worker_retry_does_not_raise_without_state_param(self) -> None:
-        """schedule_reconstructable_worker_retry must accept state, not close over a
-        caller-scope name of the same spelling.
-
-        It calls request_for_worker(config, state, worker), which requires an
-        actual `state` parameter. A prior version of this function had no
-        such parameter -- Python resolved the bare name `state` used inside
-        the call by raising NameError at call time (not import time), so
-        nothing caught it until reconcile_runtime_on_boot's boot-reconciliation
-        path actually hit a missing-process worker. No existing test built a
-        worker record with a dead process, so the gap went unnoticed until it
-        fired live and repeatedly failed 'apply_post_dispatch_maintenance'
-        (16 times in one live session on 2026-08-17, non-fatal but recurring)
-        before OPS-SUPERVISOR-RETRY-MISSING-STATE-20260817 fixed the missing
-        parameter. This test calls the function directly (not through the
-        much larger reconcile_runtime_on_boot) so a future regression is
-        caught by a NameError at the narrowest possible point.
-        """
-
-        config = config_fixture()
-        state = {"workers": {}, "queue": {"events": {}}}
-        worker = {
-            "provider": "codex",
-            "request_snapshot": {
-                "agent_id": "codex",
-                "provider": "codex",
-                "delivery_mode": "codex",
-                "message": "wake",
-            },
-        }
-
-        result = supervisor.schedule_reconstructable_worker_retry(
-            config, state, worker, "worker process missing"
-        )
-
-        self.assertTrue(result)
-        self.assertEqual(worker.get("status"), "retry_backoff")
-
-    def test_reconstructable_worker_retry_honors_canonical_explicit_hold(self) -> None:
-        config = config_fixture()
-        task = task_fixture(status="blocked")
-        task["waiting_for"] = "Human/Ops"
-        status = {
-            "tasks": [task],
-            "blockers": [
-                {
-                    "task_id": "TASK-1",
-                    "status": "open",
-                    "waiting_for": "Human/Ops",
-                }
-            ],
-        }
-        state = {"workers": {}, "queue": {"events": {}}}
-        worker = {
-            "provider": "codex",
-            "request_snapshot": {
-                "agent_id": "codex",
-                "provider": "codex",
-                "delivery_mode": "codex",
-                "message": "wake",
-            },
-        }
-
-        with mock.patch.object(
-            supervisor,
-            "request_for_worker",
-            side_effect=AssertionError("explicit hold must stop before retry reconstruction"),
-        ):
-            result = supervisor.schedule_reconstructable_worker_retry(
-                config,
-                state,
-                worker,
-                "worker process missing",
-                status=status,
-                task=task,
-            )
-
-        self.assertFalse(result)
-        self.assertNotIn("status", worker)
-
-    def test_reconstructable_worker_retry_stops_at_total_retry_budget(self) -> None:
-        config = config_fixture()
-        config["worker_retry"] = {"enabled": True, "max_attempts": 1}
-        state = {"workers": {}, "queue": {"events": {}}}
-        worker = {
-            "provider": "codex",
-            "retry_count": 1,
-            "request_snapshot": {
-                "agent_id": "codex",
-                "provider": "codex",
-                "delivery_mode": "codex",
-                "message": "wake",
-            },
-        }
-
-        self.assertFalse(
-            supervisor.schedule_reconstructable_worker_retry(
-                config, state, worker, "worker lease expired"
-            )
-        )
-        self.assertNotIn("status", worker)
-
     def test_boot_reconciliation_routes_explicit_hold_through_typed_recovery(self) -> None:
         config = config_fixture()
         task = task_fixture(status="blocked")
@@ -261,6 +159,13 @@ class V2StartupCacheTests(unittest.TestCase):
         }
         state = {"workers": {"run-finalize": worker}, "queue": {"events": {}}}
 
+        def recover_held(*args, **kwargs):
+            worker["lost_lease_receipt_id"] = "receipt-held"
+            state[supervisor.WORKER_RECOVERY_RECEIPTS_KEY] = {
+                "receipt-held": {"status": "held"}
+            }
+            return True
+
         with (
             mock.patch.object(supervisor, "load_status", return_value=status),
             mock.patch.object(supervisor, "pid_is_alive", return_value=False),
@@ -268,7 +173,7 @@ class V2StartupCacheTests(unittest.TestCase):
             mock.patch.object(supervisor, "finalize_queue_event_record"),
             mock.patch.object(supervisor, "write_activity_log"),
             mock.patch.object(
-                supervisor, "recover_lost_worker_lease", return_value=True
+                supervisor, "recover_lost_worker_lease", side_effect=recover_held
             ) as recover,
             mock.patch.object(supervisor, "reconcile_pending_worker_recoveries", return_value=False),
         ):
@@ -283,6 +188,12 @@ class V2StartupCacheTests(unittest.TestCase):
             reason="Worker process missing during supervisor boot reconciliation.",
             status=status,
         )
+        counts = state["worker_runtime_metrics"]["last_measurements"][
+            "boot_reconciliation"
+        ]["counts"]
+        self.assertEqual(counts["missing_process_tasks_held"], 1)
+        self.assertNotIn("missing_process_workers_reassigned", counts)
+        self.assertNotIn("expired_lease_workers_reassigned", counts)
 
     def test_boot_reconciliation_routes_expired_lease_through_typed_recovery(self) -> None:
         config = config_fixture()
@@ -304,6 +215,13 @@ class V2StartupCacheTests(unittest.TestCase):
         }
         state = {"workers": {"run-expired-boot": worker}, "queue": {"events": {}}}
 
+        def recover_reassigned(*args, **kwargs):
+            worker["lost_lease_receipt_id"] = "receipt-reassigned"
+            state[supervisor.WORKER_RECOVERY_RECEIPTS_KEY] = {
+                "receipt-reassigned": {"status": "reassigned"}
+            }
+            return True
+
         with (
             mock.patch.object(supervisor, "load_status", return_value=status),
             mock.patch.object(supervisor, "update_worker_runtime_markers", return_value=False),
@@ -313,7 +231,9 @@ class V2StartupCacheTests(unittest.TestCase):
             mock.patch.object(supervisor, "canonical_worker_terminal_status", return_value=None),
             mock.patch.object(supervisor, "write_activity_log"),
             mock.patch.object(
-                supervisor, "recover_lost_worker_lease", return_value=True
+                supervisor,
+                "recover_lost_worker_lease",
+                side_effect=recover_reassigned,
             ) as recover,
             mock.patch.object(supervisor, "reconcile_pending_worker_recoveries", return_value=False),
         ):
@@ -327,6 +247,11 @@ class V2StartupCacheTests(unittest.TestCase):
             reason="Worker lease expired during supervisor boot reconciliation.",
             status=status,
         )
+        counts = state["worker_runtime_metrics"]["last_measurements"][
+            "boot_reconciliation"
+        ]["counts"]
+        self.assertEqual(counts["expired_lease_workers_reassigned"], 1)
+        self.assertNotIn("missing_process_workers_reassigned", counts)
 
     def test_command_runtime_health_failure_is_one_global_dispatch_hold(self) -> None:
         config = config_fixture()
@@ -2502,45 +2427,113 @@ class DurableQueueContractTests(unittest.TestCase):
         self.assertEqual(callers, {"process_queue"})
 
     def test_review_requeue_outbox_materializes_exactly_once_across_restart(self) -> None:
-        task = task_fixture(status="in_progress")
-        task[supervisor.REVIEW_REQUEUE_INTENT_KEY] = {
-            "schema_version": supervisor.REVIEW_REQUEUE_INTENT_SCHEMA_VERSION,
-            "intent_id": "review-requeue-" + "a" * 64,
-            "status": "pending",
-            "task_id": "TASK-1",
-            "task_generation": 1,
-            "owner": "Codex",
-            "reviewer": "Codex2",
-            "reopened_at": "2026-08-28T12:00:00Z",
-            "reopened_by": "Codex2",
-            "reason": "changes requested",
-        }
-        status = {"tasks": [task]}
-        state = with_healthy_delivery_health(
-            self.config,
-            {"workers": {}, "queue": {"events": {}}, "seen_event_keys": {}},
-        )
-        plan = supervisor.build_dispatch_plan(
-            self.config, state, status, [], live_total=0
-        )
-        self.assertEqual(len(plan["events"]), 1)
-        with (
-            mock.patch.object(supervisor, "load_status", return_value=status),
-            mock.patch.object(supervisor, "write_activity_log"),
-            mock.patch("watch_events.write_activity_log"),
-        ):
-            self.assertTrue(supervisor.reserve_dispatch_plan(self.config, state, plan))
-        event_key = plan["events"][0]["key"]
-        self.assertIn(event_key, state["seen_event_keys"])
+        with tempfile.TemporaryDirectory() as directory:
+            temp_root = Path(directory)
+            status_root = temp_root / "status"
+            (status_root / ".orchestrator").mkdir(parents=True)
+            (temp_root / "runtime").mkdir()
+            config = config_fixture(status_root)
+            event_log = temp_root / "runtime" / "tasks.jsonl"
+            config["task_state_store"] = {
+                "mode": "authoritative",
+                "event_log": str(event_log),
+            }
+            task = task_fixture(status="in_progress")
+            pending_intent = {
+                "schema_version": supervisor.REVIEW_REQUEUE_INTENT_SCHEMA_VERSION,
+                "intent_id": "review-requeue-" + "a" * 64,
+                "status": "pending",
+                "task_id": "TASK-1",
+                "task_generation": 1,
+                "owner": "Codex",
+                "reviewer": "Codex2",
+                "reopened_at": "2026-08-28T12:00:00Z",
+                "reopened_by": "Codex2",
+                "reason": "changes requested",
+            }
+            task[supervisor.REVIEW_REQUEUE_INTENT_KEY] = pending_intent
+            status = {"tasks": [task]}
+            supervisor.rewrite_task_state_store.append_state_commit(
+                event_log, status, source="test-seed"
+            )
+            Path(config["paths"]["status_file"]).write_text(
+                json.dumps(status), encoding="utf-8"
+            )
+            state = with_healthy_delivery_health(
+                config,
+                {
+                    "version": 2,
+                    "workers": {},
+                    "queue": {"version": 2, "events": {}},
+                    "seen_event_keys": {},
+                },
+            )
 
-        # Queue append and consumer offset commit together. Simulate a later
-        # restart after the terminal queue row was compacted: the immutable
-        # canonical intent plus durable offset still cannot append twice.
-        state["queue"]["events"] = {}
-        replay = supervisor.build_dispatch_plan(
-            self.config, state, status, [], live_total=0
-        )
-        self.assertEqual(replay["events"], [])
+            # Crash before reserve leaves the canonical row pending and
+            # therefore eligible for the ordinary planner retry.
+            self.assertFalse(
+                supervisor.reconcile_review_requeue_materializations(config, state)
+            )
+            plan = supervisor.build_dispatch_plan(
+                config, state, status, [], live_total=0
+            )
+            self.assertEqual(len(plan["events"]), 1)
+            with (
+                mock.patch.object(supervisor, "write_activity_log"),
+                mock.patch("watch_events.write_activity_log"),
+            ):
+                self.assertTrue(supervisor.reserve_dispatch_plan(config, state, plan))
+            supervisor.save_runtime_state(config, state)
+
+            # Simulate restart after runtime reserve but before the TaskStore
+            # acknowledgement. The exact durable queue+seen pair recovers the
+            # canonical pending -> materialized transition without enqueueing.
+            def drain_outbox(recover_config):
+                latest = supervisor.load_status(recover_config)
+                latest.pop("status_activity_outbox", None)
+                supervisor.write_status(
+                    recover_config, latest, source="test-outbox-drain"
+                )
+                return True
+
+            with mock.patch.object(
+                supervisor, "sync_status_pipeline", side_effect=drain_outbox
+            ):
+                self.assertTrue(
+                    supervisor.reconcile_review_requeue_materializations(config)
+                )
+            latest = supervisor.load_status(config)
+            materialized = latest["tasks"][0][supervisor.REVIEW_REQUEUE_INTENT_KEY]
+            restarted_state = supervisor.load_runtime_state_snapshot(config)
+            queued = supervisor.queue_events(restarted_state)
+            self.assertEqual(materialized["status"], "materialized")
+            self.assertEqual(materialized["queue_event_id"], queued[0]["event_id"])
+            self.assertEqual(materialized["event_key"], queued[0]["event_key"])
+            self.assertEqual(materialized["materialized_at"], queued[0]["created_at"])
+
+            # The acknowledged row remains admissible for its own late queue
+            # validation; only the planner treats the durable ack as consumed.
+            decision = supervisor.evaluate_queued_delivery_admission(
+                config,
+                restarted_state,
+                queued[0],
+                supervisor.task_index_from_status(config, latest),
+                queued,
+            )
+            self.assertIsNotNone(decision)
+            self.assertTrue(decision.eligible)
+
+            # Runtime seen keys are bounded cache state, not the durable
+            # exactly-once authority. Losing both queue history and the old
+            # seen key still cannot materialize a second queue row.
+            restarted_state["queue"]["events"] = {}
+            restarted_state["seen_event_keys"] = {
+                "newer-key": "2026-08-28T13:00:00Z"
+            }
+            replay = supervisor.build_dispatch_plan(
+                config, restarted_state, latest, [], live_total=0
+            )
+            self.assertEqual(replay["events"], [])
 
     def test_owned_ready_dispatch_prepares_the_only_canonical_launch_mutation(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -4819,6 +4812,23 @@ class DurableWorkerRecoveryTests(unittest.TestCase):
         state["workers"][str(worker["run_id"])] = worker
 
     def test_loss_fences_generation_reassigns_and_backfills_materialized_ids(self) -> None:
+        seeded = supervisor.load_status(self.config)
+        seeded["tasks"][0][supervisor.REVIEW_REQUEUE_INTENT_KEY] = {
+            "schema_version": supervisor.REVIEW_REQUEUE_INTENT_SCHEMA_VERSION,
+            "intent_id": "review-requeue-" + "b" * 64,
+            "status": "materialized",
+            "task_id": "TASK-1",
+            "task_generation": 1,
+            "owner": "Codex",
+            "reviewer": "Codex2",
+            "reopened_at": "2026-08-28T09:00:00Z",
+            "reopened_by": "Codex2",
+            "reason": "changes requested",
+            "queue_event_id": "evt-lost-1",
+            "event_key": "key-evt-lost-1",
+            "materialized_at": "2026-08-28T09:00:01Z",
+        }
+        supervisor.write_status(self.config, seeded, source="test-seed-reopen")
         state = self._state()
         worker = self._worker()
         self._store_started(state, worker)
@@ -4842,16 +4852,35 @@ class DurableWorkerRecoveryTests(unittest.TestCase):
             self.assertEqual(receipt["type"], "worker_lost_lease")
             self.assertEqual(receipt["status"], "reassigned")
             self.assertEqual((task["owner"], task["generation"]), ("Codex2", 3))
+            self.assertNotIn(supervisor.REVIEW_REQUEUE_INTENT_KEY, task)
             self.assertEqual(worker["status"], "superseded")
             self.assertFalse(supervisor.worker_matches_current_task_generation(worker, task))
             self.assertEqual(
                 state["queue"]["events"]["evt-lost-1"]["lost_lease_receipt_id"],
                 receipt_id,
             )
+            self.assertTrue(supervisor.task_has_active_worker_recovery(task))
+            self.assertFalse(
+                supervisor.persist_task_reassignment(
+                    self.config,
+                    task_id="TASK-1",
+                    new_owner="Codex",
+                    new_reviewer=str(task["reviewer"]),
+                    message="generic lane must wait for recovery materialization",
+                    expected_owner="Codex2",
+                    expected_reviewer=str(task["reviewer"]),
+                    expected_status=str(task["status"]),
+                    expected_generation=3,
+                )
+            )
 
             plan = supervisor.build_dispatch_plan(
                 self.config, state, status, supervisor.queue_events(state), live_total=0
             )
+            # The old reopen intent was retired in the receipt fence
+            # transaction, so the generation-3 replacement has one fresh
+            # dispatch identity instead of being permanently fail-closed.
+            self.assertEqual(len(plan["events"]), 1)
             self.assertEqual(plan["events"][0]["recovery_receipt_id"], receipt_id)
             self.assertTrue(supervisor.reserve_dispatch_plan(self.config, state, plan))
             replacement_event = next(
@@ -4958,6 +4987,170 @@ class DurableWorkerRecoveryTests(unittest.TestCase):
             )
             recovered = supervisor.load_status(self.config)
             self.assertEqual((recovered["tasks"][0]["owner"], recovered["tasks"][0]["generation"]), ("Codex2", 3))
+
+    def test_pending_receipt_blocks_every_generic_assignment_lane(self) -> None:
+        state = self._state()
+        worker = self._worker()
+        self._store_started(state, worker)
+        with (
+            mock.patch.object(
+                supervisor, "sync_status_pipeline", side_effect=self._drain_status_outbox
+            ),
+            mock.patch.object(
+                supervisor, "worker_recovery_assignment_pair", return_value=None
+            ),
+        ):
+            self.assertTrue(
+                supervisor.recover_lost_worker_lease(
+                    self.config,
+                    state,
+                    worker,
+                    reason_kind="worker_process_missing",
+                    reason="worker disappeared",
+                )
+            )
+
+        pending = supervisor.load_status(self.config)
+        task = pending["tasks"][0]
+        self.assertTrue(supervisor.task_has_pending_worker_recovery(task))
+        fenced_generation = task["generation"]
+        self.assertFalse(
+            supervisor.persist_task_reassignment(
+                self.config,
+                task_id="TASK-1",
+                new_owner="Codex2",
+                new_reviewer="Codex",
+                message="generic lane must not cross typed recovery fence",
+                expected_owner="Codex",
+                expected_reviewer="Codex2",
+                expected_status="in_progress",
+                expected_generation=fenced_generation,
+            )
+        )
+
+        with (
+            mock.patch.object(
+                supervisor,
+                "assignment_terminal_unavailability",
+                return_value="quota_terminal",
+            ),
+            mock.patch.object(
+                supervisor,
+                "persist_task_reassignment",
+                side_effect=AssertionError("availability lane crossed recovery fence"),
+            ),
+        ):
+            self.assertFalse(
+                supervisor.reconcile_unavailable_assignments(self.config, state)
+            )
+
+        self.config["worker_reassignment"]["failure_loop"] = {
+            "enabled": True,
+            "max_failures_in_window": 1,
+            "window_seconds": 3600,
+            "max_auto_reassignments": 1,
+        }
+        with (
+            mock.patch.object(
+                supervisor,
+                "recent_task_failure_counts",
+                return_value={"TASK-1": 5},
+            ),
+            mock.patch.object(
+                supervisor,
+                "persist_task_reassignment",
+                side_effect=AssertionError("failure lane crossed recovery fence"),
+            ),
+            mock.patch.object(
+                supervisor,
+                "record_failure_loop_blocker",
+                side_effect=AssertionError("failure hold crossed recovery fence"),
+            ),
+        ):
+            self.assertFalse(supervisor.reconcile_failure_loops(self.config, state))
+        self.assertEqual(
+            supervisor.load_status(self.config)["tasks"][0]["generation"],
+            fenced_generation,
+        )
+
+    def test_pending_receipt_outbox_drains_before_reassignment_retry(self) -> None:
+        state = self._state()
+        worker = self._worker()
+        self._store_started(state, worker)
+        with mock.patch.object(supervisor, "sync_status_pipeline", return_value=False):
+            self.assertTrue(
+                supervisor.recover_lost_worker_lease(
+                    self.config,
+                    state,
+                    worker,
+                    reason_kind="worker_process_missing",
+                    reason="worker disappeared",
+                )
+            )
+        pending = supervisor.load_status(self.config)
+        self.assertNotIn(pending.get("status_activity_outbox"), (None, {}, []))
+        self.assertEqual(pending["tasks"][0]["generation"], 2)
+        receipt_id = pending["tasks"][0][supervisor.WORKER_RECOVERY_TASK_KEY][
+            "receipt_id"
+        ]
+        self.assertEqual(
+            pending[supervisor.WORKER_RECOVERY_RECEIPTS_KEY][receipt_id]["status"],
+            "pending",
+        )
+
+        with mock.patch.object(
+            supervisor, "sync_status_pipeline", side_effect=self._drain_status_outbox
+        ):
+            self.assertTrue(
+                supervisor.reconcile_pending_worker_recoveries(self.config, state)
+            )
+        recovered = supervisor.load_status(self.config)
+        self.assertIn(recovered.get("status_activity_outbox"), (None, {}, []))
+        self.assertEqual(recovered["tasks"][0]["generation"], 3)
+        self.assertEqual(
+            recovered[supervisor.WORKER_RECOVERY_RECEIPTS_KEY][receipt_id]["status"],
+            "reassigned",
+        )
+
+    def test_prune_preserves_unmaterialized_reassignment_receipt(self) -> None:
+        keep_id = "lost-lease-keep"
+        current_id = "lost-lease-current"
+        receipts = {
+            f"lost-lease-old-{index:03d}": {
+                "status": "materialized",
+                "detected_at": f"2026-08-27T00:{index // 60:02d}:{index % 60:02d}Z",
+            }
+            for index in range(supervisor.MAX_WORKER_RECOVERY_RECEIPTS)
+        }
+        receipts[keep_id] = {
+            "status": "reassigned",
+            "detected_at": "2026-08-28T00:00:00Z",
+        }
+        receipts[current_id] = {
+            "status": "materialized",
+            "detected_at": "2026-08-28T00:00:01Z",
+        }
+        status = {
+            "tasks": [
+                {
+                    "id": "TASK-1",
+                    supervisor.WORKER_RECOVERY_TASK_KEY: {"receipt_id": keep_id},
+                }
+            ],
+            supervisor.WORKER_RECOVERY_RECEIPTS_KEY: receipts,
+        }
+
+        supervisor._prune_worker_recovery_receipts(
+            status, current_receipt_id=current_id
+        )
+
+        self.assertIn(keep_id, receipts)
+        self.assertIn(current_id, receipts)
+        self.assertEqual(
+            status["tasks"][0][supervisor.WORKER_RECOVERY_TASK_KEY]["receipt_id"],
+            keep_id,
+        )
+        self.assertEqual(len(receipts), supervisor.MAX_WORKER_RECOVERY_RECEIPTS)
 
     def test_same_task_can_record_a_second_lost_generation_with_lineage(self) -> None:
         self.config["worker_reassignment"]["owner_fallbacks"]["Codex2"] = ["Codex"]
@@ -5479,7 +5672,6 @@ class WorkerLeaseApprovalWaitProgressTests(unittest.TestCase):
             "marker_updates": 0,
             "commit_progress_updates": 0,
             "lease_refreshes": 0,
-            "expired_lease_workers_failed": 0,
         }
         with (
             mock.patch.object(supervisor, "update_worker_runtime_markers", return_value=False),

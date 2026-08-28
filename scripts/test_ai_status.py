@@ -9280,6 +9280,48 @@ class SidecarTaskTests(unittest.TestCase):
         self.assertEqual(task["status"], "in_progress")
         self.assertEqual(task["artifact_conflict_guard"], guard)
 
+    def test_reassignment_retires_generation_bound_review_requeue_intent(self) -> None:
+        task = {
+            "id": "REOPEN-REASSIGN-001",
+            "status": "in_progress",
+            "owner": "Codex",
+            "reviewer": "Codex2",
+            "generation": 1,
+            "review_requeue_intent": {
+                "schema_version": ai_status.REVIEW_REQUEUE_INTENT_SCHEMA_VERSION,
+                "intent_id": "review-requeue-" + "c" * 64,
+                "status": "materialized",
+                "task_id": "REOPEN-REASSIGN-001",
+                "task_generation": 1,
+                "owner": "Codex",
+                "reviewer": "Codex2",
+                "reopened_at": "2026-08-28T09:00:00Z",
+                "reopened_by": "Codex2",
+                "reason": "changes requested",
+                "queue_event_id": "evt-old-reopen",
+                "event_key": "key-old-reopen",
+                "materialized_at": "2026-08-28T09:00:01Z",
+            },
+        }
+        self.state["tasks"].append(task)
+
+        with mock.patch.dict(
+            os.environ,
+            {
+                "AI_NAME": "Human/Ops",
+                "TASK_ASSIGN_REASON": "Replace the lost reopen worker.",
+            },
+            clear=False,
+        ):
+            ai_status.command_assign(
+                self.state,
+                ["REOPEN-REASSIGN-001", "Claude", "Codex2"],
+            )
+
+        updated = ai_status.get_task(self.state, "REOPEN-REASSIGN-001")
+        self.assertEqual(updated["generation"], 2)
+        self.assertNotIn(ai_status.REVIEW_REQUEUE_INTENT_KEY, updated)
+
     def test_human_ops_recall_cannot_change_admitted_contract_metadata(self) -> None:
         self.state["tasks"].append(
             {
