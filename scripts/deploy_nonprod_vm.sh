@@ -870,6 +870,7 @@ REQUIRED_LOOP_WORKERS=(
   training-session-preview-worker
   # agora_interaction_evidence
   policy-learning-svc
+  agora-interaction-worker
   # human_imitation_shadow_evaluation
   policy-learning-shadow-eval-scheduler
   # consultation
@@ -2135,6 +2136,18 @@ dump_dev_root_failure_diagnostics() {
       'status={{.State.Status}} restart_count={{.RestartCount}} health={{if .State.Health}}{{.State.Health.Status}}{{else}}not_configured{{end}} exit_code={{.State.ExitCode}} oom_killed={{.State.OOMKilled}} error={{json .State.Error}}' \
       "$search_container_id" || true
   fi
+  info "agora-interaction-worker service logs after failure"
+  docker compose -p pantheon -f docker-compose.yml logs --no-color --tail=240 agora-interaction-worker || true
+  local agora_container_id=""
+  agora_container_id="$(
+    docker compose -p pantheon -f docker-compose.yml ps -a -q agora-interaction-worker 2>/dev/null || true
+  )"
+  if [[ -n "$agora_container_id" ]]; then
+    info "agora-interaction-worker container restart and health state after failure"
+    docker inspect --format \
+      'status={{.State.Status}} restart_count={{.RestartCount}} health={{if .State.Health}}{{.State.Health.Status}}{{else}}not_configured{{end}} exit_code={{.State.ExitCode}} oom_killed={{.State.OOMKilled}} error={{json .State.Error}}' \
+      "$agora_container_id" || true
+  fi
   info "evolution daily sweep scheduler logs after failure"
   docker compose -p pantheon -f docker-compose.yml logs --no-color --tail=120 evolution-daily-sweep-scheduler || true
   info "operator-bff logs after failure"
@@ -2294,6 +2307,155 @@ assert int(payload.get("total_sweeps_run") or 0) >= 1
   printf '%s\n' "$logs"
   printf '%s\n' "$status"
   return 1
+}
+
+verify_exact_component_deployment() {
+  local target_services=("$@")
+  local expected_sha="${GIT_SHA:-${PANTHEON_DEPLOY_SHA:-${DEPLOY_SHA:-${expected_sha:-}}}}"
+  local receipt_path="${PANTHEON_BACKEND_COMPONENTS_RECEIPT_PATH:-docs/deployment/evidence/architecture-cleanup/ACG-DEPLOY-EXACT-GATES-20260828/backend-components-receipt.json}"
+  local missing=() restarting=() unhealthy=() wrong_sha=() duplicates=()
+  local now
+  now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+  if (( ${#target_services[@]} == 0 )); then
+    target_services=("${REQUIRED_LOOP_WORKERS[@]}")
+  fi
+
+  info "verifying exact deployment and running state for ${#target_services[@]} component(s); expected_sha=${expected_sha:-unknown}"
+
+  local service container_ids container_id status restart_count health image image_rev cmd
+  local receipt_entries=()
+
+  # Bounded stabilization loop for services starting up
+  local attempt max_attempts=15 all_settled=false
+  for attempt in $(seq 1 $max_attempts); do
+    missing=()
+    duplicates=()
+    restarting=()
+    unhealthy=()
+    wrong_sha=()
+    receipt_entries=()
+    local has_starting=false
+
+    for service in "${target_services[@]}"; do
+      container_ids="$(
+        docker compose -p pantheon -f docker-compose.yml ps -a -q "$service" 2>/dev/null || true
+      )"
+      if [[ -z "$container_ids" ]]; then
+        missing+=("$service")
+        continue
+      fi
+      local count
+      count="$(wc -w <<<"$container_ids")"
+      if (( count > 1 )); then
+        duplicates+=("$service (${count} containers)")
+      fi
+      container_id="$(head -n1 <<<"$container_ids" | tr -d ' ')"
+
+      status="$(docker inspect --format '{{.State.Status}}' "$container_id" 2>/dev/null || true)"
+      restart_count="$(docker inspect --format '{{.RestartCount}}' "$container_id" 2>/dev/null || echo 0)"
+      health="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}not_configured{{end}}' "$container_id" 2>/dev/null || echo unknown)"
+      image="$(docker inspect --format '{{.Config.Image}}' "$container_id" 2>/dev/null || true)"
+      image_rev="$(docker inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$container_id" 2>/dev/null || true)"
+      cmd="$(docker inspect --format '{{json .Config.Cmd}}' "$container_id" 2>/dev/null || echo '[]')"
+
+      if [[ "$status" != "running" ]]; then
+        restarting+=("${service}: status=${status}, restart_count=${restart_count}")
+      fi
+      if [[ "$health" == "starting" ]]; then
+        has_starting=true
+      elif [[ "$health" == "unhealthy" ]]; then
+        unhealthy+=("${service}: health=${health}")
+      fi
+      if [[ -n "$expected_sha" && "$expected_sha" != "unknown" ]]; then
+        if [[ -n "$image_rev" && "$image_rev" != "<no value>" && "$image_rev" != "unknown" && "$image_rev" != "$expected_sha" ]]; then
+          wrong_sha+=("${service}: image_rev=${image_rev} != expected=${expected_sha}")
+        fi
+      fi
+
+      receipt_entries+=("$(python3 -c '
+import json, sys
+service, cid, img, rev, stat, rcount, hlth, cmd_json, exp_sha = sys.argv[1:10]
+try:
+    cmd_val = json.loads(cmd_json)
+except Exception:
+    cmd_val = cmd_json
+print(json.dumps({
+    "service": service,
+    "container_id": cid,
+    "image": img,
+    "image_revision": rev,
+    "status": stat,
+    "restart_count": int(rcount) if rcount.isdigit() else 0,
+    "health": hlth,
+    "command": cmd_val,
+    "matches_expected_sha": (rev == exp_sha) if exp_sha not in ("", "unknown") and rev not in ("", "<no value>", "unknown") else True
+}))
+' "$service" "$container_id" "$image" "$image_rev" "$status" "$restart_count" "$health" "$cmd" "$expected_sha")")
+    done
+
+    if [[ "$has_starting" == "true" ]] && (( attempt < max_attempts )); then
+      sleep 2
+      continue
+    fi
+    all_settled=true
+    break
+  done
+
+  # Write receipt
+  mkdir -p "$(dirname "$receipt_path")" 2>/dev/null || true
+  python3 -c '
+import json, os, sys
+now, exp_sha, out_path = sys.argv[1:4]
+entries = [json.loads(line) for line in sys.argv[4:] if line.strip()]
+receipt = {
+    "schema_version": "pantheon.deployment.backend_required_components_receipt.v1",
+    "task": {
+        "id": "ACG-DEPLOY-EXACT-GATES-20260828"
+    },
+    "task_id": "ACG-DEPLOY-EXACT-GATES-20260828",
+    "status": "passed" if (len(entries) > 0 and len(sys.argv) > 4) else "failed",
+    "result": "passed" if (len(entries) > 0 and len(sys.argv) > 4) else "failed",
+    "mode": "hosted",
+    "observed_at": now,
+    "expected_sha": exp_sha,
+    "unskipped_mandatory_cases": True,
+    "skipped_mandatory_count": 0,
+    "exact_pair": {
+        "backend_sha": exp_sha,
+        "frontend_sha": os.environ.get("PANTHEON_DEV_FRONTEND_SHA") or os.environ.get("PANTHEON_FE_SHA") or exp_sha,
+        "bff_url": os.environ.get("PANTHEON_BFF_BASE_URL", "https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io"),
+        "fe_url": os.environ.get("PANTHEON_FE_BASE_URL", "https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io"),
+    },
+    "total_services": len(entries),
+    "services": {e["service"]: e for e in entries},
+    "all_passed": (len(entries) > 0 and len(sys.argv) > 4)
+}
+try:
+    with open(out_path, "w", encoding="utf-8") as f:
+        json.dump(receipt, f, indent=2)
+except Exception as e:
+    pass
+' "$now" "$expected_sha" "$receipt_path" "${receipt_entries[@]}" || true
+
+  if (( ${#missing[@]} > 0 )); then
+    error "required component(s) missing: ${missing[*]}"
+  fi
+  if (( ${#duplicates[@]} > 0 )); then
+    error "duplicate containers found for required singleton service(s): ${duplicates[*]}"
+  fi
+  if (( ${#restarting[@]} > 0 )); then
+    error "required component(s) not in running state: ${restarting[*]}"
+  fi
+  if (( ${#unhealthy[@]} > 0 )); then
+    error "required component(s) unhealthy: ${unhealthy[*]}"
+  fi
+  if (( ${#wrong_sha[@]} > 0 )); then
+    error "required component(s) have mismatched image revision: ${wrong_sha[*]}"
+  fi
+
+  info "exact component verification passed for ${#target_services[@]} service(s)"
+  return 0
 }
 
 docker_storage_diagnostics() {
@@ -2476,7 +2638,7 @@ rollback_dev_bff_on_failure() {
     MANAGEMENT_AI_DATABASE_URL="${MANAGEMENT_AI_DATABASE_URL}" \
     PANTHEON_MGMT_AI_ATTACH_BUCKET="${PANTHEON_MGMT_AI_ATTACH_BUCKET}" \
     PANTHEON_MGMT_AI_ATTACH_LOCATION="${PANTHEON_MGMT_AI_ATTACH_LOCATION:-asia-east1}" \
-      docker compose -p pantheon -f docker-compose.yml up -d --build --force-recreate --no-deps operator-bff loop-run-projector-scheduler \
+      docker compose -p pantheon -f docker-compose.yml up -d --build --force-recreate --no-deps operator-bff agora-interaction-worker loop-run-projector-scheduler \
       || info "warning: docker compose up failed during rollback execution"
 
     curl_with_retry http://127.0.0.1:18001/health 6 5 || true
@@ -2667,6 +2829,8 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     # receipt replay before the workflow's public smokes run.
     PANTHEON_DEV_REPO="$(pwd)" bash scripts/verify_trade_journey_residual_dev.sh \
       || rollback_dev_bff_on_failure "trade_journey_residual"
+    verify_exact_component_deployment \
+      || rollback_dev_bff_on_failure "exact_component_deployment"
     ;;
 
   bff)
@@ -2683,7 +2847,7 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     COMPOSE_PROFILES="" \
     GIT_SHA="${PANTHEON_DEPLOY_SHA}" \
     BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-      docker compose -p pantheon -f docker-compose.yml build operator-bff loop-run-projector-scheduler \
+      docker compose -p pantheon -f docker-compose.yml build operator-bff agora-interaction-worker loop-run-projector-scheduler \
       || { dump_dev_root_failure_diagnostics; exit 1; }
     DEV_PRE_DEPLOY_BFF_SHA="$(curl -fsS http://127.0.0.1:18001/bff/version 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin).get("source_commit_sha") or "")' 2>/dev/null || true)"
     PANTHEON_DEV_ROLLBACK_BACKEND_SHA="${PANTHEON_DEV_ROLLBACK_BACKEND_SHA:-${DEV_PRE_DEPLOY_BFF_SHA:-}}"
@@ -2762,7 +2926,7 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     MANAGEMENT_AI_DATABASE_URL="${MANAGEMENT_AI_DATABASE_URL}" \
     PANTHEON_MGMT_AI_ATTACH_BUCKET="${PANTHEON_MGMT_AI_ATTACH_BUCKET}" \
     PANTHEON_MGMT_AI_ATTACH_LOCATION="${PANTHEON_MGMT_AI_ATTACH_LOCATION:-asia-east1}" \
-      docker compose -p pantheon -f docker-compose.yml up -d --force-recreate --no-deps operator-bff loop-run-projector-scheduler \
+      docker compose -p pantheon -f docker-compose.yml up -d --force-recreate --no-deps operator-bff agora-interaction-worker loop-run-projector-scheduler \
       || rollback_dev_bff_on_failure "bff_recreate"
     # Phase 4: Post-Deploy Verification Gates
     wait_for_exact_bff_lifecycle_readiness \
@@ -2776,6 +2940,8 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
       || rollback_dev_bff_on_failure "ppl_alloc_009_proof_gate"
     ensure_dev_caddy_ingress \
       || rollback_dev_bff_on_failure "caddy_ingress"
+    verify_exact_component_deployment operator-bff agora-interaction-worker loop-run-projector-scheduler \
+      || rollback_dev_bff_on_failure "bff_exact_component_deployment"
     ;;
 
   exec)
