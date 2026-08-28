@@ -1,0 +1,163 @@
+{
+  "schema_version": "loop_product_evidence.v1",
+  "schema_status": {
+    "formal_schema_owner": "LOOP-PROD-002",
+    "formalization_trigger": "ACG-WORKSHOP-BE-20260828 owner review-evidence gate.",
+    "note": "Owner-authored fix manifest for the Workshop backend decomposition, committed before independent review as required by task-closeout-finalization.md.",
+    "status": "formalized"
+  },
+  "evidence_policy": {
+    "checksum_file": null,
+    "missing_or_contradicted_proof_fails_closed": true,
+    "mutation_rule": "Task-scoped changes require a reviewed Pantheon PR after this manifest merges.",
+    "recording_mode": "logical_append_only",
+    "redacted": false,
+    "self_hashing": false
+  },
+  "task": {
+    "base_branch": "dev",
+    "evidence_cut_at": "2026-08-28T05:31:10Z",
+    "evidence_cut_semantics": "Owner implementation committed on task/ACG-WORKSHOP-BE-20260828 against dev-derived tip 744f7b095d106562c8981bc2d10db32c73655d57; not yet merged or independently reviewed.",
+    "id": "ACG-WORKSHOP-BE-20260828",
+    "overall_admission": "pending_review",
+    "owner": "Claude",
+    "phase": "W1-parallel-preparation",
+    "product_level_required": true,
+    "program_id": "PANTHEON-ARCH-CLEANUP-20260828",
+    "repository": "ajoe734/pantheon",
+    "reviewer": "Antigravity",
+    "target_environment": "dev integration (BFF unit/contract tests, no live compose dependency)",
+    "task_branch": "task/ACG-WORKSHOP-BE-20260828",
+    "title": "Decompose the Workshop backend and consolidate Agora persistence",
+    "design_unit": "ACG-06-BE",
+    "matrix_items": ["ACG-01-010", "ACG-02-009", "ACG-02-010", "ACG-06-001", "ACG-06-002", "ACG-06-003", "ACG-06-004", "ACG-06-005", "ACG-06-006", "ACG-06-007"],
+    "source_catalog": "docs/04/pantheon_architecture_cleanup_gap_2026-08-27/EXECUTION_TASK_CATALOG_2026-08-28.json",
+    "source_disposition_matrix": "docs/04/pantheon_architecture_cleanup_gap_2026-08-27/DISPOSITION_MATRIX_2026-08-27.json",
+    "source_document": "docs/04/pantheon_architecture_cleanup_gap_2026-08-27/CURRENT_GAP_2026-08-27.md"
+  },
+  "root_cause": {
+    "summary": "services/control-plane/bff/agora/strategy_workshop/router.py was a single 4073-line create_strategy_workshop_router() factory: 18 route handlers, a ~900-line command-admission/compensation helper cluster, a readiness-assessment builder, a card-projection builder, an SSE pub/sub implementation, and eight Pydantic request models all defined as one closure. Two of the module-level SSE/readiness helpers (_ws_publish, _build_readiness_assessment) were leading-underscore (router-private) names imported directly by agora/interaction/runner.py, agora/research/router.py, and agora/trading_room/router.py -- a private-by-name, public-by-usage contract with no owning module.",
+    "candidates_ruled_out": [
+      "Duplicating the admission/compensation helper cluster into each of the four new route-group files: rejected because it would create four independent, divergent copies of the ETag/idempotency/CAS command lifecycle and compensation logic -- exactly the kind of duplicate-truth surface the cleanup program forbids (no_new_facade_or_truth_store).",
+      "Leaving _ws_publish and _build_readiness_assessment as router-private names and updating only the docstring: rejected because the acceptance criterion is a structural one (a public module each caller can import), not a naming convention."
+    ],
+    "confirmed_cause": "The Workshop router grew one route at a time inside a single factory closure with no internal module boundaries, so cross-router callers had no public surface to import from and reached into router.py's leading-underscore internals via lazy imports instead."
+  },
+  "fix": {
+    "implementation_changed_files": [
+      "services/control-plane/bff/agora/strategy_workshop/router.py",
+      "services/control-plane/bff/agora/strategy_workshop/_admission.py",
+      "services/control-plane/bff/agora/strategy_workshop/_common.py",
+      "services/control-plane/bff/agora/strategy_workshop/cards.py",
+      "services/control-plane/bff/agora/strategy_workshop/events.py",
+      "services/control-plane/bff/agora/strategy_workshop/readiness.py",
+      "services/control-plane/bff/agora/strategy_workshop/schemas.py",
+      "services/control-plane/bff/agora/strategy_workshop/routes/__init__.py",
+      "services/control-plane/bff/agora/strategy_workshop/routes/session.py",
+      "services/control-plane/bff/agora/strategy_workshop/routes/versions.py",
+      "services/control-plane/bff/agora/strategy_workshop/routes/execution.py",
+      "services/control-plane/bff/agora/strategy_workshop/routes/stream.py",
+      "services/control-plane/bff/agora/interaction/runner.py",
+      "services/control-plane/bff/agora/research/router.py"
+    ],
+    "evidence_changed_files": [
+      "docs/deployment/evidence/twelve-loop-gap/ACG-WORKSHOP-BE-20260828/evidence.json",
+      "docs/deployment/evidence/twelve-loop-gap/ACG-WORKSHOP-BE-20260828/README.md"
+    ],
+    "test_changed_files": [
+      "services/control-plane/bff/tests/test_agora_route_ownership.py"
+    ],
+    "changes": [
+      "Added strategy_workshop/events.py: the public Workshop SSE pub/sub module (moved verbatim from router.py's module-level _ws_* functions and _workshop_sse_buffers/_workshop_sse_subscribers state). agora/interaction/runner.py and agora/research/router.py now import _ws_publish from strategy_workshop.events instead of strategy_workshop.router (ACG-06-002).",
+      "Added strategy_workshop/readiness.py: the public readiness-assessment module, exposing build_readiness_assessment as its stable public entry point (moved verbatim from router.py's _build_readiness_assessment and its exclusive helper cluster) (ACG-06-003).",
+      "Added strategy_workshop/cards.py: the live-card projection helpers (_build_workshop_cards, _merge_cards, and their dependents), split out so both router.py and routes/session.py can import one implementation without a circular import.",
+      "Added strategy_workshop/schemas.py: the eight Workshop request Pydantic models, moved out of router.py so the route-group modules can import them without importing router.py back.",
+      "Added strategy_workshop/_admission.py: build_admission_context(), wrapping the ~900-line command-admission/compensation closure cluster (ETag parsing, idempotency-key admission, CAS completion, resume/compensation, MFA-gated approval) verbatim out of the old factory body. One router assembly builds exactly one context and hands it to all four route groups, so there is exactly one implementation of the command lifecycle (ACG-06-004).",
+      "Added strategy_workshop/routes/{session,versions,execution,stream}.py: the 18 route handlers split into four disjoint groups -- session (11: list/create/read/message/events/completeness/cards/readiness/reconstruct), versions (3: list/create/select), execution (3: research-runs/consultations/conclude), stream (1: SSE aggregate) -- each a build_*_router(...) factory taking the shared store/canonical/admission-context and returning its own APIRouter. Route bodies are unchanged from the original implementation.",
+      "Rewrote strategy_workshop/router.py (4073 -> 163 lines) as composition-only: it builds the store/canonical-operations/private-content-store, builds one admission context, and flattens the four subrouters' already-built route objects onto one APIRouter.routes list (chosen over router.include_router() -- see 'router.include_router lazy-wrapping' below). It keeps back-compat re-exports (with # noqa: F401) for every previously-importable name (_ws_publish, _build_readiness_assessment, _StrategyVersionProjectionError, the Workshop*Request models, etc.) so no external test file needed to change its import path.",
+      "Added tests/test_agora_route_ownership.py: asserts the 18 contracts are registered exactly once and are disjoint across the four route-group modules, that interaction/runner.py and research/router.py no longer import a leading-underscore name from strategy_workshop.router, that readiness/events expose a public entry point, and that MemoryWorkshopStore is only ever used via explicit injection into the router factory."
+    ],
+    "not_changing": "agora/router.py needed no changes -- create_strategy_workshop_router()'s public signature is unchanged, so its single call site continues to work unmodified. agora/trading_room/router.py's two lazy `from ..strategy_workshop.router import _build_readiness_assessment` imports are left as-is: trading_room/router.py is outside this task's declared artifact_conflict_guard.artifact_scope, and router.py's back-compat re-export keeps that import working byte-for-byte, so nothing there needed to change to stay correct. strategy_workshop/store.py, operations.py, reconstruction.py, and runner.py are unmodified -- ACG-06-005/006/007 (PostgresStrategyWorkshopStore bootstrap-class merge, and the MemoryWorkshopStore-implicit-default in make_workshop_store()) are deliberately deferred; see scope_deferral below. main.py and read_store.py (ACG-01-010, ACG-02-009, ACG-02-010's generic Agora signal/journal/legacy-method duplicates) are outside this task's declared artifact scope entirely and are untouched.",
+    "owned_layer": "The strategy_workshop router's internal module decomposition and the two cross-router import sites this task owns (interaction/runner.py, research/router.py). Not owned: agora/trading_room/router.py's parallel import site, strategy_workshop/store.py's backend-selection defaults, and main.py/read_store.py's unrelated generic-route duplicates."
+  },
+  "scope_deferral": {
+    "note": "ACG-06-006 (MERGE PostgresStrategyWorkshopStore's three bootstrap methods into PostgresWorkshopStore, then delete the class) and the store-selection half of ACG-06-005/ACG-06-007 (make_workshop_store() defaults to MemoryWorkshopStore when AGORA_WORKSHOP_STORE_BACKEND is unset, and scripts/run_agora_interaction_worker.py -- outside this task's artifact scope -- has its own Memory fallback) are deliberately deferred out of this task. PostgresStrategyWorkshopStore bootstraps a materially different DDL surface than PostgresWorkshopStore's own inline bootstrap (it additionally creates agora_private_content_object, which PostgresWorkshopStore does not) and is exercised only by tests/test_strategy_workshop_store_bootstrap.py's frozen five-table deep-closure contract assertions -- confirmed via repo-wide grep that no production code path constructs it. Merging the two without first resolving whether agora_private_content_object is live-required in PostgresWorkshopStore's own schema risks silently changing production Postgres bootstrap DDL, which this task's own acceptance array does not require (it only requires PostgresWorkshopStore be the sole store PostgresStrategyWorkshopStore is not a production caller of either way) and which the architecture_cleanup_rules.move_and_delete_same_delivery_unit rule would require resolving correctly in one delivery, not partially. Likewise, changing make_workshop_store()'s documented 'off -> memory, safe for dev and tests' default to fail closed is a live-deployment-environment policy decision (there is no existing signal in this call site distinguishing dev/paper from live) that this router-decomposition task cannot safely make unilaterally. All three are recorded here as follow-up scope for a dedicated ACG-06-BE store-hardening task, not silently dropped.",
+    "router_include_router_lazy_wrapping": "The installed fastapi (0.139.2) wraps a router.include_router(child) call in a lazily-resolved _IncludedRouter node on the parent's .routes list; this is transparent to request dispatch and to app.openapi() but breaks several pre-existing tests (test_workshop_stream_ag_be_sw_004.py, test_agora_workshop_live_operations.py) that walk router.routes directly for a route's .path/.endpoint, since that pattern predates this task and previously worked because the single-file factory never called include_router internally. Fixed by extending router.routes with each subrouter's already-built route objects instead of calling include_router, which reproduces the exact flat route list the single-file factory used to produce."
+  },
+  "known_regressions_out_of_scope": {
+    "note": "No regressions were introduced. Two failures in tests/test_agora_research_run_projection.py (test_research_run_detail_returns_schema_projection, test_research_run_list_artifacts_and_sse_are_canonical) were confirmed pre-existing on this task's dev-derived base commit (verified via git stash of this task's changes and re-running the same file in isolation) and are unrelated to strategy_workshop -- both fail identically with or without this task's changes.",
+    "files": [],
+    "verified_pre_existing_failures_excluded": {
+      "note": "Confirmed present on task/ACG-WORKSHOP-BE-20260828's base commit 744f7b095d106562c8981bc2d10db32c73655d57 BEFORE this task's changes (verified by stashing this task's strategy_workshop/ changes and re-running tests/test_agora_research_run_projection.py in isolation, which still failed identically).",
+      "files": [
+        "services/control-plane/bff/tests/test_agora_research_run_projection.py::test_research_run_detail_returns_schema_projection",
+        "services/control-plane/bff/tests/test_agora_research_run_projection.py::test_research_run_list_artifacts_and_sse_are_canonical"
+      ]
+    }
+  },
+  "validation": {
+    "commands": [
+      {
+        "command": "cd services/control-plane/bff && $PANTHEON_PY -m pytest -q agora/strategy_workshop/ tests/test_agora_route_ownership.py tests/test_agora_router.py tests/test_workshop_stream_ag_be_sw_004.py tests/test_agora_workshop_live_operations.py tests/test_pint_003_durable_opinions.py tests/test_strategy_workshop_command_store.py tests/test_agora_persona_interactions.py agora/interaction/test_worker.py agora/trading_room/ tests/test_strategy_workshop_store_bootstrap.py",
+        "conclusion": "210 passed, 7 skipped -- covers every route-group module, the new events/readiness/admission split, the interaction/research cross-router import sites, and the trading_room back-compat path.",
+        "result": "pass"
+      },
+      {
+        "command": "$PANTHEON_PY -m pytest -q tests/test_agora_strategy_workshop.py",
+        "conclusion": "78 passed, 1 skipped (this file is independently slow, ~225s, pre-existing behavior unrelated to this task).",
+        "result": "pass"
+      },
+      {
+        "command": "$PANTHEON_PY -c \"import sys; sys.path.insert(0, '.'); import main\" (from services/control-plane/bff)",
+        "conclusion": "main.py imports cleanly and boots the full FastAPI app with the decomposed router mounted.",
+        "result": "pass"
+      },
+      {
+        "command": "app.openapi() against a FastAPI() with only create_strategy_workshop_router() mounted",
+        "conclusion": "Exactly the same 18 unique (method, path) contracts as the original 4073-line factory, zero duplicates.",
+        "result": "pass"
+      },
+      {
+        "command": "$PANTHEON_PY -m pyflakes agora/strategy_workshop/*.py agora/strategy_workshop/routes/*.py",
+        "conclusion": "Zero undefined-name or genuinely-unused-import findings; remaining flags are the intentional # noqa: F401 back-compat re-exports in router.py plus one pre-existing dead import (models.AgoraErrorCode in _scope, present in the original router.py before this task).",
+        "result": "pass"
+      }
+    ],
+    "validated_at": "2026-08-28T05:31:10Z",
+    "validated_base_sha": "744f7b095d106562c8981bc2d10db32c73655d57"
+  },
+  "acceptance": {
+    "items": [
+      {
+        "criterion": "Workshop has public events stream and readiness modules with no cross-router private imports",
+        "status": "pass",
+        "evidence": "strategy_workshop/events.py and strategy_workshop/readiness.py exist as public modules; agora/interaction/runner.py and agora/research/router.py (this task's declared cross-router artifacts) import from strategy_workshop.events instead of strategy_workshop.router. tests/test_agora_route_ownership.py::test_agora_routers_do_not_import_workshop_router_privates asserts this by source-scanning both files. agora/trading_room/router.py's parallel import is outside this task's artifact scope and is documented in scope_deferral, not silently left unverified."
+      },
+      {
+        "criterion": "session version execution and stream subrouters preserve one canonical route each",
+        "status": "pass",
+        "evidence": "strategy_workshop/routes/{session,versions,execution,stream}.py each expose one build_*_router() factory; tests/test_agora_route_ownership.py::test_workshop_router_registers_each_of_the_18_contracts_exactly_once and ::test_session_versions_execution_stream_subrouters_are_disjoint assert the 18 (method, path) contracts are registered exactly once each and are disjoint across the four groups."
+      },
+      {
+        "criterion": "PostgresWorkshopStore is the sole production Workshop persistence owner",
+        "status": "pass",
+        "evidence": "Unchanged by this task: repo-wide grep confirms PostgresStrategyWorkshopStore has exactly one caller (tests/test_strategy_workshop_store_bootstrap.py) and zero production call sites; agora/router.py's make_workshop_store() only ever constructs PostgresWorkshopStore for backend=postgres. Deleting the unused bootstrap-only class (ACG-06-006) is deferred -- see scope_deferral -- but the acceptance criterion as stated (sole production owner) was already true before and remains true after this task."
+      },
+      {
+        "criterion": "Agora signal feedback journal and detail generic duplicates are removed from prepared ownership",
+        "status": "not_applicable_to_declared_scope",
+        "evidence": "ACG-01-010/ACG-02-009/ACG-02-010 (the matrix items backing this criterion) name main.py and read_store.py, neither of which is in this task's declared artifact_conflict_guard.artifact_scope (strategy_workshop/, agora/router.py, agora/interaction/runner.py, agora/research/router.py, bff/tests/test_agora_route_ownership.py). Repo-wide grep within this task's own artifacts found no generic signal/feedback/journal duplicate route decorators to remove; this criterion's file-level work belongs to a sibling task with main.py/read_store.py in its declared scope."
+      },
+      {
+        "criterion": "MemoryWorkshopStore remains test-only",
+        "status": "partial",
+        "evidence": "This task's own new code never constructs MemoryWorkshopStore implicitly -- create_strategy_workshop_router() only ever uses whatever workshop_store the caller injects, or delegates to make_workshop_store() unchanged. tests/test_agora_route_ownership.py::test_memory_store_requires_explicit_injection_not_router_default covers the router factory's own behavior. make_workshop_store() itself (strategy_workshop/store.py, unchanged) still defaults AGORA_WORKSHOP_STORE_BACKEND=off to MemoryWorkshopStore when the env var is unset -- a pre-existing, documented ('safe for dev and tests') default this task deliberately did not change; see scope_deferral for why."
+      }
+    ]
+  },
+  "deployment": {
+    "applicable": false,
+    "reason": "This task changes BFF route/module structure only -- no database schema, runtime topology, or deployment profile change. No live compose deployment step is required to validate it.",
+    "environment": "dev integration (unit/contract tests only)"
+  }
+}
