@@ -281,6 +281,7 @@ def _transport(
     bff_fallback: str = "strict",
     auth_mode: str = "strict",
     auth_stub: bool = False,
+    dev_login_enabled: bool = True,
     readyz_ok: bool = True,
     healthz_ok: bool = True,
     deployment_state: str = "accepted",
@@ -344,7 +345,11 @@ def _transport(
         if url == f"{BFF_URL}/bff/version":
             return 200, {
                 "source_commit_sha": runtime_bff_sha,
-                "config_posture": {"auth_mode": auth_mode, "auth_stub": auth_stub},
+                "config_posture": {
+                    "auth_mode": auth_mode,
+                    "auth_stub": auth_stub,
+                    "dev_login_enabled": dev_login_enabled,
+                },
             }
         if url == f"{BFF_URL}/healthz":
             return 200, {
@@ -431,11 +436,23 @@ def test_hosted_functional_acceptance_happy_path(tmp_path: Path) -> None:
     assert (out_dir / "DEPLOYMENT_AUDIT.md").exists()
 
 
+def test_hosted_functional_acceptance_permissive_stub_happy_path(tmp_path: Path) -> None:
+    paths = _write_evidence_files(tmp_path)
+    verifier = ProductFunctionalClosureVerifier(
+        _config(tmp_path, paths, profile="hosted-functional"),
+        transport=_transport(auth_mode="permissive", auth_stub=True, dev_login_enabled=True),
+    )
+    report = verifier.run_full_acceptance()
+
+    assert report.overall_status == "PASSED"
+    assert report.exact_pair["deployment_profile"] == "functional-accepted"
+
+
 def test_privileged_acceptance_happy_path(tmp_path: Path) -> None:
     paths = _write_evidence_files(tmp_path)
     verifier = ProductFunctionalClosureVerifier(
         _config(tmp_path, paths, profile="privileged"),
-        transport=_transport(),
+        transport=_transport(auth_mode="strict", auth_stub=False),
     )
     report = verifier.run_full_acceptance()
 
@@ -470,8 +487,8 @@ def test_invalid_profile_rejected(tmp_path: Path) -> None:
         ({"embedded_bearer": "true"}, "unsafe"),
         ({"bff_mode": "mock"}, "unsafe"),
         ({"bff_fallback": "loose"}, "unsafe"),
-        ({"auth_stub": True}, "auth posture"),
-        ({"auth_mode": "permissive"}, "auth posture"),
+        ({"auth_mode": "invalid_mode"}, "auth posture"),
+        ({"auth_mode": "permissive", "dev_login_enabled": False}, "auth posture"),
         ({"deployment_state": "pending"}, "is not accepted read-only"),
         ({"profile": "operator-live"}, "is not accepted read-only"),
         ({"bff_host": "https://different-host.test"}, "frontend manifest is bound to"),
@@ -481,6 +498,29 @@ def test_gate_01_validation_errors(tmp_path: Path, transport_kwargs, expected_er
     paths = _write_evidence_files(tmp_path)
     verifier = ProductFunctionalClosureVerifier(
         _config(tmp_path, paths, strict=True),
+        transport=_transport(**transport_kwargs),
+    )
+    report = verifier.run_full_acceptance()
+    assert report.overall_status == "FAILED"
+    gate_01 = report.gate_results[0]
+    assert gate_01.gate_id == "gate_01_manifest_exact_pair"
+    assert gate_01.status == "FAILED"
+    assert expected_err in str(gate_01.error)
+
+
+@pytest.mark.parametrize(
+    ("transport_kwargs", "expected_err"),
+    [
+        ({"auth_stub": True}, "auth posture"),
+        ({"auth_mode": "permissive"}, "auth posture"),
+    ],
+)
+def test_gate_01_privileged_profile_rejects_non_strict_auth(
+    tmp_path: Path, transport_kwargs, expected_err: str
+) -> None:
+    paths = _write_evidence_files(tmp_path)
+    verifier = ProductFunctionalClosureVerifier(
+        _config(tmp_path, paths, profile="privileged", strict=True),
         transport=_transport(**transport_kwargs),
     )
     report = verifier.run_full_acceptance()

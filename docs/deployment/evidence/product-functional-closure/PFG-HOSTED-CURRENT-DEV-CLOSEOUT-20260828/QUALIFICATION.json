@@ -1,0 +1,23 @@
+{
+  "exact_pair": {
+    "acceptance_profile": "hosted-functional",
+    "backend_sha": "dcb14231d29f08f1646a4ee962b83fd2d4b67560",
+    "bff_url": "https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io",
+    "deployment_profile": "functional-accepted",
+    "fe_url": "https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io",
+    "frontend_sha": "c230fc76bef78fc297135152f2acba690314bb9d",
+    "pair_id": "0429052ba5ef5e392248990dedcbdf7705a5fea42d5a370a4de26222156596f1"
+  },
+  "gates_summary": {
+    "duration_ms": 6566.26,
+    "executed_gates": 6,
+    "failed_gates": 0,
+    "passed_gates": 6,
+    "total_gates": 6
+  },
+  "mode": "hosted",
+  "qualification_status": "PASSED",
+  "schema_version": "pantheon.product_functional_closure.hosted-qualification.v1",
+  "task_id": "PFG-HOSTED-CURRENT-DEV-CLOSEOUT-20260828",
+  "verified_at": "2026-08-28T06:48:30Z"
+}
