@@ -422,7 +422,7 @@ def get_paper_telemetry_read_model(
                 continue
             b_strat = str(b.get("strategy_id") or b.get("id") or "")
             b_persona = b.get("persona_id")
-            b_ledger = str(b.get("paper_ledger_id") or f"ledger-{b.get(binding_id) or b.get(id)}")
+            b_ledger = str(b.get("paper_ledger_id") or f"ledger-{b.get('binding_id') or b.get('id') or b_strat or 'default'}")
 
             matching_events = [
                 e for e in tel_events

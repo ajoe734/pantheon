@@ -506,6 +506,56 @@ class TestManagementReadModelsUnits:
         assert len(item["series"]) == 1
         assert item["series"][0]["equity"] == 10500.0
 
+    def test_get_paper_telemetry_read_model_missing_paper_ledger_id(self):
+        # Case 1: Binding without paper_ledger_id, but with binding_id
+        bindings_with_binding_id = [
+            {
+                "strategy_id": "strat-paper-2",
+                "persona_id": "persona-2",
+                "status": "active",
+                "binding_id": "bind-xyz",
+            }
+        ]
+        res1 = get_paper_telemetry_read_model(
+            runtime_bindings_reader=lambda: (True, bindings_with_binding_id),
+            utc_now=_sample_utc_now,
+        )
+        assert len(res1["items"]) == 1
+        assert res1["items"][0]["paper_ledger_id"] == "ledger-bind-xyz"
+
+        # Case 2: Binding without paper_ledger_id or binding_id, but with id
+        bindings_with_id = [
+            {
+                "strategy_id": "strat-paper-3",
+                "persona_id": "persona-3",
+                "status": "active",
+                "id": "item-id-123",
+            }
+        ]
+        res2 = get_paper_telemetry_read_model(
+            runtime_bindings_reader=lambda: (True, bindings_with_id),
+            utc_now=_sample_utc_now,
+        )
+        assert len(res2["items"]) == 1
+        assert res2["items"][0]["paper_ledger_id"] == "ledger-item-id-123"
+
+        # Case 3: Minimal binding without paper_ledger_id, binding_id, or id (direct repro of Claude blocker)
+        minimal_bindings = [
+            {
+                "strategy_id": "strat-paper-4",
+                "persona_id": "persona-4",
+                "status": "active",
+            }
+        ]
+        res3 = get_paper_telemetry_read_model(
+            runtime_bindings_reader=lambda: (True, minimal_bindings),
+            utc_now=_sample_utc_now,
+        )
+        assert len(res3["items"]) == 1
+        assert res3["items"][0]["strategy_id"] == "strat-paper-4"
+        assert res3["items"][0]["paper_ledger_id"] == "ledger-strat-paper-4"
+
+
     def test_get_postmortems_and_detail_read_model(self):
         postmortems = [
             {
