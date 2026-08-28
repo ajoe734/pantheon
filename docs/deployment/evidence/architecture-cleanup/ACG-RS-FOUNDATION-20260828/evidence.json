@@ -1,0 +1,38 @@
+{
+  "task_id": "ACG-RS-FOUNDATION-20260828",
+  "title": "Inventory ReadSurfaceStore callers and extract test-only fixtures",
+  "program_id": "PANTHEON-ARCH-CLEANUP-20260828",
+  "design_unit": "ACG-02-FOUNDATION",
+  "matrix_items": [
+    "ACG-02-001",
+    "ACG-02-002",
+    "ACG-02-003",
+    "ACG-02-004",
+    "ACG-02-005"
+  ],
+  "artifacts": [
+    "services/control-plane/bff/tests/read_store_migration_inventory.json",
+    "services/control-plane/bff/tests/read_store_fixtures.py",
+    "services/control-plane/bff/tests/test_read_store_fixture_boundaries.py"
+  ],
+  "method": "AST-parsed services/control-plane/bff/read_store.py::ReadSurfaceStore for its 457 top-level methods (verified count matches the disposition matrix). For each method, substring-scanned every tracked *.py file (git ls-files) for `.method_name(` call sites, split into production files vs test files (test_*.py, *_test.py, /tests/, conftest.py), plus a separate scan of read_store.py itself outside each method's own body for internal call sites. __init__ uses an explicit `ReadSurfaceStore(...)` construction-site pattern instead of `.__init__(`, because the latter false-positive matches virtually every unrelated class's constructor call in the repo. Each method was classified into one of the five ACG-02-00x disposition items by inspecting its body for delegation into CanonicalSnapshotAdapter (self._canonical -> ACG-02-004/VERIFY), ServiceBackedReadAdapter (self._service -> ACG-02-005/MERGE), local/fixture-pack seeded data (_default_read_data/fixture_pack/self._data -> ACG-02-002/MIGRATE), or the default ACG-02-001/KEEP temporary migration seam.",
+  "disposition_counts": {
+    "KEEP (ACG-02-001)": 321,
+    "MIGRATE (ACG-02-002)": 16,
+    "VERIFY (ACG-02-004)": 21,
+    "MERGE (ACG-02-005)": 99
+  },
+  "notes": [
+    "No method was classified REMOVE (ACG-02-003): the PANTHEON_BFF_ALLOW_LOCAL_SNAPSHOT_FALLBACK flag it targets is read in main.py/service-composition code, not inside any ReadSurfaceStore method body, so no method-level disposition maps to it directly; the constructor-level fallback wiring remains a follow-on task, not an omission from this inventory.",
+    "11 of 457 methods show zero recorded production, internal, or test callers (_automation_record_sort_key, dataset_source_cached, _recent_sort_value, _paper_runtime_monitoring_sort_key, get_canonical_approval_decision_readback, get_v5_intervention, get_job_logs_bff, _lineage_edge_sort_key, _tw03_warning_sort_key, get_persona_consult_policy, get_postmortem_detail_read_model). Several are *_sort_key helpers typically passed as a `key=` callback (e.g. `key=self._foo`) rather than called with parens, so the `.name(` substring scan under-counts those; they are flagged in the inventory for a follow-on caller audit rather than asserted dead.",
+    "read_store_fixtures.py is intentionally independent of read_store.py: it defines its own DOMAIN_OWNERS map covering all 83 ReadSurfaceStore._LOCAL_DATA_KEYS domains plus typed factory functions (make_fixture_record/build_fixture_dataset), and does not import read_store or the product fixture-pack files. This gives a follow-on MIGRATE task (ACG-02-002) a concrete, reviewed target to inject instead of the constructor's implicit _default_read_data()/fixture-pack merge -- it does not itself move any product seeding code, since this task must not modify read_store.py or main.py.",
+    "test_read_store_fixture_boundaries.py asserts: the inventory's method set matches ReadSurfaceStore's live method set exactly (fails if the class changes without a re-run); every inventory entry carries production/test caller lists, a valid disposition, and a matrix_item; read_store_fixtures.py has no import naming read_store/fixtures_pack; and every _LOCAL_DATA_KEYS domain has a named typed owner in DOMAIN_OWNERS.",
+    "Caller matching is a textual `.name(` substring scan, not a type-resolved call graph: a handful of generic/common method names (close, get, save, load, run, list, source, keys, items, values, update, reset, clear, copy, reload) can also match an unrelated class's same-named method, so their inventory entries carry an explicit `caller_match_caveat` field flagging the risk of over-count; a name only ever referenced as a bare callback (e.g. `key=self.name`, no parens) is instead under-counted, which is the likely explanation for several of the 11 zero-caller sort-key helpers."
+  ],
+  "verification": {
+    "command": ".venv-pantheon/bin/python -m pytest services/control-plane/bff/tests/test_read_store_fixture_boundaries.py -q",
+    "result": "8 passed",
+    "read_store_and_main_untouched": "git diff --stat -- services/control-plane/bff/read_store.py services/control-plane/bff/main.py produced no output (no changes)",
+    "scope_note": "the full services/control-plane/bff/tests/ suite was attempted but exceeded a 180s local run budget; verification was scoped to this task's own boundary test plus a diff-stat confirmation that read_store.py/main.py are unmodified, consistent with the task not touching runtime behavior."
+  }
+}
