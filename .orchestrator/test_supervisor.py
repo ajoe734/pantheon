@@ -2383,6 +2383,77 @@ class SharedPlannerContractTests(unittest.TestCase):
             1,
         )
 
+    def test_integration_resume_redispatches_owner_finalize_once(self) -> None:
+        task = task_fixture(
+            task_id="TASK-1",
+            status="review_approved",
+            owner="Codex",
+            reviewer="Codex2",
+        )
+        task["delivery_binding"] = review_admission_binding()
+        task_map = {"TASK-1": task}
+        state = with_healthy_delivery_health(
+            self.config, {"workers": {}, "queue": {"events": {}}}
+        )
+        resolver = supervisor.task_resolver_for_config(self.config, task_map)
+        settings = supervisor.ready_dispatch_settings(self.config)
+
+        initial_event = supervisor.build_dispatch_event(
+            task,
+            "Codex",
+            supervisor.REASON_OWNED_FINALIZE,
+            resolver,
+            activity_events=[],
+        )
+        seen_event_keys = {initial_event["key"]: "2026-08-24T12:00:00Z"}
+
+        def decide(activity_events: list[dict[str, object]]) -> dict[str, object]:
+            return supervisor.evaluate_dispatch_candidate(
+                self.config,
+                state,
+                {"tasks": [task]},
+                task,
+                "Codex",
+                resolver,
+                settings=settings,
+                active_task_ids=set(),
+                pending_task_ids=set(),
+                pending_event_keys=set(),
+                agent_loads={},
+                active_account_loads={},
+                pending_account_loads={},
+                seen_event_keys=seen_event_keys,
+                checked_at="2026-08-24T12:00:05Z",
+                cooldown_seconds=900,
+                activity_events=activity_events,
+            )
+
+        self.assertEqual(
+            decide([])["first_blocking_gate"], "unchanged_cooldown"
+        )
+
+        resumed_events = [
+            {
+                "ts": "2026-08-24T12:00:04Z",
+                "agent": "Human/Ops",
+                "type": "integration_resumed",
+                "task_id": "TASK-1",
+            }
+        ]
+        resumed = decide(resumed_events)
+        self.assertTrue(resumed["eligible"])
+        self.assertEqual(resumed["reason"], supervisor.REASON_OWNED_FINALIZE)
+        self.assertEqual(resumed["event"]["integration_resume_revision"], 1)
+        self.assertEqual(
+            resumed["event"]["task"]["integration_resume_revision"], 1
+        )
+        self.assertNotEqual(resumed["event"]["key"], initial_event["key"])
+
+        seen_event_keys[resumed["event"]["key"]] = "2026-08-24T12:00:05Z"
+        repeated = decide(resumed_events)
+        self.assertFalse(repeated["eligible"])
+        self.assertEqual(repeated["first_blocking_gate"], "unchanged_cooldown")
+
     def test_review_reopen_advances_reopen_revision_and_redispatches_owner_once(self) -> None:
         task = task_fixture(task_id="TASK-1", status="in_progress", owner="Codex", reviewer="Codex2")
         task_map = {"TASK-1": task}
