@@ -15,8 +15,8 @@
 This document provides the authoritative caller ownership partition and inventory for all legacy `read_store` member calls in `services/control-plane/bff/main.py` belonging to the **Persona, Capital, Deployment, Runtime, and Ranking** domain (`persona_capital_runtime`).
 
 ### Key Metrics
-- **Total Legacy `read_store` Call Sites in `main.py`:** `599` direct code call sites (`600` occurrences including 1 comment reference at `L40568`)
-- **Total Distinct `read_store` Methods in `main.py`:** `203` (comprising `202` public domain methods and `1` internal helper `_parse_rfc3339`)
+- **Total Legacy `read_store` Call Sites in `main.py`:** `598` direct code call sites (`600` total occurrences including 1 comment reference at `L40568` and 1 docstring reference at `L6953`)
+- **Total Distinct `read_store` Methods in `main.py`:** `202` (accounting for all executable domain methods across `main.py`; `_parse_rfc3339` is a local module helper defined at `main.py:6950` and is not a member of `read_store`)
 - **`persona_capital_runtime` Distinct Methods:** `45`
 - **`persona_capital_runtime` Total Call Sites:** `213`
 - **Read Methods in Domain:** `36` methods (`199` call sites)
@@ -30,7 +30,7 @@ This document provides the authoritative caller ownership partition and inventor
 1. **Complete Method & Line Inventory:** Every `read_store` call in `main.py` belonging to this domain is indexed with its exact 1-indexed line number, enclosing function/endpoint, call signature, and invocation context (§ 3 & § 4).
 2. **Read / Write Classification & Destination:** Every method is classified as `Read` or `Write` with its exact destination named (domain ports in `domain_ports/persona_capital_runtime.py` and `ports/persona_capital_runtime.py`, or command owners in `command_executor.py` / domain services) (§ 2 & § 3).
 3. **Missing Narrow Domain API Identification:** Explicitly identifies narrow read APIs missing from domain ports without proposing generic fallback delegation, compatibility storage, or product source edits (§ 5).
-4. **Exact Method Count & Non-Overlap Proof:** Proves exact method count (`45`) and non-overlap across all 6 ownership partition tasks, ensuring 100% disjoint union covering all 203 methods and 599 code calls / 600 total occurrences (§ 6).
+4. **Exact Method Count & Non-Overlap Proof:** Proves exact method count (`45`) and non-overlap across all 6 ownership partition tasks, ensuring 100% disjoint union covering all 202 methods and 598 code calls / 600 total occurrences (§ 6).
 5. **Zero Production Source Modification:** No production source code in `services/control-plane/bff` is modified in this task.
 
 ---
@@ -842,19 +842,19 @@ The following 8 read methods are called in `main.py` but are not yet exposed dir
 
 ## 6. Multi-Domain Partition Proof & Disjointness Matrix
 
-To guarantee that caller migration tasks proceed without merge conflicts or overlapping responsibilities, all 203 legacy `read_store` methods and 599 direct code call sites across `main.py` are strictly partitioned into 6 disjoint domain tasks:
+To guarantee that caller migration tasks proceed without merge conflicts or overlapping responsibilities, all 202 legacy `read_store` methods and 598 direct code call sites across `main.py` are strictly partitioned into 6 disjoint domain tasks:
 
 | Task ID | Domain Name | Artifact Document | Methods | Call Sites | Representative Methods |
 |---|---|---|---:|---:|---|
 | `ACG-RS-OPS-OWNERSHIP-MAP-20260828` | Operations & Agora | `docs/04/read_surface_ownership_partition_20260828/operations_agora.md` | 48 | 76 | `create_agora_session`, `get_committee`, `list_skills`, `record_sponsor_decision` |
-| `ACG-RS-OODA-OWNERSHIP-MAP-20260828` | OODA & Management | `docs/04/read_surface_ownership_partition_20260828/ooda_management.md` | 16 | 50 | `list_ooda_packets`, `list_approval_queue_items`, `get_synthesis_conflict_log`, `_parse_rfc3339` |
-| `ACG-RS-RESEARCH-OWNERSHIP-MAP-20260828` | Research & Knowledge | `docs/04/read_surface_ownership_partition_20260828/research_knowledge.md` | 42 | 116 | `list_strategy_specs`, `get_research_ticket`, `dataset_source`, `list_evidence_refs` |
+| `ACG-RS-OODA-OWNERSHIP-MAP-20260828` | OODA & Management | `docs/04/read_surface_ownership_partition_20260828/ooda_management.md` | 15 | 41 | `list_ooda_packets`, `list_approval_queue_items`, `get_synthesis_conflict_log`, `get_approval_decision` |
+| `ACG-RS-RESEARCH-OWNERSHIP-MAP-20260828` | Research & Knowledge | `docs/04/read_surface_ownership_partition_20260828/research_knowledge.md` | 42 | 118 | `list_strategy_specs`, `get_research_ticket`, `dataset_source`, `list_evidence_refs` |
 | `ACG-RS-TRAINING-OWNERSHIP-MAP-20260828` | Persona Training | `docs/04/read_surface_ownership_partition_20260828/persona_training.md` | 17 | 31 | `create_trainer_session`, `get_trainer_replay`, `create_rapid_eval` |
 | **`ACG-RS-CAPITAL-OWNERSHIP-MAP-20260828`** | **Persona Capital & Runtime** | `docs/04/read_surface_ownership_partition_20260828/persona_capital_runtime.md` | **45** | **213** | `list_personas`, `list_capital_pools`, `list_runtime_bindings`, `list_rankings` |
-| `ACG-RS-LIFECYCLE-OWNERSHIP-MAP-20260828` | Lifecycle Telemetry & Governance | `docs/04/read_surface_ownership_partition_20260828/lifecycle_telemetry_governance.md` | 35 | 113 | `list_incidents`, `get_kill_switch_status`, `list_evolution_decisions`, `get_telemetry_summary` |
-| **Total** | **All 6 Domains** | | **203** | **599** | **100% Disjoint Union & Zero Overlap** |
+| `ACG-RS-LIFECYCLE-OWNERSHIP-MAP-20260828` | Lifecycle Telemetry & Governance | `docs/04/read_surface_ownership_partition_20260828/lifecycle_telemetry_governance.md` | 35 | 119 | `list_incidents`, `get_kill_switch_status`, `list_evolution_decisions`, `get_telemetry_summary` |
+| **Total** | **All 6 Domains** | | **202** | **598** | **100% Disjoint Union & Zero Overlap** |
 
-*Note on Total Call Count:* The 599 direct code call sites plus 1 comment reference at `main.py:40568` account for all 600 string occurrences of `read_store.<method>` in `main.py`.
+*Note on Total Call Count:* The 598 direct code call sites plus 1 `#` comment reference at `main.py:40568` and 1 docstring reference at `main.py:6953` account for all 600 string occurrences of `read_store.<ident>` in `main.py`.
 
 ### 6.1 Reconciliation of Evolution Call Site Ownership Across Sibling Maps
 
@@ -869,24 +869,25 @@ A critical boundary clarification exists regarding the **13 call sites** in `mai
 3. **Partition Resolution:** Canonical ownership of all 13 evolution call sites and their 3 methods belongs exclusively to **`ACG-RS-LIFECYCLE-OWNERSHIP-MAP-20260828`** (under Governance and Incident sub-domains). This cleanly adjusts `persona_capital_runtime`'s direct method set to **45 methods** (`213` direct calls), establishing complete disjointness and preventing duplicate migration work.
 
 ### 6.2 Formal Mathematical Proof of Disjoint Union
-Let $\mathcal{M}_{\text{all}}$ be the set of 203 distinct direct member names called on `read_store` across all 599 direct code calls in `main.py`.  
+Let $\mathcal{M}_{\text{all}}$ be the set of 202 distinct direct member names called on `read_store` across all 598 direct code calls in `main.py`.  
 Let $M_{\text{ops}}, M_{\text{ooda}}, M_{\text{res}}, M_{\text{train}}, M_{\text{cap}}, M_{\text{ltg}}$ be the sets of methods assigned to each of the 6 domains.  
 
 1. **Pairwise Disjointness**:
    $$\forall i, j \in \{\text{ops}, \text{ooda}, \text{res}, \text{train}, \text{cap}, \text{ltg}\}, \; i \neq j \implies M_i \cap M_j = \emptyset$$
 
 2. **Complete Coverage**:
-   $$\bigcup_{k \in \{\text{ops}, \text{ooda}, \text{res}, \text{train}, \text{cap}, \text{ltg}\}} M_k = \mathcal{M}_{\text{all}} \quad (|\mathcal{M}_{\text{all}}| = 203)$$
+   $$\bigcup_{k \in \{\text{ops}, \text{ooda}, \text{res}, \text{train}, \text{cap}, \text{ltg}\}} M_k = \mathcal{M}_{\text{all}} \quad (|\mathcal{M}_{\text{all}}| = 202)$$
 
 3. **Method Sum Verification**:
-   $$\sum |M_k| = 48 + 16 + 42 + 17 + 45 + 35 = 203$$
+   $$\sum |M_k| = 48 + 15 + 42 + 17 + 45 + 35 = 202$$
 
 4. **Call Site Sum Verification**:
-   $$\sum \text{Calls}(M_k) = 76 + 50 + 116 + 31 + 213 + 113 = 599$$
+   $$\sum \text{Calls}(M_k) = 76 + 41 + 118 + 31 + 213 + 119 = 598$$
 
 ### 6.3 Global Distinct Method Resolution
-The total count of distinct `read_store` methods in `main.py` is exactly **203**, consisting of:
-- `202` public domain-specific methods (e.g., `list_personas`, `get_capital_pool`, `list_runtime_bindings`, `get_incident_response`, etc.)
-- `1` internal helper method `_parse_rfc3339` called on `read_store` at `main.py:59604` (owned by `ooda_management`).
+The total count of distinct `read_store` methods in `main.py` is exactly **202**, consisting of all public domain-specific methods (e.g., `list_personas`, `get_capital_pool`, `list_runtime_bindings`, `get_incident_response`, etc.).
 
-This completely accounts for all 203 distinct member calls in `main.py` and resolves any previous discrepancies.
+**Clarification on `_parse_rfc3339`:**
+- `_parse_rfc3339` is a local module-level helper function defined in `main.py:6950` and called bare throughout the codebase (`_parse_rfc3339(...)` at `L10300`, `L13781`, `L13782`, `L30444`, `L30552`, `L60022`, `L60023`, `L60088`, `L60089`).
+- It is never invoked as `read_store._parse_rfc3339` in executable code. The string `read_store._parse_rfc3339` only appears in the explanatory docstring at `main.py:6953` (*"Mirrors read_store._parse_rfc3339 so callers in this module resolve a defined symbol..."*).
+- Therefore, `_parse_rfc3339` is correctly excluded from the distinct method set on `read_store`, giving the exact true global count of **202** distinct methods and **598** direct code call sites across `main.py`.
