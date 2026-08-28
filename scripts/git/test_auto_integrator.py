@@ -135,6 +135,26 @@ class FakeRunner(auto_integrator.CommandRunner):
             }
             return completed(command, stdout=auto_integrator.json.dumps(payload))
         if (
+            command[:2] == ["gh", "api"]
+            and len(command) == 3
+            and command[2]
+            == "repos/ajoe734/pantheon/actions/workflows?per_page=100"
+        ):
+            return completed(
+                command,
+                stdout=auto_integrator.json.dumps(
+                    {
+                        "workflows": [
+                            {
+                                "id": 123,
+                                "name": "Canonical Review Gate",
+                                "state": "active",
+                            }
+                        ]
+                    }
+                ),
+            )
+        if (
             command[:4] == ["gh", "api", "--method", "PUT"]
             and "/pulls/" in joined
             and "/merge" in joined
@@ -1186,6 +1206,9 @@ class IntegrationPlanTests(unittest.TestCase):
         self.assertIn("waiting for that successor check", first_result.detail)
         self.assertTrue(any("/git/tags" in " ".join(command) for command in runner.commands))
         self.assertTrue(any("/git/refs" in " ".join(command) for command in runner.commands))
+        self.assertTrue(
+            any("actions/workflows?per_page=100" in " ".join(command) for command in runner.commands)
+        )
         self.assertTrue(any("/actions/workflows/" in " ".join(command) for command in runner.commands))
         self.assertFalse(any(command[:3] == ["gh", "pr", "merge"] for command in runner.commands))
         proof_index = next(index for index, command in enumerate(runner.commands) if "/git/tags" in " ".join(command))
