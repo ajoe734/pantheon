@@ -374,6 +374,32 @@ def test_promotion_locks_before_candidate_validation_or_config_switch(
     assert not live_config.exists()
 
 
+def test_replace_rejects_missing_verifier_before_stopping_incumbent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    candidate, status_root = _candidate(tmp_path)
+    live_config = tmp_path / "runtime" / "live.json"
+    stopped: list[bool] = []
+    monkeypatch.delenv("BRIDGE_SIGNING_PUBLIC_KEYS_JSON")
+    monkeypatch.setattr(
+        promotion,
+        "stop_existing_supervisor",
+        lambda *_args, **_kwargs: stopped.append(True),
+    )
+
+    with pytest.raises(ValueError, match="BRIDGE_SIGNING_PUBLIC_KEYS_JSON must be valid JSON"):
+        promotion.replace_supervisor(
+            candidate,
+            status_root=status_root,
+            live_config_path=live_config,
+            python_executable=Path(sys.executable),
+            termination_timeout=1,
+        )
+
+    assert stopped == []
+    assert not live_config.exists()
+
+
 def test_status_root_replacement_stops_pid_from_installed_config(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

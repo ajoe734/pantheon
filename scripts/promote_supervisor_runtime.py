@@ -535,6 +535,10 @@ def _replace_supervisor_locked(
         repository_source_roots=repository_source_roots,
         repository_integration_roots=repository_integration_roots,
     )
+    # A direct promotion bypasses the watchdog wrapper, so prove that the
+    # verifier-only child environment is complete before stopping the healthy
+    # incumbent. This keeps a bad authority file from turning into downtime.
+    supervisor_launch_environment(os.environ, authority_env_file=authority_env_file)
     rendered_bytes = (json.dumps(rendered, indent=2, ensure_ascii=False) + "\n").encode("utf-8")
     approval_queue_value = rendered.get("paths", {}).get("approval_queue")
     if not isinstance(approval_queue_value, str) or not approval_queue_value.strip():
