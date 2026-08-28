@@ -4,14 +4,14 @@
 This document records the exact-pair admission, deployment trigger, and hosted functional acceptance evidence for task `PFG-HOSTED-CURRENT-DEV-CLOSEOUT-20260828` under program `pantheon-product-functional-closure-20260820`.
 
 ## 1. Admitted Exact Pair
-- **Backend (`ajoe734/pantheon` `dev`)**: `a09bd00818f06fbafd4f67a8d39f88fe6881fae6`
-- **Frontend (`ajoe734/execute-plans` `dev`)**: `97aa1c4b5234c595d0f5502f7785383479851318` (includes merge PR #681)
+- **Backend (`ajoe734/pantheon` `dev`)**: `dcb14231d29f08f1646a4ee962b83fd2d4b67560`
+- **Frontend (`ajoe734/execute-plans` `dev`)**: `c230fc76bef78fc297135152f2acba690314bb9d` (includes merge PR #683)
 - **Hosted BFF URL**: `https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io`
 - **Hosted FE URL**: `https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io`
 
 ## 2. Bounded Admission & Single-Shot Deployment
 - Execution start recorded exactly one admission artifact (`admission.json`).
-- Dispatched single-shot nonprod deployment workflow (`nonprod-deploy.yml` run `33136122613`).
+- Dispatched single-shot nonprod deployment workflow (`nonprod-deploy.yml` run `33144815565`).
 - Ref change re-resolutions: 0 (bounded pair policy strictly observed; no infinite chasing).
 
 ## 3. Gate Verification Summary

@@ -1,0 +1,146 @@
+{
+  "exact_pair": {
+    "acceptance_profile": "hosted-functional",
+    "backend_sha": "dcb14231d29f08f1646a4ee962b83fd2d4b67560",
+    "bff_url": "https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io",
+    "deployment_profile": "unaccepted",
+    "fe_url": "https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io",
+    "frontend_sha": "c230fc76bef78fc297135152f2acba690314bb9d",
+    "pair_id": "0429052ba5ef5e392248990dedcbdf7705a5fea42d5a370a4de26222156596f1"
+  },
+  "gap_matrix": [
+    {
+      "description": "Live deployment manifest and exact FE/BFF identity pair",
+      "evidence": "hosted evidence missing or rejected",
+      "gap_id": "PFC-01",
+      "gate": "gate_01_manifest_exact_pair",
+      "status": "UNRESOLVED"
+    },
+    {
+      "description": "BFF lifecycle readiness and strict auth posture",
+      "evidence": "hosted evidence missing or rejected",
+      "gap_id": "PFC-02",
+      "gate": "gate_01_manifest_exact_pair",
+      "status": "UNRESOLVED"
+    },
+    {
+      "description": "Source manual-only one-shot and zero continuous egress",
+      "evidence": "hosted evidence missing or rejected",
+      "gap_id": "PFC-03",
+      "gate": "gate_02_source_manual_only_readiness",
+      "status": "UNRESOLVED"
+    },
+    {
+      "description": "Paper runtime executable bindings and bounded lifecycle",
+      "evidence": "hosted evidence missing or rejected",
+      "gap_id": "PFC-04",
+      "gate": "gate_03_paper_runtime_execution",
+      "status": "UNRESOLVED"
+    },
+    {
+      "description": "L12 cross-loop stimulus and loop-health truth",
+      "evidence": "hosted evidence missing or rejected",
+      "gap_id": "PFC-05",
+      "gate": "gate_04_authenticated_product_journeys",
+      "status": "UNRESOLVED"
+    },
+    {
+      "description": "Agora workshop to trading-room product journey",
+      "evidence": "hosted evidence missing or rejected",
+      "gap_id": "PFC-06",
+      "gate": "gate_04_authenticated_product_journeys",
+      "status": "UNRESOLVED"
+    },
+    {
+      "description": "Management console real read models and domain actions",
+      "evidence": "hosted evidence missing or rejected",
+      "gap_id": "PFC-07",
+      "gate": "gate_04_authenticated_product_journeys",
+      "status": "UNRESOLVED"
+    },
+    {
+      "description": "Management AI NL provider and UI action routing",
+      "evidence": "hosted evidence missing or rejected",
+      "gap_id": "PFC-08",
+      "gate": "gate_04_authenticated_product_journeys",
+      "status": "UNRESOLVED"
+    },
+    {
+      "description": "Backend and frontend code disposition and duplicate cleanup",
+      "evidence": "hosted evidence missing or rejected",
+      "gap_id": "PFC-09",
+      "gate": "gate_05_code_disposition_and_simplification",
+      "status": "UNRESOLVED"
+    },
+    {
+      "description": "Gate-before-switch deployment and rollback drill safety",
+      "evidence": "hosted evidence missing or rejected",
+      "gap_id": "PFC-10",
+      "gate": "gate_06_rollback_and_switch_safety",
+      "status": "UNRESOLVED"
+    }
+  ],
+  "gate_results": [
+    {
+      "details": {},
+      "duration_ms": 118.78,
+      "error": "[gate_01.auth_posture] BFF auth posture is not strict/non-stub: {'auth_stub': True, 'auth_mode': 'permissive', 'dev_login_enabled': True, 'mfa_required': True, 'assistant_kernel_enabled': True, 'trade_journey_reader_backend': 'postgres', 'trade_journey_projection_schema': 'trade_journey_projection'}",
+      "gate_id": "gate_01_manifest_exact_pair",
+      "name": "Live manifest and exact deployed pair",
+      "status": "FAILED"
+    },
+    {
+      "details": {},
+      "duration_ms": 164.23,
+      "error": "[gate_02.source_runtime_evidence_missing] --source-runtime-evidence is required and must be provided",
+      "gate_id": "gate_02_source_manual_only_readiness",
+      "name": "Source Ingestion manual-only mode and bounded readiness",
+      "status": "FAILED"
+    },
+    {
+      "details": {},
+      "duration_ms": 69.91,
+      "error": "[gate_03.paper_runtime_evidence_missing] --paper-runtime-evidence is required and must be provided",
+      "gate_id": "gate_03_paper_runtime_execution",
+      "name": "Paper execution bounded state and executable RuntimeBinding",
+      "status": "FAILED"
+    },
+    {
+      "details": {},
+      "duration_ms": 0.0,
+      "error": "[gate_04.missing_l12_evidence] --l12-evidence is required and must be provided",
+      "gate_id": "gate_04_authenticated_product_journeys",
+      "name": "Required authenticated product journeys",
+      "status": "FAILED"
+    },
+    {
+      "details": {},
+      "duration_ms": 0.4,
+      "error": "[gate_05.task_id] code disposition task_id 'PFG-HOSTED-CURRENT-DEV-CLOSEOUT-20260828' != expected 'PFG-HOSTED-ACCEPT-20260820'",
+      "gate_id": "gate_05_code_disposition_and_simplification",
+      "name": "Code disposition and dead owner removal",
+      "status": "FAILED"
+    },
+    {
+      "details": {},
+      "duration_ms": 0.0,
+      "error": "[gate_06.rollback_evidence_missing] --rollback-evidence is required and must exist",
+      "gate_id": "gate_06_rollback_and_switch_safety",
+      "name": "Gate-before-switch deployment and rollback drill safety",
+      "status": "FAILED"
+    }
+  ],
+  "mode": "hosted",
+  "overall_status": "FAILED",
+  "program_id": "pantheon-product-functional-closure-20260820",
+  "schema_version": "pantheon.product_functional_closure.hosted-acceptance-report.v1",
+  "summary": {
+    "duration_ms": 354.21,
+    "executed_gates": 6,
+    "failed_gates": 6,
+    "passed_gates": 0,
+    "total_gates": 6
+  },
+  "task_id": "PFG-HOSTED-ACCEPT-20260820",
+  "verified_at": "2026-08-28T06:19:20Z"
+}

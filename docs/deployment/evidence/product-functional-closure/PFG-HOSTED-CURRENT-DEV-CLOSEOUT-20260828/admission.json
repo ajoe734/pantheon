@@ -2,23 +2,23 @@
   "schema_version": "pantheon.product_functional_closure.exact_pair_admission.v1",
   "task_id": "PFG-HOSTED-CURRENT-DEV-CLOSEOUT-20260828",
   "program_id": "pantheon-product-functional-closure-20260820",
-  "admitted_at": "2026-08-28T02:30:00Z",
+  "admitted_at": "2026-08-28T05:27:00Z",
   "admitted_pair": {
     "backend_repo": "ajoe734/pantheon",
     "backend_branch": "dev",
-    "backend_sha": "a09bd00818f06fbafd4f67a8d39f88fe6881fae6",
+    "backend_sha": "dcb14231d29f08f1646a4ee962b83fd2d4b67560",
     "frontend_repo": "ajoe734/execute-plans",
     "frontend_branch": "dev",
-    "frontend_sha": "97aa1c4b5234c595d0f5502f7785383479851318",
-    "frontend_merge_pr": "https://github.com/ajoe734/execute-plans/pull/681",
-    "frontend_merge_commit": "97aa1c4b5234c595d0f5502f7785383479851318",
+    "frontend_sha": "c230fc76bef78fc297135152f2acba690314bb9d",
+    "frontend_merge_pr": "https://github.com/ajoe734/execute-plans/pull/683",
+    "frontend_merge_commit": "c230fc76bef78fc297135152f2acba690314bb9d",
     "bff_url": "https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io",
     "fe_url": "https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io"
   },
   "deployment_trigger": {
     "workflow": ".github/workflows/nonprod-deploy.yml",
-    "run_id": "33136122613",
-    "run_url": "https://github.com/ajoe734/pantheon/actions/runs/33136122613",
+    "run_id": "33144815565",
+    "run_url": "https://github.com/ajoe734/pantheon/actions/runs/33144815565",
     "bounded_admission": true,
     "ref_change_re_resolution_count": 0,
     "max_re_resolutions_allowed": 1
@@ -27,7 +27,7 @@
     "schema_version": "pantheon.agora.compatibility-gate-evidence.v1",
     "contract_family": "agora.v1.13",
     "compatibility_status": "accepted",
-    "manifest_sha256": "44ea4c6ad0df272898dbf5b9cb79b76c8c4daec051c56784d1bc92e8a1d0fe16"
+    "manifest_sha256": "ea47a2e5b8b876421393313f83e136fd317ff86f0597ce154eb35c6db07f342b"
   },
   "status": "admitted"
 }
