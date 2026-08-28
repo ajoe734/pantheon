@@ -1410,6 +1410,24 @@ class IntegrationPlanTests(unittest.TestCase):
             any("scripts/ai_status.py" in " ".join(command) and "assign" in command for command in runner.commands)
         )
 
+    def test_operator_exact_head_merge_never_claims_reviewer_or_owner_finalization(self) -> None:
+        candidate = auto_integrator.TaskCandidate(
+            task_id="ABC-001",
+            title="Ready",
+            owner="Codex",
+            reviewer="Claude",
+            branch="task/ABC-001",
+            raw_task={
+                "status": "review_approved",
+                "operator_acceptance": {"mode": "operator_exact_head"},
+            },
+        )
+
+        detail = auto_integrator.post_merge_task_handoff(candidate)
+
+        self.assertIn("Human/Ops exact-head closeout", detail)
+        self.assertIn("no owner finalization", detail)
+
     def test_final_revalidation_blocks_when_canonical_reviewer_changes(self) -> None:
         candidate = auto_integrator.TaskCandidate(
             task_id="ABC-001",

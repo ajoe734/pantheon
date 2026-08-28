@@ -3542,6 +3542,11 @@ def ensure_review_finalize_handoff(
     timestamp: str,
     message: str | None = None,
 ) -> None:
+    # An explicit Human/Ops exact-head acceptance already has its own
+    # integration authority. It must not be translated into an owner worker
+    # handoff merely because it shares ``review_approved`` with peer review.
+    if operator_acceptance_evidence_matches(task):
+        return
     owner = canonical_agent_name(task.get("owner"))
     if not owner:
         return
@@ -3639,7 +3644,12 @@ def recompute_agents(state: dict[str, Any]) -> None:
         agent = get_agent(state, name)
         owned = by_owner.get(name, [])
         active = [task for task in owned if task["status"] in {"in_progress", "review", "blocked"}]
-        approved = [task for task in owned if task["status"] == "review_approved"]
+        approved = [
+            task
+            for task in owned
+            if task["status"] == "review_approved"
+            and not operator_acceptance_evidence_matches(task)
+        ]
         queued = [task for task in owned if task["status"] == "todo"]
         ready = [
             task
@@ -5046,6 +5056,11 @@ def normalize_handoffs(state: dict[str, Any]) -> None:
                     handoff["resolved_at"] = iso_now()
                 continue
             if task_status == "review_approved":
+                if operator_acceptance_evidence_matches(task):
+                    for handoff in pending:
+                        handoff["status"] = "done"
+                        handoff["resolved_at"] = iso_now()
+                    continue
                 owner = canonical_agent_name(task.get("owner"))
                 owner_handoffs = [handoff for handoff in pending if handoff.get("to") == owner]
                 for handoff in pending:
@@ -5068,6 +5083,15 @@ def normalize_handoffs(state: dict[str, Any]) -> None:
 
     for task in state.get("tasks", []):
         if task.get("status") != "review_approved":
+            continue
+        if operator_acceptance_evidence_matches(task):
+            for handoff in state.get("handoffs", []):
+                if (
+                    handoff.get("task_id") == task.get("id")
+                    and handoff.get("status") != "done"
+                ):
+                    handoff["status"] = "done"
+                    handoff["resolved_at"] = iso_now()
             continue
         task_id = task.get("id")
         owner = canonical_agent_name(task.get("owner"))
@@ -7004,6 +7028,51 @@ def validate_merged_tooling_done(task: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def validate_operator_accepted_merged_delivery(task: dict[str, Any]) -> dict[str, Any]:
+    """Validate closeout of the exact head explicitly accepted by Human/Ops.
+
+    This does not impersonate a reviewer. It is admitted only after the
+    distinct operator exact-head proof has been recorded, and the caller must
+    prove that same head is already merged into the task's declared target.
+    """
+
+    if not operator_acceptance_evidence_matches(task):
+        raise SystemExit(
+            "Cannot reconcile task: no valid Human/Ops exact-head acceptance is recorded."
+        )
+    binding = _validated_pr_binding(
+        task.get(APPROVAL_BINDING_KEY) or {}, str(task.get("id") or "")
+    )
+    delivery = _validated_reconcile_delivery(task)
+    if str(delivery.get("commit") or "").lower() != binding["head_sha"]:
+        raise SystemExit(
+            "Cannot reconcile task: operator closeout must verify the exact accepted "
+            "PR head as the merged delivery commit."
+        )
+    acceptance = dict(task.get(OPERATOR_ACCEPTANCE_KEY) or {})
+    if normalize_github_repo_slug(str(acceptance.get("repository") or "")) != str(
+        delivery["repository_slug"]
+    ):
+        raise SystemExit(
+            "Cannot reconcile task: operator acceptance repository differs from "
+            "the merged delivery repository."
+        )
+    return {
+        "recorded_at": iso_now(),
+        "reconciled_from_operator_acceptance": True,
+        "delivery_class": "operator_exact_head",
+        "operator_authorized": True,
+        "operator_acceptance": {
+            "pr": binding["pr"],
+            "head_sha": binding["head_sha"],
+            "proof_ref": str(
+                acceptance.get("operator_acceptance_proof_ref") or ""
+            ),
+        },
+        **delivery,
+    }
+
+
 def validate_merged_done_evidence(task: dict[str, Any]) -> dict[str, Any]:
     """Validate immutable, dev-merged review and delivery evidence.
 
@@ -8591,7 +8660,14 @@ def prepare_external_mutation_preflight(
 
     if command == "reconcile_merged_done":
         current_reviewer = canonical_agent_name(task.get("reviewer"))
-        if actor != "Human/Ops" and actor != current_reviewer:
+        operator_accepted = operator_acceptance_evidence_matches(task)
+        if operator_accepted and (
+            actor != "Human/Ops" or not local_human_ops_requested()
+        ):
+            raise SystemExit(
+                "Only explicit local Human/Ops may close an operator-accepted exact head"
+            )
+        if not operator_accepted and actor != "Human/Ops" and actor != current_reviewer:
             raise SystemExit(
                 "Only Human/Ops or the task's current reviewer "
                 f"({current_reviewer or 'unknown'}) can reconcile an already-merged "
@@ -8601,7 +8677,14 @@ def prepare_external_mutation_preflight(
         delivery_class = str(
             os.environ.get("RECONCILE_DELIVERY_CLASS") or ""
         ).strip()
-        if delivery_class:
+        if operator_accepted:
+            if delivery_class:
+                raise SystemExit(
+                    "RECONCILE_DELIVERY_CLASS is not valid for operator exact-head closeout"
+                )
+            delivery = validate_operator_accepted_merged_delivery(task)
+            verdict_ref = None
+        elif delivery_class:
             if delivery_class != "development_tooling":
                 raise SystemExit(
                     "RECONCILE_DELIVERY_CLASS must be development_tooling when set"
@@ -9105,13 +9188,6 @@ def command_operator_accept(state: dict[str, Any], args: list[str]) -> None:
         task["protected_closeout_verdict"] = verdict_ref
     mark_blockers_resolved(state, task_id)
     mark_handoffs_done(state, task_id)
-    ensure_review_finalize_handoff(
-        state,
-        task,
-        from_agent=actor,
-        timestamp=timestamp,
-        message=message,
-    )
     append_log(
         {
             "ts": timestamp,

@@ -3917,7 +3917,7 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
         self.assertEqual(events[0]["review_binding"], expected)
         self.assertEqual(events[0]["github_review_bridge"], bridge_evidence)
 
-    def test_operator_accept_records_distinct_exact_head_evidence_and_closes_review_handoff(self) -> None:
+    def test_operator_accept_records_distinct_exact_head_evidence_without_owner_finalizer(self) -> None:
         self._set_pr_delivery_binding(pr=4218, head_sha="b" * 40)
         task = self.state["tasks"][0]
         binding = {
@@ -3964,12 +3964,33 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
         self.assertNotIn(ai_status.GITHUB_REVIEW_BRIDGE_KEY, task)
         self.assertTrue(ai_status.operator_acceptance_evidence_matches(task))
         self.assertTrue(ai_status.exact_head_acceptance_evidence_matches(task))
-        self.assertEqual(self.state["handoffs"][0]["status"], "done")
         self.assertTrue(
-            any(
-                item.get("from") == "Human/Ops" and item.get("status") == "pending"
-                for item in self.state["handoffs"]
-            )
+            all(item.get("status") == "done" for item in self.state["handoffs"])
+        )
+
+    def test_operator_acceptance_never_recreates_owner_finalizer_handoff(self) -> None:
+        task = self.state["tasks"][0]
+        task["status"] = "review_approved"
+        self.state["handoffs"] = [
+            {
+                "task_id": "REG-002",
+                "from": "Human/Ops",
+                "to": "Codex",
+                "message": "Legacy finalizer handoff",
+                "status": "pending",
+                "created_at": "2026-08-28T00:00:00Z",
+            }
+        ]
+
+        with mock.patch.object(
+            ai_status, "operator_acceptance_evidence_matches", return_value=True
+        ):
+            ai_status.normalize_handoffs(self.state)
+            ai_status.recompute_agents(self.state)
+
+        self.assertEqual(self.state["handoffs"][0]["status"], "done")
+        self.assertNotEqual(
+            ai_status.get_agent(self.state, "Codex")["status"], "finalize"
         )
 
     def test_operator_accept_rejects_without_explicit_local_human_ops_mode(self) -> None:
@@ -5204,6 +5225,116 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
         self.assertEqual(terminal["terminal_outcome"], "completed")
         self.assertTrue(terminal["delivery"]["reconciled_from_tooling_delivery"])
         protected.assert_not_called()
+
+    def test_reconcile_merged_done_closes_operator_accepted_exact_head(self) -> None:
+        task = self.state["tasks"][0]
+        task["status"] = "review_approved"
+        delivery = {
+            "reconciled_from_operator_acceptance": True,
+            "delivery_class": "operator_exact_head",
+            "commit": "a" * 40,
+        }
+        with (
+            mock.patch.dict(
+                os.environ,
+                {"AI_NAME": "Human/Ops", "PANTHEON_LOCAL_HUMAN_OPS": "1"},
+                clear=False,
+            ),
+            mock.patch.object(
+                ai_status, "operator_acceptance_evidence_matches", return_value=True
+            ),
+            mock.patch.object(
+                ai_status,
+                "validate_operator_accepted_merged_delivery",
+                return_value=delivery,
+            ) as validate_delivery,
+            mock.patch.object(
+                ai_status, "validate_protected_closeout_transition"
+            ) as protected,
+            mock.patch.object(ai_status, "load_archived_snapshot", return_value=None),
+        ):
+            _command_reconcile_merged_done(
+                self.state,
+                ["REG-002", "Human/Ops closed the exact accepted merged head."],
+            )
+
+        terminal = ai_status.get_task(self.state, "REG-002")
+        self.assertEqual(terminal["status"], "done")
+        self.assertTrue(terminal["delivery"]["reconciled_from_operator_acceptance"])
+        validate_delivery.assert_called_once_with(task)
+        protected.assert_not_called()
+
+    def test_reconcile_operator_exact_head_requires_explicit_local_human_ops(self) -> None:
+        task = self.state["tasks"][0]
+        task["status"] = "review_approved"
+        with (
+            mock.patch.dict(
+                os.environ,
+                {"AI_NAME": "Human/Ops", "PANTHEON_LOCAL_HUMAN_OPS": ""},
+                clear=False,
+            ),
+            mock.patch.object(
+                ai_status, "operator_acceptance_evidence_matches", return_value=True
+            ),
+            self.assertRaisesRegex(SystemExit, "explicit local Human/Ops"),
+        ):
+            _command_reconcile_merged_done(
+                self.state,
+                ["REG-002", "This operator closeout is not locally authorized."],
+            )
+
+    def test_validate_operator_accepted_merged_delivery_requires_exact_head(self) -> None:
+        task = {
+            "id": "REG-002",
+            ai_status.APPROVAL_BINDING_KEY: {
+                "pr": 4269,
+                "head_sha": "a" * 40,
+                "head_branch": "task/REG-002",
+                "base": "dev",
+            },
+            ai_status.OPERATOR_ACCEPTANCE_KEY: {
+                "repository": "ajoe734/pantheon",
+                "operator_acceptance_proof_ref": (
+                    "refs/tags/pantheon-review/operator-accept/" + "a" * 40
+                ),
+            },
+        }
+        merged_delivery = {
+            "repository_id": "pantheon",
+            "repository_slug": "ajoe734/pantheon",
+            "repository_path": "/tmp/pantheon",
+            "commit": "a" * 40,
+            "merge_target_ref": "origin/dev",
+            "merge_target_sha": "b" * 40,
+            "head_merged_to_target": True,
+        }
+        with (
+            mock.patch.object(
+                ai_status, "operator_acceptance_evidence_matches", return_value=True
+            ),
+            mock.patch.object(
+                ai_status,
+                "_validated_reconcile_delivery",
+                return_value=merged_delivery,
+            ),
+        ):
+            result = ai_status.validate_operator_accepted_merged_delivery(task)
+        self.assertTrue(result["reconciled_from_operator_acceptance"])
+        self.assertEqual(result["commit"], "a" * 40)
+
+        wrong_head = {**merged_delivery, "commit": "c" * 40}
+        with (
+            mock.patch.object(
+                ai_status, "operator_acceptance_evidence_matches", return_value=True
+            ),
+            mock.patch.object(
+                ai_status,
+                "_validated_reconcile_delivery",
+                return_value=wrong_head,
+            ),
+            self.assertRaisesRegex(SystemExit, "exact accepted PR head"),
+        ):
+            ai_status.validate_operator_accepted_merged_delivery(task)
 
     def test_reconcile_merged_done_tooling_mode_rejects_product_task(self) -> None:
         task = self.state["tasks"][0]
