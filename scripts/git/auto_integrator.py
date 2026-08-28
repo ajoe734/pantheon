@@ -722,6 +722,14 @@ def normalize_state(value: Any) -> str:
 def post_merge_task_handoff(candidate: TaskCandidate) -> str:
     status = str(candidate.raw_task.get("status") or "").strip().lower()
     if not status or status == "review_approved":
+        operator_acceptance = candidate.raw_task.get("operator_acceptance")
+        if isinstance(operator_acceptance, Mapping) and str(
+            operator_acceptance.get("mode") or ""
+        ).strip() == "operator_exact_head":
+            return (
+                f"left {candidate.task_id} in review_approved for Human/Ops exact-head "
+                "closeout (no owner finalization)"
+            )
         return (
             f"left {candidate.task_id} in review_approved for owner finalization"
         )
@@ -2983,9 +2991,18 @@ def integrate_candidate(
             dry_run=False,
             commands=runner.commands[:],
         )
+    operator_acceptance = candidate.raw_task.get("operator_acceptance")
+    is_operator_exact_head = isinstance(operator_acceptance, Mapping) and str(
+        operator_acceptance.get("mode") or ""
+    ).strip() == "operator_exact_head"
     if gated:
+        acceptance_label = (
+            "Human/Ops exact-head accepted"
+            if is_operator_exact_head
+            else "reviewer-approved"
+        )
         detail = (
-            f"Merged the reviewer-approved head {decision.head_oid} of PR #{number} into "
+            f"Merged the {acceptance_label} head {decision.head_oid} of PR #{number} into "
             f"{candidate.target_branch}; {post_merge_task_handoff(candidate)}."
         )
     else:
