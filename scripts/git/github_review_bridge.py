@@ -1464,7 +1464,7 @@ def bridge_operator_acceptance(
         result,
         repository=repository,
         actor=actor,
-        binding=normalized,
+        binding=binding,
         intent_nonce=nonce if nonce else None,
     )
     return result
