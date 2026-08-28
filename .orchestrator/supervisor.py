@@ -13967,7 +13967,13 @@ def ready_dispatch_signature(
     activity_events: list[dict[str, Any]] | None = None,
     config: dict[str, Any] | None = None,
 ) -> str:
-    requeue_intent = task_review_requeue_intent(task)
+    # A review-requeue event is reserved while the canonical outbox record is
+    # ``pending``, then the exact same record is acknowledged as
+    # ``materialized``.  Its intent id is part of the reserved event identity,
+    # so it must remain part of a late freshness check after acknowledgement.
+    # Otherwise the checker recomputes a different key and discards the one
+    # durable event before it can launch a worker.
+    requeue_intent = task_review_requeue_record(task)
     return json.dumps(
         {
             "delivery_binding_digest": rewrite_task_machine.delivery_binding_digest(task),
