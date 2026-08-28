@@ -167,6 +167,12 @@ CYCLE_PHASE_METRICS_MAX = 64
 CYCLE_BATCH_COUNT_MAX = 16
 RUNTIME_PHASE_LAUNCH_INTENT_STALE_DEFAULT_SECONDS = 30.0
 RUNTIME_PHASE_LAUNCH_INTENT_STALE_MAX_SECONDS = 300.0
+REVIEW_REQUEUE_INTENT_KEY = "review_requeue_intent"
+REVIEW_REQUEUE_INTENT_SCHEMA_VERSION = 1
+WORKER_RECOVERY_TASK_KEY = "worker_recovery"
+WORKER_RECOVERY_RECEIPTS_KEY = "worker_recovery_receipts"
+LOST_LEASE_RECEIPT_SCHEMA_VERSION = 1
+MAX_WORKER_RECOVERY_RECEIPTS = 128
 
 
 def write_activity_log(config: dict[str, Any], entry: dict[str, Any]) -> None:
@@ -2024,6 +2030,9 @@ def build_request(
         metadata.setdefault("dispatch_event_key", dispatch_event_key)
     if "task_generation" in event:
         metadata.setdefault("task_generation", event.get("task_generation"))
+    recovery_receipt_id = str(event.get("recovery_receipt_id") or "").strip()
+    if recovery_receipt_id:
+        metadata.setdefault("recovery_receipt_id", recovery_receipt_id)
     model_preference = resolve_agent_model_preference(config, agent)
     if model_preference and "model_preference" not in metadata:
         metadata["model_preference"] = model_preference
@@ -3832,6 +3841,9 @@ def start_worker_for_request(
     now_dt = datetime.now(timezone.utc)
     now = _isoformat_utc(now_dt)
     result_metadata = result.metadata if isinstance(result.metadata, dict) else {}
+    recovery_receipt_id = str(
+        request.metadata.get("recovery_receipt_id") or ""
+    ).strip()
     worker_record = {
         "run_id": worker_run_id,
         "provider": request.provider,
@@ -3883,6 +3895,7 @@ def start_worker_for_request(
         "notes": result.notes,
         "metadata": result_metadata,
         "request_snapshot": request_snapshot(request),
+        "recovery_receipt_id": recovery_receipt_id or None,
         "parent_run_id": parent_run_id,
         # A retry is represented by a new worker record.  Carry the attempt
         # number into that child instead of resetting its retry budget to zero;
@@ -3902,6 +3915,18 @@ def start_worker_for_request(
         q_record["lease_acquired_at"] = worker_record.get("lease_acquired_at") or utc_now()
         q_record["lease_expires_at"] = worker_record.get("lease_expires_at") or queue_lease_expiry(config)
         q_record["processed_at"] = q_record.get("processed_at") or utc_now()
+        if recovery_receipt_id:
+            q_record["recovery_receipt_id"] = recovery_receipt_id
+    if recovery_receipt_id:
+        runtime_receipt = state.setdefault(
+            WORKER_RECOVERY_RECEIPTS_KEY, {}
+        ).get(recovery_receipt_id)
+        if isinstance(runtime_receipt, dict):
+            runtime_receipt["runtime_status"] = "materialized"
+            replacement = runtime_receipt.get("replacement")
+            if isinstance(replacement, dict):
+                replacement["queue_event_id"] = queue_event_id
+                replacement["worker_run_id"] = worker_run_id
     record_worker_runtime_measurement(
         config,
         state,
@@ -3931,6 +3956,15 @@ def start_worker_for_request(
         save_runtime_state(config, state)
     else:
         _persist_runtime_phase_launch_receipt(config, state, worker_record)
+    if recovery_receipt_id and config.get("paths", {}).get("status_file"):
+        mark_worker_recovery_materialized(
+            config,
+            receipt_id=recovery_receipt_id,
+            task_id=str(request.task_id or ""),
+            task_generation=int(request.metadata.get("task_generation") or 0),
+            queue_event_id=str(queue_event_id or ""),
+            worker_run_id=str(worker_run_id),
+        )
     write_activity_log(
         config,
         {
@@ -8442,6 +8476,228 @@ def record_failure_loop_blocker(
     return event
 
 
+def _worker_recovery_activity_event(
+    receipt: Mapping[str, Any],
+    *,
+    event_type: str,
+    timestamp: str,
+    message: str,
+) -> dict[str, Any]:
+    receipt_id = str(receipt.get("receipt_id") or "").strip()
+    return {
+        "event_id": f"supervisor-{event_type}-{receipt_id}",
+        "ts": timestamp,
+        "agent": "Orchestrator",
+        "type": event_type,
+        "task_id": receipt.get("task_id"),
+        "target_agent": (receipt.get("replacement") or {}).get("agent"),
+        "provider": (receipt.get("worker") or {}).get("provider"),
+        "worker_run_id": receipt.get("worker_run_id"),
+        "queue_event_id": receipt.get("queue_event_id"),
+        "recovery_receipt_id": receipt_id,
+        "worker_recovery_receipt": deepcopy(dict(receipt)),
+        "message": message,
+    }
+
+
+def _worker_recovery_pointer(receipt: Mapping[str, Any]) -> dict[str, Any]:
+    """Return the small task-local pointer to the canonical receipt history."""
+
+    replacement = receipt.get("replacement")
+    replacement = replacement if isinstance(replacement, Mapping) else {}
+    return {
+        "receipt_id": str(receipt.get("receipt_id") or ""),
+        "status": str(receipt.get("status") or ""),
+        "task_generation": int(receipt.get("task_generation") or 0),
+        "fence_generation": int(receipt.get("fence_generation") or 0),
+        "replacement_generation": replacement.get("task_generation"),
+    }
+
+
+def _canonical_worker_recovery_receipt(
+    status: Mapping[str, Any],
+    task: Mapping[str, Any],
+) -> dict[str, Any] | None:
+    pointer = task.get(WORKER_RECOVERY_TASK_KEY)
+    receipts = status.get(WORKER_RECOVERY_RECEIPTS_KEY)
+    if not isinstance(pointer, Mapping) or not isinstance(receipts, Mapping):
+        return None
+    receipt_id = str(pointer.get("receipt_id") or "").strip()
+    receipt = receipts.get(receipt_id)
+    if not receipt_id or not isinstance(receipt, Mapping):
+        return None
+    if (
+        str(receipt.get("receipt_id") or "") != receipt_id
+        or str(receipt.get("task_id") or "") != str(task.get("id") or "")
+        or str(pointer.get("status") or "") != str(receipt.get("status") or "")
+    ):
+        return None
+    return deepcopy(dict(receipt))
+
+
+def _prune_worker_recovery_receipts(
+    status: dict[str, Any],
+    *,
+    current_receipt_id: str,
+) -> None:
+    receipts = status.get(WORKER_RECOVERY_RECEIPTS_KEY)
+    if not isinstance(receipts, dict) or len(receipts) <= MAX_WORKER_RECOVERY_RECEIPTS:
+        return
+    protected = {
+        receipt_id
+        for receipt_id, receipt in receipts.items()
+        if isinstance(receipt, Mapping)
+        and str(receipt.get("status") or "") == "pending"
+    }
+    protected.add(current_receipt_id)
+    terminal = sorted(
+        (
+            receipt_id
+            for receipt_id, receipt in receipts.items()
+            if receipt_id not in protected
+            and isinstance(receipt, Mapping)
+            and str(receipt.get("status") or "") != "pending"
+        ),
+        key=lambda receipt_id: (
+            str((receipts.get(receipt_id) or {}).get("detected_at") or ""),
+            receipt_id,
+        ),
+    )
+    while len(receipts) > MAX_WORKER_RECOVERY_RECEIPTS and terminal:
+        removed = terminal.pop(0)
+        receipts.pop(removed, None)
+        for task in status.get("tasks", []) or []:
+            pointer = task.get(WORKER_RECOVERY_TASK_KEY)
+            if isinstance(pointer, Mapping) and str(
+                pointer.get("receipt_id") or ""
+            ) == removed:
+                task.pop(WORKER_RECOVERY_TASK_KEY, None)
+
+
+def _persist_worker_recovery_receipt_locked(
+    config: dict[str, Any],
+    receipt: Mapping[str, Any],
+    *,
+    expected_owner: str,
+    expected_reviewer: str,
+    expected_status: str,
+    expected_generation: int,
+) -> bool:
+    """CAS one pending lost-lease receipt into canonical TaskStore truth."""
+
+    status = load_status(config)
+    task_id = str(receipt.get("task_id") or "").strip()
+    task = next(
+        (item for item in (status.get("tasks") or []) if item.get("id") == task_id),
+        None,
+    )
+    if task is None:
+        return False
+    receipt_id = str(receipt.get("receipt_id") or "").strip()
+    existing = _canonical_worker_recovery_receipt(status, task)
+    if (
+        existing is not None
+        and str(existing.get("receipt_id") or "") == receipt_id
+        and str(existing.get("task_id") or "") == task_id
+    ):
+        # Exact replay after the receipt+fence TaskStore commit but before the
+        # runtime cache CAS.  The caller adopts the canonical receipt.
+        return True
+    if (
+        str(task.get("owner") or "") != expected_owner
+        or str(task.get("reviewer") or "") != expected_reviewer
+        or str(task.get("status") or "") != expected_status
+        or task_generation(task) != expected_generation
+    ):
+        return False
+    receipts = status.get(WORKER_RECOVERY_RECEIPTS_KEY)
+    if receipts is None:
+        receipts = {}
+        status[WORKER_RECOVERY_RECEIPTS_KEY] = receipts
+    if not isinstance(receipts, dict):
+        return False
+    if existing is not None:
+        if str(existing.get("status") or "") == "pending":
+            # One task has one active recovery owner.  A later detector adopts
+            # it instead of replacing an unresolved canonical receipt.
+            return False
+    timestamp = utc_now()
+    canonical = deepcopy(dict(receipt))
+    canonical_status = str(canonical.get("status") or "pending")
+    if canonical_status not in {"pending", "held", "resolved"}:
+        return False
+    canonical["status"] = canonical_status
+    canonical["fence_generation"] = expected_generation + 1
+    canonical["last_attempt_at"] = timestamp
+    canonical["attempt_count"] = max(1, int(canonical.get("attempt_count", 0) or 0))
+    if existing is not None:
+        canonical["previous_receipt_id"] = existing.get("receipt_id")
+    receipts[receipt_id] = canonical
+    task[WORKER_RECOVERY_TASK_KEY] = _worker_recovery_pointer(canonical)
+    # Generation is the canonical worker lease fencing token.  Fence in the
+    # same TaskStore transaction as the durable receipt, before searching for
+    # a fallback, so a vanished worker's late command cannot mutate the task
+    # even when no replacement capacity is currently available.
+    task["generation"] = expected_generation + 1
+    task["last_update"] = timestamp
+    if canonical_status == "pending":
+        task["next"] = (
+            f"Supervisor fenced lost worker lease {receipt_id}; waiting for an eligible "
+            "configured fallback assignment."
+        )
+    event = _worker_recovery_activity_event(
+        canonical,
+        event_type=(
+            "worker_lost_lease_recovery_pending"
+            if canonical_status == "pending"
+            else f"worker_lost_lease_recovery_{canonical_status}"
+        ),
+        timestamp=timestamp,
+        message=(
+            str(task.get("next") or "")
+            if canonical_status == "pending"
+            else f"Supervisor fenced lost worker lease {receipt_id}; recovery is {canonical_status}."
+        ),
+    )
+    composed = _compose_status_activity_outbox(
+        status.get("status_activity_outbox"), event
+    )
+    if composed is None:
+        return False
+    status["status_activity_outbox"] = composed
+    _prune_worker_recovery_receipts(status, current_receipt_id=receipt_id)
+    write_status(config, status, source="supervisor-worker-lost-lease")
+    return True
+
+
+def persist_worker_recovery_receipt(
+    config: dict[str, Any],
+    receipt: Mapping[str, Any],
+    *,
+    expected_owner: str,
+    expected_reviewer: str,
+    expected_status: str,
+    expected_generation: int,
+) -> bool:
+    status_path = config_path(config, "status_file")
+    with canonical_task_state_lock_file(
+        status_path,
+        shared=False,
+        nonblocking=False,
+    ):
+        applied = _persist_worker_recovery_receipt_locked(
+            config,
+            receipt,
+            expected_owner=expected_owner,
+            expected_reviewer=expected_reviewer,
+            expected_status=expected_status,
+            expected_generation=expected_generation,
+        )
+    if not applied:
+        return False
+    return sync_status_pipeline(config)
+
+
 def _persist_task_reassignment_locked(
     config: dict[str, Any],
     *,
@@ -8458,6 +8714,7 @@ def _persist_task_reassignment_locked(
     expected_reviewer: str | None = None,
     expected_status: str | None = None,
     expected_generation: int | None = None,
+    worker_recovery_receipt: Mapping[str, Any] | None = None,
 ) -> bool:
     status = load_status(config)
     if status.get("status_activity_outbox") not in (None, {}, []):
@@ -8480,6 +8737,20 @@ def _persist_task_reassignment_locked(
         return False
     if expected_generation is not None and old_generation != expected_generation:
         return False
+    recovery_receipt: dict[str, Any] | None = None
+    if worker_recovery_receipt is not None:
+        recovery_receipt = deepcopy(dict(worker_recovery_receipt))
+        receipt_id = str(recovery_receipt.get("receipt_id") or "").strip()
+        existing_recovery = _canonical_worker_recovery_receipt(status, task)
+        if (
+            not receipt_id
+            or str(recovery_receipt.get("task_id") or "") != task_id
+            or int(recovery_receipt.get("fence_generation") or 0) != old_generation
+            or existing_recovery is None
+            or str(existing_recovery.get("receipt_id") or "") != receipt_id
+            or str(existing_recovery.get("status") or "") != "pending"
+        ):
+            return False
     if (
         reviewer_is_explicit_human_gate(old_reviewer)
         and not reviewer_is_explicit_human_gate(new_reviewer)
@@ -8515,6 +8786,33 @@ def _persist_task_reassignment_locked(
     task["last_update"] = timestamp
     task["generation"] = old_generation + 1
     task["next"] = message
+    if recovery_receipt is not None:
+        role = str(recovery_receipt.get("recovery_role") or "owner")
+        replacement_agent = (
+            assignment.new_reviewer if role == "reviewer" else assignment.new_owner
+        )
+        recovery_receipt.update(
+            {
+                "status": "reassigned",
+                "last_attempt_at": timestamp,
+                "attempt_count": int(recovery_receipt.get("attempt_count", 0) or 0) + 1,
+                "reassigned_at": timestamp,
+                "replacement": {
+                    "role": role,
+                    "agent": replacement_agent,
+                    "owner": assignment.new_owner,
+                    "reviewer": assignment.new_reviewer,
+                    "task_generation": old_generation + 1,
+                    "queue_event_id": None,
+                    "worker_run_id": None,
+                },
+            }
+        )
+        receipts = status.get(WORKER_RECOVERY_RECEIPTS_KEY)
+        if not isinstance(receipts, dict):
+            return False
+        receipts[recovery_receipt["receipt_id"]] = deepcopy(recovery_receipt)
+        task[WORKER_RECOVERY_TASK_KEY] = _worker_recovery_pointer(recovery_receipt)
 
     if resolve_open_blockers:
         for blocker in status.get("blockers", []) or []:
@@ -8555,6 +8853,9 @@ def _persist_task_reassignment_locked(
         old_generation=old_generation,
         new_generation=old_generation + 1,
     )
+    if recovery_receipt is not None:
+        event["recovery_receipt_id"] = recovery_receipt["receipt_id"]
+        event["worker_recovery_receipt"] = deepcopy(recovery_receipt)
     status["status_activity_outbox"] = _status_activity_outbox([event])
     write_status(config, status, source="supervisor-reassignment")
     return True
@@ -8576,6 +8877,7 @@ def persist_task_reassignment(
     expected_reviewer: str | None = None,
     expected_status: str | None = None,
     expected_generation: int | None = None,
+    worker_recovery_receipt: Mapping[str, Any] | None = None,
 ) -> bool:
     status_path = config_path(config, "status_file")
     with canonical_task_state_lock_file(
@@ -8598,10 +8900,112 @@ def persist_task_reassignment(
             expected_reviewer=expected_reviewer,
             expected_status=expected_status,
             expected_generation=expected_generation,
+            worker_recovery_receipt=worker_recovery_receipt,
         )
     if not applied:
         return False
     return sync_status_pipeline(config)
+
+
+def _mark_worker_recovery_materialized_locked(
+    config: dict[str, Any],
+    *,
+    receipt_id: str,
+    task_id: str,
+    expected_generation: int,
+    queue_event_id: str,
+    worker_run_id: str,
+) -> bool:
+    """Backfill replacement lineage after the runtime launch receipt is durable."""
+
+    status = load_status(config)
+    task = next(
+        (item for item in (status.get("tasks") or []) if item.get("id") == task_id),
+        None,
+    )
+    if task is None or task_generation(task) != expected_generation:
+        return False
+    receipt = _canonical_worker_recovery_receipt(status, task)
+    if receipt is None or str(receipt.get("receipt_id") or "") != receipt_id:
+        return False
+    replacement = receipt.get("replacement")
+    if not isinstance(replacement, Mapping):
+        return False
+    if int(replacement.get("task_generation") or 0) != expected_generation:
+        return False
+    prior_queue = str(replacement.get("queue_event_id") or "")
+    prior_worker = str(replacement.get("worker_run_id") or "")
+    if prior_queue and prior_queue != queue_event_id:
+        return False
+    if prior_worker and prior_worker != worker_run_id:
+        return False
+    if (
+        str(receipt.get("status") or "") == "materialized"
+        and prior_queue == queue_event_id
+        and prior_worker == worker_run_id
+    ):
+        return True
+    timestamp = utc_now()
+    receipt["status"] = "materialized"
+    receipt["materialized_at"] = timestamp
+    receipt["replacement"] = {
+        **dict(replacement),
+        "queue_event_id": queue_event_id,
+        "worker_run_id": worker_run_id,
+    }
+    receipts = status.get(WORKER_RECOVERY_RECEIPTS_KEY)
+    if not isinstance(receipts, dict):
+        return False
+    receipts[receipt_id] = deepcopy(receipt)
+    task[WORKER_RECOVERY_TASK_KEY] = _worker_recovery_pointer(receipt)
+    event = _worker_recovery_activity_event(
+        receipt,
+        event_type="worker_lost_lease_recovery_materialized",
+        timestamp=timestamp,
+        message=(
+            f"Lost-lease recovery {receipt_id} materialized replacement worker "
+            f"{worker_run_id} from queue intent {queue_event_id}."
+        ),
+    )
+    composed = _compose_status_activity_outbox(
+        status.get("status_activity_outbox"), event
+    )
+    if composed is None:
+        return False
+    status["status_activity_outbox"] = composed
+    write_status(config, status, source="supervisor-worker-recovery-materialized")
+    return True
+
+
+def mark_worker_recovery_materialized(
+    config: dict[str, Any],
+    *,
+    receipt_id: str,
+    task_id: str,
+    task_generation: int,
+    queue_event_id: str,
+    worker_run_id: str,
+) -> bool:
+    if not all((receipt_id, task_id, queue_event_id, worker_run_id)):
+        return False
+    status_path = config_path(config, "status_file")
+    with canonical_task_state_lock_file(
+        status_path,
+        shared=False,
+        nonblocking=False,
+    ):
+        applied = _mark_worker_recovery_materialized_locked(
+            config,
+            receipt_id=receipt_id,
+            task_id=task_id,
+            expected_generation=task_generation,
+            queue_event_id=queue_event_id,
+            worker_run_id=worker_run_id,
+        )
+    if not applied:
+        return False
+    sync_status_pipeline(config)
+    return True
 
 
 def assignment_terminal_unavailability(
@@ -10246,6 +10650,7 @@ def poll_workers(
         "lease_refreshes": 0,
         "expired_lease_workers_failed": 0,
         "expired_lease_workers_retried": 0,
+        "lost_lease_workers_recovered": 0,
     }
     workers = state.setdefault("workers", {})
     if workers and not activity_events:
@@ -10278,93 +10683,54 @@ def poll_workers(
             observation.get("meaningful_progress_advanced")
             or observation.get("commit_progress_advanced")
         )
-        if observation["stop"]:
-            if observation.get("lease_expired"):
-                reason = (
-                    record_delivery_health_for_reaped_worker(config, state, worker)
-                    or (
-                        "Worker lease expired after observed work progress became stale."
-                        if worker_lease_requires_work_progress(config)
-                        and not worker_lease_progress_is_fresh(config, worker, now)
-                        else "Worker lease expired after heartbeat became stale."
-                    )
+        lease_expired = bool(observation.get("lease_expired"))
+        missing_process = bool(
+            not alive and str(worker.get("status") or "") in {"running", "stalled"}
+        )
+        if lease_expired or missing_process:
+            task = task_map.get(str(worker.get("task_id") or ""))
+            terminal = canonical_worker_terminal_status(
+                config,
+                worker,
+                task,
+                activity_events=governance_activity_events,
+            )
+            if terminal is not None:
+                worker["status"] = "completed"
+                worker["last_event_at"] = utc_now()
+                worker.pop("last_error", None)
+                finalize_queue_event_record(config, state, worker, "completed")
+                changed = True
+                continue
+            reason = (
+                record_delivery_health_for_reaped_worker(config, state, worker)
+                if lease_expired
+                else None
+            ) or (
+                (
+                    "Worker lease expired after observed work progress became stale."
+                    if worker_lease_requires_work_progress(config)
+                    and not worker_lease_progress_is_fresh(config, worker, now)
+                    else "Worker lease expired after heartbeat became stale."
                 )
-                task = task_map.get(str(worker.get("task_id") or ""))
-                if (
-                    isinstance(task, Mapping)
-                    and str(task.get("status") or "").strip().lower() == "blocked"
-                    and task_has_explicit_recovery_hold(status_snapshot, task)
-                ):
-                    worker["status"] = "completed"
-                    worker["last_event_at"] = utc_now()
-                    worker.pop("last_error", None)
-                    finalize_queue_event_record(config, state, worker, "completed")
-                    write_activity_log(
-                        config,
-                        {
-                            "type": "worker_completed_on_explicit_task_hold",
-                            "provider": worker.get("provider"),
-                            "task_id": worker.get("task_id"),
-                            "message": (
-                                "Expired worker lease ended after the canonical task entered "
-                                "an explicit blocked hold; automatic retry suppressed."
-                            ),
-                            "worker_run_id": worker.get("run_id"),
-                            "waiting_for": task.get("waiting_for"),
-                        },
-                    )
-                    changed = True
-                elif schedule_reconstructable_worker_retry(
-                    config,
-                    state,
-                    worker,
-                    reason,
-                    status=status_snapshot,
-                    task=task,
-                ):
-                    write_activity_log(
-                        config,
-                        {
-                            "type": "worker_retry_scheduled",
-                            "provider": worker.get("provider"),
-                            "task_id": worker.get("task_id"),
-                            "message": (
-                                "Expired worker lease returned to the bounded recovery path; "
-                                f"retry {worker.get('retry_count')} scheduled at "
-                                f"{worker.get('next_retry_at')}: {reason}"
-                            ),
-                            "worker_run_id": worker.get("run_id"),
-                            "next_retry_at": worker.get("next_retry_at"),
-                            "reason": reason,
-                            "outcome": "retry",
-                        },
-                    )
-                    poll_counts["expired_lease_workers_retried"] += 1
-                    changed = True
-                else:
-                    worker["status"] = "failed"
-                    worker["last_error"] = reason
-                    worker["last_event_at"] = utc_now()
-                    finalize_queue_event_record(config, state, worker, "failed", reason)
-                    record_retry_exhausted_worker_terminal_outcome(
-                        config,
-                        worker,
-                        reason=reason,
-                    )
-                    write_activity_log(
-                        config,
-                        {
-                            "type": "worker_failed",
-                            "provider": worker.get("provider"),
-                            "task_id": worker.get("task_id"),
-                            "message": reason,
-                            "worker_run_id": worker.get("run_id"),
-                            "reason": reason,
-                            "outcome": "terminal_failure",
-                        },
-                    )
-                    poll_counts["expired_lease_workers_failed"] += 1
-                    changed = True
+                if lease_expired
+                else "Worker process disappeared while its canonical lease was active."
+            )
+            changed = recover_lost_worker_lease(
+                config,
+                state,
+                worker,
+                reason_kind=(
+                    "worker_lease_expired"
+                    if lease_expired
+                    else "worker_process_missing"
+                ),
+                reason=reason,
+                status=status_snapshot,
+            ) or changed
+            poll_counts["lost_lease_workers_recovered"] += 1
+            continue
+        if observation["stop"]:
             continue
         assignment = poll_worker_assignment_stage(
             config,
@@ -10423,6 +10789,7 @@ def poll_workers(
             governance_activity_events=governance_activity_events,
         )
         changed = bool(completion["changed"]) or changed
+    changed = reconcile_pending_worker_recoveries(config, state) or changed
     changed = cleanup_inactive_worker_worktrees(config, state) or changed
     record_worker_runtime_measurement(
         config,
@@ -10432,6 +10799,7 @@ def poll_workers(
         emit_activity=bool(
             poll_counts["expired_lease_workers_failed"]
             or poll_counts["expired_lease_workers_retried"]
+            or poll_counts["lost_lease_workers_recovered"]
         ),
     )
     return changed
@@ -11179,6 +11547,512 @@ def schedule_reconstructable_worker_retry(
     return True
 
 
+def build_lost_lease_receipt(
+    config: dict[str, Any],
+    worker: Mapping[str, Any],
+    task: Mapping[str, Any],
+    *,
+    reason_kind: str,
+    reason: str,
+    detected_at: str | None = None,
+    status: str = "pending",
+) -> dict[str, Any]:
+    """Build one typed, replay-stable receipt for a lost worker lease."""
+
+    task_id = str(task.get("id") or worker.get("task_id") or "").strip()
+    run_id = str(worker.get("run_id") or "").strip()
+    queue_event_id = str(worker.get("queue_event_id") or "").strip()
+    process_generation = str(worker.get("process_generation") or "").strip()
+    lease_acquired_at = str(worker.get("lease_acquired_at") or "").strip()
+    lease_expires_at = str(worker.get("lease_expires_at") or "").strip()
+    generation = task_generation(task)
+    basis = {
+        "task_id": task_id,
+        "task_generation": generation,
+        "worker_run_id": run_id,
+        "queue_event_id": queue_event_id,
+        "process_generation": process_generation,
+        "lease_acquired_at": lease_acquired_at,
+        "lease_expires_at": lease_expires_at,
+        "reason_kind": reason_kind,
+    }
+    digest = hashlib.sha256(
+        json.dumps(basis, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    dispatch_reason = str((worker.get("request_snapshot") or {}).get("reason") or "")
+    recovery_role = (
+        "reviewer"
+        if dispatch_reason == REASON_REVIEW_READY
+        else "owner"
+    )
+    agent_id = str(worker.get("agent_id") or worker.get("provider") or "").strip()
+    actor = display_name_for(config, agent_id)
+    return {
+        "schema_version": LOST_LEASE_RECEIPT_SCHEMA_VERSION,
+        "type": "worker_lost_lease",
+        "receipt_id": f"lost-lease-{digest}",
+        "dedupe_key": f"worker-lost-lease:{digest}",
+        "status": status,
+        "task_id": task_id,
+        "task_generation": generation,
+        "worker_run_id": run_id,
+        "queue_event_id": queue_event_id,
+        "recovery_role": recovery_role,
+        "worker": {
+            "agent": actor,
+            "agent_id": agent_id,
+            "logical_agent_id": str(worker.get("logical_agent_id") or agent_id),
+            "provider": str(worker.get("provider") or agent_id),
+        },
+        "lease": {
+            "lease_id": ":".join(
+                item for item in (queue_event_id, run_id, process_generation) if item
+            ),
+            "owner": str(worker.get("lease_owner") or run_id),
+            "acquired_at": lease_acquired_at or None,
+            "expires_at": lease_expires_at or None,
+            "last_heartbeat_at": worker.get("last_heartbeat_at"),
+            "pid": worker.get("pid"),
+            "pid_start_ticks": worker.get("pid_start_ticks"),
+            "process_generation": process_generation or None,
+        },
+        "reason_kind": reason_kind,
+        "reason": reason,
+        "detected_at": detected_at or utc_now(),
+        "previous": {
+            "owner": str(task.get("owner") or ""),
+            "reviewer": str(task.get("reviewer") or ""),
+            "status": str(task.get("status") or ""),
+            "task_generation": generation,
+            "agent": actor,
+            "worker_run_id": run_id,
+            "queue_event_id": queue_event_id,
+        },
+        "replacement": None,
+        "attempt_count": 0,
+        "last_attempt_at": None,
+    }
+
+
+def task_has_pending_worker_recovery(task: Mapping[str, Any] | None) -> bool:
+    pointer = (task or {}).get(WORKER_RECOVERY_TASK_KEY)
+    if not isinstance(pointer, Mapping):
+        return False
+    try:
+        fence_generation = int(pointer.get("fence_generation") or 0)
+    except (TypeError, ValueError):
+        return True
+    return bool(
+        str(pointer.get("receipt_id") or "")
+        and str(pointer.get("status") or "") == "pending"
+        and fence_generation == task_generation(task)
+    )
+
+
+def _worker_recovery_candidate_has_capacity(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    status: dict[str, Any],
+    task: dict[str, Any],
+    *,
+    owner: str,
+    reviewer: str,
+    target_agent: str,
+) -> bool:
+    candidate = deepcopy(task)
+    candidate["owner"] = owner
+    candidate["reviewer"] = reviewer
+    candidate.pop(WORKER_RECOVERY_TASK_KEY, None)
+    candidate_status = deepcopy(status)
+    candidate_status["tasks"] = [
+        candidate if item.get("id") == candidate.get("id") else item
+        for item in (status.get("tasks") or [])
+    ]
+    task_map = task_index_from_status(config, candidate_status)
+    settings = ready_dispatch_settings(config)
+    active_statuses = normalized_status_set(settings.get("active_worker_statuses"), [])
+    queued = queue_events(state)
+    _active_agents, active_pairs = active_worker_indexes(state, active_statuses)
+    _pending_agents, pending_pairs, _pending_keys = outstanding_delivery_indexes(
+        config, state, queued, task_map
+    )
+    active_task_ids = {task_id for task_id, _agent in active_pairs if task_id}
+    pending_task_ids = {task_id for task_id, _agent in pending_pairs if task_id}
+    active_resources = active_execution_resource_counts(state, task_map, active_statuses)
+    pending_resources = queued_execution_resource_counts(
+        config, state, queued, task_map
+    )
+    configured_limits = settings.get("execution_resource_limits")
+    resource_limits = (
+        dict(configured_limits)
+        if isinstance(configured_limits, Mapping)
+        else {"pantheon-dev": 1}
+    )
+    decision = evaluate_task_delivery_admission(
+        config,
+        state,
+        candidate,
+        target_agent,
+        task_resolver_for_config(config, task_map),
+        active_task_ids=active_task_ids,
+        pending_task_ids=pending_task_ids,
+        agent_loads=agent_dispatch_loads(
+            config, state, active_statuses, queued, task_map
+        ),
+        active_account_loads=active_account_counts(config, state, active_statuses),
+        pending_account_loads=queued_account_counts(
+            config, state, queued, task_map
+        ),
+        active_resource_loads=active_resources,
+        pending_resource_loads=pending_resources,
+        resource_limits=resource_limits,
+        live_total=sum(
+            1
+            for worker in (state.get("workers") or {}).values()
+            if str(worker.get("status") or "") in active_statuses
+        ),
+    )
+    return bool(decision.eligible)
+
+
+def worker_recovery_assignment_pair(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    status: dict[str, Any],
+    task: dict[str, Any],
+    receipt: Mapping[str, Any],
+) -> tuple[str, str] | None:
+    """Choose only a configured, healthy fallback with current capacity."""
+
+    settings = worker_reassignment_settings(config)
+    owner = canonical_agent_name(config, str(task.get("owner") or ""))
+    reviewer = canonical_agent_name(config, str(task.get("reviewer") or ""))
+    role = str(receipt.get("recovery_role") or "owner")
+    lost_agent = str((receipt.get("worker") or {}).get("agent") or "")
+    if role == "reviewer":
+        reviewer_candidates = reassignment_candidate_order(
+            config,
+            settings.get("reviewer_fallbacks", {}) or {},
+            roots=[reviewer, owner],
+            exclude={reviewer, owner, lost_agent},
+        )
+        for candidate_reviewer in reviewer_candidates:
+            pair = plan_task_assignment_pair(
+                config,
+                task,
+                state=state,
+                fixed_owner=owner,
+                preferred_reviewers=[candidate_reviewer],
+                allowed_reviewers=[candidate_reviewer],
+                require_owner_ready=False,
+            )
+            if pair and _worker_recovery_candidate_has_capacity(
+                config,
+                state,
+                status,
+                task,
+                owner=pair[0],
+                reviewer=pair[1],
+                target_agent=pair[1],
+            ):
+                return pair
+        return None
+
+    owner_candidates = reassignment_candidate_order(
+        config,
+        settings.get("owner_fallbacks", {}) or {},
+        roots=[owner],
+        exclude={owner, lost_agent},
+    )
+    for candidate_owner in owner_candidates:
+        pair = plan_task_assignment_pair(
+            config,
+            task,
+            state=state,
+            owner_candidates=[candidate_owner],
+        )
+        if pair and _worker_recovery_candidate_has_capacity(
+            config,
+            state,
+            status,
+            task,
+            owner=pair[0],
+            reviewer=pair[1],
+            target_agent=pair[0],
+        ):
+            return pair
+    return None
+
+
+def _adopt_worker_recovery_receipt(
+    state: dict[str, Any],
+    receipt: Mapping[str, Any],
+) -> bool:
+    receipt_id = str(receipt.get("receipt_id") or "")
+    receipts = state.setdefault(WORKER_RECOVERY_RECEIPTS_KEY, {})
+    normalized = deepcopy(dict(receipt))
+    if receipts.get(receipt_id) == normalized:
+        return False
+    receipts[receipt_id] = normalized
+    return True
+
+
+def _fence_lost_worker_runtime(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    worker: dict[str, Any],
+    receipt: Mapping[str, Any],
+) -> bool:
+    changed = _adopt_worker_recovery_receipt(state, receipt)
+    receipt_id = str(receipt.get("receipt_id") or "")
+    next_status = (
+        "recovery_pending"
+        if str(receipt.get("status") or "") == "pending"
+        else "superseded"
+    )
+    if worker.get("status") != next_status:
+        worker["status"] = next_status
+        changed = True
+    worker["lease_fenced_at"] = worker.get("lease_fenced_at") or utc_now()
+    worker["lost_lease_receipt_id"] = receipt_id
+    worker["last_error"] = str(receipt.get("reason") or "Worker lease was lost.")
+    worker["last_event_at"] = worker.get("lease_fenced_at")
+    finalize_queue_event_record(
+        config,
+        state,
+        worker,
+        "failed",
+        str(receipt.get("reason") or "Worker lease was lost."),
+    )
+    queue_event_id = str(worker.get("queue_event_id") or "")
+    if queue_event_id:
+        record = queue_status(state, queue_event_id)
+        record["lost_lease_receipt_id"] = receipt_id
+        record["recovery_status"] = str(receipt.get("status") or "")
+    return True
+
+
+def attempt_worker_recovery_reassignment(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    status: dict[str, Any],
+    task: dict[str, Any],
+    receipt: Mapping[str, Any],
+) -> bool:
+    if str(receipt.get("status") or "") != "pending":
+        return _adopt_worker_recovery_receipt(state, receipt)
+    if (
+        str(task.get("status") or "").strip().lower() == "blocked"
+        and task_has_explicit_recovery_hold(status, task)
+    ):
+        return _adopt_worker_recovery_receipt(state, receipt)
+    pair = worker_recovery_assignment_pair(config, state, status, task, receipt)
+    if pair is None:
+        return _adopt_worker_recovery_receipt(state, receipt)
+    role = str(receipt.get("recovery_role") or "owner")
+    target = pair[1] if role == "reviewer" else pair[0]
+    message = (
+        f"Supervisor recovered lost lease {receipt.get('receipt_id')} by assigning "
+        f"the {role} lane to {target}; the next planner cycle owns dispatch."
+    )
+    persist_task_reassignment(
+        config,
+        task_id=str(task.get("id") or ""),
+        new_owner=pair[0],
+        new_reviewer=pair[1],
+        message=message,
+        expected_owner=str(task.get("owner") or ""),
+        expected_reviewer=str(task.get("reviewer") or ""),
+        expected_status=str(task.get("status") or ""),
+        expected_generation=task_generation(task),
+        worker_recovery_receipt=receipt,
+    )
+    # The canonical CAS may have committed even if activity publication was
+    # interrupted.  Re-read authority and adopt it instead of issuing a second
+    # reassignment after restart.
+    latest = load_status(config)
+    latest_task = task_index_from_status(config, latest).get(str(task.get("id") or ""))
+    if latest_task is None:
+        return False
+    canonical = _canonical_worker_recovery_receipt(latest, latest_task)
+    if (
+        canonical is None
+        or str(canonical.get("receipt_id") or "") != str(receipt.get("receipt_id") or "")
+        or str(canonical.get("status") or "") not in {"reassigned", "materialized"}
+    ):
+        return False
+    changed = _adopt_worker_recovery_receipt(state, canonical)
+    run_id = str(canonical.get("worker_run_id") or "")
+    worker = (state.get("workers") or {}).get(run_id)
+    if isinstance(worker, dict):
+        if worker.get("status") != "superseded":
+            worker["status"] = "superseded"
+            changed = True
+        worker["recovery_replacement"] = deepcopy(canonical.get("replacement"))
+    return True
+
+
+def recover_lost_worker_lease(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    worker: dict[str, Any],
+    *,
+    reason_kind: str,
+    reason: str,
+    status: dict[str, Any] | None = None,
+) -> bool:
+    """Shared boot/poll recovery path for a missing PID or expired lease."""
+
+    status = status if isinstance(status, dict) else load_status(config)
+    task_id = str(worker.get("task_id") or "")
+    task = task_index_from_status(config, status).get(task_id)
+    if task is None or not worker_matches_current_task_generation(worker, task):
+        worker["status"] = "superseded"
+        worker["lease_fenced_at"] = worker.get("lease_fenced_at") or utc_now()
+        finalize_queue_event_record(config, state, worker, "completed")
+        return True
+    role = (
+        "reviewer"
+        if str((worker.get("request_snapshot") or {}).get("reason") or "")
+        == REASON_REVIEW_READY
+        else "owner"
+    )
+    actor = display_name_for(
+        config, str(worker.get("agent_id") or worker.get("provider") or "")
+    )
+    expected_actor = str(task.get(role) or "")
+    if actor != expected_actor:
+        worker["status"] = "superseded"
+        worker["lease_fenced_at"] = worker.get("lease_fenced_at") or utc_now()
+        finalize_queue_event_record(config, state, worker, "completed")
+        return True
+    held = (
+        str(task.get("status") or "").strip().lower() == "blocked"
+        and task_has_explicit_recovery_hold(status, task)
+    )
+    receipt = build_lost_lease_receipt(
+        config,
+        worker,
+        task,
+        reason_kind=reason_kind,
+        reason=reason,
+        status="held" if held else "pending",
+    )
+    persist_worker_recovery_receipt(
+        config,
+        receipt,
+        expected_owner=str(task.get("owner") or ""),
+        expected_reviewer=str(task.get("reviewer") or ""),
+        expected_status=str(task.get("status") or ""),
+        expected_generation=task_generation(task),
+    )
+    latest = load_status(config)
+    latest_task = task_index_from_status(config, latest).get(task_id)
+    canonical = (
+        _canonical_worker_recovery_receipt(latest, latest_task)
+        if latest_task is not None
+        else None
+    )
+    if (
+        canonical is None
+        or str(canonical.get("receipt_id") or "") != str(receipt.get("receipt_id") or "")
+    ):
+        # A competing detector may have won the canonical receipt+generation
+        # CAS. This lease is stale either way; fence it immediately and let
+        # the winning receipt remain the sole recovery authority.
+        worker["status"] = "superseded"
+        worker["lease_fenced_at"] = worker.get("lease_fenced_at") or utc_now()
+        finalize_queue_event_record(config, state, worker, "completed")
+        return True
+    _fence_lost_worker_runtime(config, state, worker, canonical)
+    write_activity_log(
+        config,
+        {
+            "type": "worker_lost_lease",
+            "task_id": task_id,
+            "provider": worker.get("provider"),
+            "worker_run_id": worker.get("run_id"),
+            "queue_event_id": worker.get("queue_event_id"),
+            "recovery_receipt_id": canonical.get("receipt_id"),
+            "reason_kind": reason_kind,
+            "message": reason,
+        },
+    )
+    if str(canonical.get("status") or "") != "pending":
+        return True
+    return attempt_worker_recovery_reassignment(
+        config, state, latest, latest_task, canonical
+    ) or True
+
+
+def reconcile_pending_worker_recoveries(
+    config: dict[str, Any],
+    state: dict[str, Any],
+) -> bool:
+    """Adopt and retry canonical recovery receipts on every boot/poll cycle."""
+
+    status = load_status(config)
+    changed = False
+    limit = int(
+        worker_reassignment_settings(config).get("max_reassignments_per_cycle", 4)
+        or 4
+    )
+    attempted = 0
+    for task in status.get("tasks", []) or []:
+        if not isinstance(task, dict):
+            continue
+        receipt = _canonical_worker_recovery_receipt(status, task)
+        if receipt is None:
+            continue
+        changed = _adopt_worker_recovery_receipt(state, receipt) or changed
+        if str(receipt.get("status") or "") == "reassigned":
+            receipt_id = str(receipt.get("receipt_id") or "")
+            replacement_worker = next(
+                (
+                    worker
+                    for worker in (state.get("workers") or {}).values()
+                    if isinstance(worker, Mapping)
+                    and str(worker.get("recovery_receipt_id") or "") == receipt_id
+                    and str(worker.get("queue_event_id") or "")
+                    and str(worker.get("run_id") or "")
+                ),
+                None,
+            )
+            if replacement_worker is not None and mark_worker_recovery_materialized(
+                config,
+                receipt_id=receipt_id,
+                task_id=str(task.get("id") or ""),
+                task_generation=task_generation(task),
+                queue_event_id=str(replacement_worker.get("queue_event_id") or ""),
+                worker_run_id=str(replacement_worker.get("run_id") or ""),
+            ):
+                status = load_status(config)
+                refreshed_task = task_index_from_status(config, status).get(
+                    str(task.get("id") or "")
+                )
+                refreshed = (
+                    _canonical_worker_recovery_receipt(status, refreshed_task)
+                    if refreshed_task is not None
+                    else None
+                )
+                if refreshed is not None:
+                    changed = _adopt_worker_recovery_receipt(state, refreshed) or changed
+                changed = True
+                continue
+        if str(receipt.get("status") or "") != "pending" or attempted >= limit:
+            continue
+        attempted += 1
+        changed = (
+            attempt_worker_recovery_reassignment(
+                config, state, status, task, receipt
+            )
+            or changed
+        )
+        if changed:
+            status = load_status(config)
+    return changed
+
+
 def _prepare_worker_terminal_outcome_locked(
     config: dict[str, Any],
     worker: dict[str, Any],
@@ -11440,31 +12314,6 @@ def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> 
             else "Worker process missing during supervisor boot reconciliation."
         )
         task = task_map.get(str(worker.get("task_id") or ""))
-        if (
-            isinstance(task, Mapping)
-            and str(task.get("status") or "").strip().lower() == "blocked"
-            and task_has_explicit_recovery_hold(status_snapshot, task)
-        ):
-            worker["status"] = "completed"
-            worker["last_event_at"] = worker.get("runner_finished_at") or utc_now()
-            worker.pop("last_error", None)
-            finalize_queue_event_record(config, state, worker, "completed")
-            write_activity_log(
-                config,
-                {
-                    "type": "worker_completed_on_explicit_task_hold",
-                    "provider": worker.get("provider"),
-                    "task_id": worker.get("task_id"),
-                    "message": (
-                        "Worker process ended after the canonical task entered "
-                        "an explicit blocked hold; automatic retry suppressed."
-                    ),
-                    "worker_run_id": run_id,
-                    "waiting_for": task.get("waiting_for"),
-                },
-            )
-            changed = True
-            continue
         handoff_status = canonical_worker_terminal_status(
             config,
             worker,
@@ -11494,153 +12343,21 @@ def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> 
             changed = True
             continue
 
-        runner_succeeded = worker_runner_succeeded(worker)
-
-        if runner_succeeded:
-            reason = GENERIC_WORKER_EXIT_REASON
-
-        detected_reason = detect_worker_failure(worker)
-        failure_kind = ""
-        raw_ref: str | None = None
-        if detected_reason:
-            failure = classify_worker_failure(config, worker, detected_reason)
-            failure_summary = summarize_failure_reason(
-                detected_reason,
-                str(worker.get("provider") or worker.get("agent_id") or ""),
-            )
-            raw_ref = write_failure_evidence(
-                config,
-                worker=worker,
-                reason=detected_reason,
-                failure_kind=str(failure.get("kind") or ""),
-            )
-            failure_kind = str(failure.get("kind") or "")
-            record_delivery_health_failure(
-                config,
-                state,
-                agent_id=str(worker.get("agent_id") or ""),
-                failure_kind=failure_kind,
-                detail=failure_summary.get("summary") or detected_reason,
-            )
-            if failure_kind in {"transient", "capacity", "capacity_retryable"}:
-                retry_reason = failure_summary.get("summary") or detected_reason
-                if (missing_process or expired_lease) and schedule_reconstructable_worker_retry(
-                    config,
-                    state,
-                    worker,
-                    retry_reason,
-                    status=status_snapshot,
-                    task=task,
-                ):
-                    worker["last_error_raw_ref"] = raw_ref
-                    write_activity_log(
-                        config,
-                        {
-                            "type": "worker_retry_scheduled",
-                            "provider": worker.get("provider"),
-                            "task_id": worker.get("task_id"),
-                            "message": (
-                                "Transient worker failure found during boot reconciliation; "
-                                f"retry {worker.get('retry_count')} scheduled at "
-                                f"{worker.get('next_retry_at')}: "
-                                f"{failure_summary.get('summary') or detected_reason}"
-                            ),
-                            "worker_run_id": worker.get("run_id"),
-                            "next_retry_at": worker.get("next_retry_at"),
-                            "raw_ref": raw_ref,
-                            "reason": retry_reason,
-                            "outcome": "retry",
-                        },
-                    )
-                    if expired_lease:
-                        counts["expired_lease_workers_retried"] += 1
-                    else:
-                        counts["missing_process_workers_retried"] += 1
-                    changed = True
-                    continue
-            reason = failure_summary.get("summary") or detected_reason
-            worker["last_error_raw_ref"] = raw_ref
-        elif missing_process:
-            failure_kind = "missing_process"
-            raw_ref = write_failure_evidence(
-                config,
-                worker=worker,
-                reason=reason,
-                failure_kind=failure_kind,
-            )
-
-        if missing_process or expired_lease:
-            if schedule_reconstructable_worker_retry(
-                config,
-                state,
-                worker,
-                reason,
-                status=status_snapshot,
-                task=task,
-            ):
-                write_activity_log(
-                    config,
-                    {
-                        "type": "worker_retry_scheduled",
-                        "provider": worker.get("provider"),
-                        "task_id": worker.get("task_id"),
-                        "message": (
-                            "Expired worker lease" if expired_lease else "Missing worker process"
-                        ) + (
-                            " found during boot reconciliation; "
-                            f"retry {worker.get('retry_count')} scheduled at "
-                            f"{worker.get('next_retry_at')}: {reason}"
-                        ),
-                        "worker_run_id": worker.get("run_id"),
-                        "next_retry_at": worker.get("next_retry_at"),
-                        "reason": reason,
-                        "outcome": "retry",
-                    },
-                )
-                if expired_lease:
-                    counts["expired_lease_workers_retried"] = counts.get(
-                        "expired_lease_workers_retried", 0
-                    ) + 1
-                else:
-                    counts["missing_process_workers_retried"] += 1
-                changed = True
-                continue
-
-        worker["status"] = "failed"
-        worker["last_event_at"] = utc_now()
-        worker["last_error"] = reason
-        finalize_queue_event_record(config, state, worker, "failed", reason)
-        if expired_lease:
-            counts["expired_lease_workers_failed"] += 1
-            if record_retry_exhausted_worker_terminal_outcome(
-                config,
-                worker,
-                reason=reason,
-            ):
-                counts["expired_lease_tasks_blocked"] = counts.get(
-                    "expired_lease_tasks_blocked", 0
-                ) + 1
-        else:
-            counts["missing_process_workers_failed"] += 1
-            if record_missing_worker_terminal_outcome(
-                config,
-                worker,
-                reason=reason,
-            ):
-                counts["missing_process_tasks_blocked"] += 1
-        write_activity_log(
+        if recover_lost_worker_lease(
             config,
-            {
-                "type": "worker_failed",
-                "provider": worker.get("provider"),
-                "task_id": worker.get("task_id"),
-                "message": reason,
-                "worker_run_id": run_id,
-                "reason": reason,
-                "outcome": "terminal_failure",
-            },
-        )
-        changed = True
+            state,
+            worker,
+            reason_kind=(
+                "worker_lease_expired"
+                if expired_lease
+                else "worker_process_missing"
+            ),
+            reason=reason,
+            status=status_snapshot,
+        ):
+            counts["missing_process_workers_reassigned"] += 1
+            changed = True
+        continue
 
     queue_records = state.setdefault("queue", {}).setdefault("events", {})
     queued_events = queue_events(state)
@@ -11682,6 +12399,7 @@ def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> 
             record["error"] = "Started queue record had no active worker and task is no longer redispatchable."
             counts["started_queue_records_failed"] += 1
         changed = True
+    changed = reconcile_pending_worker_recoveries(config, state) or changed
     corrective_counts = {
         key: counts[key]
         for key in (
@@ -12041,6 +12759,12 @@ def task_execution_dispatch_candidate(
     could actually be queued.
     """
 
+    if task_has_pending_worker_recovery(task):
+        # The receipt transaction already fenced the lost generation.  Do not
+        # let the ordinary planner redispatch the incumbent while fallback
+        # eligibility/capacity is still unresolved.
+        return None
+
     dispatch_settings = settings or ready_dispatch_settings(config)
     review_statuses = normalized_status_set(
         dispatch_settings.get("review_statuses"),
@@ -12347,6 +13071,52 @@ def task_generation(task: Mapping[str, Any] | None) -> int:
     return generation if generation >= 1 else 0
 
 
+def task_review_requeue_intent(
+    task: Mapping[str, Any] | None,
+) -> dict[str, Any] | None:
+    """Return the current canonical reopen outbox row, or fail closed.
+
+    The task row is the durable producer side of the outbox.  Runtime queue
+    reservation uses ``intent_id`` as part of its event key, so replay after a
+    crash is harmless and a later reopen cannot be mistaken for the old one.
+    """
+
+    if not isinstance(task, Mapping):
+        return None
+    raw = task.get(REVIEW_REQUEUE_INTENT_KEY)
+    if not isinstance(raw, Mapping):
+        return None
+    intent = dict(raw)
+    required = {
+        "schema_version",
+        "intent_id",
+        "status",
+        "task_id",
+        "task_generation",
+        "owner",
+        "reviewer",
+        "reopened_at",
+        "reopened_by",
+        "reason",
+    }
+    try:
+        intent_generation = int(intent.get("task_generation") or 0)
+    except (TypeError, ValueError):
+        return None
+    if (
+        set(intent) != required
+        or intent.get("schema_version") != REVIEW_REQUEUE_INTENT_SCHEMA_VERSION
+        or str(intent.get("status") or "") != "pending"
+        or not str(intent.get("intent_id") or "").startswith("review-requeue-")
+        or str(intent.get("task_id") or "") != str(task.get("id") or "")
+        or intent_generation != task_generation(task)
+        or str(intent.get("owner") or "") != str(task.get("owner") or "")
+        or str(intent.get("reviewer") or "") != str(task.get("reviewer") or "")
+    ):
+        return None
+    return deepcopy(intent)
+
+
 def task_review_reopen_revision(
     task: Mapping[str, Any] | None,
     activity_events: list[dict[str, Any]] | None = None,
@@ -12397,6 +13167,7 @@ def ready_dispatch_signature(
     activity_events: list[dict[str, Any]] | None = None,
     config: dict[str, Any] | None = None,
 ) -> str:
+    requeue_intent = task_review_requeue_intent(task)
     return json.dumps(
         {
             "delivery_binding_digest": rewrite_task_machine.delivery_binding_digest(task),
@@ -12406,6 +13177,9 @@ def ready_dispatch_signature(
             "reason": reason,
             "review_reopen_revision": task_review_reopen_revision(
                 task, activity_events=activity_events, config=config
+            ),
+            "review_requeue_intent_id": (
+                requeue_intent.get("intent_id") if requeue_intent else None
             ),
             "reviewer": task.get("reviewer"),
             "execution_resources": task_execution_resources(task),
@@ -12436,6 +13210,7 @@ def build_dispatch_event(
     reopen_revision = task_review_reopen_revision(
         task, activity_events=activity_events, config=config
     )
+    requeue_intent = task_review_requeue_intent(task)
     task_payload = {
         "id": task.get("id"),
         "generation": task_generation(task),
@@ -12488,6 +13263,18 @@ def build_dispatch_event(
             task_payload[key] = task.get(key)
     if reopen_revision > 0:
         task_payload["review_reopen_revision"] = reopen_revision
+    if requeue_intent is not None:
+        task_payload[REVIEW_REQUEUE_INTENT_KEY] = deepcopy(requeue_intent)
+    recovery_pointer = task.get(WORKER_RECOVERY_TASK_KEY)
+    recovery_receipt_id = (
+        str(recovery_pointer.get("receipt_id") or "")
+        if isinstance(recovery_pointer, Mapping)
+        and str(recovery_pointer.get("status") or "")
+        in {"reassigned", "materialized"}
+        else ""
+    )
+    if recovery_receipt_id:
+        task_payload[WORKER_RECOVERY_TASK_KEY] = deepcopy(dict(recovery_pointer))
     signature = ready_dispatch_signature(
         task, reason, task_lookup, activity_events=activity_events, config=config
     )
@@ -12501,6 +13288,10 @@ def build_dispatch_event(
     }
     if reopen_revision > 0:
         event["review_reopen_revision"] = reopen_revision
+    if requeue_intent is not None:
+        event["review_requeue_intent_id"] = requeue_intent["intent_id"]
+    if recovery_receipt_id:
+        event["recovery_receipt_id"] = recovery_receipt_id
     return event
 
 
@@ -12595,6 +13386,19 @@ def evaluate_dispatch_candidate(
     event["provider"] = admission.provider_id
     if event["key"] in pending_event_keys:
         return reject("duplicate_event", "The exact delivery intent already exists")
+
+    if (
+        task_review_requeue_intent(task) is not None
+        and event["key"] in seen_event_keys
+    ):
+        # Reopen is a canonical transactional-outbox row, not an ordinary
+        # unchanged-task poll.  Queue append and this consumer offset share
+        # one runtime transaction, so a crash/restart must never materialize
+        # the same reopen intent twice even when the general cooldown is zero.
+        return reject(
+            "review_requeue_already_materialized",
+            "The canonical review-requeue intent was already materialized",
+        )
 
     # A terminal (completed/failed) queue record with this exact key only
     # proves a delivery attempt was made, not that the reviewer recorded a
@@ -13156,6 +13960,30 @@ def reserve_dispatch_plan(
             event["context_files"] = worker_execution_context_files(task_id)
         if not _queue_delivery_event_locked(config, state, event):
             continue
+        recovery_receipt_id = str(event.get("recovery_receipt_id") or "")
+        if recovery_receipt_id:
+            for queued_event_id, queued_record in (
+                state.get("queue", {}).get("events", {}) or {}
+            ).items():
+                intent = (
+                    queued_record.get("intent")
+                    if isinstance(queued_record, Mapping)
+                    else None
+                )
+                if not isinstance(intent, Mapping) or str(
+                    intent.get("event_key") or ""
+                ) != event_key:
+                    continue
+                queued_record["recovery_receipt_id"] = recovery_receipt_id
+                runtime_receipt = state.setdefault(
+                    WORKER_RECOVERY_RECEIPTS_KEY, {}
+                ).get(recovery_receipt_id)
+                if isinstance(runtime_receipt, dict):
+                    runtime_receipt["runtime_status"] = "queued"
+                    replacement = runtime_receipt.get("replacement")
+                    if isinstance(replacement, dict):
+                        replacement["queue_event_id"] = queued_event_id
+                break
         pending_keys.add(event_key)
         pending_task_ids.add(task_id)
         pending_pairs.add((task_id, agent_id))

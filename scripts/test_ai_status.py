@@ -5220,6 +5220,12 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
         task = ai_status.get_task(self.state, "REG-002")
         self.assertEqual(task["status"], "in_progress")
         self.assertNotIn("failure_streak", task)
+        intent = task[ai_status.REVIEW_REQUEUE_INTENT_KEY]
+        self.assertEqual(intent["status"], "pending")
+        self.assertEqual(intent["task_id"], "REG-002")
+        self.assertEqual(intent["task_generation"], int(task.get("generation", 1)))
+        self.assertTrue(intent["intent_id"].startswith("review-requeue-"))
+        self.assertEqual(intent["reopened_by"], "Claude")
         pending = [handoff for handoff in self.state["handoffs"] if handoff["status"] != "done"]
         self.assertEqual(len(pending), 1)
         self.assertEqual(pending[0]["from"], "Claude")

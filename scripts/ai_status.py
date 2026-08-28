@@ -150,6 +150,8 @@ STATUS_ARCHIVE_OUTBOX_SCHEMA_VERSION = task_archive_module.STATUS_ARCHIVE_OUTBOX
 TERMINAL_FACTS_KEY = "terminal_facts"
 ARCHIVE_RECEIPTS_KEY = "archive_receipts"
 ARCHIVE_RECEIPT_SCHEMA_VERSION = 1
+REVIEW_REQUEUE_INTENT_KEY = "review_requeue_intent"
+REVIEW_REQUEUE_INTENT_SCHEMA_VERSION = 1
 SUPERVISOR_DISPATCH_BATCH_SCHEMA_VERSION = 1
 SUPERVISOR_DISPATCH_BATCH_MAX_MUTATIONS = 64
 SUPERVISOR_DISPATCH_BATCH_COMMAND = "supervisor-dispatch-batch"
@@ -5987,6 +5989,27 @@ def command_reopen(state: dict[str, Any], args: list[str]) -> None:
     ).strip()
     timestamp = iso_now()
     apply_task_lifecycle_transition(task, "reopen")
+    generation = max(1, int(task.get("generation", 1) or 1))
+    requeue_basis = {
+        "schema_version": REVIEW_REQUEUE_INTENT_SCHEMA_VERSION,
+        "task_id": task_id,
+        "task_generation": generation,
+        "owner": owner,
+        "reviewer": reviewer,
+        "reopened_at": timestamp,
+        "reopened_by": actor,
+        "reason": message,
+    }
+    requeue_intent = {
+        **requeue_basis,
+        "intent_id": "review-requeue-" + _canonical_json_sha256(requeue_basis),
+        "status": "pending",
+    }
+    # The canonical task row and its activity outbox are committed by the same
+    # TaskStore transaction in ``main``.  The supervisor materializes this
+    # immutable intent into the runtime queue with the intent id as its
+    # idempotency key; a crash on either side can therefore replay safely.
+    task[REVIEW_REQUEUE_INTENT_KEY] = deepcopy(requeue_intent)
     task["last_update"] = timestamp
     task["next"] = message
     task.pop("waiting_for", None)
@@ -6019,6 +6042,7 @@ def command_reopen(state: dict[str, Any], args: list[str]) -> None:
             "type": "reopen",
             "task_id": task_id,
             "message": message,
+            REVIEW_REQUEUE_INTENT_KEY: deepcopy(requeue_intent),
             **local_human_ops_audit_fields(),
             **(
                 {GITHUB_REVIEW_BRIDGE_KEY: dict(github_review_bridge)}
@@ -6129,6 +6153,7 @@ def command_handoff(state: dict[str, Any], args: list[str]) -> None:
         raise SystemExit(f"{task_id} review admission returned no evidence manifest identity")
     timestamp = iso_now()
     apply_task_lifecycle_transition(task, "handoff")
+    task.pop(REVIEW_REQUEUE_INTENT_KEY, None)
     task["last_update"] = timestamp
     task["next"] = message
     task[DELIVERY_BINDING_KEY] = deepcopy(binding)
