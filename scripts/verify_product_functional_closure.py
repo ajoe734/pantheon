@@ -43,6 +43,27 @@ DEFAULT_EVIDENCE_DIR = (
 
 SHA40_RE = re.compile(r"^[0-9a-f]{40}$")
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+OCI_IMAGE_ID_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
+BACKEND_COMPONENT_RECEIPT_SCHEMA = (
+    "pantheon.deployment.backend_required_components_receipt.v1"
+)
+BFF_IMAGE_REQUIRED_COMPONENTS = frozenset(
+    {
+        "operator-bff",
+        "agora-interaction-worker",
+        "loop-run-projector-scheduler",
+    }
+)
+BACKEND_COMPONENT_FAILURE_KEYS = frozenset(
+    {
+        "missing",
+        "duplicates",
+        "not_running_or_restarted",
+        "unhealthy",
+        "wrong_sha",
+        "identity_errors",
+    }
+)
 
 logger = logging.getLogger("verify_product_functional_closure")
 Transport = Callable[[str, float], tuple[int, Mapping[str, Any]]]
@@ -119,6 +140,14 @@ ALLOWED_PRODUCER_WORKFLOWS: dict[str, tuple[str, ...]] = {
         "nonprod-deploy.yml",
         ".github/workflows/branch-ci.yml",
         "branch-ci.yml",
+    ),
+    "backend_components": (
+        ".github/workflows/nonprod-deploy.yml",
+        "nonprod-deploy.yml",
+        ".github/workflows/branch-ci.yml",
+        "branch-ci.yml",
+        ".github/workflows/pantheon-integration-gate.yml",
+        "pantheon-integration-gate.yml",
     ),
 }
 
@@ -244,6 +273,7 @@ class AcceptanceConfig:
     rollback_evidence: Optional[Path] = None
     source_runtime_evidence: Optional[Path] = None
     paper_runtime_evidence: Optional[Path] = None
+    backend_components_evidence: Optional[Path] = None
     code_disposition_path: Optional[Path] = None
     bff_base_url: str = DEFAULT_DEV_BFF_URL
     fe_base_url: str = DEFAULT_DEV_FE_URL
@@ -307,6 +337,15 @@ class AcceptanceConfig:
                 self.source_runtime_evidence = self.evidence_dir / "source-runtime-evidence.json"
             if self.paper_runtime_evidence is None and (self.evidence_dir / "paper-runtime-evidence.json").exists():
                 self.paper_runtime_evidence = self.evidence_dir / "paper-runtime-evidence.json"
+            if self.backend_components_evidence is None:
+                for cand in (
+                    "backend-components-evidence.json",
+                    "backend-components-receipt.json",
+                    "backend-required-components-receipt.json",
+                ):
+                    if (self.evidence_dir / cand).exists():
+                        self.backend_components_evidence = self.evidence_dir / cand
+                        break
             if self.rollback_evidence is None and (self.evidence_dir / "rollback-evidence.json").exists():
                 self.rollback_evidence = self.evidence_dir / "rollback-evidence.json"
             if self.restart_evidence is None and (self.evidence_dir / "restart-evidence.json").exists():
@@ -694,6 +733,218 @@ class ProductFunctionalClosureVerifier:
                 f"deploymentState={deployment_state!r}, profile={profile!r} is not accepted read-only",
             )
 
+        if not self.config.backend_components_evidence:
+            raise ProductFunctionalClosureAcceptanceError(
+                "gate_01.missing_backend_components_evidence",
+                "--backend-components-evidence is required and must be provided",
+            )
+        backend_components_data = self._load_evidence(
+            "backend_components", self.config.backend_components_evidence
+        )
+        schema = backend_components_data.get("schema_version")
+        if schema != BACKEND_COMPONENT_RECEIPT_SCHEMA:
+            raise ProductFunctionalClosureAcceptanceError(
+                "gate_01.backend_components_schema",
+                f"invalid backend components receipt schema: {schema!r}",
+            )
+        receipt_expected_sha = backend_components_data.get("expected_sha")
+        if receipt_expected_sha != self.config.expected_bff_sha:
+            raise ProductFunctionalClosureAcceptanceError(
+                "gate_01.backend_components_sha",
+                f"backend components receipt SHA {receipt_expected_sha!r} != expected {self.config.expected_bff_sha}",
+            )
+        if backend_components_data.get("deploy_source_sha") != self.config.expected_bff_sha:
+            raise ProductFunctionalClosureAcceptanceError(
+                "gate_01.backend_components_deploy_source_sha",
+                "backend components receipt deploy_source_sha does not match the expected BFF SHA",
+            )
+        deployment_component = backend_components_data.get("deployment_component")
+        if deployment_component not in {"root", "bff"}:
+            raise ProductFunctionalClosureAcceptanceError(
+                "gate_01.backend_components_deployment_component",
+                "backend components receipt must bind deployment_component to 'root' or 'bff'",
+            )
+        if backend_components_data.get("all_passed") is not True:
+            raise ProductFunctionalClosureAcceptanceError(
+                "gate_01.backend_components_all_passed",
+                "backend components receipt does not declare all_passed=true",
+            )
+
+        required_services_value = backend_components_data.get("required_services")
+        if not isinstance(required_services_value, list) or not required_services_value:
+            raise ProductFunctionalClosureAcceptanceError(
+                "gate_01.backend_components_required_services",
+                "backend components receipt must declare a non-empty required_services list",
+            )
+        if any(not isinstance(item, str) or not item for item in required_services_value):
+            raise ProductFunctionalClosureAcceptanceError(
+                "gate_01.backend_components_required_services",
+                "backend components receipt required_services contains an empty or non-string identity",
+            )
+        required_services = set(required_services_value)
+        if len(required_services) != len(required_services_value):
+            raise ProductFunctionalClosureAcceptanceError(
+                "gate_01.backend_components_required_services",
+                "backend components receipt required_services contains duplicates",
+            )
+        missing_bff_components = sorted(
+            BFF_IMAGE_REQUIRED_COMPONENTS - required_services
+        )
+        if missing_bff_components:
+            raise ProductFunctionalClosureAcceptanceError(
+                "gate_01.backend_components_required_services",
+                "backend components receipt omits required BFF-image component(s): "
+                + ", ".join(missing_bff_components),
+            )
+
+        services_map = _mapping(
+            backend_components_data.get("services", {}),
+            "gate_01.backend_components.services",
+        )
+        if not services_map:
+            raise ProductFunctionalClosureAcceptanceError(
+                "gate_01.backend_components_empty",
+                "backend components receipt declares empty services map",
+            )
+        observed_services = set(services_map)
+        if observed_services != required_services:
+            missing_services = sorted(required_services - observed_services)
+            unexpected_services = sorted(observed_services - required_services)
+            raise ProductFunctionalClosureAcceptanceError(
+                "gate_01.backend_components_incomplete",
+                "backend components receipt service set is incomplete or unexpected: "
+                f"missing={missing_services}, unexpected={unexpected_services}",
+            )
+        total_services = backend_components_data.get("total_services")
+        if type(total_services) is not int or total_services != len(required_services):
+            raise ProductFunctionalClosureAcceptanceError(
+                "gate_01.backend_components_total_services",
+                f"backend components receipt total_services={total_services!r} "
+                f"does not match required service count {len(required_services)}",
+            )
+
+        failures = _mapping(
+            backend_components_data.get("verification_failures"),
+            "gate_01.backend_components.verification_failures",
+        )
+        if set(failures) != BACKEND_COMPONENT_FAILURE_KEYS:
+            raise ProductFunctionalClosureAcceptanceError(
+                "gate_01.backend_components_verification_failures",
+                "backend components receipt verification_failures keys are incomplete",
+            )
+        for failure_kind, failure_entries in failures.items():
+            if not isinstance(failure_entries, list):
+                raise ProductFunctionalClosureAcceptanceError(
+                    "gate_01.backend_components_verification_failures",
+                    f"verification_failures.{failure_kind} must be a list",
+                )
+            if failure_entries:
+                raise ProductFunctionalClosureAcceptanceError(
+                    "gate_01.backend_components_verification_failures",
+                    f"verification_failures.{failure_kind} is not empty: {failure_entries}",
+                )
+
+        for svc_name, svc_info in services_map.items():
+            svc_dict = _mapping(
+                svc_info, f"gate_01.backend_components.{svc_name}"
+            )
+            if svc_dict.get("service") != svc_name:
+                raise ProductFunctionalClosureAcceptanceError(
+                    f"gate_01.backend_components.{svc_name}.service",
+                    f"service identity {svc_dict.get('service')!r} does not match key {svc_name!r}",
+                )
+            for identity_field in ("container_id", "image"):
+                identity_value = svc_dict.get(identity_field)
+                if not isinstance(identity_value, str) or not identity_value:
+                    raise ProductFunctionalClosureAcceptanceError(
+                        f"gate_01.backend_components.{svc_name}.{identity_field}",
+                        f"service {svc_name} is missing {identity_field} identity",
+                    )
+            status = svc_dict.get("status")
+            if status != "running":
+                raise ProductFunctionalClosureAcceptanceError(
+                    f"gate_01.backend_components.{svc_name}.status",
+                    f"service {svc_name} status is {status!r}, must be 'running'",
+                )
+            health = svc_dict.get("health")
+            if health not in {"healthy", "not_configured"}:
+                raise ProductFunctionalClosureAcceptanceError(
+                    f"gate_01.backend_components.{svc_name}.health",
+                    f"service {svc_name} health is {health!r}, must be healthy or explicitly not_configured",
+                )
+            image_id = svc_dict.get("image_id")
+            compose_image_id = svc_dict.get("compose_image_id")
+            if not isinstance(image_id, str) or not OCI_IMAGE_ID_RE.fullmatch(image_id):
+                raise ProductFunctionalClosureAcceptanceError(
+                    f"gate_01.backend_components.{svc_name}.image_id",
+                    f"service {svc_name} has invalid container image ID {image_id!r}",
+                )
+            if compose_image_id != image_id:
+                raise ProductFunctionalClosureAcceptanceError(
+                    f"gate_01.backend_components.{svc_name}.compose_image_id",
+                    f"service {svc_name} Compose image ID {compose_image_id!r} != container image ID {image_id!r}",
+                )
+            if svc_dict.get("matches_expected_image") is not True:
+                raise ProductFunctionalClosureAcceptanceError(
+                    f"gate_01.backend_components.{svc_name}.matches_expected_image",
+                    f"service {svc_name} does not declare matches_expected_image=true",
+                )
+            if svc_dict.get("source_revision") != self.config.expected_bff_sha:
+                raise ProductFunctionalClosureAcceptanceError(
+                    f"gate_01.backend_components.{svc_name}.source_revision",
+                    f"service {svc_name} source_revision does not match the expected BFF SHA",
+                )
+            source_identity_method = svc_dict.get("source_identity_method")
+            if source_identity_method not in {
+                "oci_revision",
+                "deploy_checkout_and_compose_image_id",
+            }:
+                raise ProductFunctionalClosureAcceptanceError(
+                    f"gate_01.backend_components.{svc_name}.source_identity_method",
+                    f"service {svc_name} has unsupported source identity method {source_identity_method!r}",
+                )
+            rev = svc_dict.get("image_revision")
+            if rev is not None and rev != self.config.expected_bff_sha:
+                raise ProductFunctionalClosureAcceptanceError(
+                    f"gate_01.backend_components.{svc_name}.revision",
+                    f"service {svc_name} image revision {rev!r} != expected {self.config.expected_bff_sha}",
+                )
+            if source_identity_method == "oci_revision" and (
+                rev != self.config.expected_bff_sha
+                or svc_dict.get("matches_expected_sha") is not True
+            ):
+                raise ProductFunctionalClosureAcceptanceError(
+                    f"gate_01.backend_components.{svc_name}.matches_expected_sha",
+                    f"service {svc_name} OCI revision does not prove the expected BFF SHA",
+                )
+            if source_identity_method == "deploy_checkout_and_compose_image_id" and (
+                rev is not None or svc_dict.get("matches_expected_sha") is not None
+            ):
+                raise ProductFunctionalClosureAcceptanceError(
+                    f"gate_01.backend_components.{svc_name}.matches_expected_sha",
+                    f"service {svc_name} fallback source identity must not claim an OCI revision match",
+                )
+            restart_count = svc_dict.get("restart_count")
+            if type(restart_count) is not int or restart_count != 0:
+                raise ProductFunctionalClosureAcceptanceError(
+                    f"gate_01.backend_components.{svc_name}.restart_count",
+                    f"service {svc_name} restart_count is {restart_count!r}, must be 0",
+                )
+            command = svc_dict.get("command")
+            if not isinstance(command, (list, str)) or not command:
+                raise ProductFunctionalClosureAcceptanceError(
+                    f"gate_01.backend_components.{svc_name}.command",
+                    f"service {svc_name} is missing command identity",
+                )
+        backend_components_result = {
+            "verified_services_count": len(services_map),
+            "required_services_count": len(required_services),
+            "all_running": True,
+            "receipt_observed_at": backend_components_data.get("observed_at"),
+            "deployment_component": deployment_component,
+            "services": list(services_map.keys()),
+        }
+
         return {
             "observed_frontend_sha": fe_sha,
             "observed_manifest_bff_sha": manifest_bff_sha,
@@ -703,6 +954,7 @@ class ProductFunctionalClosureVerifier:
             "profile": profile,
             "build_mode": build,
             "config_posture": posture,
+            "backend_components": backend_components_result,
         }
 
     def verify_gate_02_source_manual_only_readiness(self) -> dict[str, Any]:
@@ -1488,6 +1740,12 @@ def main(
     parser.add_argument("--rollback-evidence", type=Path)
     parser.add_argument("--source-runtime-evidence", type=Path)
     parser.add_argument("--paper-runtime-evidence", type=Path)
+    parser.add_argument(
+        "--backend-components-evidence",
+        "--backend-components-receipt",
+        type=Path,
+        dest="backend_components_evidence",
+    )
     parser.add_argument("--code-disposition", type=Path)
     parser.add_argument("--evidence-dir", type=Path)
     parser.add_argument("--max-evidence-age-seconds", type=int, default=21600)
@@ -1513,6 +1771,7 @@ def main(
         rollback_evidence=args.rollback_evidence,
         source_runtime_evidence=args.source_runtime_evidence,
         paper_runtime_evidence=args.paper_runtime_evidence,
+        backend_components_evidence=args.backend_components_evidence,
         code_disposition_path=args.code_disposition,
         bff_base_url=args.bff_url.rstrip("/"),
         fe_base_url=args.fe_url.rstrip("/"),

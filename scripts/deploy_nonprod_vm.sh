@@ -604,6 +604,9 @@ ssh_bash() {
   command_prefix+=" PANTHEON_DEPLOY_PROJECT_ID=$(shell_quote "$PROJECT_ID")"
   command_prefix+=" PANTHEON_REMOTE_DIR=$(shell_quote "$remote_dir")"
   command_prefix+=" PANTHEON_DEPLOY_WORKTREE_ROOT=$(shell_quote "${PANTHEON_DEPLOY_WORKTREE_ROOT:-}")"
+  command_prefix+=" PANTHEON_DEPLOY_RECEIPT_ROOT=$(shell_quote "${PANTHEON_DEPLOY_RECEIPT_ROOT:-}")"
+  command_prefix+=" PANTHEON_BACKEND_COMPONENTS_RECEIPT_PATH=$(shell_quote "${PANTHEON_BACKEND_COMPONENTS_RECEIPT_PATH:-}")"
+  command_prefix+=" PANTHEON_DEV_FRONTEND_SHA=$(shell_quote "${PANTHEON_DEV_FRONTEND_SHA:-${FRONTEND_SHA:-}}")"
   command_prefix+=" PANTHEON_DEV_ROLLBACK_BACKEND_SHA=$(shell_quote "${DEV_ROLLBACK_BACKEND_SHA:-}")"
   command_prefix+=" PANTHEON_GITHUB_TOKEN=$(shell_quote "${GITHUB_TOKEN:-}")"
   command_prefix+=" PANTHEON_ALLOW_DIRTY_DEPLOY=$(shell_quote "$ALLOW_DIRTY")"
@@ -870,6 +873,7 @@ REQUIRED_LOOP_WORKERS=(
   training-session-preview-worker
   # agora_interaction_evidence
   policy-learning-svc
+  agora-interaction-worker
   # human_imitation_shadow_evaluation
   policy-learning-shadow-eval-scheduler
   # consultation
@@ -2135,6 +2139,18 @@ dump_dev_root_failure_diagnostics() {
       'status={{.State.Status}} restart_count={{.RestartCount}} health={{if .State.Health}}{{.State.Health.Status}}{{else}}not_configured{{end}} exit_code={{.State.ExitCode}} oom_killed={{.State.OOMKilled}} error={{json .State.Error}}' \
       "$search_container_id" || true
   fi
+  info "agora-interaction-worker service logs after failure"
+  docker compose -p pantheon -f docker-compose.yml logs --no-color --tail=240 agora-interaction-worker || true
+  local agora_container_id=""
+  agora_container_id="$(
+    docker compose -p pantheon -f docker-compose.yml ps -a -q agora-interaction-worker 2>/dev/null || true
+  )"
+  if [[ -n "$agora_container_id" ]]; then
+    info "agora-interaction-worker container restart and health state after failure"
+    docker inspect --format \
+      'status={{.State.Status}} restart_count={{.RestartCount}} health={{if .State.Health}}{{.State.Health.Status}}{{else}}not_configured{{end}} exit_code={{.State.ExitCode}} oom_killed={{.State.OOMKilled}} error={{json .State.Error}}' \
+      "$agora_container_id" || true
+  fi
   info "evolution daily sweep scheduler logs after failure"
   docker compose -p pantheon -f docker-compose.yml logs --no-color --tail=120 evolution-daily-sweep-scheduler || true
   info "operator-bff logs after failure"
@@ -2294,6 +2310,293 @@ assert int(payload.get("total_sweeps_run") or 0) >= 1
   printf '%s\n' "$logs"
   printf '%s\n' "$status"
   return 1
+}
+
+verify_exact_component_deployment() {
+  local target_services=("$@")
+  local expected_sha="${GIT_SHA:-${PANTHEON_DEPLOY_SHA:-${DEPLOY_SHA:-}}}"
+  local expected_frontend_sha="${PANTHEON_DEV_FRONTEND_SHA:-${PANTHEON_FE_SHA:-}}"
+  local deploy_environment="${PANTHEON_DEPLOY_ENV:-dev}"
+  local deploy_component="${PANTHEON_DEPLOY_COMPONENT:-root}"
+  local bff_url="${PANTHEON_BFF_BASE_URL:-https://${PANTHEON_DEV_BFF_PUBLIC_HOST:-pantheon-lupin-dev-bff.35.201.204.12.sslip.io}}"
+  local fe_url="${PANTHEON_FE_BASE_URL:-https://${PANTHEON_DEV_FE_PUBLIC_HOST:-pantheon-lupin-dev-fe.35.201.204.12.sslip.io}}"
+  local receipt_root="${PANTHEON_DEPLOY_RECEIPT_ROOT:-${HOME}/pantheon-ci-deploy/deployment-receipts}"
+  local receipt_path="${PANTHEON_BACKEND_COMPONENTS_RECEIPT_PATH:-${receipt_root}/${deploy_environment}/${deploy_component}/backend-components-receipt.json}"
+  local missing=() restarting=() unhealthy=() wrong_sha=() duplicates=() identity_errors=()
+  local now deploy_checkout_sha
+  now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+  if (( ${#target_services[@]} == 0 )); then
+    target_services=("${REQUIRED_LOOP_WORKERS[@]}")
+  fi
+
+  if [[ ! "$expected_sha" =~ ^[0-9a-f]{40}$ ]]; then
+    printf '[remote-deploy] exact component verification requires a full backend SHA (got %s)\n' "${expected_sha:-empty}" >&2
+    return 1
+  fi
+  if [[ ! "$expected_frontend_sha" =~ ^[0-9a-f]{40}$ ]]; then
+    printf '[remote-deploy] exact component verification requires a full frontend SHA (got %s)\n' "${expected_frontend_sha:-empty}" >&2
+    return 1
+  fi
+  deploy_checkout_sha="$(git rev-parse HEAD 2>/dev/null || true)"
+  if [[ "$deploy_checkout_sha" != "$expected_sha" ]]; then
+    printf '[remote-deploy] deploy checkout SHA %s does not match expected backend SHA %s\n' "${deploy_checkout_sha:-missing}" "$expected_sha" >&2
+    return 1
+  fi
+
+  local service
+  declare -A seen_target_services=()
+  for service in "${target_services[@]}"; do
+    if [[ -z "$service" || -n "${seen_target_services[$service]:-}" ]]; then
+      printf '[remote-deploy] exact component verification received an empty or duplicate service name: %s\n' "${service:-<empty>}" >&2
+      return 1
+    fi
+    seen_target_services["$service"]=1
+  done
+
+  info "verifying exact deployment and running state for ${#target_services[@]} component(s); expected_sha=${expected_sha}"
+
+  local container_ids container_id status restart_count health image image_id compose_image_id image_rev cmd entry_json
+  local receipt_entries=()
+
+  # Bounded stabilization loop for services starting up
+  local attempt max_attempts=15
+  for attempt in $(seq 1 $max_attempts); do
+    missing=()
+    duplicates=()
+    restarting=()
+    unhealthy=()
+    wrong_sha=()
+    identity_errors=()
+    receipt_entries=()
+    local has_starting=false
+
+    for service in "${target_services[@]}"; do
+      container_ids="$(
+        docker compose -p pantheon -f docker-compose.yml ps -a -q "$service" 2>/dev/null || true
+      )"
+      if [[ -z "$container_ids" ]]; then
+        missing+=("$service")
+        continue
+      fi
+      local count
+      count="$(wc -w <<<"$container_ids")"
+      if (( count > 1 )); then
+        duplicates+=("$service (${count} containers)")
+      fi
+      container_id="$(head -n1 <<<"$container_ids" | tr -d ' ')"
+
+      status="$(docker inspect --format '{{.State.Status}}' "$container_id" 2>/dev/null || true)"
+      restart_count="$(docker inspect --format '{{.RestartCount}}' "$container_id" 2>/dev/null || true)"
+      health="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}not_configured{{end}}' "$container_id" 2>/dev/null || true)"
+      image="$(docker inspect --format '{{.Config.Image}}' "$container_id" 2>/dev/null || true)"
+      image_id="$(docker inspect --format '{{.Image}}' "$container_id" 2>/dev/null || true)"
+      compose_image_id="$(docker compose -p pantheon -f docker-compose.yml images -q "$service" 2>/dev/null || true)"
+      image_rev="$(docker inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$container_id" 2>/dev/null || true)"
+      cmd="$(docker inspect --format '{{json .Config.Cmd}}' "$container_id" 2>/dev/null || true)"
+
+      if [[ "$status" != "running" ]]; then
+        restarting+=("${service}: status=${status}, restart_count=${restart_count}")
+      fi
+      if [[ ! "$restart_count" =~ ^[0-9]+$ || "$restart_count" != "0" ]]; then
+        restarting+=("${service}: restart_count=${restart_count:-unknown}")
+      fi
+      if [[ "$health" == "starting" ]]; then
+        has_starting=true
+      elif [[ "$health" != "healthy" && "$health" != "not_configured" ]]; then
+        unhealthy+=("${service}: health=${health}")
+      fi
+      if [[ -z "$image" ]]; then
+        identity_errors+=("${service}: image identity is missing")
+      fi
+      if [[ ! "$image_id" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+        identity_errors+=("${service}: container image ID is invalid (${image_id:-missing})")
+      fi
+      if [[ ! "$compose_image_id" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+        identity_errors+=("${service}: Compose image ID is invalid (${compose_image_id:-missing})")
+      elif [[ "$image_id" != "$compose_image_id" ]]; then
+        identity_errors+=("${service}: container image ID ${image_id:-missing} != Compose image ID ${compose_image_id}")
+      fi
+      if [[ -n "$image_rev" && "$image_rev" != "<no value>" && "$image_rev" != "unknown" && "$image_rev" != "$expected_sha" ]]; then
+        wrong_sha+=("${service}: image_rev=${image_rev:-missing} != expected=${expected_sha}")
+      fi
+
+      if ! entry_json="$(python3 -c '
+import json, sys
+service, cid, img, image_id, compose_image_id, rev, stat, rcount, hlth, cmd_json, exp_sha = sys.argv[1:12]
+try:
+    cmd_val = json.loads(cmd_json)
+except Exception as exc:
+    raise SystemExit(f"invalid command JSON for {service}: {exc}")
+if not cmd_val:
+    raise SystemExit(f"empty command identity for {service}")
+if not rcount.isdigit():
+    raise SystemExit(f"invalid restart count for {service}: {rcount!r}")
+print(json.dumps({
+    "service": service,
+    "container_id": cid,
+    "image": img,
+    "image_id": image_id,
+    "compose_image_id": compose_image_id,
+    "image_revision": rev if rev not in ("", "<no value>", "unknown") else None,
+    "source_revision": exp_sha,
+    "source_identity_method": "oci_revision" if rev == exp_sha else "deploy_checkout_and_compose_image_id",
+    "status": stat,
+    "restart_count": int(rcount),
+    "health": hlth,
+    "command": cmd_val,
+    "matches_expected_sha": rev == exp_sha if rev not in ("", "<no value>", "unknown") else None,
+    "matches_expected_image": image_id == compose_image_id,
+}))
+' "$service" "$container_id" "$image" "$image_id" "$compose_image_id" "$image_rev" "$status" "$restart_count" "$health" "$cmd" "$expected_sha")"; then
+        identity_errors+=("${service}: receipt identity serialization failed")
+        continue
+      fi
+      receipt_entries+=("$entry_json")
+    done
+
+    if [[ "$has_starting" == "true" ]] && (( attempt < max_attempts )); then
+      sleep 2
+      continue
+    fi
+    break
+  done
+
+  if (( ${#receipt_entries[@]} != ${#target_services[@]} )); then
+    identity_errors+=("receipt entries=${#receipt_entries[@]} required=${#target_services[@]}")
+  fi
+
+  local verification_status="passed"
+  if (( ${#missing[@]} > 0 || ${#duplicates[@]} > 0 || ${#restarting[@]} > 0 || ${#unhealthy[@]} > 0 || ${#wrong_sha[@]} > 0 || ${#identity_errors[@]} > 0 )); then
+    verification_status="failed"
+  fi
+
+  local required_services_json receipt_entries_json failures_json
+  required_services_json="$(printf '%s\n' "${target_services[@]}" | python3 -c 'import json,sys; print(json.dumps([line.rstrip("\n") for line in sys.stdin if line.rstrip("\n")]))')" \
+    || { printf '[remote-deploy] unable to serialize required service identities\n' >&2; return 1; }
+  receipt_entries_json="$(printf '%s\n' "${receipt_entries[@]}" | python3 -c 'import json,sys; print(json.dumps([json.loads(line) for line in sys.stdin if line.strip()]))')" \
+    || { printf '[remote-deploy] unable to serialize component receipt entries\n' >&2; return 1; }
+  failures_json="$(python3 -c '
+import json, sys
+keys = ("missing", "duplicates", "not_running_or_restarted", "unhealthy", "wrong_sha", "identity_errors")
+values = [json.loads(value) for value in sys.argv[1:]]
+print(json.dumps(dict(zip(keys, values))))
+' \
+    "$(printf '%s\n' "${missing[@]}" | python3 -c 'import json,sys; print(json.dumps([line.rstrip("\n") for line in sys.stdin if line.rstrip("\n")]))')" \
+    "$(printf '%s\n' "${duplicates[@]}" | python3 -c 'import json,sys; print(json.dumps([line.rstrip("\n") for line in sys.stdin if line.rstrip("\n")]))')" \
+    "$(printf '%s\n' "${restarting[@]}" | python3 -c 'import json,sys; print(json.dumps([line.rstrip("\n") for line in sys.stdin if line.rstrip("\n")]))')" \
+    "$(printf '%s\n' "${unhealthy[@]}" | python3 -c 'import json,sys; print(json.dumps([line.rstrip("\n") for line in sys.stdin if line.rstrip("\n")]))')" \
+    "$(printf '%s\n' "${wrong_sha[@]}" | python3 -c 'import json,sys; print(json.dumps([line.rstrip("\n") for line in sys.stdin if line.rstrip("\n")]))')" \
+    "$(printf '%s\n' "${identity_errors[@]}" | python3 -c 'import json,sys; print(json.dumps([line.rstrip("\n") for line in sys.stdin if line.rstrip("\n")]))')")" \
+    || { printf '[remote-deploy] unable to serialize component verification failures\n' >&2; return 1; }
+
+  if ! mkdir -p -- "$(dirname "$receipt_path")"; then
+    printf '[remote-deploy] unable to create backend component receipt directory: %s\n' "$(dirname "$receipt_path")" >&2
+    return 1
+  fi
+  if ! python3 - \
+    "$now" "$expected_sha" "$expected_frontend_sha" "$bff_url" "$fe_url" \
+    "$deploy_environment" "$deploy_component" "$verification_status" "$receipt_path" \
+    "$required_services_json" "$receipt_entries_json" "$failures_json" <<'PY'
+import json
+import os
+import sys
+from pathlib import Path
+
+(
+    now,
+    backend_sha,
+    frontend_sha,
+    bff_url,
+    fe_url,
+    deploy_environment,
+    deploy_component,
+    verification_status,
+    output_value,
+    required_services_json,
+    entries_json,
+    failures_json,
+) = sys.argv[1:]
+required_services = json.loads(required_services_json)
+entries = json.loads(entries_json)
+failures = json.loads(failures_json)
+services = {entry["service"]: entry for entry in entries}
+if len(services) != len(entries):
+    raise SystemExit("component receipt contains duplicate service entries")
+complete = set(services) == set(required_services) and len(required_services) == len(entries)
+all_passed = verification_status == "passed" and complete and not any(failures.values())
+if verification_status == "passed" and not all_passed:
+    raise SystemExit("component receipt cannot record passed status with incomplete evidence")
+receipt = {
+    "schema_version": "pantheon.deployment.backend_required_components_receipt.v1",
+    "task": {
+        "id": "ACG-DEPLOY-EXACT-GATES-20260828"
+    },
+    "task_id": "ACG-DEPLOY-EXACT-GATES-20260828",
+    "status": verification_status,
+    "result": verification_status,
+    "mode": "hosted",
+    "observed_at": now,
+    "expected_sha": backend_sha,
+    "deploy_source_sha": backend_sha,
+    "deployment_environment": deploy_environment,
+    "deployment_component": deploy_component,
+    "unskipped_mandatory_cases": True,
+    "skipped_mandatory_count": 0,
+    "exact_pair": {
+        "backend_sha": backend_sha,
+        "frontend_sha": frontend_sha,
+        "bff_url": bff_url,
+        "fe_url": fe_url,
+    },
+    "required_services": required_services,
+    "total_services": len(entries),
+    "services": services,
+    "verification_failures": failures,
+    "all_passed": all_passed,
+}
+output_path = Path(output_value)
+temporary_path = output_path.with_name(f".{output_path.name}.tmp.{os.getpid()}")
+try:
+    with temporary_path.open("x", encoding="utf-8") as handle:
+        json.dump(receipt, handle, indent=2, sort_keys=True)
+        handle.write("\n")
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.replace(temporary_path, output_path)
+finally:
+    temporary_path.unlink(missing_ok=True)
+PY
+  then
+    printf '[remote-deploy] unable to atomically write backend component receipt: %s\n' "$receipt_path" >&2
+    return 1
+  fi
+  info "backend component receipt written atomically outside the deploy worktree: ${receipt_path}"
+
+  if (( ${#missing[@]} > 0 )); then
+    printf '[remote-deploy] required component(s) missing: %s\n' "${missing[*]}" >&2
+  fi
+  if (( ${#duplicates[@]} > 0 )); then
+    printf '[remote-deploy] duplicate containers found for required singleton service(s): %s\n' "${duplicates[*]}" >&2
+  fi
+  if (( ${#restarting[@]} > 0 )); then
+    printf '[remote-deploy] required component(s) not in stable running state: %s\n' "${restarting[*]}" >&2
+  fi
+  if (( ${#unhealthy[@]} > 0 )); then
+    printf '[remote-deploy] required component(s) unhealthy or unknown: %s\n' "${unhealthy[*]}" >&2
+  fi
+  if (( ${#wrong_sha[@]} > 0 )); then
+    printf '[remote-deploy] required component(s) have missing or mismatched image revision: %s\n' "${wrong_sha[*]}" >&2
+  fi
+  if (( ${#identity_errors[@]} > 0 )); then
+    printf '[remote-deploy] required component identity evidence is incomplete: %s\n' "${identity_errors[*]}" >&2
+  fi
+  if [[ "$verification_status" != "passed" ]]; then
+    return 1
+  fi
+
+  info "exact component verification passed for ${#target_services[@]} service(s)"
+  return 0
 }
 
 docker_storage_diagnostics() {
@@ -2476,7 +2779,7 @@ rollback_dev_bff_on_failure() {
     MANAGEMENT_AI_DATABASE_URL="${MANAGEMENT_AI_DATABASE_URL}" \
     PANTHEON_MGMT_AI_ATTACH_BUCKET="${PANTHEON_MGMT_AI_ATTACH_BUCKET}" \
     PANTHEON_MGMT_AI_ATTACH_LOCATION="${PANTHEON_MGMT_AI_ATTACH_LOCATION:-asia-east1}" \
-      docker compose -p pantheon -f docker-compose.yml up -d --build --force-recreate --no-deps operator-bff loop-run-projector-scheduler \
+      docker compose -p pantheon -f docker-compose.yml up -d --build --force-recreate --no-deps operator-bff agora-interaction-worker loop-run-projector-scheduler \
       || info "warning: docker compose up failed during rollback execution"
 
     curl_with_retry http://127.0.0.1:18001/health 6 5 || true
@@ -2667,6 +2970,8 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     # receipt replay before the workflow's public smokes run.
     PANTHEON_DEV_REPO="$(pwd)" bash scripts/verify_trade_journey_residual_dev.sh \
       || rollback_dev_bff_on_failure "trade_journey_residual"
+    verify_exact_component_deployment \
+      || rollback_dev_bff_on_failure "exact_component_deployment"
     ;;
 
   bff)
@@ -2683,7 +2988,7 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     COMPOSE_PROFILES="" \
     GIT_SHA="${PANTHEON_DEPLOY_SHA}" \
     BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-      docker compose -p pantheon -f docker-compose.yml build operator-bff loop-run-projector-scheduler \
+      docker compose -p pantheon -f docker-compose.yml build operator-bff agora-interaction-worker loop-run-projector-scheduler \
       || { dump_dev_root_failure_diagnostics; exit 1; }
     DEV_PRE_DEPLOY_BFF_SHA="$(curl -fsS http://127.0.0.1:18001/bff/version 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin).get("source_commit_sha") or "")' 2>/dev/null || true)"
     PANTHEON_DEV_ROLLBACK_BACKEND_SHA="${PANTHEON_DEV_ROLLBACK_BACKEND_SHA:-${DEV_PRE_DEPLOY_BFF_SHA:-}}"
@@ -2762,7 +3067,7 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     MANAGEMENT_AI_DATABASE_URL="${MANAGEMENT_AI_DATABASE_URL}" \
     PANTHEON_MGMT_AI_ATTACH_BUCKET="${PANTHEON_MGMT_AI_ATTACH_BUCKET}" \
     PANTHEON_MGMT_AI_ATTACH_LOCATION="${PANTHEON_MGMT_AI_ATTACH_LOCATION:-asia-east1}" \
-      docker compose -p pantheon -f docker-compose.yml up -d --force-recreate --no-deps operator-bff loop-run-projector-scheduler \
+      docker compose -p pantheon -f docker-compose.yml up -d --force-recreate --no-deps operator-bff agora-interaction-worker loop-run-projector-scheduler \
       || rollback_dev_bff_on_failure "bff_recreate"
     # Phase 4: Post-Deploy Verification Gates
     wait_for_exact_bff_lifecycle_readiness \
@@ -2776,6 +3081,8 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
       || rollback_dev_bff_on_failure "ppl_alloc_009_proof_gate"
     ensure_dev_caddy_ingress \
       || rollback_dev_bff_on_failure "caddy_ingress"
+    verify_exact_component_deployment operator-bff agora-interaction-worker loop-run-projector-scheduler \
+      || rollback_dev_bff_on_failure "bff_exact_component_deployment"
     ;;
 
   exec)
