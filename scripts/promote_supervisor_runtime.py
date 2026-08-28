@@ -22,10 +22,17 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping
 
+GIT_SCRIPTS_DIR = Path(__file__).resolve().parent / "git"
+if str(GIT_SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(GIT_SCRIPTS_DIR))
+
+import auto_integrator  # noqa: E402  (shared stable integration lock)
+
 from provision_live_supervisor_config import (
     build_live_config,
     ensure_approval_queue_marker,
     load_json_object,
+    parse_repository_integration_roots,
     parse_repository_source_roots,
     validated_immutable_command_root,
     validated_root,
@@ -105,6 +112,7 @@ def render_v2_config(
     live_config_path: Path,
     python_executable: Path,
     repository_source_roots: Mapping[str, Path | str] | None = None,
+    repository_integration_roots: Mapping[str, Path | str] | None = None,
 ) -> tuple[dict[str, Any], dict[str, str]]:
     """Render a new V2 runtime config without using an incumbent overlay."""
 
@@ -118,6 +126,7 @@ def render_v2_config(
         live_config_path=live_config_path,
         python_executable=python_executable,
         repository_source_roots=repository_source_roots,
+        repository_integration_roots=repository_integration_roots,
     )
     _validate_authoritative_store(rendered)
     return rendered, identity
@@ -435,7 +444,7 @@ def sync_coordination_root_code(candidate_root: Path, status_root: Path) -> dict
     return result
 
 
-def replace_supervisor(
+def _replace_supervisor_locked(
     repo_root: Path,
     *,
     status_root: Path,
@@ -444,6 +453,7 @@ def replace_supervisor(
     termination_timeout: float,
     evidence_path: Path | None = None,
     repository_source_roots: Mapping[str, Path | str] | None = None,
+    repository_integration_roots: Mapping[str, Path | str] | None = None,
 ) -> dict[str, Any]:
     """Stop old, install exact V2 config, then launch exact V2 source."""
 
@@ -455,6 +465,7 @@ def replace_supervisor(
         live_config_path=live_config_path,
         python_executable=python_executable,
         repository_source_roots=repository_source_roots,
+        repository_integration_roots=repository_integration_roots,
     )
     rendered_bytes = (json.dumps(rendered, indent=2, ensure_ascii=False) + "\n").encode("utf-8")
     approval_queue_value = rendered.get("paths", {}).get("approval_queue")
@@ -470,6 +481,20 @@ def replace_supervisor(
         "live_config": str(live_config_path),
         "config_sha256": _sha256(rendered_bytes),
         "task_state_store": dict(rendered["task_state_store"]),
+        "repository_source_roots": {
+            repository_id: str(entry.get("local_path"))
+            for repository_id, entry in (
+                (rendered.get("coordination") or {}).get("repositories") or {}
+            ).items()
+            if isinstance(entry, dict) and entry.get("local_path")
+        },
+        "repository_integration_roots": {
+            repository_id: str(entry.get("integration_path"))
+            for repository_id, entry in (
+                (rendered.get("coordination") or {}).get("repositories") or {}
+            ).items()
+            if isinstance(entry, dict) and entry.get("integration_path")
+        },
         "approval_queue": str(approval_queue_path),
         "incumbent_pid_file": str(incumbent_pid_path),
         "stopped_pid": None,
@@ -477,20 +502,10 @@ def replace_supervisor(
         "outcome": "failed",
     }
     try:
-        # The candidate is already identity- and cleanliness-validated above.
-        # Seal it before TERM so a failure cannot interrupt the incumbent, and
-        # so workers can only read the exact command source after launch.
         result["command_runtime_seal"] = seal_command_runtime(Path(identity["root"]))
-        # The provider boundary is enforced by worker_runner, not by mode bits
-        # alone. Prove the host can create that namespace before TERM so a
-        # missing/disabled bubblewrap cannot replace a healthy incumbent with
-        # a supervisor that is unable to launch any worker safely.
         result["worker_sandbox_preflight"] = verify_worker_sandbox(
             Path(identity["root"])
         )
-        # Workers require this split-root marker before their adapter starts.
-        # Creating it is idempotent and happens before TERM, so a malformed
-        # coordination root cannot turn a healthy incumbent into an outage.
         ensure_approval_queue_marker(approval_queue_path)
         stopped_pid = stop_existing_supervisor(
             incumbent_pid_path, timeout_seconds=termination_timeout
@@ -504,11 +519,6 @@ def replace_supervisor(
         )
         result["outcome"] = "launched"
         result["exit_code"] = 0
-        # Best-effort and fully self-contained: sync_coordination_root_code
-        # already catches its own errors, but this call site never lets an
-        # unexpected exception from it reach the replacement's own outcome
-        # or exit_code either, since the supervisor above already launched
-        # successfully.
         try:
             result["coordination_code_sync"] = sync_coordination_root_code(
                 Path(identity["root"]), status_root
@@ -525,6 +535,32 @@ def replace_supervisor(
     return result
 
 
+def replace_supervisor(
+    repo_root: Path,
+    *,
+    status_root: Path,
+    live_config_path: Path,
+    python_executable: Path,
+    termination_timeout: float,
+    evidence_path: Path | None = None,
+    repository_source_roots: Mapping[str, Path | str] | None = None,
+    repository_integration_roots: Mapping[str, Path | str] | None = None,
+) -> dict[str, Any]:
+    """Validate and switch config while excluding the canonical merge owner."""
+
+    with auto_integrator.lock_file(status_root / auto_integrator.DEFAULT_LOCK):
+        return _replace_supervisor_locked(
+            repo_root,
+            status_root=status_root,
+            live_config_path=live_config_path,
+            python_executable=python_executable,
+            termination_timeout=termination_timeout,
+            evidence_path=evidence_path,
+            repository_source_roots=repository_source_roots,
+            repository_integration_roots=repository_integration_roots,
+        )
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repo", default=".", help="Exact V2 command source root.")
@@ -539,6 +575,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=[],
         metavar="REPOSITORY_ID=/ABSOLUTE/GIT/ROOT",
         help="Render an absolute source checkout into coordination.repositories.",
+    )
+    parser.add_argument(
+        "--repository-integration-root",
+        action="append",
+        default=[],
+        metavar="REPOSITORY_ID=/ABSOLUTE/GIT/ROOT",
+        help="Render a dedicated clean merge checkout into coordination.repositories.",
     )
     parser.add_argument("--promote", action="store_true", help="Stop and replace the runtime.")
     parser.add_argument("--discover-only", action="store_true", help="Render and validate only.")
@@ -559,6 +602,9 @@ def main(argv: list[str] | None = None) -> int:
         repository_source_roots = parse_repository_source_roots(
             args.repository_source_root
         )
+        repository_integration_roots = parse_repository_integration_roots(
+            args.repository_integration_root
+        )
         if not python_executable.is_file():
             raise ValueError(f"python executable does not exist: {python_executable}")
         validated_root(status_root, label="status root", required=(".git", "ai-status.json"))
@@ -569,6 +615,7 @@ def main(argv: list[str] | None = None) -> int:
                 live_config_path=live_config_path,
                 python_executable=python_executable,
                 repository_source_roots=repository_source_roots,
+                repository_integration_roots=repository_integration_roots,
             )
             result: dict[str, Any] = {
                 "schema_version": 2,
@@ -585,6 +632,13 @@ def main(argv: list[str] | None = None) -> int:
                     ).items()
                     if isinstance(entry, dict) and entry.get("local_path")
                 },
+                "repository_integration_roots": {
+                    repository_id: str(entry.get("integration_path"))
+                    for repository_id, entry in (
+                        (rendered.get("coordination") or {}).get("repositories") or {}
+                    ).items()
+                    if isinstance(entry, dict) and entry.get("integration_path")
+                },
             }
         else:
             evidence_path = _path(args.evidence_path) if args.evidence_path else None
@@ -596,8 +650,9 @@ def main(argv: list[str] | None = None) -> int:
                 termination_timeout=args.termination_timeout,
                 evidence_path=evidence_path,
                 repository_source_roots=repository_source_roots,
+                repository_integration_roots=repository_integration_roots,
             )
-    except (OSError, ValueError) as exc:
+    except (OSError, ValueError, auto_integrator.IntegrationLockError) as exc:
         result = {"outcome": "failed", "exit_code": 1, "error": f"{type(exc).__name__}: {exc}"}
     if args.json:
         print(json.dumps(result, indent=2, sort_keys=True))

@@ -126,6 +126,9 @@ def _run_sync(
 ) -> subprocess.CompletedProcess[str]:
     env = os.environ.copy()
     env["SYNC_PROMOTION_ARGS_FILE"] = str(promotion_args)
+    env["PANTHEON_INTEGRATION_RUNTIME_PARENT"] = str(
+        script.parent / "integration-runtimes"
+    )
     # The fake Pantheon repository is enough to validate the wiring; the
     # production script's default remains the canonical execute-plans checkout.
     env["PANTHEON_EXECUTE_PLANS_SOURCE_ROOT"] = str(dev_root)
@@ -164,9 +167,33 @@ def test_sync_uses_explicit_coordination_root_and_never_inspects_live_cwd(tmp_pa
     result = _run_sync(script, dev_root, live_config, coordination, promotion_args)
 
     candidate = runtime_parent / target
+    integration_parent = script.parent / "integration-runtimes"
     assert result.returncode == 0, result.stderr
     assert _git(dev_root, "rev-parse", "HEAD") == target
     assert _git(candidate, "rev-parse", "HEAD") == target
+    pantheon_integration = integration_parent / "pantheon" / target
+    execute_plans_integration = integration_parent / "execute_plans" / target
+    for integration_root in (pantheon_integration, execute_plans_integration):
+        assert integration_root.is_dir()
+        assert _git(integration_root, "rev-parse", "HEAD") == target
+        assert _git(integration_root, "status", "--porcelain", "--untracked-files=all") == ""
+        assert _git(integration_root, "rev-parse", "--show-toplevel") == str(
+            integration_root
+        )
+        assert _git(
+            integration_root,
+            "rev-parse",
+            "--path-format=absolute",
+            "--git-common-dir",
+        ) == str(integration_root / ".git")
+        assert _git(integration_root, "remote", "get-url", "origin") == str(remote)
+        checkout_probe = integration_root / ".writable-probe"
+        common_probe = integration_root / ".git" / ".writable-probe"
+        checkout_probe.write_text("ok\n", encoding="utf-8")
+        common_probe.write_text("ok\n", encoding="utf-8")
+        checkout_probe.unlink()
+        common_probe.unlink()
+    assert pantheon_integration != execute_plans_integration
     assert promotion_args.read_text(encoding="utf-8").splitlines() == [
         "--promote",
         "--repo",
@@ -179,6 +206,10 @@ def test_sync_uses_explicit_coordination_root_and_never_inspects_live_cwd(tmp_pa
         f"pantheon={dev_root}",
         "--repository-source-root",
         f"execute_plans={dev_root}",
+        "--repository-integration-root",
+        f"pantheon={integration_parent / 'pantheon' / target}",
+        "--repository-integration-root",
+        f"execute_plans={integration_parent / 'execute_plans' / target}",
     ]
     source = SYNC_SCRIPT.read_text(encoding="utf-8")
     assert "PID_FILE=" not in source
@@ -445,6 +476,9 @@ def test_sync_prunes_old_command_runtimes_after_promotion(tmp_path: Path) -> Non
     env = os.environ.copy()
     env["SYNC_PROMOTION_ARGS_FILE"] = str(promotion_args)
     env["SYNC_PRUNE_ARGS_FILE"] = str(prune_args)
+    env["PANTHEON_INTEGRATION_RUNTIME_PARENT"] = str(
+        script.parent / "integration-runtimes"
+    )
     # execute-plans multi-repo support (SUP-WORKTREE-BASE-SYNC-20260822) requires
     # a real git checkout at this root; the fake Pantheon repository is enough
     # to validate the prune wiring, so reuse it here too.
@@ -462,6 +496,8 @@ def test_sync_prunes_old_command_runtimes_after_promotion(tmp_path: Path) -> Non
     assert prune_args.read_text(encoding="utf-8").splitlines() == [
         "--parent",
         str(runtime_parent),
+        "--integration-parent",
+        str(script.parent / "integration-runtimes"),
         "--live-config",
         str(live_config),
         "--status-root",

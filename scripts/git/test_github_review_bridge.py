@@ -25,12 +25,42 @@ class FakeRunner:
         actual_head: str = HEAD,
         dispatch_error: str = "",
         pr_state: str = "OPEN",
+        merge_state: str = "CLEAN",
+        auto_merge_request: Mapping[str, Any] | None = None,
+        base_sha: str = "c" * 40,
+        compare_status: str = "ahead",
+        behind_by: int = 0,
+        manifest_payload: Mapping[str, Any] | None = None,
+        base_manifest_payload: Mapping[str, Any] | None = None,
+        base_manifest_missing: bool = False,
+        base_manifest_error: str = "",
+        pr_files: Sequence[Mapping[str, Any]] | None = None,
+        is_draft: bool = False,
     ) -> None:
         self.review_error = review_error
         self.context_required = context_required
         self.actual_head = actual_head
         self.dispatch_error = dispatch_error
         self.pr_state = pr_state
+        self.merge_state = merge_state
+        self.auto_merge_request = auto_merge_request
+        self.base_sha = base_sha
+        self.compare_status = compare_status
+        self.behind_by = behind_by
+        self.manifest_payload = (
+            dict(manifest_payload)
+            if manifest_payload is not None
+            else {"type": "file", "sha": "d" * 40}
+        )
+        self.base_manifest_payload = (
+            dict(base_manifest_payload)
+            if base_manifest_payload is not None
+            else {"type": "file", "sha": "e" * 40}
+        )
+        self.base_manifest_missing = base_manifest_missing
+        self.base_manifest_error = base_manifest_error
+        self.pr_files = [dict(item) for item in (pr_files or [])]
+        self.is_draft = is_draft
         self.reviews: list[dict[str, Any]] = []
         self.statuses: list[dict[str, Any]] = []
         self.calls: list[tuple[list[str], Mapping[str, Any] | None]] = []
@@ -56,7 +86,25 @@ class FakeRunner:
                 "headRefName": "task/AUDIT-001",
                 "headRefOid": self.actual_head,
                 "baseRefName": "dev",
+                "baseRefOid": self.base_sha,
+                "isDraft": self.is_draft,
+                "mergeStateStatus": self.merge_state,
+                "autoMergeRequest": self.auto_merge_request,
             }
+        if joined == (
+            f"gh api repos/{REPOSITORY}/compare/{self.base_sha}...{self.actual_head}"
+        ):
+            return {"status": self.compare_status, "behind_by": self.behind_by}
+        if joined.startswith(f"gh api repos/{REPOSITORY}/contents/"):
+            if joined.endswith(f"?ref={self.base_sha}"):
+                if self.base_manifest_missing:
+                    raise bridge.GitHubReviewBridgeError("Not Found (HTTP 404)")
+                if self.base_manifest_error:
+                    raise bridge.GitHubReviewBridgeError(self.base_manifest_error)
+                return dict(self.base_manifest_payload)
+            return dict(self.manifest_payload)
+        if joined.endswith("/pulls/4269/files?per_page=100"):
+            return list(self.pr_files)
         commit_prefix = f"repos/{REPOSITORY}/commits/"
         if (
             joined.startswith(f"gh api {commit_prefix}")
@@ -381,6 +429,61 @@ class GitHubReviewBridgeTests(unittest.TestCase):
         self.assertEqual(first.review_proof_ref, second.review_proof_ref)
         self.assertEqual(tag_calls_after_first, tag_calls_after_second)
 
+    def test_same_intent_nonce_replays_review_and_status_idempotently(self) -> None:
+        runner = FakeRunner()
+        nonce = "1" * 32
+        first = bridge.bridge_review_decision(
+            repository=REPOSITORY,
+            task_id="AUDIT-001",
+            actor="Codex2",
+            decision="approve",
+            message="First phase-two attempt.",
+            binding=binding(),
+            intent_nonce=nonce,
+            runner=runner,
+        )
+        second = bridge.bridge_review_decision(
+            repository=REPOSITORY,
+            task_id="AUDIT-001",
+            actor="Codex2",
+            decision="approve",
+            message="Crash retry with the same nonce.",
+            binding=binding(),
+            intent_nonce=nonce,
+            runner=runner,
+        )
+
+        self.assertEqual(first.intent_nonce, nonce)
+        self.assertEqual(second.intent_nonce, nonce)
+        self.assertEqual(len(runner.reviews), 1)
+        self.assertEqual(len(runner.statuses), 1)
+
+    def test_new_intent_nonce_does_not_reuse_orphan_review_authority(self) -> None:
+        runner = FakeRunner()
+        bridge.bridge_review_decision(
+            repository=REPOSITORY,
+            task_id="AUDIT-001",
+            actor="Codex2",
+            decision="approve",
+            message="Orphaned first intent.",
+            binding=binding(),
+            intent_nonce="1" * 32,
+            runner=runner,
+        )
+        bridge.bridge_review_decision(
+            repository=REPOSITORY,
+            task_id="AUDIT-001",
+            actor="Codex2",
+            decision="approve",
+            message="Fresh canonical intent.",
+            binding=binding(),
+            intent_nonce="2" * 32,
+            runner=runner,
+        )
+
+        self.assertEqual(len(runner.reviews), 2)
+        self.assertEqual(len(runner.statuses), 2)
+
     def test_reopen_pushes_a_distinct_proof_tag_namespace(self) -> None:
         runner = FakeRunner(
             review_error="Can not request changes on your own pull request",
@@ -502,35 +605,220 @@ class GitHubReviewBridgeTests(unittest.TestCase):
         ]
         self.assertEqual(mutation_calls, [])
 
-    def test_approve_succeeds_when_pr_already_merged(self) -> None:
-        """OPS-REVIEW-BRIDGE-MERGED-PR-STATE-20260820: a governed decision
-        commonly runs after the PR's own merge (auto-merge on the required
-        status, or a retried handoff/approve cycle), and the merged head is
-        still the exact reviewed identity. Rejecting it here forced repeated
-        manual Human/Ops handoff rebinding (e.g. PR #5019 on
-        L12-GAP-F05-L5-AGORA-OBSERVATION-20260818)."""
-
-        runner = FakeRunner(pr_state="MERGED")
-
-        result = bridge.bridge_review_decision(
+    def test_review_admission_freezes_manifest_base_and_merge_method(self) -> None:
+        admitted = bridge.validate_review_admission(
             repository=REPOSITORY,
-            task_id="AUDIT-001",
-            actor="Codex2",
-            decision="approve",
-            message="Already-merged PR, exact head still matches.",
             binding=binding(),
-            runner=runner,
+            review_file="docs/evidence/AUDIT-001/evidence.json",
+            runner=FakeRunner(),
         )
 
-        self.assertEqual(result.mode, "pull_request_review_and_required_status")
-        self.assertEqual(result.status_state, "success")
+        self.assertEqual(
+            admitted.as_dict(),
+            {
+                **binding(),
+                "base_sha": "c" * 40,
+                "required_merge_method": "MERGE",
+                "evidence_manifest": {
+                    "path": "docs/evidence/AUDIT-001/evidence.json",
+                    "blob_sha": "d" * 40,
+                },
+            },
+        )
+
+    def test_review_admission_rejects_missing_committed_manifest(self) -> None:
+        runner = FakeRunner(manifest_payload={"type": "dir", "sha": "d" * 40})
+
+        with self.assertRaisesRegex(
+            bridge.GitHubReviewBridgeError, "not a committed file"
+        ):
+            bridge.validate_review_admission(
+                repository=REPOSITORY,
+                binding=binding(),
+                review_file="docs/evidence/AUDIT-001/evidence.json",
+                runner=runner,
+            )
+
+    def test_review_admission_rejects_manifest_unchanged_from_base(self) -> None:
+        runner = FakeRunner(
+            base_manifest_payload={"type": "file", "sha": "d" * 40}
+        )
+        with self.assertRaisesRegex(
+            bridge.GitHubReviewBridgeError, "unchanged from the exact base"
+        ):
+            bridge.validate_review_admission(
+                repository=REPOSITORY,
+                binding=binding(),
+                review_file="docs/evidence/AUDIT-001/evidence.json",
+                runner=runner,
+            )
+
+    def test_review_admission_accepts_manifest_absent_from_base(self) -> None:
+        admitted = bridge.validate_review_admission(
+            repository=REPOSITORY,
+            binding=binding(),
+            review_file="docs/evidence/AUDIT-001/evidence.json",
+            runner=FakeRunner(base_manifest_missing=True),
+        )
+        self.assertEqual(admitted.manifest_blob_sha, "d" * 40)
+
+    def test_review_admission_uses_exact_pr_files_when_base_lookup_fails(self) -> None:
+        path = "docs/evidence/AUDIT-001/evidence.json"
+        admitted = bridge.validate_review_admission(
+            repository=REPOSITORY,
+            binding=binding(),
+            review_file=path,
+            runner=FakeRunner(
+                base_manifest_error="base contents temporarily unavailable",
+                pr_files=[{"filename": path, "sha": "d" * 40, "status": "modified"}],
+            ),
+        )
+        self.assertEqual(admitted.manifest_path, path)
+
+    def test_review_admission_rejects_malformed_base_without_exact_pr_file(self) -> None:
+        with self.assertRaisesRegex(
+            bridge.GitHubReviewBridgeError, "malformed base contents"
+        ):
+            bridge.validate_review_admission(
+                repository=REPOSITORY,
+                binding=binding(),
+                review_file="docs/evidence/AUDIT-001/evidence.json",
+                runner=FakeRunner(
+                    base_manifest_payload={"type": "dir", "sha": "e" * 40}
+                ),
+            )
+
+    def test_review_admission_rejects_other_pr_file_as_manifest_proof(self) -> None:
+        with self.assertRaisesRegex(
+            bridge.GitHubReviewBridgeError, "no exact PR-file change evidence"
+        ):
+            bridge.validate_review_admission(
+                repository=REPOSITORY,
+                binding=binding(),
+                review_file="docs/evidence/AUDIT-001/evidence.json",
+                runner=FakeRunner(
+                    base_manifest_error="base contents temporarily unavailable",
+                    pr_files=[
+                        {
+                            "filename": "docs/evidence/OTHER/evidence.json",
+                            "sha": "d" * 40,
+                            "status": "modified",
+                        }
+                    ],
+                ),
+            )
+
+    def test_review_admission_rejects_absolute_manifest_path(self) -> None:
+        with self.assertRaisesRegex(
+            bridge.GitHubReviewBridgeError, "repository-relative REVIEW_FILE"
+        ):
+            bridge.validate_review_admission(
+                repository=REPOSITORY,
+                binding=binding(),
+                review_file="/docs/evidence/AUDIT-001/evidence.json",
+                runner=FakeRunner(),
+            )
+
+    def test_review_admission_rejects_non_merge_required_method(self) -> None:
+        with self.assertRaisesRegex(
+            bridge.GitHubReviewBridgeError, "requires merge method MERGE"
+        ):
+            bridge.validate_review_admission(
+                repository=REPOSITORY,
+                binding=binding(),
+                review_file="docs/evidence/AUDIT-001/evidence.json",
+                required_merge_method="SQUASH",
+                runner=FakeRunner(),
+            )
+
+    def test_review_admission_rejects_every_armed_auto_merge(self) -> None:
+        for method in ("MERGE", "SQUASH"):
+            with self.subTest(method=method), self.assertRaisesRegex(
+                bridge.GitHubReviewBridgeError, "already has armed auto-merge"
+            ):
+                bridge.validate_review_admission(
+                    repository=REPOSITORY,
+                    binding=binding(),
+                    review_file="docs/evidence/AUDIT-001/evidence.json",
+                    runner=FakeRunner(auto_merge_request={"mergeMethod": method}),
+                )
+
+    def test_review_admission_rejects_behind_head(self) -> None:
+        with self.assertRaisesRegex(bridge.GitHubReviewBridgeError, "is BEHIND"):
+            bridge.validate_review_admission(
+                repository=REPOSITORY,
+                binding=binding(),
+                review_file="docs/evidence/AUDIT-001/evidence.json",
+                runner=FakeRunner(merge_state="BEHIND"),
+            )
+
+    def test_review_approval_revalidation_rejects_advanced_base(self) -> None:
+        frozen = bridge.validate_review_admission(
+            repository=REPOSITORY,
+            binding=binding(),
+            review_file="docs/evidence/AUDIT-001/evidence.json",
+            runner=FakeRunner(),
+        ).as_dict()
+
+        with self.assertRaisesRegex(
+            bridge.GitHubReviewBridgeError, "does not contain current base"
+        ):
+            bridge.revalidate_review_admission(
+                repository=REPOSITORY,
+                delivery_binding=frozen,
+                runner=FakeRunner(
+                    base_sha="e" * 40,
+                    compare_status="diverged",
+                    behind_by=1,
+                ),
+            )
+
+    def test_review_approval_revalidation_rejects_legacy_binding(self) -> None:
+        with self.assertRaisesRegex(
+            bridge.GitHubReviewBridgeError, "no frozen evidence manifest"
+        ):
+            bridge.revalidate_review_admission(
+                repository=REPOSITORY,
+                delivery_binding=binding(),
+                runner=FakeRunner(),
+            )
+
+    def test_review_approval_allows_new_base_already_contained_in_head(self) -> None:
+        frozen = bridge.validate_review_admission(
+            repository=REPOSITORY,
+            binding=binding(),
+            review_file="docs/evidence/AUDIT-001/evidence.json",
+            runner=FakeRunner(),
+        ).as_dict()
+
+        current = bridge.revalidate_review_admission(
+            repository=REPOSITORY,
+            delivery_binding=frozen,
+            runner=FakeRunner(base_sha="e" * 40, compare_status="ahead", behind_by=0),
+        )
+
+        self.assertEqual(current.base_sha, "e" * 40)
+        self.assertEqual(current.manifest_blob_sha, "d" * 40)
+
+    def test_normal_approve_rejects_pr_already_merged(self) -> None:
+        runner = FakeRunner(pr_state="MERGED")
+        with self.assertRaisesRegex(bridge.ReviewBindingMismatch, "expected open"):
+            bridge.bridge_review_decision(
+                repository=REPOSITORY,
+                task_id="AUDIT-001",
+                actor="Codex2",
+                decision="approve",
+                message="Merged PR must use explicit reconciliation.",
+                binding=binding(),
+                runner=runner,
+            )
 
     def test_approve_fails_when_pr_is_closed_unmerged(self) -> None:
         runner = FakeRunner(pr_state="CLOSED")
 
         with self.assertRaisesRegex(
             bridge.GitHubReviewBridgeError,
-            "is not open or merged",
+            "expected open",
         ):
             bridge.bridge_review_decision(
                 repository=REPOSITORY,

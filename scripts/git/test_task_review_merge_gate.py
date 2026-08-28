@@ -71,6 +71,20 @@ def approval_event(**overrides: Any) -> dict[str, Any]:
     return event
 
 
+def exact_head_rest_merge(head: str = "b" * 40) -> list[str]:
+    return [
+        "gh",
+        "api",
+        "--method",
+        "PUT",
+        "repos/ajoe734/pantheon/pulls/100/merge",
+        "-f",
+        f"sha={head}",
+        "-f",
+        "merge_method=merge",
+    ]
+
+
 def integration_resume_event(**overrides: Any) -> dict[str, Any]:
     event = {
         "ts": "2026-07-26T13:00:00Z",
@@ -1685,13 +1699,8 @@ class IntegratorGateTests(unittest.TestCase):
         merge_commands = [c for c in runner.commands if c[:3] == ["gh", "pr", "merge"]]
         self.assertEqual(merge_commands, [["gh", "pr", "merge", "100", "--disable-auto"]])
 
-    def test_approved_gated_pr_behind_dev_merges_after_a_clean_ephemeral_test(self) -> None:
-        """SUP-GATED-PR-EXACT-HEAD-QUEUE-MERGE-20260805: the home-grown merge
-        queue. A gated PR's approved head is not rebased (that would move it
-        past what the reviewer saw), but staleness alone should not leave it
-        waiting forever either -- a disposable local merge of the current dev
-        tip proves the combination is conflict-free, and that is enough to
-        merge the unchanged reviewed commit for real."""
+    def test_approved_gated_pr_behind_dev_waits_after_clean_ephemeral_test(self) -> None:
+        """A clean disposable merge never delegates authority to a queue."""
 
         runner = self._runner(open_pr(mergeStateStatus="BEHIND"), merge_base_returncode=1)
 
@@ -1703,12 +1712,10 @@ class IntegratorGateTests(unittest.TestCase):
             gate=self._gate(tasks=[task_row()], events=[approval_event()]),
         )
 
-        self.assertEqual(result.action, "merged", result.detail)
+        self.assertEqual(result.action, "waiting", result.detail)
         merge_commands = [c for c in runner.commands if c[:3] == ["gh", "pr", "merge"]]
-        self.assertEqual(
-            merge_commands,
-            [["gh", "pr", "merge", "100", "--merge", "--match-head-commit", "b" * 40]],
-        )
+        self.assertEqual(merge_commands, [])
+        self.assertNotIn(exact_head_rest_merge(), runner.commands)
         # The ephemeral test-merge must never be pushed anywhere.
         self.assertFalse(any(command[:2] == ["git", "push"] for command in runner.commands))
 
@@ -1749,10 +1756,8 @@ class IntegratorGateTests(unittest.TestCase):
 
         self.assertEqual(result.action, "merged")
         merge_commands = [c for c in runner.commands if c[:3] == ["gh", "pr", "merge"]]
-        self.assertEqual(
-            merge_commands,
-            [["gh", "pr", "merge", "100", "--merge", "--match-head-commit", "b" * 40]],
-        )
+        self.assertEqual(merge_commands, [])
+        self.assertIn(exact_head_rest_merge(), runner.commands)
         self.assertFalse(any("--auto" in command for command in runner.commands))
 
     def test_approved_gated_pr_revokes_a_standing_auto_merge_request_first(self) -> None:
@@ -1773,11 +1778,9 @@ class IntegratorGateTests(unittest.TestCase):
         merge_commands = [c for c in runner.commands if c[:3] == ["gh", "pr", "merge"]]
         self.assertEqual(
             merge_commands,
-            [
-                ["gh", "pr", "merge", "100", "--disable-auto"],
-                ["gh", "pr", "merge", "100", "--merge", "--match-head-commit", "b" * 40],
-            ],
+            [["gh", "pr", "merge", "100", "--disable-auto"]],
         )
+        self.assertIn(exact_head_rest_merge(), runner.commands)
 
     def test_successful_revocation_that_still_reads_armed_never_merges(self) -> None:
         """A zero exit from gh is not proof that GitHub withdrew the grant."""
@@ -1858,11 +1861,9 @@ class IntegratorGateTests(unittest.TestCase):
         merge_commands = [c for c in runner.commands if c[:3] == ["gh", "pr", "merge"]]
         self.assertEqual(
             merge_commands,
-            [
-                ["gh", "pr", "merge", "100", "--disable-auto"],
-                ["gh", "pr", "merge", "100", "--merge", "--match-head-commit", "b" * 40],
-            ],
+            [["gh", "pr", "merge", "100", "--disable-auto"]],
         )
+        self.assertIn(exact_head_rest_merge(), runner.commands)
 
     def test_unreadable_revocation_readback_never_reaches_the_merge(self) -> None:
         """A command result cannot replace the required live state proof."""
@@ -1911,12 +1912,8 @@ class IntegratorGateTests(unittest.TestCase):
         self.assertEqual(merge_commands, [["gh", "pr", "merge", "100", "--disable-auto"]])
         self.assertIn(["gh", "pr", "view", "100", "--json", "autoMergeRequest"], runner.commands)
 
-    def test_gated_pr_behind_dev_is_queue_merged_not_force_pushed(self) -> None:
-        """SUP-GATED-PR-EXACT-HEAD-QUEUE-MERGE-20260805 superseded the old
-        "BEHIND always waits" behavior: a clean disposable merge test lets a
-        behind-but-conflict-free approved head land via the queue path. The
-        safety property this test guards -- the reviewed head is never
-        rebased or force-pushed -- still holds."""
+    def test_gated_pr_behind_dev_waits_without_queue_or_force_push(self) -> None:
+        """A BEHIND exact head is observed, never queued, rebased, or pushed."""
 
         runner = self._runner(
             open_pr(mergeStateStatus="BEHIND"),
@@ -1931,7 +1928,7 @@ class IntegratorGateTests(unittest.TestCase):
             gate=self._gate(tasks=[task_row()], events=[approval_event()]),
         )
 
-        self.assertEqual(result.action, "merged", result.detail)
+        self.assertEqual(result.action, "waiting", result.detail)
         self.assertIn(
             ["git", "merge-base", "--is-ancestor", "origin/dev", "b" * 40],
             runner.commands,
@@ -1939,10 +1936,8 @@ class IntegratorGateTests(unittest.TestCase):
         self.assertFalse(any(command[:2] == ["git", "rebase"] for command in runner.commands))
         self.assertFalse(any(command[:2] == ["git", "push"] for command in runner.commands))
         merge_commands = [c for c in runner.commands if c[:3] == ["gh", "pr", "merge"]]
-        self.assertEqual(
-            merge_commands,
-            [["gh", "pr", "merge", "100", "--merge", "--match-head-commit", "b" * 40]],
-        )
+        self.assertEqual(merge_commands, [])
+        self.assertNotIn(exact_head_rest_merge(), runner.commands)
 
     def test_behind_gated_pr_has_auto_merge_revoked_before_any_merge_probe(self) -> None:
         """PR #4201's shape: BEHIND, unapproved, auto-merge still armed."""
@@ -1965,10 +1960,10 @@ class IntegratorGateTests(unittest.TestCase):
         merge_commands = [c for c in runner.commands if c[:3] == ["gh", "pr", "merge"]]
         self.assertEqual(merge_commands, [["gh", "pr", "merge", "100", "--disable-auto"]])
 
-    def test_approved_but_behind_gated_pr_still_revokes_before_queue_merging(self) -> None:
+    def test_approved_but_behind_gated_pr_revokes_then_waits_without_queue(self) -> None:
         """A stray auto-merge grant is revoked before anything else runs,
-        whether the PR ultimately queue-merges or waits -- the revocation
-        is unconditional, not contingent on this PR's outcome."""
+        whether the PR ultimately waits or merges -- the revocation is
+        unconditional, not contingent on this PR's outcome."""
 
         runner = self._runner(
             open_pr(
@@ -1986,15 +1981,13 @@ class IntegratorGateTests(unittest.TestCase):
             gate=self._gate(tasks=[task_row()], events=[approval_event()]),
         )
 
-        self.assertEqual(result.action, "merged", result.detail)
+        self.assertEqual(result.action, "waiting", result.detail)
         merge_commands = [c for c in runner.commands if c[:3] == ["gh", "pr", "merge"]]
         self.assertEqual(
             merge_commands,
-            [
-                ["gh", "pr", "merge", "100", "--disable-auto"],
-                ["gh", "pr", "merge", "100", "--merge", "--match-head-commit", "b" * 40],
-            ],
+            [["gh", "pr", "merge", "100", "--disable-auto"]],
         )
+        self.assertNotIn(exact_head_rest_merge(), runner.commands)
         self.assertFalse(any(command[:2] == ["git", "rebase"] for command in runner.commands))
         self.assertFalse(any(command[:2] == ["git", "push"] for command in runner.commands))
 
@@ -2030,14 +2023,15 @@ class IntegratorGateTests(unittest.TestCase):
             runner,
             execute=True,
             gate=self._gate(
-                tasks=[task_row(status="review_approved", reviewer="Codex", merge_policy="merge_then_review")],
+                tasks=[task_row(status="in_progress", reviewer="Codex", merge_policy="merge_then_review")],
                 events=[],
             ),
         )
 
         self.assertEqual(result.action, "merged")
         merge_commands = [c for c in runner.commands if c[:3] == ["gh", "pr", "merge"]]
-        self.assertEqual(merge_commands, [["gh", "pr", "merge", "100", "--merge"]])
+        self.assertEqual(merge_commands, [])
+        self.assertIn(exact_head_rest_merge(), runner.commands)
 
 
 class RealGitExactHeadIntegrationTests(unittest.TestCase):
@@ -2155,18 +2149,7 @@ class RealGitExactHeadIntegrationTests(unittest.TestCase):
             )
             self.assertFalse(any(command[:2] == ["git", "rebase"] for command in runner.commands))
             self.assertFalse(any(command[:2] == ["git", "push"] for command in runner.commands))
-            self.assertIn(
-                [
-                    "gh",
-                    "pr",
-                    "merge",
-                    "100",
-                    "--merge",
-                    "--match-head-commit",
-                    exact_head,
-                ],
-                runner.commands,
-            )
+            self.assertIn(exact_head_rest_merge(exact_head), runner.commands)
 
 
 FAKE_GH = r"""#!/usr/bin/env bash
@@ -2434,15 +2417,32 @@ class TaskFinalizeShellTests(unittest.TestCase):
         self.assertIn("auto-merge remains armed", proc.stderr)
         self.assertNotIn("open with auto-merge disabled", proc.stdout)
 
-    def test_merge_then_review_task_still_enables_auto_merge(self) -> None:
+    def test_merge_then_review_task_is_submitted_without_auto_merge(self) -> None:
         proc, calls = self._run_finalize(
             task_row(id="ABC-001", status="in_progress", reviewer="Codex", merge_policy="merge_then_review")
         )
 
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
-        self.assertIn("--label auto-merge", calls)
-        self.assertIn("pr merge task/ABC-001 --auto --merge", calls)
+        self.assertNotIn("--label auto-merge", calls)
+        self.assertNotIn("--auto --merge", calls)
         self.assertNotIn("--disable-auto", calls)
+        self.assertIn("canonical supervisor integration runner", proc.stdout)
+
+    def test_safe_pr_merge_then_review_is_submitted_without_auto_merge(self) -> None:
+        proc, calls = self._run_safe_pr(
+            task_row(
+                id="ABC-001",
+                status="in_progress",
+                reviewer="Codex",
+                merge_policy="merge_then_review",
+            )
+        )
+
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertNotIn("--label auto-merge", calls)
+        self.assertNotIn("--auto --merge", calls)
+        self.assertNotIn("--disable-auto", calls)
+        self.assertIn("canonical supervisor integration runner", proc.stdout)
 
     def test_safe_pr_revokes_a_standing_request_and_verifies_it_off(self) -> None:
         proc, calls = self._run_safe_pr(

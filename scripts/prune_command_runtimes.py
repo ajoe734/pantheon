@@ -7,7 +7,8 @@ promoter's own contract ("It never reconstructs a retired runtime or tries to
 restore one") only ever covered *launch*, not disk retention. Left alone the
 directory grows without bound.
 
-This prunes everything under ``--parent`` except:
+This prunes command runtimes under ``--parent`` and versioned repository
+integration clones under ``--integration-parent`` except:
 
   * the exact SHA the installed live config currently launches,
   * the newest ``--keep`` checkouts by materialization time,
@@ -15,7 +16,9 @@ This prunes everything under ``--parent`` except:
     ``status_command_runtime.command_root`` -- a worker started under an
     older promotion keeps running against that exact checkout for the rest
     of its lifetime, so an LRU-only policy could delete a runtime out from
-    under a live task.
+    under a live task,
+  * every ``coordination.repositories.*.integration_path`` referenced by the
+    atomically installed live config.
 """
 from __future__ import annotations
 
@@ -32,8 +35,16 @@ from typing import Mapping
 SCRIPTS_DIR = Path(__file__).resolve().parent
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
+GIT_SCRIPTS_DIR = SCRIPTS_DIR / "git"
+if str(GIT_SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(GIT_SCRIPTS_DIR))
+
+import auto_integrator  # noqa: E402  (shared stable integration lock)
 
 DEFAULT_COMMAND_RUNTIME_PARENT = Path("/home/lupin/pantheon-ci-deploy/command-runtimes")
+DEFAULT_INTEGRATION_RUNTIME_PARENT = Path(
+    "/home/lupin/pantheon-ci-deploy/integration-runtimes"
+)
 DEFAULT_LIVE_CONFIG = Path(
     "/home/lupin/pantheon-ci-deploy/runtime/live-supervisor-mainroot-config.json"
 )
@@ -58,6 +69,22 @@ def _live_root(live_config_path: Path) -> str | None:
     if len(entries) != 1 or not entries[0].is_absolute():
         return None
     return str(entries[0].parent.parent.resolve())
+
+
+def _live_integration_roots(live_config_path: Path) -> set[str]:
+    try:
+        payload = json.loads(live_config_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return set()
+    repositories = ((payload.get("coordination") or {}).get("repositories") or {})
+    if not isinstance(repositories, Mapping):
+        return set()
+    roots: set[str] = set()
+    for entry in repositories.values():
+        raw = entry.get("integration_path") if isinstance(entry, Mapping) else None
+        if isinstance(raw, str) and raw.strip() and Path(raw).is_absolute():
+            roots.add(str(Path(raw).resolve()))
+    return roots
 
 
 def _active_leased_roots(status_root: Path) -> set[str]:
@@ -140,9 +167,13 @@ def plan_deletions(
     return delete, retain
 
 
-def main(argv: list[str] | None = None) -> int:
+def _main_locked(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--parent", default=str(DEFAULT_COMMAND_RUNTIME_PARENT))
+    parser.add_argument(
+        "--integration-parent",
+        default=str(DEFAULT_INTEGRATION_RUNTIME_PARENT),
+    )
     parser.add_argument("--live-config", default=str(DEFAULT_LIVE_CONFIG))
     parser.add_argument(
         "--status-root",
@@ -159,18 +190,40 @@ def main(argv: list[str] | None = None) -> int:
 
     parent = Path(args.parent).expanduser().resolve()
     live_root = _live_root(Path(args.live_config).expanduser())
+    live_integration_roots = _live_integration_roots(
+        Path(args.live_config).expanduser()
+    )
     leased_roots = _active_leased_roots(Path(args.status_root).expanduser().resolve())
 
     delete, retain = plan_deletions(
         parent, keep=args.keep, live_root=live_root, leased_roots=leased_roots
     )
+    integration_delete: list[Path] = []
+    integration_retain: list[Path] = []
+    integration_parent = Path(args.integration_parent).expanduser().resolve()
+    if integration_parent.is_dir() and not integration_parent.is_symlink():
+        for repository_parent in integration_parent.iterdir():
+            if not repository_parent.is_dir() or repository_parent.is_symlink():
+                continue
+            planned, kept = plan_deletions(
+                repository_parent,
+                keep=args.keep,
+                live_root=None,
+                leased_roots=live_integration_roots,
+            )
+            integration_delete.extend(planned)
+            integration_retain.extend(kept)
 
     result: dict[str, object] = {
         "live_root": live_root,
         "leased_roots": sorted(leased_roots),
+        "live_integration_roots": sorted(live_integration_roots),
         "retained": sorted(str(p) for p in retain),
+        "integration_retained": sorted(str(p) for p in integration_retain),
         "deleted": [],
         "planned": sorted(str(p) for p in delete),
+        "integration_deleted": [],
+        "integration_planned": sorted(str(p) for p in integration_delete),
     }
     if not args.dry_run:
         deleted: list[str] = []
@@ -178,17 +231,57 @@ def main(argv: list[str] | None = None) -> int:
             _unseal_and_delete(entry)
             deleted.append(str(entry))
         result["deleted"] = sorted(deleted)
+        integration_deleted: list[str] = []
+        for entry in integration_delete:
+            _unseal_and_delete(entry)
+            integration_deleted.append(str(entry))
+        result["integration_deleted"] = sorted(integration_deleted)
 
     if args.json:
         print(json.dumps(result, indent=2, sort_keys=True))
     else:
         verb = "would delete" if args.dry_run else "deleted"
         print(
-            f"prune_command_runtimes: {verb} {len(delete)}, "
-            f"retained {len(retain)} (live={live_root or 'unknown'}, "
-            f"leased={len(leased_roots)})"
+            f"prune_command_runtimes: {verb} {len(delete)} command and "
+            f"{len(integration_delete)} integration runtimes; retained "
+            f"{len(retain)} command and {len(integration_retain)} integration "
+            f"(live={live_root or 'unknown'}, leased={len(leased_roots)})"
         )
     return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    # Parse only the lock binding first; all live-config reads, planning and
+    # deletion happen after the same stable EX lock used by the merge owner.
+    probe = argparse.ArgumentParser(add_help=False)
+    probe.add_argument("--status-root")
+    probe.add_argument("--json", action="store_true")
+    known, _ = probe.parse_known_args(argv)
+    if not known.status_root:
+        return _main_locked(argv)
+    lock_path = (
+        Path(known.status_root).expanduser().resolve()
+        / auto_integrator.DEFAULT_LOCK
+    )
+    try:
+        with auto_integrator.lock_file(lock_path):
+            return _main_locked(argv)
+    except auto_integrator.IntegrationLockHeld as exc:
+        payload = {
+            "skipped": True,
+            "reason": "integration_lock_held",
+            "detail": str(exc),
+            "deleted": [],
+            "integration_deleted": [],
+        }
+        if known.json:
+            print(json.dumps(payload, indent=2, sort_keys=True))
+        else:
+            print(f"prune_command_runtimes: skipped active integration runner ({exc})")
+        return 0
+    except auto_integrator.IntegrationLockError as exc:
+        print(f"prune_command_runtimes: integration lock error: {exc}", file=sys.stderr)
+        return 2
 
 
 if __name__ == "__main__":

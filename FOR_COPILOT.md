@@ -55,8 +55,8 @@ Use the script, not manual Markdown edits:
 AI_NAME=Copilot bash scripts/ai-status.sh start RS-001 "Started governed research-ingest implementation"
 AI_NAME=Copilot bash scripts/ai-status.sh progress RS-001 "Drafted adapter and source-governance notes"
 AI_NAME=Copilot bash scripts/ai-status.sh blocker RS-001 "Need registry linkage clarifications" Codex
-AI_NAME=Copilot bash scripts/ai-status.sh handoff RS-001 Codex "Research-ingest implementation is ready for review"
-AI_NAME=Copilot REVIEW_FILE=path/to/review.md REVIEW_NOTES_ZH="審查通過||回 owner 收尾" bash scripts/ai-status.sh approve LP-002 "Review approved and returned to owner for finalization"
+AI_NAME=Copilot REVIEW_PR="$PR_NUMBER" REVIEW_HEAD_SHA="$PR_HEAD_SHA" REVIEW_FILE=path/declared-in-task-artifacts/evidence.json bash scripts/ai-status.sh handoff RS-001 Codex "Exact PR head and manifest are ready for review"
+AI_NAME=Copilot REVIEW_NOTES_ZH="審查通過||回 owner 收尾" bash scripts/ai-status.sh approve LP-002 "Review approved and returned to owner for finalization"
 AI_NAME=Copilot bash scripts/ai-status.sh done RS-001 "Owner finalized approved research-ingest work"
 ```
 

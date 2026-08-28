@@ -73,6 +73,12 @@ class DeliveryBindingTests(unittest.TestCase):
                 "head_sha": "a" * 40,
                 "head_branch": "task/TASK-1",
                 "base": "dev",
+                "base_sha": "b" * 40,
+                "required_merge_method": "MERGE",
+                "evidence_manifest": {
+                    "path": "docs/evidence/TASK-1/evidence.json",
+                    "blob_sha": "c" * 40,
+                },
             },
         }
         self.assertTrue(task_machine.delivery_binding_is_current(task))
@@ -83,6 +89,19 @@ class DeliveryBindingTests(unittest.TestCase):
         task["delivery_binding"]["head_sha"] = "short"
         self.assertFalse(task_machine.delivery_binding_is_current(task))
         self.assertIsNone(task_machine.delivery_binding_digest(task))
+
+    def test_pull_request_binding_rejects_legacy_identity_without_admission(self) -> None:
+        task = {
+            "id": "TASK-1",
+            "delivery_binding": {
+                "kind": "pull_request",
+                "pr": 42,
+                "head_sha": "a" * 40,
+                "head_branch": "task/TASK-1",
+                "base": "dev",
+            },
+        }
+        self.assertFalse(task_machine.delivery_binding_is_current(task))
 
     def test_artifact_binding_is_invalidated_by_contract_change(self) -> None:
         task = {
