@@ -198,13 +198,12 @@ from loop_inventory import (
     LoopHealthListEnvelope,
     LoopInventoryDetailEnvelope,
     LoopInventoryListEnvelope,
-    get_loop_health_entry,
     get_loop_inventory_entry,
-    list_loop_health_entries,
     list_loop_inventory_entries,
     loop_inventory_meta,
     truth_label_payload,
 )
+from management_read_models import loop_truth
 from operations_read_model import (
     DataConfidence,
     OperationsReadModelEnvelope,
@@ -63193,22 +63192,6 @@ def _loop_inventory_response_meta(payload: Dict[str, Any]) -> Dict[str, Any]:
     return payload
 
 
-def _loop_health_store_records(
-    tenant_id: str,
-    environment: str,
-) -> Tuple[bool, List[Dict[str, Any]], str]:
-    available, records = read_store.list_loop_health_records()
-    source = read_store.dataset_source("loop_health") if available else "missing"
-    scoped_records = [
-        record
-        for record in records
-        if isinstance(record, dict)
-        and str(record.get("tenant_id") or "").strip() == tenant_id
-        and str(record.get("environment") or "").strip() == environment
-    ]
-    return bool(available and scoped_records), scoped_records, source
-
-
 def _authenticated_loop_truth_scope(
     identity: OperatorIdentity,
     *,
@@ -63357,6 +63340,14 @@ def _loop_health_response_meta(
     surfaces["loop_health_snapshots"] = snapshot_surface
     catalog_meta = loop_inventory_meta()
     meta["catalog"] = catalog_meta
+    # The canonical loop-health array is exactly twelve rows; a composite
+    # overlay such as ``per_persona_ooda`` is noncanonical catalog inventory
+    # and is surfaced here separately instead of inside `items`.
+    meta["composite_overlay_inventory"] = [
+        item
+        for item in list_loop_inventory_entries()
+        if item.get("classification") == "composite_overlay"
+    ]
     meta["truth_labels"] = truth_label_payload()
     meta["truth_source_policy"] = {
         "accepted_live_source_types": ["live_truth"],
@@ -63401,135 +63392,6 @@ async def bff_v5_loop_inventory(
     return _loop_inventory_response_meta(payload)
 
 
-async def _async_loop_health_records(
-    *,
-    tenant_id: str,
-    environment: str,
-) -> Tuple[bool, List[Dict[str, Any]], str]:
-    fs_available, fs_records, fs_source = _loop_health_store_records(
-        tenant_id,
-        environment,
-    )
-    for r in fs_records:
-        if isinstance(r, dict):
-            r["_health_source"] = fs_source
-
-    dsn = os.environ.get("DATABASE_URL")
-    db_records = []
-    db_available = False
-    if dsn:
-        try:
-            import importlib
-            loop_control = importlib.import_module("services.loop-control")
-            LoopControllerStore = loop_control.LoopControllerStore
-            project_controller_record_to_bff = loop_control.project_controller_record_to_bff
-            store = LoopControllerStore(dsn)
-            records = await store.list_records(tenant_id, environment)
-            records = [
-                record
-                for record in records
-                if str(record.get("tenant_id") or "").strip() == tenant_id
-                and str(record.get("environment") or "").strip() == environment
-            ]
-            if records:
-                db_records = [project_controller_record_to_bff(r) for r in records]
-                for r in db_records:
-                    r["_health_source"] = "controller_store"
-                db_available = True
-        except Exception as e:
-            log.warning(f"Failed to load loop health from database: {e}. Falling back to file store.")
-
-    merged_records = []
-    seen_loops = set()
-
-    for r in db_records:
-        loop_id = r.get("loop_id") or r.get("id")
-        if loop_id:
-            merged_records.append(r)
-            seen_loops.add(str(loop_id).strip())
-
-    for r in fs_records:
-        loop_id = r.get("loop_id") or r.get("id")
-        if loop_id:
-            clean_id = str(loop_id).strip()
-            if clean_id not in seen_loops:
-                merged_records.append(r)
-                seen_loops.add(clean_id)
-
-    monitor = globals().get("downstream_health_monitor")
-    if monitor:
-        try:
-            loop12_rec = monitor.publish_loop_12_controller_truth()
-            if "bff_health_monitoring" not in seen_loops:
-                loop12_rec["_health_source"] = "bff_downstream_health_monitor"
-                merged_records.append(loop12_rec)
-                seen_loops.add("bff_health_monitoring")
-        except Exception as exc:
-            log.warning("Failed publishing Loop 12 truth in _async_loop_health_records: %s", exc)
-
-        try:
-            monitor_state = monitor.get_state()
-            targets_state = monitor_state.get("targets", {})
-            loop_target_map = {
-                "source_ingestion": ["source-ingest", "source-ingest-scheduler"],
-                "strategy_distillation": ["distillation"],
-                "alpha_replication": ["research-orchestrator", "research-worker-gateway"],
-                "persona_teaching": ["persona", "training-session"],
-                "agora_interaction_evidence": ["policy-learning"],
-                "human_imitation_shadow_evaluation": ["shadow-eval-scheduler"],
-                "consultation": ["consultation", "openclaw-gateway-adapter", "consultation-workflow-executor"],
-                "promotion_deployment": ["promotion", "deployment", "deployment-outbox-consumer"],
-                "capital_pool_execution": ["capital", "paper-fleet-reconciler", "paper-signal-producer"],
-                "telemetry_reconciliation": ["telemetry", "reconciliation-drift", "reconciliation-drift-consumer", "reconciliation-drift-scheduler", "reconciliation-drift-incident-listener"],
-                "evolution": ["evolution", "postmortems", "evolution-scheduler", "evolution-dispatch", "evolution-threshold-sweep"],
-                "bff_health_monitoring": ["runtime-manager", "governance"],
-            }
-            records_by_id = {str(r.get("loop_id") or r.get("id") or "").strip(): r for r in merged_records if isinstance(r, dict)}
-            for loop_id, mapped_targets in loop_target_map.items():
-                for t_name in mapped_targets:
-                    t_info = targets_state.get(t_name)
-                    if t_info and isinstance(t_info, dict) and t_info.get("ok") is False:
-                        fail_reason = t_info.get("failure_reason") or "degraded"
-                        target_summary = f"{t_name}: {fail_reason}"
-                        rec = records_by_id.get(loop_id)
-                        if rec is None:
-                            rec = {
-                                "loop_id": loop_id,
-                                "id": loop_id,
-                                "tenant_id": tenant_id,
-                                "environment": environment,
-                                "status": "degraded",
-                                "_health_source": "bff_downstream_health_monitor",
-                            }
-                            merged_records.append(rec)
-                            records_by_id[loop_id] = rec
-                        rec["downstream_actual_state"] = {
-                            "status": "degraded",
-                            "source": "bff_downstream_health_monitor",
-                            "authoritative": True,
-                            "reported_status": "degraded",
-                            "summary": target_summary,
-                            "checked_at": t_info.get("checked_at"),
-                        }
-                        rec["worker_health"] = {
-                            "ready": False,
-                            "ok": False,
-                            "status": "degraded",
-                            "reason": fail_reason,
-                            "worker_name": t_name,
-                        }
-                        rec["truth_note"] = target_summary
-                        break
-        except Exception as exc:
-            log.warning("Failed merging downstream monitor targets in _async_loop_health_records: %s", exc)
-
-    has_monitor_records = any(r.get("_health_source") == "bff_downstream_health_monitor" for r in merged_records)
-    health_available = db_available or fs_available or has_monitor_records
-    health_source = "controller_store" if db_available else (fs_source if fs_available else ("bff_downstream_health_monitor" if has_monitor_records else "missing"))
-    return health_available, merged_records, health_source
-
-
-
 @app.get("/bff/v5/loop-health", response_model=LoopHealthListEnvelope)
 async def bff_v5_loop_health(
     authorization: Optional[str] = Header(default=None),
@@ -63544,11 +63406,12 @@ async def bff_v5_loop_health(
         requested_tenant=x_tenant_id,
         requested_environment=environment,
     )
-    health_available, health_records, health_source = await _async_loop_health_records(
-        tenant_id=tenant_id,
-        environment=effective_environment,
+    health_available, health_records = await loop_truth.fetch_controller_store_health_records(
+        tenant_id,
+        effective_environment,
     )
-    records = list_loop_health_entries(
+    health_source = "controller_store" if health_available else "missing"
+    records = loop_truth.project_canonical_loop_health(
         health_records,
         health_source=health_source,
     )
@@ -63588,12 +63451,13 @@ async def bff_v5_loop_health_detail(
         requested_tenant=x_tenant_id,
         requested_environment=environment,
     )
-    health_available, health_records, health_source = await _async_loop_health_records(
-        tenant_id=tenant_id,
-        environment=effective_environment,
+    health_available, health_records = await loop_truth.fetch_controller_store_health_records(
+        tenant_id,
+        effective_environment,
     )
+    health_source = "controller_store" if health_available else "missing"
     payload = _sem_final_registry_detail(
-        get_loop_health_entry(
+        loop_truth.project_canonical_loop_health_entry(
             loop_id,
             health_records,
             health_source=health_source,
