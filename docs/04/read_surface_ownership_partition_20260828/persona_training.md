@@ -16,13 +16,14 @@ The objective is to establish a deterministic, zero-overlap migration baseline f
 ### Key Governance Principles
 1. **Zero Generic Delegation**: Every legacy `read_store` call must map directly to an explicit, typed domain port method or command owner. No generic proxies or dynamic `getattr` fallbacks are permitted.
 2. **Zero Production Code Changes in this Task**: Production BFF source (`services/control-plane/bff/main.py` and `read_store.py`) remains untouched during this mapping phase.
-3. **Disjoint Partitioning**: The method sets and caller sites allocated to `persona_training` are proven to have zero overlap with the other five domain ownership maps (`operations_agora`, `ooda_management`, `research_knowledge`, `persona_capital_runtime`, `lifecycle_telemetry_governance`).
+3. **Explicit Missing API Identification**: Any helper or fallback constructor currently defined only on `read_store.py` (such as `build_trainer_preview_unavailable`) is explicitly identified as a missing narrow domain API with its intended typed owner, signature, and cutover plan.
+4. **Disjoint Partitioning**: The method sets and caller sites allocated to `persona_training` are proven to have zero overlap with the other five domain ownership maps (`operations_agora`, `ooda_management`, `research_knowledge`, `persona_capital_runtime`, `lifecycle_telemetry_governance`).
 
 ---
 
 ## 2. Complete Inventory of `main.py` Caller Sites
 
-There are **31 direct member calls** in `services/control-plane/bff/main.py` invoking methods belonging to the Persona Training domain, plus **4 foreign-key existence guard calls** (`read_store.get_persona`) located inside trainer route handlers.
+There are **31 direct member calls** in `services/control-plane/bff/main.py` invoking methods belonging to the Persona Training domain across **17 unique domain methods**, plus **4 foreign-key existence guard calls** (`read_store.get_persona`) located inside trainer route handlers.
 
 ### 2.1 Tabular Call Inventory
 
@@ -39,10 +40,10 @@ There are **31 direct member calls** in `services/control-plane/bff/main.py` inv
 | 9 | `15584` | `append_trainer_message` | `append_trainer_message` | `POST /api/v1/trainer/sessions/{session_id}/message` | Write | `TrainingSessionTrainerPort.append_trainer_message` | Training Session Service (`POST /api/v1/trainer/sessions/{id}/message`) |
 | 10 | `15618` | `get_trainer_session` | `get_trainer_preview` | `GET /api/v1/trainer/sessions/{session_id}/preview` | Read | `TrainingSessionTrainerPort.get_trainer_session` | Training Session Service (`GET /api/v1/trainer/sessions/{id}`) |
 | 11 | `15628` | `get_trainer_preview` | `get_trainer_preview` | `GET /api/v1/trainer/sessions/{session_id}/preview` | Read | `TrainingSessionTrainerPort.get_trainer_preview` | Training Session Service (`GET /api/v1/trainer/sessions/{id}/preview`) |
-| 12 | `15642` | `build_trainer_preview_unavailable` | `get_trainer_preview` | `GET /api/v1/trainer/sessions/{session_id}/preview` | Read | `PersonaTrainingDomainPort.build_trainer_preview_unavailable` | Domain Preview Helper / Fallback Constructor |
+| 12 | `15642` | `build_trainer_preview_unavailable` | `get_trainer_preview` | `GET /api/v1/trainer/sessions/{session_id}/preview` | Read | *Missing Explicit Narrow API* (Target: `TrainingSessionTrainerPort.build_trainer_preview_unavailable` / Preview Helper) | Domain Preview Fallback Constructor (Currently in `read_store.py` only; see §3.4, §5.1) |
 | 13 | `15660` | `get_trainer_session` | `refresh_trainer_preview` | `POST /api/v1/trainer/sessions/{session_id}/preview` | Read | `TrainingSessionTrainerPort.get_trainer_session` | Training Session Service (`GET /api/v1/trainer/sessions/{id}`) |
 | 14 | `15669` | `get_trainer_preview` | `refresh_trainer_preview` | `POST /api/v1/trainer/sessions/{session_id}/preview` | Read | `TrainingSessionTrainerPort.get_trainer_preview` | Training Session Service (`GET /api/v1/trainer/sessions/{id}/preview`) |
-| 15 | `15673` | `build_trainer_preview_unavailable` | `refresh_trainer_preview` | `POST /api/v1/trainer/sessions/{session_id}/preview` | Read | `PersonaTrainingDomainPort.build_trainer_preview_unavailable` | Domain Preview Helper / Fallback Constructor |
+| 15 | `15673` | `build_trainer_preview_unavailable` | `refresh_trainer_preview` | `POST /api/v1/trainer/sessions/{session_id}/preview` | Read | *Missing Explicit Narrow API* (Target: `TrainingSessionTrainerPort.build_trainer_preview_unavailable` / Preview Helper) | Domain Preview Fallback Constructor (Currently in `read_store.py` only; see §3.4, §5.1) |
 | 16 | `15697` | `refresh_trainer_preview` | `refresh_trainer_preview` | `POST /api/v1/trainer/sessions/{session_id}/preview` | Write | `TrainingSessionTrainerPort.refresh_trainer_preview` | Training Session Service (`POST /api/v1/trainer/sessions/{id}/preview`) |
 | 17 | `15746` | `list_trainer_replays` | `list_trainer_replays` | `GET /api/v1/trainer/replay` | Read | `TrainingSessionTrainerPort.list_trainer_replays` | Training Session Service (`GET /api/v1/trainer/replay`) |
 | 18 | `15777` | `get_trainer_replay` | `get_trainer_replay_detail` | `GET /api/v1/trainer/replay/{session_id}` | Read | `TrainingSessionTrainerPort.get_trainer_replay` | Training Session Service (`GET /api/v1/trainer/replay/{id}`) |
@@ -111,13 +112,28 @@ The following 4 calls check persona existence in route entry points. Their prima
 - **Methods**: `get_trainer_preview`, `build_trainer_preview_unavailable`, `refresh_trainer_preview`
 - **Call Count**: 7 call sites:
   - `get_trainer_preview`: Lines 15628, 15669 (**Read**)
-  - `build_trainer_preview_unavailable`: Lines 15642, 15673 (**Read / Pure View Constructor**)
+  - `build_trainer_preview_unavailable`: Lines 15642, 15673 (**Read / Pure Fallback Constructor**)
   - `refresh_trainer_preview`: Line 15697 (**Write / Calculation Trigger**)
 - **Classification**:
   - `get_trainer_preview` & `build_trainer_preview_unavailable` -> **Read**
   - `refresh_trainer_preview` -> **Write**
-- **Port Mapping**: Handled via `TrainingSessionTrainerPort` / `PersonaTrainingDomainPort`.
-- **Destination**: Training Session service preview calculation engine.
+- **Port Mapping & Missing Narrow API Identification**:
+  - `get_trainer_preview` and `refresh_trainer_preview` are implemented on `TrainingSessionTrainerPort` and composed into `PersonaTrainingDomainPort`.
+  - **`build_trainer_preview_unavailable` is a missing explicit narrow API**: The existing narrow port `PersonaTrainingDomainPort` / `TrainingSessionTrainerPort` in `services/control-plane/bff/domain_ports/persona_training.py` currently exposes no such method (only legacy `read_store.py` defines it).
+  - **Intended Typed Owner**: Training Session Domain (`TrainingSessionTrainerPort` / `PersonaTrainingDomainPort` or a dedicated pure domain helper module).
+  - **Intended Typed Signature**:
+    ```python
+    def build_trainer_preview_unavailable(
+        self,
+        session_id: str,
+        *,
+        session_status: Optional[str],
+        snapshot_at: Optional[str] = None,
+        control_diff: Optional[List[Dict[str, Any]]] = None,
+    ) -> Dict[str, Any]: ...
+    ```
+  - **Migration Handling**: During the caller cutover phase (`ACG-RS-CALLER-MIGRATION-20260828`), this constructor will be exposed as an explicit typed method on the domain port or extracted to a pure preview helper in `services/control-plane/bff/` / `services/training-session/`, eliminating reliance on `read_store.py` without introducing generic delegation or runtime regression.
+- **Destination**: Training Session service preview calculation engine / fallback constructor.
 
 ### 3.5 Trainer Replay (TW-04)
 - **Methods**: `list_trainer_replays`, `get_trainer_replay`, `commit_trainer_replay`, `discard_trainer_replay`
@@ -150,12 +166,12 @@ The following 4 calls check persona existence in route entry points. Their prima
 
 ## 4. Method Count Summary & Disjoint Domain Partition Proof
 
-### 4.1 Exact Persona Training Method Set (12 Core Methods)
+### 4.1 Exact Persona Training Method Set (17 Unique Methods)
 
-The following 12 methods in `ReadSurfaceStore` belong strictly to the Persona Training & Replay domain:
+The following 17 unique methods in `ReadSurfaceStore` belong strictly to the Persona Training & Replay domain:
 
 1. `append_trainer_message` (1 call site: L15584)
-2. `build_trainer_preview_unavailable` (2 call sites: L15642, L15673)
+2. `build_trainer_preview_unavailable` (2 call sites: L15642, L15673 - *Missing explicit narrow API in port; see §3.4 & §5.1*)
 3. `commit_trainer_replay` (1 call site: L15970)
 4. `create_rapid_eval` (1 call site: L16125)
 5. `create_trainer_session` (1 call site: L15365)
@@ -172,7 +188,8 @@ The following 12 methods in `ReadSurfaceStore` belong strictly to the Persona Tr
 16. `patch_trainer_controls` (1 call site: L15534)
 17. `refresh_trainer_preview` (1 call site: L15697)
 
-*Total direct call invocations in `main.py` for these methods: **31**.*
+- **Total Unique Domain Methods**: **17**
+- **Total Direct Call Invocations in `main.py`**: **31** (reconciled across all 17 methods above).
 
 ---
 
@@ -238,18 +255,37 @@ class PersonaTrainingDomainPort:
     def get_rapid_eval(self, eval_id: Optional[str], **kwargs: Any) -> Optional[Dict[str, Any]]: ...
 ```
 
-### Verification Evidence
+### 5.1 Missing Explicit Narrow API Analysis
+
+While the implemented `PersonaTrainingDomainPort` covers the 16 interactive and query methods listed above, **`build_trainer_preview_unavailable` is identified as a missing explicit narrow API**:
+- **Current State**: Only legacy `services/control-plane/bff/read_store.py` (`ReadSurfaceStore.build_trainer_preview_unavailable`) defines this fallback payload constructor. The implemented narrow port `PersonaTrainingDomainPort` / `TrainingSessionTrainerPort` in `domain_ports/persona_training.py` does not yet declare or implement it.
+- **Intended Typed Owner**: Training Session Domain (`TrainingSessionTrainerPort` / `PersonaTrainingDomainPort` or a dedicated pure domain helper module).
+- **Target Typed Signature**:
+  ```python
+  def build_trainer_preview_unavailable(
+      self,
+      session_id: str,
+      *,
+      session_status: Optional[str],
+      snapshot_at: Optional[str] = None,
+      control_diff: Optional[List[Dict[str, Any]]] = None,
+  ) -> Dict[str, Any]: ...
+  ```
+- **Migration & Cutover Plan**: In `ACG-RS-CALLER-MIGRATION-20260828`, this method will be explicitly added to `TrainingSessionTrainerPort` (or moved to a pure domain helper) before caller cutover in `main.py`, preserving type safety and zero generic delegation. In compliance with the boundary constraints of this inventory task, no production code in `services/control-plane/bff` is altered here.
+
+### 5.2 Verification Evidence
 - Port unit tests: `services/control-plane/bff/tests/test_persona_training_ports.py` (17 test cases passing).
-- Validates strict delegation to injected Training Session backend and Persona Registry store without fallback or proxying.
+- Validates strict delegation to injected Training Session backend and Persona Registry store without fallback or dynamic proxying.
 
 ---
 
 ## 6. Migration Sequence & Acceptance Verification
 
 During caller cutover (`ACG-RS-CALLER-MIGRATION-20260828`):
-1. Replace `read_store` calls in `main.py` lines 15259–16174 with `ports.persona_training.*` or `ports.persona_capital_runtime.*` for FK checks.
-2. In projection helpers (lines 21746, 36463, 40209, 48478, 49137), replace `read_store.get_teaching_sessions_for_persona(persona_id)` with `ports.persona_training.list_persona_teaching_sessions(persona_id)`.
-3. In `services/control-plane/bff/read_store.py`, all trainer and teaching methods will be decommissioned and deleted in `ACG-RS-FINAL-DELETE-20260828`.
+1. Add `build_trainer_preview_unavailable` to `TrainingSessionTrainerPort` / `PersonaTrainingDomainPort` (or domain helper) with explicit typed signature.
+2. Replace `read_store` calls in `main.py` lines 15259–16174 with `ports.persona_training.*` or `ports.persona_capital_runtime.*` for FK checks.
+3. In projection helpers (lines 21746, 36463, 40209, 48478, 49137), replace `read_store.get_teaching_sessions_for_persona(persona_id)` with `ports.persona_training.list_persona_teaching_sessions(persona_id)`.
+4. In `services/control-plane/bff/read_store.py`, all trainer and teaching methods will be decommissioned and deleted in `ACG-RS-FINAL-DELETE-20260828`.
 
 ---
 *End of Ownership Partition Map for Persona Training.*
