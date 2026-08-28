@@ -6210,6 +6210,80 @@ class WorkerLeaseApprovalWaitProgressTests(unittest.TestCase):
             supervisor.worker_lease_progress_is_fresh(self.config, worker, self.now)
         )
 
+    def test_active_bounded_antigravity_child_renews_quiet_test_lease(self) -> None:
+        config = {
+            "worker_runtime": {"work_progress_stale_seconds": 360},
+            "providers": {"antigravity2": {"antigravity": {"print_timeout": "2h"}}},
+        }
+        worker = {
+            "status": "running",
+            "provider": "antigravity2",
+            "lease_acquired_at": (self.now - timedelta(minutes=45)).isoformat(),
+            "last_work_progress_at": self.stale_event_at,
+            "last_active_process_at": self.fresh_event_at,
+        }
+        self.assertTrue(supervisor.worker_lease_progress_is_fresh(config, worker, self.now))
+
+    def test_active_child_without_provider_timeout_cannot_renew_quiet_lease(self) -> None:
+        worker = {
+            "status": "running",
+            "provider": "antigravity2",
+            "lease_acquired_at": (self.now - timedelta(minutes=45)).isoformat(),
+            "last_work_progress_at": self.stale_event_at,
+            "last_active_process_at": self.fresh_event_at,
+        }
+        self.assertFalse(
+            supervisor.worker_lease_progress_is_fresh(self.config, worker, self.now)
+        )
+
+    def test_active_child_is_reclaimed_at_provider_timeout_even_with_future_lease(self) -> None:
+        config = {
+            "worker_runtime": {"work_progress_stale_seconds": 360},
+            "providers": {"antigravity2": {"antigravity": {"print_timeout": "2h"}}},
+        }
+        worker = {
+            "status": "running",
+            "provider": "antigravity2",
+            "lease_acquired_at": (self.now - timedelta(hours=2, seconds=1)).isoformat(),
+            "lease_expires_at": (self.now + timedelta(minutes=10)).isoformat(),
+            "last_work_progress_at": self.stale_event_at,
+            "last_active_process_at": self.fresh_event_at,
+        }
+        self.assertTrue(supervisor.worker_lease_is_expired(config, worker, self.now))
+
+    def test_process_activity_is_recorded_only_with_a_fresh_heartbeat(self) -> None:
+        worker = {
+            "pid": 1234,
+            "status": "running",
+            "last_heartbeat_at": self.fresh_event_at,
+            "process_activity_snapshot": {"processes": ["123:1"], "cpu_ticks": 10, "io_bytes": 0},
+        }
+        state = {"queue": {"events": {}}}
+        poll_counts = {
+            "marker_updates": 0,
+            "commit_progress_updates": 0,
+            "lease_refreshes": 0,
+        }
+        current = {"processes": ["123:1"], "cpu_ticks": 11, "io_bytes": 0}
+        with (
+            mock.patch.object(supervisor, "update_worker_runtime_markers", return_value=False),
+            mock.patch.object(supervisor, "update_from_log", return_value=False),
+            mock.patch.object(supervisor, "pid_is_alive", return_value=True),
+            mock.patch.object(supervisor, "update_worker_commit_progress", return_value=(False, False)),
+            mock.patch.object(supervisor, "worker_process_activity_snapshot", return_value=current),
+            mock.patch.object(supervisor, "worker_lease_can_renew", return_value=False),
+            mock.patch.object(supervisor, "worker_lease_is_expired", return_value=False),
+        ):
+            supervisor.poll_worker_observation_stage(
+                self.config,
+                state,
+                worker,
+                now=self.now,
+                active_worker_statuses={"running"},
+                poll_counts=poll_counts,
+            )
+        self.assertEqual(worker["last_active_process_at"], self.now.isoformat().replace("+00:00", "Z"))
+
     def test_deferred_lease_termination_preserves_observation_contract(self) -> None:
         """A failed termination probe must not crash the poll driver.
 
