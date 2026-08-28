@@ -303,16 +303,23 @@ def _runtime_controller_record_qualified(
     if record.get("ready") is False or raw_health.get("ready") is False or record.get("functional_ready") is False:
         return False
 
-    name_matches = (
-        (controller_name == expected_name)
-        if expected_name
-        else bool(controller_name)
+    # A blank catalog controller identity can never be satisfied by any
+    # reported name; accepting "any nonblank name" here was a second,
+    # permissive validator layered on top of the catalog contract.
+    name_matches = bool(expected_name) and controller_name == expected_name
+
+    desired_state_presence = _dict_or_empty(record.get("desired_state_presence"))
+    downstream_actual_state = _dict_or_empty(record.get("downstream_actual_state"))
+    authoritative_desired_and_actual = bool(
+        desired_state_presence.get("authoritative")
+        and downstream_actual_state.get("authoritative")
     )
 
     return bool(
         reported_status in _ACCEPTED_CONTROLLER_HEALTH_STATUSES
         and controller_name
         and name_matches
+        and authoritative_desired_and_actual
         and _controller_heartbeat_is_current(heartbeat)
         and _health_record_refs(record)
     )
@@ -575,6 +582,19 @@ def _registry_entries(registry: Dict[str, Any]) -> List[Dict[str, Any]]:
         for entry in [*canonical, *overlays]
         if isinstance(entry, dict)
     ]
+
+
+def _canonical_registry_entries(registry: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """The twelve stable canonical loops only; excludes composite overlays.
+
+    Loop-health truth is scoped to these twelve rows.  A composite overlay
+    such as ``per_persona_ooda`` is catalog inventory, not current
+    controller-runtime truth, and is surfaced separately by the inventory
+    read model instead.
+    """
+
+    canonical = registry.get("loops") if isinstance(registry.get("loops"), list) else []
+    return [entry for entry in canonical if isinstance(entry, dict)]
 
 
 def loop_inventory_meta() -> Dict[str, Any]:
@@ -1080,8 +1100,14 @@ def list_loop_health_entries(
     *,
     health_source: str = "missing",
 ) -> List[Dict[str, Any]]:
+    """Return exactly the twelve canonical loop-health rows.
+
+    The composite overlay is catalog inventory, not current controller
+    truth, and is intentionally excluded here.
+    """
+
     registry = _load_registry()
-    loops = _registry_entries(registry)
+    loops = _canonical_registry_entries(registry)
     records_by_loop = _normalize_health_records(health_records)
     projected_list = []
     for loop in loops:
