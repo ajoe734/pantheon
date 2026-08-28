@@ -4046,6 +4046,217 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
             )
         self.assertEqual(task["status"], "review")
 
+    def test_operator_accept_rehabilitates_legacy_delivery_binding_without_manifest(self) -> None:
+        message = "Human/Ops rehabilitates legacy exact PR head."
+        task = self.state["tasks"][0]
+        task.pop(ai_status.DELIVERY_BINDING_KEY, None)
+        task.pop("review_file", None)
+        task[ai_status.APPROVAL_BINDING_KEY] = {
+            "pr": 4269,
+            "head_sha": "a" * 40,
+            "head_branch": "task/REG-002",
+            "base": "dev",
+        }
+
+        def mock_rehabilitate(*, repository, binding=None, delivery_binding=None, **kwargs):
+            return self._review_bridge.ReviewAdmissionBinding(
+                pr=4269,
+                head_sha="a" * 40,
+                head_branch="task/REG-002",
+                base="dev",
+                base_sha="c" * 40,
+                required_merge_method="MERGE",
+                manifest_path=None,
+                manifest_blob_sha=None,
+            )
+
+        def accept(**kwargs):
+            return {
+                "repository": "ajoe734/pantheon",
+                "pr": 4269,
+                "head_sha": "a" * 40,
+                "head_branch": "task/REG-002",
+                "base": "dev",
+                "decision": "operator-accept",
+                "actor": "Human/Ops",
+                "mode": "operator_exact_head",
+                "operator_acceptance_proof_ref": (
+                    f"refs/tags/pantheon-review/operator-accept/{'a' * 40}"
+                ),
+                "frozen_base_sha": "c" * 40,
+                "current_base_sha": "c" * 40,
+                "intent_nonce": kwargs["intent_nonce"],
+            }
+
+        with (
+            mock.patch.dict(
+                os.environ,
+                {"AI_NAME": "Human/Ops", "PANTHEON_LOCAL_HUMAN_OPS": "1"},
+                clear=False,
+            ),
+            mock.patch.object(
+                self._review_bridge,
+                "rehabilitate_operator_admission",
+                side_effect=mock_rehabilitate,
+            ),
+            mock.patch.object(
+                self._review_bridge,
+                "revalidate_operator_admission",
+                side_effect=mock_rehabilitate,
+            ),
+            mock.patch.object(
+                self._review_bridge,
+                "bridge_operator_acceptance",
+                side_effect=accept,
+            ),
+            mock.patch.object(self._review_bridge, "validate_operator_acceptance_evidence"),
+            mock.patch.object(ai_status, "load_config", return_value={}),
+            mock.patch.object(ai_status, "load_state", return_value=self.state),
+            mock.patch.object(ai_status, "save_state"),
+            mock.patch.object(ai_status, "recover_status_archive_outbox"),
+            mock.patch.object(ai_status, "recover_status_activity_outbox"),
+            mock.patch.object(ai_status, "sync_all"),
+            mock.patch.object(ai_status, "refresh_derived_status_views_if_current"),
+            mock.patch.object(ai_status, "validate_active_status_command_lease"),
+            mock.patch.object(ai_status, "validate_bound_status_command_task_authority"),
+            mock.patch.object(
+                ai_status,
+                "authoritative_task_state_transaction",
+                return_value=contextlib.nullcontext(),
+            ),
+        ):
+            preflight = ai_status.prepare_external_mutation_preflight(
+                "operator_accept", task, ["REG-002", message]
+            )
+            ai_status.run_two_phase_review_decision(
+                "operator_accept", ["REG-002", message], preflight
+            )
+
+        self.assertEqual(task["status"], "review_approved")
+        self.assertIn(ai_status.OPERATOR_ACCEPTANCE_KEY, task)
+        self.assertNotIn(ai_status.GITHUB_REVIEW_BRIDGE_KEY, task)
+        self.assertEqual(
+            task[ai_status.DELIVERY_BINDING_KEY],
+            {
+                "kind": "pull_request",
+                "pr": 4269,
+                "head_sha": "a" * 40,
+                "head_branch": "task/REG-002",
+                "base": "dev",
+                "base_sha": "c" * 40,
+                "required_merge_method": "MERGE",
+            },
+        )
+        self.assertNotIn("evidence_manifest", task[ai_status.DELIVERY_BINDING_KEY])
+        self.assertTrue(ai_status.operator_acceptance_evidence_matches(task))
+
+    def test_ordinary_reviewer_approve_rejects_legacy_binding_lacking_manifest(self) -> None:
+        task = self.state["tasks"][0]
+        task[ai_status.DELIVERY_BINDING_KEY] = {
+            "kind": "pull_request",
+            "pr": 4269,
+            "head_sha": "a" * 40,
+            "head_branch": "task/REG-002",
+            "base": "dev",
+            "base_sha": "c" * 40,
+            "required_merge_method": "MERGE",
+        }
+        task.pop("review_file", None)
+        with (
+            mock.patch.dict(os.environ, {"AI_NAME": "Claude"}, clear=False),
+            self.assertRaisesRegex(
+                SystemExit,
+                "reopen and re-handoff.*before review|legacy or incomplete PR delivery evidence and cannot approve",
+            ),
+        ):
+            ai_status.prepare_external_mutation_preflight(
+                "approve", task, ["REG-002", "Reviewer attempts approval without manifest"]
+            )
+
+    def test_operator_accept_rehabilitation_rejects_head_mismatch(self) -> None:
+        task = self.state["tasks"][0]
+        task[ai_status.DELIVERY_BINDING_KEY] = {
+            "kind": "pull_request",
+            "pr": 4269,
+            "head_sha": "a" * 40,
+            "head_branch": "task/REG-002",
+            "base": "dev",
+        }
+        with (
+            mock.patch.dict(
+                os.environ,
+                {"AI_NAME": "Human/Ops", "PANTHEON_LOCAL_HUMAN_OPS": "1"},
+                clear=False,
+            ),
+            mock.patch.object(
+                self._review_bridge,
+                "rehabilitate_operator_admission",
+                side_effect=self._review_bridge.ReviewBindingMismatch(
+                    "GitHub PR #4269 no longer matches reviewed identity: head bbbb != aaaa"
+                ),
+            ),
+            self.assertRaisesRegex(SystemExit, "GitHub rejected operator acceptance.*head bbbb != aaaa"),
+        ):
+            ai_status.prepare_external_mutation_preflight(
+                "operator_accept", task, ["REG-002", "Operator accepts but head mismatched."]
+            )
+
+    def test_operator_accept_rehabilitation_rejects_closed_pr(self) -> None:
+        task = self.state["tasks"][0]
+        task[ai_status.DELIVERY_BINDING_KEY] = {
+            "kind": "pull_request",
+            "pr": 4269,
+            "head_sha": "a" * 40,
+            "head_branch": "task/REG-002",
+            "base": "dev",
+        }
+        with (
+            mock.patch.dict(
+                os.environ,
+                {"AI_NAME": "Human/Ops", "PANTHEON_LOCAL_HUMAN_OPS": "1"},
+                clear=False,
+            ),
+            mock.patch.object(
+                self._review_bridge,
+                "rehabilitate_operator_admission",
+                side_effect=self._review_bridge.ReviewBindingMismatch(
+                    "GitHub PR #4269 is closed, expected open"
+                ),
+            ),
+            self.assertRaisesRegex(SystemExit, "GitHub rejected operator acceptance.*closed, expected open"),
+        ):
+            ai_status.prepare_external_mutation_preflight(
+                "operator_accept", task, ["REG-002", "Operator accepts but PR is closed."]
+            )
+
+    def test_operator_accept_rehabilitation_rejects_changed_branch(self) -> None:
+        task = self.state["tasks"][0]
+        task[ai_status.DELIVERY_BINDING_KEY] = {
+            "kind": "pull_request",
+            "pr": 4269,
+            "head_sha": "a" * 40,
+            "head_branch": "task/REG-002",
+            "base": "dev",
+        }
+        with (
+            mock.patch.dict(
+                os.environ,
+                {"AI_NAME": "Human/Ops", "PANTHEON_LOCAL_HUMAN_OPS": "1"},
+                clear=False,
+            ),
+            mock.patch.object(
+                self._review_bridge,
+                "rehabilitate_operator_admission",
+                side_effect=self._review_bridge.ReviewBindingMismatch(
+                    "GitHub PR #4269 no longer matches reviewed identity: branch feature/other != task/REG-002"
+                ),
+            ),
+            self.assertRaisesRegex(SystemExit, "GitHub rejected operator acceptance.*branch feature/other != task/REG-002"),
+        ):
+            ai_status.prepare_external_mutation_preflight(
+                "operator_accept", task, ["REG-002", "Operator accepts but branch changed."]
+            )
+
     def test_approve_bridge_failure_preserves_review_state(self) -> None:
         self._set_pr_delivery_binding(pr=4269, head_sha="a" * 40)
         with (
@@ -5291,6 +5502,76 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
         self.assertTrue(terminal["delivery"]["reconciled_from_operator_acceptance"])
         validate_delivery.assert_called_once_with(task)
         protected.assert_not_called()
+
+    def test_reconcile_operator_exact_head_succeeds_for_rehabilitated_delivery_binding(self) -> None:
+        task = self.state["tasks"][0]
+        task["status"] = "review_approved"
+        task[ai_status.APPROVAL_BINDING_KEY] = {
+            "pr": 4269,
+            "head_sha": "a" * 40,
+            "head_branch": "task/REG-002",
+            "base": "dev",
+        }
+        task[ai_status.DELIVERY_BINDING_KEY] = {
+            "kind": "pull_request",
+            "pr": 4269,
+            "head_sha": "a" * 40,
+            "head_branch": "task/REG-002",
+            "base": "dev",
+            "base_sha": "c" * 40,
+            "required_merge_method": "MERGE",
+        }
+        task[ai_status.OPERATOR_ACCEPTANCE_KEY] = {
+            "repository": "ajoe734/pantheon",
+            "pr": 4269,
+            "head_sha": "a" * 40,
+            "head_branch": "task/REG-002",
+            "base": "dev",
+            "decision": "operator-accept",
+            "actor": "Human/Ops",
+            "mode": "operator_exact_head",
+            "operator_acceptance_proof_ref": (
+                f"refs/tags/pantheon-review/operator-accept/{'a' * 40}"
+            ),
+            "frozen_base_sha": "c" * 40,
+            "current_base_sha": "c" * 40,
+        }
+        delivery = {
+            "repository_id": "pantheon",
+            "repository_slug": "ajoe734/pantheon",
+            "repository_path": "/tmp/pantheon",
+            "commit": "a" * 40,
+            "merge_target_ref": "origin/dev",
+            "merge_target_sha": "b" * 40,
+            "head_merged_to_target": True,
+        }
+        with (
+            mock.patch.dict(
+                os.environ,
+                {"AI_NAME": "Human/Ops", "PANTHEON_LOCAL_HUMAN_OPS": "1"},
+                clear=False,
+            ),
+            mock.patch.object(
+                self._review_bridge,
+                "validate_operator_acceptance_evidence",
+                return_value=True,
+            ),
+            mock.patch.object(
+                ai_status,
+                "_validated_reconcile_delivery",
+                return_value=delivery,
+            ),
+            mock.patch.object(ai_status, "load_archived_snapshot", return_value=None),
+        ):
+            _command_reconcile_merged_done(
+                self.state,
+                ["REG-002", "Human/Ops closed the exact accepted merged head."],
+            )
+
+        terminal = ai_status.get_task(self.state, "REG-002")
+        self.assertEqual(terminal["status"], "done")
+        self.assertTrue(terminal["delivery"]["reconciled_from_operator_acceptance"])
+        self.assertEqual(terminal["delivery"]["commit"], "a" * 40)
 
     def test_reconcile_operator_exact_head_requires_explicit_local_human_ops(self) -> None:
         task = self.state["tasks"][0]
