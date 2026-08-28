@@ -60,6 +60,6 @@
   },
   "verification": {
     "command": ".venv-pantheon/bin/python -m pytest scripts/test_deploy_nonprod_vm.py scripts/test_verify_product_functional_closure.py scripts/test_dev_environment_lease_deploy_contract.py -q",
-    "result": "all passed (113 in deploy/verify tests, 209 in lease deploy contract tests)"
+    "result": "all passed (118 in deploy/verify tests, 209 in lease deploy contract tests; total 327 tests)"
   }
 }

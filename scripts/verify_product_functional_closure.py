@@ -712,70 +712,73 @@ class ProductFunctionalClosureVerifier:
                 f"deploymentState={deployment_state!r}, profile={profile!r} is not accepted read-only",
             )
 
-        backend_components_result = None
-        if self.config.backend_components_evidence is not None:
-            backend_components_data = self._load_evidence(
-                "backend_components", self.config.backend_components_evidence
+        if not self.config.backend_components_evidence:
+            raise ProductFunctionalClosureAcceptanceError(
+                "gate_01.missing_backend_components_evidence",
+                "--backend-components-evidence is required and must be provided",
             )
-            schema = backend_components_data.get("schema_version")
-            if not schema or not isinstance(schema, str) or "backend_required_components_receipt" not in schema:
+        backend_components_data = self._load_evidence(
+            "backend_components", self.config.backend_components_evidence
+        )
+        schema = backend_components_data.get("schema_version")
+        if not schema or not isinstance(schema, str) or "backend_required_components_receipt" not in schema:
+            raise ProductFunctionalClosureAcceptanceError(
+                "gate_01.backend_components_schema",
+                f"invalid backend components receipt schema: {schema!r}",
+            )
+        receipt_expected_sha = backend_components_data.get("expected_sha")
+        if (
+            receipt_expected_sha
+            and receipt_expected_sha not in ("unknown", "")
+            and receipt_expected_sha != self.config.expected_bff_sha
+        ):
+            raise ProductFunctionalClosureAcceptanceError(
+                "gate_01.backend_components_sha",
+                f"backend components receipt SHA {receipt_expected_sha!r} != expected {self.config.expected_bff_sha}",
+            )
+        services_map = _mapping(
+            backend_components_data.get("services", {}),
+            "gate_01.backend_components.services",
+        )
+        if not services_map:
+            raise ProductFunctionalClosureAcceptanceError(
+                "gate_01.backend_components_empty",
+                "backend components receipt declares empty services map",
+            )
+        for svc_name, svc_info in services_map.items():
+            svc_dict = _mapping(
+                svc_info, f"gate_01.backend_components.{svc_name}"
+            )
+            status = svc_dict.get("status")
+            if status != "running":
                 raise ProductFunctionalClosureAcceptanceError(
-                    "gate_01.backend_components_schema",
-                    f"invalid backend components receipt schema: {schema!r}",
+                    f"gate_01.backend_components.{svc_name}.status",
+                    f"service {svc_name} status is {status!r}, must be 'running'",
                 )
-            receipt_expected_sha = backend_components_data.get("expected_sha")
+            health = svc_dict.get("health")
+            if health == "unhealthy":
+                raise ProductFunctionalClosureAcceptanceError(
+                    f"gate_01.backend_components.{svc_name}.health",
+                    f"service {svc_name} is unhealthy",
+                )
+            rev = svc_dict.get("image_revision")
             if (
-                receipt_expected_sha
-                and receipt_expected_sha not in ("unknown", "")
-                and receipt_expected_sha != self.config.expected_bff_sha
+                rev
+                and rev not in ("unknown", "<no value>", "")
+                and rev != self.config.expected_bff_sha
             ):
                 raise ProductFunctionalClosureAcceptanceError(
-                    "gate_01.backend_components_sha",
-                    f"backend components receipt SHA {receipt_expected_sha!r} != expected {self.config.expected_bff_sha}",
+                    f"gate_01.backend_components.{svc_name}.revision",
+                    f"service {svc_name} image revision {rev!r} != expected {self.config.expected_bff_sha}",
                 )
-            services_map = _mapping(
-                backend_components_data.get("services", {}),
-                "gate_01.backend_components.services",
-            )
-            if not services_map:
-                raise ProductFunctionalClosureAcceptanceError(
-                    "gate_01.backend_components_empty",
-                    "backend components receipt declares empty services map",
-                )
-            for svc_name, svc_info in services_map.items():
-                svc_dict = _mapping(
-                    svc_info, f"gate_01.backend_components.{svc_name}"
-                )
-                status = svc_dict.get("status")
-                if status != "running":
-                    raise ProductFunctionalClosureAcceptanceError(
-                        f"gate_01.backend_components.{svc_name}.status",
-                        f"service {svc_name} status is {status!r}, must be 'running'",
-                    )
-                health = svc_dict.get("health")
-                if health == "unhealthy":
-                    raise ProductFunctionalClosureAcceptanceError(
-                        f"gate_01.backend_components.{svc_name}.health",
-                        f"service {svc_name} is unhealthy",
-                    )
-                rev = svc_dict.get("image_revision")
-                if (
-                    rev
-                    and rev not in ("unknown", "<no value>", "")
-                    and rev != self.config.expected_bff_sha
-                ):
-                    raise ProductFunctionalClosureAcceptanceError(
-                        f"gate_01.backend_components.{svc_name}.revision",
-                        f"service {svc_name} image revision {rev!r} != expected {self.config.expected_bff_sha}",
-                    )
-            backend_components_result = {
-                "verified_services_count": len(services_map),
-                "all_running": True,
-                "receipt_observed_at": backend_components_data.get("observed_at"),
-                "services": list(services_map.keys()),
-            }
+        backend_components_result = {
+            "verified_services_count": len(services_map),
+            "all_running": True,
+            "receipt_observed_at": backend_components_data.get("observed_at"),
+            "services": list(services_map.keys()),
+        }
 
-        result_payload = {
+        return {
             "observed_frontend_sha": fe_sha,
             "observed_manifest_bff_sha": manifest_bff_sha,
             "observed_runtime_bff_sha": runtime_bff_sha,
@@ -784,10 +787,8 @@ class ProductFunctionalClosureVerifier:
             "profile": profile,
             "build_mode": build,
             "config_posture": posture,
+            "backend_components": backend_components_result,
         }
-        if backend_components_result is not None:
-            result_payload["backend_components"] = backend_components_result
-        return result_payload
 
     def verify_gate_02_source_manual_only_readiness(self) -> dict[str, Any]:
         """Gate 02: Verify Source Ingestion manual-only mode and bounded readiness."""

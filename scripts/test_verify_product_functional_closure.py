@@ -1674,3 +1674,24 @@ def test_gate_01_backend_components_service_wrong_revision_fails(tmp_path: Path)
     assert gate_01.status == "FAILED"
     assert "agora-interaction-worker image revision" in str(gate_01.error)
 
+
+def test_gate_01_backend_components_absent_from_discovery_and_config_fails(tmp_path: Path) -> None:
+    """Proves Gate 01 fails closed when backend components receipt is entirely absent from config and auto-discovery."""
+    paths = _write_evidence_files(tmp_path)
+    paths["backend_components"].unlink()
+    del paths["backend_components"]
+
+    config = _config(tmp_path, paths)
+    assert config.backend_components_evidence is None
+
+    verifier = ProductFunctionalClosureVerifier(
+        config,
+        transport=_transport(),
+    )
+    report = verifier.run_full_acceptance()
+    assert report.overall_status == "FAILED"
+    gate_01 = next(r for r in report.gate_results if r.gate_id == "gate_01_manifest_exact_pair")
+    assert gate_01.status == "FAILED"
+    assert "--backend-components-evidence is required and must be provided" in str(gate_01.error)
+
+

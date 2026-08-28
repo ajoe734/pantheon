@@ -2311,7 +2311,7 @@ assert int(payload.get("total_sweeps_run") or 0) >= 1
 
 verify_exact_component_deployment() {
   local target_services=("$@")
-  local expected_sha="${GIT_SHA:-${PANTHEON_DEPLOY_SHA:-}}"
+  local expected_sha="${GIT_SHA:-${PANTHEON_DEPLOY_SHA:-${DEPLOY_SHA:-${expected_sha:-}}}}"
   local receipt_path="${PANTHEON_BACKEND_COMPONENTS_RECEIPT_PATH:-docs/deployment/evidence/architecture-cleanup/ACG-DEPLOY-EXACT-GATES-20260828/backend-components-receipt.json}"
   local missing=() restarting=() unhealthy=() wrong_sha=() duplicates=()
   local now
@@ -2405,7 +2405,7 @@ print(json.dumps({
   # Write receipt
   mkdir -p "$(dirname "$receipt_path")" 2>/dev/null || true
   python3 -c '
-import json, sys
+import json, os, sys
 now, exp_sha, out_path = sys.argv[1:4]
 entries = [json.loads(line) for line in sys.argv[4:] if line.strip()]
 receipt = {
