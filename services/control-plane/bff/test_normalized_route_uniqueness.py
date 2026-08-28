@@ -313,6 +313,145 @@ def assert_unique_openapi_operation_ids(app: FastAPI) -> None:
 
 
 # --------------------------------------------------------------------------- #
+# Real Domain Router & BFF Main Wiring Gates
+# --------------------------------------------------------------------------- #
+
+
+def _instantiate_domain_routers() -> List[Tuple[str, APIRouter]]:
+    """Instantiate all domain router factories with mock ports for contract verification."""
+    from agora.router import create_agora_router
+    from console_gap.alpha_factory import create_alpha_factory_router
+    from console_gap.consult_rules import create_consult_rules_router
+    from console_gap.datasources import create_datasources_router
+    from console_gap.knowledge import create_knowledge_router
+    from console_gap.lineage import create_lineage_router
+    from console_gap.memory_governance import create_memory_governance_router
+    from console_gap.permissions import create_permissions_router
+    from console_gap.route_policies import create_route_policies_router
+    from console_gap.workflows_hooks import create_workflows_hooks_router
+    from management_read_models import create_management_read_models_router
+    from trade_journal import create_trade_journal_router
+    from trade_journeys import create_trade_journeys_router
+
+    mock_store = lambda *a, **k: None
+    mock_fn = lambda *a, **k: None
+    mock_dict = lambda *a, **k: {}
+    mock_str = lambda *a, **k: "2026-08-28T00:00:00Z"
+
+    return [
+        ("permissions", create_permissions_router(get_read_store=mock_store, extract_identity=mock_fn, require_read_role=mock_fn)),
+        ("memory_governance", create_memory_governance_router(get_read_store=mock_store, extract_identity=mock_fn, require_read_role=mock_fn)),
+        ("consult_rules", create_consult_rules_router(get_read_store=mock_store, extract_identity=mock_fn, require_read_role=mock_fn)),
+        ("route_policies", create_route_policies_router(get_read_store=mock_store, extract_identity=mock_fn, require_read_role=mock_fn)),
+        ("workflows_hooks", create_workflows_hooks_router(read_store_provider=mock_store, extract_identity=mock_fn, require_read_role=mock_fn, snapshot_now=mock_str)),
+        ("datasources", create_datasources_router(get_read_store=mock_store, extract_identity=mock_fn, require_read_role=mock_fn, snapshot_meta=mock_dict, utc_now=mock_str)),
+        ("management_read_models", create_management_read_models_router(get_read_store=mock_store, extract_identity=mock_fn, require_read_role=mock_fn, snapshot_meta=mock_dict, utc_now=mock_str)),
+        ("knowledge", create_knowledge_router(extract_identity=mock_fn, require_read_role=mock_fn, read_store_getter=mock_store, utc_now=mock_str, dataset_surface_status=mock_dict)),
+        ("trade_journal", create_trade_journal_router(extract_identity=mock_fn, require_read_role=mock_fn, require_operator_role=mock_fn)),
+        ("trade_journeys", create_trade_journeys_router(extract_identity=mock_fn, require_read_role=mock_fn)),
+        ("lineage", create_lineage_router(get_read_store=mock_store, extract_identity=mock_fn, require_read_role=mock_fn, snapshot_meta=mock_dict, utc_now=mock_str)),
+        ("alpha_factory", create_alpha_factory_router(get_read_store=mock_store, extract_identity=mock_fn, require_read_role=mock_fn, utc_now=mock_str)),
+        ("agora", create_agora_router(extract_identity=mock_fn, require_read_role=mock_fn, require_write_role=mock_fn, bff_error=mock_fn, utc_now=mock_str, get_read_store=mock_store, sync_servant_agent=mock_fn)),
+    ]
+
+
+def test_real_domain_routers_zero_duplicate_normalized_routes() -> None:
+    """Every instantiated domain router must have zero internal route collisions."""
+    routers = _instantiate_domain_routers()
+    assert len(routers) == 13, "Expected 13 domain routers"
+
+    for name, router in routers:
+        collisions = find_duplicate_normalized_routes(router)
+        assert not collisions, (
+            f"Domain router '{name}' has internal route collisions:\n"
+            + "\n".join(c.format_diagnostic() for c in collisions)
+        )
+
+
+def test_real_domain_routers_composition_zero_duplicate_normalized_routes() -> None:
+    """When all domain routers are composed into a clean app, there must be zero duplicate normalized routes."""
+    app = FastAPI(title="Composed Clean BFF")
+    routers = _instantiate_domain_routers()
+    for _, router in routers:
+        app.include_router(router)
+
+    assert_zero_duplicate_normalized_routes(app)
+    assert len(find_parameter_route_shadowing(app)) == 0
+
+
+def test_real_bff_main_app_route_scanning_and_collision_characterization() -> None:
+    """Scan the real bff_main.app to characterize known legacy collisions and prevent new regressions.
+
+    ACG-01-004 through ACG-01-013 inventory 7 legacy collision groups in main.py that are
+    scheduled for cutover in Wave 2 (ACG-BFF-MAIN-CUTOVER-20260828). This test characterizes
+    those exact known collisions and fails immediately if any new/untracked collision is added.
+    """
+    import main as bff_main
+
+    entries = scan_fastapi_routes(bff_main.app)
+    assert len(entries) >= 400, f"Expected real bff_main.app to have 400+ routes, got {len(entries)}"
+
+    collisions = find_duplicate_normalized_routes(bff_main.app)
+    collision_shapes = {(c.method, c.normalized_path) for c in collisions}
+
+    # The 7 known legacy collisions in main.py scheduled for cutover in ACG-BFF-MAIN-CUTOVER-20260828
+    known_legacy_collision_shapes = {
+        ("GET", "/bff/agora/signals/{param}"),
+        ("GET", "/bff/events/stream"),
+        ("GET", "/readyz"),
+        ("PATCH", "/bff/agora/journal/{param}"),
+        ("POST", "/bff/actions/{param}/{param}/{param}"),
+        ("POST", "/bff/agora/signals/{param}/feedback"),
+        ("POST", "/bff/ranking-formulas"),
+    }
+
+    # Verify that every discovered collision is within the audited legacy set
+    unexpected_collisions = collision_shapes - known_legacy_collision_shapes
+    assert not unexpected_collisions, (
+        f"Detected {len(unexpected_collisions)} new/unexpected collision(s) on bff_main.app:\n"
+        + "\n\n".join(
+            c.format_diagnostic()
+            for c in collisions
+            if (c.method, c.normalized_path) in unexpected_collisions
+        )
+    )
+
+    # Verify that the collision reporter provides complete diagnostic attribution
+    for c in collisions:
+        diag = c.format_diagnostic()
+        assert "Order: #" in diag
+        assert "Module:" in diag
+        assert "Qualname:" in diag
+        assert "Location:" in diag
+
+
+def test_real_bff_main_app_openapi_operation_id_characterization() -> None:
+    """Scan bff_main.app for OpenAPI operation ID duplicates, characterizing them and guarding against new ones."""
+    import main as bff_main
+
+    dup_ops = find_duplicate_openapi_operation_ids(bff_main.app)
+    assert len(dup_ops) > 0, "Expected to detect existing legacy operation ID duplicates on bff_main.app"
+
+    # Verify diagnostic report formatting
+    lines = []
+    for op_id, occurrences in sorted(dup_ops.items()):
+        lines.append(f"Op ID '{op_id}' ({len(occurrences)} occurrences)")
+        for method, path, qualname in occurrences:
+            assert method and path and qualname
+
+    report = "\n".join(lines)
+    assert "Op ID" in report
+
+
+def test_real_bff_main_app_zero_static_route_shadowing() -> None:
+    """Verify that bff_main.app has zero static route shadowing by earlier parameterized routes."""
+    import main as bff_main
+
+    offenders = find_parameter_route_shadowing(bff_main.app)
+    assert not offenders, "Static routes shadowed on bff_main.app:\n" + "\n".join(offenders)
+
+
+# --------------------------------------------------------------------------- #
 # Unit Tests & Gate Verification
 # --------------------------------------------------------------------------- #
 
@@ -489,3 +628,4 @@ def test_gate_has_no_hardcoded_duplicate_allowlist() -> None:
     forbidden_tokens = ["EXPECTED_" + "WINNERS", "DUPLICATE_" + "ALLOWLIST", "ALLOWLIST"]
     for token in forbidden_tokens:
         assert token not in module_dict, f"Gate module must not contain allowlist token '{token}'"
+
