@@ -57255,427 +57255,9 @@ def _evol_exp_bff_action_command(
     return result
 
 
-# -- Evolution Programs ------------------------------------------------------
-
-@app.get("/bff/evolution-programs")
-async def bff_list_evolution_programs(
-    status: Optional[str] = None,
-    page_token: Optional[str] = None,
-    page_size: int = Query(default=20, ge=1, le=200),
-    authorization: Optional[str] = Header(default=None),
-):
-    """BFF: evolution program list."""
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-    snapshot_at = utc_now()
-    programs = read_store.list_evolution_programs(status=status)
-    total = len(programs)
-    page_items, next_page_token = _page_slice(programs, page_token, page_size)
-    return {
-        "data": page_items,
-        "page_info": {"next_page_token": next_page_token, "total": total},
-        "meta": _read_surface_meta(
-            "evolution_programs", "evolution_program_list",
-            snapshot_at=snapshot_at, total=total,
-        ),
-    }
-
-
-@app.post("/bff/evolution-programs", status_code=201)
-async def bff_create_evolution_program(
-    payload: Dict[str, Any] = Body(...),
-    authorization: Optional[str] = Header(default=None),
-    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
-):
-    """BFF: create evolution program — Idempotency-Key required."""
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-    _reject_body_idempotency_key(payload)
-    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
-    request_hash = _stable_json_hash({"route": "POST /bff/evolution-programs", "payload": payload})
-    cached = _evol_exp_bff_idempotency_check(resolved_key, request_hash)
-    if cached is not None:
-        return cached
-    name = str(payload.get("name") or "").strip()
-    if not name:
-        raise _bff_error(
-            422, ErrorCode.VALIDATION_FAILED, "name is required",
-            "Evolution program name must be a non-empty string",
-            precondition_failed="name",
-        )
-    snapshot_at = utc_now()
-    program_id = f"evp-{snapshot_at[:10].replace('-', '')}-{uuid.uuid4().hex[:8]}"
-    result = read_store.create_evolution_program(
-        program_id=program_id,
-        name=name,
-        actor_id=identity.operator_id,
-        created_at=snapshot_at,
-        params=payload.get("params") or {},
-    )
-    _EVOL_EXP_BFF_IDEMPOTENCY[resolved_key] = {"request_hash": request_hash, "result": result}
-    return result
-
-
-@app.get("/bff/evolution-programs/{program_id}")
-async def bff_get_evolution_program(
-    program_id: str,
-    authorization: Optional[str] = Header(default=None),
-):
-    """BFF: evolution program detail."""
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-    snapshot_at = utc_now()
-    program = read_store.get_evolution_program(program_id)
-    if not program:
-        surface = _dataset_surface_status("evolution_programs", snapshot_at=snapshot_at)
-        _raise_if_read_surface_unavailable(surface, label="Evolution program")
-        raise _bff_error(
-            404, ErrorCode.RESOURCE_NOT_FOUND,
-            "Evolution program not found",
-            f"Evolution program {program_id} does not exist",
-        )
-    return {
-        "data": program,
-        "meta": _read_surface_meta("evolution_programs", "evolution_program_detail", snapshot_at=snapshot_at),
-    }
-
-
-@app.patch("/bff/evolution-programs/{program_id}")
-async def bff_patch_evolution_program(
-    program_id: str,
-    payload: Dict[str, Any] = Body(...),
-    authorization: Optional[str] = Header(default=None),
-    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
-):
-    """BFF: patch evolution program — Idempotency-Key required."""
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-    _reject_body_idempotency_key(payload)
-    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
-    request_hash = _stable_json_hash(
-        {"route": "PATCH /bff/evolution-programs/{program_id}", "program_id": program_id, "payload": payload}
-    )
-    cached = _evol_exp_bff_idempotency_check(resolved_key, request_hash)
-    if cached is not None:
-        return cached
-    program = read_store.get_evolution_program(program_id)
-    if not program:
-        raise _bff_error(
-            404, ErrorCode.RESOURCE_NOT_FOUND,
-            "Evolution program not found",
-            f"Evolution program {program_id} does not exist",
-        )
-    snapshot_at = utc_now()
-    updated = read_store.patch_evolution_program(
-        program_id,
-        patch={k: payload[k] for k in ("name", "status", "params") if k in payload},
-        actor_id=identity.operator_id,
-        updated_at=snapshot_at,
-    ) or dict(program)
-    result = {"data": updated, "meta": {"snapshot_at": snapshot_at}}
-    _EVOL_EXP_BFF_IDEMPOTENCY[resolved_key] = {"request_hash": request_hash, "result": result}
-    return result
-
-
-@app.get("/bff/evolution-programs/{program_id}/runs")
-async def bff_list_evolution_program_runs(
-    program_id: str,
-    authorization: Optional[str] = Header(default=None),
-):
-    """BFF: list runs for an evolution program."""
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-    snapshot_at = utc_now()
-    program = read_store.get_evolution_program(program_id)
-    if not program:
-        raise _bff_error(
-            404, ErrorCode.RESOURCE_NOT_FOUND,
-            "Evolution program not found",
-            f"Evolution program {program_id} does not exist",
-        )
-    runs = read_store.list_evolution_program_runs(program_id)
-    return {
-        "data": runs,
-        "page_info": {"total": len(runs)},
-        "meta": _read_surface_meta("evolution_programs", "evolution_program_runs", snapshot_at=snapshot_at),
-    }
-
-
-@app.get("/bff/evolution-programs/{program_id}/candidates")
-async def bff_list_evolution_program_candidates(
-    program_id: str,
-    authorization: Optional[str] = Header(default=None),
-):
-    """BFF: list candidates for an evolution program."""
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-    snapshot_at = utc_now()
-    program = read_store.get_evolution_program(program_id)
-    if not program:
-        raise _bff_error(
-            404, ErrorCode.RESOURCE_NOT_FOUND,
-            "Evolution program not found",
-            f"Evolution program {program_id} does not exist",
-        )
-    candidates = read_store.list_evolution_program_candidates(program_id)
-    return {
-        "data": candidates,
-        "page_info": {"total": len(candidates)},
-        "meta": _read_surface_meta("evolution_programs", "evolution_program_candidates", snapshot_at=snapshot_at),
-    }
-
-
-@app.post("/bff/evolution-programs/{program_id}/actions/{action_id}", status_code=202)
-async def bff_evolution_program_action(
-    program_id: str,
-    action_id: str,
-    payload: Dict[str, Any] = Body(default_factory=dict),
-    authorization: Optional[str] = Header(default=None),
-    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
-):
-    """BFF: evolution program action."""
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-    _reject_body_idempotency_key(payload)
-    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
-    program = read_store.get_evolution_program(program_id)
-    if not program:
-        raise _bff_error(
-            404, ErrorCode.RESOURCE_NOT_FOUND,
-            "Evolution program not found",
-            f"Evolution program {program_id} does not exist",
-        )
-    return _evol_exp_bff_action_command(
-        entity_type=ObjectType.EVOLUTION_PROGRAM,
-        entity_id=program_id,
-        action_id=action_id,
-        resolved_key=resolved_key,
-        identity=identity,
-        payload=payload,
-        command_type=CommandType.EVOLUTION_PROGRAM_ACTION,
-    )
-
-
-# -- Experiments -------------------------------------------------------------
-
-@app.get("/bff/experiments")
-async def bff_list_experiments(
-    status: Optional[str] = None,
-    page_token: Optional[str] = None,
-    page_size: int = Query(default=20, ge=1, le=200),
-    authorization: Optional[str] = Header(default=None),
-):
-    """BFF: experiment list."""
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-    snapshot_at = utc_now()
-    items = read_store.list_experiments_bff(status=status)
-    total = len(items)
-    page_items, next_page_token = _page_slice(items, page_token, page_size)
-    return {
-        "data": page_items,
-        "page_info": {"next_page_token": next_page_token, "total": total},
-        "meta": _read_surface_meta("experiments", "experiment_list", snapshot_at=snapshot_at, total=total),
-    }
-
-
-@app.post("/bff/experiments", status_code=201)
-async def bff_create_experiment(
-    payload: Dict[str, Any] = Body(...),
-    authorization: Optional[str] = Header(default=None),
-    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
-):
-    """BFF: create experiment — Idempotency-Key required."""
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-    _reject_body_idempotency_key(payload)
-    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
-    request_hash = _stable_json_hash({"route": "POST /bff/experiments", "payload": payload})
-    cached = _evol_exp_bff_idempotency_check(resolved_key, request_hash)
-    if cached is not None:
-        return cached
-    name = str(payload.get("name") or payload.get("experiment_name") or "").strip()
-    if not name:
-        raise _bff_error(
-            422, ErrorCode.VALIDATION_FAILED, "name is required",
-            "Experiment name must be a non-empty string",
-            precondition_failed="name",
-        )
-    result = read_store.create_experiment_bff(
-        name=name,
-        actor_id=identity.operator_id,
-        created_at=utc_now(),
-        params=payload,
-    )
-    _EVOL_EXP_BFF_IDEMPOTENCY[resolved_key] = {"request_hash": request_hash, "result": result}
-    return result
-
-
-@app.get("/bff/experiments/{experiment_id}")
-async def bff_get_experiment(
-    experiment_id: str,
-    authorization: Optional[str] = Header(default=None),
-):
-    """BFF: experiment detail."""
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-    snapshot_at = utc_now()
-    item = read_store.get_experiment_bff(experiment_id)
-    if not item:
-        surface = _dataset_surface_status("experiments", snapshot_at=snapshot_at)
-        _raise_if_read_surface_unavailable(surface, label="Experiment")
-        raise _bff_error(
-            404, ErrorCode.RESOURCE_NOT_FOUND,
-            "Experiment not found",
-            f"Experiment {experiment_id} does not exist",
-        )
-    return {
-        "data": item,
-        "meta": _read_surface_meta("experiments", "experiment_detail", snapshot_at=snapshot_at),
-    }
-
-
-@app.post("/bff/experiments/{experiment_id}/actions/{action_id}", status_code=202)
-async def bff_experiment_action(
-    experiment_id: str,
-    action_id: str,
-    payload: Dict[str, Any] = Body(default_factory=dict),
-    authorization: Optional[str] = Header(default=None),
-    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
-):
-    """BFF: experiment action."""
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-    _reject_body_idempotency_key(payload)
-    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
-    item = read_store.get_experiment_bff(experiment_id)
-    if not item:
-        raise _bff_error(
-            404, ErrorCode.RESOURCE_NOT_FOUND,
-            "Experiment not found",
-            f"Experiment {experiment_id} does not exist",
-        )
-    return _evol_exp_bff_action_command(
-        entity_type=ObjectType.EXPERIMENT,
-        entity_id=experiment_id,
-        action_id=action_id,
-        resolved_key=resolved_key,
-        identity=identity,
-        payload=payload,
-        command_type=CommandType.EXPERIMENT_ACTION,
-    )
-
-
-@app.get("/bff/experiments/{experiment_id}/logs")
-async def bff_get_experiment_logs(
-    experiment_id: str,
-    authorization: Optional[str] = Header(default=None),
-):
-    """BFF: experiment logs."""
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-    snapshot_at = utc_now()
-    item = read_store.get_experiment_bff(experiment_id)
-    if not item:
-        raise _bff_error(
-            404, ErrorCode.RESOURCE_NOT_FOUND,
-            "Experiment not found",
-            f"Experiment {experiment_id} does not exist",
-        )
-    logs = read_store.get_experiment_logs(experiment_id)
-    return {
-        "data": logs,
-        "meta": _read_surface_meta("experiments", "experiment_logs", snapshot_at=snapshot_at),
-    }
-
-
-@app.get("/bff/experiments/{experiment_id}/metrics")
-async def bff_get_experiment_metrics(
-    experiment_id: str,
-    authorization: Optional[str] = Header(default=None),
-):
-    """BFF: experiment metrics."""
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-    snapshot_at = utc_now()
-    item = read_store.get_experiment_bff(experiment_id)
-    if not item:
-        raise _bff_error(
-            404, ErrorCode.RESOURCE_NOT_FOUND,
-            "Experiment not found",
-            f"Experiment {experiment_id} does not exist",
-        )
-    metrics = read_store.get_experiment_metrics(experiment_id)
-    return {
-        "data": metrics,
-        "meta": _read_surface_meta("experiments", "experiment_metrics", snapshot_at=snapshot_at),
-    }
-
-
-@app.get("/bff/experiments/{experiment_id}/artifacts")
-async def bff_get_experiment_artifacts(
-    experiment_id: str,
-    authorization: Optional[str] = Header(default=None),
-):
-    """BFF: experiment artifacts."""
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-    snapshot_at = utc_now()
-    item = read_store.get_experiment_bff(experiment_id)
-    if not item:
-        raise _bff_error(
-            404, ErrorCode.RESOURCE_NOT_FOUND,
-            "Experiment not found",
-            f"Experiment {experiment_id} does not exist",
-        )
-    artifacts = read_store.get_experiment_artifacts(experiment_id)
-    return {
-        "data": artifacts,
-        "meta": _read_surface_meta("experiments", "experiment_artifacts", snapshot_at=snapshot_at),
-    }
-
-
-# -- Events list -------------------------------------------------------------
-
-@app.get("/bff/events")
-async def bff_list_events(
-    event_type: Optional[str] = None,
-    page_token: Optional[str] = None,
-    page_size: int = Query(default=50, ge=1, le=200),
-    authorization: Optional[str] = Header(default=None),
-):
-    """BFF: event list (paginated telemetry/audit feed)."""
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-    snapshot_at = utc_now()
-    events = read_store.list_events_bff(event_type=event_type, page_size=page_size)
-    total = len(events)
-    page_items, next_page_token = _page_slice(events, page_token, page_size)
-    return {
-        "data": page_items,
-        "page_info": {"next_page_token": next_page_token, "total": total},
-        "meta": _read_surface_meta("events", "event_list", snapshot_at=snapshot_at, total=total),
-    }
-
-
 # --------------------------------------------------------------------------- #
 # Execute-Plans SSE Compatibility Aliases (BFF-LUV-GAP-010)
 # --------------------------------------------------------------------------- #
-
-@app.get("/bff/events/stream")
-async def bff_events_stream_alias(
-    channel: str = Query(default="system", description="SSE channel name"),
-    last_event_id: Optional[str] = Query(default=None, alias="last_event_id"),
-    authorization: Optional[str] = Header(default=None),
-):
-    """Alias for generic stream with Part 06 naming."""
-    return await stream_generic_events(channel, last_event_id, authorization)
-
 
 @app.get("/bff/sse/notifications")
 async def bff_sse_notifications_alias(
@@ -60820,79 +60402,11 @@ _GOV_BFF_EXPERIMENT_OVERLAY: Dict[str, Dict[str, Any]] = {}
 _GOV_BFF_JOB_OVERLAY: Dict[str, Dict[str, Any]] = {}
 
 
-def _get_bff_evolution_program(program_id: str) -> Optional[Dict[str, Any]]:
-    overlay = _GOV_BFF_EVOLUTION_PROGRAM_OVERLAY.get(program_id)
-    if overlay is not None:
-        return dict(overlay)
-    program = read_store.get_evolution_program(program_id)
-    return dict(program) if program else None
-
-
-def _list_bff_evolution_programs(*, status: Optional[str] = None) -> List[Dict[str, Any]]:
-    programs_by_id: Dict[str, Dict[str, Any]] = {}
-    for program in read_store.list_evolution_programs():
-        program_id = str(program.get("program_id") or program.get("id") or "").strip()
-        if program_id:
-            programs_by_id[program_id] = dict(program)
-    for program_id, program in _GOV_BFF_EVOLUTION_PROGRAM_OVERLAY.items():
-        programs_by_id[program_id] = dict(program)
-    programs = list(programs_by_id.values())
-    if status:
-        requested = {s.strip().lower() for s in status.split(",") if s.strip()}
-        programs = [p for p in programs if str(p.get("status") or "").lower() in requested]
-    return sorted(programs, key=lambda p: str(p.get("created_at") or ""), reverse=True)
-
-
 def _get_bff_experiment(experiment_id: str) -> Optional[Dict[str, Any]]:
-    overlay = _GOV_BFF_EXPERIMENT_OVERLAY.get(experiment_id)
-    if overlay:
-        return _bff_experiment_with_analysis_links(overlay)
-    experiment = read_store.get_research_experiment(experiment_id)
-    if not experiment:
-        return None
-    return _bff_experiment_with_analysis_links(experiment)
-
-
-def _bff_experiment_with_analysis_links(experiment: Dict[str, Any]) -> Dict[str, Any]:
-    record = dict(experiment)
-    experiment_id = str(record.get("experiment_id") or record.get("id") or "").strip()
-    if not experiment_id:
-        return record
-    analyses = read_store.list_research_analyses(experiment_id=experiment_id)
-    analysis_links: List[Dict[str, Any]] = []
-    for analysis in analyses:
-        analysis_id = str(analysis.get("analysis_id") or analysis.get("id") or "").strip()
-        if not analysis_id:
-            continue
-        analysis_links.append(
-            {
-                "analysis_id": analysis_id,
-                "ticket_id": analysis.get("ticket_id"),
-                "status": analysis.get("status"),
-                "detail": f"/bff/research-analyses/{analysis_id}",
-                "api_detail": f"/api/v1/research/analysis/{analysis_id}",
-            }
-        )
-    record["analysis_links"] = analysis_links
-    record["analysis_ids"] = [link["analysis_id"] for link in analysis_links]
-    return record
-
-
-def _list_bff_experiments(*, status: Optional[str] = None) -> List[Dict[str, Any]]:
-    items = list(read_store.list_research_experiments())
-    seen = {str(e.get("experiment_id") or e.get("id") or "") for e in items}
-    for eid, exp in _GOV_BFF_EXPERIMENT_OVERLAY.items():
-        if eid not in seen:
-            items.append(dict(exp))
-    if status:
-        requested = {s.strip().lower() for s in status.split(",") if s.strip()}
-        items = [e for e in items if str(e.get("status") or "").lower() in requested]
-    return sorted(items, key=lambda e: str(e.get("created_at") or e.get("queued_at") or ""), reverse=True)
+    return read_store.get_experiment_bff(experiment_id)
 
 
 def _research_experiments_surface_source(records: Sequence[Dict[str, Any]]) -> Optional[str]:
-    if _GOV_BFF_EXPERIMENT_OVERLAY:
-        return "bff_overlay"
     if read_store.dataset_source("research_experiments") != "missing":
         return None
     for record in records:
@@ -60902,841 +60416,15 @@ def _research_experiments_surface_source(records: Sequence[Dict[str, Any]]) -> O
 
 
 def _get_bff_job(job_id: str) -> Optional[Dict[str, Any]]:
-    overlay = _GOV_BFF_JOB_OVERLAY.get(job_id)
-    if overlay is not None:
-        return dict(overlay)
-    projected = read_store.get_job_bff(job_id)
-    if projected is not None:
-        return projected
-    return _find_record_by_id(_read_store_fixture_records("jobs"), job_id, ("job_id", "id"))
+    return read_store.get_job_bff(job_id)
 
 
 def _list_bff_jobs(*, status: Optional[str] = None) -> List[Dict[str, Any]]:
-    jobs = _merge_registry_records(
-        read_store.list_jobs_bff(),
-        [dict(record) for record in _GOV_BFF_JOB_OVERLAY.values()],
-        ("job_id", "id"),
-    )
+    jobs = read_store.list_jobs_bff()
     if status:
         requested = {s.strip().lower() for s in status.split(",") if s.strip()}
         jobs = [j for j in jobs if str(j.get("status") or "").lower() in requested]
     return sorted(jobs, key=lambda j: str(j.get("created_at") or j.get("submitted_at") or ""), reverse=True)
-
-
-# -- Evolution Programs ------------------------------------------------------
-
-@app.get("/bff/evolution-programs")
-async def bff_list_evolution_programs(
-    status: Optional[str] = None,
-    page_token: Optional[str] = None,
-    page_size: int = Query(default=20, ge=1, le=200),
-    authorization: Optional[str] = Header(default=None),
-):
-    """BFF: list evolution programs (execute-plans compatibility surface)."""
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-
-    snapshot_at = utc_now()
-    programs = _list_bff_evolution_programs(status=status)
-    surface = _dataset_surface_status(
-        "evolution_decisions",
-        snapshot_at=snapshot_at,
-        has_data=bool(programs) or None,
-    )
-    if surface.get("status") == "unavailable" and not programs:
-        next_page_token = None
-    else:
-        programs, next_page_token = _page_slice(programs, page_token, page_size)
-
-    meta = _snapshot_meta(snapshot_at)
-    meta["surfaces"] = {"evolution_programs": surface}
-    return {
-        "items": programs,
-        "page_info": {"next_page_token": next_page_token},
-        "meta": meta,
-    }
-
-
-@app.post("/bff/evolution-programs", status_code=201)
-async def bff_create_evolution_program(
-    request: Request,
-    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
-    authorization: Optional[str] = Header(default=None),
-):
-    """BFF: create an evolution program record."""
-    identity = _extract_identity(authorization)
-    _require_operator_role(identity)
-    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
-    payload: Dict[str, Any] = {}
-    try:
-        payload = await request.json()
-    except Exception:
-        pass
-    _reject_body_idempotency_key(payload)
-
-    existing = _GOV_BFF_IDEMPOTENCY.get(resolved_key)
-    req_hash = _stable_json_hash(payload)
-    if existing is not None:
-        if existing.get("request_hash") != req_hash:
-            raise _bff_error(
-                409,
-                ErrorCode.IDEMPOTENCY_CONFLICT,
-                "Idempotency key already used with a different payload",
-                f"Key {resolved_key!r} is bound to a different request hash",
-                precondition_failed="idempotency_conflict",
-                suggestion="Use a new Idempotency-Key or resubmit the original payload unchanged",
-            )
-        return existing["result"]
-
-    program_id = str(payload.get("program_id") or payload.get("id") or uuid.uuid4())
-    created_at = utc_now()
-    result = {
-        "id": program_id,
-        "program_id": program_id,
-        "name": payload.get("name") or "Untitled Evolution Program",
-        "status": "active",
-        "created_at": created_at,
-        "updated_at": created_at,
-        "created_by": identity.operator_id,
-        "description": payload.get("description") or "",
-        "config": payload.get("config") or {},
-        "artifact_links": [],
-        "meta": {"idempotency_key": resolved_key},
-    }
-    _GOV_BFF_EVOLUTION_PROGRAM_OVERLAY[program_id] = result
-    _GOV_BFF_IDEMPOTENCY[resolved_key] = {"request_hash": req_hash, "result": result}
-    return result
-
-
-@app.get("/bff/evolution-programs/{programId}")
-async def bff_get_evolution_program(
-    programId: str,
-    authorization: Optional[str] = Header(default=None),
-):
-    """BFF: get a specific evolution program by ID."""
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-
-    clean_id = programId.strip()
-    program = _get_bff_evolution_program(clean_id)
-    if not program:
-        raise _bff_error(
-            404,
-            ErrorCode.RESOURCE_NOT_FOUND,
-            "Evolution program not found",
-            f"Evolution program {programId} does not exist",
-        )
-
-    snapshot_at = utc_now()
-    return {
-        "data": program,
-        "meta": {"snapshot_at": snapshot_at, "staleness": _meta_staleness()},
-    }
-
-
-@app.patch("/bff/evolution-programs/{programId}")
-async def bff_patch_evolution_program(
-    programId: str,
-    request: Request,
-    authorization: Optional[str] = Header(default=None),
-):
-    """BFF: update an evolution program."""
-    identity = _extract_identity(authorization)
-    _require_operator_role(identity)
-
-    clean_id = programId.strip()
-    program = _get_bff_evolution_program(clean_id)
-    if not program:
-        raise _bff_error(
-            404,
-            ErrorCode.RESOURCE_NOT_FOUND,
-            "Evolution program not found",
-            f"Evolution program {programId} does not exist",
-        )
-
-    patch: Dict[str, Any] = {}
-    try:
-        patch = await request.json()
-    except Exception:
-        pass
-
-    allowed_fields = {"name", "description", "status", "config"}
-    updated = dict(program)
-    for field in allowed_fields:
-        if field in patch:
-            updated[field] = patch[field]
-    updated["updated_at"] = utc_now()
-    _GOV_BFF_EVOLUTION_PROGRAM_OVERLAY[clean_id] = updated
-
-    snapshot_at = utc_now()
-    return {
-        "data": updated,
-        "meta": {"snapshot_at": snapshot_at, "staleness": _meta_staleness()},
-    }
-
-
-@app.get("/bff/evolution-programs/{programId}/runs")
-async def bff_list_evolution_program_runs(
-    programId: str,
-    status: Optional[str] = None,
-    page_token: Optional[str] = None,
-    page_size: int = Query(default=20, ge=1, le=200),
-    authorization: Optional[str] = Header(default=None),
-):
-    """BFF: list evolution decision runs for a program."""
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-
-    clean_id = programId.strip()
-    program = _get_bff_evolution_program(clean_id)
-    if not program:
-        raise _bff_error(
-            404,
-            ErrorCode.RESOURCE_NOT_FOUND,
-            "Evolution program not found",
-            f"Evolution program {programId} does not exist",
-        )
-
-    snapshot_at = utc_now()
-    decisions = read_store.list_evolution_decisions(status=status)
-    runs = [
-        {
-            "run_id": str(d.get("id") or d.get("decision_id") or ""),
-            "program_id": clean_id,
-            "status": d.get("status") or "pending",
-            "action_type": d.get("action_type") or "",
-            "risk_level": d.get("risk_level") or "",
-            "created_at": d.get("created_at") or "",
-            "artifact_links": d.get("artifact_links") or [],
-        }
-        for d in decisions
-        if not d.get("program_id") or d.get("program_id") == clean_id
-    ]
-
-    surface = _dataset_surface_status("evolution_decisions", snapshot_at=snapshot_at)
-    if surface.get("status") == "unavailable":
-        runs = []
-        next_page_token = None
-    else:
-        runs, next_page_token = _page_slice(runs, page_token, page_size)
-
-    meta = _snapshot_meta(snapshot_at)
-    meta["surfaces"] = {"evolution_runs": surface}
-    return {
-        "items": runs,
-        "page_info": {"next_page_token": next_page_token},
-        "meta": meta,
-    }
-
-
-@app.get("/bff/evolution-programs/{programId}/candidates")
-async def bff_list_evolution_program_candidates(
-    programId: str,
-    page_token: Optional[str] = None,
-    page_size: int = Query(default=20, ge=1, le=200),
-    authorization: Optional[str] = Header(default=None),
-):
-    """BFF: list evolution candidates for a program."""
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-
-    clean_id = programId.strip()
-    program = _get_bff_evolution_program(clean_id)
-    if not program:
-        raise _bff_error(
-            404,
-            ErrorCode.RESOURCE_NOT_FOUND,
-            "Evolution program not found",
-            f"Evolution program {programId} does not exist",
-        )
-
-    snapshot_at = utc_now()
-    candidates: List[Dict[str, Any]] = []
-    for cand in program.get("candidates") or []:
-        candidates.append(dict(cand))
-
-    candidates, next_page_token = _page_slice(candidates, page_token, page_size)
-    meta = _snapshot_meta(snapshot_at)
-    return {
-        "items": candidates,
-        "page_info": {"next_page_token": next_page_token},
-        "meta": meta,
-    }
-
-
-@app.post("/bff/evolution-programs/{programId}/actions/{actionId}", status_code=202)
-async def bff_evolution_program_action(
-    programId: str,
-    actionId: str,
-    request: Request,
-    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
-    authorization: Optional[str] = Header(default=None),
-):
-    """BFF: submit an action against an evolution program."""
-    identity = _extract_identity(authorization)
-    _require_operator_role(identity)
-    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
-    payload: Dict[str, Any] = {}
-    try:
-        payload = await request.json()
-    except Exception:
-        pass
-    clean_id = programId.strip()
-    program = _get_bff_evolution_program(clean_id)
-    if not program:
-        raise _bff_error(
-            404,
-            ErrorCode.RESOURCE_NOT_FOUND,
-            "Evolution program not found",
-            f"Evolution program {programId} does not exist",
-        )
-    return _gov_bff_action_command(
-        ObjectType.EVOLUTION_PROGRAM, clean_id, actionId, resolved_key, identity, payload,
-        CommandType.EVOLUTION_PROGRAM_ACTION,
-    )
-
-
-# -- Experiments -------------------------------------------------------------
-
-@app.get("/bff/experiments")
-async def bff_list_experiments_compat(
-    status: Optional[str] = None,
-    page_token: Optional[str] = None,
-    page_size: int = Query(default=20, ge=1, le=200),
-    authorization: Optional[str] = Header(default=None),
-):
-    """BFF: list experiments (execute-plans compatibility surface)."""
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-
-    snapshot_at = utc_now()
-    items = _list_bff_experiments(status=status)
-    source = _research_experiments_surface_source(items)
-    surface = _dataset_surface_status("research_experiments", snapshot_at=snapshot_at, source=source)
-    if surface.get("status") == "unavailable" and not _GOV_BFF_EXPERIMENT_OVERLAY:
-        items = []
-        next_page_token = None
-    else:
-        items, next_page_token = _page_slice(items, page_token, page_size)
-
-    meta = _snapshot_meta(snapshot_at)
-    meta["surfaces"] = {"experiments": surface}
-    return {
-        "items": items,
-        "page_info": {"next_page_token": next_page_token},
-        "meta": meta,
-    }
-
-
-@app.post("/bff/experiments", status_code=201)
-async def bff_create_experiment_compat(
-    request: Request,
-    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
-    authorization: Optional[str] = Header(default=None),
-):
-    """BFF: create an experiment (execute-plans compatibility surface)."""
-    identity = _extract_identity(authorization)
-    _require_operator_role(identity)
-    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
-    payload: Dict[str, Any] = {}
-    try:
-        payload = await request.json()
-    except Exception:
-        pass
-    _reject_body_idempotency_key(payload)
-
-    existing = _GOV_BFF_IDEMPOTENCY.get(resolved_key)
-    req_hash = _stable_json_hash(payload)
-    if existing is not None:
-        if existing.get("request_hash") != req_hash:
-            raise _bff_error(
-                409,
-                ErrorCode.IDEMPOTENCY_CONFLICT,
-                "Idempotency key already used with a different payload",
-                f"Key {resolved_key!r} is bound to a different request hash",
-                precondition_failed="idempotency_conflict",
-                suggestion="Use a new Idempotency-Key or resubmit the original payload unchanged",
-            )
-        return existing["result"]
-
-    experiment_id = str(payload.get("experiment_id") or payload.get("id") or uuid.uuid4())
-    created_at = utc_now()
-    result = {
-        "id": experiment_id,
-        "experiment_id": experiment_id,
-        "name": payload.get("name") or payload.get("experiment_name") or "Untitled Experiment",
-        "status": "queued",
-        "created_at": created_at,
-        "queued_at": created_at,
-        "updated_at": created_at,
-        "created_by": identity.operator_id,
-        "description": payload.get("description") or "",
-        "config": payload.get("config") or {},
-        "artifact_links": [],
-        "logs": [],
-        "metrics": {},
-        "meta": {"idempotency_key": resolved_key},
-    }
-    _GOV_BFF_EXPERIMENT_OVERLAY[experiment_id] = result
-    _GOV_BFF_IDEMPOTENCY[resolved_key] = {"request_hash": req_hash, "result": result}
-    return result
-
-
-@app.get("/bff/experiments/{experimentId}")
-async def bff_get_experiment_compat(
-    experimentId: str,
-    authorization: Optional[str] = Header(default=None),
-):
-    """BFF: get a specific experiment by ID."""
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-
-    clean_id = experimentId.strip()
-    experiment = _get_bff_experiment(clean_id)
-    if not experiment:
-        raise _bff_error(
-            404,
-            ErrorCode.RESOURCE_NOT_FOUND,
-            "Experiment not found",
-            f"Experiment {experimentId} does not exist",
-        )
-
-    snapshot_at = utc_now()
-    return {
-        "data": experiment,
-        "meta": {"snapshot_at": snapshot_at, "staleness": _meta_staleness()},
-    }
-
-
-@app.post("/bff/experiments/{experimentId}/actions/{actionId}", status_code=202)
-async def bff_experiment_action(
-    experimentId: str,
-    actionId: str,
-    request: Request,
-    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
-    authorization: Optional[str] = Header(default=None),
-):
-    """BFF: submit an action against an experiment."""
-    identity = _extract_identity(authorization)
-    _require_operator_role(identity)
-    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
-    payload: Dict[str, Any] = {}
-    try:
-        payload = await request.json()
-    except Exception:
-        pass
-    clean_id = experimentId.strip()
-    experiment = _get_bff_experiment(clean_id)
-    if not experiment:
-        raise _bff_error(
-            404,
-            ErrorCode.RESOURCE_NOT_FOUND,
-            "Experiment not found",
-            f"Experiment {experimentId} does not exist",
-        )
-    return _gov_bff_action_command(
-        ObjectType.EXPERIMENT, clean_id, actionId, resolved_key, identity, payload,
-        CommandType.EXPERIMENT_ACTION,
-    )
-
-
-@app.get("/bff/experiments/{experimentId}/logs")
-async def bff_get_experiment_logs(
-    experimentId: str,
-    authorization: Optional[str] = Header(default=None),
-):
-    """BFF: get logs for a specific experiment."""
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-
-    clean_id = experimentId.strip()
-    experiment = _get_bff_experiment(clean_id)
-    if not experiment:
-        raise _bff_error(
-            404,
-            ErrorCode.RESOURCE_NOT_FOUND,
-            "Experiment not found",
-            f"Experiment {experimentId} does not exist",
-        )
-
-    snapshot_at = utc_now()
-    logs = list(experiment.get("logs") or [])
-    return {
-        "experiment_id": clean_id,
-        "logs": logs,
-        "meta": {"snapshot_at": snapshot_at, "staleness": _meta_staleness()},
-    }
-
-
-@app.get("/bff/experiments/{experimentId}/metrics")
-async def bff_get_experiment_metrics(
-    experimentId: str,
-    authorization: Optional[str] = Header(default=None),
-):
-    """BFF: get metrics for a specific experiment."""
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-
-    clean_id = experimentId.strip()
-    experiment = _get_bff_experiment(clean_id)
-    if not experiment:
-        raise _bff_error(
-            404,
-            ErrorCode.RESOURCE_NOT_FOUND,
-            "Experiment not found",
-            f"Experiment {experimentId} does not exist",
-        )
-
-    snapshot_at = utc_now()
-    metrics = dict(experiment.get("metrics") or {})
-    return {
-        "experiment_id": clean_id,
-        "metrics": metrics,
-        "meta": {"snapshot_at": snapshot_at, "staleness": _meta_staleness()},
-    }
-
-
-@app.get("/bff/experiments/{experimentId}/artifacts")
-async def bff_get_experiment_artifacts(
-    experimentId: str,
-    authorization: Optional[str] = Header(default=None),
-):
-    """BFF: get artifact links for a specific experiment."""
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-
-    clean_id = experimentId.strip()
-    experiment = _get_bff_experiment(clean_id)
-    if not experiment:
-        raise _bff_error(
-            404,
-            ErrorCode.RESOURCE_NOT_FOUND,
-            "Experiment not found",
-            f"Experiment {experimentId} does not exist",
-        )
-
-    snapshot_at = utc_now()
-    artifacts = list(experiment.get("artifact_links") or [])
-    return {
-        "experiment_id": clean_id,
-        "artifacts": artifacts,
-        "meta": {"snapshot_at": snapshot_at, "staleness": _meta_staleness()},
-    }
-
-
-# -- Research Experiments (BFF-B2-004 dedicated surface) ---------------------
-
-@app.get("/bff/research-experiments")
-async def bff_list_research_experiments(
-    status: Optional[str] = None,
-    page_token: Optional[str] = None,
-    page_size: int = Query(default=20, ge=1, le=200),
-    authorization: Optional[str] = Header(default=None),
-):
-    """BFF: list research experiments (execute-plans compatibility surface)."""
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-
-    snapshot_at = utc_now()
-    all_items = _list_bff_experiments(status=status)
-    source = _research_experiments_surface_source(all_items)
-    surface = _dataset_surface_status(
-        "research_experiments",
-        snapshot_at=snapshot_at,
-        source=source,
-    )
-    items, next_page_token = _page_slice(all_items, page_token, page_size)
-
-    meta = _snapshot_meta(snapshot_at)
-    meta["surfaces"] = {"research_experiments": surface}
-    return {
-        "data": items,
-        "items": items,
-        "page_info": {"next_page_token": next_page_token, "total": len(all_items)},
-        "meta": meta,
-    }
-
-
-@app.get("/bff/research-experiments/{experiment_id}")
-async def bff_get_research_experiment(
-    experiment_id: str,
-    authorization: Optional[str] = Header(default=None),
-):
-    """BFF: get a research experiment by ID (execute-plans compatibility surface)."""
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-
-    clean_id = experiment_id.strip()
-    record = _get_bff_experiment(clean_id)
-    source = _research_experiments_surface_source([record] if record else [])
-    return _sem_final_read_model_detail(
-        record,
-        entity_id=clean_id,
-        label="Research experiment",
-        dataset="research_experiments",
-        surface_key="research_experiment_detail",
-        source=source,
-        source_available=True if source is not None else None,
-    )
-
-
-# -- Jobs --------------------------------------------------------------------
-
-@app.get("/bff/jobs")
-async def bff_list_jobs(
-    status: Optional[str] = None,
-    page_token: Optional[str] = None,
-    page_size: int = Query(default=20, ge=1, le=200),
-    authorization: Optional[str] = Header(default=None),
-):
-    """BFF: list background jobs (execute-plans compatibility surface)."""
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-
-    snapshot_at = utc_now()
-    started = time.monotonic()
-    try:
-        jobs = await _run_management_read(_list_bff_jobs, status=status)
-    except _ManagementReadTimeout:
-        _log_management_read_timing("jobs", started, timed_out=True)
-        meta = _snapshot_meta(snapshot_at)
-        meta["surfaces"] = {
-            "jobs": _management_read_timeout_surface(
-                "jobs",
-                snapshot_at=snapshot_at,
-                message="Jobs read timed out under concurrent read fanout; degraded empty response returned.",
-            ),
-        }
-        return {
-            "data": [],
-            "items": [],
-            "page_info": {
-                "next_page_token": None,
-                "total": 0,
-                "returned": 0,
-            },
-            "meta": meta,
-        }
-    surface = _dataset_surface_status(
-        "jobs",
-        snapshot_at=snapshot_at,
-        has_data=bool(jobs) or None,
-    )
-    total = len(jobs)
-    if surface.get("status") == "unavailable" and not jobs:
-        page_items: List[Dict[str, Any]] = []
-        next_page_token = None
-    else:
-        page_items, next_page_token = _page_slice(jobs, page_token, page_size)
-
-    meta = _snapshot_meta(snapshot_at)
-    meta["surfaces"] = {"jobs": surface}
-    _log_management_read_timing("jobs", started)
-    return {
-        "data": page_items,
-        "items": page_items,
-        "page_info": {
-            "next_page_token": next_page_token,
-            "total": total,
-            "returned": len(page_items),
-        },
-        "meta": meta,
-    }
-
-
-@app.get("/bff/jobs/{jobId}")
-async def bff_get_job(
-    jobId: str,
-    authorization: Optional[str] = Header(default=None),
-):
-    """BFF: get a specific job by ID."""
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-
-    clean_id = jobId.strip()
-    job = _get_bff_job(clean_id)
-    if not job:
-        raise _bff_error(
-            404,
-            ErrorCode.RESOURCE_NOT_FOUND,
-            "Job not found",
-            f"Job {jobId} does not exist",
-        )
-
-    snapshot_at = utc_now()
-    return {
-        "data": job,
-        "meta": {"snapshot_at": snapshot_at, "staleness": _meta_staleness()},
-    }
-
-
-@app.get("/bff/jobs/{jobId}/logs")
-async def bff_get_job_logs(
-    jobId: str,
-    authorization: Optional[str] = Header(default=None),
-):
-    """BFF: get logs for a specific job."""
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-
-    clean_id = jobId.strip()
-    job = _get_bff_job(clean_id)
-    if not job:
-        raise _bff_error(
-            404,
-            ErrorCode.RESOURCE_NOT_FOUND,
-            "Job not found",
-            f"Job {jobId} does not exist",
-        )
-
-    snapshot_at = utc_now()
-    logs = list(job.get("logs") or [])
-    return {
-        "job_id": clean_id,
-        "status": job.get("status") or "unknown",
-        "progress": job.get("progress") or {},
-        "logs": logs,
-        "meta": {"snapshot_at": snapshot_at, "staleness": _meta_staleness()},
-    }
-
-
-@app.post("/bff/jobs/{jobId}/actions/{actionId}", status_code=202)
-async def bff_job_action(
-    jobId: str,
-    actionId: str,
-    request: Request,
-    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
-    authorization: Optional[str] = Header(default=None),
-):
-    """BFF: submit an action against a background job."""
-    identity = _extract_identity(authorization)
-    _require_operator_role(identity)
-    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
-    payload: Dict[str, Any] = {}
-    try:
-        payload = await request.json()
-    except Exception:
-        pass
-    clean_id = jobId.strip()
-    job = _get_bff_job(clean_id)
-    if not job:
-        raise _bff_error(
-            404,
-            ErrorCode.RESOURCE_NOT_FOUND,
-            "Job not found",
-            f"Job {jobId} does not exist",
-        )
-    return _gov_bff_action_command(
-        ObjectType.JOB, clean_id, actionId, resolved_key, identity, payload,
-        CommandType.JOB_ACTION,
-    )
-
-
-# -- Events list (non-stream) ------------------------------------------------
-
-@app.get("/bff/events")
-async def bff_list_events(
-    event_type: Optional[str] = None,
-    actor: Optional[str] = None,
-    target_type: Optional[str] = None,
-    page_token: Optional[str] = None,
-    page_size: int = Query(default=50, ge=1, le=500),
-    authorization: Optional[str] = Header(default=None),
-):
-    """BFF: list recent system/audit events (execute-plans compatibility surface)."""
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-
-    snapshot_at = utc_now()
-    action_types = [event_type] if event_type else None
-    events = _list_governance_audit_events(
-        actor=actor,
-        action_types=action_types,
-        target_type=target_type,
-    )
-    surface = _dataset_surface_status("audit_log", snapshot_at=snapshot_at)
-    if surface.get("status") == "unavailable":
-        events = []
-        next_page_token = None
-    else:
-        events, next_page_token = _page_slice(events, page_token, page_size)
-
-    meta = _snapshot_meta(snapshot_at)
-    meta["surfaces"] = {"events": surface}
-    return {
-        "items": events,
-        "page_info": {"next_page_token": next_page_token},
-        "meta": meta,
-    }
-
-
-_BFF_GAP004_ROUTE_PATHS = {
-    "/bff/evolution-programs",
-    "/bff/evolution-programs/{}",
-    "/bff/evolution-programs/{}/runs",
-    "/bff/evolution-programs/{}/candidates",
-    "/bff/evolution-programs/{}/actions/{}",
-    "/bff/experiments",
-    "/bff/experiments/{}",
-    "/bff/experiments/{}/actions/{}",
-    "/bff/experiments/{}/logs",
-    "/bff/experiments/{}/metrics",
-    "/bff/experiments/{}/artifacts",
-    "/bff/jobs",
-    "/bff/jobs/{}",
-    "/bff/jobs/{}/logs",
-    "/bff/jobs/{}/actions/{}",
-    "/bff/events",
-}
-
-
-def _bff_gap004_route_path_key(path: str) -> str:
-    return re.sub(r"\{[^}/]+\}", "{}", path)
-
-
-def _bff_gap004_route_methods(route: Any) -> List[str]:
-    return sorted(
-        method
-        for method in getattr(route, "methods", set())
-        if method not in {"HEAD", "OPTIONS"}
-    )
-
-
-def _prefer_latest_bff_gap004_routes() -> None:
-    """Keep the task-scoped GAP-004 handlers authoritative.
-
-    Earlier execute-plans slices registered placeholder handlers for the same
-    compatibility paths. FastAPI matches the first route, so prune the shadowed
-    registrations and keep the latest GAP-004 route for each method/path key.
-    """
-    preferred: Dict[tuple[str, str], Any] = {}
-    for route in app.router.routes:
-        path_key = _bff_gap004_route_path_key(getattr(route, "path", ""))
-        if path_key not in _BFF_GAP004_ROUTE_PATHS:
-            continue
-        for method in _bff_gap004_route_methods(route):
-            preferred[(method, path_key)] = route
-
-    if not preferred:
-        return
-
-    pruned = []
-    for route in app.router.routes:
-        path_key = _bff_gap004_route_path_key(getattr(route, "path", ""))
-        methods = _bff_gap004_route_methods(route)
-        route_keys = [(method, path_key) for method in methods if path_key in _BFF_GAP004_ROUTE_PATHS]
-        if route_keys and all(preferred.get(key) is not route for key in route_keys):
-            continue
-        pruned.append(route)
-    app.router.routes[:] = pruned
-
-
-_prefer_latest_bff_gap004_routes()
 
 
 # --------------------------------------------------------------------------- #
@@ -62269,88 +60957,6 @@ def _submit_canonical_action_command(
         enqueue=True,
         include_durable_meta=True,
         response_deprecation=deprecation,
-    )
-
-
-@app.post(
-    "/bff/actions/{type}/{id}/{action}",
-    status_code=202,
-    deprecated=True,
-    operation_id="submit_bff_action_generic",
-    summary="Submit deprecated generic BFF action",
-)
-async def sem_canonical_action_command(
-    background_tasks: BackgroundTasks,
-    response: Response,
-    type: str,
-    id: str,
-    action: str,
-    payload: Dict[str, Any] = Body(default_factory=dict),
-    authorization: Optional[str] = Header(default=None),
-    x_mfa_token: Optional[str] = Header(default=None, alias="X-MFA-Token"),
-    x_trace_id: Optional[str] = Header(default=None, alias="X-Trace-Id"),
-    x_correlation_id: Optional[str] = Header(default=None, alias="X-Correlation-Id"),
-    x_request_id: Optional[str] = Header(default=None, alias="X-Request-Id"),
-    x_confirm_token: Optional[str] = Header(default=None, alias="X-Confirm-Token"),
-    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
-):
-    return _submit_canonical_action_command(
-        background_tasks=background_tasks,
-        response=response,
-        entity_type=type,
-        entity_id=id,
-        action_id=action,
-        payload=payload,
-        authorization=authorization,
-        x_mfa_token=x_mfa_token,
-        x_trace_id=x_trace_id,
-        x_correlation_id=x_correlation_id,
-        x_request_id=x_request_id,
-        x_confirm_token=x_confirm_token,
-        idempotency_key=idempotency_key,
-        x_idempotency_key=x_idempotency_key,
-    )
-
-
-@app.post(
-    "/bff/actions/{entityType}/{entityId}/{actionId}",
-    status_code=202,
-    deprecated=True,
-    operation_id="submit_bff_action_named",
-    summary="Submit BFF action by entity and action id",
-)
-async def sem_legacy_named_action_command(
-    background_tasks: BackgroundTasks,
-    response: Response,
-    entityType: str,
-    entityId: str,
-    actionId: str,
-    payload: Dict[str, Any] = Body(default_factory=dict),
-    authorization: Optional[str] = Header(default=None),
-    x_mfa_token: Optional[str] = Header(default=None, alias="X-MFA-Token"),
-    x_trace_id: Optional[str] = Header(default=None, alias="X-Trace-Id"),
-    x_correlation_id: Optional[str] = Header(default=None, alias="X-Correlation-Id"),
-    x_request_id: Optional[str] = Header(default=None, alias="X-Request-Id"),
-    x_confirm_token: Optional[str] = Header(default=None, alias="X-Confirm-Token"),
-    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
-):
-    return _submit_canonical_action_command(
-        background_tasks=background_tasks,
-        response=response,
-        entity_type=entityType,
-        entity_id=entityId,
-        action_id=actionId,
-        payload=payload,
-        authorization=authorization,
-        x_mfa_token=x_mfa_token,
-        x_trace_id=x_trace_id,
-        x_correlation_id=x_correlation_id,
-        x_request_id=x_request_id,
-        x_confirm_token=x_confirm_token,
-        idempotency_key=idempotency_key,
-        x_idempotency_key=x_idempotency_key,
     )
 
 
@@ -64392,7 +62998,6 @@ async def sem_bff_health_alias():
     return _sem_bff_health_payload()
 
 
-@app.get("/readyz")
 @app.get("/bff/readyz")
 async def sem_bff_readiness_alias():
     payload = _sem_bff_health_payload()
@@ -67730,104 +66335,6 @@ async def bff_get_channel(
     )
 
 
-@app.get("/bff/ranking-formulas")
-async def bff_list_ranking_formulas_facade(
-    status: Optional[str] = None,
-    authorization: Optional[str] = Header(default=None),
-):
-    """BFF B2.3: list ranking formulas from the read surface store."""
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-    records = read_store.list_ranking_formulas(status=status)
-    return _sem_final_list_response(records, dataset="ranking_formulas", surface_key="ranking_formulas")
-
-
-@app.get("/bff/ranking-formulas/{formula_id}")
-async def bff_get_ranking_formula_facade(
-    formula_id: str,
-    authorization: Optional[str] = Header(default=None),
-):
-    """BFF B2.3: get ranking formula detail by formula_id."""
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-    clean_id = str(formula_id or "").strip()
-    return _sem_final_read_model_detail(
-        read_store.get_ranking_formula(clean_id),
-        entity_id=clean_id,
-        label="Ranking formula",
-        dataset="ranking_formulas",
-        surface_key="ranking_formula_detail",
-    )
-
-
-@app.post("/bff/ranking-formulas", status_code=201)
-async def bff_create_ranking_formula_facade(
-    payload: Dict[str, Any] = Body(default_factory=dict),
-    authorization: Optional[str] = Header(default=None),
-    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
-):
-    """BFF B2.3: create a ranking formula in the read surface store."""
-    identity = _extract_identity(authorization)
-    _require_operator_role(identity)
-    _reject_body_idempotency_key(payload)
-    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
-    request_hash = _stable_json_hash({"route": "POST /bff/ranking-formulas", "payload": payload})
-    dry_run = _request_dry_run_requested()
-    if not dry_run:
-        cached = _capital_bff_idempotency_check(
-            identity.operator_id, resolved_key, request_hash
-        )
-        if cached is not None:
-            return JSONResponse(status_code=201, content=jsonable_encoder(cached))
-    name = str(payload.get("name") or "").strip()
-    if not name:
-        raise _bff_error(
-            422,
-            ErrorCode.VALIDATION_FAILED,
-            "name is required",
-            "Ranking formula name must be a non-empty string",
-            precondition_failed="name",
-        )
-    description = str(payload.get("description") or "").strip()
-    snapshot_at = utc_now()
-    if dry_run:
-        preview_id = str(payload.get("id") or payload.get("formula_id") or f"rf-dryrun-{uuid.uuid4().hex[:8]}")
-        return _dry_run_success_response(
-            {
-                "id": preview_id,
-                "formula_id": preview_id,
-                "name": name,
-                "description": description,
-                "status": str(payload.get("status") or "active"),
-                "params": payload.get("params") or {},
-                "created_by": identity.operator_id,
-            },
-            snapshot_at=snapshot_at,
-            idempotency_key=resolved_key,
-            evidence_kind="ranking_formula.create.preview",
-        )
-    record = read_store.create_ranking_formula(
-        name=name,
-        description=description,
-        actor_id=identity.operator_id,
-        created_at=snapshot_at,
-        params=payload.get("params"),
-    )
-    result = {
-        "data": record,
-        "meta": _read_surface_meta(
-            "ranking_formulas",
-            "ranking_formula_detail",
-            snapshot_at=snapshot_at,
-        ),
-    }
-    _capital_bff_idempotency_store(
-        identity.operator_id, resolved_key, request_hash, result
-    )
-    return JSONResponse(status_code=201, content=jsonable_encoder(result))
-
-
 # ============================================================================
 # BFF-B2-006: v5 closed-loop read routes — dedicated GET handlers
 # Covers: /bff/v5/control-room, /bff/v5/execution/persona-health,
@@ -67988,10 +66495,8 @@ async def bff_v5_intervention_detail(
 # /bff/v5/control-room, /bff/v5/execution/persona-health,
 # /bff/v5/execution/strategy-health, and /bff/v5/interventions/{id}
 # have dedicated handlers in the BFF-B2-006 block above; all excluded here.
-@app.get("/bff/agora/signals/{id}")
 @app.get("/bff/approvals/{id}")
 @app.get("/bff/artifacts/{id}")
-@app.get("/bff/events/stream")
 @app.get("/bff/research-analyses")
 async def sem_final_generic_read_alias(
     request: Request,
@@ -68033,8 +66538,6 @@ async def sem_final_id_named_read_alias(
 # and /bff/strategies/{id} have dedicated PATCH handlers registered earlier
 # and are intentionally excluded here.
 @app.patch("/bff/artifacts/{id}")
-@app.patch("/bff/ranking-formulas/{id}")
-@app.patch("/bff/research-experiments/{id}")
 async def sem_final_generic_patch_alias(id: str, payload: Dict[str, Any] = Body(default_factory=dict), authorization: Optional[str] = Header(default=None)):
     _require_operator_role(_extract_identity(authorization))
     return {"data": {"id": id, **payload}, "meta": {"snapshot_at": utc_now()}}
@@ -68392,8 +66895,6 @@ async def sem_final_generic_id_command_alias(
 
 
 @app.post("/bff/artifacts", status_code=201)
-@app.post("/bff/ranking-formulas", status_code=201)
-@app.post("/bff/research-experiments", status_code=201)
 async def sem_final_generic_create_alias(payload: Dict[str, Any] = Body(default_factory=dict), authorization: Optional[str] = Header(default=None)):
     _require_operator_role(_extract_identity(authorization))
     status = 202 if "decision" in payload else 201
@@ -68412,18 +66913,6 @@ async def sem_final_generic_create_alias(payload: Dict[str, Any] = Body(default_
 async def sem_agora_alerts_triage_alias(authorization: Optional[str] = Header(default=None)):
     _require_read_role(_extract_identity(authorization))
     return _sem_empty_final_list("agora_alerts_triage")
-
-
-@app.post("/bff/agora/signals/{id}/feedback", status_code=202)
-async def sem_agora_signal_feedback_id_alias(id: str, payload: Dict[str, Any] = Body(default_factory=dict), authorization: Optional[str] = Header(default=None)):
-    _require_operator_role(_extract_identity(authorization))
-    return JSONResponse(status_code=202, content={"status": "accepted", "data": {"id": id, "signalId": id, **payload}, "meta": {"snapshot_at": utc_now()}})
-
-
-@app.patch("/bff/agora/journal/{id}")
-async def sem_agora_journal_id_patch_alias(id: str, payload: Dict[str, Any] = Body(default_factory=dict), authorization: Optional[str] = Header(default=None)):
-    _require_operator_role(_extract_identity(authorization))
-    return {"data": {"id": id, **payload}, "meta": {"snapshot_at": utc_now()}}
 
 
 def _assistant_focus_entity(
@@ -69254,6 +67743,216 @@ app.include_router(_create_alpha_factory_router(
     require_read_role=_require_read_role,
     utc_now=utc_now,
 ))
+
+# -- Jobs (read_store narrow ports) ------------------------------------------
+
+@app.get("/bff/jobs")
+async def bff_list_jobs(
+    status: Optional[str] = None,
+    job_type: Optional[str] = None,
+    page_token: Optional[str] = None,
+    page_size: int = Query(default=20, ge=1, le=200),
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: job list using narrow port read_store.list_jobs_bff."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    snapshot_at = utc_now()
+    jobs = list(_GOV_BFF_JOB_OVERLAY.values()) or read_store.list_jobs_bff(status=status, job_type=job_type)
+    if status:
+        jobs = [j for j in jobs if j.get("status") == status]
+    if job_type:
+        jobs = [j for j in jobs if j.get("job_type") == job_type]
+    total = len(jobs)
+    page_items, next_page_token = _page_slice(jobs, page_token, page_size)
+    return {
+        "items": page_items,
+        "data": page_items,
+        "page_info": {"next_page_token": next_page_token, "total": total},
+        "meta": _read_surface_meta("jobs", "job_list", snapshot_at=snapshot_at, total=total),
+    }
+
+
+@app.get("/bff/jobs/{job_id}")
+async def bff_get_job(
+    job_id: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: job detail using narrow port read_store.get_job_bff."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    snapshot_at = utc_now()
+    job = _GOV_BFF_JOB_OVERLAY.get(job_id) or read_store.get_job_bff(job_id)
+    if not job:
+        surface = _dataset_surface_status("jobs", snapshot_at=snapshot_at)
+        _raise_if_read_surface_unavailable(surface, label="Job")
+        raise _bff_error(
+            404, ErrorCode.RESOURCE_NOT_FOUND,
+            "Job not found",
+            f"Job {job_id} does not exist",
+        )
+    return {
+        "data": job,
+        "meta": _read_surface_meta("jobs", "job_detail", snapshot_at=snapshot_at),
+    }
+
+
+@app.get("/bff/jobs/{job_id}/logs")
+async def bff_get_job_logs(
+    job_id: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    """BFF: job logs using narrow port read_store.get_job_logs_bff."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    snapshot_at = utc_now()
+    job = _GOV_BFF_JOB_OVERLAY.get(job_id) or read_store.get_job_bff(job_id)
+    if not job:
+        raise _bff_error(
+            404, ErrorCode.RESOURCE_NOT_FOUND,
+            "Job not found",
+            f"Job {job_id} does not exist",
+        )
+    logs = job.get("logs") if isinstance(job, dict) and "logs" in job else read_store.get_job_logs_bff(job_id)
+    return {
+        "job_id": job_id,
+        "status": job.get("status") if isinstance(job, dict) else "unknown",
+        "logs": logs,
+        "data": logs,
+        "meta": _read_surface_meta("jobs", "job_logs", snapshot_at=snapshot_at),
+    }
+
+
+@app.post("/bff/jobs/{job_id}/actions/{action_id}", status_code=202)
+async def bff_job_action(
+    job_id: str,
+    action_id: str,
+    payload: Dict[str, Any] = Body(default_factory=dict),
+    authorization: Optional[str] = Header(default=None),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+):
+    """BFF: job action."""
+    identity = _extract_identity(authorization)
+    _require_read_role(identity)
+    _reject_body_idempotency_key(payload)
+    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+    job = _GOV_BFF_JOB_OVERLAY.get(job_id) or read_store.get_job_bff(job_id)
+    if not job:
+        raise _bff_error(
+            404, ErrorCode.RESOURCE_NOT_FOUND,
+            "Job not found",
+            f"Job {job_id} does not exist",
+        )
+    return _evol_exp_bff_action_command(
+        entity_type=ObjectType.JOB,
+        entity_id=job_id,
+        action_id=action_id,
+        resolved_key=resolved_key,
+        identity=identity,
+        payload=payload,
+        command_type=CommandType.JOB_ACTION,
+    )
+
+
+async def bff_events_stream_alias(
+    channel: str = "system",
+    last_event_id: Optional[str] = None,
+    authorization: Optional[str] = None,
+):
+    return await stream_generic_events(channel, last_event_id, authorization)
+
+
+# ACG-01-004 / ACG-01-005: Events canonical router
+from events.router import create_events_router as _create_events_router
+app.include_router(
+    _create_events_router(
+        get_read_store=lambda: read_store,
+        get_command_store=lambda: command_store,
+        extract_identity=_extract_identity,
+        require_read_role=_require_read_role,
+        bff_error=_bff_error,
+        utc_now=utc_now,
+        snapshot_meta=_snapshot_meta,
+    )
+)
+
+# ACG-01-006 / ACG-01-007: Evolution Programs canonical router
+from evolution.router import create_evolution_programs_router as _create_evolution_programs_router
+app.include_router(
+    _create_evolution_programs_router(
+        get_read_store=lambda: read_store,
+        extract_identity=_extract_identity,
+        require_read_role=_require_read_role,
+        require_operator_role=_require_operator_role,
+        bff_error=_bff_error,
+        utc_now=utc_now,
+        page_slice=_page_slice,
+        snapshot_meta=_snapshot_meta,
+        dataset_surface_status=_dataset_surface_status,
+        submit_program_action=lambda entity_type, entity_id, action_id, resolved_key, identity, payload: _gov_bff_action_command(
+            ObjectType.EVOLUTION_PROGRAM,
+            entity_id,
+            action_id,
+            _resolve_final_idempotency_key(resolved_key, None),
+            identity,
+            payload or {},
+            CommandType.EVOLUTION_PROGRAM_ACTION,
+        ),
+    )
+)
+
+# ACG-01-008 / ACG-01-009: Research Experiments canonical router
+from research.router import create_research_experiments_router as _create_research_experiments_router
+app.include_router(
+    _create_research_experiments_router(
+        get_read_store=lambda: read_store,
+        extract_identity=_extract_identity,
+        require_read_role=_require_read_role,
+        require_operator_role=_require_operator_role,
+        bff_error=_bff_error,
+        utc_now=utc_now,
+        page_slice=_page_slice,
+        snapshot_meta=_snapshot_meta,
+        dataset_surface_status=_dataset_surface_status,
+        submit_experiment_action=lambda entity_type, entity_id, action_id, resolved_key, identity, payload: _gov_bff_action_command(
+            ObjectType.EXPERIMENT,
+            entity_id,
+            action_id,
+            _resolve_final_idempotency_key(resolved_key, None),
+            identity,
+            payload or {},
+            CommandType.EXPERIMENT_ACTION,
+        ),
+    )
+)
+
+# ACG-01-011: Action command adapter router
+from command_adapters.router import create_action_command_router as _create_action_command_router
+app.include_router(
+    _create_action_command_router(
+        submit_command_admission=_submit_final_command_admission,
+        extract_identity=_extract_identity,
+        require_operator_role=_require_operator_role,
+        bff_error=_bff_error,
+        utc_now=utc_now,
+        command_store=lambda: command_store,
+    )
+)
+
+# ACG-01-012: Ranking Formulas canonical router
+from management_read_models.ranking_router import create_ranking_formulas_router as _create_ranking_formulas_router
+app.include_router(
+    _create_ranking_formulas_router(
+        get_read_store=lambda: read_store,
+        extract_identity=_extract_identity,
+        require_read_role=_require_read_role,
+        require_operator_role=_require_operator_role,
+        bff_error=_bff_error,
+        utc_now=utc_now,
+        snapshot_meta=_snapshot_meta,
+    )
+)
 
 
 def _ensure_agora_servant_openclaw_agent(persona: Dict[str, Any]) -> Dict[str, Any]:

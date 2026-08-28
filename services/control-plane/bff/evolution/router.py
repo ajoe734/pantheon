@@ -237,9 +237,12 @@ def create_evolution_programs_router(
         action_id: str,
         payload: Dict[str, Any] = Body(default_factory=dict),
         authorization: Optional[str] = Header(default=None),
+        idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+        x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
     ) -> Dict[str, Any]:
         identity = extract_identity(authorization)
         require_operator_role(identity)
+        resolved_key = (idempotency_key or x_idempotency_key or "").strip()
         read_store = get_read_store()
         clean_id = program_id.strip()
         _require_program(read_store, clean_id)
@@ -250,6 +253,10 @@ def create_evolution_programs_router(
                 "Evolution program actions are not wired",
                 "submit_program_action was not injected into create_evolution_programs_router",
             )
-        return submit_program_action(ObjectType.EVOLUTION_PROGRAM.value, clean_id, action_id, identity, payload)
+        try:
+            res = submit_program_action(ObjectType.EVOLUTION_PROGRAM.value, clean_id, action_id, resolved_key, identity, payload)
+        except TypeError:
+            res = submit_program_action(ObjectType.EVOLUTION_PROGRAM.value, clean_id, action_id, identity, payload)
+        return res.model_dump(mode="json") if hasattr(res, "model_dump") else res
 
     return router

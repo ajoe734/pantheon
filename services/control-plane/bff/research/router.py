@@ -33,6 +33,8 @@ alias stubs, and the pruning hack for these paths.
 """
 from __future__ import annotations
 
+import hashlib
+import json
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from fastapi import APIRouter, Body, Header, Query
@@ -42,8 +44,11 @@ from models import ErrorCode, ObjectType
 PageSlice = Callable[[List[Dict[str, Any]], Optional[str], int], Tuple[List[Dict[str, Any]], Optional[str]]]
 SnapshotMeta = Callable[[str], Dict[str, Any]]
 SurfaceStatus = Callable[..., Dict[str, Any]]
-# (entity_type_value, entity_id, action_id, identity, payload) -> receipt dict
-SubmitAction = Callable[[str, str, str, Any, Dict[str, Any]], Dict[str, Any]]
+# (entity_type_value, entity_id, action_id, resolved_key, identity, payload) -> receipt dict
+SubmitAction = Callable[..., Any]
+
+_RESEARCH_EXPERIMENT_IDEMPOTENCY: Dict[str, Dict[str, Any]] = {}
+
 
 
 def _default_page_slice(
@@ -97,43 +102,55 @@ def create_research_experiments_router(
     router = APIRouter()
 
     def _list_experiments(read_store: Any, status: Optional[str]) -> List[Dict[str, Any]]:
-        items = _filter_by_status_csv(list(read_store.list_research_experiments()), status)
-        return sorted(items, key=lambda e: str(e.get("created_at") or e.get("queued_at") or ""), reverse=True)
+        if hasattr(read_store, "list_experiments_bff"):
+            return read_store.list_experiments_bff(status=status)
+        raw = read_store.list_research_experiments() if hasattr(read_store, "list_research_experiments") else []
+        return _filter_by_status_csv(raw, status)
 
-    def _get_experiment_with_analysis_links(read_store: Any, experiment_id: str) -> Optional[Dict[str, Any]]:
-        experiment = read_store.get_experiment_bff(experiment_id)
-        if not experiment:
-            return None
-        record = dict(experiment)
-        analyses = read_store.list_research_analyses(experiment_id=experiment_id)
-        analysis_links: List[Dict[str, Any]] = []
-        for analysis in analyses:
-            analysis_id = str(analysis.get("analysis_id") or analysis.get("id") or "").strip()
-            if not analysis_id:
-                continue
-            analysis_links.append(
-                {
-                    "analysis_id": analysis_id,
-                    "ticket_id": analysis.get("ticket_id"),
-                    "status": analysis.get("status"),
-                    "detail": f"/bff/research-analyses/{analysis_id}",
-                    "api_detail": f"/api/v1/research/analysis/{analysis_id}",
-                }
-            )
-        record["analysis_links"] = analysis_links
-        record["analysis_ids"] = [link["analysis_id"] for link in analysis_links]
-        return record
+    def _enrich_experiment_with_analyses(read_store: Any, item: Dict[str, Any], clean_id: str) -> Dict[str, Any]:
+        enriched = dict(item)
+        analyses = []
+        if hasattr(read_store, "list_research_analyses"):
+            try:
+                analyses = read_store.list_research_analyses(experiment_id=clean_id) or []
+            except Exception:
+                analyses = []
+        analysis_ids = []
+        analysis_links = []
+        for a in analyses:
+            if isinstance(a, dict):
+                a_id = str(a.get("analysis_id") or a.get("id") or "")
+                if a_id:
+                    analysis_ids.append(a_id)
+                link_item = dict(a)
+                if a_id and "detail" not in link_item:
+                    link_item["detail"] = f"/bff/research-analyses/{a_id}"
+                analysis_links.append(link_item)
+        if "analysis_ids" not in enriched:
+            enriched["analysis_ids"] = analysis_ids
+        if "analysis_links" not in enriched:
+            enriched["analysis_links"] = analysis_links
+        return enriched
 
-    def _require_experiment(read_store: Any, experiment_id: str) -> Dict[str, Any]:
-        experiment = _get_experiment_with_analysis_links(read_store, experiment_id)
-        if not experiment:
+    def _require_experiment(read_store: Any, clean_id: str) -> Dict[str, Any]:
+        if hasattr(read_store, "get_experiment_bff"):
+            item = read_store.get_experiment_bff(clean_id)
+        elif hasattr(read_store, "get_research_experiment"):
+            item = read_store.get_research_experiment(clean_id)
+        else:
+            item = None
+        if not item:
             raise bff_error(
                 404,
                 ErrorCode.RESOURCE_NOT_FOUND,
-                "Experiment not found",
-                f"Experiment {experiment_id} does not exist",
+                f"Experiment '{clean_id}' not found",
+                f"No experiment exists with id '{clean_id}'",
             )
-        return experiment
+        return _enrich_experiment_with_analyses(read_store, item, clean_id)
+
+    # ------------------------------------------------------------------
+    # Canonical /bff/experiments endpoints
+    # ------------------------------------------------------------------
 
     @router.get("/bff/experiments")
     async def list_experiments(
@@ -142,11 +159,10 @@ def create_research_experiments_router(
         page_size: int = Query(default=20, ge=1, le=200),
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
-        """List experiments. Filter: comma-separated ``status`` (case-insensitive)."""
         identity = extract_identity(authorization)
         require_read_role(identity)
-        read_store = get_read_store()
         snapshot_at = utc_now()
+        read_store = get_read_store()
         items = _list_experiments(read_store, status)
         surface = dataset_surface_status("research_experiments", snapshot_at=snapshot_at, has_data=bool(items) or None)
         if surface.get("status") == "unavailable" and not items:
@@ -161,10 +177,29 @@ def create_research_experiments_router(
     async def create_experiment(
         payload: Dict[str, Any] = Body(...),
         authorization: Optional[str] = Header(default=None),
+        idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+        x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
     ) -> Dict[str, Any]:
         """Create an experiment. ``name``/``experiment_name`` is required (422 otherwise)."""
         identity = extract_identity(authorization)
         require_operator_role(identity)
+        resolved_key = (idempotency_key or x_idempotency_key or "").strip()
+        import hashlib
+        req_hash = hashlib.sha256(json.dumps(payload, sort_keys=True, default=str).encode("utf-8")).hexdigest()
+        if resolved_key:
+            existing = _RESEARCH_EXPERIMENT_IDEMPOTENCY.get(resolved_key)
+            if existing is not None:
+                if existing.get("hash") != req_hash:
+                    raise bff_error(
+                        409,
+                        ErrorCode.IDEMPOTENCY_CONFLICT,
+                        "Idempotency key was already used with a different payload",
+                        f"Key {resolved_key!r} is bound to a different request hash",
+                        precondition_failed="idempotency_conflict",
+                        suggestion="Use a new Idempotency-Key or resubmit the original payload unchanged",
+                    )
+                return existing["result"]
+
         name = str(payload.get("name") or payload.get("experiment_name") or "").strip()
         if not name:
             raise bff_error(
@@ -173,12 +208,15 @@ def create_research_experiments_router(
                 precondition_failed="name",
             )
         read_store = get_read_store()
-        return read_store.create_experiment_bff(
+        result = read_store.create_experiment_bff(
             name=name,
             actor_id=identity.operator_id,
             created_at=utc_now(),
             params=payload,
         )
+        if resolved_key:
+            _RESEARCH_EXPERIMENT_IDEMPOTENCY[resolved_key] = {"hash": req_hash, "result": result}
+        return result
 
     @router.get("/bff/experiments/{experiment_id}")
     async def get_experiment(
@@ -198,9 +236,12 @@ def create_research_experiments_router(
         action_id: str,
         payload: Dict[str, Any] = Body(default_factory=dict),
         authorization: Optional[str] = Header(default=None),
+        idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+        x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
     ) -> Dict[str, Any]:
         identity = extract_identity(authorization)
         require_operator_role(identity)
+        resolved_key = (idempotency_key or x_idempotency_key or "").strip()
         read_store = get_read_store()
         clean_id = experiment_id.strip()
         _require_experiment(read_store, clean_id)
@@ -211,7 +252,11 @@ def create_research_experiments_router(
                 "Experiment actions are not wired",
                 "submit_experiment_action was not injected into create_research_experiments_router",
             )
-        return submit_experiment_action(ObjectType.EXPERIMENT.value, clean_id, action_id, identity, payload)
+        try:
+            res = submit_experiment_action(ObjectType.EXPERIMENT.value, clean_id, action_id, resolved_key, identity, payload)
+        except TypeError:
+            res = submit_experiment_action(ObjectType.EXPERIMENT.value, clean_id, action_id, identity, payload)
+        return res.model_dump(mode="json") if hasattr(res, "model_dump") else res
 
     @router.get("/bff/experiments/{experiment_id}/logs")
     async def get_experiment_logs(
@@ -276,7 +321,14 @@ def create_research_experiments_router(
         require_read_role(identity)
         read_store = get_read_store()
         snapshot_at = utc_now()
-        all_items = _list_experiments(read_store, status)
+        if hasattr(read_store, "list_research_experiments"):
+            try:
+                all_items = read_store.list_research_experiments(status=status)
+            except TypeError:
+                raw = read_store.list_research_experiments()
+                all_items = _filter_by_status_csv(raw, status)
+        else:
+            all_items = _list_experiments(read_store, status)
         surface = dataset_surface_status(
             "research_experiments", snapshot_at=snapshot_at, has_data=bool(all_items) or None,
         )
@@ -298,8 +350,25 @@ def create_research_experiments_router(
         identity = extract_identity(authorization)
         require_read_role(identity)
         read_store = get_read_store()
-        experiment = _require_experiment(read_store, experiment_id.strip())
+        clean_id = experiment_id.strip()
+        if hasattr(read_store, "get_research_experiment"):
+            experiment = read_store.get_research_experiment(clean_id)
+        else:
+            experiment = _require_experiment(read_store, clean_id)
+        if not experiment:
+            raise bff_error(
+                404,
+                ErrorCode.RESOURCE_NOT_FOUND,
+                f"Experiment '{clean_id}' not found",
+                f"No experiment exists with id '{clean_id}'",
+            )
+        experiment = _enrich_experiment_with_analyses(read_store, experiment, clean_id)
         snapshot_at = utc_now()
-        return {"data": experiment, "meta": snapshot_meta(snapshot_at)}
+        surface = dataset_surface_status(
+            "research_experiments", snapshot_at=snapshot_at, has_data=bool(experiment) or None,
+        )
+        meta = snapshot_meta(snapshot_at)
+        meta["surfaces"] = {"research_experiment_detail": surface}
+        return {"data": experiment, "meta": meta}
 
     return router
