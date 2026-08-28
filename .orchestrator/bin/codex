@@ -13,4 +13,40 @@ if [[ ! -x "${codex_bin}" ]]; then
   fi
 fi
 
+source_codex_home="${CODEX_HOME:-$HOME/.codex}"
+
+# The IDE and an auto-worker can run different Codex CLI versions on the same
+# host.  They must not share models_cache.json: a newer client can refresh it
+# to a schema an already-running worker cannot read.  For a supervised run,
+# seed a private, run-scoped CODEX_HOME with only the durable login/config
+# inputs.  Runtime caches, sessions, and logs are intentionally not copied.
+#
+# Keep ordinary interactive invocations unchanged: ORCH_RUN_ID is issued only
+# by the supervisor's worker runner.
+if [[ -n "${ORCH_RUN_ID:-}" ]]; then
+  safe_run_id="$(printf '%s' "${ORCH_RUN_ID}" | tr -c 'A-Za-z0-9_.-' '-' | tr -s '-')"
+  safe_run_id="${safe_run_id#-}"
+  safe_run_id="${safe_run_id%-}"
+  if [[ -z "${safe_run_id}" ]]; then
+    echo "Codex worker run id is empty after normalization." >&2
+    exit 2
+  fi
+
+  worker_home_root="${PANTHEON_CODEX_WORKER_HOME_ROOT:-$HOME/.cache/pantheon/codex-workers}"
+  worker_codex_home="${worker_home_root}/${safe_run_id}"
+  mkdir -p "${worker_codex_home}"
+
+  # Copy once so a refresh performed by a worker remains private to that run.
+  # auth.json/config.toml are the only Codex-home files needed to establish
+  # its configured account and settings; models_cache.json must always be
+  # fetched by the CLI version that will consume it.
+  for seed_file in auth.json config.toml; do
+    if [[ -f "${source_codex_home}/${seed_file}" && ! -e "${worker_codex_home}/${seed_file}" ]]; then
+      cp "${source_codex_home}/${seed_file}" "${worker_codex_home}/${seed_file}"
+    fi
+  done
+
+  export CODEX_HOME="${worker_codex_home}"
+fi
+
 exec "${codex_bin}" "$@"

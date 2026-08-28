@@ -19,12 +19,11 @@ tag at the exact reviewed head SHA when it runs -- durably, on the host that
 actually has the state, at decision time. A tag is part of the repository's
 own object graph, so *any* clone or `gh api` call sees it, including this
 runner. The check below therefore only ever asks one question, answerable
-purely over the GitHub API with no local checkout required at all: does
-`refs/tags/pantheon-review/approve/<head-sha>` exist? Existence is
-sufficient proof, because the tag is only ever created by the trusted,
-already-integrity-checked internal approve path (owner != reviewer, exact
-head binding, etc.) -- CI does not need to re-derive any of that, only
-confirm the artifact it produced is present for this exact head.
+purely over the GitHub API with no local checkout required at all: does an
+independent-review tag or a separately named Human/Ops acceptance tag exist
+for this exact head? Each tag is produced only by its matching trusted,
+exact-head path. CI does not re-derive that decision; it only confirms the
+artifact it produced is present for this exact head.
 
 Product PRs require the exact-head review-proof tag.  Development-tooling PRs
 labelled `delivery:tooling` use the explicit Human/Ops delivery decision
@@ -49,7 +48,11 @@ from urllib.parse import quote
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "scripts" / "git"))
 
-from github_review_bridge import CANONICAL_REVIEW_CONTEXT, review_proof_tag_name  # noqa: E402
+from github_review_bridge import (  # noqa: E402
+    CANONICAL_REVIEW_CONTEXT,
+    operator_acceptance_proof_tag_name,
+    review_proof_tag_name,
+)
 
 DEFAULT_TASK_BRANCH_PREFIX = "task/"
 APPROVE_DECISION = "approve"
@@ -104,6 +107,14 @@ def review_proof_tag_exists(
     *, repository: str, head_sha: str, lookup: TagLookup = default_tag_lookup
 ) -> bool:
     ref = f"refs/tags/{review_proof_tag_name(decision=APPROVE_DECISION, head_sha=head_sha)}"
+    found = lookup(repository, ref)
+    return isinstance(found, Mapping) and found.get("ref") == ref
+
+
+def operator_acceptance_proof_tag_exists(
+    *, repository: str, head_sha: str, lookup: TagLookup = default_tag_lookup
+) -> bool:
+    ref = f"refs/tags/{operator_acceptance_proof_tag_name(head_sha=head_sha)}"
     found = lookup(repository, ref)
     return isinstance(found, Mapping) and found.get("ref") == ref
 
@@ -167,12 +178,25 @@ def build_status_payload(
             "target_url": target_url,
         }
 
+    if operator_acceptance_proof_tag_exists(
+        repository=repository, head_sha=head_sha, lookup=active_lookup
+    ):
+        return {
+            "state": "success",
+            "context": CANONICAL_REVIEW_CONTEXT,
+            "description": f"{task_id}: Human/Ops exact-head acceptance present at {head_sha[:12]}"[
+                :_DESCRIPTION_LIMIT
+            ],
+            "target_url": target_url,
+        }
+
     return {
         "state": "failure",
         "context": CANONICAL_REVIEW_CONTEXT,
         "description": (
             f"{task_id}: no review-proof tag "
-            f"({review_proof_tag_name(decision=APPROVE_DECISION, head_sha=head_sha)}) "
+            f"({review_proof_tag_name(decision=APPROVE_DECISION, head_sha=head_sha)} or "
+            f"{operator_acceptance_proof_tag_name(head_sha=head_sha)}) "
             f"for head {head_sha[:12]} -- not yet independently approved at this head"
         )[:_DESCRIPTION_LIMIT],
         "target_url": target_url,

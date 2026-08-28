@@ -292,6 +292,34 @@ def test_replace_has_only_stop_install_launch_and_never_rolls_back(
     assert not hasattr(promotion, "PromotionTransaction")
 
 
+def test_promotion_locks_before_candidate_validation_or_config_switch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    candidate, status_root = _candidate(tmp_path)
+    live_config = tmp_path / "runtime" / "live.json"
+    validated = False
+
+    def unexpected_render(*args: object, **kwargs: object):
+        nonlocal validated
+        validated = True
+        raise AssertionError("validation ran during active integration")
+
+    monkeypatch.setattr(promotion, "render_v2_config", unexpected_render)
+    lock_path = status_root / promotion.auto_integrator.DEFAULT_LOCK
+    with promotion.auto_integrator.lock_file(lock_path):
+        with pytest.raises(promotion.auto_integrator.IntegrationLockHeld):
+            promotion.replace_supervisor(
+                candidate,
+                status_root=status_root,
+                live_config_path=live_config,
+                python_executable=Path(sys.executable),
+                termination_timeout=1,
+            )
+
+    assert validated is False
+    assert not live_config.exists()
+
+
 def test_status_root_replacement_stops_pid_from_installed_config(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

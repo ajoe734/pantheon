@@ -7,6 +7,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 from unittest import mock
@@ -37,8 +38,14 @@ class FakeRunner(auto_integrator.CommandRunner):
         check_filesystem_paths: bool = False,
         git_toplevel_returncode: int = 0,
         git_toplevel_path: str | None = None,
+        git_common_dir_returncode: int = 0,
+        git_common_dir_path: str | None = None,
+        git_status_returncode: int = 0,
+        git_status_output: str = "",
         origin_remote_returncode: int = 0,
         origin_remote_slug: str | None = None,
+        git_head: str = "abc123",
+        symbolic_ref_returncode: int = 1,
     ) -> None:
         super().__init__()
         self.pr = dict(pr) if pr is not None else None
@@ -51,19 +58,21 @@ class FakeRunner(auto_integrator.CommandRunner):
         self.check_filesystem_paths = check_filesystem_paths
         self.git_toplevel_returncode = git_toplevel_returncode
         self.git_toplevel_path = git_toplevel_path
+        self.git_common_dir_returncode = git_common_dir_returncode
+        self.git_common_dir_path = git_common_dir_path
+        self.git_status_returncode = git_status_returncode
+        self.git_status_output = git_status_output
         self.origin_remote_returncode = origin_remote_returncode
         self.origin_remote_slug = origin_remote_slug
+        self.git_head = git_head
+        self.symbolic_ref_returncode = symbolic_ref_returncode
         # SUP-GATED-PR-EXACT-HEAD-QUEUE-MERGE-20260805: outcome of the
         # disposable `git merge origin/dev` test-merge run against a behind
         # gated PR's exact reviewed head. 0 = clean (default); non-zero
         # models a real conflict.
         self.ephemeral_merge_returncode = ephemeral_merge_returncode
-        # SUP-MERGE-QUEUE-AWARE-INTEGRATOR-20260804: models whether an actual
-        # (non --auto, non --disable-auto) `gh pr merge` call lands
-        # immediately -- true is the pre-merge-queue default; a caller
-        # models a merge-queue-required branch by passing False, which
-        # leaves `self.pr["state"]` unchanged (still OPEN) after the merge
-        # call, the way a request that was only *enqueued* would.
+        # Models whether the synchronous REST merge endpoint returns
+        # merged=true. A false result never creates a queue/auto-merge request.
         self.merge_lands_synchronously = merge_lands_synchronously
         self.landed_merged_at = landed_merged_at
         self.commits = {str(sha): dict(payload) for sha, payload in (commits or {}).items()}
@@ -87,7 +96,9 @@ class FakeRunner(auto_integrator.CommandRunner):
         cwd: Path = auto_integrator.ROOT,
         check: bool = True,
         env: Mapping[str, str] | None = None,
+        timeout: float | None = None,
     ):
+        del timeout
         command = [str(arg) for arg in args]
         self.commands.append(command)
         joined = " ".join(command)
@@ -123,6 +134,22 @@ class FakeRunner(auto_integrator.CommandRunner):
                 }
             }
             return completed(command, stdout=auto_integrator.json.dumps(payload))
+        if (
+            command[:4] == ["gh", "api", "--method", "PUT"]
+            and "/pulls/" in joined
+            and "/merge" in joined
+        ):
+            if self.merge_lands_synchronously and self.pr is not None:
+                self.pr = {
+                    **self.pr,
+                    "state": "MERGED",
+                    "mergedAt": self.landed_merged_at,
+                    "mergeCommit": {"oid": "merge123"},
+                }
+                payload = {"merged": True, "sha": "merge123", "message": "merged"}
+            else:
+                payload = {"merged": False, "message": "not directly mergeable"}
+            return completed(command, stdout=auto_integrator.json.dumps(payload))
         commit_prefix = "repos/ajoe734/pantheon/commits/"
         if command[:2] == ["gh", "api"] and len(command) == 3 and command[2].startswith(commit_prefix):
             head_sha = command[2][len(commit_prefix) :].partition("?")[0]
@@ -152,9 +179,9 @@ class FakeRunner(auto_integrator.CommandRunner):
             return completed(command)
         if command[:3] == ["git", "merge-base", "--is-ancestor"]:
             return completed(command, returncode=self.merge_base_returncode)
-        if command[:2] == ["git", "merge"] and "--abort" not in command:
+        if command[:1] == ["git"] and "merge" in command and "--abort" not in command:
             return completed(command, returncode=self.ephemeral_merge_returncode)
-        if command[:3] == ["git", "merge", "--abort"]:
+        if command[:1] == ["git"] and "merge" in command and "--abort" in command:
             return completed(command)
         if command[:3] == ["git", "worktree", "add"]:
             return completed(command)
@@ -163,6 +190,21 @@ class FakeRunner(auto_integrator.CommandRunner):
                 return completed(command, returncode=self.git_toplevel_returncode)
             top = self.git_toplevel_path if self.git_toplevel_path is not None else str(cwd)
             return completed(command, stdout=f"{top}\n")
+        if command[:3] == ["git", "rev-parse", "--git-common-dir"]:
+            if self.git_common_dir_returncode != 0:
+                return completed(command, returncode=self.git_common_dir_returncode)
+            common_dir = (
+                self.git_common_dir_path
+                if self.git_common_dir_path is not None
+                else str(Path(cwd) / ".git")
+            )
+            return completed(command, stdout=f"{common_dir}\n")
+        if command[:2] == ["git", "status"]:
+            return completed(
+                command,
+                stdout=self.git_status_output,
+                returncode=self.git_status_returncode,
+            )
         if command[:3] == ["git", "remote", "get-url"]:
             if self.origin_remote_returncode != 0:
                 return completed(command, returncode=self.origin_remote_returncode)
@@ -174,7 +216,9 @@ class FakeRunner(auto_integrator.CommandRunner):
                 slug = "ajoe734/pantheon"
             return completed(command, stdout=f"https://github.com/{slug}.git\n")
         if command[:3] == ["git", "rev-parse", "HEAD"]:
-            return completed(command, stdout="abc123\n")
+            return completed(command, stdout=f"{self.git_head}\n")
+        if command[:3] == ["git", "symbolic-ref", "-q"]:
+            return completed(command, returncode=self.symbolic_ref_returncode)
         if command[:2] == ["git", "rebase"] and "--abort" not in command:
             return completed(command, returncode=self.rebase_returncode)
         if command[:3] == ["git", "worktree", "remove"]:
@@ -184,15 +228,6 @@ class FakeRunner(auto_integrator.CommandRunner):
                 if self.disable_auto_clears_request and self.pr is not None:
                     self.pr = {**self.pr, "autoMergeRequest": None}
                 return completed(command, returncode=self.disable_auto_returncode)
-            if "--auto" not in command and self.merge_lands_synchronously and self.pr is not None:
-                # A direct (non-queued) merge request that GitHub completes
-                # immediately -- the next `gh pr view` should see it MERGED.
-                self.pr = {
-                    **self.pr,
-                    "state": "MERGED",
-                    "mergedAt": self.landed_merged_at,
-                    "mergeCommit": {"oid": "merge123"},
-                }
             return completed(command)
         if "scripts/ai_status.py" in joined:
             return completed(command)
@@ -280,6 +315,50 @@ def approved_gate(task_id: str = "ABC-001", pr_number: int = 44) -> auto_integra
     )
 
 
+def operator_accepted_gate(
+    task_id: str = "ABC-001", pr_number: int = 44
+) -> auto_integrator.ReviewGate:
+    binding = {
+        "pr": pr_number,
+        "head_sha": APPROVED_HEAD,
+        "head_branch": f"task/{task_id}",
+        "base": "dev",
+    }
+    return auto_integrator.ReviewGate(
+        state={
+            "tasks": [
+                {
+                    "id": task_id,
+                    "title": "Ready",
+                    "status": "review_approved",
+                    "owner": "Codex",
+                    "reviewer": "Claude",
+                }
+            ]
+        },
+        events=[
+            {
+                "ts": "2026-06-12T00:45:00Z",
+                "agent": "Human/Ops",
+                "type": "operator_accepted",
+                "task_id": task_id,
+                "message": "Human/Ops accepted this exact head.",
+                "review_binding": binding,
+                "operator_acceptance": {
+                    "repository": "ajoe734/pantheon",
+                    **binding,
+                    "decision": "operator-accept",
+                    "actor": "Human/Ops",
+                    "mode": "operator_exact_head",
+                    "operator_acceptance_proof_ref": (
+                        "refs/tags/pantheon-review/operator-accept/" + APPROVED_HEAD
+                    ),
+                },
+            }
+        ],
+    )
+
+
 def merged_pr(number: int = 55) -> dict[str, Any]:
     pr = green_pr(number)
     pr["state"] = "MERGED"
@@ -289,19 +368,131 @@ def merged_pr(number: int = 55) -> dict[str, Any]:
 
 
 class CandidateSelectionTests(unittest.TestCase):
-    def test_review_approved_candidates_only(self) -> None:
+    def test_candidates_include_approved_and_permitted_merge_then_review_only(self) -> None:
         state = {
             "tasks": [
                 {"id": "ABC-001", "title": "Ready", "status": "review_approved", "owner": "Codex", "reviewer": "Claude"},
                 {"id": "ABC-002", "title": "Todo", "status": "todo", "owner": "Codex", "reviewer": "Claude"},
                 {"id": "ABC-003", "title": "Missing owner", "status": "review_approved", "reviewer": "Claude"},
+                {"id": "ABC-004", "title": "Merge then review", "status": "in_progress", "owner": "Codex", "reviewer": "Codex", "merge_policy": "merge_then_review"},
+                {"id": "ABC-005", "title": "Independent review", "status": "in_progress", "owner": "Codex", "reviewer": "Claude", "merge_policy": "merge_then_review"},
+                {"id": "ABC-006", "title": "Unknown policy", "status": "in_progress", "owner": "Codex", "reviewer": "Codex", "merge_policy": "merge_when_green"},
+                {"id": "ABC-007", "title": "Not active", "status": "todo", "owner": "Codex", "reviewer": "Codex", "merge_policy": "merge_then_review"},
             ]
         }
 
-        candidates = auto_integrator.review_approved_candidates(state)
+        candidates = auto_integrator.integration_candidates(state)
 
-        self.assertEqual([candidate.task_id for candidate in candidates], ["ABC-001"])
+        self.assertEqual(
+            [candidate.task_id for candidate in candidates],
+            ["ABC-001", "ABC-004"],
+        )
         self.assertEqual(candidates[0].branch, "task/ABC-001")
+
+    def test_candidate_prefers_dedicated_integration_path_over_local_path(self) -> None:
+        state = {
+            "tasks": [
+                {
+                    "id": "ABC-001",
+                    "title": "Ready",
+                    "status": "review_approved",
+                    "owner": "Codex",
+                    "reviewer": "Claude",
+                }
+            ]
+        }
+        config = {
+            "coordination": {
+                "repositories": {
+                    "pantheon": {
+                        "repo": "ajoe734/pantheon",
+                        "default_branch": "dev",
+                        "local_path": "/worker/source/pantheon",
+                        "integration_path": "/integration/pantheon/" + "a" * 40,
+                    }
+                }
+            }
+        }
+
+        candidate = auto_integrator.integration_candidates(state, config=config)[0]
+
+        self.assertEqual(
+            candidate.repository_root,
+            Path("/integration/pantheon/" + "a" * 40),
+        )
+        self.assertTrue(candidate.dedicated_integration_path)
+
+    def test_stale_first_candidate_does_not_starve_open_second_candidate(self) -> None:
+        self._assert_observation_does_not_consume_limit("not_ready")
+
+    def test_pending_first_candidate_does_not_starve_ready_second_candidate(self) -> None:
+        self._assert_observation_does_not_consume_limit("waiting")
+
+    def test_blocked_first_candidate_does_not_starve_ready_second_candidate(self) -> None:
+        self._assert_observation_does_not_consume_limit("blocked")
+
+    def _assert_observation_does_not_consume_limit(self, first_action: str) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            status_file = root / "ai-status.json"
+            config_file = root / "config.json"
+            status_file.write_text('{"tasks": []}\n', encoding="utf-8")
+            config_file.write_text("{}\n", encoding="utf-8")
+            first = auto_integrator.TaskCandidate(
+                task_id="STALE-001",
+                title="Stale or pending",
+                owner="Codex",
+                reviewer="Codex",
+                branch="task/STALE-001",
+                raw_task={
+                    "status": "in_progress",
+                    "owner": "Codex",
+                    "reviewer": "Codex",
+                    "merge_policy": "merge_then_review",
+                },
+            )
+            second = auto_integrator.TaskCandidate(
+                task_id="READY-002",
+                title="Ready",
+                owner="Codex",
+                reviewer="Claude",
+                branch="task/READY-002",
+                raw_task={"status": "review_approved"},
+            )
+            outcomes = [
+                auto_integrator.IntegrationResult(first.task_id, first_action, "observe"),
+                auto_integrator.IntegrationResult(second.task_id, "would_merge", "ready"),
+            ]
+            output = io.StringIO()
+            with mock.patch.object(
+                auto_integrator,
+                "integration_candidates",
+                return_value=[first, second],
+            ), mock.patch.object(
+                auto_integrator,
+                "integrate_candidate",
+                side_effect=outcomes,
+            ) as integrate, mock.patch("sys.stdout", output):
+                auto_integrator.main(
+                    [
+                        "--no-lock",
+                        "--max-tasks",
+                        "1",
+                        "--status-file",
+                        str(status_file),
+                        "--config-file",
+                        str(config_file),
+                        "--json",
+                    ]
+                )
+
+            payload = json.loads(output.getvalue())
+            self.assertEqual(integrate.call_count, 2)
+            self.assertEqual(payload["candidate_count"], 2)
+            self.assertEqual(
+                [result["task_id"] for result in payload["results"]],
+                ["STALE-001", "READY-002"],
+            )
 
     def test_default_discovery_binds_to_canonical_status_root_over_local_worktree(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -541,9 +732,346 @@ class GitHubJsonCommandRunnerTests(unittest.TestCase):
 
 class IntegrationPlanTests(unittest.TestCase):
 
-    def test_merge_command_always_requests_a_merge_commit(self) -> None:
-        command = auto_integrator.merge_command(44, auto_integrator.Settings(), auto=False)
-        self.assertEqual(command, ["gh", "pr", "merge", "44", "--merge"])
+    def test_merge_owner_contract_is_task_dev_not_release_promotion(self) -> None:
+        contract = (REPO_ROOT / "scripts/git/auto_integrator_contract.md").read_text(
+            encoding="utf-8"
+        )
+        release_runner = (REPO_ROOT / "scripts/git/publish_promote.py").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("canonical `task/* -> dev` integration", contract)
+        self.assertIn("separate release authority", contract)
+        self.assertIn("def request_verified_auto_merge", release_runner)
+        self.assertIn('["gh", "pr", "merge", promote_branch, "--auto", "--merge"]', release_runner)
+
+    def test_execute_cannot_bypass_integration_lock(self) -> None:
+        with self.assertRaises(SystemExit) as raised:
+            auto_integrator.main(["--execute", "--no-lock"])
+        self.assertEqual(raised.exception.code, 2)
+
+    def test_execute_cannot_override_promoted_smoke_policy(self) -> None:
+        for override in (["--skip-smoke"], ["--smoke-command", "true"]):
+            with self.subTest(override=override), self.assertRaises(SystemExit) as raised:
+                auto_integrator.main(["--execute", *override])
+            self.assertEqual(raised.exception.code, 2)
+
+    def test_execute_authority_binds_watchdog_runtime_status_and_lock(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            head = "b" * 40
+            command_root = root / "command-runtimes" / head
+            command_root.mkdir(parents=True)
+            status_root = root / "status"
+            (status_root / ".orchestrator").mkdir(parents=True)
+            status_file = status_root / "ai-status.json"
+            status_file.write_text('{"tasks": []}\n', encoding="utf-8")
+            live_config = root / "runtime" / "live.json"
+            live_config.parent.mkdir()
+            payload = {
+                "paths": {"status_file": str(status_file)},
+                "watchdog": {
+                    "supervisor_command": [
+                        sys.executable,
+                        str(command_root / ".orchestrator" / "supervisor.py"),
+                        "--config",
+                        str(live_config),
+                    ]
+                },
+                "branch_workflow": {
+                    "auto_integrator": {
+                        "lock_file": ".orchestrator/auto-integrator.lock"
+                    }
+                },
+            }
+            live_config.write_text(json.dumps(payload), encoding="utf-8")
+            runner = FakeRunner(git_head=head)
+
+            resolved = auto_integrator.resolve_execute_authority(
+                live_config, runner, command_root=command_root
+            )
+            self.assertEqual(resolved[0], status_file)
+            self.assertEqual(
+                resolved[2].lock_path.resolve(),
+                (status_root / auto_integrator.DEFAULT_LOCK).resolve(),
+            )
+
+            forged = json.loads(json.dumps(payload))
+            forged["branch_workflow"]["auto_integrator"]["lock_file"] = str(
+                root / "private.lock"
+            )
+            live_config.write_text(json.dumps(forged), encoding="utf-8")
+            with self.assertRaisesRegex(
+                auto_integrator.ExecuteAuthorityError, "lock must be canonical"
+            ):
+                auto_integrator.resolve_execute_authority(
+                    live_config, runner, command_root=command_root
+                )
+
+    def test_live_execute_requires_explicit_dedicated_integration_path(self) -> None:
+        candidate = auto_integrator.TaskCandidate(
+            task_id="ABC-001",
+            title="Ready",
+            owner="Codex",
+            reviewer="Claude",
+            branch="task/ABC-001",
+            repository_root=Path("/worker/source/pantheon"),
+            dedicated_integration_path=False,
+        )
+        runner = FakeRunner(pr=green_pr())
+
+        result = auto_integrator.integrate_candidate(
+            candidate,
+            auto_integrator.Settings(),
+            runner,
+            execute=True,
+            require_dedicated_integration_path=True,
+            open_unblock=False,
+            gate=approved_gate(),
+        )
+
+        self.assertEqual(result.action, "blocked")
+        self.assertIn("no explicit integration_path", result.detail)
+        self.assertEqual(runner.commands, [])
+
+    def test_execute_preflight_rejects_linked_worktree_common_dir(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            source = root / "source"
+            source.mkdir()
+            subprocess.run(["git", "init", "-b", "dev"], cwd=source, check=True, capture_output=True)
+            subprocess.run(["git", "config", "user.email", "test@example.invalid"], cwd=source, check=True)
+            subprocess.run(["git", "config", "user.name", "Test"], cwd=source, check=True)
+            (source / "README").write_text("test\n", encoding="utf-8")
+            subprocess.run(["git", "add", "README"], cwd=source, check=True)
+            subprocess.run(["git", "commit", "-m", "test"], cwd=source, check=True, capture_output=True)
+            head = subprocess.run(
+                ["git", "rev-parse", "HEAD"], cwd=source, check=True, capture_output=True, text=True
+            ).stdout.strip()
+            linked = root / head
+            subprocess.run(
+                ["git", "worktree", "add", "--detach", str(linked), head],
+                cwd=source,
+                check=True,
+                capture_output=True,
+            )
+            candidate = auto_integrator.TaskCandidate(
+                "ABC-001", "Ready", "Codex", "Claude", "task/ABC-001",
+                repository_root=linked,
+                dedicated_integration_path=True,
+            )
+
+            problem = auto_integrator.preflight_repository(
+                candidate,
+                auto_integrator.CommandRunner(),
+                linked,
+                require_standalone_integration=True,
+            )
+            self.assertEqual(problem[0], "integration-checkout-not-standalone")
+
+    def test_execute_preflight_accepts_two_standalone_versioned_clones(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            for repository_id, slug in (
+                ("pantheon", "ajoe734/pantheon"),
+                ("execute_plans", "ajoe734/execute-plans"),
+            ):
+                source = root / f"{repository_id}-source"
+                source.mkdir()
+                subprocess.run(["git", "init", "-b", "dev"], cwd=source, check=True, capture_output=True)
+                subprocess.run(["git", "config", "user.email", "test@example.invalid"], cwd=source, check=True)
+                subprocess.run(["git", "config", "user.name", "Test"], cwd=source, check=True)
+                (source / "README").write_text(repository_id + "\n", encoding="utf-8")
+                subprocess.run(["git", "add", "README"], cwd=source, check=True)
+                subprocess.run(["git", "commit", "-m", "test"], cwd=source, check=True, capture_output=True)
+                head = subprocess.run(
+                    ["git", "rev-parse", "HEAD"], cwd=source, check=True, capture_output=True, text=True
+                ).stdout.strip()
+                destination_parent = root / f"{repository_id}-integration"
+                destination_parent.mkdir()
+                destination = destination_parent / head
+                subprocess.run(
+                    ["git", "clone", "--no-local", str(source), str(destination)],
+                    check=True,
+                    capture_output=True,
+                )
+                subprocess.run(["git", "checkout", "--detach", head], cwd=destination, check=True, capture_output=True)
+                candidate = auto_integrator.TaskCandidate(
+                    repository_id + "-TASK", "Ready", "Codex", "Claude", "task/TASK",
+                    repository_id=repository_id,
+                    repository_slug=slug,
+                    repository_root=destination,
+                    dedicated_integration_path=True,
+                )
+                self.assertIsNone(
+                    auto_integrator.preflight_repository(
+                        candidate,
+                        auto_integrator.CommandRunner(),
+                        destination,
+                        require_standalone_integration=True,
+                    )
+                )
+
+    def test_main_execute_rejects_cli_status_and_config_authority_overrides(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            status_file = root / "ai-status.json"
+            config_file = root / "config.json"
+            with self.assertRaises(SystemExit) as raised:
+                auto_integrator.main(
+                    [
+                        "--execute",
+                        "--status-file",
+                        str(status_file),
+                        "--config-file",
+                        str(config_file),
+                    ]
+                )
+            self.assertEqual(raised.exception.code, 2)
+
+    def test_merge_then_review_open_pr_flows_through_locked_runner_to_merge(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            coordination_root = root / "coordination"
+            repository_root = root / APPROVED_HEAD
+            coordination_root.mkdir()
+            subprocess.run(
+                ["git", "init", "-b", "dev", str(repository_root)],
+                check=True,
+                capture_output=True,
+            )
+            status_file = coordination_root / "ai-status.json"
+            config_file = coordination_root / "config.json"
+            lock_path = coordination_root / "auto-integrator.lock"
+            status_file.write_text(
+                json.dumps(
+                    {
+                        "tasks": [
+                            {
+                                "id": "ABC-001",
+                                "title": "Ready to integrate",
+                                "status": "in_progress",
+                                "owner": "Codex",
+                                "reviewer": "Codex",
+                                "merge_policy": "merge_then_review",
+                            }
+                        ]
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            config_file.write_text(
+                json.dumps(
+                    {
+                        "paths": {"status_file": str(status_file)},
+                        "coordination": {
+                            "repositories": {
+                                "pantheon": {
+                                    "local_path": str(repository_root),
+                                    "integration_path": str(repository_root),
+                                }
+                            }
+                        },
+                        "branch_workflow": {
+                            "auto_integrator": {
+                                "lock_file": str(lock_path),
+                                "max_tasks_per_run": 1,
+                            }
+                        },
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            runner = FakeRunner(
+                pr=green_pr(),
+                check_filesystem_paths=True,
+                git_head=APPROVED_HEAD,
+            )
+            output = io.StringIO()
+
+            with mock.patch.object(
+                auto_integrator, "CommandRunner", return_value=runner
+            ), mock.patch.object(
+                auto_integrator,
+                "resolve_execute_authority",
+                return_value=(
+                    status_file,
+                    coordination_root,
+                    auto_integrator.Settings(
+                        lock_path=lock_path,
+                        max_tasks_per_run=1,
+                        smoke_commands=("true",),
+                    ),
+                    json.loads(config_file.read_text(encoding="utf-8")),
+                ),
+            ), mock.patch("sys.stdout", output):
+                returncode = auto_integrator.main(
+                    [
+                        "--execute",
+                        "--json",
+                    ]
+                )
+
+            payload = json.loads(output.getvalue())
+            self.assertEqual(returncode, 0)
+            self.assertEqual(payload["candidate_count"], 1)
+            self.assertEqual(payload["results"][0]["action"], "merged")
+            self.assertIn(
+                "left ABC-001 at canonical status in_progress for post-merge review/finalization",
+                payload["results"][0]["detail"],
+            )
+            self.assertIn(
+                [
+                    "gh",
+                    "api",
+                    "--method",
+                    "PUT",
+                    "repos/ajoe734/pantheon/pulls/44/merge",
+                    "-f",
+                    f"sha={APPROVED_HEAD}",
+                    "-f",
+                    "merge_method=merge",
+                ],
+                runner.commands,
+            )
+            self.assertIn(["sh", "-lc", "true"], runner.commands)
+            self.assertFalse(
+                any(
+                    command[:3] == ["gh", "pr", "merge"] and "--auto" in command
+                    for command in runner.commands
+                )
+            )
+            self.assertEqual(
+                json.loads(lock_path.read_text(encoding="utf-8"))["state"],
+                "released",
+            )
+
+    def test_merge_command_uses_synchronous_exact_head_rest_endpoint(self) -> None:
+        candidate = auto_integrator.TaskCandidate(
+            task_id="ABC-001",
+            title="Ready",
+            owner="Codex",
+            reviewer="Claude",
+            branch="task/ABC-001",
+        )
+        command = auto_integrator.merge_command(
+            candidate, 44, exact_head=APPROVED_HEAD
+        )
+        self.assertEqual(
+            command,
+            [
+                "gh",
+                "api",
+                "--method",
+                "PUT",
+                "repos/ajoe734/pantheon/pulls/44/merge",
+                "-f",
+                f"sha={APPROVED_HEAD}",
+                "-f",
+                "merge_method=merge",
+            ],
+        )
 
     def test_non_merge_method_is_rejected_at_config_load(self) -> None:
         with mock.patch.object(
@@ -555,6 +1083,8 @@ class IntegrationPlanTests(unittest.TestCase):
         ):
             with self.assertRaisesRegex(ValueError, "requires merge commits"):
                 auto_integrator.load_settings()
+
+
     def test_task_brief_only_successor_is_carried_forward_automatically(self) -> None:
         successor = "b" * 40
         candidate = auto_integrator.TaskCandidate(
@@ -690,7 +1220,13 @@ class IntegrationPlanTests(unittest.TestCase):
             workflow_calls_after_first_pass,
             sum(1 for command in runner.commands if "/actions/workflows/" in " ".join(command)),
         )
-        self.assertTrue(any(command[:3] == ["gh", "pr", "merge"] for command in runner.commands))
+        self.assertTrue(
+            any(
+                command[:4] == ["gh", "api", "--method", "PUT"]
+                and "/pulls/44/merge" in " ".join(command)
+                for command in runner.commands
+            )
+        )
 
     def test_rejected_gate_never_publishes_task_brief_carry_forward_proof(self) -> None:
         successor = "b" * 40
@@ -816,6 +1352,26 @@ class IntegrationPlanTests(unittest.TestCase):
         self.assertIn(["sh", "-lc", "true"], runner.commands)
         self.assertFalse(any(command[:3] == ["gh", "pr", "merge"] for command in runner.commands))
 
+    def test_dry_run_reports_operator_acceptance_without_calling_it_reviewer_approval(self) -> None:
+        candidate = auto_integrator.TaskCandidate(
+            task_id="ABC-001",
+            title="Ready",
+            owner="Codex",
+            reviewer="Claude",
+            branch="task/ABC-001",
+        )
+        result = auto_integrator.integrate_candidate(
+            candidate,
+            auto_integrator.Settings(smoke_commands=("true",)),
+            FakeRunner(pr=green_pr()),
+            execute=False,
+            gate=operator_accepted_gate(),
+        )
+
+        self.assertEqual(result.action, "would_merge")
+        self.assertIn("accepted by Human/Ops", result.detail)
+        self.assertNotIn("approved by Claude", result.detail)
+
     def test_red_checks_open_unblock_in_execute_mode(self) -> None:
         candidate = auto_integrator.TaskCandidate(
             task_id="ABC-001",
@@ -841,7 +1397,7 @@ class IntegrationPlanTests(unittest.TestCase):
         self.assertTrue(any("scripts/ai_status.py" in " ".join(command) and "assign" in command for command in runner.commands))
         self.assertFalse(any(command[:3] == ["gh", "pr", "merge"] for command in runner.commands))
 
-    def test_merge_then_review_rebase_conflict_opens_unblock_without_merge(self) -> None:
+    def test_merge_then_review_exact_head_conflict_opens_unblock_without_merge(self) -> None:
         candidate = auto_integrator.TaskCandidate(
             task_id="ABC-001",
             title="Ready",
@@ -849,7 +1405,11 @@ class IntegrationPlanTests(unittest.TestCase):
             reviewer="Claude",
             branch="task/ABC-001",
         )
-        runner = FakeRunner(pr=green_pr(), rebase_returncode=1)
+        runner = FakeRunner(
+            pr=green_pr(),
+            merge_base_returncode=1,
+            ephemeral_merge_returncode=1,
+        )
 
         result = auto_integrator.integrate_candidate(
             candidate,
@@ -862,7 +1422,7 @@ class IntegrationPlanTests(unittest.TestCase):
                         {
                             "id": "ABC-001",
                             "title": "Ready",
-                            "status": "review_approved",
+                            "status": "in_progress",
                             "owner": "Codex",
                             "reviewer": "Codex",
                             "merge_policy": "merge_then_review",
@@ -874,10 +1434,53 @@ class IntegrationPlanTests(unittest.TestCase):
         )
 
         self.assertEqual(result.action, "blocked")
-        self.assertEqual(result.unblock_task_id, "INTEGRATION-UNBLOCK-ABC-001-REBASE-CONFLICT")
+        self.assertEqual(
+            result.unblock_task_id,
+            "INTEGRATION-UNBLOCK-ABC-001-EXACT-HEAD-MERGE-CONFLICT",
+        )
         self.assertFalse(any(command[:3] == ["gh", "pr", "merge"] for command in runner.commands))
 
-    def test_execute_merges_when_gh_pr_merge_lands_synchronously(self) -> None:
+    def test_clean_disposable_exact_head_merge_uses_scoped_identity_and_lands_head(self) -> None:
+        candidate = auto_integrator.TaskCandidate(
+            task_id="ABC-001",
+            title="Ready",
+            owner="Codex",
+            reviewer="Claude",
+            branch="task/ABC-001",
+        )
+        runner = FakeRunner(pr=green_pr(), merge_base_returncode=1)
+
+        result = auto_integrator.integrate_candidate(
+            candidate,
+            auto_integrator.Settings(smoke_commands=("true",)),
+            runner,
+            execute=True,
+            gate=approved_gate(),
+        )
+
+        self.assertEqual(result.action, "merged")
+        merge_commands = [
+            command
+            for command in runner.commands
+            if command[:1] == ["git"] and "merge" in command and "--abort" not in command
+        ]
+        self.assertEqual(len(merge_commands), 1)
+        self.assertEqual(
+            merge_commands[0][:5],
+            [
+                "git",
+                "-c",
+                "user.name=Pantheon Auto Integrator",
+                "-c",
+                "user.email=pantheon-auto-integrator@noreply.local",
+            ],
+        )
+        self.assertIn("--no-edit", merge_commands[0])
+        self.assertTrue(
+            any(command[:4] == ["gh", "api", "--method", "PUT"] for command in runner.commands)
+        )
+
+    def test_execute_merges_when_rest_endpoint_returns_merged_true(self) -> None:
         """After merging an exact approved head, the integrator leaves the task
         review_approved for supervisor owned_finalize dispatch and never calls
         owner-only done without a lease."""
@@ -901,7 +1504,9 @@ class IntegrationPlanTests(unittest.TestCase):
 
         self.assertEqual(result.action, "merged")
         self.assertIn("left ABC-001 in review_approved for owner finalization", result.detail)
-        self.assertTrue(any(command[:3] == ["gh", "pr", "merge"] for command in runner.commands))
+        self.assertTrue(
+            any(command[:4] == ["gh", "api", "--method", "PUT"] for command in runner.commands)
+        )
         self.assertFalse(
             any("scripts/ai_status.py" in " ".join(command) and "done" in command for command in runner.commands)
         )
@@ -909,10 +1514,191 @@ class IntegrationPlanTests(unittest.TestCase):
             any("scripts/ai_status.py" in " ".join(command) and "assign" in command for command in runner.commands)
         )
 
-    def test_execute_defers_merge_when_merge_has_not_landed_yet(self) -> None:
-        """A branch that requires a merge queue does not merge synchronously
-        -- `gh pr merge` enqueues the request instead (see `gh pr merge
-        --help`). The integrator must not treat the merge as complete."""
+    def test_operator_exact_head_merge_never_claims_reviewer_or_owner_finalization(self) -> None:
+        candidate = auto_integrator.TaskCandidate(
+            task_id="ABC-001",
+            title="Ready",
+            owner="Codex",
+            reviewer="Claude",
+            branch="task/ABC-001",
+            raw_task={
+                "status": "review_approved",
+                "operator_acceptance": {"mode": "operator_exact_head"},
+            },
+        )
+
+        detail = auto_integrator.post_merge_task_handoff(candidate)
+
+        self.assertIn("Human/Ops exact-head closeout", detail)
+        self.assertIn("no owner finalization", detail)
+
+    def test_final_revalidation_blocks_when_canonical_reviewer_changes(self) -> None:
+        candidate = auto_integrator.TaskCandidate(
+            task_id="ABC-001",
+            title="Ready",
+            owner="Codex",
+            reviewer="Claude",
+            branch="task/ABC-001",
+        )
+        runner = FakeRunner(pr=green_pr(number=44))
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            canonical_state = Path(tmp_dir) / "ai-status.json"
+            canonical_state.write_text(
+                json.dumps(
+                    {
+                        "tasks": [
+                            {
+                                "id": "ABC-001",
+                                "title": "Ready",
+                                "status": "review_approved",
+                                "owner": "Codex",
+                                "reviewer": "Gemini",
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            result = auto_integrator.integrate_candidate(
+                candidate,
+                auto_integrator.Settings(smoke_commands=("true",)),
+                runner,
+                canonical_state_file=canonical_state,
+                execute=True,
+                gate=approved_gate(),
+            )
+
+        self.assertEqual(result.action, "blocked")
+        self.assertIn("Canonical merge authority changed", result.detail)
+        self.assertFalse(
+            any(command[:4] == ["gh", "api", "--method", "PUT"] for command in runner.commands)
+        )
+
+    def test_final_revalidation_blocks_when_pr_head_changes_after_smoke(self) -> None:
+        candidate = auto_integrator.TaskCandidate(
+            task_id="ABC-001",
+            title="Ready",
+            owner="Codex",
+            reviewer="Claude",
+            branch="task/ABC-001",
+        )
+        initial_pr = green_pr(number=44)
+        moved_pr = {**initial_pr, "headRefOid": "f" * 40}
+        runner = FakeRunner(pr=initial_pr)
+
+        with mock.patch.object(
+            auto_integrator,
+            "fetch_pr_for_task",
+            side_effect=[initial_pr, moved_pr],
+        ) as fetch:
+            result = auto_integrator.integrate_candidate(
+                candidate,
+                auto_integrator.Settings(smoke_commands=("true",)),
+                runner,
+                execute=True,
+                gate=approved_gate(),
+            )
+
+        self.assertEqual(fetch.call_count, 2)
+        self.assertEqual(result.action, "blocked")
+        self.assertIn("Canonical merge authority changed", result.detail)
+        self.assertFalse(
+            any(command[:4] == ["gh", "api", "--method", "PUT"] for command in runner.commands)
+        )
+
+    def test_final_github_timeouts_release_authority_locks_before_unblock(self) -> None:
+        matchers = {
+            "list": lambda command: command[:3] == ["gh", "pr", "list"],
+            "view": lambda command: command[:3] == ["gh", "pr", "view"],
+            "graphql": lambda command: command[:3] == ["gh", "api", "graphql"],
+        }
+
+        for label, matcher in matchers.items():
+            with self.subTest(operation=label), tempfile.TemporaryDirectory() as tmp_dir:
+                class TimeoutRunner(FakeRunner):
+                    def run(self, args: Sequence[str], **kwargs: Any):  # type: ignore[override]
+                        command = [str(item) for item in args]
+                        if self.default_timeout is not None and matcher(command):
+                            self.commands.append(command)
+                            raise subprocess.TimeoutExpired(command, self.default_timeout)
+                        return super().run(args, **kwargs)
+
+                status_root = Path(tmp_dir)
+                state_file = status_root / "ai-status.json"
+                state_file.write_text(
+                    json.dumps(approved_gate().state) + "\n", encoding="utf-8"
+                )
+                timed_pr = green_pr()
+                if label == "graphql":
+                    timed_pr["url"] = "https://github.com/ajoe734/pantheon/pull/44"
+                runner = TimeoutRunner(pr=timed_pr)
+                events: list[str] = []
+                held = {"task": False, "activity": False}
+
+                @contextmanager
+                def task_lock(*_args: Any, **_kwargs: Any):
+                    held["task"] = True
+                    events.append("task_enter")
+                    try:
+                        yield
+                    finally:
+                        events.append("task_exit")
+                        held["task"] = False
+
+                @contextmanager
+                def activity_lock(*_args: Any, **_kwargs: Any):
+                    self.assertTrue(held["task"])
+                    held["activity"] = True
+                    events.append("activity_enter")
+                    try:
+                        yield
+                    finally:
+                        events.append("activity_exit")
+                        held["activity"] = False
+
+                def unblock(*_args: Any, **_kwargs: Any) -> str:
+                    self.assertFalse(held["task"] or held["activity"])
+                    events.append("unblock")
+                    return "UNBLOCK"
+
+                with mock.patch.object(
+                    auto_integrator.orchestrator_common,
+                    "canonical_task_state_lock_file",
+                    task_lock,
+                ), mock.patch.object(
+                    auto_integrator.orchestrator_common,
+                    "activity_audit_lock_file",
+                    activity_lock,
+                ), mock.patch.object(
+                    auto_integrator, "open_unblock_task", side_effect=unblock
+                ):
+                    result = auto_integrator.integrate_candidate(
+                        auto_integrator.TaskCandidate(
+                            task_id="ABC-001",
+                            title="Ready",
+                            owner="Codex",
+                            reviewer="Claude",
+                            branch="task/ABC-001",
+                        ),
+                        auto_integrator.Settings(smoke_commands=("true",)),
+                        runner,
+                        status_root=status_root,
+                        canonical_state_file=state_file,
+                        execute=True,
+                        gate=approved_gate(),
+                    )
+
+                self.assertEqual(result.action, "blocked")
+                self.assertEqual(result.unblock_task_id, "UNBLOCK")
+                self.assertEqual(
+                    events,
+                    ["task_enter", "activity_enter", "activity_exit", "task_exit", "unblock"],
+                )
+                self.assertIsNone(runner.default_timeout)
+
+    def test_execute_waits_when_rest_endpoint_refuses_direct_merge(self) -> None:
+        """A refusal never turns into a merge queue or auto-merge request."""
 
         candidate = auto_integrator.TaskCandidate(
             task_id="ABC-001",
@@ -921,9 +1707,6 @@ class IntegrationPlanTests(unittest.TestCase):
             reviewer="Claude",
             branch="task/ABC-001",
         )
-        # merge_lands_synchronously=False models a merge-queue-required
-        # branch: `gh pr merge` is accepted (enqueued) but the PR has not
-        # actually landed within this process's lifetime.
         runner = FakeRunner(pr=green_pr(number=44), merge_lands_synchronously=False)
 
         result = auto_integrator.integrate_candidate(
@@ -934,9 +1717,14 @@ class IntegrationPlanTests(unittest.TestCase):
             gate=approved_gate(),
         )
 
-        self.assertEqual(result.action, "queued_for_merge")
+        self.assertEqual(result.action, "waiting")
         self.assertFalse(result.dry_run)
-        self.assertTrue(any(command[:3] == ["gh", "pr", "merge"] for command in runner.commands))
+        self.assertTrue(
+            any(command[:4] == ["gh", "api", "--method", "PUT"] for command in runner.commands)
+        )
+        self.assertFalse(
+            any(command[:3] == ["gh", "pr", "merge"] for command in runner.commands)
+        )
         self.assertFalse(
             any("scripts/ai_status.py" in " ".join(command) and "done" in command for command in runner.commands)
         )
@@ -1398,7 +2186,7 @@ class CrossRepoIntegrationTests(unittest.TestCase):
                 },
             ]
         }
-        candidates = auto_integrator.review_approved_candidates(state)
+        candidates = auto_integrator.integration_candidates(state)
         self.assertEqual(len(candidates), 2)
         fe_cand = candidates[0]
         self.assertEqual(fe_cand.task_id, "FE-001")
@@ -1427,7 +2215,7 @@ class CrossRepoIntegrationTests(unittest.TestCase):
                 }
             ]
         }
-        candidates = auto_integrator.review_approved_candidates(state)
+        candidates = auto_integrator.integration_candidates(state)
         self.assertEqual(len(candidates), 1)
         self.assertIsNotNone(candidates[0].scope_error)
         self.assertIn("unrecognized target_repo", candidates[0].scope_error or "")
@@ -1445,7 +2233,7 @@ class CrossRepoIntegrationTests(unittest.TestCase):
                 }
             ]
         }
-        candidates = auto_integrator.review_approved_candidates(state)
+        candidates = auto_integrator.integration_candidates(state)
         self.assertEqual(len(candidates), 1)
         self.assertIsNotNone(candidates[0].scope_error)
         self.assertIn("multiple non-Pantheon repositories", candidates[0].scope_error or "")
@@ -1514,8 +2302,9 @@ class CrossRepoIntegrationTests(unittest.TestCase):
         self.assertIn("into dev", result.detail)
         self.assertTrue(
             any(
-                cmd[:4] == ["gh", "pr", "merge", "99"]
-                and "--match-head-commit" in cmd
+                cmd[:4] == ["gh", "api", "--method", "PUT"]
+                and "repos/ajoe734/execute-plans/pulls/99/merge" in cmd
+                and f"sha={APPROVED_HEAD}" in cmd
                 for cmd in runner.commands
             )
         )
@@ -1687,7 +2476,7 @@ class CrossRepoIntegrationTests(unittest.TestCase):
                     }
                 ]
             }
-            candidates = auto_integrator.review_approved_candidates(
+            candidates = auto_integrator.integration_candidates(
                 state, config=config, status_root=coordination_root
             )
             self.assertEqual(len(candidates), 1)
@@ -1748,6 +2537,94 @@ class CrossRepoIntegrationTests(unittest.TestCase):
             result.unblock_task_id,
             "INTEGRATION-UNBLOCK-FE-001-INVALID-GIT-REPOSITORY",
         )
+
+    def test_missing_git_common_dir_fails_closed(self) -> None:
+        candidate = auto_integrator.TaskCandidate(
+            task_id="FE-001",
+            title="FE Task",
+            owner="Codex",
+            reviewer="Claude",
+            branch="task/FE-001",
+            repository_id="execute_plans",
+            repository_slug="ajoe734/execute-plans",
+            repository_root=Path("/fake/execute-plans"),
+            target_branch="dev",
+        )
+        runner = FakeRunner(git_common_dir_returncode=1)
+
+        error = auto_integrator.preflight_repository(
+            candidate, runner, candidate.repository_root
+        )
+
+        self.assertIsNotNone(error)
+        self.assertEqual(error[0], "invalid-git-common-dir")
+        self.assertFalse(any(command[:3] == ["gh", "pr", "list"] for command in runner.commands))
+
+    def test_dirty_repository_checkout_fails_closed(self) -> None:
+        candidate = auto_integrator.TaskCandidate(
+            task_id="FE-001",
+            title="FE Task",
+            owner="Codex",
+            reviewer="Claude",
+            branch="task/FE-001",
+            repository_id="execute_plans",
+            repository_slug="ajoe734/execute-plans",
+            repository_root=Path("/fake/execute-plans"),
+            target_branch="dev",
+        )
+        runner = FakeRunner(git_status_output=" M src/App.tsx\n")
+
+        error = auto_integrator.preflight_repository(
+            candidate, runner, candidate.repository_root
+        )
+
+        self.assertIsNotNone(error)
+        self.assertEqual(error[0], "dirty-repository-checkout")
+        self.assertIn("src/App.tsx", error[1])
+
+    def test_unwritable_checkout_and_git_common_dir_fail_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            repo = Path(tmp_dir) / "execute-plans"
+            subprocess.run(
+                ["git", "init", "-b", "dev", str(repo)],
+                check=True,
+                capture_output=True,
+            )
+            candidate = auto_integrator.TaskCandidate(
+                task_id="FE-001",
+                title="FE Task",
+                owner="Codex",
+                reviewer="Claude",
+                branch="task/FE-001",
+                repository_id="execute_plans",
+                repository_slug="ajoe734/execute-plans",
+                repository_root=repo,
+                target_branch="dev",
+            )
+            runner = FakeRunner(check_filesystem_paths=True)
+
+            with mock.patch.object(
+                auto_integrator,
+                "_directory_is_writable",
+                side_effect=lambda path: path != repo,
+            ):
+                checkout_error = auto_integrator.preflight_repository(
+                    candidate, runner, repo
+                )
+            self.assertIsNotNone(checkout_error)
+            self.assertEqual(checkout_error[0], "repository-checkout-not-writable")
+
+            git_common_dir = (repo / ".git").resolve()
+            with mock.patch.object(
+                auto_integrator,
+                "_directory_is_writable",
+                side_effect=lambda path: path.resolve() != git_common_dir,
+            ):
+                common_error = auto_integrator.preflight_repository(
+                    candidate, runner, repo
+                )
+            self.assertIsNotNone(common_error)
+            self.assertEqual(common_error[0], "git-common-dir-not-writable")
 
     def test_mismatched_origin_remote_fails_closed(self) -> None:
         ep_root = Path("/fake/execute-plans")
@@ -1935,6 +2812,271 @@ class CrossRepoIntegrationTests(unittest.TestCase):
             result.unblock_task_id,
             "INTEGRATION-UNBLOCK-FE-001-PR-LOOKUP-FAILED",
         )
+
+
+class IntegrationLockTests(unittest.TestCase):
+    def test_existing_empty_lock_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            lock_path = Path(tmp_dir) / "auto-integrator.lock"
+            lock_path.touch()
+            with self.assertRaisesRegex(
+                auto_integrator.IntegrationLockError, "metadata is empty"
+            ):
+                with auto_integrator.lock_file(lock_path):
+                    self.fail("empty pre-existing lock was accepted")
+
+    def test_first_publish_exposes_only_complete_locked_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            lock_path = Path(tmp_dir) / "auto-integrator.lock"
+            real_link = os.link
+            observed: list[dict[str, Any]] = []
+
+            def observe_publish(source: object, destination: object) -> None:
+                real_link(source, destination)
+                observed.append(json.loads(lock_path.read_text(encoding="utf-8")))
+
+            with mock.patch.object(auto_integrator.os, "link", side_effect=observe_publish):
+                with auto_integrator.lock_file(lock_path):
+                    pass
+
+            self.assertEqual(len(observed), 1)
+            self.assertEqual(observed[0]["schema"], auto_integrator.LOCK_SCHEMA)
+            self.assertEqual(observed[0]["state"], "held")
+            self.assertEqual(observed[0]["pid"], os.getpid())
+
+    def test_separate_process_cannot_share_merge_owner_lock(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            lock_path = Path(tmp_dir) / "auto-integrator.lock"
+            script = (
+                "import sys; from pathlib import Path; "
+                "from scripts.git.auto_integrator import lock_file; "
+                f"p=Path({str(lock_path)!r}); "
+                "ctx=lock_file(p); ctx.__enter__(); print('ready', flush=True); "
+                "sys.stdin.readline(); ctx.__exit__(None,None,None)"
+            )
+            child = subprocess.Popen(
+                [sys.executable, "-c", script],
+                cwd=REPO_ROOT,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+            try:
+                self.assertEqual(child.stdout.readline().strip(), "ready")
+                with self.assertRaises(auto_integrator.IntegrationLockHeld):
+                    with auto_integrator.lock_file(lock_path):
+                        self.fail("separate process shared merge authority")
+            finally:
+                child.communicate("release\n", timeout=5)
+            self.assertEqual(child.returncode, 0)
+
+    def test_main_reports_active_lock_as_machine_readable_skip(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            lock_path = root / "auto-integrator.lock"
+            status_file = root / "ai-status.json"
+            config_file = root / "config.json"
+            status_file.write_text('{"tasks": []}\n', encoding="utf-8")
+            config_file.write_text("{}\n", encoding="utf-8")
+
+            output = io.StringIO()
+            with auto_integrator.lock_file(lock_path):
+                with mock.patch.object(
+                    auto_integrator,
+                    "load_settings",
+                    return_value=auto_integrator.Settings(lock_path=lock_path),
+                ):
+                    with mock.patch("sys.stdout", output):
+                        returncode = auto_integrator.main(
+                            [
+                                "--status-file",
+                                str(status_file),
+                                "--config-file",
+                                str(config_file),
+                                "--json",
+                            ]
+                        )
+                    plain_output = io.StringIO()
+                    plain_error = io.StringIO()
+                    with mock.patch("sys.stdout", plain_output), mock.patch(
+                        "sys.stderr", plain_error
+                    ):
+                        plain_returncode = auto_integrator.main(
+                            [
+                                "--status-file",
+                                str(status_file),
+                                "--config-file",
+                                str(config_file),
+                            ]
+                        )
+
+            payload = json.loads(output.getvalue())
+            self.assertEqual(returncode, 0)
+            self.assertTrue(payload["skipped"])
+            self.assertEqual(payload["reason"], "integration_lock_held")
+            self.assertEqual(payload["candidate_count"], 0)
+            self.assertEqual(payload["results"], [])
+            self.assertEqual(plain_returncode, 0)
+            self.assertIn("skipped reason=integration_lock_held", plain_output.getvalue())
+            self.assertEqual(plain_error.getvalue(), "")
+
+    def test_main_reports_corrupt_lock_as_machine_readable_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            lock_path = root / "auto-integrator.lock"
+            status_file = root / "ai-status.json"
+            config_file = root / "config.json"
+            lock_path.write_text("not-json\n", encoding="utf-8")
+            status_file.write_text('{"tasks": []}\n', encoding="utf-8")
+            config_file.write_text("{}\n", encoding="utf-8")
+
+            output = io.StringIO()
+            with mock.patch.object(
+                auto_integrator,
+                "load_settings",
+                return_value=auto_integrator.Settings(lock_path=lock_path),
+            ), mock.patch("sys.stdout", output):
+                returncode = auto_integrator.main(
+                    [
+                        "--status-file",
+                        str(status_file),
+                        "--config-file",
+                        str(config_file),
+                        "--json",
+                    ]
+                )
+
+            payload = json.loads(output.getvalue())
+            self.assertEqual(returncode, 2)
+            self.assertFalse(payload["skipped"])
+            self.assertEqual(payload["reason"], "integration_lock_error")
+            self.assertIn("metadata is corrupt", payload["detail"])
+
+    def test_active_kernel_lock_is_not_stolen_and_owner_is_visible(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            lock_path = Path(tmp_dir) / "auto-integrator.lock"
+            with auto_integrator.lock_file(lock_path):
+                held = json.loads(lock_path.read_text(encoding="utf-8"))
+                self.assertEqual(held["schema"], auto_integrator.LOCK_SCHEMA)
+                self.assertEqual(held["state"], "held")
+                self.assertEqual(held["owner"], "supervisor_integration_runner")
+                self.assertTrue(held["owner_id"])
+                self.assertEqual(held["pid"], os.getpid())
+                with self.assertRaisesRegex(
+                    auto_integrator.IntegrationLockHeld, "lock is already held"
+                ):
+                    with auto_integrator.lock_file(lock_path):
+                        self.fail("active lock was stolen")
+
+            released = json.loads(lock_path.read_text(encoding="utf-8"))
+            self.assertEqual(released["state"], "released")
+            self.assertIn("released_at", released)
+
+    def test_dead_legacy_owner_is_recovered(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            lock_path = Path(tmp_dir) / "auto-integrator.lock"
+            lock_path.write_text(
+                json.dumps({"pid": 2_147_483_647, "created_at": 1}) + "\n",
+                encoding="utf-8",
+            )
+
+            with auto_integrator.lock_file(lock_path):
+                held = json.loads(lock_path.read_text(encoding="utf-8"))
+                self.assertEqual(held["state"], "held")
+                self.assertEqual(held["recovered_from"]["pid"], 2_147_483_647)
+
+            self.assertEqual(
+                json.loads(lock_path.read_text(encoding="utf-8"))["state"],
+                "released",
+            )
+
+    def test_legacy_unlink_recreate_race_retries_on_the_path_inode(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            lock_path = Path(tmp_dir) / "auto-integrator.lock"
+            lock_path.write_text(
+                json.dumps(
+                    {
+                        "schema": auto_integrator.LOCK_SCHEMA,
+                        "state": "released",
+                        "pid": 2_147_483_647,
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            real_read = auto_integrator._read_lock_metadata
+            reads = 0
+            first_inode = 0
+
+            def unlink_during_first_metadata_read(handle: Any) -> dict[str, Any]:
+                nonlocal reads, first_inode
+                reads += 1
+                if reads == 1:
+                    first_inode = os.fstat(handle.fileno()).st_ino
+                    lock_path.unlink()
+                    lock_path.write_text(
+                        json.dumps(
+                            {
+                                "schema": auto_integrator.LOCK_SCHEMA,
+                                "state": "released",
+                                "pid": 2_147_483_647,
+                            }
+                        )
+                        + "\n",
+                        encoding="utf-8",
+                    )
+                    return {
+                        "schema": auto_integrator.LOCK_SCHEMA,
+                        "state": "released",
+                        "pid": 2_147_483_647,
+                    }
+                return real_read(handle)
+
+            with mock.patch.object(
+                auto_integrator,
+                "_read_lock_metadata",
+                side_effect=unlink_during_first_metadata_read,
+            ):
+                with auto_integrator.lock_file(lock_path):
+                    held = json.loads(lock_path.read_text(encoding="utf-8"))
+                    self.assertEqual(held["state"], "held")
+                    self.assertNotEqual(lock_path.stat().st_ino, first_inode)
+
+            self.assertEqual(reads, 2)
+            self.assertEqual(
+                json.loads(lock_path.read_text(encoding="utf-8"))["state"],
+                "released",
+            )
+
+    def test_live_legacy_owner_is_not_stolen(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            lock_path = Path(tmp_dir) / "auto-integrator.lock"
+            lock_path.write_text(
+                json.dumps(
+                    {"pid": os.getpid(), "created_at": int(auto_integrator.time.time())}
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(
+                auto_integrator.IntegrationLockHeld, "legacy lock has a live owner"
+            ):
+                with auto_integrator.lock_file(lock_path):
+                    self.fail("live legacy owner was stolen")
+
+    def test_unwritable_lock_parent_fails_before_execution(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            lock_path = Path(tmp_dir) / "auto-integrator.lock"
+            with mock.patch.object(
+                auto_integrator, "_directory_is_writable", return_value=False
+            ):
+                with self.assertRaisesRegex(
+                    auto_integrator.IntegrationLockError, "lock parent is not writable"
+                ):
+                    with auto_integrator.lock_file(lock_path):
+                        self.fail("unwritable lock parent was accepted")
 
 
 if __name__ == "__main__":

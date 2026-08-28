@@ -169,6 +169,7 @@ def test_source_ingestion_remains_reconcile_only_manual() -> None:
 
     assert scheduler_env.get("SOURCE_INGEST_CONTROLLER_MODE") == "${SOURCE_INGEST_CONTROLLER_MODE:-reconcile_only}"
     assert scheduler_env.get("SOURCE_INGEST_CONTROLLER_MAX_TICKS") == "${SOURCE_INGEST_CONTROLLER_MAX_TICKS:-0}"
+    assert scheduler.get("restart") == "${SOURCE_INGEST_CONTROLLER_RESTART_POLICY:-unless-stopped}"
 
     for svc_name, svc in services.items():
         env = svc.get("environment", {})

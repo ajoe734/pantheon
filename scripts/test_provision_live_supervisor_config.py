@@ -42,6 +42,28 @@ def _roots(tmp_path: Path) -> tuple[Path, Path]:
     return command, status
 
 
+def _integration_clone(tmp_path: Path, repository_id: str) -> Path:
+    remote = tmp_path / f"{repository_id}.git"
+    source = tmp_path / f"{repository_id}-source"
+    remote.mkdir()
+    source.mkdir()
+    _git(remote, "init", "--bare")
+    _git(source, "init", "-b", "dev")
+    _git(source, "config", "user.email", "test@example.invalid")
+    _git(source, "config", "user.name", "Pantheon Test")
+    (source / "README.md").write_text(repository_id + "\n", encoding="utf-8")
+    _git(source, "add", "README.md")
+    _git(source, "commit", "-m", "initial")
+    _git(source, "remote", "add", "origin", str(remote))
+    _git(source, "push", "-u", "origin", "dev")
+    head = _git(source, "rev-parse", "HEAD")
+    destination = tmp_path / "integration-runtimes" / repository_id / head
+    destination.parent.mkdir(parents=True)
+    _git(destination.parent, "clone", str(remote), str(destination))
+    _git(destination, "checkout", "--detach", head)
+    return destination
+
+
 @pytest.mark.parametrize("retired_key", ["account_group", "quota_group", "dispatch_group"])
 def test_provider_account_aliases_are_rejected(retired_key: str) -> None:
     config = {"providers": {"codex": {retired_key: "old"}}}
@@ -180,6 +202,57 @@ def test_build_live_config_projects_explicit_repository_source_roots(tmp_path: P
     repositories = rendered["coordination"]["repositories"]
     assert repositories["pantheon"]["local_path"] == str(command.resolve())
     assert repositories["execute_plans"]["local_path"] == str(execute_root.resolve())
+
+
+def test_build_live_config_projects_clean_standalone_integration_roots(
+    tmp_path: Path,
+) -> None:
+    command, status = _roots(tmp_path)
+    pantheon_integration = _integration_clone(tmp_path, "pantheon")
+    execute_integration = _integration_clone(tmp_path, "execute_plans")
+    repo_config = json.loads(
+        (command / ".orchestrator" / "config.json").read_text(encoding="utf-8")
+    )
+
+    rendered = provision.build_live_config(
+        repo_config,
+        existing_live_config=None,
+        command_root=command,
+        status_root=status,
+        live_config_path=tmp_path / "runtime" / "live.json",
+        python_executable=Path(sys.executable),
+        repository_source_roots={"pantheon": command},
+        repository_integration_roots={
+            "pantheon": pantheon_integration,
+            "execute_plans": execute_integration,
+        },
+    )
+
+    repositories = rendered["coordination"]["repositories"]
+    assert repositories["pantheon"]["local_path"] == str(command.resolve())
+    assert repositories["pantheon"]["integration_path"] == str(
+        pantheon_integration.resolve()
+    )
+    assert repositories["execute_plans"]["integration_path"] == str(
+        execute_integration.resolve()
+    )
+    for root in (pantheon_integration, execute_integration):
+        assert _git(root, "status", "--porcelain", "--untracked-files=all") == ""
+        assert _git(root, "rev-parse", "--git-common-dir") == ".git"
+
+
+def test_repository_integration_root_rejects_dirty_or_unversioned_clone(
+    tmp_path: Path,
+) -> None:
+    integration = _integration_clone(tmp_path, "pantheon")
+    (integration / "untracked.txt").write_text("dirty\n", encoding="utf-8")
+    rendered = {"coordination": {"repositories": {"pantheon": {}}}}
+
+    with pytest.raises(ValueError, match="must be clean"):
+        provision.apply_repository_integration_roots(
+            rendered,
+            {"pantheon": integration},
+        )
 
 
 def test_repository_source_root_requires_absolute_git_root(tmp_path: Path) -> None:

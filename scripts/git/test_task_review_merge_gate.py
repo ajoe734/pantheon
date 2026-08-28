@@ -71,6 +71,64 @@ def approval_event(**overrides: Any) -> dict[str, Any]:
     return event
 
 
+def operator_acceptance_event(**overrides: Any) -> dict[str, Any]:
+    """A distinct Human/Ops exact-head acceptance, never reviewer evidence."""
+
+    binding = dict(overrides.pop("review_binding", approval_binding()))
+    evidence = {
+        "repository": "ajoe734/pantheon",
+        "pr": binding["pr"],
+        "head_sha": binding["head_sha"],
+        "head_branch": binding["head_branch"],
+        "base": binding["base"],
+        "decision": "operator-accept",
+        "actor": "Human/Ops",
+        "mode": "operator_exact_head",
+        "operator_acceptance_proof_ref": (
+            "refs/tags/pantheon-review/operator-accept/" + binding["head_sha"]
+        ),
+    }
+    evidence.update(overrides.pop("operator_acceptance", {}))
+    event = {
+        "ts": "2026-07-26T12:00:00Z",
+        "agent": "Human/Ops",
+        "type": "operator_accepted",
+        "task_id": "ABC-001",
+        "message": "Human/Ops accepted this exact head.",
+        "review_binding": binding,
+        "operator_acceptance": evidence,
+    }
+    event.update(overrides)
+    return event
+
+
+def exact_head_rest_merge(head: str = "b" * 40) -> list[str]:
+    return [
+        "gh",
+        "api",
+        "--method",
+        "PUT",
+        "repos/ajoe734/pantheon/pulls/100/merge",
+        "-f",
+        f"sha={head}",
+        "-f",
+        "merge_method=merge",
+    ]
+
+
+def integration_resume_event(**overrides: Any) -> dict[str, Any]:
+    event = {
+        "ts": "2026-07-26T13:00:00Z",
+        "agent": "Human/Ops",
+        "type": "integration_resumed",
+        "task_id": "ABC-001",
+        "message": "Resume exact reviewed PR after writable integrator recovery.",
+        "operator_mode": "local_human_ops",
+    }
+    event.update(overrides)
+    return event
+
+
 #: The PR identities `command_approve` would stamp on the live-regression
 #: approvals below. The PR numbers, shas and branches are the recorded ones;
 #: only the binding wrapper is new, because on 2026-07-26 nothing recorded it.
@@ -181,6 +239,60 @@ class ApprovedPathTests(unittest.TestCase):
         decision = decide(events=[approval_event(agent="claude")])
 
         self.assertTrue(decision.allow_merge)
+
+
+class OperatorExactHeadAcceptanceTests(unittest.TestCase):
+    def test_exact_head_operator_acceptance_allows_merge_without_relabeling_reviewer(self) -> None:
+        decision = decide(events=[operator_acceptance_event()])
+
+        self.assertTrue(decision.allow_merge)
+        self.assertFalse(decision.allow_auto_merge)
+        self.assertEqual(decision.reason, "exact_head_operator_accepted")
+        self.assertEqual(decision.approval["authority"], "operator_exact_head")
+        self.assertEqual(decision.approval["reviewer"], "Human/Ops")
+        self.assertIn("distinct operator exact-head acceptance", decision.detail)
+
+    def test_operator_acceptance_from_non_human_ops_cannot_replace_review(self) -> None:
+        decision = decide(events=[operator_acceptance_event(agent="Codex")])
+
+        self.assertFalse(decision.allow_merge)
+        self.assertEqual(decision.reason, "approval_binding_unusable")
+        self.assertIn("not recorded by Human/Ops", decision.detail)
+
+    def test_operator_acceptance_proof_for_another_head_is_refused(self) -> None:
+        decision = decide(
+            events=[
+                operator_acceptance_event(
+                    operator_acceptance={
+                        "operator_acceptance_proof_ref": (
+                            "refs/tags/pantheon-review/operator-accept/" + "c" * 40
+                        )
+                    }
+                )
+            ]
+        )
+
+        self.assertFalse(decision.allow_merge)
+        self.assertEqual(decision.reason, "approval_binding_unusable")
+        self.assertIn("proof ref does not match", decision.detail)
+
+    def test_operator_acceptance_recovers_after_environment_blocker_resume(self) -> None:
+        decision = decide(
+            events=[
+                operator_acceptance_event(),
+                {
+                    "ts": "2026-07-26T12:30:00Z",
+                    "agent": "AutoIntegrator",
+                    "type": "blocker",
+                    "task_id": "ABC-001",
+                    "message": "temporary integration environment failure",
+                },
+                integration_resume_event(),
+            ]
+        )
+
+        self.assertTrue(decision.allow_merge)
+        self.assertEqual(decision.reason, "exact_head_operator_accepted")
 
     def test_declared_exact_head_must_match_the_pr_head(self) -> None:
         decision = decide(tasks=[task_row(github={"head_sha": "c" * 40})])
@@ -452,6 +564,67 @@ class FailClosedTests(unittest.TestCase):
                     "task_id": "ABC-001",
                     "message": "Assigned ABC-001 to Codex with reviewer Codex2",
                 },
+            ]
+        )
+
+        self.assertFalse(decision.allow_merge)
+        self.assertEqual(decision.reason, "approval_revoked")
+
+    def test_local_human_ops_resume_clears_only_a_later_blocker_revocation(self) -> None:
+        decision = decide(
+            events=[
+                approval_event(),
+                {
+                    "ts": "2026-07-26T12:30:00Z",
+                    "agent": "Codex",
+                    "type": "blocker",
+                    "task_id": "ABC-001",
+                    "message": "Integrator lock is read-only in the worker sandbox.",
+                },
+                integration_resume_event(),
+            ]
+        )
+
+        self.assertTrue(decision.allow_merge)
+        self.assertEqual(decision.reason, "exact_head_approved")
+
+    def test_resume_without_local_human_ops_marker_does_not_clear_blocker(self) -> None:
+        decision = decide(
+            events=[
+                approval_event(),
+                {
+                    "ts": "2026-07-26T12:30:00Z",
+                    "agent": "Codex",
+                    "type": "blocker",
+                    "task_id": "ABC-001",
+                    "message": "Integrator lock is read-only.",
+                },
+                integration_resume_event(operator_mode=""),
+            ]
+        )
+
+        self.assertFalse(decision.allow_merge)
+        self.assertEqual(decision.reason, "approval_revoked")
+
+    def test_resume_cannot_clear_reviewer_reopen_hidden_by_later_blocker(self) -> None:
+        decision = decide(
+            events=[
+                approval_event(),
+                {
+                    "ts": "2026-07-26T12:15:00Z",
+                    "agent": "Claude",
+                    "type": "reopen",
+                    "task_id": "ABC-001",
+                    "message": "Changes required in the implementation.",
+                },
+                {
+                    "ts": "2026-07-26T12:30:00Z",
+                    "agent": "Codex",
+                    "type": "blocker",
+                    "task_id": "ABC-001",
+                    "message": "Integrator is unavailable.",
+                },
+                integration_resume_event(),
             ]
         )
 
@@ -1611,13 +1784,8 @@ class IntegratorGateTests(unittest.TestCase):
         merge_commands = [c for c in runner.commands if c[:3] == ["gh", "pr", "merge"]]
         self.assertEqual(merge_commands, [["gh", "pr", "merge", "100", "--disable-auto"]])
 
-    def test_approved_gated_pr_behind_dev_merges_after_a_clean_ephemeral_test(self) -> None:
-        """SUP-GATED-PR-EXACT-HEAD-QUEUE-MERGE-20260805: the home-grown merge
-        queue. A gated PR's approved head is not rebased (that would move it
-        past what the reviewer saw), but staleness alone should not leave it
-        waiting forever either -- a disposable local merge of the current dev
-        tip proves the combination is conflict-free, and that is enough to
-        merge the unchanged reviewed commit for real."""
+    def test_approved_gated_pr_behind_dev_waits_after_clean_ephemeral_test(self) -> None:
+        """A clean disposable merge never delegates authority to a queue."""
 
         runner = self._runner(open_pr(mergeStateStatus="BEHIND"), merge_base_returncode=1)
 
@@ -1629,12 +1797,10 @@ class IntegratorGateTests(unittest.TestCase):
             gate=self._gate(tasks=[task_row()], events=[approval_event()]),
         )
 
-        self.assertEqual(result.action, "merged", result.detail)
+        self.assertEqual(result.action, "waiting", result.detail)
         merge_commands = [c for c in runner.commands if c[:3] == ["gh", "pr", "merge"]]
-        self.assertEqual(
-            merge_commands,
-            [["gh", "pr", "merge", "100", "--merge", "--match-head-commit", "b" * 40]],
-        )
+        self.assertEqual(merge_commands, [])
+        self.assertNotIn(exact_head_rest_merge(), runner.commands)
         # The ephemeral test-merge must never be pushed anywhere.
         self.assertFalse(any(command[:2] == ["git", "push"] for command in runner.commands))
 
@@ -1675,10 +1841,8 @@ class IntegratorGateTests(unittest.TestCase):
 
         self.assertEqual(result.action, "merged")
         merge_commands = [c for c in runner.commands if c[:3] == ["gh", "pr", "merge"]]
-        self.assertEqual(
-            merge_commands,
-            [["gh", "pr", "merge", "100", "--merge", "--match-head-commit", "b" * 40]],
-        )
+        self.assertEqual(merge_commands, [])
+        self.assertIn(exact_head_rest_merge(), runner.commands)
         self.assertFalse(any("--auto" in command for command in runner.commands))
 
     def test_approved_gated_pr_revokes_a_standing_auto_merge_request_first(self) -> None:
@@ -1699,11 +1863,9 @@ class IntegratorGateTests(unittest.TestCase):
         merge_commands = [c for c in runner.commands if c[:3] == ["gh", "pr", "merge"]]
         self.assertEqual(
             merge_commands,
-            [
-                ["gh", "pr", "merge", "100", "--disable-auto"],
-                ["gh", "pr", "merge", "100", "--merge", "--match-head-commit", "b" * 40],
-            ],
+            [["gh", "pr", "merge", "100", "--disable-auto"]],
         )
+        self.assertIn(exact_head_rest_merge(), runner.commands)
 
     def test_successful_revocation_that_still_reads_armed_never_merges(self) -> None:
         """A zero exit from gh is not proof that GitHub withdrew the grant."""
@@ -1784,11 +1946,9 @@ class IntegratorGateTests(unittest.TestCase):
         merge_commands = [c for c in runner.commands if c[:3] == ["gh", "pr", "merge"]]
         self.assertEqual(
             merge_commands,
-            [
-                ["gh", "pr", "merge", "100", "--disable-auto"],
-                ["gh", "pr", "merge", "100", "--merge", "--match-head-commit", "b" * 40],
-            ],
+            [["gh", "pr", "merge", "100", "--disable-auto"]],
         )
+        self.assertIn(exact_head_rest_merge(), runner.commands)
 
     def test_unreadable_revocation_readback_never_reaches_the_merge(self) -> None:
         """A command result cannot replace the required live state proof."""
@@ -1837,12 +1997,8 @@ class IntegratorGateTests(unittest.TestCase):
         self.assertEqual(merge_commands, [["gh", "pr", "merge", "100", "--disable-auto"]])
         self.assertIn(["gh", "pr", "view", "100", "--json", "autoMergeRequest"], runner.commands)
 
-    def test_gated_pr_behind_dev_is_queue_merged_not_force_pushed(self) -> None:
-        """SUP-GATED-PR-EXACT-HEAD-QUEUE-MERGE-20260805 superseded the old
-        "BEHIND always waits" behavior: a clean disposable merge test lets a
-        behind-but-conflict-free approved head land via the queue path. The
-        safety property this test guards -- the reviewed head is never
-        rebased or force-pushed -- still holds."""
+    def test_gated_pr_behind_dev_waits_without_queue_or_force_push(self) -> None:
+        """A BEHIND exact head is observed, never queued, rebased, or pushed."""
 
         runner = self._runner(
             open_pr(mergeStateStatus="BEHIND"),
@@ -1857,7 +2013,7 @@ class IntegratorGateTests(unittest.TestCase):
             gate=self._gate(tasks=[task_row()], events=[approval_event()]),
         )
 
-        self.assertEqual(result.action, "merged", result.detail)
+        self.assertEqual(result.action, "waiting", result.detail)
         self.assertIn(
             ["git", "merge-base", "--is-ancestor", "origin/dev", "b" * 40],
             runner.commands,
@@ -1865,10 +2021,8 @@ class IntegratorGateTests(unittest.TestCase):
         self.assertFalse(any(command[:2] == ["git", "rebase"] for command in runner.commands))
         self.assertFalse(any(command[:2] == ["git", "push"] for command in runner.commands))
         merge_commands = [c for c in runner.commands if c[:3] == ["gh", "pr", "merge"]]
-        self.assertEqual(
-            merge_commands,
-            [["gh", "pr", "merge", "100", "--merge", "--match-head-commit", "b" * 40]],
-        )
+        self.assertEqual(merge_commands, [])
+        self.assertNotIn(exact_head_rest_merge(), runner.commands)
 
     def test_behind_gated_pr_has_auto_merge_revoked_before_any_merge_probe(self) -> None:
         """PR #4201's shape: BEHIND, unapproved, auto-merge still armed."""
@@ -1891,10 +2045,10 @@ class IntegratorGateTests(unittest.TestCase):
         merge_commands = [c for c in runner.commands if c[:3] == ["gh", "pr", "merge"]]
         self.assertEqual(merge_commands, [["gh", "pr", "merge", "100", "--disable-auto"]])
 
-    def test_approved_but_behind_gated_pr_still_revokes_before_queue_merging(self) -> None:
+    def test_approved_but_behind_gated_pr_revokes_then_waits_without_queue(self) -> None:
         """A stray auto-merge grant is revoked before anything else runs,
-        whether the PR ultimately queue-merges or waits -- the revocation
-        is unconditional, not contingent on this PR's outcome."""
+        whether the PR ultimately waits or merges -- the revocation is
+        unconditional, not contingent on this PR's outcome."""
 
         runner = self._runner(
             open_pr(
@@ -1912,15 +2066,13 @@ class IntegratorGateTests(unittest.TestCase):
             gate=self._gate(tasks=[task_row()], events=[approval_event()]),
         )
 
-        self.assertEqual(result.action, "merged", result.detail)
+        self.assertEqual(result.action, "waiting", result.detail)
         merge_commands = [c for c in runner.commands if c[:3] == ["gh", "pr", "merge"]]
         self.assertEqual(
             merge_commands,
-            [
-                ["gh", "pr", "merge", "100", "--disable-auto"],
-                ["gh", "pr", "merge", "100", "--merge", "--match-head-commit", "b" * 40],
-            ],
+            [["gh", "pr", "merge", "100", "--disable-auto"]],
         )
+        self.assertNotIn(exact_head_rest_merge(), runner.commands)
         self.assertFalse(any(command[:2] == ["git", "rebase"] for command in runner.commands))
         self.assertFalse(any(command[:2] == ["git", "push"] for command in runner.commands))
 
@@ -1956,14 +2108,15 @@ class IntegratorGateTests(unittest.TestCase):
             runner,
             execute=True,
             gate=self._gate(
-                tasks=[task_row(status="review_approved", reviewer="Codex", merge_policy="merge_then_review")],
+                tasks=[task_row(status="in_progress", reviewer="Codex", merge_policy="merge_then_review")],
                 events=[],
             ),
         )
 
         self.assertEqual(result.action, "merged")
         merge_commands = [c for c in runner.commands if c[:3] == ["gh", "pr", "merge"]]
-        self.assertEqual(merge_commands, [["gh", "pr", "merge", "100", "--merge"]])
+        self.assertEqual(merge_commands, [])
+        self.assertIn(exact_head_rest_merge(), runner.commands)
 
 
 class RealGitExactHeadIntegrationTests(unittest.TestCase):
@@ -2081,18 +2234,7 @@ class RealGitExactHeadIntegrationTests(unittest.TestCase):
             )
             self.assertFalse(any(command[:2] == ["git", "rebase"] for command in runner.commands))
             self.assertFalse(any(command[:2] == ["git", "push"] for command in runner.commands))
-            self.assertIn(
-                [
-                    "gh",
-                    "pr",
-                    "merge",
-                    "100",
-                    "--merge",
-                    "--match-head-commit",
-                    exact_head,
-                ],
-                runner.commands,
-            )
+            self.assertIn(exact_head_rest_merge(exact_head), runner.commands)
 
 
 FAKE_GH = r"""#!/usr/bin/env bash
@@ -2360,15 +2502,32 @@ class TaskFinalizeShellTests(unittest.TestCase):
         self.assertIn("auto-merge remains armed", proc.stderr)
         self.assertNotIn("open with auto-merge disabled", proc.stdout)
 
-    def test_merge_then_review_task_still_enables_auto_merge(self) -> None:
+    def test_merge_then_review_task_is_submitted_without_auto_merge(self) -> None:
         proc, calls = self._run_finalize(
             task_row(id="ABC-001", status="in_progress", reviewer="Codex", merge_policy="merge_then_review")
         )
 
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
-        self.assertIn("--label auto-merge", calls)
-        self.assertIn("pr merge task/ABC-001 --auto --merge", calls)
+        self.assertNotIn("--label auto-merge", calls)
+        self.assertNotIn("--auto --merge", calls)
         self.assertNotIn("--disable-auto", calls)
+        self.assertIn("canonical supervisor integration runner", proc.stdout)
+
+    def test_safe_pr_merge_then_review_is_submitted_without_auto_merge(self) -> None:
+        proc, calls = self._run_safe_pr(
+            task_row(
+                id="ABC-001",
+                status="in_progress",
+                reviewer="Codex",
+                merge_policy="merge_then_review",
+            )
+        )
+
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertNotIn("--label auto-merge", calls)
+        self.assertNotIn("--auto --merge", calls)
+        self.assertNotIn("--disable-auto", calls)
+        self.assertIn("canonical supervisor integration runner", proc.stdout)
 
     def test_safe_pr_revokes_a_standing_request_and_verifies_it_off(self) -> None:
         proc, calls = self._run_safe_pr(

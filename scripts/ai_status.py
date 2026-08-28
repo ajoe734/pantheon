@@ -9,6 +9,7 @@ import hashlib
 import json
 import os
 import re
+import secrets
 import shutil
 import stat
 import subprocess
@@ -17,6 +18,7 @@ import tempfile
 import urllib.parse
 from contextlib import contextmanager
 from copy import deepcopy
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path, PurePosixPath
 from threading import local
@@ -150,6 +152,9 @@ STATUS_ARCHIVE_OUTBOX_SCHEMA_VERSION = task_archive_module.STATUS_ARCHIVE_OUTBOX
 TERMINAL_FACTS_KEY = "terminal_facts"
 ARCHIVE_RECEIPTS_KEY = "archive_receipts"
 ARCHIVE_RECEIPT_SCHEMA_VERSION = 1
+REVIEW_REQUEUE_INTENT_KEY = "review_requeue_intent"
+REVIEW_REQUEUE_INTENT_SCHEMA_VERSION = 1
+WORKER_RECOVERY_TASK_KEY = "worker_recovery"
 SUPERVISOR_DISPATCH_BATCH_SCHEMA_VERSION = 1
 SUPERVISOR_DISPATCH_BATCH_MAX_MUTATIONS = 64
 SUPERVISOR_DISPATCH_BATCH_COMMAND = "supervisor-dispatch-batch"
@@ -188,6 +193,7 @@ LOCAL_HUMAN_OPS_ACTIONS = frozenset(
         "dependency-track",
         "execution-resource",
         "reopen",
+        "resume_integration",
         "note",
         "reconcile_merged_done",
         "supersede",
@@ -196,6 +202,7 @@ LOCAL_HUMAN_OPS_ACTIONS = frozenset(
         "archive_correct_review_file",
         "archive_reconcile",
         "record_terminal_fact",
+        "operator_accept",
     }
 )
 DEV_BRIDGE_CONSUMED_KEY = "consumed_dev_bridge_packets"
@@ -2632,6 +2639,33 @@ def task_assignment_generation(task: Mapping[str, Any] | None) -> int:
     return value
 
 
+def task_has_active_worker_recovery(task: Mapping[str, Any] | None) -> bool:
+    """Fail closed while supervisor-owned lost-lease recovery is unresolved."""
+
+    pointer = (task or {}).get(WORKER_RECOVERY_TASK_KEY)
+    if not isinstance(pointer, Mapping):
+        return False
+    receipt_id = str(pointer.get("receipt_id") or "").strip()
+    status = str(pointer.get("status") or "").strip()
+    if not receipt_id or status not in {"pending", "reassigned"}:
+        return False
+    generation_key = (
+        "fence_generation" if status == "pending" else "replacement_generation"
+    )
+    raw_authority_generation = pointer.get(generation_key)
+    if (
+        raw_authority_generation in (None, "")
+        or isinstance(raw_authority_generation, bool)
+    ):
+        return True
+    try:
+        authority_generation = int(raw_authority_generation)
+        current_generation = task_assignment_generation(task)
+    except (TypeError, ValueError, RuntimeError):
+        return True
+    return authority_generation == current_generation
+
+
 def validate_bound_status_command_task_authority(
     state: dict[str, Any], command: str, args: list[str]
 ) -> None:
@@ -2906,14 +2940,14 @@ def approved_closeout_commit_ref(
 
     A reusable worker worktree may be fast-forwarded to a later ``dev`` tip
     after the task PR merges.  That workspace movement must not replace the
-    exact task commit that the canonical reviewer approved.  Only a complete
-    canonical review-bridge binding may select this path; legacy or incomplete
-    rows retain the existing HEAD-based validation.
+    exact task commit that was independently reviewed or explicitly accepted
+    by Human/Ops. Only complete exact-head evidence may select this path;
+    legacy or incomplete rows retain the existing HEAD-based validation.
     """
 
     if str(task.get("status") or "").strip() != "review_approved":
         return None
-    if not github_review_bridge_evidence_matches(task):
+    if not exact_head_acceptance_evidence_matches(task):
         return None
     binding = task.get(APPROVAL_BINDING_KEY)
     if not isinstance(binding, Mapping):
@@ -3508,6 +3542,11 @@ def ensure_review_finalize_handoff(
     timestamp: str,
     message: str | None = None,
 ) -> None:
+    # An explicit Human/Ops exact-head acceptance already has its own
+    # integration authority. It must not be translated into an owner worker
+    # handoff merely because it shares ``review_approved`` with peer review.
+    if operator_acceptance_evidence_matches(task):
+        return
     owner = canonical_agent_name(task.get("owner"))
     if not owner:
         return
@@ -3605,7 +3644,12 @@ def recompute_agents(state: dict[str, Any]) -> None:
         agent = get_agent(state, name)
         owned = by_owner.get(name, [])
         active = [task for task in owned if task["status"] in {"in_progress", "review", "blocked"}]
-        approved = [task for task in owned if task["status"] == "review_approved"]
+        approved = [
+            task
+            for task in owned
+            if task["status"] == "review_approved"
+            and not operator_acceptance_evidence_matches(task)
+        ]
         queued = [task for task in owned if task["status"] == "todo"]
         ready = [
             task
@@ -4233,7 +4277,13 @@ def merged_delivery_evidence(task: Mapping[str, Any]) -> dict[str, Any] | None:
                 "merge_target": str(delivery.get("merge_target_branch") or delivery.get("merge_target_ref") or "").strip() or None,
             }
 
-    for key in ("source_ref", "github", APPROVAL_BINDING_KEY, GITHUB_REVIEW_BRIDGE_KEY):
+    for key in (
+        "source_ref",
+        "github",
+        APPROVAL_BINDING_KEY,
+        GITHUB_REVIEW_BRIDGE_KEY,
+        OPERATOR_ACCEPTANCE_KEY,
+    ):
         payload = task.get(key)
         if not isinstance(payload, Mapping):
             continue
@@ -4273,7 +4323,12 @@ def delivery_binding_stale_evidence(task: Mapping[str, Any]) -> dict[str, Any] |
         return None
 
     candidates: list[tuple[str, str]] = []
-    for key in (APPROVAL_BINDING_KEY, GITHUB_REVIEW_BRIDGE_KEY, "github"):
+    for key in (
+        APPROVAL_BINDING_KEY,
+        GITHUB_REVIEW_BRIDGE_KEY,
+        OPERATOR_ACCEPTANCE_KEY,
+        "github",
+    ):
         payload = task.get(key)
         if not isinstance(payload, Mapping):
             continue
@@ -4485,18 +4540,18 @@ def detect_truth_mismatches(
                     and task.get(DELIVERY_BINDING_KEY, {}).get("kind") == "pull_request"
                 )
             )
-            and not github_review_bridge_evidence_matches(task)
+            and not exact_head_acceptance_evidence_matches(task)
         ):
             push(
                 {
                     "id": f"github-review-gate-missing:{task['id']}",
                     "type": "github_review_gate_missing",
                     "severity": "high",
-                    "title": "Internal approval 尚未綁定 GitHub review gate",
+                    "title": "Internal acceptance 尚未綁定 GitHub review gate",
                     "summary": (
                         f"{task['id']} 有 exact-head review binding 且狀態為 "
-                        "review_approved，但沒有對應的 GitHub review 或 "
-                        "branch-policy-recognized canonical status evidence。"
+                        "review_approved，但沒有對應的 reviewer 或 Human/Ops "
+                        "exact-head gate evidence。"
                     ),
                     "task_id": task["id"],
                     "detected_at": task.get("last_update"),
@@ -5001,6 +5056,11 @@ def normalize_handoffs(state: dict[str, Any]) -> None:
                     handoff["resolved_at"] = iso_now()
                 continue
             if task_status == "review_approved":
+                if operator_acceptance_evidence_matches(task):
+                    for handoff in pending:
+                        handoff["status"] = "done"
+                        handoff["resolved_at"] = iso_now()
+                    continue
                 owner = canonical_agent_name(task.get("owner"))
                 owner_handoffs = [handoff for handoff in pending if handoff.get("to") == owner]
                 for handoff in pending:
@@ -5023,6 +5083,15 @@ def normalize_handoffs(state: dict[str, Any]) -> None:
 
     for task in state.get("tasks", []):
         if task.get("status") != "review_approved":
+            continue
+        if operator_acceptance_evidence_matches(task):
+            for handoff in state.get("handoffs", []):
+                if (
+                    handoff.get("task_id") == task.get("id")
+                    and handoff.get("status") != "done"
+                ):
+                    handoff["status"] = "done"
+                    handoff["resolved_at"] = iso_now()
             continue
         task_id = task.get("id")
         owner = canonical_agent_name(task.get("owner"))
@@ -5572,6 +5641,11 @@ def command_assign(state: dict[str, Any], args: list[str]) -> bool | None:
             raise SystemExit(
                 "Only Human/Ops may change an existing task assignment."
             )
+        if task_has_active_worker_recovery(task):
+            raise SystemExit(
+                f"Task {task_id} has active supervisor worker recovery; wait for "
+                "that receipt to materialize or reach a durable hold before reassignment."
+            )
         assignment_reason = (
             os.environ.get("TASK_ASSIGN_REASON", "").strip()
             or os.environ.get("HUMAN_OPS_REASON", "").strip()
@@ -5607,6 +5681,10 @@ def command_assign(state: dict[str, Any], args: list[str]) -> bool | None:
             task["summary_zh"] = summary_zh
         if metadata:
             task.update(metadata)
+        # Reassignment creates a new delivery generation. The audit log keeps
+        # the prior reopen lineage, while its generation-bound queue outbox row
+        # must not survive and fail closed against the replacement.
+        task.pop(REVIEW_REQUEUE_INTENT_KEY, None)
         task["last_update"] = timestamp
         task["next"] = assignment_next or "Ownership updated"
 
@@ -5985,7 +6063,32 @@ def command_reopen(state: dict[str, Any], args: list[str]) -> None:
         preflight.get(REVIEW_BINDING_MISMATCH_PREFLIGHT_KEY) or ""
     ).strip()
     timestamp = iso_now()
+    task.pop(REVIEW_DECISION_INTENT_KEY, None)
     apply_task_lifecycle_transition(task, "reopen")
+    generation = max(1, int(task.get("generation", 1) or 1))
+    requeue_basis = {
+        "schema_version": REVIEW_REQUEUE_INTENT_SCHEMA_VERSION,
+        "task_id": task_id,
+        "task_generation": generation,
+        "owner": owner,
+        "reviewer": reviewer,
+        "reopened_at": timestamp,
+        "reopened_by": actor,
+        "reason": message,
+    }
+    requeue_intent = {
+        **requeue_basis,
+        # Timestamp/task content can repeat within one second after an earlier
+        # reopen completes. A fresh cryptographic nonce prevents an old durable
+        # queue row from becoming indistinguishable from this new intent.
+        "intent_id": "review-requeue-" + os.urandom(32).hex(),
+        "status": "pending",
+    }
+    # The canonical task row and its activity outbox are committed by the same
+    # TaskStore transaction in ``main``.  The supervisor materializes this
+    # immutable intent into the runtime queue with the intent id as its
+    # idempotency key; a crash on either side can therefore replay safely.
+    task[REVIEW_REQUEUE_INTENT_KEY] = deepcopy(requeue_intent)
     task["last_update"] = timestamp
     task["next"] = message
     task.pop("waiting_for", None)
@@ -5993,6 +6096,7 @@ def command_reopen(state: dict[str, Any], args: list[str]) -> None:
     # handoff must freeze the new deliverable instead of reusing this head.
     task.pop(DELIVERY_BINDING_KEY, None)
     task.pop(APPROVAL_BINDING_KEY, None)
+    task.pop("review_file", None)
     if github_review_bridge:
         task[GITHUB_REVIEW_BRIDGE_KEY] = dict(github_review_bridge)
     else:
@@ -6017,6 +6121,7 @@ def command_reopen(state: dict[str, Any], args: list[str]) -> None:
             "type": "reopen",
             "task_id": task_id,
             "message": message,
+            REVIEW_REQUEUE_INTENT_KEY: deepcopy(requeue_intent),
             **local_human_ops_audit_fields(),
             **(
                 {GITHUB_REVIEW_BRIDGE_KEY: dict(github_review_bridge)}
@@ -6028,6 +6133,76 @@ def command_reopen(state: dict[str, Any], args: list[str]) -> None:
                 if binding_mismatch
                 else {}
             ),
+        }
+    )
+
+
+def command_resume_integration(state: dict[str, Any], args: list[str]) -> None:
+    """Restore a blocked, exactly-reviewed PR to integration eligibility.
+
+    ``reopen`` means the implementation is no longer accepted and therefore
+    intentionally clears its frozen delivery binding. It must not be used for
+    a transient failure in the serialized integrator itself: doing so loses a
+    valid exact-head approval and creates an avoidable second review cycle.
+
+    This recovery command is deliberately narrower. Only local Human/Ops can
+    use it, only from ``blocked``, and only when the stored PR delivery,
+    review, and GitHub bridge evidence still identify the same approved head.
+    The auto-integrator independently re-reads the live PR, checks, and gate
+    before it can merge anything.
+    """
+
+    if len(args) < 2:
+        raise SystemExit("Usage: resume_integration <task-id> <message>")
+    task_id, message = args[0], args[1]
+    if current_actor() != "Human/Ops":
+        raise SystemExit("Only local Human/Ops may resume a blocked reviewed integration")
+    task = get_task(state, task_id)
+    if task is None:
+        raise SystemExit(f"Unknown task: {task_id}")
+
+    validate_task_lifecycle_transition(task, "resume_integration")
+    delivery = task.get(DELIVERY_BINDING_KEY)
+    approval = task.get(APPROVAL_BINDING_KEY)
+    if not isinstance(delivery, Mapping) or str(delivery.get("kind") or "") != "pull_request":
+        raise SystemExit(
+            f"{task_id} cannot resume integration without a pull-request delivery binding"
+        )
+    if not isinstance(approval, Mapping):
+        raise SystemExit(
+            f"{task_id} cannot resume integration without an exact review binding"
+        )
+    for field in ("pr", "head_sha", "head_branch", "base"):
+        if str(delivery.get(field) or "").strip() != str(approval.get(field) or "").strip():
+            raise SystemExit(
+                f"{task_id} cannot resume integration: delivery and review {field} differ"
+            )
+    if not exact_head_acceptance_evidence_matches(task):
+        raise SystemExit(
+            f"{task_id} cannot resume integration without matching GitHub approval evidence"
+        )
+
+    timestamp = iso_now()
+    apply_task_lifecycle_transition(task, "resume_integration")
+    task["last_update"] = timestamp
+    task["next"] = message
+    task.pop("waiting_for", None)
+    mark_blockers_resolved(state, task_id)
+    ensure_review_finalize_handoff(
+        state,
+        task,
+        from_agent=canonical_agent_name(task.get("reviewer")),
+        timestamp=timestamp,
+        message=message,
+    )
+    append_log(
+        {
+            "ts": timestamp,
+            "agent": "Human/Ops",
+            "type": "integration_resumed",
+            "task_id": task_id,
+            "message": message,
+            **local_human_ops_audit_fields(),
         }
     )
 
@@ -6048,12 +6223,38 @@ def command_handoff(state: dict[str, Any], args: list[str]) -> None:
         raise SystemExit(
             f"{task_id} handoff target must match the assigned reviewer ({task.get('reviewer')}); reassign reviewer first if needed"
         )
-    binding = resolve_handoff_delivery_binding(task, load_config())
+    preflight = consume_external_mutation_preflight("handoff", task)
+    binding = dict(preflight.get(DELIVERY_BINDING_KEY) or {})
+    manifest = binding.get("evidence_manifest")
+    if binding.get("kind") == "pull_request" and (
+        not isinstance(manifest, Mapping)
+        or not str(manifest.get("path") or "").strip()
+    ):
+        raise SystemExit(f"{task_id} review admission returned no evidence manifest identity")
     timestamp = iso_now()
     apply_task_lifecycle_transition(task, "handoff")
+    task.pop(REVIEW_REQUEUE_INTENT_KEY, None)
     task["last_update"] = timestamp
     task["next"] = message
+    # One handoff starts one new review epoch. Never let an earlier approval,
+    # bridge write, closeout, or crash-recovery intent compete with the newly
+    # admitted delivery identity.
+    for stale_key in (
+        APPROVAL_BINDING_KEY,
+        GITHUB_REVIEW_BRIDGE_KEY,
+        OPERATOR_ACCEPTANCE_KEY,
+        "review_file",
+        "review_notes_zh",
+        "protected_closeout_verdict",
+        "delivery",
+        "terminal_outcome",
+        "review_requeue_intent",
+        REVIEW_DECISION_INTENT_KEY,
+    ):
+        task.pop(stale_key, None)
     task[DELIVERY_BINDING_KEY] = deepcopy(binding)
+    if isinstance(manifest, Mapping):
+        task["review_file"] = str(manifest["path"])
     mark_handoffs_done_for_actor(state, task_id, actor)
     mark_blockers_resolved(state, task_id)
     state.setdefault("handoffs", []).append(
@@ -6074,6 +6275,11 @@ def command_handoff(state: dict[str, Any], args: list[str]) -> None:
             "task_id": task_id,
             "message": f"Handoff to {to_agent}: {message}",
             DELIVERY_BINDING_KEY: deepcopy(binding),
+            **(
+                {"review_file": str(manifest["path"])}
+                if isinstance(manifest, Mapping)
+                else {}
+            ),
         }
     )
 
@@ -6822,6 +7028,51 @@ def validate_merged_tooling_done(task: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def validate_operator_accepted_merged_delivery(task: dict[str, Any]) -> dict[str, Any]:
+    """Validate closeout of the exact head explicitly accepted by Human/Ops.
+
+    This does not impersonate a reviewer. It is admitted only after the
+    distinct operator exact-head proof has been recorded, and the caller must
+    prove that same head is already merged into the task's declared target.
+    """
+
+    if not operator_acceptance_evidence_matches(task):
+        raise SystemExit(
+            "Cannot reconcile task: no valid Human/Ops exact-head acceptance is recorded."
+        )
+    binding = _validated_pr_binding(
+        task.get(APPROVAL_BINDING_KEY) or {}, str(task.get("id") or "")
+    )
+    delivery = _validated_reconcile_delivery(task)
+    if str(delivery.get("commit") or "").lower() != binding["head_sha"]:
+        raise SystemExit(
+            "Cannot reconcile task: operator closeout must verify the exact accepted "
+            "PR head as the merged delivery commit."
+        )
+    acceptance = dict(task.get(OPERATOR_ACCEPTANCE_KEY) or {})
+    if normalize_github_repo_slug(str(acceptance.get("repository") or "")) != str(
+        delivery["repository_slug"]
+    ):
+        raise SystemExit(
+            "Cannot reconcile task: operator acceptance repository differs from "
+            "the merged delivery repository."
+        )
+    return {
+        "recorded_at": iso_now(),
+        "reconciled_from_operator_acceptance": True,
+        "delivery_class": "operator_exact_head",
+        "operator_authorized": True,
+        "operator_acceptance": {
+            "pr": binding["pr"],
+            "head_sha": binding["head_sha"],
+            "proof_ref": str(
+                acceptance.get("operator_acceptance_proof_ref") or ""
+            ),
+        },
+        **delivery,
+    }
+
+
 def validate_merged_done_evidence(task: dict[str, Any]) -> dict[str, Any]:
     """Validate immutable, dev-merged review and delivery evidence.
 
@@ -7110,8 +7361,16 @@ def command_supersede(state: dict[str, Any], args: list[str]) -> None:
 DELIVERY_BINDING_KEY = "delivery_binding"
 APPROVAL_BINDING_KEY = "review_binding"
 GITHUB_REVIEW_BRIDGE_KEY = "github_review_bridge"
+OPERATOR_ACCEPTANCE_KEY = "operator_acceptance"
+REVIEW_DECISION_INTENT_KEY = "review_decision_intent"
+REVIEW_DECISION_INTENT_SCHEMA_VERSION = 1
+REVIEW_DECISION_BRIDGE_REQUIRED_KEY = "review_decision_bridge_required"
+REVIEW_DECISION_RESUME_KEY = "review_decision_resume"
+REVIEW_DECISION_EXACT_BINDING_KEY = "review_decision_exact_binding"
+REVIEW_DECISION_REPOSITORY_KEY = "review_decision_repository"
 APPROVAL_HEAD_SHA_RE = re.compile(r"^[0-9a-fA-F]{40}$")
 DEFAULT_APPROVAL_BASE_BRANCH = "dev"
+REQUIRED_REVIEW_MERGE_METHOD = "MERGE"
 GITHUB_CANONICAL_REVIEW_CONTEXT = "Pantheon canonical review gate"
 GITHUB_REVIEW_MODES = {
     "pull_request_review",
@@ -7123,6 +7382,15 @@ REVIEW_BINDING_MISMATCH_PREFLIGHT_KEY = "review_binding_mismatch"
 
 class ReviewBindingMismatchError(RuntimeError):
     """A persisted review binding definitively differs from GitHub truth."""
+
+
+class ReviewIntentAdmissionInvalid(RuntimeError):
+    """A reservation became invalid before any GitHub write began."""
+
+    def __init__(self, *, task_id: str, nonce: str, detail: str) -> None:
+        super().__init__(detail)
+        self.task_id = task_id
+        self.nonce = nonce
 
 
 def _github_review_bridge_module():
@@ -7161,8 +7429,10 @@ def validate_handoff_pr_delivery_binding(
     task: Mapping[str, Any],
     config: dict[str, Any],
     binding: Mapping[str, Any],
+    *,
+    review_file: str | None = None,
 ) -> dict[str, Any]:
-    """Return a PR binding only after the shared GitHub validator accepts it."""
+    """Return the one complete review-admission binding, or fail closed."""
 
     task_id = str(task.get("id") or "").strip()
     normalized = _validated_pr_binding(binding, task_id)
@@ -7180,27 +7450,120 @@ def validate_handoff_pr_delivery_binding(
             f"GitHub slug for {task_id or '?'}"
         )
     github_review_bridge = _github_review_bridge_module()
+    manifest_path = (
+        str(review_file).strip()
+        if review_file is not None
+        else os.environ.get("REVIEW_FILE", "").strip()
+    )
+    if not manifest_path:
+        raise SystemExit(
+            f"PR handoff requires REVIEW_FILE for {task_id or '?'}; the evidence "
+            "manifest must be committed in the exact PR head before review"
+        )
+    manifest_path = validate_review_manifest_contract_path(
+        task,
+        config,
+        repository_id=repository_id,
+        review_file=manifest_path,
+    )
     try:
-        validated = github_review_bridge.validate_review_binding(
+        validated = github_review_bridge.validate_review_admission(
             repository=repository_slug_value,
             binding=normalized,
+            review_file=manifest_path,
+            required_merge_method=REQUIRED_REVIEW_MERGE_METHOD,
         )
     except github_review_bridge.GitHubReviewBridgeError as exc:
         raise SystemExit(
             f"GitHub rejected the proposed delivery binding for {task_id or '?'}: {exc}"
         ) from exc
-    return {
-        "pr": validated.pr,
-        "head_sha": validated.head_sha,
-        "head_branch": validated.head_branch,
-        "base": validated.base,
-    }
+    return dict(validated.as_dict())
+
+
+def _safe_repo_relative_path(value: Any, *, label: str) -> PurePosixPath:
+    raw = str(value or "").strip()
+    path = PurePosixPath(raw)
+    if (
+        not raw
+        or raw.startswith("/")
+        or "\\" in raw
+        or path.is_absolute()
+        or any(part in {"", ".", ".."} for part in path.parts)
+    ):
+        raise SystemExit(f"{label} must be a normalized repository-relative path")
+    return path
+
+
+def validate_review_manifest_contract_path(
+    task: Mapping[str, Any],
+    config: dict[str, Any],
+    *,
+    repository_id: str,
+    review_file: str,
+) -> str:
+    """Require REVIEW_FILE to belong to this task's delivery contract.
+
+    Merely committing some evidence file on the reviewed head is insufficient:
+    a reviewer must be bound to an artifact path the task actually authorizes.
+    A declared directory-like artifact is an allowed prefix; a declared file is
+    accepted exactly. Repository prefixes are removed before comparison.
+    """
+
+    task_id = str(task.get("id") or "?").strip()
+    manifest = _safe_repo_relative_path(review_file, label="REVIEW_FILE")
+    allowed: list[PurePosixPath] = []
+    artifacts = task.get("artifacts")
+    if isinstance(artifacts, list):
+        for artifact in artifacts:
+            artifact_repo = artifact_repository_id(
+                config,
+                artifact,
+                default_repo_id=repository_id,
+            )
+            if artifact_repo != repository_id:
+                continue
+            relative = repository_relative_artifact_path(
+                config,
+                artifact,
+                repository_id,
+            )
+            try:
+                normalized = _safe_repo_relative_path(
+                    relative.as_posix(),
+                    label="task artifact",
+                )
+            except SystemExit:
+                continue
+            allowed.append(normalized)
+    if not any(
+        manifest == artifact or artifact in manifest.parents
+        for artifact in allowed
+    ):
+        rendered = ", ".join(path.as_posix() for path in allowed) or "<none>"
+        raise SystemExit(
+            f"{task_id}: REVIEW_FILE={manifest.as_posix()!r} is outside the task "
+            f"artifact contract for repository {repository_id!r}; allowed: {rendered}"
+        )
+    return manifest.as_posix()
+
+
+@dataclass(frozen=True)
+class OpenPullRequestDiscovery:
+    """Typed result that distinguishes confirmed absence from every PR state."""
+
+    pr: int | None
+    head_sha: str = ""
+    state: str = ""
+
+    @property
+    def found(self) -> bool:
+        return self.pr is not None
 
 
 def _discover_open_pull_request_for_branch(
     *, repository: str, head_branch: str, base: str
-) -> dict[str, Any] | None:
-    """Return the exact open PR for a branch pair, if exactly one exists.
+) -> OpenPullRequestDiscovery:
+    """Return one exact PR in any state or a positive confirmation none exists.
 
     Handoff is the one place delivery identity may be discovered -- review
     must never infer it (see resolve_approval_binding). A task with no
@@ -7211,48 +7574,93 @@ def _discover_open_pull_request_for_branch(
     kind), permanently blocking the PR on branch protection with no way out
     except reopen+re-handoff.
 
-    Any failure (missing repo config, gh error, ambiguous match) returns
-    None so the caller falls through to its existing artifact_contract path
-    -- this only adds a positive match, never blocks or changes behavior
-    for a task that genuinely has no open PR.
+    Only a valid empty GitHub response means ``no pull request``. Command
+    failures, invalid payloads, and ambiguous matches fail closed so a real PR
+    can never be silently downgraded to an artifact-only review contract.
     """
 
     owner, _, _ = repository.partition("/")
     if not owner or "/" not in repository:
-        return None
-    result = subprocess.run(
-        [
-            "gh", "api", f"repos/{repository}/pulls",
-            "--method", "GET",
-            "-f", f"head={owner}:{head_branch}",
-            "-f", f"base={base}",
-            "-f", "state=open",
-        ],
-        cwd=ROOT,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if result.returncode != 0 or not result.stdout.strip():
-        return None
+        raise SystemExit(
+            f"Cannot discover pull requests for invalid repository slug {repository!r}"
+        )
+    try:
+        result = subprocess.run(
+            [
+                "gh", "api", f"repos/{repository}/pulls",
+                "--method", "GET",
+                "-f", f"head={owner}:{head_branch}",
+                "-f", f"base={base}",
+                "-f", "state=all",
+            ],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=15,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise SystemExit(
+            f"Cannot determine whether {head_branch} has a PR in "
+            f"{repository}: {exc}"
+        ) from exc
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout).strip()
+        raise SystemExit(
+            f"Cannot determine whether {head_branch} has a PR in "
+            f"{repository}: gh exited {result.returncode}"
+            + (f": {detail}" if detail else "")
+        )
+    if not result.stdout.strip():
+        raise SystemExit(
+            f"Cannot determine whether {head_branch} has a PR in "
+            f"{repository}: GitHub returned an empty response"
+        )
     try:
         payload = json.loads(result.stdout)
-    except json.JSONDecodeError:
-        return None
-    if not isinstance(payload, list) or len(payload) != 1:
-        return None
+    except json.JSONDecodeError as exc:
+        raise SystemExit(
+            f"Cannot determine whether {head_branch} has a PR in "
+            f"{repository}: GitHub returned invalid JSON"
+        ) from exc
+    if not isinstance(payload, list):
+        raise SystemExit(
+            f"Cannot determine whether {head_branch} has a PR in "
+            f"{repository}: GitHub returned a non-list payload"
+        )
+    if not payload:
+        return OpenPullRequestDiscovery(pr=None)
+    if len(payload) != 1:
+        raise SystemExit(
+            f"Cannot determine the delivery PR for {head_branch} in {repository}: "
+            f"GitHub returned {len(payload)} pull requests across all states"
+        )
     pr = payload[0]
     if not isinstance(pr, dict):
-        return None
+        raise SystemExit(
+            f"Cannot determine the delivery PR for {head_branch} in {repository}: "
+            "GitHub returned an invalid pull-request row"
+        )
     number = pr.get("number")
-    head_sha = str((pr.get("head") or {}).get("sha") or "")
+    head = pr.get("head")
+    head_sha = str(head.get("sha") or "") if isinstance(head, Mapping) else ""
+    raw_state = str(pr.get("state") or "").strip().upper()
+    state = "MERGED" if pr.get("merged_at") else raw_state
     if (
         not isinstance(number, int)
         or number <= 0
         or not APPROVAL_HEAD_SHA_RE.fullmatch(head_sha)
+        or state not in {"OPEN", "MERGED", "CLOSED"}
     ):
-        return None
-    return {"pr": number, "head_sha": head_sha.lower()}
+        raise SystemExit(
+            f"Cannot determine the delivery PR for {head_branch} in {repository}: "
+            "GitHub returned an incomplete pull-request identity"
+        )
+    return OpenPullRequestDiscovery(
+        pr=number,
+        head_sha=head_sha.lower(),
+        state=state,
+    )
 
 
 def resolve_handoff_delivery_binding(
@@ -7260,9 +7668,9 @@ def resolve_handoff_delivery_binding(
 ) -> dict[str, Any]:
     """Create the one delivery contract before a task becomes reviewable.
 
-    A PR task receives a full exact-head identity.  A task with no PR receives
-    a hash of its declared artifact/acceptance contract.  Both are persisted on
-    the task at handoff, eliminating the old late discovery at approval.
+    A PR task receives one exact-head identity plus immutable manifest,
+    current-base, and merge-method evidence. A genuinely non-PR task retains
+    the explicit artifact contract path; it never gains PR merge authority.
     """
 
     task_id = str(task.get("id") or "").strip()
@@ -7297,7 +7705,12 @@ def resolve_handoff_delivery_binding(
         )
         return {
             "kind": "pull_request",
-            **validate_handoff_pr_delivery_binding(task, config, candidate),
+            **validate_handoff_pr_delivery_binding(
+                task,
+                config,
+                candidate,
+                review_file=os.environ.get("REVIEW_FILE", ""),
+            ),
         }
 
     if requires_pr_delivery_binding(task):
@@ -7308,21 +7721,35 @@ def resolve_handoff_delivery_binding(
         )
 
     repository_slug_value = repository_slug(config, repository_id)
-    if repository_slug_value:
-        discovered = _discover_open_pull_request_for_branch(
-            repository=repository_slug_value,
-            head_branch=head_branch,
-            base=base_branch,
+    if not repository_slug_value:
+        raise SystemExit(
+            f"Handoff cannot determine whether {task_id or '?'} has a PR without "
+            "a configured GitHub repository slug"
         )
-        if discovered:
-            return {
-                "kind": "pull_request",
-                **_validated_pr_binding(
-                    {**discovered, "head_branch": head_branch, "base": base_branch},
+    discovered = _discover_open_pull_request_for_branch(
+        repository=repository_slug_value,
+        head_branch=head_branch,
+        base=base_branch,
+    )
+    if discovered.found:
+        assert discovered.pr is not None
+        return {
+            "kind": "pull_request",
+            **validate_handoff_pr_delivery_binding(
+                task,
+                config,
+                _validated_pr_binding(
+                    {
+                        "pr": discovered.pr,
+                        "head_sha": discovered.head_sha,
+                        "head_branch": head_branch,
+                        "base": base_branch,
+                    },
                     task_id,
                 ),
-            }
-
+                review_file=os.environ.get("REVIEW_FILE", ""),
+            ),
+        }
     contract = _delivery_contract_payload(task)
     return {
         "kind": "artifact_contract",
@@ -7459,6 +7886,188 @@ def requires_pr_delivery_binding(task: Mapping[str, Any]) -> bool:
     return False
 
 
+_PULL_REQUEST_URL_RE = re.compile(r"https?://[^\s]+/pull/\d+(?:\b|/)", re.IGNORECASE)
+_LEGACY_PULL_REQUEST_FIELDS = frozenset(
+    {
+        "pr",
+        "pr_number",
+        "pr_url",
+        "pull_request",
+        "pull_request_number",
+        "pull_request_url",
+    }
+)
+
+
+def _mapping_has_pull_request_identity(value: Mapping[str, Any]) -> bool:
+    kind = str(value.get("kind") or value.get("type") or "").strip().casefold()
+    if kind in {"pr", "pull_request", "pull request"}:
+        return True
+    for key in _LEGACY_PULL_REQUEST_FIELDS:
+        if key in value:
+            return True
+    for key in ("url", "html_url"):
+        if _PULL_REQUEST_URL_RE.search(str(value.get(key) or "")):
+            return True
+    return False
+
+
+def pull_request_delivery_reason(task: Mapping[str, Any]) -> str:
+    """Return why a task is known to be PR-backed, including legacy rows."""
+
+    delivery = task.get(DELIVERY_BINDING_KEY)
+    if isinstance(delivery, Mapping) and str(delivery.get("kind") or "") == "pull_request":
+        return DELIVERY_BINDING_KEY
+    if requires_pr_delivery_binding(task):
+        return "required_artifacts"
+    for key in (
+        APPROVAL_BINDING_KEY,
+        GITHUB_REVIEW_BRIDGE_KEY,
+        OPERATOR_ACCEPTANCE_KEY,
+    ):
+        value = task.get(key)
+        if isinstance(value, Mapping) and _mapping_has_pull_request_identity(value):
+            return key
+    for key in ("source_ref", "github", "delivery"):
+        value = task.get(key)
+        if isinstance(value, Mapping) and _mapping_has_pull_request_identity(value):
+            return key
+    return ""
+
+
+def _legacy_delivery_branch_pair(task: Mapping[str, Any]) -> tuple[str, str]:
+    task_id = str(task.get("id") or "").strip()
+    for key in (
+        DELIVERY_BINDING_KEY,
+        APPROVAL_BINDING_KEY,
+        GITHUB_REVIEW_BRIDGE_KEY,
+        OPERATOR_ACCEPTANCE_KEY,
+        "github",
+        "source_ref",
+    ):
+        value = task.get(key)
+        if not isinstance(value, Mapping):
+            continue
+        head_branch = str(value.get("head_branch") or "").strip()
+        base = str(value.get("base") or "").strip()
+        if head_branch:
+            return head_branch, base or DEFAULT_APPROVAL_BASE_BRANCH
+    return f"task/{task_id}", DEFAULT_APPROVAL_BASE_BRANCH
+
+
+def review_gate_delivery_kind(
+    task: Mapping[str, Any], config: dict[str, Any]
+) -> tuple[str, str]:
+    """Classify review/closeout delivery without downgrading uncertain PRs."""
+
+    delivery = task.get(DELIVERY_BINDING_KEY)
+    current_binding = task_machine.delivery_binding_is_current(task)
+    current_artifact_binding = (
+        current_binding
+        and isinstance(delivery, Mapping)
+        and str(delivery.get("kind") or "") == "artifact_contract"
+    )
+    if (
+        current_binding
+        and isinstance(delivery, Mapping)
+        and str(delivery.get("kind") or "") == "pull_request"
+    ):
+        return "pull_request", DELIVERY_BINDING_KEY
+
+    # A review row without a complete current handoff binding is never safe to
+    # reinterpret as artifact-only. Legacy provenance may explain why it is a
+    # PR row, but cannot manufacture the frozen admission facts review needs.
+    status = str(task.get("status") or "").strip().lower()
+    if not current_binding and status in {"review", "review_approved"}:
+        raise SystemExit(
+            f"{task.get('id') or 'task'} has unknown legacy delivery identity; "
+            "reopen and re-handoff a current PR or artifact contract before review"
+        )
+
+    # A current artifact contract is the delivery identity established by the
+    # latest handoff. Historical source_ref/github/review mappings remain
+    # provenance and cannot replace it. The current task contract can still
+    # require PR delivery, and state=all discovery below must still catch a PR
+    # that appeared after the artifact handoff.
+    if requires_pr_delivery_binding(task):
+        reason = "required_artifacts"
+    elif current_artifact_binding:
+        # A canonical approval/bridge mapping is not generic provenance: if
+        # one somehow coexists with an artifact handoff, fail closed as an
+        # inconsistent PR review row. New handoff normally clears both.
+        reason = next(
+            (
+                key
+                for key in (
+                    APPROVAL_BINDING_KEY,
+                    GITHUB_REVIEW_BRIDGE_KEY,
+                    OPERATOR_ACCEPTANCE_KEY,
+                )
+                if isinstance(task.get(key), Mapping)
+                and _mapping_has_pull_request_identity(task[key])
+            ),
+            "",
+        )
+    else:
+        reason = pull_request_delivery_reason(task)
+    if reason:
+        return "pull_request", reason
+
+    task_id = str(task.get("id") or "").strip()
+    try:
+        repository_id = validate_task_repository_scope(config, dict(task))
+    except (ValueError, RuntimeError) as exc:
+        raise SystemExit(
+            f"Cannot determine delivery kind for {task_id or '?'}: {exc}"
+        ) from exc
+    repository_slug_value = repository_slug(config, repository_id)
+    if not repository_slug_value:
+        raise SystemExit(
+            f"Cannot determine delivery kind for {task_id or '?'} without a "
+            "configured GitHub repository slug"
+        )
+    head_branch, base = _legacy_delivery_branch_pair(task)
+    discovered = _discover_open_pull_request_for_branch(
+        repository=repository_slug_value,
+        head_branch=head_branch,
+        base=base,
+    )
+    if discovered.found:
+        return "pull_request", f"{discovered.state.lower()}_pull_request"
+    if current_artifact_binding:
+        return "artifact_contract", DELIVERY_BINDING_KEY
+    return "artifact_contract", "confirmed_no_pull_request"
+
+
+def require_current_pr_delivery_binding(
+    task: Mapping[str, Any], *, action: str
+) -> Mapping[str, Any]:
+    """Require the complete handoff-frozen PR and manifest for review/closeout."""
+
+    task_id = str(task.get("id") or "task").strip()
+    delivery = task.get(DELIVERY_BINDING_KEY)
+    if (
+        not isinstance(delivery, Mapping)
+        or str(delivery.get("kind") or "") != "pull_request"
+        or not task_machine.delivery_binding_is_current(task)
+    ):
+        raise SystemExit(
+            f"{task_id} has legacy or incomplete PR delivery evidence and cannot "
+            f"{action}; reopen and re-handoff the exact PR head, current base, "
+            "merge method, and evidence manifest first"
+        )
+    manifest = delivery.get("evidence_manifest")
+    assert isinstance(manifest, Mapping)
+    frozen_review_file = str(manifest.get("path") or "").strip()
+    task_review_file = str(task.get("review_file") or "").strip()
+    if not task_review_file or task_review_file != frozen_review_file:
+        raise SystemExit(
+            f"{task_id} has legacy or incomplete PR evidence-manifest binding and "
+            f"cannot {action}; reopen and re-handoff the exact PR delivery first"
+        )
+    return delivery
+
+
 def review_evidence_file_committed(
     *, repository: str, head_sha: str, review_file: str
 ) -> bool:
@@ -7469,13 +8078,10 @@ def review_evidence_file_committed(
     head, or the head at approval time) is not guaranteed to be fetched into
     the local checkout at command-run time.
 
-    SUP-REVIEW-EVIDENCE-BINDING-ENFORCEMENT-20260804: this is what makes the
-    "owner may bind the same already committed and reviewed manifest" fallback
-    in task-closeout-finalization.md actually true instead of merely
-    documented. Without it, `done` accepted any REVIEW_FILE string at face
-    value, including one that only exists in a commit added *after* approval
-    -- exactly the SHA-shifting, re-review-forcing loop diagnosed in
-    SUP-REVIEW-PIPELINE-INTEGRITY-20260804.
+    PR delivery now freezes the manifest at handoff and never calls this helper
+    from `done`; a missing PR manifest is an invalid legacy row that must be
+    reopened and handed off again. This helper remains for the artifact-only
+    approval/closeout compatibility path.
     """
     review_file = (review_file or "").strip().lstrip("/")
     if not repository or not head_sha or not review_file:
@@ -7495,6 +8101,7 @@ def bridge_github_review_decision(
     decision: str,
     message: str,
     binding: Mapping[str, Any],
+    intent_nonce: str = "",
 ) -> dict[str, Any]:
     """Represent an exact-head governed verdict on the delivery PR.
 
@@ -7526,6 +8133,7 @@ def bridge_github_review_decision(
             decision=decision,
             message=message,
             binding=binding,
+            intent_nonce=intent_nonce,
         )
     except github_review_bridge.ReviewBindingMismatch as exc:
         raise ReviewBindingMismatchError(str(exc)) from exc
@@ -7537,6 +8145,8 @@ def bridge_github_review_decision(
     payload = result.as_dict()
     if not isinstance(payload, dict):
         raise SystemExit("GitHub review bridge returned invalid evidence")
+    if intent_nonce and str(payload.get("intent_nonce") or "") != intent_nonce:
+        raise SystemExit("GitHub review bridge returned evidence for a different intent")
     return payload
 
 
@@ -7574,8 +8184,67 @@ def github_review_bridge_evidence_matches(task: Mapping[str, Any]) -> bool:
     return review_recorded and required_status_recorded
 
 
+def operator_acceptance_evidence_matches(task: Mapping[str, Any]) -> bool:
+    """Return whether a Human/Ops acceptance proves this exact PR head.
+
+    This does not reuse reviewer evidence: the two paths have different
+    authority and must remain visibly distinguishable in canonical state.
+    """
+
+    binding = task.get(APPROVAL_BINDING_KEY)
+    evidence = task.get(OPERATOR_ACCEPTANCE_KEY)
+    if not isinstance(binding, Mapping) or not isinstance(evidence, Mapping):
+        return False
+    # Operator acceptance records frozen-base evidence from the immutable PR
+    # delivery binding.  The review binding intentionally contains only the
+    # PR identity used by ordinary reviewer workflows, so pass the frozen base
+    # through from the delivery binding without relaxing any of the shared
+    # PR/head/branch/base equality checks.
+    bridge_binding = dict(binding)
+    delivery = task.get(DELIVERY_BINDING_KEY)
+    if isinstance(delivery, Mapping):
+        for field in ("pr", "head_sha", "head_branch", "base"):
+            if str(delivery.get(field) or "").strip() != str(
+                binding.get(field) or ""
+            ).strip():
+                return False
+        frozen_base_sha = str(delivery.get("base_sha") or "").strip().lower()
+        if frozen_base_sha:
+            bridge_binding["base_sha"] = frozen_base_sha
+    bridge = _github_review_bridge_module()
+    try:
+        bridge.validate_operator_acceptance_evidence(
+            evidence,
+            repository=str(evidence.get("repository") or "").strip(),
+            actor="Human/Ops",
+            binding=bridge_binding,
+            intent_nonce=(
+                str(evidence.get("intent_nonce") or "").strip() or None
+            ),
+        )
+    except bridge.GitHubReviewBridgeError:
+        return False
+    return True
+
+
+def exact_head_acceptance_evidence_matches(task: Mapping[str, Any]) -> bool:
+    """Accept either independent review or the explicit operator path."""
+
+    return (
+        github_review_bridge_evidence_matches(task)
+        or operator_acceptance_evidence_matches(task)
+    )
+
+
 EXTERNAL_MUTATION_COMMANDS = frozenset(
-    {"approve", "reopen", "done", "reconcile_merged_done"}
+    {
+        "handoff",
+        "approve",
+        "operator_accept",
+        "reopen",
+        "done",
+        "reconcile_merged_done",
+    }
 )
 
 
@@ -7589,6 +8258,137 @@ def task_mutation_cas_digest(task: Mapping[str, Any]) -> str:
         ensure_ascii=False,
     ).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
+
+
+def review_decision_task_digest(task: Mapping[str, Any]) -> str:
+    """Digest business task truth while excluding the intent and UI markers."""
+
+    candidate = deepcopy(dict(task))
+    candidate.pop(REVIEW_DECISION_INTENT_KEY, None)
+    candidate.pop("status_write_pending", None)
+    candidate.pop("status_write_pending_count", None)
+    return task_mutation_cas_digest(candidate)
+
+
+def validate_review_decision_intent(value: Any) -> dict[str, Any]:
+    exact_keys = {
+        "schema_version",
+        "nonce",
+        "command",
+        "decision",
+        "task_id",
+        "task_digest",
+        "actor",
+        "message",
+        "repository",
+        "binding",
+        "transition_payload",
+        "created_at",
+        "intent_sha256",
+    }
+    if not isinstance(value, Mapping) or set(value) != exact_keys:
+        raise RuntimeError("review decision intent schema is not exact")
+    intent = deepcopy(dict(value))
+    command = str(intent.get("command") or "")
+    expected_decision = {
+        "approve": "approve",
+        "operator_accept": "operator_accept",
+        "reopen": "reopen",
+    }.get(command)
+    nonce = str(intent.get("nonce") or "")
+    task_id = str(intent.get("task_id") or "").strip()
+    actor = str(intent.get("actor") or "").strip()
+    message = str(intent.get("message") or "")
+    repository = str(intent.get("repository") or "").strip()
+    task_digest = str(intent.get("task_digest") or "")
+    binding = intent.get("binding")
+    transition_payload = intent.get("transition_payload")
+    if (
+        intent.get("schema_version") != REVIEW_DECISION_INTENT_SCHEMA_VERSION
+        or not re.fullmatch(r"[0-9a-f]{32}", nonce)
+        or expected_decision is None
+        or intent.get("decision") != expected_decision
+        or not task_id
+        or not actor
+        or not message
+        or not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repository)
+        or not re.fullmatch(r"[0-9a-f]{64}", task_digest)
+        or not isinstance(binding, Mapping)
+        or not isinstance(transition_payload, Mapping)
+        or not str(intent.get("created_at") or "").strip()
+    ):
+        raise RuntimeError("review decision intent contract is invalid")
+    _validated_pr_binding(binding, task_id)
+    unsigned = {key: value for key, value in intent.items() if key != "intent_sha256"}
+    if intent.get("intent_sha256") != _canonical_json_sha256(unsigned):
+        raise RuntimeError("review decision intent digest mismatch")
+    return intent
+
+
+def pending_review_decision_intent(task: Mapping[str, Any]) -> dict[str, Any] | None:
+    raw = task.get(REVIEW_DECISION_INTENT_KEY)
+    if raw in (None, {}, []):
+        return None
+    return validate_review_decision_intent(raw)
+
+
+def _review_intent_request_matches(
+    intent: Mapping[str, Any],
+    *,
+    command: str,
+    args: list[str],
+    actor: str,
+) -> bool:
+    message = args[1] if len(args) >= 2 else ""
+    return (
+        intent.get("command") == command
+        and intent.get("task_id") == (args[0] if args else "")
+        and intent.get("actor") == actor
+        and intent.get("message") == message
+    )
+
+
+def enforce_pending_review_decision_fence(
+    task: Mapping[str, Any],
+    *,
+    command: str,
+    args: list[str],
+    allow_matching_resume: bool = False,
+) -> dict[str, Any] | None:
+    intent = pending_review_decision_intent(task)
+    if intent is None:
+        return None
+    actor = current_actor()
+    if allow_matching_resume and _review_intent_request_matches(
+        intent,
+        command=command,
+        args=args,
+        actor=actor,
+    ):
+        return intent
+    raise SystemExit(
+        f"{task.get('id') or 'task'} has pending {intent['command']} intent "
+        f"{intent['nonce']}; all other task mutations are blocked until the "
+        "same decision is retried and finalized"
+    )
+
+
+def _preflight_from_review_intent(
+    task: Mapping[str, Any], intent: Mapping[str, Any]
+) -> dict[str, Any]:
+    payload = deepcopy(dict(intent["transition_payload"]))
+    payload.update(
+        {
+            "command": str(intent["command"]),
+            "task_id": str(intent["task_id"]),
+            "task_digest": task_mutation_cas_digest(task),
+            REVIEW_DECISION_BRIDGE_REQUIRED_KEY: True,
+            REVIEW_DECISION_RESUME_KEY: True,
+            REVIEW_DECISION_EXACT_BINDING_KEY: deepcopy(intent["binding"]),
+            REVIEW_DECISION_REPOSITORY_KEY: str(intent["repository"]),
+        }
+    )
+    return payload
 
 
 def validate_task_lifecycle_transition(task: Mapping[str, Any], action: str) -> None:
@@ -7615,19 +8415,103 @@ def prepare_external_mutation_preflight(
 
     if command not in EXTERNAL_MUTATION_COMMANDS:
         raise RuntimeError(f"unsupported external mutation preflight: {command}")
-    if len(args) < 2:
-        raise SystemExit(f"Usage: {command} <task-id> <message>")
-    task_id, message = args[0], args[1]
+    minimum_args = 3 if command == "handoff" else 2
+    if len(args) < minimum_args:
+        usage = (
+            "handoff <task-id> <to-agent> <message>"
+            if command == "handoff"
+            else f"{command} <task-id> <message>"
+        )
+        raise SystemExit(f"Usage: {usage}")
+    task_id = args[0]
+    message = args[2] if command == "handoff" else args[1]
     if str(task.get("id") or "") != task_id:
         raise SystemExit(f"Unknown task: {task_id}")
     actor = current_actor()
     ensure_agent(actor)
+    existing_intent = pending_review_decision_intent(task)
+    if existing_intent is not None:
+        if command in {"approve", "operator_accept", "reopen"} and _review_intent_request_matches(
+            existing_intent,
+            command=command,
+            args=args,
+            actor=actor,
+        ):
+            return _preflight_from_review_intent(task, existing_intent)
+        raise SystemExit(
+            f"{task_id} has pending {existing_intent['command']} intent "
+            f"{existing_intent['nonce']}; retry that exact decision before {command}"
+        )
     digest = task_mutation_cas_digest(task)
     payload: dict[str, Any] = {
         "command": command,
         "task_id": task_id,
         "task_digest": digest,
     }
+
+    if command == "handoff":
+        to_agent = canonical_agent_name(args[1])
+        ensure_agent(to_agent)
+        if canonical_agent_name(task.get("owner")) != actor:
+            raise SystemExit(
+                f"Only the owner ({task.get('owner')}) can hand off {task_id} for review"
+            )
+        if canonical_agent_name(task.get("reviewer")) != to_agent:
+            raise SystemExit(
+                f"{task_id} handoff target must match the assigned reviewer "
+                f"({task.get('reviewer')}); reassign reviewer first if needed"
+            )
+        validate_task_lifecycle_transition(task, "handoff")
+        binding = resolve_handoff_delivery_binding(task, load_config())
+        manifest = binding.get("evidence_manifest")
+        if binding.get("kind") == "pull_request" and (
+            not isinstance(manifest, Mapping)
+            or not str(manifest.get("path") or "").strip()
+        ):
+            raise SystemExit(
+                f"{task_id} review admission returned no evidence manifest identity"
+            )
+        payload[DELIVERY_BINDING_KEY] = deepcopy(binding)
+        return payload
+
+    if command == "operator_accept":
+        if actor != "Human/Ops" or not local_human_ops_requested():
+            raise SystemExit(
+                "Only explicit local Human/Ops mode may record an operator acceptance"
+            )
+        validate_task_lifecycle_transition(task, "approve")
+        config = load_config()
+        delivery = require_current_pr_delivery_binding(task, action="operator accept")
+        binding = resolve_approval_binding(task)
+        validate_delivery_binding_for_approval(task, binding)
+        try:
+            repository_id = validate_task_repository_scope(config, task)
+        except (ValueError, RuntimeError) as exc:
+            raise SystemExit(f"Cannot operator-accept task {task_id}: {exc}") from exc
+        repository_slug_value = repository_slug(config, repository_id)
+        if not repository_slug_value:
+            raise SystemExit(
+                f"Cannot operator-accept task {task_id} without a GitHub repository slug"
+            )
+        candidate = deepcopy(task)
+        verdict_ref = validate_protected_closeout_transition(
+            candidate,
+            transition="review_approved",
+            transition_actor=actor,
+        )
+        payload.update(
+            {
+                APPROVAL_BINDING_KEY: dict(binding),
+                OPERATOR_ACCEPTANCE_KEY: {},
+                "protected_closeout_verdict": deepcopy(verdict_ref),
+                "delivery_kind": "pull_request",
+                "delivery_kind_reason": DELIVERY_BINDING_KEY,
+                REVIEW_DECISION_BRIDGE_REQUIRED_KEY: True,
+                REVIEW_DECISION_REPOSITORY_KEY: repository_slug_value,
+                REVIEW_DECISION_EXACT_BINDING_KEY: deepcopy(delivery),
+            }
+        )
+        return payload
 
     if command == "approve":
         if canonical_agent_name(task.get("reviewer")) != actor:
@@ -7636,13 +8520,51 @@ def prepare_external_mutation_preflight(
             )
         validate_task_lifecycle_transition(task, "approve")
         review_notes = parse_delimited_env("REVIEW_NOTES_ZH")
-        review_file = os.environ.get("REVIEW_FILE", "").strip()
+        requested_review_file = os.environ.get("REVIEW_FILE", "").strip()
         config = load_config()
+        delivery_kind, delivery_reason = review_gate_delivery_kind(task, config)
+        delivery = task.get(DELIVERY_BINDING_KEY)
+        if delivery_kind == "pull_request":
+            delivery = require_current_pr_delivery_binding(task, action="approve")
+        frozen_manifest = (
+            delivery.get("evidence_manifest")
+            if isinstance(delivery, Mapping)
+            else None
+        )
+        frozen_review_file = (
+            str(frozen_manifest.get("path") or "").strip()
+            if isinstance(frozen_manifest, Mapping)
+            else ""
+        )
+        if (
+            requested_review_file
+            and frozen_review_file
+            and requested_review_file != frozen_review_file
+        ):
+            raise SystemExit(
+                f"{task_id}: REVIEW_FILE={requested_review_file!r} differs from the "
+                f"manifest frozen at handoff ({frozen_review_file!r}); reopen and "
+                "hand off the intended exact delivery"
+            )
+        review_file = frozen_review_file or requested_review_file
         try:
             repository_id = validate_task_repository_scope(config, task)
         except (ValueError, RuntimeError) as exc:
             raise SystemExit(f"Cannot approve task {task_id}: {exc}") from exc
         repository_slug_value = repository_slug(config, repository_id)
+        if delivery_kind == "pull_request":
+            github_review_bridge = _github_review_bridge_module()
+            try:
+                github_review_bridge.revalidate_review_admission(
+                    repository=repository_slug_value,
+                    delivery_binding=delivery,
+                )
+            except github_review_bridge.GitHubReviewBridgeError as exc:
+                raise SystemExit(
+                    f"Cannot approve task {task_id}: review admission is missing or "
+                    f"stale: {exc}. Reopen, refresh the branch, and hand off the new "
+                    "exact head."
+                ) from exc
         binding = resolve_approval_binding(task)
         validate_delivery_binding_for_approval(task, binding)
         if review_file and binding and (
@@ -7668,30 +8590,26 @@ def prepare_external_mutation_preflight(
             candidate,
             transition="review_approved",
         )
-        try:
-            bridge_result = (
-                bridge_github_review_decision(
-                    task,
-                    actor=actor,
-                    decision="approve",
-                    message=message,
-                    binding=binding,
-                )
-                if binding
-                else {}
-            )
-        except ReviewBindingMismatchError as exc:
-            raise SystemExit(
-                f"GitHub rejected approval for {task_id}: {exc}. Reopen the task "
-                "and hand off the actual PR head before approving it."
-            ) from exc
         payload.update(
             {
                 "review_notes_zh": review_notes,
                 "review_file": review_file,
                 APPROVAL_BINDING_KEY: dict(binding),
-                GITHUB_REVIEW_BRIDGE_KEY: dict(bridge_result),
+                GITHUB_REVIEW_BRIDGE_KEY: {},
                 "protected_closeout_verdict": deepcopy(verdict_ref),
+                "delivery_kind": delivery_kind,
+                "delivery_kind_reason": delivery_reason,
+                REVIEW_DECISION_BRIDGE_REQUIRED_KEY: bool(binding),
+                **(
+                    {REVIEW_DECISION_REPOSITORY_KEY: repository_slug_value}
+                    if binding
+                    else {}
+                ),
+                **(
+                    {REVIEW_DECISION_EXACT_BINDING_KEY: deepcopy(delivery)}
+                    if binding and isinstance(delivery, Mapping)
+                    else {}
+                ),
             }
         )
         return payload
@@ -7706,7 +8624,8 @@ def prepare_external_mutation_preflight(
             )
         validate_task_lifecycle_transition(task, "reopen")
         binding: dict[str, Any] = {}
-        bridge_result: dict[str, Any] = {}
+        exact_binding: dict[str, Any] = {}
+        repository_slug_value = ""
         if actor == reviewer:
             explicit_binding = bool(
                 os.environ.get("REVIEW_PR", "").strip()
@@ -7719,32 +8638,52 @@ def prepare_external_mutation_preflight(
             elif isinstance(task.get(APPROVAL_BINDING_KEY), Mapping):
                 binding = dict(task[APPROVAL_BINDING_KEY])
             if binding:
+                delivery = task.get(DELIVERY_BINDING_KEY)
+                exact_binding = (
+                    deepcopy(dict(delivery))
+                    if isinstance(delivery, Mapping)
+                    and str(delivery.get("kind") or "") == "pull_request"
+                    else deepcopy(binding)
+                )
+                config = load_config()
                 try:
-                    bridge_result = bridge_github_review_decision(
-                        task,
-                        actor=actor,
-                        decision="reopen",
-                        message=message,
-                        binding=binding,
+                    repository_id = validate_task_repository_scope(config, task)
+                except (ValueError, RuntimeError) as exc:
+                    raise SystemExit(f"Cannot reopen task {task_id}: {exc}") from exc
+                repository_slug_value = repository_slug(config, repository_id) or ""
+                if not repository_slug_value:
+                    raise SystemExit(
+                        f"Cannot reopen task {task_id} without a GitHub repository slug"
                     )
-                except ReviewBindingMismatchError as exc:
-                    # A definitive PR identity mismatch is itself proof that
-                    # this canonical binding cannot stay reviewable.  Reopen
-                    # through the existing CAS-bound lifecycle command and let
-                    # the owner hand off the actual head.  Network/CLI errors
-                    # remain fail-closed in bridge_github_review_decision.
-                    payload[REVIEW_BINDING_MISMATCH_PREFLIGHT_KEY] = str(exc)
         payload.update(
             {
                 APPROVAL_BINDING_KEY: dict(binding),
-                GITHUB_REVIEW_BRIDGE_KEY: dict(bridge_result),
+                GITHUB_REVIEW_BRIDGE_KEY: {},
+                REVIEW_DECISION_BRIDGE_REQUIRED_KEY: bool(binding),
+                **(
+                    {REVIEW_DECISION_REPOSITORY_KEY: repository_slug_value}
+                    if binding
+                    else {}
+                ),
+                **(
+                    {REVIEW_DECISION_EXACT_BINDING_KEY: exact_binding}
+                    if exact_binding
+                    else {}
+                ),
             }
         )
         return payload
 
     if command == "reconcile_merged_done":
         current_reviewer = canonical_agent_name(task.get("reviewer"))
-        if actor != "Human/Ops" and actor != current_reviewer:
+        operator_accepted = operator_acceptance_evidence_matches(task)
+        if operator_accepted and (
+            actor != "Human/Ops" or not local_human_ops_requested()
+        ):
+            raise SystemExit(
+                "Only explicit local Human/Ops may close an operator-accepted exact head"
+            )
+        if not operator_accepted and actor != "Human/Ops" and actor != current_reviewer:
             raise SystemExit(
                 "Only Human/Ops or the task's current reviewer "
                 f"({current_reviewer or 'unknown'}) can reconcile an already-merged "
@@ -7754,7 +8693,14 @@ def prepare_external_mutation_preflight(
         delivery_class = str(
             os.environ.get("RECONCILE_DELIVERY_CLASS") or ""
         ).strip()
-        if delivery_class:
+        if operator_accepted:
+            if delivery_class:
+                raise SystemExit(
+                    "RECONCILE_DELIVERY_CLASS is not valid for operator exact-head closeout"
+                )
+            delivery = validate_operator_accepted_merged_delivery(task)
+            verdict_ref = None
+        elif delivery_class:
             if delivery_class != "development_tooling":
                 raise SystemExit(
                     "RECONCILE_DELIVERY_CLASS must be development_tooling when set"
@@ -7787,7 +8733,23 @@ def prepare_external_mutation_preflight(
         )
     validate_task_lifecycle_transition(task, "done")
     candidate = deepcopy(task)
-    done_review_file = os.environ.get("REVIEW_FILE", "").strip()
+    config = load_config()
+    delivery_kind, delivery_reason = review_gate_delivery_kind(candidate, config)
+    if delivery_kind == "pull_request":
+        delivery = require_current_pr_delivery_binding(candidate, action="finalize")
+        frozen_manifest = delivery["evidence_manifest"]
+        assert isinstance(frozen_manifest, Mapping)
+        frozen_review_file = str(frozen_manifest.get("path") or "").strip()
+        done_review_file = os.environ.get("REVIEW_FILE", "").strip()
+        if done_review_file and done_review_file != frozen_review_file:
+            raise SystemExit(
+                f"{task_id}: REVIEW_FILE={done_review_file!r} differs from the "
+                f"manifest frozen at handoff ({frozen_review_file!r}); reopen and "
+                "re-handoff the intended exact PR delivery"
+            )
+        done_review_file = ""
+    else:
+        done_review_file = os.environ.get("REVIEW_FILE", "").strip()
     if done_review_file and not candidate.get("review_file"):
         approved_head_sha = str(
             (candidate.get(APPROVAL_BINDING_KEY) or {}).get("head_sha") or ""
@@ -7827,9 +8789,333 @@ def prepare_external_mutation_preflight(
             "review_file": done_review_file if not task.get("review_file") else "",
             "delivery": deepcopy(delivery),
             "protected_closeout_verdict": deepcopy(verdict_ref),
+            "delivery_kind": delivery_kind,
+            "delivery_kind_reason": delivery_reason,
         }
     )
     return payload
+
+
+def reserve_review_decision_intent(
+    state: dict[str, Any],
+    *,
+    command: str,
+    args: list[str],
+    preflight: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Durably reserve one exact GitHub decision before performing its I/O."""
+
+    task_id = args[0] if args else ""
+    task = get_task(state, task_id)
+    if task is None:
+        raise SystemExit(f"Unknown task: {task_id}")
+    existing = enforce_pending_review_decision_fence(
+        task,
+        command=command,
+        args=args,
+        allow_matching_resume=True,
+    )
+    if existing is not None:
+        if review_decision_task_digest(task) != existing["task_digest"]:
+            raise SystemExit(
+                f"{task_id} changed while review decision intent {existing['nonce']} "
+                "was pending; refusing to replay GitHub authority"
+            )
+        return deepcopy(task)
+
+    validated = validate_external_mutation_preflight(command, task, preflight)
+    if not validated.get(REVIEW_DECISION_BRIDGE_REQUIRED_KEY):
+        raise RuntimeError("review decision reservation requires GitHub bridge I/O")
+    binding = validated.get(REVIEW_DECISION_EXACT_BINDING_KEY)
+    if not isinstance(binding, Mapping):
+        raise RuntimeError("review decision reservation has no exact binding")
+    _validated_pr_binding(binding, task_id)
+    repository = str(validated.get(REVIEW_DECISION_REPOSITORY_KEY) or "").strip()
+    if not repository:
+        raise RuntimeError("review decision reservation has no repository identity")
+    transition_payload = {
+        key: deepcopy(value)
+        for key, value in validated.items()
+        if key
+        not in {
+            "command",
+            "task_id",
+            "task_digest",
+            REVIEW_DECISION_BRIDGE_REQUIRED_KEY,
+            REVIEW_DECISION_RESUME_KEY,
+            REVIEW_DECISION_EXACT_BINDING_KEY,
+            REVIEW_DECISION_REPOSITORY_KEY,
+            GITHUB_REVIEW_BRIDGE_KEY,
+            REVIEW_BINDING_MISMATCH_PREFLIGHT_KEY,
+        }
+    }
+    unsigned = {
+        "schema_version": REVIEW_DECISION_INTENT_SCHEMA_VERSION,
+        "nonce": secrets.token_hex(16),
+        "command": command,
+        "decision": command,
+        "task_id": task_id,
+        "task_digest": review_decision_task_digest(task),
+        "actor": current_actor(),
+        "message": args[1],
+        "repository": repository,
+        "binding": deepcopy(dict(binding)),
+        "transition_payload": transition_payload,
+        "created_at": iso_now(),
+    }
+    intent = {
+        **unsigned,
+        "intent_sha256": _canonical_json_sha256(unsigned),
+    }
+    validate_review_decision_intent(intent)
+    task[REVIEW_DECISION_INTENT_KEY] = intent
+    # Reservation is itself the canonical outbox commit. It deliberately does
+    # not recover or replace an unrelated pending audit/archive outbox.
+    save_state(state)
+    return deepcopy(task)
+
+
+def execute_review_decision_intent(task: Mapping[str, Any]) -> dict[str, Any]:
+    """Perform idempotent GitHub I/O for one durable intent, lock-free."""
+
+    intent = pending_review_decision_intent(task)
+    if intent is None:
+        raise RuntimeError("review decision GitHub I/O requires a pending intent")
+    task_id = str(intent["task_id"])
+    if review_decision_task_digest(task) != intent["task_digest"]:
+        raise SystemExit(
+            f"{task_id} changed while review decision intent {intent['nonce']} was "
+            "pending; refusing GitHub I/O"
+        )
+    config = load_config()
+    try:
+        repository_id = validate_task_repository_scope(config, dict(task))
+    except (ValueError, RuntimeError) as exc:
+        raise SystemExit(f"GitHub review intent rejected for {task_id}: {exc}") from exc
+    repository_slug_value = repository_slug(config, repository_id)
+    if not repository_slug_value:
+        raise SystemExit(f"GitHub review intent has no repository slug for {task_id}")
+    if repository_slug_value != intent["repository"]:
+        raise SystemExit(
+            f"GitHub repository identity changed while review intent {intent['nonce']} "
+            "was pending"
+        )
+
+    binding = deepcopy(dict(intent["binding"]))
+    command = str(intent["command"])
+    admission = None
+    if command in {"approve", "operator_accept"}:
+        github_review_bridge = _github_review_bridge_module()
+        try:
+            admission = github_review_bridge.revalidate_review_admission(
+                repository=repository_slug_value,
+                delivery_binding=binding,
+                allow_base_advance=(command == "operator_accept"),
+            )
+        except github_review_bridge.GitHubReviewBridgeError as exc:
+            raise ReviewIntentAdmissionInvalid(
+                task_id=task_id,
+                nonce=str(intent["nonce"]),
+                detail=(
+                    f"Cannot approve task {task_id}: the reserved exact delivery is "
+                    f"no longer an open, current review admission: {exc}"
+                ),
+            ) from exc
+    result = deepcopy(dict(intent["transition_payload"]))
+    result.update(
+        {
+            "command": command,
+            "task_id": task_id,
+            "intent_nonce": str(intent["nonce"]),
+        }
+    )
+    if command == "operator_accept":
+        try:
+            evidence = github_review_bridge.bridge_operator_acceptance(
+                repository=repository_slug_value,
+                task_id=task_id,
+                actor=str(intent["actor"]),
+                message=str(intent["message"]),
+                binding=binding,
+                intent_nonce=str(intent["nonce"]),
+                current_admission=admission,
+            )
+        except github_review_bridge.GitHubReviewBridgeError as exc:
+            raise SystemExit(
+                f"GitHub rejected operator acceptance for {task_id}: {exc}"
+            ) from exc
+        result[OPERATOR_ACCEPTANCE_KEY] = dict(evidence)
+        return result
+    try:
+        evidence = bridge_github_review_decision(
+            dict(task),
+            actor=str(intent["actor"]),
+            decision=str(intent["decision"]),
+            message=str(intent["message"]),
+            binding=binding,
+            intent_nonce=str(intent["nonce"]),
+        )
+    except ReviewBindingMismatchError as exc:
+        if command != "reopen":
+            raise SystemExit(
+                f"GitHub rejected approval for {task_id}: {exc}. Reopen the task "
+                "and hand off the actual PR head before approving it."
+            ) from exc
+        result[REVIEW_BINDING_MISMATCH_PREFLIGHT_KEY] = str(exc)
+        result[GITHUB_REVIEW_BRIDGE_KEY] = {}
+        return result
+    result[GITHUB_REVIEW_BRIDGE_KEY] = dict(evidence)
+    return result
+
+
+def finalize_review_decision_intent(
+    state: dict[str, Any],
+    *,
+    command: str,
+    args: list[str],
+    external_result: Mapping[str, Any],
+) -> dict[str, Any]:
+    """CAS the reserved intent, then atomically transition, evidence, clear."""
+
+    task_id = args[0] if args else ""
+    task = get_task(state, task_id)
+    if task is None:
+        raise SystemExit(f"Unknown task: {task_id}")
+    intent = enforce_pending_review_decision_fence(
+        task,
+        command=command,
+        args=args,
+        allow_matching_resume=True,
+    )
+    if intent is None:
+        raise SystemExit(f"{task_id} review decision intent is no longer pending")
+    if (
+        external_result.get("command") != command
+        or external_result.get("task_id") != task_id
+        or external_result.get("intent_nonce") != intent["nonce"]
+    ):
+        raise SystemExit(f"{task_id} GitHub result does not match its pending intent")
+    if review_decision_task_digest(task) != intent["task_digest"]:
+        raise SystemExit(
+            f"{task_id} changed while review decision intent {intent['nonce']} was "
+            "pending; refusing stale finalization"
+        )
+
+    mismatch = str(
+        external_result.get(REVIEW_BINDING_MISMATCH_PREFLIGHT_KEY) or ""
+    ).strip()
+    evidence = external_result.get(GITHUB_REVIEW_BRIDGE_KEY)
+    operator_evidence = external_result.get(OPERATOR_ACCEPTANCE_KEY)
+    if mismatch:
+        if command != "reopen" or evidence not in (None, {}, []):
+            raise SystemExit("only reviewer reopen may finalize a binding mismatch")
+    elif command == "operator_accept":
+        if not isinstance(operator_evidence, Mapping):
+            raise SystemExit(f"{task_id} operator intent produced no acceptance evidence")
+        github_review_bridge = _github_review_bridge_module()
+        try:
+            github_review_bridge.validate_operator_acceptance_evidence(
+                operator_evidence,
+                repository=str(intent["repository"]),
+                actor=str(intent["actor"]),
+                binding=intent["binding"],
+                intent_nonce=str(intent["nonce"]),
+            )
+        except github_review_bridge.GitHubReviewBridgeError as exc:
+            raise SystemExit(
+                f"{task_id} operator acceptance evidence is invalid: {exc}"
+            ) from exc
+    else:
+        if not isinstance(evidence, Mapping):
+            raise SystemExit(f"{task_id} review intent produced no GitHub evidence")
+        github_review_bridge = _github_review_bridge_module()
+        try:
+            github_review_bridge.validate_result_evidence(
+                evidence,
+                repository=str(intent["repository"]),
+                actor=str(intent["actor"]),
+                decision=str(intent["decision"]),
+                binding=intent["binding"],
+                intent_nonce=str(intent["nonce"]),
+            )
+        except github_review_bridge.GitHubReviewBridgeError as exc:
+            raise SystemExit(f"{task_id} GitHub intent evidence is invalid: {exc}") from exc
+
+    # Existing audit/archive outboxes predate the reservation. They are safe to
+    # recover only now, after admission and GitHub I/O succeeded. Recheck the
+    # intent on both sides of recovery so projection work cannot mask drift.
+    recover_status_archive_outbox(state)
+    recover_status_activity_outbox(state)
+    task = get_task(state, task_id)
+    if task is None:
+        raise SystemExit(f"{task_id} disappeared during outbox recovery")
+    current_intent = pending_review_decision_intent(task)
+    if current_intent != intent or review_decision_task_digest(task) != intent["task_digest"]:
+        raise SystemExit(f"{task_id} changed during review intent finalization")
+
+    final_preflight = deepcopy(dict(intent["transition_payload"]))
+    final_preflight.update(
+        {
+            "command": command,
+            "task_id": task_id,
+            "task_digest": task_mutation_cas_digest(task),
+            GITHUB_REVIEW_BRIDGE_KEY: deepcopy(dict(evidence))
+            if isinstance(evidence, Mapping)
+            else {},
+            OPERATOR_ACCEPTANCE_KEY: deepcopy(dict(operator_evidence))
+            if isinstance(operator_evidence, Mapping)
+            else {},
+            **(
+                {REVIEW_BINDING_MISMATCH_PREFLIGHT_KEY: mismatch}
+                if mismatch
+                else {}
+            ),
+        }
+    )
+    function = {
+        "approve": command_approve,
+        "operator_accept": command_operator_accept,
+        "reopen": command_reopen,
+    }[command]
+    with bound_external_mutation_preflight(final_preflight):
+        with buffer_activity_events():
+            function(state, args)
+            sync_all(state, refresh_views=False)
+    return deepcopy(state)
+
+
+def abort_review_decision_intent(
+    state: dict[str, Any],
+    *,
+    command: str,
+    args: list[str],
+    nonce: str,
+) -> dict[str, Any]:
+    """Clear only a reservation whose read-only re-admission failed."""
+
+    task_id = args[0] if args else ""
+    task = get_task(state, task_id)
+    if task is None:
+        raise SystemExit(f"Unknown task: {task_id}")
+    intent = enforce_pending_review_decision_fence(
+        task,
+        command=command,
+        args=args,
+        allow_matching_resume=True,
+    )
+    if intent is None:
+        raise SystemExit(f"{task_id} review decision intent is no longer pending")
+    if (
+        intent["nonce"] != nonce
+        or review_decision_task_digest(task) != intent["task_digest"]
+    ):
+        raise SystemExit(
+            f"{task_id} changed while aborting invalid review intent; leaving it "
+            "fenced for explicit recovery"
+        )
+    task.pop(REVIEW_DECISION_INTENT_KEY, None)
+    save_state(state)
+    return deepcopy(state)
 
 
 @contextmanager
@@ -7850,12 +9136,13 @@ def bound_external_mutation_preflight(
             _EXTERNAL_MUTATION_PREFLIGHT_LOCAL.value = previous
 
 
-def consume_external_mutation_preflight(
-    command: str, task: Mapping[str, Any]
+def validate_external_mutation_preflight(
+    command: str,
+    task: Mapping[str, Any],
+    value: Mapping[str, Any] | None,
 ) -> dict[str, Any]:
-    """Validate prepared external evidence under the canonical write lock."""
+    """CAS-check prepared external evidence before any canonical mutation."""
 
-    value = getattr(_EXTERNAL_MUTATION_PREFLIGHT_LOCAL, "value", None)
     if not isinstance(value, Mapping):
         raise RuntimeError(
             f"{command} requires lock-free external mutation preflight"
@@ -7872,6 +9159,63 @@ def consume_external_mutation_preflight(
             f"discarding stale {command} result and requiring a fresh attempt"
         )
     return deepcopy(dict(value))
+
+
+def consume_external_mutation_preflight(
+    command: str, task: Mapping[str, Any]
+) -> dict[str, Any]:
+    """Consume evidence already CAS-checked under the canonical write lock."""
+
+    value = getattr(_EXTERNAL_MUTATION_PREFLIGHT_LOCAL, "value", None)
+    return validate_external_mutation_preflight(command, task, value)
+
+
+def command_operator_accept(state: dict[str, Any], args: list[str]) -> None:
+    """Record an explicit Human/Ops acceptance without relabelling it review."""
+
+    if len(args) < 2:
+        raise SystemExit("Usage: operator_accept <task-id> <message>")
+    task_id, message = args[0], args[1]
+    actor = current_actor()
+    if actor != "Human/Ops" or not local_human_ops_requested():
+        raise SystemExit("Only explicit local Human/Ops mode may record an operator acceptance")
+    task = get_task(state, task_id)
+    if task is None:
+        raise SystemExit(f"Unknown task: {task_id}")
+    preflight = consume_external_mutation_preflight("operator_accept", task)
+    binding = dict(preflight.get(APPROVAL_BINDING_KEY) or {})
+    acceptance = dict(preflight.get(OPERATOR_ACCEPTANCE_KEY) or {})
+    verdict_ref = deepcopy(preflight.get("protected_closeout_verdict"))
+    if not binding or not acceptance:
+        raise RuntimeError("operator acceptance requires exact-head binding and evidence")
+
+    timestamp = iso_now()
+    task.pop(REVIEW_DECISION_INTENT_KEY, None)
+    apply_task_lifecycle_transition(task, "approve")
+    task[APPROVAL_BINDING_KEY] = binding
+    task[OPERATOR_ACCEPTANCE_KEY] = acceptance
+    # A direct operator acceptance replaces the pending peer-review handoff;
+    # leave no hidden reviewer obligation after the task is review_approved.
+    task.pop(GITHUB_REVIEW_BRIDGE_KEY, None)
+    task["last_update"] = timestamp
+    task["next"] = message
+    task.pop("waiting_for", None)
+    if verdict_ref is not None:
+        task["protected_closeout_verdict"] = verdict_ref
+    mark_blockers_resolved(state, task_id)
+    mark_handoffs_done(state, task_id)
+    append_log(
+        {
+            "ts": timestamp,
+            "agent": actor,
+            "type": "operator_accepted",
+            "task_id": task_id,
+            "message": message,
+            APPROVAL_BINDING_KEY: binding,
+            OPERATOR_ACCEPTANCE_KEY: acceptance,
+            **local_human_ops_audit_fields(),
+        }
+    )
 
 
 def command_approve(state: dict[str, Any], args: list[str]) -> None:
@@ -7893,6 +9237,7 @@ def command_approve(state: dict[str, Any], args: list[str]) -> None:
     github_review_bridge = dict(preflight.get(GITHUB_REVIEW_BRIDGE_KEY) or {})
 
     timestamp = iso_now()
+    task.pop(REVIEW_DECISION_INTENT_KEY, None)
     apply_task_lifecycle_transition(task, "approve")
     task["last_update"] = timestamp
     task["next"] = message
@@ -8856,6 +10201,11 @@ def run_supervisor_dispatch_batch(
         task = get_task(state, task_id)
         if task is None:
             raise RuntimeError(f"Supervisor dispatch batch task is missing: {task_id}")
+        if pending_review_decision_intent(task) is not None:
+            raise RuntimeError(
+                f"Supervisor dispatch batch is fenced by pending review decision "
+                f"intent for {task_id}"
+            )
         if str(task.get("owner") or "").strip() != actor:
             raise RuntimeError(
                 f"Supervisor dispatch batch owner CAS failed for {task_id}: "
@@ -9273,6 +10623,12 @@ def run_dev_bridge_materialize_batch(
     results: list[dict[str, Any]] = []
     for row in batch["tasks"]:
         task_id = str(row["task_id"])
+        existing = get_task(state, task_id)
+        if existing is not None and pending_review_decision_intent(existing) is not None:
+            raise SystemExit(
+                f"Dev bridge materialization is fenced by pending review decision "
+                f"intent for {task_id}"
+            )
         with dev_bridge_materialize_mutation_environment(row, actor):
             outcome = commands["assign"](
                 state,
@@ -9392,6 +10748,78 @@ def canonical_external_mutation_preflight(
     return prepare_external_mutation_preflight(command, task_snapshot, args)
 
 
+def run_two_phase_review_decision(
+    command: str,
+    args: list[str],
+    preflight: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Reserve -> unlock GitHub -> CAS finalize for PR approve/reopen."""
+
+    config = load_config()
+    reserved_task: dict[str, Any]
+    with runtime_state_lock(config, shared=True):
+        validate_active_status_command_lease(command, args)
+        with canonical_task_state_lock(shared=False):
+            with authoritative_task_state_transaction():
+                state = load_state()
+                task_id = args[0] if args else ""
+                task = get_task(state, task_id)
+                if task is None:
+                    raise SystemExit(f"Unknown task: {task_id}")
+                enforce_pending_review_decision_fence(
+                    task,
+                    command=command,
+                    args=args,
+                    allow_matching_resume=True,
+                )
+                validate_bound_status_command_task_authority(state, command, args)
+                reserved_task = reserve_review_decision_intent(
+                    state,
+                    command=command,
+                    args=args,
+                    preflight=preflight,
+                )
+
+    # This is the only network-writing phase. No runtime, canonical task, or
+    # activity lock is held here.
+    try:
+        external_result = execute_review_decision_intent(reserved_task)
+    except ReviewIntentAdmissionInvalid as exc:
+        # Re-admission is read-only and runs before bridge_review_decision, so
+        # this is the one failure class that can safely release the fence.
+        # Any bridge failure may be partial and intentionally leaves the same
+        # nonce pending for an idempotent retry.
+        with runtime_state_lock(config, shared=True):
+            validate_active_status_command_lease(command, args)
+            with canonical_task_state_lock(shared=False):
+                with authoritative_task_state_transaction():
+                    state = load_state()
+                    aborted_state = abort_review_decision_intent(
+                        state,
+                        command=command,
+                        args=args,
+                        nonce=exc.nonce,
+                    )
+        refresh_derived_status_views_if_current(aborted_state)
+        raise SystemExit(str(exc)) from exc
+
+    committed_state: dict[str, Any]
+    with runtime_state_lock(config, shared=True):
+        validate_active_status_command_lease(command, args)
+        with canonical_task_state_lock(shared=False):
+            with authoritative_task_state_transaction():
+                state = load_state()
+                validate_bound_status_command_task_authority(state, command, args)
+                committed_state = finalize_review_decision_intent(
+                    state,
+                    command=command,
+                    args=args,
+                    external_result=external_result,
+                )
+    refresh_derived_status_views_if_current(committed_state)
+    return committed_state
+
+
 def main(argv: list[str]) -> int:
     validate_status_command_runtime_binding()
     validate_status_root_binding()
@@ -9413,6 +10841,7 @@ def main(argv: list[str]) -> int:
         "dependency-track": command_dependency_track,
         "execution-resource": command_execution_resource,
         "reopen": command_reopen,
+        "resume_integration": command_resume_integration,
         "handoff": command_handoff,
         "blocker": command_blocker,
         "done": command_done,
@@ -9420,6 +10849,7 @@ def main(argv: list[str]) -> int:
         "supersede": command_supersede,
         "retire_archive_collision": command_retire_archive_collision,
         "approve": command_approve,
+        "operator_accept": command_operator_accept,
         "record_terminal_fact": command_record_terminal_fact,
         "archive_reconcile": command_archive_reconcile,
         "archive_correct_review_file": command_archive_correct_review_file,
@@ -9722,8 +11152,33 @@ def main(argv: list[str]) -> int:
         else None
     )
 
+    if (
+        command in {"approve", "operator_accept", "reopen"}
+        and external_preflight is not None
+        and external_preflight.get(REVIEW_DECISION_BRIDGE_REQUIRED_KEY)
+    ):
+        run_two_phase_review_decision(command, args, external_preflight)
+        return 0
+
     def run_mutation() -> dict[str, Any] | None:
         state = load_state()
+        task_id = args[0] if args else ""
+        task = get_task(state, task_id) if task_id else None
+        if task is not None:
+            enforce_pending_review_decision_fence(
+                task,
+                command=command,
+                args=args,
+            )
+        if external_preflight is not None:
+            task = get_task(state, task_id)
+            if task is None:
+                raise SystemExit(f"Unknown task: {task_id}")
+            validate_external_mutation_preflight(
+                command,
+                task,
+                external_preflight,
+            )
         if local_human_ops_requested():
             dev_bridge_replay_ledger(state)
         validate_bound_status_command_task_authority(state, command, args)

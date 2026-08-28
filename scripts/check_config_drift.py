@@ -190,6 +190,33 @@ def parse_repository_source_roots(values: list[str] | None) -> dict[str, str]:
     return roots
 
 
+def parse_repository_integration_roots(values: list[str] | None) -> dict[str, str]:
+    """Parse deployment-owned dedicated merge checkout topology."""
+
+    roots: dict[str, str] = {}
+    for raw_value in values or []:
+        repository_id, separator, raw_path = str(raw_value).partition("=")
+        repository_id = repository_id.strip()
+        raw_path = raw_path.strip()
+        if (
+            not separator
+            or not re.fullmatch(r"[a-z][a-z0-9_]*", repository_id)
+            or not raw_path
+        ):
+            raise ValueError(
+                "repository integration root must use "
+                "repository_id=/absolute/git/root"
+            )
+        candidate = Path(os.path.expanduser(raw_path))
+        if not candidate.is_absolute():
+            raise ValueError(
+                f"repository integration root for {repository_id} must be "
+                f"absolute: {raw_path}"
+            )
+        roots[repository_id] = str(candidate.resolve(strict=False))
+    return roots
+
+
 def find_repository_source_drift(
     live_cfg: dict,
     expected_roots: dict[str, str],
@@ -219,6 +246,35 @@ def find_repository_source_drift(
     return drift
 
 
+def find_repository_integration_drift(
+    live_cfg: dict,
+    expected_roots: dict[str, str],
+) -> list[dict[str, str | None]]:
+    """Return dedicated integration checkout topology mismatches."""
+
+    repositories = ((live_cfg.get("coordination") or {}).get("repositories") or {})
+    if not isinstance(repositories, dict):
+        repositories = {}
+    drift: list[dict[str, str | None]] = []
+    for repository_id, expected in expected_roots.items():
+        entry = repositories.get(repository_id)
+        actual_raw = entry.get("integration_path") if isinstance(entry, dict) else None
+        actual = (
+            str(Path(str(actual_raw)).expanduser().resolve(strict=False))
+            if isinstance(actual_raw, str) and actual_raw.strip()
+            else None
+        )
+        if actual != expected:
+            drift.append(
+                {
+                    "repository_id": repository_id,
+                    "expected_integration_path": expected,
+                    "live_integration_path": actual,
+                }
+            )
+    return drift
+
+
 def main(argv: list[str] | None = None) -> int:
     repo_root = Path(__file__).resolve().parents[1]
     parser = argparse.ArgumentParser(description=__doc__)
@@ -239,6 +295,13 @@ def main(argv: list[str] | None = None) -> int:
         metavar="REPOSITORY_ID=/ABSOLUTE/GIT/ROOT",
         help="Fail when a live registry source root differs from deployment topology.",
     )
+    parser.add_argument(
+        "--repository-integration-root",
+        action="append",
+        default=[],
+        metavar="REPOSITORY_ID=/ABSOLUTE/GIT/ROOT",
+        help="Fail when a live dedicated merge root differs from deployment topology.",
+    )
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
 
@@ -250,6 +313,12 @@ def main(argv: list[str] | None = None) -> int:
     repository_source_roots = parse_repository_source_roots(args.repository_source_root)
     repository_source_drift = find_repository_source_drift(
         live_cfg, repository_source_roots
+    )
+    repository_integration_roots = parse_repository_integration_roots(
+        args.repository_integration_root
+    )
+    repository_integration_drift = find_repository_integration_drift(
+        live_cfg, repository_integration_roots
     )
     behind = None
     if args.dev_root:
@@ -266,11 +335,16 @@ def main(argv: list[str] | None = None) -> int:
     behind_fail = (args.max_behind is not None and behind is not None
                    and behind > args.max_behind)
     # After --fix, drift is resolved; only unresolved drift fails.
-    drift_fail = (bool(report["drift"]) and not args.fix) or bool(repository_source_drift)
+    drift_fail = (
+        (bool(report["drift"]) and not args.fix)
+        or bool(repository_source_drift)
+        or bool(repository_integration_drift)
+    )
     exit_code = 1 if (drift_fail or behind_fail) else 0
 
     if args.json:
         print(json.dumps({**report, "repository_source_drift": repository_source_drift,
+                          "repository_integration_drift": repository_integration_drift,
                           "dev_root_behind": behind,
                           "fixed": fixed, "exit_code": exit_code}, indent=2))
         return exit_code
@@ -289,10 +363,22 @@ def main(argv: list[str] | None = None) -> int:
             f"{item['repository_id']}: expected={item['expected_local_path']!r} "
             f"live={item['live_local_path']!r}"
         )
+    for item in repository_integration_drift:
+        print(
+            "[INTEGRATION_ROOT_DRIFT] "
+            f"{item['repository_id']}: "
+            f"expected={item['expected_integration_path']!r} "
+            f"live={item['live_integration_path']!r}"
+        )
     if behind is not None:
         flag = " (STALE)" if behind_fail else ""
         print(f"[dev-root] {args.dev_root} is {behind} commit(s) behind {args.ref}{flag}")
-    if exit_code == 0 and not report["drift"] and not repository_source_drift:
+    if (
+        exit_code == 0
+        and not report["drift"]
+        and not repository_source_drift
+        and not repository_integration_drift
+    ):
         print("OK: no actionable config drift.")
     return exit_code
 

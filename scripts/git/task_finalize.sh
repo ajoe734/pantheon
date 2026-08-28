@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Push a task/<TASK-ID> branch and open its PR into dev with auto-merge.
+# Push a task/<TASK-ID> branch and open its PR into dev.
 #
 # Usage: scripts/git/task_finalize.sh <TASK-ID> [--title <title>] [--body <body>] [--body-file <path>]
 #
 # Defaults:
 #   * Title  = HEAD commit subject
 #   * Body   = HEAD commit body (everything after the subject line)
-#   * Labels = auto-merge
+#   * Merge  = canonical supervisor integration runner only
 #
 # Refuses to push if the local task branch is not ahead of origin/dev or
 # if the branch name doesn't follow the task/<TASK-ID> convention.
@@ -15,13 +15,12 @@
 # helper. `scripts/git/task_review_merge_gate.py` resolves the policy:
 #
 #   review_before_merge (default, and forced for any task with an independent
-#     reviewer) -- the PR is opened with auto-merge OFF. The exact assigned
-#     reviewer approves the exact PR head, then
-#     `scripts/git/auto_integrator.py --execute --task-id <TASK-ID>` merges it.
+#     reviewer) -- the PR is opened with auto-merge OFF. The owner freezes the
+#     exact PR/head/manifest at handoff; the assigned reviewer approves it, then
+#     the canonical supervisor integration runner merges it.
 #
-#   merge_then_review -- only when the canonical row declares it and requires
-#     no independent review. `--auto --merge` is enabled as before so CI green
-#     completes the PR.
+#   merge_then_review -- the canonical runner may honor this policy, but this
+#     helper still leaves auto-merge OFF and never issues a merge request.
 #
 # Do not run `scripts/ai-status.sh done` until GitHub reports the PR merged.
 
@@ -160,7 +159,7 @@ if [[ "$LOOKUP_RC" -ne 0 ]]; then
   exit 4
 fi
 
-if [[ "$MERGE_POLICY" == "review_before_merge" && -n "$EXISTING_PR" ]]; then
+if [[ -n "$EXISTING_PR" ]]; then
   echo "→ revoke any standing merge grant before changing existing PR #$EXISTING_PR"
   ensure_auto_merge_off "$EXISTING_PR" "before push" || exit 4
 fi
@@ -184,9 +183,6 @@ PR_ARGS=(
   --head "$TASK_BRANCH"
   --title "$CUSTOM_TITLE"
 )
-if [[ "$MERGE_POLICY" == "merge_then_review" ]]; then
-  PR_ARGS+=(--label auto-merge)
-fi
 if [[ -n "$CUSTOM_BODY_FILE" ]]; then
   PR_ARGS+=(--body-file "$CUSTOM_BODY_FILE")
 else
@@ -211,34 +207,30 @@ fi
 
 PR_TARGET="${EXISTING_PR:-$TASK_BRANCH}"
 
-if [[ "$MERGE_POLICY" == "merge_then_review" ]]; then
-  echo "→ enable auto-merge (canonical contract permits merge-then-review)"
-  gh pr merge "$PR_TARGET" --auto --merge
-else
-  # Re-read after the push/create too. The pre-push revocation closes the
-  # existing-PR race; this second proof catches a concurrent re-arm.
-  echo "→ auto-merge withheld until the assigned reviewer approves this exact head"
-  ensure_auto_merge_off "$PR_TARGET" "after push/open" || exit 4
-fi
+# Re-read after the push/create too. The pre-push revocation closes the
+# existing-PR race; this second proof catches a concurrent re-arm. Revocation
+# is the only merge-related mutation this helper owns.
+echo "→ submit PR to canonical supervisor integration runner with auto-merge off"
+ensure_auto_merge_off "$PR_TARGET" "after push/open" || exit 4
 
 PR_URL=$(gh pr view "$PR_TARGET" --json url -q '.url' 2>/dev/null || echo "")
-if [[ "$MERGE_POLICY" == "merge_then_review" ]]; then
-  echo "✓ task $TASK_ID PR is open with auto-merge enabled"
-else
-  echo "✓ task $TASK_ID PR is open with auto-merge disabled (review before merge)"
-fi
+echo "✓ task $TASK_ID PR is open with auto-merge disabled"
 if [[ -n "$PR_URL" ]]; then
   echo "  $PR_URL"
 fi
 if [[ "$MERGE_POLICY" != "merge_then_review" ]]; then
-  # The approval has to name this exact head: the gate compares the recorded
-  # binding against the PR standing at merge time, so an unbound approval
-  # cannot land the PR.
+  # The owner must freeze this exact head and its committed evidence manifest
+  # before the reviewer can be dispatched. Approval consumes that binding.
   PR_NUMBER=$(gh pr view "$PR_TARGET" --json number -q '.number' 2>/dev/null || echo "")
   HEAD_SHA=$(git rev-parse HEAD)
-  echo "  next: assigned reviewer approves this exact head with"
-  echo "        AI_NAME=<reviewer> REVIEW_PR=${PR_NUMBER:-<pr-number>} REVIEW_HEAD_SHA=$HEAD_SHA \\"
-  echo "          \"\$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh\" approve $TASK_ID \"<review evidence>\""
-  echo "        then python3 scripts/git/auto_integrator.py --execute --task-id $TASK_ID"
+  echo "  next: owner admits this exact delivery for review with"
+  echo "        AI_NAME=<owner> REVIEW_PR=${PR_NUMBER:-<pr-number>} REVIEW_HEAD_SHA=$HEAD_SHA \\"
+  echo "          REVIEW_FILE=<repo-relative-evidence-manifest> \\"
+  echo "          \"\$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh\" handoff $TASK_ID <reviewer> \"<ready for review>\""
+  echo "        reviewer then approves the frozen delivery with"
+  echo "          AI_NAME=<reviewer> \"\$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh\" approve $TASK_ID \"<review evidence>\""
+  echo "        the canonical supervisor integration runner will then evaluate it"
+else
+  echo "  next: canonical supervisor integration runner evaluates merge-then-review policy"
 fi
 echo "  (wait for the PR to merge before running scripts/ai-status.sh done)"
