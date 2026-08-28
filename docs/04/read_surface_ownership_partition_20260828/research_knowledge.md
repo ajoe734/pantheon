@@ -118,11 +118,11 @@ An AST scan of `services/control-plane/bff/main.py` identifies **75 member call 
 | 13608 | `get_institutional_memory_entry` | `_kw02_resolve_memory_anchors` | `(internal helper)` | **Read** | `ResearchKnowledgeSourcePort.get_institutional_memory_entry` |
 | 18895 | `get_source_ops_snapshot` | `get_source_ops` | `GET /api/v1/operator/source/ops` | **Read** | `ResearchKnowledgeSourcePort.get_source_ops_snapshot` |
 | 18926 | `get_search_ops_snapshot` | `get_search_ops` | `GET /api/v1/operator/search/ops` | **Read** | `ResearchKnowledgeSourcePort.get_search_ops_snapshot` |
-| 19100 | `create_research_ticket` | `create_research_ticket` | `POST /api/v1/research/tickets` | **Write** | `Command: ResearchTicketService / ResearchKnowledgeSourcePort` |
+| 19100 | `create_research_ticket` | `create_research_ticket` | `POST /api/v1/research/tickets` | **Write** | `DefaultResearchKnowledgeSourcePort.create_research_ticket (services/control-plane/bff/domain_ports/research_knowledge_source.py:1751)` |
 | 19132 | `list_research_tickets` | `list_research_tickets` | `GET /api/v1/research/tickets` | **Read** | `ResearchKnowledgeSourcePort.list_research_tickets` |
 | 19168 | `get_research_ticket` | `get_research_ticket` | `GET /api/v1/research/tickets/{ticket_id}` | **Read** | `ResearchKnowledgeSourcePort.get_research_ticket` |
 | 19209 | `get_research_ticket` | `patch_research_ticket` | `PATCH /api/v1/research/tickets/{ticket_id}` | **Read** | `ResearchKnowledgeSourcePort.get_research_ticket` |
-| 19219 | `patch_research_ticket` | `patch_research_ticket` | `PATCH /api/v1/research/tickets/{ticket_id}` | **Write** | `Command: ResearchTicketService / ResearchKnowledgeSourcePort` |
+| 19219 | `patch_research_ticket` | `patch_research_ticket` | `PATCH /api/v1/research/tickets/{ticket_id}` | **Write** | `DefaultResearchKnowledgeSourcePort.patch_research_ticket (services/control-plane/bff/domain_ports/research_knowledge_source.py:1791)` |
 | 19263 | `get_research_search_index` | `search_research_corpus` | `GET /api/v1/research/search` | **Read** | `ResearchKnowledgeSourcePort.get_research_search_index` |
 | 19274 | `list_research_search_results` | `search_research_corpus` | `GET /api/v1/research/search` | **Read** | `ResearchKnowledgeSourcePort.list_research_search_results` |
 | 19312 | `get_last_governed_search_refs` | `search_research_corpus` | `GET /api/v1/research/search` | **Read** | `ResearchKnowledgeSourcePort.get_last_governed_search_refs` |
@@ -130,16 +130,16 @@ An AST scan of `services/control-plane/bff/main.py` identifies **75 member call 
 | 19366 | `get_source_change_proposals` | `list_source_change_proposals` | `GET /api/v1/research/source-change-proposals` | **Read** | `ResearchKnowledgeSourcePort.get_source_change_proposals` |
 | 19407 | `list_research_analyses` | `list_research_analysis` | `GET /api/v1/research/analysis` | **Read** | `ResearchKnowledgeSourcePort.list_research_analyses` |
 | 19464 | `get_research_analysis` | `get_research_analysis` | `GET /api/v1/research/analysis/{analysis_id}` | **Read** | `ResearchKnowledgeSourcePort.get_research_analysis` |
-| 19654 | `create_research_experiment` | `launch_experiment` | `POST /api/v1/experiments/launch` | **Write** | `Command: ExperimentRunnerService / ResearchKnowledgeSourcePort` |
+| 19654 | `create_research_experiment` | `launch_experiment` | `POST /api/v1/experiments/launch` | **Write** | `DefaultResearchKnowledgeSourcePort.create_research_experiment (services/control-plane/bff/domain_ports/research_knowledge_source.py:2041)` |
 | 19693 | `list_research_experiments` | `api_v1_list_experiments` | `GET /api/v1/experiments` | **Read** | `ResearchKnowledgeSourcePort.list_research_experiments` |
 | 19740 | `get_research_experiment` | `api_v1_get_experiment` | `GET /api/v1/experiments/{experiment_id}` | **Read** | `ResearchKnowledgeSourcePort.get_research_experiment` |
 | 19785 | `get_research_experiment` | `cancel_experiment` | `POST /api/v1/experiments/{experiment_id}/cancel` | **Read** | `ResearchKnowledgeSourcePort.get_research_experiment` |
-| 19803 | `cancel_research_experiment` | `cancel_experiment` | `POST /api/v1/experiments/{experiment_id}/cancel` | **Write** | `Command: ExperimentRunnerService / ResearchKnowledgeSourcePort` |
+| 19803 | `cancel_research_experiment` | `cancel_experiment` | `POST /api/v1/experiments/{experiment_id}/cancel` | **Write** | `DefaultResearchKnowledgeSourcePort.cancel_research_experiment (services/control-plane/bff/domain_ports/research_knowledge_source.py:2079)` |
 | 19835 | `list_research_artifacts` | `list_artifacts` | `GET /api/v1/artifacts` | **Read** | `ResearchKnowledgeSourcePort.list_research_artifacts` |
 | 19893 | `get_research_artifact` | `compare_artifacts` | `GET /api/v1/artifacts/compare` | **Read** | `ResearchKnowledgeSourcePort.get_research_artifact` |
 | 19925 | `compare_research_artifacts` | `compare_artifacts` | `GET /api/v1/artifacts/compare` | **Read** | `ResearchKnowledgeSourcePort.compare_research_artifacts` |
 | 19942 | `get_research_artifact` | `get_artifact` | `GET /api/v1/artifacts/{artifact_id}` | **Read** | `ResearchKnowledgeSourcePort.get_research_artifact` |
-| 20024 | `create_research_note` | `create_research_note` | `POST /api/v1/knowledge/notes` | **Write** | `Command: ResearchNotesService / ResearchKnowledgeSourcePort` |
+| 20024 | `create_research_note` | `create_research_note` | `POST /api/v1/knowledge/notes` | **Write** | `DefaultResearchKnowledgeSourcePort.create_research_note (services/control-plane/bff/domain_ports/research_knowledge_source.py:499)` |
 | 20070 | `list_research_notes` | `list_research_notes` | `GET /api/v1/knowledge/notes` | **Read** | `ResearchKnowledgeSourcePort.list_research_notes` |
 | 20133 | `get_research_note` | `get_research_note_detail` | `GET /api/v1/knowledge/notes/{note_id}` | **Read** | `ResearchKnowledgeSourcePort.get_research_note` |
 | 20210 | `list_evidence_refs` | `list_evidence_refs` | `GET /api/v1/knowledge/evidence` | **Read** | `ResearchKnowledgeSourcePort.list_evidence_refs` |
@@ -164,7 +164,7 @@ An AST scan of `services/control-plane/bff/main.py` identifies **75 member call 
 | 30908 | `list_strategy_specs` | `_list_strategy_summaries` | `(internal helper)` | **Read** | `ResearchKnowledgeSourcePort.list_strategy_specs` |
 | 31050 | `list_strategy_specs` | `_list_strategy_spec_match_candidates` | `(internal helper)` | **Read** | `ResearchKnowledgeSourcePort.list_strategy_specs` |
 | 31058 | `get_strategy_spec_detail` | `_list_strategy_spec_match_candidates` | `(internal helper)` | **Read** | `ResearchKnowledgeSourcePort.get_strategy_spec_detail` |
-| 31301 | `create_research_ticket` | `_persona_strategy_match_action_response` | `(internal helper)` | **Write** | `Command: ResearchTicketService / ResearchKnowledgeSourcePort` |
+| 31301 | `create_research_ticket` | `_persona_strategy_match_action_response` | `(internal helper)` | **Write** | `DefaultResearchKnowledgeSourcePort.create_research_ticket (services/control-plane/bff/domain_ports/research_knowledge_source.py:1751)` |
 | 45027 | `list_evidence_refs` | `bff_management_nl_ask` | `POST /bff/management/nl/ask` | **Read** | `ResearchKnowledgeSourcePort.list_evidence_refs` |
 | 45988 | `get_strategy_spec_detail` | `bff_list_strategies` | `GET /bff/strategies` | **Read** | `ResearchKnowledgeSourcePort.get_strategy_spec_detail` |
 | 46075 | `get_strategy_spec` | `bff_get_strategy` | `GET /bff/strategies/{strategy_id}` | **Read** | `ResearchKnowledgeSourcePort.get_strategy_spec` |
@@ -210,17 +210,17 @@ In addition to entity member methods, `services/control-plane/bff/main.py` queri
 
 ---
 
-## 6. Read vs Write Classification & Command Owner Segregation
+## 6. Read vs Write Classification & Verified Owner Mapping
 
 ### A. Read Operations (69 Member Calls + 13 Dataset Source Calls)
 - **Classification:** Strict Queries (Idempotent, Side-Effect Free).
 - **Resolution Strategy:** Directly served by `ResearchKnowledgeSourcePort` methods.
-- **Underlying Authoritative Stores:**
+- **Underlying Authoritative Stores & Port Implementation:**
   - `evidence_refs`: `services/knowledge/evidence/repository.py` (`JsonlEvidenceRepository` / `InMemoryEvidenceRepository`).
   - `institutional_memory_entries`: `services/memory/institutional_memory_store.py` (`InstitutionalMemoryStore`).
   - `search_ops` / `research_search_results`: `services/search/gateway.py` (`SearchGateway`) and `services/search/index_store.py` (`JsonlSearchIndexStore`).
   - `data_sources` / `source_connectors`: `services/source_ingestion/registry/data_source_registry.py` (`DataSourceRegistry`).
-  - `research_tickets`, `research_analyses`, `research_experiments`, `research_artifacts`, `research_notes`, `insight_cards`, `strategy_specs`: Served directly by typed stores/clients in `DefaultResearchKnowledgeSourcePort`.
+  - `research_tickets`, `research_analyses`, `research_experiments`, `research_artifacts`, `research_notes`, `insight_cards`, `strategy_specs`: Served directly by typed stores and state projection in `DefaultResearchKnowledgeSourcePort` (`services/control-plane/bff/domain_ports/research_knowledge_source.py`).
 
 ### B. Write Operations (6 Member Calls)
 The 6 write call sites in `main.py` perform state mutations:
@@ -231,9 +231,14 @@ The 6 write call sites in `main.py` perform state mutations:
 5. `create_research_note` (Line 20024): Endpoint `POST /api/v1/knowledge/notes`. Appends a new research note.
 6. `create_research_ticket` (Line 31301): Internal action helper `_persona_strategy_match_action_response`. Auto-creates a ticket upon persona match.
 
-**Command Owner Target:**
-- In production, these mutations route to the domain's backend command services (`ResearchTicketService`, `ExperimentRunnerService`, `ResearchNotesService`).
-- For test environments, `DefaultResearchKnowledgeSourcePort` provides in-memory write support, ensuring test doubles remain deterministic without mutating production storage.
+**Verified Implementation & Owner Destination:**
+- At the current repository head, these write operations are implemented directly via the in-memory mutation methods of `DefaultResearchKnowledgeSourcePort` in `services/control-plane/bff/domain_ports/research_knowledge_source.py` (re-exported at `services/control-plane/bff/ports/research_knowledge_source.py`):
+  - `create_research_ticket`: `DefaultResearchKnowledgeSourcePort.create_research_ticket` (`services/control-plane/bff/domain_ports/research_knowledge_source.py:1751`)
+  - `patch_research_ticket`: `DefaultResearchKnowledgeSourcePort.patch_research_ticket` (`services/control-plane/bff/domain_ports/research_knowledge_source.py:1791`)
+  - `create_research_experiment`: `DefaultResearchKnowledgeSourcePort.create_research_experiment` (`services/control-plane/bff/domain_ports/research_knowledge_source.py:2041`)
+  - `cancel_research_experiment`: `DefaultResearchKnowledgeSourcePort.cancel_research_experiment` (`services/control-plane/bff/domain_ports/research_knowledge_source.py:2079`)
+  - `create_research_note`: `DefaultResearchKnowledgeSourcePort.create_research_note` (`services/control-plane/bff/domain_ports/research_knowledge_source.py:499`)
+- There are no separate backend command services defined at this head; all verified mutation capabilities reside within `DefaultResearchKnowledgeSourcePort`.
 
 ---
 
