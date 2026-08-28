@@ -311,8 +311,8 @@ class DefaultTagLookupTests(unittest.TestCase):
 class WorkflowDispatchContractTests(unittest.TestCase):
     """SUP-REVIEW-GATE-DISPATCH-RETRIGGER-20260805: the bridge's dispatch call
     and the workflow's `workflow_dispatch` declaration are a cross-file
-    contract that nothing else checks. A drifted workflow filename or input
-    name would 404, and the dispatch is deliberately best-effort -- so the
+    contract that nothing else checks. A drifted workflow name or input
+    name would prevent dispatch, and the dispatch is deliberately best-effort -- so the
     failure is silent, and approvals would quietly go back to sitting on a
     blocked PR. Pin both halves here."""
 
@@ -326,10 +326,11 @@ class WorkflowDispatchContractTests(unittest.TestCase):
         # PyYAML resolves the bare `on:` key to the boolean True.
         cls.triggers = cls.workflow.get(True, cls.workflow.get("on"))
 
-    def test_bridge_constant_names_the_real_workflow_file(self) -> None:
+    def test_bridge_constant_names_the_real_workflow(self) -> None:
         self.assertTrue(self.workflow_path.is_file())
-        self.assertEqual(
-            bridge.CANONICAL_REVIEW_GATE_WORKFLOW_FILE, self.workflow_path.name
+        self.assertIn(
+            self.workflow["name"],
+            bridge.CANONICAL_REVIEW_GATE_WORKFLOW_NAMES,
         )
 
     def test_workflow_declares_the_dispatch_inputs_the_bridge_sends(self) -> None:

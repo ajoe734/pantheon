@@ -39,6 +39,9 @@ class FakeRunner:
         base_manifest_error: str = "",
         pr_files: Sequence[Mapping[str, Any]] | None = None,
         is_draft: bool = False,
+        workflow_id: int = 842691579,
+        workflow_path: str = ".github/workflows/canonical-review-gate.yml",
+        workflow_name: str = "Canonical Review Gate",
     ) -> None:
         self.review_error = review_error
         self.context_required = context_required
@@ -67,6 +70,9 @@ class FakeRunner:
         self.base_manifest_error = base_manifest_error
         self.pr_files = [dict(item) for item in (pr_files or [])]
         self.is_draft = is_draft
+        self.workflow_id = workflow_id
+        self.workflow_path = workflow_path
+        self.workflow_name = workflow_name
         self.reviews: list[dict[str, Any]] = []
         self.statuses: list[dict[str, Any]] = []
         self.calls: list[tuple[list[str], Mapping[str, Any] | None]] = []
@@ -151,6 +157,18 @@ class FakeRunner:
         if joined.endswith("/protection/required_status_checks"):
             contexts = [bridge.CANONICAL_REVIEW_CONTEXT] if self.context_required else []
             return {"contexts": contexts, "checks": []}
+        if joined == f"gh api repos/{REPOSITORY}/actions/workflows?per_page=100":
+            return {
+                "total_count": 1,
+                "workflows": [
+                    {
+                        "id": self.workflow_id,
+                        "name": self.workflow_name,
+                        "path": self.workflow_path,
+                        "state": "active",
+                    }
+                ],
+            }
         if joined.endswith(f"/commits/{HEAD}/statuses?per_page=100"):
             return list(reversed(self.statuses))
         if f"/statuses/{HEAD}" in joined and "--method POST" in joined:
@@ -182,7 +200,7 @@ class FakeRunner:
             return dict(ref_payload)
         if (
             f"repos/{REPOSITORY}/actions/workflows/"
-            f"{bridge.CANONICAL_REVIEW_GATE_WORKFLOW_FILE}/dispatches" in joined
+            f"{self.workflow_id}/dispatches" in joined
             and "--method POST" in joined
         ):
             if self.dispatch_error:
@@ -1073,6 +1091,30 @@ class GitHubReviewBridgeTests(unittest.TestCase):
                 "inputs": {"head_ref": "task/AUDIT-001", "head_sha": HEAD},
             },
         )
+
+    def test_operator_acceptance_resolves_execute_plans_workflow_by_name(self) -> None:
+        """The frontend repo uses a different workflow filename than Pantheon."""
+
+        runner = FakeRunner(
+            workflow_id=342891579,
+            workflow_path=".github/workflows/pantheon-canonical-review-gate.yml",
+            workflow_name="Pantheon canonical review gate",
+        )
+        bridge.bridge_operator_acceptance(
+            repository=REPOSITORY,
+            task_id="AUDIT-001",
+            actor="Human/Ops",
+            message="Use the repository's canonical gate workflow.",
+            binding=binding(),
+            runner=runner,
+        )
+
+        dispatched = [
+            command
+            for command, _payload in runner.calls
+            if "actions/workflows/342891579/dispatches" in " ".join(command)
+        ]
+        self.assertEqual(len(dispatched), 1)
 
     def test_reopen_does_not_dispatch_canonical_review_gate_workflow(self) -> None:
         runner = FakeRunner(
