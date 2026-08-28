@@ -29,8 +29,7 @@ RUNTIME_SERVICE_DIR = REPO_ROOT / "services" / "runtime-manager"
 FLEET_MODULE_PATH = (
     REPO_ROOT
     / "services"
-    / "execution"
-    / "runtime-manager"
+    / "paper_fleet_reconciler"
     / "paper_fleet_reconciler.py"
 )
 REGISTRATION_PATH = (

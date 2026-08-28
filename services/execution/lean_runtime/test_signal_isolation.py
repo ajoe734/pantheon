@@ -956,11 +956,8 @@ class TestLeaderLeaseCrossProcess(unittest.TestCase):
 
     def test_file_backed_leader_lease_prevents_duplicate_leaders(self):
         import tempfile
-        import importlib
         from pathlib import Path
-
-        paper_fleet_reconciler = importlib.import_module("services.execution.runtime-manager.paper_fleet_reconciler")
-        PaperFleetReconciler = paper_fleet_reconciler.PaperFleetReconciler
+        from services.paper_fleet_reconciler.paper_fleet_reconciler import PaperFleetReconciler
 
         with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as tmp:
             lease_file = Path(tmp.name)

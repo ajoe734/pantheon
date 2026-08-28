@@ -261,7 +261,7 @@ flowchart TB
 | `web` | `services/channels/web/` | `8000` | `optional-web` | thin router proxy; not part of Wave 1 honesty gate |
 | `cron` | `services/control-plane/cron/` | n/a | `optional-cron` | workflow runner; no default public port contract |
 | `mlflow-server` | `services/research/mlflow/` | `5000` | `research` | optional research profile only |
-| `lean` / future `runtime-manager` | `lean/`, `services/execution/runtime-manager/` | internal | `execution-lab` | paper / mock execution only in single-VM tests; not a default profile gate |
+| `lean` / future `runtime-manager` | `lean/`, `services/runtime-manager/` | internal | `execution-lab` | paper / mock execution only in single-VM tests; not a default profile gate |
 
 ### 4.4 Canonical port and health registry
 
@@ -523,7 +523,7 @@ Wave 1 先以 4.1-4.8 的 service family 為準；
 | `pantheon/services/decision/` | `decision-engine-svc` |
 | `pantheon/services/optimizer-svc/` or `services/evaluation/optimizers/` | `optimizer-svc` |
 | `pantheon/services/control-plane/governance/` | `promotion-svc` |
-| `pantheon/services/execution/runtime-manager/` | `runtime-manager-svc` |
+| `pantheon/services/runtime-manager/` | `runtime-manager-svc` |
 | `pantheon/services/telemetry/` + `services/incident/` | `telemetry-incident-svc` |
 | `pantheon/services/control-plane/governance/evolution_*` | `evolution-svc` |
 | `pantheon-lean/lean/Algorithm.Python/pantheon_algo/` | LEAN bridge / runtime payload layer |
@@ -647,7 +647,7 @@ flowchart LR
 目前 baseline smoke floor 直接對應下列 repo scripts：
 - `services/registry/promotion/smoke_test_gate.py`
 - `services/control-plane/governance/smoke_test_deployment_saga.py`
-- `services/execution/runtime-manager/smoke_test_runtime_binding.py`
+- `services/runtime_manager/smoke_test_runtime_binding.py`
 - `services/telemetry/smoke_test_ingest.py`
 - `python3 -m unittest discover -s services/telemetry/lineage_read -p 'test_*.py'`
 - `services/control-plane/bff/smoke_test.py`

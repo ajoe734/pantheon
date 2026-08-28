@@ -18,27 +18,19 @@ import sys
 import tempfile
 from pathlib import Path
 
-# Ensure project root is importable
-sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
+_REPO_ROOT = str(Path(__file__).resolve().parent.parent.parent)
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
 
-import importlib.util as _ilu
-import sys as _sys
-
-_spec = _ilu.spec_from_file_location(
-    "runtime_binding",
-    Path(__file__).parent / "runtime_binding.py",
+from services.runtime_manager.runtime_binding import (
+    DeploymentMode,
+    RollbackActionType,
+    RuntimeBinding,
+    RuntimeBindingError,
+    RuntimeBindingStatus,
+    RuntimeBindingStore,
+    validate_binding,
 )
-_mod = _ilu.module_from_spec(_spec)
-_sys.modules["runtime_binding"] = _mod
-_spec.loader.exec_module(_mod)
-
-RuntimeBinding = _mod.RuntimeBinding
-RuntimeBindingError = _mod.RuntimeBindingError
-RuntimeBindingStatus = _mod.RuntimeBindingStatus
-DeploymentMode = _mod.DeploymentMode
-RollbackActionType = _mod.RollbackActionType
-RuntimeBindingStore = _mod.RuntimeBindingStore
-validate_binding = _mod.validate_binding
 
 PASS = "\033[32mPASS\033[0m"
 FAIL = "\033[31mFAIL\033[0m"

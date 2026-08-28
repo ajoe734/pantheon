@@ -1,14 +1,14 @@
-"""Execution plane package.
+"""Canonical Runtime Manager package.
 
-Re-exports canonical runtime control symbols from services.runtime_manager.
+Exports the pure runtime mutation state machine (RuntimeManagerService),
+RuntimeBinding models/store, and KillSwitchController primitives.
 """
 from __future__ import annotations
 
-from services.runtime_manager import (
+from services.runtime_manager.kill_switch_controller import (
     FAST_PATH_BENCHMARK_ITERATIONS,
     FAST_PATH_DISPATCH_CHANNEL,
     FAST_PATH_LATENCY_TARGET_MS,
-    DeploymentMode,
     EmergencyClass,
     EmergencyTrigger,
     HardTriggerReason,
@@ -18,18 +18,43 @@ from services.runtime_manager import (
     KillSwitchController,
     KillSwitchError,
     KillSwitchOutcome,
+    SafeModeState,
+    SoftTriggerReason,
+)
+from services.runtime_manager.runtime_binding import (
+    DeploymentMode,
     RollbackActionType,
     RuntimeBinding,
     RuntimeBindingError,
     RuntimeBindingStatus,
     RuntimeBindingStore,
-    SafeModeState,
-    SoftTriggerReason,
     utc_now,
     validate_binding,
 )
+from services.runtime_manager.service import (
+    DeployPlanRequest,
+    EvolutionFreezeRequest,
+    EvolutionRedeployRequest,
+    EvolutionRetrainRequest,
+    KillSwitchRequest,
+    ReplaceRuntimeRequest,
+    RollbackRequest,
+    RuntimeManagerError,
+    RuntimeManagerService,
+)
 
 __all__ = [
+    # Service
+    "RuntimeManagerService",
+    "RuntimeManagerError",
+    "DeployPlanRequest",
+    "ReplaceRuntimeRequest",
+    "RollbackRequest",
+    "KillSwitchRequest",
+    "EvolutionFreezeRequest",
+    "EvolutionRetrainRequest",
+    "EvolutionRedeployRequest",
+    # RuntimeBinding
     "RuntimeBinding",
     "RuntimeBindingError",
     "RuntimeBindingStatus",
@@ -38,6 +63,7 @@ __all__ = [
     "RollbackActionType",
     "validate_binding",
     "utc_now",
+    # KillSwitch
     "KillSwitchController",
     "KillSwitchError",
     "EmergencyTrigger",
