@@ -1206,15 +1206,15 @@ def queued_account_counts(
         events = queue_events(state)
     queued_events = events
     for event in queued_events:
-        if task_map is not None and stale_dispatch_skip_message(config, event, task_map):
-            continue
         event_id = str(event.get("event_id") or "")
         if not event_id:
             continue
         if event_id in active_queue_event_ids:
             continue
         record = queue_records.get(event_id, {})
-        if record.get("status") in {"completed", "failed"}:
+        if str(record.get("status") or "") in {"completed", "failed"}:
+            continue
+        if task_map is not None and stale_dispatch_skip_message(config, event, task_map):
             continue
         group_id = agent_account_id(config, str(event.get("target_agent") or ""))
         if not group_id:
@@ -1275,8 +1275,6 @@ def queued_execution_resource_counts(
     for event in queued_events:
         if not isinstance(event, Mapping):
             continue
-        if stale_dispatch_skip_message(config, event, task_map):
-            continue
         event_id = str(event.get("event_id") or "")
         if not event_id or event_id in active_queue_event_ids:
             continue
@@ -1284,6 +1282,8 @@ def queued_execution_resource_counts(
         if not isinstance(record, Mapping):
             record = {}
         if str(record.get("status") or "") in {"completed", "failed"}:
+            continue
+        if stale_dispatch_skip_message(config, event, task_map):
             continue
         task_id = str(event.get("task_id") or "")
         task = task_map.get(task_id)
@@ -1618,6 +1618,7 @@ def evaluate_task_delivery_admission(
 def idle_delivery_health_refresh_targets(
     config: dict[str, Any],
     state: Mapping[str, Any],
+    status_snapshot: Mapping[str, Any] | None = None,
 ) -> list[dict[str, str]]:
     """Return due probes for configured endpoints without task demand.
 
@@ -1627,12 +1628,40 @@ def idle_delivery_health_refresh_targets(
     leaves an expired auth or quota observation closed until an unrelated task
     happens to target that lane.
 
-    This remains a pure projection over the runtime snapshot.  The slow probe
-    runs after delivery, and the resulting observation is committed only by
-    the existing reserved runtime-maintenance transaction.  Enumerating
-    ``delivery_lane_for_agent`` also means an orphaned physical-agent record
-    which is not a configured delivery endpoint never receives a probe.
+    When ``status_snapshot`` is supplied, only active delivery lanes (lanes with
+    active tasks, active workers, or queued delivery intents) are considered for
+    idle refresh.  Idle lanes without tasks or workers never receive expensive
+    probes.
     """
+
+    active_agent_ids: set[str] | None = None
+    if status_snapshot is not None:
+        active_agent_ids = set()
+        for task in status_snapshot.get("tasks", []) or []:
+            if not isinstance(task, Mapping):
+                continue
+            status = str(task.get("status") or "").lower()
+            owner = normalize_agent_id(str(task.get("owner") or ""))
+            reviewer = normalize_agent_id(str(task.get("reviewer") or ""))
+            if status in {"todo", "in_progress", "review_approved", "blocked"}:
+                if owner:
+                    active_agent_ids.add(owner)
+            elif status == "review":
+                if reviewer:
+                    active_agent_ids.add(reviewer)
+        for worker in (state.get("workers") or {}).values():
+            if not isinstance(worker, Mapping):
+                continue
+            agent_id = normalize_agent_id(str(worker.get("agent_id") or worker.get("logical_agent_id") or ""))
+            if agent_id:
+                active_agent_ids.add(agent_id)
+        for record in ((state.get("queue") or {}).get("events") or {}).values():
+            if not isinstance(record, Mapping) or str(record.get("status") or "") in {"completed", "failed"}:
+                continue
+            intent = record.get("intent") if isinstance(record.get("intent"), Mapping) else record
+            agent_id = normalize_agent_id(str(intent.get("target_agent") or ""))
+            if agent_id:
+                active_agent_ids.add(agent_id)
 
     health = runtime_delivery_health(state)
     endpoint_health = _admission_health_records(health, "endpoints")
@@ -1642,6 +1671,8 @@ def idle_delivery_health_refresh_targets(
     seen: set[str] = set()
 
     for logical_agent_id in dispatch_loop_agent_ids(config):
+        if active_agent_ids is not None and logical_agent_id not in active_agent_ids:
+            continue
         lane = delivery_lane_for_agent(config, logical_agent_id)
         for endpoint in lane.endpoints:
             endpoint_id = normalize_agent_id(endpoint.endpoint_id)
@@ -4080,7 +4111,8 @@ def process_queue(
     changed = False
     task_map = task_index_from_status(config, load_status(config))
     active_statuses = {str(value) for value in ready_dispatch_settings(config).get("active_worker_statuses", [])}
-    for event in sorted(queue_events(state), key=queue_event_sort_key):
+    queued_events = sorted(queue_events(state), key=queue_event_sort_key)
+    for event in queued_events:
         event_id = event.get("event_id")
         if not event_id:
             continue
@@ -4218,7 +4250,7 @@ def process_queue(
             state,
             event,
             task_map,
-            queue_events(state),
+            queued_events,
         )
         if decision is None:
             record["status"] = "completed"
@@ -4464,11 +4496,14 @@ def pid_is_alive(pid: int | None) -> bool:
     proc_stat = Path(f"/proc/{pid}/stat")
     if proc_stat.exists():
         try:
-            parts = proc_stat.read_text(encoding="utf-8", errors="ignore").split()
+            content = proc_stat.read_text(encoding="utf-8", errors="ignore")
         except OSError:
-            parts = []
-        if len(parts) >= 3 and parts[2] == "Z":
-            return False
+            content = ""
+        rparen = content.rfind(")")
+        if rparen != -1:
+            rest = content[rparen + 1:].strip().split()
+            if rest and rest[0] in {"Z", "X"}:
+                return False
     try:
         os.kill(pid, 0)
     except OSError:
@@ -4642,6 +4677,19 @@ def scan_live_worker_pids_by_agent(proc_root: Path | None = None) -> dict[str, l
             continue
         pid = int(name)
         if pid == self_pid:
+            continue
+        proc_stat = entry / "stat"
+        if proc_stat.exists():
+            try:
+                stat_content = proc_stat.read_text(encoding="utf-8", errors="ignore")
+            except OSError:
+                stat_content = ""
+            rparen = stat_content.rfind(")")
+            if rparen != -1:
+                rest = stat_content[rparen + 1:].strip().split()
+                if rest and rest[0] in {"Z", "X"}:
+                    continue
+        if proc_root is None and not pid_is_alive(pid):
             continue
         cmdline_path = entry / "cmdline"
         try:
@@ -11043,7 +11091,6 @@ def poll_workers(
         )
         changed = bool(completion["changed"]) or changed
     changed = reconcile_pending_worker_recoveries(config, state) or changed
-    changed = cleanup_inactive_worker_worktrees(config, state) or changed
     record_worker_runtime_measurement(
         config,
         state,
@@ -11714,9 +11761,16 @@ def reconcile_queue_records(config: dict[str, Any], state: dict[str, Any]) -> bo
     if not queue_events:
         return False
     active_statuses = {str(value) for value in ready_dispatch_settings(config).get("active_worker_statuses", [])}
-    for event_id, record in queue_events.items():
-        workers = [worker for worker in state.get("workers", {}).values() if worker.get("queue_event_id") == event_id]
-        if not workers:
+    workers_by_event: dict[str, list[dict[str, Any]]] = {}
+    for worker in (state.get("workers") or {}).values():
+        if isinstance(worker, Mapping):
+            qid = str(worker.get("queue_event_id") or "").strip()
+            if qid:
+                workers_by_event.setdefault(qid, []).append(worker)
+
+    for event_id, workers in workers_by_event.items():
+        record = queue_events.get(event_id)
+        if not isinstance(record, dict):
             continue
         if any(worker.get("status") in active_statuses for worker in workers):
             continue
@@ -13091,13 +13145,13 @@ def outstanding_delivery_indexes(
     queue_records = state.get("queue", {}).get("events", {})
     queued_events = queue_events(state) if events is None else events
     for event in queued_events:
-        if task_map is not None and stale_dispatch_skip_message(config, event, task_map):
-            continue
         event_id = event.get("event_id")
         if not event_id:
             continue
         record = queue_records.get(event_id, {})
-        if record.get("status") in {"completed", "failed"}:
+        if str(record.get("status") or "") in {"completed", "failed"}:
+            continue
+        if task_map is not None and stale_dispatch_skip_message(config, event, task_map):
             continue
         event_key = str(event.get("event_key") or "")
         if event_key:
@@ -13151,25 +13205,34 @@ def reconcile_queue_intents(config: dict[str, Any], state: dict[str, Any]) -> bo
     changed = False
     now = datetime.now(timezone.utc)
 
+    workers_by_event: dict[str, list[tuple[str, dict[str, Any]]]] = {}
+    for run_id, worker in workers.items():
+        if isinstance(worker, Mapping):
+            qid = str(worker.get("queue_event_id") or "").strip()
+            if qid:
+                workers_by_event.setdefault(qid, []).append((run_id, worker))
+
     for event in events:
         event_id = event.get("event_id")
         if not event_id:
             continue
 
         record = queue_records.get(event_id, {})
-        related_worker_items = [
-            (run_id, worker)
-            for run_id, worker in workers.items()
-            if worker.get("queue_event_id") == event_id
-        ]
+        record_status = str(record.get("status") or "")
+        related_worker_items = workers_by_event.get(event_id, [])
         related_workers = [worker for _, worker in related_worker_items]
+
+        # Fast path for completed records without related workers
+        if record_status in {"completed", "done"} and not related_worker_items:
+            continue
+
         has_active_worker = any(worker.get("status") in active_statuses for worker in related_workers)
 
         # ``retry_backoff`` is a scheduler hold, not a live process.  When its
         # process is gone, release only the lease; preserve the exact intent so
         # a later delivery uses the same generation-bound work item.
         stale_retry_workers = (
-            record.get("status") in {"started", "retry_backoff"}
+            record_status in {"started", "retry_backoff"}
             and bool(related_worker_items)
             and all(
                 str(worker.get("status") or "") == "retry_backoff"
@@ -13206,6 +13269,7 @@ def reconcile_queue_intents(config: dict[str, Any], state: dict[str, Any]) -> bo
             record.pop("lease_expires_at", None)
             changed = True
             continue
+
         skip_message = stale_dispatch_skip_message(config, event, task_map)
 
         if skip_message and not has_active_worker:
@@ -13216,7 +13280,7 @@ def reconcile_queue_intents(config: dict[str, Any], state: dict[str, Any]) -> bo
             changed = True
             continue
 
-        if not related_workers and record.get("status") in {"started", "waiting_approval", "retry_backoff", "stalled"}:
+        if not related_workers and record_status in {"started", "waiting_approval", "retry_backoff", "stalled"}:
             record["status"] = "queued"
             record.pop("processed_at", None)
             record.pop("error", None)
@@ -13226,7 +13290,7 @@ def reconcile_queue_intents(config: dict[str, Any], state: dict[str, Any]) -> bo
         current_task = task_map.get(str(event.get("task_id") or ""))
         current_status = str(current_task.get("status") or "").lower() if current_task else ""
 
-        if record.get("status") == "failed" and not has_active_worker and current_status in redispatch_statuses:
+        if record_status == "failed" and not has_active_worker and current_status in redispatch_statuses:
             record["status"] = "queued"
             record.pop("processed_at", None)
             record.pop("error", None)
@@ -13549,15 +13613,15 @@ def agent_dispatch_loads(
     queue_records = state.get("queue", {}).get("events", {})
     queued_events = queue_events(state) if events is None else events
     for event in queued_events:
-        if task_map is not None and stale_dispatch_skip_message(config, event, task_map):
-            continue
         event_id = str(event.get("event_id") or "")
         if not event_id:
             continue
         if event_id in represented_queue_event_ids:
             continue
         record = queue_records.get(event_id, {})
-        if record.get("status") in {"completed", "failed"}:
+        if str(record.get("status") or "") in {"completed", "failed"}:
+            continue
+        if task_map is not None and stale_dispatch_skip_message(config, event, task_map):
             continue
         reason = str(event.get("reason") or "")
         priority = dispatch_reason_priority(reason)
@@ -14279,10 +14343,16 @@ def evaluate_queued_delivery_admission(
         if str(candidate.get("event_id") or "") != event_id
         and queue_event_sort_key(candidate) < current_key
     ]
-    delivery_state = deepcopy(state)
-    queue_records = ((delivery_state.get("queue") or {}).get("events") or {})
-    if isinstance(queue_records, dict):
-        queue_records.pop(event_id, None)
+    queue = state.get("queue", {})
+    queue_events_dict = dict(queue.get("events", {})) if isinstance(queue, dict) else {}
+    queue_events_dict.pop(event_id, None)
+    delivery_state = {
+        **state,
+        "queue": {
+            **queue,
+            "events": queue_events_dict,
+        },
+    }
     settings = ready_dispatch_settings(config)
     active_statuses = normalized_status_set(settings.get("active_worker_statuses"), [])
     _active_agents, active_pairs = active_worker_indexes(delivery_state, active_statuses)
@@ -14641,7 +14711,9 @@ def build_dispatch_plan(
     # A startup or otherwise idle supervisor still needs to repair due
     # evidence.  Keep these targets after task/fallback demand so bounded
     # probing spends the current cycle on an immediately blocked task first.
-    for target in idle_delivery_health_refresh_targets(config, scratch):
+    for target in idle_delivery_health_refresh_targets(
+        config, scratch, status_snapshot=status_snapshot
+    ):
         if target not in refresh_targets:
             refresh_targets.append(target)
     # Startup, a config-topology change, or an explicit Human/Ops request may
@@ -15693,9 +15765,10 @@ def _run_reserved_worktree_prunes(
     config: dict[str, Any],
     state: dict[str, Any],
 ) -> bool:
-    """Prune ordinary orphaned worker worktrees."""
+    """Prune ordinary orphaned and inactive worker worktrees."""
 
-    return prune_orphan_worktrees(config, state)
+    changed = prune_orphan_worktrees(config, state)
+    return cleanup_inactive_worker_worktrees(config, state) or changed
 
 
 def _finalize_runtime_cycle_locked(

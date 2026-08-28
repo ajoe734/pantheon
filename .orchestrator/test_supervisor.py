@@ -7093,5 +7093,454 @@ class ExecutionResourceAdmissionTests(unittest.TestCase):
         self.assertEqual(counts_stale, {})
 
 
+class SupervisorCycleLatencyRecoveryTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        temp_root = Path(self.temp.name)
+        self.root = temp_root / "status"
+        (self.root / ".orchestrator").mkdir(parents=True)
+        (temp_root / "runtime").mkdir()
+        self.config = config_fixture(self.root)
+        event_log = temp_root / "runtime" / "tasks.jsonl"
+        self.config["task_state_store"] = {
+            "mode": "authoritative",
+            "event_log": str(event_log),
+        }
+        self.status = {"tasks": [], "blockers": [], "handoffs": []}
+        supervisor.rewrite_task_state_store.append_state_commit(
+            event_log,
+            self.status,
+            source="test-seed",
+        )
+        self.status_file = Path(self.config["paths"]["status_file"])
+        self.state_file = Path(self.config["paths"]["state_file"])
+        self.status_file.write_text(json.dumps(self.status), encoding="utf-8")
+        self.state = runtime_state.default_state()
+        self.state["delivery_health"] = healthy_delivery_health(self.config)
+        self.state["delivery_health"]["authority"] = {
+            "topology_fingerprint": supervisor._delivery_health_topology_fingerprint(self.config)
+        }
+        self.state_file.write_text(json.dumps(self.state), encoding="utf-8")
+
+    def _drain_status_outbox(self, config: dict[str, object]) -> bool:
+        status = supervisor.load_status(config)
+        if status.get("status_activity_outbox") in (None, {}, []):
+            return True
+        status.pop("status_activity_outbox", None)
+        supervisor.write_status(config, status, source="test-outbox-drain")
+        return True
+
+    def test_poll_workers_skips_worktree_cleanup_on_dispatch_critical_path(self) -> None:
+        """poll_workers on the pre-plan path must not perform unbounded worktree removal."""
+        worker = {
+            "run_id": "run-1",
+            "task_id": "TASK-1",
+            "agent_id": "codex",
+            "status": "running",
+            "pid": os.getpid(),
+            "process_generation": 1,
+            "lease_expires_at": (datetime.now(timezone.utc) + timedelta(minutes=10)).isoformat(),
+        }
+        self.state["workers"] = {"run-1": worker}
+        with (
+            mock.patch.object(supervisor, "load_approval_state", return_value={}),
+            mock.patch.object(supervisor, "load_status", return_value={"tasks": []}),
+            mock.patch.object(supervisor, "cleanup_inactive_worker_worktrees") as mock_cleanup,
+            mock.patch.object(supervisor, "prune_orphan_worktrees") as mock_orphan,
+            mock.patch.object(supervisor, "poll_worker_orphan_stage", return_value={"changed": False, "stop": False}),
+            mock.patch.object(supervisor, "poll_worker_observation_stage", return_value={"changed": False, "alive": True, "meaningful_progress_advanced": False, "commit_progress_advanced": False, "lease_expired": False, "stop": False}),
+            mock.patch.object(supervisor, "reconcile_pending_worker_recoveries", return_value=False),
+            mock.patch.object(supervisor, "record_worker_runtime_measurement"),
+        ):
+            mock_cleanup.return_value = False
+            mock_orphan.return_value = False
+
+            # Pre-plan poll_workers should NOT trigger worktree cleanup
+            supervisor.poll_workers(self.config, self.state)
+            self.assertEqual(mock_cleanup.call_count, 0)
+
+            # Post-dispatch maintenance phase SHOULD trigger worktree cleanup
+            supervisor._run_reserved_worktree_prunes(self.config, self.state)
+            self.assertEqual(mock_cleanup.call_count, 1)
+            self.assertEqual(mock_orphan.call_count, 1)
+
+    def test_idle_delivery_health_refresh_targets_filters_by_status_snapshot(self) -> None:
+        """Idle delivery health probes are restricted to active delivery lanes."""
+        expired_at = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()
+        self.state["delivery_health"] = healthy_delivery_health(self.config)
+        self.state.setdefault("supervisor", {})["delivery_health_refresh_authority"] = {
+            "topology_fingerprint": supervisor._delivery_health_topology_fingerprint(self.config)
+        }
+        self.state["delivery_health"]["endpoints"]["codex2"] = {
+            "state": "expired",
+            "valid_until": expired_at,
+        }
+        # Only Codex has an active task and is healthy; Codex2 has no tasks/workers/fallback demand
+        status_snapshot = {
+            "tasks": [
+                task_fixture("TASK-CODEX", owner="Codex", status="todo"),
+            ]
+        }
+        targets = supervisor.idle_delivery_health_refresh_targets(
+            self.config, self.state, status_snapshot=status_snapshot
+        )
+        self.assertEqual(targets, [])
+
+        # build_dispatch_plan excludes idle un-demanded codex2
+        plan = supervisor.build_dispatch_plan(
+            self.config,
+            self.state,
+            status_snapshot,
+            queue_snapshot=[],
+            live_total=0,
+        )
+        refresh_ids = [t["id"] for t in plan.get("health_refresh_targets", [])]
+        self.assertNotIn("codex2", refresh_ids)
+
+        # When codex is expired, only codex is included in idle targets
+        self.state["delivery_health"]["endpoints"]["codex"] = {
+            "state": "expired",
+            "valid_until": expired_at,
+        }
+        targets_with_expired = supervisor.idle_delivery_health_refresh_targets(
+            self.config, self.state, status_snapshot=status_snapshot
+        )
+        self.assertEqual(targets_with_expired, [{"scope": "endpoint", "id": "codex"}])
+
+        # Without status_snapshot (legacy/unfiltered caller), all due endpoints are returned
+        all_targets = supervisor.idle_delivery_health_refresh_targets(
+            self.config, self.state, status_snapshot=None
+        )
+        all_target_ids = {t["id"] for t in all_targets}
+        self.assertEqual(all_target_ids, {"codex", "codex2"})
+
+    def test_large_queue_records_reconciliation_is_bounded(self) -> None:
+        """Reconciliation and queue scanning remain bounded with 1600+ historic records."""
+        events: dict[str, dict[str, Any]] = {}
+        for i in range(1600):
+            event_id = f"evt-hist-{i}"
+            events[event_id] = {
+                "status": "completed",
+                "processed_at": "2026-08-01T00:00:00Z",
+                "intent": {
+                    "event_id": event_id,
+                    "task_id": f"HIST-TASK-{i}",
+                    "task_generation": 1,
+                    "target_agent": "Codex",
+                    "delivery_endpoint_id": "codex",
+                    "reason": "owned_ready_dispatch",
+                },
+            }
+        # Add 1 active event with a finished worker and 1 active event with running worker
+        events["evt-finished"] = {
+            "status": "started",
+            "intent": {
+                "event_id": "evt-finished",
+                "task_id": "FIN-TASK",
+                "task_generation": 1,
+                "target_agent": "Codex",
+                "delivery_endpoint_id": "codex",
+                "reason": "owned_ready_dispatch",
+            },
+        }
+        events["evt-running"] = {
+            "status": "started",
+            "intent": {
+                "event_id": "evt-running",
+                "task_id": "RUN-TASK",
+                "task_generation": 1,
+                "target_agent": "Codex",
+                "delivery_endpoint_id": "codex",
+                "reason": "owned_ready_dispatch",
+            },
+        }
+        self.state["queue"]["events"] = events
+        self.state["workers"] = {
+            "run-fin": {
+                "run_id": "run-fin",
+                "queue_event_id": "evt-finished",
+                "task_id": "FIN-TASK",
+                "agent_id": "codex",
+                "status": "completed",
+                "last_event_at": "2026-08-28T12:00:00Z",
+            },
+            "run-live": {
+                "run_id": "run-live",
+                "queue_event_id": "evt-running",
+                "task_id": "RUN-TASK",
+                "agent_id": "codex",
+                "status": "running",
+                "last_event_at": "2026-08-28T12:00:00Z",
+            },
+        }
+
+        # Time queue_events
+        t0 = datetime.now()
+        loaded_events = supervisor.queue_events(self.state)
+        t_load = (datetime.now() - t0).total_seconds()
+        self.assertEqual(len(loaded_events), 1602)
+        self.assertLess(t_load, 0.1)
+
+        # Time reconcile_queue_records
+        t0 = datetime.now()
+        changed = supervisor.reconcile_queue_records(self.config, self.state)
+        t_reconcile = (datetime.now() - t0).total_seconds()
+        self.assertTrue(changed)
+        self.assertLess(t_reconcile, 0.1)
+        self.assertEqual(self.state["queue"]["events"]["evt-finished"]["status"], "completed")
+        self.assertEqual(self.state["queue"]["events"]["evt-running"]["status"], "started")
+
+        # Time reconcile_queue_intents
+        t0 = datetime.now()
+        supervisor.reconcile_queue_intents(self.config, self.state)
+        t_intents = (datetime.now() - t0).total_seconds()
+        self.assertLess(t_intents, 0.1)
+
+    def test_queued_counts_and_admission_skip_completed_records_bounded(self) -> None:
+        """queued count helpers skip completed records without evaluating skip messages."""
+        events: dict[str, dict[str, Any]] = {}
+        for i in range(1600):
+            event_id = f"evt-hist-{i}"
+            events[event_id] = {
+                "status": "completed",
+                "processed_at": "2026-08-01T00:00:00Z",
+                "intent": {
+                    "event_id": event_id,
+                    "task_id": f"HIST-TASK-{i}",
+                    "task_generation": 1,
+                    "target_agent": "Codex",
+                    "delivery_endpoint_id": "codex",
+                    "reason": "owned_ready_dispatch",
+                },
+            }
+        self.state["queue"]["events"] = events
+        task_map = {f"HIST-TASK-{i}": task_fixture(f"HIST-TASK-{i}", status="done") for i in range(10)}
+
+        with mock.patch.object(
+            supervisor, "stale_dispatch_skip_message"
+        ) as mock_stale:
+            mock_stale.return_value = None
+
+            q_accounts = supervisor.queued_account_counts(
+                self.config, self.state, task_map=task_map
+            )
+            self.assertEqual(q_accounts, {})
+            self.assertEqual(mock_stale.call_count, 0)
+
+            q_resources = supervisor.queued_execution_resource_counts(
+                self.config, self.state, task_map=task_map
+            )
+            self.assertEqual(q_resources, {})
+            self.assertEqual(mock_stale.call_count, 0)
+
+            loads = supervisor.agent_dispatch_loads(
+                self.config, self.state, {"running"}, task_map=task_map
+            )
+            self.assertEqual(loads, {})
+            self.assertEqual(mock_stale.call_count, 0)
+
+            agents, task_agents, event_keys = supervisor.outstanding_delivery_indexes(
+                self.config, self.state, task_map=task_map
+            )
+            self.assertEqual(agents, set())
+            self.assertEqual(task_agents, set())
+            self.assertEqual(event_keys, set())
+            self.assertEqual(mock_stale.call_count, 0)
+
+    def test_supervisor_cycle_metrics_and_latency_under_1600_records_fixture_load(self) -> None:
+        """Supervisor run_once completes well within configured poll interval under fixture load."""
+        events: dict[str, dict[str, Any]] = {}
+        for i in range(1600):
+            event_id = f"evt-hist-{i}"
+            events[event_id] = {
+                "status": "completed",
+                "processed_at": "2026-08-01T00:00:00Z",
+                "intent": {
+                    "event_id": event_id,
+                    "task_id": f"HIST-TASK-{i}",
+                    "task_generation": 1,
+                    "target_agent": "Codex",
+                    "delivery_endpoint_id": "codex",
+                    "reason": "owned_ready_dispatch",
+                },
+            }
+        self.state["queue"]["events"] = events
+        self.state["delivery_health"] = healthy_delivery_health(self.config)
+        self.state_file.write_text(json.dumps(self.state), encoding="utf-8")
+
+        # Two active tasks
+        tasks = [
+            task_fixture("TASK-LOAD-1", owner="Codex", status="todo"),
+            task_fixture("TASK-LOAD-2", owner="Codex2", status="todo"),
+        ]
+        status_payload = {"tasks": tasks, "blockers": [], "handoffs": []}
+        self.status_file.write_text(json.dumps(status_payload), encoding="utf-8")
+        event_log = Path(self.config["task_state_store"]["event_log"])
+        supervisor.rewrite_task_state_store.append_state_commit(
+            event_log,
+            status_payload,
+            source="test-load",
+        )
+
+        t0 = datetime.now()
+        with (
+            mock.patch.object(supervisor, "probe_demanded_delivery_health", return_value=False),
+            mock.patch.object(
+                supervisor,
+                "start_worker_for_request",
+                return_value=(
+                    True,
+                    {"run_id": "run-1"},
+                    DeliveryResult(
+                        ok=True,
+                        adapter="codex",
+                        mode="codex",
+                        target="codex",
+                        auto_delivered=True,
+                        manual_confirmation_required=False,
+                        run_id="run-1",
+                    ),
+                ),
+            ),
+        ):
+            supervisor.run_once(self.config, quiet=True)
+        elapsed = (datetime.now() - t0).total_seconds()
+
+        # Entire supervisor cycle under 1600-record fixture load must finish in < 5.0 seconds
+        # (far below the 30-second poll interval threshold)
+        self.assertLess(elapsed, 5.0)
+
+        # Inspect recorded cycle metrics
+        reloaded_state = runtime_state.load_runtime_state(self.config)
+        metrics = reloaded_state.get("supervisor", {}).get("last_cycle_metrics")
+        self.assertIsNotNone(metrics)
+        self.assertLess(float(metrics.get("cycle_elapsed_seconds", 99.0)), 5.0)
+        phase_elapsed = metrics.get("phase_elapsed", {})
+        self.assertIn("dispatch_plan_transaction", phase_elapsed)
+        self.assertIn("process_queue_reserved", phase_elapsed)
+        self.assertIn("poll_workers_before_plan_reserved", phase_elapsed)
+
+    def test_exact_head_and_worker_lease_recovery_regression(self) -> None:
+        """Targeted regression test for worker lease expiration and lost-lease recovery."""
+        expired_at = (datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat()
+        worker = {
+            "run_id": "run-lost-1",
+            "task_id": "TASK-LOST-1",
+            "task_generation": 1,
+            "provider": "codex",
+            "agent_id": "codex",
+            "logical_agent_id": "codex",
+            "queue_event_id": "evt-lost-1",
+            "status": "running",
+            "pid": 999999,
+            "process_generation": 1,
+            "lease_acquired_at": (datetime.now(timezone.utc) - timedelta(minutes=20)).isoformat(),
+            "lease_expires_at": expired_at,
+            "last_event_at": (datetime.now(timezone.utc) - timedelta(minutes=20)).isoformat(),
+            "request_snapshot": {
+                "reason": supervisor.REASON_OWNED_IN_PROGRESS,
+                "task_generation": 1,
+                "metadata": {"task_generation": 1},
+            },
+        }
+        self.state["workers"] = {"run-lost-1": worker}
+        self.state["queue"]["events"] = {
+            "evt-lost-1": {
+                "status": "started",
+                "run_id": "run-lost-1",
+                "lease_owner": "run-lost-1",
+                "intent": {
+                    "event_id": "evt-lost-1",
+                    "task_id": "TASK-LOST-1",
+                    "task_generation": 1,
+                    "target_agent": "Codex",
+                    "delivery_endpoint_id": "codex",
+                    "reason": "owned_ready_dispatch",
+                },
+            }
+        }
+        tasks = [task_fixture("TASK-LOST-1", owner="Codex", status="in_progress")]
+        status_payload = {"tasks": tasks, "blockers": [], "handoffs": []}
+        self.status_file.write_text(json.dumps(status_payload), encoding="utf-8")
+        event_log = Path(self.config["task_state_store"]["event_log"])
+        supervisor.rewrite_task_state_store.append_state_commit(
+            event_log,
+            status_payload,
+            source="test-lost-lease",
+        )
+        self.state_file.write_text(json.dumps(self.state), encoding="utf-8")
+
+        observation = {
+            "changed": False,
+            "alive": True,
+            "meaningful_progress_advanced": False,
+            "commit_progress_advanced": False,
+            "lease_expired": True,
+            "stop": True,
+        }
+
+        with (
+            mock.patch.object(supervisor, "load_approval_state", return_value={}),
+            mock.patch.object(supervisor, "retry_due_workers", return_value=False),
+            mock.patch.object(supervisor, "recent_governance_activity_events", return_value=[]),
+            mock.patch.object(supervisor, "poll_worker_orphan_stage", return_value={"changed": False, "stop": False}),
+            mock.patch.object(supervisor, "poll_worker_observation_stage", return_value=observation),
+            mock.patch.object(supervisor, "record_delivery_health_for_reaped_worker", return_value=None),
+            mock.patch.object(supervisor, "worker_lease_requires_work_progress", return_value=True),
+            mock.patch.object(supervisor, "worker_lease_progress_is_fresh", return_value=False),
+            mock.patch.object(supervisor, "record_retry_exhausted_worker_terminal_outcome"),
+            mock.patch.object(supervisor, "write_activity_log"),
+            mock.patch.object(supervisor, "record_worker_runtime_measurement"),
+            mock.patch.object(supervisor, "sync_status_pipeline", side_effect=self._drain_status_outbox),
+        ):
+            # poll_workers should reap the expired lease worker and stamp lost-lease receipt
+            changed = supervisor.poll_workers(self.config, self.state)
+            self.assertTrue(changed)
+            reaped_worker = self.state["workers"]["run-lost-1"]
+            self.assertEqual(reaped_worker["status"], "superseded")
+
+            # Status contains the materialized worker recovery receipt
+            status = supervisor.load_status(self.config)
+            task = status["tasks"][0]
+            self.assertIn(supervisor.WORKER_RECOVERY_TASK_KEY, task)
+            receipt_id = task[supervisor.WORKER_RECOVERY_TASK_KEY]["receipt_id"]
+            self.assertIn(receipt_id, status[supervisor.WORKER_RECOVERY_RECEIPTS_KEY])
+
+            # reconcile_queue_records finalizes queue event completed
+            changed_queue = supervisor.reconcile_queue_records(self.config, self.state)
+            self.assertTrue(changed_queue)
+            self.assertEqual(self.state["queue"]["events"]["evt-lost-1"]["status"], "completed")
+
+            # reconcile_queue_intents remains stable
+            supervisor.reconcile_queue_intents(self.config, self.state)
+
+    def test_zombie_worker_pid_treated_as_non_live_and_does_not_block_dispatch(self) -> None:
+        """Zombie worker PIDs are treated as non-live in /proc scanning and liveness checks."""
+        mock_proc_dir = Path(self.temp.name) / "mock_proc"
+        zombie_pid_dir = mock_proc_dir / "816487"
+        zombie_pid_dir.mkdir(parents=True)
+        # stat file with state 'Z' (zombie) and space in command
+        (zombie_pid_dir / "stat").write_text(
+            "816487 (python3 worker_runner.py) Z 1 816487 816487 0 -1 4194304 0 0 0 0 0 0 0 0 20 0 1 0 123456\n",
+            encoding="utf-8",
+        )
+        (zombie_pid_dir / "cmdline").write_bytes(
+            b"python3\x00scripts/dev/worker_runner.py\x00auto worker \xe8\xba\xab\xe5\x88\x86\xe6\x98\xaf\xef\xbc\x9aCodex\x00"
+        )
+
+        # scan_live_worker_pids_by_agent must exclude the zombie PID
+        live_pids = supervisor.scan_live_worker_pids_by_agent(proc_root=mock_proc_dir)
+        self.assertEqual(live_pids, {})
+
+        # pid_is_alive on a stat content with 'Z' returns False
+        with mock.patch.object(Path, "exists", return_value=True), mock.patch.object(
+            Path,
+            "read_text",
+            return_value="816487 (python3 worker_runner.py) Z 1 816487 816487 0 -1 4194304 0 0 0 0 0 0 0 0 20 0 1 0 123456\n",
+        ):
+            self.assertFalse(supervisor.pid_is_alive(816487))
+
+
 if __name__ == "__main__":
     unittest.main()
