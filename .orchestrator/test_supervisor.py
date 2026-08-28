@@ -134,6 +134,76 @@ class V2StartupCacheTests(unittest.TestCase):
             with mock.patch.object(supervisor, "load_status", return_value={"tasks": []}):
                 self.assertFalse(supervisor.reconcile_runtime_on_boot(config, state))
 
+    def test_boot_reconciliation_completes_successful_owner_after_review_handoff(self) -> None:
+        config = config_fixture()
+        task = task_fixture(status="review")
+        status = {"tasks": [task], "blockers": []}
+        worker = {
+            "run_id": "run-owner-handoff",
+            "status": "running",
+            "task_id": "TASK-1",
+            "provider": "codex",
+            "agent_id": "codex",
+            "pid": 999999,
+            "runner_status": "completed",
+            "exit_code": 0,
+            "runner_finished_at": "2026-08-28T00:00:00Z",
+            "request_snapshot": {"reason": supervisor.REASON_OWNED_IN_PROGRESS},
+        }
+        state = {"workers": {"run-owner-handoff": worker}, "queue": {"events": {}}}
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "pid_is_alive", return_value=False),
+            mock.patch.object(supervisor, "update_worker_runtime_markers", return_value=False),
+            mock.patch.object(supervisor, "finalize_queue_event_record") as finalize,
+            mock.patch.object(supervisor, "write_activity_log"),
+            mock.patch.object(supervisor, "recover_lost_worker_lease") as recover,
+            mock.patch.object(supervisor, "reconcile_pending_worker_recoveries", return_value=False),
+        ):
+            self.assertTrue(supervisor.reconcile_runtime_on_boot(config, state))
+
+        self.assertEqual(worker["status"], "completed")
+        self.assertEqual(worker["last_event_at"], "2026-08-28T00:00:00Z")
+        finalize.assert_called_once_with(config, state, worker, "completed")
+        recover.assert_not_called()
+
+    def test_boot_reconciliation_recovers_successful_owner_without_handoff(self) -> None:
+        config = config_fixture()
+        task = task_fixture(status="in_progress")
+        status = {"tasks": [task], "blockers": []}
+        worker = {
+            "run_id": "run-owner-still-responsible",
+            "status": "running",
+            "task_id": "TASK-1",
+            "provider": "codex",
+            "agent_id": "codex",
+            "pid": 999999,
+            "runner_status": "completed",
+            "exit_code": 0,
+            "request_snapshot": {"reason": supervisor.REASON_OWNED_IN_PROGRESS},
+        }
+        state = {"workers": {"run-owner-still-responsible": worker}, "queue": {"events": {}}}
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "pid_is_alive", return_value=False),
+            mock.patch.object(supervisor, "update_worker_runtime_markers", return_value=False),
+            mock.patch.object(supervisor, "canonical_worker_terminal_status", return_value=None),
+            mock.patch.object(supervisor, "recover_lost_worker_lease", return_value=True) as recover,
+            mock.patch.object(supervisor, "reconcile_pending_worker_recoveries", return_value=False),
+        ):
+            self.assertTrue(supervisor.reconcile_runtime_on_boot(config, state))
+
+        recover.assert_called_once_with(
+            config,
+            state,
+            worker,
+            reason_kind="worker_process_missing",
+            reason="Worker process missing during supervisor boot reconciliation.",
+            status=status,
+        )
+
     def test_boot_reconciliation_routes_explicit_hold_through_typed_recovery(self) -> None:
         config = config_fixture()
         task = task_fixture(status="blocked")
