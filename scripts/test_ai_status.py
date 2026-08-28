@@ -4257,6 +4257,122 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
                 "operator_accept", task, ["REG-002", "Operator accepts but branch changed."]
             )
 
+    def test_review_gate_delivery_kind_recognizes_operator_acceptance_without_manifest(self) -> None:
+        task = self.state["tasks"][0]
+        task["status"] = "review_approved"
+        task.pop("review_file", None)
+        task[ai_status.APPROVAL_BINDING_KEY] = {
+            "pr": 4269,
+            "head_sha": "a" * 40,
+            "head_branch": "task/REG-002",
+            "base": "dev",
+        }
+        task[ai_status.DELIVERY_BINDING_KEY] = {
+            "kind": "pull_request",
+            "pr": 4269,
+            "head_sha": "a" * 40,
+            "head_branch": "task/REG-002",
+            "base": "dev",
+            "base_sha": "c" * 40,
+            "required_merge_method": "MERGE",
+        }
+        task[ai_status.OPERATOR_ACCEPTANCE_KEY] = {
+            "repository": "ajoe734/pantheon",
+            "pr": 4269,
+            "head_sha": "a" * 40,
+            "head_branch": "task/REG-002",
+            "base": "dev",
+            "decision": "operator-accept",
+            "actor": "Human/Ops",
+            "mode": "operator_exact_head",
+            "operator_acceptance_proof_ref": (
+                f"refs/tags/pantheon-review/operator-accept/{'a' * 40}"
+            ),
+            "frozen_base_sha": "c" * 40,
+            "current_base_sha": "c" * 40,
+        }
+
+        kind, reason = ai_status.review_gate_delivery_kind(task, {})
+        self.assertEqual(kind, "pull_request")
+        self.assertEqual(reason, ai_status.OPERATOR_ACCEPTANCE_KEY)
+
+    def test_operator_accept_resolves_candidate_from_completion_evidence(self) -> None:
+        task = self.state["tasks"][0]
+        task.pop(ai_status.DELIVERY_BINDING_KEY, None)
+        task.pop(ai_status.APPROVAL_BINDING_KEY, None)
+        task["completion_evidence"] = {
+            "implementation_pr": "https://github.com/ajoe734/pantheon/pull/4269",
+            "implementation_commit": "a" * 40,
+        }
+        with (
+            mock.patch.object(
+                self._review_bridge,
+                "rehabilitate_operator_admission",
+                return_value=self._review_bridge.ReviewAdmissionBinding(
+                    pr=4269,
+                    head_sha="a" * 40,
+                    head_branch="task/REG-002",
+                    base="dev",
+                    base_sha="c" * 40,
+                    required_merge_method="MERGE",
+                    manifest_path=None,
+                    manifest_blob_sha=None,
+                ),
+            ),
+        ):
+            delivery = ai_status.resolve_operator_accept_delivery_binding(
+                task, {}, "ajoe734/pantheon"
+            )
+        self.assertEqual(delivery["pr"], 4269)
+        self.assertEqual(delivery["head_sha"], "a" * 40)
+
+    def test_done_accepts_operator_accepted_delivery_binding_without_manifest(self) -> None:
+        task = self.state["tasks"][0]
+        task["status"] = "review_approved"
+        task["owner"] = "Codex"
+        task["reviewer"] = "Codex2"
+        task.pop("review_file", None)
+        task[ai_status.APPROVAL_BINDING_KEY] = {
+            "pr": 4269,
+            "head_sha": "a" * 40,
+            "head_branch": "task/REG-002",
+            "base": "dev",
+        }
+        task[ai_status.DELIVERY_BINDING_KEY] = {
+            "kind": "pull_request",
+            "pr": 4269,
+            "head_sha": "a" * 40,
+            "head_branch": "task/REG-002",
+            "base": "dev",
+            "base_sha": "c" * 40,
+            "required_merge_method": "MERGE",
+        }
+        task[ai_status.OPERATOR_ACCEPTANCE_KEY] = {
+            "repository": "ajoe734/pantheon",
+            "pr": 4269,
+            "head_sha": "a" * 40,
+            "head_branch": "task/REG-002",
+            "base": "dev",
+            "decision": "operator-accept",
+            "actor": "Human/Ops",
+            "mode": "operator_exact_head",
+            "operator_acceptance_proof_ref": (
+                f"refs/tags/pantheon-review/operator-accept/{'a' * 40}"
+            ),
+            "frozen_base_sha": "c" * 40,
+            "current_base_sha": "c" * 40,
+        }
+
+        with (
+            mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False),
+            mock.patch.object(ai_status, "collect_done_delivery_metadata", return_value={}),
+            mock.patch.object(ai_status, "load_archived_snapshot", return_value=None),
+        ):
+            _command_done(self.state, ["REG-002", "Owner finalizes operator-accepted task."])
+
+        archived = self.state[ai_status.STATUS_ARCHIVE_OUTBOX_KEY]["snapshots"][0]["task"]
+        self.assertEqual(archived["status"], "done")
+
     def test_approve_bridge_failure_preserves_review_state(self) -> None:
         self._set_pr_delivery_binding(pr=4269, head_sha="a" * 40)
         with (

@@ -1464,7 +1464,10 @@ def validate_operator_acceptance_evidence(
         if (
             not OID_RE.fullmatch(frozen_base_sha)
             or not OID_RE.fullmatch(current_base_sha)
-            or frozen_base_sha != expected_frozen_base_sha
+            or (
+                expected_frozen_base_sha
+                and frozen_base_sha != expected_frozen_base_sha
+            )
         ):
             raise GitHubReviewBridgeError("operator acceptance base evidence mismatch")
     return dict(value)

@@ -7410,13 +7410,25 @@ def _delivery_contract_payload(task: Mapping[str, Any]) -> dict[str, Any]:
     return dict(task_machine.delivery_contract_payload(task))
 
 
+def _extract_pr_number(value: Any) -> int | None:
+    if isinstance(value, int) and value > 0:
+        return value
+    text = str(value or "").strip().lstrip("#")
+    if text.isdigit() and int(text) > 0:
+        return int(text)
+    match = re.search(r"/pull/(\d+)", text, re.IGNORECASE)
+    if match:
+        return int(match.group(1))
+    return None
+
+
 def _validated_pr_binding(binding: Mapping[str, Any], task_id: str) -> dict[str, Any]:
-    raw_pr = str(binding.get("pr") or "").strip().lstrip("#")
+    raw_pr = _extract_pr_number(binding.get("pr"))
     head_sha = str(binding.get("head_sha") or "").strip().lower()
-    if not raw_pr.isdigit() or int(raw_pr) <= 0 or not APPROVAL_HEAD_SHA_RE.fullmatch(head_sha):
+    if raw_pr is None or not APPROVAL_HEAD_SHA_RE.fullmatch(head_sha):
         raise SystemExit(f"{task_id} has an invalid pull-request delivery binding")
     return {
-        "pr": int(raw_pr),
+        "pr": raw_pr,
         "head_sha": head_sha,
         "head_branch": str(binding.get("head_branch") or "").strip()
         or f"task/{task_id}",
@@ -7928,7 +7940,13 @@ def pull_request_delivery_reason(task: Mapping[str, Any]) -> str:
         value = task.get(key)
         if isinstance(value, Mapping) and _mapping_has_pull_request_identity(value):
             return key
-    for key in ("source_ref", "github", "delivery"):
+    for key in (
+        "source_ref",
+        "github",
+        "delivery",
+        "completion_evidence",
+        "external_delivery",
+    ):
         value = task.get(key)
         if isinstance(value, Mapping) and _mapping_has_pull_request_identity(value):
             return key
@@ -7944,12 +7962,22 @@ def _legacy_delivery_branch_pair(task: Mapping[str, Any]) -> tuple[str, str]:
         OPERATOR_ACCEPTANCE_KEY,
         "github",
         "source_ref",
+        "delivery",
+        "completion_evidence",
+        "external_delivery",
     ):
         value = task.get(key)
         if not isinstance(value, Mapping):
             continue
-        head_branch = str(value.get("head_branch") or "").strip()
-        base = str(value.get("base") or "").strip()
+        head_branch = str(
+            value.get("head_branch")
+            or value.get("branch")
+            or value.get("headRefName")
+            or ""
+        ).strip()
+        base = str(
+            value.get("base") or value.get("baseRefName") or ""
+        ).strip()
         if head_branch:
             return head_branch, base or DEFAULT_APPROVAL_BASE_BRANCH
     return f"task/{task_id}", DEFAULT_APPROVAL_BASE_BRANCH
@@ -7973,6 +8001,13 @@ def review_gate_delivery_kind(
         and str(delivery.get("kind") or "") == "pull_request"
     ):
         return "pull_request", DELIVERY_BINDING_KEY
+
+    if (
+        operator_acceptance_evidence_matches(task)
+        and isinstance(delivery, Mapping)
+        and str(delivery.get("kind") or "") == "pull_request"
+    ):
+        return "pull_request", OPERATOR_ACCEPTANCE_KEY
 
     # A review row without a complete current handoff binding is never safe to
     # reinterpret as artifact-only. Legacy provenance may explain why it is a
@@ -8145,16 +8180,31 @@ def resolve_operator_accept_delivery_binding(
             "github",
             "source_ref",
             "delivery",
+            "completion_evidence",
+            "external_delivery",
         ):
             value = task.get(key)
             if not isinstance(value, Mapping):
                 continue
-            pr_val = value.get("pr") or value.get("pr_number") or value.get("number")
+            pr_val = (
+                value.get("pr")
+                or value.get("pr_number")
+                or value.get("number")
+                or value.get("pull_request")
+                or value.get("primary_pr")
+                or value.get("implementation_pr")
+                or value.get("pr_url")
+                or value.get("pull_request_url")
+                or value.get("url")
+            )
             head_val = (
                 value.get("head_sha")
                 or value.get("commit")
                 or value.get("sha")
                 or value.get("headRefOid")
+                or value.get("primary_merge_commit")
+                or value.get("implementation_commit")
+                or value.get("merge_commit")
             )
             branch_val = (
                 value.get("head_branch")
@@ -8902,18 +8952,46 @@ def prepare_external_mutation_preflight(
     config = load_config()
     delivery_kind, delivery_reason = review_gate_delivery_kind(candidate, config)
     if delivery_kind == "pull_request":
-        delivery = require_current_pr_delivery_binding(candidate, action="finalize")
-        frozen_manifest = delivery["evidence_manifest"]
-        assert isinstance(frozen_manifest, Mapping)
-        frozen_review_file = str(frozen_manifest.get("path") or "").strip()
-        done_review_file = os.environ.get("REVIEW_FILE", "").strip()
-        if done_review_file and done_review_file != frozen_review_file:
-            raise SystemExit(
-                f"{task_id}: REVIEW_FILE={done_review_file!r} differs from the "
-                f"manifest frozen at handoff ({frozen_review_file!r}); reopen and "
-                "re-handoff the intended exact PR delivery"
+        if operator_acceptance_evidence_matches(candidate):
+            delivery = candidate.get(DELIVERY_BINDING_KEY)
+            if (
+                not isinstance(delivery, Mapping)
+                or str(delivery.get("kind") or "") != "pull_request"
+            ):
+                raise SystemExit(
+                    f"{task_id} has invalid PR delivery binding for operator acceptance"
+                )
+            frozen_manifest = delivery.get("evidence_manifest")
+            frozen_review_file = (
+                str(frozen_manifest.get("path") or "").strip()
+                if isinstance(frozen_manifest, Mapping)
+                else ""
             )
-        done_review_file = ""
+            done_review_file = os.environ.get("REVIEW_FILE", "").strip()
+            if (
+                done_review_file
+                and frozen_review_file
+                and done_review_file != frozen_review_file
+            ):
+                raise SystemExit(
+                    f"{task_id}: REVIEW_FILE={done_review_file!r} differs from the "
+                    f"manifest frozen at handoff ({frozen_review_file!r}); reopen and "
+                    "re-handoff the intended exact PR delivery"
+                )
+            done_review_file = ""
+        else:
+            delivery = require_current_pr_delivery_binding(candidate, action="finalize")
+            frozen_manifest = delivery["evidence_manifest"]
+            assert isinstance(frozen_manifest, Mapping)
+            frozen_review_file = str(frozen_manifest.get("path") or "").strip()
+            done_review_file = os.environ.get("REVIEW_FILE", "").strip()
+            if done_review_file and done_review_file != frozen_review_file:
+                raise SystemExit(
+                    f"{task_id}: REVIEW_FILE={done_review_file!r} differs from the "
+                    f"manifest frozen at handoff ({frozen_review_file!r}); reopen and "
+                    "re-handoff the intended exact PR delivery"
+                )
+            done_review_file = ""
     else:
         done_review_file = os.environ.get("REVIEW_FILE", "").strip()
     if done_review_file and not candidate.get("review_file"):
