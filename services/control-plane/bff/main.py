@@ -218,8 +218,14 @@ from operations_read_model import (
     diagnostic as ops_read_model_diagnostic,
     sanitize_metric as ops_read_model_sanitize_metric,
 )
-from read_store import ReadSurfaceStore, redact_evidence_refs
-from services.persona.runtime_profile import build_persona_runtime_profile
+from read_store import redact_evidence_refs
+try:
+    from ports import ReadSurfacePorts, create_read_surface_ports
+except ImportError:
+    from services.control_plane.bff.ports import (  # type: ignore[no-redef]
+        ReadSurfacePorts,
+        create_read_surface_ports,
+    )
 from settings_store import SettingsStore
 from persona_provisioning import (
     ProvisioningConflict,
@@ -1194,13 +1200,7 @@ async def _bff_unhandled_exception_handler(
 
 command_store = CommandStore(os.path.join(BFF_DATA_DIR, "commands.jsonl"))
 session_lifecycle_store = SessionLifecycleStore(os.path.join(BFF_DATA_DIR, "session_lifecycle.json"))
-read_store = ReadSurfaceStore(
-    os.path.join(BFF_DATA_DIR, "read_surfaces.json"),
-    allow_local_snapshot_fallback=_bool_from_env(
-        "PANTHEON_BFF_ALLOW_LOCAL_SNAPSHOT_FALLBACK",
-        default=False,
-    ),
-)
+read_store: ReadSurfacePorts = create_read_surface_ports()
 settings_store = SettingsStore(os.path.join(BFF_DATA_DIR, "settings.json"))
 _ppl_alloc_009_eligibility_observation_store = PaperEligibilityObservationStore(
     os.path.join(BFF_DATA_DIR, "ppl_alloc_009_proof_observations.sqlite3")
@@ -14996,7 +14996,7 @@ async def _run_management_read(
 
 
 async def _read_management_source_connector_registry(
-    store: ReadSurfaceStore,
+    store: Any,
 ) -> Dict[str, Any]:
     """Read the canonical Source registry within the Management read budget.
 
@@ -44984,7 +44984,7 @@ async def bff_management_nl_ask(
     ]
 
     # BFF-B6-001-SEC-FIX: pass tenant scope to context collection.
-    # _mgmt_nl_collect_context fans out to several ReadSurfaceStore.list_* calls,
+    # _mgmt_nl_collect_context fans out to several read surface port list_* calls,
     # each a blocking urllib HTTP request to runtime-manager (timeout 2s each). On
     # the single-worker BFF that blocks the event loop for seconds per request;
     # run it in a worker thread so concurrent requests (and the FE-BFF gate's
