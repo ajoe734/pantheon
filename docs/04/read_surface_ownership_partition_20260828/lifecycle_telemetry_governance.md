@@ -1,27 +1,33 @@
 # Lifecycle, Telemetry, and Governance Caller Ownership Map
 
-**Task ID:** `ACG-RS-LIFECYCLE-OWNERSHIP-MAP-20260828`  
-**Program ID:** `PANTHEON-ARCH-CLEANUP-20260828`  
-**Owner:** `Antigravity2`  
-**Reviewer:** `Codex2`  
-**Domain Target:** `services/control-plane/bff/domain_ports/lifecycle_telemetry_governance.py` & `services/control-plane/bff/ports/lifecycle_telemetry_governance.py`  
-**Status:** Complete Caller Inventory and Partition Map  
+**Task ID:** `ACG-RS-LIFECYCLE-OWNERSHIP-MAP-20260828`
+**Program ID:** `PANTHEON-ARCH-CLEANUP-20260828`
+**Owner:** `Antigravity2`
+**Reviewer:** `Codex`
+**Domain Target:** `services/control-plane/bff/domain_ports/lifecycle_telemetry_governance.py` & `services/control-plane/bff/ports/lifecycle_telemetry_governance.py`
+**Status:** Complete Caller Inventory and Partition Map
 
 ---
 
 ## 1. Executive Summary & Domain Scope
 
-This document provides the canonical, non-overlapping ownership inventory of all legacy `read_store` member calls in `services/control-plane/bff/main.py` belonging to the **Lifecycle, Telemetry, Incident, Governance, and Lineage** domain.
+This document provides the canonical, non-overlapping caller ownership inventory for all legacy `read_store` member calls in `services/control-plane/bff/main.py` belonging to the **Lifecycle, Telemetry, Incident, Governance, and Lineage** domain (`lifecycle_telemetry_governance`).
 
 This partition establishes the exact migration boundaries for downstream cutover tasks without redundant discovery, generic facade delegation, compatibility storage leaks, or product source modifications.
 
 ### Key Metrics
-- **Total `read_store` Call Sites in `main.py`:** `610` total call sites across all domains
-- **Lifecycle, Telemetry & Governance Call Sites in `main.py`:** `111` calls
-- **Lifecycle, Telemetry & Governance Unique Methods in Domain:** `38` methods (34 with direct calls in `main.py`, 4 available domain protocols/delegates)
-- **Operation Classification:** 100% Read (`read`), 0% Write (`write`)
-- **Direct Destination Ports:** `IncidentReaderPort`, `LifecycleReaderPort`, `GovernanceReaderPort`, `LineageReaderPort`, `TelemetryReaderPort`
-- **Cross-Task Overlap:** `0` (mathematically proven disjoint across all 6 ownership tasks)
+- **Total `read_store` References in `main.py`:** `615` total references (`600` direct `read_store.<method>` calls + `15` dynamic `getattr(read_store, ...)` invocations across `203` distinct direct methods and `12` distinct dynamic attributes).
+- **Lifecycle, Telemetry & Governance Call Sites in `main.py`:** `111` call sites (`110` direct member calls + `1` dynamic `getattr` invocation for `loop_run_projection_metadata` at `L7736`).
+- **Legacy Member Names Accessed in `main.py`:** `34` distinct legacy member names (`33` direct method names + `1` dynamic attribute `loop_run_projection_metadata`).
+- **Typed Domain Port APIs on `LifecycleTelemetryGovernancePort`:** `37` typed-port APIs across 5 domain protocols in `domain_ports/lifecycle_telemetry_governance.py`.
+- **API Mapping & Gap Reconciliation:**
+  - `33` typed-port APIs are directly called across the 110 direct call sites in `main.py`.
+  - `1` dynamic `getattr` call site (`L7736`) maps to `LifecycleReaderPort.loop_run_projection_metadata`.
+  - `1` accessed legacy member name (`get_rollbacks`, 3 call sites) is a legacy alias on `ReadSurfaceStore` mapping directly to `GovernanceReaderPort.list_all_rollbacks(runtime_id=...)`.
+  - `4` typed-port APIs are provided on domain protocols for domain completeness with 0 calls in `main.py` (`get_evolution_decision`, `list_loop_health_records`, `get_loop_health_record`, `list_telemetry_events`).
+- **Operation Classification:** 100% Read (`read`), 0% Write (`write`).
+- **Direct Destination Ports:** `IncidentReaderPort`, `LifecycleReaderPort`, `GovernanceReaderPort`, `LineageReaderPort`, `TelemetryReaderPort`.
+- **Cross-Task Overlap:** `0` (mathematically proven disjoint across all 6 ownership partition tasks).
 
 ---
 
@@ -29,14 +35,14 @@ This partition establishes the exact migration boundaries for downstream cutover
 
 The Lifecycle, Telemetry, and Governance domain is partitioned into 5 focused sub-domains, each backed by a dedicated typed domain protocol and adapter in `domain_ports/lifecycle_telemetry_governance.py`:
 
-| Sub-Domain | Dedicated Protocol | Domain Adapter | Main.py Calls | Unique Methods | Responsibilities |
+| Sub-Domain | Dedicated Protocol | Domain Adapter | Main.py Calls | Accessed Legacy Methods | Responsibilities |
 |---|---|---|---:|---:|---|
-| **1. Incidents & Postmortems** | `IncidentReaderPort` | `DomainIncidentPort` | 29 | 7 | Incident lifecycles, postmortems, incident-linked evolution decisions & rollbacks |
-| **2. Lifecycle, Loops & Sentinels** | `LifecycleReaderPort` | `DomainLifecyclePort` | 31 | 9 | Loop runs, 12-loop health records, Sentinel findings, Kill Switch, Trade Journey projection reader |
-| **3. Governance, Evolution & Audit** | `GovernanceReaderPort` | `DomainGovernancePort` | 15 | 8 | Evolution decisions, freeze orders, rollbacks, rollback reviews, governance audit event trails |
+| **1. Incidents & Postmortems** | `IncidentReaderPort` | `DomainIncidentPort` | 28 | 7 | Incident lifecycles, postmortems, incident-linked evolution decisions & rollbacks |
+| **2. Lifecycle, Loops & Sentinels** | `LifecycleReaderPort` | `DomainLifecyclePort` | 27 | 7 | Loop runs, 12-loop health records, Sentinel findings, Kill Switch, Trade Journey projection reader (26 direct + 1 dynamic getattr) |
+| **3. Governance, Evolution & Audit** | `GovernanceReaderPort` | `DomainGovernancePort` | 20 | 7 | Evolution decisions, freeze orders, rollbacks, rollback reviews, governance audit event trails (includes `get_rollbacks` alias) |
 | **4. Lineage & Inspiration Graph** | `LineageReaderPort` | `DomainLineagePort` | 9 | 7 | Lineage DAG edges, records, graph nodes, artifact existence, inspiration graph projections |
-| **5. Telemetry & Paper-Live Drift** | `TelemetryReaderPort` | `DomainTelemetryPort` | 27 | 7 | Telemetry events with source attribution, telemetry summaries, performance curves, paper-live drift reports |
-| **Total** | `LifecycleTelemetryGovernancePort` | `CompositeLifecycleTelemetryGovernancePort` | **111** | **38** | Full narrow domain read surface |
+| **5. Telemetry & Paper-Live Drift** | `TelemetryReaderPort` | `DomainTelemetryPort` | 27 | 6 | Telemetry events with source attribution, telemetry summaries, performance curves, paper-live drift reports |
+| **Total Domain Surface** | `LifecycleTelemetryGovernancePort` | `CompositeLifecycleTelemetryGovernancePort` | **111** | **34** | Full narrow domain read surface (mapped to **37** typed domain port APIs) |
 
 ---
 
@@ -53,7 +59,7 @@ The following table details every single `read_store` call site in `services/con
 | 5 | `L5380` | `get_evolution_decision_by_id` | `_mutation_review_inputs` | `read` | `GovernanceReaderPort.get_evolution_decision_by_id` | Governance, Evolution & Audit |
 | 6 | `L5391` | `get_incident` | `_mutation_review_inputs` | `read` | `IncidentReaderPort.get_incident` | Incidents & Postmortems |
 | 7 | `L5394` | `get_postmortem` | `_mutation_review_inputs` | `read` | `IncidentReaderPort.get_postmortem` | Incidents & Postmortems |
-| 8 | `L7736` | `loop_run_projection_metadata` | `_loop_run_projection_metadata` | `read` | `LifecycleReaderPort.loop_run_projection_metadata` | Lifecycle, Loops & Sentinels |
+| 8 | `L7736` | `loop_run_projection_metadata` | `_loop_run_projection_metadata` | `read` | `LifecycleReaderPort.loop_run_projection_metadata` *(dynamic getattr)* | Lifecycle, Loops & Sentinels |
 | 9 | `L8664` | `get_telemetry_summary` | `_project_operator_runtime_state_row` | `read` | `TelemetryReaderPort.get_telemetry_summary` | Telemetry & Paper-Live Drift |
 | 10 | `L8680` | `get_rollbacks` | `_project_operator_runtime_state_row` | `read` | `GovernanceReaderPort.list_all_rollbacks(runtime_id=...)` | Governance, Evolution & Audit |
 | 11 | `L8871` | `get_telemetry_summary` | `_build_telemetry_health_group` | `read` | `TelemetryReaderPort.get_telemetry_summary` | Telemetry & Paper-Live Drift |
@@ -162,50 +168,50 @@ The following table details every single `read_store` call site in `services/con
 
 ## 4. Method-Level API & Destination Port Mapping
 
-Every method in this domain is mapped to its exact typed protocol signature, runtime behavior, and domain port destination:
+Every method accessed in this domain is mapped to its exact typed protocol signature, runtime behavior, and domain port destination:
 
-### 4.1 Governance, Evolution & Audit
+### 4.1 Governance, Evolution & Audit (20 Call Sites across 7 Accessed Legacy Members, 7 Typed Port APIs)
 
-| Method Name | Call Count | Classification | Target Protocol Signature | Description |
+| Method / Member Name | Main.py Calls | Classification | Target Protocol Signature | Description |
 |---|---:|:---:|---|---|
-| `get_evolution_decision` | 0 | `read` | `get_evolution_decision(decision_id: str) -> Optional[Dict[str, Any]]` | Alias for get_evolution_decision_by_id on GovernanceReaderPort. |
 | `get_evolution_decision_by_id` | 2 | `read` | `get_evolution_decision_by_id(decision_id: str) -> Optional[Dict[str, Any]]` | Retrieves evolution decision record by decision ID. |
+| `get_evolution_decision` | 0 | `read` | `get_evolution_decision(decision_id: str) -> Optional[Dict[str, Any]]` | Alias for `get_evolution_decision_by_id` on `GovernanceReaderPort` (uncalled in `main.py`). |
 | `get_rollback_review` | 1 | `read` | `get_rollback_review(rollback_id: Optional[str]) -> Optional[Dict[str, Any]]` | Retrieves post-rollback review and verification report by rollback ID. |
-| `get_rollbacks` | 3 | `read` | `list_all_rollbacks(runtime_id: Optional[str] = None) -> List[Dict[str, Any]]` | Retrieves rollbacks filtered for a specific runtime_id. |
+| `get_rollbacks` | 3 | `read` | `list_all_rollbacks(runtime_id: Optional[str] = None) -> List[Dict[str, Any]]` | Legacy alias on `ReadSurfaceStore` mapping to `GovernanceReaderPort.list_all_rollbacks(runtime_id=...)`. |
 | `list_all_rollbacks` | 2 | `read` | `list_all_rollbacks(runtime_id: Optional[str] = None, action_type: Optional[str] = None, time_range: Optional[str] = None) -> List[Dict[str, Any]]` | Lists rollback actions across runtimes, action types, and time ranges. |
 | `list_evolution_decisions` | 9 | `read` | `list_evolution_decisions(action_type: Optional[str] = None, risk_level: Optional[str] = None, status: Optional[str] = None) -> List[Dict[str, Any]]` | Lists evolution governance decisions filtered by action_type, risk_level, or decision status. |
 | `list_freeze_orders` | 2 | `read` | `list_freeze_orders(status: Optional[str] = None, scope: Optional[str] = None) -> List[Dict[str, Any]]` | Lists emergency and governance freeze orders filtered by status and scope. |
 | `list_governance_audit_events` | 1 | `read` | `list_governance_audit_events(*, actor: Optional[str] = None, action_types: Optional[List[str]] = None, target_type: Optional[str] = None, from_ts: Optional[datetime] = None, to_ts: Optional[datetime] = None, include_fixture_pack: bool = True) -> List[Dict[str, Any]]` | Lists governance and compliance audit trail events with multi-field filtering. |
 
-### 4.2 Incidents & Postmortems
+### 4.2 Incidents & Postmortems (28 Call Sites across 7 Accessed Legacy Members, 7 Typed Port APIs)
 
-| Method Name | Call Count | Classification | Target Protocol Signature | Description |
+| Method / Member Name | Main.py Calls | Classification | Target Protocol Signature | Description |
 |---|---:|:---:|---|---|
 | `get_evolution_decisions_by_incident` | 2 | `read` | `get_evolution_decisions_by_incident(incident_id: str) -> List[Dict[str, Any]]` | Retrieves evolution decisions linked to a specific incident ID. |
 | `get_incident` | 7 | `read` | `get_incident(incident_id: str) -> Optional[Dict[str, Any]]` | Retrieves specific incident by incident_id. |
 | `get_postmortem` | 2 | `read` | `get_postmortem(report_id: str) -> Optional[Dict[str, Any]]` | Retrieves a postmortem report by report_id. |
 | `get_postmortem_by_incident` | 1 | `read` | `get_postmortem_by_incident(incident_id: str) -> Optional[Dict[str, Any]]` | Retrieves postmortem report associated with a specific incident ID. |
 | `get_rollbacks_by_incident` | 1 | `read` | `get_rollbacks_by_incident(incident_id: str) -> List[Dict[str, Any]]` | Retrieves rollback actions linked to a specific incident ID. |
-| `list_incidents` | 13 | `read` | `list_incidents(status: Optional[str] = None, severity: Optional[str] = None, affected_pool_id: Optional[str] = None) -> List[Dict[str, Any]]` | Lists incident records with status, severity, and capital pool filters, preserving the anchor inc-20260410-001 sorting rule. |
+| `list_incidents` | 13 | `read` | `list_incidents(status: Optional[str] = None, severity: Optional[str] = None, affected_pool_id: Optional[str] = None) -> List[Dict[str, Any]]` | Lists incident records with status, severity, and capital pool filters, preserving the anchor `inc-20260410-001` sorting rule. |
 | `list_postmortems` | 2 | `read` | `list_postmortems(time_range: Optional[str] = None) -> List[Dict[str, Any]]` | Lists postmortem reports across time ranges. |
 
-### 4.3 Lifecycle, Loops & Sentinels
+### 4.3 Lifecycle, Loops & Sentinels (27 Call Sites across 7 Accessed Legacy Members, 9 Typed Port APIs)
 
-| Method Name | Call Count | Classification | Target Protocol Signature | Description |
+| Method / Member Name | Main.py Calls | Classification | Target Protocol Signature | Description |
 |---|---:|:---:|---|---|
 | `get_kill_switch_status` | 5 | `read` | `get_kill_switch_status() -> Dict[str, Any]` | Returns current platform kill switch and safe mode execution status. |
-| `get_loop_health_record` | 0 | `read` | `get_loop_health_record(loop_id: str) -> Tuple[bool, Optional[Dict[str, Any]]]` | Retrieves health record for a specific loop ID. |
+| `get_loop_health_record` | 0 | `read` | `get_loop_health_record(loop_id: str) -> Tuple[bool, Optional[Dict[str, Any]]]` | Retrieves health record for a specific loop ID (uncalled in `main.py`). |
 | `get_loop_run` | 2 | `read` | `get_loop_run(loop_run_id: str) -> Tuple[bool, Optional[Dict[str, Any]]]` | Retrieves specific loop run record by ID. |
 | `get_sentinel_finding` | 2 | `read` | `get_sentinel_finding(finding_id: str) -> Tuple[bool, Optional[Dict[str, Any]]]` | Retrieves single sentinel finding by finding ID. |
-| `list_loop_health_records` | 0 | `read` | `list_loop_health_records() -> Tuple[bool, List[Dict[str, Any]]]` | Lists health records for all twelve canonical loops. |
+| `list_loop_health_records` | 0 | `read` | `list_loop_health_records() -> Tuple[bool, List[Dict[str, Any]]]` | Lists health records for all twelve canonical loops (uncalled in `main.py`). |
 | `list_loop_runs` | 5 | `read` | `list_loop_runs() -> Tuple[bool, List[Dict[str, Any]]]` | Lists all loop runs, returning availability boolean and list of loop run projection records. |
 | `list_sentinel_findings` | 8 | `read` | `list_sentinel_findings(*, kind: Optional[str] = None, status: Optional[str] = None, severity: Optional[str] = None) -> Tuple[bool, List[Dict[str, Any]]]` | Lists sentinel anomaly and risk findings with kind, status, and severity filters. |
-| `loop_run_projection_metadata` | 1 | `read` | `loop_run_projection_metadata() -> Dict[str, Any]` | Returns loop run projection envelope and source state metadata. |
+| `loop_run_projection_metadata` | 1 | `read` | `loop_run_projection_metadata() -> Dict[str, Any]` | Returns loop run projection envelope and source state metadata *(accessed via dynamic getattr at L7736)*. |
 | `trade_journey_projection_reader` | 4 | `read` | `trade_journey_projection_reader() -> Any` | Returns configured trade journey projection reader instance for live projection lookups. |
 
-### 4.4 Lineage & Inspiration Graph
+### 4.4 Lineage & Inspiration Graph (9 Call Sites across 7 Accessed Legacy Members, 7 Typed Port APIs)
 
-| Method Name | Call Count | Classification | Target Protocol Signature | Description |
+| Method / Member Name | Main.py Calls | Classification | Target Protocol Signature | Description |
 |---|---:|:---:|---|---|
 | `artifact_exists` | 1 | `read` | `artifact_exists(artifact_id: str) -> bool` | Checks if artifact exists in registry or lineage provenance graph. |
 | `get_inspiration_graph` | 1 | `read` | `get_inspiration_graph(artifact_id: str) -> Optional[Dict[str, Any]]` | Retrieves weighted inspiration relationships and strategy tags for research artifacts. |
@@ -215,15 +221,15 @@ Every method in this domain is mapped to its exact typed protocol signature, run
 | `list_lineage_edges` | 3 | `read` | `list_lineage_edges(artifact_id: Optional[str] = None, include_fixture_pack: bool = True) -> List[Dict[str, Any]]` | Lists directed lineage provenance edges connecting research, strategies, allocations, and bindings. |
 | `list_lineage_records` | 1 | `read` | `list_lineage_records(artifact_id: Optional[str] = None, include_fixture_pack: bool = True) -> List[Dict[str, Any]]` | Lists lineage records aggregated by artifact ID with edge counts and latest timestamps. |
 
-### 4.5 Telemetry & Paper-Live Drift
+### 4.5 Telemetry & Paper-Live Drift (27 Call Sites across 6 Accessed Legacy Members, 7 Typed Port APIs)
 
-| Method Name | Call Count | Classification | Target Protocol Signature | Description |
+| Method / Member Name | Main.py Calls | Classification | Target Protocol Signature | Description |
 |---|---:|:---:|---|---|
 | `get_paper_live_drift_report` | 4 | `read` | `get_paper_live_drift_report(runtime_id: Optional[str]) -> Optional[Dict[str, Any]]` | Retrieves paper-vs-live execution slippage and drift diagnostic report for runtime ID. |
 | `get_telemetry_performance` | 3 | `read` | `get_telemetry_performance(artifact_id: str) -> Optional[Dict[str, Any]]` | Retrieves performance metrics curve and trade logs for a specific artifact or runtime. |
 | `get_telemetry_summary` | 14 | `read` | `get_telemetry_summary(runtime_id: str) -> Optional[Dict[str, Any]]` | Retrieves aggregated performance and risk telemetry summary (PnL, Sharpe, drawdown, fill rate) for runtime binding. |
 | `list_paper_live_drift_reports` | 1 | `read` | `list_paper_live_drift_reports() -> List[Dict[str, Any]]` | Lists all paper-live drift diagnostic reports. |
-| `list_telemetry_events` | 0 | `read` | `list_telemetry_events(pool_id: Optional[str] = None, artifact_id: Optional[str] = None, time_range: Optional[str] = None) -> List[Dict[str, Any]]` | Lists normalized execution telemetry events. |
+| `list_telemetry_events` | 0 | `read` | `list_telemetry_events(pool_id: Optional[str] = None, artifact_id: Optional[str] = None, time_range: Optional[str] = None) -> List[Dict[str, Any]]` | Lists normalized execution telemetry events (uncalled in `main.py`; `list_telemetry_events_with_source` used instead). |
 | `list_telemetry_events_with_source` | 1 | `read` | `list_telemetry_events_with_source(pool_id: Optional[str] = None, artifact_id: Optional[str] = None, time_range: Optional[str] = None) -> Tuple[str, List[Dict[str, Any]]]` | Lists telemetry events alongside dataset source attribution (telemetry_events vs telemetry_summary_fallback). |
 | `list_telemetry_summaries` | 4 | `read` | `list_telemetry_summaries() -> List[Dict[str, Any]]` | Lists all telemetry summary records across all active runtimes. |
 
@@ -233,7 +239,7 @@ Every method in this domain is mapped to its exact typed protocol signature, run
 
 An exhaustive audit of `services/control-plane/bff/domain_ports/lifecycle_telemetry_governance.py` and `services/control-plane/bff/ports/lifecycle_telemetry_governance.py` confirms:
 
-1. **Zero Missing Domain APIs:** All 38 methods in the domain have full protocol definitions, concrete domain adapters, in-memory test doubles, and composite re-exports.
+1. **Zero Missing Domain APIs:** All 37 typed-port methods in the domain have full protocol definitions, concrete domain adapters, in-memory test doubles, and composite re-exports.
 2. **Zero Generic Delegation Leaks:** No method delegates back to `ReadSurfaceStore` or untyped dictionary fallbacks.
 3. **Zero Compatibility Storage Leaks:** Data structures conform strictly to domain entity types (incidents, postmortems, loop runs, sentinel findings, evolution decisions, freeze orders, rollbacks, lineage DAG edges, telemetry summaries, drift reports).
 4. **Zero Production Code Changes in this Task:** In accordance with task acceptance constraints, no production files in `services/control-plane/bff/` are modified in this mapping task.
@@ -242,24 +248,43 @@ An exhaustive audit of `services/control-plane/bff/domain_ports/lifecycle_teleme
 
 ## 6. Mathematical Non-Overlap Proof Across All 6 Ownership Tasks
 
-To prevent duplicate effort or conflicting ownership during cutover, all 610 `read_store` call sites and 176 methods in `main.py` were evaluated against the 6 domain tasks plus cross-domain infrastructure:
+To prevent duplicate effort or conflicting ownership during caller migration, all 600 direct `read_store` call sites and 203 unique direct methods across `main.py` are strictly partitioned into 6 disjoint domain tasks:
 
-| Task ID | Domain Name | Target Domain Port Module | Main.py Calls | Method Count | Disjointness Status |
+| Task ID | Domain Name | Target Domain Port Module | Direct Methods | Direct Calls | Status & Disjointness Proof |
 |---|---|---|---:|---:|:---:|
-| `ACG-RS-OPS-OWNERSHIP-MAP-20260828` | Operations & Agora | `operations_consultation.py` | 86 | 60 | **100% Disjoint** (0 overlap) |
-| `ACG-RS-OODA-OWNERSHIP-MAP-20260828` | OODA & Management | `ooda_management.py` | 49 | 21 | **100% Disjoint** (0 overlap) |
-| `ACG-RS-RESEARCH-OWNERSHIP-MAP-20260828` | Research & Knowledge | `research_knowledge_source.py` | 75 | 38 | **100% Disjoint** (0 overlap) |
-| `ACG-RS-TRAINING-OWNERSHIP-MAP-20260828` | Persona Training | `persona_training.py` | 54 | 24 | **100% Disjoint** (0 overlap) |
-| `ACG-RS-CAPITAL-OWNERSHIP-MAP-20260828` | Persona Capital & Runtime | `persona_capital_runtime.py` | 192 | 44 | **100% Disjoint** (0 overlap) |
-| **`ACG-RS-LIFECYCLE-OWNERSHIP-MAP-20260828`** | **Lifecycle, Telemetry & Governance** | **`lifecycle_telemetry_governance.py`** | **111** | **38** | **100% Disjoint** (0 overlap) |
-| *(infrastructure)* | Cross-Domain Infrastructure | `_data`, `_read_dataset_records`, `dataset_source*` | 43 | 4 | **100% Disjoint** (0 overlap) |
-| **Total System Surface** | **All Domains Combined** | **All 6 Domain Ports** | **610** | **176** | **Complete Disjoint Partition** |
+| `ACG-RS-OPS-OWNERSHIP-MAP-20260828` | Operations & Agora | `operations_consultation.py` | 48 | 76 | **100% Disjoint** (0 overlap; 83 total call sites including delegates/dynamic) |
+| `ACG-RS-OODA-OWNERSHIP-MAP-20260828` | OODA & Management | `ooda_management.py` | 16 | 50 | **100% Disjoint** (0 overlap; 52 total call sites including 2 dynamic getattr) |
+| `ACG-RS-RESEARCH-OWNERSHIP-MAP-20260828` | Research & Knowledge | `research_knowledge_source.py` | 42 | 116 | **100% Disjoint** (0 overlap; includes 13 `dataset_source` calls) |
+| `ACG-RS-TRAINING-OWNERSHIP-MAP-20260828` | Persona Training | `persona_training.py` | 17 | 31 | **100% Disjoint** (0 overlap) |
+| `ACG-RS-CAPITAL-OWNERSHIP-MAP-20260828` | Persona Capital & Runtime | `persona_capital_runtime.py` | 47 | 217 | **100% Disjoint** (0 overlap; evolution decisions resolved to LTG) |
+| **`ACG-RS-LIFECYCLE-OWNERSHIP-MAP-20260828`** | **Lifecycle, Telemetry & Governance** | **`lifecycle_telemetry_governance.py`** | **33** | **110** | **100% Disjoint** (0 overlap; 111 total call sites including L7736 dynamic getattr) |
+| **Total System Surface** | **All 6 Domains Combined** | **All 6 Domain Ports** | **203** | **600** | **Exact Pairwise Disjoint Partition** |
 
-### Overlap Proof Statement
-Let $M_{LTG}$ be the set of 38 methods assigned to `ACG-RS-LIFECYCLE-OWNERSHIP-MAP-20260828`.
-For every other task domain $D \in \{Ops, Ooda, Research, Training, Capital, Infra\}$ with method set $M_D$:
-$$M_{LTG} \cap M_D = \emptyset$$
-Every call site in `main.py` is mapped to exactly one domain port with zero ambiguity.
+### 6.1 Reconciliation of Evolution Call Site Ownership Across Sibling Maps
+
+A critical boundary clarification exists regarding the **13 call sites** in `main.py` referencing evolution decisions:
+- `get_evolution_decision_by_id` (2 call sites: `L5380`, `L21999`)
+- `get_evolution_decisions_by_incident` (2 call sites: `L12582`, `L21910`)
+- `list_evolution_decisions` (9 call sites: `L21782`, `L21975`, `L36581`, `L39770`, `L43480`, `L61688`, `L64076`, `L65294`, `L65489`)
+
+**Canonical Ownership Determination:**
+1. **Governance & Incident Domain Truth:** In `services/control-plane/bff/domain_ports/lifecycle_telemetry_governance.py`, `GovernanceReaderPort` implements `list_evolution_decisions`, `get_evolution_decision_by_id`, and `get_evolution_decision`, while `IncidentReaderPort` implements `get_evolution_decisions_by_incident`. These domain ports hold the authoritative query parameters (`action_type`, `risk_level`, `status`, `incident_ref`) and canonical DTO projections for evolution governance.
+2. **Capital Evolution Projection Boundary:** `EvolutionProjectionPort` in `services/control-plane/bff/domain_ports/persona_capital_runtime.py` is a pure derived projection layer that composes candidate and run lists for evolution programs (`list_evolution_programs`, `get_evolution_program`, `list_evolution_program_runs`, `list_evolution_program_candidates`). It does not implement `get_evolution_decision_by_id` or `get_evolution_decisions_by_incident`.
+3. **Partition Resolution:** Canonical ownership of all 13 evolution call sites and their 3 methods belongs exclusively to **`ACG-RS-LIFECYCLE-OWNERSHIP-MAP-20260828`** (under Governance and Incident sub-domains). This cleanly adjusts `persona_capital_runtime`'s direct method set to **47 methods** (`217` direct calls), establishing complete disjointness and preventing duplicate migration work.
+
+### 6.2 Formal Proof of Disjoint Union
+
+Let $\mathcal{M}_{\text{main.py}}$ be the set of 203 distinct direct member names called on  across all 600 direct calls in .
+
+Let {\text{train}}, D_{\text{ooda}}, D_{\text{ops}}, D_{\text{res}}, D_{\text{cap}}, D_{\text{ltg}}$ be the respective disjoint method sets:
+1. **Pairwise Disjointness**:
+   395\forall i, j \in \{\text{train}, \text{ooda}, \text{ops}, \text{res}, \text{cap}, \text{ltg}\}, \; i \neq j \implies D_i \cap D_j = \emptyset395
+2. **Complete Coverage**:
+   395\bigcup_{k \in \{\text{train}, \text{ooda}, \text{ops}, \text{res}, \text{cap}, \text{ltg}\}} D_k = \mathcal{M}_{\text{main.py}} \quad (|\mathcal{M}_{\text{main.py}}| = 203)395
+3. **Method Sum**:
+   395\sum |D_k| = 17 + 16 + 48 + 42 + 47 + 33 = 203395
+4. **Call Site Sum**:
+   395\sum \text{Calls}(D_k) = 31 + 50 + 76 + 116 + 217 + 110 = 600395
 
 ---
 
