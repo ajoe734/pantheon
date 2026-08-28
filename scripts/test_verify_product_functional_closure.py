@@ -171,6 +171,8 @@ def _write_evidence_files(root: Path) -> dict[str, Path]:
         "max_ticks": 0,
         "recurring_provider_process": "absent",
         "continuous_egress": "disabled",
+        "zero_continuous_egress": True,
+        "before_after": "reconcile_only",
     }
     paper_runtime_payload = {
         "schema_version": "pantheon.product_functional_closure.paper_runtime.v1",
@@ -184,6 +186,8 @@ def _write_evidence_files(root: Path) -> dict[str, Path]:
             "bff_url": BFF_URL,
             "fe_url": FE_URL,
         },
+        "environment_scope": "paper",
+        "deployment_sha": BFF_SHA,
         "paper_fleet_ready": True,
         "executable_binding_contract": "admitted",
         "bounded_lifecycle": "enforced",
@@ -518,16 +522,126 @@ def test_gate_02_source_dep_unready_fails(tmp_path: Path) -> None:
     assert "source ingestion dependency" in str(gate_02.error)
 
 
+def test_gate_02_missing_source_runtime_evidence_arg_fails(tmp_path: Path) -> None:
+    paths = _write_evidence_files(tmp_path)
+    cfg = _config(tmp_path, paths)
+    cfg.source_runtime_evidence = None
+    verifier = ProductFunctionalClosureVerifier(cfg, transport=_transport())
+    report = verifier.run_full_acceptance()
+    assert report.overall_status == "FAILED"
+    gate_02 = next(r for r in report.gate_results if r.gate_id == "gate_02_source_manual_only_readiness")
+    assert gate_02.status == "FAILED"
+    assert "source-runtime-evidence is required" in str(gate_02.error)
+
+
+def test_gate_02_source_runtime_file_not_found_fails(tmp_path: Path) -> None:
+    paths = _write_evidence_files(tmp_path)
+    paths["source_runtime"].unlink()
+    verifier = ProductFunctionalClosureVerifier(_config(tmp_path, paths), transport=_transport())
+    report = verifier.run_full_acceptance()
+    assert report.overall_status == "FAILED"
+    gate_02 = next(r for r in report.gate_results if r.gate_id == "gate_02_source_manual_only_readiness")
+    assert gate_02.status == "FAILED"
+    assert "does not exist" in str(gate_02.error)
+
+
+def test_gate_02_source_runtime_missing_schema_version_fails(tmp_path: Path) -> None:
+    paths = _write_evidence_files(tmp_path)
+    src = json.loads(paths["source_runtime"].read_text())
+    del src["schema_version"]
+    paths["source_runtime"].write_text(json.dumps(src))
+    verifier = ProductFunctionalClosureVerifier(_config(tmp_path, paths), transport=_transport())
+    report = verifier.run_full_acceptance()
+    assert report.overall_status == "FAILED"
+    gate_02 = next(r for r in report.gate_results if r.gate_id == "gate_02_source_manual_only_readiness")
+    assert gate_02.status == "FAILED"
+    assert "must declare a non-empty schema_version" in str(gate_02.error)
+
+
+def test_gate_02_source_runtime_missing_task_fails(tmp_path: Path) -> None:
+    paths = _write_evidence_files(tmp_path)
+    src = json.loads(paths["source_runtime"].read_text())
+    del src["task"]
+    paths["source_runtime"].write_text(json.dumps(src))
+    verifier = ProductFunctionalClosureVerifier(_config(tmp_path, paths), transport=_transport())
+    report = verifier.run_full_acceptance()
+    assert report.overall_status == "FAILED"
+    gate_02 = next(r for r in report.gate_results if r.gate_id == "gate_02_source_manual_only_readiness")
+    assert gate_02.status == "FAILED"
+    assert "must declare an associated task id" in str(gate_02.error)
+
+
+def test_gate_02_source_runtime_non_hosted_mode_fails(tmp_path: Path) -> None:
+    paths = _write_evidence_files(tmp_path)
+    src = json.loads(paths["source_runtime"].read_text())
+    src["mode"] = "local"
+    paths["source_runtime"].write_text(json.dumps(src))
+    verifier = ProductFunctionalClosureVerifier(_config(tmp_path, paths), transport=_transport())
+    report = verifier.run_full_acceptance()
+    assert report.overall_status == "FAILED"
+    gate_02 = next(r for r in report.gate_results if r.gate_id == "gate_02_source_manual_only_readiness")
+    assert gate_02.status == "FAILED"
+    assert "must declare mode='hosted'" in str(gate_02.error)
+
+
+def test_gate_02_source_runtime_missing_observed_at_fails(tmp_path: Path) -> None:
+    paths = _write_evidence_files(tmp_path)
+    src = json.loads(paths["source_runtime"].read_text())
+    del src["observed_at"]
+    paths["source_runtime"].write_text(json.dumps(src))
+    verifier = ProductFunctionalClosureVerifier(_config(tmp_path, paths), transport=_transport())
+    report = verifier.run_full_acceptance()
+    assert report.overall_status == "FAILED"
+    gate_02 = next(r for r in report.gate_results if r.gate_id == "gate_02_source_manual_only_readiness")
+    assert gate_02.status == "FAILED"
+    assert "must declare observed_at timestamp" in str(gate_02.error)
+
+
+def test_gate_02_source_runtime_stale_observed_at_fails(tmp_path: Path) -> None:
+    paths = _write_evidence_files(tmp_path)
+    src = json.loads(paths["source_runtime"].read_text())
+    src["observed_at"] = _timestamp(age_seconds=50000)
+    paths["source_runtime"].write_text(json.dumps(src))
+    verifier = ProductFunctionalClosureVerifier(_config(tmp_path, paths), transport=_transport())
+    report = verifier.run_full_acceptance()
+    assert report.overall_status == "FAILED"
+    gate_02 = next(r for r in report.gate_results if r.gate_id == "gate_02_source_manual_only_readiness")
+    assert gate_02.status == "FAILED"
+    assert "outside the allowed freshness window" in str(gate_02.error)
+
+
+def test_gate_02_source_runtime_partial_exact_pair_fails(tmp_path: Path) -> None:
+    paths = _write_evidence_files(tmp_path)
+    src = json.loads(paths["source_runtime"].read_text())
+    del src["exact_pair"]["bff_url"]
+    paths["source_runtime"].write_text(json.dumps(src))
+    verifier = ProductFunctionalClosureVerifier(_config(tmp_path, paths), transport=_transport())
+    report = verifier.run_full_acceptance()
+    assert report.overall_status == "FAILED"
+    gate_02 = next(r for r in report.gate_results if r.gate_id == "gate_02_source_manual_only_readiness")
+    assert gate_02.status == "FAILED"
+    assert "exact_pair.bff_url is missing" in str(gate_02.error)
+
+
+def test_gate_02_source_runtime_exact_pair_mismatch_fails(tmp_path: Path) -> None:
+    paths = _write_evidence_files(tmp_path)
+    src = json.loads(paths["source_runtime"].read_text())
+    src["exact_pair"]["backend_sha"] = "0" * 40
+    paths["source_runtime"].write_text(json.dumps(src))
+    verifier = ProductFunctionalClosureVerifier(_config(tmp_path, paths), transport=_transport())
+    report = verifier.run_full_acceptance()
+    assert report.overall_status == "FAILED"
+    gate_02 = next(r for r in report.gate_results if r.gate_id == "gate_02_source_manual_only_readiness")
+    assert gate_02.status == "FAILED"
+    assert "exact_pair.backend_sha is" in str(gate_02.error)
+
+
 def test_gate_02_source_runtime_mode_invalid_fails(tmp_path: Path) -> None:
     paths = _write_evidence_files(tmp_path)
     src = json.loads(paths["source_runtime"].read_text())
     src["scheduler_mode"] = "continuous_pull"
     paths["source_runtime"].write_text(json.dumps(src))
-
-    verifier = ProductFunctionalClosureVerifier(
-        _config(tmp_path, paths),
-        transport=_transport(),
-    )
+    verifier = ProductFunctionalClosureVerifier(_config(tmp_path, paths), transport=_transport())
     report = verifier.run_full_acceptance()
     assert report.overall_status == "FAILED"
     gate_02 = next(r for r in report.gate_results if r.gate_id == "gate_02_source_manual_only_readiness")
@@ -535,21 +649,224 @@ def test_gate_02_source_runtime_mode_invalid_fails(tmp_path: Path) -> None:
     assert "source runtime scheduler mode is" in str(gate_02.error)
 
 
+def test_gate_02_source_runtime_max_ticks_nonzero_fails(tmp_path: Path) -> None:
+    paths = _write_evidence_files(tmp_path)
+    src = json.loads(paths["source_runtime"].read_text())
+    src["max_ticks"] = 1
+    paths["source_runtime"].write_text(json.dumps(src))
+    verifier = ProductFunctionalClosureVerifier(_config(tmp_path, paths), transport=_transport())
+    report = verifier.run_full_acceptance()
+    assert report.overall_status == "FAILED"
+    gate_02 = next(r for r in report.gate_results if r.gate_id == "gate_02_source_manual_only_readiness")
+    assert gate_02.status == "FAILED"
+    assert "max_ticks is 1" in str(gate_02.error)
+
+
+def test_gate_02_source_runtime_missing_max_ticks_fails(tmp_path: Path) -> None:
+    paths = _write_evidence_files(tmp_path)
+    src = json.loads(paths["source_runtime"].read_text())
+    del src["max_ticks"]
+    paths["source_runtime"].write_text(json.dumps(src))
+    verifier = ProductFunctionalClosureVerifier(_config(tmp_path, paths), transport=_transport())
+    report = verifier.run_full_acceptance()
+    assert report.overall_status == "FAILED"
+    gate_02 = next(r for r in report.gate_results if r.gate_id == "gate_02_source_manual_only_readiness")
+    assert gate_02.status == "FAILED"
+    assert "source runtime max_ticks is None" in str(gate_02.error)
+
+
 def test_gate_02_source_recurring_process_fails(tmp_path: Path) -> None:
     paths = _write_evidence_files(tmp_path)
     src = json.loads(paths["source_runtime"].read_text())
     src["recurring_provider_process"] = "present"
     paths["source_runtime"].write_text(json.dumps(src))
-
-    verifier = ProductFunctionalClosureVerifier(
-        _config(tmp_path, paths),
-        transport=_transport(),
-    )
+    verifier = ProductFunctionalClosureVerifier(_config(tmp_path, paths), transport=_transport())
     report = verifier.run_full_acceptance()
     assert report.overall_status == "FAILED"
     gate_02 = next(r for r in report.gate_results if r.gate_id == "gate_02_source_manual_only_readiness")
     assert gate_02.status == "FAILED"
-    assert "recurring_provider_process=" in str(gate_02.error)
+    assert "recurring_provider_process='present'" in str(gate_02.error)
+
+
+def test_gate_02_source_runtime_missing_recurring_process_fails(tmp_path: Path) -> None:
+    paths = _write_evidence_files(tmp_path)
+    src = json.loads(paths["source_runtime"].read_text())
+    del src["recurring_provider_process"]
+    paths["source_runtime"].write_text(json.dumps(src))
+    verifier = ProductFunctionalClosureVerifier(_config(tmp_path, paths), transport=_transport())
+    report = verifier.run_full_acceptance()
+    assert report.overall_status == "FAILED"
+    gate_02 = next(r for r in report.gate_results if r.gate_id == "gate_02_source_manual_only_readiness")
+    assert gate_02.status == "FAILED"
+    assert "recurring_provider_process=None" in str(gate_02.error)
+
+
+def test_gate_02_source_continuous_egress_enabled_fails(tmp_path: Path) -> None:
+    paths = _write_evidence_files(tmp_path)
+    src = json.loads(paths["source_runtime"].read_text())
+    src["continuous_egress"] = "enabled"
+    src["zero_continuous_egress"] = False
+    paths["source_runtime"].write_text(json.dumps(src))
+    verifier = ProductFunctionalClosureVerifier(_config(tmp_path, paths), transport=_transport())
+    report = verifier.run_full_acceptance()
+    assert report.overall_status == "FAILED"
+    gate_02 = next(r for r in report.gate_results if r.gate_id == "gate_02_source_manual_only_readiness")
+    assert gate_02.status == "FAILED"
+    assert "continuous egress" in str(gate_02.error)
+
+
+def test_gate_02_source_missing_continuous_egress_fails(tmp_path: Path) -> None:
+    paths = _write_evidence_files(tmp_path)
+    src = json.loads(paths["source_runtime"].read_text())
+    del src["continuous_egress"]
+    del src["zero_continuous_egress"]
+    paths["source_runtime"].write_text(json.dumps(src))
+    verifier = ProductFunctionalClosureVerifier(_config(tmp_path, paths), transport=_transport())
+    report = verifier.run_full_acceptance()
+    assert report.overall_status == "FAILED"
+    gate_02 = next(r for r in report.gate_results if r.gate_id == "gate_02_source_manual_only_readiness")
+    assert gate_02.status == "FAILED"
+    assert "continuous egress disabled" in str(gate_02.error)
+
+
+def test_gate_02_source_missing_before_after_fails(tmp_path: Path) -> None:
+    paths = _write_evidence_files(tmp_path)
+    src = json.loads(paths["source_runtime"].read_text())
+    del src["before_after"]
+    paths["source_runtime"].write_text(json.dumps(src))
+    verifier = ProductFunctionalClosureVerifier(_config(tmp_path, paths), transport=_transport())
+    report = verifier.run_full_acceptance()
+    assert report.overall_status == "FAILED"
+    gate_02 = next(r for r in report.gate_results if r.gate_id == "gate_02_source_manual_only_readiness")
+    assert gate_02.status == "FAILED"
+    assert "source_before_after_assertion" in str(gate_02.error)
+
+
+def test_gate_02_source_invalid_before_after_fails(tmp_path: Path) -> None:
+    paths = _write_evidence_files(tmp_path)
+    src = json.loads(paths["source_runtime"].read_text())
+    src["before_after"] = "unverified"
+    paths["source_runtime"].write_text(json.dumps(src))
+    verifier = ProductFunctionalClosureVerifier(_config(tmp_path, paths), transport=_transport())
+    report = verifier.run_full_acceptance()
+    assert report.overall_status == "FAILED"
+    gate_02 = next(r for r in report.gate_results if r.gate_id == "gate_02_source_manual_only_readiness")
+    assert gate_02.status == "FAILED"
+    assert "source_before_after_assertion" in str(gate_02.error)
+
+
+def test_gate_03_missing_paper_runtime_evidence_arg_fails(tmp_path: Path) -> None:
+    paths = _write_evidence_files(tmp_path)
+    cfg = _config(tmp_path, paths)
+    cfg.paper_runtime_evidence = None
+    verifier = ProductFunctionalClosureVerifier(cfg, transport=_transport())
+    report = verifier.run_full_acceptance()
+    assert report.overall_status == "FAILED"
+    gate_03 = next(r for r in report.gate_results if r.gate_id == "gate_03_paper_runtime_execution")
+    assert gate_03.status == "FAILED"
+    assert "paper-runtime-evidence is required" in str(gate_03.error)
+
+
+def test_gate_03_paper_runtime_file_not_found_fails(tmp_path: Path) -> None:
+    paths = _write_evidence_files(tmp_path)
+    paths["paper_runtime"].unlink()
+    verifier = ProductFunctionalClosureVerifier(_config(tmp_path, paths), transport=_transport())
+    report = verifier.run_full_acceptance()
+    assert report.overall_status == "FAILED"
+    gate_03 = next(r for r in report.gate_results if r.gate_id == "gate_03_paper_runtime_execution")
+    assert gate_03.status == "FAILED"
+    assert "does not exist" in str(gate_03.error)
+
+
+def test_gate_03_paper_runtime_missing_schema_version_fails(tmp_path: Path) -> None:
+    paths = _write_evidence_files(tmp_path)
+    paper = json.loads(paths["paper_runtime"].read_text())
+    del paper["schema_version"]
+    paths["paper_runtime"].write_text(json.dumps(paper))
+    verifier = ProductFunctionalClosureVerifier(_config(tmp_path, paths), transport=_transport())
+    report = verifier.run_full_acceptance()
+    assert report.overall_status == "FAILED"
+    gate_03 = next(r for r in report.gate_results if r.gate_id == "gate_03_paper_runtime_execution")
+    assert gate_03.status == "FAILED"
+    assert "must declare a non-empty schema_version" in str(gate_03.error)
+
+
+def test_gate_03_paper_runtime_missing_task_fails(tmp_path: Path) -> None:
+    paths = _write_evidence_files(tmp_path)
+    paper = json.loads(paths["paper_runtime"].read_text())
+    del paper["task"]
+    paths["paper_runtime"].write_text(json.dumps(paper))
+    verifier = ProductFunctionalClosureVerifier(_config(tmp_path, paths), transport=_transport())
+    report = verifier.run_full_acceptance()
+    assert report.overall_status == "FAILED"
+    gate_03 = next(r for r in report.gate_results if r.gate_id == "gate_03_paper_runtime_execution")
+    assert gate_03.status == "FAILED"
+    assert "must declare an associated task id" in str(gate_03.error)
+
+
+def test_gate_03_paper_runtime_non_hosted_mode_fails(tmp_path: Path) -> None:
+    paths = _write_evidence_files(tmp_path)
+    paper = json.loads(paths["paper_runtime"].read_text())
+    paper["mode"] = "local"
+    paths["paper_runtime"].write_text(json.dumps(paper))
+    verifier = ProductFunctionalClosureVerifier(_config(tmp_path, paths), transport=_transport())
+    report = verifier.run_full_acceptance()
+    assert report.overall_status == "FAILED"
+    gate_03 = next(r for r in report.gate_results if r.gate_id == "gate_03_paper_runtime_execution")
+    assert gate_03.status == "FAILED"
+    assert "must declare mode='hosted'" in str(gate_03.error)
+
+
+def test_gate_03_paper_runtime_missing_observed_at_fails(tmp_path: Path) -> None:
+    paths = _write_evidence_files(tmp_path)
+    paper = json.loads(paths["paper_runtime"].read_text())
+    del paper["observed_at"]
+    paths["paper_runtime"].write_text(json.dumps(paper))
+    verifier = ProductFunctionalClosureVerifier(_config(tmp_path, paths), transport=_transport())
+    report = verifier.run_full_acceptance()
+    assert report.overall_status == "FAILED"
+    gate_03 = next(r for r in report.gate_results if r.gate_id == "gate_03_paper_runtime_execution")
+    assert gate_03.status == "FAILED"
+    assert "must declare observed_at timestamp" in str(gate_03.error)
+
+
+def test_gate_03_paper_runtime_stale_observed_at_fails(tmp_path: Path) -> None:
+    paths = _write_evidence_files(tmp_path)
+    paper = json.loads(paths["paper_runtime"].read_text())
+    paper["observed_at"] = _timestamp(age_seconds=50000)
+    paths["paper_runtime"].write_text(json.dumps(paper))
+    verifier = ProductFunctionalClosureVerifier(_config(tmp_path, paths), transport=_transport())
+    report = verifier.run_full_acceptance()
+    assert report.overall_status == "FAILED"
+    gate_03 = next(r for r in report.gate_results if r.gate_id == "gate_03_paper_runtime_execution")
+    assert gate_03.status == "FAILED"
+    assert "outside the allowed freshness window" in str(gate_03.error)
+
+
+def test_gate_03_paper_runtime_partial_exact_pair_fails(tmp_path: Path) -> None:
+    paths = _write_evidence_files(tmp_path)
+    paper = json.loads(paths["paper_runtime"].read_text())
+    del paper["exact_pair"]["frontend_sha"]
+    paths["paper_runtime"].write_text(json.dumps(paper))
+    verifier = ProductFunctionalClosureVerifier(_config(tmp_path, paths), transport=_transport())
+    report = verifier.run_full_acceptance()
+    assert report.overall_status == "FAILED"
+    gate_03 = next(r for r in report.gate_results if r.gate_id == "gate_03_paper_runtime_execution")
+    assert gate_03.status == "FAILED"
+    assert "exact_pair.frontend_sha is missing" in str(gate_03.error)
+
+
+def test_gate_03_paper_runtime_exact_pair_mismatch_fails(tmp_path: Path) -> None:
+    paths = _write_evidence_files(tmp_path)
+    paper = json.loads(paths["paper_runtime"].read_text())
+    paper["exact_pair"]["backend_sha"] = "0" * 40
+    paths["paper_runtime"].write_text(json.dumps(paper))
+    verifier = ProductFunctionalClosureVerifier(_config(tmp_path, paths), transport=_transport())
+    report = verifier.run_full_acceptance()
+    assert report.overall_status == "FAILED"
+    gate_03 = next(r for r in report.gate_results if r.gate_id == "gate_03_paper_runtime_execution")
+    assert gate_03.status == "FAILED"
+    assert "exact_pair.backend_sha is" in str(gate_03.error)
 
 
 def test_gate_03_empty_dependencies_fails(tmp_path: Path) -> None:
@@ -637,7 +954,111 @@ def test_gate_03_paper_fleet_unready_fails(tmp_path: Path) -> None:
     assert report.overall_status == "FAILED"
     gate_03 = next(r for r in report.gate_results if r.gate_id == "gate_03_paper_runtime_execution")
     assert gate_03.status == "FAILED"
-    assert "paper_fleet_ready=false" in str(gate_03.error)
+    assert "paper_fleet_ready=False" in str(gate_03.error)
+
+
+def test_gate_03_paper_runtime_missing_fleet_readiness_fails(tmp_path: Path) -> None:
+    paths = _write_evidence_files(tmp_path)
+    paper = json.loads(paths["paper_runtime"].read_text())
+    del paper["paper_fleet_ready"]
+    paths["paper_runtime"].write_text(json.dumps(paper))
+    verifier = ProductFunctionalClosureVerifier(_config(tmp_path, paths), transport=_transport())
+    report = verifier.run_full_acceptance()
+    assert report.overall_status == "FAILED"
+    gate_03 = next(r for r in report.gate_results if r.gate_id == "gate_03_paper_runtime_execution")
+    assert gate_03.status == "FAILED"
+    assert "paper_fleet_ready=None" in str(gate_03.error)
+
+
+def test_gate_03_paper_runtime_missing_binding_contract_fails(tmp_path: Path) -> None:
+    paths = _write_evidence_files(tmp_path)
+    paper = json.loads(paths["paper_runtime"].read_text())
+    del paper["executable_binding_contract"]
+    paths["paper_runtime"].write_text(json.dumps(paper))
+    verifier = ProductFunctionalClosureVerifier(_config(tmp_path, paths), transport=_transport())
+    report = verifier.run_full_acceptance()
+    assert report.overall_status == "FAILED"
+    gate_03 = next(r for r in report.gate_results if r.gate_id == "gate_03_paper_runtime_execution")
+    assert gate_03.status == "FAILED"
+    assert "executable_binding_contract=None" in str(gate_03.error)
+
+
+def test_gate_03_paper_runtime_invalid_binding_contract_fails(tmp_path: Path) -> None:
+    paths = _write_evidence_files(tmp_path)
+    paper = json.loads(paths["paper_runtime"].read_text())
+    paper["executable_binding_contract"] = "unadmitted"
+    paths["paper_runtime"].write_text(json.dumps(paper))
+    verifier = ProductFunctionalClosureVerifier(_config(tmp_path, paths), transport=_transport())
+    report = verifier.run_full_acceptance()
+    assert report.overall_status == "FAILED"
+    gate_03 = next(r for r in report.gate_results if r.gate_id == "gate_03_paper_runtime_execution")
+    assert gate_03.status == "FAILED"
+    assert "executable_binding_contract='unadmitted'" in str(gate_03.error)
+
+
+def test_gate_03_paper_runtime_missing_environment_scope_fails(tmp_path: Path) -> None:
+    paths = _write_evidence_files(tmp_path)
+    paper = json.loads(paths["paper_runtime"].read_text())
+    del paper["environment_scope"]
+    paths["paper_runtime"].write_text(json.dumps(paper))
+    verifier = ProductFunctionalClosureVerifier(_config(tmp_path, paths), transport=_transport())
+    report = verifier.run_full_acceptance()
+    assert report.overall_status == "FAILED"
+    gate_03 = next(r for r in report.gate_results if r.gate_id == "gate_03_paper_runtime_execution")
+    assert gate_03.status == "FAILED"
+    assert "paper_environment_scope" in str(gate_03.error)
+
+
+def test_gate_03_paper_runtime_non_paper_environment_scope_fails(tmp_path: Path) -> None:
+    paths = _write_evidence_files(tmp_path)
+    paper = json.loads(paths["paper_runtime"].read_text())
+    paper["environment_scope"] = "production"
+    paths["paper_runtime"].write_text(json.dumps(paper))
+    verifier = ProductFunctionalClosureVerifier(_config(tmp_path, paths), transport=_transport())
+    report = verifier.run_full_acceptance()
+    assert report.overall_status == "FAILED"
+    gate_03 = next(r for r in report.gate_results if r.gate_id == "gate_03_paper_runtime_execution")
+    assert gate_03.status == "FAILED"
+    assert "paper_environment_scope" in str(gate_03.error)
+
+
+def test_gate_03_paper_runtime_missing_deployment_sha_fails(tmp_path: Path) -> None:
+    paths = _write_evidence_files(tmp_path)
+    paper = json.loads(paths["paper_runtime"].read_text())
+    del paper["deployment_sha"]
+    paths["paper_runtime"].write_text(json.dumps(paper))
+    verifier = ProductFunctionalClosureVerifier(_config(tmp_path, paths), transport=_transport())
+    report = verifier.run_full_acceptance()
+    assert report.overall_status == "FAILED"
+    gate_03 = next(r for r in report.gate_results if r.gate_id == "gate_03_paper_runtime_execution")
+    assert gate_03.status == "FAILED"
+    assert "paper_deployment_sha" in str(gate_03.error)
+
+
+def test_gate_03_paper_runtime_deployment_sha_mismatch_fails(tmp_path: Path) -> None:
+    paths = _write_evidence_files(tmp_path)
+    paper = json.loads(paths["paper_runtime"].read_text())
+    paper["deployment_sha"] = "0" * 40
+    paths["paper_runtime"].write_text(json.dumps(paper))
+    verifier = ProductFunctionalClosureVerifier(_config(tmp_path, paths), transport=_transport())
+    report = verifier.run_full_acceptance()
+    assert report.overall_status == "FAILED"
+    gate_03 = next(r for r in report.gate_results if r.gate_id == "gate_03_paper_runtime_execution")
+    assert gate_03.status == "FAILED"
+    assert "paper_deployment_sha" in str(gate_03.error)
+
+
+def test_gate_03_paper_runtime_missing_bounded_lifecycle_fails(tmp_path: Path) -> None:
+    paths = _write_evidence_files(tmp_path)
+    paper = json.loads(paths["paper_runtime"].read_text())
+    del paper["bounded_lifecycle"]
+    paths["paper_runtime"].write_text(json.dumps(paper))
+    verifier = ProductFunctionalClosureVerifier(_config(tmp_path, paths), transport=_transport())
+    report = verifier.run_full_acceptance()
+    assert report.overall_status == "FAILED"
+    gate_03 = next(r for r in report.gate_results if r.gate_id == "gate_03_paper_runtime_execution")
+    assert gate_03.status == "FAILED"
+    assert "bounded_lifecycle" in str(gate_03.error)
 
 
 @pytest.mark.parametrize("missing_journey", ["l12", "agora", "mgmt", "mgmt_ai"])

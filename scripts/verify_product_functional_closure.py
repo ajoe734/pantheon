@@ -712,56 +712,77 @@ class ProductFunctionalClosureVerifier:
         compose_findings["reconcile_only_default"] = True
         compose_findings["max_ticks_default"] = "${SOURCE_INGEST_CONTROLLER_MAX_TICKS:-0}"
 
-        # Check Source Runtime evidence
+        # Check Source Runtime evidence (mandatory existing file)
         source_runtime_path = self.config.source_runtime_evidence
         if source_runtime_path is None:
-            candidate = self.config.evidence_dir / "source-runtime.json"
-            if candidate.exists():
-                source_runtime_path = candidate
-
-        runtime_findings: dict[str, Any] = {}
-        if source_runtime_path is not None:
-            source_artifact = self._load_evidence("source_runtime", source_runtime_path)
-            mode = (
-                source_artifact.get("scheduler_mode")
-                or source_artifact.get("controller_mode")
-                or source_artifact.get("mode_posture")
+            raise ProductFunctionalClosureAcceptanceError(
+                "gate_02.source_runtime_evidence_missing",
+                "--source-runtime-evidence is required and must be provided",
             )
-            if mode not in ("reconcile_only", "reconcile-only"):
-                raise ProductFunctionalClosureAcceptanceError(
-                    "gate_02.source_runtime_mode",
-                    f"source runtime scheduler mode is {mode!r}, expected 'reconcile_only'",
-                )
-            max_ticks = source_artifact.get("max_ticks")
-            if max_ticks not in (0, "0", 1, "1"):
-                raise ProductFunctionalClosureAcceptanceError(
-                    "gate_02.source_runtime_ticks",
-                    f"source runtime max_ticks is {max_ticks!r}, expected 0 or bounded 1",
-                )
-            recurring = source_artifact.get("recurring_provider_process")
-            if recurring not in ("absent", False):
-                raise ProductFunctionalClosureAcceptanceError(
-                    "gate_02.source_recurring_process",
-                    f"source runtime reports recurring_provider_process={recurring!r}, expected 'absent'",
-                )
-            if source_artifact.get("continuous_egress") not in ("disabled", False, None) and source_artifact.get("zero_continuous_egress") is False:
-                raise ProductFunctionalClosureAcceptanceError(
-                    "gate_02.source_continuous_egress",
-                    "source runtime reports continuous egress enabled",
-                )
-            runtime_findings = {
-                "scheduler_mode": mode,
-                "max_ticks": max_ticks,
-                "recurring_provider_process": recurring,
-                "continuous_egress": "disabled",
-            }
-        else:
-            runtime_findings = {
-                "scheduler_mode": "reconcile_only",
-                "max_ticks": 0,
-                "recurring_provider_process": "absent",
-                "continuous_egress": "disabled",
-            }
+        if not source_runtime_path.exists():
+            raise ProductFunctionalClosureAcceptanceError(
+                "gate_02.source_runtime_evidence_not_found",
+                f"source runtime evidence file does not exist: {source_runtime_path}",
+            )
+
+        source_artifact = self._load_evidence("source_runtime", source_runtime_path)
+        mode = (
+            source_artifact.get("scheduler_mode")
+            or source_artifact.get("controller_mode")
+            or source_artifact.get("mode_posture")
+        )
+        if mode not in ("reconcile_only", "reconcile-only"):
+            raise ProductFunctionalClosureAcceptanceError(
+                "gate_02.source_runtime_mode",
+                f"source runtime scheduler mode is {mode!r}, expected 'reconcile_only'",
+            )
+
+        max_ticks = source_artifact.get("max_ticks")
+        if max_ticks not in (0, "0"):
+            raise ProductFunctionalClosureAcceptanceError(
+                "gate_02.source_runtime_ticks",
+                f"source runtime max_ticks is {max_ticks!r}, expected 0",
+            )
+
+        recurring = source_artifact.get("recurring_provider_process")
+        if recurring not in ("absent", False):
+            raise ProductFunctionalClosureAcceptanceError(
+                "gate_02.source_recurring_process",
+                f"source runtime reports recurring_provider_process={recurring!r}, expected 'absent'",
+            )
+
+        continuous_egress = source_artifact.get("continuous_egress")
+        zero_continuous_egress = source_artifact.get("zero_continuous_egress")
+        if continuous_egress not in ("disabled", False) and zero_continuous_egress is not True:
+            raise ProductFunctionalClosureAcceptanceError(
+                "gate_02.source_continuous_egress",
+                f"source runtime reports continuous_egress={continuous_egress!r}, zero_continuous_egress={zero_continuous_egress!r}, expected continuous egress disabled",
+            )
+        if continuous_egress in ("enabled", True) or zero_continuous_egress is False:
+            raise ProductFunctionalClosureAcceptanceError(
+                "gate_02.source_continuous_egress",
+                "source runtime reports continuous egress enabled",
+            )
+
+        before_after = (
+            source_artifact.get("before_after")
+            or source_artifact.get("before_after_reconcile_only")
+            or source_artifact.get("reconcile_only_before_after")
+            or source_artifact.get("research_one_shot_before_after")
+        )
+        if before_after not in ("reconcile_only", "verified", "enforced", True, "present"):
+            raise ProductFunctionalClosureAcceptanceError(
+                "gate_02.source_before_after_assertion",
+                f"source runtime evidence reports before_after={before_after!r}, expected 'reconcile_only' assertion before/after one-shot research run",
+            )
+
+        runtime_findings = {
+            "scheduler_mode": mode,
+            "max_ticks": max_ticks,
+            "recurring_provider_process": recurring,
+            "continuous_egress": "disabled",
+            "before_after": before_after,
+        }
 
         return {
             "health_status": health.get("status"),
@@ -842,35 +863,76 @@ class ProductFunctionalClosureVerifier:
                 "lifecycle_projector or paper-fleet-reconciler must be present in /readyz dependencies",
             )
 
-        # Check paper runtime evidence if provided
+        # Check paper runtime evidence (mandatory existing file)
         paper_runtime_path = self.config.paper_runtime_evidence
         if paper_runtime_path is None:
-            candidate = self.config.evidence_dir / "paper-runtime.json"
-            if candidate.exists():
-                paper_runtime_path = candidate
+            raise ProductFunctionalClosureAcceptanceError(
+                "gate_03.paper_runtime_evidence_missing",
+                "--paper-runtime-evidence is required and must be provided",
+            )
+        if not paper_runtime_path.exists():
+            raise ProductFunctionalClosureAcceptanceError(
+                "gate_03.paper_runtime_evidence_not_found",
+                f"paper runtime evidence file does not exist: {paper_runtime_path}",
+            )
 
-        paper_findings: dict[str, Any] = {}
-        if paper_runtime_path is not None:
-            paper_artifact = self._load_evidence("paper_runtime", paper_runtime_path)
-            if paper_artifact.get("paper_fleet_ready") is False:
-                raise ProductFunctionalClosureAcceptanceError(
-                    "gate_03.paper_fleet_unready",
-                    "paper runtime evidence reports paper_fleet_ready=false",
-                )
-            if paper_artifact.get("executable_binding_contract") not in ("admitted", "verified", None):
-                raise ProductFunctionalClosureAcceptanceError(
-                    "gate_03.binding_contract",
-                    f"paper runtime evidence reports executable_binding_contract={paper_artifact.get('executable_binding_contract')!r}",
-                )
-            paper_findings = dict(paper_artifact)
+        paper_artifact = self._load_evidence("paper_runtime", paper_runtime_path)
+        fleet_ready = paper_artifact.get("paper_fleet_ready")
+        if fleet_ready is not True:
+            raise ProductFunctionalClosureAcceptanceError(
+                "gate_03.paper_fleet_unready",
+                f"paper runtime evidence reports paper_fleet_ready={fleet_ready!r}, expected True",
+            )
+
+        binding_contract = (
+            paper_artifact.get("executable_binding_contract")
+            or paper_artifact.get("runtime_binding_contract")
+            or paper_artifact.get("runtime_binding")
+        )
+        if binding_contract not in ("admitted", "verified", "enforced"):
+            raise ProductFunctionalClosureAcceptanceError(
+                "gate_03.binding_contract",
+                f"paper runtime evidence reports executable_binding_contract={binding_contract!r}, expected 'admitted'",
+            )
+
+        env_scope = (
+            paper_artifact.get("environment_scope")
+            or paper_artifact.get("environment")
+        )
+        if env_scope != "paper":
+            raise ProductFunctionalClosureAcceptanceError(
+                "gate_03.paper_environment_scope",
+                f"paper runtime evidence environment_scope is {env_scope!r}, expected 'paper'",
+            )
+
+        dep_sha = (
+            paper_artifact.get("deployment_sha")
+            or paper_artifact.get("bff_sha")
+            or paper_artifact.get("backend_sha")
+        )
+        if dep_sha != self.config.expected_bff_sha:
+            raise ProductFunctionalClosureAcceptanceError(
+                "gate_03.paper_deployment_sha",
+                f"paper runtime evidence deployment_sha {dep_sha!r} != expected {self.config.expected_bff_sha!r}",
+            )
+
+        bounded_lifecycle = (
+            paper_artifact.get("bounded_lifecycle")
+            or paper_artifact.get("bounded_lifecycle_outbox")
+        )
+        if bounded_lifecycle not in ("enforced", "verified", "admitted", True):
+            raise ProductFunctionalClosureAcceptanceError(
+                "gate_03.bounded_lifecycle",
+                f"paper runtime evidence reports bounded_lifecycle={bounded_lifecycle!r}, expected 'enforced'",
+            )
 
         return {
             "paper_fleet_ready": True,
-            "executable_binding_contract": "admitted",
+            "executable_binding_contract": binding_contract,
             "bounded_lifecycle_outbox": "enforced",
             "dependencies": list(deps.keys()),
             "lifecycle_projector_observed": isinstance(lifecycle_projector, Mapping),
-            "paper_runtime_evidence": paper_findings,
+            "paper_runtime_evidence": dict(paper_artifact),
         }
 
     def verify_gate_04_authenticated_product_journeys(self) -> dict[str, Any]:

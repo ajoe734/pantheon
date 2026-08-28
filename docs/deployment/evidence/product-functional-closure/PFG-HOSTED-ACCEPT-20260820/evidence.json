@@ -39,18 +39,20 @@
   },
   "validation": {
     "commands": [
-      ".venv-pantheon/bin/python3 -m pytest -v scripts/test_verify_product_functional_closure.py",
-      ".venv-pantheon/bin/python3 -m py_compile scripts/verify_product_functional_closure.py scripts/test_verify_product_functional_closure.py",
+      ".venv-pantheon/bin/python3 -m pytest -v scripts/test_verify_product_functional_closure.py scripts/test_run_agora_interaction_worker.py",
+      ".venv-pantheon/bin/python3 -m py_compile scripts/verify_product_functional_closure.py scripts/test_verify_product_functional_closure.py scripts/run_agora_interaction_worker.py scripts/test_run_agora_interaction_worker.py",
       "git diff --check"
     ],
     "results": [
-      "36 passed across scripts/test_verify_product_functional_closure.py covering all 6 fail-closed acceptance gates, negative tests for unobserved/missing Source and Paper postures, all four hosted journey validation checks, code disposition, rollback checks, and CLI main entrypoint.",
+      "87 passed across scripts/test_verify_product_functional_closure.py (84 tests) and scripts/test_run_agora_interaction_worker.py (3 tests) covering all 6 fail-closed acceptance gates, mandatory Source and Paper runtime evidence invariants, negative tests for missing/unsafe postures, all four hosted journey validation checks, code disposition, rollback checks, and CLI main entrypoint.",
       "py_compile succeeded with zero syntax or compile errors.",
-      "git diff --check passed with zero formatting or trailing whitespace issues."
+      "git diff --check passed with zero formatting or trailing whitespace issues.",
+      "Post-merge hosted acceptance pending: nonprod-deploy dev accepts only current origin/dev, so final hosted execution and artifact generation will occur post-merge against the merged dev SHA with FE 8b8c5c310f83f3412bcd1ffc0616c71e09223627."
     ]
   },
   "review_decision": {
     "decision": "owner_validation_passed_pending_independent_reviewer",
-    "reviewer_action_required": "Codex2 must independently inspect this committed evidence manifest, code-disposition.json, scripts/verify_product_functional_closure.py, scripts/test_verify_product_functional_closure.py, and docs/frontend/execute-plans-dev-hosting.md, rerun the test suite, and bind canonical approval with this review_file."
+    "hosted_acceptance_status": "post_merge_hosted_run_pending",
+    "reviewer_action_required": "Codex2 must independently inspect this committed evidence manifest, code-disposition.json, scripts/verify_product_functional_closure.py, scripts/test_verify_product_functional_closure.py, and docs/frontend/execute-plans-dev-hosting.md, rerun the test suite, and bind canonical approval with this review_file. After merge to dev, deploy the merged dev commit with FE 8b8c5c310f83f3412bcd1ffc0616c71e09223627 to produce final hosted artifacts."
   }
 }
