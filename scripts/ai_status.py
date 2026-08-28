@@ -8804,12 +8804,14 @@ def execute_review_decision_intent(task: Mapping[str, Any]) -> dict[str, Any]:
 
     binding = deepcopy(dict(intent["binding"]))
     command = str(intent["command"])
+    admission = None
     if command in {"approve", "operator_accept"}:
         github_review_bridge = _github_review_bridge_module()
         try:
-            github_review_bridge.revalidate_review_admission(
+            admission = github_review_bridge.revalidate_review_admission(
                 repository=repository_slug_value,
                 delivery_binding=binding,
+                allow_base_advance=(command == "operator_accept"),
             )
         except github_review_bridge.GitHubReviewBridgeError as exc:
             raise ReviewIntentAdmissionInvalid(
@@ -8837,6 +8839,7 @@ def execute_review_decision_intent(task: Mapping[str, Any]) -> dict[str, Any]:
                 message=str(intent["message"]),
                 binding=binding,
                 intent_nonce=str(intent["nonce"]),
+                current_admission=admission,
             )
         except github_review_bridge.GitHubReviewBridgeError as exc:
             raise SystemExit(
