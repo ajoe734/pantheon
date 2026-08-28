@@ -1335,7 +1335,52 @@ def _push_review_proof_tag(
     return {**dict(created_ref), "created": True}
 
 
-CANONICAL_REVIEW_GATE_WORKFLOW_FILE = "canonical-review-gate.yml"
+# The two current delivery repositories intentionally use different workflow
+# display names (and filenames) for the same protected check. Keep this short
+# compatibility set at the GitHub workflow boundary; task state and product
+# code stay repository-agnostic.
+CANONICAL_REVIEW_GATE_WORKFLOW_NAMES = frozenset(
+    {"Canonical Review Gate", "Pantheon canonical review gate"}
+)
+
+
+def _canonical_review_gate_workflow_id(
+    runner: JsonRunner,
+    *,
+    repository: str,
+) -> str:
+    """Return the active canonical-gate workflow id for this repository.
+
+    Pantheon and execute-plans intentionally use different workflow filenames.
+    The protected check's display name is the shared contract, while a filename
+    is repository-local implementation detail. Dispatching by GitHub's stable
+    workflow id keeps a proof-tag retry on the same repository that owns the
+    reviewed PR.
+    """
+
+    payload = runner.run_json(
+        ["gh", "api", f"repos/{repository}/actions/workflows?per_page=100"]
+    )
+    workflows = payload.get("workflows") if isinstance(payload, Mapping) else None
+    if not isinstance(workflows, list):
+        raise GitHubReviewBridgeError(
+            "GitHub workflow inventory is unavailable for canonical review dispatch"
+        )
+    candidates = [
+        workflow
+        for workflow in workflows
+        if isinstance(workflow, Mapping)
+        and str(workflow.get("name") or "").strip()
+        in CANONICAL_REVIEW_GATE_WORKFLOW_NAMES
+        and str(workflow.get("state") or "").strip().lower() == "active"
+        and str(workflow.get("id") or "").strip().isdigit()
+    ]
+    if len(candidates) != 1:
+        raise GitHubReviewBridgeError(
+            "GitHub repository must expose exactly one active "
+            f"canonical review-gate workflow; found {len(candidates)}"
+        )
+    return str(candidates[0]["id"])
 
 
 def _dispatch_canonical_review_gate_workflow(
@@ -1380,6 +1425,10 @@ def _dispatch_canonical_review_gate_workflow(
     """
 
     try:
+        workflow_id = _canonical_review_gate_workflow_id(
+            runner,
+            repository=repository,
+        )
         runner.run_json(
             [
                 "gh",
@@ -1387,7 +1436,7 @@ def _dispatch_canonical_review_gate_workflow(
                 "--method",
                 "POST",
                 f"repos/{repository}/actions/workflows/"
-                f"{CANONICAL_REVIEW_GATE_WORKFLOW_FILE}/dispatches",
+                f"{workflow_id}/dispatches",
                 "--input",
                 "-",
             ],
