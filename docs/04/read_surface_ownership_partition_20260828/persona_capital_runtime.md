@@ -1,50 +1,55 @@
-# Read-Surface Caller Ownership Partition: Persona, Capital, Deployment, Runtime, Ranking, and Evolution
+# Read-Surface Caller Ownership Partition: Persona, Capital, Deployment, Runtime, and Ranking
 
 **Task ID:** `ACG-RS-CAPITAL-OWNERSHIP-MAP-20260828`  
+**Program ID:** `PANTHEON-ARCH-CLEANUP-20260828`  
+**Phase:** Read-surface ownership partition  
 **Owner:** `Antigravity2`  
-**Reviewer:** `Codex2`  
-**Domain:** Persona Fleet, Capital Pools & Bindings, Deployment Plans, Runtime Bindings & Monitoring, Ranking Projections & Formulas, and Evolution Decisions  
+**Reviewer:** `Claude`  
+**Domain:** Persona Fleet, Capital Pools & Bindings, Deployment Plans, Runtime Bindings & Monitoring, and Ranking Projections & Formulas  
 **Status:** Complete Caller Ownership & Partition Specification  
 
 ---
 
 ## 1. Executive Summary & Acceptance Verification
 
-This document provides the authoritative caller ownership partition and inventory for all legacy `read_store` member calls in `services/control-plane/bff/main.py` belonging to the **Persona, Capital, Deployment, Runtime, Ranking, and Evolution** domain (`persona_capital_runtime`).
+This document provides the authoritative caller ownership partition and inventory for all legacy `read_store` member calls in `services/control-plane/bff/main.py` belonging to the **Persona, Capital, Deployment, Runtime, and Ranking** domain (`persona_capital_runtime`).
 
 ### Key Metrics
-- **Total Legacy `read_store` Call Sites in `main.py`:** `600`
-- **Total Distinct `read_store` Methods in `main.py`:** `203`
-- **`persona_capital_runtime` Distinct Methods:** `48`
-- **`persona_capital_runtime` Total Call Sites:** `227`
-- **Read Methods in Domain:** `39` methods (`213` call sites)
+- **Total Legacy `read_store` Call Sites in `main.py`:** `599` direct code call sites (`600` occurrences including 1 comment reference at `L40568`)
+- **Total Distinct `read_store` Methods in `main.py`:** `203` (comprising `202` public domain methods and `1` internal helper `_parse_rfc3339`)
+- **`persona_capital_runtime` Distinct Methods:** `45`
+- **`persona_capital_runtime` Total Call Sites:** `213`
+- **Read Methods in Domain:** `36` methods (`199` call sites)
 - **Write / Mutation Methods in Domain:** `9` methods (`14` call sites)
-- **Domain Port Direct Coverage (Existing 1:1 APIs):** `29` methods
-- **Missing Narrow Domain APIs Identified:** `10` read methods
+- **Domain Port Direct Coverage (Existing 1:1 APIs):** `28` methods
+- **Missing Narrow Domain APIs Identified:** `8` read methods
 - **Command / Mutation Destinations Identified:** `9` write methods
+- **Sibling Task Boundary Resolution:** Evolution Decisions (`get_evolution_decision_by_id` 2 calls, `get_evolution_decisions_by_incident` 2 calls, `list_evolution_decisions` 9 calls = 3 methods / 13 call sites) are exclusively owned by `ACG-RS-LIFECYCLE-OWNERSHIP-MAP-20260828` under `GovernanceReaderPort` and `IncidentReaderPort`. `EvolutionProjectionPort` on `persona_capital_runtime` operates purely as a DTO projection over injected readers with 0 legacy `main.py` direct call sites.
 
 ### Acceptance Criteria Verification
 1. **Complete Method & Line Inventory:** Every `read_store` call in `main.py` belonging to this domain is indexed with its exact 1-indexed line number, enclosing function/endpoint, call signature, and invocation context (§ 3 & § 4).
 2. **Read / Write Classification & Destination:** Every method is classified as `Read` or `Write` with its exact destination named (domain ports in `domain_ports/persona_capital_runtime.py` and `ports/persona_capital_runtime.py`, or command owners in `command_executor.py` / domain services) (§ 2 & § 3).
 3. **Missing Narrow Domain API Identification:** Explicitly identifies narrow read APIs missing from domain ports without proposing generic fallback delegation, compatibility storage, or product source edits (§ 5).
-4. **Exact Method Count & Non-Overlap Proof:** Proves exact method count (`48`) and non-overlap across all 6 ownership partition tasks, ensuring 100% disjoint union covering all 203 methods and 600 calls (§ 6).
+4. **Exact Method Count & Non-Overlap Proof:** Proves exact method count (`45`) and non-overlap across all 6 ownership partition tasks, ensuring 100% disjoint union covering all 203 methods and 599 code calls / 600 total occurrences (§ 6).
 5. **Zero Production Source Modification:** No production source code in `services/control-plane/bff` is modified in this task.
 
 ---
 
 ## 2. Subsystem Architecture & Port Mapping
 
-The Persona, Capital, Deployment, Runtime, Ranking, and Evolution domain comprises 6 coherent sub-domains, unified under `PersonaCapitalRuntimeDomainPort` and `ReadSurfacePorts.persona_capital_runtime`:
+The Persona, Capital, Deployment, Runtime, and Ranking domain comprises 5 operational sub-domains with direct `read_store` call sites in `main.py`, unified under `PersonaCapitalRuntimeDomainPort` and `ReadSurfacePorts.persona_capital_runtime`:
 
 | Subsystem | Domain Port Class | Description | Distinct Methods | Call Sites |
 |---|---|---|---|---|
-| **Persona Fleet** | `PersonaFleetPort` | Registry reads, persona entity queries, capability snapshots, and session lookups. | 12 | 65 |
-| **Capital Pools & Bindings** | `CapitalPoolPort` | Capital pool definitions, persona capital bindings, pool quotas, and role bindings. | 7 | 46 |
-| **Deployment Plans** | `DeploymentPlanPort` | Deployment plans, plan diffs, target pool bindings, and deployment mode status. | 3 | 18 |
+| **Persona Fleet** | `PersonaFleetPort` | Registry reads, persona entity queries, capability snapshots, and session lookups. | 11 | 63 |
+| **Capital Pools & Bindings** | `CapitalPoolPort` | Capital pool definitions, persona capital bindings, pool quotas, and role bindings. | 7 | 45 |
+| **Deployment Plans** | `DeploymentPlanPort` | Deployment plans, plan diffs, target pool bindings, and deployment mode status. | 4 | 20 |
 | **Runtime Bindings & Monitoring** | `RuntimePort` | Runtime binding records, runtime ID lookup, and paper-fleet monitoring sessions. | 7 | 49 |
 | **Rankings & Projections** | `RankingProjectionPort` | Pure DTO projection over rankings, formulas, allocations, league, and containments. | 16 | 36 |
-| **Evolution Projections** | `EvolutionProjectionPort` | Pure DTO projection over evolution programs, candidate runs, and incident decisions. | 3 | 13 |
-| **Total Domain** | `PersonaCapitalRuntimeDomainPort` | Consolidated domain facade over all 6 sub-ports. | **48** | **227** |
+| **Evolution Projections** | `EvolutionProjectionPort` | Pure DTO projection over evolution programs, candidate runs, and incident decisions (composes injected readers; 0 direct legacy `read_store` calls). | 0 | 0 |
+| **Total Domain** | `PersonaCapitalRuntimeDomainPort` | Consolidated domain facade over all sub-ports. | **45** | **213** |
+
+*Note on Capital Pools & Bindings:* `list_bindings` has 13 executable call sites in `main.py`. An additional comment at `L40568` (`# Read canonical persona-capital bindings (read_store.list_bindings)`) is recorded for total grep transparency but is not counted as an active invocation.
 
 ---
 
@@ -65,47 +70,44 @@ The Persona, Capital, Deployment, Runtime, Ranking, and Evolution domain compris
 | 11 | `get_capability_snapshot_for_persona` | Persona Fleet | 9 | `Read` | `PersonaFleetPort.get_capability_snapshot_for_persona` | Missing narrow API (persona capability lookup) |
 | 12 | `get_capital_pool` | Capital Pools & Bindings | 11 | `Read` | `CapitalPoolPort.get_capital_pool` | Existing 1:1 on domain port |
 | 13 | `get_deployment_plan` | Deployment Plans | 10 | `Read` | `DeploymentPlanPort.get_deployment_plan` | Existing 1:1 on domain port |
-| 14 | `get_evolution_decision_by_id` | Evolution Projections | 2 | `Read` | `EvolutionProjectionPort.get_evolution_decision_by_id` | Missing narrow API (evolution decision by ID lookup) |
-| 15 | `get_evolution_decisions_by_incident` | Evolution Projections | 2 | `Read` | `EvolutionProjectionPort.get_evolution_decisions_by_incident / DomainIncidentPort` | Missing narrow API (evolution decision by incident lookup) |
-| 16 | `get_paper_runtime_monitoring_session` | Runtime Bindings & Monitoring | 2 | `Read` | `RuntimePort.get_paper_runtime_monitoring_session` | Missing narrow API (monitoring session lookup) |
-| 17 | `get_persona` | Persona Fleet | 23 | `Read` | `PersonaFleetPort.get_persona` | Existing 1:1 on domain port |
-| 18 | `get_persona_allowed_actions` | Persona Fleet | 3 | `Read` | `PersonaFleetPort.get_persona_allowed_actions` | Missing narrow API (pure DTO derivation from persona lifecycle state) |
-| 19 | `get_persona_containment` | Rankings & Projections | 1 | `Read` | `RankingProjectionPort.get_persona_containment` | Existing 1:1 on domain port |
-| 20 | `get_persona_league_entry` | Rankings & Projections | 3 | `Read` | `RankingProjectionPort.get_persona_league_entry` | Existing 1:1 on domain port |
-| 21 | `get_ranking` | Rankings & Projections | 2 | `Read` | `RankingProjectionPort.get_ranking` | Existing 1:1 on domain port |
-| 22 | `get_ranking_formula` | Rankings & Projections | 4 | `Read` | `RankingProjectionPort.get_ranking_formula` | Missing narrow API (ranking formula lookup) |
-| 23 | `get_ranking_snapshot` | Rankings & Projections | 1 | `Read` | `RankingProjectionPort.get_ranking_snapshot` | Missing narrow API (ranking snapshot lookup) |
-| 24 | `get_rebalance` | Rankings & Projections | 6 | `Read` | `RankingProjectionPort.get_rebalance` | Existing 1:1 on domain port |
-| 25 | `get_route_policy_for_persona` | Persona Fleet | 3 | `Read` | `PersonaFleetPort.get_route_policy_for_persona / DomainWorkflowCatalogPort` | Missing narrow API (route policy lookup) |
-| 26 | `get_runtime_binding` | Runtime Bindings & Monitoring | 6 | `Read` | `RuntimePort.get_runtime_binding` | Existing 1:1 on domain port |
-| 27 | `get_runtime_binding_by_runtime_id` | Runtime Bindings & Monitoring | 8 | `Read` | `RuntimePort.get_runtime_binding_by_runtime_id` | Existing 1:1 on domain port |
-| 28 | `get_session` | Persona Fleet | 1 | `Read` | `PersonaFleetPort.get_session` | Missing narrow API (session record projection) |
-| 29 | `get_sessions_for_persona` | Persona Fleet | 7 | `Read` | `PersonaFleetPort.get_sessions_for_persona / PersonaTrainingDomainPort.list_persona_sessions` | Missing narrow API on PersonaFleetPort (session provider) |
-| 30 | `list_authoritative_paper_runtime_monitoring_sessions` | Runtime Bindings & Monitoring | 4 | `Read` | `RuntimePort.list_authoritative_paper_runtime_monitoring_sessions` | Missing narrow API (authoritative paper fleet reader) |
-| 31 | `list_bindings` | Capital Pools & Bindings | 14 | `Read` | `CapitalPoolPort.list_bindings` | Existing 1:1 on domain port |
-| 32 | `list_capital_allocations` | Rankings & Projections | 3 | `Read` | `RankingProjectionPort.list_capital_allocations` | Existing 1:1 on domain port |
-| 33 | `list_capital_pools` | Capital Pools & Bindings | 8 | `Read` | `CapitalPoolPort.list_capital_pools` | Existing 1:1 on domain port |
-| 34 | `list_deployment_plans` | Deployment Plans | 7 | `Read` | `DeploymentPlanPort.list_deployment_plans` | Existing 1:1 on domain port |
-| 35 | `list_evolution_decisions` | Evolution Projections | 9 | `Read` | `EvolutionProjectionPort.list_evolution_decisions` | Existing 1:1 on domain port |
-| 36 | `list_paper_runtime_monitoring_sessions` | Runtime Bindings & Monitoring | 1 | `Read` | `RuntimePort.list_paper_runtime_monitoring_sessions` | Missing narrow API (monitoring session reader) |
-| 37 | `list_persona_league` | Rankings & Projections | 6 | `Read` | `RankingProjectionPort.list_persona_league` | Existing 1:1 on domain port |
-| 38 | `list_personas` | Persona Fleet | 8 | `Read` | `PersonaFleetPort.list_personas` | Existing 1:1 on domain port |
-| 39 | `list_ranking_formulas` | Rankings & Projections | 2 | `Read` | `RankingProjectionPort.list_ranking_formulas` | Existing 1:1 on domain port |
-| 40 | `list_rankings` | Rankings & Projections | 1 | `Read` | `RankingProjectionPort.list_rankings` | Existing 1:1 on domain port |
-| 41 | `list_rebalances` | Rankings & Projections | 1 | `Read` | `RankingProjectionPort.list_rebalances` | Existing 1:1 on domain port |
-| 42 | `list_runtime_bindings` | Runtime Bindings & Monitoring | 27 | `Read` | `RuntimePort.list_runtime_bindings` | Existing 1:1 on domain port |
-| 43 | `list_sessions_for_persona` | Persona Fleet | 1 | `Read` | `PersonaFleetPort.list_sessions_for_persona / PersonaTrainingDomainPort.list_persona_sessions` | Missing narrow API on PersonaFleetPort (session provider) |
-| 44 | `patch_capital_pool` | Capital Pools & Bindings | 1 | `Write` | `command_executor.py / Capital Pool Service (PATCH /capital-pools/{id})` | Command API destination (mutation) |
-| 45 | `patch_ranking_formula` | Rankings & Projections | 1 | `Write` | `command_executor.py / Ranking Formula Store` | Command API destination (mutation) |
-| 46 | `put_allocation_evaluation` | Rankings & Projections | 2 | `Write` | `command_executor.py / Allocation Evaluation Store` | Command API destination (mutation) |
-| 47 | `put_ranking_snapshot` | Rankings & Projections | 1 | `Write` | `command_executor.py / Ranking Snapshot Store` | Command API destination (mutation) |
-| 48 | `update_persona` | Persona Fleet | 5 | `Write` | `command_executor.py / Persona Registry Service (PATCH /personas/{id})` | Command API destination (mutation) |
+| 14 | `get_paper_runtime_monitoring_session` | Runtime Bindings & Monitoring | 2 | `Read` | `RuntimePort.get_paper_runtime_monitoring_session` | Missing narrow API (monitoring session lookup) |
+| 15 | `get_persona` | Persona Fleet | 23 | `Read` | `PersonaFleetPort.get_persona` | Existing 1:1 on domain port |
+| 16 | `get_persona_allowed_actions` | Persona Fleet | 3 | `Read` | `PersonaFleetPort.get_persona_allowed_actions` | Missing narrow API (pure DTO derivation from persona lifecycle state) |
+| 17 | `get_persona_containment` | Rankings & Projections | 1 | `Read` | `RankingProjectionPort.get_persona_containment` | Existing 1:1 on domain port |
+| 18 | `get_persona_league_entry` | Rankings & Projections | 3 | `Read` | `RankingProjectionPort.get_persona_league_entry` | Existing 1:1 on domain port |
+| 19 | `get_ranking` | Rankings & Projections | 2 | `Read` | `RankingProjectionPort.get_ranking` | Existing 1:1 on domain port |
+| 20 | `get_ranking_formula` | Rankings & Projections | 4 | `Read` | `RankingProjectionPort.get_ranking_formula` | Missing narrow API (ranking formula lookup) |
+| 21 | `get_ranking_snapshot` | Rankings & Projections | 1 | `Read` | `RankingProjectionPort.get_ranking_snapshot` | Missing narrow API (ranking snapshot lookup) |
+| 22 | `get_rebalance` | Rankings & Projections | 6 | `Read` | `RankingProjectionPort.get_rebalance` | Existing 1:1 on domain port |
+| 23 | `get_route_policy_for_persona` | Persona Fleet | 3 | `Read` | `PersonaFleetPort.get_route_policy_for_persona / DomainWorkflowCatalogPort` | Missing narrow API (route policy lookup) |
+| 24 | `get_runtime_binding` | Runtime Bindings & Monitoring | 6 | `Read` | `RuntimePort.get_runtime_binding` | Existing 1:1 on domain port |
+| 25 | `get_runtime_binding_by_runtime_id` | Runtime Bindings & Monitoring | 8 | `Read` | `RuntimePort.get_runtime_binding_by_runtime_id` | Existing 1:1 on domain port |
+| 26 | `get_session` | Persona Fleet | 1 | `Read` | `PersonaFleetPort.get_session` | Missing narrow API (session record projection) |
+| 27 | `get_sessions_for_persona` | Persona Fleet | 7 | `Read` | `PersonaFleetPort.get_sessions_for_persona / PersonaTrainingDomainPort.list_persona_sessions` | Missing narrow API on PersonaFleetPort (session provider) |
+| 28 | `list_authoritative_paper_runtime_monitoring_sessions` | Runtime Bindings & Monitoring | 4 | `Read` | `RuntimePort.list_authoritative_paper_runtime_monitoring_sessions` | Missing narrow API (authoritative paper fleet reader) |
+| 29 | `list_bindings` | Capital Pools & Bindings | 13 | `Read` | `CapitalPoolPort.list_bindings` | Existing 1:1 on domain port (L40568 comment excluded) |
+| 30 | `list_capital_allocations` | Rankings & Projections | 3 | `Read` | `RankingProjectionPort.list_capital_allocations` | Existing 1:1 on domain port |
+| 31 | `list_capital_pools` | Capital Pools & Bindings | 8 | `Read` | `CapitalPoolPort.list_capital_pools` | Existing 1:1 on domain port |
+| 32 | `list_deployment_plans` | Deployment Plans | 7 | `Read` | `DeploymentPlanPort.list_deployment_plans` | Existing 1:1 on domain port |
+| 33 | `list_paper_runtime_monitoring_sessions` | Runtime Bindings & Monitoring | 1 | `Read` | `RuntimePort.list_paper_runtime_monitoring_sessions` | Missing narrow API (monitoring session reader) |
+| 34 | `list_persona_league` | Rankings & Projections | 6 | `Read` | `RankingProjectionPort.list_persona_league` | Existing 1:1 on domain port |
+| 35 | `list_personas` | Persona Fleet | 8 | `Read` | `PersonaFleetPort.list_personas` | Existing 1:1 on domain port |
+| 36 | `list_ranking_formulas` | Rankings & Projections | 2 | `Read` | `RankingProjectionPort.list_ranking_formulas` | Existing 1:1 on domain port |
+| 37 | `list_rankings` | Rankings & Projections | 1 | `Read` | `RankingProjectionPort.list_rankings` | Existing 1:1 on domain port |
+| 38 | `list_rebalances` | Rankings & Projections | 1 | `Read` | `RankingProjectionPort.list_rebalances` | Existing 1:1 on domain port |
+| 39 | `list_runtime_bindings` | Runtime Bindings & Monitoring | 27 | `Read` | `RuntimePort.list_runtime_bindings` | Existing 1:1 on domain port |
+| 40 | `list_sessions_for_persona` | Persona Fleet | 1 | `Read` | `PersonaFleetPort.list_sessions_for_persona / PersonaTrainingDomainPort.list_persona_sessions` | Missing narrow API on PersonaFleetPort (session provider) |
+| 41 | `patch_capital_pool` | Capital Pools & Bindings | 1 | `Write` | `command_executor.py / Capital Pool Service (PATCH /capital-pools/{id})` | Command API destination (mutation) |
+| 42 | `patch_ranking_formula` | Rankings & Projections | 1 | `Write` | `command_executor.py / Ranking Formula Store` | Command API destination (mutation) |
+| 43 | `put_allocation_evaluation` | Rankings & Projections | 2 | `Write` | `command_executor.py / Allocation Evaluation Store` | Command API destination (mutation) |
+| 44 | `put_ranking_snapshot` | Rankings & Projections | 1 | `Write` | `command_executor.py / Ranking Snapshot Store` | Command API destination (mutation) |
+| 45 | `update_persona` | Persona Fleet | 5 | `Write` | `command_executor.py / Persona Registry Service (PATCH /personas/{id})` | Command API destination (mutation) |
 
 ---
 
 ## 4. Granular Call Site Catalog by Method
 
-Below is the exhaustive catalog of all 227 call sites across `main.py`, organized by subsystem and method.
+Below is the exhaustive catalog of all 213 call sites across `main.py`, organized by subsystem and method.
 
 ### 4.1 Persona Fleet
 
@@ -352,7 +354,7 @@ Below is the exhaustive catalog of all 227 call sites across `main.py`, organize
 - **Classification:** `Read`
 - **Target Destination:** `CapitalPoolPort.list_bindings`
 - **API Status:** Existing 1:1 on domain port
-- **Total Invocations:** 14
+- **Total Invocations:** 13
 - **Line Locations & Call Contexts:**
 | Line | Enclosing Function / Endpoint | Code Snippet |
 |---|---|---|
@@ -364,12 +366,13 @@ Below is the exhaustive catalog of all 227 call sites across `main.py`, organize
 | L31810 | `_management_portfolio_book_pool_sources` | `bindings = read_store.list_bindings() or []` |
 | L32867 | `_pm12_performance_attribution_sources` | `bindings = read_store.list_bindings(include_market_persona_defaults=True) or []` |
 | L35852 | `bff_management_portfolio_book_holdings` | `bindings = read_store.list_bindings(include_market_persona_defaults=True) or []` |
-| L40568 | `bff_management_evolution_journal` | `# Read canonical persona-capital bindings (read_store.list_bindings)` |
 | L40591 | `bff_management_evolution_journal` | `bindings += list(read_store.list_bindings(include_market_persona_defaults=True) or [])` |
 | L50778 | `_enrich_persona_item_with_bindings` | `bindings = read_store.list_bindings(persona_id=persona_id) or []` |
 | L52652 | `_pm12_persona_league_rows` | `for record in (read_store.list_bindings() or [])` |
 | L63391 | `_first_binding_for_persona` | `bindings = read_store.list_bindings(` |
 | L65485 | `_persona_fleet_slim_list_payload` | `bindings = read_store.list_bindings(include_market_persona_defaults=True)` |
+
+*Note:* `main.py:40568` (`# Read canonical persona-capital bindings (read_store.list_bindings)`) is a non-executable comment reference and is excluded from active invocation counting.
 
 #### `list_capital_pools`
 - **Subsystem:** Capital Pools & Bindings
@@ -781,57 +784,23 @@ Below is the exhaustive catalog of all 227 call sites across `main.py`, organize
 |---|---|---|
 | L50659 | `_pm12_attach_ranking_snapshot` | `read_store.put_ranking_snapshot({` |
 
-### 4.6 Evolution Projections
+### 4.6 Evolution Projections Boundary & Resolution Note
 
-#### `get_evolution_decision_by_id`
-- **Subsystem:** Evolution Projections
-- **Classification:** `Read`
-- **Target Destination:** `EvolutionProjectionPort.get_evolution_decision_by_id`
-- **API Status:** Missing narrow API (evolution decision by ID lookup)
-- **Total Invocations:** 2
-- **Line Locations & Call Contexts:**
-| Line | Enclosing Function / Endpoint | Code Snippet |
-|---|---|---|
-| L5380 | `_mutation_review_inputs` | `decision = read_store.get_evolution_decision_by_id(decision_id)` |
-| L21999 | `get_evolution_decision` | `decision = read_store.get_evolution_decision_by_id(decision_id)` |
+All 13 legacy call sites across 3 evolution methods in `main.py`:
+- `get_evolution_decision_by_id` (2 calls: `L5380`, `L21999`)
+- `get_evolution_decisions_by_incident` (2 calls: `L12582`, `L21910`)
+- `list_evolution_decisions` (9 calls: `L21782`, `L21975`, `L36581`, `L39770`, `L43480`, `L61688`, `L64076`, `L65294`, `L65489`)
 
-#### `get_evolution_decisions_by_incident`
-- **Subsystem:** Evolution Projections
-- **Classification:** `Read`
-- **Target Destination:** `EvolutionProjectionPort.get_evolution_decisions_by_incident / DomainIncidentPort`
-- **API Status:** Missing narrow API (evolution decision by incident lookup)
-- **Total Invocations:** 2
-- **Line Locations & Call Contexts:**
-| Line | Enclosing Function / Endpoint | Code Snippet |
-|---|---|---|
-| L12582 | `_build_operator_paper_live_drift_payload` | `read_store.get_evolution_decisions_by_incident(` |
-| L21910 | `get_post_incident_review` | `evolution_decisions = read_store.get_evolution_decisions_by_incident(incident_id)` |
+**Resolution:** These methods represent authoritative governance and post-incident review queries and are **exclusively owned by `ACG-RS-LIFECYCLE-OWNERSHIP-MAP-20260828`** under `GovernanceReaderPort` and `IncidentReaderPort` (`lifecycle_telemetry_governance.py`).
 
-#### `list_evolution_decisions`
-- **Subsystem:** Evolution Projections
-- **Classification:** `Read`
-- **Target Destination:** `EvolutionProjectionPort.list_evolution_decisions`
-- **API Status:** Existing 1:1 on domain port
-- **Total Invocations:** 9
-- **Line Locations & Call Contexts:**
-| Line | Enclosing Function / Endpoint | Code Snippet |
-|---|---|---|
-| L21782 | `get_persona_management` | `all_evolution_decisions=list(read_store.list_evolution_decisions() or []),` |
-| L21975 | `list_evolution_decisions` | `for decision in read_store.list_evolution_decisions(` |
-| L36581 | `_project_persona_fleet_payload` | `evolution_decisions = list(read_store.list_evolution_decisions() or [])` |
-| L39770 | `_evolution_journal_items` | `decisions = list(read_store.list_evolution_decisions() or [])` |
-| L43480 | `_mgmt_nl_collect_context` | `evolution_decisions = _mgmt_nl_filter_tenant_records(list(read_store.list_evolution_decisions() or []), tenant_id)` |
-| L61688 | `_health_reason_sentinel_findings` | `evolution_decisions = list(read_store.list_evolution_decisions() or [])` |
-| L64076 | `_build_persona_health_items` | `all_decisions = list(read_store.list_evolution_decisions() or [])` |
-| L65294 | `_project_persona_fleet_list_row` | `else list(read_store.list_evolution_decisions() or [])` |
-| L65489 | `_persona_fleet_slim_list_payload` | `evolution_decisions = list(read_store.list_evolution_decisions() or [])` |
+`EvolutionProjectionPort` in `domain_ports/persona_capital_runtime.py` remains a pure derived DTO projection layer over injected readers (`list_evolution_programs`, `get_evolution_program`, `list_evolution_program_runs`, `list_evolution_program_candidates`) with **0 direct legacy `read_store` call sites in `main.py`**.
 
 ---
 
 ## 5. Read vs Write Classification & Missing Narrow API Analysis
 
 ### 5.1 Classification Summary
-- **Read Operations (`39` methods, `213` calls):** Methods that read immutable snapshots, project pure DTOs, filter collections, or query domain state.
+- **Read Operations (`36` methods, `199` calls):** Methods that read immutable snapshots, project pure DTOs, filter collections, or query domain state.
 - **Write / Mutation Operations (`9` methods, `14` calls):** Methods that mutate entity state, store overlay records, or execute lifecycle transitions.
 
 ### 5.2 Write / Mutation Commands Destination Matrix
@@ -850,7 +819,7 @@ All write operations MUST be decoupled from `read_store` and routed directly to 
 | `put_allocation_evaluation` | 2 | `command_executor.py` / Allocation Service | Canonical Allocation Store |
 
 ### 5.3 Missing Narrow Read APIs on Domain Ports
-The following 10 read methods are called in `main.py` but are not yet exposed directly on the narrow sub-ports. They should be added as narrow, pure methods without generic fallback delegation:
+The following 8 read methods are called in `main.py` but are not yet exposed directly on the narrow sub-ports. They should be added as narrow, pure methods without generic fallback delegation:
 
 1. **`PersonaFleetPort` Additions:**
    - `get_persona_allowed_actions(persona_id)`: Pure DTO derivation calculating permitted operator actions based on `PERSONA_OPERATIONAL_LIFECYCLE_STATES` and session state.
@@ -869,35 +838,55 @@ The following 10 read methods are called in `main.py` but are not yet exposed di
    - `get_ranking_snapshot(snapshot_id)`: Narrow lookup by snapshot ID over injected ranking snapshot reader.
    - `get_allocation_evaluation(evaluation_id)`: Narrow lookup by evaluation ID over injected allocation reader.
 
-5. **`EvolutionProjectionPort` Additions:**
-   - `get_evolution_decision_by_id(decision_id)`: Narrow lookup by decision ID over injected evolution decision reader.
-   - `get_evolution_decisions_by_incident(incident_id)`: Filtered projection over injected evolution decisions for a specific incident.
-
 ---
 
 ## 6. Multi-Domain Partition Proof & Disjointness Matrix
 
-To guarantee that caller migration tasks proceed without merge conflicts or overlapping responsibilities, all 203 legacy `read_store` methods and 600 call sites across `main.py` are strictly partitioned into 6 disjoint domain tasks:
+To guarantee that caller migration tasks proceed without merge conflicts or overlapping responsibilities, all 203 legacy `read_store` methods and 599 direct code call sites across `main.py` are strictly partitioned into 6 disjoint domain tasks:
 
 | Task ID | Domain Name | Artifact Document | Methods | Call Sites | Representative Methods |
-|---|---|---|---|---|---|
-| `ACG-RS-OPS-OWNERSHIP-MAP-20260828` | Operations & Agora | `docs/04/read_surface_ownership_partition_20260828/operations_agora.md` | 48 | 74 | `create_agora_session`, `get_committee`, `list_skills`, `record_sponsor_decision` |
-| `ACG-RS-OODA-OWNERSHIP-MAP-20260828` | OODA & Management | `docs/04/read_surface_ownership_partition_20260828/ooda_management.md` | 16 | 52 | `list_ooda_packets`, `list_approval_queue_items`, `get_synthesis_conflict_log` |
+|---|---|---|---:|---:|---|
+| `ACG-RS-OPS-OWNERSHIP-MAP-20260828` | Operations & Agora | `docs/04/read_surface_ownership_partition_20260828/operations_agora.md` | 48 | 76 | `create_agora_session`, `get_committee`, `list_skills`, `record_sponsor_decision` |
+| `ACG-RS-OODA-OWNERSHIP-MAP-20260828` | OODA & Management | `docs/04/read_surface_ownership_partition_20260828/ooda_management.md` | 16 | 50 | `list_ooda_packets`, `list_approval_queue_items`, `get_synthesis_conflict_log`, `_parse_rfc3339` |
 | `ACG-RS-RESEARCH-OWNERSHIP-MAP-20260828` | Research & Knowledge | `docs/04/read_surface_ownership_partition_20260828/research_knowledge.md` | 42 | 116 | `list_strategy_specs`, `get_research_ticket`, `dataset_source`, `list_evidence_refs` |
 | `ACG-RS-TRAINING-OWNERSHIP-MAP-20260828` | Persona Training | `docs/04/read_surface_ownership_partition_20260828/persona_training.md` | 17 | 31 | `create_trainer_session`, `get_trainer_replay`, `create_rapid_eval` |
-| **`ACG-RS-CAPITAL-OWNERSHIP-MAP-20260828`** | **Persona Capital & Runtime** | `docs/04/read_surface_ownership_partition_20260828/persona_capital_runtime.md` | **48** | **227** | `list_personas`, `list_capital_pools`, `list_runtime_bindings`, `list_rankings` |
-| `ACG-RS-LIFECYCLE-OWNERSHIP-MAP-20260828` | Lifecycle Telemetry & Governance | `docs/04/read_surface_ownership_partition_20260828/lifecycle_telemetry_governance.md` | 32 | 100 | `list_incidents`, `get_kill_switch_status`, `list_lineage_edges`, `get_telemetry_summary` |
-| **Total** | **All 6 Domains** | | **203** | **600** | **100% Disjoint Union & Zero Overlap** |
+| **`ACG-RS-CAPITAL-OWNERSHIP-MAP-20260828`** | **Persona Capital & Runtime** | `docs/04/read_surface_ownership_partition_20260828/persona_capital_runtime.md` | **45** | **213** | `list_personas`, `list_capital_pools`, `list_runtime_bindings`, `list_rankings` |
+| `ACG-RS-LIFECYCLE-OWNERSHIP-MAP-20260828` | Lifecycle Telemetry & Governance | `docs/04/read_surface_ownership_partition_20260828/lifecycle_telemetry_governance.md` | 35 | 113 | `list_incidents`, `get_kill_switch_status`, `list_evolution_decisions`, `get_telemetry_summary` |
+| **Total** | **All 6 Domains** | | **203** | **599** | **100% Disjoint Union & Zero Overlap** |
 
-### Formal Mathematical Proof of Disjointness
-Let $M_{all}$ be the set of 203 methods called on `read_store` in `main.py`.  
-Let $M_{pcr}, M_{ops}, M_{ooda}, M_{res}, M_{train}, M_{ltg}$ be the sets of methods assigned to each of the 6 domains.  
+*Note on Total Call Count:* The 599 direct code call sites plus 1 comment reference at `main.py:40568` account for all 600 string occurrences of `read_store.<method>` in `main.py`.
 
-1. **Coverage Proof:**
-   $$\bigcup_{D \in \{pcr, ops, ooda, res, train, ltg\}} M_D = M_{all}$$
-   $$|M_{pcr}| + |M_{ops}| + |M_{ooda}| + |M_{res}| + |M_{train}| + |M_{ltg}| = 48 + 48 + 16 + 42 + 17 + 32 = 203 = |M_{all}|$$
+### 6.1 Reconciliation of Evolution Call Site Ownership Across Sibling Maps
 
-2. **Disjointness Proof:**
-   $$\forall i, j \in \{pcr, ops, ooda, res, train, ltg\}, i \neq j \implies M_i \cap M_j = \emptyset$$
+A critical boundary clarification exists regarding the **13 call sites** in `main.py` referencing evolution decisions:
+- `get_evolution_decision_by_id` (2 call sites: `L5380`, `L21999`)
+- `get_evolution_decisions_by_incident` (2 call sites: `L12582`, `L21910`)
+- `list_evolution_decisions` (9 call sites: `L21782`, `L21975`, `L36581`, `L39770`, `L43480`, `L61688`, `L64076`, `L65294`, `L65489`)
 
-This guarantees zero overlap between `ACG-RS-CAPITAL-OWNERSHIP-MAP-20260828` and any sibling ownership map task.
+**Canonical Ownership Determination:**
+1. **Governance & Incident Domain Truth:** In `services/control-plane/bff/domain_ports/lifecycle_telemetry_governance.py`, `GovernanceReaderPort` implements `list_evolution_decisions`, `get_evolution_decision_by_id`, and `get_evolution_decision`, while `IncidentReaderPort` implements `get_evolution_decisions_by_incident`. These domain ports hold the authoritative query parameters (`action_type`, `risk_level`, `status`, `incident_ref`) and canonical DTO projections for evolution governance.
+2. **Capital Evolution Projection Boundary:** `EvolutionProjectionPort` in `services/control-plane/bff/domain_ports/persona_capital_runtime.py` is a pure derived projection layer that composes candidate and run lists for evolution programs (`list_evolution_programs`, `get_evolution_program`, `list_evolution_program_runs`, `list_evolution_program_candidates`). It does not implement `get_evolution_decision_by_id` or `get_evolution_decisions_by_incident`.
+3. **Partition Resolution:** Canonical ownership of all 13 evolution call sites and their 3 methods belongs exclusively to **`ACG-RS-LIFECYCLE-OWNERSHIP-MAP-20260828`** (under Governance and Incident sub-domains). This cleanly adjusts `persona_capital_runtime`'s direct method set to **45 methods** (`213` direct calls), establishing complete disjointness and preventing duplicate migration work.
+
+### 6.2 Formal Mathematical Proof of Disjoint Union
+Let $\mathcal{M}_{\text{all}}$ be the set of 203 distinct direct member names called on `read_store` across all 599 direct code calls in `main.py`.  
+Let $M_{\text{ops}}, M_{\text{ooda}}, M_{\text{res}}, M_{\text{train}}, M_{\text{cap}}, M_{\text{ltg}}$ be the sets of methods assigned to each of the 6 domains.  
+
+1. **Pairwise Disjointness**:
+   $$\forall i, j \in \{\text{ops}, \text{ooda}, \text{res}, \text{train}, \text{cap}, \text{ltg}\}, \; i \neq j \implies M_i \cap M_j = \emptyset$$
+
+2. **Complete Coverage**:
+   $$\bigcup_{k \in \{\text{ops}, \text{ooda}, \text{res}, \text{train}, \text{cap}, \text{ltg}\}} M_k = \mathcal{M}_{\text{all}} \quad (|\mathcal{M}_{\text{all}}| = 203)$$
+
+3. **Method Sum Verification**:
+   $$\sum |M_k| = 48 + 16 + 42 + 17 + 45 + 35 = 203$$
+
+4. **Call Site Sum Verification**:
+   $$\sum \text{Calls}(M_k) = 76 + 50 + 116 + 31 + 213 + 113 = 599$$
+
+### 6.3 Global Distinct Method Resolution
+The total count of distinct `read_store` methods in `main.py` is exactly **203**, consisting of:
+- `202` public domain-specific methods (e.g., `list_personas`, `get_capital_pool`, `list_runtime_bindings`, `get_incident_response`, etc.)
+- `1` internal helper method `_parse_rfc3339` called on `read_store` at `main.py:59604` (owned by `ooda_management`).
+
+This completely accounts for all 203 distinct member calls in `main.py` and resolves any previous discrepancies.
