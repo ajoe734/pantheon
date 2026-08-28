@@ -489,3 +489,155 @@ def test_knowledge_inbox_router_degraded_when_empty():
     data = response.json()
     assert len(data["items"]) == 0
     assert data["meta"]["status"] == "unavailable"
+
+
+def test_knowledge_inbox_pagination_and_validation():
+    notes_store = {
+        f"note-{i}": {
+            "note_id": f"note-{i}",
+            "title": f"Note {i}",
+            "body": f"Content {i}",
+            "created_at": f"2026-08-{10 + i:02d}T00:00:00Z",
+        }
+        for i in range(1, 6)
+    }
+    port = DefaultResearchKnowledgeSourcePort(research_notes_store=notes_store)
+
+    router = create_knowledge_router(
+        extract_identity=_fake_extract_identity,
+        require_read_role=_fake_require_read_role,
+        port=port,
+        utc_now=_sample_utc_now,
+        dataset_surface_status=_fake_dataset_surface_status,
+    )
+
+    app = FastAPI()
+    app.include_router(router)
+    client = TestClient(app)
+
+    # Page size 2, first page
+    resp = client.get("/bff/knowledge?page_size=2")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert len(data["items"]) == 2
+    assert data["page_info"]["has_more"] is True
+    next_token = data["page_info"]["next_page_token"]
+    assert next_token == "2"
+
+    # Second page
+    resp2 = client.get(f"/bff/knowledge?page_size=2&page_token={next_token}")
+    assert resp2.status_code == 200
+    data2 = resp2.json()
+    assert len(data2["items"]) == 2
+    assert data2["page_info"]["has_more"] is True
+
+    # Invalid page token (non-integer) -> 422
+    resp_bad = client.get("/bff/knowledge?page_token=invalid")
+    assert resp_bad.status_code == 422
+
+    # Negative page token -> 422
+    resp_neg = client.get("/bff/knowledge?page_token=-5")
+    assert resp_neg.status_code == 422
+
+
+def test_search_results_filtering_and_query():
+    port = DefaultResearchKnowledgeSourcePort(
+        search_documents_store=[
+            {
+                "result_id": "doc-1",
+                "match_type": "ticket",
+                "title": "Cross Asset Momentum",
+                "excerpt": "Exploring momentum signals across equities and futures.",
+                "linked_ticket_id": "rt-101",
+                "linked_ticket_status": "open",
+                "created_at": "2026-08-25T00:00:00Z",
+            },
+            {
+                "result_id": "doc-2",
+                "match_type": "experiment",
+                "title": "Mean Reversion Backtest",
+                "excerpt": "Backtest on intraday mean reversion strategies.",
+                "linked_ticket_id": "rt-102",
+                "linked_ticket_status": "closed",
+                "created_at": "2026-08-26T00:00:00Z",
+            },
+        ],
+        research_tickets_store={
+            "rt-101": {"ticket_id": "rt-101", "status": "open"},
+            "rt-102": {"ticket_id": "rt-102", "status": "closed"},
+        }
+    )
+
+    index = port.get_research_search_index()
+    assert index is not None
+    assert "ticket" in index["indexed_match_types"]
+    assert "experiment" in index["indexed_match_types"]
+
+    # Search with keyword
+    results = port.list_research_search_results(query="momentum")
+    assert len(results) == 1
+    assert results[0]["result_id"] == "doc-1"
+    assert results[0]["match_type"] == "ticket"
+
+    # Filter by match_type
+    exp_results = port.list_research_search_results(query="", match_type="experiment")
+    assert len(exp_results) == 1
+    assert exp_results[0]["result_id"] == "doc-2"
+
+    # Filter by status
+    open_results = port.list_research_search_results(query="", status="open")
+    assert len(open_results) == 1
+    assert open_results[0]["result_id"] == "doc-1"
+
+
+def test_source_and_search_ops_with_http_client():
+    def fake_http_get(base_url: str, path: str):
+        if "freshness" in path:
+            return True, {"status": "fresh", "within_sla": True, "last_synced_at": "2026-08-28T01:00:00Z"}
+        if "pipeline-runs" in path:
+            return True, {"runs": [{"run_id": "pr-1", "status": "completed"}], "total": 1}
+        if "materialize" in path:
+            return True, {"materialized_at": "2026-08-28T01:00:00Z", "document_count": 42}
+        if "source-ingest/registry" in path:
+            return True, {
+                "schema_version": "1.0",
+                "connectors": [{"connector_id": "sec-edgar", "status": "healthy"}],
+                "provider_examples": ["sec://"],
+            }
+        if "source-change-proposals" in path:
+            return True, {"proposals": [{"proposal_id": "scp-1", "status": "pending"}]}
+        if "source-ingest/health-usage-snapshot" in path:
+            return True, {
+                "sources": [{"source_id": "sec", "status": "healthy"}],
+                "recommendation_summary": {"action": "none"},
+            }
+        return False, None
+
+    port = DefaultResearchKnowledgeSourcePort(
+        search_service_url="http://search-service:8000",
+        source_ingest_service_url="http://source-ingest-service:8000",
+        http_get_fn=fake_http_get,
+    )
+
+    # Search Ops
+    search_ops = port.get_search_ops_snapshot()
+    assert search_ops["source"] == "service_client"
+    assert search_ops["summary"]["freshness_ok"] is True
+    assert len(search_ops["pipeline_runs"]) == 1
+
+    # Source Connectors
+    registry = port.get_source_connector_registry()
+    assert registry["source"] == "service_client"
+    assert len(registry["connectors"]) == 1
+    assert registry["connectors"][0]["connector_id"] == "sec-edgar"
+
+    # Source Proposals
+    proposals = port.get_source_change_proposals(status="pending")
+    assert proposals["source"] == "service_client"
+    assert len(proposals["proposals"]) == 1
+
+    # Source Health Usage Snapshot
+    health = port.get_source_health_usage_snapshot()
+    assert health["source"] == "service_client"
+    assert health["source_count"] == 1
+
