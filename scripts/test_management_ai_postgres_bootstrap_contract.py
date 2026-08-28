@@ -94,7 +94,11 @@ def test_nonprod_deploy_prunes_dev_postgres_telemetry_before_root_build() -> Non
     deploy = _read("scripts/deploy_nonprod_vm.sh")
 
     assert "PANTHEON_DEV_POSTGRES_TELEMETRY_PRUNE" in deploy
+    assert 'PANTHEON_DEV_POSTGRES_TELEMETRY_PRUNE="${PANTHEON_DEV_POSTGRES_TELEMETRY_PRUNE:-false}"' in deploy
+    assert 'PANTHEON_DEV_POSTGRES_TELEMETRY_PRUNE=$(shell_quote "${PANTHEON_DEV_POSTGRES_TELEMETRY_PRUNE:-false}")' in deploy
     assert "prune_dev_management_ai_telemetry_for_disk" in deploy
+    assert "derived_telemetry_table_count" in deploy
+    assert "no derived ${mgmt_schema}.telemetry_events exists" in deploy
     assert "TRUNCATE TABLE %I.%I" in deploy
     assert "telemetry_events" in deploy
     assert (
