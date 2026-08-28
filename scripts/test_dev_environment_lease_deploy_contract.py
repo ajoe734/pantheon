@@ -1233,10 +1233,9 @@ def test_dev_root_post_up_failure_rolls_back_to_captured_baseline_negative(tmp_p
     bff_section = deploy_script.split("case \"${PANTHEON_DEPLOY_COMPONENT}\" in", 1)[1].split("\n  bff)", 1)[1].split(";;", 1)[0]
 
     for post_up_gate in (
-        'rollback_dev_bff_on_failure "docker_compose_up"',
-        'rollback_dev_bff_on_failure "projector_recreate"',
-        'rollback_dev_bff_on_failure "source_refresh_readback"',
-        'rollback_dev_bff_on_failure "shared_model_pool"',
+            'rollback_dev_bff_on_failure "docker_compose_up"',
+            'rollback_dev_bff_on_failure "projector_recreate"',
+            'rollback_dev_bff_on_failure "shared_model_pool"',
         'rollback_dev_bff_on_failure "retire_legacy_paper"',
         'rollback_dev_bff_on_failure "paper_fleet"',
         'rollback_dev_bff_on_failure "bff_lifecycle_readiness"',

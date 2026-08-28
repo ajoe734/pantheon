@@ -71,8 +71,14 @@ def test_source_controller_is_the_single_default_durable_owner() -> None:
     ]
     assert matching_commands == ["source-ingest-scheduler"]
 
-    # A bounded run remains an explicit override of this same service:
-    # docker compose run --rm -e SOURCE_INGEST_CONTROLLER_MAX_TICKS=1 ...
+    # A bounded provider pull stays inside this existing owner; it must not
+    # create a second controller process with `docker compose run`.
+    bounded_refresh = (ROOT / "scripts" / "run_bounded_source_ingest_refresh.sh").read_text(
+        encoding="utf-8"
+    )
+    assert "source-ingest-scheduler" in bounded_refresh
+    assert "run_schedule_tick" in bounded_refresh
+    assert "docker compose run" not in bounded_refresh
     assert "SOURCE_INGEST_CONTROLLER_MAX_TICKS" in owner["environment"]
 
 

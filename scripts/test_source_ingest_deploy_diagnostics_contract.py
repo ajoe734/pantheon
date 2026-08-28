@@ -1,5 +1,3 @@
-import os
-import subprocess
 from pathlib import Path
 
 
@@ -12,54 +10,6 @@ def _failure_diagnostics_function() -> str:
     start = deploy.index("dump_dev_root_failure_diagnostics() {")
     end = deploy.index("\n}\n\nverify_dev_evolution_daily_sweep()", start)
     return deploy[start:end]
-
-
-def _bounded_wait_function() -> str:
-    deploy = DEPLOY_SCRIPT.read_text(encoding="utf-8")
-    start = deploy.index("wait_for_bounded_source_refresh_service() {")
-    end = deploy.index("\n}\n\nverify_bounded_source_refresh_readback()", start) + 2
-    return deploy[start:end]
-
-
-def _run_bounded_wait(tmp_path: Path, *, exit_code: int) -> subprocess.CompletedProcess[str]:
-    fake_bin = tmp_path / "bin"
-    fake_bin.mkdir()
-    fake_docker = fake_bin / "docker"
-    fake_docker.write_text(
-        """#!/usr/bin/env bash
-set -euo pipefail
-if [[ "$1" == "compose" ]]; then
-  printf 'source-refresh-test-container\\n'
-elif [[ "$1" == "inspect" && "$3" == *State.Status* ]]; then
-  printf 'exited\\n'
-elif [[ "$1" == "inspect" && "$3" == *State.ExitCode* ]]; then
-  printf '%s\\n' "${FAKE_DOCKER_EXIT_CODE}"
-else
-  exit 91
-fi
-""",
-        encoding="utf-8",
-    )
-    fake_docker.chmod(0o755)
-    script = """set -euo pipefail
-error() {
-  echo "$*" >&2
-  exit 1
-}
-""" + _bounded_wait_function() + """
-SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS=30
-wait_for_bounded_source_refresh_service source-ingest-scheduler
-"""
-    env = dict(os.environ)
-    env["PATH"] = f"{fake_bin}:{env['PATH']}"
-    env["FAKE_DOCKER_EXIT_CODE"] = str(exit_code)
-    return subprocess.run(
-        ["bash", "-c", script],
-        check=False,
-        capture_output=True,
-        text=True,
-        env=env,
-    )
 
 
 def test_root_failure_diagnostics_capture_source_ingest_service_and_state() -> None:
@@ -80,26 +30,16 @@ def test_root_failure_diagnostics_keep_scheduler_logs_separate() -> None:
     assert "logs --no-color --tail=120 source-ingest-scheduler" in diagnostics
 
 
-def test_bounded_source_refresh_profile_is_fail_closed() -> None:
+def test_root_deploy_rejects_the_second_source_controller_profile() -> None:
     deploy = DEPLOY_SCRIPT.read_text(encoding="utf-8")
     start = deploy.index("validate_source_refresh_profile() {")
     end = deploy.index("\n}\n\ncurl_with_retry()", start)
     gate = deploy[start:end]
 
-    assert 'PANTHEON_EXTERNAL_EGRESS:-deny}" == "allowlist"' in gate
-    assert 'SOURCE_INGEST_CONTROLLER_MODE:-}" == "reconcile_and_pull"' in gate
-    assert 'SOURCE_INGEST_CONTROLLER_TRUTH_LEVEL:-}" == "reconciled_live_proof"' in gate
-    assert 'SOURCE_INGEST_CONTROLLER_RESTART_POLICY:-}" == "no"' in gate
-    assert "requires a reviewed exact host allowlist" in gate
-    assert "SOURCE_INGEST_CONTROLLER_MAX_TICKS >= 1" in gate
-    assert "SOURCE_INGEST_CONTROLLER_MAX_TICKS <= 24" in gate
-    assert "SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY <= 4" in gate
-    assert "SOURCE_INGEST_MAX_RECORDS <= 500" in gate
-    assert "SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS <= 3600" in gate
-    assert 'required = {"openapi.twse.com.tw", "www.tpex.org.tw"}' in gate
-    assert 'export SOURCE_INGEST_CONTROLLER_FORCE_CONNECTOR_IDS="${SOURCE_INGEST_BOUNDED_CONNECTOR_ID}"' in gate
-    assert 'export SOURCE_INGEST_CONTROLLER_EXCLUSIVE_CONNECTOR_IDS="${SOURCE_INGEST_BOUNDED_CONNECTOR_ID}"' in gate
-    assert "from services.external_egress import allowed_hosts" in gate
+    assert "already the durable controller" in gate
+    assert "run_bounded_source_ingest_refresh.sh" in gate
+    assert 'SOURCE_INGEST_CONTROLLER_MODE:-}" == "reconcile_and_pull"' not in gate
+    assert 'PANTHEON_EXTERNAL_EGRESS:-deny}" == "allowlist"' not in gate
 
     root_start = deploy.index("  root)\n")
     root_end = deploy.index("\n  bff)\n", root_start)
@@ -137,43 +77,11 @@ def test_default_source_owner_is_unbounded_reconcile_only() -> None:
     assert 'SOURCE_INGEST_CONTROLLER_RESTART_POLICY:-}" == "unless-stopped"' in gate
 
 
-def test_bounded_source_refresh_deploy_waits_and_gates_readback() -> None:
+def test_root_deploy_has_no_second_controller_refresh_or_readback_phase() -> None:
     deploy = DEPLOY_SCRIPT.read_text(encoding="utf-8")
-    start = deploy.index("verify_bounded_source_refresh_readback() {")
-    end = deploy.index("\n}\n\nensure_dev_caddy_ingress()", start)
-    gate = deploy[start:end]
-    assert "wait_for_bounded_source_refresh_service source-ingest-scheduler" in gate
-    assert "wait_for_bounded_source_refresh_service source-ingest-agora-projector" in gate
-    assert "/api/source-ingest/receipts" in gate
-    assert "/api/source-ingest/controller/readback" in gate
-    assert "agora_watchlist.json" in gate
-    assert "source_timestamp_status" in gate
-    assert "sourceTimeStatus" in gate
-    assert "ingestRunId" in gate
-
-    root_start = deploy.index("  root)\n")
-    root_end = deploy.index("\n  bff)\n", root_start)
-    root_case = deploy[root_start:root_end]
-    assert root_case.index("docker compose -p pantheon -f docker-compose.yml up -d") < root_case.index(
-        "verify_bounded_source_refresh_readback"
-    )
-    assert root_case.index("verify_bounded_source_refresh_readback") < root_case.index(
-        "openclaw-configure-shared-model-pool.sh"
-    )
-
-
-def test_bounded_source_refresh_wait_accepts_zero_exit(tmp_path: Path) -> None:
-    result = _run_bounded_wait(tmp_path, exit_code=0)
-
-    assert result.returncode == 0, result.stderr
-    assert result.stdout.strip() == "source-refresh-test-container"
-
-
-def test_bounded_source_refresh_wait_rejects_nonzero_exit(tmp_path: Path) -> None:
-    result = _run_bounded_wait(tmp_path, exit_code=17)
-
-    assert result.returncode != 0
-    assert "source-ingest-scheduler exited with code 17" in result.stderr
+    assert "wait_for_bounded_source_refresh_service" not in deploy
+    assert "verify_bounded_source_refresh_readback" not in deploy
+    assert "source_refresh_deploy_started_at" not in deploy
 
 
 def test_root_failure_diagnostics_capture_search_service_and_state_without_env() -> None:

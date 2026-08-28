@@ -25,6 +25,8 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Iterable, Mapping, Sequence
 
+from services.market_symbols import market_symbol_aliases
+
 
 SCHEMA_VERSION = "source_ingest_requirement_snapshot.v1"
 CHECKSUM_ALGORITHM = "sha256"
@@ -660,7 +662,25 @@ class LatestMarketSnapshotStore:
 
     def get(self, symbol: str) -> LatestMarketSnapshot | None:
         with self._lock:
-            return self._latest_by_symbol.get(_market_snapshot_symbol(symbol))
+            candidates = [
+                self._latest_by_symbol[candidate]
+                for candidate in market_symbol_aliases(symbol)
+                if candidate in self._latest_by_symbol
+            ]
+            if not candidates:
+                return None
+            # A legacy alias and its Source canonical spelling can coexist
+            # during migration.  Return the newest stored market event rather
+            # than letting the spelling chosen by the caller select stale data.
+            requested = _market_snapshot_symbol(symbol)
+            return max(
+                candidates,
+                key=lambda snapshot: (
+                    snapshot.event_time,
+                    snapshot.observed_at,
+                    snapshot.symbol == requested,
+                ),
+            )
 
     @staticmethod
     def _point_from_record(record: Any, *, ingest_run_id: str) -> tuple[str, MarketSnapshotPoint] | None:

@@ -32,6 +32,7 @@ from services.execution.market_snapshot_admission import (
     SnapshotAdmissionDecision,
     admit_market_snapshot,
 )
+from services.market_symbols import market_symbols_equivalent
 
 from services.worker_health import healthcheck as check_worker_health
 from services.worker_health import write_health
@@ -573,7 +574,11 @@ def _market_input_for_binding(
 
     requested_symbol = str(binding.get("symbol") or metadata.get("symbol") or "").strip()
     snapshot_symbol = str(raw.get("symbol") or requested_symbol).strip()
-    if requested_symbol and snapshot_symbol and snapshot_symbol != requested_symbol:
+    if (
+        requested_symbol
+        and snapshot_symbol
+        and not market_symbols_equivalent(snapshot_symbol, requested_symbol)
+    ):
         raise SignalDecisionUnavailable(
             "market_input_invalid",
             f"Source snapshot symbol {snapshot_symbol!r} does not match binding symbol {requested_symbol!r}",
@@ -594,7 +599,9 @@ def _market_input_for_binding(
             )
     return {
         "closes": normalized_closes,
-        "symbol": snapshot_symbol or raw.get("symbol"),
+        # Preserve the configured execution spelling in outbound signals.  The
+        # stored snapshot may use the equivalent, venue-canonical spelling.
+        "symbol": requested_symbol or snapshot_symbol or raw.get("symbol"),
         "source_ref": raw.get("source_ref"),
         "observed_at": raw.get("observed_at"),
         "snapshot_id": raw.get("snapshot_id"),
