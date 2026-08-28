@@ -8346,7 +8346,7 @@ def prepare_external_mutation_preflight(
     ensure_agent(actor)
     existing_intent = pending_review_decision_intent(task)
     if existing_intent is not None:
-        if command in {"approve", "reopen"} and _review_intent_request_matches(
+        if command in {"approve", "operator_accept", "reopen"} and _review_intent_request_matches(
             existing_intent,
             command=command,
             args=args,

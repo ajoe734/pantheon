@@ -3485,6 +3485,37 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
         self.assertNotIn(ai_status.GITHUB_REVIEW_BRIDGE_KEY, task)
         bridge_accept.assert_called_once()
 
+    def test_operator_accept_preflight_resumes_its_matching_pending_intent(self) -> None:
+        message = "Human/Ops retries the same exact-head acceptance."
+        self._set_pr_delivery_binding(pr=4269, head_sha="a" * 40)
+        task = self.state["tasks"][0]
+        with (
+            mock.patch.dict(
+                os.environ,
+                {"AI_NAME": "Human/Ops", "PANTHEON_LOCAL_HUMAN_OPS": "1"},
+                clear=False,
+            ),
+            mock.patch.object(ai_status, "save_state"),
+        ):
+            preflight = ai_status.prepare_external_mutation_preflight(
+                "operator_accept", task, ["REG-002", message]
+            )
+            ai_status.reserve_review_decision_intent(
+                self.state,
+                command="operator_accept",
+                args=["REG-002", message],
+                preflight=preflight,
+            )
+            resumed = ai_status.prepare_external_mutation_preflight(
+                "operator_accept", task, ["REG-002", message]
+            )
+
+        self.assertTrue(resumed[ai_status.REVIEW_DECISION_RESUME_KEY])
+        self.assertEqual(
+            resumed[ai_status.REVIEW_DECISION_EXACT_BINDING_KEY],
+            task[ai_status.REVIEW_DECISION_INTENT_KEY]["binding"],
+        )
+
     def test_reviewer_reopen_uses_the_same_two_phase_intent_protocol(self) -> None:
         message = "Reject through a durable intent."
         self._set_pr_delivery_binding(pr=4269, head_sha="a" * 40)
