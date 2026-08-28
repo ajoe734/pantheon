@@ -88,7 +88,10 @@ jobs:
     name: Deploy dev under shared environment lease
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.environment == 'dev' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    # A root deploy rebuilds the complete dev image set on one VM.  The direct
+    # SSH deadline below is two hours; the job budget must also leave room for
+    # lease acquisition, paper baseline, smoke, and a bounded rollback.
+    timeout-minutes: 240
     environment: dev
     outputs:
       backend_sha: ${{ steps.target.outputs.sha }}
@@ -861,7 +864,7 @@ jobs:
           DEV_MANAGEMENT_AI_ATTACH_LOCATION: ${{ vars.DEV_MANAGEMENT_AI_ATTACH_LOCATION || 'asia-east1' }}
           DEV_PPL_ALLOC_009_DEV_PROOF_ENABLED: ${{ env.PPL_ALLOC_009_DEV_PROOF_ENABLED }}
           PANTHEON_DEV_DOCKER_PRUNE: ${{ vars.PANTHEON_DEV_DOCKER_PRUNE || 'true' }}
-          DEV_DEPLOY_DEADLINE_SECONDS: ${{ vars.DEV_DEPLOY_DEADLINE_SECONDS || '1200' }}
+          DEV_DEPLOY_DEADLINE_SECONDS: ${{ vars.DEV_DEPLOY_DEADLINE_SECONDS || '7200' }}
           PANTHEON_DEV_ROLLBACK_BACKEND_SHA: ${{ steps.rollback_baseline.outputs.sha }}
           TARGET_SHA: ${{ steps.target.outputs.sha }}
         shell: /bin/bash --noprofile --norc -euo pipefail {0}
@@ -1389,7 +1392,9 @@ jobs:
           DEV_BFF_URL: ${{ vars.DEV_BFF_URL || 'https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io' }}
           DEV_FE_URL: ${{ vars.DEV_FE_URL || 'https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io' }}
           GCP_DEPLOY_PROJECT_ID: ${{ vars.DEV_GCP_DEPLOY_PROJECT_ID || 'pantheon-lupin-dev-20260719' }}
-          DEV_DEPLOY_DEADLINE_SECONDS: ${{ vars.DEV_DEPLOY_DEADLINE_SECONDS || '1200' }}
+          # A rollback is BFF-only and should remain bounded independently of
+          # the full root-build deadline.
+          DEV_DEPLOY_DEADLINE_SECONDS: ${{ vars.DEV_ROLLBACK_DEPLOY_DEADLINE_SECONDS || '1200' }}
         shell: /bin/bash --noprofile --norc -euo pipefail {0}
         run: |
           lease_token="${PANTHEON_ENVIRONMENT_LEASE_TOKEN}"
@@ -1835,7 +1840,7 @@ jobs:
             echo "- Lease: \`${{ steps.lease.outputs.lease_id }}\`"
             echo "- Controller: \`9e564718da8c39199a4c311f1a667b74226e3428\`"
             echo "- Target: \`dev/${TARGET_COMPONENT}\`"
-            echo "- Deploy deadline: \`${{ vars.DEV_DEPLOY_DEADLINE_SECONDS || '1200' }}s\`"
+            echo "- Deploy deadline: \`${{ vars.DEV_DEPLOY_DEADLINE_SECONDS || '7200' }}s\`"
             echo "- PPL-ALLOC-009 dev proof enabled: \`${PPL_ALLOC_009_DEV_PROOF_ENABLED}\`"
           } >> "${GITHUB_STEP_SUMMARY}"
 

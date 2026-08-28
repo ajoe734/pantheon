@@ -502,8 +502,14 @@ def test_dev_deploy_job_has_explicit_timeout_and_command_deadline() -> None:
     assert ttl_match is not None, "Lease acquire step must specify --ttl-seconds"
     lease_ttl_seconds = int(ttl_match.group(1))
 
-    # Rollback compensation deploy deadline (from compensation step)
-    rollback_deadline_seconds = initial_deadline_seconds
+    # Rollback has its own bounded BFF-only deadline.  It must not inherit the
+    # much longer root-build budget used by the initial dev deployment.
+    rollback_deadline_match = re.search(
+        r"DEV_DEPLOY_DEADLINE_SECONDS:\s*\${{\s*vars\.DEV_ROLLBACK_DEPLOY_DEADLINE_SECONDS\s*\|\|\s*'(\d+)'\s*}}",
+        comp_section,
+    )
+    assert rollback_deadline_match is not None, "rollback deadline default must be explicit"
+    rollback_deadline_seconds = int(rollback_deadline_match.group(1))
 
     # Rollback compensation lease acquire wait
     rollback_wait_match = re.search(r"id:\s*deploy_compensation[\s\S]*?--wait-seconds\s+(\d+)", dev)
@@ -560,7 +566,7 @@ def test_dev_deploy_job_has_explicit_timeout_and_command_deadline() -> None:
         (["--deploy-timeout-seconds", "750"], {}, "750"),
         ([], {"DEV_DEPLOY_DEADLINE_SECONDS": "600"}, "600"),
         ([], {"DEV_DEPLOY_TIMEOUT_SECONDS": "450"}, "450"),
-        ([], {}, "1200"),
+        ([], {}, "7200"),
     ],
 )
 def test_dev_deploy_validates_deadline_configuration_positive(

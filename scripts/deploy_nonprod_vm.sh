@@ -40,7 +40,7 @@ DEV_BFF_AUTH_STUB="${DEV_BFF_AUTH_STUB:-false}"
 DEV_BFF_AUTH_MODE="${DEV_BFF_AUTH_MODE:-strict}"
 DEV_BFF_AUTH_READINESS_TIMEOUT_SECONDS="${DEV_BFF_AUTH_READINESS_TIMEOUT_SECONDS:-120}"
 DEV_BFF_AUTH_READINESS_POLL_INTERVAL_SECONDS="${DEV_BFF_AUTH_READINESS_POLL_INTERVAL_SECONDS:-2}"
-DEV_DEPLOY_DEADLINE_SECONDS="${DEV_DEPLOY_DEADLINE_SECONDS:-${DEV_DEPLOY_TIMEOUT_SECONDS:-1200}}"
+DEV_DEPLOY_DEADLINE_SECONDS="${DEV_DEPLOY_DEADLINE_SECONDS:-${DEV_DEPLOY_TIMEOUT_SECONDS:-7200}}"
 DEV_ROLLBACK_BACKEND_SHA="${DEV_ROLLBACK_BACKEND_SHA:-${PANTHEON_DEV_ROLLBACK_BACKEND_SHA:-}}"
 DEV_PPL_ALLOC_009_DEV_PROOF_ENABLED="${DEV_PPL_ALLOC_009_DEV_PROOF_ENABLED:-false}"
 # Governed verifier/dev-login credentials for the strict auth cutover. These
@@ -224,7 +224,7 @@ Options:
                          Optional. Baseline BFF commit to restore if post-rollout
                          gates fail.
   --deadline-seconds <seconds>
-                         Deploy command deadline in seconds. Default: 1200.
+                         Deploy command deadline in seconds. Default: 7200.
   --deploy-timeout-seconds <seconds>
                          Alias for --deadline-seconds.
   --help                 Show this message.
@@ -685,7 +685,7 @@ ssh_bash() {
   command_prefix+=" PANTHEON_STAGING_BFF_CORS_ORIGINS=$(shell_quote "$STAGING_BFF_CORS_ORIGINS")"
   command_prefix+=" bash -s"
 
-  local deadline_seconds="${DEV_DEPLOY_DEADLINE_SECONDS:-1200}"
+  local deadline_seconds="${DEV_DEPLOY_DEADLINE_SECONDS:-7200}"
   local -a remote_command
   if [[ "$DEPLOY_ENV" == "dev" ]]; then
     info "direct ssh ${REMOTE_USER}@${DEV_DEPLOY_SSH_HOST} component=${remote_component} sha=${DEPLOY_SHA} (deadline=${deadline_seconds}s)"
