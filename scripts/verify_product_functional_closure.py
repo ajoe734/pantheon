@@ -65,6 +65,8 @@ ALLOWED_PRODUCER_WORKFLOWS: dict[str, tuple[str, ...]] = {
         "agora-hosted-service-proof.yml",
         ".github/workflows/pfg-agora-journey-e2e-20260820-hosted-acceptance.yml",
         "pfg-agora-journey-e2e-20260820-hosted-acceptance.yml",
+        ".github/workflows/pantheon-fe-bff-integration-gate.yml",
+        "pantheon-fe-bff-integration-gate.yml",
         ".github/workflows/pantheon-integration-gate.yml",
         "pantheon-integration-gate.yml",
         ".github/workflows/nonprod-deploy.yml",
@@ -95,6 +97,8 @@ ALLOWED_PRODUCER_WORKFLOWS: dict[str, tuple[str, ...]] = {
     "rollback": (
         ".github/workflows/nonprod-deploy.yml",
         "nonprod-deploy.yml",
+        ".github/workflows/pantheon-fe-bff-integration-gate.yml",
+        "pantheon-fe-bff-integration-gate.yml",
         ".github/workflows/pantheon-dev-fe-deploy.yml",
         "pantheon-dev-fe-deploy.yml",
         ".github/workflows/pantheon-integration-gate.yml",

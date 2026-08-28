@@ -1,0 +1,27 @@
+{
+  "schema_version": "pantheon.l12_cross_loop.acceptance_evidence.v1",
+  "task": {
+    "id": "PFG-HOSTED-CURRENT-DEV-CLOSEOUT-20260828"
+  },
+  "mode": "hosted",
+  "status": "passed",
+  "observed_at": "2026-08-28T02:45:00Z",
+  "exact_pair": {
+    "backend_sha": "a09bd00818f06fbafd4f67a8d39f88fe6881fae6",
+    "frontend_sha": "97aa1c4b5234c595d0f5502f7785383479851318",
+    "bff_url": "https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io",
+    "fe_url": "https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io"
+  },
+  "suite": "desktop-l12-cross-loop-truth",
+  "passed_count": 12,
+  "failed_count": 0,
+  "skipped_mandatory_count": 0,
+  "required_skips_allowed": false,
+  "unskipped_mandatory_cases": true,
+  "producer": {
+    "kind": "github-actions",
+    "repository": "ajoe734/pantheon",
+    "workflow": ".github/workflows/branch-ci.yml",
+    "run_id": "33135652525"
+  }
+}

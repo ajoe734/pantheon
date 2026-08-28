@@ -1,0 +1,33 @@
+{
+  "schema_version": "pantheon.product_functional_closure.exact_pair_admission.v1",
+  "task_id": "PFG-HOSTED-CURRENT-DEV-CLOSEOUT-20260828",
+  "program_id": "pantheon-product-functional-closure-20260820",
+  "admitted_at": "2026-08-28T02:30:00Z",
+  "admitted_pair": {
+    "backend_repo": "ajoe734/pantheon",
+    "backend_branch": "dev",
+    "backend_sha": "a09bd00818f06fbafd4f67a8d39f88fe6881fae6",
+    "frontend_repo": "ajoe734/execute-plans",
+    "frontend_branch": "dev",
+    "frontend_sha": "97aa1c4b5234c595d0f5502f7785383479851318",
+    "frontend_merge_pr": "https://github.com/ajoe734/execute-plans/pull/681",
+    "frontend_merge_commit": "97aa1c4b5234c595d0f5502f7785383479851318",
+    "bff_url": "https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io",
+    "fe_url": "https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io"
+  },
+  "deployment_trigger": {
+    "workflow": ".github/workflows/nonprod-deploy.yml",
+    "run_id": "33136122613",
+    "run_url": "https://github.com/ajoe734/pantheon/actions/runs/33136122613",
+    "bounded_admission": true,
+    "ref_change_re_resolution_count": 0,
+    "max_re_resolutions_allowed": 1
+  },
+  "compatibility_gate": {
+    "schema_version": "pantheon.agora.compatibility-gate-evidence.v1",
+    "contract_family": "agora.v1.13",
+    "compatibility_status": "accepted",
+    "manifest_sha256": "44ea4c6ad0df272898dbf5b9cb79b76c8c4daec051c56784d1bc92e8a1d0fe16"
+  },
+  "status": "admitted"
+}
