@@ -1342,6 +1342,8 @@ def _push_review_proof_tag(
 CANONICAL_REVIEW_GATE_WORKFLOW_NAMES = frozenset(
     {"Canonical Review Gate", "Pantheon canonical review gate"}
 )
+WORKFLOW_DISPATCH_DELIVERY_CLASS_INPUT = "delivery_class"
+WORKFLOW_DISPATCH_PRODUCT_DELIVERY_CLASS = "product"
 
 
 def _canonical_review_gate_workflow_id(
@@ -1429,25 +1431,38 @@ def _dispatch_canonical_review_gate_workflow(
             runner,
             repository=repository,
         )
-        runner.run_json(
-            [
-                "gh",
-                "api",
-                "--method",
-                "POST",
-                f"repos/{repository}/actions/workflows/"
-                f"{workflow_id}/dispatches",
-                "--input",
-                "-",
-            ],
-            payload={
-                "ref": binding.base,
-                "inputs": {
-                    "head_ref": binding.head_branch,
-                    "head_sha": binding.head_sha,
-                },
+        command = [
+            "gh",
+            "api",
+            "--method",
+            "POST",
+            f"repos/{repository}/actions/workflows/{workflow_id}/dispatches",
+            "--input",
+            "-",
+        ]
+        payload = {
+            "ref": binding.base,
+            "inputs": {
+                "head_ref": binding.head_branch,
+                "head_sha": binding.head_sha,
             },
-        )
+        }
+        try:
+            runner.run_json(command, payload=payload)
+        except GitHubReviewBridgeError as exc:
+            # execute-plans declares delivery_class as a required dispatch
+            # input, whereas Pantheon's workflow derives it from the PR label.
+            # Retry only for GitHub's explicit missing-input response; any
+            # other dispatch error remains fail-closed for required callers.
+            if (
+                f"Required input '{WORKFLOW_DISPATCH_DELIVERY_CLASS_INPUT}' not provided"
+                not in str(exc)
+            ):
+                raise
+            payload["inputs"][WORKFLOW_DISPATCH_DELIVERY_CLASS_INPUT] = (
+                WORKFLOW_DISPATCH_PRODUCT_DELIVERY_CLASS
+            )
+            runner.run_json(command, payload=payload)
     except GitHubReviewBridgeError:
         if required:
             raise
