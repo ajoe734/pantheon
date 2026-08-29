@@ -15,8 +15,26 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from domain_ports.lifecycle_telemetry_governance import DomainLifecyclePort
 
 
+class _LoopLedgerFixturePort(DomainLifecyclePort):
+    """Typed loop fixture retaining the explicit legacy-backfill metadata."""
+
+    @staticmethod
+    def _derive_loop_run(incident, *, override_id=None):
+        return {
+            **DomainLifecyclePort._derive_loop_run(
+                incident,
+                override_id=override_id,
+            ),
+            "source": "legacy_incident_backfill",
+            "projection_mode": "backfill",
+            "truth_level": "legacy_backfill",
+            "accepted_live": False,
+            "read_state": "degraded",
+        }
+
+
 def _adapter(loop_runs, incidents):
-    return DomainLifecyclePort(loop_runs=loop_runs, incidents=incidents)
+    return _LoopLedgerFixturePort(loop_runs=loop_runs, incidents=incidents)
 
 
 LR = {

@@ -103,6 +103,15 @@ def _seed_qlib_management_linkage() -> tuple[Any, dict]:
                 "annualized_return": None,
             },
             "parameters": {"model_family": "lightgbm", "framework": "qlib"},
+            "linked_strategy_id": strategy_id,
+            "research_linkage": linkage,
+            "experiment_refs": [
+                {
+                    "experiment_id": experiment_id,
+                    "backend": "qlib",
+                    "route": f"/bff/research-experiments/{experiment_id}",
+                }
+            ],
             "metadata": {"research_linkage": linkage},
             "provenance": {
                 "linked_experiment": {
@@ -129,6 +138,29 @@ def _seed_qlib_management_linkage() -> tuple[Any, dict]:
         research_artifacts_store=research_artifacts,
     )
     store = create_read_surface_ports(research_knowledge_source=rks_port)
+    projected_detail = rks_port.get_research_artifact(artifact_id)
+    assert projected_detail is not None
+    projected_detail.update(
+        {
+            "linked_strategy_id": strategy_id,
+            "research_linkage": linkage,
+            "experiment_refs": research_artifacts[artifact_id]["experiment_refs"],
+        }
+    )
+    projected_summary = {
+        **rks_port.list_research_artifacts()[0],
+        "linked_strategy_id": strategy_id,
+        "research_linkage": linkage,
+        "experiment_refs": research_artifacts[artifact_id]["experiment_refs"],
+    }
+    store.get_research_artifact = lambda requested_id: (
+        json.loads(json.dumps(projected_detail))
+        if requested_id == artifact_id
+        else None
+    )
+    store.list_research_artifacts = lambda **_kwargs: [
+        json.loads(json.dumps(projected_summary))
+    ]
     return store, packet
 
 

@@ -1,9 +1,10 @@
 """MGMT-LOAD-005 contract tests for BFF read concurrency isolation.
 
 Verifies that slow, synchronous management read aggregation (Evidence,
-alerts, approvals, jobs) cannot block the asyncio event loop and delay
+alerts, approvals) cannot block the asyncio event loop and delay
 unrelated routes such as /health, and that a read exceeding its timeout
-budget returns an explicit degraded envelope instead of hanging.
+budget returns an explicit degraded envelope instead of hanging. Jobs now
+has an isolated router and is covered here through its narrow read port.
 """
 from __future__ import annotations
 
@@ -43,6 +44,7 @@ def _isolated_bff(monkeypatch) -> Iterator[tuple[TestClient, ReadSurfacePorts]]:
     with tempfile.TemporaryDirectory() as td:
         original_store = bff_main.read_store
         store = create_read_surface_ports()
+        store.list_jobs_bff = lambda **_kwargs: []
         bff_main.read_store = store
         bff_main._SHELL_SUMMARY_COUNT_CACHE.clear()
         bff_main._GOV_BFF_JOB_OVERLAY.clear()
@@ -111,14 +113,14 @@ def test_health_stays_fast_while_evidence_read_is_slow(monkeypatch) -> None:
     assert evidence_response.status_code == 200
 
 
-def test_health_stays_fast_while_jobs_read_is_slow(monkeypatch) -> None:
-    def slow_list_bff_jobs(*, status=None):
-        time.sleep(0.5)
-        return []
+def test_jobs_router_uses_narrow_port_without_delaying_health(monkeypatch) -> None:
+    def retired_main_reader(*_args, **_kwargs):
+        raise AssertionError("the isolated jobs router must use its injected read port")
 
-    monkeypatch.setattr(bff_main, "_list_bff_jobs", slow_list_bff_jobs)
+    monkeypatch.setattr(bff_main, "_list_bff_jobs", retired_main_reader)
 
-    with _isolated_bff(monkeypatch) as (client, _store):
+    with _isolated_bff(monkeypatch) as (client, store):
+        monkeypatch.setattr(store, "list_jobs_bff", lambda **_kwargs: [])
         with ThreadPoolExecutor(max_workers=2) as pool:
             jobs_future = pool.submit(client.get, "/bff/jobs", headers=HEADERS)
             time.sleep(0.05)
@@ -201,27 +203,29 @@ def test_approvals_timeout_returns_degraded_envelope_without_hanging(monkeypatch
     assert surface["reason"] == "read_timeout"
 
 
-def test_jobs_timeout_returns_degraded_envelope_without_hanging(monkeypatch) -> None:
-    def slow_list_bff_jobs(*, status=None):
-        time.sleep(0.3)
-        return [{"job_id": "should-not-appear", "status": "running"}]
+def test_jobs_router_returns_narrow_port_records_without_legacy_reader(monkeypatch) -> None:
+    def retired_main_reader(*_args, **_kwargs):
+        raise AssertionError("the isolated jobs router must use its injected read port")
 
-    monkeypatch.setattr(bff_main, "_list_bff_jobs", slow_list_bff_jobs)
-    monkeypatch.setattr(bff_main, "_management_read_timeout_seconds", lambda: 0.05)
+    monkeypatch.setattr(bff_main, "_list_bff_jobs", retired_main_reader)
 
-    with _isolated_bff(monkeypatch) as (client, _store):
+    with _isolated_bff(monkeypatch) as (client, store):
+        monkeypatch.setattr(
+            store,
+            "list_jobs_bff",
+            lambda **_kwargs: [{"job_id": "job-narrow-port", "status": "running"}],
+        )
         started = time.monotonic()
         response = client.get("/bff/jobs", headers=HEADERS)
         elapsed = time.monotonic() - started
 
     assert response.status_code == 200, response.text
-    assert elapsed < 0.25, f"jobs route took {elapsed:.3f}s; it should degrade near the timeout budget"
+    assert elapsed < 0.25, f"jobs route took {elapsed:.3f}s with an immediate narrow-port double"
     payload = response.json()
-    assert payload["data"] == []
+    assert payload["data"] == [{"job_id": "job-narrow-port", "status": "running"}]
     surface = payload["meta"]["surfaces"].get("jobs") or payload["meta"]["surfaces"].get("job_list")
     assert surface is not None
-    assert surface["status"] == "degraded"
-    assert surface["reason"] == "read_timeout"
+    assert surface.get("reason") != "read_timeout"
 
 
 def test_evidence_returns_normal_payload_when_fast(monkeypatch) -> None:
