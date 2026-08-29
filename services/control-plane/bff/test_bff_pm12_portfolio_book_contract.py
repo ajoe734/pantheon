@@ -10,11 +10,31 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, os.path.dirname(__file__))
 
 import main as bff_main  # noqa: E402
-from read_store import ReadSurfaceStore  # noqa: E402
+from ports import ReadSurfacePorts  # noqa: E402
 
 
 HEADERS = {"Authorization": "Bearer op-pm12:operator"}
 FOCUS_PERSONA_ID = "persona-20260528-04688755"
+
+
+class PortfolioBookTestReadPorts(ReadSurfacePorts):
+    def __init__(self) -> None:
+        super().__init__()
+        self._ranking_snapshots: dict[str, Any] = {}
+
+    def get_capability_snapshot_for_persona(self, persona_id: str | None) -> dict[str, Any] | None:
+        return {}
+
+    def get_persona_capabilities(self, persona_id: str | None) -> dict[str, Any] | None:
+        return {}
+
+    def put_ranking_snapshot(self, payload: dict[str, Any]) -> dict[str, Any]:
+        snapshot_id = payload.get("id") or payload.get("ranking_snapshot_id") or "snap-1"
+        self._ranking_snapshots[snapshot_id] = payload
+        return payload
+
+    def get_ranking_snapshot(self, snapshot_id: str | None) -> dict[str, Any] | None:
+        return self._ranking_snapshots.get(str(snapshot_id or ""))
 
 
 def _portfolio_store(
@@ -29,12 +49,7 @@ def _portfolio_store(
     extra_deployment_plans: list[dict[str, Any]] | None = None,
     extra_runtime_bindings: list[dict[str, Any]] | None = None,
 ) -> TestClient:
-    td = tempfile.TemporaryDirectory(prefix="bff_pm12_")
-    monkeypatch.setattr(bff_main, "_BFF_PM12_TMPDIR", td, raising=False)
-    store = ReadSurfaceStore(
-        os.path.join(td.name, "read_surfaces.json"),
-        allow_local_snapshot_fallback=False,
-    )
+    store = PortfolioBookTestReadPorts()
     capital_pools = [
         {
             "id": "pool-alpha",

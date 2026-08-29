@@ -13,9 +13,10 @@ sys.path.insert(0, os.path.dirname(__file__))
 os.environ.setdefault("PANTHEON_BFF_AUTH_STUB", "true")
 os.environ.setdefault("PANTHEON_BFF_AUTH_MODE", "permissive")
 
+import json
 import main as bff_main
 from fastapi.testclient import TestClient
-from read_store import ReadSurfaceStore
+from ports import ReadSurfacePorts
 from models import CommandType, RiskLevel
 
 OPERATOR_TOKEN = "Bearer op-mgmt-ops-006:operator"
@@ -25,8 +26,79 @@ APPROVER_TOKEN = "Bearer op-mgmt-ops-006:approver"
 READONLY_TOKEN = "Bearer op-mgmt-ops-006:reader"
 
 
+def _load_fallback_data() -> dict[str, Any]:
+    fallback_path = os.path.join(os.path.dirname(__file__), "data", "read_surfaces.json")
+    if os.path.exists(fallback_path):
+        try:
+            with open(fallback_path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {}
+
+
+class MgmtOps006TestReadPorts(ReadSurfacePorts):
+    def __init__(self, seed_data: dict[str, Any] | None = None, *, allow_fallback: bool = True) -> None:
+        super().__init__()
+        if seed_data is not None:
+            self._data: dict[str, Any] = seed_data
+        elif allow_fallback:
+            self._data = _load_fallback_data()
+        else:
+            self._data = {}
+        self.allow_fallback = allow_fallback
+
+    def dataset_source(self, dataset: str, **kwargs: Any) -> str:
+        return "local_snapshot"
+
+    def dataset_surface_status(self, dataset: str, *, snapshot_at: str, **kwargs: Any) -> dict[str, Any]:
+        return {"status": "ok", "source": "local_snapshot", "snapshot_at": snapshot_at}
+
+    def _get_dataset(self, name: str) -> dict[str, Any] | list[Any]:
+        return self._data.setdefault(name, [])
+
+    def create_persona(self, **kwargs: Any) -> dict[str, Any]:
+        persona_id = kwargs.get("persona_id") or kwargs.get("id") or "p-new"
+        persona = {
+            "id": persona_id,
+            "persona_id": persona_id,
+            "name": kwargs.get("name") or persona_id,
+            "lifecycle_state": kwargs.get("lifecycle_state") or "active",
+            "metadata": kwargs.get("metadata") or {},
+        }
+        ds = self._data.setdefault("personas", {})
+        if isinstance(ds, dict):
+            ds[persona_id] = persona
+        elif isinstance(ds, list):
+            ds.append(persona)
+        return persona
+
+    def get_persona(self, persona_id: str | None) -> dict[str, Any] | None:
+        ds = self._data.get("personas", {})
+        if isinstance(ds, dict):
+            return ds.get(str(persona_id or ""))
+        return next((p for p in ds if p.get("id") == persona_id or p.get("persona_id") == persona_id), None)
+
+    def list_personas(self, **kwargs: Any) -> list[dict[str, Any]]:
+        ds = self._data.get("personas", {})
+        return list(ds.values()) if isinstance(ds, dict) else list(ds)
+
+    def list_runtime_bindings(self, **kwargs: Any) -> list[dict[str, Any]]:
+        ds = self._data.get("runtime_bindings") or self._data.get("runtime_instances") or self._data.get("runtimes") or {}
+        return list(ds.values()) if isinstance(ds, dict) else list(ds)
+
+    def get_runtime_binding(self, runtime_id: str | None) -> dict[str, Any] | None:
+        ds = self._data.get("runtime_bindings") or self._data.get("runtime_instances") or self._data.get("runtimes") or {}
+        if isinstance(ds, dict):
+            return ds.get(str(runtime_id or ""))
+        return next((r for r in ds if r.get("id") == runtime_id or r.get("runtime_id") == runtime_id), None)
+
+    def get_runtime_binding_by_runtime_id(self, runtime_id: str | None) -> dict[str, Any] | None:
+        return self.get_runtime_binding(runtime_id)
+
+
 @contextmanager
-def _client_with_store(store: ReadSurfaceStore) -> Iterator[TestClient]:
+def _client_with_store(store: MgmtOps006TestReadPorts) -> Iterator[TestClient]:
     original_store = bff_main.read_store
     bff_main.read_store = store
     try:
@@ -35,13 +107,8 @@ def _client_with_store(store: ReadSurfaceStore) -> Iterator[TestClient]:
         bff_main.read_store = original_store
 
 
-def _fresh_store() -> ReadSurfaceStore:
-    td = tempfile.TemporaryDirectory(prefix="bff_mgmt_ops_006_")
-    store = ReadSurfaceStore(
-        os.path.join(td.name, "read_surfaces.json"),
-        allow_local_snapshot_fallback=True,
-    )
-    return store
+def _fresh_store() -> MgmtOps006TestReadPorts:
+    return MgmtOps006TestReadPorts(allow_fallback=True)
 
 
 def test_operator_roles_check() -> None:
