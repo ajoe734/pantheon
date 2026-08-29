@@ -188,7 +188,7 @@ class ResearchKnowledgeSourcePort:
     ) -> List[Dict[str, Any]]:
         raise NotImplementedError
 
-    def get_research_ticket(self, ticket_id: Optional[str], **kwargs: Any) -> Optional[Dict[str, Any]]:
+    def get_research_ticket(self, ticket_id: Optional[str]) -> Optional[Dict[str, Any]]:
         raise NotImplementedError
 
     def create_research_ticket(
@@ -1742,7 +1742,7 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
         )
         return [self._project_research_ticket_summary(t) for t in tickets if isinstance(t, dict)]
 
-    def get_research_ticket(self, ticket_id: Optional[str], **kwargs: Any) -> Optional[Dict[str, Any]]:
+    def get_research_ticket(self, ticket_id: Optional[str]) -> Optional[Dict[str, Any]]:
         if not ticket_id:
             return None
         ticket = self._tickets.get(str(ticket_id))

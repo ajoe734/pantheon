@@ -138,18 +138,6 @@ class ReadSurfacePorts:
         self.lifecycle_telemetry_governance = lifecycle_telemetry_governance or create_lifecycle_telemetry_governance_port()
         self.persona_training = persona_training or PersonaTrainingDomainPort()
 
-    def __getattr__(self, name: str) -> Any:
-        for port in (
-            self.operations_consultation,
-            self.persona_capital_runtime,
-            self.ooda_management,
-            self.research_knowledge_source,
-            self.lifecycle_telemetry_governance,
-            self.persona_training,
-        ):
-            if hasattr(port, name):
-                return getattr(port, name)
-        raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}'")
 
     def __setattr__(self, name: str, value: Any) -> None:
         if name in (
@@ -530,6 +518,60 @@ class ReadSurfacePorts:
     def search(self, **kwargs: Any) -> Dict[str, Any]:
         return self.research_knowledge_source.search(**kwargs)
 
+    def compare_research_artifacts(self, artifact_ids: List[str]) -> Dict[str, Any]:
+        return self.research_knowledge_source.compare_research_artifacts(artifact_ids)
+
+    def compare_strategy_spec_versions(self, strategy_id: Optional[str], *, left_selector: str, right_selector: str) -> Optional[Dict[str, Any]]:
+        return self.research_knowledge_source.compare_strategy_spec_versions(strategy_id, left_selector=left_selector, right_selector=right_selector)
+
+    def get_evidence_ref_detail(self, ref_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        return self.research_knowledge_source.get_evidence_ref_detail(ref_id)
+
+    def get_insight_card_detail(self, insight_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        return self.research_knowledge_source.get_insight_card_detail(insight_id)
+
+    def get_institutional_memory_entry(self, entry_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        return self.research_knowledge_source.get_institutional_memory_entry(entry_id)
+
+    def get_last_governed_search_refs(self) -> Dict[str, Dict[str, Any]]:
+        return self.research_knowledge_source.get_last_governed_search_refs()
+
+    def get_research_artifact(self, artifact_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        return self.research_knowledge_source.get_research_artifact(artifact_id)
+
+    def get_research_search_index(self) -> Optional[Dict[str, Any]]:
+        return self.research_knowledge_source.get_research_search_index()
+
+    def get_search_ops_snapshot(self, *, pipeline_run_limit: int = 50) -> Dict[str, Any]:
+        return self.research_knowledge_source.get_search_ops_snapshot(pipeline_run_limit=pipeline_run_limit)
+
+    def get_source_change_proposals(self, *, status: Optional[str] = None, proposal_type: Optional[str] = None, source_kind: Optional[str] = None) -> Dict[str, Any]:
+        return self.research_knowledge_source.get_source_change_proposals(status=status, proposal_type=proposal_type, source_kind=source_kind)
+
+    def get_source_connector_registry(self) -> Dict[str, Any]:
+        return self.research_knowledge_source.get_source_connector_registry()
+
+    def get_source_health_usage_snapshot(self) -> Dict[str, Any]:
+        return self.research_knowledge_source.get_source_health_usage_snapshot()
+
+    def get_source_ops_snapshot(self, *, crawl_run_limit: int = 50, dlq_status: Optional[str] = None, frontier_status: Optional[str] = None, audit_limit: int = 20) -> Dict[str, Any]:
+        return self.research_knowledge_source.get_source_ops_snapshot(crawl_run_limit=crawl_run_limit, dlq_status=dlq_status, frontier_status=frontier_status, audit_limit=audit_limit)
+
+    def get_strategy_spec_detail(self, strategy_id: Optional[str], *, version_selector: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        return self.research_knowledge_source.get_strategy_spec_detail(strategy_id, version_selector=version_selector)
+
+    def list_institutional_memory_entries(self) -> List[Dict[str, Any]]:
+        return self.research_knowledge_source.list_institutional_memory_entries()
+
+    def list_research_artifacts(self, *, artifact_type: Optional[str] = None, status: Optional[str] = None, tags: Optional[List[str]] = None, author: Optional[str] = None, date_range: Optional[str] = None) -> List[Dict[str, Any]]:
+        return self.research_knowledge_source.list_research_artifacts(artifact_type=artifact_type, status=status, tags=tags, author=author, date_range=date_range)
+
+    def list_research_search_results(self, *, query: str, match_type: str = "all", status: Optional[str] = None, date_range: Optional[str] = None) -> List[Dict[str, Any]]:
+        return self.research_knowledge_source.list_research_search_results(query=query, match_type=match_type, status=status, date_range=date_range)
+
+    def list_strategy_spec_versions(self, strategy_id: Optional[str]) -> List[Dict[str, Any]]:
+        return self.research_knowledge_source.list_strategy_spec_versions(strategy_id)
+
     # -------------------------------------------------------------------------
     # Lifecycle, Telemetry, and Governance Delegates
     # -------------------------------------------------------------------------
@@ -583,6 +625,48 @@ class ReadSurfacePorts:
 
     def list_paper_live_drift_reports(self) -> List[Dict[str, Any]]:
         return self.lifecycle_telemetry_governance.list_paper_live_drift_reports()
+
+    def artifact_exists(self, artifact_id: str) -> bool:
+        return self.lifecycle_telemetry_governance.artifact_exists(artifact_id)
+
+    def get_evolution_decision_by_id(self, decision_id: str) -> Optional[Dict[str, Any]]:
+        return self.lifecycle_telemetry_governance.get_evolution_decision_by_id(decision_id)
+
+    def get_evolution_decisions_by_incident(self, incident_id: str) -> List[Dict[str, Any]]:
+        return self.lifecycle_telemetry_governance.get_evolution_decisions_by_incident(incident_id)
+
+    def get_inspiration_graph(self, artifact_id: str) -> Optional[Dict[str, Any]]:
+        return self.lifecycle_telemetry_governance.get_inspiration_graph(artifact_id)
+
+    def get_lineage_edge(self, edge_id: str) -> Optional[Dict[str, Any]]:
+        return self.lifecycle_telemetry_governance.get_lineage_edge(edge_id)
+
+    def get_lineage_graph_nodes(self, edges: List[Dict[str, Any]]) -> List[Dict[str, str]]:
+        return self.lifecycle_telemetry_governance.get_lineage_graph_nodes(edges)
+
+    def get_loop_run(self, loop_run_id: str) -> Tuple[bool, Optional[Dict[str, Any]]]:
+        return self.lifecycle_telemetry_governance.get_loop_run(loop_run_id)
+
+    def get_postmortem_by_incident(self, incident_id: str) -> Optional[Dict[str, Any]]:
+        return self.lifecycle_telemetry_governance.get_postmortem_by_incident(incident_id)
+
+    def get_rollback_review(self, rollback_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        return self.lifecycle_telemetry_governance.get_rollback_review(rollback_id)
+
+    def get_rollbacks_by_incident(self, incident_id: str) -> List[Dict[str, Any]]:
+        return self.lifecycle_telemetry_governance.get_rollbacks_by_incident(incident_id)
+
+    def get_sentinel_finding(self, finding_id: str) -> Tuple[bool, Optional[Dict[str, Any]]]:
+        return self.lifecycle_telemetry_governance.get_sentinel_finding(finding_id)
+
+    def list_freeze_orders(self, status: Optional[str] = None, scope: Optional[str] = None) -> List[Dict[str, Any]]:
+        return self.lifecycle_telemetry_governance.list_freeze_orders(status=status, scope=scope)
+
+    def list_lineage_records(self, artifact_id: Optional[str] = None, include_fixture_pack: bool = True) -> List[Dict[str, Any]]:
+        return self.lifecycle_telemetry_governance.list_lineage_records(artifact_id=artifact_id, include_fixture_pack=include_fixture_pack)
+
+    def list_telemetry_summaries(self) -> List[Dict[str, Any]]:
+        return self.lifecycle_telemetry_governance.list_telemetry_summaries()
 
     # -------------------------------------------------------------------------
     # Persona Training & Replay Delegates
