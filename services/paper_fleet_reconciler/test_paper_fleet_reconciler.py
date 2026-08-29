@@ -2119,6 +2119,136 @@ class TestPaperFleetStaleSessionAdmissionAndResume(unittest.TestCase):
         self.assertEqual(store.get("b-op-pause-1").status, "paused")
         self.assertEqual(store.get("b-op-pause-2").status, "paused")
 
+class TestPaperFleetTaiwanSessionFreshness(unittest.TestCase):
+    """Governed Taiwan (Asia/Taipei) market-session freshness at the fleet
+    reconciler's admission defense (services.execution.market_snapshot_admission),
+    replacing the flat 24h age gate for TWSE/TPEx official closes."""
+
+    def setUp(self) -> None:
+        self.transitions: List[Dict[str, Any]] = []
+
+    def _make_store_and_recon(
+        self,
+        bindings: List[Dict[str, Any]],
+        *,
+        source_snapshot: Optional[Dict[str, Any]] = None,
+    ) -> Tuple[Any, Any]:
+        from services.runtime_manager.runtime_binding import RuntimeBinding, RuntimeBindingStore
+        from services.paper_fleet_reconciler.paper_fleet_reconciler import PaperFleetReconciler
+
+        store = RuntimeBindingStore()
+        known = {
+            "binding_id", "runtime_id", "capital_pool_id", "artifact_id",
+            "artifact_version", "plan_id", "persona_capital_binding_id",
+            "deployment_mode", "status", "effective_at", "retired_at",
+            "rollback_parent", "metadata",
+        }
+        for b_dict in bindings:
+            meta = dict(b_dict.get("metadata") or {})
+            for k, v in b_dict.items():
+                if k not in known:
+                    meta[k] = v
+            clean_dict = {k: v for k, v in b_dict.items() if k in known}
+            clean_dict["metadata"] = meta
+            clean_dict.setdefault("effective_at", datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"))
+            rb = RuntimeBinding(**clean_dict)
+            store.create(rb, single_runtime_enforced=False)
+
+        transitions = self.transitions
+
+        class _MockReconciler(PaperFleetReconciler):
+            def _spawn(inner_self, binding_id: str, port: int, env: Any) -> _FakeProcess:
+                return _FakeProcess(pid=100)
+
+            def _resolve_market_snapshot(inner_self, binding: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+                if source_snapshot is not None:
+                    return source_snapshot
+                return super()._resolve_market_snapshot(binding)
+
+            def _transition_binding(
+                inner_self,
+                binding_id: str,
+                new_status: str,
+                *,
+                metadata_patch: Optional[Dict[str, Any]] = None,
+            ) -> bool:
+                transitions.append({
+                    "binding_id": binding_id,
+                    "new_status": new_status,
+                    "metadata_patch": metadata_patch,
+                })
+                return super()._transition_binding(
+                    binding_id,
+                    new_status,
+                    metadata_patch=metadata_patch,
+                )
+
+        recon = _MockReconciler(
+            store=store,
+            leader_store=_unit_leader_store(),
+            poll_interval_seconds=999,
+            restart_backoff_seconds=0,
+            drain_timeout_seconds=1,
+        )
+        return store, recon
+
+    @staticmethod
+    def _tw_snapshot(event_time: str, observed_at: str) -> Dict[str, Any]:
+        return {
+            "snapshot_id": "snap-tw-fleet-001",
+            "symbol": "2330.TWSE",
+            "event_time": event_time,
+            "observed_at": observed_at,
+            "source_ref": "source-ingest://normalized/tw-price/2330",
+            "lineage": {
+                "source_ids": ["tw-official:tw_price_daily:TWSE:2330:checksummed"],
+                "connector_ids": ["tw-twse-tpex-official-market"],
+            },
+            "closes": [950.0, 955.0],
+        }
+
+    @patch(
+        "services.paper_fleet_reconciler.paper_fleet_reconciler._iso_now",
+        return_value="2026-08-29T12:00:00Z",
+    )
+    def test_tw_friday_close_retains_active_worker_on_saturday(self, _mock_now) -> None:
+        snap = self._tw_snapshot("2026-08-28T05:30:00Z", "2026-08-29T11:00:00Z")
+        b = _make_binding(
+            "b-tw-weekend-001",
+            symbol="2330.TWSE",
+            market_data_policy={"owner": "source-ingest", "contract": "latest_stored_normalized", "max_age_seconds": 86400, "minimum_closes": 2},
+            market_input=snap,
+        )
+        store, recon = self._make_store_and_recon([b], source_snapshot=snap)
+
+        result = recon.reconcile_once()
+        self.assertEqual(result["worker_count"], 1)
+        self.assertEqual(result["running_count"], 1)
+        self.assertEqual(len(self.transitions), 0)
+
+    @patch(
+        "services.paper_fleet_reconciler.paper_fleet_reconciler._iso_now",
+        return_value="2026-08-31T06:00:00Z",
+    )
+    def test_tw_friday_close_paused_once_monday_session_closes(self, _mock_now) -> None:
+        snap = self._tw_snapshot("2026-08-28T05:30:00Z", "2026-08-31T05:45:00Z")
+        b = _make_binding(
+            "b-tw-monday-stale-001",
+            symbol="2330.TWSE",
+            market_data_policy={"owner": "source-ingest", "contract": "latest_stored_normalized", "max_age_seconds": 86400, "minimum_closes": 2},
+            market_input=snap,
+        )
+        store, recon = self._make_store_and_recon([b], source_snapshot=snap)
+
+        result = recon.reconcile_once()
+        self.assertEqual(result["worker_count"], 0)
+        self.assertEqual(len(self.transitions), 2)
+        self.assertEqual(self.transitions[1]["new_status"], "paused")
+        saved = store.get("b-tw-monday-stale-001")
+        adm = saved.metadata.get("session_admission")
+        self.assertEqual(adm["reason_code"], "market_input_stale")
+
+
 
 if __name__ == "__main__":
     import sys

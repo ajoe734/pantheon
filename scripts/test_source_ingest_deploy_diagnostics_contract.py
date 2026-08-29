@@ -195,6 +195,13 @@ def test_bounded_source_refresh_deploy_waits_and_gates_readback() -> None:
     assert "len(closes) < 2" in gate
     assert "math.isfinite(float(close))" in gate
     assert "active paper snapshot lacks official exchange lineage" in gate
+    # Taiwan market-session freshness gate reuses the shared governed rule
+    # instead of a divergent local heuristic, so a valid Friday close is not
+    # forced through the flat 24h comparison on a weekend deploy.
+    assert "from services.execution.market_snapshot_admission import" in gate
+    assert "evaluate_taiwan_market_freshness" in gate
+    assert "is_taiwan_symbol(canonical_symbol)" in gate
+    assert "failed Taiwan market-session freshness" in gate
 
     root_start = deploy.index("  root)\n")
     root_end = deploy.index("\n  bff)\n", root_start)
