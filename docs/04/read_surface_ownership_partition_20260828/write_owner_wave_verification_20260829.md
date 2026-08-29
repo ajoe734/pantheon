@@ -1,9 +1,9 @@
 # Independent write-owner wave verification — 2026-08-29
 
-Task: `ACG-WRITE-OWNER-WAVE-VERIFY-20260829`  
-Owner: `Codex`  
-Reviewer: `Codex2`  
-Artifact status: `ready_for_independent_review`  
+- Task: `ACG-WRITE-OWNER-WAVE-VERIFY-20260829`
+- Owner: `Codex`
+- Reviewer: `Codex2`
+- Artifact status: `ready_for_independent_review`
 Scope: verification record for the resumed `ACG-RS-CALLER-MIGRATION-20260828` task; this document does not change canonical product policy.
 
 ## Verdict
