@@ -22,6 +22,8 @@ BFF_DIR = Path(__file__).resolve().parent.parent
 if str(BFF_DIR) not in sys.path:
     sys.path.insert(0, str(BFF_DIR))
 
+from fastapi.testclient import TestClient
+
 from ports import (
     ReadSurfacePorts,
     create_read_surface_ports,
@@ -342,3 +344,341 @@ class TestBffMainDecoupledStartup(unittest.TestCase):
 
         self.assertIsNotNone(bff_main.app)
         self.assertEqual(bff_main.app.title, "Pantheon Operator BFF")
+
+
+class TestReadSurfacePortsRetainedCallerContracts(unittest.TestCase):
+    """Verifies that ReadSurfacePorts correctly fulfills contracts for retained callers."""
+
+    def setUp(self) -> None:
+        self.ports = create_in_memory_read_surface_ports(
+            operations_consultation_kwargs={
+                "consult_rules": [{"rule_id": "cr-100", "persona_id": "p-100", "min_participants": 3}],
+                "consult_memos": [
+                    {
+                        "memo_id": "memo-100",
+                        "linked_session_id": "sess-100",
+                        "status": "published",
+                        "summary": "Committee Memo 100",
+                    },
+                    {
+                        "memo_id": "memo-200",
+                        "linked_session_id": "sess-200",
+                        "status": "draft",
+                        "summary": "Committee Memo 200",
+                    },
+                ],
+            },
+            persona_capital_runtime_kwargs={
+                "personas": [{"persona_id": "p-100", "name": "Alpha", "lifecycle_state": "active"}],
+                "deployment_plans": [
+                    {
+                        "plan_id": "dp-100",
+                        "id": "dp-100",
+                        "status": "proposed",
+                        "target_stage": "paper",
+                        "approval_decision_id": "app-100",
+                    }
+                ],
+                "capital_pools": [{"pool_id": "cp-100", "name": "Main Pool"}],
+                "bindings": [{"binding_id": "b-100", "persona_id": "p-100", "pool_id": "cp-100"}],
+                "runtime_bindings": [{"runtime_id": "rt-100", "binding_id": "b-100", "status": "running"}],
+            },
+            ooda_management_kwargs={
+                "approval_decisions": [
+                    {
+                        "decision_id": "app-100",
+                        "id": "app-100",
+                        "state": "pending",
+                        "outcome": "pending",
+                        "reviewer": "RiskCommittee",
+                        "risk_level": "low",
+                        "decided_at": "2026-08-28T00:00:00Z",
+                    }
+                ],
+            },
+            lifecycle_telemetry_governance_kwargs={
+                "paper_live_drift_reports": [
+                    {
+                        "session_id": "sess-drift-1",
+                        "id": "sess-drift-1",
+                        "runtime_id": "rt-100",
+                        "binding_id": "b-100",
+                        "active": True,
+                    }
+                ],
+            },
+        )
+
+    def test_get_committee_session_memo_positional_and_keyword(self) -> None:
+        # Two positional arguments: (session_id, memo_id)
+        memo = self.ports.get_committee_session_memo("sess-100", "memo-100")
+        self.assertIsNotNone(memo)
+        self.assertEqual(memo["memo_id"], "memo-100")
+
+        # Single positional argument: (memo_id)
+        memo_single = self.ports.get_committee_session_memo("memo-100")
+        self.assertIsNotNone(memo_single)
+        self.assertEqual(memo_single["memo_id"], "memo-100")
+
+        # Keyword arguments: session_id=..., memo_id=...
+        memo_kw = self.ports.get_committee_session_memo(session_id="sess-100", memo_id="memo-100")
+        self.assertIsNotNone(memo_kw)
+        self.assertEqual(memo_kw["memo_id"], "memo-100")
+
+        # Session mismatch must return None
+        memo_mismatch = self.ports.get_committee_session_memo("sess-wrong", "memo-100")
+        self.assertIsNone(memo_mismatch)
+
+        # Non-existent memo must return None
+        memo_none = self.ports.get_committee_session_memo("sess-100", "memo-missing")
+        self.assertIsNone(memo_none)
+
+    def test_list_committee_session_memos_filtered_and_unfiltered(self) -> None:
+        # Filtered by positional session_id
+        memos = self.ports.list_committee_session_memos("sess-100")
+        self.assertEqual(len(memos), 1)
+        self.assertEqual(memos[0]["memo_id"], "memo-100")
+
+        # Filtered by keyword session_id
+        memos_kw = self.ports.list_committee_session_memos(session_id="sess-200")
+        self.assertEqual(len(memos_kw), 1)
+        self.assertEqual(memos_kw[0]["memo_id"], "memo-200")
+
+        # Unfiltered returns all memos
+        all_memos = self.ports.list_committee_session_memos()
+        self.assertEqual(len(all_memos), 2)
+
+    def test_get_allowed_actions_positional_and_keyword(self) -> None:
+        # Positional plan_id
+        actions = self.ports.get_allowed_actions("dp-100")
+        self.assertIsInstance(actions, dict)
+        self.assertTrue(actions.get("canApprove"))
+        self.assertTrue(actions.get("canReject"))
+
+        # Keyword plan_id
+        actions_kw = self.ports.get_allowed_actions(plan_id="dp-100")
+        self.assertIsInstance(actions_kw, dict)
+        self.assertTrue(actions_kw.get("canApprove"))
+
+        # Empty / non-existent plan
+        actions_empty = self.ports.get_allowed_actions("dp-nonexistent")
+        self.assertFalse(actions_empty.get("canApprove"))
+        self.assertFalse(actions_empty.get("canReject"))
+        self.assertFalse(actions_empty.get("canPromoteToPaper"))
+
+    def test_get_latest_run_positional_and_keyword(self) -> None:
+        # Positional plan_id
+        run = self.ports.get_latest_run("dp-100")
+        self.assertIsInstance(run, dict)
+
+        # Keyword plan_id
+        run_kw = self.ports.get_latest_run(plan_id="dp-100")
+        self.assertIsInstance(run_kw, dict)
+
+        # No arguments
+        run_none = self.ports.get_latest_run()
+        self.assertTrue(run_none is None or isinstance(run_none, dict))
+
+    def test_get_review_summary_positional_and_keyword(self) -> None:
+        # Positional plan_id
+        review = self.ports.get_review_summary("dp-100")
+        self.assertIsNotNone(review)
+        self.assertEqual(review.get("governanceOutcome"), "pending")
+        self.assertEqual(review.get("reviewer"), "RiskCommittee")
+
+        # Keyword plan_id
+        review_kw = self.ports.get_review_summary(plan_id="dp-100")
+        self.assertIsNotNone(review_kw)
+        self.assertEqual(review_kw.get("governanceOutcome"), "pending")
+
+        # No arguments falls back to diagnostic surface status
+        review_diag = self.ports.get_review_summary()
+        self.assertIsInstance(review_diag, dict)
+
+    def test_get_consult_policy_positional_and_keyword(self) -> None:
+        # Positional persona_id
+        policy = self.ports.get_consult_policy("p-100")
+        self.assertIsNotNone(policy)
+        self.assertEqual(policy.get("rule_id"), "cr-100")
+
+        # Keyword persona_id
+        policy_kw = self.ports.get_consult_policy(persona_id="p-100")
+        self.assertIsNotNone(policy_kw)
+        self.assertEqual(policy_kw.get("rule_id"), "cr-100")
+
+        # Non-existent persona returns None
+        policy_none = self.ports.get_consult_policy("p-nonexistent")
+        self.assertIsNone(policy_none)
+
+        # get_persona_consult_policy alias
+        policy_alias = self.ports.get_persona_consult_policy("p-100")
+        self.assertEqual(policy_alias, policy)
+
+    def test_get_paper_runtime_monitoring_session_positional_and_keyword(self) -> None:
+        # Positional session_id
+        mon = self.ports.get_paper_runtime_monitoring_session("sess-drift-1")
+        self.assertIsNotNone(mon)
+        self.assertEqual(mon.get("runtime_id"), "rt-100")
+
+        # Keyword runtime_id & binding_id
+        mon_kw = self.ports.get_paper_runtime_monitoring_session(runtime_id="rt-100", binding_id="b-100")
+        self.assertIsNotNone(mon_kw)
+        self.assertEqual(mon_kw.get("session_id"), "sess-drift-1")
+
+        # get_paper_live_drift_report
+        drift = self.ports.get_paper_live_drift_report("rt-100")
+        self.assertIsNotNone(drift)
+        self.assertEqual(drift.get("runtime_id"), "rt-100")
+
+    def test_get_persona_allowed_actions(self) -> None:
+        actions = self.ports.get_persona_allowed_actions("p-100")
+        self.assertIsNotNone(actions)
+        self.assertTrue(actions.get("canEdit"))
+        self.assertTrue(actions.get("canRetire"))
+
+
+class TestEndpointLevelRetainedCallers(unittest.TestCase):
+    """Endpoint-level regressions proving main.py retained callers execute cleanly through ReadSurfacePorts."""
+
+    def setUp(self) -> None:
+        import main as bff_main
+
+        self.original_read_store = bff_main.read_store
+        self.ports = create_in_memory_read_surface_ports(
+            operations_consultation_kwargs={
+                "consult_requests": [
+                    {
+                        "request_id": "sess-comm-1",
+                        "status": "active",
+                        "mode": "committee",
+                        "from_persona_id": "p-100",
+                        "task": "Committee evaluation",
+                    }
+                ],
+                "consult_rules": [{"rule_id": "cr-100", "persona_id": "p-100", "min_participants": 3}],
+                "consult_memos": [
+                    {
+                        "memo_id": "memo-comm-1",
+                        "linked_session_id": "sess-comm-1",
+                        "status": "published",
+                        "summary": "Evaluation passed",
+                    }
+                ],
+            },
+            persona_capital_runtime_kwargs={
+                "personas": [{"persona_id": "p-100", "name": "Alpha", "lifecycle_state": "active"}],
+                "deployment_plans": [
+                    {
+                        "plan_id": "dp-comm-1",
+                        "id": "dp-comm-1",
+                        "status": "proposed",
+                        "target_stage": "paper",
+                        "stage": "paper",
+                        "artifact_id": "art-100",
+                        "approval_decision_id": "app-comm-1",
+                        "capital_pool_id": "cp-100",
+                        "runtime_binding_id": "rb-100",
+                    }
+                ],
+                "capital_pools": [{"pool_id": "cp-100", "id": "cp-100", "name": "Main Pool"}],
+                "bindings": [{"binding_id": "b-100", "persona_id": "p-100", "pool_id": "cp-100"}],
+                "runtime_bindings": [
+                    {
+                        "runtime_id": "rt-100",
+                        "id": "rb-100",
+                        "runtime_binding_id": "rb-100",
+                        "binding_id": "b-100",
+                        "status": "running",
+                    }
+                ],
+            },
+            ooda_management_kwargs={
+                "approval_decisions": [
+                    {
+                        "decision_id": "app-comm-1",
+                        "id": "app-comm-1",
+                        "state": "pending",
+                        "outcome": "pending",
+                        "reviewer": "RiskLead",
+                        "risk_level": "low",
+                        "decided_at": "2026-08-28T00:00:00Z",
+                    }
+                ],
+            },
+            lifecycle_telemetry_governance_kwargs={
+                "paper_live_drift_reports": [
+                    {
+                        "session_id": "sess-drift-1",
+                        "id": "sess-drift-1",
+                        "runtime_id": "rt-100",
+                        "binding_id": "b-100",
+                        "active": True,
+                    }
+                ],
+            },
+        )
+        bff_main.read_store = self.ports
+        self.client = TestClient(bff_main.app, raise_server_exceptions=False)
+        self.auth_headers = {"Authorization": "Bearer admin:admin"}
+
+    def tearDown(self) -> None:
+        import main as bff_main
+        bff_main.read_store = self.original_read_store
+
+    def test_endpoint_list_committee_session_memos(self) -> None:
+        response = self.client.get(
+            "/bff/agora/committee/sessions/sess-comm-1/memos",
+            headers=self.auth_headers,
+        )
+        self.assertEqual(response.status_code, 200, response.text)
+        data = response.json()
+        self.assertIn("items", data)
+        self.assertEqual(len(data["items"]), 1)
+        self.assertEqual(data["items"][0]["memo_id"], "memo-comm-1")
+
+    def test_endpoint_get_committee_session_memo_detail(self) -> None:
+        response = self.client.get(
+            "/bff/agora/committee/sessions/sess-comm-1/memos/memo-comm-1",
+            headers=self.auth_headers,
+        )
+        self.assertEqual(response.status_code, 200, response.text)
+        data = response.json()
+        self.assertIn("data", data)
+        self.assertEqual(data["data"]["memo_id"], "memo-comm-1")
+
+    def test_endpoint_deployment_plans_list(self) -> None:
+        response = self.client.get(
+            "/api/v1/operator/deployment-plans",
+            headers=self.auth_headers,
+        )
+        self.assertEqual(response.status_code, 200, response.text)
+        data = response.json()
+        self.assertIn("items", data)
+        self.assertGreaterEqual(len(data["items"]), 1)
+        plan_item = data["items"][0]
+        self.assertEqual(plan_item["plan_id"], "dp-comm-1")
+        self.assertEqual(plan_item["governance_outcome"], "pending")
+
+    def test_endpoint_deployment_review_detail(self) -> None:
+        response = self.client.get(
+            "/api/v1/operator/deployment-review/dp-comm-1",
+            headers=self.auth_headers,
+        )
+        self.assertEqual(response.status_code, 200, response.text)
+        res = response.json()
+        self.assertIn("data", res)
+        data = res["data"]
+        self.assertIn("allowedActions", data)
+        self.assertIn("latestRun", data)
+        self.assertIn("review", data)
+        self.assertTrue(data["allowedActions"]["canApprove"])
+
+    def test_endpoint_persona_consult_policy(self) -> None:
+        response = self.client.get(
+            "/api/v1/personas/p-100/consult-policy",
+            headers=self.auth_headers,
+        )
+        self.assertEqual(response.status_code, 200, response.text)
+        data = response.json()
+        self.assertIn("data", data)
+        self.assertEqual(data["data"].get("rule_id"), "cr-100")
