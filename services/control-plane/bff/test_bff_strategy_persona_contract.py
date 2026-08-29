@@ -28,11 +28,51 @@ from action_catalog import get_catalog_entry
 from models import CommandType
 from persona_provisioning import MemoryPersonaProvisioningStore
 from ports import ReadSurfacePorts
-from read_store import _default_read_data
 from test_persona_provisioning_coordinator import FakeOwnerTransport, _schedule_receipt
 
 OPERATOR_TOKEN = "Bearer op-2:operator"
 HEADERS = {"Authorization": OPERATOR_TOKEN}
+
+
+def _local_strategy_persona_read_data() -> dict[str, Any]:
+    return {
+        "strategies": {
+            "strat-1": {
+                "id": "strat-1",
+                "strategy_id": "strat-1",
+                "name": "Strategy 1",
+                "state": "active",
+                "risk": "medium",
+                "personaIds": ["persona-1"],
+                "capitalPoolId": "pool-1",
+                "created_at": "2026-05-01T00:00:00Z",
+                "updated_at": "2026-05-01T00:00:00Z",
+            }
+        },
+        "personas": {
+            "persona-1": {
+                "id": "persona-1",
+                "persona_id": "persona-1",
+                "name": "Persona 1",
+                "state": "active",
+                "status": "active",
+                "archetype": "macro",
+                "routedStrategies": ["strat-1"],
+                "successRate": 0.8,
+                "metadata": {
+                    "owner": "op-1",
+                    "archetype": "macro",
+                    "risk_level": "medium",
+                },
+                "created_at": "2026-05-01T00:00:00Z",
+                "updated_at": "2026-05-01T00:00:00Z",
+            }
+        },
+        "runtime_bindings": {},
+        "persona_league": [],
+        "bindings": {},
+        "capital_pools": {},
+    }
 
 
 class StrategyPersonaTestReadPorts(ReadSurfacePorts):
@@ -43,7 +83,7 @@ class StrategyPersonaTestReadPorts(ReadSurfacePorts):
         allow_local_snapshot_fallback: bool = True,
     ) -> None:
         super().__init__()
-        self._data = seed_data if seed_data is not None else _default_read_data()
+        self._data = seed_data if seed_data is not None else _local_strategy_persona_read_data()
         self.allow_local_snapshot_fallback = allow_local_snapshot_fallback
         self._ranking_snapshots: dict[str, Any] = {}
 
@@ -299,7 +339,7 @@ def _error(resp):
 
 def _fresh_client(td: str) -> TestClient:
     global _CURRENT_STORE_DATA
-    _CURRENT_STORE_DATA = _default_read_data()
+    _CURRENT_STORE_DATA = _local_strategy_persona_read_data()
     bff_main.read_store = StrategyPersonaTestReadPorts(
         seed_data=_CURRENT_STORE_DATA,
         allow_local_snapshot_fallback=True,
