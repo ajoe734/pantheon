@@ -14,8 +14,10 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 import main as bff_main
 from command_queue import CommandStore
-from read_store import ReadSurfaceStore
-from rebalance_authority_test_support import CapitalBffAuthorityHarness
+from rebalance_authority_test_support import (
+    CapitalBffAuthorityHarness,
+    PplProjectionTestDouble,
+)
 
 
 HEADERS = {"Authorization": "Bearer codex2-ppl-alloc:operator,reviewer"}
@@ -44,15 +46,13 @@ def _browser_json_number_round_trip(value: Any) -> Any:
 
 
 def _client(td: str, *, fallback: bool = True) -> TestClient:
-    bff_main.read_store = ReadSurfaceStore(
-        os.path.join(td, "read-surfaces.json"),
-        allow_local_snapshot_fallback=fallback,
-    )
+    del td, fallback
+    bff_main.read_store = PplProjectionTestDouble()
     bff_main._CAPITAL_BFF_IDEMPOTENCY.clear()
     return TestClient(bff_main.app, raise_server_exceptions=False)
 
 
-def _write_live_binding(store: ReadSurfaceStore, *, current_weight: float) -> None:
+def _write_live_binding(store: PplProjectionTestDouble, *, current_weight: float) -> None:
     store.create_persona_binding(
         binding_id=LIVE_BINDING_ID,
         persona_id=LIVE_PERSONA_ID,
@@ -69,7 +69,7 @@ def _write_live_binding(store: ReadSurfaceStore, *, current_weight: float) -> No
     )
 
 
-def _seed_live_persona(store: ReadSurfaceStore) -> None:
+def _seed_live_persona(store: PplProjectionTestDouble) -> None:
     store.create_persona(
         persona_id=LIVE_PERSONA_ID,
         name="PPL Alloc Live",
@@ -160,7 +160,7 @@ def _binding_evidence_ref(
 
 
 def _install_evidence_records(
-    store: ReadSurfaceStore,
+    store: PplProjectionTestDouble,
     records: list[dict[str, Any]],
 ) -> None:
     def list_evidence_refs(**_: Any) -> list[dict[str, Any]]:
@@ -170,7 +170,7 @@ def _install_evidence_records(
 
 
 def _install_runtime_observations(
-    store: ReadSurfaceStore,
+    store: PplProjectionTestDouble,
     *,
     persona_id: str,
     runtime_id: str,
@@ -369,7 +369,8 @@ def test_ppl_alloc_009_governed_paper_chain_applies_without_two_man(
         assert activated.json()["status"] == "active"
 
         store = bff_main.read_store
-        assert isinstance(store, ReadSurfaceStore)
+        assert isinstance(store, PplProjectionTestDouble)
+        store.add_authoritative_binding(activated.json())
         store.create_persona(
             persona_id=PAPER_PERSONA_ID,
             name="PPL Alloc 009 Paper",
@@ -715,7 +716,7 @@ def test_ranking_tuple_and_snapshot_round_trip_into_rebalance_proposal() -> None
             assert harness.client is not None
             client = harness.client
             store = bff_main.read_store
-            assert isinstance(store, ReadSurfaceStore)
+            assert isinstance(store, PplProjectionTestDouble)
             owner_binding = client.post(
                 "/api/v1/bindings",
                 headers={
@@ -907,10 +908,7 @@ def test_ranking_tuple_and_snapshot_round_trip_into_rebalance_proposal() -> None
                 )
                 assert tampered.status_code == 422, (field, tampered.text)
 
-            reloaded = ReadSurfaceStore(
-                str(harness.read_path),
-                allow_local_snapshot_fallback=False,
-            )
+            reloaded = harness.read_surface
             assert reloaded.get_ranking_snapshot(snapshot_id) is not None
             assert reloaded.get_allocation_evaluation(evaluation_id) is not None
             harness.restart()
@@ -1095,7 +1093,7 @@ def test_durable_lineage_integrity_fails_closed_after_same_id_store_tamper() -> 
             try:
                 client = _client(td, fallback=False)
                 store = bff_main.read_store
-                assert isinstance(store, ReadSurfaceStore)
+                assert isinstance(store, PplProjectionTestDouble)
                 _seed_live_persona(store)
                 ranking = client.get(
                     "/bff/management/quarterly-ranking",
@@ -1117,21 +1115,22 @@ def test_durable_lineage_integrity_fails_closed_after_same_id_store_tamper() -> 
                 evaluation = evaluated.json()["data"]
 
                 if tamper_target == "ranking_snapshot":
-                    stored_items = store._data["ranking_snapshots"][snapshot_id][
-                        "items"
-                    ]
-                    stored_row = _item_by_persona(stored_items, LIVE_PERSONA_ID)
-                    stored_row["stage"] = "paper_running"
+                    store.tamper_ranking_snapshot_item(
+                        snapshot_id,
+                        LIVE_PERSONA_ID,
+                        "stage",
+                        "paper_running",
+                    )
                 else:
                     evaluation_id = evaluation["allocation_evaluation_id"]
-                    store._data["allocation_evaluations"][evaluation_id]["lines"][
-                        0
-                    ]["target_weight"] = 0.99
-                store._save()
-                bff_main.read_store = ReadSurfaceStore(
-                    os.path.join(td, "read-surfaces.json"),
-                    allow_local_snapshot_fallback=False,
-                )
+                    store.tamper_allocation_evaluation_line(
+                        evaluation_id,
+                        0,
+                        "target_weight",
+                        0.99,
+                    )
+                bff_main.read_store = store.clone_for_restart()
+                store = bff_main.read_store
 
                 if tamper_target == "ranking_snapshot":
                     rejected = client.post(
@@ -1176,7 +1175,7 @@ def test_binding_weight_mutation_changes_snapshot_and_quarterly_surfaces_converg
         try:
             client = _client(td)
             store = bff_main.read_store
-            assert isinstance(store, ReadSurfaceStore)
+            assert isinstance(store, PplProjectionTestDouble)
             _seed_live_persona(store)
 
             initial = client.get(
@@ -1251,8 +1250,38 @@ def test_binding_evidence_is_persona_scoped_and_rbac_keeps_snapshot_stable() -> 
         try:
             client = _client(td)
             store = bff_main.read_store
-            assert isinstance(store, ReadSurfaceStore)
+            assert isinstance(store, PplProjectionTestDouble)
             _seed_live_persona(store)
+            store.create_persona(
+                persona_id="persona-alpha",
+                name="Alpha Evidence Persona",
+                actor_id="Codex2",
+                archetype="alpha",
+                lifecycle_state="paper_running",
+            )
+            store.create_persona_binding(
+                binding_id="binding-042",
+                persona_id="persona-alpha",
+                capital_pool_id="pool-alpha",
+                actor_id="Codex2",
+                metadata={"allowed_deployment_scope": "live"},
+            )
+            store.create_runtime_binding(
+                runtime_id="runtime-alpha-evidence",
+                name="Alpha Evidence Runtime",
+                persona_id="persona-alpha",
+                binding_id="binding-042",
+                deployment_plan_id="plan-alpha-evidence",
+                runtime_kind="live",
+                actor_id="Codex2",
+                state="running",
+                params={"capital_pool_id": "pool-alpha"},
+            )
+            _install_runtime_observations(
+                store,
+                persona_id="persona-alpha",
+                runtime_id="runtime-alpha-evidence",
+            )
             live_ref_id = "evidence-ppl-alloc-012-live-binding"
             alpha_ref_id = "evidence-ppl-alloc-012-alpha-binding"
             _install_evidence_records(
@@ -1320,7 +1349,7 @@ def test_recommendations_preserve_archetype_filter_projection() -> None:
         try:
             client = _client(td)
             store = bff_main.read_store
-            assert isinstance(store, ReadSurfaceStore)
+            assert isinstance(store, PplProjectionTestDouble)
             _seed_live_persona(store)
 
             response = client.get(
@@ -1365,7 +1394,7 @@ def test_live_runtime_without_active_persona_binding_fails_closed() -> None:
         try:
             client = _client(td, fallback=False)
             store = bff_main.read_store
-            assert isinstance(store, ReadSurfaceStore)
+            assert isinstance(store, PplProjectionTestDouble)
             persona_id = "persona-ppl-alloc-012-runtime-only"
             runtime_id = "runtime-ppl-alloc-012-runtime-only"
             store.create_persona(
@@ -1417,7 +1446,7 @@ def test_runtime_binding_mode_is_actual_stage_not_binding_ceiling() -> None:
         try:
             client = _client(td, fallback=False)
             store = bff_main.read_store
-            assert isinstance(store, ReadSurfaceStore)
+            assert isinstance(store, PplProjectionTestDouble)
             persona_id = "persona-ppl-alloc-012-paper-under-live-ceiling"
             binding_id = "binding-ppl-alloc-012-paper-under-live-ceiling"
             runtime_id = "runtime-ppl-alloc-012-paper-under-live-ceiling"
@@ -1482,7 +1511,7 @@ def test_paper_runtime_session_requires_runtime_manager_monitoring_owner() -> No
         try:
             _client(td, fallback=False)
             store = bff_main.read_store
-            assert isinstance(store, ReadSurfaceStore)
+            assert isinstance(store, PplProjectionTestDouble)
             store.get_sessions_for_persona = lambda _persona_id: [  # type: ignore[method-assign]
                 {
                     "id": "local-persona-session",
@@ -1491,7 +1520,7 @@ def test_paper_runtime_session_requires_runtime_manager_monitoring_owner() -> No
                 }
             ]
             store.list_authoritative_paper_runtime_monitoring_sessions = (  # type: ignore[method-assign]
-                lambda: []
+                lambda: [None]
             )
             session, resolution = bff_main._pm12_runtime_session_resolution(
                 PAPER_PERSONA_ID,
@@ -1513,7 +1542,7 @@ def test_missing_runtime_fails_closed_even_with_live_binding_and_observations() 
         try:
             client = _client(td, fallback=False)
             store = bff_main.read_store
-            assert isinstance(store, ReadSurfaceStore)
+            assert isinstance(store, PplProjectionTestDouble)
             persona_id = "persona-ppl-alloc-012-missing-runtime"
             runtime_id = "runtime-ppl-alloc-012-phantom"
             store.create_persona(
@@ -1568,7 +1597,7 @@ def test_runtime_binding_requires_fresh_explicit_deployment_mode() -> None:
             try:
                 client = _client(td, fallback=False)
                 store = bff_main.read_store
-                assert isinstance(store, ReadSurfaceStore)
+                assert isinstance(store, PplProjectionTestDouble)
                 _seed_live_persona(store)
                 original_runtimes = store.list_runtime_bindings
 
@@ -1617,7 +1646,7 @@ def test_ended_or_stale_runtime_session_fails_closed() -> None:
             try:
                 client = _client(td, fallback=False)
                 store = bff_main.read_store
-                assert isinstance(store, ReadSurfaceStore)
+                assert isinstance(store, PplProjectionTestDouble)
                 _seed_live_persona(store)
                 original_sessions = store.get_sessions_for_persona
 
@@ -1660,7 +1689,7 @@ def test_stale_or_mismatched_telemetry_cannot_supply_ranking_coverage() -> None:
             try:
                 client = _client(td, fallback=False)
                 store = bff_main.read_store
-                assert isinstance(store, ReadSurfaceStore)
+                assert isinstance(store, PplProjectionTestDouble)
                 _seed_live_persona(store)
                 original_telemetry = store.get_telemetry_summary
 
@@ -1736,7 +1765,7 @@ def test_declared_stopped_runtime_cannot_be_authoritative_despite_active_status(
         try:
             client = _client(td, fallback=False)
             store = bff_main.read_store
-            assert isinstance(store, ReadSurfaceStore)
+            assert isinstance(store, PplProjectionTestDouble)
             store.create_persona(
                 persona_id=persona_id,
                 name="PPL Stopped Runtime",
@@ -1811,7 +1840,7 @@ def test_invalid_binding_weights_never_serialize_or_become_eligible() -> None:
         try:
             client = _client(td, fallback=False)
             store = bff_main.read_store
-            assert isinstance(store, ReadSurfaceStore)
+            assert isinstance(store, PplProjectionTestDouble)
             invalid_weights = {
                 "nan": float("nan"),
                 "positive-inf": float("inf"),
@@ -1889,7 +1918,7 @@ def test_paper_ledger_without_persona_binding_remains_ranking_eligible() -> None
         try:
             client = _client(td, fallback=False)
             store = bff_main.read_store
-            assert isinstance(store, ReadSurfaceStore)
+            assert isinstance(store, PplProjectionTestDouble)
             persona_id = "persona-ppl-alloc-012-paper-unbound"
             runtime_id = "runtime-ppl-alloc-012-paper-unbound"
             paper_ledger_id = "paper-ledger-ppl-alloc-012-unbound"
@@ -1951,7 +1980,7 @@ def test_stable_promotion_submit_replays_original_snapshot_after_ranking_mutatio
             bff_main.command_store = CommandStore(os.path.join(td, "commands.jsonl"))
             bff_main._FINAL_CONTRACT_IDEMPOTENCY.clear()
             store = bff_main.read_store
-            assert isinstance(store, ReadSurfaceStore)
+            assert isinstance(store, PplProjectionTestDouble)
             _seed_live_persona(store)
 
             recommendation_response = client.get(
@@ -2192,7 +2221,7 @@ def test_stable_promotion_submit_uses_each_admitted_snapshot_after_mutation_and_
             bff_main.command_store = CommandStore(command_path)
             bff_main._FINAL_CONTRACT_IDEMPOTENCY.clear()
             store = bff_main.read_store
-            assert isinstance(store, ReadSurfaceStore)
+            assert isinstance(store, PplProjectionTestDouble)
             _seed_live_persona(store)
 
             original_response = client.get(
@@ -2232,10 +2261,8 @@ def test_stable_promotion_submit_uses_each_admitted_snapshot_after_mutation_and_
 
             client.close()
             client = None
-            bff_main.read_store = ReadSurfaceStore(
-                os.path.join(td, "read-surfaces.json"),
-                allow_local_snapshot_fallback=True,
-            )
+            bff_main.read_store = store.clone_for_restart()
+            store = bff_main.read_store
             bff_main.command_store = CommandStore(command_path)
             client = TestClient(bff_main.app, raise_server_exceptions=False)
 
@@ -2412,7 +2439,7 @@ def test_promotion_first_submit_rejects_expired_snapshot(monkeypatch) -> None:
             bff_main.command_store = CommandStore(os.path.join(td, "commands.jsonl"))
             bff_main._FINAL_CONTRACT_IDEMPOTENCY.clear()
             store = bff_main.read_store
-            assert isinstance(store, ReadSurfaceStore)
+            assert isinstance(store, PplProjectionTestDouble)
             _seed_live_persona(store)
 
             response = client.get(
@@ -2464,7 +2491,7 @@ def test_promotion_first_submit_rejects_unknown_forged_or_mutated_snapshot_tuple
             bff_main.command_store = CommandStore(os.path.join(td, "commands.jsonl"))
             bff_main._FINAL_CONTRACT_IDEMPOTENCY.clear()
             store = bff_main.read_store
-            assert isinstance(store, ReadSurfaceStore)
+            assert isinstance(store, PplProjectionTestDouble)
             _seed_live_persona(store)
 
             response = client.get(
@@ -2515,9 +2542,12 @@ def test_promotion_first_submit_rejects_unknown_forged_or_mutated_snapshot_tuple
                 )
                 assert submit.status_code == 422, submit.text
 
-            snapshots = store._ensure_local_overlay_records("ranking_snapshots")
-            snapshots[snapshot_id]["items"][0]["score"] = 0
-            store._save()
+            store.tamper_ranking_snapshot_item(
+                snapshot_id,
+                LIVE_PERSONA_ID,
+                "score",
+                0,
+            )
             mutated = client.post(
                 f"/bff/management/quarterly-ranking/recommendations/{recommendation_id}/submit",
                 headers={
@@ -2551,7 +2581,7 @@ def test_legacy_promotion_submit_remains_read_only_when_current_revision_is_subm
             bff_main.command_store = CommandStore(os.path.join(td, "commands.jsonl"))
             bff_main._FINAL_CONTRACT_IDEMPOTENCY.clear()
             store = bff_main.read_store
-            assert isinstance(store, ReadSurfaceStore)
+            assert isinstance(store, PplProjectionTestDouble)
             _seed_live_persona(store)
 
             recommendation_response = client.get(
@@ -2667,7 +2697,7 @@ def test_promotion_submit_cross_role_replay_redacts_admin_only_evidence() -> Non
             bff_main.command_store = CommandStore(os.path.join(td, "commands.jsonl"))
             bff_main._FINAL_CONTRACT_IDEMPOTENCY.clear()
             store = bff_main.read_store
-            assert isinstance(store, ReadSurfaceStore)
+            assert isinstance(store, PplProjectionTestDouble)
             _seed_live_persona(store)
             restricted_ref_id = "evidence-ppl-alloc-012-admin-only-binding"
             _install_evidence_records(
@@ -2800,7 +2830,7 @@ def test_multiple_active_bindings_fail_closed_without_seed_weight() -> None:
         try:
             client = _client(td, fallback=False)
             store = bff_main.read_store
-            assert isinstance(store, ReadSurfaceStore)
+            assert isinstance(store, PplProjectionTestDouble)
             persona_id = "persona-ppl-alloc-012-ambiguous"
             store.create_persona(
                 persona_id=persona_id,
@@ -2950,7 +2980,7 @@ def test_binding_runtime_and_stage_mismatches_fail_closed() -> None:
         try:
             client = _client(td, fallback=False)
             store = bff_main.read_store
-            assert isinstance(store, ReadSurfaceStore)
+            assert isinstance(store, PplProjectionTestDouble)
             store.create_persona(
                 persona_id="persona-stage-mismatch",
                 name="PPL Stage Mismatch",
