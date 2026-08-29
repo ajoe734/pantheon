@@ -1,23 +1,22 @@
 """Contract tests for /bff/approvals population via promotion-service approvals.
 
 Verifies the end-to-end read path established by CONSOLE-DATA-APPROVALS:
-  - POST promotion/api/v1/approvals produces a real approval decision
-  - PANTHEON_BFF_APPROVAL_DECISION_STORE wires the BFF canonical read path
+  - The typed OODA/management port wires the BFF canonical read path
   - GET /bff/approvals returns count>0 and the pending item when the store is populated
   - Decided approvals (approved/rejected) are excluded from the pending list
   - Empty / absent store returns count=0 (no fabricated data)
   - The governance approval queue surface also picks up the projected data
-  - Explicit store path wins over PANTHEON_GOVERNANCE_APPROVAL_API_URL service client
-  - PANTHEON_PROMOTION_API_URL is tried before the governance service when no file is set
+  - The adapter's own HTTP-vs-file precedence (PANTHEON_PROMOTION_API_URL /
+    PANTHEON_GOVERNANCE_APPROVAL_API_URL / PANTHEON_BFF_APPROVAL_DECISION_STORE)
+    is exercised directly against CanonicalSnapshotAdapter, since /bff/approvals
+    itself only ever reads bff_main.read_store and never touches those env vars.
 
 Stub dispatch (dev safety): no live broker orders, no capital allocation.
 """
 from __future__ import annotations
 
-import json
 import os
 import sys
-import tempfile
 from unittest.mock import patch
 
 from fastapi.testclient import TestClient
@@ -25,6 +24,12 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 import main as bff_main
+# NOTE: CanonicalSnapshotAdapter is intentionally still imported here. Unlike
+# every other fixture in this file, `test_promotion_service_url_read_path`
+# below is a narrow unit test of read_store.py's own adapter precedence logic
+# (file vs. HTTP dataset discovery), not a BFF composite-contract fixture. The
+# other 6 declared-artifact files, and every other test in this file, build
+# bff_main.read_store exclusively via create_in_memory_read_surface_ports().
 from read_store import CanonicalSnapshotAdapter
 from ports import create_in_memory_read_surface_ports
 
@@ -81,93 +86,58 @@ _DECIDED_APPROVAL = {
 }
 
 
-def _write_approval_decisions(td: str, decisions: list) -> str:
-    """Write approval decisions as a list to approval_decisions.json and return path."""
-    path = os.path.join(td, "approval_decisions.json")
-    keyed = {d["decision_id"]: d for d in decisions}
-    with open(path, "w") as f:
-        json.dump(keyed, f)
-    return path
-
-
 # ---------------------------------------------------------------------------
 # /bff/approvals — populated store returns count > 0
 # ---------------------------------------------------------------------------
 
 class TestBffApprovalsSurfacePopulated:
-    """When PANTHEON_BFF_APPROVAL_DECISION_STORE points to a real projected file
+    """When the OODA/management port is seeded with approval decisions,
     the /bff/approvals endpoint returns count>0 and the pending items."""
 
     def test_pending_approval_appears_in_bff_approvals(self) -> None:
-        with tempfile.TemporaryDirectory() as td:
-            store_path = _write_approval_decisions(td, [_PENDING_APPROVAL])
-            original_store = bff_main.read_store
-            orig_env = os.environ.get("PANTHEON_BFF_APPROVAL_DECISION_STORE")
-            try:
-                os.environ["PANTHEON_BFF_APPROVAL_DECISION_STORE"] = store_path
-                bff_main.read_store = create_in_memory_read_surface_ports(
-                    ooda_management_kwargs={"approval_decisions": [_PENDING_APPROVAL]}
-                )
-                client = TestClient(bff_main.app, raise_server_exceptions=False)
-                resp = client.get("/bff/approvals", headers=ADMIN_HEADERS)
-                assert resp.status_code == 200, resp.text
-                body = resp.json()
-                assert body["count"] > 0, f"expected count>0, got {body}"
-                ids = [item.get("decision_id") for item in body["items"]]
-                assert "apv-consdata-001" in ids
-            finally:
-                bff_main.read_store = original_store
-                if orig_env is None:
-                    os.environ.pop("PANTHEON_BFF_APPROVAL_DECISION_STORE", None)
-                else:
-                    os.environ["PANTHEON_BFF_APPROVAL_DECISION_STORE"] = orig_env
+        original_store = bff_main.read_store
+        try:
+            bff_main.read_store = create_in_memory_read_surface_ports(
+                ooda_management_kwargs={"approval_decisions": [_PENDING_APPROVAL]}
+            )
+            client = TestClient(bff_main.app, raise_server_exceptions=False)
+            resp = client.get("/bff/approvals", headers=ADMIN_HEADERS)
+            assert resp.status_code == 200, resp.text
+            body = resp.json()
+            assert body["count"] > 0, f"expected count>0, got {body}"
+            ids = [item.get("decision_id") for item in body["items"]]
+            assert "apv-consdata-001" in ids
+        finally:
+            bff_main.read_store = original_store
 
     def test_decided_approvals_excluded_from_pending_list(self) -> None:
-        with tempfile.TemporaryDirectory() as td:
-            store_path = _write_approval_decisions(td, [_DECIDED_APPROVAL])
-            original_store = bff_main.read_store
-            orig_env = os.environ.get("PANTHEON_BFF_APPROVAL_DECISION_STORE")
-            try:
-                os.environ["PANTHEON_BFF_APPROVAL_DECISION_STORE"] = store_path
-                bff_main.read_store = create_in_memory_read_surface_ports(
-                    ooda_management_kwargs={"approval_decisions": [_DECIDED_APPROVAL]}
-                )
-                client = TestClient(bff_main.app, raise_server_exceptions=False)
-                resp = client.get("/bff/approvals", headers=ADMIN_HEADERS)
-                assert resp.status_code == 200, resp.text
-                body = resp.json()
-                assert body["count"] == 0, f"expected 0 pending (decided approval filtered), got {body}"
-            finally:
-                bff_main.read_store = original_store
-                if orig_env is None:
-                    os.environ.pop("PANTHEON_BFF_APPROVAL_DECISION_STORE", None)
-                else:
-                    os.environ["PANTHEON_BFF_APPROVAL_DECISION_STORE"] = orig_env
+        original_store = bff_main.read_store
+        try:
+            bff_main.read_store = create_in_memory_read_surface_ports(
+                ooda_management_kwargs={"approval_decisions": [_DECIDED_APPROVAL]}
+            )
+            client = TestClient(bff_main.app, raise_server_exceptions=False)
+            resp = client.get("/bff/approvals", headers=ADMIN_HEADERS)
+            assert resp.status_code == 200, resp.text
+            body = resp.json()
+            assert body["count"] == 0, f"expected 0 pending (decided approval filtered), got {body}"
+        finally:
+            bff_main.read_store = original_store
 
     def test_mixed_store_only_pending_returned(self) -> None:
-        with tempfile.TemporaryDirectory() as td:
-            store_path = _write_approval_decisions(
-                td, [_PENDING_APPROVAL, _DECIDED_APPROVAL]
+        original_store = bff_main.read_store
+        try:
+            bff_main.read_store = create_in_memory_read_surface_ports(
+                ooda_management_kwargs={"approval_decisions": [_PENDING_APPROVAL, _DECIDED_APPROVAL]}
             )
-            original_store = bff_main.read_store
-            orig_env = os.environ.get("PANTHEON_BFF_APPROVAL_DECISION_STORE")
-            try:
-                os.environ["PANTHEON_BFF_APPROVAL_DECISION_STORE"] = store_path
-                bff_main.read_store = create_in_memory_read_surface_ports(
-                    ooda_management_kwargs={"approval_decisions": [_PENDING_APPROVAL, _DECIDED_APPROVAL]}
-                )
-                client = TestClient(bff_main.app, raise_server_exceptions=False)
-                resp = client.get("/bff/approvals", headers=ADMIN_HEADERS)
-                assert resp.status_code == 200, resp.text
-                body = resp.json()
-                assert body["count"] == 1, f"expected only pending item, got {body}"
-                assert body["items"][0]["decision_id"] == "apv-consdata-001"
-            finally:
-                bff_main.read_store = original_store
-                if orig_env is None:
-                    os.environ.pop("PANTHEON_BFF_APPROVAL_DECISION_STORE", None)
-                else:
-                    os.environ["PANTHEON_BFF_APPROVAL_DECISION_STORE"] = orig_env
+            client = TestClient(bff_main.app, raise_server_exceptions=False)
+            resp = client.get("/bff/approvals", headers=ADMIN_HEADERS)
+            assert resp.status_code == 200, resp.text
+            body = resp.json()
+            assert body["count"] == 1, f"expected only pending item, got {body}"
+            assert body["items"][0]["decision_id"] == "apv-consdata-001"
+        finally:
+            bff_main.read_store = original_store
 
 
 # ---------------------------------------------------------------------------
@@ -179,23 +149,16 @@ class TestBffApprovalsNoFabrication:
     No fixture data must be invented."""
 
     def test_empty_store_returns_count_zero(self) -> None:
-        with tempfile.TemporaryDirectory() as td:
-            original_store = bff_main.read_store
-            orig_env = os.environ.get("PANTHEON_BFF_APPROVAL_DECISION_STORE")
-            try:
-                os.environ.pop("PANTHEON_BFF_APPROVAL_DECISION_STORE", None)
-                bff_main.read_store = create_in_memory_read_surface_ports()
-                client = TestClient(bff_main.app, raise_server_exceptions=False)
-                resp = client.get("/bff/approvals", headers=ADMIN_HEADERS)
-                assert resp.status_code == 200, resp.text
-                body = resp.json()
-                assert body["count"] == 0, f"expected 0 when no store wired, got {body}"
-            finally:
-                bff_main.read_store = original_store
-                if orig_env is None:
-                    os.environ.pop("PANTHEON_BFF_APPROVAL_DECISION_STORE", None)
-                else:
-                    os.environ["PANTHEON_BFF_APPROVAL_DECISION_STORE"] = orig_env
+        original_store = bff_main.read_store
+        try:
+            bff_main.read_store = create_in_memory_read_surface_ports()
+            client = TestClient(bff_main.app, raise_server_exceptions=False)
+            resp = client.get("/bff/approvals", headers=ADMIN_HEADERS)
+            assert resp.status_code == 200, resp.text
+            body = resp.json()
+            assert body["count"] == 0, f"expected 0 when no store wired, got {body}"
+        finally:
+            bff_main.read_store = original_store
 
     def test_unauthenticated_rejected(self) -> None:
         client = TestClient(bff_main.app, raise_server_exceptions=False)
@@ -214,27 +177,19 @@ class TestGovernanceApprovalQueueSurfaceWithProjectedStore:
     ROUTE = "/api/v1/operator/governance/approval-queue"
 
     def test_queue_returns_pending_when_store_wired(self) -> None:
-        with tempfile.TemporaryDirectory() as td:
-            store_path = _write_approval_decisions(td, [_PENDING_APPROVAL])
-            original_store = bff_main.read_store
-            orig_env = os.environ.get("PANTHEON_BFF_APPROVAL_DECISION_STORE")
-            try:
-                os.environ["PANTHEON_BFF_APPROVAL_DECISION_STORE"] = store_path
-                bff_main.read_store = create_in_memory_read_surface_ports(
-                    ooda_management_kwargs={"approval_decisions": [_PENDING_APPROVAL]}
-                )
-                client = TestClient(bff_main.app, raise_server_exceptions=False)
-                resp = client.get(self.ROUTE, headers=ADMIN_HEADERS)
-                assert resp.status_code == 200, resp.text
-                body = resp.json()
-                ids = [item.get("decision_id") for item in (body.get("items") or [])]
-                assert "apv-consdata-001" in ids, f"pending approval not in queue: {body}"
-            finally:
-                bff_main.read_store = original_store
-                if orig_env is None:
-                    os.environ.pop("PANTHEON_BFF_APPROVAL_DECISION_STORE", None)
-                else:
-                    os.environ["PANTHEON_BFF_APPROVAL_DECISION_STORE"] = orig_env
+        original_store = bff_main.read_store
+        try:
+            bff_main.read_store = create_in_memory_read_surface_ports(
+                ooda_management_kwargs={"approval_decisions": [_PENDING_APPROVAL]}
+            )
+            client = TestClient(bff_main.app, raise_server_exceptions=False)
+            resp = client.get(self.ROUTE, headers=ADMIN_HEADERS)
+            assert resp.status_code == 200, resp.text
+            body = resp.json()
+            ids = [item.get("decision_id") for item in (body.get("items") or [])]
+            assert "apv-consdata-001" in ids, f"pending approval not in queue: {body}"
+        finally:
+            bff_main.read_store = original_store
 
 
 # ---------------------------------------------------------------------------
@@ -242,52 +197,44 @@ class TestGovernanceApprovalQueueSurfaceWithProjectedStore:
 # ---------------------------------------------------------------------------
 
 class TestStorePrecedenceOverServiceClient:
-    """PANTHEON_BFF_APPROVAL_DECISION_STORE must win over
-    PANTHEON_GOVERNANCE_APPROVAL_API_URL when the file exists.
-
-    This is the core fix for the reviewer-flagged bug: docker-compose sets
-    PANTHEON_GOVERNANCE_APPROVAL_API_URL=http://governance:8082, so
-    CanonicalSnapshotAdapter._load_http_dataset previously shadowed the
-    projection-populated file and returned count=0.
+    """The composite /bff/approvals route only ever reads bff_main.read_store,
+    so a governance-service URL being configured in the environment must never
+    shadow a populated in-memory port. This guards the reviewer-flagged bug:
+    docker-compose sets PANTHEON_GOVERNANCE_APPROVAL_API_URL=http://governance:8082,
+    which (in the legacy CanonicalSnapshotAdapter-backed store) could shadow a
+    projection-populated file and return count=0.
     """
 
     def test_file_store_wins_when_governance_url_is_also_set(self) -> None:
-        """When both PANTHEON_BFF_APPROVAL_DECISION_STORE (populated) and
-        PANTHEON_GOVERNANCE_APPROVAL_API_URL are set, the file wins and
-        /bff/approvals returns count>0 from the file."""
-        with tempfile.TemporaryDirectory() as td:
-            store_path = _write_approval_decisions(td, [_PENDING_APPROVAL])
-            original_store = bff_main.read_store
-            orig_store_env = os.environ.get("PANTHEON_BFF_APPROVAL_DECISION_STORE")
-            orig_gov_env = os.environ.get("PANTHEON_GOVERNANCE_APPROVAL_API_URL")
-            try:
-                os.environ["PANTHEON_BFF_APPROVAL_DECISION_STORE"] = store_path
-                # Simulate docker-compose default which would otherwise shadow the file.
-                os.environ["PANTHEON_GOVERNANCE_APPROVAL_API_URL"] = "http://governance-stub:9999"
-                bff_main.read_store = create_in_memory_read_surface_ports(
-                    ooda_management_kwargs={"approval_decisions": [_PENDING_APPROVAL]}
-                )
-                client = TestClient(bff_main.app, raise_server_exceptions=False)
-                resp = client.get("/bff/approvals", headers=ADMIN_HEADERS)
-                assert resp.status_code == 200, resp.text
-                body = resp.json()
-                assert body["count"] > 0, (
-                    "expected count>0 from file store even though "
-                    "PANTHEON_GOVERNANCE_APPROVAL_API_URL is set; "
-                    f"got {body}"
-                )
-                ids = [item.get("decision_id") for item in body["items"]]
-                assert "apv-consdata-001" in ids, f"projected approval not found: {body}"
-            finally:
-                bff_main.read_store = original_store
-                if orig_store_env is None:
-                    os.environ.pop("PANTHEON_BFF_APPROVAL_DECISION_STORE", None)
-                else:
-                    os.environ["PANTHEON_BFF_APPROVAL_DECISION_STORE"] = orig_store_env
-                if orig_gov_env is None:
-                    os.environ.pop("PANTHEON_GOVERNANCE_APPROVAL_API_URL", None)
-                else:
-                    os.environ["PANTHEON_GOVERNANCE_APPROVAL_API_URL"] = orig_gov_env
+        """Even when PANTHEON_GOVERNANCE_APPROVAL_API_URL is set, the typed
+        in-memory port wired onto bff_main.read_store wins and /bff/approvals
+        returns count>0 from it (the route never falls back to a service
+        client keyed off that env var)."""
+        original_store = bff_main.read_store
+        orig_gov_env = os.environ.get("PANTHEON_GOVERNANCE_APPROVAL_API_URL")
+        try:
+            # Simulate docker-compose default which would otherwise shadow the store.
+            os.environ["PANTHEON_GOVERNANCE_APPROVAL_API_URL"] = "http://governance-stub:9999"
+            bff_main.read_store = create_in_memory_read_surface_ports(
+                ooda_management_kwargs={"approval_decisions": [_PENDING_APPROVAL]}
+            )
+            client = TestClient(bff_main.app, raise_server_exceptions=False)
+            resp = client.get("/bff/approvals", headers=ADMIN_HEADERS)
+            assert resp.status_code == 200, resp.text
+            body = resp.json()
+            assert body["count"] > 0, (
+                "expected count>0 from the in-memory port even though "
+                "PANTHEON_GOVERNANCE_APPROVAL_API_URL is set; "
+                f"got {body}"
+            )
+            ids = [item.get("decision_id") for item in body["items"]]
+            assert "apv-consdata-001" in ids, f"projected approval not found: {body}"
+        finally:
+            bff_main.read_store = original_store
+            if orig_gov_env is None:
+                os.environ.pop("PANTHEON_GOVERNANCE_APPROVAL_API_URL", None)
+            else:
+                os.environ["PANTHEON_GOVERNANCE_APPROVAL_API_URL"] = orig_gov_env
 
     def test_promotion_service_url_read_path(self) -> None:
         """PANTHEON_PROMOTION_API_URL is tried before the governance service URL.

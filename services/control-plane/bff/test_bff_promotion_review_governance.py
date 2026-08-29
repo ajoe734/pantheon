@@ -19,7 +19,6 @@ import main as bff_main
 from command_queue import CommandStore
 from models import CommandStatus, CommandType, ObjectType, TargetObject
 from ports import ReadSurfacePorts
-from read_store import _default_read_data
 
 
 OPERATOR_HEADERS = {"Authorization": "Bearer op-promo:operator"}
@@ -33,7 +32,7 @@ class PromotionReviewTestReadPorts(ReadSurfacePorts):
         if seed_data is not None:
             self._data = seed_data
         else:
-            self._data = _default_read_data()
+            self._data = {}
         self._data.setdefault("personas", {})["persona-alpha"] = {
             "id": "persona-alpha",
             "persona_id": "persona-alpha",

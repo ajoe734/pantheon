@@ -12,10 +12,27 @@ sys.path.insert(0, os.path.dirname(__file__))
 
 import main as bff_main
 from ports import ReadSurfacePorts
-from read_store import _default_read_data
 
 
 AUTH = {"Authorization": "Bearer operator_001"}
+
+
+def _local_read_cutoff_data() -> dict[str, Any]:
+    return {
+        "deployment_plans": {
+            "plan-F-042": {
+                "id": "plan-F-042",
+                "plan_id": "plan-F-042",
+                "persona_id": "persona-alpha",
+                "binding_id": "binding-alpha",
+                "capital_pool_id": "pool-main",
+                "deployment_mode": "paper",
+                "status": "active",
+                "created_at": "2026-05-01T00:00:00Z",
+                "updated_at": "2026-05-01T00:00:00Z",
+            }
+        }
+    }
 
 
 _READ_SOURCE_ENVS = {
@@ -36,7 +53,7 @@ class ReadCutoffWave4TestReadPorts(ReadSurfacePorts):
     def __init__(self, *, allow_local_snapshot_fallback: bool = False, seed_data: dict[str, Any] | None = None) -> None:
         super().__init__()
         self._allow_local_snapshot_fallback = allow_local_snapshot_fallback
-        self._data = seed_data if seed_data is not None else (_default_read_data() if allow_local_snapshot_fallback else {})
+        self._data = seed_data if seed_data is not None else (_local_read_cutoff_data() if allow_local_snapshot_fallback else {})
 
     def dataset_source(self, dataset: str, **kwargs: Any) -> str:
         if self._allow_local_snapshot_fallback:
