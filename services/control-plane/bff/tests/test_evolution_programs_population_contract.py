@@ -19,7 +19,7 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 import main as bff_main
-from read_store import ReadSurfaceStore
+from ports import create_in_memory_read_surface_ports
 
 AUTH = "Bearer op-dev:admin:mfa"
 HEADERS = {"Authorization": AUTH}
@@ -57,9 +57,8 @@ def _client_with_evolution_programs_store(td: str) -> TestClient:
         json.dump({"evo-vslice-1": EVO_VSLICE_1}, f)
 
     os.environ["PANTHEON_BFF_EVOLUTION_PROGRAM_STORE"] = store_path
-    bff_main.read_store = ReadSurfaceStore(
-        os.path.join(td, "read_surfaces.json"),
-        allow_local_snapshot_fallback=True,
+    bff_main.read_store = create_in_memory_read_surface_ports(
+        persona_capital_runtime_kwargs={"evolution_programs": [EVO_VSLICE_1]}
     )
     return TestClient(bff_main.app)
 

@@ -10,33 +10,78 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, os.path.dirname(__file__))
 
 import main as bff_main
-from read_store import ReadSurfaceStore
+from ports import create_in_memory_read_surface_ports
 
 
 OPERATOR_AUTH = "Bearer test-operator:operator"
 
+_DEFAULT_INSPIRATION_GRAPHS = {
+    "artifact-042": {
+        "artifact_id": "artifact-042",
+        "inspiration_edges": [
+            {
+                "source_artifact_id": "artifact-041",
+                "relationship_type": "derived_from",
+                "influence_weight": 0.85,
+            },
+            {
+                "source_artifact_id": "artifact-039",
+                "relationship_type": "strategy_applied",
+                "influence_weight": 0.6,
+            },
+            {
+                "source_artifact_id": "artifact-038",
+                "relationship_type": "inspired_by",
+                "influence_weight": 0.4,
+            },
+        ],
+        "strategy_tags": [
+            "momentum-alpha",
+            "low-volatility",
+            "sector-rotation",
+        ],
+        "page_info": {
+            "next_page_token": None,
+        },
+        "snapshot_at": "2026-04-19T03:00:00Z",
+        "surfaces": {
+            "inspiration": "fresh",
+        },
+    }
+}
+
 
 @contextmanager
-def _seeded_client(*, allow_local_snapshot_fallback: bool = True):
-    with tempfile.TemporaryDirectory() as td:
-        original_store = bff_main.read_store
-        bff_main.read_store = ReadSurfaceStore(
-            os.path.join(td, "read_surfaces.json"),
-            allow_local_snapshot_fallback=allow_local_snapshot_fallback,
-        )
-        client = TestClient(bff_main.app)
-        try:
-            yield client
-        finally:
-            bff_main.read_store = original_store
+def _seeded_client(
+    *,
+    inspiration_graphs: dict | None = None,
+    lineage_edges: list | None = None,
+):
+    original_store = bff_main.read_store
+    graphs = dict(_DEFAULT_INSPIRATION_GRAPHS if inspiration_graphs is None else inspiration_graphs)
+    bff_main.read_store = create_in_memory_read_surface_ports(
+        lifecycle_telemetry_governance_kwargs={
+            "inspiration_graphs": graphs,
+            "lineage_edges": lineage_edges or [],
+        }
+    )
+    client = TestClient(bff_main.app)
+    try:
+        yield client
+    finally:
+        bff_main.read_store = original_store
 
 
 def test_ew04_inspiration_graph_contract_returns_published_projection() -> None:
-    with _seeded_client() as client:
-        bff_main.read_store._data["inspiration_graphs"]["artifact-042"]["page_info"] = {
-            "next_page_token": "cursor:artifact-042:2",
+    graphs = {
+        "artifact-042": {
+            **_DEFAULT_INSPIRATION_GRAPHS["artifact-042"],
+            "page_info": {
+                "next_page_token": "cursor:artifact-042:2",
+            },
         }
-        bff_main.read_store._save()
+    }
+    with _seeded_client(inspiration_graphs=graphs) as client:
 
         response = client.get(
             "/api/v1/lineage/inspiration/artifact-042",
@@ -118,19 +163,16 @@ def test_ew04_inspiration_graph_returns_404_for_unknown_artifact_even_when_datas
 
 
 def test_ew04_inspiration_graph_fallback_from_lineage_edges_does_not_synthesize_constant_weight() -> None:
-    with _seeded_client() as client:
-        # Provide lineage edges without explicit influence weight
-        bff_main.read_store._data["lineage_edges"] = [
-            {
-                "id": "edge-001",
-                "from_artifact_id": "artifact-upstream",
-                "to_artifact_id": "artifact-fallback-01",
-                "edge_type": "inspired_by",
-                "strategy_id": "alpha-strategy",
-            }
-        ]
-        bff_main.read_store._save()
-
+    edges = [
+        {
+            "id": "edge-001",
+            "from_artifact_id": "artifact-upstream",
+            "to_artifact_id": "artifact-fallback-01",
+            "edge_type": "inspired_by",
+            "strategy_id": "alpha-strategy",
+        }
+    ]
+    with _seeded_client(lineage_edges=edges) as _client:
         projection = bff_main._ew04_inspiration_projection_from_lineage_edges("artifact-fallback-01")
         assert projection is not None
         assert projection["artifact_id"] == "artifact-fallback-01"

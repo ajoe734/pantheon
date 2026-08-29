@@ -11,26 +11,37 @@ from fastapi.testclient import TestClient
 
 sys.path.insert(0, os.path.dirname(__file__))
 
+import json
+from pathlib import Path
 import main as bff_main
-from read_store import ReadSurfaceStore
+from ports import create_in_memory_read_surface_ports
 
 
 AUTH = "Bearer test-operator:operator,admin"
 
+_DATA_PATH = Path(__file__).parent / "data" / "read_surfaces.json"
+with open(_DATA_PATH, "r", encoding="utf-8") as _f:
+    _RAW_DATA = json.load(_f)
+
 
 @contextmanager
 def _seeded_client():
-    with tempfile.TemporaryDirectory() as td:
-        original_store = bff_main.read_store
-        bff_main.read_store = ReadSurfaceStore(
-            os.path.join(td, "read_surfaces.json"),
-            allow_local_snapshot_fallback=True,
-        )
-        client = TestClient(bff_main.app)
-        try:
-            yield client
-        finally:
-            bff_main.read_store = original_store
+    original_store = bff_main.read_store
+    ports = create_in_memory_read_surface_ports(
+        lifecycle_telemetry_governance_kwargs={
+            "evolution_decisions": _RAW_DATA.get("evolution_decisions", {}),
+            "freeze_orders": _RAW_DATA.get("freeze_orders", {}),
+            "all_rollbacks": _RAW_DATA.get("all_rollbacks", []),
+        }
+    )
+    ports.list_evolution_decisions = ports.lifecycle_telemetry_governance.list_evolution_decisions
+    ports.list_all_rollbacks = ports.lifecycle_telemetry_governance.list_all_rollbacks
+    bff_main.read_store = ports
+    client = TestClient(bff_main.app)
+    try:
+        yield client
+    finally:
+        bff_main.read_store = original_store
 
 
 def test_evolution_decisions_list_contract():
