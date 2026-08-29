@@ -1,0 +1,86 @@
+{
+  "task_id": "ACG-WRITE-OWNER-AGORA-20260829",
+  "program_id": "acg-write-owner-agora-20260829",
+  "status": "ready_for_review",
+  "owner": "Antigravity",
+  "reviewer": "Codex2",
+  "generation": 6,
+  "timestamp": "2026-08-29T04:40:00Z",
+  "summary": "Implement independent persistent write owner for Agora domain (services/agora/store.py, service.py, write_authority.py) backed by PostgresJsonOwnerStore across Agora tables (sessions, memos, evidence_packs, notes, insights, training_examples, signals, signal_feedback, feedback, handoffs, audit_events, journal_entries, journal_audit, journal_idempotency, workshops, proposals, interactions) with owner_service='agora-svc'. Enforce role-based write authority matrix across all Agora resources with fail-closed 403 AgoraWriteForbiddenError. Zero read_store or in-memory dictionary overlay imports in services/agora/. Write-then-fresh-read verified across distinct store instances. Source Ingestion verified reconcile-only. Zero changes to services/control-plane/bff/main.py.",
+  "scope": {
+    "repository": "pantheon",
+    "deliverables": [
+      "services/agora/__init__.py",
+      "services/agora/service.py",
+      "services/agora/store.py",
+      "services/agora/write_authority.py",
+      "tests/agora_write_owner/__init__.py",
+      "tests/agora_write_owner/conftest.py",
+      "tests/agora_write_owner/evidence.json",
+      "tests/agora_write_owner/test_agora_decision_journal_patch.py",
+      "tests/agora_write_owner/test_agora_store_persistence.py",
+      "tests/agora_write_owner/test_agora_write_authority.py",
+      "tests/agora_write_owner/test_agora_write_owner.py",
+      "tests/agora_write_owner/test_no_read_store_import.py",
+      "tests/agora_write_owner/test_source_ingestion_reconcile_only.py"
+    ]
+  },
+  "acceptance_criteria_verification": {
+    "criterion_1_independent_persistent_owner": {
+      "verified": true,
+      "details": "AgoraStore and AgoraWriteService implement dedicated domain write owners using PostgresJsonOwnerStore across all Agora tables with owner_service='agora-svc'."
+    },
+    "criterion_2_no_read_store_import": {
+      "verified": true,
+      "details": "AST-verified zero imports or references to read_store or bff_local_dev_store in services/agora/."
+    },
+    "criterion_3_write_then_fresh_read_proof": {
+      "verified": true,
+      "details": "Tested cross-instance mutation and immediate fresh read retrieval across separate store instances with zero in-memory caching or dictionary overlays."
+    },
+    "criterion_4_no_main_py_change": {
+      "verified": true,
+      "details": "services/control-plane/bff/main.py remains completely untouched."
+    },
+    "criterion_5_source_ingestion_reconcile_only": {
+      "verified": true,
+      "details": "AST-verified that services/source_ingestion/ has zero write mutations on Agora stores and remains strictly reconcile-only."
+    }
+  },
+  "test_suites_executed": [
+    {
+      "suite": "tests/agora_write_owner/test_agora_store_persistence.py",
+      "passed": 8,
+      "failed": 0
+    },
+    {
+      "suite": "tests/agora_write_owner/test_agora_write_authority.py",
+      "passed": 3,
+      "failed": 0
+    },
+    {
+      "suite": "tests/agora_write_owner/test_agora_decision_journal_patch.py",
+      "passed": 1,
+      "failed": 0
+    },
+    {
+      "suite": "tests/agora_write_owner/test_agora_write_owner.py",
+      "passed": 3,
+      "failed": 0
+    },
+    {
+      "suite": "tests/agora_write_owner/test_no_read_store_import.py",
+      "passed": 1,
+      "failed": 0
+    },
+    {
+      "suite": "tests/agora_write_owner/test_source_ingestion_reconcile_only.py",
+      "passed": 1,
+      "failed": 0
+    }
+  ],
+  "verification": [
+    "python3 scripts/dev/provision_python_distribution.py",
+    "$PANTHEON_PY -m pytest -v tests/agora_write_owner (17 passed)"
+  ]
+}
