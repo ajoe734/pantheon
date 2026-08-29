@@ -185,6 +185,8 @@ def test_bounded_source_refresh_deploy_waits_and_gates_readback() -> None:
     assert "ingestRunId" in gate
     assert "SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS" in gate
     assert "/api/source-ingest/snapshots/latest?symbol=" in gate
+    assert 'snapshot.get("symbol") != execution_symbol' in gate
+    assert "canonical_taiwan_symbol(execution_symbol)" in gate
     assert "active paper snapshot is outside 24h" in gate
     assert "active paper snapshot lacks official exchange lineage" in gate
 

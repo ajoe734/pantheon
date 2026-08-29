@@ -59,7 +59,7 @@ def create_ingest_operations_router(runtime: SourceIngestionRuntime) -> APIRoute
                     "symbol": str(symbol or "").strip().upper(),
                 },
             )
-        return snapshot.to_public_dict()
+        return snapshot.to_public_dict(requested_symbol=symbol)
 
     @router.post("/api/source-ingest/connectors", status_code=201)
     def configure_connector(

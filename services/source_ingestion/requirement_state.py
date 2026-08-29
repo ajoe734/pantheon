@@ -565,11 +565,19 @@ class LatestMarketSnapshot:
             "points": [point.to_dict() for point in self.points],
         }
 
-    def to_public_dict(self) -> dict[str, Any]:
+    def to_public_dict(self, *, requested_symbol: Any | None = None) -> dict[str, Any]:
+        public_symbol = self.symbol
+        if requested_symbol is not None:
+            public_symbol = _market_snapshot_symbol(requested_symbol)
+            if _market_snapshot_lookup_symbol(public_symbol) != self.symbol:
+                raise MarketSnapshotStateError(
+                    f"requested symbol {public_symbol!r} does not resolve to "
+                    f"stored snapshot symbol {self.symbol!r}"
+                )
         return {
             "schema_version": self.schema_version,
             "snapshot_id": self.snapshot_id,
-            "symbol": self.symbol,
+            "symbol": public_symbol,
             "event_time": self.event_time,
             "observed_at": self.observed_at,
             "closes": list(self.closes),

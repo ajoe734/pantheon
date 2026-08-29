@@ -189,10 +189,17 @@ def test_tw_execution_alias_reads_only_the_official_twse_snapshot(
 
     assert alias.status_code == 200, alias.text
     assert official.status_code == 200, official.text
-    assert alias.json() == official.json()
-    assert alias.json()["symbol"] == "2330.TWSE"
-    assert alias.json()["closes"] == [955.0]
-    assert alias.json()["lineage"]["source_ids"] == [
+    alias_body = alias.json()
+    official_body = official.json()
+    assert alias_body["symbol"] == "2330.TW"
+    assert official_body["symbol"] == "2330.TWSE"
+    assert {key: value for key, value in alias_body.items() if key != "symbol"} == {
+        key: value for key, value in official_body.items() if key != "symbol"
+    }
+    assert alias_body["snapshot_id"] == official_body["snapshot_id"]
+    assert module.latest_market_snapshot_store.get("2330.TW").symbol == "2330.TWSE"
+    assert alias_body["closes"] == [955.0]
+    assert alias_body["lineage"]["source_ids"] == [
         "tw-official:tw_price_daily:TWSE:2330:official"
     ]
 

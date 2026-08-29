@@ -1232,11 +1232,12 @@ for requested_symbol in [item for item in priority_csv.split(",") if item]:
         raise SystemExit(
             f"active paper snapshot is unavailable for {requested_symbol}: {exc}"
         ) from exc
-    canonical_symbol = canonical_taiwan_symbol(requested_symbol)
-    if snapshot.get("symbol") != canonical_symbol:
+    execution_symbol = requested_symbol.upper()
+    canonical_symbol = canonical_taiwan_symbol(execution_symbol)
+    if snapshot.get("symbol") != execution_symbol:
         raise SystemExit(
             f"active paper snapshot identity mismatch for {requested_symbol}: "
-            f"{snapshot.get('symbol')!r} != {canonical_symbol!r}"
+            f"{snapshot.get('symbol')!r} != {execution_symbol!r}"
         )
     event_time = timestamp(snapshot.get("event_time"))
     age_seconds = (datetime.now(timezone.utc) - event_time).total_seconds()
@@ -1254,7 +1255,7 @@ for requested_symbol in [item for item in priority_csv.split(",") if item]:
         raise SystemExit(f"active paper snapshot lacks official exchange lineage for {requested_symbol}")
     print(
         "active paper snapshot accepted "
-        f"requested={requested_symbol} canonical={canonical_symbol} "
+        f"execution={execution_symbol} official={canonical_symbol} "
         f"event_time={snapshot.get('event_time')} snapshot={snapshot.get('snapshot_id')}"
     )
 print(

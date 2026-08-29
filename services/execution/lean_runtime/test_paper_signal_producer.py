@@ -354,6 +354,79 @@ class TestPaperSignalProducer(unittest.TestCase):
         self.assertEqual(producer.degraded_bindings, {})
 
     @patch("urllib.request.urlopen")
+    def test_tw_alias_snapshot_passes_producer_admission_with_official_lineage(
+        self,
+        mock_urlopen,
+    ) -> None:
+        from services.execution.lean_runtime.paper_signal_producer import CurrentArtifactStrategy
+        from services.execution.lean_runtime.test_current_artifact_signal import _artifact, _binding
+
+        artifact = _artifact()
+        artifact["parameters"]["symbols"] = ["2330.TW"]
+        binding = _binding(
+            artifact,
+            binding_id="rb-source-ingest-tw-alias",
+            include_market_input=False,
+        )
+        binding["symbol"] = "2330.TW"
+        binding["market_data_policy"] = {
+            "owner": "source-ingest",
+            "contract": "latest_stored_normalized",
+            "max_age_seconds": 86400,
+            "minimum_closes": 2,
+        }
+
+        response = MagicMock()
+        response.read.return_value = json.dumps(
+            {
+                "symbol": "2330.TW",
+                "closes": [950.0, 955.0],
+                "snapshot_id": "mss-official-twse-2330",
+                "event_time": _NOW,
+                "source_ref": "source-ingest://snapshots/mss-official-twse-2330",
+                "observed_at": _NOW,
+                "lineage": {
+                    "source_ids": [
+                        "tw-official:tw_price_daily:TWSE:2330:checksummed"
+                    ],
+                    "connector_ids": ["tw-twse-tpex-official-market"],
+                    "content_refs": [
+                        "tw-official://tw_price_daily/TWSE/2330/2026-06-14/checksummed"
+                    ],
+                    "ingest_run_ids": ["ingest-official-twse-2330"],
+                },
+            }
+        ).encode("utf-8")
+        context = MagicMock()
+        context.__enter__.return_value = response
+        mock_urlopen.return_value = context
+
+        store = InMemoryPendingSignalStore()
+        producer = PaperSignalProducer(
+            store_for=lambda _: store,
+            strategy=CurrentArtifactStrategy(),
+        )
+
+        with patch.dict(
+            "os.environ",
+            {"PANTHEON_SOURCE_INGEST_URL": "http://source-ingest:8080"},
+        ):
+            count = producer.produce(binding, _NOW)
+
+        self.assertEqual(count, 1)
+        [signal] = store.get_pending()
+        self.assertEqual(signal["symbol"], "2330.TW")
+        self.assertEqual(
+            signal["metadata"]["market_input_snapshot_id"],
+            "mss-official-twse-2330",
+        )
+        self.assertEqual(
+            signal["metadata"]["market_input_lineage"]["source_ids"],
+            ["tw-official:tw_price_daily:TWSE:2330:checksummed"],
+        )
+        self.assertEqual(producer.degraded_bindings, {})
+
+    @patch("urllib.request.urlopen")
     def test_stale_source_snapshot_emits_no_signal_with_typed_reason(self, mock_urlopen) -> None:
         from services.execution.lean_runtime.paper_signal_producer import CurrentArtifactStrategy
         from services.execution.lean_runtime.test_current_artifact_signal import _artifact, _binding
@@ -512,4 +585,3 @@ class TestSharedSnapshotAdmissionDecisions(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
