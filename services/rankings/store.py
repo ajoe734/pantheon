@@ -5,33 +5,32 @@ sole write path for ranking records and deliberately does not import
 ``services/control-plane/bff/read_store.py``: that module's ranking helpers
 keep an in-process local overlay dict as a response fallback, which is not a
 durable write path and does not survive process restart or a second reader
-process. Every read here re-reads the durable backing store (an mtime-gated
-reload for the JSON backend, or a fresh ``SELECT`` for the Postgres backend)
-so a ``get``/``list`` immediately observes a write committed by a different
-store instance, including one in a different process.
+process.
+
+Generation 2 narrows this store to a single concrete backend:
+``PostgresJsonOwnerStore`` (see
+``DATABASE_OWNERSHIP_AND_SHARED_CLUSTER_POLICY.md``). Generation 1 shipped a
+JSON-file backend and a Postgres backend side by side, selected by an
+environment variable -- two persistence implementations for the same
+domain, which duplicates the durability guarantee this module exists to
+provide instead of concentrating it in one place. There is exactly one
+storage implementation now: every read re-runs a fresh ``SELECT`` against
+the owner table, so a ``get``/``list`` immediately observes a write
+committed by a different store instance, including one in a different
+process.
 
 Source Ingestion remains reconcile-only for this domain: it may read the
-durable rankings state to reconcile, but it is not a write owner and must not
-call the write methods below.
+durable rankings state to reconcile, but it is not a write owner and must
+not call the write methods below.
 """
 from __future__ import annotations
 
-import json
 import os
-import tempfile
 import threading
-from contextlib import contextmanager
 from copy import deepcopy
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
-from functools import wraps
-from pathlib import Path
-from typing import Any, Dict, Iterator, List, Mapping, Optional
-
-try:
-    import fcntl
-except ImportError:  # pragma: no cover - posix only in this repo's runtime
-    fcntl = None
+from typing import Any, Dict, List, Mapping, Optional
 
 from services.foundation.postgres_json_store import PostgresJsonOwnerStore
 
@@ -83,151 +82,14 @@ def _validate(record: RankingRecord) -> None:
         raise RankingWriteOwnerError("entries must be a list")
 
 
-def _serialized_read(method):
-    @wraps(method)
-    def wrapper(self, *args, **kwargs):
-        with self._write_guard(read_only=True):
-            return method(self, *args, **kwargs)
-
-    return wrapper
-
-
-def _serialized_write(method):
-    @wraps(method)
-    def wrapper(self, *args, **kwargs):
-        with self._write_guard(read_only=False):
-            return method(self, *args, **kwargs)
-
-    return wrapper
-
-
 class RankingWriteStore:
-    """Durable JSON-file write owner for Rankings records.
+    """The sole durable write owner for Rankings records.
 
-    Cross-process flock serializes read-modify-write cycles, and an
-    mtime-gated reload discards any process-local cache before every
-    operation, so this store never answers from a stale in-memory snapshot.
+    Backed by one concrete implementation, ``PostgresJsonOwnerStore``. Every
+    method re-reads the backing table before answering, so this store never
+    returns a stale in-memory snapshot and a write is immediately visible to
+    any other store instance pointed at the same table.
     """
-
-    def __init__(self, path: Optional[Path] = None) -> None:
-        self._records: Dict[str, RankingRecord] = {}
-        self._path = path
-        self._loaded_mtime_ns: Optional[int] = None
-        self._thread_lock = threading.RLock()
-        if path and path.exists():
-            self._load(path)
-            self._loaded_mtime_ns = path.stat().st_mtime_ns
-
-    @contextmanager
-    def _write_guard(self, *, read_only: bool) -> Iterator[None]:
-        with self._thread_lock:
-            if self._path is None:
-                yield
-                return
-            self._path.parent.mkdir(parents=True, exist_ok=True)
-            lock_path = self._path.with_name(f".{self._path.name}.lock")
-            descriptor = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
-            try:
-                if fcntl is not None:
-                    fcntl.flock(descriptor, fcntl.LOCK_SH if read_only else fcntl.LOCK_EX)
-                self._refresh_from_disk_locked()
-                yield
-            finally:
-                if fcntl is not None:
-                    fcntl.flock(descriptor, fcntl.LOCK_UN)
-                os.close(descriptor)
-
-    def _refresh_from_disk_locked(self) -> None:
-        if not self._path or not self._path.exists():
-            return
-        mtime_ns = self._path.stat().st_mtime_ns
-        if self._loaded_mtime_ns == mtime_ns:
-            return
-        self._records.clear()
-        self._load(self._path)
-        self._loaded_mtime_ns = mtime_ns
-
-    def _load(self, path: Path) -> None:
-        text = path.read_text()
-        if not text.strip():
-            return
-        data = json.loads(text)
-        for payload in data.get("rankings", []):
-            record = RankingRecord.from_dict(payload)
-            self._records[record.ranking_id] = record
-
-    def _save(self) -> None:
-        if self._path is None:
-            return
-        self._path.parent.mkdir(parents=True, exist_ok=True)
-        data = {"rankings": [record.to_dict() for record in self._records.values()]}
-        handle = tempfile.NamedTemporaryFile(
-            mode="w",
-            encoding="utf-8",
-            dir=self._path.parent,
-            prefix=f".{self._path.name}.",
-            suffix=".tmp",
-            delete=False,
-        )
-        temporary_path = Path(handle.name)
-        try:
-            with handle:
-                json.dump(data, handle, indent=2, sort_keys=True)
-                handle.flush()
-                os.fsync(handle.fileno())
-            os.replace(temporary_path, self._path)
-            directory_fd = os.open(self._path.parent, os.O_RDONLY)
-            try:
-                os.fsync(directory_fd)
-            finally:
-                os.close(directory_fd)
-        finally:
-            if temporary_path.exists():
-                temporary_path.unlink()
-        self._loaded_mtime_ns = self._path.stat().st_mtime_ns
-
-    # ---- reads ----
-
-    @_serialized_read
-    def get_ranking(self, ranking_id: str) -> Optional[RankingRecord]:
-        record = self._records.get(ranking_id)
-        return deepcopy(record) if record is not None else None
-
-    @_serialized_read
-    def list_rankings(self) -> List[RankingRecord]:
-        return [deepcopy(record) for record in self._records.values()]
-
-    # ---- writes ----
-
-    @_serialized_write
-    def create_ranking(self, record: RankingRecord) -> RankingRecord:
-        _validate(record)
-        if record.ranking_id in self._records:
-            raise RankingConflictError(f"ranking already exists: {record.ranking_id}")
-        self._records[record.ranking_id] = deepcopy(record)
-        self._save()
-        return deepcopy(self._records[record.ranking_id])
-
-    @_serialized_write
-    def put_ranking(self, record: RankingRecord) -> RankingRecord:
-        """Create-or-replace. The sole owner-service write entrypoint."""
-        _validate(record)
-        record.updated_at = utc_now()
-        self._records[record.ranking_id] = deepcopy(record)
-        self._save()
-        return deepcopy(self._records[record.ranking_id])
-
-    @_serialized_write
-    def delete_ranking(self, ranking_id: str) -> bool:
-        if ranking_id not in self._records:
-            return False
-        del self._records[ranking_id]
-        self._save()
-        return True
-
-
-class PostgresRankingWriteStore(RankingWriteStore):
-    """Postgres owner store for Rankings records (staging/prod backend)."""
 
     def __init__(
         self,
@@ -241,76 +103,74 @@ class PostgresRankingWriteStore(RankingWriteStore):
             owner_service="rankings-svc",
             bootstrap=bootstrap,
         )
-        super().__init__(path=None)
-        self._refresh_from_postgres()
+        self._thread_lock = threading.RLock()
 
-    def _refresh_from_postgres(self) -> None:
-        self._records = {}
+    def _refresh(self) -> Dict[str, RankingRecord]:
+        records: Dict[str, RankingRecord] = {}
         for payload in self._records_table.list_all():
             record = RankingRecord.from_dict(payload)
-            self._records[record.ranking_id] = record
+            records[record.ranking_id] = record
+        return records
 
-    @_serialized_read
+    # ---- reads ----
+
     def get_ranking(self, ranking_id: str) -> Optional[RankingRecord]:
-        self._refresh_from_postgres()
-        record = self._records.get(ranking_id)
-        return deepcopy(record) if record is not None else None
+        with self._thread_lock:
+            record = self._refresh().get(ranking_id)
+            return deepcopy(record) if record is not None else None
 
-    @_serialized_read
     def list_rankings(self) -> List[RankingRecord]:
-        self._refresh_from_postgres()
-        return [deepcopy(record) for record in self._records.values()]
+        with self._thread_lock:
+            return [deepcopy(record) for record in self._refresh().values()]
 
-    @_serialized_write
+    # ---- writes ----
+
     def create_ranking(self, record: RankingRecord) -> RankingRecord:
-        self._refresh_from_postgres()
-        _validate(record)
-        if record.ranking_id in self._records:
-            raise RankingConflictError(f"ranking already exists: {record.ranking_id}")
-        self._records_table.put(record.ranking_id, record.to_dict())
-        self._refresh_from_postgres()
-        return deepcopy(self._records[record.ranking_id])
+        """Insert a brand-new ranking; atomic against concurrent creators."""
 
-    @_serialized_write
+        with self._thread_lock:
+            _validate(record)
+            created, canonical = self._records_table.compare_and_set(
+                record.ranking_id, None, record.to_dict()
+            )
+            if not created:
+                raise RankingConflictError(f"ranking already exists: {record.ranking_id}")
+            return RankingRecord.from_dict(canonical)
+
     def put_ranking(self, record: RankingRecord) -> RankingRecord:
-        _validate(record)
-        record.updated_at = utc_now()
-        self._records_table.put(record.ranking_id, record.to_dict())
-        self._refresh_from_postgres()
-        return deepcopy(self._records[record.ranking_id])
+        """Create-or-replace. The sole owner-service write entrypoint."""
 
-    @_serialized_write
+        with self._thread_lock:
+            _validate(record)
+            record.updated_at = utc_now()
+            self._records_table.put(record.ranking_id, record.to_dict())
+            return deepcopy(record)
+
     def delete_ranking(self, ranking_id: str) -> bool:
-        self._refresh_from_postgres()
-        current = self._records.get(ranking_id)
-        if current is None:
-            return False
-        deleted = self._records_table.delete_if_matches(ranking_id, current.to_dict())
-        self._refresh_from_postgres()
-        return deleted
+        with self._thread_lock:
+            current = self._refresh().get(ranking_id)
+            if current is None:
+                return False
+            return self._records_table.delete_if_matches(ranking_id, current.to_dict())
 
 
-def build_rankings_store(path: Optional[Path] = None) -> RankingWriteStore:
-    """Select the Rankings write-owner backend from environment posture.
+def build_rankings_store(
+    dsn: Optional[str] = None,
+    table: Optional[str] = None,
+    bootstrap: Optional[bool] = None,
+) -> RankingWriteStore:
+    """Build the Rankings write-owner store.
 
-    ``RANKING_STORE_BACKEND=json`` (the default) is the dev/local durable
-    JSON-file owner store rooted at ``path``. ``RANKING_STORE_BACKEND=postgres``
-    selects the shared-cluster Postgres owner table, matching the
+    ``PostgresJsonOwnerStore`` is the only backend, matching the
     write-ownership pattern documented in
-    ``DATABASE_OWNERSHIP_AND_SHARED_CLUSTER_POLICY.md``.
+    ``DATABASE_OWNERSHIP_AND_SHARED_CLUSTER_POLICY.md``. The DSN, table, and
+    bootstrap flag may be passed explicitly or resolved from the environment.
     """
 
-    backend = (os.getenv("RANKING_STORE_BACKEND") or "json").strip().lower()
-    if backend in ("", "json"):
-        return RankingWriteStore(path=path)
-    if backend != "postgres":
-        raise ValueError("RANKING_STORE_BACKEND must be json or postgres")
-    dsn = os.getenv("RANKING_STORE_DSN") or os.getenv("DATABASE_URL")
-    if not dsn:
-        raise ValueError("RANKING_STORE_DSN or DATABASE_URL is required for Postgres ranking store")
-    bootstrap = os.getenv("RANKING_STORE_BOOTSTRAP", "1").strip().lower() not in ("0", "false", "no")
-    return PostgresRankingWriteStore(
-        dsn=dsn,
-        table=os.getenv("RANKING_STORE_TABLE", "rankings.rankings"),
-        bootstrap=bootstrap,
-    )
+    resolved_dsn = dsn or os.getenv("RANKING_STORE_DSN") or os.getenv("DATABASE_URL")
+    if not resolved_dsn:
+        raise ValueError("RANKING_STORE_DSN or DATABASE_URL is required for the Rankings write-owner store")
+    resolved_table = table or os.getenv("RANKING_STORE_TABLE", "rankings.rankings")
+    if bootstrap is None:
+        bootstrap = os.getenv("RANKING_STORE_BOOTSTRAP", "1").strip().lower() not in ("0", "false", "no")
+    return RankingWriteStore(dsn=resolved_dsn, table=resolved_table, bootstrap=bootstrap)
