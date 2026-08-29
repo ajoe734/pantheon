@@ -1,18 +1,18 @@
 # Operations & Agora Read Surface Ownership Partition
 
-**Task ID**: `ACG-RS-OPS-OWNERSHIP-MAP-20260828`  
-**Design Unit**: `ACG-02-OWNERSHIP-OPS-AGORA`  
-**Program ID**: `PANTHEON-ARCH-CLEANUP-20260828`  
-**Phase**: Read-surface ownership partition  
-**Domain**: `operations_agora`  
-**Owner**: `Antigravity`  
-**Reviewer**: `Codex2`  
-**Target Artifact**: `docs/04/read_surface_ownership_partition_20260828/operations_agora.md`  
+**Task ID**: `ACG-RS-OPS-OWNERSHIP-MAP-20260828`
+**Design Unit**: `ACG-02-OWNERSHIP-OPS-AGORA`
+**Program ID**: `PANTHEON-ARCH-CLEANUP-20260828`
+**Phase**: Read-surface ownership partition
+**Domain**: `operations_agora`
+**Owner**: `Antigravity`
+**Reviewer**: `Codex2`
+**Target Artifact**: `docs/04/read_surface_ownership_partition_20260828/operations_agora.md`
 **Target Domain Port Modules**:
 - `services/control-plane/bff/domain_ports/operations_consultation.py`
 - `services/control-plane/bff/ports/operations_consultation.py`
-- `services/control-plane/bff/ports/read_surface_ports.py`  
-**Status**: Canonical Ownership Map & Migration Seam Specification  
+- `services/control-plane/bff/ports/read_surface_ports.py`
+**Status**: Canonical Ownership Map & Migration Seam Specification
 
 ---
 
@@ -56,11 +56,11 @@ All 202 direct executable AST methods and 598 direct member references (and corr
 | Domain Partition | Task ID | Target Domain Port Module | Frozen Delivery / PR Head SHA | Direct AST Methods ($|D_k|$) | Direct AST Refs | Lexical (Methods / Calls) | Scope & Boundary Summary |
 |---|---|---|---|---:|---:|---:|---|
 | **Operations & Agora** | `ACG-RS-OPS-OWNERSHIP-MAP-20260828` | `operations_consultation.py` | `task/ACG-RS-OPS-OWNERSHIP-MAP-20260828` | **48** | **76** | 48 / 76 | Agora trading room, sessions, signals, feedback, notes, committees, consult requests, MCP tools/skills (83 local audit calls across 54 methods) |
-| **OODA & Management** | `ACG-RS-OODA-OWNERSHIP-MAP-20260828` | `ooda_management.py` | `4ec6e171909c8d8ca3959a420db0d88d7095b49e` (PR #5357) | **15** | **49** | 16 / 50 | OODA loop packets, synthesis conflict logs, governance review queue, approval decisions (51 total AST calls with 2 dynamic `getattr`; 16/50 in lexical space including L6953 docstring) |
-| **Research & Knowledge** | `ACG-RS-RESEARCH-OWNERSHIP-MAP-20260828` | `research_knowledge_source.py` | `a29218e2c9fb4850c8b0598d86db20d20de17965` (PR #5359) | **44** | **119** | 42 / 116 | Research tickets, experiments, analyses, artifacts, strategy specs, search index, dataset sources (including 13 `dataset_source` calls; 39 typed port methods; 42/116 in PR #5359) |
+| **OODA & Management** | `ACG-RS-OODA-OWNERSHIP-MAP-20260828` | `ooda_management.py` | `4b9f0b5a28af08bde017ce85cc17226b94fcbe98` (PR #5357) | **15** | **49** | 16 / 50 | OODA loop packets, synthesis conflict logs, governance review queue, approval decisions (51 total AST calls with 2 dynamic `getattr`; 16/50 in lexical space including L6953 docstring) |
+| **Research & Knowledge** | `ACG-RS-RESEARCH-OWNERSHIP-MAP-20260828` | `research_knowledge_source.py` | `3507b39c8ced923351c04cdfe87fa3584c5a5d38` (PR #5359) | **44** | **119** | 42 / 116 | Research tickets, experiments, analyses, artifacts, strategy specs, search index, dataset sources (including 13 `dataset_source` calls; 39 typed port APIs; 42/116 in PR #5359) |
 | **Persona Training** | `ACG-RS-TRAINING-OWNERSHIP-MAP-20260828` | `persona_training.py` | `7853a6e64a5b0bf7c5815452dda3b9f02d8720af` (PR #5355) | **17** | **31** | 17 / 31 | Interactive trainer sessions, trainer controls, preview evaluation, trainer replay commit/discard, rapid evaluation |
 | **Persona Capital & Runtime** | `ACG-RS-CAPITAL-OWNERSHIP-MAP-20260828` | `persona_capital_runtime.py` | `580076652d9321bec845b36a5a99efbac885e149` (PR #5356) | **45** | **213** | 47 / 217 | Persona fleet registry, capital pools, bindings, deployment plans, rankings, rebalances (45/213 in AST space after evolution transfer to LTG and removing L40568 comment; 47/217 in PR #5356) |
-| **Lifecycle, Telemetry & Governance** | `ACG-RS-LIFECYCLE-OWNERSHIP-MAP-20260828` | `lifecycle_telemetry_governance.py` | `d6ccba7a98ce80d56c92e873bcfa606e2fd47206` (PR #5360) | **33** | **110** | 33 / 110 | Incidents, postmortems, kill switch, sentinel findings, loop runs, lineage, telemetry drift, evolution decisions (111 AST calls with L7736 dynamic `getattr`; includes 13 evolution calls across 3 methods) |
+| **Lifecycle, Telemetry & Governance** | `ACG-RS-LIFECYCLE-OWNERSHIP-MAP-20260828` | `lifecycle_telemetry_governance.py` | `6b9a8c630bdc597ebdb4a3126cf77350064f63f0` (PR #5360) | **33** | **110** | 33 / 110 | Incidents, postmortems, kill switch, sentinel findings, loop runs, lineage, telemetry drift, evolution decisions (111 AST calls with L7736 dynamic `getattr`; includes 13 evolution calls across 3 methods) |
 | **TOTAL** | **All 6 Domains Combined** | **All 6 Domain Ports** | **Exact Disjoint Union** | **202** | **598** | **203 / 600** | **100% Disjoint Union & Full Coverage of `main.py` Surface (613 AST Refs / 615 Lexical Refs)** |
 
 ### 2.3 Sibling Reporting Variance & Cross-Domain Boundary Reconciliation
@@ -165,7 +165,7 @@ The table below catalogs all 54 methods evaluated in the Operations & Agora doma
 | 39 | `get_committee` | **READ** | 2 | `AgoraCommitteePort.get_committee()` | `services/agora/ / CommitteeRegistry` | Extract typed AgoraCommitteePort reader |
 | 40 | `list_committees` | **READ** | 1 | `AgoraCommitteePort.list_committees()` | `services/agora/ / CommitteeRegistry` | Extract typed AgoraCommitteePort reader |
 | 41 | `record_sponsor_decision` | **WRITE** | 1 | `SponsorDecisionCommandPort.record_sponsor_decision()` | `services/control-plane/governance / GovernancePolicyStore` | Extract GovernancePolicyStore command |
-| 42 | `get_consult_policy` | **READ** | 1 | `ConsultationReaderPort.get_consult_policy()` | `services/consultation/ / services/control-plane/bff/domain_ports/operations_consultation.py` | Existing port in operations_consultation.py |
+| 42 | `get_consult_policy` | **READ** | 1 | `ConsultationReaderPort.get_consult_policy()` | `services/consultation/ / services/control-plane/bff/domain_ports/operations_consultation.py` | Extract typed ConsultationReaderPort reader |
 | 43 | `create_consult_request` | **WRITE** | 1 | `ConsultationReaderPort.create_consult_request()` | `services/consultation/client.py::ConsultationServiceClient / ConsultationStore` | Existing port in operations_consultation.py |
 | 44 | `cancel_consult_request` | **WRITE** | 1 | `ConsultationReaderPort.cancel_consult_request()` | `services/consultation/client.py::ConsultationServiceClient / ConsultationStore` | Existing port in operations_consultation.py |
 | 45 | `get_consult_request` | **READ** | 3 | `ConsultationReaderPort.get_consult_request()` | `services/control-plane/bff/domain_ports/operations_consultation.py::DomainConsultationPort` | Existing port in operations_consultation.py |
@@ -316,7 +316,7 @@ The 54 methods of the Operations, Agora, OpenClaw, and Consultation domain matri
 ### 5.7 Consultation Lifecycle & Transcripts (13 methods, 16 call sites)
 - **Methods**: `get_consult_policy`, `create_consult_request`, `cancel_consult_request`, `get_consult_request`, `list_consult_requests`, `get_consult_memo`, `list_consult_memos`, `list_consultations_for_persona`, `get_consultation`, `get_consultation_participants`, `get_consultation_outcome`, `get_consultation_evidence`, `get_consult_transcript`
 - **Domain Port**: `ConsultationReaderPort` / `DomainConsultationPort` in `services/control-plane/bff/domain_ports/operations_consultation.py`.
-- **Target Seam**: Backed directly by `ConsultationServiceClient` and `ConsultationStore` (from `services/consultation/`). Implemented with payload redaction for persona-internal states and contiguous transcript gap detection.
+- **Target Seam**: Backed directly by `ConsultationServiceClient` and `ConsultationStore` (from `services/consultation/`). Implemented with payload redaction for persona-internal states and contiguous transcript gap detection. `get_consult_policy` will be extracted and added to `ConsultationReaderPort` during migration.
 - **Call Classification**: 2 WRITE, 11 READ (16 call sites: 2 WRITE, 14 READ).
 
 ---
@@ -328,4 +328,3 @@ The 54 methods of the Operations, Agora, OpenClaw, and Consultation domain matri
 3. **No Compatibility Shims**: Do not introduce intermediate wrapper layers that bounce calls back to `read_store`. Calls must migrate cleanly to typed domain ports.
 4. **Fail-Closed Safety**: OpenClaw broker readiness and Agora committee handoffs must maintain strict fail-closed safety constraints during cutover.
 5. **Exact Mathematical Parity**: Total method count across all 6 sibling tasks equals exactly 202 direct methods and 598 direct member references in AST space (203 methods and 600 direct occurrences in lexical space, 613 total AST references / 615 total lexical references), providing an unassailable baseline for complete legacy retirement in `ACG-RS-FINAL-DELETE-20260828`.
-
