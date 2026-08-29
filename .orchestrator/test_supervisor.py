@@ -6219,6 +6219,25 @@ class RuntimeAndFailureSemanticsTests(unittest.TestCase):
         self.assertEqual(worker["status"], "superseded")
         self.assertNotIn("governance_lease_guard", worker)
 
+    def test_rich_status_lease_matches_exact_worker_and_rejects_mismatch(self) -> None:
+        worker = self._owner_worker(generation=1)
+        event = self._exact_lifecycle_event(worker, event_type="handoff")
+        lease = event["status_command"]["worker_lease"]
+        lease.update(
+            {
+                "task_generation": 1,
+                "actor": "Codex",
+                "workspace_repository_id": "pantheon",
+                "workspace_branch": "task/TASK-1",
+                "workspace_source_root": "/tmp/pantheon",
+            }
+        )
+
+        self.assertTrue(supervisor.status_event_matches_worker_process(event, worker))
+
+        lease["pid_start_ticks"] = 9999
+        self.assertFalse(supervisor.status_event_matches_worker_process(event, worker))
+
     def test_reviewer_reopen_ends_the_exact_worker_that_emitted_it(self) -> None:
         config = config_fixture()
         task = task_fixture(status="in_progress")

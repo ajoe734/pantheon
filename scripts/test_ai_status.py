@@ -8862,6 +8862,7 @@ class DeliveryMetadataValidationTests(unittest.TestCase):
                 ("rev-parse", "HEAD"): workspace_head,
                 ("rev-parse", approved_head): approved_head,
                 ("show", "-s", "--format=%s", approved_head): "REG-002: deliver reviewed fix",
+                ("show", "-s", "--format=%P", approved_head): approved_head,
                 ("show", "-s", "--format=%b", approved_head): (
                     "LLM-Agent: Codex\nTask-ID: REG-002\nReviewer: Claude\n"
                 ),
@@ -8906,6 +8907,225 @@ class DeliveryMetadataValidationTests(unittest.TestCase):
             ["merge-base", "--is-ancestor", approved_head, "origin/dev"],
             succeeded_calls,
         )
+
+    def test_collect_done_uses_authored_parent_for_exact_base_merge_tip(self) -> None:
+        approved_head = "a" * 40
+        authored_parent = "b" * 40
+        frozen_base = "c" * 40
+        task = {
+            "id": "REG-002",
+            "owner": "Codex",
+            "reviewer": "Claude",
+            "status": "review_approved",
+            "artifacts": [],
+            ai_status.APPROVAL_BINDING_KEY: {
+                "pr": 152,
+                "head_sha": approved_head,
+                "head_branch": "task/REG-002",
+                "base": "dev",
+            },
+            ai_status.DELIVERY_BINDING_KEY: {
+                "kind": "pull_request",
+                "pr": 152,
+                "head_sha": approved_head,
+                "head_branch": "task/REG-002",
+                "base": "dev",
+                "base_sha": frozen_base,
+                "required_merge_method": "MERGE",
+                "evidence_manifest": {"path": "evidence.json", "blob_sha": "d" * 40},
+            },
+            ai_status.GITHUB_REVIEW_BRIDGE_KEY: {
+                "decision": "approve",
+                "mode": "required_commit_status",
+                "pr": 152,
+                "head_sha": approved_head,
+                "head_branch": "task/REG-002",
+                "base": "dev",
+                "status_id": 99,
+                "status_context": ai_status.GITHUB_CANONICAL_REVIEW_CONTEXT,
+                "status_state": "success",
+            },
+        }
+
+        def fake_run_git_command(args: list[str], **kwargs: object) -> str:
+            responses = {
+                ("rev-parse", "--abbrev-ref", "HEAD"): "task/REG-002",
+                ("rev-parse", "HEAD"): "e" * 40,
+                ("rev-parse", approved_head): approved_head,
+                ("show", "-s", "--format=%s", approved_head): "REG-002: merge dev",
+                ("show", "-s", "--format=%P", approved_head): f"{authored_parent} {frozen_base}",
+                ("show", "-s", "--format=%P", authored_parent): "",
+                ("show", "-s", "--format=%s", authored_parent): "REG-002: deliver reviewed fix",
+                ("show", "-s", "--format=%b", authored_parent): (
+                    "LLM-Agent: Codex\nTask-ID: REG-002\nReviewer: Claude\n"
+                ),
+                ("show", "-s", "--format=%an", authored_parent): "Codex",
+                ("show", "-s", "--format=%ae", authored_parent): "codex@example.com",
+                ("status", "--porcelain"): "",
+                ("remote",): "origin",
+                ("rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"): "",
+                ("fetch", "origin", "dev"): "",
+                ("rev-parse", "--verify", "origin/dev"): "e" * 40,
+            }
+            try:
+                return responses[tuple(args)]
+            except KeyError as exc:
+                raise AssertionError(f"unexpected git command: {args}") from exc
+
+        def fake_git_command_succeeds(args: list[str], **kwargs: object) -> bool:
+            if args == ["cat-file", "-e", f"{approved_head}^{{commit}}"]:
+                return True
+            if args == ["merge-base", "--is-ancestor", approved_head, "origin/dev"]:
+                return True
+            raise AssertionError(f"unexpected git predicate: {args}")
+
+        with (
+            mock.patch.object(ai_status, "run_git_command", side_effect=fake_run_git_command),
+            mock.patch.object(
+                ai_status, "git_command_succeeds", side_effect=fake_git_command_succeeds
+            ),
+        ):
+            delivery = ai_status.collect_done_delivery_metadata(task, "Codex")
+
+        self.assertEqual(delivery["commit"], approved_head)
+        self.assertEqual(delivery["commit_metadata_ref"], authored_parent)
+        self.assertEqual(delivery["commit_metadata_source"], "approved_merge_first_parent")
+        self.assertTrue(delivery["head_merged_to_target"])
+
+    def test_approved_closeout_metadata_rejects_wrong_merge_base(self) -> None:
+        approved_head = "a" * 40
+        task = {
+            "id": "REG-002",
+            ai_status.DELIVERY_BINDING_KEY: {
+                "base": "dev",
+                "base_sha": "c" * 40,
+            },
+        }
+
+        def fake_run_git_command(args: list[str], **kwargs: object) -> str:
+            if args == ["show", "-s", "--format=%s", approved_head]:
+                return "REG-002: merge dev"
+            if args == ["show", "-s", "--format=%P", approved_head]:
+                return f"{'b' * 40} {'d' * 40}"
+            raise AssertionError(f"unexpected git command: {args}")
+
+        with (
+            mock.patch.object(ai_status, "run_git_command", side_effect=fake_run_git_command),
+            mock.patch.object(ai_status, "git_command_succeeds", return_value=False),
+        ):
+            metadata_ref = ai_status.approved_closeout_metadata_ref(
+                task,
+                repository_root=Path("/repo"),
+                approved_ref=approved_head,
+            )
+
+        self.assertEqual(metadata_ref, approved_head)
+
+    def test_approved_closeout_metadata_accepts_descriptive_frozen_base_merge_tip(self) -> None:
+        approved_head = "a" * 40
+        authored_parent = "b" * 40
+        frozen_base = "c" * 40
+        task = {
+            "id": "REG-002",
+            ai_status.DELIVERY_BINDING_KEY: {
+                "base": "dev",
+                "base_sha": frozen_base,
+            },
+        }
+
+        def fake_run_git_command(args: list[str], **kwargs: object) -> str:
+            if args == ["show", "-s", "--format=%P", approved_head]:
+                return f"{authored_parent} {frozen_base}"
+            if args == ["show", "-s", "--format=%P", authored_parent]:
+                return ""
+            raise AssertionError(f"unexpected git command: {args}")
+
+        with mock.patch.object(ai_status, "run_git_command", side_effect=fake_run_git_command):
+            metadata_ref = ai_status.approved_closeout_metadata_ref(
+                task,
+                repository_root=Path("/repo"),
+                approved_ref=approved_head,
+            )
+
+        self.assertEqual(metadata_ref, authored_parent)
+
+    def test_approved_closeout_metadata_unwraps_consecutive_base_refresh_merges(self) -> None:
+        approved_head = "a" * 40
+        first_refresh = "b" * 40
+        frozen_base = "c" * 40
+        authored_parent = "d" * 40
+        older_base = "e" * 40
+        task = {
+            "id": "REG-002",
+            ai_status.DELIVERY_BINDING_KEY: {
+                "base": "dev",
+                "base_sha": frozen_base,
+            },
+        }
+
+        def fake_run_git_command(args: list[str], **kwargs: object) -> str:
+            responses = {
+                ("show", "-s", "--format=%P", approved_head): f"{first_refresh} {frozen_base}",
+                ("show", "-s", "--format=%P", first_refresh): f"{authored_parent} {older_base}",
+                ("show", "-s", "--format=%P", authored_parent): "",
+            }
+            try:
+                return responses[tuple(args)]
+            except KeyError as exc:
+                raise AssertionError(f"unexpected git command: {args}") from exc
+
+        with (
+            mock.patch.object(ai_status, "run_git_command", side_effect=fake_run_git_command),
+            mock.patch.object(
+                ai_status,
+                "git_command_succeeds",
+                side_effect=lambda args, **kwargs: args
+                == ["merge-base", "--is-ancestor", older_base, frozen_base],
+            ),
+        ):
+            metadata_ref = ai_status.approved_closeout_metadata_ref(
+                task,
+                repository_root=Path("/repo"),
+                approved_ref=approved_head,
+            )
+
+        self.assertEqual(metadata_ref, authored_parent)
+
+    def test_approved_closeout_metadata_does_not_cross_non_base_second_parent(self) -> None:
+        approved_head = "a" * 40
+        first_refresh = "b" * 40
+        frozen_base = "c" * 40
+        authored_parent = "d" * 40
+        unrelated_parent = "e" * 40
+        task = {
+            "id": "REG-002",
+            ai_status.DELIVERY_BINDING_KEY: {
+                "base": "dev",
+                "base_sha": frozen_base,
+            },
+        }
+
+        def fake_run_git_command(args: list[str], **kwargs: object) -> str:
+            responses = {
+                ("show", "-s", "--format=%P", approved_head): f"{first_refresh} {frozen_base}",
+                ("show", "-s", "--format=%P", first_refresh): f"{authored_parent} {unrelated_parent}",
+            }
+            try:
+                return responses[tuple(args)]
+            except KeyError as exc:
+                raise AssertionError(f"unexpected git command: {args}") from exc
+
+        with (
+            mock.patch.object(ai_status, "run_git_command", side_effect=fake_run_git_command),
+            mock.patch.object(ai_status, "git_command_succeeds", return_value=False),
+        ):
+            metadata_ref = ai_status.approved_closeout_metadata_ref(
+                task,
+                repository_root=Path("/repo"),
+                approved_ref=approved_head,
+            )
+
+        self.assertEqual(metadata_ref, first_refresh)
 
     def test_collect_done_does_not_trust_unverified_approved_head_binding(self) -> None:
         approved_head = "a" * 40

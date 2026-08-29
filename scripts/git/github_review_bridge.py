@@ -801,7 +801,11 @@ def _validate_pr_admission_metadata(
         )
 
     merge_state = str(snapshot.get("mergeStateStatus") or "").strip().upper()
-    if merge_state == "BEHIND":
+    if merge_state == "DIRTY":
+        raise GitHubReviewBridgeError(
+            f"GitHub PR #{normalized.pr} has merge conflicts and cannot enter review"
+        )
+    if merge_state == "BEHIND" and not allow_base_advance:
         raise GitHubReviewBridgeError(
             f"GitHub PR #{normalized.pr} is BEHIND {normalized.base}; refresh it before review"
         )
@@ -952,14 +956,15 @@ def revalidate_review_admission(
     *,
     repository: str,
     delivery_binding: Mapping[str, Any],
-    allow_base_advance: bool = False,
+    allow_base_advance: bool = True,
     runner: JsonRunner | None = None,
 ) -> ReviewAdmissionBinding:
     """Recheck a frozen admission before approval can unlock integration.
 
-    The current base may equal the frozen base or move to another commit which
-    the immutable reviewed head already contains. Any ordinary base advance
-    makes the ancestry check fail and requires refresh plus a new handoff.
+    The exact reviewed head, branch and evidence blob remain frozen. An
+    unrelated linear base advance is accepted when GitHub still reports the
+    exact PR open and non-conflicting. A head/branch/blob mismatch, base rewind/divergence,
+    conflict or non-linear base advance still fails closed.
     """
 
     manifest = delivery_binding.get("evidence_manifest")
