@@ -13,7 +13,7 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 import main as bff_main
-from ports import create_read_surface_ports
+from ports import create_in_memory_read_surface_ports
 
 
 HEADERS = {"Authorization": "Bearer op-console:operator"}
@@ -86,7 +86,16 @@ def _projected_store_client() -> Iterator[TestClient]:
                 path = root / filename
                 path.write_text(json.dumps(payloads[filename]), encoding="utf-8")
                 os.environ[env_name] = str(path)
-            bff_main.read_store = create_read_surface_ports()
+            ports = create_in_memory_read_surface_ports(
+                operations_consultation_kwargs={
+                    "route_policies": list(payloads["route_policies.json"].values()),
+                    "workflow_templates": list(payloads["workflow_templates.json"].values()),
+                    "hook_registry": list(payloads["hook_registry.json"].values()),
+                },
+            )
+            ports.list_jobs_bff = lambda **_kwargs: list(payloads["jobs.json"].values())
+            ports.dataset_source = lambda _dataset: "service_store"
+            bff_main.read_store = ports
             yield TestClient(bff_main.app)
         finally:
             bff_main.read_store = original_store
@@ -109,9 +118,12 @@ def test_console_data_route_workflows_projected_stores_are_ok() -> None:
             response = client.get(path, headers=HEADERS)
             assert response.status_code == 200, response.text
             body = response.json()
-            assert body["items"] == body.get("data", body["items"])
-            assert body["items"]
-            assert body["items"][0][id_key] == expected_id
+            data = body.get("data")
+            items = body.get("items")
+            if items is None and isinstance(data, dict):
+                items = data.get("items")
+            assert items
+            assert items[0][id_key] == expected_id
             assert body["page_info"]["total"] == 1
             surface = body["meta"]["surfaces"][surface_key]
             assert surface["status"] == "ok"

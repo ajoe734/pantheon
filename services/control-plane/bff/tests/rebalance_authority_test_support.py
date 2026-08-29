@@ -16,7 +16,7 @@ import command_executor
 import main as bff_main
 import read_store as read_store_module
 from command_queue import CommandStore
-from read_store import ReadSurfaceStore
+from ports import create_in_memory_read_surface_ports
 
 
 AUTHORITY_URL = "http://capital-authority.test"
@@ -230,10 +230,7 @@ class CapitalBffAuthorityHarness:
     def _reset_bff_process_state(self) -> None:
         if self.client is not None:
             self.client.close()
-        bff_main.read_store = ReadSurfaceStore(
-            str(self.read_path),
-            allow_local_snapshot_fallback=False,
-        )
+        bff_main.read_store = create_in_memory_read_surface_ports()
         bff_main.command_store = CommandStore(str(self.command_path))
         bff_main._CAPITAL_BFF_IDEMPOTENCY.clear()
         bff_main._COMMAND_AUTH_CONTEXT.clear()
