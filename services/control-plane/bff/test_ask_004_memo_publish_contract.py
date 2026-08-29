@@ -11,13 +11,14 @@ Canonical basis:
 """
 from __future__ import annotations
 
-import json
+import copy
 import os
 import sys
 import tempfile
 import uuid
 from contextlib import contextmanager
-from typing import Iterator
+from datetime import datetime, timezone
+from typing import Any, Dict, Iterator, List, Optional
 
 from fastapi.testclient import TestClient
 
@@ -25,9 +26,306 @@ sys.path.insert(0, os.path.dirname(__file__))
 
 import main as bff_main
 from command_queue import CommandStore
-from read_store import ReadSurfaceStore
 
 AUTH = {"Authorization": "Bearer ask-test-op:operator"}
+
+
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def _project_consult_memo_summary(memo: Dict[str, Any]) -> Dict[str, Any]:
+    memo_id = str(memo.get("memo_id") or memo.get("id") or "").strip()
+    recommendations = list(memo.get("recommendations") or [])
+    return {
+        "object_ref": {"type": "ConsultMemo", "id": memo_id},
+        "memo_id": memo_id,
+        "memo_type": memo.get("memo_type") or "red_team",
+        "status": memo.get("status") or memo.get("lifecycle_state") or "draft",
+        "linked_request_id": memo.get("linked_request_id"),
+        "recommendation_count": len(recommendations),
+        "published_at": memo.get("published_at"),
+        "created_at": memo.get("created_at"),
+    }
+
+
+def _project_consult_memo_detail(memo: Dict[str, Any]) -> Dict[str, Any]:
+    memo_id = str(memo.get("memo_id") or memo.get("id") or "").strip()
+    mapping = memo.get("session_to_memo_mapping") if isinstance(memo.get("session_to_memo_mapping"), dict) else {}
+    governance_target = memo.get("governance_target") if isinstance(memo.get("governance_target"), dict) else {}
+    return {
+        "object_ref": {"type": "ConsultMemo", "id": memo_id},
+        "memo_id": memo_id,
+        "memo_type": memo.get("memo_type") or "red_team",
+        "status": memo.get("status") or memo.get("lifecycle_state") or "draft",
+        "lifecycle_state": memo.get("lifecycle_state") or memo.get("status") or "draft",
+        "author_ref": memo.get("author_ref"),
+        "linked_request_id": memo.get("linked_request_id"),
+        "linked_session_id": memo.get("linked_session_id"),
+        "session_to_memo_mapping": {
+            "mapping_id": mapping.get("mapping_id"),
+            "source_session_id": mapping.get("source_session_id"),
+            "transcript_id": mapping.get("transcript_id"),
+            "transcript_version": mapping.get("transcript_version"),
+            "memo_id": mapping.get("memo_id") or memo_id,
+            "memo_type": mapping.get("memo_type") or memo.get("memo_type") or "red_team",
+            "created_by": copy.deepcopy(mapping.get("created_by") or {}),
+            "evidence_refs": list(mapping.get("evidence_refs") or []),
+            "mapping_status": mapping.get("mapping_status"),
+            "created_at": mapping.get("created_at"),
+        },
+        "summary": memo.get("summary"),
+        "recommendations": list(memo.get("recommendations") or []),
+        "evidence_refs": list(memo.get("evidence_refs") or []),
+        "published_at": memo.get("published_at"),
+        "created_at": memo.get("created_at"),
+        "supersedes_memo_id": memo.get("supersedes_memo_id"),
+        "superseded_by_memo_id": memo.get("superseded_by_memo_id"),
+        "surface_state": memo.get("surface_state") or "ok",
+        "governance_target": copy.deepcopy(governance_target),
+        "suppressed": bool(memo.get("suppressed")),
+        "withdrawn": bool(memo.get("withdrawn")),
+        "active_governance_review_id": memo.get("active_governance_review_id"),
+    }
+
+
+class _CommitteeMemoReadStore:
+    """Local in-memory double for ASK-004 committee-session memo publish.
+
+    ``ReadSurfacePorts`` (the migrated read-only container) deliberately
+    excludes session/memo mutation methods such as ``create_agora_session``,
+    ``submit_committee_session_memo``, ``publish_committee_session_memo`` and
+    ``create_agora_handoff`` -- see
+    ``RETAINED_WRITES_DEFERRED_FROM_READ_SURFACE`` in
+    tests/test_read_surface_caller_migration.py -- so this test double
+    hand-implements the small set of methods the ASK-004 routes in main.py
+    call directly on the ``read_store`` global, backed by plain dicts
+    instead of the retired legacy read-surface store class.
+    """
+
+    def __init__(self, seed_sessions: Optional[Dict[str, Dict[str, Any]]] = None) -> None:
+        # ``_data`` is read by main.py's ``_sem_local_records``/``dataset_source``
+        # fallbacks (via ``getattr(read_store, "_data", {})``) for list routes.
+        self._data: Dict[str, Any] = {
+            "agora_sessions": copy.deepcopy(seed_sessions or {}),
+            "consult_memos": {},
+            "agora_handoffs": {},
+        }
+
+    # ---- sessions ---- #
+
+    def get_agora_session(self, session_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        if not session_id:
+            return None
+        session = self._data["agora_sessions"].get(str(session_id))
+        return copy.deepcopy(session) if session is not None else None
+
+    def create_agora_session(
+        self,
+        *,
+        session_id: str,
+        title: str,
+        actor_id: str,
+        payload: Dict[str, Any],
+        created_at: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        timestamp = created_at or _utc_now()
+        session = {
+            "id": session_id,
+            "sessionId": session_id,
+            "title": title,
+            "mode": payload.get("mode") or payload.get("sessionType") or "quick_ask",
+            "status": payload.get("status") or "active",
+            "participants": copy.deepcopy(payload.get("participants") or []),
+            "messages": copy.deepcopy(payload.get("messages") or []),
+            "createdBy": actor_id,
+            "createdAt": timestamp,
+            "updatedAt": timestamp,
+        }
+        for field in ("quorumState", "consensusState", "participantRoster", "linkedRequestId"):
+            if payload.get(field) is not None:
+                session[field] = copy.deepcopy(payload[field])
+        self._data["agora_sessions"][session_id] = session
+        return copy.deepcopy(session)
+
+    # ---- consult memos ---- #
+
+    def dataset_source(self, dataset: str, **_kwargs: Any) -> str:
+        records = self._data.get(dataset)
+        if isinstance(records, dict) and records:
+            return "local_snapshot"
+        if isinstance(records, list) and records:
+            return "local_snapshot"
+        return "missing"
+
+    def get_consult_memo(self, memo_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        if not memo_id:
+            return None
+        record = self._data["consult_memos"].get(str(memo_id))
+        return _project_consult_memo_detail(record) if record is not None else None
+
+    def submit_committee_session_memo(
+        self,
+        session_id: str,
+        *,
+        memo_id: str,
+        actor_id: str,
+        payload: Dict[str, Any],
+        created_at: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        session = self.get_agora_session(session_id)
+        if session is None or str(session.get("mode") or "").strip() != "committee":
+            return None
+        timestamp = created_at or _utc_now()
+        memo_type = str(payload.get("memoType") or payload.get("memo_type") or "committee_summary").strip() or "committee_summary"
+        author_ref = copy.deepcopy(
+            payload.get("authorRef") or payload.get("author_ref") or {"type": "operator", "id": actor_id}
+        )
+        evidence_refs = copy.deepcopy(list(payload.get("evidenceRefs") or payload.get("evidence_refs") or []))
+        evidence_ref_ids: List[str] = []
+        for item in evidence_refs:
+            if isinstance(item, dict):
+                ref_id = str(item.get("id") or item.get("ref_id") or item.get("artifact_ref") or "").strip()
+            else:
+                ref_id = str(item or "").strip()
+            if ref_id and ref_id not in evidence_ref_ids:
+                evidence_ref_ids.append(ref_id)
+        if isinstance(author_ref, dict):
+            created_by = copy.deepcopy(author_ref)
+        else:
+            created_by = {"actor_type": "operator", "actor_id": str(author_ref or actor_id)}
+        memo: Dict[str, Any] = {
+            "id": memo_id,
+            "memo_id": memo_id,
+            "memo_type": memo_type,
+            "status": "draft",
+            "lifecycle_state": "draft",
+            "linked_session_id": session_id,
+            "linked_request_id": (
+                payload.get("linkedRequestId")
+                or payload.get("linked_request_id")
+                or session.get("linkedRequestId")
+            ),
+            "author_ref": author_ref,
+            "session_to_memo_mapping": {
+                "mapping_id": f"map-{memo_id}",
+                "source_session_id": session_id,
+                "transcript_id": payload.get("transcriptId") or payload.get("transcript_id") or f"tr-{session_id}",
+                "transcript_version": payload.get("transcriptVersion") or payload.get("transcript_version"),
+                "memo_id": memo_id,
+                "memo_type": memo_type,
+                "created_by": created_by,
+                "evidence_refs": evidence_ref_ids,
+                "mapping_status": "draft",
+                "created_at": timestamp,
+            },
+            "summary": str(payload.get("summary") or "").strip() or None,
+            "recommendations": copy.deepcopy(list(payload.get("recommendations") or [])),
+            "evidence_refs": evidence_refs,
+            "created_at": timestamp,
+            "published_at": None,
+            "governance_target": {
+                "target_type": "artifact",
+                "target_id": None,
+                "deployment_plan_id": None,
+                "artifact_id": None,
+                "strategy_id": None,
+            },
+        }
+        self._data["consult_memos"][memo_id] = memo
+        return _project_consult_memo_detail(copy.deepcopy(memo))
+
+    def list_committee_session_memos(self, session_id: str) -> List[Dict[str, Any]]:
+        memos = [
+            memo
+            for memo in self._data["consult_memos"].values()
+            if str(memo.get("linked_session_id") or "") == str(session_id)
+        ]
+        memos.sort(key=lambda memo: str(memo.get("created_at") or ""), reverse=True)
+        return [_project_consult_memo_summary(memo) for memo in memos]
+
+    def get_committee_session_memo(self, session_id: str, memo_id: str) -> Optional[Dict[str, Any]]:
+        record = self._data["consult_memos"].get(str(memo_id))
+        if record is None or str(record.get("linked_session_id") or "") != str(session_id):
+            return None
+        return _project_consult_memo_detail(record)
+
+    def publish_committee_session_memo(
+        self,
+        session_id: str,
+        memo_id: str,
+        *,
+        actor_id: str,
+        published_at: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        record = self._data["consult_memos"].get(str(memo_id))
+        if record is None or str(record.get("linked_session_id") or "") != str(session_id):
+            return None
+        timestamp = published_at or _utc_now()
+        memo = copy.deepcopy(record)
+        if str(memo.get("status") or memo.get("lifecycle_state") or "").strip().lower() == "published":
+            return _project_consult_memo_detail(memo)
+        memo["status"] = "published"
+        memo["lifecycle_state"] = "published"
+        memo["published_at"] = timestamp
+        memo["published_by"] = actor_id
+        mapping = memo.get("session_to_memo_mapping")
+        if isinstance(mapping, dict):
+            mapping["mapping_status"] = "active"
+        self._data["consult_memos"][memo_id] = memo
+        return _project_consult_memo_detail(copy.deepcopy(memo))
+
+    def list_consult_memos(self, *, statuses: Optional[List[str]] = None) -> List[Dict[str, Any]]:
+        memos = list(self._data["consult_memos"].values())
+        if statuses:
+            requested = {str(value).strip().lower() for value in statuses if str(value).strip()}
+            memos = [
+                memo
+                for memo in memos
+                if str(memo.get("status") or memo.get("lifecycle_state") or "").strip().lower() in requested
+            ]
+        memos.sort(
+            key=lambda memo: (
+                str(memo.get("published_at") or memo.get("created_at") or ""),
+                str(memo.get("created_at") or ""),
+                str(memo.get("memo_id") or ""),
+            ),
+            reverse=True,
+        )
+        return [_project_consult_memo_summary(memo) for memo in memos]
+
+    # ---- handoffs ---- #
+
+    def create_agora_handoff(
+        self,
+        *,
+        handoff_id: str,
+        handoff_type: str,
+        source_route: str,
+        source_entity: Dict[str, Any],
+        destination_route: str,
+        destination_queue: str,
+        priority: str,
+        payload: Dict[str, Any],
+        actor_id: str,
+        created_at: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        timestamp = created_at or _utc_now()
+        record = {
+            "id": handoff_id,
+            "handoffId": handoff_id,
+            "handoffType": handoff_type,
+            "status": "submitted",
+            "source": {"app": "agora", "route": source_route, "entity": copy.deepcopy(source_entity)},
+            "destination": {"app": "management", "route": destination_route, "queue": destination_queue},
+            "priority": priority,
+            "payload": copy.deepcopy(payload),
+            "createdBy": {"type": "operator", "id": actor_id},
+            "createdAt": timestamp,
+            "updatedAt": timestamp,
+        }
+        self._data["agora_handoffs"][handoff_id] = record
+        return copy.deepcopy(record)
 
 _SEED_SESSIONS = {
     "committee-memo-001": {
@@ -65,16 +363,9 @@ def _idem() -> str:
 @contextmanager
 def _client(*, seeded: bool = False) -> Iterator[TestClient]:
     with tempfile.TemporaryDirectory() as td:
-        store_path = os.path.join(td, "read_surfaces.json")
-        if seeded:
-            with open(store_path, "w") as f:
-                json.dump({"agora_sessions": _SEED_SESSIONS}, f)
         original_store = bff_main.read_store
         original_cmd = bff_main.command_store
-        bff_main.read_store = ReadSurfaceStore(
-            store_path,
-            allow_local_snapshot_fallback=seeded,
-        )
+        bff_main.read_store = _CommitteeMemoReadStore(_SEED_SESSIONS if seeded else None)
         bff_main.command_store = CommandStore(os.path.join(td, "commands.jsonl"))
         bff_main._AGORA_CORE_BFF_IDEMPOTENCY.clear()
         client = TestClient(bff_main.app)

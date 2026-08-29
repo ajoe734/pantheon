@@ -1,16 +1,20 @@
 from __future__ import annotations
 
+import json
 import os
 import sys
 import tempfile
+import uuid
 from contextlib import contextmanager
+from datetime import datetime
+from typing import Any, Dict, List, Optional
 
 from fastapi.testclient import TestClient
 
 sys.path.insert(0, os.path.dirname(__file__))
 
 import main as bff_main
-from read_store import ReadSurfaceStore
+from domain_ports.operations_consultation import DomainConsultationPort
 from services.consultation.store import ConsultationStore
 
 OPERATOR_AUTH = "Bearer test-operator:operator"
@@ -28,6 +32,269 @@ _VALID_CREATE_PAYLOAD = {
     "consultation_type": "risk_review",
 }
 
+_CONSULTATION_DATA_DIR_ENVS = (
+    "PANTHEON_BFF_CONSULTATION_DATA_DIR",
+    "PANTHEON_CONSULTATION_DATA_DIR",
+    "CONSULTATION_DATA_DIR",
+)
+
+
+def _consultation_service_configured() -> bool:
+    return any(os.environ.get(name, "").strip() for name in _CONSULTATION_DATA_DIR_ENVS)
+
+
+def _parse_rfc3339(value: Any) -> datetime:
+    if not value or not isinstance(value, str):
+        return datetime.min
+    cleaned = value.strip()
+    if not cleaned:
+        return datetime.min
+    try:
+        normalized = cleaned.replace("Z", "+00:00") if cleaned.endswith("Z") else cleaned
+        return datetime.fromisoformat(normalized).replace(tzinfo=None)
+    except (ValueError, TypeError):
+        return datetime.min
+
+
+def _can_cancel(req: Dict[str, Any]) -> bool:
+    status = str(req.get("status") or "created").lower()
+    if status in {"completed", "canceled", "cancelled"}:
+        return False
+    return not bool(req.get("linked_session_id"))
+
+
+def _project_summary(req: Dict[str, Any]) -> Dict[str, Any]:
+    task_full = str(req.get("task") or "")
+    task_summary = task_full[:120] + ("…" if len(task_full) > 120 else "")
+    return {
+        "request_id": req.get("request_id"),
+        "status": req.get("status") or "created",
+        "from_persona_id": req.get("from_persona_id"),
+        "target_type": req.get("target_type"),
+        "target_ref": req.get("target_ref"),
+        "task_summary": task_summary,
+        "priority": req.get("priority"),
+        "consultation_type": req.get("consultation_type"),
+        "created_at": req.get("created_at"),
+        "linked_session_id": req.get("linked_session_id"),
+        "request_to_session_status": req.get("request_to_session_status", "pending_session"),
+        "allowedActions": {"canCancel": _can_cancel(req)},
+    }
+
+
+def _project_detail(req: Dict[str, Any]) -> Dict[str, Any]:
+    linked_session_id = req.get("linked_session_id")
+    r2s_status = str(req.get("request_to_session_status") or "pending_session")
+    session_route_href = f"/api/v1/consultations/{linked_session_id}" if linked_session_id else None
+    return {
+        "request_id": req.get("request_id"),
+        "status": req.get("status") or "created",
+        "from_persona_id": req.get("from_persona_id"),
+        "target_type": req.get("target_type"),
+        "target_ref": req.get("target_ref"),
+        "task": req.get("task"),
+        "context_refs": req.get("context_refs", []),
+        "priority": req.get("priority"),
+        "consultation_type": req.get("consultation_type"),
+        "created_at": req.get("created_at"),
+        "completed_at": req.get("completed_at"),
+        "canceled_at": req.get("canceled_at"),
+        "linked_session_id": linked_session_id,
+        "request_to_session_status": r2s_status,
+        "session_handoff": {
+            "status": r2s_status,
+            "linked_session_id": linked_session_id,
+            "session_route_href": session_route_href,
+            "note": req.get("session_handoff_note", ""),
+        },
+        "allowedActions": {"canCancel": _can_cancel(req)},
+    }
+
+
+class _LocalConsultRequestServiceAdapter:
+    """Mimics the `_service` file-backed adapter used by direct-write test cases."""
+
+    def __init__(self, outer: "_ConsultRequestReadStore") -> None:
+        self._outer = outer
+
+    def list_records(self, dataset: str):
+        if dataset != "consult_requests":
+            return False, []
+        return True, list(self._outer._load_requests().values())
+
+    def write_records(self, dataset: str, records: Dict[str, Dict[str, Any]]) -> bool:
+        if dataset != "consult_requests":
+            return False
+        self._outer._write_requests(dict(records))
+        return True
+
+
+class _ConsultRequestReadStore:
+    """CW-01 in-memory consult-request read/write double.
+
+    Delegates to the real DomainConsultationPort when a consultation service
+    data dir is configured (matching production behavior), and otherwise
+    persists consult requests to a plain dict/JSON file keyed by
+    PANTHEON_BFF_CONSULT_REQUEST_STORE, mirroring the retired
+    the legacy BFF read surface's local fallback semantics.
+    """
+
+    def __init__(self, path: str, allow_local_snapshot_fallback: bool = True) -> None:
+        self._path = path
+        self._requests: Dict[str, Dict[str, Any]] = {}
+        self._domain = DomainConsultationPort()
+        self._service = _LocalConsultRequestServiceAdapter(self)
+
+    def _consult_request_store_path(self) -> Optional[str]:
+        raw = os.environ.get("PANTHEON_BFF_CONSULT_REQUEST_STORE", "").strip()
+        return raw or None
+
+    def _load_requests(self) -> Dict[str, Dict[str, Any]]:
+        path = self._consult_request_store_path()
+        if path:
+            try:
+                with open(path, "r", encoding="utf-8") as handle:
+                    return json.load(handle)
+            except (FileNotFoundError, json.JSONDecodeError):
+                return {}
+        return self._requests
+
+    def _write_requests(self, requests: Dict[str, Dict[str, Any]]) -> None:
+        path = self._consult_request_store_path()
+        if path:
+            with open(path, "w", encoding="utf-8") as handle:
+                json.dump(requests, handle)
+        else:
+            self._requests = requests
+
+    def dataset_source(self, dataset: str) -> str:
+        if dataset != "consult_requests":
+            return "missing"
+        if _consultation_service_configured():
+            return "consultation_service_store"
+        if self._consult_request_store_path():
+            return "service_store"
+        return "missing"
+
+    def list_consult_requests(
+        self,
+        *,
+        statuses: Optional[List[str]] = None,
+        target_type: Optional[str] = None,
+        consultation_type: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        if _consultation_service_configured():
+            return self._domain.list_consult_requests(
+                statuses=statuses,
+                target_type=target_type,
+                consultation_type=consultation_type,
+            )
+        requests = list(self._load_requests().values())
+        if statuses:
+            requested = {s.strip().lower() for s in statuses if s.strip()}
+            requests = [r for r in requests if str(r.get("status") or "").strip().lower() in requested]
+        if target_type:
+            requested_tt = target_type.strip().lower()
+            requests = [r for r in requests if str(r.get("target_type") or "").strip().lower() == requested_tt]
+        if consultation_type:
+            requested_ct = consultation_type.strip().lower()
+            requests = [
+                r for r in requests if str(r.get("consultation_type") or "").strip().lower() == requested_ct
+            ]
+        requests.sort(key=lambda r: _parse_rfc3339(r.get("created_at")), reverse=True)
+        return [_project_summary(r) for r in requests]
+
+    def get_consult_request(self, request_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        if not request_id:
+            return None
+        if _consultation_service_configured():
+            return self._domain.get_consult_request(request_id)
+        req = self._load_requests().get(request_id)
+        return _project_detail(req) if req else None
+
+    def create_consult_request(
+        self,
+        *,
+        from_persona_id: str,
+        target_type: str,
+        target_ref: str,
+        task: str,
+        context_refs: List[Dict[str, str]],
+        priority: str,
+        consultation_type: str,
+        actor_id: str,
+        created_at: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        if _consultation_service_configured():
+            return self._domain.create_consult_request(
+                from_persona_id=from_persona_id,
+                target_type=target_type,
+                target_ref=target_ref,
+                task=task,
+                context_refs=context_refs,
+                priority=priority,
+                consultation_type=consultation_type,
+                actor_id=actor_id,
+                created_at=created_at,
+            )
+
+        timestamp = created_at or datetime.utcnow().isoformat() + "Z"
+        requests = self._load_requests()
+        request_id = f"cr-{timestamp[:10].replace('-', '')}-{uuid.uuid4().hex[:8]}"
+        while request_id in requests:
+            request_id = f"cr-{timestamp[:10].replace('-', '')}-{uuid.uuid4().hex[:8]}"
+
+        req: Dict[str, Any] = {
+            "request_id": request_id,
+            "status": "created",
+            "from_persona_id": from_persona_id,
+            "target_type": target_type,
+            "target_ref": target_ref,
+            "task": task,
+            "context_refs": context_refs,
+            "priority": priority,
+            "consultation_type": consultation_type,
+            "created_at": timestamp,
+            "completed_at": None,
+            "canceled_at": None,
+            "linked_session_id": None,
+            "request_to_session_status": "pending_session",
+            "session_handoff_note": "Request accepted; session creation is pending Persona Plane assignment.",
+            "created_by": actor_id,
+        }
+        requests[request_id] = req
+        self._write_requests(requests)
+        return _project_detail(req)
+
+    def cancel_consult_request(
+        self,
+        request_id: str,
+        *,
+        actor_id: str,
+        canceled_at: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        if _consultation_service_configured():
+            return self._domain.cancel_consult_request(
+                request_id,
+                actor_id=actor_id,
+                canceled_at=canceled_at,
+            )
+
+        requests = self._load_requests()
+        req = requests.get(request_id)
+        if req is None:
+            return None
+        if not _can_cancel(req):
+            return None
+        timestamp = canceled_at or datetime.utcnow().isoformat() + "Z"
+        req["status"] = "canceled"
+        req["canceled_at"] = timestamp
+        req["request_to_session_status"] = "canceled_before_session"
+        req["session_handoff_note"] = "Request canceled by operator."
+        requests[request_id] = req
+        self._write_requests(requests)
+        return _project_detail(req)
+
 
 @contextmanager
 def _seeded_client(*, allow_local_snapshot_fallback: bool = True):
@@ -36,7 +303,7 @@ def _seeded_client(*, allow_local_snapshot_fallback: bool = True):
         original_store = bff_main.read_store
         original_cr_env = os.environ.get("PANTHEON_BFF_CONSULT_REQUEST_STORE")
         os.environ["PANTHEON_BFF_CONSULT_REQUEST_STORE"] = cr_store_path
-        bff_main.read_store = ReadSurfaceStore(
+        bff_main.read_store = _ConsultRequestReadStore(
             os.path.join(td, "read_surfaces.json"),
             allow_local_snapshot_fallback=allow_local_snapshot_fallback,
         )
@@ -230,7 +497,7 @@ def test_cw01_create_and_cancel_use_consultation_service_store_when_configured()
         }
         os.environ["PANTHEON_BFF_CONSULTATION_DATA_DIR"] = td
         os.environ.pop("PANTHEON_BFF_CONSULT_REQUEST_STORE", None)
-        bff_main.read_store = ReadSurfaceStore(
+        bff_main.read_store = _ConsultRequestReadStore(
             os.path.join(td, "read_surfaces.json"),
             allow_local_snapshot_fallback=False,
         )
