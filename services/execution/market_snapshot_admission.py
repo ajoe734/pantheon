@@ -43,31 +43,57 @@ TW_OFFICIAL_CALENDAR_DOMAINS = {
     "www.tpex.org.tw",
     "openapi.tpex.org.tw",
 }
-TW_VALID_MARKETS = {"TW", "TWSE", "TPEX"}
-TW_VALID_VENUES = {"TWSE", "TPEX", "TWSE/TPEX", "TAIFEX", "TW"}
-TW_VALID_TIMEZONES = {"Asia/Taipei", "UTC+8", "+08:00", "UTC+08:00"}
+TW_VALID_MARKETS = {"TW", "TWSE", "TPEX", "TWSE/TPEX"}
+TW_VALID_CASH_VENUES = {"TWSE", "TPEX", "TWSE/TPEX"}
+TW_VALID_TIMEZONES = {"Asia/Taipei"}
+
+# Governed external trusted pins for Taiwan exchange calendar evidence.
+# An untrusted evidence object cannot self-assert its own expected checksum.
+# The 64-hex SHA-256 digest in the evidence must match an entry in this
+# externally pinned catalog (or an externally supplied trusted pin).
+TW_GOVERNED_CALENDAR_PINS: Mapping[str, str] = {
+    "2026.1": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+}
 
 # Sentinel returned by a calendar_evidence lookup to signal that evidence
 # was consulted but could not be verified (malformed record, missing source
-# citation, or the evidence source itself is unreachable) -- kept distinct
-# from "no record" (a plain weekday with no holiday claim, which is
-# fail-closed as an ordinary trading day, not as "unverifiable").
+# citation, or the evidence source itself is unreachable).
 CALENDAR_EVIDENCE_UNVERIFIABLE = object()
+
+
+def parse_iso_date(value: Any, *, field_name: str = "date") -> Tuple[Optional[date], Optional[str]]:
+    """Parse a strict ISO-8601 date string (YYYY-MM-DD).
+
+    Returns (date, None) on success or (None, error_message) on failure.
+    """
+    text = str(value or "").strip()
+    if not text or len(text) != 10 or text[4] != "-" or text[7] != "-":
+        return None, f"{field_name} {value!r} is not a valid strict ISO date (expected YYYY-MM-DD)"
+    try:
+        parsed = date.fromisoformat(text)
+        return parsed, None
+    except ValueError as exc:
+        return None, f"{field_name} {value!r} is not a valid strict ISO date: {exc}"
 
 
 def validate_taiwan_calendar_evidence(
     evidence: Any,
+    *,
+    expected_sha256: Optional[str] = None,
+    trusted_pins: Optional[Any] = None,
+    now_dt: Optional[datetime] = None,
 ) -> Tuple[bool, Optional[str], Optional[Dict[str, Any]]]:
     """Validate explicit Taiwan exchange market calendar evidence.
 
     Enforces:
-      - market / venue is Taiwan (TW, TWSE, TPEX)
-      - timezone is Asia/Taipei
+      - cash venue is explicitly TWSE, TPEX, or TWSE/TPEX
+      - timezone is exactly 'Asia/Taipei' (no UTC/offset aliases)
       - authority is present and non-empty
-      - source_url is an official TWSE/TPEx domain
-      - fetched_at / observed_at timestamp is valid
-      - version or checksum/sha256 is present and valid
-      - coverage interval or explicit dates are extracted
+      - source_url uses HTTPS and an official TWSE/TPEx domain
+      - fetched_at is valid strict RFC3339 and non-future (within 300s)
+      - checksum is an exact 64-hex SHA-256 digest matching external trusted pin
+      - no self-asserted checksum within the evidence object is trusted
+      - coverage dates, session dates, and holiday dates are strict ISO dates
     """
     import urllib.parse
 
@@ -79,13 +105,16 @@ def validate_taiwan_calendar_evidence(
     if not market and not venue:
         return False, "calendar evidence missing required market or venue", None
     if market and market not in TW_VALID_MARKETS:
-        return False, f"calendar evidence market {market!r} is not a valid Taiwan market (TW, TWSE, TPEX)", None
-    if venue and venue not in TW_VALID_VENUES:
-        return False, f"calendar evidence venue {venue!r} is not a valid Taiwan venue (TWSE, TPEX, TAIFEX, TW)", None
+        return False, f"calendar evidence market {market!r} is not a valid Taiwan market (TW, TWSE, TPEX, TWSE/TPEX)", None
+
+    # Exact cash venue check: must be TWSE, TPEX, or TWSE/TPEX (no TAIFEX, no raw "TW" as venue)
+    resolved_venue = venue or (market if market in TW_VALID_CASH_VENUES else "")
+    if not resolved_venue or resolved_venue not in TW_VALID_CASH_VENUES:
+        return False, f"calendar evidence venue {venue or market!r} is not an official Taiwan cash venue (expected TWSE or TPEX)", None
 
     tz = str(evidence.get("timezone") or evidence.get("tz") or "").strip()
-    if not tz or tz not in TW_VALID_TIMEZONES:
-        return False, f"calendar evidence timezone {tz!r} is not valid Taiwan timezone (expected 'Asia/Taipei')", None
+    if tz != "Asia/Taipei":
+        return False, f"calendar evidence timezone {tz!r} is invalid (expected exact 'Asia/Taipei')", None
 
     authority = str(evidence.get("authority") or "").strip()
     if not authority:
@@ -100,8 +129,8 @@ def validate_taiwan_calendar_evidence(
     except Exception as exc:
         return False, f"calendar evidence source_url {source_url!r} is invalid: {exc}", None
 
-    if parsed_url.scheme not in ("http", "https"):
-        return False, f"calendar evidence source_url scheme {parsed_url.scheme!r} must be http or https", None
+    if parsed_url.scheme != "https":
+        return False, f"calendar evidence source_url scheme {parsed_url.scheme!r} must be https", None
 
     hostname = (parsed_url.hostname or "").lower()
     if not hostname:
@@ -120,24 +149,61 @@ def validate_taiwan_calendar_evidence(
 
     fetched_raw = evidence.get("fetched_at") or evidence.get("observed_at") or evidence.get("timestamp")
     if not fetched_raw:
-        return False, "calendar evidence missing required fetched_at / observed_at timestamp", None
+        return False, "calendar evidence missing required fetched_at timestamp", None
     fetched_dt, err = parse_rfc3339(fetched_raw, field_name="fetched_at")
     if err or fetched_dt is None:
         return False, f"calendar evidence invalid fetched_at: {err}", None
 
-    version = evidence.get("version")
-    checksum = evidence.get("checksum") or evidence.get("sha256")
-    if not version and not checksum:
-        return False, "calendar evidence must include a version or sha256 checksum", None
+    ref_now = now_dt if now_dt is not None else datetime.now(timezone.utc)
+    if (fetched_dt - ref_now).total_seconds() > 300:
+        return False, f"calendar evidence fetched_at {fetched_raw!r} is in the future", None
 
-    if checksum:
-        cs = str(checksum).strip().lower()
-        if len(cs) < 8:
-            return False, f"calendar evidence checksum {checksum!r} is invalid / too short", None
-        if "expected_checksum" in evidence and cs != str(evidence["expected_checksum"]).strip().lower():
-            return False, f"calendar evidence checksum mismatch: {cs} != {evidence['expected_checksum']}", None
-        if "expected_sha256" in evidence and cs != str(evidence["expected_sha256"]).strip().lower():
-            return False, f"calendar evidence sha256 mismatch: {cs} != {evidence['expected_sha256']}", None
+    # Checksum: require exact 64-hex SHA-256 matching external trusted pin
+    raw_checksum = evidence.get("checksum") or evidence.get("sha256")
+    if not raw_checksum:
+        return False, "calendar evidence must include a 64-hex sha256 checksum", None
+    cs = str(raw_checksum).strip().lower()
+    if len(cs) != 64 or not all(c in "0123456789abcdef" for c in cs):
+        return False, f"calendar evidence checksum {raw_checksum!r} must be a 64-hex SHA-256 digest", None
+
+    version_str = str(evidence.get("version") or "").strip()
+
+    if expected_sha256 is not None:
+        pin = expected_sha256.strip().lower()
+        if cs != pin:
+            return False, f"calendar evidence sha256 {cs!r} does not match external expected sha256 {pin!r}", None
+    else:
+        pins_source = trusted_pins if trusted_pins is not None else TW_GOVERNED_CALENDAR_PINS
+        if isinstance(pins_source, Mapping):
+            if version_str and version_str in pins_source:
+                expected_pin = str(pins_source[version_str]).strip().lower()
+                if cs != expected_pin:
+                    return False, f"calendar evidence sha256 {cs!r} does not match trusted pin for version {version_str!r} ({expected_pin!r})", None
+            elif cs not in {str(v).strip().lower() for v in pins_source.values()}:
+                return False, f"calendar evidence sha256 {cs!r} is not in trusted external pins", None
+        elif isinstance(pins_source, (set, list, tuple)):
+            allowed = {str(v).strip().lower() for v in pins_source}
+            if cs not in allowed:
+                return False, f"calendar evidence sha256 {cs!r} is not in trusted external pins", None
+        else:
+            return False, "trusted_pins must be a mapping, set, or sequence", None
+
+    coverage_start_raw = evidence.get("coverage_start") or evidence.get("start_date")
+    coverage_end_raw = evidence.get("coverage_end") or evidence.get("end_date")
+    c_start_iso = None
+    c_end_iso = None
+    if coverage_start_raw is not None and str(coverage_start_raw).strip():
+        c_start_d, err = parse_iso_date(coverage_start_raw, field_name="coverage_start")
+        if err or c_start_d is None:
+            return False, f"calendar evidence invalid coverage_start: {err}", None
+        c_start_iso = c_start_d.isoformat()
+    if coverage_end_raw is not None and str(coverage_end_raw).strip():
+        c_end_d, err = parse_iso_date(coverage_end_raw, field_name="coverage_end")
+        if err or c_end_d is None:
+            return False, f"calendar evidence invalid coverage_end: {err}", None
+        c_end_iso = c_end_d.isoformat()
+    if c_start_iso and c_end_iso and c_start_iso > c_end_iso:
+        return False, f"calendar evidence coverage_start {c_start_iso} is after coverage_end {c_end_iso}", None
 
     holidays_map: Dict[str, Dict[str, Any]] = {}
     trading_days: set[str] = set()
@@ -145,47 +211,87 @@ def validate_taiwan_calendar_evidence(
     raw_sessions = evidence.get("sessions")
     if isinstance(raw_sessions, Mapping):
         for d_str, s_info in raw_sessions.items():
+            parsed_d, err = parse_iso_date(d_str, field_name="session date")
+            if err or parsed_d is None:
+                return False, f"calendar evidence invalid session date {d_str!r}: {err}", None
+            d_iso = parsed_d.isoformat()
             if isinstance(s_info, Mapping):
                 stype = str(s_info.get("type") or s_info.get("session_type") or "").strip().lower()
                 is_hol = s_info.get("holiday_flag") is True or stype in ("holiday", "closed", "non_trading")
                 if is_hol:
-                    holidays_map[str(d_str)] = dict(s_info)
+                    holidays_map[d_iso] = dict(s_info)
                 elif stype in ("trading", "cash", "regular", "open"):
-                    trading_days.add(str(d_str))
-            elif isinstance(s_info, str):
-                if s_info.lower() in ("holiday", "closed", "non_trading"):
-                    holidays_map[str(d_str)] = {"name": s_info}
+                    trading_days.add(d_iso)
                 else:
-                    trading_days.add(str(d_str))
+                    return False, f"calendar evidence session {d_iso} has unrecognized type {stype!r}", None
+            elif isinstance(s_info, str):
+                stype = s_info.strip().lower()
+                if stype in ("holiday", "closed", "non_trading"):
+                    holidays_map[d_iso] = {"name": s_info}
+                elif stype in ("trading", "cash", "regular", "open"):
+                    trading_days.add(d_iso)
+                else:
+                    return False, f"calendar evidence session {d_iso} has unrecognized type {s_info!r}", None
+            else:
+                return False, f"calendar evidence session for {d_iso} must be an object or string", None
 
     raw_holidays = evidence.get("holidays")
     if isinstance(raw_holidays, Mapping):
         for d_str, h_info in raw_holidays.items():
+            parsed_d, err = parse_iso_date(d_str, field_name="holiday date")
+            if err or parsed_d is None:
+                return False, f"calendar evidence invalid holiday date {d_str!r}: {err}", None
+            d_iso = parsed_d.isoformat()
             if isinstance(h_info, Mapping):
-                holidays_map[str(d_str)] = dict(h_info)
+                holidays_map[d_iso] = dict(h_info)
             else:
-                holidays_map[str(d_str)] = {"name": str(h_info)}
+                holidays_map[d_iso] = {"name": str(h_info)}
     elif isinstance(raw_holidays, (list, tuple, set)):
         for item in raw_holidays:
             if isinstance(item, str):
-                holidays_map[item] = {"name": "Official Holiday"}
+                parsed_d, err = parse_iso_date(item, field_name="holiday date")
+                if err or parsed_d is None:
+                    return False, f"calendar evidence invalid holiday date {item!r}: {err}", None
+                holidays_map[parsed_d.isoformat()] = {"name": "Official Holiday"}
             elif isinstance(item, Mapping) and item.get("date"):
-                holidays_map[str(item["date"])] = dict(item)
+                d_str = item["date"]
+                parsed_d, err = parse_iso_date(d_str, field_name="holiday date")
+                if err or parsed_d is None:
+                    return False, f"calendar evidence invalid holiday date {d_str!r}: {err}", None
+                holidays_map[parsed_d.isoformat()] = dict(item)
+            else:
+                return False, "calendar evidence holiday entry must be a date string or object with date", None
+    elif raw_holidays is not None:
+        return False, "calendar evidence holidays must be a mapping or list", None
 
-    coverage_start = str(evidence.get("coverage_start") or evidence.get("start_date") or "").strip() or None
-    coverage_end = str(evidence.get("coverage_end") or evidence.get("end_date") or "").strip() or None
+    raw_trading_days = evidence.get("trading_days")
+    if isinstance(raw_trading_days, (list, tuple, set)):
+        for item in raw_trading_days:
+            if isinstance(item, str):
+                parsed_d, err = parse_iso_date(item, field_name="trading date")
+                if err or parsed_d is None:
+                    return False, f"calendar evidence invalid trading date {item!r}: {err}", None
+                trading_days.add(parsed_d.isoformat())
+            elif isinstance(item, Mapping) and item.get("date"):
+                d_str = item["date"]
+                parsed_d, err = parse_iso_date(d_str, field_name="trading date")
+                if err or parsed_d is None:
+                    return False, f"calendar evidence invalid trading date {d_str!r}: {err}", None
+                trading_days.add(parsed_d.isoformat())
+            else:
+                return False, "calendar evidence trading_days entry must be a date string or object with date", None
 
     norm = {
         "market": market or "TW",
-        "venue": venue or "TWSE",
+        "venue": resolved_venue,
         "timezone": "Asia/Taipei",
         "authority": authority,
         "source_url": source_url,
         "fetched_at": fetched_raw,
-        "version": str(version) if version else None,
-        "checksum": str(checksum) if checksum else None,
-        "coverage_start": coverage_start,
-        "coverage_end": coverage_end,
+        "version": version_str if version_str else None,
+        "checksum": cs,
+        "coverage_start": c_start_iso,
+        "coverage_end": c_end_iso,
         "holidays": holidays_map,
         "trading_days": trading_days,
     }
@@ -229,6 +335,8 @@ def evaluate_taiwan_market_freshness(
     max_refresh_age_seconds: int,
     calendar_evidence: Optional[Any] = None,
     holiday_lookup: Optional[Any] = None,
+    expected_sha256: Optional[str] = None,
+    trusted_pins: Optional[Any] = None,
 ) -> Tuple[bool, Optional[str], Optional[str]]:
     """Deterministic Taiwan (Asia/Taipei) market-session freshness rule.
 
@@ -265,7 +373,12 @@ def evaluate_taiwan_market_freshness(
 
     validated_evidence = None
     if calendar_evidence is not None:
-        val_ok, val_err, val_norm = validate_taiwan_calendar_evidence(calendar_evidence)
+        val_ok, val_err, val_norm = validate_taiwan_calendar_evidence(
+            calendar_evidence,
+            expected_sha256=expected_sha256,
+            trusted_pins=trusted_pins,
+            now_dt=now_dt,
+        )
         if not val_ok:
             return (
                 False,
@@ -281,6 +394,8 @@ def evaluate_taiwan_market_freshness(
             cursor += timedelta(days=1)
             continue
 
+        c_iso = cursor.isoformat()
+
         # Weekday:
         if cursor == taipei_now_date:
             today_close = _tw_session_close_utc(cursor)
@@ -289,29 +404,45 @@ def evaluate_taiwan_market_freshness(
                 cursor += timedelta(days=1)
                 continue
 
-        # For any weekday in the gap where regular session closed (or today after 13:30),
-        # an official exchange holiday must be evidenced to explain why trading was suspended.
+        # For any completed weekday session in the gap (or today after 13:30),
+        # an explicit validated session record (holiday/closure) must be present.
         if holiday_lookup is not None:
             try:
-                evidence_rec = holiday_lookup(cursor.isoformat())
+                evidence_rec = holiday_lookup(c_iso)
             except Exception as exc:
                 return (
                     False,
                     "market_input_calendar_unverifiable",
-                    f"official Taiwan market-session evidence for {cursor.isoformat()} failed lookup: {exc}",
+                    f"official Taiwan market-session evidence for {c_iso} failed lookup: {exc}",
                 )
-            if evidence_rec is CALENDAR_EVIDENCE_UNVERIFIABLE:
+            if evidence_rec is CALENDAR_EVIDENCE_UNVERIFIABLE or evidence_rec is None:
                 return (
                     False,
                     "market_input_calendar_unverifiable",
-                    f"official Taiwan market-session evidence for {cursor.isoformat()} is missing or unverifiable",
+                    f"official Taiwan market-session evidence for {c_iso} is missing or unverifiable",
                 )
-            if evidence_rec is None:
+            # Full evidence contract validation (no authority-only bypass)
+            h_ok, h_err, h_norm = validate_taiwan_calendar_evidence(
+                evidence_rec,
+                expected_sha256=expected_sha256,
+                trusted_pins=trusted_pins,
+                now_dt=now_dt,
+            )
+            if not h_ok or h_norm is None:
+                return (
+                    False,
+                    "market_input_calendar_unverifiable",
+                    f"official Taiwan market-session evidence for {c_iso} validation failed: {h_err}",
+                )
+            if c_iso in h_norm["holidays"]:
+                cursor += timedelta(days=1)
+                continue
+            elif c_iso in h_norm["trading_days"]:
                 if cursor < taipei_now_date:
                     return (
                         False,
                         "market_input_stale",
-                        f"a newer official Taiwan session closed on {cursor.isoformat()}",
+                        f"a newer official Taiwan session closed on {c_iso}",
                     )
                 today_close = _tw_session_close_utc(cursor)
                 return (
@@ -319,17 +450,14 @@ def evaluate_taiwan_market_freshness(
                     "market_input_stale",
                     f"a newer official Taiwan session closed at {today_close.isoformat()}",
                 )
-            if isinstance(evidence_rec, Mapping) and evidence_rec.get("authority"):
-                cursor += timedelta(days=1)
-                continue
-            return (
-                False,
-                "market_input_calendar_unverifiable",
-                f"official Taiwan market-session evidence for {cursor.isoformat()} is missing required authority citation",
-            )
+            else:
+                return (
+                    False,
+                    "market_input_calendar_unverifiable",
+                    f"official Taiwan market-session evidence missing explicit session record for weekday {c_iso}",
+                )
 
         if validated_evidence is not None:
-            c_iso = cursor.isoformat()
             c_start = validated_evidence.get("coverage_start")
             c_end = validated_evidence.get("coverage_end")
             if c_start and c_iso < c_start:
@@ -348,7 +476,7 @@ def evaluate_taiwan_market_freshness(
             if c_iso in validated_evidence["holidays"]:
                 cursor += timedelta(days=1)
                 continue
-            elif c_iso in validated_evidence["trading_days"] or (c_start and c_end):
+            elif c_iso in validated_evidence["trading_days"]:
                 if cursor < taipei_now_date:
                     return (
                         False,
@@ -365,21 +493,15 @@ def evaluate_taiwan_market_freshness(
                 return (
                     False,
                     "market_input_calendar_unverifiable",
-                    f"official Taiwan market-session evidence missing coverage for weekday {c_iso}",
+                    f"official Taiwan market-session evidence missing explicit session record for weekday {c_iso}",
                 )
 
-        # No calendar_evidence and no holiday_lookup provided:
-        if cursor < taipei_now_date:
-            return (
-                False,
-                "market_input_stale",
-                f"a newer official Taiwan session closed on {cursor.isoformat()}",
-            )
-        today_close = _tw_session_close_utc(cursor)
+        # No calendar_evidence and no holiday_lookup provided for this completed weekday:
+        # Fails closed as market_input_calendar_unverifiable (stale is reserved for explicit validated trading sessions).
         return (
             False,
-            "market_input_stale",
-            f"a newer official Taiwan session closed at {today_close.isoformat()}",
+            "market_input_calendar_unverifiable",
+            f"no official Taiwan calendar evidence provided for completed weekday session {c_iso}",
         )
 
     return True, None, None

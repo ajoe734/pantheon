@@ -1,9 +1,9 @@
 {
   "schema_version": "pantheon.agora-taiwan-market-session-freshness-review.v1",
   "task_id": "AGORA-TAIWAN-MARKET-SESSION-FRESHNESS-V1-20260829",
-  "generated_at": "2026-08-29T21:50:00Z",
+  "generated_at": "2026-08-29T22:06:00Z",
   "owner": "Antigravity2",
-  "reviewer": "Claude",
+  "reviewer": "Antigravity",
   "status": "implementation_ready_for_review",
   "acceptance_state": "exact_head_review_and_post_merge_release_required",
   "immutable_failure_reproduction": {
@@ -18,7 +18,7 @@
     "cause": "market_snapshot_admission.admit_market_snapshot, the deploy script's inline readback check, and services/control-plane/bff/agora/operational_readiness.py each compared age_seconds against a flat max_age_seconds/sla_seconds with no notion of Asia/Taipei trading sessions, weekends, or official market holidays.",
     "constraints_preserved": [
       "Non-Taiwan symbols keep the unchanged flat max_age_seconds behavior in admit_market_snapshot and operational_readiness.",
-      "Weekday staleness (a later official session already closed), a stale refresh receipt, non-official lineage, and future event/observation times remain fail-closed with typed reason codes.",
+      "Weekday staleness (an explicit newer validated session closed), a stale refresh receipt, missing/unverifiable calendar evidence, non-official lineage, and future event/observation/fetched times remain fail-closed with typed reason codes.",
       "No new provider egress, fixture data, or bypass of the minimum-closes / lineage checks."
     ]
   },
@@ -32,9 +32,10 @@
         "evaluate_taiwan_market_freshness",
         "validate_taiwan_calendar_evidence"
       ],
-      "venue_timezone": "Asia/Taipei (UTC+8)",
+      "venue_timezone": "Asia/Taipei",
+      "valid_cash_venues": ["TWSE", "TPEX", "TWSE/TPEX"],
       "session_close_local": "13:30",
-      "rule": "A Taiwan official close is admitted when the gap between its event_time and now is fully explained by weekends (deterministic, requiring no feed) and/or validated official exchange calendar evidence (citing TWSE/TPEx source URL, authority, version/checksum, Asia/Taipei timezone, and fetched time), and the refresh receipt (observed_at) is within max_refresh_age_seconds of now, and the lineage carries an official tw-official:/tw-twse-tpex-official-market marker. Any weekday in the gap with no evidence is treated as an ordinary trading day (fail-closed stale); missing, incomplete, bad-checksum, or unofficial evidence fails closed as unverifiable (market_input_calendar_unverifiable) instead of silently guessing.",
+      "rule": "A Taiwan official close is admitted when the gap between its event_time and now is fully explained by weekends (deterministic, requiring no feed) and/or validated official exchange calendar evidence (citing TWSE/TPEx HTTPS source URL, authority, 64-hex SHA-256 matching external trusted pin, exact Asia/Taipei timezone, strict ISO dates, and non-future fetched time), and the refresh receipt (observed_at) is within max_refresh_age_seconds of now, and the lineage carries an official tw-official:/tw-twse-tpex-official-market marker. Any completed weekday in the gap requires an explicit validated session record; missing or unverifiable evidence returns market_input_calendar_unverifiable, and market_input_stale is returned only for an explicit validated trading session.",
       "typed_reason_codes": [
         "market_input_stale",
         "market_input_stale_refresh",
@@ -67,23 +68,32 @@
       "commands": [
         "git diff --check",
         "bash -n scripts/deploy_nonprod_vm.sh",
-        ".venv-pantheon/bin/python3 -m py_compile services/execution/market_snapshot_admission.py services/execution/lean_runtime/test_paper_signal_producer.py services/paper_fleet_reconciler/test_paper_fleet_reconciler.py services/control-plane/bff/agora/operational_readiness.py services/control-plane/bff/agora/test_operational_readiness.py scripts/test_source_ingest_deploy_diagnostics_contract.py"
+        "python3 -m py_compile services/execution/market_snapshot_admission.py services/execution/lean_runtime/test_paper_signal_producer.py services/paper_fleet_reconciler/test_paper_fleet_reconciler.py services/control-plane/bff/agora/operational_readiness.py services/control-plane/bff/agora/test_operational_readiness.py scripts/test_source_ingest_deploy_diagnostics_contract.py"
       ],
       "result": "passed"
     },
     "focused_admission_producer_fleet_readiness_source_deploy": {
-      "command": ".venv-pantheon/bin/python3 -m pytest -q services/execution/lean_runtime/test_paper_signal_producer.py services/paper_fleet_reconciler/test_paper_fleet_reconciler.py services/source_ingestion/tests/test_latest_market_snapshot.py services/control-plane/bff/agora/test_operational_readiness.py scripts/test_source_ingest_deploy_diagnostics_contract.py",
-      "result": "112 passed, 1 warning",
+      "command": "PYTHONPATH=. /home/lupin/.local/bin/pytest -q services/execution/lean_runtime/test_paper_signal_producer.py services/paper_fleet_reconciler/test_paper_fleet_reconciler.py services/source_ingestion/tests/test_latest_market_snapshot.py services/control-plane/bff/agora/test_operational_readiness.py scripts/test_source_ingest_deploy_diagnostics_contract.py",
+      "result": "122 passed, 1 warning",
       "warning": "existing Starlette TestClient deprecation warning only"
     },
     "new_deterministic_taiwan_scenarios": [
       "Friday close admitted on Saturday (weekend gap, no calendar evidence needed).",
       "Multi-day official Lunar New Year holiday span admitted with valid official calendar evidence.",
       "Calendar evidence missing a required weekday in the gap rejected as market_input_calendar_unverifiable.",
+      "Calendar evidence with no coverage-range inference: absent weekday in coverage interval rejected as market_input_calendar_unverifiable (Defect 1).",
       "Calendar evidence with incomplete range rejected as market_input_calendar_unverifiable.",
-      "Calendar evidence with bad checksum rejected as market_input_calendar_unverifiable.",
+      "Completed weekday without calendar evidence rejected as market_input_calendar_unverifiable (Defect 2).",
+      "Completed weekday with explicit validated trading session rejected as market_input_stale (Defect 2).",
+      "holiday_lookup returning authority-only record without full contract validation rejected as market_input_calendar_unverifiable (Defect 3).",
+      "Calendar evidence with TAIFEX, TW, or non-cash venue rejected as market_input_calendar_unverifiable (Defect 4).",
+      "Calendar evidence with UTC, UTC+8, or timezone alias rejected; exact Asia/Taipei required (Defect 4).",
+      "Calendar evidence with HTTP scheme rejected; HTTPS required (Defect 5).",
+      "Calendar evidence with invalid or non-64-hex checksum rejected (Defect 5).",
+      "Calendar evidence with self-asserted checksum not in trusted external pin rejected (Defect 5).",
+      "Calendar evidence with future fetched_at timestamp (>300s) rejected (Defect 6).",
+      "Calendar evidence with non-ISO coverage_start, coverage_end, holiday, session, or trading date rejected (Defect 6).",
       "Calendar evidence with unofficial URL domain rejected as market_input_calendar_unverifiable.",
-      "Friday close rejected as market_input_stale once Monday's own session has closed.",
       "Stale refresh receipt (observed_at older than max_refresh_age_seconds) rejected as market_input_stale_refresh.",
       "Future event_time rejected as market_input_invalid.",
       "Non-official lineage rejected as market_input_non_official_lineage.",

@@ -601,6 +601,8 @@ class TestSharedSnapshotAdmissionDecisions(unittest.TestCase):
     def _tw_calendar_evidence(
         *,
         holidays=None,
+        trading_days=None,
+        sessions=None,
         coverage_start="2026-01-01",
         coverage_end="2026-12-31",
         source_url="https://www.twse.com.tw/en/trading/calendar.html",
@@ -610,7 +612,7 @@ class TestSharedSnapshotAdmissionDecisions(unittest.TestCase):
         timezone="Asia/Taipei",
         market="TW",
         venue="TWSE",
-        fetched_at="2026-08-28T00:00:00Z",
+        fetched_at="2026-01-01T00:00:00Z",
         extra=None,
     ):
         ev = {
@@ -624,7 +626,7 @@ class TestSharedSnapshotAdmissionDecisions(unittest.TestCase):
             "checksum": checksum,
             "coverage_start": coverage_start,
             "coverage_end": coverage_end,
-            "holidays": holidays or {
+            "holidays": holidays if holidays is not None else {
                 "2026-02-16": {"name": "Lunar New Year (eve)"},
                 "2026-02-17": {"name": "Lunar New Year"},
                 "2026-02-18": {"name": "Lunar New Year"},
@@ -632,6 +634,10 @@ class TestSharedSnapshotAdmissionDecisions(unittest.TestCase):
                 "2026-02-20": {"name": "Lunar New Year (makeup)"},
             },
         }
+        if trading_days is not None:
+            ev["trading_days"] = trading_days
+        if sessions is not None:
+            ev["sessions"] = sessions
         if extra:
             ev.update(extra)
         return ev
@@ -674,7 +680,28 @@ class TestSharedSnapshotAdmissionDecisions(unittest.TestCase):
         dec = admit_market_snapshot(snapshot, max_age_seconds=86400, now_iso="2026-02-23T03:00:00Z")
         self.assertFalse(dec.admitted)
         self.assertEqual(dec.reason_code, "market_input_calendar_unverifiable")
-        self.assertIn("missing coverage for weekday", dec.detail)
+        self.assertIn("missing explicit session record for weekday", dec.detail)
+
+    def test_tw_calendar_evidence_no_coverage_range_inference_rejected(self) -> None:
+        from services.execution.market_snapshot_admission import admit_market_snapshot
+
+        # Defect 1: coverage_start/end must NOT infer that unlisted weekdays are trading.
+        # An unlisted completed weekday must fail closed as market_input_calendar_unverifiable.
+        snapshot = self._tw_snapshot("2026-02-13T05:30:00Z", "2026-02-23T02:00:00Z")
+        snapshot["calendar_evidence"] = self._tw_calendar_evidence(
+            holidays={
+                "2026-02-16": {"name": "LNY 1"},
+                "2026-02-17": {"name": "LNY 2"},
+                "2026-02-18": {"name": "LNY 3"},
+                # 2026-02-19 and 2026-02-20 are missing from holidays and trading_days
+            },
+            coverage_start="2026-02-01",
+            coverage_end="2026-02-28",
+        )
+        dec = admit_market_snapshot(snapshot, max_age_seconds=86400, now_iso="2026-02-23T03:00:00Z")
+        self.assertFalse(dec.admitted)
+        self.assertEqual(dec.reason_code, "market_input_calendar_unverifiable")
+        self.assertIn("missing explicit session record for weekday 2026-02-19", dec.detail)
 
     def test_tw_calendar_evidence_incomplete_range_rejected(self) -> None:
         from services.execution.market_snapshot_admission import admit_market_snapshot
@@ -690,17 +717,173 @@ class TestSharedSnapshotAdmissionDecisions(unittest.TestCase):
         self.assertEqual(dec.reason_code, "market_input_calendar_unverifiable")
         self.assertIn("before coverage_start", dec.detail)
 
-    def test_tw_calendar_evidence_bad_checksum_rejected(self) -> None:
+    def test_tw_weekday_close_without_calendar_evidence_rejected_as_unverifiable(self) -> None:
         from services.execution.market_snapshot_admission import admit_market_snapshot
 
+        # Defect 2: Missing calendar evidence for a completed weekday session must return
+        # market_input_calendar_unverifiable (not market_input_stale).
+        snapshot = self._tw_snapshot("2026-08-28T05:30:00Z", "2026-08-31T05:45:00Z")
+        dec = admit_market_snapshot(snapshot, max_age_seconds=86400, now_iso="2026-08-31T06:00:00Z")
+        self.assertFalse(dec.admitted)
+        self.assertEqual(dec.reason_code, "market_input_calendar_unverifiable")
+        self.assertIn("no official Taiwan calendar evidence provided", dec.detail)
+
+    def test_tw_weekday_close_with_explicit_trading_session_rejected_as_stale(self) -> None:
+        from services.execution.market_snapshot_admission import admit_market_snapshot
+
+        # Defect 2: Stale is returned only when an explicit validated trading session occurred.
+        snapshot = self._tw_snapshot("2026-08-28T05:30:00Z", "2026-08-31T05:45:00Z")
+        snapshot["calendar_evidence"] = self._tw_calendar_evidence(
+            holidays={},
+            trading_days=["2026-08-31"],
+        )
+        dec = admit_market_snapshot(snapshot, max_age_seconds=86400, now_iso="2026-08-31T06:00:00Z")
+        self.assertFalse(dec.admitted)
+        self.assertEqual(dec.reason_code, "market_input_stale")
+        self.assertIn("a newer official Taiwan session closed", dec.detail)
+
+    def test_tw_holiday_lookup_authority_only_rejected(self) -> None:
+        from datetime import datetime
+
+        from services.execution.market_snapshot_admission import evaluate_taiwan_market_freshness
+
+        # Defect 3: holiday_lookup returning authority-only dict without full contract is rejected.
+        def authority_only_lookup(_date_iso: str):
+            return {"authority": "TWSE"}
+
+        ok, reason_code, detail = evaluate_taiwan_market_freshness(
+            event_time_dt=datetime.fromisoformat("2026-08-28T05:30:00+00:00"),
+            now_dt=datetime.fromisoformat("2026-08-31T06:00:00+00:00"),
+            refresh_receipt_dt=datetime.fromisoformat("2026-08-31T05:45:00+00:00"),
+            lineage={
+                "source_ids": ["tw-official:tw_price_daily:TWSE:2330:checksummed"],
+                "connector_ids": ["tw-twse-tpex-official-market"],
+            },
+            max_refresh_age_seconds=86400,
+            holiday_lookup=authority_only_lookup,
+        )
+        self.assertFalse(ok)
+        self.assertEqual(reason_code, "market_input_calendar_unverifiable")
+        self.assertIn("validation failed", detail)
+
+    def test_tw_calendar_evidence_taifex_or_tw_venue_rejected(self) -> None:
+        from services.execution.market_snapshot_admission import admit_market_snapshot
+
+        # Defect 4: TAIFEX or TW venues must be rejected; only cash venues TWSE/TPEX are accepted.
+        for bad_venue in ("TAIFEX", "TW", "HKEX"):
+            snapshot = self._tw_snapshot("2026-02-13T05:30:00Z", "2026-02-23T02:00:00Z")
+            snapshot["calendar_evidence"] = self._tw_calendar_evidence(venue=bad_venue)
+            dec = admit_market_snapshot(snapshot, max_age_seconds=86400, now_iso="2026-02-23T03:00:00Z")
+            self.assertFalse(dec.admitted)
+            self.assertEqual(dec.reason_code, "market_input_calendar_unverifiable")
+            self.assertIn("not an official Taiwan cash venue", dec.detail)
+
+    def test_tw_calendar_evidence_utc_timezone_alias_rejected(self) -> None:
+        from services.execution.market_snapshot_admission import admit_market_snapshot
+
+        # Defect 4: UTC aliases like UTC+8, +08:00, UTC must be rejected; exact Asia/Taipei required.
+        for bad_tz in ("UTC+8", "+08:00", "UTC+08:00", "UTC", "Asia/Tokyo"):
+            snapshot = self._tw_snapshot("2026-02-13T05:30:00Z", "2026-02-23T02:00:00Z")
+            snapshot["calendar_evidence"] = self._tw_calendar_evidence(timezone=bad_tz)
+            dec = admit_market_snapshot(snapshot, max_age_seconds=86400, now_iso="2026-02-23T03:00:00Z")
+            self.assertFalse(dec.admitted)
+            self.assertEqual(dec.reason_code, "market_input_calendar_unverifiable")
+            self.assertIn("expected exact 'Asia/Taipei'", dec.detail)
+
+    def test_tw_calendar_evidence_http_scheme_rejected(self) -> None:
+        from services.execution.market_snapshot_admission import admit_market_snapshot
+
+        # Defect 5: HTTP scheme is rejected; HTTPS is required.
         snapshot = self._tw_snapshot("2026-02-13T05:30:00Z", "2026-02-23T02:00:00Z")
         snapshot["calendar_evidence"] = self._tw_calendar_evidence(
-            checksum="short",
+            source_url="http://www.twse.com.tw/en/trading/calendar.html",
         )
         dec = admit_market_snapshot(snapshot, max_age_seconds=86400, now_iso="2026-02-23T03:00:00Z")
         self.assertFalse(dec.admitted)
         self.assertEqual(dec.reason_code, "market_input_calendar_unverifiable")
-        self.assertIn("checksum", dec.detail)
+        self.assertIn("scheme 'http' must be https", dec.detail)
+
+    def test_tw_calendar_evidence_bad_checksum_rejected(self) -> None:
+        from services.execution.market_snapshot_admission import admit_market_snapshot
+
+        # Defect 5: Checksum must be 64-hex SHA-256 matching external pin.
+        for bad_cs in ("short", "not_a_hex_string_with_64_characters_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"):
+            snapshot = self._tw_snapshot("2026-02-13T05:30:00Z", "2026-02-23T02:00:00Z")
+            snapshot["calendar_evidence"] = self._tw_calendar_evidence(checksum=bad_cs)
+            dec = admit_market_snapshot(snapshot, max_age_seconds=86400, now_iso="2026-02-23T03:00:00Z")
+            self.assertFalse(dec.admitted)
+            self.assertEqual(dec.reason_code, "market_input_calendar_unverifiable")
+            self.assertIn("checksum", dec.detail)
+
+    def test_tw_calendar_evidence_self_asserted_checksum_rejected(self) -> None:
+        from services.execution.market_snapshot_admission import admit_market_snapshot
+
+        # Defect 5: Self-asserted checksums cannot bypass the external trusted pin.
+        untrusted_sha = "1111111111111111111111111111111111111111111111111111111111111111"
+        snapshot = self._tw_snapshot("2026-02-13T05:30:00Z", "2026-02-23T02:00:00Z")
+        snapshot["calendar_evidence"] = self._tw_calendar_evidence(
+            checksum=untrusted_sha,
+            extra={"expected_checksum": untrusted_sha, "expected_sha256": untrusted_sha},
+        )
+        dec = admit_market_snapshot(snapshot, max_age_seconds=86400, now_iso="2026-02-23T03:00:00Z")
+        self.assertFalse(dec.admitted)
+        self.assertEqual(dec.reason_code, "market_input_calendar_unverifiable")
+        self.assertIn("does not match", dec.detail)
+
+    def test_tw_calendar_evidence_future_fetched_at_rejected(self) -> None:
+        from services.execution.market_snapshot_admission import admit_market_snapshot
+
+        # Defect 6: Future fetched_at timestamp (>300s) is rejected.
+        snapshot = self._tw_snapshot("2026-02-13T05:30:00Z", "2026-02-23T02:00:00Z")
+        snapshot["calendar_evidence"] = self._tw_calendar_evidence(
+            fetched_at="2026-02-23T10:00:00Z",  # 7 hours after now_iso (03:00)
+        )
+        dec = admit_market_snapshot(snapshot, max_age_seconds=86400, now_iso="2026-02-23T03:00:00Z")
+        self.assertFalse(dec.admitted)
+        self.assertEqual(dec.reason_code, "market_input_calendar_unverifiable")
+        self.assertIn("fetched_at '2026-02-23T10:00:00Z' is in the future", dec.detail)
+
+    def test_tw_calendar_evidence_non_iso_dates_rejected(self) -> None:
+        from services.execution.market_snapshot_admission import admit_market_snapshot
+
+        # Defect 6: Strict ISO date validation for coverage, holiday, session, and trading dates.
+        # Case A: non-ISO coverage_start
+        snapshot = self._tw_snapshot("2026-02-13T05:30:00Z", "2026-02-23T02:00:00Z")
+        snapshot["calendar_evidence"] = self._tw_calendar_evidence(coverage_start="2026/01/01")
+        dec = admit_market_snapshot(snapshot, max_age_seconds=86400, now_iso="2026-02-23T03:00:00Z")
+        self.assertFalse(dec.admitted)
+        self.assertEqual(dec.reason_code, "market_input_calendar_unverifiable")
+        self.assertIn("invalid coverage_start", dec.detail)
+
+        # Case B: non-ISO holiday date key
+        snapshot = self._tw_snapshot("2026-02-13T05:30:00Z", "2026-02-23T02:00:00Z")
+        snapshot["calendar_evidence"] = self._tw_calendar_evidence(
+            holidays={"2026-2-16": {"name": "LNY"}},
+        )
+        dec = admit_market_snapshot(snapshot, max_age_seconds=86400, now_iso="2026-02-23T03:00:00Z")
+        self.assertFalse(dec.admitted)
+        self.assertEqual(dec.reason_code, "market_input_calendar_unverifiable")
+        self.assertIn("invalid holiday date", dec.detail)
+
+        # Case C: non-ISO session date
+        snapshot = self._tw_snapshot("2026-02-13T05:30:00Z", "2026-02-23T02:00:00Z")
+        snapshot["calendar_evidence"] = self._tw_calendar_evidence(
+            sessions={"02/16/2026": {"type": "holiday"}},
+        )
+        dec = admit_market_snapshot(snapshot, max_age_seconds=86400, now_iso="2026-02-23T03:00:00Z")
+        self.assertFalse(dec.admitted)
+        self.assertEqual(dec.reason_code, "market_input_calendar_unverifiable")
+        self.assertIn("invalid session date", dec.detail)
+
+        # Case D: non-ISO trading_days
+        snapshot = self._tw_snapshot("2026-02-13T05:30:00Z", "2026-02-23T02:00:00Z")
+        snapshot["calendar_evidence"] = self._tw_calendar_evidence(
+            trading_days=["2026.02.16"],
+        )
+        dec = admit_market_snapshot(snapshot, max_age_seconds=86400, now_iso="2026-02-23T03:00:00Z")
+        self.assertFalse(dec.admitted)
+        self.assertEqual(dec.reason_code, "market_input_calendar_unverifiable")
+        self.assertIn("invalid trading date", dec.detail)
 
     def test_tw_calendar_evidence_unofficial_url_rejected(self) -> None:
         from services.execution.market_snapshot_admission import admit_market_snapshot
@@ -713,15 +896,6 @@ class TestSharedSnapshotAdmissionDecisions(unittest.TestCase):
         self.assertFalse(dec.admitted)
         self.assertEqual(dec.reason_code, "market_input_calendar_unverifiable")
         self.assertIn("not an official TWSE/TPEx domain", dec.detail)
-
-    def test_tw_weekday_close_stale_after_monday_session(self) -> None:
-        from services.execution.market_snapshot_admission import admit_market_snapshot
-
-        # Friday close still held stale once Monday's own session has closed.
-        snapshot = self._tw_snapshot("2026-08-28T05:30:00Z", "2026-08-31T05:45:00Z")
-        dec = admit_market_snapshot(snapshot, max_age_seconds=86400, now_iso="2026-08-31T06:00:00Z")
-        self.assertFalse(dec.admitted)
-        self.assertEqual(dec.reason_code, "market_input_stale")
 
     def test_tw_stale_refresh_receipt_rejected(self) -> None:
         from services.execution.market_snapshot_admission import admit_market_snapshot

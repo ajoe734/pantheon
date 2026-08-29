@@ -2232,6 +2232,20 @@ class TestPaperFleetTaiwanSessionFreshness(unittest.TestCase):
     )
     def test_tw_friday_close_paused_once_monday_session_closes(self, _mock_now) -> None:
         snap = self._tw_snapshot("2026-08-28T05:30:00Z", "2026-08-31T05:45:00Z")
+        snap["calendar_evidence"] = {
+            "market": "TW",
+            "venue": "TWSE",
+            "timezone": "Asia/Taipei",
+            "authority": "TWSE/TPEx announced holiday schedule",
+            "source_url": "https://www.twse.com.tw/en/trading/calendar.html",
+            "fetched_at": "2026-08-31T05:00:00Z",
+            "version": "2026.1",
+            "checksum": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "coverage_start": "2026-01-01",
+            "coverage_end": "2026-12-31",
+            "trading_days": ["2026-08-31"],
+            "holidays": {},
+        }
         b = _make_binding(
             "b-tw-monday-stale-001",
             symbol="2330.TWSE",
@@ -2248,6 +2262,27 @@ class TestPaperFleetTaiwanSessionFreshness(unittest.TestCase):
         adm = saved.metadata.get("session_admission")
         self.assertEqual(adm["reason_code"], "market_input_stale")
 
+    @patch(
+        "services.paper_fleet_reconciler.paper_fleet_reconciler._iso_now",
+        return_value="2026-08-31T06:00:00Z",
+    )
+    def test_tw_friday_close_paused_without_calendar_evidence(self, _mock_now) -> None:
+        snap = self._tw_snapshot("2026-08-28T05:30:00Z", "2026-08-31T05:45:00Z")
+        b = _make_binding(
+            "b-tw-monday-unverifiable-001",
+            symbol="2330.TWSE",
+            market_data_policy={"owner": "source-ingest", "contract": "latest_stored_normalized", "max_age_seconds": 86400, "minimum_closes": 2},
+            market_input=snap,
+        )
+        store, recon = self._make_store_and_recon([b], source_snapshot=snap)
+
+        result = recon.reconcile_once()
+        self.assertEqual(result["worker_count"], 0)
+        self.assertEqual(len(self.transitions), 2)
+        self.assertEqual(self.transitions[1]["new_status"], "paused")
+        saved = store.get("b-tw-monday-unverifiable-001")
+        adm = saved.metadata.get("session_admission")
+        self.assertEqual(adm["reason_code"], "market_input_calendar_unverifiable")
 
 
 if __name__ == "__main__":
