@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import importlib
 import os
 import sys
@@ -14,15 +15,256 @@ from fastapi.testclient import TestClient
 
 import command_executor
 import main as bff_main
-import read_store as read_store_module
 from command_queue import CommandStore
-from ports import create_in_memory_read_surface_ports
+from management_projection_test_doubles import PplFixtureBuilder
+from ports import ReadSurfacePorts, create_in_memory_read_surface_ports
 
 
 AUTHORITY_URL = "http://capital-authority.test"
 HEADERS = {"Authorization": "Bearer op-2:operator"}
 APPROVER_HEADERS = {"Authorization": "Bearer op-approval:approver"}
 SECOND_OPERATOR_HEADERS = {"Authorization": "Bearer op-3:operator"}
+
+
+class PplProjectionTestDouble(ReadSurfacePorts):
+    """Explicit mutable PPL fixture over narrow read ports.
+
+    The double exposes only the named Persona/Capital/Runtime fixture writes
+    used by ranking-projection tests.  Reads continue through
+    ``ReadSurfacePorts``; it is not a forwarding compatibility facade.
+    """
+
+    def __init__(self, *, snapshot: Optional[Dict[str, Any]] = None) -> None:
+        state = copy.deepcopy(snapshot or {})
+        self._fixture_builder = PplFixtureBuilder()
+        self._personas = state.get("personas", [])
+        self._capital_pools = state.get("capital_pools", [])
+        self._bindings = state.get("bindings", [])
+        self._runtime_bindings = state.get("runtime_bindings", [])
+        self._rankings = state.get("rankings", [])
+        self._rebalances = state.get("rebalances", [])
+        self._capital_allocations = state.get("capital_allocations", [])
+        self._ranking_snapshots = state.get("ranking_snapshots", {})
+        self._allocation_evaluations = state.get("allocation_evaluations", {})
+        ports = create_in_memory_read_surface_ports(
+            persona_capital_runtime_kwargs={
+                "personas": self._personas,
+                "capital_pools": self._capital_pools,
+                "bindings": self._bindings,
+                "runtime_bindings": self._runtime_bindings,
+                "rankings": self._rankings,
+                "rebalances": self._rebalances,
+                "capital_allocations": self._capital_allocations,
+            }
+        )
+        super().__init__(
+            operations_consultation=ports.operations_consultation,
+            persona_capital_runtime=ports.persona_capital_runtime,
+            ooda_management=ports.ooda_management,
+            research_knowledge_source=ports.research_knowledge_source,
+            lifecycle_telemetry_governance=ports.lifecycle_telemetry_governance,
+            persona_training=ports.persona_training,
+        )
+
+    @staticmethod
+    def _replace(records: list[Dict[str, Any]], record: Dict[str, Any], *keys: str) -> Dict[str, Any]:
+        record_id = next((str(record.get(key) or "") for key in keys if record.get(key)), "")
+        for index, existing in enumerate(records):
+            existing_id = next((str(existing.get(key) or "") for key in keys if existing.get(key)), "")
+            if record_id and existing_id == record_id:
+                records[index] = copy.deepcopy(record)
+                return records[index]
+        records.append(copy.deepcopy(record))
+        return records[-1]
+
+    def create_persona(
+        self,
+        *,
+        persona_id: str,
+        name: str,
+        actor_id: str,
+        archetype: str = "generalist",
+        lifecycle_state: str = "draft",
+        risk_level: str = "low",
+        mandate: Optional[str] = None,
+        strategy_family: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        **_: Any,
+    ) -> Dict[str, Any]:
+        record = self._fixture_builder.add_persona(
+            persona_id,
+            name=name,
+            actor_id=actor_id,
+            lifecycle_state=lifecycle_state,
+            status=lifecycle_state,
+            mandate=mandate or archetype,
+            strategy_family=strategy_family or archetype,
+            metadata={
+                **(metadata or {}),
+                "owner": actor_id,
+                "archetype": archetype,
+                "risk_level": risk_level,
+            },
+        )
+        return self._replace(self._personas, record, "persona_id", "id")
+
+    def create_persona_binding(
+        self,
+        *,
+        binding_id: str,
+        persona_id: str,
+        capital_pool_id: str,
+        actor_id: str,
+        role: str = "paper_owner",
+        validity: str = "active",
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        record = self._fixture_builder.add_binding(
+            binding_id,
+            persona_id,
+            capital_pool_id,
+            actor_id=actor_id,
+            role=role,
+            validity=validity,
+            status=validity,
+            metadata=metadata or {},
+            persona_capital_binding_id=binding_id,
+        )
+        return self._replace(self._bindings, record, "binding_id", "id")
+
+    def create_runtime_binding(
+        self,
+        *,
+        runtime_id: str,
+        name: str,
+        persona_id: str,
+        binding_id: str,
+        deployment_plan_id: str,
+        runtime_kind: str,
+        actor_id: str,
+        params: Optional[Dict[str, Any]] = None,
+        state: str = "stopped",
+    ) -> Dict[str, Any]:
+        clean_params = dict(params or {})
+        record = self._fixture_builder.add_runtime_binding(
+            runtime_id,
+            binding_id,
+            name=name,
+            persona_id=persona_id,
+            deployment_plan_id=deployment_plan_id,
+            runtime_kind=runtime_kind,
+            deployment_stage=runtime_kind,
+            deployment_mode=runtime_kind,
+            state=state,
+            status=state,
+            actor_id=actor_id,
+            capital_pool_id=clean_params.get("capital_pool_id"),
+            params=clean_params,
+            runtime_binding_id=binding_id,
+            persona_capital_binding_id=binding_id,
+        )
+        return self._replace(self._runtime_bindings, record, "runtime_id", "id")
+
+    def add_authoritative_capital_pool(self, record: Dict[str, Any]) -> Dict[str, Any]:
+        pool_id = str(record.get("pool_id") or record.get("id") or "")
+        typed = self._fixture_builder.add_capital_pool(pool_id)
+        typed.update(copy.deepcopy(record))
+        return self._replace(self._capital_pools, typed, "pool_id", "id")
+
+    def add_authoritative_binding(self, record: Dict[str, Any]) -> Dict[str, Any]:
+        binding_id = str(record.get("binding_id") or record.get("id") or "")
+        typed = self._fixture_builder.add_binding(
+            binding_id,
+            str(record.get("persona_id") or ""),
+            str(record.get("capital_pool_id") or ""),
+        )
+        typed.update(copy.deepcopy(record))
+        return self._replace(self._bindings, typed, "binding_id", "id")
+
+    def add_authoritative_rebalance(self, record: Dict[str, Any]) -> Dict[str, Any]:
+        rebalance_id = str(record.get("rebalance_id") or record.get("id") or "")
+        typed = self._fixture_builder.add_rebalance(rebalance_id)
+        typed.update(copy.deepcopy(record))
+        return self._replace(self._rebalances, typed, "rebalance_id", "id")
+
+    def put_ranking_snapshot(self, record: Dict[str, Any]) -> Dict[str, Any]:
+        snapshot_id = str(record.get("ranking_snapshot_id") or "")
+        if not snapshot_id or not record.get("content_digest"):
+            raise ValueError("ranking snapshot id and content_digest are required")
+        existing = self._ranking_snapshots.get(snapshot_id)
+        if existing is not None and existing.get("content_digest") != record.get("content_digest"):
+            raise ValueError("ranking snapshot id already has different content")
+        stored = copy.deepcopy({**record, "ranking_snapshot_id": snapshot_id})
+        self._ranking_snapshots[snapshot_id] = stored
+        ranking = {**stored, "id": snapshot_id, "ranking_id": snapshot_id}
+        self._replace(self._rankings, ranking, "ranking_id", "id")
+        return copy.deepcopy(stored)
+
+    def get_ranking_snapshot(self, snapshot_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        record = self._ranking_snapshots.get(str(snapshot_id or ""))
+        return copy.deepcopy(record) if record is not None else None
+
+    def put_allocation_evaluation(self, record: Dict[str, Any]) -> Dict[str, Any]:
+        evaluation_id = str(record.get("allocation_evaluation_id") or "")
+        if not evaluation_id or not record.get("content_digest"):
+            raise ValueError("allocation evaluation id and content_digest are required")
+        existing = self._allocation_evaluations.get(evaluation_id)
+        if existing is not None and existing.get("content_digest") != record.get("content_digest"):
+            raise ValueError("allocation evaluation id already has different content")
+        stored = copy.deepcopy({**record, "allocation_evaluation_id": evaluation_id})
+        self._allocation_evaluations[evaluation_id] = stored
+        allocation = {**stored, "id": evaluation_id, "allocation_id": evaluation_id}
+        self._replace(self._capital_allocations, allocation, "allocation_id", "id")
+        return copy.deepcopy(stored)
+
+    def get_allocation_evaluation(self, evaluation_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        record = self._allocation_evaluations.get(str(evaluation_id or ""))
+        return copy.deepcopy(record) if record is not None else None
+
+    def get_capability_snapshot_for_persona(self, persona_id: str) -> Optional[Dict[str, Any]]:
+        del persona_id
+        return None
+
+    def dataset_source(self, dataset: str) -> str:
+        if dataset in {"evidence_refs", "ranking_snapshots", "allocation_evaluations"}:
+            return "typed_store"
+        return super().dataset_source(dataset)
+
+    def tamper_ranking_snapshot_item(
+        self, snapshot_id: str, persona_id: str, field: str, value: Any
+    ) -> None:
+        record = self._ranking_snapshots[snapshot_id]
+        item = next(item for item in record.get("items", []) if item.get("persona_id") == persona_id)
+        item[field] = value
+
+    def tamper_allocation_evaluation_line(
+        self, evaluation_id: str, line_index: int, field: str, value: Any
+    ) -> None:
+        self._allocation_evaluations[evaluation_id]["lines"][line_index][field] = value
+
+    def clone_for_restart(self) -> "PplProjectionTestDouble":
+        clone = PplProjectionTestDouble(
+            snapshot={
+                "personas": self._personas,
+                "capital_pools": self._capital_pools,
+                "bindings": self._bindings,
+                "runtime_bindings": self._runtime_bindings,
+                "rankings": self._rankings,
+                "rebalances": self._rebalances,
+                "capital_allocations": self._capital_allocations,
+                "ranking_snapshots": self._ranking_snapshots,
+                "allocation_evaluations": self._allocation_evaluations,
+            }
+        )
+        for name in (
+            "get_sessions_for_persona",
+            "get_telemetry_summary",
+            "list_authoritative_paper_runtime_monitoring_sessions",
+            "list_evidence_refs",
+        ):
+            if name in self.__dict__:
+                setattr(clone, name, self.__dict__[name])
+        return clone
 
 
 def _assign_rebalance_lineage(payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -127,6 +369,7 @@ class CapitalBffAuthorityHarness:
         self.capital_module: Optional[ModuleType] = None
         self.capital_client: Optional[TestClient] = None
         self.client: Optional[TestClient] = None
+        self.read_surface = PplProjectionTestDouble()
 
     def __enter__(self) -> "CapitalBffAuthorityHarness":
         self.root.mkdir(parents=True, exist_ok=True)
@@ -137,7 +380,6 @@ class CapitalBffAuthorityHarness:
         self._original_command_store = bff_main.command_store
         self._original_post_json = command_executor._post_json
         self._original_get_json = command_executor._get_json
-        self._original_http_json_get = read_store_module._http_json_get
         self._capital_idempotency = dict(bff_main._CAPITAL_BFF_IDEMPOTENCY)
         self._command_auth_context = dict(bff_main._COMMAND_AUTH_CONTEXT)
         self._persona_overlay = dict(bff_main._PERSONA_BFF_OVERLAY)
@@ -162,7 +404,6 @@ class CapitalBffAuthorityHarness:
         self.capital_client = TestClient(self.capital_module.app)
         command_executor._post_json = self._post_json
         command_executor._get_json = self._get_json
-        read_store_module._http_json_get = self._http_json_get
         self._reset_bff_process_state()
 
         assert self.client is not None
@@ -209,7 +450,6 @@ class CapitalBffAuthorityHarness:
 
         command_executor._post_json = self._original_post_json
         command_executor._get_json = self._original_get_json
-        read_store_module._http_json_get = self._original_http_json_get
         bff_main.read_store = self._original_read_store
         bff_main.command_store = self._original_command_store
         bff_main._CAPITAL_BFF_IDEMPOTENCY.clear()
@@ -232,7 +472,7 @@ class CapitalBffAuthorityHarness:
     def _reset_bff_process_state(self) -> None:
         if self.client is not None:
             self.client.close()
-        bff_main.read_store = create_in_memory_read_surface_ports()
+        bff_main.read_store = self.read_surface
         bff_main.command_store = CommandStore(str(self.command_path))
         bff_main._CAPITAL_BFF_IDEMPOTENCY.clear()
         bff_main._COMMAND_AUTH_CONTEXT.clear()
@@ -246,10 +486,11 @@ class CapitalBffAuthorityHarness:
             self.capital_client.close()
         self.capital_module = importlib.reload(self.capital_module)
         self.capital_client = TestClient(self.capital_module.app)
+        self.read_surface = self.read_surface.clone_for_restart()
         self._reset_bff_process_state()
 
     def create_persona(self, persona_id: str = "p-live") -> Dict[str, Any]:
-        return bff_main.read_store.create_persona(
+        return self.read_surface.create_persona(
             persona_id=persona_id,
             name="Contained Live Persona",
             actor_id="operator-test",
@@ -265,7 +506,7 @@ class CapitalBffAuthorityHarness:
         snapshot_id = str(payload["ranking_snapshot_id"])
         evaluation_id = str(payload["allocation_evaluation_id"])
         policy_version = str(payload["allocation_policy_version"])
-        bff_main.read_store.put_ranking_snapshot({
+        self.read_surface.put_ranking_snapshot({
             "ranking_snapshot_id": snapshot_id,
             "surface": "quarterly",
             "period": "test",
@@ -282,7 +523,7 @@ class CapitalBffAuthorityHarness:
             "evidence_assertion_digests": {},
         })
         lines = [dict(line) for line in payload.get("lines") or []]
-        bff_main.read_store.put_allocation_evaluation({
+        self.read_surface.put_allocation_evaluation({
             "allocation_evaluation_id": evaluation_id,
             "ranking_snapshot_id": snapshot_id,
             "allocation_policy_version": policy_version,
@@ -426,7 +667,14 @@ class CapitalBffAuthorityHarness:
                 response.headers,
                 BytesIO(response.content),
             )
-        return response.json()
+        body = response.json()
+        if parsed.path == "/api/capital-pools":
+            self.read_surface.add_authoritative_capital_pool(body)
+        elif parsed.path == "/api/bindings":
+            self.read_surface.add_authoritative_binding(body)
+        elif parsed.path == "/api/rebalances":
+            self.read_surface.add_authoritative_rebalance(body)
+        return body
 
     def _get_json(
         self,
@@ -450,21 +698,3 @@ class CapitalBffAuthorityHarness:
         if not response.content:
             return None
         return response.json()
-
-    def _http_json_get(
-        self,
-        base_url: str,
-        path: str,
-        *,
-        headers: Optional[Dict[str, str]] = None,
-    ) -> tuple[bool, Any]:
-        assert base_url.rstrip("/") == AUTHORITY_URL
-        assert self.capital_client is not None
-        response = self.capital_client.get(path, headers=headers or {})
-        if response.status_code == 404:
-            return True, None
-        if response.status_code >= 400:
-            return False, None
-        if not response.content:
-            return True, None
-        return True, response.json()
