@@ -4,7 +4,7 @@
 |---|---|
 | 文件狀態 | 完整稽核結論（2026-08-29T22:54Z 最新重審與 delta 盤點）；舊 FE/BFF pair 已由補償恢復，但 current source promotion 仍受阻，第三遍 current UI 明確保留為未驗證 |
 | 稽核範圍 | Pantheon 系統、十二循環、Management、Management AI、Agora、Source Ingestion、操作 UI、dev hosted runtime |
-| Pantheon repository 基線 | `origin/dev@394eb0501676f4520973a216db7eb7010f368bb3`；包含 `b3b26a7` 後新增的 `f227360` Source frontier recovery、`9e9ab33` Active symbol snapshot recovery、`44895a2` Official snapshot min closes 及 `394eb05` Taiwan market-session freshness |
+| Pantheon repository 基線 | `origin/dev@954caefa519ab89827b4d3030a511f2f7c73138a`；包含 `b3b26a7` 後新增的 `f227360` Source frontier recovery、`9e9ab33` Active symbol snapshot recovery、`44895a2` Official snapshot min closes、`394eb05` Taiwan market-session freshness 及 `e5b4d10` dev tooling cleanup |
 | Pantheon product runtime 基線 | `394eb0501676f4520973a216db7eb7010f368bb3` |
 | execute-plans source 基線 | `origin/dev@bd03c863e3c2c1c64b9b7797f27cefaf84df17c1`（包含 PR #694 evidence manifest，前端 UI 程式碼同 `5ffee3db8c2b37b4070d43d091ed4207ef5d70e5`） |
 | current hosted BFF | `dcb14231d29f08f1646a4ee962b83fd2d4b67560`；`22:54Z` 直接確認：舊 accepted pair 運行中，PostgreSQL checkpoint `7,635,368`，backlog 0，quarantine 0 |
