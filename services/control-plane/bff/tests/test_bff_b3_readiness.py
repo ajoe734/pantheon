@@ -18,7 +18,7 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 import main as bff_main
-from read_store import ReadSurfaceStore
+from ports import create_read_surface_ports
 
 
 OPERATOR_HEADERS = {"Authorization": "Bearer op-b3-readiness:operator"}
@@ -37,10 +37,7 @@ def _readiness_client() -> Iterator[TestClient]:
         os.environ["OPENCLAW_CAPITAL_BINDING_ENABLED"] = "false"
         os.environ["PANTHEON_CAPITAL_BINDING_LIVE_ENABLED"] = "false"
         try:
-            store = ReadSurfaceStore(
-                os.path.join(td, "read_surfaces.json"),
-                allow_local_snapshot_fallback=True,
-            )
+            store = create_read_surface_ports()
             store.get_openclaw_broker_adapter_readiness = lambda: {
                 "surface": "openclaw_broker_adapter_readiness",
                 "overall_status": "ok",

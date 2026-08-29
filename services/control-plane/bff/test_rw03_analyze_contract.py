@@ -12,20 +12,38 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, os.path.dirname(__file__))
 
 import main as bff_main
-from read_store import ReadSurfaceStore
+from ports import DefaultResearchKnowledgeSourcePort
 
 
 OPERATOR_AUTH = "Bearer test-operator:operator"
+
+
+class _AnalysisPortDouble(DefaultResearchKnowledgeSourcePort):
+    """Typed RW-03 double that preserves route-compatible fallback flags."""
+
+    def __init__(self, records: dict[str, dict], *, source: str) -> None:
+        super().__init__(research_analyses_store=records)
+        self._source = source
+
+    def dataset_source(self, dataset: str, **_: object) -> str:
+        if dataset == "research_analyses":
+            return self._source
+        return super().dataset_source(dataset)
+
+    def list_research_analyses(self, **kwargs: object) -> list[dict]:
+        kwargs.pop("include_snapshot_fallback", None)
+        kwargs.pop("include_local_fallback", None)
+        return super().list_research_analyses(**kwargs)
+
+    def get_research_analysis(self, analysis_id: str, **_: object) -> dict | None:
+        return super().get_research_analysis(analysis_id)
 
 
 @contextmanager
 def _seeded_client():
     with tempfile.TemporaryDirectory() as td:
         original_store = bff_main.read_store
-        bff_main.read_store = ReadSurfaceStore(
-            os.path.join(td, "read_surfaces.json"),
-            allow_local_snapshot_fallback=True,
-        )
+        bff_main.read_store = _AnalysisPortDouble({}, source="local_snapshot")
         client = TestClient(bff_main.app)
         try:
             yield client
@@ -104,9 +122,9 @@ def _service_backed_client():
         os.environ["PANTHEON_BFF_RESEARCH_ANALYSIS_STORE"] = str(analysis_store)
 
         original_store = bff_main.read_store
-        bff_main.read_store = ReadSurfaceStore(
-            os.path.join(td, "read_surfaces.json"),
-            allow_local_snapshot_fallback=True,
+        bff_main.read_store = _AnalysisPortDouble(
+            json.loads(analysis_store.read_text(encoding="utf-8")),
+            source="service_client",
         )
         client = TestClient(bff_main.app)
         try:
@@ -124,10 +142,7 @@ def _service_backed_client():
 def _unavailable_client():
     with tempfile.TemporaryDirectory() as td:
         original_store = bff_main.read_store
-        bff_main.read_store = ReadSurfaceStore(
-            os.path.join(td, "read_surfaces.json"),
-            allow_local_snapshot_fallback=False,
-        )
+        bff_main.read_store = _AnalysisPortDouble({}, source="missing")
         client = TestClient(bff_main.app)
         try:
             yield client

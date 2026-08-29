@@ -21,17 +21,66 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 import main as bff_main
-from read_store import ReadSurfaceStore
+from ports import create_in_memory_read_surface_ports
 
 OPERATOR_HEADERS = {"Authorization": "Bearer op-b2-006:operator"}
 NO_AUTH_HEADERS: dict = {}
 
 
+class _V5ClosedLoopTestStore:
+    def __init__(self, personas: Optional[list] = None) -> None:
+        raw_personas = personas or [
+            {
+                "persona_id": "persona-alpha",
+                "name": "Alpha",
+                "lifecycle_state": "active",
+                "deployment_stage": "live",
+                "runtime_id": "rt-paper-001",
+                "metadata": {
+                    "market_scope": "crypto",
+                    "strategy_family": "momentum",
+                },
+            },
+        ]
+        self.ports = create_in_memory_read_surface_ports(
+            persona_capital_runtime_kwargs={
+                "personas": raw_personas,
+                "persona_league": [
+                    {
+                        "persona_id": p.get("persona_id") or p.get("id"),
+                        "rank": 1,
+                        "league_tier": "champion",
+                        "score": 95.0,
+                    }
+                    for p in raw_personas
+                ],
+            },
+        )
+
+    def __getattr__(self, name: str) -> Any:
+        attr = getattr(self.ports, name)
+        if callable(attr):
+            def _safe_wrapper(*args: Any, **kwargs: Any) -> Any:
+                try:
+                    return attr(*args, **kwargs)
+                except TypeError:
+                    return attr(*args)
+            return _safe_wrapper
+        return attr
+
+
 def _fresh_client(td: str) -> TestClient:
-    bff_main.read_store = ReadSurfaceStore(
-        os.path.join(td, "read_surfaces.json"),
-        allow_local_snapshot_fallback=True,
-    )
+    snapshot_path = os.path.join(td, "read_surfaces.json")
+    personas = None
+    if os.path.exists(snapshot_path):
+        try:
+            with open(snapshot_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                if "personas" in data:
+                    personas = list(data["personas"].values())
+        except Exception:
+            pass
+    bff_main.read_store = _V5ClosedLoopTestStore(personas=personas)
     bff_main._GOV_BFF_IDEMPOTENCY.clear()
     return TestClient(bff_main.app)
 

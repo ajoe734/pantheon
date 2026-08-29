@@ -13,126 +13,207 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, os.path.dirname(__file__))
 
 import main as bff_main
-from read_store import ReadSurfaceStore
+from ports import ReadSurfacePorts, create_in_memory_read_surface_ports
 
 
 HEADERS = {"Authorization": "Bearer op-bff-b2-005:operator"}
 
 
-def _seed_read_store(path: Path) -> ReadSurfaceStore:
-    path.write_text(
-        json.dumps(
-            {
-                "agora_watchlist": {
-                    "AAPL": {
-                        "id": "watch-AAPL",
-                        "symbol": "AAPL",
-                        "return1dPct": 2.6,
-                    }
-                },
-                "agora_signals": {
-                    "sig-b2-005": {
-                        "id": "sig-b2-005",
-                        "signal_id": "sig-b2-005",
-                        "title": "B2 signal",
-                        "reviewStatus": "pending_trader_review",
-                        "createdAt": "2026-05-23T06:04:00Z",
-                        "updatedAt": "2026-05-23T06:04:00Z",
-                    }
-                },
-                "insight_cards": {
-                    "ins-b2-005": {
-                        "id": "ins-b2-005",
-                        "insight_id": "ins-b2-005",
-                        "summary": "Inbox insight for B2 acceptance.",
-                        "created_at": "2026-05-23T06:05:00Z",
-                        "updated_at": "2026-05-23T06:05:00Z",
-                    }
-                },
-                "agora_sessions": {
-                    "sess-b2-005": {
-                        "id": "sess-b2-005",
-                        "sessionId": "sess-b2-005",
-                        "title": "Canonical alias session",
-                        "status": "active",
-                        "createdAt": "2026-05-23T06:00:00Z",
-                        "updatedAt": "2026-05-23T06:00:00Z",
-                    },
-                    "ask-b2-005": {
-                        "id": "ask-b2-005",
-                        "sessionId": "ask-b2-005",
-                        "title": "Quick ask alias session",
-                        "mode": "quick_ask",
-                        "status": "active",
-                        "createdAt": "2026-05-23T06:06:00Z",
-                        "updatedAt": "2026-05-23T06:06:00Z",
-                    }
-                },
-                "research_notes": {
-                    "note-b2-005": {
-                        "id": "note-b2-005",
-                        "note_id": "note-b2-005",
-                        "title": "Market note",
-                        "body": "Alias route should share the notes read model.",
-                        "created_at": "2026-05-23T06:00:00Z",
-                        "updated_at": "2026-05-23T06:00:00Z",
-                    }
-                },
-                "decision_journal_entries": {
-                    "journal-b2-005": {
-                        "id": "journal-b2-005",
-                        "entry_id": "journal-b2-005",
-                        "title": "Alias journal",
-                        "body": "Decision journal alias coverage.",
-                        "created_at": "2026-05-23T06:00:00Z",
-                        "updated_at": "2026-05-23T06:00:00Z",
-                    }
-                },
-                "postmortems": {
-                    "pm-b2-005": {
-                        "id": "pm-b2-005",
-                        "postmortem_id": "pm-b2-005",
-                        "title": "Agora B2 postmortem",
-                        "status": "published",
-                        "created_at": "2026-05-23T06:03:00Z",
-                        "updated_at": "2026-05-23T06:03:00Z",
-                    }
-                },
-                "research_tickets": {
-                    "rt-b2-005": {
-                        "ticket_id": "rt-b2-005",
-                        "title": "Alias research task",
-                        "description": "Research task alias coverage.",
-                        "status": "new",
-                        "priority": "normal",
-                        "owner": "research",
-                        "created_at": "2026-05-23T06:00:00Z",
-                        "updated_at": "2026-05-23T06:00:00Z",
-                    }
-                },
-                "agora_handoffs": {
-                    "handoff-b2-005": {
-                        "id": "handoff-b2-005",
-                        "handoffId": "handoff-b2-005",
-                        "handoffType": "consult_memo_to_management_review",
-                        "status": "submitted",
-                        "priority": "normal",
-                        "createdAt": "2026-05-23T06:00:00Z",
-                        "updatedAt": "2026-05-23T06:00:00Z",
-                    }
-                },
+class AgoraAliasesTestReadPorts(ReadSurfacePorts):
+    def __init__(self, data: dict | None = None) -> None:
+        super().__init__()
+        self._data = data or {}
+
+    def dataset_source(self, dataset: str) -> str:
+        return "local_snapshot" if self._data else "missing"
+
+    def dataset_surface_status(self, dataset: str, *, snapshot_at: str, **kwargs: Any) -> dict[str, Any]:
+        return {"status": "degraded", "source": "local_snapshot", "snapshot_at": snapshot_at}
+
+    def list_agora_watchlist(self, **kwargs: Any) -> list[dict[str, Any]]:
+        return list(self._data.get("agora_watchlist", {}).values())
+
+    def list_agora_signals(self, **kwargs: Any) -> list[dict[str, Any]]:
+        return list(self._data.get("agora_signals", {}).values())
+
+    def get_agora_signal(self, signal_id: str | None) -> dict[str, Any] | None:
+        return self._data.get("agora_signals", {}).get(str(signal_id or ""))
+
+    def list_agora_sessions(self, **kwargs: Any) -> list[dict[str, Any]]:
+        return list(self._data.get("agora_sessions", {}).values())
+
+    def get_agora_session(self, session_id: str | None) -> dict[str, Any] | None:
+        return self._data.get("agora_sessions", {}).get(str(session_id or ""))
+
+    def list_agora_messages(self, session_id: str | None, **kwargs: Any) -> list[dict[str, Any]]:
+        sess = self.get_agora_session(session_id)
+        return list(sess.get("messages", [])) if sess else []
+
+    def list_agora_session_messages(self, session_id: str | None, **kwargs: Any) -> list[dict[str, Any]]:
+        return self.list_agora_messages(session_id, **kwargs)
+
+    def list_agora_notes(self, **kwargs: Any) -> list[dict[str, Any]]:
+        return list(self._data.get("research_notes", {}).values())
+
+    def list_research_notes(self, **kwargs: Any) -> list[dict[str, Any]]:
+        return self.list_agora_notes(**kwargs)
+
+    def list_decision_journal_entries(self, **kwargs: Any) -> list[dict[str, Any]]:
+        return list(self._data.get("decision_journal_entries", {}).values())
+
+    def list_research_tickets(self, **kwargs: Any) -> list[dict[str, Any]]:
+        return list(self._data.get("research_tickets", {}).values())
+
+    def list_postmortems(self, **kwargs: Any) -> list[dict[str, Any]]:
+        return list(self._data.get("postmortems", {}).values())
+
+    def list_agora_postmortems(self, **kwargs: Any) -> list[dict[str, Any]]:
+        return self.list_postmortems(**kwargs)
+
+    def list_agora_handoffs(self, **kwargs: Any) -> list[dict[str, Any]]:
+        return list(self._data.get("agora_handoffs", {}).values())
+
+    def get_agora_handoff(self, handoff_id: str | None) -> dict[str, Any] | None:
+        return self._data.get("agora_handoffs", {}).get(str(handoff_id or ""))
+
+    def list_insight_cards(self, **kwargs: Any) -> list[dict[str, Any]]:
+        return list(self._data.get("insight_cards", {}).values())
+
+    def list_agora_insights(self, **kwargs: Any) -> list[dict[str, Any]]:
+        return self.list_insight_cards(**kwargs)
+
+    def _read_dataset_records(self, dataset: str) -> list[dict[str, Any]]:
+        if dataset in ("insight_cards", "insights"):
+            return self.list_insight_cards()
+        if dataset == "agora_signals":
+            return self.list_agora_signals()
+        if dataset == "agora_sessions":
+            return self.list_agora_sessions()
+        if dataset == "research_tickets":
+            return self.list_research_tickets()
+        if dataset == "postmortems":
+            return self.list_postmortems()
+        if dataset == "research_notes":
+            return self.list_agora_notes()
+        if dataset == "decision_journal_entries":
+            return self.list_decision_journal_entries()
+        if dataset == "agora_handoffs":
+            return self.list_agora_handoffs()
+        if dataset == "agora_watchlist":
+            return self.list_agora_watchlist()
+        raw = self._data.get(dataset, {})
+        return list(raw.values()) if isinstance(raw, dict) else list(raw)
+
+
+def _seed_read_store() -> AgoraAliasesTestReadPorts:
+    data = {
+        "agora_watchlist": {
+            "AAPL": {
+                "id": "watch-AAPL",
+                "symbol": "AAPL",
+                "return1dPct": 2.6,
             }
-        ),
-        encoding="utf-8",
-    )
-    return ReadSurfaceStore(str(path), allow_local_snapshot_fallback=True)
+        },
+        "agora_signals": {
+            "sig-b2-005": {
+                "id": "sig-b2-005",
+                "signal_id": "sig-b2-005",
+                "title": "B2 signal",
+                "reviewStatus": "pending_trader_review",
+                "createdAt": "2026-05-23T06:04:00Z",
+                "updatedAt": "2026-05-23T06:04:00Z",
+            }
+        },
+        "insight_cards": {
+            "ins-b2-005": {
+                "id": "ins-b2-005",
+                "insight_id": "ins-b2-005",
+                "summary": "Inbox insight for B2 acceptance.",
+                "created_at": "2026-05-23T06:05:00Z",
+                "updated_at": "2026-05-23T06:05:00Z",
+            }
+        },
+        "agora_sessions": {
+            "sess-b2-005": {
+                "id": "sess-b2-005",
+                "sessionId": "sess-b2-005",
+                "title": "Canonical alias session",
+                "status": "active",
+                "createdAt": "2026-05-23T06:00:00Z",
+                "updatedAt": "2026-05-23T06:00:00Z",
+            },
+            "ask-b2-005": {
+                "id": "ask-b2-005",
+                "sessionId": "ask-b2-005",
+                "title": "Quick ask alias session",
+                "mode": "quick_ask",
+                "status": "active",
+                "createdAt": "2026-05-23T06:06:00Z",
+                "updatedAt": "2026-05-23T06:06:00Z",
+            }
+        },
+        "research_notes": {
+            "note-b2-005": {
+                "id": "note-b2-005",
+                "note_id": "note-b2-005",
+                "title": "Market note",
+                "body": "Alias route should share the notes read model.",
+                "created_at": "2026-05-23T06:00:00Z",
+                "updated_at": "2026-05-23T06:00:00Z",
+            }
+        },
+        "decision_journal_entries": {
+            "journal-b2-005": {
+                "id": "journal-b2-005",
+                "entry_id": "journal-b2-005",
+                "title": "Alias journal",
+                "body": "Decision journal alias coverage.",
+                "created_at": "2026-05-23T06:00:00Z",
+                "updated_at": "2026-05-23T06:00:00Z",
+            }
+        },
+        "postmortems": {
+            "pm-b2-005": {
+                "id": "pm-b2-005",
+                "postmortem_id": "pm-b2-005",
+                "title": "Agora B2 postmortem",
+                "status": "published",
+                "created_at": "2026-05-23T06:03:00Z",
+                "updated_at": "2026-05-23T06:03:00Z",
+            }
+        },
+        "research_tickets": {
+            "rt-b2-005": {
+                "ticket_id": "rt-b2-005",
+                "title": "Alias research task",
+                "description": "Research task alias coverage.",
+                "status": "new",
+                "priority": "normal",
+                "owner": "research",
+                "created_at": "2026-05-23T06:00:00Z",
+                "updated_at": "2026-05-23T06:00:00Z",
+            }
+        },
+        "agora_handoffs": {
+            "handoff-b2-005": {
+                "id": "handoff-b2-005",
+                "handoffId": "handoff-b2-005",
+                "handoffType": "consult_memo_to_management_review",
+                "status": "submitted",
+                "priority": "normal",
+                "createdAt": "2026-05-23T06:00:00Z",
+                "updatedAt": "2026-05-23T06:00:00Z",
+            }
+        },
+    }
+    return AgoraAliasesTestReadPorts(data)
 
 
 @contextmanager
 def _isolated_bff() -> Iterator[TestClient]:
     with tempfile.TemporaryDirectory() as td:
         original_store = bff_main.read_store
-        bff_main.read_store = _seed_read_store(Path(td) / "read_surfaces.json")
+        bff_main.read_store = _seed_read_store()
         try:
             yield TestClient(bff_main.app)
         finally:

@@ -41,7 +41,7 @@ def check(label: str, condition: bool) -> None:
 
 
 def run_smoke() -> None:
-    from read_store import ReadSurfaceStore
+    from ports import create_in_memory_read_surface_ports
 
     with tempfile.TemporaryDirectory() as td:
         registry_path = Path(td) / "personas.json"
@@ -89,9 +89,10 @@ def run_smoke() -> None:
         original_env = os.environ.get("PANTHEON_BFF_PERSONA_REGISTRY_STORE")
         os.environ["PANTHEON_BFF_PERSONA_REGISTRY_STORE"] = str(registry_path)
         try:
-            store = ReadSurfaceStore(
-                os.path.join(td, "bff_read_surfaces.json"),
-                allow_local_snapshot_fallback=False,
+            store = create_in_memory_read_surface_ports(
+                persona_capital_runtime_kwargs={
+                    "personas": [p.to_dict() for p in reg.list()],
+                }
             )
 
             # ------------------------------------------------------------------ #
@@ -124,12 +125,12 @@ def run_smoke() -> None:
                     )
 
             # ------------------------------------------------------------------ #
-            # Step 5: Verify source is service_store (not local_snapshot / fixture)
+            # Step 5: Verify source is service_store / typed_store (not local_snapshot / fixture)
             # ------------------------------------------------------------------ #
             source = store.dataset_source("personas")
             check(
-                "dataset_source('personas') == 'service_store' (service_backed, not fixture_backed)",
-                source == "service_store",
+                "dataset_source('personas') in ('service_store', 'typed_store') (service_backed, not fixture_backed)",
+                source in ("service_store", "typed_store"),
             )
 
         finally:

@@ -9,7 +9,7 @@ import os
 import sys
 import tempfile
 from contextlib import contextmanager
-from typing import Iterator
+from typing import Any, Iterator
 
 from fastapi.testclient import TestClient
 
@@ -17,7 +17,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 
 import main as bff_main
 from command_queue import CommandStore
-from read_store import ReadSurfaceStore
+from ports import ReadSurfacePorts
 
 
 OPERATOR_TOKEN = "Bearer op-gap-004:operator"
@@ -25,15 +25,183 @@ HEADERS = {"Authorization": OPERATOR_TOKEN}
 IDEMPOTENCY_KEY = "test-evo-exp-jobs-events-001"
 
 
+class EvolutionExperimentJobsEventsTestReadPorts(ReadSurfacePorts):
+    def __init__(self, seed_data: dict[str, Any] | None = None) -> None:
+        super().__init__()
+        self._data: dict[str, Any] = seed_data or {}
+
+    def dataset_source(self, dataset: str) -> str:
+        return "local_snapshot"
+
+    def dataset_surface_status(self, dataset: str, *, snapshot_at: str, **kwargs: Any) -> dict[str, Any]:
+        source = self.dataset_source(dataset)
+        return {
+            "status": "degraded" if source == "missing" else "ok",
+            "source": source,
+            "snapshot_at": snapshot_at,
+        }
+
+    def _get_dataset(self, name: str) -> dict[str, Any] | list[Any]:
+        return self._data.setdefault(name, {})
+
+    def list_evolution_programs(self, **kwargs: Any) -> list[dict[str, Any]]:
+        ds = self._get_dataset("evolution_programs")
+        return list(ds.values()) if isinstance(ds, dict) else list(ds)
+
+    def get_evolution_program(self, program_id: str | None) -> dict[str, Any] | None:
+        ds = self._get_dataset("evolution_programs")
+        if isinstance(ds, dict):
+            return ds.get(str(program_id or ""))
+        return next((p for p in ds if p.get("id") == program_id or p.get("program_id") == program_id), None)
+
+    def create_evolution_program(
+        self,
+        *,
+        program_id: str,
+        name: str,
+        actor_id: str,
+        created_at: str | None = None,
+        params: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        timestamp = created_at or "2026-08-29T00:00:00Z"
+        record = {
+            "id": program_id,
+            "program_id": program_id,
+            "name": name,
+            "status": "active",
+            "params": params or {},
+            "created_at": timestamp,
+            "updated_at": timestamp,
+            "created_by": actor_id,
+        }
+        ds = self._get_dataset("evolution_programs")
+        if isinstance(ds, dict):
+            ds[program_id] = record
+        return record
+
+    def patch_evolution_program(
+        self,
+        program_id: str,
+        *,
+        patch: dict[str, Any],
+        actor_id: str,
+        updated_at: str | None = None,
+        **kwargs: Any,
+    ) -> dict[str, Any] | None:
+        prog = self.get_evolution_program(program_id)
+        if not prog:
+            return None
+        prog.update(patch)
+        prog["updated_at"] = updated_at or "2026-08-29T00:00:00Z"
+        prog["updated_by"] = actor_id
+        return prog
+
+    def list_evolution_program_runs(self, program_id: str, **kwargs: Any) -> list[dict[str, Any]]:
+        return []
+
+    def list_evolution_program_candidates(self, program_id: str, **kwargs: Any) -> list[dict[str, Any]]:
+        return []
+
+    def list_research_experiments(self, **kwargs: Any) -> list[dict[str, Any]]:
+        ds = self._get_dataset("research_experiments")
+        return list(ds.values()) if isinstance(ds, dict) else list(ds)
+
+    def get_research_experiment(self, experiment_id: str | None) -> dict[str, Any] | None:
+        ds = self._get_dataset("research_experiments")
+        if isinstance(ds, dict):
+            return ds.get(str(experiment_id or ""))
+        return next((e for e in ds if e.get("id") == experiment_id or e.get("experiment_id") == experiment_id), None)
+
+    def list_experiments_bff(self, status: str | None = None, **kwargs: Any) -> list[dict[str, Any]]:
+        ds = self._get_dataset("research_experiments")
+        items = list(ds.values()) if isinstance(ds, dict) else list(ds)
+        if status:
+            statuses = [s.strip().lower() for s in status.split(",")]
+            items = [i for i in items if str(i.get("status", "")).lower() in statuses]
+        return items
+
+    def get_experiment_bff(self, experiment_id: str | None, **kwargs: Any) -> dict[str, Any] | None:
+        return self.get_research_experiment(experiment_id)
+
+    def create_experiment_bff(
+        self,
+        *,
+        name: str,
+        description: str = "",
+        actor_id: str = "op-user",
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        exp_id = f"exp-{len(self.list_research_experiments()) + 1:03d}"
+        record = {
+            "id": exp_id,
+            "experiment_id": exp_id,
+            "name": name,
+            "description": description,
+            "status": "queued",
+            "created_at": "2026-08-29T00:00:00Z",
+            "created_by": actor_id,
+            "logs": ["Experiment queued"],
+            "metrics": {"loss": 0.01},
+            "artifacts": [],
+        }
+        ds = self._get_dataset("research_experiments")
+        if isinstance(ds, dict):
+            ds[exp_id] = record
+        return record
+
+    def get_experiment_logs(self, experiment_id: str, **kwargs: Any) -> list[str]:
+        exp = self.get_research_experiment(experiment_id)
+        if exp and "logs" in exp:
+            return list(exp["logs"])
+        return ["Log entry"]
+
+    def get_experiment_metrics(self, experiment_id: str, **kwargs: Any) -> dict[str, Any]:
+        exp = self.get_research_experiment(experiment_id)
+        if exp and "metrics" in exp:
+            return dict(exp["metrics"])
+        return {"metric": 1.0}
+
+    def get_experiment_artifacts(self, experiment_id: str, **kwargs: Any) -> list[dict[str, Any]]:
+        exp = self.get_research_experiment(experiment_id)
+        if exp and "artifacts" in exp:
+            return list(exp["artifacts"])
+        return []
+
+    def list_research_experiment_jobs(self, **kwargs: Any) -> list[dict[str, Any]]:
+        ds = self._get_dataset("research_experiment_jobs")
+        return list(ds.values()) if isinstance(ds, dict) else list(ds)
+
+    def get_research_experiment_job(self, job_id: str | None) -> dict[str, Any] | None:
+        ds = self._get_dataset("research_experiment_jobs")
+        if isinstance(ds, dict):
+            return ds.get(str(job_id or ""))
+        return next((j for j in ds if j.get("id") == job_id or j.get("job_id") == job_id), None)
+
+    def list_jobs_bff(self, *, status: str | None = None, job_type: str | None = None, **kwargs: Any) -> list[dict[str, Any]]:
+        ds = self._get_dataset("jobs")
+        items = list(ds.values()) if isinstance(ds, dict) else list(ds)
+        if status:
+            items = [i for i in items if i.get("status") == status]
+        if job_type:
+            items = [i for i in items if i.get("job_type") == job_type or i.get("type") == job_type]
+        return items
+
+    def list_governance_events(self, **kwargs: Any) -> list[dict[str, Any]]:
+        ds = self._get_dataset("governance_events")
+        return list(ds.values()) if isinstance(ds, dict) else list(ds)
+
+    def list_audit_events(self, **kwargs: Any) -> list[dict[str, Any]]:
+        ds = self._get_dataset("audit_events")
+        return list(ds.values()) if isinstance(ds, dict) else list(ds)
+
+
 @contextmanager
-def _isolated_bff() -> Iterator[tuple[TestClient, ReadSurfaceStore]]:
+def _isolated_bff() -> Iterator[tuple[TestClient, EvolutionExperimentJobsEventsTestReadPorts]]:
     with tempfile.TemporaryDirectory() as td:
         original_store = bff_main.read_store
         original_command_store = bff_main.command_store
-        store = ReadSurfaceStore(
-            os.path.join(td, "read_surfaces.json"),
-            allow_local_snapshot_fallback=True,
-        )
+        store = EvolutionExperimentJobsEventsTestReadPorts()
         bff_main.read_store = store
         bff_main.command_store = CommandStore(os.path.join(td, "commands.jsonl"))
         bff_main._GOV_BFF_IDEMPOTENCY.clear()

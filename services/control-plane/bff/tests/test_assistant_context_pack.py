@@ -8,15 +8,13 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 import main as bff_main
-from read_store import ReadSurfaceStore
-
+from ports import create_in_memory_read_surface_ports
 
 OPERATOR_HEADERS = {"Authorization": "Bearer asst-kernel:operator"}
 
 
-def _seed_store(path: str) -> ReadSurfaceStore:
-    store = ReadSurfaceStore(path, allow_local_snapshot_fallback=True)
-    store._data["jobs"] = {
+def _seed_store(path: str = ""):
+    jobs_map = {
         "job_123": {
             "id": "job_123",
             "job_id": "job_123",
@@ -42,7 +40,7 @@ def _seed_store(path: str) -> ReadSurfaceStore:
             "logs": [{"ts": "2026-05-31T15:06:00Z", "level": "info", "message": "beta tick"}],
         },
     }
-    store._data["governance_audit_events"] = [
+    audit_map = [
         {
             "entry_id": "audit_123",
             "target_type": "job",
@@ -60,7 +58,7 @@ def _seed_store(path: str) -> ReadSurfaceStore:
             "timestamp": "2026-05-31T15:05:30Z",
         },
     ]
-    store._data["personas"] = {
+    personas_map = {
         "persona_1": {
             "id": "persona_1",
             "persona_id": "persona_1",
@@ -68,7 +66,7 @@ def _seed_store(path: str) -> ReadSurfaceStore:
             "lifecycle_state": "active",
         }
     }
-    store._data["strategy_specs"] = {
+    strategy_specs_map = {
         "strategy_1": {
             "id": "strategy_1",
             "strategy_id": "strategy_1",
@@ -76,6 +74,22 @@ def _seed_store(path: str) -> ReadSurfaceStore:
             "status": "active",
         }
     }
+
+    store = create_in_memory_read_surface_ports()
+    store.list_jobs = lambda **kw: list(jobs_map.values())
+    store.list_jobs_bff = lambda **kw: list(jobs_map.values())
+    store.get_job = lambda job_id: jobs_map.get(job_id)
+    store.get_job_bff = lambda job_id: jobs_map.get(job_id)
+    store.list_governance_audit_events = lambda **kw: list(audit_map)
+    store.list_personas = lambda **kw: list(personas_map.values())
+    store.list_strategy_specs = lambda **kw: list(strategy_specs_map.values())
+    store.list_events_bff = lambda **kw: []
+    store.list_persona_league = lambda **kw: []
+    store.list_strategy_summaries = lambda **kw: []
+    store.list_runtimes = lambda **kw: []
+    store.list_runtime_instances = lambda **kw: []
+    store.list_runtime_bindings = lambda **kw: []
+    store.dataset_source = lambda d: "typed_store"
     return store
 
 

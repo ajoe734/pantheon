@@ -16,16 +16,54 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 import main as bff_main
-from read_store import ReadSurfaceStore
+from typing import Any
+from ports import create_in_memory_read_surface_ports
 
 OPERATOR_HEADERS = {"Authorization": "Bearer op-b3-human:operator"}
 
 
+class _HumanInboxTestStore:
+    def __init__(self) -> None:
+        self.ports = create_in_memory_read_surface_ports(
+            ooda_management_kwargs={
+                "approval_decisions": [
+                    {
+                        "decision_id": "appr-001",
+                        "decision_type": "DeploymentPlan",
+                        "risk_level": "medium",
+                        "submitted_at": "2026-04-16T08:15:00Z",
+                        "submitted_by": "governance-review-queue",
+                        "decision_state": "pending",
+                        "allowedActions": {"canApprove": True},
+                        "decision_context": {"risk_summary": "Risk assessment complete"},
+                    }
+                ],
+            },
+            persona_capital_runtime_kwargs={
+                "personas": [
+                    {
+                        "persona_id": "persona-alpha",
+                        "name": "Alpha",
+                        "lifecycle_state": "active",
+                    }
+                ]
+            },
+        )
+
+    def __getattr__(self, name: str) -> Any:
+        attr = getattr(self.ports, name)
+        if callable(attr):
+            def _safe_wrapper(*args: Any, **kwargs: Any) -> Any:
+                try:
+                    return attr(*args, **kwargs)
+                except TypeError:
+                    return attr(*args)
+            return _safe_wrapper
+        return attr
+
+
 def _fresh_client(td: str) -> TestClient:
-    bff_main.read_store = ReadSurfaceStore(
-        os.path.join(td, "read_surfaces.json"),
-        allow_local_snapshot_fallback=True,
-    )
+    bff_main.read_store = _HumanInboxTestStore()
     return TestClient(bff_main.app)
 
 

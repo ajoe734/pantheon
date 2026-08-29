@@ -31,7 +31,7 @@ BFF_DIR = REPO_ROOT / "services" / "control-plane" / "bff"
 sys.path.insert(0, str(BFF_DIR))
 try:
     import main as bff_main
-    from read_store import ReadSurfaceStore
+    from ports import create_in_memory_read_surface_ports
 finally:
     sys.path.remove(str(BFF_DIR))
 
@@ -79,24 +79,23 @@ OPERATOR_HEADERS = {"Authorization": "Bearer op-b2:operator"}
 def _fresh_client(td: str) -> TestClient:
     os.environ["PANTHEON_BFF_AUTH_STUB"] = "true"
     os.environ["PANTHEON_BFF_AUTH_MODE"] = "permissive"
-    bff_main.read_store = ReadSurfaceStore(
-        os.path.join(td, "read_surfaces.json"),
-        allow_local_snapshot_fallback=True,
-    )
-    bff_main.read_store._data["personas"] = {}
+    bff_main.read_store = create_in_memory_read_surface_ports()
     return TestClient(bff_main.app)
 
 def _seed_persona(client: TestClient, name: str) -> str:
-    # Seed via /bff/personas to avoid strict auth mode restrictions of management endpoints
     import uuid
-    key = f"smoke-key-{uuid.uuid4().hex[:8]}"
-    resp = client.post(
-        "/bff/personas",
-        json={"name": name},
-        headers={**OPERATOR_HEADERS, "Idempotency-Key": key},
-    )
-    assert resp.status_code == 201, resp.text
-    return resp.json()["data"]["id"]
+    pid = f"persona-{uuid.uuid4().hex[:8]}"
+    persona_record = {
+        "id": pid,
+        "persona_id": pid,
+        "name": name,
+        "lifecycle_state": "active",
+        "mandate": "test",
+    }
+    existing_personas = list(bff_main.read_store.persona_capital_runtime.persona.list_personas())
+    existing_personas.append(persona_record)
+    bff_main.read_store.persona_capital_runtime.persona._records_provider = lambda: list(existing_personas)
+    return pid
 
 
 # ---------------------------------------------------------------------------

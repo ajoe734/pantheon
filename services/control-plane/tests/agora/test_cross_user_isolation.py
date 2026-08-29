@@ -50,7 +50,71 @@ _install_bff_agora_package()
 import main as bff_main  # noqa: E402
 from agora.dashboard import router as dashboard_router  # noqa: E402
 from agora.servant import router as servant_router  # noqa: E402
-from read_store import ReadSurfaceStore  # noqa: E402
+from ports import ReadSurfacePorts  # noqa: E402
+
+
+class CrossUserTestStore(ReadSurfacePorts):
+    def __init__(self) -> None:
+        super().__init__()
+        self._personas: dict[str, dict[str, Any]] = {}
+        self._capability_snapshots: dict[str, dict[str, Any]] = {}
+        self._decision_journal: dict[str, dict[str, Any]] = {}
+
+    def create_persona(self, **kwargs: Any) -> dict[str, Any]:
+        pid = kwargs.get("persona_id") or f"persona-{len(self._personas)+1}"
+        record = dict(kwargs)
+        record["persona_id"] = pid
+        record["id"] = pid
+        self._personas[pid] = record
+        return record
+
+    def update_persona(self, persona_id: str, **kwargs: Any) -> Optional[dict[str, Any]]:
+        record = self._personas.get(persona_id)
+        if record is None:
+            return None
+        for k, v in kwargs.items():
+            if v is not None:
+                record[k] = v
+        return dict(record)
+
+    def get_persona(self, persona_id: str) -> Optional[dict[str, Any]]:
+        return self._personas.get(persona_id)
+
+    def list_personas(self, **kwargs: Any) -> list[dict[str, Any]]:
+        return list(self._personas.values())
+
+    def upsert_persona_capability_snapshot(self, **kwargs: Any) -> dict[str, Any]:
+        sid = kwargs.get("snapshot_id") or f"snap-{len(self._capability_snapshots)+1}"
+        record = dict(kwargs)
+        record["snapshot_id"] = sid
+        record["id"] = sid
+        self._capability_snapshots[sid] = record
+        return record
+
+    def get_persona_capability_snapshot(self, snapshot_id: str) -> Optional[dict[str, Any]]:
+        return self._capability_snapshots.get(snapshot_id)
+
+    def create_decision_journal_entry(self, **kwargs: Any) -> dict[str, Any]:
+        eid = kwargs.get("entry_id") or f"entry-{len(self._decision_journal)+1}"
+        record = dict(kwargs)
+        record["id"] = eid
+        record["entry_id"] = eid
+        record["actorId"] = kwargs.get("actor_id")
+        record["actor_id"] = kwargs.get("actor_id")
+        record["createdBy"] = kwargs.get("actor_id")
+        record["created_by"] = kwargs.get("actor_id")
+        record["operator_id"] = kwargs.get("actor_id")
+        record["userId"] = kwargs.get("actor_id")
+        record["user_id"] = kwargs.get("actor_id")
+        record["visibility"] = kwargs.get("visibility", "private")
+        self._decision_journal[eid] = record
+        return dict(record)
+
+    def list_decision_journal_entries(self, **kwargs: Any) -> list[dict[str, Any]]:
+        return list(self._decision_journal.values())
+
+    def record_agora_audit_event(self, event: dict[str, Any]) -> dict[str, Any]:
+        return dict(event)
 
 
 def _auth(user: str, *, agora_caps: bool = False) -> dict[str, str]:
@@ -110,10 +174,7 @@ def client(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> tuple[TestClient,
     monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "true")
     monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "permissive")
     original_store = bff_main.read_store
-    bff_main.read_store = ReadSurfaceStore(
-        str(tmp_path / "read_surfaces.json"),
-        allow_local_snapshot_fallback=False,
-    )
+    bff_main.read_store = CrossUserTestStore()
 
     fake_openclaw = FakeOpenClawClient()
     monkeypatch.setattr(servant_router, "OpenClawOpsClient", lambda: fake_openclaw)

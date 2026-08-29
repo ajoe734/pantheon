@@ -2981,6 +2981,70 @@ def approved_closeout_commit_ref(
     return approved_head
 
 
+def approved_closeout_metadata_ref(
+    task: Mapping[str, Any],
+    *,
+    repository_root: Path,
+    approved_ref: str | None,
+) -> str | None:
+    """Return the commit whose trailers attest an approved delivery.
+
+    The immutable reviewed head is always the commit used to prove that the
+    delivered PR reached the target branch. A task branch may, however, end in
+    its own merge of the frozen base solely to make the PR current. That merge
+    has no authored change or trailers; its first parent is the task's last
+    authored commit. Treating the merge object as the authored delivery makes
+    a valid reviewed PR impossible to close, while accepting arbitrary
+    ancestors would weaken the trailer contract.
+
+    This exception is deliberately narrow: it applies only to an exact
+    reviewed merge tip with exactly two parents and with a target-base
+    ancestor as its second parent. The merge subject is intentionally not
+    part of the proof: workers may describe the same no-content base refresh
+    as ``merge dev``, ``merge origin/dev``, or ``merge dev to refresh stale
+    base``. A task may have refreshed that base more than once while waiting
+    for review, so consecutive merges with the same structural relationship
+    are unwrapped through their first parent.
+
+    The traversal never searches arbitrary history: each skipped merge must
+    have exactly two commit-shaped parents and its second parent must equal
+    the frozen base or be its ancestor. The selected first non-refresh commit
+    still undergoes the ordinary task-id and trailer validation below. Any
+    other shape stops the traversal and retains the existing fail-closed
+    validation.
+    """
+
+    if not approved_ref:
+        return None
+    binding = task.get(DELIVERY_BINDING_KEY)
+    if not isinstance(binding, Mapping):
+        return approved_ref
+    frozen_base = str(binding.get("base_sha") or "").strip().lower()
+    if not APPROVAL_HEAD_SHA_RE.fullmatch(frozen_base):
+        return approved_ref
+    metadata_ref = approved_ref
+    while True:
+        parents = run_git_command(
+            ["show", "-s", "--format=%P", metadata_ref],
+            cwd=repository_root,
+            failure_message="Cannot finalize task: canonical approved head parents are unavailable.",
+        ).split()
+        if len(parents) != 2:
+            return metadata_ref
+        authored_parent, merged_base = (parent.strip().lower() for parent in parents)
+        if not (
+            APPROVAL_HEAD_SHA_RE.fullmatch(authored_parent)
+            and APPROVAL_HEAD_SHA_RE.fullmatch(merged_base)
+        ):
+            return metadata_ref
+        if merged_base != frozen_base and not git_command_succeeds(
+            ["merge-base", "--is-ancestor", merged_base, frozen_base],
+            cwd=repository_root,
+        ):
+            return metadata_ref
+        metadata_ref = authored_parent
+
+
 def parse_commit_metadata_lines(body: str) -> dict[str, str]:
     metadata: dict[str, str] = {}
     for raw_line in body.splitlines():
@@ -3207,7 +3271,12 @@ def _done_delivery_repository_root(
     }
 
 
-def _delivered_commit_timestamp(repository_root: Path, task: Mapping[str, Any]) -> str:
+def _delivered_commit_timestamp(
+    repository_root: Path,
+    task: Mapping[str, Any],
+    *,
+    commit_ref: str = "",
+) -> str:
     """Return the ISO timestamp the delivered content was actually authored at.
 
     A squash merge creates a brand-new commit object with a fresh
@@ -3218,7 +3287,8 @@ def _delivered_commit_timestamp(repository_root: Path, task: Mapping[str, Any]) 
     reassignment that in reality only happened after the real authoring,
     not before it.
 
-    When the task recorded an exact reviewed head (APPROVAL_BINDING_KEY),
+    When a caller already selected the authored metadata commit, use it.
+    Otherwise, when the task recorded an exact reviewed head (APPROVAL_BINDING_KEY),
     prefer that commit's own timestamp instead -- fetching it from origin
     first if the local checkout does not already have the object. GitHub
     keeps every PR commit reachable by SHA even after a squash-merge
@@ -3227,6 +3297,17 @@ def _delivered_commit_timestamp(repository_root: Path, task: Mapping[str, Any]) 
     timestamp when no reviewed head is recorded or that exact object
     cannot be resolved even after the fetch attempt.
     """
+
+    selected_ref = str(commit_ref or "").strip()
+    if selected_ref:
+        return run_git_command(
+            ["show", "-s", "--format=%cI", selected_ref],
+            cwd=repository_root,
+            failure_message=(
+                "Cannot finalize task: delivered commit timestamp is "
+                "unavailable for reassignment verification."
+            ),
+        )
 
     binding = task.get(APPROVAL_BINDING_KEY)
     reviewed_head = (
@@ -3323,6 +3404,11 @@ def collect_done_delivery_metadata(task: dict[str, Any], actor: str) -> dict[str
             branch=branch,
         )
         commit_ref = approved_ref or "HEAD"
+        metadata_ref = approved_closeout_metadata_ref(
+            task,
+            repository_root=repository_root,
+            approved_ref=approved_ref,
+        ) or commit_ref
         commit_hash = (
             run_git_command(
                 ["rev-parse", commit_ref],
@@ -3340,25 +3426,31 @@ def collect_done_delivery_metadata(task: dict[str, Any], actor: str) -> dict[str
         delivery["commit_source"] = (
             "canonical_approved_head" if approved_ref else "workspace_head"
         )
+        delivery["commit_metadata_ref"] = metadata_ref
+        delivery["commit_metadata_source"] = (
+            "approved_merge_first_parent"
+            if approved_ref and metadata_ref != approved_ref
+            else delivery["commit_source"]
+        )
         if approved_ref:
             delivery["workspace_head"] = workspace_head
         subject = run_git_command(
-            ["show", "-s", "--format=%s", commit_ref],
+            ["show", "-s", "--format=%s", metadata_ref],
             cwd=repository_root,
             failure_message="Cannot finalize task: latest commit subject is unavailable.",
         )
         body = run_git_command(
-            ["show", "-s", "--format=%b", commit_ref],
+            ["show", "-s", "--format=%b", metadata_ref],
             cwd=repository_root,
             failure_message="Cannot finalize task: latest commit body is unavailable.",
         )
         author_name = run_git_command(
-            ["show", "-s", "--format=%an", commit_ref],
+            ["show", "-s", "--format=%an", metadata_ref],
             cwd=repository_root,
             failure_message="Cannot finalize task: latest commit author name is unavailable.",
         )
         author_email = run_git_command(
-            ["show", "-s", "--format=%ae", commit_ref],
+            ["show", "-s", "--format=%ae", metadata_ref],
             cwd=repository_root,
             failure_message="Cannot finalize task: latest commit author email is unavailable.",
         )
@@ -3400,7 +3492,9 @@ def collect_done_delivery_metadata(task: dict[str, Any], actor: str) -> dict[str
                     # failing closed and requiring a Human/Ops sign-off.
                     if field_name in {"LLM-Agent", "Reviewer"} and not commit_timestamp:
                         commit_timestamp = _delivered_commit_timestamp(
-                            repository_root, task
+                            repository_root,
+                            task,
+                            commit_ref=metadata_ref if approved_ref else "",
                         )
                     if field_name == "LLM-Agent":
                         delivery["commit_owner_reassignment"] = (
@@ -8774,6 +8868,7 @@ def prepare_external_mutation_preflight(
                 github_review_bridge.revalidate_review_admission(
                     repository=repository_slug_value,
                     delivery_binding=delivery,
+                    allow_base_advance=True,
                 )
             except github_review_bridge.GitHubReviewBridgeError as exc:
                 raise SystemExit(
@@ -9154,7 +9249,7 @@ def execute_review_decision_intent(task: Mapping[str, Any]) -> dict[str, Any]:
             admission = github_review_bridge.revalidate_review_admission(
                 repository=repository_slug_value,
                 delivery_binding=binding,
-                allow_base_advance=False,
+                allow_base_advance=True,
             )
         except github_review_bridge.GitHubReviewBridgeError as exc:
             raise ReviewIntentAdmissionInvalid(

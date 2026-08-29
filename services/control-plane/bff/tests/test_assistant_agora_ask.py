@@ -28,16 +28,90 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 import main as bff_main
 from openclaw_ops_client import OpenClawOpsClientError
-from read_store import ReadSurfaceStore
+from ports import create_in_memory_read_surface_ports
 
 OPERATOR_HEADERS = {"Authorization": "Bearer op-ask:operator"}
 
 
 def _fresh_client(td: str) -> TestClient:
-    store = ReadSurfaceStore(
-        os.path.join(td, "read_surfaces.json"),
-        allow_local_snapshot_fallback=True,
-    )
+    sessions_map: dict[str, dict] = {}
+    store = create_in_memory_read_surface_ports()
+
+    def get_agora_session(session_id: str | None) -> dict | None:
+        return sessions_map.get(session_id or "")
+
+    def create_agora_session(
+        *,
+        session_id: str,
+        title: str,
+        actor_id: str,
+        payload: dict,
+        created_at: str | None = None,
+    ) -> dict:
+        timestamp = created_at or "2026-08-29T00:00:00Z"
+        session = {
+            "id": session_id,
+            "sessionId": session_id,
+            "title": title,
+            "mode": payload.get("mode") or payload.get("sessionType") or "quick_ask",
+            "status": payload.get("status") or "active",
+            "participants": list(payload.get("participants") or []),
+            "contextRefs": list(payload.get("contextRefs") or payload.get("context_refs") or []),
+            "messages": list(payload.get("messages") or []),
+            "createdBy": actor_id,
+            "createdAt": timestamp,
+            "updatedAt": timestamp,
+        }
+        sessions_map[session_id] = session
+        return session
+
+    def list_agora_session_messages(session_id: str) -> list[dict] | None:
+        session = get_agora_session(session_id)
+        if session is None:
+            return None
+        return list(session.get("messages") or [])
+
+    def append_agora_session_message(
+        session_id: str,
+        *,
+        message_id: str,
+        content: str,
+        actor_id: str,
+        payload: dict,
+        created_at: str | None = None,
+    ) -> dict | None:
+        session = get_agora_session(session_id)
+        if session is None:
+            return None
+        timestamp = created_at or "2026-08-29T00:00:00Z"
+        message = {
+            "id": message_id,
+            "sessionId": session_id,
+            "sender": payload.get("sender") or {"type": "operator", "id": actor_id},
+            "role": payload.get("role") or "user",
+            "content": content,
+            "language": payload.get("language") or "zh-TW",
+            "attachments": list(payload.get("attachments") or []),
+            "citations": list(payload.get("citations") or []),
+            "annotations": list(payload.get("annotations") or []),
+            "createdAt": timestamp,
+        }
+        session.setdefault("messages", []).append(message)
+        session["updatedAt"] = timestamp
+        return message
+
+    store.get_agora_session = get_agora_session
+    store.create_agora_session = create_agora_session
+    store.list_agora_session_messages = list_agora_session_messages
+    store.append_agora_session_message = append_agora_session_message
+    store.list_events_bff = lambda **kw: []
+    store.list_persona_league = lambda **kw: []
+    store.list_personas = lambda **kw: []
+    store.list_strategy_summaries = lambda **kw: []
+    store.list_strategy_specs = lambda **kw: []
+    store.list_runtimes = lambda **kw: []
+    store.list_runtime_instances = lambda **kw: []
+    store.list_runtime_bindings = lambda **kw: []
     bff_main.read_store = store
     bff_main._AGORA_CORE_BFF_IDEMPOTENCY.clear()
     # Reset transcript store so turns don't bleed between tests

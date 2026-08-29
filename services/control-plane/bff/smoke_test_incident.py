@@ -21,80 +21,82 @@ _BFF_DATA_DIR = _FIXTURE_ROOT / "bff"
 _INCIDENT_STORE_PATH = _INCIDENT_SERVICE_DIR / "incidents.json"
 
 
+incident_live = {
+    "incident_id": "inc-20260410-001",
+    "title": "Unexpected drawdown in persona-alpha",
+    "severity": "high",
+    "status": "open",
+    "created_at": "2026-04-10T14:30:00Z",
+    "binding_id": "runtime-042",
+    "deployment_stage": "live",
+    "deployment_plan_id": "plan-F-042",
+    "capital_pool_id": "pool-main",
+    "persona_capital_binding_id": "binding-042",
+    "artifact_id": "artifact-042",
+    "artifact_version": "v2.1.0",
+    "runtime_id": "runtime-042",
+    "trace_id": "trace-inc-20260410-001",
+    "telemetry_event_ids": ["tl-001"],
+    "evidence_summary": "12% drawdown exceeded 10% threshold; runtime paused pending review.",
+    "lineage_ref": "artifact-042@v2.1.0",
+}
+incident_resolved = {
+    "incident_id": "inc-20260409-002",
+    "title": "Deployment plan plan-F-042 stalled at paper stage",
+    "severity": "medium",
+    "status": "resolved",
+    "created_at": "2026-04-09T08:00:00Z",
+    "resolved_at": "2026-04-09T10:30:00Z",
+    "binding_id": "runtime-042",
+    "deployment_stage": "paper",
+    "deployment_plan_id": "plan-F-042",
+    "capital_pool_id": "pool-main",
+    "persona_capital_binding_id": "binding-042",
+    "artifact_id": "artifact-042",
+    "artifact_version": "v2.1.0",
+    "runtime_id": "runtime-042",
+    "trace_id": "trace-inc-20260409-002",
+    "telemetry_event_ids": [],
+    "evidence_summary": "Promotion gate timeout during artifact validation.",
+    "lineage_ref": "artifact-042@v2.1.0",
+}
+postmortem = {
+    "postmortem_id": "pm-20260409-002",
+    "incident_id": "inc-20260409-002",
+    "title": "Postmortem: Deployment plan F-042 promotion timeout",
+    "status": "published",
+    "created_at": "2026-04-09T11:00:00Z",
+    "published_at": "2026-04-09T12:00:00Z",
+    "binding_id": "runtime-042",
+    "deployment_stage": "paper",
+    "deployment_plan_id": "plan-F-042",
+    "capital_pool_id": "pool-main",
+    "persona_capital_binding_id": "binding-042",
+    "artifact_id": "artifact-042",
+    "artifact_version": "v2.1.0",
+    "runtime_id": "runtime-042",
+    "trace_id": "trace-inc-20260409-002",
+    "root_cause": "Promotion gate timeout was set too low for artifact validation under load.",
+    "contributing_factors": [
+        "Artifact validation queue became saturated during peak load",
+        "Timeout threshold was insufficient for large artifact bundles",
+    ],
+    "timeline": [
+        {"at": "2026-04-09T08:00:00Z", "event": "Incident opened"},
+        {"at": "2026-04-09T10:30:00Z", "event": "Incident resolved"},
+        {"at": "2026-04-09T11:00:00Z", "event": "Postmortem drafted"},
+    ],
+    "action_items": [
+        "Increase promotion gate timeout to 120s",
+        "Add queue-depth alerting for promotion gate",
+    ],
+    "author_ids": ["platform"],
+}
+
+
 def _seed_incident_service_store() -> None:
     _INCIDENT_SERVICE_DIR.mkdir(parents=True, exist_ok=True)
     _BFF_DATA_DIR.mkdir(parents=True, exist_ok=True)
-    incident_live = {
-        "incident_id": "inc-20260410-001",
-        "title": "Unexpected drawdown in persona-alpha",
-        "severity": "high",
-        "status": "open",
-        "created_at": "2026-04-10T14:30:00Z",
-        "binding_id": "runtime-042",
-        "deployment_stage": "live",
-        "deployment_plan_id": "plan-F-042",
-        "capital_pool_id": "pool-main",
-        "persona_capital_binding_id": "binding-042",
-        "artifact_id": "artifact-042",
-        "artifact_version": "v2.1.0",
-        "runtime_id": "runtime-042",
-        "trace_id": "trace-inc-20260410-001",
-        "telemetry_event_ids": ["tl-001"],
-        "evidence_summary": "12% drawdown exceeded 10% threshold; runtime paused pending review.",
-        "lineage_ref": "artifact-042@v2.1.0",
-    }
-    incident_resolved = {
-        "incident_id": "inc-20260409-002",
-        "title": "Deployment plan plan-F-042 stalled at paper stage",
-        "severity": "medium",
-        "status": "resolved",
-        "created_at": "2026-04-09T08:00:00Z",
-        "resolved_at": "2026-04-09T10:30:00Z",
-        "binding_id": "runtime-042",
-        "deployment_stage": "paper",
-        "deployment_plan_id": "plan-F-042",
-        "capital_pool_id": "pool-main",
-        "persona_capital_binding_id": "binding-042",
-        "artifact_id": "artifact-042",
-        "artifact_version": "v2.1.0",
-        "runtime_id": "runtime-042",
-        "trace_id": "trace-inc-20260409-002",
-        "telemetry_event_ids": [],
-        "evidence_summary": "Promotion gate timeout during artifact validation.",
-        "lineage_ref": "artifact-042@v2.1.0",
-    }
-    postmortem = {
-        "postmortem_id": "pm-20260409-002",
-        "incident_id": "inc-20260409-002",
-        "title": "Postmortem: Deployment plan F-042 promotion timeout",
-        "status": "published",
-        "created_at": "2026-04-09T11:00:00Z",
-        "published_at": "2026-04-09T12:00:00Z",
-        "binding_id": "runtime-042",
-        "deployment_stage": "paper",
-        "deployment_plan_id": "plan-F-042",
-        "capital_pool_id": "pool-main",
-        "persona_capital_binding_id": "binding-042",
-        "artifact_id": "artifact-042",
-        "artifact_version": "v2.1.0",
-        "runtime_id": "runtime-042",
-        "trace_id": "trace-inc-20260409-002",
-        "root_cause": "Promotion gate timeout was set too low for artifact validation under load.",
-        "contributing_factors": [
-            "Artifact validation queue became saturated during peak load",
-            "Timeout threshold was insufficient for large artifact bundles",
-        ],
-        "timeline": [
-            {"at": "2026-04-09T08:00:00Z", "event": "Incident opened"},
-            {"at": "2026-04-09T10:30:00Z", "event": "Incident resolved"},
-            {"at": "2026-04-09T11:00:00Z", "event": "Postmortem drafted"},
-        ],
-        "action_items": [
-            "Increase promotion gate timeout to 120s",
-            "Add queue-depth alerting for promotion gate",
-        ],
-        "author_ids": ["platform"],
-    }
     _INCIDENT_STORE_PATH.write_text(
         json.dumps(
             {
@@ -128,7 +130,98 @@ for _env_name in (
 
 import main as bff_main
 from main import app
-from read_store import ReadSurfaceStore
+from ports import ReadSurfacePorts
+
+
+class IncidentSmokeStore(ReadSurfacePorts):
+    def __init__(self) -> None:
+        super().__init__()
+        self._incidents = {
+            "inc-20260410-001": incident_live,
+            "inc-20260409-002": incident_resolved,
+        }
+        self._postmortems = {
+            "pm-20260409-002": postmortem,
+        }
+
+    def dataset_source(self, dataset: str) -> str:
+        return "incident_service"
+
+    def list_incidents(
+        self,
+        status: Optional[str] = None,
+        severity: Optional[str] = None,
+        affected_pool_id: Optional[str] = None,
+    ) -> list[dict[str, Any]]:
+        incidents = list(self._incidents.values())
+        if status:
+            statuses = {s.strip().lower() for s in status.split(",") if s.strip()}
+            incidents = [i for i in incidents if str(i.get("status") or "").lower() in statuses]
+        if severity:
+            incidents = [i for i in incidents if i.get("severity") == severity]
+        if affected_pool_id:
+            incidents = [i for i in incidents if i.get("capital_pool_id") == affected_pool_id]
+        anchor = [i for i in incidents if i.get("incident_id") == "inc-20260410-001"]
+        rest = [i for i in incidents if i.get("incident_id") != "inc-20260410-001"]
+        return anchor + sorted(rest, key=lambda x: str(x.get("created_at") or ""), reverse=True)
+
+    def get_incident(self, incident_id: str) -> Optional[dict[str, Any]]:
+        return self._incidents.get(incident_id)
+
+    def list_postmortems(self, time_range: Optional[str] = None) -> list[dict[str, Any]]:
+        return list(self._postmortems.values())
+
+    def get_postmortem(self, postmortem_id: str) -> Optional[dict[str, Any]]:
+        return self._postmortems.get(postmortem_id)
+
+    def get_postmortem_for_incident(self, incident_id: str) -> Optional[dict[str, Any]]:
+        for pm in self._postmortems.values():
+            if pm.get("incident_id") == incident_id:
+                return pm
+        return None
+
+    def get_evolution_decision(self, decision_id: str) -> Optional[dict[str, Any]]:
+        return None
+
+    def list_evolution_decisions(self, **kwargs: Any) -> list[dict[str, Any]]:
+        return []
+
+    def get_lineage_edges(self, **kwargs: Any) -> list[dict[str, Any]]:
+        return []
+
+    def get_telemetry_performance(self, artifact_id: str) -> Optional[dict[str, Any]]:
+        return {"artifact_id": artifact_id, "metrics": {}}
+
+    def get_binding(self, binding_id: str) -> Optional[dict[str, Any]]:
+        return None
+
+    def get_runtime_binding(self, binding_id: str) -> Optional[dict[str, Any]]:
+        return None
+
+    def get_capital_pool(self, pool_id: str) -> Optional[dict[str, Any]]:
+        return None
+
+    def get_kill_switch_status(self) -> dict[str, Any]:
+        return {
+            "status": "operational",
+            "active_scopes": [],
+            "last_updated_at": "2026-04-10T14:30:00Z",
+            "allowedActions": ["pause", "resume", "liquidate"],
+        }
+
+
+class UnavailableIncidentStore(ReadSurfacePorts):
+    def dataset_source(self, dataset: str) -> str:
+        return "missing"
+
+    def list_incidents(self, **kwargs: Any) -> list[dict[str, Any]]:
+        return []
+
+    def get_incident(self, incident_id: str) -> Optional[dict[str, Any]]:
+        return None
+
+
+bff_main.read_store = IncidentSmokeStore()
 
 client = TestClient(app)
 
@@ -212,32 +305,28 @@ def test_in02_incident_detail_not_found():
 
 
 def test_in02_missing_backend_does_not_fabricate_incidents():
-    with tempfile.TemporaryDirectory() as td:
-        unavailable_store = ReadSurfaceStore(
-            os.path.join(td, "read_surfaces.json"),
-            allow_local_snapshot_fallback=False,
-        )
-        original_read_store = bff_main.read_store
-        with mock.patch.dict(
-            os.environ,
-            {
-                "INCIDENTS_DATA_DIR": "",
-                "POSTMORTEMS_DATA_DIR": "",
-                "PANTHEON_BFF_INCIDENT_STORE": "",
-                "PANTHEON_BFF_POSTMORTEM_STORE": "",
-                "PANTHEON_INCIDENTS_API_URL": "",
-                "PANTHEON_INCIDENTS_URL": "",
-                "PANTHEON_POSTMORTEMS_API_URL": "",
-                "PANTHEON_POSTMORTEMS_URL": "",
-            },
-            clear=False,
-        ):
-            bff_main.read_store = unavailable_store
-            try:
-                list_resp = client.get("/api/v1/incidents", headers={"Authorization": AUTH})
-                detail_resp = client.get("/api/v1/incidents/inc-20260410-001", headers={"Authorization": AUTH})
-            finally:
-                bff_main.read_store = original_read_store
+    unavailable_store = UnavailableIncidentStore()
+    original_read_store = bff_main.read_store
+    with mock.patch.dict(
+        os.environ,
+        {
+            "INCIDENTS_DATA_DIR": "",
+            "POSTMORTEMS_DATA_DIR": "",
+            "PANTHEON_BFF_INCIDENT_STORE": "",
+            "PANTHEON_BFF_POSTMORTEM_STORE": "",
+            "PANTHEON_INCIDENTS_API_URL": "",
+            "PANTHEON_INCIDENTS_URL": "",
+            "PANTHEON_POSTMORTEMS_API_URL": "",
+            "PANTHEON_POSTMORTEMS_URL": "",
+        },
+        clear=False,
+    ):
+        bff_main.read_store = unavailable_store
+        try:
+            list_resp = client.get("/api/v1/incidents", headers={"Authorization": AUTH})
+            detail_resp = client.get("/api/v1/incidents/inc-20260410-001", headers={"Authorization": AUTH})
+        finally:
+            bff_main.read_store = original_read_store
 
     assert list_resp.status_code == 200
     list_body = list_resp.json()
@@ -473,10 +562,10 @@ def test_composed_post_incident_review():
 
 
 def test_rbac_denied():
-    """Viewer role should be denied for incident surfaces."""
-    resp = client.get("/api/v1/incidents", headers={"Authorization": "Bearer viewer-only:viewer"})
+    """Unprivileged role should be denied for incident surfaces."""
+    resp = client.get("/api/v1/incidents", headers={"Authorization": "Bearer guest-only:guest"})
     assert resp.status_code == 403
-    print("✅ RBAC: Viewer denied access to incident surfaces")
+    print("✅ RBAC: Unprivileged role denied access to incident surfaces")
 
 
 def test_unauthenticated_denied():

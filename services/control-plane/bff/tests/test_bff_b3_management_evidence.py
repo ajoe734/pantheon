@@ -20,11 +20,46 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 import main as bff_main
-from read_store import ReadSurfaceStore
+from ports import create_read_surface_ports
 
 
 ADMIN_HEADERS = {"Authorization": "Bearer op-b3:admin"}
 OPERATOR_HEADERS = {"Authorization": "Bearer op-b3:operator"}
+
+
+class _EvidenceRefsTestStore:
+    def __init__(self) -> None:
+        self.ports = create_read_surface_ports()
+
+    def _load_evidence(self) -> dict[str, Any]:
+        store_path = os.environ.get("PANTHEON_BFF_EVIDENCE_REF_STORE")
+        if store_path and os.path.exists(store_path):
+            try:
+                with open(store_path, "r", encoding="utf-8") as f:
+                    return json.load(f)
+            except Exception:
+                pass
+        return {}
+
+    def list_evidence_refs(self, **kwargs: Any) -> list[dict[str, Any]]:
+        return list(self._load_evidence().values())
+
+    def get_evidence_ref(self, ref_id: Optional[str]) -> Optional[dict[str, Any]]:
+        if not ref_id:
+            return None
+        return self._load_evidence().get(ref_id)
+
+    def get_evidence_ref_detail(self, ref_id: Optional[str]) -> Optional[dict[str, Any]]:
+        return self.get_evidence_ref(ref_id)
+
+    def dataset_source(self, dataset: str) -> str:
+        if dataset == "evidence_refs":
+            store_path = os.environ.get("PANTHEON_BFF_EVIDENCE_REF_STORE")
+            return "service_backend" if store_path else "missing"
+        return self.ports.dataset_source(dataset)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self.ports, name)
 
 
 @contextmanager
@@ -134,10 +169,7 @@ def _evidence_client() -> Iterator[TestClient]:
         os.environ.pop("PANTHEON_AUDIT_OUT_DIR", None)
         original_store = bff_main.read_store
         try:
-            bff_main.read_store = ReadSurfaceStore(
-                os.path.join(td, "read_surfaces.json"),
-                allow_local_snapshot_fallback=True,
-            )
+            bff_main.read_store = _EvidenceRefsTestStore()
             with TestClient(bff_main.app) as client:
                 yield client
         finally:
@@ -228,10 +260,7 @@ def _current_run_evidence_client(verifier_path: Path) -> Iterator[TestClient]:
     os.environ.pop("PANTHEON_AUDIT_OUT_DIR", None)
     original_store = bff_main.read_store
     try:
-        bff_main.read_store = ReadSurfaceStore(
-            str(verifier_path.parent / "read_surfaces.json"),
-            allow_local_snapshot_fallback=False,
-        )
+        bff_main.read_store = create_read_surface_ports()
         with TestClient(bff_main.app) as client:
             yield client
     finally:

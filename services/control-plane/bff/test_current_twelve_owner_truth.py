@@ -4,7 +4,7 @@ import importlib.util
 import json
 import os
 import sys
-import tempfile
+from copy import deepcopy
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -21,7 +21,6 @@ sys.path.insert(0, str(BFF_DIR))
 import main as bff_main  # noqa: E402
 import loop_inventory as loop_inventory_model  # noqa: E402
 from downstream_health_monitor import _probe_http  # noqa: E402
-from read_store import ReadSurfaceStore  # noqa: E402
 
 
 REPO_ROOT = BFF_DIR.parents[2]
@@ -54,41 +53,45 @@ def _loop_conformance_module():
 def _scoped_health_client(
     *,
     loop_health_store: Optional[Dict[str, Dict[str, Any]]] = None,
+    downstream_monitor: Optional[Any] = None,
 ) -> Iterator[TestClient]:
-    with tempfile.TemporaryDirectory() as td:
-        root = Path(td)
-        snapshot_path = root / "read_surfaces.json"
-        env_overrides: Dict[str, str] = {
-            "PANTHEON_BFF_AUTH_STUB": "true",
-            "PANTHEON_ENV": ENVIRONMENT,
-        }
-        if loop_health_store is not None:
-            health_path = root / "loop_health.json"
-            scoped_records = {}
-            for k, v in loop_health_store.items():
-                record = dict(v)
-                record.setdefault("tenant_id", TENANT_ID)
-                record.setdefault("environment", ENVIRONMENT)
-                scoped_records[k] = record
-            health_path.write_text(
-                json.dumps(scoped_records),
-                encoding="utf-8",
-            )
-            env_overrides["PANTHEON_BFF_LOOP_HEALTH_STORE"] = str(health_path)
+    scoped_records: List[Dict[str, Any]] = []
+    for record in (loop_health_store or {}).values():
+        scoped_record = deepcopy(record)
+        scoped_record.setdefault("tenant_id", TENANT_ID)
+        scoped_record.setdefault("environment", ENVIRONMENT)
+        scoped_records.append(scoped_record)
 
-        original_store = bff_main.read_store
-        original_monitor = getattr(bff_main, "downstream_health_monitor", None)
-        bff_main.read_store = ReadSurfaceStore(
-            str(snapshot_path),
-            allow_local_snapshot_fallback=False,
-        )
-        bff_main.downstream_health_monitor = None
-        with patch.dict(os.environ, env_overrides, clear=False):
-            try:
-                yield TestClient(bff_main.app, raise_server_exceptions=False)
-            finally:
-                bff_main.read_store = original_store
-                bff_main.downstream_health_monitor = original_monitor
+    async def _fetch_controller_records(
+        tenant_id: str,
+        environment: str,
+    ) -> tuple[bool, List[Dict[str, Any]]]:
+        records = [
+            deepcopy(record)
+            for record in scoped_records
+            if record["tenant_id"] == tenant_id
+            and record["environment"] == environment
+        ]
+        return bool(records), records
+
+    env_overrides = {
+        "PANTHEON_BFF_AUTH_STUB": "true",
+        "PANTHEON_ENV": ENVIRONMENT,
+    }
+    with (
+        patch.dict(os.environ, env_overrides, clear=False),
+        patch.object(
+            bff_main.loop_truth,
+            "fetch_controller_store_health_records",
+            new=_fetch_controller_records,
+        ),
+        patch.object(
+            bff_main,
+            "downstream_health_monitor",
+            downstream_monitor,
+        ),
+    ):
+        yield TestClient(bff_main.app, raise_server_exceptions=False)
 
 
 def _build_valid_controller_row(
@@ -121,10 +124,19 @@ def _build_valid_controller_row(
             "source": f"{loop_id}-desired-authority",
             "checked_at": heartbeat.isoformat(),
         },
+        "desired_state_presence": {
+            "present": True,
+            "authoritative": True,
+            "source": f"{loop_id}-desired-authority",
+            "checked_at": heartbeat.isoformat(),
+            "query": f"desired for {loop_id}",
+        },
         "downstream_actual_state": {
             "status": "ready",
+            "authoritative": True,
             "source": f"{loop_id}-terminal-store",
             "checked_at": heartbeat.isoformat(),
+            "query": f"actual for {loop_id}",
         },
         "last_heartbeat_at": heartbeat.isoformat(),
         "last_tick_at": heartbeat.isoformat(),
@@ -482,7 +494,7 @@ class TestTaskArchiveLivenessRejection:
 class TestAllTwelveProductLoopsRuntimeObservations:
     """Validate positive and negative runtime observation acceptance across all twelve loops."""
 
-    def test_all_twelve_canonical_loops_accept_positive_runtime_observation(self) -> None:
+    def test_positive_runtime_observations_respect_catalog_controller_admission(self) -> None:
         conformance = _loop_conformance_module()
         now = datetime.now(timezone.utc)
         store = {
@@ -496,8 +508,11 @@ class TestAllTwelveProductLoopsRuntimeObservations:
         assert response.status_code == 200, response.text
         payload = response.json()
         assert payload["meta"]["coverage"]["canonical_loop_count"] == 12
-        assert payload["meta"]["coverage"]["controller_health_record_count"] == 12
-        assert payload["meta"]["surfaces"]["loop_health"]["status"] == "ok"
+        assert payload["meta"]["coverage"]["raw_health_record_count"] == 12
+        assert payload["meta"]["coverage"]["controller_health_record_count"] == len(
+            EXPECTED_IMPLEMENTED_CONTROLLERS
+        )
+        assert payload["meta"]["surfaces"]["loop_health"]["status"] == "degraded"
 
         items = {item["loop_id"]: item for item in payload["items"]}
         for loop_id in conformance.CANONICAL_LOOP_IDS:
@@ -508,18 +523,26 @@ class TestAllTwelveProductLoopsRuntimeObservations:
             packet = item["evidence_packet"]
             maturity = item["runtime_maturity"]
 
-            assert health["current_record_accepted"] is True, f"{loop_id} current_record_accepted should be True"
-            assert health["status"] == "healthy", f"{loop_id} status mismatch"
-            assert health["rejection_reason"] is None, f"{loop_id} has unexpected rejection_reason"
-            assert live_status["has_live_evidence"] is True, f"{loop_id} has_live_evidence should be True"
-            assert live_status["is_reconciled"] is True, f"{loop_id} is_reconciled should be True"
-            assert live_status["operator_truth"]["accepted_as_live"] is True, f"{loop_id} operator_truth accepted_as_live"
-            assert live_status["operator_truth"]["degraded"] is False, f"{loop_id} operator_truth degraded"
-            assert maturity["state"] == "reconciled", f"{loop_id} maturity state should be reconciled"
-            assert packet["runtime_controller_record_qualified"] is True, f"{loop_id} packet qualified"
-            assert packet["accepted_live_liveness"] is True, f"{loop_id} packet accepted_live_liveness"
+            if loop_id in EXPECTED_IMPLEMENTED_CONTROLLERS:
+                assert health["current_record_accepted"] is True, loop_id
+                assert health["status"] == "healthy", loop_id
+                assert health["rejection_reason"] is None, loop_id
+                assert live_status["has_live_evidence"] is True, loop_id
+                assert live_status["is_reconciled"] is True, loop_id
+                assert live_status["operator_truth"]["accepted_as_live"] is True, loop_id
+                assert live_status["operator_truth"]["degraded"] is False, loop_id
+                assert maturity["state"] == "reconciled", loop_id
+                assert packet["runtime_controller_record_qualified"] is True, loop_id
+                assert packet["accepted_live_liveness"] is True, loop_id
+            else:
+                assert health["current_record_accepted"] is False, loop_id
+                assert health["rejection_reason"] is not None, loop_id
+                assert live_status["has_live_evidence"] is False, loop_id
+                assert live_status["is_reconciled"] is False, loop_id
+                assert packet["runtime_controller_record_qualified"] is False, loop_id
+                assert packet["accepted_live_liveness"] is False, loop_id
 
-    def test_all_twelve_loops_detail_endpoints(self) -> None:
+    def test_all_twelve_loop_detail_endpoints_apply_catalog_admission(self) -> None:
         conformance = _loop_conformance_module()
         now = datetime.now(timezone.utc)
         for loop_id in conformance.CANONICAL_LOOP_IDS:
@@ -530,10 +553,12 @@ class TestAllTwelveProductLoopsRuntimeObservations:
 
             assert response.status_code == 200, f"{loop_id} detail failed: {response.text}"
             data = response.json()["data"]
-            assert data["controller_health"]["current_record_accepted"] is True, loop_id
-            assert data["controller_health"]["status"] == "healthy", loop_id
-            assert data["live_status"]["is_reconciled"] is True, loop_id
-            assert data["live_status"]["has_live_evidence"] is True, loop_id
+            expected = loop_id in EXPECTED_IMPLEMENTED_CONTROLLERS
+            assert data["controller_health"]["current_record_accepted"] is expected, loop_id
+            assert data["live_status"]["is_reconciled"] is expected, loop_id
+            assert data["live_status"]["has_live_evidence"] is expected, loop_id
+            if expected:
+                assert data["controller_health"]["status"] == "healthy", loop_id
 
     def test_all_twelve_loops_reject_negative_stale_heartbeat(self) -> None:
         conformance = _loop_conformance_module()
@@ -576,9 +601,10 @@ class TestAllTwelveProductLoopsRuntimeObservations:
             assert response.status_code == 200, response.text
             data = response.json()["data"]
             assert data["controller_health"]["current_record_accepted"] is False, loop_id
-            assert data["controller_health"]["rejection_reason"] == (
-                "worker functional health is degraded despite process readiness"
-            ), loop_id
+            if loop_id in EXPECTED_IMPLEMENTED_CONTROLLERS:
+                assert data["controller_health"]["rejection_reason"] == (
+                    "worker functional health is degraded despite process readiness"
+                ), loop_id
             assert data["live_status"]["has_live_evidence"] is False, loop_id
             assert data["live_status"]["is_reconciled"] is False, loop_id
 
@@ -614,33 +640,28 @@ class TestOverlayExclusion:
         store = {"per_persona_ooda": row}
 
         with _scoped_health_client(loop_health_store=store) as client:
-            response = client.get("/bff/v5/loop-health/per_persona_ooda", headers=HEADERS)
+            detail_response = client.get(
+                "/bff/v5/loop-health/per_persona_ooda",
+                headers=HEADERS,
+            )
+            list_response = client.get("/bff/v5/loop-health", headers=HEADERS)
 
-        assert response.status_code == 200, response.text
-        data = response.json()["data"]
-        assert data["classification"] == "composite_overlay"
-        assert data["controller_health"]["current_record_accepted"] is False
-        assert data["controller_health"]["rejection_reason"] == (
-            "composite overlay loops do not accept direct controller runtime records"
-        )
-        assert data["live_status"]["is_live"] is False
-        assert data["live_status"]["has_live_evidence"] is False
+        assert detail_response.status_code == 404, detail_response.text
+        assert list_response.status_code == 200, list_response.text
+        payload = list_response.json()
+        assert "per_persona_ooda" not in {
+            item["loop_id"] for item in payload["items"]
+        }
+        overlays = payload["meta"]["composite_overlay_inventory"]
+        assert [item["loop_id"] for item in overlays] == ["per_persona_ooda"]
 
 
-class TestBffDownstreamWorkerFailureAttribution:
-    """Validate that BFF attributes functional worker failures to the correct loops (8, 9, 12)."""
+class TestBffDownstreamWorkerIsolation:
+    """Validate that component probes cannot manufacture canonical loop truth."""
 
-    def test_downstream_health_prober_attributes_failures_to_loops_8_9_12(self) -> None:
+    def test_downstream_probe_failures_stay_on_downstream_health_surface(self) -> None:
         now_iso = datetime.now(timezone.utc).isoformat()
         mock_monitor = MagicMock()
-        mock_monitor.publish_loop_12_controller_truth.return_value = {
-            "loop_id": "bff_health_monitoring",
-            "controller_name": "bff_downstream_health_monitor",
-            "status": "degraded",
-            "last_heartbeat_at": now_iso,
-            "evidence_refs": ["docs/deployment/evidence/twelve-loop-gap/L12-TRUTH-001/bff_health_monitoring.json"],
-            "truth_level": "reconciled_live_proof",
-        }
         mock_monitor.get_state.return_value = {
             "targets": {
                 "deployment-outbox-consumer": {
@@ -664,35 +685,20 @@ class TestBffDownstreamWorkerFailureAttribution:
             }
         }
 
-        with tempfile.TemporaryDirectory() as td:
-            snapshot_path = Path(td) / "read_surfaces.json"
-            original_store = bff_main.read_store
-            original_monitor = getattr(bff_main, "downstream_health_monitor", None)
-            bff_main.read_store = ReadSurfaceStore(
-                str(snapshot_path),
-                allow_local_snapshot_fallback=False,
+        with _scoped_health_client(downstream_monitor=mock_monitor) as client:
+            downstream_response = client.get(
+                "/bff/v5/downstream-health",
+                headers=HEADERS,
             )
-            bff_main.downstream_health_monitor = mock_monitor
-            try:
-                client = TestClient(bff_main.app, raise_server_exceptions=False)
-                response = client.get("/bff/v5/loop-health", headers=HEADERS)
-                assert response.status_code == 200, response.text
-                items = {item["loop_id"]: item for item in response.json()["items"]}
+            loop_response = client.get("/bff/v5/loop-health", headers=HEADERS)
 
-                # Loop 8: promotion_deployment
-                loop8 = items["promotion_deployment"]
-                assert loop8["controller_health"]["current_record_accepted"] is False
-                assert "deployment-outbox-consumer" in str(loop8.get("truth_note") or "") or "deployment-outbox-consumer" in str(loop8.get("downstream_actual_state") or "")
+        assert downstream_response.status_code == 200, downstream_response.text
+        assert downstream_response.json()["data"] == mock_monitor.get_state.return_value
 
-                # Loop 9: capital_pool_execution
-                loop9 = items["capital_pool_execution"]
-                assert loop9["controller_health"]["current_record_accepted"] is False
-                assert "paper-fleet-reconciler" in str(loop9.get("truth_note") or "") or "paper-fleet-reconciler" in str(loop9.get("downstream_actual_state") or "")
-
-                # Loop 12: bff_health_monitoring
-                loop12 = items["bff_health_monitoring"]
-                assert loop12["controller_health"]["current_record_accepted"] is False
-                assert "runtime-manager" in str(loop12.get("truth_note") or "") or "runtime-manager" in str(loop12.get("downstream_actual_state") or "")
-            finally:
-                bff_main.read_store = original_store
-                bff_main.downstream_health_monitor = original_monitor
+        assert loop_response.status_code == 200, loop_response.text
+        loop_payload = loop_response.json()
+        assert len(loop_payload["items"]) == 12
+        serialized_loops = json.dumps(loop_payload["items"], sort_keys=True)
+        for target in mock_monitor.get_state.return_value["targets"].values():
+            assert target["failure_reason"] not in serialized_loops
+        mock_monitor.publish_loop_12_controller_truth.assert_not_called()

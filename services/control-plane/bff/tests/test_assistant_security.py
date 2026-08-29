@@ -16,7 +16,7 @@ if BFF_DIR not in sys.path:
     sys.path.insert(0, BFF_DIR)
 
 import main as bff_main  # noqa: E402
-from read_store import ReadSurfaceStore  # noqa: E402
+from ports import create_in_memory_read_surface_ports  # noqa: E402
 import assistant.control_mode as control_mode_module  # noqa: E402
 from assistant.control_mode import ControlModeStore  # noqa: E402
 from assistant.command_idempotency import CommandIdempotencyStore  # noqa: E402
@@ -92,9 +92,8 @@ def _control_mode_client(
     return TestClient(app, raise_server_exceptions=True)
 
 
-def _seed_store(path: str) -> ReadSurfaceStore:
-    store = ReadSurfaceStore(path, allow_local_snapshot_fallback=True)
-    store._data["jobs"] = {
+def _seed_store(path: str = ""):
+    jobs_map = {
         "job_sec": {
             "id": "job_sec",
             "job_id": "job_sec",
@@ -119,6 +118,20 @@ def _seed_store(path: str) -> ReadSurfaceStore:
             ],
         }
     }
+    store = create_in_memory_read_surface_ports()
+    store.list_jobs = lambda **kw: list(jobs_map.values())
+    store.list_jobs_bff = lambda **kw: list(jobs_map.values())
+    store.get_job = lambda job_id: jobs_map.get(job_id)
+    store.get_job_bff = lambda job_id: jobs_map.get(job_id)
+    store.list_events_bff = lambda **kw: []
+    store.list_persona_league = lambda **kw: []
+    store.list_personas = lambda **kw: []
+    store.list_strategy_summaries = lambda **kw: []
+    store.list_strategy_specs = lambda **kw: []
+    store.list_runtimes = lambda **kw: []
+    store.list_runtime_instances = lambda **kw: []
+    store.list_runtime_bindings = lambda **kw: []
+    store.dataset_source = lambda d: "typed_store"
     return store
 
 
@@ -1136,8 +1149,15 @@ def test_execute_medium_risk_requires_confirmation() -> None:
     assert exc_info.value.field_name == "confirmed"
 
 
-def test_execute_medium_risk_persona_action_with_confirmation_returns_admitted_receipt() -> None:
+def test_execute_medium_risk_persona_action_with_confirmation_returns_admitted_receipt(monkeypatch) -> None:
     """PersonaAction with reason and confirmed=True produces an admitted receipt with confirmation_marker."""
+    from models import CommandStatus
+    import command_executor
+    monkeypatch.setattr(
+        command_executor,
+        "execute_command_with_status",
+        lambda *args, **kwargs: (CommandStatus.EXECUTED, {"command_id": "cmd-001"}, None),
+    )
     receipt = execute_governed_tool(
         action_id="PersonaAction",
         entity_type="Persona",
