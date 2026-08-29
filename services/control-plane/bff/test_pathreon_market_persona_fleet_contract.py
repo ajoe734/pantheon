@@ -15,8 +15,236 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, os.path.dirname(__file__))
 
 import main as bff_main
-from ports import ReadSurfacePorts, create_in_memory_read_surface_ports, create_read_surface_ports
-from read_store import _merge_market_persona_fleet, _tw_qlib_research_experiment_default
+from ports import ReadSurfacePorts, create_in_memory_read_surface_ports
+
+# NOTE: `_merge_market_persona_fleet` is kept as a narrow, deliberate import from the
+# legacy composite read_store module rather than ported locally. This module's own
+# purpose (see the `_enable_market_persona_seed` fixture below) is to test the
+# behavior of that retired opt-in seed fixture itself -- not to use it as generic
+# fixture-backing data for unrelated composite contract tests. The function is also
+# ~700 lines and tightly coupled to several other read_store-private helpers
+# (`_market_persona_required_data_sources`, `_market_persona_research_truth`,
+# `_provider_truth`, `_ref_values`, `_put_default_record`), so faithfully porting it
+# would mean duplicating most of read_store's private market-persona-seed internals
+# with high risk of silent drift. This is the "adapter internals" style exception
+# documented for this migration task.
+from read_store import _merge_market_persona_fleet
+
+# `_tw_qlib_research_experiment_default` (and its small, fully self-contained
+# dependency chain of pure helpers/constants) IS practical to port locally, so it is
+# reproduced here verbatim instead of importing it from read_store.
+_LOCAL_TW_QLIB_DATASET_MANIFEST_REF = "support/evidence/MGMT-QLIB-001/dataset_manifest.json"
+_LOCAL_TW_QLIB_LINKAGE_PACKET_REF = (
+    "support/evidence/MGMT-QLIB-006/management_linkage_packet.json"
+)
+_LOCAL_TW_QLIB_EXPERIMENT_ID = "exp-mgmt-qlib-006"
+_LOCAL_TW_QLIB_STRATEGY_ID = "tw-cross-sectional-equity-alpha"
+_LOCAL_TW_QLIB_STRATEGY_SPEC_ID = "qlib-tw-cross-sectional-alpha-spec-v1"
+_LOCAL_TW_QLIB_ARTIFACT_ID = "qlib-tw-cross-sectional-alpha-model-draft-v1"
+_LOCAL_TW_QLIB_DATASET_REF = "dataset:tw-equity-ohlcv-top50-2024-daily"
+_LOCAL_TW_QLIB_DATASET_MANIFEST_ID = (
+    "qlib-dataset-manifest:dataset-tw-equity-ohlcv-top50-2024-daily"
+)
+
+
+def _local_tw_qlib_evidence_refs() -> list[dict[str, Any]]:
+    return [
+        {
+            "ref_type": "management_linkage_packet",
+            "ref_id": "mgmt-qlib-006-management-linkage-v1",
+            "ref": _LOCAL_TW_QLIB_LINKAGE_PACKET_REF,
+        },
+        {
+            "ref_type": "dataset_manifest",
+            "ref_id": _LOCAL_TW_QLIB_DATASET_MANIFEST_ID,
+            "ref": _LOCAL_TW_QLIB_DATASET_MANIFEST_REF,
+        },
+        {
+            "ref_type": "research_experiment",
+            "ref_id": _LOCAL_TW_QLIB_EXPERIMENT_ID,
+            "route": f"/bff/research-experiments/{_LOCAL_TW_QLIB_EXPERIMENT_ID}",
+        },
+        {
+            "ref_type": "strategy_artifacts",
+            "ref_id": _LOCAL_TW_QLIB_STRATEGY_ID,
+            "route": f"/bff/strategies/{_LOCAL_TW_QLIB_STRATEGY_ID}/artifacts",
+        },
+    ]
+
+
+def _local_tw_qlib_safety_assertions() -> dict[str, Any]:
+    return {
+        "registry_write_performed": False,
+        "registry_write_authority": "registry_service_only",
+        "broker_session_opened": False,
+        "order_route": "none",
+        "deployment_stage": "none",
+        "live_capital_side_effects": False,
+    }
+
+
+def _local_tw_qlib_research_linkage() -> dict[str, Any]:
+    return {
+        "kind": "qlib_admission_research_linkage",
+        "framework": "qlib",
+        "admission_stage": "management_review_linked",
+        "strategy_id": _LOCAL_TW_QLIB_STRATEGY_ID,
+        "strategy_spec_id": _LOCAL_TW_QLIB_STRATEGY_SPEC_ID,
+        "dataset_manifest_id": _LOCAL_TW_QLIB_DATASET_MANIFEST_ID,
+        "source_task_ids": [
+            "MGMT-QLIB-001",
+            "MGMT-QLIB-002",
+            "MGMT-QLIB-004",
+            "MGMT-QLIB-006",
+        ],
+        "pending_task_ids": ["MGMT-QLIB-003", "MGMT-QLIB-005"],
+        "evidence_refs": [
+            {
+                "ref_type": "dataset_manifest",
+                "task_id": "MGMT-QLIB-001",
+                "ref": _LOCAL_TW_QLIB_DATASET_MANIFEST_REF,
+            },
+            {
+                "ref_type": "strategy_spec_packet",
+                "task_id": "MGMT-QLIB-002",
+                "ref": "support/evidence/MGMT-QLIB-002/strategy_spec_packet.json",
+            },
+            {
+                "ref_type": "model_eval_artifact_review",
+                "task_id": "MGMT-QLIB-004",
+                "ref": "support/reviews/MGMT-QLIB-004-review-codex2.md",
+            },
+        ],
+        "expected_evidence_refs": [
+            {
+                "ref_type": "registry_admission_packet",
+                "task_id": "MGMT-QLIB-005",
+                "ref": "support/evidence/MGMT-QLIB-005/registry_admission_packet.json",
+                "status": "pending_upstream_task",
+            },
+        ],
+        "artifact_refs": [
+            {
+                "artifact_name": "model_artifact",
+                "artifact_type": "model_artifact",
+                "artifact_ref": f"{_LOCAL_TW_QLIB_ARTIFACT_ID}@1.0.0",
+                "artifact_state": "draft",
+                "deployment_stage": "none",
+                "registry_id": _LOCAL_TW_QLIB_ARTIFACT_ID,
+            },
+            {
+                "artifact_name": "evaluation_report",
+                "artifact_type": "evaluation_result",
+                "artifact_ref": f"eval-{_LOCAL_TW_QLIB_ARTIFACT_ID}@1.0.0",
+                "target_artifact_ref": f"{_LOCAL_TW_QLIB_ARTIFACT_ID}@1.0.0",
+                "artifact_state": "draft",
+                "deployment_stage": "none",
+            },
+            {
+                "artifact_name": "registry_entry_projection",
+                "artifact_type": "registry_entry_projection",
+                "artifact_ref": f"artifact://qlib/{_LOCAL_TW_QLIB_ARTIFACT_ID}/1.0.0/registry_entry",
+                "artifact_state": "draft",
+                "deployment_stage": "none",
+            },
+            {
+                "artifact_name": "candidate_packet",
+                "artifact_type": "registry_candidate_handoff",
+                "artifact_ref": f"artifact://qlib/{_LOCAL_TW_QLIB_ARTIFACT_ID}/1.0.0/candidate_packet",
+                "artifact_state": "draft",
+                "deployment_stage": "none",
+            },
+        ],
+        "ooda_refs": [
+            {
+                "stage": "observe",
+                "ref_type": "dataset_manifest",
+                "ref": _LOCAL_TW_QLIB_DATASET_MANIFEST_REF,
+            },
+            {
+                "stage": "orient",
+                "ref_type": "strategy_spec_packet",
+                "ref": "support/evidence/MGMT-QLIB-002/strategy_spec_packet.json",
+            },
+            {
+                "stage": "decide",
+                "ref_type": "registry_admission_packet",
+                "ref": "support/evidence/MGMT-QLIB-005/registry_admission_packet.json",
+                "status": "pending_upstream_task",
+            },
+        ],
+        "management_routes": {
+            "artifact_detail": f"/bff/artifacts/{_LOCAL_TW_QLIB_ARTIFACT_ID}",
+            "api_artifact_detail": f"/api/v1/artifacts/{_LOCAL_TW_QLIB_ARTIFACT_ID}",
+            "research_experiment_detail": f"/bff/research-experiments/{_LOCAL_TW_QLIB_EXPERIMENT_ID}",
+            "strategy_artifacts": f"/bff/strategies/{_LOCAL_TW_QLIB_STRATEGY_ID}/artifacts",
+        },
+        "safety_assertions": _local_tw_qlib_safety_assertions(),
+    }
+
+
+def _local_tw_qlib_research_experiment_default() -> dict[str, Any]:
+    linkage = _local_tw_qlib_research_linkage()
+    return {
+        "experiment_id": _LOCAL_TW_QLIB_EXPERIMENT_ID,
+        "ticket_id": "rt-mgmt-qlib-006",
+        "experiment_name": "MGMT-QLIB-006 Qlib TW admission linkage",
+        "status": "completed",
+        "stage": "management_review_linked",
+        "queued_at": "2026-05-15T17:25:00Z",
+        "started_at": "2026-05-15T17:26:00Z",
+        "completed_at": "2026-05-15T17:30:00Z",
+        "progress": {
+            "percent": 100,
+            "phase": "management_review_linked",
+            "message": "Management linkage packet is ready; registry admission remains gated.",
+        },
+        "strategy_selector": {"strategy_id": _LOCAL_TW_QLIB_STRATEGY_ID, "variant_id": None},
+        "linked_strategy_id": _LOCAL_TW_QLIB_STRATEGY_ID,
+        "parameter_set": {
+            "framework": "qlib",
+            "model_family": "lightgbm",
+            "market": "TW",
+            "universe": "tw-equity-top50",
+        },
+        "run_config": {
+            "backend": "qlib",
+            "dataset_ref": _LOCAL_TW_QLIB_DATASET_REF,
+            "dataset_manifest_id": _LOCAL_TW_QLIB_DATASET_MANIFEST_ID,
+            "time_range": {
+                "start_at": "2024-01-02T00:00:00Z",
+                "end_at": "2026-01-05T00:00:00Z",
+            },
+            "execution_mode": "offline_admission_review",
+            "priority": "normal",
+            "requested_by": "pathreon-management",
+        },
+        "launch_context": {
+            "task_id": "MGMT-QLIB-006",
+            "analysis_refs": None,
+            "source_task_ids": linkage["source_task_ids"],
+            "pending_task_ids": linkage["pending_task_ids"],
+        },
+        "validation_warnings": [
+            {
+                "code": "REGISTRY_ADMISSION_PENDING",
+                "message": "MGMT-QLIB-005 registry admission evidence is pending; deployment is blocked.",
+            }
+        ],
+        "artifact_ids": [_LOCAL_TW_QLIB_ARTIFACT_ID],
+        "artifact_refs": linkage["artifact_refs"],
+        "framework": "qlib",
+        "dataset_ref": _LOCAL_TW_QLIB_DATASET_REF,
+        "dataset_manifest_id": _LOCAL_TW_QLIB_DATASET_MANIFEST_ID,
+        "research_linkage": linkage,
+        "evidence_refs": _local_tw_qlib_evidence_refs(),
+        "safety_assertions": _local_tw_qlib_safety_assertions(),
+        "registry_admission_status": "pending_upstream_task",
+        "can_deploy": False,
+        "deployment_stage": "none",
+        "failure": {"reason_code": None, "message": None},
+        "governed_default_source": "composed_market_persona_defaults",
+    }
 
 
 @pytest.fixture(autouse=True)
@@ -121,7 +349,7 @@ def _make_store(
     research_experiments = dict(data.get("research_experiments") or {})
     research_experiments.setdefault(
         "exp-mgmt-qlib-006",
-        _tw_qlib_research_experiment_default(),
+        _local_tw_qlib_research_experiment_default(),
     )
 
     store = create_in_memory_read_surface_ports(
