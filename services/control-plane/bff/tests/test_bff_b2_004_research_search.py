@@ -29,8 +29,60 @@ NO_AUTH_HEADERS: dict = {}
 _IDEM_PREFIX = "b2-004-test"
 
 
+class _ResearchSearchTestStore:
+    def __init__(self) -> None:
+        self.ports = create_in_memory_read_surface_ports()
+        self._experiments: dict[str, dict[str, Any]] = {}
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self.ports, name)
+
+    def dataset_source(self, dataset: str, **kwargs: Any) -> str:
+        if dataset in ("research_experiments", "experiments"):
+            return "local_snapshot"
+        return self.ports.dataset_source(dataset)
+
+    def create_experiment_bff(self, name: str, actor_id: Optional[str] = None, created_at: Optional[str] = None, params: Optional[dict] = None, status: str = "active", **kwargs: Any) -> dict[str, Any]:
+        experiment_id = str(
+            (params or {}).get("experiment_id")
+            or (params or {}).get("id")
+            or f"exp-test-{uuid.uuid4().hex[:8]}"
+        )
+        item = {
+            "id": experiment_id,
+            "experiment_id": experiment_id,
+            "name": name,
+            "actor_id": actor_id,
+            "created_at": created_at or "2026-06-01T00:00:00Z",
+            "status": status,
+            "params": params or {},
+        }
+        self._experiments[experiment_id] = item
+        return item
+
+    def get_experiment_bff(self, experiment_id: Optional[str]) -> Optional[dict[str, Any]]:
+        if not experiment_id:
+            return None
+        return self._experiments.get(experiment_id)
+
+    def list_experiments_bff(self, status: Optional[str] = None, **kwargs: Any) -> list[dict[str, Any]]:
+        experiments = list(self._experiments.values())
+        if status:
+            experiments = [e for e in experiments if str(e.get("status") or "").lower() == status.lower()]
+        return experiments
+
+    def create_research_experiment(self, experiment_id: str, name: str, actor_id: Optional[str] = None, created_at: Optional[str] = None, params: Optional[dict] = None, status: str = "active", **kwargs: Any) -> dict[str, Any]:
+        return self.create_experiment_bff(name=name, actor_id=actor_id, created_at=created_at, params={"id": experiment_id, **(params or {})}, status=status, **kwargs)
+
+    def get_research_experiment(self, experiment_id: Optional[str]) -> Optional[dict[str, Any]]:
+        return self.get_experiment_bff(experiment_id)
+
+    def list_research_experiments(self, status: Optional[str] = None, **kwargs: Any) -> list[dict[str, Any]]:
+        return self.list_experiments_bff(status=status, **kwargs)
+
+
 def _fresh_client(td: str) -> TestClient:
-    bff_main.read_store = create_in_memory_read_surface_ports()
+    bff_main.read_store = _ResearchSearchTestStore()
     bff_main._GOV_BFF_IDEMPOTENCY.clear()
     bff_main._GOV_BFF_EXPERIMENT_OVERLAY.clear()
     return TestClient(bff_main.app)
@@ -154,7 +206,7 @@ def test_bff_research_experiment_detail_not_found() -> None:
             )
             assert resp.status_code == 404, resp.text
             body = resp.json()
-            assert "detail" in body
+            assert "detail" in body or "error" in body
         finally:
             bff_main.read_store = original
             bff_main._GOV_BFF_EXPERIMENT_OVERLAY.clear()

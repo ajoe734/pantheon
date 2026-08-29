@@ -39,8 +39,115 @@ NO_AUTH_HEADERS: dict = {}
 _IDEM_PREFIX = "b2-002-test"
 
 
+class _EvolutionJobsOpsTestStore:
+    def __init__(self) -> None:
+        self.ports = create_in_memory_read_surface_ports()
+        self._programs: dict[str, dict[str, Any]] = {}
+        self._jobs: dict[str, dict[str, Any]] = {}
+        self._loop_runs: dict[str, dict[str, Any]] = {}
+        self._findings: dict[str, dict[str, Any]] = {}
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self.ports, name)
+
+    def dataset_source(self, dataset: str, **kwargs: Any) -> str:
+        if dataset in ("jobs", "bff_jobs"):
+            return "local_snapshot"
+        return self.ports.dataset_source(dataset)
+
+    def trade_journey_projection_reader(self) -> Any:
+        return None
+
+    def list_loop_runs(self, **kwargs: Any) -> tuple[bool, list[dict[str, Any]]]:
+        return True, list(self._loop_runs.values())
+
+    def get_loop_run(self, run_id: Optional[str]) -> tuple[bool, Optional[dict[str, Any]]]:
+        if not run_id or run_id not in self._loop_runs:
+            return True, None
+        return True, self._loop_runs.get(run_id)
+
+    def create_loop_run(self, run_id: str, **kwargs: Any) -> dict[str, Any]:
+        item = {"id": run_id, "run_id": run_id, "status": "running", "created_at": "2026-06-01T00:00:00Z", **kwargs}
+        self._loop_runs[run_id] = item
+        return item
+
+    def get_sentinel_finding(self, finding_id: Optional[str]) -> tuple[bool, Optional[dict[str, Any]]]:
+        if not finding_id or finding_id not in self._findings:
+            return True, None
+        return True, self._findings.get(finding_id)
+
+    def create_evolution_program(self, program_id: str, name: str, actor_id: Optional[str] = None, created_at: Optional[str] = None, params: Optional[dict] = None, **kwargs: Any) -> dict[str, Any]:
+        item = {
+            "id": program_id,
+            "program_id": program_id,
+            "name": name,
+            "actor_id": actor_id,
+            "created_at": created_at or "2026-06-01T00:00:00Z",
+            "status": "active",
+            "params": params or {},
+            "runs": [],
+            "candidates": [],
+        }
+        self._programs[program_id] = item
+        return item
+
+    def get_evolution_program(self, program_id: Optional[str]) -> Optional[dict[str, Any]]:
+        if not program_id:
+            return None
+        return self._programs.get(program_id)
+
+    def list_evolution_programs(self, **kwargs: Any) -> list[dict[str, Any]]:
+        return list(self._programs.values())
+
+    def list_evolution_program_runs(self, program_id: Optional[str]) -> list[dict[str, Any]]:
+        prog = self.get_evolution_program(program_id)
+        if not prog:
+            return []
+        return prog.get("runs", [])
+
+    def list_evolution_program_candidates(self, program_id: Optional[str]) -> list[dict[str, Any]]:
+        prog = self.get_evolution_program(program_id)
+        if not prog:
+            return []
+        return prog.get("candidates", [])
+
+    def create_job(self, job_id: str, name: str, job_type: str = "evolution", **kwargs: Any) -> dict[str, Any]:
+        item = {
+            "id": job_id,
+            "job_id": job_id,
+            "name": name,
+            "type": job_type,
+            "status": "pending",
+            "created_at": "2026-06-01T00:00:00Z",
+            **kwargs,
+        }
+        self._jobs[job_id] = item
+        return item
+
+    def get_job(self, job_id: Optional[str]) -> tuple[bool, Optional[dict[str, Any]]]:
+        if not job_id or job_id not in self._jobs:
+            return True, None
+        return True, self._jobs.get(job_id)
+
+    def list_jobs(self, **kwargs: Any) -> tuple[bool, list[dict[str, Any]]]:
+        return True, list(self._jobs.values())
+
+    def list_jobs_bff(self, status: Optional[str] = None, job_type: Optional[str] = None, **kwargs: Any) -> list[dict[str, Any]]:
+        jobs = list(self._jobs.values())
+        if status:
+            jobs = [j for j in jobs if j.get("status") == status]
+        if job_type:
+            jobs = [j for j in jobs if j.get("type") == job_type]
+        return jobs
+
+    def get_job_bff(self, job_id: Optional[str]) -> Optional[dict[str, Any]]:
+        if not job_id:
+            return None
+        return self._jobs.get(job_id)
+
+
 def _fresh_client(td: str) -> TestClient:
-    bff_main.read_store = create_in_memory_read_surface_ports()
+    bff_main.read_store = _EvolutionJobsOpsTestStore()
     bff_main._GOV_BFF_IDEMPOTENCY.clear()
     bff_main._GOV_BFF_EVOLUTION_PROGRAM_OVERLAY.clear()
     bff_main._GOV_BFF_JOB_OVERLAY.clear()

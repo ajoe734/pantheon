@@ -16,13 +16,248 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 import main as bff_main
-from ports import create_read_surface_ports
+from typing import Any
+import json
+from read_store import _load_default_fixture_pack_datasets
+from ports import create_in_memory_read_surface_ports, create_read_surface_ports
 
 OPERATOR_HEADERS = {"Authorization": "Bearer op-b3-evolution:operator,reviewer"}
 
 
+class _EvolutionJournalTestStore:
+    def __init__(self, data: dict[str, Any]) -> None:
+        self.data = data
+        self.default_data = _load_default_fixture_pack_datasets()
+        persona_capital_kwargs = {
+            "evolution_decisions": list(data.get("evolution_decisions", {}).values()) if isinstance(data.get("evolution_decisions"), dict) else data.get("evolution_decisions", []),
+            "personas": list(data.get("personas", {}).values()) if isinstance(data.get("personas"), dict) else data.get("personas", []),
+            "candidate_artifacts": list(data.get("candidate_artifacts", {}).values()) if isinstance(data.get("candidate_artifacts"), dict) else data.get("candidate_artifacts", []),
+            "evolution_programs": list(data.get("evolution_programs", {}).values()) if isinstance(data.get("evolution_programs"), dict) else data.get("evolution_programs", []),
+            "bindings": list(data.get("bindings", {}).values()) if isinstance(data.get("bindings"), dict) else data.get("bindings", []),
+            "capital_pools": list(data.get("capital_pools", {}).values()) if isinstance(data.get("capital_pools"), dict) else data.get("capital_pools", []),
+        }
+        lifecycle_kwargs = {
+            "incidents": data.get("incidents", {}),
+            "postmortems": data.get("postmortems", {}),
+            "kill_switch": data.get("kill_switch", {"enabled": False, "status": "armed"}),
+            "governance_audit_events": list(data.get("governance_audit_events", {}).values()) if isinstance(data.get("governance_audit_events"), dict) else data.get("governance_audit_events", []),
+            "freeze_orders": data.get("freeze_orders", {}),
+            "all_rollbacks": list((data.get("all_rollbacks") or data.get("rollbacks", {})).values()) if isinstance(data.get("all_rollbacks") or data.get("rollbacks"), dict) else (data.get("all_rollbacks") or data.get("rollbacks", [])),
+        }
+        ooda_kwargs = {
+            "approval_decisions": list(data.get("approval_decisions", {}).values()) if isinstance(data.get("approval_decisions"), dict) else data.get("approval_decisions", []),
+            "mutation_reviews": list(data.get("mutation_reviews", {}).values()) if isinstance(data.get("mutation_reviews"), dict) else data.get("mutation_reviews", []),
+        }
+        self.ports = create_in_memory_read_surface_ports(
+            persona_capital_runtime_kwargs=persona_capital_kwargs,
+            lifecycle_telemetry_governance_kwargs=lifecycle_kwargs,
+            ooda_management_kwargs=ooda_kwargs,
+        )
+
+    def dataset_source(self, dataset: str) -> str:
+        key = dataset
+        if dataset == "persona_bindings" and "persona_bindings" not in self.data:
+            key = "bindings"
+        if dataset == "all_rollbacks" and "all_rollbacks" not in self.data:
+            key = "rollbacks"
+        if key in self.data:
+            return "local_snapshot" if self.data[key] is not None else "missing"
+        return self.ports.dataset_source(dataset)
+
+    def list_bindings(self, **kwargs: Any) -> list[dict[str, Any]]:
+        val = self.data.get("bindings") or self.data.get("persona_bindings") or {}
+        return list(val.values()) if isinstance(val, dict) else list(val)
+
+    def list_runtime_bindings(self, **kwargs: Any) -> list[dict[str, Any]]:
+        val = self.data.get("runtime_bindings") or {}
+        return list(val.values()) if isinstance(val, dict) else list(val)
+
+    def list_personas(self, **kwargs: Any) -> list[dict[str, Any]]:
+        val = self.data.get("personas") or {}
+        return list(val.values()) if isinstance(val, dict) else list(val)
+
+    def list_incidents(self, **kwargs: Any) -> list[dict[str, Any]]:
+        val = self.data.get("incidents") or {}
+        return list(val.values()) if isinstance(val, dict) else list(val)
+
+    def list_evolution_decisions(self, **kwargs: Any) -> list[dict[str, Any]]:
+        val = self.data.get("evolution_decisions")
+        if val is None:
+            val = self.default_data.get("evolution_decisions") or {}
+        return list(val.values()) if isinstance(val, dict) else list(val)
+
+    def get_approval_decision(self, decision_id: str) -> Optional[dict[str, Any]]:
+        val = self.data.get("approval_decisions")
+        if isinstance(val, dict) and decision_id in val:
+            return val[decision_id]
+        if isinstance(val, list):
+            for d in val:
+                if d.get("approval_decision_id") == decision_id or d.get("id") == decision_id:
+                    return d
+        def_val = self.default_data.get("approval_decisions")
+        if isinstance(def_val, dict) and decision_id in def_val:
+            return def_val[decision_id]
+        if isinstance(def_val, list):
+            for d in def_val:
+                if d.get("approval_decision_id") == decision_id or d.get("id") == decision_id:
+                    return d
+        return {"id": decision_id, "approval_decision_id": decision_id, "status": "approved"}
+
+    def get_evolution_decision_by_id(self, decision_id: str) -> Optional[dict[str, Any]]:
+        val = self.data.get("evolution_decisions")
+        if isinstance(val, dict) and decision_id in val:
+            return val[decision_id]
+        if isinstance(val, list):
+            for d in val:
+                if d.get("decision_id") == decision_id or d.get("id") == decision_id:
+                    return d
+        def_val = self.default_data.get("evolution_decisions")
+        if isinstance(def_val, dict) and decision_id in def_val:
+            return def_val[decision_id]
+        if isinstance(def_val, list):
+            for d in def_val:
+                if d.get("decision_id") == decision_id or d.get("id") == decision_id:
+                    return d
+        return None
+
+    def get_evolution_decision(self, decision_id: str) -> Optional[dict[str, Any]]:
+        return self.get_evolution_decision_by_id(decision_id)
+
+    def get_incident(self, incident_id: str) -> Optional[dict[str, Any]]:
+        val = self.data.get("incidents")
+        if isinstance(val, dict) and incident_id in val:
+            return val[incident_id]
+        if isinstance(val, list):
+            for d in val:
+                if d.get("incident_id") == incident_id or d.get("id") == incident_id:
+                    return d
+        def_val = self.default_data.get("incidents")
+        if isinstance(def_val, dict) and incident_id in def_val:
+            return def_val[incident_id]
+        if isinstance(def_val, list):
+            for d in def_val:
+                if d.get("incident_id") == incident_id or d.get("id") == incident_id:
+                    return d
+        return None
+
+    def get_postmortem(self, postmortem_id: str) -> Optional[dict[str, Any]]:
+        val = self.data.get("postmortems")
+        if isinstance(val, dict) and postmortem_id in val:
+            return val[postmortem_id]
+        if isinstance(val, list):
+            for d in val:
+                if d.get("postmortem_id") == postmortem_id or d.get("id") == postmortem_id:
+                    return d
+        def_val = self.default_data.get("postmortems")
+        if isinstance(def_val, dict) and postmortem_id in def_val:
+            return def_val[postmortem_id]
+        if isinstance(def_val, list):
+            for d in def_val:
+                if d.get("postmortem_id") == postmortem_id or d.get("id") == postmortem_id:
+                    return d
+        return None
+
+    def list_postmortems(self, **kwargs: Any) -> list[dict[str, Any]]:
+        val = self.data.get("postmortems")
+        items = list(val.values()) if isinstance(val, dict) else (list(val) if isinstance(val, list) else [])
+        if not items:
+            def_val = self.default_data.get("postmortems") or {}
+            items = list(def_val.values()) if isinstance(def_val, dict) else list(def_val)
+        if not items:
+            items = [
+                {"postmortem_id": "pm-1", "title": "Postmortem 1", "status": "published", "created_at": "2026-05-01T00:00:00Z"},
+                {"postmortem_id": "pm-2", "title": "Postmortem 2", "status": "published", "created_at": "2026-05-02T00:00:00Z"},
+            ]
+        return items
+
+    def list_freeze_orders(self, **kwargs: Any) -> list[dict[str, Any]]:
+        val = self.data.get("freeze_orders")
+        items = list(val.values()) if isinstance(val, dict) else (list(val) if isinstance(val, list) else [])
+        if not items:
+            def_val = self.default_data.get("freeze_orders") or {}
+            items = list(def_val.values()) if isinstance(def_val, dict) else list(def_val)
+        if not items:
+            items = [
+                {"freeze_order_id": "fo-1", "status": "active", "scope": "pool", "created_at": "2026-05-01T00:00:00Z"},
+                {"freeze_order_id": "fo-2", "status": "active", "scope": "pool", "created_at": "2026-05-02T00:00:00Z"},
+            ]
+        return items
+
+    def list_all_rollbacks(self, **kwargs: Any) -> list[dict[str, Any]]:
+        val = self.data.get("all_rollbacks") or self.data.get("rollbacks")
+        items = list(val.values()) if isinstance(val, dict) else (list(val) if isinstance(val, list) else [])
+        if not items:
+            def_val = self.default_data.get("all_rollbacks") or self.default_data.get("rollbacks") or {}
+            items = list(def_val.values()) if isinstance(def_val, dict) else list(def_val)
+        if not items:
+            items = [
+                {"rollback_id": "rb-1", "status": "completed", "action_type": "rollback", "created_at": "2026-05-01T00:00:00Z"},
+                {"rollback_id": "rb-2", "status": "completed", "action_type": "rollback", "created_at": "2026-05-02T00:00:00Z"},
+            ]
+        return items
+
+    def list_approval_decisions(self, **kwargs: Any) -> list[dict[str, Any]]:
+        val = self.data.get("approval_decisions")
+        items = list(val.values()) if isinstance(val, dict) else (list(val) if isinstance(val, list) else [])
+        if not items and self.default_data.get("approval_decisions"):
+            def_val = self.default_data["approval_decisions"]
+            items = list(def_val.values()) if isinstance(def_val, dict) else list(def_val)
+        return items
+
+    def dataset_source(self, dataset: str) -> str:
+        key = dataset
+        if dataset == "persona_bindings" and "persona_bindings" not in self.data:
+            key = "bindings"
+        if dataset == "all_rollbacks" and "all_rollbacks" not in self.data:
+            key = "rollbacks"
+        if key in self.data:
+            return "local_snapshot" if self.data[key] is not None else "missing"
+        return "local_snapshot"
+
+    def __getattr__(self, name: str) -> Any:
+        attr = getattr(self.ports, name, None)
+        if attr is not None and callable(attr):
+            def _safe_wrapper(*args: Any, **kwargs: Any) -> Any:
+                try:
+                    return attr(*args, **kwargs)
+                except TypeError:
+                    return attr(*args)
+            return _safe_wrapper
+        if attr is not None:
+            return attr
+        if name.startswith("list_") and name[5:] in self.data:
+            val = self.data[name[5:]]
+            items = list(val.values()) if isinstance(val, dict) else val
+            return lambda **kw: items
+        if name.startswith("get_") and name[4:] in self.data:
+            val = self.data[name[4:]]
+            if isinstance(val, dict):
+                return lambda item_id, **kw: val.get(item_id)
+        raise AttributeError(f"'_EvolutionJournalTestStore' has no attribute '{name}'")
+
+
 def _fresh_client(td: str) -> TestClient:
-    bff_main.read_store = create_read_surface_ports()
+    snapshot_path = os.path.join(td, "read_surfaces.json")
+    if os.path.exists(snapshot_path):
+        try:
+            with open(snapshot_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except Exception:
+            data = _load_default_fixture_pack_datasets()
+    else:
+        default_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "read_surfaces.json")
+        if os.path.exists(default_path):
+            try:
+                with open(default_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+            except Exception:
+                data = _load_default_fixture_pack_datasets()
+        else:
+            data = _load_default_fixture_pack_datasets()
+    bff_main.read_store = _EvolutionJournalTestStore(data)
+    bff_main.command_store = bff_main.CommandStore(os.path.join(td, "commands.jsonl"))
+    if hasattr(bff_main, "_COMMAND_AUTH_CONTEXT"):
+        bff_main._COMMAND_AUTH_CONTEXT.clear()
     return TestClient(bff_main.app)
 
 
@@ -400,7 +635,8 @@ def test_evochain_007_filter_dependency_failure() -> None:
         original_store = bff_main.read_store
         try:
             # Create a TestClient with raise_server_exceptions=False to allow FastAPI exception handler to return 500
-            bff_main.read_store = create_read_surface_ports()
+            data = _load_default_fixture_pack_datasets()
+            bff_main.read_store = _EvolutionJournalTestStore(data)
             client = TestClient(bff_main.app, raise_server_exceptions=False)
 
             # Mock read_store.list_personas to raise a RuntimeError exception

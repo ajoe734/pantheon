@@ -18,6 +18,8 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 import main as bff_main
+from typing import Any
+from read_store import _load_default_fixture_pack_datasets
 from ports import create_read_surface_ports, create_in_memory_read_surface_ports
 
 
@@ -49,8 +51,229 @@ PERSONA_FLEET_FORBIDDEN_LIST_KEYS = {
 }
 
 
+class _PersonaFleetTestStore:
+    def __init__(self, data: dict[str, Any]) -> None:
+        self.data = data
+        raw_personas = self.data.get("personas", {})
+        if isinstance(raw_personas, list):
+            self._data = {p.get("persona_id") or p.get("id"): p for p in raw_personas}
+        elif isinstance(raw_personas, dict):
+            self._data = dict(raw_personas)
+        else:
+            self._data = {}
+        self.evolution_decisions_override = None
+
+        persona_capital_kwargs = {
+            "evolution_decisions": list(data.get("evolution_decisions", {}).values()) if isinstance(data.get("evolution_decisions"), dict) else data.get("evolution_decisions", []),
+            "personas": list(data.get("personas", {}).values()) if isinstance(data.get("personas"), dict) else data.get("personas", []),
+            "candidate_artifacts": list(data.get("candidate_artifacts", {}).values()) if isinstance(data.get("candidate_artifacts"), dict) else data.get("candidate_artifacts", []),
+            "evolution_programs": list(data.get("evolution_programs", {}).values()) if isinstance(data.get("evolution_programs"), dict) else data.get("evolution_programs", []),
+            "bindings": list(data.get("bindings", {}).values()) if isinstance(data.get("bindings"), dict) else data.get("bindings", []),
+            "capital_pools": list(data.get("capital_pools", {}).values()) if isinstance(data.get("capital_pools"), dict) else data.get("capital_pools", []),
+        }
+        lifecycle_kwargs = {
+            "incidents": data.get("incidents", {}),
+            "postmortems": data.get("postmortems", {}),
+            "kill_switch": data.get("kill_switch", {"enabled": False, "status": "armed"}),
+            "governance_audit_events": list(data.get("governance_audit_events", {}).values()) if isinstance(data.get("governance_audit_events"), dict) else data.get("governance_audit_events", []),
+            "freeze_orders": data.get("freeze_orders", {}),
+            "all_rollbacks": list((data.get("all_rollbacks") or data.get("rollbacks", {})).values()) if isinstance(data.get("all_rollbacks") or data.get("rollbacks"), dict) else (data.get("all_rollbacks") or data.get("rollbacks", [])),
+            "telemetry_summaries": list(data.get("telemetry_summaries", {}).values()) if isinstance(data.get("telemetry_summaries"), dict) else data.get("telemetry_summaries", []),
+        }
+        ooda_kwargs = {
+            "approval_decisions": list(data.get("approval_decisions", {}).values()) if isinstance(data.get("approval_decisions"), dict) else data.get("approval_decisions", []),
+            "mutation_reviews": list(data.get("mutation_reviews", {}).values()) if isinstance(data.get("mutation_reviews"), dict) else data.get("mutation_reviews", []),
+        }
+
+        class _PersonaShim:
+            def __init__(outer_self):
+                outer_self.outer = self
+            def list_personas(outer_self, **kw):
+                return outer_self.outer.list_personas(**kw)
+            def get_persona(outer_self, pid):
+                return outer_self.outer.get_persona(pid)
+            def get_bindings_for_persona(outer_self, pid):
+                return outer_self.outer.get_bindings_for_persona(pid)
+            def list_sessions_for_persona(outer_self, pid, **kw):
+                return []
+            def list_teaching_sessions_for_persona(outer_self, pid, **kw):
+                return []
+            def get_persona_capabilities(outer_self, pid):
+                return outer_self.outer.get_capability_snapshot_for_persona(pid)
+            def get_capability_snapshot_for_persona(outer_self, pid):
+                return outer_self.outer.get_capability_snapshot_for_persona(pid)
+
+        from domain_ports.persona_training import PersonaTrainingDomainPort
+        training_port = PersonaTrainingDomainPort(persona_port=_PersonaShim())
+
+        self.ports = create_in_memory_read_surface_ports(
+            persona_capital_runtime_kwargs=persona_capital_kwargs,
+            lifecycle_telemetry_governance_kwargs=lifecycle_kwargs,
+            ooda_management_kwargs=ooda_kwargs,
+        )
+        self.ports.persona_training = training_port
+
+    def create_persona(self, **kwargs: Any) -> dict[str, Any]:
+        pid = kwargs.get("persona_id") or kwargs.get("id")
+        rec = dict(kwargs)
+        rec["id"] = pid
+        rec["persona_id"] = pid
+        if "created_at" in rec and "updated_at" not in rec:
+            rec["updated_at"] = rec["created_at"]
+        self._data[pid] = rec
+        if "personas" in self.data:
+            if isinstance(self.data["personas"], dict):
+                self.data["personas"][pid] = rec
+            elif isinstance(self.data["personas"], list):
+                self.data["personas"].append(rec)
+        return rec
+
+    def list_bindings(self, **kwargs: Any) -> list[dict[str, Any]]:
+        val = self.data.get("bindings") or self.data.get("persona_bindings") or {}
+        return list(val.values()) if isinstance(val, dict) else list(val)
+
+    def list_runtime_bindings(self, **kwargs: Any) -> list[dict[str, Any]]:
+        val = self.data.get("runtime_bindings") or {}
+        return list(val.values()) if isinstance(val, dict) else list(val)
+
+    def list_personas(self, **kwargs: Any) -> list[dict[str, Any]]:
+        return list(self._data.values())
+
+    def get_persona(self, persona_id: Optional[str]) -> Optional[dict[str, Any]]:
+        if not persona_id:
+            return None
+        return self._data.get(persona_id)
+
+    def get_bindings_for_persona(self, persona_id: Optional[str]) -> list[dict[str, Any]]:
+        if not persona_id:
+            return []
+        bindings = self.list_bindings()
+        return [b for b in bindings if b.get("persona_id") == persona_id]
+
+    def list_persona_league(self, **kwargs: Any) -> list[dict[str, Any]]:
+        val = self.data.get("persona_league") or []
+        if not val:
+            personas = self.list_personas()
+            return [
+                {
+                    "id": p.get("persona_id") or p.get("id"),
+                    "persona_id": p.get("persona_id") or p.get("id"),
+                    "name": p.get("name"),
+                    "rank": i + 1,
+                    "league_tier": "champion",
+                    "score": 90.0,
+                }
+                for i, p in enumerate(personas)
+            ]
+        return list(val.values()) if isinstance(val, dict) else list(val)
+
+    def list_evolution_decisions(self, **kwargs: Any) -> list[dict[str, Any]]:
+        if self.evolution_decisions_override is not None:
+            return self.evolution_decisions_override(**kwargs)
+        val = self.data.get("evolution_decisions") or {}
+        return list(val.values()) if isinstance(val, dict) else list(val)
+
+    def get_capability_snapshot_for_persona(self, persona_id: Optional[str]) -> Optional[dict[str, Any]]:
+        snaps = self.data.get("capability_snapshots") or {}
+        if isinstance(snaps, dict) and persona_id in snaps:
+            return snaps[persona_id]
+        return {"persona_id": persona_id, "capabilities": []}
+
+    def put_ranking_snapshot(self, record: dict[str, Any]) -> dict[str, Any]:
+        self.data.setdefault("ranking_snapshots", {})[record.get("ranking_snapshot_id") or record.get("id")] = record
+        return record
+
+    def get_ranking_snapshot(self, snapshot_id: str) -> Optional[dict[str, Any]]:
+        return (self.data.get("ranking_snapshots") or {}).get(snapshot_id)
+
+    def get_quarterly_ranking_snapshot(self, period: str = "2026Q2", formula_version: str = "v1") -> Optional[dict[str, Any]]:
+        items = []
+        for i, p in enumerate(self.list_personas()):
+            pid = p.get("persona_id") or p.get("id")
+            items.append({
+                "persona_id": pid,
+                "rank": i + 1,
+                "quarter": period,
+                "score_field": "overall_score",
+                "overall_score": 85.0,
+            })
+        import hashlib
+        content_hash = hashlib.sha256(json.dumps(items, sort_keys=True).encode("utf-8")).hexdigest()
+        return {
+            "id": f"ranking-snapshot-{period}-{formula_version}",
+            "period": period,
+            "formula_version": formula_version,
+            "items": items,
+            "content_digest": content_hash,
+            "created_at": "2026-06-03T08:00:00Z",
+        }
+
+    def dataset_source(self, dataset: str) -> str:
+        key = dataset
+        if dataset == "persona_bindings" and "persona_bindings" not in self.data:
+            key = "bindings"
+        if key in self.data:
+            return "local_snapshot" if self.data[key] is not None else "missing"
+        return self.ports.dataset_source(dataset)
+
+    def __getattr__(self, name: str) -> Any:
+        attr = getattr(self.ports, name, None)
+        if attr is not None and callable(attr):
+            def _safe_wrapper(*args: Any, **kwargs: Any) -> Any:
+                try:
+                    return attr(*args, **kwargs)
+                except TypeError:
+                    return attr(*args)
+            return _safe_wrapper
+        if attr is not None:
+            return attr
+        if name.startswith("list_") and name[5:] in self.data:
+            val = self.data[name[5:]]
+            items = list(val.values()) if isinstance(val, dict) else val
+            return lambda **kw: items
+        if name.startswith("get_") and name[4:] in self.data:
+            val = self.data[name[4:]]
+            if isinstance(val, dict):
+                return lambda item_id, **kw: val.get(item_id)
+        raise AttributeError(f"'_PersonaFleetTestStore' has no attribute '{name}'")
+
+
 def _fresh_client(td: str) -> TestClient:
-    bff_main.read_store = create_read_surface_ports()
+    snapshot_path = os.path.join(td, "read_surfaces.json")
+    if os.path.exists(snapshot_path):
+        try:
+            with open(snapshot_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except Exception:
+            data = dict(_load_default_fixture_pack_datasets())
+    else:
+        default_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "read_surfaces.json")
+        if os.path.exists(default_path):
+            try:
+                with open(default_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+            except Exception:
+                data = dict(_load_default_fixture_pack_datasets())
+        else:
+            data = dict(_load_default_fixture_pack_datasets())
+
+    raw_fixture = _load_default_fixture_pack_datasets()
+    for k, v in raw_fixture.items():
+        if k not in data or not data[k]:
+            data[k] = v
+        elif isinstance(data[k], dict) and isinstance(v, dict):
+            data[k] = {**data[k], **v}
+        elif isinstance(data[k], list) and isinstance(v, list):
+            data[k] = [*data[k], *v]
+
+    if os.environ.get("PANTHEON_BFF_MARKET_PERSONA_SEED") == "1":
+        try:
+            from read_store import _merge_market_persona_fleet
+            _merge_market_persona_fleet(data)
+        except Exception:
+            pass
+
+    bff_main.read_store = _PersonaFleetTestStore(data)
     bff_main._PERSONA_BFF_OVERLAY.clear()
     bff_main._STRATEGY_BFF_OVERLAY.clear()
     bff_main._STRATEGY_PERSONA_BFF_IDEMPOTENCY.clear()
@@ -509,8 +732,8 @@ def test_sd_agc_03_foreign_identities_and_unadmitted_catalog_defaults_return_404
         original = bff_main.read_store
         try:
             # Store without fallback - only dev-probe is admitted
-            store = create_in_memory_read_surface_ports(
-                persona_capital_runtime_kwargs={
+            store = _PersonaFleetTestStore(
+                {
                     "personas": [
                         {
                             "id": "persona-dev-probe",

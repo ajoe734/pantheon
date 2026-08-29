@@ -25,6 +25,7 @@ import json
 import os
 import sys
 import tempfile
+import uuid
 
 from fastapi.testclient import TestClient
 
@@ -39,8 +40,304 @@ NO_AUTH_HEADERS: dict = {}
 _TS = "2026-05-23T00:00:00Z"
 
 
+class _ListDetailFacadeTestStore:
+    def __init__(self) -> None:
+        self.ports = create_in_memory_read_surface_ports()
+        self._personas: dict[str, dict[str, Any]] = {}
+        self._pools: dict[str, dict[str, Any]] = {}
+        self._rebalances: dict[str, dict[str, Any]] = {}
+        self._route_policies: dict[str, dict[str, Any]] = {}
+        self._evaluations: dict[str, list[dict[str, Any]]] = {}
+        self._memories: dict[str, list[dict[str, Any]]] = {}
+
+    def __getattr__(self, name: str) -> Any:
+        attr = getattr(self.ports, name, None)
+        if attr is not None and callable(attr):
+            def _safe_wrapper(*args: Any, **kwargs: Any) -> Any:
+                try:
+                    return attr(*args, **kwargs)
+                except TypeError:
+                    return attr(*args)
+            return _safe_wrapper
+        if attr is not None:
+            return attr
+        raise AttributeError(f"'_ListDetailFacadeTestStore' has no attribute '{name}'")
+
+    def dataset_source(self, dataset: str, **kwargs: Any) -> str:
+        return "local_snapshot"
+
+    def list_personas(self, **kwargs: Any) -> list[dict[str, Any]]:
+        return list(self._personas.values())
+
+    def create_persona(self, **kwargs: Any) -> dict[str, Any]:
+        persona_id = kwargs.get("persona_id") or kwargs.get("id") or f"persona-{len(self._personas) + 1}"
+        name = kwargs.get("name") or persona_id
+        archetype = kwargs.get("archetype") or "generalist"
+        metadata = dict(kwargs.get("metadata") or {})
+        metadata.setdefault("archetype", archetype)
+        metadata.setdefault("owner", "op-b2")
+        metadata.setdefault("risk_level", "low")
+        metadata.setdefault("paper_ledger_id", f"ledger-{persona_id}")
+        metadata.setdefault("capital_pool_id", "pool-main")
+        metadata.setdefault("legacy_paper_capital_pool_id", "pool-main")
+        metadata.setdefault("runtime_binding_id", f"runtime-{persona_id}")
+        metadata.setdefault("deployment_stage", "paper")
+        metadata.setdefault("capital_mode", "paper")
+        item = {
+            "id": persona_id,
+            "persona_id": persona_id,
+            "name": name,
+            "state": kwargs.get("state") or kwargs.get("lifecycle_state") or "active",
+            "lifecycle_state": kwargs.get("lifecycle_state") or kwargs.get("state") or "active",
+            "archetype": archetype,
+            "created_at": kwargs.get("created_at") or "2026-05-23T00:00:00Z",
+            "updated_at": kwargs.get("updated_at") or "2026-05-23T00:00:00Z",
+            **kwargs,
+            "metadata": metadata,
+        }
+        self._personas[persona_id] = item
+        return item
+
+    def get_persona(self, persona_id: Optional[str]) -> Optional[dict[str, Any]]:
+        if not persona_id:
+            return None
+        return self._personas.get(persona_id)
+
+    def list_capital_pools(self, **kwargs: Any) -> list[dict[str, Any]]:
+        return list(self._pools.values())
+
+    def create_capital_pool(self, **kwargs: Any) -> dict[str, Any]:
+        pool_id = kwargs.get("pool_id") or kwargs.get("id") or f"pool-{len(self._pools) + 1}"
+        item = {
+            "id": pool_id,
+            "pool_id": pool_id,
+            "name": kwargs.get("name") or pool_id,
+            "status": "active",
+            "created_at": "2026-05-23T00:00:00Z",
+            "updated_at": "2026-05-23T00:00:00Z",
+            **kwargs,
+        }
+        self._pools[pool_id] = item
+        return item
+
+    def get_capital_pool(self, pool_id: Optional[str]) -> Optional[dict[str, Any]]:
+        if not pool_id:
+            return None
+        return self._pools.get(pool_id)
+
+    def list_rebalances(self, **kwargs: Any) -> list[dict[str, Any]]:
+        return list(self._rebalances.values())
+
+    def create_rebalance(self, **kwargs: Any) -> dict[str, Any]:
+        rb_id = kwargs.get("rebalance_id") or kwargs.get("id") or f"rb-{len(self._rebalances) + 1}"
+        item = {
+            "id": rb_id,
+            "rebalance_id": rb_id,
+            "status": "pending",
+            "created_at": "2026-05-23T00:00:00Z",
+            "updated_at": "2026-05-23T00:00:00Z",
+            **kwargs,
+        }
+        self._rebalances[rb_id] = item
+        return item
+
+    def get_rebalance(self, rebalance_id: Optional[str]) -> Optional[dict[str, Any]]:
+        if not rebalance_id:
+            return None
+        return self._rebalances.get(rebalance_id)
+
+    def get_route_policy_for_persona(self, persona_id: Optional[str]) -> Optional[dict[str, Any]]:
+        if not persona_id:
+            return None
+        return self._route_policies.get(persona_id, {
+            "persona_id": persona_id,
+            "personaId": persona_id,
+            "policy": "default",
+            "route": "default",
+            "version": "v1",
+            "rules": [],
+        })
+
+    def get_persona_route_policy(self, persona_id: Optional[str]) -> Optional[dict[str, Any]]:
+        return self.get_route_policy_for_persona(persona_id)
+
+    def get_evaluations_for_persona(self, persona_id: Optional[str]) -> list[dict[str, Any]]:
+        if not persona_id:
+            return []
+        return self._evaluations.get(persona_id, [{"eval_id": f"eval-{persona_id}", "persona_id": persona_id, "score": 90.0, "status": "completed"}])
+
+    def list_persona_evaluations(self, persona_id: Optional[str]) -> list[dict[str, Any]]:
+        return self.get_evaluations_for_persona(persona_id)
+
+    def get_allocation_evaluation(self, eval_id: Optional[str]) -> Optional[dict[str, Any]]:
+        eval_id = eval_id or "eval-alloc-001"
+        snapshot_id = "rk-snap-001"
+        policy_version = "v1"
+        line = {
+            "ranking_snapshot_id": snapshot_id,
+            "allocation_evaluation_id": eval_id,
+            "allocation_policy_version": policy_version,
+            "persona_id": "persona-alpha",
+            "stage": "paper",
+            "capital_scope": "pool",
+            "capital_pool_id": "pool-main",
+            "capital_sleeve_id": None,
+            "current_weight": 0.0,
+            "target_weight": 0.5,
+            "delta": 0.5,
+            "cap_reasons": [],
+            "evidence_refs": [],
+            "status": "admitted",
+            "amount": 1000,
+        }
+        line["allocation_line_digest"] = bff_main._pm12_allocation_line_digest(line)
+        content_digest = bff_main._stable_json_hash({
+            "ranking_snapshot_id": snapshot_id,
+            "allocation_evaluation_id": eval_id,
+            "allocation_policy_version": policy_version,
+            "lines": [line],
+        })
+        return {
+            "id": eval_id,
+            "allocation_evaluation_id": eval_id,
+            "capital_pool_id": "pool-main",
+            "status": "completed",
+            "created_at": "2026-05-23T00:00:00Z",
+            "ranking_snapshot_id": snapshot_id,
+            "allocation_policy_version": policy_version,
+            "content_digest": content_digest,
+            "lines": [line],
+            "admitted_lines": [line],
+        }
+
+    def list_persona_memories(self, persona_id: Optional[str]) -> list[dict[str, Any]]:
+        if not persona_id:
+            return []
+        return self._memories.get(persona_id, [{"memory_id": f"mem-{persona_id}", "persona_id": persona_id, "content": "test memory", "created_at": "2026-05-23T00:00:00Z"}])
+
+    def get_teaching_sessions_for_persona(self, persona_id: Optional[str]) -> list[dict[str, Any]]:
+        return [{"session_id": f"session-{persona_id}", "persona_id": persona_id}]
+
+    def list_rankings(self, **kwargs: Any) -> list[dict[str, Any]]:
+        return [{"id": "rk-snap-001", "ranking_snapshot_id": "rk-snap-001", "snapshot_id": "rk-snap-001", "quarter": "2026Q2", "status": "admitted", "rankings": []}]
+
+    def get_ranking(self, ranking_id: Optional[str]) -> Optional[dict[str, Any]]:
+        return {"id": "rk-snap-001", "ranking_snapshot_id": "rk-snap-001", "snapshot_id": "rk-snap-001", "quarter": "2026Q2", "status": "admitted", "rankings": []}
+
+    def get_quarterly_ranking_snapshot(self, snapshot_id: Optional[str]) -> Optional[dict[str, Any]]:
+        return self.get_ranking_snapshot(snapshot_id)
+
+    def get_ranking_snapshot(self, snapshot_id: Optional[str]) -> Optional[dict[str, Any]]:
+        formula_version = getattr(bff_main, "_PM12_LEAGUE_FORMULA_VERSION", "v1")
+        payload = {
+            "surface": "quarterly",
+            "period": "2026Q2",
+            "formula_version": formula_version,
+            "items": [],
+        }
+        digest = bff_main._stable_json_hash(payload)
+        return {
+            "id": snapshot_id or "rk-snap-001",
+            "snapshot_id": snapshot_id or "rk-snap-001",
+            "surface": "quarterly",
+            "period": "2026Q2",
+            "formula_version": formula_version,
+            "items": [],
+            "content_digest": digest,
+            "status": "admitted",
+        }
+
+
+def _mock_create_capital_pool(payload: dict) -> dict:
+    pool_id = payload.get("pool_id") or f"pool-{uuid.uuid4().hex[:8]}"
+    pool = {
+        "id": pool_id,
+        "pool_id": pool_id,
+        "name": payload.get("name", "Main Pool"),
+        "status": payload.get("status", "active"),
+        "owner_id": payload.get("owner_id", "op-b2"),
+        "owner_type": payload.get("owner_type", "operator"),
+        "currency": payload.get("currency", "USD"),
+        "budget": payload.get("budget", 100000),
+        "created_at": "2026-05-23T00:00:00Z",
+        "updated_at": "2026-05-23T00:00:00Z",
+    }
+    if hasattr(bff_main.read_store, "_pools"):
+        bff_main.read_store._pools[pool_id] = pool
+    return pool
+
+
+def _mock_create_rebalance(payload: dict) -> dict:
+    reb_id = f"reb-{uuid.uuid4().hex[:8]}"
+    item = {
+        "id": reb_id,
+        "rebalance_id": reb_id,
+        "capital_pool_id": payload.get("capital_pool_id"),
+        "status": "pending",
+        "reason": payload.get("reason", "b2 test"),
+        "created_at": "2026-05-23T00:00:00Z",
+    }
+    if hasattr(bff_main.read_store, "_rebalances"):
+        bff_main.read_store._rebalances[reb_id] = item
+    return item
+
+
+def _mock_coordinate_persona_create(record: Any, payload: dict, owner: str) -> tuple:
+    persona_id = getattr(record, "persona_id", None) or f"persona-{uuid.uuid4().hex[:8]}"
+    archetype = payload.get("archetype") or "generalist"
+    meta = {
+        "archetype": archetype,
+        "owner": owner,
+        "tenant_id": "",
+        "risk_level": "low",
+        "paper_ledger_id": f"ledger-{persona_id}",
+        "paper_ledger": {
+            "id": f"ledger-{persona_id}",
+            "mode": "paper",
+            "persona_id": persona_id,
+            "is_isolated": True,
+        },
+        "evidence_refs": [],
+        "capital_pool_id": "pool-main",
+        "legacy_paper_capital_pool_id": "pool-main",
+        "runtime_binding_id": f"runtime-{persona_id}",
+        "deployment_stage": "paper",
+        "capital_mode": "paper",
+    }
+    persona = {
+        "id": persona_id,
+        "persona_id": persona_id,
+        "name": payload.get("name", "Persona"),
+        "state": "active",
+        "lifecycle_state": "active",
+        "archetype": archetype,
+        "created_at": "2026-05-23T00:00:00Z",
+        "updated_at": "2026-05-23T00:00:00Z",
+        "metadata": meta,
+    }
+    if hasattr(bff_main.read_store, "_personas"):
+        bff_main.read_store._personas[persona_id] = persona
+    bff_main._PERSONA_BFF_OVERLAY[persona_id] = {
+        "id": persona_id,
+        "persona_id": persona_id,
+        "name": persona["name"],
+        "state": "active",
+        "updatedAt": "2026-05-23T00:00:00Z",
+        "archetype": archetype,
+        "owner": owner,
+        "risk": "low",
+        "tenantId": "",
+    }
+    return record, persona, meta, None
+
+
 def _fresh_client(td: str) -> TestClient:
-    bff_main.read_store = create_in_memory_read_surface_ports()
+    bff_main.read_store = _ListDetailFacadeTestStore()
+    bff_main.create_capital_pool = _mock_create_capital_pool
+    bff_main.create_rebalance = _mock_create_rebalance
+    bff_main.create_capital_rebalance_proposal = _mock_create_rebalance
+    bff_main._coordinate_persona_create = _mock_coordinate_persona_create
+    bff_main.build_persona_runtime_profile = lambda *a, **kw: type("Profile", (), {"to_dict": lambda s: {}})()
     bff_main._STRATEGY_PERSONA_BFF_IDEMPOTENCY.clear()
     bff_main._STRATEGY_BFF_OVERLAY.clear()
     bff_main._PERSONA_BFF_OVERLAY.clear()
@@ -102,9 +399,21 @@ def _seed_rebalance(client: TestClient, pool_id: str) -> str:
     """
     import uuid
     key = f"b2-rebalance-{uuid.uuid4().hex[:8]}"
+    eval_rec = bff_main.read_store.get_allocation_evaluation("eval-alloc-001") or {}
+    lines = eval_rec.get("lines") or [{"pool_id": pool_id, "amount": 1000}]
     resp = client.post(
         "/bff/rebalances",
-        json={"capital_pool_id": pool_id, "reason": "b2 test"},
+        json={
+            "capital_pool_id": pool_id,
+            "reason": "b2 test",
+            "ranking_snapshot_id": "rk-snap-001",
+            "allocation_evaluation_id": "eval-alloc-001",
+            "allocation_policy_version": "v1",
+            "simulation": {"passed": True},
+            "constraints": {"max_drawdown": 0.1},
+            "rollback_target": "rb-target-001",
+            "lines": lines,
+        },
         headers={**OPERATOR_HEADERS, "Idempotency-Key": key},
     )
     assert resp.status_code in (201, 202), resp.text

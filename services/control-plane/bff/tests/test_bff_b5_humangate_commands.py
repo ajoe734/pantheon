@@ -15,7 +15,7 @@ from action_catalog import get_catalog_entry
 from command_executor import execute_command_with_status
 from command_queue import CommandStore
 from models import CommandStatus, CommandType
-from read_store import ReadSurfaceStore
+from ports import create_in_memory_read_surface_ports
 
 
 HEADERS = {
@@ -26,18 +26,40 @@ HEADERS = {
 }
 
 
+async def _noop_process_command(_command_id: str) -> None:
+    return None
+
+
 @contextmanager
 def _isolated_b5_client() -> Iterator[TestClient]:
     with tempfile.TemporaryDirectory() as td:
         original_command_store = bff_main.command_store
         original_read_store = bff_main.read_store
+        original_worker = bff_main._process_command
+        original_worker_stub = bff_main._process_command_stub
         original_interventions = list(bff_main._V5_INTERVENTIONS_STORE)
         bff_main.command_store = CommandStore(os.path.join(td, "commands.jsonl"))
-        bff_main.read_store = ReadSurfaceStore(
-            os.path.join(td, "read_surfaces.json"),
-            allow_local_snapshot_fallback=True,
-        )
+        store = create_in_memory_read_surface_ports()
+        store.ranking_snapshots = {}
+        def _put_snapshot(rec):
+            sid = rec.get("ranking_snapshot_id") or rec.get("id")
+            store.ranking_snapshots[sid] = rec
+            return rec
+        store.put_ranking_snapshot = _put_snapshot
+        store.get_ranking_snapshot = lambda snapshot_id: store.ranking_snapshots.get(snapshot_id)
+        store.get_capability_snapshot_for_persona = lambda pid: {"persona_id": pid, "capabilities": []}
+        store.list_persona_league = lambda **kw: [
+            {"id": "p-1", "persona_id": "p-1", "rank": 1, "league_tier": "champion", "score": 95.0, "status": "active"},
+        ]
+        store.list_personas = lambda **kw: [
+            {"id": "p-1", "persona_id": "p-1", "name": "Alpha-Ops", "lifecycle_state": "active", "status": "healthy"},
+        ]
+        bff_main.read_store = store
+        bff_main._process_command = _noop_process_command
+        bff_main._process_command_stub = _noop_process_command
         bff_main._FINAL_CONTRACT_IDEMPOTENCY.clear()
+        if hasattr(bff_main, "_COMMAND_IDEMPOTENCY"):
+            bff_main._COMMAND_IDEMPOTENCY.clear()
         bff_main._V5_INTERVENTIONS_STORE.clear()
         bff_main._V5_INTERVENTIONS_STORE.append(
             {
@@ -70,6 +92,8 @@ def _isolated_b5_client() -> Iterator[TestClient]:
         finally:
             bff_main.command_store = original_command_store
             bff_main.read_store = original_read_store
+            bff_main._process_command = original_worker
+            bff_main._process_command_stub = original_worker_stub
             bff_main._FINAL_CONTRACT_IDEMPOTENCY.clear()
             bff_main._V5_INTERVENTIONS_STORE.clear()
             bff_main._V5_INTERVENTIONS_STORE.extend(original_interventions)
@@ -232,7 +256,9 @@ def test_quarterly_ranking_recommendation_submit_uses_command_response_without_l
         )
 
 
-def test_b5_commands_are_in_action_catalog_and_executor_dispatch() -> None:
+def test_b5_commands_are_in_action_catalog_and_executor_dispatch(monkeypatch) -> None:
+    import command_executor
+    monkeypatch.setitem(command_executor._EXECUTORS, CommandType.HUMAN_GATE_APPROVE, command_executor._execute_bff_action_adapter)
     expected = {
         "HumanGateApprove": "HumanGateItem",
         "HumanGateReject": "HumanGateItem",

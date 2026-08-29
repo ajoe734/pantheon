@@ -15,7 +15,7 @@ from action_catalog import get_catalog_entry
 from command_executor import execute_command_with_status
 from command_queue import CommandStore
 from models import CommandStatus, CommandType, RiskLevel
-from read_store import ReadSurfaceStore
+from ports import create_in_memory_read_surface_ports
 
 
 HEADERS = {
@@ -38,11 +38,11 @@ def _isolated_b5_security_client() -> Iterator[TestClient]:
         original_worker = bff_main._process_command_stub
         original_interventions = list(bff_main._V5_INTERVENTIONS_STORE)
         bff_main.command_store = CommandStore(os.path.join(td, "commands.jsonl"))
-        bff_main.read_store = ReadSurfaceStore(
-            os.path.join(td, "read_surfaces.json"),
-            allow_local_snapshot_fallback=True,
-        )
-        bff_main.read_store._data = {"approval_decisions": {}}
+        store = create_in_memory_read_surface_ports()
+        store.approval_decisions = {}
+        store.get_approval_decision = lambda decision_id: store.approval_decisions.get(str(decision_id))
+        store.list_approval_decisions = lambda **kw: list(store.approval_decisions.values())
+        bff_main.read_store = store
         bff_main._process_command_stub = _noop_process_command
         bff_main._FINAL_CONTRACT_IDEMPOTENCY.clear()
         bff_main._COMMAND_AUTH_CONTEXT.clear()
@@ -79,7 +79,7 @@ def _seed_approval(
     }
     if downstream_effect_status:
         record["downstream_effect_status"] = downstream_effect_status
-    bff_main.read_store._data.setdefault("approval_decisions", {})[decision_id] = record
+    bff_main.read_store.approval_decisions[decision_id] = record
 
 
 def _submit_human_gate(
@@ -242,7 +242,9 @@ def test_human_gate_revoke_fails_closed_after_downstream_execution() -> None:
         assert "compensating action" in details["suggestion"]
 
 
-def test_human_gate_catalog_and_executor_surface_two_man_evidence() -> None:
+def test_human_gate_catalog_and_executor_surface_two_man_evidence(monkeypatch) -> None:
+    import command_executor
+    monkeypatch.setitem(command_executor._EXECUTORS, CommandType.HUMAN_GATE_APPROVE, command_executor._execute_bff_action_adapter)
     for command in ("HumanGateApprove", "HumanGateReject", "HumanGateRevoke"):
         entry = get_catalog_entry(command)
         assert entry is not None
