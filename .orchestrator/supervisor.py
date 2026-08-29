@@ -8062,6 +8062,7 @@ GOVERNANCE_LIFECYCLE_EVENT_TYPES = frozenset(
         "reopen",
         "handoff",
         "review_approved",
+        "integration_resumed",
         "blocker",
         "done",
         "supersede",
@@ -14288,6 +14289,43 @@ def task_review_reopen_revision(
     return counted
 
 
+def task_integration_resume_revision(
+    task: Mapping[str, Any] | None,
+    activity_events: list[dict[str, Any]] | None = None,
+    *,
+    config: dict[str, Any] | None = None,
+) -> int:
+    """Return the number of exact reviewed integrations restored for ``task``.
+
+    A Human/Ops ``resume_integration`` preserves the existing delivery and
+    approval bindings; it deliberately does not change the assignment
+    generation.  Its owner-finalize dispatch must nevertheless be a fresh
+    delivery request.  Otherwise the cooldown key from the failed integration
+    attempt suppresses the restored closeout for the whole cooldown window.
+
+    The canonical ``integration_resumed`` activity event is already append-only
+    and task-scoped, so it is the single source of this revision.  Once that
+    fresh dispatch has been attempted, its new key is again protected by the
+    ordinary cooldown gate.
+    """
+
+    if activity_events is None and config is not None:
+        activity_events = recent_governance_activity_events(config)
+    if not isinstance(activity_events, (list, tuple)) or not isinstance(task, Mapping):
+        return 0
+    task_id = str(task.get("id") or "").strip()
+    if not task_id:
+        return 0
+    return sum(
+        1
+        for event in activity_events
+        if isinstance(event, Mapping)
+        and str(event.get("task_id") or "").strip() == task_id
+        and str(event.get("type") or "").strip().lower()
+        == "integration_resumed"
+    )
+
+
 def ready_dispatch_signature(
     task: dict[str, Any],
     reason: str,
@@ -14303,8 +14341,7 @@ def ready_dispatch_signature(
     # Otherwise the checker recomputes a different key and discards the one
     # durable event before it can launch a worker.
     requeue_intent = task_review_requeue_record(task)
-    return json.dumps(
-        {
+    signature = {
             "delivery_binding_digest": rewrite_task_machine.delivery_binding_digest(task),
             "dependency_signature": task_dependency_signature(task, task_lookup),
             "depends_on": list(task.get("depends_on", []) or []),
@@ -14321,10 +14358,14 @@ def ready_dispatch_signature(
             "status": task.get("status"),
             "task_generation": task_generation(task),
             "task_id": task.get("id"),
-        },
-        sort_keys=True,
-        ensure_ascii=True,
-    )
+    }
+    if reason == REASON_OWNED_FINALIZE:
+        resume_revision = task_integration_resume_revision(
+            task, activity_events=activity_events, config=config
+        )
+        if resume_revision > 0:
+            signature["integration_resume_revision"] = resume_revision
+    return json.dumps(signature, sort_keys=True, ensure_ascii=True)
 
 
 def build_dispatch_event(
@@ -14344,6 +14385,13 @@ def build_dispatch_event(
     ]
     reopen_revision = task_review_reopen_revision(
         task, activity_events=activity_events, config=config
+    )
+    resume_revision = (
+        task_integration_resume_revision(
+            task, activity_events=activity_events, config=config
+        )
+        if reason == REASON_OWNED_FINALIZE
+        else 0
     )
     requeue_intent = task_review_requeue_intent(task)
     task_payload = {
@@ -14398,6 +14446,8 @@ def build_dispatch_event(
             task_payload[key] = task.get(key)
     if reopen_revision > 0:
         task_payload["review_reopen_revision"] = reopen_revision
+    if resume_revision > 0:
+        task_payload["integration_resume_revision"] = resume_revision
     if requeue_intent is not None:
         task_payload[REVIEW_REQUEUE_INTENT_KEY] = deepcopy(requeue_intent)
     recovery_pointer = task.get(WORKER_RECOVERY_TASK_KEY)
@@ -14423,6 +14473,8 @@ def build_dispatch_event(
     }
     if reopen_revision > 0:
         event["review_reopen_revision"] = reopen_revision
+    if resume_revision > 0:
+        event["integration_resume_revision"] = resume_revision
     if requeue_intent is not None:
         event["review_requeue_intent_id"] = requeue_intent["intent_id"]
     if recovery_receipt_id:
