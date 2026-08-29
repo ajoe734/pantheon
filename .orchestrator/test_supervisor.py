@@ -8131,5 +8131,38 @@ class SupervisorCycleLatencyRecoveryTests(unittest.TestCase):
             self.assertFalse(supervisor.pid_is_alive(816487))
 
 
+class SupervisorLaunchAuthorityTests(unittest.TestCase):
+    def test_repository_local_config_without_live_command_is_allowed(self) -> None:
+        supervisor.validate_supervisor_launch_authority(
+            {"watchdog": {}}, supervisor_path=Path(supervisor.__file__)
+        )
+
+    def test_exact_promoted_entrypoint_is_allowed(self) -> None:
+        exact = Path("/tmp/command-runtimes/deadbeef/.orchestrator/supervisor.py")
+        supervisor.validate_supervisor_launch_authority(
+            {"watchdog": {"supervisor_command": ["python3", "-B", str(exact)]}},
+            supervisor_path=exact,
+        )
+
+    def test_mutable_entrypoint_is_rejected_before_live_state_ownership(self) -> None:
+        exact = Path("/tmp/command-runtimes/deadbeef/.orchestrator/supervisor.py")
+        mutable = Path("/tmp/pantheon/.orchestrator/supervisor.py")
+        with self.assertRaisesRegex(RuntimeError, "promoted live config is owned"):
+            supervisor.validate_supervisor_launch_authority(
+                {"watchdog": {"supervisor_command": ["python3", "-B", str(exact)]}},
+                supervisor_path=mutable,
+            )
+
+    def test_malformed_live_command_fails_closed(self) -> None:
+        invalid_commands = ["python3", ["python3", "supervisor.py"], ["python3"]]
+        for command in invalid_commands:
+            with self.subTest(command=command):
+                with self.assertRaisesRegex(RuntimeError, "supervisor_command"):
+                    supervisor.validate_supervisor_launch_authority(
+                        {"watchdog": {"supervisor_command": command}},
+                        supervisor_path=Path(supervisor.__file__),
+                    )
+
+
 if __name__ == "__main__":
     unittest.main()

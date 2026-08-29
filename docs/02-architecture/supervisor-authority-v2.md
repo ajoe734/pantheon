@@ -535,7 +535,20 @@ This specification maps to:
 - `.orchestrator/runtime_state.py` — V2 runtime cache and durable delivery
   queue projection. Every restart preserves leases under one atomic update
   lock. It is not task authority;
+- `.orchestrator/rewrite/runtime_authority.py` — the one entrypoint identity
+  check for a promoted live config. A mutable checkout is rejected before it
+  can acquire the singleton lock or write PID/runtime state;
+- `.orchestrator/rewrite/task_identity.py` — the one canonical task-generation
+  normalizer used by scheduler and recovery fencing;
+- `.orchestrator/rewrite/worker_recovery.py` — typed, replay-stable lost-lease
+  receipt construction and recovery field ownership;
 - `scripts/test_verify_task_state_store.py` — operational audit contracts.
+
+Operational lifecycle is owned by immutable runtime promotion plus the
+persistent watchdog. `scripts/run-supervisor.sh` is local-fixture-only, while
+`scripts/remote_orchestrator.sh` is diagnostic-only. Mutable remote
+start/stop/restart and the Shioaji credential-coupled supervisor restart script
+are retired.
 
 Scheduler, queue, worker, review, account-health, recovery, and rollout changes
 must obey Sections 1–4 and integrate through this TaskStore contract. They must

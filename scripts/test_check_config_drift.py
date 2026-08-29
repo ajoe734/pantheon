@@ -137,7 +137,6 @@ def test_progress_lease_policy_drift_is_actionable_by_default() -> None:
 def test_ready_dispatcher_capacity_drift_is_actionable_by_default() -> None:
     repo = {
         "ready_dispatcher": {
-            "sidecar_only_agents": [],
             "max_dispatches_per_tick": 10,
             "max_active_workers_per_task": 1,
             "max_concurrent_workers": 13,
@@ -145,7 +144,6 @@ def test_ready_dispatcher_capacity_drift_is_actionable_by_default() -> None:
     }
     live = {
         "ready_dispatcher": {
-            "sidecar_only_agents": ["Codex"],
             "max_dispatches_per_tick": 1,
             "max_active_workers_per_task": 2,
             "max_concurrent_workers": 1,
@@ -156,7 +154,6 @@ def test_ready_dispatcher_capacity_drift_is_actionable_by_default() -> None:
 
     assert report["intentional"] == []
     assert {item["path"] for item in report["drift"]} == {
-        "ready_dispatcher.sidecar_only_agents",
         "ready_dispatcher.max_dispatches_per_tick",
         "ready_dispatcher.max_active_workers_per_task",
         "ready_dispatcher.max_concurrent_workers",

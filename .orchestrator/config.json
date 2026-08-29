@@ -735,7 +735,6 @@
       "in_progress",
       "todo"
     ],
-    "sidecar_only_agents": [],
     "dependency_done_statuses": [
       "done"
     ],

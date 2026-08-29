@@ -120,9 +120,16 @@ from rewrite import provider_health as rewrite_provider_health
 from rewrite import task_machine as rewrite_task_machine
 from rewrite import task_state_store as rewrite_task_state_store
 from rewrite import worker_lifecycle as rewrite_worker_lifecycle
+from rewrite.runtime_authority import validate_supervisor_launch_authority
+from rewrite.task_identity import task_generation
+from rewrite.worker_recovery import (
+    LOST_LEASE_RECEIPT_SCHEMA_VERSION,
+    WORKER_RECOVERY_RECEIPTS_KEY,
+    WORKER_RECOVERY_TASK_KEY,
+    build_lost_lease_receipt,
+)
 
 
-SIDECAR_READY_PRIORITY_OFFSET = 10
 
 
 _DEFERRED_DISPATCH_STATUS_SYNCS: ContextVar[
@@ -170,9 +177,6 @@ RUNTIME_PHASE_LAUNCH_INTENT_STALE_DEFAULT_SECONDS = 30.0
 RUNTIME_PHASE_LAUNCH_INTENT_STALE_MAX_SECONDS = 300.0
 REVIEW_REQUEUE_INTENT_KEY = "review_requeue_intent"
 REVIEW_REQUEUE_INTENT_SCHEMA_VERSION = 1
-WORKER_RECOVERY_TASK_KEY = "worker_recovery"
-WORKER_RECOVERY_RECEIPTS_KEY = "worker_recovery_receipts"
-LOST_LEASE_RECEIPT_SCHEMA_VERSION = 1
 MAX_WORKER_RECOVERY_RECEIPTS = 128
 
 
@@ -1129,10 +1133,6 @@ def validate_provider_accounts(config: dict[str, Any]) -> None:
                     if not target or target.casefold() not in known_reassignment_agents:
                         errors.append(
                             f"worker_reassignment.{mapping_name}.{raw_root} has unknown target {raw_target!r}"
-                        )
-                    elif target in sidecar_only_agent_names(config):
-                        errors.append(
-                            f"worker_reassignment.{mapping_name}.{raw_root} targets sidecar-only agent {target}"
                         )
     if errors:
         raise ValueError("invalid provider account configuration: " + "; ".join(errors))
@@ -6031,14 +6031,6 @@ def known_agent_display_names(config: dict[str, Any]) -> set[str]:
 
 
 
-def sidecar_only_agent_names(config: dict[str, Any]) -> set[str]:
-    return {
-        str(agent_name).strip()
-        for agent_name in ready_dispatch_settings(config).get("sidecar_only_agents", []) or []
-        if str(agent_name).strip()
-    }
-
-
 def agent_is_known(config: dict[str, Any], agent_name: str | None) -> bool:
     """True if the name maps to an agent in the roster (display name or id).
 
@@ -6127,9 +6119,7 @@ def agent_can_take_task(
         )
         if not healthy_endpoint:
             return False
-    if not isinstance(task, dict) or task_is_sidecar(task):
-        return True
-    return name not in sidecar_only_agent_names(config)
+    return True
 
 
 def bounded_fallback_candidates(
@@ -12209,93 +12199,6 @@ def worker_retry_attempt_index(worker: dict[str, Any]) -> int:
     )
 
 
-def build_lost_lease_receipt(
-    config: dict[str, Any],
-    worker: Mapping[str, Any],
-    task: Mapping[str, Any],
-    *,
-    reason_kind: str,
-    reason: str,
-    detected_at: str | None = None,
-    status: str = "pending",
-) -> dict[str, Any]:
-    """Build one typed, replay-stable receipt for a lost worker lease."""
-
-    task_id = str(task.get("id") or worker.get("task_id") or "").strip()
-    run_id = str(worker.get("run_id") or "").strip()
-    queue_event_id = str(worker.get("queue_event_id") or "").strip()
-    process_generation = str(worker.get("process_generation") or "").strip()
-    lease_acquired_at = str(worker.get("lease_acquired_at") or "").strip()
-    lease_expires_at = str(worker.get("lease_expires_at") or "").strip()
-    generation = task_generation(task)
-    basis = {
-        "task_id": task_id,
-        "task_generation": generation,
-        "worker_run_id": run_id,
-        "queue_event_id": queue_event_id,
-        "process_generation": process_generation,
-        "lease_acquired_at": lease_acquired_at,
-        "lease_expires_at": lease_expires_at,
-        "reason_kind": reason_kind,
-    }
-    digest = hashlib.sha256(
-        json.dumps(basis, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    ).hexdigest()
-    dispatch_reason = str((worker.get("request_snapshot") or {}).get("reason") or "")
-    recovery_role = (
-        "reviewer"
-        if dispatch_reason == REASON_REVIEW_READY
-        else "owner"
-    )
-    agent_id = str(worker.get("agent_id") or worker.get("provider") or "").strip()
-    actor = display_name_for(config, agent_id)
-    return {
-        "schema_version": LOST_LEASE_RECEIPT_SCHEMA_VERSION,
-        "type": "worker_lost_lease",
-        "receipt_id": f"lost-lease-{digest}",
-        "dedupe_key": f"worker-lost-lease:{digest}",
-        "status": status,
-        "task_id": task_id,
-        "task_generation": generation,
-        "worker_run_id": run_id,
-        "queue_event_id": queue_event_id,
-        "recovery_role": recovery_role,
-        "worker": {
-            "agent": actor,
-            "agent_id": agent_id,
-            "logical_agent_id": str(worker.get("logical_agent_id") or agent_id),
-            "provider": str(worker.get("provider") or agent_id),
-        },
-        "lease": {
-            "lease_id": ":".join(
-                item for item in (queue_event_id, run_id, process_generation) if item
-            ),
-            "owner": str(worker.get("lease_owner") or run_id),
-            "acquired_at": lease_acquired_at or None,
-            "expires_at": lease_expires_at or None,
-            "last_heartbeat_at": worker.get("last_heartbeat_at"),
-            "pid": worker.get("pid"),
-            "pid_start_ticks": worker.get("pid_start_ticks"),
-            "process_generation": process_generation or None,
-        },
-        "reason_kind": reason_kind,
-        "reason": reason,
-        "detected_at": detected_at or utc_now(),
-        "previous": {
-            "owner": str(task.get("owner") or ""),
-            "reviewer": str(task.get("reviewer") or ""),
-            "status": str(task.get("status") or ""),
-            "task_generation": generation,
-            "agent": actor,
-            "worker_run_id": run_id,
-            "queue_event_id": queue_event_id,
-        },
-        "replacement": None,
-        "attempt_count": 0,
-        "last_attempt_at": None,
-    }
-
-
 def task_has_pending_worker_recovery(task: Mapping[str, Any] | None) -> bool:
     pointer = (task or {}).get(WORKER_RECOVERY_TASK_KEY)
     if not isinstance(pointer, Mapping):
@@ -13533,16 +13436,6 @@ def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> 
 
 
 
-def task_is_sidecar(task: dict[str, Any]) -> bool:
-    return str(task.get("task_class") or "").strip().lower() == "sidecar"
-
-
-
-
-
-
-
-
 def redispatch_candidate_statuses(config: dict[str, Any]) -> set[str]:
     settings = ready_dispatch_settings(config)
     statuses = set(str(value).lower() for value in settings.get("review_statuses", []))
@@ -14193,14 +14086,6 @@ def stale_dispatch_skip_message(
     return None
 
 
-def task_generation(task: Mapping[str, Any] | None) -> int:
-    try:
-        generation = int((task or {}).get("generation", 1))
-    except (TypeError, ValueError):
-        return 0
-    return generation if generation >= 1 else 0
-
-
 def task_review_requeue_record(
     task: Mapping[str, Any] | None,
 ) -> dict[str, Any] | None:
@@ -14642,11 +14527,6 @@ def build_dispatch_event(
     }
     for key in (
         "task_class",
-        "auto_generated",
-        "helper_parent",
-        "helper_kind",
-        "mutates_canonical",
-        "auto_created_by",
         "delivery_binding",
         "target_repo",
         "target_repository",
@@ -14784,8 +14664,6 @@ def evaluate_dispatch_candidate(
     }
     reason = reason_map[admission.task_reason]
     priority = admission.task_reason.value
-    if task_is_sidecar(task):
-        priority += SIDECAR_READY_PRIORITY_OFFSET
     event = build_dispatch_event(
         task,
         target_agent,
@@ -16539,6 +16417,7 @@ def main() -> int:
     args = parse_args()
     SUPERVISOR_LOG_QUIET = args.quiet
     config = load_config(args.config)
+    validate_supervisor_launch_authority(config, supervisor_path=Path(__file__))
     validate_provider_accounts(config)
     check_status_root_consistency(config, allow_isolated=args.allow_isolated_status_root)
     if args.request_delivery_health_refresh:
