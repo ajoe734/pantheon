@@ -244,7 +244,11 @@ class ProviderPermissionsTest(unittest.TestCase):
         self.assertEqual(evaluation["risk_class"], "unknown")
 
     def test_edit_allows_configured_execute_plans_workspace_root(self) -> None:
-        with mock.patch("permission_broker.ROOT", Path("/home/lupin/code/pantheon")):
+        with (
+            mock.patch("permission_broker.ROOT", Path("/home/lupin/code/pantheon")),
+            mock.patch.dict(permission_broker.os.environ, {}, clear=True),
+            mock.patch.object(permission_broker, "load_runtime_state") as runtime_loader,
+        ):
             evaluation = permission_broker.evaluate_tool_request(
                 "Edit",
                 {"file_path": "/home/lupin/code/execute-plans/src/lib/bff/client.ts"},
@@ -257,6 +261,373 @@ class ProviderPermissionsTest(unittest.TestCase):
 
         self.assertEqual(evaluation["decision"], "allow")
         self.assertEqual(evaluation["risk_class"], "repo_write")
+        runtime_loader.assert_not_called()
+
+    def test_edit_allows_exact_active_leased_worktree_root(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="permission-broker-lease-") as temp_dir:
+            temp_root = Path(temp_dir).resolve()
+            repo_root = temp_root / "source" / "pantheon"
+            workspace_root = temp_root / "worktrees" / "task-123"
+            workspace_root.mkdir(parents=True)
+            runtime_state = {
+                "workers": {
+                    "run-123": {
+                        "run_id": "run-123",
+                        "task_id": "TASK-123",
+                        "task_generation": 2,
+                        "agent_id": "claude_1",
+                        "status": "running",
+                        "lease_expires_at": (
+                            datetime.now(timezone.utc) + timedelta(days=1)
+                        ).isoformat(),
+                        "workspace_mode": "isolated_worktree",
+                        "workspace_path": str(workspace_root),
+                    }
+                }
+            }
+            env = {
+                "ORCH_RUN_ID": "run-123",
+                "ORCH_TASK_ID": "TASK-123",
+                "ORCH_TASK_GENERATION": "999",
+                "ORCH_AGENT_ID": "claude-1",
+                "PANTHEON_WORKTREE_ROOT": str(workspace_root),
+                "ORCH_WORKSPACE_PATH": str(workspace_root),
+            }
+
+            with (
+                mock.patch("permission_broker.ROOT", repo_root),
+                mock.patch.dict(permission_broker.os.environ, env, clear=True),
+                mock.patch.object(
+                    permission_broker,
+                    "load_runtime_state",
+                    return_value=runtime_state,
+                ),
+                mock.patch.object(
+                    permission_broker,
+                    "load_status",
+                    return_value={
+                        "tasks": [
+                            {
+                                "id": "TASK-123",
+                                "generation": 2,
+                                "owner": "Claude-1",
+                            }
+                        ]
+                    },
+                ),
+            ):
+                evaluation = permission_broker.evaluate_tool_request(
+                    "Edit",
+                    {"file_path": str(workspace_root / "src" / "module.py")},
+                    {},
+                )
+                allowed_roots = permission_broker._allowed_workspace_roots({})
+
+            self.assertEqual(evaluation["decision"], "allow")
+            self.assertEqual(evaluation["risk_class"], "repo_write")
+            self.assertIn(workspace_root, allowed_roots)
+            self.assertNotIn(workspace_root.parent, allowed_roots)
+
+    def test_edit_denies_stale_worker_generation_after_reassignment(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="permission-broker-generation-") as temp_dir:
+            temp_root = Path(temp_dir).resolve()
+            repo_root = temp_root / "source" / "pantheon"
+            workspace_root = temp_root / "worktrees" / "task-123"
+            workspace_root.mkdir(parents=True)
+            runtime_state = {
+                "workers": {
+                    "run-123": {
+                        "run_id": "run-123",
+                        "task_id": "TASK-123",
+                        "task_generation": 1,
+                        "agent_id": "claude",
+                        "status": "running",
+                        "lease_expires_at": (
+                            datetime.now(timezone.utc) + timedelta(days=1)
+                        ).isoformat(),
+                        "workspace_mode": "isolated_worktree",
+                        "workspace_path": str(workspace_root),
+                    }
+                }
+            }
+            env = {
+                "ORCH_RUN_ID": "run-123",
+                "ORCH_TASK_ID": "TASK-123",
+                # Worker-provided launch context cannot replace canonical
+                # worker/task generation binding after reassignment.
+                "ORCH_TASK_GENERATION": "2",
+                "ORCH_AGENT_ID": "claude",
+                "PANTHEON_WORKTREE_ROOT": str(workspace_root),
+                "ORCH_WORKSPACE_PATH": str(workspace_root),
+            }
+
+            with (
+                mock.patch("permission_broker.ROOT", repo_root),
+                mock.patch.dict(permission_broker.os.environ, env, clear=True),
+                mock.patch.object(
+                    permission_broker,
+                    "load_runtime_state",
+                    return_value=runtime_state,
+                ),
+                mock.patch.object(
+                    permission_broker,
+                    "load_status",
+                    return_value={
+                        "tasks": [
+                            {
+                                "id": "TASK-123",
+                                "generation": 2,
+                                "owner": "Claude",
+                            }
+                        ]
+                    },
+                ),
+            ):
+                evaluation = permission_broker.evaluate_tool_request(
+                    "Edit",
+                    {"file_path": str(workspace_root / "src" / "module.py")},
+                    {},
+                )
+
+            self.assertEqual(evaluation["decision"], "deny")
+            self.assertEqual(evaluation["risk_class"], "out_of_workspace")
+
+    def test_leased_root_loads_runtime_state_from_rebound_status_root(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="permission-broker-status-") as temp_dir:
+            status_root = Path(temp_dir).resolve()
+            workspace_root = status_root / "worktrees" / "task-123"
+            workspace_root.mkdir(parents=True)
+            runtime_state = {
+                "workers": {
+                    "run-123": {
+                        "run_id": "run-123",
+                        "task_id": "TASK-123",
+                        "task_generation": 4,
+                        "agent_id": "claude",
+                        "status": "running",
+                        "lease_expires_at": (
+                            datetime.now(timezone.utc) + timedelta(days=1)
+                        ).isoformat(),
+                        "workspace_mode": "isolated_worktree",
+                        "workspace_path": str(workspace_root),
+                    }
+                }
+            }
+            immutable_config = {
+                "paths": {"state_file": ".orchestrator/state.json"},
+            }
+            status_state = {
+                "tasks": [
+                    {
+                        "id": "TASK-123",
+                        "generation": 4,
+                        "owner": "Claude",
+                    }
+                ]
+            }
+            env = {
+                "ORCH_RUN_ID": "run-123",
+                "ORCH_TASK_ID": "TASK-123",
+                "ORCH_AGENT_ID": "claude",
+                "PANTHEON_STATUS_ROOT": str(status_root),
+                "PANTHEON_WORKTREE_ROOT": str(workspace_root),
+                "ORCH_WORKSPACE_PATH": str(workspace_root),
+            }
+            runtime_configs: list[dict] = []
+            status_configs: list[dict] = []
+
+            def load_runtime(config: dict) -> dict:
+                runtime_configs.append(config)
+                return runtime_state
+
+            def load_canonical_status(config: dict) -> dict:
+                status_configs.append(config)
+                return status_state
+
+            with (
+                mock.patch.object(
+                    permission_broker,
+                    "load_config",
+                    return_value=immutable_config,
+                ),
+                mock.patch.dict(permission_broker.os.environ, env, clear=True),
+                mock.patch.object(
+                    permission_broker,
+                    "load_runtime_state",
+                    side_effect=load_runtime,
+                ),
+                mock.patch.object(
+                    permission_broker,
+                    "load_status",
+                    side_effect=load_canonical_status,
+                ),
+            ):
+                allowed_roots = permission_broker._allowed_workspace_roots()
+
+            self.assertEqual(len(runtime_configs), 1)
+            self.assertEqual(len(status_configs), 1)
+            self.assertEqual(
+                runtime_configs[0]["paths"]["state_file"],
+                str(status_root / ".orchestrator" / "state.json"),
+            )
+            self.assertEqual(
+                status_configs[0]["paths"]["status_file"],
+                str(status_root / "ai-status.json"),
+            )
+            self.assertIn(workspace_root, allowed_roots)
+
+    def test_edit_denies_worktrees_parent_outside_exact_active_lease(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="permission-broker-lease-") as temp_dir:
+            temp_root = Path(temp_dir).resolve()
+            repo_root = temp_root / "source" / "pantheon"
+            workspace_root = temp_root / "worktrees" / "task-123"
+            workspace_root.mkdir(parents=True)
+            worker = {
+                "run_id": "run-123",
+                "task_id": "TASK-123",
+                "task_generation": 1,
+                "agent_id": "claude",
+                "status": "running",
+                "lease_expires_at": (
+                    datetime.now(timezone.utc) + timedelta(days=1)
+                ).isoformat(),
+                "workspace_mode": "isolated_worktree",
+                "workspace_path": str(workspace_root),
+            }
+            env = {
+                "ORCH_RUN_ID": "run-123",
+                "ORCH_TASK_ID": "TASK-123",
+                "ORCH_AGENT_ID": "claude",
+                "PANTHEON_WORKTREE_ROOT": str(workspace_root),
+                "ORCH_WORKSPACE_PATH": str(workspace_root),
+            }
+
+            with (
+                mock.patch("permission_broker.ROOT", repo_root),
+                mock.patch.dict(permission_broker.os.environ, env, clear=True),
+                mock.patch.object(
+                    permission_broker,
+                    "load_runtime_state",
+                    return_value={"workers": {"run-123": worker}},
+                ),
+                mock.patch.object(
+                    permission_broker,
+                    "load_status",
+                    return_value={
+                        "tasks": [
+                            {
+                                "id": "TASK-123",
+                                "generation": 1,
+                                "owner": "Claude",
+                            }
+                        ]
+                    },
+                ),
+            ):
+                evaluation = permission_broker.evaluate_tool_request(
+                    "Edit",
+                    {"file_path": str(workspace_root.parent / "other-task" / "file.py")},
+                    {},
+                )
+
+            self.assertEqual(evaluation["decision"], "deny")
+            self.assertEqual(evaluation["risk_class"], "out_of_workspace")
+
+    def test_edit_denies_unbound_mismatched_stale_or_non_running_lease(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="permission-broker-lease-") as temp_dir:
+            temp_root = Path(temp_dir).resolve()
+            repo_root = temp_root / "source" / "pantheon"
+            workspace_root = temp_root / "worktrees" / "task-123"
+            other_workspace = temp_root / "worktrees" / "other-task"
+            workspace_root.mkdir(parents=True)
+            other_workspace.mkdir(parents=True)
+            future_expiry = (datetime.now(timezone.utc) + timedelta(days=1)).isoformat()
+            base_env = {
+                "ORCH_RUN_ID": "run-123",
+                "ORCH_TASK_ID": "TASK-123",
+                "ORCH_AGENT_ID": "claude",
+                "PANTHEON_WORKTREE_ROOT": str(workspace_root),
+                "ORCH_WORKSPACE_PATH": str(workspace_root),
+            }
+            base_worker = {
+                "run_id": "run-123",
+                "task_id": "TASK-123",
+                "task_generation": 3,
+                "agent_id": "claude",
+                "status": "running",
+                "lease_expires_at": future_expiry,
+                "workspace_mode": "isolated_worktree",
+                "workspace_path": str(workspace_root),
+            }
+            base_task = {
+                "id": "TASK-123",
+                "generation": 3,
+                "owner": "Claude",
+            }
+            cases = (
+                ("missing workspace env", {"ORCH_WORKSPACE_PATH": ""}, {}, {}, True),
+                (
+                    "workspace env disagreement",
+                    {"ORCH_WORKSPACE_PATH": str(other_workspace)},
+                    {},
+                    {},
+                    True,
+                ),
+                ("unleased run", {}, {}, {}, False),
+                ("mismatched run record", {}, {"run_id": "run-other"}, {}, True),
+                ("mismatched task", {}, {"task_id": "TASK-OTHER"}, {}, True),
+                ("mismatched agent", {}, {"agent_id": "claude2"}, {}, True),
+                ("canonical owner mismatch", {}, {}, {"owner": "Human/Ops"}, True),
+                ("non-running worker", {}, {"status": "completed"}, {}, True),
+                (
+                    "stale lease",
+                    {},
+                    {
+                        "lease_expires_at": (
+                            datetime.now(timezone.utc) - timedelta(seconds=1)
+                        ).isoformat()
+                    },
+                    {},
+                    True,
+                ),
+                ("shared workspace", {}, {"workspace_mode": "shared"}, {}, True),
+                (
+                    "worker workspace mismatch",
+                    {},
+                    {"workspace_path": str(other_workspace)},
+                    {},
+                    True,
+                ),
+            )
+
+            for label, env_updates, worker_updates, task_updates, include_worker in cases:
+                with self.subTest(label=label):
+                    env = {**base_env, **env_updates}
+                    worker = {**base_worker, **worker_updates}
+                    task = {**base_task, **task_updates}
+                    workers = {"run-123": worker} if include_worker else {}
+                    with (
+                        mock.patch("permission_broker.ROOT", repo_root),
+                        mock.patch.dict(permission_broker.os.environ, env, clear=True),
+                        mock.patch.object(
+                            permission_broker,
+                            "load_runtime_state",
+                            return_value={"workers": workers},
+                        ),
+                        mock.patch.object(
+                            permission_broker,
+                            "load_status",
+                            return_value={"tasks": [task]},
+                        ),
+                    ):
+                        evaluation = permission_broker.evaluate_tool_request(
+                            "Edit",
+                            {"file_path": str(workspace_root / "src" / "module.py")},
+                            {},
+                        )
+
+                    self.assertEqual(evaluation["decision"], "deny")
+                    self.assertEqual(evaluation["risk_class"], "out_of_workspace")
 
     def test_edit_outside_configured_workspace_roots_is_denied(self) -> None:
         with mock.patch("permission_broker.ROOT", Path("/home/lupin/code/pantheon")):
