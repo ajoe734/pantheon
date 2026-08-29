@@ -445,10 +445,14 @@ target branch before it updates `ai-status.json` or archives the task.
   merges. If a PR fails CI, the task branch stays for the worker (or
   chair-review) to push a fix commit; do **not** force-push to recover
   unless explicitly authorized.
-- If the PR is `BEHIND`, owner handoff fails before `review`. Refresh the PR
-  branch and repeat admission. If checks fail after approval, leave the task in
-  `review_approved` while the approved head remains immutable and repair only
-  through a reopen/new-head review cycle.
+- Before the owner hands off to `review`, a `BEHIND` PR must be refreshed and
+  admitted again. This owner-side rule ends once the handoff freezes its
+  delivery binding: a reviewer must run canonical `ai-status.sh approve` and
+  must not reopen solely because current `dev` advanced linearly. Canonical
+  approval accepts that linear advance, but still rejects conflicts, changed
+  head/branch/manifest, and a base rewind or divergence. If checks fail after
+  approval, leave the task in `review_approved` while the approved head remains
+  immutable and repair only through a reopen/new-head review cycle.
 - Never use `--force`, `--mirror`, `--delete`, `--all`, or `--tags`
   pushes as routine closeout.
 
