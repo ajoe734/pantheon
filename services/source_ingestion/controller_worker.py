@@ -34,6 +34,8 @@ NON_TERMINAL_TRUTH_LEVEL = "scheduled_tick"
 RECONCILE_ONLY_MODE = "reconcile_only"
 RECONCILE_AND_PULL_MODE = "reconcile_and_pull"
 CONTROLLER_MODES = frozenset({RECONCILE_ONLY_MODE, RECONCILE_AND_PULL_MODE})
+UNRESOLVED_FRONTIER_STATUSES = frozenset({"queued", "retry", "running"})
+MAX_EXPLICIT_FRONTIER_RECOVERY_ITEMS = 100
 CADENCE_SOURCE_AGE_LIMIT_SECONDS = {
     "realtime": 300,
     "minutely": 300,
@@ -352,6 +354,208 @@ def read_actual_state(*, api_url: str, timeout_seconds: float = 30.0) -> dict[st
         api_url.rstrip("/") + "/api/source-ingest/controller/readback",
         timeout_seconds=timeout_seconds,
     )
+
+
+def read_frontier_state(*, api_url: str, timeout_seconds: float = 30.0) -> tuple[dict[str, Any], ...]:
+    """Read the authoritative crawl frontier without mutating it."""
+
+    response = _request_json(
+        api_url.rstrip("/") + "/api/source-ingest/frontier",
+        timeout_seconds=timeout_seconds,
+    )
+    frontier = response.get("frontier")
+    if not isinstance(frontier, list) or any(not isinstance(item, Mapping) for item in frontier):
+        raise ControllerTickError(
+            "frontier_recovery",
+            "authoritative frontier response is malformed",
+        )
+    return tuple(dict(item) for item in frontier)
+
+
+def recover_explicit_frontier(
+    *,
+    api_url: str,
+    recovery_connector_ids: Sequence[str],
+    allowed_pending_connector_ids: Sequence[str] = (),
+    controller_token: str,
+    timeout_seconds: float = 30.0,
+) -> dict[str, Any]:
+    """Converge only an explicitly authorized authoritative frontier slice.
+
+    Recovery never deletes frontier data and never widens a provider request:
+    each already-persisted item is re-run through the normal scheduler with an
+    exact one-connector exclusive allow-list. Any running, unclassified, or
+    nonterminal item fails the controller tick closed.
+    """
+
+    recovery_ids = {
+        str(connector_id).strip()
+        for connector_id in recovery_connector_ids
+        if str(connector_id).strip()
+    }
+    allowed_pending_ids = {
+        str(connector_id).strip()
+        for connector_id in allowed_pending_connector_ids
+        if str(connector_id).strip()
+    }
+    if not recovery_ids:
+        return {
+            "status": "not_requested",
+            "requested_connector_count": 0,
+            "recovered_item_count": 0,
+        }
+
+    before = read_frontier_state(api_url=api_url, timeout_seconds=timeout_seconds)
+    unresolved = [item for item in before if item.get("status") in UNRESOLVED_FRONTIER_STATUSES]
+    running = [item for item in unresolved if item.get("status") == "running"]
+    if running:
+        raise ControllerTickError(
+            "frontier_recovery",
+            f"authoritative frontier has {len(running)} running item(s); refusing concurrent recovery",
+            frontier_recovery={"running_count": len(running)},
+        )
+
+    unexpected = sorted(
+        {
+            str(item.get("connector_id") or "")
+            for item in unresolved
+            if str(item.get("connector_id") or "") not in recovery_ids | allowed_pending_ids
+        }
+    )
+    if unexpected:
+        raise ControllerTickError(
+            "frontier_recovery",
+            "authoritative frontier contains unresolved connectors outside the explicit recovery boundary: "
+            + ", ".join(unexpected),
+            frontier_recovery={"unexpected_connector_ids": unexpected},
+        )
+
+    targets = [
+        item
+        for item in unresolved
+        if str(item.get("connector_id") or "") in recovery_ids
+    ]
+    if len(targets) > MAX_EXPLICIT_FRONTIER_RECOVERY_ITEMS:
+        raise ControllerTickError(
+            "frontier_recovery",
+            f"explicit frontier recovery exceeds the {MAX_EXPLICIT_FRONTIER_RECOVERY_ITEMS}-item bound",
+            frontier_recovery={"target_count": len(targets)},
+        )
+    invalid_targets = [
+        item
+        for item in targets
+        if not str(item.get("frontier_id") or "")
+        or not str(item.get("connector_id") or "")
+        or item.get("status") not in {"queued", "retry"}
+    ]
+    if invalid_targets:
+        raise ControllerTickError(
+            "frontier_recovery",
+            "explicit frontier recovery contains malformed or non-claimable items",
+            frontier_recovery={"invalid_target_count": len(invalid_targets)},
+        )
+
+    before_projection = [
+        {
+            key: item.get(key)
+            for key in (
+                "frontier_id",
+                "connector_id",
+                "status",
+                "attempts",
+                "max_attempts",
+                "available_at",
+                "updated_at",
+                "last_error",
+            )
+        }
+        for item in targets
+    ]
+    receipts: list[dict[str, Any]] = []
+    for target in targets:
+        connector_id = str(target["connector_id"])
+        frontier_id = str(target["frontier_id"])
+        response = run_schedule_tick(
+            api_url=api_url,
+            max_concurrency=1,
+            timeout_seconds=timeout_seconds,
+            force_connector_ids=[connector_id],
+            exclusive_connector_ids=[connector_id],
+            controller_token=controller_token,
+        )
+        summary = response.get("summary")
+        failed = response.get("failed")
+        ran = response.get("ran")
+        matching = [
+            item
+            for item in (ran if isinstance(ran, list) else [])
+            if isinstance(item, Mapping)
+            and item.get("connector_id") == connector_id
+            and isinstance(item.get("frontier"), Mapping)
+            and item["frontier"].get("frontier_id") == frontier_id
+        ]
+        if (
+            not isinstance(summary, Mapping)
+            or not isinstance(failed, list)
+            or failed
+            or int(summary.get("total_failed") or 0) != 0
+            or int(summary.get("total_ran") or 0) != 1
+            or len(matching) != 1
+            or matching[0]["frontier"].get("status") != "done"
+            or not isinstance(matching[0].get("run"), Mapping)
+            or matching[0]["run"].get("status") != "completed"
+        ):
+            raise ControllerTickError(
+                "frontier_recovery",
+                f"explicit frontier recovery did not terminalize {frontier_id} for {connector_id}",
+                frontier_recovery={
+                    "connector_id": connector_id,
+                    "frontier_id": frontier_id,
+                    "schedule_summary": dict(summary) if isinstance(summary, Mapping) else None,
+                    "failed": failed if isinstance(failed, list) else None,
+                },
+            )
+        receipts.append(
+            {
+                "connector_id": connector_id,
+                "frontier_id": frontier_id,
+                "ingest_run_id": matching[0]["run"].get("ingest_run_id"),
+            }
+        )
+
+    after = read_frontier_state(api_url=api_url, timeout_seconds=timeout_seconds)
+    remaining = [
+        item
+        for item in after
+        if item.get("status") in UNRESOLVED_FRONTIER_STATUSES
+        and str(item.get("connector_id") or "") in recovery_ids
+    ]
+    unexpected_after = sorted(
+        {
+            str(item.get("connector_id") or "")
+            for item in after
+            if item.get("status") in UNRESOLVED_FRONTIER_STATUSES
+            and str(item.get("connector_id") or "") not in allowed_pending_ids
+        }
+    )
+    if remaining or unexpected_after:
+        raise ControllerTickError(
+            "frontier_recovery",
+            "authoritative frontier did not converge inside the explicit recovery boundary",
+            frontier_recovery={
+                "remaining_count": len(remaining),
+                "unexpected_connector_ids": unexpected_after,
+            },
+        )
+
+    return {
+        "status": "converged",
+        "requested_connector_count": len(recovery_ids),
+        "recovered_item_count": len(receipts),
+        "before_sha256": _digest(before_projection),
+        "receipts_sha256": _digest(receipts),
+        "receipts": receipts,
+    }
 
 
 def _trusted_unresolved_dlq_count(actual: Mapping[str, Any]) -> int | None:
@@ -819,6 +1023,7 @@ class ControllerConfig:
     mode: str = RECONCILE_AND_PULL_MODE
     force_connector_ids: tuple[str, ...] = ()
     exclusive_connector_ids: tuple[str, ...] = ()
+    frontier_recovery_connector_ids: tuple[str, ...] = ()
 
 
 def config_from_env() -> ControllerConfig:
@@ -836,11 +1041,20 @@ def config_from_env() -> ControllerConfig:
     max_ticks = _env_int("SOURCE_INGEST_CONTROLLER_MAX_TICKS", 0, minimum=0)
     force_connector_ids = _env_csv("SOURCE_INGEST_CONTROLLER_FORCE_CONNECTOR_IDS")
     exclusive_connector_ids = _env_csv("SOURCE_INGEST_CONTROLLER_EXCLUSIVE_CONNECTOR_IDS")
+    frontier_recovery_connector_ids = _env_csv(
+        "SOURCE_INGEST_CONTROLLER_FRONTIER_RECOVERY_CONNECTOR_IDS"
+    )
     if mode == RECONCILE_AND_PULL_MODE and not 1 <= max_ticks <= 24:
         raise ValueError("reconcile_and_pull mode requires SOURCE_INGEST_CONTROLLER_MAX_TICKS between 1 and 24")
     if mode == RECONCILE_AND_PULL_MODE and not exclusive_connector_ids:
         raise ValueError("reconcile_and_pull mode requires explicitly selected connector IDs (exclusive_connector_ids)")
-    if mode == RECONCILE_ONLY_MODE and (force_connector_ids or exclusive_connector_ids):
+    if len(frontier_recovery_connector_ids) > MAX_EXPLICIT_FRONTIER_RECOVERY_ITEMS:
+        raise ValueError(
+            "SOURCE_INGEST_CONTROLLER_FRONTIER_RECOVERY_CONNECTOR_IDS exceeds the explicit recovery bound"
+        )
+    if mode == RECONCILE_ONLY_MODE and (
+        force_connector_ids or exclusive_connector_ids or frontier_recovery_connector_ids
+    ):
         raise ValueError("reconcile_only mode must not select provider connector execution")
     return ControllerConfig(
         api_url=str(os.getenv("SOURCE_INGEST_API_URL") or "http://127.0.0.1:8097"),
@@ -861,6 +1075,7 @@ def config_from_env() -> ControllerConfig:
         mode=mode,
         force_connector_ids=force_connector_ids,
         exclusive_connector_ids=exclusive_connector_ids,
+        frontier_recovery_connector_ids=frontier_recovery_connector_ids,
     )
 
 
@@ -869,6 +1084,7 @@ def compute_request_fingerprint(
     mode: str,
     exclusive_connector_ids: Sequence[str] = (),
     force_connector_ids: Sequence[str] = (),
+    frontier_recovery_connector_ids: Sequence[str] = (),
     api_url: str = "",
     truth_level: str = "",
     max_concurrency: int = 2,
@@ -878,6 +1094,13 @@ def compute_request_fingerprint(
         "api_url": str(api_url).rstrip("/"),
         "exclusive_connector_ids": sorted(set(str(c).strip() for c in (exclusive_connector_ids or ()) if str(c).strip())),
         "force_connector_ids": sorted(set(str(c).strip() for c in (force_connector_ids or ()) if str(c).strip())),
+        "frontier_recovery_connector_ids": sorted(
+            set(
+                str(c).strip()
+                for c in (frontier_recovery_connector_ids or ())
+                if str(c).strip()
+            )
+        ),
         "max_concurrency": int(max_concurrency),
         "mode": str(mode),
         "truth_level": str(truth_level),
@@ -892,6 +1115,7 @@ def run_controller_once(
     mode: str = RECONCILE_AND_PULL_MODE,
     exclusive_connector_ids: Sequence[str] | None = None,
     force_connector_ids: Sequence[str] | None = None,
+    frontier_recovery_connector_ids: Sequence[str] | None = None,
     api_url: str | None = None,
     state_path: Path | str | None = None,
     controller_token: str | None = None,
@@ -918,9 +1142,18 @@ def run_controller_once(
         force_tuple = tuple(
             dict.fromkeys(str(c).strip() for c in (force_connector_ids or ()) if str(c).strip())
         )
+        recovery_tuple = tuple(
+            dict.fromkeys(
+                str(c).strip()
+                for c in (frontier_recovery_connector_ids or ())
+                if str(c).strip()
+            )
+        )
         if mode == RECONCILE_AND_PULL_MODE and not exclusive_tuple:
             raise ValueError("reconcile_and_pull mode requires explicitly selected connector IDs (exclusive_connector_ids)")
-        if mode == RECONCILE_ONLY_MODE and (exclusive_tuple or force_tuple):
+        if len(recovery_tuple) > MAX_EXPLICIT_FRONTIER_RECOVERY_ITEMS:
+            raise ValueError("frontier recovery connector IDs exceed the explicit recovery bound")
+        if mode == RECONCILE_ONLY_MODE and (exclusive_tuple or force_tuple or recovery_tuple):
             raise ValueError("reconcile_only mode must not select provider connector execution")
         resolved_state_path = (
             Path(state_path)
@@ -956,10 +1189,15 @@ def run_controller_once(
             mode=mode,
             force_connector_ids=force_tuple,
             exclusive_connector_ids=exclusive_tuple,
+            frontier_recovery_connector_ids=recovery_tuple,
         )
     else:
         if config.mode == RECONCILE_AND_PULL_MODE and not config.exclusive_connector_ids:
             raise ValueError("reconcile_and_pull mode requires explicitly selected connector IDs (exclusive_connector_ids)")
+        if len(config.frontier_recovery_connector_ids) > MAX_EXPLICIT_FRONTIER_RECOVERY_ITEMS:
+            raise ValueError("frontier recovery connector IDs exceed the explicit recovery bound")
+        if config.mode == RECONCILE_ONLY_MODE and config.frontier_recovery_connector_ids:
+            raise ValueError("reconcile_only mode must not select provider connector execution")
 
     lock_path = config.state_path.with_name(f"{config.state_path.name}.lock")
     lock_path.parent.mkdir(parents=True, exist_ok=True)
@@ -968,6 +1206,7 @@ def run_controller_once(
         mode=config.mode,
         exclusive_connector_ids=config.exclusive_connector_ids,
         force_connector_ids=config.force_connector_ids,
+        frontier_recovery_connector_ids=config.frontier_recovery_connector_ids,
         api_url=config.api_url,
         truth_level=config.truth_level,
         max_concurrency=config.max_concurrency,
@@ -1128,6 +1367,7 @@ def run_controller_tick(
     desired_meta: dict[str, Any] = {}
     reconcile: dict[str, Any] = {}
     schedule: dict[str, Any] = {}
+    frontier_recovery: dict[str, Any] = {}
     pre_actual: dict[str, Any] = {}
     actual: dict[str, Any] = {}
     had_failures = state.consecutive_failures > 0
@@ -1175,6 +1415,13 @@ def run_controller_tick(
             )
         else:
             exclusive_connector_ids = sorted(set(config.exclusive_connector_ids))
+            frontier_recovery = recover_explicit_frontier(
+                api_url=config.api_url,
+                recovery_connector_ids=config.frontier_recovery_connector_ids,
+                allowed_pending_connector_ids=exclusive_connector_ids,
+                controller_token=config.controller_token,
+                timeout_seconds=config.timeout_seconds,
+            )
             forced_connector_ids = (
                 exclusive_connector_ids
                 if exclusive_connector_ids
@@ -1227,6 +1474,7 @@ def run_controller_tick(
                     "provider_egress_attempted": config.mode == RECONCILE_AND_PULL_MODE,
                     "desired_state": desired_meta,
                     "reconcile_summary": reconcile.get("summary"),
+                    "frontier_recovery": frontier_recovery,
                     "schedule_summary": schedule.get("summary"),
                     "actual_readback": accepted_actual,
                 },
@@ -1247,6 +1495,7 @@ def run_controller_tick(
             schedule={
                 "mode": config.mode,
                 "provider_egress_attempted": config.mode == RECONCILE_AND_PULL_MODE,
+                "frontier_recovery": frontier_recovery,
                 "summary": schedule.get("summary"),
             },
             actual_readback=accepted_actual,
@@ -1259,6 +1508,7 @@ def run_controller_tick(
             "state_sequence_no": state.sequence_no,
             "desired_state": desired_meta,
             "reconcile_summary": reconcile.get("summary"),
+            "frontier_recovery": frontier_recovery,
             "schedule_summary": schedule.get("summary"),
             "actual_readback": state.actual_readback,
         }
