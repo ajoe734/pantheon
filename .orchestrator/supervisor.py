@@ -1760,7 +1760,36 @@ def worktree_cleanup_settings(config: dict[str, Any]) -> dict[str, Any]:
             for b in (settings.get("base_branches") or ["dev", "master", "main"])
             if str(b).strip()
         ],
+        # An orphan whose branch never merges (superseded, abandoned, rejected)
+        # would otherwise be skipped by require_merged forever. Removing its
+        # worktree loses nothing: the branch and its commits stay in the repo's
+        # object database, recoverable with `git worktree add` again. 0 disables
+        # this fallback and restores the old permanent-skip behavior.
+        "orphan_unmerged_max_age_days": int(
+            settings.get("orphan_unmerged_max_age_days", 14) or 0
+        ),
     }
+
+
+def _worktree_last_activity_epoch(
+    repository_root: Path, branch: str, worktree_path: Path
+) -> float | None:
+    """Best-effort last-touched time for staleness comparisons."""
+
+    if branch:
+        proc = subprocess.run(
+            ["git", "-C", str(repository_root), "log", "-1", "--format=%ct", branch],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        text = proc.stdout.strip()
+        if proc.returncode == 0 and text.isdigit():
+            return float(text)
+    try:
+        return worktree_path.stat().st_mtime
+    except OSError:
+        return None
 
 
 def _task_id_slug(task_id: str | None) -> str:
@@ -9958,6 +9987,7 @@ def _cleanup_registered_worker_worktrees(
         "archived": 0,
         "failed": 0,
         "missing_leases": 0,
+        "stale_unmerged": 0,
         "details": [],
     }
     changed = False
@@ -9974,8 +10004,17 @@ def _cleanup_registered_worker_worktrees(
         if require_merged and (
             not branch or branch not in merged_by_root.get(repository_root, set())
         ):
-            summary["skipped"] += 1
-            continue
+            max_age_days = settings["orphan_unmerged_max_age_days"]
+            stale_enough = False
+            if max_age_days > 0:
+                last_active = _worktree_last_activity_epoch(repository_root, branch, wt_path)
+                if last_active is not None:
+                    age_days = (time.time() - last_active) / 86400.0
+                    stale_enough = age_days >= max_age_days
+            if not stale_enough:
+                summary["skipped"] += 1
+                continue
+            summary["stale_unmerged"] += 1
         if not wt_path.exists():
             if workspace_id is not None:
                 leases.pop(workspace_id, None)

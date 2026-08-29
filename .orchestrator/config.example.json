@@ -112,7 +112,8 @@
       "dev",
       "master",
       "main"
-    ]
+    ],
+    "orphan_unmerged_max_age_days": 14
   },
   "worker_retry": {
     "enabled": true,
