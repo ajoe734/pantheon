@@ -13,7 +13,7 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 import main as bff_main
-from read_store import ReadSurfaceStore
+from ports import create_read_surface_ports
 
 
 HEADERS = {"Authorization": "Bearer op-console:operator"}
@@ -86,10 +86,7 @@ def _projected_store_client() -> Iterator[TestClient]:
                 path = root / filename
                 path.write_text(json.dumps(payloads[filename]), encoding="utf-8")
                 os.environ[env_name] = str(path)
-            bff_main.read_store = ReadSurfaceStore(
-                str(root / "read_surfaces.json"),
-                allow_local_snapshot_fallback=False,
-            )
+            bff_main.read_store = create_read_surface_ports()
             yield TestClient(bff_main.app)
         finally:
             bff_main.read_store = original_store

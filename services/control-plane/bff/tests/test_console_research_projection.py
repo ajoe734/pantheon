@@ -18,7 +18,7 @@ from scripts import cleanup_legacy_research_evidence_refs as legacy_cleanup  # n
 from scripts import project_research_to_bff_surfaces as projector  # noqa: E402
 
 import main as bff_main  # noqa: E402
-from read_store import ReadSurfaceStore  # noqa: E402
+from ports import create_read_surface_ports  # noqa: E402
 
 
 HEADERS = {"Authorization": "Bearer op-dev:admin:mfa"}
@@ -181,10 +181,7 @@ def _projected_bff(monkeypatch) -> Iterator[TestClient]:
         monkeypatch.delenv("PANTHEON_MEMORY_API_URL", raising=False)
 
         original_store = bff_main.read_store
-        bff_main.read_store = ReadSurfaceStore(
-            os.path.join(td, "read_surfaces.json"),
-            allow_local_snapshot_fallback=False,
-        )
+        bff_main.read_store = create_read_surface_ports()
         try:
             yield TestClient(bff_main.app)
         finally:
