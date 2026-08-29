@@ -8,14 +8,8 @@ from typing import Any
 from fastapi.testclient import TestClient
 import pytest
 
-from services.capital import main as capital_main
-from services.capital.allocation_store import AllocationAuthorityStore
-from services.capital.models import (
-    CreateCapitalPoolRequest,
-    PatchCapitalPoolRequest,
-)
 from services.capital.pg_store import (
-    JsonlCapitalAuditStore,
+    CapitalPool,
     PersistentCapitalPoolStore,
 )
 from services.deployment.models import CreateDeploymentPlanRequest
@@ -23,11 +17,7 @@ from services.deployment.service import (
     DeploymentPlanStore,
     DeploymentPlannerService,
 )
-from services.persona.write_owner import (
-    CreatePersonaRequest,
-    PersistentPersonaOwner,
-    create_app,
-)
+from services.persona.write_owner import PersistentPersonaOwner, create_app
 from services.runtime_manager import RuntimeManagerService
 
 
@@ -300,47 +290,32 @@ def test_persona_http_decision_executor_requires_exact_governance_binding(
     )
 
 
-def _capital_service(tmp_path: Path) -> capital_main.CapitalBoundaryService:
-    return capital_main.CapitalBoundaryService(
-        pool_store=PersistentCapitalPoolStore(tmp_path / "capital_pools.json"),
-        binding_store=capital_main.PersonaCapitalBindingStore(
-            path=tmp_path / "persona_capital_bindings.json"
-        ),
-        allocation_store=AllocationAuthorityStore(
-            path=tmp_path / "capital_allocation_authority.json"
-        ),
-        audit_log_path=tmp_path / "capital_audit.jsonl",
-        audit_store=JsonlCapitalAuditStore(tmp_path / "capital_audit.jsonl"),
-    )
-
-
 def test_capital_patch_is_read_by_fresh_owner_store(tmp_path: Path) -> None:
-    service = _capital_service(tmp_path)
-    service.create_pool(
-        CreateCapitalPoolRequest(
-            actor_id="capital-operator",
-            actor_role="capital.admin",
+    store_path = tmp_path / "capital_pools.json"
+    owner = PersistentCapitalPoolStore(store_path)
+    owner.create(
+        CapitalPool(
             pool_id="pool-owner-proof",
             name="Original Pool",
             owner_id="fund-owner-proof",
             owner_type="fund",
             status="active",
+            created_at="2026-08-29T00:00:00Z",
         )
     )
 
-    patched = service.patch_pool(
+    patched = owner.patch(
         "pool-owner-proof",
-        PatchCapitalPoolRequest(
-            actor_id="capital-operator",
-            actor_role="capital.admin",
-            name="Persisted Pool",
-            risk_policy_ref="risk-policy-v2",
-            params={"paper_limit": 100000},
-        ),
+        patch={
+            "name": "Persisted Pool",
+            "risk_policy_ref": "risk-policy-v2",
+            "metadata": {"params": {"paper_limit": 100000}},
+        },
+        updated_at="2026-08-29T00:01:00Z",
     )
 
     assert patched.name == "Persisted Pool"
-    fresh = PersistentCapitalPoolStore(tmp_path / "capital_pools.json")
+    fresh = PersistentCapitalPoolStore(store_path)
     readback = fresh.require("pool-owner-proof")
     assert readback.name == "Persisted Pool"
     assert readback.risk_policy_ref == "risk-policy-v2"
@@ -452,8 +427,8 @@ def test_owner_modules_do_not_import_bff_read_store() -> None:
     repository_root = Path(__file__).resolve().parents[2]
     owner_modules = (
         repository_root / "services/persona/write_owner.py",
-        repository_root / "services/capital/main.py",
-        repository_root / "services/runtime-manager/main.py",
+        repository_root / "services/capital/pg_store.py",
+        repository_root / "services/runtime_manager/service.py",
         repository_root / "services/deployment/service.py",
     )
     for module_path in owner_modules:

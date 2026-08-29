@@ -47,7 +47,6 @@ try:
         CreateCapitalPoolRequest,
         CreateRebalanceRequest,
         PersonaCapitalBindingBody,
-        PatchCapitalPoolRequest,
         RebalanceApplyReceipt,
         RebalanceBody,
         UpdateBindingStatusRequest,
@@ -90,7 +89,6 @@ except ImportError:
         CreateCapitalPoolRequest,
         CreateRebalanceRequest,
         PersonaCapitalBindingBody,
-        PatchCapitalPoolRequest,
         RebalanceApplyReceipt,
         RebalanceBody,
         UpdateBindingStatusRequest,
@@ -316,40 +314,6 @@ class CapitalBoundaryService:
             actor_id=body.actor_id,
             actor_role=body.actor_role,
             detail={"status": updated.status},
-        )
-        return updated
-
-    def patch_pool(self, pool_id: str, body: PatchCapitalPoolRequest) -> CapitalPool:
-        """Patch canonical pool fields in the Capital owner store.
-
-        Legacy ``params`` remain API-compatible but are persisted under the
-        canonical metadata document; they are never held in a BFF overlay.
-        """
-
-        self._authorize("CapitalPool", "update", body.actor_role)
-        fields = body.model_fields_set - {"actor_id", "actor_role"}
-        with self._CAPITAL_STATE_APPLY_LOCK:
-            current = self.pool_store.require(pool_id)
-            patch: Dict[str, Any] = {}
-            for field_name in fields & {"name", "status", "risk_policy_ref"}:
-                patch[field_name] = getattr(body, field_name)
-            if "params" in fields:
-                metadata = dict(current.metadata)
-                metadata["params"] = body.params
-                metadata["last_updated_by"] = body.actor_id
-                patch["metadata"] = metadata
-            updated = self.pool_store.patch(  # type: ignore[attr-defined]
-                pool_id,
-                patch=patch,
-                updated_at=self._utc_now(),
-            )
-        self._emit_nonfatal(
-            event_type="capital_pool_updated",
-            resource_type="CapitalPool",
-            resource_id=updated.pool_id,
-            actor_id=body.actor_id,
-            actor_role=body.actor_role,
-            detail={"changed_fields": sorted(fields)},
         )
         return updated
 
@@ -1112,19 +1076,6 @@ def update_capital_pool_status(
     try:
         body = bind_capital_mutation(body)
         return _pool_body(service.update_pool_status(pool_id, body))
-    except CAPITAL_HTTP_ERRORS as exc:
-        _raise_http_error(exc)
-
-
-@app.patch("/api/capital-pools/{pool_id}", response_model=CapitalPoolBody)
-def patch_capital_pool(
-    pool_id: str,
-    body: PatchCapitalPoolRequest,
-) -> CapitalPoolBody:
-    service = get_capital_service()
-    try:
-        body = bind_capital_mutation(body)
-        return _pool_body(service.patch_pool(pool_id, body))
     except CAPITAL_HTTP_ERRORS as exc:
         _raise_http_error(exc)
 
