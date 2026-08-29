@@ -2,12 +2,12 @@
 
 | 欄位 | 內容 |
 |---|---|
-| 文件狀態 | 完整稽核結論（2026-08-29T22:54Z 最新重審與 delta 盤點）；舊 FE/BFF pair 已由補償恢復，但 current source promotion 仍受阻，第三遍 current UI 明確保留為未驗證 |
+| 文件狀態 | 完整稽核結論（2026-08-29T23:41Z 納入 post-cutoff promotion run 33280168821 失敗與補償恢復重審）；舊 FE/BFF pair 由補償維持一致運行，current source promotion 在 Agora projection 綁定驗證受阻，第三遍 current UI 明確保留為未驗證 |
 | 稽核範圍 | Pantheon 系統、十二循環、Management、Management AI、Agora、Source Ingestion、操作 UI、dev hosted runtime |
-| Pantheon repository 基線 | `origin/dev@8f8383b507b1fb631d44422031f01ebea5024d5e`；包含 `b3b26a7` 後新增的 `f227360` Source frontier recovery、`9e9ab33` Active symbol snapshot recovery、`44895a2` Official snapshot min closes、`394eb05` Taiwan market-session freshness、`e5b4d10` dev tooling cleanup 及 `254d2e7` Source frontier scope recovery |
-| Pantheon product runtime 基線 | `8f8383b507b1fb631d44422031f01ebea5024d5e`（含 `254d2e7b05096dad3f6c7512db089ae2cbd8fe08`） |
+| Pantheon repository 基線 | `origin/dev@9ee1e936c2db6f871085b28c4db563d349a050aa`；包含 `f227360` Source frontier recovery、`9e9ab33` Active symbol snapshot recovery、`44895a2` Official snapshot min closes、`394eb05` Taiwan market-session freshness、`e5b4d10` dev tooling cleanup、`254d2e7` Source frontier scope recovery 及 `9ee1e93` delivery recovery |
+| Pantheon product runtime 基線 | `8f8383b507b1fb631d44422031f01ebea5024d5e`（含 `254d2e7b05096dad3f6c7512db089ae2cbd8fe08`；run 33280168821 candidate） |
 | execute-plans source 基線 | `origin/dev@bd03c863e3c2c1c64b9b7797f27cefaf84df17c1`（包含 PR #694 evidence manifest，前端 UI 程式碼同 `5ffee3db8c2b37b4070d43d091ed4207ef5d70e5`） |
-| current hosted BFF | `dcb14231d29f08f1646a4ee962b83fd2d4b67560`；`22:54Z` 直接確認：舊 accepted pair 運行中，PostgreSQL checkpoint `7,635,368`，backlog 0，quarantine 0 |
+| current hosted BFF | `dcb14231d29f08f1646a4ee962b83fd2d4b67560`；`23:41Z` 直接確認：舊 accepted pair 運行中，PostgreSQL checkpoint `7,637,654`，backlog 0，quarantine 0 |
 | current hosted FE | `c230fc76bef78fc297135152f2acba690314bb9d`；前一個 accepted release |
 | hosted profile | `read-only`; `live` + `strict`; real writes false |
 | UI 裝置範圍 | Desktop browser；不納入 mobile 測試 |
@@ -105,11 +105,11 @@ release workflow顯示success但必要steps被skip、current FE source通過type
 
 ## 3. 第一批直接證據：版本與 hosted 基礎健康
 
-稽核時間 `2026-08-29T15:47:39Z` 起至 `2026-08-29T22:54:17Z` 最新重驗：
+稽核時間 `2026-08-29T15:47:39Z` 起至 `2026-08-29T23:41:28Z` 最新重驗：
 
 | 項目 | 觀察 | 判定 |
 |---|---|---|
-| Pantheon current source | `origin/dev@8f8383b`；包含 `f227360` Source frontier recovery、`9e9ab33` active symbol snapshot recovery、`44895a2` official snapshot min closes、`394eb05` Taiwan market session freshness 及 `254d2e7` Source frontier scope recovery | source 基線已前進；包含五大 Agora/Source/Paper 恢復變更 |
+| Pantheon current source | `origin/dev@9ee1e93`；包含 `f227360` Source frontier recovery、`9e9ab33` active symbol snapshot recovery、`44895a2` official snapshot min closes、`394eb05` Taiwan market session freshness、`254d2e7` Source frontier scope recovery 及 `9ee1e93` delivery recovery | source 基線已前進；包含五大 Agora/Source/Paper 恢復變更 |
 | execute-plans current source | `origin/dev@bd03c86` | source 基線包含 PR #694 closeout manifest；UI 程式碼同 `5ffee3d`（Workshop tenant submission 修正） |
 | Hosted release pair | FE `c230fc7` / BFF `dcb1423`，pair id `0429052b...` | exact hosted pair 可識別且維持一致 |
 | Source vs hosted | 目前兩個 repo 的 hosted SHA 仍落後 current source | `PARTIAL`；live 服務已由補償維持自洽舊版，但未部署 current candidate |
@@ -118,7 +118,7 @@ release workflow顯示success但必要steps被skip、current FE source通過type
 | BFF `/bff/version` | HTTP 200；source SHA `dcb1423` 與 manifest 一致 | `PASS`（僅版本端點） |
 | BFF `/livez` | HTTP 200、live/ready true | `PASS`（僅 process 存活） |
 | BFF `/readyz` | runtime-manager、governance、deployment、lifecycle projector 皆 ok | `PASS`（已列依賴） |
-| Lifecycle projector | Postgres writer/reader、backlog 0、quarantine 0、paper scope、checkpoint `7,635,368` | `PASS`（此時間點 projection readiness） |
+| Lifecycle projector | Postgres writer/reader、backlog 0、quarantine 0、paper scope、checkpoint `7,637,654` | `PASS`（此時間點 projection readiness） |
 | Legacy recovery stores | preserved=true、accepted_reader=false | 未作 canonical reader；不算雙 owner |
 
 ### 3.1 Promotion 期間與失敗後的第二次 identity 觀察
@@ -206,10 +206,24 @@ backlog/quarantine均為0。因此**目前served pair已恢復一致，但只是
 4. **PR #5415（`44895a2`）與 PR #5416（`394eb05`）的合併修復**：
    - PR #5415 引入 bounded 2-month official history acquisition、distinct-day snapshot deduplication，以及 nonprod deployment 診斷要求（每 symbol 至少 2 筆 distinct official closes）。
    - PR #5416 將 flat 24h 檢驗改為 governed Taiwan（Asia/Taipei）market-session freshness 規則：在 refresh receipt（`observed_at`）與 lineage 皆為 official 且新鮮的前提下，承認週五官方收盤價在週末及法定例假日的有效性；週間過期、非官方 lineage 或偽造時間戳仍 fail-closed。
-5. **最新 hosted 現狀（2026-08-29T22:54:17Z 直接 probe）**：
+5. **Post-cutoff nonprod deployment run `33280168821` 失敗與補償恢復**：
+   - 部署 candidate：Pantheon `8f8383b507b1fb631d44422031f01ebea5024d5e`（含 `254d2e7` Source frontier scope recovery）+ execute-plans `bd03c863e3c2c1c64b9b7797f27cefaf84df17c1`。
+   - 流程執行情況：Immutable admission、SSH 連線、environment lease 取得、Docker Compose container 建立及各大主要服務（BFF、Runtime Manager、Governance、Deployment、Lifecycle Projector）的 health check 全部成功。
+   - 失敗直接證據：在 `scripts/deploy_nonprod_vm.sh` 執行 bounded manual Source refresh 觸發 active paper symbol（2330.TW）的 Taiwan official pull 並產出新鮮合規 receipt 之後，deploy script 驗證 Agora read projection 時觸發阻斷：
+     ```text
+     raise SystemExit("Agora projection does not bind the new receipt/run/source")
+     ```
+     於 `scripts/deploy_nonprod_vm.sh:1218` 退出（exit code 1），使 deployment gate 終止。
+   - **觀察事實與推論邊界區分**：
+     - 直接觀察事實：驗證程式讀取 `projection_path` 時，未找到符合 `connectorId == connector_id`、`ingestRunId == run_id` 且 `sourceId == source_id` 的 projected row，因而 fail-closed 退出。
+     - 非其他阻斷因素：本次失敗**不是** auth、billing、VM 基礎設施、Docker image ID 正規化、Source 對外網路 egress、paper-signal-producer 啟動異常（container startup 與 healthy 均通過），亦**不是**週末 session freshness 判別問題（Taiwan official refresh 與 market session freshness 均順利通過 admission）。此為 Agora projection 綁定驗證之功能面 gate 阻斷。
+   - **補償執行與基準恢復**：
+     - `dev-deploy-compensation` 步驟成功執行，將 VM 上的服務與靜態資產完整回滾至先前的 accepted baseline：FE `c230fc76bef78fc297135152f2acba690314bb9d` 與 BFF `dcb14231d29f08f1646a4ee962b83fd2d4b67560`。
+     - 目標 candidate `8f8383b/bd03c86` 未通過 promotion，亦未完成 final atomic switch。
+6. **最新 hosted 現狀（2026-08-29T23:41:28Z 直接 probe）**：
    - FE `/deployment.json` 仍為 accepted `c230fc7`，宣告 BFF `dcb1423`；
-   - 實際 BFF `/bff/version` 為 `dcb1423`；`/readyz` ready，Lifecycle reader/writer 為 PostgreSQL，checkpoint 與 source high watermark 同為 `7,635,368`，backlog/quarantine 為 0。
-   - `394eb05` 合併後尚未執行新的 `nonprod-deploy.yml` 成功 promotion。因此目前 **hosted pair 保持一致但為舊版**，source-level 的四大修復（frontier recovery、snapshot alias、min closes、TW session freshness）處於 **source fixed / runtime unverified** 狀態。
+   - 實際 BFF `/bff/version` 為 `dcb1423`（build time `2026-08-29T23:28:55Z`）；`/readyz` ready，Lifecycle reader/writer 為 PostgreSQL，checkpoint 與 source high watermark 同為 `7,637,654`，backlog/quarantine 為 0。
+   - 因此目前 **hosted pair 保持自洽一致但為已恢復之舊版**，最新 candidate 處於 **source fixed / runtime unverified** 狀態，第三遍 current UI 驗收持續保留未簽收。
 
 ### 3.6 舊 closeout 文件與原始 workflow 不一致
 
@@ -258,7 +272,7 @@ HAR/DOM與skip來源。因此它們不是獨立可重現的功能證據，且被
 |---|---:|---|---|---|
 | OP-G01 | P0 | Agora research可產生假`real` candidate truth | Compose的orchestrator/gateway將production adapters固定為`false`、service default為`stub`；但BFF `DefaultAllowlistedAdapter` 不呼叫backend，直接組artifact/evidence並預設`provenance=real` | dev至少一個admitted bounded/offline real adapter要有真backend receipt/result；目前這條改標simulation/unavailable，禁止做成candidate truth |
 | OP-G02 | P0 | Agora PerformanceSuggestion 無 production wiring | `PerformanceSuggestionProducer(...)` 只出現在 tests；production tree 沒有 caller | telemetry/paper/risk outcome 自然觸發 producer，suggestion durable readback，UI refresh 顯示相同 ID |
-| OP-G03 | P0 | current source FE/BFF尚未成對部署 | `22:54Z`直接確認補償已維持自洽舊pair `c230fc7/dcb1423`；current source `394eb05/bd03c86`（含四大Agora/Source修復）尚未成功promotion至live VM | 用current admitted FE/BFF建立atomic candidate；manifest、BFF version、served bundle與candidate evidence四者一致後再驗收 |
+| OP-G03 | P0 | current source FE/BFF尚未成對部署 | `23:41Z` 直接確認補償已維持自洽舊 pair `c230fc7/dcb1423`（PostgreSQL checkpoint `7,637,654`）；post-cutoff promotion run `33280168821`（`8f8383b/bd03c86`）因 Agora projection 綁定檢查在 gate 失敗並補償恢復，current source 尚未成功 promotion 至 live VM | 用 current admitted FE/BFF 建立 atomic candidate；manifest、BFF version、served bundle 與 candidate evidence 四者一致後再驗收 |
 | OP-G04 | P0 | release gate 可把實際失敗包成綠燈 | run `33256001457` 的Management hosted log因缺`BFF_AUTH_TOKEN`失敗、route-load也失敗，但workflow success；舊closeout綁定的`33146133499`又skip七個auth/write/exact-pair steps卻生成全passed摘要 | 必要hosted/auth/write/readback step的fail/skip必須讓functional acceptance fail；read-only smoke另列；證據必須保存逐ID/HAR/terminal readback |
 | OP-G05 | P1 | auth readiness 仍同步依賴 OpenClaw latency | `ready` 已只看 `authReady`，但 route 還是同步 `_safe_provider_readiness()` → provider network probe | auth endpoint只做本地 session/tenant/role；provider readiness由獨立、可降級 endpoint/cache 取得，不阻塞 protected render |
 | OP-G06 | P0 | Management 非 Persona generic CRUD 未接 durable owner | `createEntity.ts` 的非 Persona create/update/delete在非 strict使用 `writeOverlay`；strict live則拒絕；無 durable mutation | 每個可見 CRUD control不是接 canonical BFF owner並 readback，就是從 production UI移除／明確標 unavailable |
@@ -274,7 +288,7 @@ HAR/DOM與skip來源。因此它們不是獨立可重現的功能證據，且被
 | OP-G16 | P0 | deployment lease與rollback共用同一個脆弱遠端依賴 | 一次GitHub API timeout同時使長部署失敗、rollback lease失敗；補償exit 78卻在step summary顯示success | lease heartbeat採有界retry/grace而非單次遠端timeout即殺部署；rollback已有本地sealed authority可獨立執行；補償失敗必須是顯式red且自動驗證served pair |
 | OP-G17 | P0 | Registry→Deployment→RuntimeBinding的executable projection仍非自然產生 | `verify_deploy_authorities()`驗證canonical artifact identity/checksum，但不回傳`object_store`/loader projection/`market_data_policy`；deployment adapter只原樣轉送`deploy_context.metadata`，fleet再於下游拒絕缺欄位binding。舊closeout tests沒有檢查這段投影 | Registry authority以同一artifact/version/checksum產生immutable loader projection與market policy，DeploymentPlan持有引用，Runtime Manager驗證後才建active binding；不接受caller任意metadata |
 | OP-G18 | P1 | Management Postmortem仍無canonical read owner | `PostmortemLibrary.tsx`不再固定3筆，但由Incident timeline中`[postmortem]`字串臨時產生`pm_<incident>`，沒有讀Postmortem authority的ID/revision/status | 由postmortem owner提供list/detail契約；Incident只保存`postmortem_id`引用，UI reload後讀同一durable object |
-| OP-G19 | P0 | paper-signal-producer runtime healthy 尚未在 live promotion 閉環 | image ID 正規化（`b3b26a7`）、frontier recovery（`f227360`）、snapshot alias（`9e9ab33`）、2-month history / min closes（`44895a2`）及 Taiwan weekend session freshness（`394eb05`）均已在 source 完成並通過 197 個單元/契約測試；但 run `33272385942` 證實舊 flat 24h 檢驗在週末阻斷部署後，最新 `394eb05` 仍待成功 promotion 於 live VM 證明 container stabilization 與 healthy | 部署流程保存 producer health payload 與 service logs；以最新 source candidate 執行 nonprod deploy，證明 producer 進入 healthy 且完成 signal→order/fill/heartbeat readback |
+| OP-G19 | P0 | paper-signal-producer runtime healthy 與 Agora projection 尚未在 live promotion 閉環 | image ID 正規化（`b3b26a7`）、frontier recovery（`f227360`）、snapshot alias（`9e9ab33`）、2-month history / min closes（`44895a2`）及 Taiwan weekend session freshness（`394eb05`）均已在 source 完成；在 run `33280168821` 中 container 啟動與 session freshness 驗證通過，但在部署 gate 的 Agora projection 綁定驗證（`scripts/deploy_nonprod_vm.sh:1218`）中斷並補償恢復；最新 candidate 仍待通過完整 promotion 在 live VM 閉環 | 部署流程排查 Agora projection 綁定並保存 producer health payload 與 service logs；以最新 source candidate 執行 nonprod deploy，證明 producer 進入 healthy、Agora projection 驗證通過且完成 signal→order/fill/heartbeat readback |
 
 ### 4.3 架構簡化 SA/SD 逐項驗收
 
@@ -376,16 +390,16 @@ served FE、authenticated network、canonical data與reload readback補齊前，
 
 | Product owner | Current code truth | Runtime evidence | Result |
 |---|---|---|---|
-| Lifecycle projector | PostgreSQL canonical controller；JSON只作legacy recovery | `22:54Z` hosted `dcb1423` checkpoint=`7,635,368`=high watermark、backlog/quarantine 0、accepted reader=false for legacy | `PASS` for restored old pair；current promotion restart/persistence step被skip |
+| Lifecycle projector | PostgreSQL canonical controller；JSON只作legacy recovery | `23:41Z` hosted `dcb1423` checkpoint=`7,637,654`=high watermark、backlog/quarantine 0、accepted reader=false for legacy | `PASS` for restored old pair；current promotion restart/persistence step被skip |
 | Runtime Manager | one service owner與Compose service；executable fleet會fail closed | BFF `/readyz` dependency `ok`，但正常deployment不產生完整loader/market projection | `FAIL`（Loop 8→9） |
-| Source controller | reconcile-only default、bounded canary API、frontier recovery（`f227360`）、min closes（`44895a2`）、TW session freshness（`394eb05`） | exact hosted Source mode/action evidence尚未產出；run `33272385942` 證實週末 snapshot 被舊 24h 規則阻斷，新規則未經成功 promotion 驗證 | `PARTIAL` |
+| Source controller | reconcile-only default、bounded canary API、frontier recovery（`f227360`）、min closes（`44895a2`）、TW session freshness（`394eb05`） | exact hosted Source mode/action evidence尚未產出；run `33280168821` 證實 bounded Taiwan official refresh 成功產出 receipt，但在 deploy gate 的 Agora projection 綁定驗證（`scripts/deploy_nonprod_vm.sh:1218`）失敗並觸發補償回滾 | `PARTIAL` |
 | Interaction worker | durable request/outbox、independent worker service | exact deployment step尚未驗 worker health/terminal run | `PARTIAL` |
 | Research orchestrator/gateway | real adapter gate存在 | Compose明確production adapters=false、default stub；BFF default adapter又自建假`real` artifacts | `FAIL` |
 | Agora performance | route/store/producer class存在 | producer沒有production caller | `FAIL` |
 | Management reads | domain ports/routes、canonical empty/degraded定義存在 | current exact authenticated reads尚未跑 | `PARTIAL` at source / `UNVERIFIED` hosted |
 | Management commands | adapter registry多數command有domain owner；generic CRUD無owner時strict拒絕 | current hosted write/readback全被skip | `PARTIAL` |
 | Management AI | `/bff/management/nl/ask`走OpenClaw；UI action handlers已接 | current deploy probe skipped；無current provider/terminal readback | `PARTIAL` at source / `UNVERIFIED` hosted |
-| FE | `e205643`基線typecheck與175 focused tests通過；`5ffee3d`增量通過52個Workshop tests；`bd03c86`包含PR #694 closeout manifest | 補償後served `c230fc7/dcb1423`一致但落後current；current integration gate在live identity resolution失敗後skip所有功能steps | `FAIL`（current delivery） |
+| FE | `e205643`基線typecheck與175 focused tests通過；`5ffee3d`增量通過52個Workshop tests；`bd03c86`包含PR #694 closeout manifest | 補償後served `c230fc7/dcb1423`一致但落後current；run `33280168821` 在 gate 階段中斷並補償恢復，未切換至 `bd03c86` | `FAIL`（current delivery） |
 
 ## 6. 第三遍結果：hosted desktop UI -> BFF -> durable truth -> UI
 
@@ -443,7 +457,7 @@ tests算failed或passed。這個分類很重要：產品ASGI route直接可執�
 
 ## 8. 修正優先序（功能可運作優先）
 
-1. 以 `394eb05`（含 Compose bare image ID 正規化、active-symbol frontier recovery、2-month history / 2-close min closes 與 Taiwan market-session freshness）執行 nonprod deployment，確認 VM 部署成功、paper-signal-producer 進入 healthy 且 source snapshot 順利通過驗收（OP-G19）。
+1. 排查並修正 `scripts/deploy_nonprod_vm.sh:1218` 在 bounded manual Source refresh 後 Agora projection 對新 receipt/run/source 的綁定檢查，並以最新 source candidate（含 Compose bare image ID 正規化、active-symbol frontier recovery、2-month history / 2-close min closes、Taiwan market-session freshness 及 Agora projection 修復）執行 nonprod deployment，確認 VM 部署成功、paper-signal-producer 進入 healthy、Agora projection 驗證通過並完成 atomic switch（OP-G19、OP-G03）。
 2. 修正lease/rollback/compensation單點與false-green，再atomic promotion一組current FE/BFF/manifest；目前舊pair雖已恢復，仍不是current驗收目標。
 3. 將Agora BFF假`real` adapter改為simulation/unavailable，再接一條admitted bounded、non-stub research lane與real candidate。
 4. 完成Registry→DeploymentPlan→RuntimeBinding的canonical executable projection，再跑paper lifecycle。
@@ -455,8 +469,7 @@ tests算failed或passed。這個分類很重要：產品ASGI route直接可執�
 10. 修正sync TestClient/dependency組合，將需要ASGI的tests改成async transport並加入硬timeout。
 11. 重跑三遍對照；未取得direct evidence者保留`UNVERIFIED`，不以task/PR/test數量補空白。
 
-目前可下的產品級結論是：**舊版BFF process、Lifecycle PostgreSQL projection與列出的核心依賴
-在補償後可達，舊FE/BFF pair也已恢復一致；image identity false-negative、frontier recovery、min closes 與 Taiwan session freshness 已在 current source 完成修復（197 tests passed），但尚未經由成功 promotion 部署至 live VM；paper-signal-producer 仍待 live container healthy 證明，Agora research與RuntimeBinding又有current source P0，所以不是所有功能正常，也不具備全產品簽收條件。**
+目前可下的產品級結論是：**舊版BFF process、Lifecycle PostgreSQL projection與列出的核心依賴在補償後可達，舊FE/BFF pair也已恢復一致（PostgreSQL checkpoint `7,637,654`）；image identity false-negative、frontier recovery、min closes 與 Taiwan session freshness 已在 current source 完成修復（197 tests passed），但在 run `33280168821` 中 Agora projection 綁定驗證受阻並觸發補償回滾；paper-signal-producer 仍待 live atomic switch 閉環，Agora research與RuntimeBinding又有current source P0，所以不是所有功能正常，也不具備全產品簽收條件。**
 
 ## 9. 三遍前後對照方法
 
@@ -489,8 +502,8 @@ tests算failed或passed。這個分類很重要：產品ASGI route直接可執�
 | 對照遍次 | 正向查核 | 反向查核 | 結果 |
 |---|---|---|---|
 | 第一遍：SA/SD→code | 找到Source commands/search/memory、Agora worker、loop projection、Management UI actions、`5ffee3d` Workshop tenant修正、`b3b26a7` deploy/source recovery、`f227360` frontier recovery、`9e9ab33` snapshot alias、`44895a2` min closes 及 `394eb05` TW session freshness | 搜尋production caller、stub、seed、overlay、private imports、dead compatibility；找到假`real` research、無caller performance producer、generic CRUD overlay、BFF main未拆完 | 舊GAP一部分關閉，19個current GAP保留 |
-| 第二遍：code→runtime | 逐次對照Compose、entrypoint、public version/readyz、Lifecycle checkpoint（`7,635,368`）與workflow target SHAs | 發現RuntimeBinding投影不完整、production research disabled；run `33272385942` 揭示週末 snapshot 阻斷；最新 `394eb05` 尚未重跑 promotion；補償後成功維持舊 pair `c230fc7/dcb1423` 一致性 | current runtime gate `FAIL`；rollback restoration `PASS` |
-| 第三遍：UI→durable truth→UI | 檢查current route mount、`e205643`的175 focused tests、`5ffee3d`的52-test增量、舊artifact與public auth-boundary | 逐項查原始workflow與artifact logs；發現authenticated/write/exact-pair steps skipped、hosted logs失敗卻summary passed；current FE gate又在live identity resolution失敗 | current pair未部署，不以舊pair補驗；全產品sign-off `FAIL` |
+| 第二遍：code→runtime | 逐次對照Compose、entrypoint、public version/readyz、Lifecycle checkpoint（`7,637,654`）與workflow target SHAs | 發現RuntimeBinding投影不完整、production research disabled；run `33280168821` 揭示 bounded refresh 後 Agora projection 綁定阻斷；補償後成功維持舊 pair `c230fc7/dcb1423` 一致性 | current runtime gate `FAIL`；rollback restoration `PASS` |
+| 第三遍：UI→durable truth→UI | 檢查current route mount、`e205643`的175 focused tests、`5ffee3d`的52-test增量、舊artifact與public auth-boundary | 逐項查原始workflow與artifact logs；發現authenticated/write/exact-pair steps skipped、hosted logs失敗卻summary passed；run `33280168821` 補償後仍運行舊 pair，current candidate 未切換 | current pair未部署，不以舊pair補驗；全產品sign-off `FAIL` |
 
 第三遍current journey「不跑」不是漏驗，而exact-current定義的必然結果：half-switch時任何UI
 成功/失敗都無法歸屬candidate；補償後只能歸屬舊`c230fc7/dcb1423`。正確處置是將P-14/P-15
@@ -500,8 +513,8 @@ tests算failed或passed。這個分類很重要：產品ASGI route直接可執�
 
 最終結論是：**不是所有功能都正常運作，也不是所有架構簡化都完成。** 已確認
 Source Management、Lifecycle PostgreSQL、Agora interaction worker、Workshop tenant submit、Management UI action、Source frontier recovery、snapshot alias、min-closes 歷史獲取、Taiwan market-session freshness 與多項去synthetic
-修正存在；但Agora fake-real research/performance wiring、canonical executable RuntimeBinding、
-current hosted delivery、paper producer live container healthy、Source/Management/Agora/十二循環durable journeys、Postmortem owner及大型/dead-code
+修正存在；但在 run `33280168821` 中，Agora projection 綁定驗證受阻並補償恢復舊版，Agora fake-real research/performance wiring、canonical executable RuntimeBinding、
+current hosted delivery、paper producer live promotion 閉環、Source/Management/Agora/十二循環durable journeys、Postmortem owner及大型/dead-code
 cleanup仍有直接落差。在atomic promotion、第三遍exact desktop journey與durable readback補齊前，
 本報告明確拒絕全產品簽收。
 
@@ -547,9 +560,9 @@ cleanup仍有直接落差。在atomic promotion、第三遍exact desktop journey
 
 ### 11.3 Runtime與validation evidence
 
-- Public FE `/deployment.json`、BFF `/bff/version`、`/livez`、`/readyz` 於 2026-08-29 各觀察時間點（包含 22:54:17Z 最新 probe）的直接回應。
-- GitHub workflow runs `33272385942`、`33271993547`、`33271922125`、`33268311841`、`33266252692`、`33262293025`、`33260583008`、`33256001457`、`33146133499`、`33144815565` 及 execute-plans `33264640000`、`33263289212` 的 raw jobs/logs；判定以原始 step 狀態為準，不採只列 count 的 closeout 摘要。
-- Pantheon PRs 關聯：PR #5409（Audit 盤點主 PR）、PR #5410（`b3b26a7` Deploy recovery & bounded source refresh）、PR #5411（`254d2e7` Source frontier scope recovery）、PR #5412（`f227360` Source frontier recovery）、PR #5413（`9e9ab33` Active symbol snapshot recovery & alias view）、PR #5415（`44895a2` Official snapshot min closes）、PR #5416（`394eb05` Taiwan market session freshness）、PR #5419（`e5b4d10` dev tooling cleanup）。
+- Public FE `/deployment.json`、BFF `/bff/version`、`/livez`、`/readyz` 於 2026-08-29 各觀察時間點（包含 23:41:28Z 最新 probe）的直接回應。
+- GitHub workflow runs `33280168821`、`33272385942`、`33271993547`、`33271922125`、`33268311841`、`33266252692`、`33262293025`、`33260583008`、`33256001457`、`33146133499`、`33144815565` 及 execute-plans `33264640000`、`33263289212` 的 raw jobs/logs；判定以原始 step 狀態為準，不採只列 count 的 closeout 摘要。
+- Pantheon PRs 關聯：PR #5409（Audit 盤點主 PR）、PR #5410（`b3b26a7` Deploy recovery & bounded source refresh）、PR #5411（`254d2e7` Source frontier scope recovery）、PR #5412（`f227360` Source frontier recovery）、PR #5413（`9e9ab33` Active symbol snapshot recovery & alias view）、PR #5415（`44895a2` Official snapshot min closes）、PR #5416（`394eb05` Taiwan market session freshness）、PR #5419（`e5b4d10` dev tooling cleanup）、PR #5420（`9ee1e93` delivery recovery）。
 - Pantheon focused validation：
   - route no-shadowing、normalized route uniqueness 與 development route boundary 共 23 passed；
   - Source reconcile-only contract 1 passed；
