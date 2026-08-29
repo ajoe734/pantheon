@@ -453,6 +453,10 @@ target branch before it updates `ai-status.json` or archives the task.
   head/branch/manifest, and a base rewind or divergence. If checks fail after
   approval, leave the task in `review_approved` while the approved head remains
   immutable and repair only through a reopen/new-head review cycle.
+- For owner finalization, an unchanged frozen approved head already has its
+  independent test evidence. Do not rerun those suites: verify the exact
+  approval, merged ancestry, and a clean task worktree, then issue `done`.
+  Rerun validation only when the head or its bound evidence changes.
 - Never use `--force`, `--mirror`, `--delete`, `--all`, or `--tags`
   pushes as routine closeout.
 
