@@ -884,7 +884,27 @@ class GitHubReviewBridgeTests(unittest.TestCase):
                 runner=FakeRunner(merge_state="BEHIND"),
             )
 
-    def test_review_approval_revalidation_rejects_advanced_base(self) -> None:
+    def test_review_revalidation_rejects_merge_conflict_after_base_advance(self) -> None:
+        frozen = bridge.validate_review_admission(
+            repository=REPOSITORY,
+            binding=binding(),
+            review_file="docs/evidence/AUDIT-001/evidence.json",
+            runner=FakeRunner(),
+        ).as_dict()
+
+        with self.assertRaisesRegex(bridge.GitHubReviewBridgeError, "merge conflicts"):
+            bridge.revalidate_review_admission(
+                repository=REPOSITORY,
+                delivery_binding=frozen,
+                runner=FakeRunner(
+                    merge_state="DIRTY",
+                    base_sha="e" * 40,
+                    compare_status="diverged",
+                    behind_by=1,
+                ),
+            )
+
+    def test_review_approval_revalidation_rejects_advanced_base_when_opted_out(self) -> None:
         frozen = bridge.validate_review_admission(
             repository=REPOSITORY,
             binding=binding(),
@@ -898,6 +918,7 @@ class GitHubReviewBridgeTests(unittest.TestCase):
             bridge.revalidate_review_admission(
                 repository=REPOSITORY,
                 delivery_binding=frozen,
+                allow_base_advance=False,
                 runner=FakeRunner(
                     base_sha="e" * 40,
                     compare_status="diverged",
@@ -905,7 +926,7 @@ class GitHubReviewBridgeTests(unittest.TestCase):
                 ),
             )
 
-    def test_operator_acceptance_allows_a_linear_base_advance(self) -> None:
+    def test_review_approval_revalidation_allows_a_linear_base_advance(self) -> None:
         frozen = bridge.validate_review_admission(
             repository=REPOSITORY,
             binding=binding(),
@@ -940,7 +961,6 @@ class GitHubReviewBridgeTests(unittest.TestCase):
             bridge.revalidate_review_admission(
                 repository=REPOSITORY,
                 delivery_binding=frozen,
-                allow_base_advance=True,
                 runner=FakeRunner(
                     base_sha="e" * 40,
                     compare_status="diverged",
