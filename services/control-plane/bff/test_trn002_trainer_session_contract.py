@@ -26,7 +26,7 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, os.path.dirname(__file__))
 
 import main as bff_main
-from ports import create_in_memory_read_surface_ports
+from test_training_session_service_client import create_training_read_surface_double
 
 
 OPERATOR_AUTH = "Bearer test-operator:operator"
@@ -41,7 +41,7 @@ _COMPLETED_SESSION = "trn-20260418-003"  # status=completed
 def _client() -> Iterator[TestClient]:
     with tempfile.TemporaryDirectory() as td:
         original_store = bff_main.read_store
-        bff_main.read_store = create_in_memory_read_surface_ports()
+        bff_main.read_store = create_training_read_surface_double()
         try:
             yield TestClient(bff_main.app)
         finally:

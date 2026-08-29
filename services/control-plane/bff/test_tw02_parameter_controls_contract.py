@@ -12,7 +12,7 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, os.path.dirname(__file__))
 
 import main as bff_main
-from ports import create_in_memory_read_surface_ports
+from test_training_session_service_client import create_training_read_surface_double
 
 
 OPERATOR_AUTH = "Bearer test-operator:operator"
@@ -50,7 +50,7 @@ def _seeded_client(*, service_backed_control_store: bool = False):
             os.environ.pop("PANTHEON_BFF_TRAINER_CONTROL_STORE", None)
 
         original_store = bff_main.read_store
-        bff_main.read_store = create_in_memory_read_surface_ports()
+        bff_main.read_store = create_training_read_surface_double()
         client = TestClient(bff_main.app)
         try:
             yield client, control_store_path

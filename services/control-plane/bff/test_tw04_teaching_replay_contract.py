@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import os
 import sys
 import tempfile
@@ -11,8 +10,8 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, os.path.dirname(__file__))
 
 import main as bff_main
-from ports import create_in_memory_read_surface_ports
 from services.source_ingestion.strategy_seed_store import StrategySpecSeedStore
+from test_training_session_service_client import create_training_read_surface_double
 
 
 OPERATOR_AUTH = "Bearer test-operator:operator"
@@ -28,7 +27,7 @@ def _seeded_client():
         }
         os.environ["STRATEGY_SEED_STORE_PATH"] = os.path.join(td, "strategy_seeds.jsonl")
         os.environ["INTERACTION_SOURCE_STORE_PATH"] = os.path.join(td, "interaction_records.jsonl")
-        bff_main.read_store = create_in_memory_read_surface_ports()
+        bff_main.read_store = create_training_read_surface_double()
         client = TestClient(bff_main.app)
         try:
             yield client
@@ -342,7 +341,10 @@ def test_tw04_commit_succeeds_and_appends_event():
             headers={"Authorization": OPERATOR_AUTH},
         )
         assert inbox.status_code == 200, inbox.text
-        assert any(item["seed_id"] == seed_extraction["seed_id"] for item in inbox.json()["data"])
+        assert any(
+            item["seed_id"] == seed_extraction["seed_id"]
+            for item in inbox.json()["data"]["items"]
+        )
         stored = StrategySpecSeedStore().get(seed_extraction["seed_id"])
         assert stored is not None
         assert stored.lineage["trainer_seed_extraction_ref"]["event_id"] == payload["event"]["event_id"]
@@ -514,34 +516,29 @@ def test_tw04_detail_surface_stale_with_local_snapshot():
 
 
 def test_tw04_existing_snapshot_backfills_drawdown_evidence_route():
-    with tempfile.TemporaryDirectory() as td:
-        store_path = os.path.join(td, "read_surfaces.json")
-        payload = _default_read_data()
-        payload["trainer_replays"]["trn-20260418-003"]["events"][1]["evidence_ref"]["url_pattern"] = (
-            "/telemetry/drawdown/tel-drawdown-2026-04-18"
-        )
-        with open(store_path, "w", encoding="utf-8") as handle:
-            json.dump(payload, handle, indent=2, ensure_ascii=True)
+    store = create_training_read_surface_double()
+    replay = store.get_trainer_replay("trn-20260418-003")
+    assert replay is not None
+    drawdown_event = next(e for e in replay["events"] if e["event_id"] == "tevt-20260418-002")
+    drawdown_event["evidence_ref"]["url_pattern"] = (
+        "/telemetry/drawdown/tel-drawdown-2026-04-18"
+    )
+    store.add_replay(replay)
 
-        store = create_in_memory_read_surface_ports()
-        replay = store.get_trainer_replay("trn-20260418-003")
-        assert replay is not None
-        drawdown_event = next(e for e in replay["events"] if e["event_id"] == "tevt-20260418-002")
-        evidence_ref = drawdown_event["evidence_ref"]
-        assert evidence_ref is not None
-        assert evidence_ref["url_pattern"] == "/operator/paper-live-drift/runtime-042"
-
-        with open(store_path, "r", encoding="utf-8") as handle:
-            persisted = json.load(handle)
-        persisted_ref = persisted["trainer_replays"]["trn-20260418-003"]["events"][1]["evidence_ref"]
-        assert persisted_ref["url_pattern"] == "/operator/paper-live-drift/runtime-042"
+    normalized = store.get_trainer_replay("trn-20260418-003")
+    normalized_event = next(
+        e for e in normalized["events"] if e["event_id"] == "tevt-20260418-002"
+    )
+    assert normalized_event["evidence_ref"]["url_pattern"] == (
+        "/operator/paper-live-drift/runtime-042"
+    )
 
 
 @contextmanager
 def _seeded_client_with_degraded_session():
     with tempfile.TemporaryDirectory() as td:
         original_store = bff_main.read_store
-        store = create_in_memory_read_surface_ports()
+        store = create_training_read_surface_double()
         degraded_session = {
             "session_id": "trn-degraded-001",
             "persona_id": "persona-alpha",
@@ -584,8 +581,7 @@ def _seeded_client_with_degraded_session():
                 }
             ],
         }
-        store._data.setdefault("trainer_replays", {})["trn-degraded-001"] = degraded_session
-        store._save()
+        store.add_replay(degraded_session)
         bff_main.read_store = store
         client = TestClient(bff_main.app)
         try:

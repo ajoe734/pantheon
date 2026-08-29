@@ -27,12 +27,47 @@ from models import (
     InterventionStatus,
     ObjectType,
 )
-from ports import create_in_memory_read_surface_ports
+from ports import ReadSurfacePorts, create_in_memory_read_surface_ports
 
 
 OPERATOR_TOKEN = "Bearer op-v5:operator"
 APPROVER_TOKEN = "Bearer op-v5-approver:approver"
 ADMIN_MFA_TOKEN = "Bearer op-v5-admin:admin:mfa"
+
+
+class _V5ReadSurfaceDouble(ReadSurfacePorts):
+    """Typed intervention and approval boundary double for V5 route tests."""
+
+    def __init__(self) -> None:
+        self.approval_decisions: list[dict] = []
+        base = create_in_memory_read_surface_ports(
+            ooda_management_kwargs={"approval_decisions": self.approval_decisions}
+        )
+        super().__init__(
+            operations_consultation=base.operations_consultation,
+            persona_capital_runtime=base.persona_capital_runtime,
+            ooda_management=base.ooda_management,
+            research_knowledge_source=base.research_knowledge_source,
+            lifecycle_telemetry_governance=base.lifecycle_telemetry_governance,
+            persona_training=base.persona_training,
+        )
+
+    def seed_approval_decision(self, decision: dict) -> None:
+        self.approval_decisions.append(dict(decision))
+
+    def list_v5_interventions(self, *, status=None, kind=None):
+        store_path = os.getenv("PANTHEON_BFF_V5_INTERVENTION_STORE")
+        if not store_path or not os.path.exists(store_path):
+            return []
+        with open(store_path, "r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+        records = list(payload.values()) if isinstance(payload, dict) else list(payload or [])
+        return [
+            record
+            for record in records
+            if (not status or record.get("status") == status)
+            and (not kind or record.get("kind") == kind)
+        ]
 
 
 async def _noop_process_command(_command_id: str) -> None:
@@ -47,7 +82,7 @@ def _isolated_client() -> Iterator[TestClient]:
         original_interventions = list(bff_main._V5_INTERVENTIONS_STORE)
         original_read_store = bff_main.read_store
         bff_main.command_store = CommandStore(os.path.join(td, "commands.jsonl"))
-        bff_main.read_store = create_in_memory_read_surface_ports()
+        bff_main.read_store = _V5ReadSurfaceDouble()
         bff_main._process_command_stub = _noop_process_command
         bff_main._V5_INTERVENTIONS_STORE.clear()
         try:
@@ -61,7 +96,7 @@ def _isolated_client() -> Iterator[TestClient]:
 
 
 def _seed_approval_decision(approval_id: str, target_id: str) -> None:
-    bff_main.read_store.ooda_management.review_queue._approval_decisions[approval_id] = {
+    bff_main.read_store.seed_approval_decision({
         "id": approval_id,
         "decision_id": approval_id,
         "state": "approved",
@@ -73,7 +108,7 @@ def _seed_approval_decision(approval_id: str, target_id: str) -> None:
         "target_id": target_id,
         "submitted_at": "2026-06-01T00:00:00Z",
         "decided_at": "2026-06-01T00:01:00Z",
-    }
+    })
 
 
 def _seed_two_man_signature(
@@ -232,7 +267,7 @@ def test_get_v5_interventions_reads_service_backed_store() -> None:
         original_env = os.environ.get("PANTHEON_BFF_V5_INTERVENTION_STORE")
         original_read_store = bff_main.read_store
         os.environ["PANTHEON_BFF_V5_INTERVENTION_STORE"] = intervention_path
-        bff_main.read_store = create_in_memory_read_surface_ports()
+        bff_main.read_store = _V5ReadSurfaceDouble()
         try:
             with _isolated_client() as client:
                 response = client.get(
