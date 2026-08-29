@@ -14,10 +14,148 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 import main as bff_main
 from agora.servant import router as servant_router
 from openclaw_ops_client import OpenClawOpsClientError
-from read_store import ReadSurfaceStore
-
+from ports import create_in_memory_read_surface_ports
 
 AUTH = {"Authorization": "Bearer agora-test-user:operator"}
+
+
+def _create_test_agora_store():
+    personas_map: dict[str, dict] = {}
+    snapshots_map: dict[str, dict] = {}
+
+    store = create_in_memory_read_surface_ports()
+
+    def create_persona(
+        *,
+        persona_id: str,
+        name: str,
+        actor_id: str,
+        created_at: str | None = None,
+        archetype: str = "generalist",
+        lifecycle_state: str = "draft",
+        risk_level: str = "low",
+        mandate: str | None = None,
+        strategy_family: str | None = None,
+        traits: dict | None = None,
+        metadata: dict | None = None,
+        required_data_sources: list | None = None,
+    ) -> dict:
+        timestamp = created_at or "2026-08-29T00:00:00Z"
+        clean_metadata = dict(metadata or {})
+        clean_metadata.update({
+            "owner": actor_id,
+            "archetype": archetype,
+            "risk_level": risk_level,
+        })
+        if traits:
+            clean_metadata["traits"] = dict(traits)
+        record = {
+            "id": persona_id,
+            "persona_id": persona_id,
+            "name": name,
+            "mandate": mandate or archetype,
+            "strategy_family": strategy_family or archetype,
+            "lifecycle_state": lifecycle_state,
+            "status": lifecycle_state,
+            "created_at": timestamp,
+            "updated_at": timestamp,
+            "created_by": actor_id,
+            "tenant_id": "pantheon-dev",
+            "tenantId": "pantheon-dev",
+            "required_data_sources": list(required_data_sources or []),
+            "metadata": clean_metadata,
+            "canonicalWriteAuthority": "persona_registry_service",
+            "persistenceMode": "bff_local_dev_store",
+        }
+        personas_map[persona_id] = record
+        return record
+
+    def update_persona(
+        persona_id: str,
+        *,
+        name: str | None = None,
+        actor_id: str | None = None,
+        updated_at: str | None = None,
+        archetype: str | None = None,
+        lifecycle_state: str | None = None,
+        risk_level: str | None = None,
+        metadata: dict | None = None,
+    ) -> dict | None:
+        if not persona_id or persona_id not in personas_map:
+            return None
+        record = dict(personas_map[persona_id])
+        timestamp = updated_at or "2026-08-29T00:00:00Z"
+        if name is not None:
+            record["name"] = name
+        if lifecycle_state is not None:
+            record["lifecycle_state"] = lifecycle_state
+            record["status"] = lifecycle_state
+        if archetype is not None:
+            record["mandate"] = archetype
+            record["strategy_family"] = archetype
+        record["updated_at"] = timestamp
+        clean_metadata = dict(record.get("metadata") or {})
+        if metadata:
+            clean_metadata.update(metadata)
+        if actor_id is not None:
+            clean_metadata["owner"] = actor_id
+        if archetype is not None:
+            clean_metadata["archetype"] = archetype
+        if risk_level is not None:
+            clean_metadata["risk_level"] = risk_level
+        record["metadata"] = clean_metadata
+        personas_map[persona_id] = record
+        return record
+
+    def get_persona(pid: str) -> dict | None:
+        return personas_map.get(pid)
+
+    def list_personas(**kw) -> list[dict]:
+        res = list(personas_map.values())
+        if kw.get("lifecycle_state"):
+            res = [p for p in res if p.get("lifecycle_state") == kw["lifecycle_state"]]
+        return res
+
+    def upsert_persona_capability_snapshot(
+        snapshot_id: str,
+        persona_id: str,
+        capabilities: list[str],
+        generated_at: str,
+        source_refs: list[str] | None = None,
+        metadata: dict | None = None,
+        **kw,
+    ) -> dict:
+        snap = {
+            "snapshot_id": snapshot_id,
+            "persona_id": persona_id,
+            "capabilities": list(capabilities),
+            "allowed_capabilities": list(capabilities),
+            "generated_at": generated_at,
+            "source_refs": source_refs or [],
+            "metadata": dict(metadata or {}),
+        }
+        snapshots_map[snapshot_id] = snap
+        return snap
+
+    def get_capability_snapshot(snap_id: str) -> dict | None:
+        return snapshots_map.get(snap_id)
+
+    def get_capability_snapshot_for_persona(pid: str) -> dict | None:
+        for snap in snapshots_map.values():
+            if snap.get("persona_id") == pid:
+                return snap
+        return None
+
+    store.create_persona = create_persona
+    store.update_persona = update_persona
+    store.get_persona = get_persona
+    store.list_personas = list_personas
+    store.upsert_persona_capability_snapshot = upsert_persona_capability_snapshot
+    store.get_capability_snapshot = get_capability_snapshot
+    store.get_capability_snapshot_for_persona = get_capability_snapshot_for_persona
+    store._local_dataset = lambda name: snapshots_map if name == "capability_snapshots" else {}
+    store.dataset_source = lambda d: "typed_store"
+    return store
 
 
 class FakeOpenClawClient:
@@ -116,7 +254,7 @@ class FakeOpenClawClient:
 def _install_client(monkeypatch: Any, tmp_path: Path) -> tuple[TestClient, FakeOpenClawClient]:
     monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "true")
     monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "permissive")
-    store = ReadSurfaceStore(str(tmp_path / "read_surfaces.json"), allow_local_snapshot_fallback=True)
+    store = _create_test_agora_store()
     monkeypatch.setattr(bff_main, "read_store", store)
     monkeypatch.setattr(
         bff_main,
