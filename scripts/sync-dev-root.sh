@@ -362,6 +362,7 @@ log "replacing supervisor from explicit config identity=${active_root:-none} can
 if ! "$candidate_root/scripts/promote-supervisor-runtime.sh" \
   --promote --repo "$candidate_root" --status-root "$COORDINATION_ROOT" \
   --live-config "$LIVE_CONFIG" \
+  --authority-env-file "$AUTHORITY_ENV_FILE" \
   --repository-source-root "pantheon=$DEV_ROOT" \
   --repository-source-root "execute_plans=$EXECUTE_PLANS_SOURCE_ROOT" \
   --repository-integration-root "pantheon=$pantheon_integration_root" \

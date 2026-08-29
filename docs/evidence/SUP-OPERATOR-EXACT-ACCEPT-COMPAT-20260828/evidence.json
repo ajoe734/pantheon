@@ -1,0 +1,19 @@
+{
+  "task_id": "SUP-OPERATOR-EXACT-ACCEPT-COMPAT-20260828",
+  "status": "review",
+  "owner": "Antigravity",
+  "reviewer": "Codex2",
+  "summary": "Fix compatibility issue where legacy PR handoffs lacking an evidence manifest cause explicit Human/Ops exact-head operator_accept and subsequent owner done to fail or demand unnecessary reopen/re-review.",
+  "scope": [
+    "scripts/ai_status.py",
+    "scripts/git/github_review_bridge.py",
+    "scripts/test_ai_status.py"
+  ],
+  "verification": [
+    "python3 scripts/test_ai_status.py (366 tests passed)",
+    "python3 scripts/git/test_github_review_bridge.py (48 tests passed)",
+    "python3 scripts/git/test_canonical_review_gate_workflow.py (31 tests passed)",
+    "python3 scripts/git/test_task_review_merge_gate.py (106 tests passed)",
+    "python3 scripts/git/test_auto_integrator.py (89 tests passed)"
+  ]
+}
