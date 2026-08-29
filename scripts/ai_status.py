@@ -2998,14 +2998,19 @@ def approved_closeout_metadata_ref(
     ancestors would weaken the trailer contract.
 
     This exception is deliberately narrow: it applies only to an exact
-    reviewed merge tip with exactly two parents and with the frozen base as
-    its second parent. The merge subject is intentionally not part of the
-    proof: workers may describe the same no-content base refresh as
-    ``merge dev``, ``merge origin/dev``, or ``merge dev to refresh stale
-    base``. In every case the frozen-base parent relation is the immutable
-    structural evidence, while the selected first parent still undergoes the
-    ordinary task-id and trailer validation below. All other reviewed heads
-    remain their own metadata source and retain the existing fail-closed
+    reviewed merge tip with exactly two parents and with a target-base
+    ancestor as its second parent. The merge subject is intentionally not
+    part of the proof: workers may describe the same no-content base refresh
+    as ``merge dev``, ``merge origin/dev``, or ``merge dev to refresh stale
+    base``. A task may have refreshed that base more than once while waiting
+    for review, so consecutive merges with the same structural relationship
+    are unwrapped through their first parent.
+
+    The traversal never searches arbitrary history: each skipped merge must
+    have exactly two commit-shaped parents and its second parent must equal
+    the frozen base or be its ancestor. The selected first non-refresh commit
+    still undergoes the ordinary task-id and trailer validation below. Any
+    other shape stops the traversal and retains the existing fail-closed
     validation.
     """
 
@@ -3017,14 +3022,27 @@ def approved_closeout_metadata_ref(
     frozen_base = str(binding.get("base_sha") or "").strip().lower()
     if not APPROVAL_HEAD_SHA_RE.fullmatch(frozen_base):
         return approved_ref
-    parents = run_git_command(
-        ["show", "-s", "--format=%P", approved_ref],
-        cwd=repository_root,
-        failure_message="Cannot finalize task: canonical approved head parents are unavailable.",
-    ).split()
-    if len(parents) != 2 or parents[1].strip().lower() != frozen_base:
-        return approved_ref
-    return parents[0]
+    metadata_ref = approved_ref
+    while True:
+        parents = run_git_command(
+            ["show", "-s", "--format=%P", metadata_ref],
+            cwd=repository_root,
+            failure_message="Cannot finalize task: canonical approved head parents are unavailable.",
+        ).split()
+        if len(parents) != 2:
+            return metadata_ref
+        authored_parent, merged_base = (parent.strip().lower() for parent in parents)
+        if not (
+            APPROVAL_HEAD_SHA_RE.fullmatch(authored_parent)
+            and APPROVAL_HEAD_SHA_RE.fullmatch(merged_base)
+        ):
+            return metadata_ref
+        if merged_base != frozen_base and not git_command_succeeds(
+            ["merge-base", "--is-ancestor", merged_base, frozen_base],
+            cwd=repository_root,
+        ):
+            return metadata_ref
+        metadata_ref = authored_parent
 
 
 def parse_commit_metadata_lines(body: str) -> dict[str, str]:

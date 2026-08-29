@@ -8954,6 +8954,7 @@ class DeliveryMetadataValidationTests(unittest.TestCase):
                 ("rev-parse", approved_head): approved_head,
                 ("show", "-s", "--format=%s", approved_head): "REG-002: merge dev",
                 ("show", "-s", "--format=%P", approved_head): f"{authored_parent} {frozen_base}",
+                ("show", "-s", "--format=%P", authored_parent): "",
                 ("show", "-s", "--format=%s", authored_parent): "REG-002: deliver reviewed fix",
                 ("show", "-s", "--format=%b", authored_parent): (
                     "LLM-Agent: Codex\nTask-ID: REG-002\nReviewer: Claude\n"
@@ -9008,7 +9009,10 @@ class DeliveryMetadataValidationTests(unittest.TestCase):
                 return f"{'b' * 40} {'d' * 40}"
             raise AssertionError(f"unexpected git command: {args}")
 
-        with mock.patch.object(ai_status, "run_git_command", side_effect=fake_run_git_command):
+        with (
+            mock.patch.object(ai_status, "run_git_command", side_effect=fake_run_git_command),
+            mock.patch.object(ai_status, "git_command_succeeds", return_value=False),
+        ):
             metadata_ref = ai_status.approved_closeout_metadata_ref(
                 task,
                 repository_root=Path("/repo"),
@@ -9032,6 +9036,8 @@ class DeliveryMetadataValidationTests(unittest.TestCase):
         def fake_run_git_command(args: list[str], **kwargs: object) -> str:
             if args == ["show", "-s", "--format=%P", approved_head]:
                 return f"{authored_parent} {frozen_base}"
+            if args == ["show", "-s", "--format=%P", authored_parent]:
+                return ""
             raise AssertionError(f"unexpected git command: {args}")
 
         with mock.patch.object(ai_status, "run_git_command", side_effect=fake_run_git_command):
@@ -9042,6 +9048,84 @@ class DeliveryMetadataValidationTests(unittest.TestCase):
             )
 
         self.assertEqual(metadata_ref, authored_parent)
+
+    def test_approved_closeout_metadata_unwraps_consecutive_base_refresh_merges(self) -> None:
+        approved_head = "a" * 40
+        first_refresh = "b" * 40
+        frozen_base = "c" * 40
+        authored_parent = "d" * 40
+        older_base = "e" * 40
+        task = {
+            "id": "REG-002",
+            ai_status.DELIVERY_BINDING_KEY: {
+                "base": "dev",
+                "base_sha": frozen_base,
+            },
+        }
+
+        def fake_run_git_command(args: list[str], **kwargs: object) -> str:
+            responses = {
+                ("show", "-s", "--format=%P", approved_head): f"{first_refresh} {frozen_base}",
+                ("show", "-s", "--format=%P", first_refresh): f"{authored_parent} {older_base}",
+                ("show", "-s", "--format=%P", authored_parent): "",
+            }
+            try:
+                return responses[tuple(args)]
+            except KeyError as exc:
+                raise AssertionError(f"unexpected git command: {args}") from exc
+
+        with (
+            mock.patch.object(ai_status, "run_git_command", side_effect=fake_run_git_command),
+            mock.patch.object(
+                ai_status,
+                "git_command_succeeds",
+                side_effect=lambda args, **kwargs: args
+                == ["merge-base", "--is-ancestor", older_base, frozen_base],
+            ),
+        ):
+            metadata_ref = ai_status.approved_closeout_metadata_ref(
+                task,
+                repository_root=Path("/repo"),
+                approved_ref=approved_head,
+            )
+
+        self.assertEqual(metadata_ref, authored_parent)
+
+    def test_approved_closeout_metadata_does_not_cross_non_base_second_parent(self) -> None:
+        approved_head = "a" * 40
+        first_refresh = "b" * 40
+        frozen_base = "c" * 40
+        authored_parent = "d" * 40
+        unrelated_parent = "e" * 40
+        task = {
+            "id": "REG-002",
+            ai_status.DELIVERY_BINDING_KEY: {
+                "base": "dev",
+                "base_sha": frozen_base,
+            },
+        }
+
+        def fake_run_git_command(args: list[str], **kwargs: object) -> str:
+            responses = {
+                ("show", "-s", "--format=%P", approved_head): f"{first_refresh} {frozen_base}",
+                ("show", "-s", "--format=%P", first_refresh): f"{authored_parent} {unrelated_parent}",
+            }
+            try:
+                return responses[tuple(args)]
+            except KeyError as exc:
+                raise AssertionError(f"unexpected git command: {args}") from exc
+
+        with (
+            mock.patch.object(ai_status, "run_git_command", side_effect=fake_run_git_command),
+            mock.patch.object(ai_status, "git_command_succeeds", return_value=False),
+        ):
+            metadata_ref = ai_status.approved_closeout_metadata_ref(
+                task,
+                repository_root=Path("/repo"),
+                approved_ref=approved_head,
+            )
+
+        self.assertEqual(metadata_ref, first_refresh)
 
     def test_collect_done_does_not_trust_unverified_approved_head_binding(self) -> None:
         approved_head = "a" * 40
