@@ -1,0 +1,60 @@
+{
+  "task_id": "ACG-WRITE-OWNER-AGORA-20260829",
+  "program_id": "acg-write-owner-agora-20260829",
+  "status": "ready_for_review",
+  "owner": "Antigravity",
+  "reviewer": "Codex2",
+  "timestamp": "2026-08-29T04:10:00Z",
+  "scope": {
+    "repository": "pantheon",
+    "deliverables": [
+      "docs/04/read_surface_ownership_partition_20260828/operations_agora.md",
+      "services/control-plane/bff/agora/trading_room/test_postgres_store.py",
+      "tests/agora_write_owner/__init__.py",
+      "tests/agora_write_owner/evidence.json"
+    ]
+  },
+  "acceptance_criteria_verification": {
+    "criterion_1_independent_persistent_owner": {
+      "verified": true,
+      "details": "All 19 direct read_store write mutations map to concrete existing durable domain owners under services/control-plane/bff/agora/{candidate_decisions,governance,strategy_workshop,trading_room}/store.py, services/consultation/store.py, and focused domain ports. No duplicate standalone services/agora/ or services/signal-store/ microservices created."
+    },
+    "criterion_2_no_read_store_import": {
+      "verified": true,
+      "details": "AST-verified zero imports or references to read_store or ReadSurfaceStore across all store.py modules under services/control-plane/bff/agora/."
+    },
+    "criterion_3_write_then_fresh_read_proof": {
+      "verified": true,
+      "details": "Fresh-reader invariants and restart persistence verified across all TradingRoomStore entities (decision events, intents, handoffs, workspace proposals, workspaces, widget proposals, workspace versions, trader decisions, idempotency keys), CandidateDecisionStore, ProposalStore, and StrategyWorkshopStore."
+    },
+    "criterion_4_no_main_py_change": {
+      "verified": true,
+      "details": "services/control-plane/bff/main.py and services/control-plane/bff/read_store.py remain completely untouched with zero net diff against dev."
+    },
+    "criterion_5_source_ingestion_reconcile_only": {
+      "verified": true,
+      "details": "AST-verified that services/source_ingestion/ contains zero Agora store write mutations and operates strictly as a reconcile/read-only extraction bridge."
+    }
+  },
+  "test_suites_executed": [
+    {
+      "suite": "services/control-plane/bff/agora/trading_room/test_postgres_store.py",
+      "passed": 5,
+      "skipped": 2,
+      "failed": 0
+    },
+    {
+      "suite": "services/control-plane/bff/agora",
+      "passed": 230,
+      "skipped": 17,
+      "failed": 0
+    }
+  ],
+  "conclusions": [
+    "Reverted rejected anchor commit c021890f8 with clean git revert.",
+    "Proved zero creation of standalone services/agora or signal-store persistence.",
+    "Mapped all 19 direct read_store mutations to existing concrete owners in docs/04/read_surface_ownership_partition_20260828/operations_agora.md.",
+    "Added fresh-reader persistence, AST import isolation, and reconcile-only verification in services/control-plane/bff/agora/trading_room/test_postgres_store.py.",
+    "100% test pass rate across all Agora test suites."
+  ]
+}
