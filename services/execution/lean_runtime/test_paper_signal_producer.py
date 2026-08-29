@@ -597,9 +597,49 @@ class TestSharedSnapshotAdmissionDecisions(unittest.TestCase):
             "closes": [950.0, 955.0],
         }
 
+    @staticmethod
+    def _tw_calendar_evidence(
+        *,
+        holidays=None,
+        coverage_start="2026-01-01",
+        coverage_end="2026-12-31",
+        source_url="https://www.twse.com.tw/en/trading/calendar.html",
+        authority="TWSE/TPEx announced holiday schedule",
+        version="2026.1",
+        checksum="e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        timezone="Asia/Taipei",
+        market="TW",
+        venue="TWSE",
+        fetched_at="2026-08-28T00:00:00Z",
+        extra=None,
+    ):
+        ev = {
+            "market": market,
+            "venue": venue,
+            "timezone": timezone,
+            "authority": authority,
+            "source_url": source_url,
+            "fetched_at": fetched_at,
+            "version": version,
+            "checksum": checksum,
+            "coverage_start": coverage_start,
+            "coverage_end": coverage_end,
+            "holidays": holidays or {
+                "2026-02-16": {"name": "Lunar New Year (eve)"},
+                "2026-02-17": {"name": "Lunar New Year"},
+                "2026-02-18": {"name": "Lunar New Year"},
+                "2026-02-19": {"name": "Lunar New Year"},
+                "2026-02-20": {"name": "Lunar New Year (makeup)"},
+            },
+        }
+        if extra:
+            ev.update(extra)
+        return ev
+
     def test_tw_friday_close_admitted_on_saturday(self) -> None:
         from services.execution.market_snapshot_admission import admit_market_snapshot
 
+        # Friday close evaluated on Saturday: deterministic weekend requires no calendar feed.
         snapshot = self._tw_snapshot("2026-08-28T05:30:00Z", "2026-08-29T11:00:00Z")
         dec = admit_market_snapshot(snapshot, max_age_seconds=86400, now_iso="2026-08-29T12:00:00Z")
         self.assertTrue(dec.admitted)
@@ -608,13 +648,71 @@ class TestSharedSnapshotAdmissionDecisions(unittest.TestCase):
     def test_tw_holiday_span_admitted_with_calendar_evidence(self) -> None:
         from services.execution.market_snapshot_admission import admit_market_snapshot
 
-        # Friday 2026-02-13 close, evaluated 2026-02-23 after the governed
-        # Lunar New Year holiday table (2026-02-16..20) plus the following
-        # weekend (2026-02-21/22) fully explain the gap to Monday 2026-02-23.
+        # Friday 2026-02-13 close, evaluated 2026-02-23 after the official
+        # Lunar New Year holiday table (2026-02-16..20) plus weekends
+        # fully explain the gap to Monday 2026-02-23 before market close.
         snapshot = self._tw_snapshot("2026-02-13T05:30:00Z", "2026-02-23T02:00:00Z")
+        snapshot["calendar_evidence"] = self._tw_calendar_evidence()
         dec = admit_market_snapshot(snapshot, max_age_seconds=86400, now_iso="2026-02-23T03:00:00Z")
         self.assertTrue(dec.admitted)
         self.assertIsNone(dec.reason_code)
+
+    def test_tw_calendar_evidence_missing_weekday_rejected(self) -> None:
+        from services.execution.market_snapshot_admission import admit_market_snapshot
+
+        # Evidence covers 2026-02-16..18 but is missing 2026-02-19 and 2026-02-20.
+        snapshot = self._tw_snapshot("2026-02-13T05:30:00Z", "2026-02-23T02:00:00Z")
+        snapshot["calendar_evidence"] = self._tw_calendar_evidence(
+            holidays={
+                "2026-02-16": {"name": "LNY 1"},
+                "2026-02-17": {"name": "LNY 2"},
+                "2026-02-18": {"name": "LNY 3"},
+            },
+            coverage_start=None,
+            coverage_end=None,
+        )
+        dec = admit_market_snapshot(snapshot, max_age_seconds=86400, now_iso="2026-02-23T03:00:00Z")
+        self.assertFalse(dec.admitted)
+        self.assertEqual(dec.reason_code, "market_input_calendar_unverifiable")
+        self.assertIn("missing coverage for weekday", dec.detail)
+
+    def test_tw_calendar_evidence_incomplete_range_rejected(self) -> None:
+        from services.execution.market_snapshot_admission import admit_market_snapshot
+
+        # Evidence range starts on 2026-02-17, missing 2026-02-16.
+        snapshot = self._tw_snapshot("2026-02-13T05:30:00Z", "2026-02-23T02:00:00Z")
+        snapshot["calendar_evidence"] = self._tw_calendar_evidence(
+            coverage_start="2026-02-17",
+            coverage_end="2026-02-28",
+        )
+        dec = admit_market_snapshot(snapshot, max_age_seconds=86400, now_iso="2026-02-23T03:00:00Z")
+        self.assertFalse(dec.admitted)
+        self.assertEqual(dec.reason_code, "market_input_calendar_unverifiable")
+        self.assertIn("before coverage_start", dec.detail)
+
+    def test_tw_calendar_evidence_bad_checksum_rejected(self) -> None:
+        from services.execution.market_snapshot_admission import admit_market_snapshot
+
+        snapshot = self._tw_snapshot("2026-02-13T05:30:00Z", "2026-02-23T02:00:00Z")
+        snapshot["calendar_evidence"] = self._tw_calendar_evidence(
+            checksum="short",
+        )
+        dec = admit_market_snapshot(snapshot, max_age_seconds=86400, now_iso="2026-02-23T03:00:00Z")
+        self.assertFalse(dec.admitted)
+        self.assertEqual(dec.reason_code, "market_input_calendar_unverifiable")
+        self.assertIn("checksum", dec.detail)
+
+    def test_tw_calendar_evidence_unofficial_url_rejected(self) -> None:
+        from services.execution.market_snapshot_admission import admit_market_snapshot
+
+        snapshot = self._tw_snapshot("2026-02-13T05:30:00Z", "2026-02-23T02:00:00Z")
+        snapshot["calendar_evidence"] = self._tw_calendar_evidence(
+            source_url="https://example.com/unverified-calendar.json",
+        )
+        dec = admit_market_snapshot(snapshot, max_age_seconds=86400, now_iso="2026-02-23T03:00:00Z")
+        self.assertFalse(dec.admitted)
+        self.assertEqual(dec.reason_code, "market_input_calendar_unverifiable")
+        self.assertIn("not an official TWSE/TPEx domain", dec.detail)
 
     def test_tw_weekday_close_stale_after_monday_session(self) -> None:
         from services.execution.market_snapshot_admission import admit_market_snapshot
@@ -652,7 +750,7 @@ class TestSharedSnapshotAdmissionDecisions(unittest.TestCase):
         self.assertEqual(dec.reason_code, "market_input_non_official_lineage")
 
     def test_tw_missing_calendar_evidence_rejected(self) -> None:
-        from datetime import datetime, timezone
+        from datetime import datetime
 
         from services.execution.market_snapshot_admission import (
             CALENDAR_EVIDENCE_UNVERIFIABLE,

@@ -359,12 +359,16 @@ class AgoraOperationalReadinessService:
             observed_at_raw = snapshot.get("observed_at")
             if observed_at_raw:
                 refresh_dt, _err = parse_rfc3339(observed_at_raw, field_name="observed_at")
+            ev = snapshot.get("calendar_evidence")
+            if ev is None and isinstance(snapshot.get("lineage"), Mapping):
+                ev = snapshot["lineage"].get("calendar_evidence")
             tw_ok, _tw_reason, _tw_detail = evaluate_taiwan_market_freshness(
                 event_time_dt=ts_dt,
                 now_dt=now_dt,
                 refresh_receipt_dt=refresh_dt,
                 lineage=snapshot.get("lineage"),
                 max_refresh_age_seconds=sla_seconds,
+                calendar_evidence=ev,
             )
             if not tw_ok:
                 freshness = "stale"

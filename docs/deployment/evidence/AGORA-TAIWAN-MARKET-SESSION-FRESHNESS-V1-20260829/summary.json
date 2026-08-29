@@ -1,9 +1,9 @@
 {
   "schema_version": "pantheon.agora-taiwan-market-session-freshness-review.v1",
   "task_id": "AGORA-TAIWAN-MARKET-SESSION-FRESHNESS-V1-20260829",
-  "generated_at": "2026-08-29T21:30:00Z",
-  "owner": "Claude",
-  "reviewer": "Antigravity",
+  "generated_at": "2026-08-29T21:50:00Z",
+  "owner": "Antigravity2",
+  "reviewer": "Claude",
   "status": "implementation_ready_for_review",
   "acceptance_state": "exact_head_review_and_post_merge_release_required",
   "immutable_failure_reproduction": {
@@ -30,11 +30,11 @@
       "functions": [
         "is_taiwan_symbol",
         "evaluate_taiwan_market_freshness",
-        "lookup_official_tw_holiday"
+        "validate_taiwan_calendar_evidence"
       ],
       "venue_timezone": "Asia/Taipei (UTC+8)",
       "session_close_local": "13:30",
-      "rule": "A Taiwan official close is admitted when the gap between its event_time and now is fully explained by weekends and/or governed OFFICIAL_TW_MARKET_HOLIDAYS entries (each citing an announcing authority), and the refresh receipt (observed_at) is within max_refresh_age_seconds of now, and the lineage carries an official tw-official:/tw-twse-tpex-official-market marker. Any weekday in the gap with no evidence is treated as an ordinary trading day (fail-closed stale); a lookup that raises or returns the CALENDAR_EVIDENCE_UNVERIFIABLE sentinel fails closed as unverifiable instead of silently guessing.",
+      "rule": "A Taiwan official close is admitted when the gap between its event_time and now is fully explained by weekends (deterministic, requiring no feed) and/or validated official exchange calendar evidence (citing TWSE/TPEx source URL, authority, version/checksum, Asia/Taipei timezone, and fetched time), and the refresh receipt (observed_at) is within max_refresh_age_seconds of now, and the lineage carries an official tw-official:/tw-twse-tpex-official-market marker. Any weekday in the gap with no evidence is treated as an ordinary trading day (fail-closed stale); missing, incomplete, bad-checksum, or unofficial evidence fails closed as unverifiable (market_input_calendar_unverifiable) instead of silently guessing.",
       "typed_reason_codes": [
         "market_input_stale",
         "market_input_stale_refresh",
@@ -54,11 +54,11 @@
       },
       {
         "site": "services/control-plane/bff/agora/operational_readiness.py",
-        "change": "_evaluate_source now imports evaluate_taiwan_market_freshness/is_taiwan_symbol/parse_rfc3339 from market_snapshot_admission and routes Taiwan-symbol snapshots through the same rule instead of the flat age_seconds > sla_seconds comparison; non-Taiwan snapshots are unchanged."
+        "change": "_evaluate_source now imports evaluate_taiwan_market_freshness/is_taiwan_symbol/parse_rfc3339 from market_snapshot_admission and routes Taiwan-symbol snapshots through the same rule (extracting calendar_evidence when present) instead of the flat age_seconds > sla_seconds comparison; non-Taiwan snapshots are unchanged."
       },
       {
         "site": "scripts/deploy_nonprod_vm.sh",
-        "change": "verify_bounded_source_refresh_readback's inline Python readback check imports evaluate_taiwan_market_freshness/is_taiwan_symbol and replaces the flat 'outside 24h' SystemExit for Taiwan symbols with the shared rule; the future-time (-300s) guard and the official-lineage check are unchanged."
+        "change": "verify_bounded_source_refresh_readback's inline Python readback check imports evaluate_taiwan_market_freshness/is_taiwan_symbol and replaces the flat 'outside 24h' SystemExit for Taiwan symbols with the shared rule (extracting calendar_evidence when present); the future-time (-300s) guard and the official-lineage check are unchanged."
       }
     ]
   },
@@ -73,12 +73,16 @@
     },
     "focused_admission_producer_fleet_readiness_source_deploy": {
       "command": ".venv-pantheon/bin/python3 -m pytest -q services/execution/lean_runtime/test_paper_signal_producer.py services/paper_fleet_reconciler/test_paper_fleet_reconciler.py services/source_ingestion/tests/test_latest_market_snapshot.py services/control-plane/bff/agora/test_operational_readiness.py scripts/test_source_ingest_deploy_diagnostics_contract.py",
-      "result": "107 passed, 1 warning",
+      "result": "112 passed, 1 warning",
       "warning": "existing Starlette TestClient deprecation warning only"
     },
     "new_deterministic_taiwan_scenarios": [
       "Friday close admitted on Saturday (weekend gap, no calendar evidence needed).",
-      "Multi-day official Lunar New Year holiday span admitted with governed calendar evidence.",
+      "Multi-day official Lunar New Year holiday span admitted with valid official calendar evidence.",
+      "Calendar evidence missing a required weekday in the gap rejected as market_input_calendar_unverifiable.",
+      "Calendar evidence with incomplete range rejected as market_input_calendar_unverifiable.",
+      "Calendar evidence with bad checksum rejected as market_input_calendar_unverifiable.",
+      "Calendar evidence with unofficial URL domain rejected as market_input_calendar_unverifiable.",
       "Friday close rejected as market_input_stale once Monday's own session has closed.",
       "Stale refresh receipt (observed_at older than max_refresh_age_seconds) rejected as market_input_stale_refresh.",
       "Future event_time rejected as market_input_invalid.",

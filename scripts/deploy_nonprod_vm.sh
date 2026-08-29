@@ -1294,12 +1294,16 @@ for requested_symbol in [item for item in priority_csv.split(",") if item]:
         # receipt, unverifiable calendar evidence, and non-official lineage.
         observed_at_raw = snapshot.get("observed_at")
         refresh_dt = timestamp(observed_at_raw) if observed_at_raw else None
+        ev = snapshot.get("calendar_evidence")
+        if ev is None and isinstance(lineage, dict):
+            ev = lineage.get("calendar_evidence")
         tw_ok, tw_reason, tw_detail = evaluate_taiwan_market_freshness(
             event_time_dt=event_time,
             now_dt=now_dt,
             refresh_receipt_dt=refresh_dt,
             lineage=lineage,
             max_refresh_age_seconds=86400,
+            calendar_evidence=ev,
         )
         if not tw_ok:
             raise SystemExit(
