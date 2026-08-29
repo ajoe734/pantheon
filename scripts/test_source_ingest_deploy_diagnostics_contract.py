@@ -81,6 +81,15 @@ def test_root_failure_diagnostics_keep_scheduler_logs_separate() -> None:
     assert "logs --no-color --tail=120 source-ingest-scheduler" in diagnostics
 
 
+def test_root_failure_diagnostics_capture_paper_signal_producer_reason() -> None:
+    diagnostics = _failure_diagnostics_function()
+
+    assert 'info "paper-signal-producer service logs after failure"' in diagnostics
+    assert "logs --no-color --tail=240 paper-signal-producer" in diagnostics
+    assert "ps -a -q paper-signal-producer" in diagnostics
+    assert 'info "paper-signal-producer container restart and health state after failure"' in diagnostics
+
+
 def test_bounded_source_refresh_profile_is_fail_closed() -> None:
     deploy = DEPLOY_SCRIPT.read_text(encoding="utf-8")
     start = deploy.index("validate_source_refresh_profile() {")
@@ -174,6 +183,10 @@ def test_bounded_source_refresh_deploy_waits_and_gates_readback() -> None:
     assert "source_timestamp_status" in gate
     assert "sourceTimeStatus" in gate
     assert "ingestRunId" in gate
+    assert "SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS" in gate
+    assert "/api/source-ingest/snapshots/latest?symbol=" in gate
+    assert "active paper snapshot is outside 24h" in gate
+    assert "active paper snapshot lacks official exchange lineage" in gate
 
     root_start = deploy.index("  root)\n")
     root_end = deploy.index("\n  bff)\n", root_start)
@@ -181,9 +194,30 @@ def test_bounded_source_refresh_deploy_waits_and_gates_readback() -> None:
     assert root_case.index("docker compose -p pantheon -f docker-compose.yml up -d") < root_case.index(
         "verify_bounded_source_refresh_readback"
     )
+    assert root_case.index("docker compose -p pantheon -f docker-compose.yml build") < root_case.index(
+        "resolve_bounded_source_refresh_active_symbols"
+    )
+    assert root_case.index("resolve_bounded_source_refresh_active_symbols") < root_case.index(
+        "docker compose -p pantheon -f docker-compose.yml up -d"
+    )
     assert root_case.index("verify_bounded_source_refresh_readback") < root_case.index(
         "openclaw-configure-shared-model-pool.sh"
     )
+
+
+def test_bounded_refresh_resolves_symbols_from_read_only_runtime_binding_store() -> None:
+    deploy = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    start = deploy.index("resolve_bounded_source_refresh_active_symbols() {")
+    end = deploy.index("\n}\n\nverify_bounded_source_refresh_readback()", start)
+    resolver = deploy[start:end]
+
+    assert "runtime-manager - <<'PY'" in resolver
+    assert "PANTHEON_RUNTIME_BINDING_STORE_PATH" in resolver
+    assert 'mode != "paper" or status != "active"' in resolver
+    assert 'binding.get("symbol") or metadata.get("symbol")' in resolver
+    assert "strategy_artifact" not in resolver
+    assert 'export SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS="$priority_symbols"' in resolver
+    assert "SOURCE_INGEST_MAX_RECORDS" not in resolver
 
 
 def test_bounded_source_refresh_wait_accepts_zero_exit(tmp_path: Path) -> None:

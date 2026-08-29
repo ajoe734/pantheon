@@ -13,6 +13,7 @@ from services.source_ingestion.connectors import (
     TW_OFFICIAL_CONNECTOR_ID,
     TaiwanOfficialMarketDatasetAdapter,
 )
+from services.source_ingestion.connectors.base import SourceEvidenceError
 from services.source_ingestion.provider_adapters import execute_provider_owned_adapter, provider_adapter_tokens
 from services.source_ingestion.scheduler import IngestBatch, IngestionScheduler, JsonlIngestScheduleStore
 
@@ -206,6 +207,76 @@ def test_taiwan_official_provider_owned_adapter_is_allowlisted_and_emits_both_ve
     assert records[0].metadata["provider_owned_adapter"] == "TaiwanOfficialMarketDatasetAdapter.records_from_payload"
     assert records[0].metadata["normalized_row"]["symbol_canonical"] == "2330.TWSE"
     assert records[1].metadata["normalized_row"]["symbol_canonical"] == "3105.TPEX"
+
+
+def test_bounded_official_refresh_prioritizes_active_symbols_before_global_cap(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS", "2330.TW,3105.TWO")
+    adapter = TaiwanOfficialMarketDatasetAdapter(max_records=3)
+    connector = adapter.connector()
+    twse_payload = [
+        {
+            **TWSE_PRICE_PAYLOAD[0],
+            "Code": f"{index:04d}",
+            "Name": f"TWSE {index}",
+        }
+        for index in range(1, 105)
+    ] + TWSE_PRICE_PAYLOAD
+    tpex_payload = [
+        {
+            **TPEX_PRICE_PAYLOAD[0],
+            "SecuritiesCompanyCode": f"{index:04d}",
+            "CompanyName": f"TPEx {index}",
+        }
+        for index in range(4001, 4105)
+    ] + TPEX_PRICE_PAYLOAD
+
+    records = execute_provider_owned_adapter(
+        connector=connector,
+        fetch={
+            "mode": "provider_owned_adapter",
+            "adapter": "TaiwanOfficialMarketDatasetAdapter",
+            "adapter_config": {"max_records": 3},
+            "request": {
+                "dataset": "tw_price_daily",
+                "venues": ["TWSE", "TPEx"],
+                "payloads": {"TWSE": twse_payload, "TPEx": tpex_payload},
+            },
+            "max_records": 3,
+        },
+        trace_id="trace-active-symbol-priority",
+    )
+
+    assert [record.metadata["symbol_canonical"] for record in records[:2]] == [
+        "2330.TWSE",
+        "3105.TPEX",
+    ]
+    assert len(records) == 3
+
+
+def test_bounded_official_refresh_fails_when_active_symbols_exceed_cap(monkeypatch) -> None:
+    monkeypatch.setenv("SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS", "2330.TW,3105.TWO")
+
+    with pytest.raises(SourceEvidenceError, match="active Taiwan paper symbols exceed"):
+        execute_provider_owned_adapter(
+            connector=TaiwanOfficialMarketDatasetAdapter(max_records=1).connector(),
+            fetch={
+                "mode": "provider_owned_adapter",
+                "adapter": "TaiwanOfficialMarketDatasetAdapter",
+                "adapter_config": {"max_records": 1},
+                "request": {
+                    "dataset": "tw_price_daily",
+                    "venues": ["TWSE", "TPEx"],
+                    "payloads": {
+                        "TWSE": TWSE_PRICE_PAYLOAD,
+                        "TPEx": TPEX_PRICE_PAYLOAD,
+                    },
+                },
+                "max_records": 1,
+            },
+            trace_id="trace-active-symbol-cap",
+        )
 
 
 def test_taiwan_official_adapter_emits_chip_records_and_skips_archive_detail() -> None:

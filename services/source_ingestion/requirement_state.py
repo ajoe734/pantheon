@@ -402,6 +402,26 @@ def _market_snapshot_symbol(value: Any) -> str:
     return _market_snapshot_text(value, field_name="symbol").upper()
 
 
+def _market_snapshot_lookup_symbol(value: Any) -> str:
+    """Resolve execution aliases to one explicit stored exchange identity.
+
+    This normalization is deliberately read-only.  Historical snapshot rows
+    retain their checksummed symbol and snapshot id, while ``2330.TW`` cannot
+    accidentally select an older, separately persisted ``.TW`` series when
+    the official Source projection is stored as ``2330.TWSE``.
+    """
+
+    symbol = _market_snapshot_symbol(value)
+    if "." not in symbol:
+        return symbol
+    ticker, suffix = symbol.rsplit(".", 1)
+    if suffix in {"TW", "TWSE"}:
+        return f"{ticker}.TWSE"
+    if suffix in {"TWO", "TPEX"}:
+        return f"{ticker}.TPEX"
+    return symbol
+
+
 def _market_snapshot_close(value: Any) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise MarketSnapshotStateError("close must be a positive finite number")
@@ -660,7 +680,7 @@ class LatestMarketSnapshotStore:
 
     def get(self, symbol: str) -> LatestMarketSnapshot | None:
         with self._lock:
-            return self._latest_by_symbol.get(_market_snapshot_symbol(symbol))
+            return self._latest_by_symbol.get(_market_snapshot_lookup_symbol(symbol))
 
     @staticmethod
     def _point_from_record(record: Any, *, ingest_run_id: str) -> tuple[str, MarketSnapshotPoint] | None:
