@@ -273,6 +273,7 @@ def test_write_authority_matrix(client):
     matrix = response.json()["matrix"]
     expected = {
         ("CapitalPool", "create"),
+        ("CapitalPool", "update"),
         ("CapitalPool", "update_status"),
         ("PersonaCapitalBinding", "create"),
         ("PersonaCapitalBinding", "activate"),
@@ -304,6 +305,30 @@ def test_create_pool_and_list(client):
 
     persisted = (data_dir / "capital_pools.json").read_text(encoding="utf-8")
     assert "pool-001" in persisted
+
+
+def test_patch_pool_survives_fresh_service_instance(client):
+    test_client, _ = client
+    assert test_client.post("/api/capital-pools", json=_pool_payload()).status_code == 201
+
+    patched = test_client.patch(
+        "/api/capital-pools/pool-001",
+        json={
+            "actor_id": "capital-admin-1",
+            "actor_role": "capital.admin",
+            "name": "Renamed Owner Pool",
+            "risk_policy_ref": "risk-v2",
+            "params": {"paper_limit": 100000},
+        },
+    )
+    assert patched.status_code == 200, patched.text
+    assert patched.json()["name"] == "Renamed Owner Pool"
+
+    fresh_client = TestClient(_reload_capital_module().app)
+    readback = fresh_client.get("/api/capital-pools/pool-001")
+    assert readback.status_code == 200
+    assert readback.json()["risk_policy_ref"] == "risk-v2"
+    assert readback.json()["metadata"]["params"] == {"paper_limit": 100000}
 
 
 def test_pool_and_binding_create_idempotency_survive_restart(client):

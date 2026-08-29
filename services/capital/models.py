@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Union
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class CapitalPoolBody(BaseModel):
@@ -147,6 +147,25 @@ class UpdateCapitalPoolStatusRequest(BaseModel):
     actor_id: str
     actor_role: str
     status: str
+
+
+class PatchCapitalPoolRequest(BaseModel):
+    """Canonical Capital owner patch; omitted and explicit-null are distinct."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    actor_id: str = Field(min_length=1)
+    actor_role: str = Field(min_length=1)
+    name: Optional[str] = Field(default=None, min_length=1)
+    status: Optional[str] = None
+    risk_policy_ref: Optional[str] = None
+    params: Optional[Dict[str, Any]] = None
+
+    @model_validator(mode="after")
+    def require_patch_field(self) -> "PatchCapitalPoolRequest":
+        if not (self.model_fields_set - {"actor_id", "actor_role"}):
+            raise ValueError("at least one CapitalPool patch field is required")
+        return self
 
 
 class CreateBindingRequest(BaseModel):

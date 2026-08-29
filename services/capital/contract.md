@@ -33,7 +33,7 @@ It does **not** own deployment execution or `RuntimeBinding` writes.
 
 | Object | Operation | Authorized role |
 |---|---|---|
-| `CapitalPool` | create / update status | `capital.admin` |
+| `CapitalPool` | create / update / update status | `capital.admin` |
 | `PersonaCapitalBinding` | create / activate / update status | `persona.admin` |
 | `Rebalance` | create / apply | `operator`, `approver`, `admin`, `capital.operator`, `capital.admin` |
 | `Containment` | create | `operator`, `approver`, `reviewer`, `admin`, `capital.operator`, `capital.admin`, `risk.admin` |
@@ -48,6 +48,7 @@ underlying JSON stores directly.
 - `POST   /api/capital-pools`
 - `GET    /api/capital-pools`
 - `GET    /api/capital-pools/{pool_id}`
+- `PATCH  /api/capital-pools/{pool_id}`
 - `PATCH  /api/capital-pools/{pool_id}/status`
 - `GET    /api/capital-pools/{pool_id}/live-owner`
 
@@ -153,6 +154,10 @@ underlying JSON stores directly.
     `PostgresJsonOwnerStore`. The aggregate remains a single-writer owner design:
     `PostgresJsonOwnerStore` does not provide cross-replica compare-and-swap, so
     Capital must run one writer until a transactional/CAS store replaces it.
+18. General pool patch writes are owned by `services/capital/`, accept only
+    `name`, `status`, `risk_policy_ref`, and legacy `params`, and persist
+    `params` inside canonical metadata. Callers must fresh-read the owner API;
+    no BFF overlay, cache, or submitted-response fallback is authoritative.
 
 ## Downstream Read Paths
 
