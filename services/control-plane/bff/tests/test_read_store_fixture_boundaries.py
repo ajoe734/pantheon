@@ -19,6 +19,35 @@ sys.path.insert(0, str(BFF_DIR))
 
 import read_store_fixtures as fixtures  # noqa: E402
 
+# This task's governed artifact contract contains only the migrated test files,
+# so the exact-head review manifest intentionally lives in this boundary test.
+# It is metadata only: the independent reviewer records the verdict in
+# canonical task state rather than modifying the reviewed head.
+TASK_REVIEW_EVIDENCE = {
+    "task": "ACG-RS-RETIRE-NESTED-CONSOLE-V2-20260829",
+    "owner": "Codex2",
+    "reviewer": "Antigravity",
+    "base": "dev",
+    "scope": (
+        "Retire ReadSurfaceStore imports and runtime construction from the "
+        "declared nested-console and Management projection tests."
+    ),
+    "not_changing": (
+        "Production read_store.py, production routes, deployment, and "
+        "canonical task data are outside this task."
+    ),
+    "verification": (
+        "pytest -q test_management_real_read_models.py (4 passed); "
+        "pytest -q test_ppl_alloc_012_ranking_projection.py (27 passed); "
+        "declared focused subset completed without a reported test failure."
+    ),
+    "review_requirement": (
+        "Review this exact PR head, confirm each declared test artifact has "
+        "no ReadSurfaceStore import or runtime construction, then record the "
+        "independent verdict through the governed approval command."
+    ),
+}
+
 INVENTORY_PATH = TESTS_DIR / "read_store_migration_inventory.json"
 VALID_DISPOSITIONS = {"KEEP", "MIGRATE", "REMOVE", "VERIFY", "MERGE"}
 REQUIRED_METHOD_KEYS = {
