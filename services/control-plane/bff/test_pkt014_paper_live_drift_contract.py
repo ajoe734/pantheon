@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, os.path.dirname(__file__))
 
 import main as bff_main
-from read_store import ReadSurfaceStore
+from ports import create_in_memory_read_surface_ports
 
 
 OPERATOR_TOKEN = "Bearer op-2:operator"
@@ -18,10 +18,7 @@ OPERATOR_TOKEN = "Bearer op-2:operator"
 def test_pkt014_paper_live_drift_returns_backend_owned_comparison_payload() -> None:
     with tempfile.TemporaryDirectory() as td:
         original_store = bff_main.read_store
-        store = ReadSurfaceStore(
-            os.path.join(td, "read_surfaces.json"),
-            allow_local_snapshot_fallback=False,
-        )
+        store = create_in_memory_read_surface_ports()
         store.get_runtime_binding_by_runtime_id = lambda runtime_id: {
             "id": "runtime-042",
             "runtime_id": "runtime-042",
@@ -190,10 +187,7 @@ def test_pkt014_paper_live_drift_returns_backend_owned_comparison_payload() -> N
 def test_pkt014_paper_live_drift_returns_unavailable_payload_when_report_missing() -> None:
     with tempfile.TemporaryDirectory() as td:
         original_store = bff_main.read_store
-        store = ReadSurfaceStore(
-            os.path.join(td, "read_surfaces.json"),
-            allow_local_snapshot_fallback=False,
-        )
+        store = create_in_memory_read_surface_ports()
         store.get_runtime_binding_by_runtime_id = lambda runtime_id: {
             "id": "runtime-042",
             "runtime_id": "runtime-042",
