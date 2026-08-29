@@ -313,6 +313,65 @@ class ProviderPermissionsTest(unittest.TestCase):
             self.assertIn(workspace_root, allowed_roots)
             self.assertNotIn(workspace_root.parent, allowed_roots)
 
+    def test_leased_root_loads_runtime_state_from_rebound_status_root(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="permission-broker-status-") as temp_dir:
+            status_root = Path(temp_dir).resolve()
+            workspace_root = status_root / "worktrees" / "task-123"
+            workspace_root.mkdir(parents=True)
+            runtime_state = {
+                "workers": {
+                    "run-123": {
+                        "run_id": "run-123",
+                        "task_id": "TASK-123",
+                        "agent_id": "claude",
+                        "status": "running",
+                        "lease_expires_at": (
+                            datetime.now(timezone.utc) + timedelta(days=1)
+                        ).isoformat(),
+                        "workspace_mode": "isolated_worktree",
+                        "workspace_path": str(workspace_root),
+                    }
+                }
+            }
+            immutable_config = {
+                "paths": {"state_file": ".orchestrator/state.json"},
+            }
+            env = {
+                "ORCH_RUN_ID": "run-123",
+                "ORCH_TASK_ID": "TASK-123",
+                "ORCH_AGENT_ID": "claude",
+                "PANTHEON_STATUS_ROOT": str(status_root),
+                "PANTHEON_WORKTREE_ROOT": str(workspace_root),
+                "ORCH_WORKSPACE_PATH": str(workspace_root),
+            }
+            loaded_configs: list[dict] = []
+
+            def load_runtime(config: dict) -> dict:
+                loaded_configs.append(config)
+                return runtime_state
+
+            with (
+                mock.patch.object(
+                    permission_broker,
+                    "load_config",
+                    return_value=immutable_config,
+                ),
+                mock.patch.dict(permission_broker.os.environ, env, clear=True),
+                mock.patch.object(
+                    permission_broker,
+                    "load_runtime_state",
+                    side_effect=load_runtime,
+                ),
+            ):
+                allowed_roots = permission_broker._allowed_workspace_roots()
+
+            self.assertEqual(len(loaded_configs), 1)
+            self.assertEqual(
+                loaded_configs[0]["paths"]["state_file"],
+                str(status_root / ".orchestrator" / "state.json"),
+            )
+            self.assertIn(workspace_root, allowed_roots)
+
     def test_edit_denies_worktrees_parent_outside_exact_active_lease(self) -> None:
         with tempfile.TemporaryDirectory(prefix="permission-broker-lease-") as temp_dir:
             temp_root = Path(temp_dir).resolve()
