@@ -18,7 +18,7 @@ from scripts import cleanup_legacy_research_evidence_refs as legacy_cleanup  # n
 from scripts import project_research_to_bff_surfaces as projector  # noqa: E402
 
 import main as bff_main  # noqa: E402
-from ports import create_read_surface_ports  # noqa: E402
+from ports import create_in_memory_read_surface_ports  # noqa: E402
 
 
 HEADERS = {"Authorization": "Bearer op-dev:admin:mfa"}
@@ -181,7 +181,22 @@ def _projected_bff(monkeypatch) -> Iterator[TestClient]:
         monkeypatch.delenv("PANTHEON_MEMORY_API_URL", raising=False)
 
         original_store = bff_main.read_store
-        bff_main.read_store = create_read_surface_ports()
+        ports = create_in_memory_read_surface_ports(
+            research_knowledge_source_kwargs={
+                "research_tickets_store": stores["research_tickets"],
+                "research_analyses_store": stores["research_analyses"],
+                "research_artifacts_store": stores["research_artifacts"],
+                "research_notes_store": stores["research_notes"],
+                "evidence_refs_store": stores["evidence_refs"],
+                "insight_cards_store": stores["insight_cards"],
+                "strategy_specs_store": stores["strategy_specs"],
+            },
+        )
+        ports.list_institutional_memory_entries = lambda: list(
+            stores["institutional_memory_entries"].values()
+        )
+        ports.dataset_source = lambda _dataset: "test_projection"
+        bff_main.read_store = ports
         try:
             yield TestClient(bff_main.app)
         finally:

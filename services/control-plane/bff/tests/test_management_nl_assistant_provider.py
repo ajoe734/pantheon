@@ -28,7 +28,7 @@ from management_nl_command_idempotency import (
 )
 from models import OperatorIdentity
 from openclaw_ops_client import OpenClawOpsClient, OpenClawOpsClientError
-from read_store import ReadSurfaceStore
+from ports import create_in_memory_read_surface_ports
 
 
 OPERATOR_HEADERS = {"Authorization": "Bearer asst-bff-002:operator"}
@@ -284,19 +284,19 @@ def _seeded_client(tmp_path: Path, monkeypatch) -> TestClient:
     monkeypatch.setenv("PANTHEON_BFF_TENANT_ID", "tenant-alpha")
     monkeypatch.setenv("PANTHEON_BFF_ALLOWED_TENANTS", "tenant-alpha,tenant-beta")
     monkeypatch.setenv("PANTHEON_MANAGEMENT_AI_AUDIT_PATH", str(tmp_path / "management-ai-audit.jsonl"))
-    store = ReadSurfaceStore(
-        str(read_surface_path),
-        allow_local_snapshot_fallback=True,
+    store = create_in_memory_read_surface_ports(
+        persona_capital_runtime_kwargs={
+            "capital_pools": list(seeded_surfaces["capital_pools"].values()),
+            "runtime_bindings": list(seeded_surfaces["runtime_bindings"].values()),
+            "personas": list(seeded_surfaces["personas"].values()),
+            "bindings": list(seeded_surfaces["persona_bindings"].values()),
+        },
+        lifecycle_telemetry_governance_kwargs={
+            "telemetry_summaries": seeded_surfaces["telemetry_summaries"],
+        },
     )
-    for dataset in (
-        "capital_pools",
-        "runtime_bindings",
-        "telemetry_summaries",
-        "personas",
-        "persona_bindings",
-    ):
-        store._data[dataset] = json.loads(json.dumps(seeded_surfaces.get(dataset, {})))
-    store._save()
+    store._data = json.loads(json.dumps(seeded_surfaces))
+    store.get_agora_session = lambda session_id: store._data["agora_sessions"].get(session_id)
     bff_main.read_store = store
     bff_main._MGMT_NL_IDEMPOTENCY.clear()
     bff_main._MGMT_AI_AUDIT_EVENTS.clear()
