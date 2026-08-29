@@ -20,7 +20,7 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 import main as bff_main
-from read_store import ReadSurfaceStore
+from ports import create_read_surface_ports
 
 
 ADMIN_HEADERS = {"Authorization": "Bearer op-b3:admin"}
@@ -134,10 +134,7 @@ def _evidence_client() -> Iterator[TestClient]:
         os.environ.pop("PANTHEON_AUDIT_OUT_DIR", None)
         original_store = bff_main.read_store
         try:
-            bff_main.read_store = ReadSurfaceStore(
-                os.path.join(td, "read_surfaces.json"),
-                allow_local_snapshot_fallback=True,
-            )
+            bff_main.read_store = create_read_surface_ports()
             with TestClient(bff_main.app) as client:
                 yield client
         finally:
@@ -228,10 +225,7 @@ def _current_run_evidence_client(verifier_path: Path) -> Iterator[TestClient]:
     os.environ.pop("PANTHEON_AUDIT_OUT_DIR", None)
     original_store = bff_main.read_store
     try:
-        bff_main.read_store = ReadSurfaceStore(
-            str(verifier_path.parent / "read_surfaces.json"),
-            allow_local_snapshot_fallback=False,
-        )
+        bff_main.read_store = create_read_surface_ports()
         with TestClient(bff_main.app) as client:
             yield client
     finally:

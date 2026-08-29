@@ -16,16 +16,13 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 import main as bff_main
-from read_store import ReadSurfaceStore
+from ports import create_read_surface_ports
 
 OPERATOR_HEADERS = {"Authorization": "Bearer op-b3-human:operator"}
 
 
 def _fresh_client(td: str) -> TestClient:
-    bff_main.read_store = ReadSurfaceStore(
-        os.path.join(td, "read_surfaces.json"),
-        allow_local_snapshot_fallback=True,
-    )
+    bff_main.read_store = create_read_surface_ports()
     return TestClient(bff_main.app)
 
 

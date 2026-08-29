@@ -31,7 +31,7 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 import main as bff_main
-from read_store import ReadSurfaceStore
+from ports import create_in_memory_read_surface_ports
 
 OPERATOR_HEADERS = {"Authorization": "Bearer op-b2-002:operator"}
 NO_AUTH_HEADERS: dict = {}
@@ -40,10 +40,7 @@ _IDEM_PREFIX = "b2-002-test"
 
 
 def _fresh_client(td: str) -> TestClient:
-    bff_main.read_store = ReadSurfaceStore(
-        os.path.join(td, "read_surfaces.json"),
-        allow_local_snapshot_fallback=True,
-    )
+    bff_main.read_store = create_in_memory_read_surface_ports()
     bff_main._GOV_BFF_IDEMPOTENCY.clear()
     bff_main._GOV_BFF_EVOLUTION_PROGRAM_OVERLAY.clear()
     bff_main._GOV_BFF_JOB_OVERLAY.clear()

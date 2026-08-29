@@ -18,7 +18,7 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 import main as bff_main
-from read_store import ReadSurfaceStore
+from ports import create_read_surface_ports, create_in_memory_read_surface_ports
 
 
 @pytest.fixture(autouse=True)
@@ -50,10 +50,7 @@ PERSONA_FLEET_FORBIDDEN_LIST_KEYS = {
 
 
 def _fresh_client(td: str) -> TestClient:
-    bff_main.read_store = ReadSurfaceStore(
-        os.path.join(td, "read_surfaces.json"),
-        allow_local_snapshot_fallback=True,
-    )
+    bff_main.read_store = create_read_surface_ports()
     bff_main._PERSONA_BFF_OVERLAY.clear()
     bff_main._STRATEGY_BFF_OVERLAY.clear()
     bff_main._STRATEGY_PERSONA_BFF_IDEMPOTENCY.clear()
@@ -512,14 +509,41 @@ def test_sd_agc_03_foreign_identities_and_unadmitted_catalog_defaults_return_404
         original = bff_main.read_store
         try:
             # Store without fallback - only dev-probe is admitted
-            bff_main.read_store = ReadSurfaceStore(
-                os.path.join(td, "read_surfaces.json"),
-                allow_local_snapshot_fallback=False,
+            store = create_in_memory_read_surface_ports(
+                persona_capital_runtime_kwargs={
+                    "personas": [
+                        {
+                            "id": "persona-dev-probe",
+                            "persona_id": "persona-dev-probe",
+                            "name": "dev-probe",
+                            "lifecycle_state": "paper",
+                            "status": "healthy",
+                            "created_at": "2026-06-03T08:27:44Z",
+                            "updated_at": "2026-06-03T08:27:44Z",
+                            "metadata": {"owner": "pantheon-dev-browser", "tenant_id": "pantheon-dev"},
+                            "canonicalWriteAuthority": "persona_registry_service",
+                            "persistenceMode": "bff_local_dev_store",
+                        },
+                        {
+                            "id": "persona-other-tenant",
+                            "persona_id": "persona-other-tenant",
+                            "name": "other-tenant-persona",
+                            "lifecycle_state": "paper",
+                            "status": "healthy",
+                            "created_at": "2026-06-03T08:27:44Z",
+                            "updated_at": "2026-06-03T08:27:44Z",
+                            "metadata": {"owner": "pantheon-dev-browser", "tenant_id": "tenant-other"},
+                            "canonicalWriteAuthority": "persona_registry_service",
+                            "persistenceMode": "bff_local_dev_store",
+                        },
+                    ]
+                }
             )
+            bff_main.read_store = store
             bff_main._PERSONA_BFF_OVERLAY.clear()
             bff_main._STRATEGY_BFF_OVERLAY.clear()
             bff_main._STRATEGY_PERSONA_BFF_IDEMPOTENCY.clear()
-            bff_main.read_store._data["personas"] = {
+            bff_main.read_store._data = {
                 "persona-dev-probe": {
                     "id": "persona-dev-probe",
                     "persona_id": "persona-dev-probe",
