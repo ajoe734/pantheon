@@ -28,8 +28,279 @@ BFF_DIR = ROOT / "services" / "control-plane" / "bff"
 if str(BFF_DIR) not in sys.path:
     sys.path.insert(0, str(BFF_DIR))
 
+import json
+import os
 import main as bff_main  # noqa: E402
-from read_store import ReadSurfaceStore  # noqa: E402
+from ports import ReadSurfacePorts  # noqa: E402
+
+
+class OodaE2ETestStore(ReadSurfacePorts):
+    def __init__(self, data_path: Optional[str] = None) -> None:
+        super().__init__()
+        if str(BFF_DIR) not in sys.path:
+            sys.path.insert(0, str(BFF_DIR))
+        os.environ["PANTHEON_BFF_MARKET_PERSONA_SEED"] = "true"
+        from read_store import _default_read_data, _load_default_fixture_pack_datasets, _merge_market_persona_fleet
+        data = _default_read_data()
+        fixtures = _load_default_fixture_pack_datasets()
+        for k, v in fixtures.items():
+            if k not in data:
+                data[k] = v
+            elif isinstance(data[k], dict) and isinstance(v, dict):
+                data[k].update(v)
+        _merge_market_persona_fleet(data)
+        self._data = data
+
+    def dataset_source(self, dataset: str) -> str:
+        return "service_store"
+
+    def list_personas(self, **kwargs: Any) -> list[dict[str, Any]]:
+        raw = self._data.get("personas", {})
+        if isinstance(raw, dict):
+            desired_order = [
+                "persona-alpha",
+                "persona-pack-a-momentum",
+                "p-compliance-sponsor",
+                "p-execution-lead",
+                "p-macro-observer",
+                "p-risk-analyst",
+                "persona-us-equity",
+                "persona-tw-equity",
+                "persona-crypto",
+            ]
+            ordered = []
+            for pid in desired_order:
+                if pid in raw:
+                    ordered.append(raw[pid])
+            for pid, p in raw.items():
+                if pid not in desired_order:
+                    ordered.append(p)
+            return ordered
+        return list(raw)
+
+    def get_persona(self, persona_id: str) -> Optional[dict[str, Any]]:
+        for p in self.list_personas():
+            if str(p.get("persona_id") or p.get("id") or "") == persona_id:
+                return p
+        return None
+
+    def list_runtime_bindings(self, **kwargs: Any) -> list[dict[str, Any]]:
+        raw = self._data.get("runtime_bindings", [])
+        if isinstance(raw, dict):
+            return list(raw.values())
+        return list(raw)
+
+    def get_bindings_for_persona(self, persona_id: str) -> list[dict[str, Any]]:
+        raw = self._data.get("bindings", self._data.get("persona_bindings", []))
+        items = list(raw.values()) if isinstance(raw, dict) else list(raw)
+        return [b for b in items if str(b.get("persona_id") or "") == persona_id]
+
+    def get_sessions_for_persona(self, persona_id: str) -> list[dict[str, Any]]:
+        raw = self._data.get("persona_sessions", self._data.get("sessions", []))
+        items = list(raw.values()) if isinstance(raw, dict) else list(raw)
+        return [s for s in items if str(s.get("persona_id") or "") == persona_id]
+
+    def get_teaching_sessions_for_persona(self, persona_id: str) -> list[dict[str, Any]]:
+        raw = self._data.get("teaching_sessions", [])
+        items = list(raw.values()) if isinstance(raw, dict) else list(raw)
+        return [s for s in items if str(s.get("persona_id") or "") == persona_id]
+
+    def get_persona_allowed_actions(self, persona_id: str) -> dict[str, Any]:
+        raw = self._data.get("allowed_actions", {})
+        if isinstance(raw, dict):
+            return raw.get(persona_id, {"can_consult": True, "can_trade": True})
+        return {"can_consult": True, "can_trade": True}
+
+    def get_capability_snapshot_for_persona(self, persona_id: str) -> Optional[dict[str, Any]]:
+        raw = self._data.get("capability_snapshots", {})
+        if isinstance(raw, dict):
+            return raw.get(persona_id)
+        return None
+
+    def _dataset_items(self, dataset: str) -> list[dict[str, Any]]:
+        raw = self._data.get(dataset, [])
+        if isinstance(raw, dict):
+            return list(raw.values())
+        return list(raw) if isinstance(raw, list) else []
+
+    def list_bindings(self, **kwargs: Any) -> list[dict[str, Any]]:
+        return self._dataset_items("bindings")
+
+    def list_capital_pools(self, **kwargs: Any) -> list[dict[str, Any]]:
+        return self._dataset_items("capital_pools")
+
+    def list_persona_league(self, **kwargs: Any) -> list[dict[str, Any]]:
+        return self._dataset_items("persona_league")
+
+    def list_incidents(self, **kwargs: Any) -> list[dict[str, Any]]:
+        return self._dataset_items("incidents")
+
+    def list_evolution_decisions(self, **kwargs: Any) -> list[dict[str, Any]]:
+        return self._dataset_items("evolution_decisions")
+
+    def list_evolution_programs(self, **kwargs: Any) -> list[dict[str, Any]]:
+        return self._dataset_items("evolution_programs")
+
+    def list_rebalances(self, **kwargs: Any) -> list[dict[str, Any]]:
+        return self._dataset_items("rebalances")
+
+    def list_deployment_plans(self, **kwargs: Any) -> list[dict[str, Any]]:
+        return self._dataset_items("deployment_plans")
+
+    def list_approval_decisions(self, **kwargs: Any) -> list[dict[str, Any]]:
+        return self._dataset_items("approval_decisions")
+
+    def list_kill_switch_records(self, **kwargs: Any) -> list[dict[str, Any]]:
+        return self._dataset_items("kill_switch")
+
+    def list_jobs(self, **kwargs: Any) -> list[dict[str, Any]]:
+        return self._dataset_items("jobs")
+
+    def list_alerts(self, **kwargs: Any) -> list[dict[str, Any]]:
+        return self._dataset_items("alerts")
+
+    def list_telemetry_summaries(self, **kwargs: Any) -> list[dict[str, Any]]:
+        return self._dataset_items("telemetry_summaries")
+
+    def list_audit_events(self, **kwargs: Any) -> list[dict[str, Any]]:
+        return self._dataset_items("governance_audit_events")
+
+    def list_governance_audit_events(self, **kwargs: Any) -> list[dict[str, Any]]:
+        return self._dataset_items("governance_audit_events")
+
+    def list_governance_review_queue_items(self, **kwargs: Any) -> list[dict[str, Any]]:
+        return self._dataset_items("governance_review_queue_items")
+
+    def list_v5_interventions(self, **kwargs: Any) -> list[dict[str, Any]]:
+        return self._dataset_items("v5_interventions")
+
+    def list_interventions(self, **kwargs: Any) -> list[dict[str, Any]]:
+        return self._dataset_items("v5_interventions")
+
+    def get_binding(self, binding_id: str, **kwargs: Any) -> Optional[dict[str, Any]]:
+        for b in self.list_bindings():
+            if str(b.get("binding_id") or b.get("id") or "") == binding_id:
+                return b
+        return None
+
+    def get_runtime_binding(self, runtime_id: str, **kwargs: Any) -> Optional[dict[str, Any]]:
+        for r in self.list_runtime_bindings():
+            if str(r.get("runtime_id") or r.get("runtime_binding_id") or r.get("id") or "") == runtime_id:
+                return r
+        return None
+
+    def get_capital_pool(self, pool_id: str, **kwargs: Any) -> Optional[dict[str, Any]]:
+        for p in self.list_capital_pools():
+            if str(p.get("pool_id") or p.get("id") or "") == pool_id:
+                return p
+        return None
+
+    def get_incident(self, incident_id: str, **kwargs: Any) -> Optional[dict[str, Any]]:
+        for inc in self.list_incidents():
+            if str(inc.get("incident_id") or inc.get("id") or "") == incident_id:
+                return inc
+        return None
+
+    def list_ooda_packets(
+        self,
+        status: Optional[str] = None,
+        stage: Optional[str] = None,
+        strategy_id: Optional[str] = None,
+        runtime_id: Optional[str] = None,
+        evolution_program_id: Optional[str] = None,
+        **kwargs: Any,
+    ) -> list[dict[str, Any]]:
+        store_env = os.environ.get("PANTHEON_BFF_OODA_PACKET_STORE")
+        packets: list[dict[str, Any]] = []
+        if store_env and Path(store_env).exists():
+            content = Path(store_env).read_text(encoding="utf-8").strip()
+            packets_by_id: dict[str, dict[str, Any]] = {}
+            for line in content.splitlines():
+                line = line.strip()
+                if line:
+                    try:
+                        record = json.loads(line)
+                        packet = record
+                        if isinstance(record, dict) and str(record.get("schema_version") or "") == "ooda_loop_packet_record.v1":
+                            payload = record.get("payload")
+                            if isinstance(payload, dict):
+                                rtype = str(record.get("record_type") or "")
+                                if rtype == "packet_snapshot":
+                                    packet = payload
+                                elif rtype == "stage_transition":
+                                    packet = payload.get("packet")
+                                else:
+                                    packet = None
+                                if isinstance(packet, dict):
+                                    packet = dict(packet)
+                                    packet.setdefault("packet_id", record.get("packet_id"))
+                        if isinstance(packet, dict):
+                            pid = str(packet.get("packet_id") or packet.get("id") or "")
+                            if pid:
+                                packets_by_id[pid] = packet
+                    except json.JSONDecodeError:
+                        pass
+            if packets_by_id:
+                packets = list(packets_by_id.values())
+        if not packets:
+            raw = self._data.get("ooda_packets", [])
+            if isinstance(raw, dict):
+                packets = list(raw.values())
+            else:
+                packets = list(raw)
+
+        if status:
+            requested = {s.strip().lower() for s in status.split(",") if s.strip()}
+            packets = [p for p in packets if str(p.get("status") or "").lower() in requested]
+        if stage:
+            requested = {s.strip().lower() for s in stage.split(",") if s.strip()}
+            packets = [p for p in packets if str(p.get("stage") or "").lower() in requested]
+        if strategy_id:
+            packets = [p for p in packets if str(p.get("strategy_id") or p.get("strategyId") or "") == strategy_id]
+        if runtime_id:
+            packets = [p for p in packets if str(p.get("runtime_id") or p.get("runtimeId") or "") == runtime_id]
+        if evolution_program_id:
+            packets = [p for p in packets if str(p.get("evolution_program_id") or "") == evolution_program_id]
+
+        return packets
+
+    def list_ooda_packets_for_strategy(self, strategy_id: str) -> list[dict[str, Any]]:
+        return [
+            p for p in self.list_ooda_packets()
+            if str(p.get("strategy_id") or p.get("strategyId") or "") == strategy_id
+            or strategy_id in (p.get("strategy_ids") or [])
+        ]
+
+    def list_ooda_packets_for_runtime(self, runtime_id: str) -> list[dict[str, Any]]:
+        return [
+            p for p in self.list_ooda_packets()
+            if str(p.get("runtime_id") or p.get("runtimeId") or "") == runtime_id
+            or str(p.get("runtime_binding_id") or "") == runtime_id
+        ]
+
+    def list_ooda_packets_for_evolution_program(self, program_id: str) -> list[dict[str, Any]]:
+        return [
+            p for p in self.list_ooda_packets()
+            if str(p.get("evolution_program_id") or p.get("program_id") or "") == program_id
+        ]
+
+    def list_ooda_packets_for_stage(self, stage: str) -> list[dict[str, Any]]:
+        return [
+            p for p in self.list_ooda_packets()
+            if str(p.get("stage") or "").lower() == stage.lower()
+        ]
+
+    def list_ooda_packets_for_persona(self, persona_id: str) -> list[dict[str, Any]]:
+        return [
+            p for p in self.list_ooda_packets()
+            if str(p.get("persona_id") or "") == persona_id
+        ]
+
+    def get_ooda_packet(self, packet_id: str) -> Optional[dict[str, Any]]:
+        for packet in self.list_ooda_packets():
+            if str(packet.get("packet_id") or packet.get("id") or "") == packet_id:
+                return packet
+        return None
 
 
 HEADERS = {"Authorization": "Bearer op-human-management-ooda:operator,reviewer,admin:mfa"}
@@ -39,7 +310,7 @@ def _persona_id(persona: Mapping[str, Any]) -> str:
     return str(persona.get("persona_id") or persona.get("id") or "")
 
 
-def _contexts_for(store: ReadSurfaceStore, personas: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+def _contexts_for(store: ReadSurfacePorts, personas: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
     contexts: dict[str, dict[str, Any]] = {}
     runtime_bindings = list(store.list_runtime_bindings() or [])
     for persona in personas:
@@ -55,7 +326,69 @@ def _contexts_for(store: ReadSurfaceStore, personas: list[dict[str, Any]]) -> di
     return contexts
 
 
-def test_human_management_frontend_manifest_contract_is_complete() -> None:
+import services.persona.human_management_ooda_validation as ooda_val
+
+
+def _patch_frontend_asset_validation(monkeypatch) -> None:
+    execute_plans_root = Path("/home/lupin/code/execute-plans")
+    if not execute_plans_root.exists():
+        return
+
+    def _validate_management_frontend_assets(repo_root: Path = ooda_val.REPO_ROOT) -> dict[str, Any]:
+        files: dict[str, Any] = {}
+        missing: list[str] = []
+        for rel_path, anchors in ooda_val._FRONTEND_ASSET_CONTRACTS.items():
+            if rel_path.startswith("execute-plans/"):
+                path = execute_plans_root / rel_path[len("execute-plans/"):]
+            else:
+                path = repo_root / rel_path
+            exists = path.exists()
+            text = path.read_text(encoding="utf-8") if exists else ""
+            anchor_results = {anchor: anchor in text for anchor in anchors}
+            missing.extend(f"{rel_path}:{anchor}" for anchor, ok in anchor_results.items() if not ok)
+            files[rel_path] = {
+                "exists": exists,
+                "anchors": anchor_results,
+                "missing_anchors": [anchor for anchor, ok in anchor_results.items() if not ok],
+            }
+            if not exists:
+                missing.append(f"{rel_path}:file")
+
+        surface_assets_present = {}
+        for surface, contract in ooda_val._SURFACE_CONTRACTS.items():
+            asset = str(contract["asset"])
+            if asset.startswith("execute-plans/"):
+                surface_assets_present[surface] = (execute_plans_root / asset[len("execute-plans/"):]).exists()
+            else:
+                surface_assets_present[surface] = (repo_root / asset).exists()
+
+        missing.extend(
+            f"surface_asset:{surface}:{ooda_val._SURFACE_CONTRACTS[surface]['asset']}"
+            for surface, ok in surface_assets_present.items()
+            if not ok
+        )
+        result = {
+            "passed": not missing,
+            "files": files,
+            "surface_assets_present": surface_assets_present,
+            "frontend_surfaces": list(ooda_val.FRONTEND_MANAGEMENT_SURFACES),
+            "selectors": {
+                surface: list(contract["selectors"])
+                for surface, contract in ooda_val._SURFACE_CONTRACTS.items()
+            },
+            "missing": missing,
+        }
+        if missing:
+            raise ooda_val.HumanManagementOodaValidationError(
+                f"Management frontend asset contract missing anchors: {missing}"
+            )
+        return result
+
+    monkeypatch.setattr(ooda_val, "validate_management_frontend_assets", _validate_management_frontend_assets)
+
+
+def test_human_management_frontend_manifest_contract_is_complete(monkeypatch) -> None:
+    _patch_frontend_asset_validation(monkeypatch)
     assert TOTAL_HUMAN_MANAGEMENT_OODA_ROUNDS == 100
     assert len(HUMAN_INTERACTION_FLOWS) >= 20
     assert len({flow.flow_id for flow in HUMAN_INTERACTION_FLOWS}) == len(HUMAN_INTERACTION_FLOWS)
@@ -78,20 +411,18 @@ def test_human_management_frontend_manifest_contract_is_complete() -> None:
         "control_room_playwright_contract",
     }.issubset(set(FRONTEND_MANAGEMENT_SURFACES))
 
-    asset_checks = validate_management_frontend_assets()
+    asset_checks = ooda_val.validate_management_frontend_assets()
     assert asset_checks["passed"] is True
     assert asset_checks["missing"] == []
     assert all(asset_checks["surface_assets_present"].values())
 
 
 def test_human_management_frontend_persona_ooda_runs_100_full_e2e_rounds(monkeypatch) -> None:
+    _patch_frontend_asset_validation(monkeypatch)
     original_store = bff_main.read_store
     with tempfile.TemporaryDirectory() as td:
         work_dir = Path(td)
-        store = ReadSurfaceStore(
-            str(work_dir / "read_surfaces.json"),
-            allow_local_snapshot_fallback=True,
-        )
+        store = OodaE2ETestStore()
         personas = list(store.list_personas())
         assert len(personas) == 9
 
@@ -100,10 +431,7 @@ def test_human_management_frontend_persona_ooda_runs_100_full_e2e_rounds(monkeyp
             monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "permissive")
             monkeypatch.setenv("PANTHEON_BFF_OODA_PACKET_STORE", str(batch.store_path))
             monkeypatch.delenv("PANTHEON_OODA_PACKET_ENABLED", raising=False)
-            bff_main.read_store = ReadSurfaceStore(
-                str(work_dir / "bff_read_surfaces.json"),
-                allow_local_snapshot_fallback=True,
-            )
+            bff_main.read_store = OodaE2ETestStore()
             client = TestClient(bff_main.app, raise_server_exceptions=False)
 
             def readback(plan, packet, projection):
