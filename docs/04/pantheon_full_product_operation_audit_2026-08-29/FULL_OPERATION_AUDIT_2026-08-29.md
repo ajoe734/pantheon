@@ -264,7 +264,7 @@ HAR/DOM與skip來源。因此它們不是獨立可重現的功能證據，且被
 | Source active-symbol frontier 重啟丟失 | `f227360`（PR #5412）在 controller worker 加入 explicit frontier recovery，重啟時可由既有 SourceRecord 恢復 checkpoint | source-level 已修；待 hosted deployment 驗證 |
 | Active paper symbol snapshot alias 與 official refresh 優先序 | `9e9ab33`（PR #5413）新增 snapshot alias read view 與 active paper symbol 的 Taiwan official refresh 優先路由 | source-level 已修；待 hosted deployment 驗證 |
 | Active symbol 官方收盤歷史不足導致 producer 阻斷 | `44895a2`（PR #5415）引入 2 個月有界歷史獲取、distinct-day snapshot 去重與 >=2 distinct closes 診斷門檻 | source-level 已修；待 hosted deployment 驗證 |
-| 週末與例假日官方收盤價被 flat 24h 判為過期 | `394eb05`（PR #5416）實作 governed Taiwan market-session freshness 規則，承認週末/例假日的週五官方收盤有效性 | source-level 已修（歷史 PR #5416 套件 197 passed；最新 focused verifier 套件為 140 passed、2 failed、1 skipped，2 個失敗為 verifier fixture 在 stage_04 遭 official lineage fail-closed 拒絕，待 exact hosted promotion 驗證） |
+| 週末與例假日官方收盤價被 flat 24h 判為過期 | `394eb05`（PR #5416）實作 governed Taiwan market-session freshness 規則，承認週末/例假日的週五官方收盤有效性 | source-level 已修（歷史 PR #5416 套件 197 passed；最新 focused verifier 套件為 144 passed、2 failed、1 skipped，2 個失敗為 verifier fixture 在 stage_04 遭 official lineage fail-closed 拒絕，待 exact hosted promotion 驗證） |
 
 ### 4.2 Current direct GAP
 
@@ -450,7 +450,7 @@ served FE、authenticated network、canonical data與reload readback補齊前，
 - Source command/schema/concurrency 18個非HTTP tests通過；
 - governed search、structured alpha、reviewed memory 25個非HTTP tests通過；
 - 歷史 PR #5416 驗證時 paper signal producer、market snapshot admission、Taiwan official connectors、controller worker、Agora operational readiness、deploy diagnostics contract 核心套件共 197 passed、1 skipped（live opt-in）；
-- 最新 current dev 執行 focused verifier 套件（`scripts/test_verify_agora_*.py`、`test_paper_signal_producer.py`、`test_paper_fleet_reconciler.py`、`test_operational_readiness.py`、`test_source_ingest_deploy_diagnostics_contract.py`、`test_taiwan_official_connectors.py`）之實際結果為 **140 passed、2 failed、1 skipped**；
+- 最新 current dev 執行 focused verifier 套件（`scripts/test_verify_agora_*.py`、`test_paper_signal_producer.py`、`test_paper_fleet_reconciler.py`、`test_operational_readiness.py`、`test_source_ingest_deploy_diagnostics_contract.py`、`test_taiwan_official_connectors.py`）之實際結果為 **144 passed、2 failed、1 skipped**；
 - **2 個 failed 之真因與邊界分析**：失敗案例為 `scripts/test_verify_agora_operational_readiness.py` 中的 `test_verifier_full_positive_run` 與 `test_verifier_fails_on_order_authority_claim`。兩者皆在 `stage_04_bounded_recovery_sequence` 執行時拋出 `[bounded_recovery_sequence] Market snapshot admission failed: market_input_non_official_lineage (snapshot lineage is not an official TWSE/TPEx source)`。此為 verifier 內部測試 fixture 構造之 mock market snapshot lineage 未帶有 `394eb05` 所要求的 `tw-official:` / `tw-twse-tpex-official-market` 官方標記，因而被 `market_snapshot_admission.py` fail-closed 拒絕。此結果證明了 Taiwan official lineage 門禁確實嚴格生效，但也揭示了 standalone verifier 測試套件本身在 current dev 仍待更新 fixture lineage；
 - current BFF以async ASGI transport呼叫`/livez`與authenticated data-sources list均回200。
 
@@ -472,7 +472,7 @@ tests算failed或passed。這個分類很重要：產品ASGI route直接可執�
 10. 修正sync TestClient/dependency組合，將需要ASGI的tests改成async transport並加入硬timeout。
 11. 重跑三遍對照；未取得direct evidence者保留`UNVERIFIED`，不以task/PR/test數量補空白。
 
-目前可下的產品級結論是：**舊版BFF process、Lifecycle PostgreSQL projection與列出的核心依賴在補償後可達，舊FE/BFF pair也已恢復一致（PostgreSQL checkpoint `7,637,654`）；image identity false-negative、frontier recovery、min closes 與 Taiwan session freshness 已在 current source 完成修復（歷史 197 passed；最新 focused verifier 140 passed / 2 failed / 1 skipped），但在 run `33280168821` 中 Agora projection 綁定驗證受阻（OP-G19）並觸發補償回滾；paper-signal-producer 仍待 live atomic switch 閉環（OP-G20），Agora research與RuntimeBinding又有current source P0，所以不是所有功能正常，也不具備全產品簽收條件。**
+目前可下的產品級結論是：**舊版BFF process、Lifecycle PostgreSQL projection與列出的核心依賴在補償後可達，舊FE/BFF pair也已恢復一致（PostgreSQL checkpoint `7,637,654`）；image identity false-negative、frontier recovery、min closes 與 Taiwan session freshness 已在 current source 完成修復（歷史 197 passed；最新 focused verifier 144 passed / 2 failed / 1 skipped），但在 run `33280168821` 中 Agora projection 綁定驗證受阻（OP-G19）並觸發補償回滾；paper-signal-producer 仍待 live atomic switch 閉環（OP-G20），Agora research與RuntimeBinding又有current source P0，所以不是所有功能正常，也不具備全產品簽收條件。**
 
 ## 9. 三遍前後對照方法
 
@@ -571,7 +571,7 @@ cleanup仍有直接落差。在atomic promotion、第三遍exact desktop journey
   - Source reconcile-only contract 1 passed；
   - Source command/schema/concurrency 18 passed；
   - governed search、structured alpha、reviewed memory 25 passed；
-  - paper signal producer、market snapshot admission、Taiwan official connectors、controller worker、Agora operational readiness、deploy diagnostics contract 歷史套件共 197 passed、1 skipped；最新 current dev 執行 focused verifier 套件（`scripts/test_verify_agora_*.py` 等）為 140 passed、2 failed（2 個失敗在 `stage_04_bounded_recovery_sequence` 觸發 `market_input_non_official_lineage` 嚴格拒絕）、1 skipped；
+  - paper signal producer、market snapshot admission、Taiwan official connectors、controller worker、Agora operational readiness、deploy diagnostics contract 歷史套件共 197 passed、1 skipped；最新 current dev 執行 focused verifier 套件（`scripts/test_verify_agora_*.py` 等）為 144 passed、2 failed（2 個失敗在 `stage_04_bounded_recovery_sequence` 觸發 `market_input_non_official_lineage` 嚴格拒絕）、1 skipped；
   - async ASGI `/livez`／data-sources 直接呼叫 200。
 - execute-plans validation：`e205643` 基線 typecheck/175 focused tests；`5ffee3d` exact source typecheck、Strategy Workshop 52 tests、變更檔 ESLint 0 errors；`bd03c86` PR #694 closeout manifest。
 
