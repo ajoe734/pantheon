@@ -247,7 +247,7 @@ jobs:
           # The tooling smoke imports canonical signature and boundary helpers.
           # Keep these explicit: requirements.txt intentionally does not pull
           # product service dependencies into a tooling-only change.
-          python3 -m pip install cryptography pyyaml
+          python3 -m pip install cryptography pyyaml "pydantic>=2" pytest
 
       - name: Classify changed components
         id: boundary
@@ -270,7 +270,14 @@ jobs:
         run: |
           PYTHONPATH=.orchestrator python3 -m unittest \
             test_supervisor test_runtime_state test_approval_queue \
-            scripts.test_ai_status scripts.test_check_config_drift scripts.test_component_boundary
+            rewrite.test_task_contract \
+            test_supervisor_recovery_process_e2e test_supervisor_watchdog \
+            scripts.test_ai_status scripts.test_status_command_runtime_pin \
+            scripts.test_check_config_drift scripts.test_component_boundary
+          PYTHONPATH=.orchestrator python3 -m pytest -q \
+            .orchestrator/development_bridge/tests/test_dev_bridge_inbox_cli.py \
+            .orchestrator/development_bridge/tests/test_dev_bridge_reliability.py \
+            scripts/test_verify_task_state_store.py
 
       - name: Run product or mixed smoke gate
         if: steps.boundary.outputs.tooling_only != 'true'

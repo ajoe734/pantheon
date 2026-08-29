@@ -6,6 +6,7 @@ import importlib.util
 import json
 import os
 import subprocess
+import sys
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -13,6 +14,10 @@ from unittest.mock import patch
 
 import pytest
 
+from common import (
+    CANONICAL_TASK_STATE_IDENTITY_ENV,
+    canonical_task_state_identity_for_paths,
+)
 from .. import dev_bridge_admission, dev_bridge_dispatcher, dev_bridge_inbox
 from ..dev_bridge_dispatcher import _task_metadata, dispatch_task_packet
 from ..dev_bridge_inbox import drain_task_packet_inbox, queue_task_packet
@@ -195,7 +200,12 @@ def _load_ai_status_module():
     )
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    sys.modules[spec.name] = module
+    try:
+        spec.loader.exec_module(module)
+    except Exception:
+        sys.modules.pop(spec.name, None)
+        raise
     return module
 
 
@@ -215,7 +225,12 @@ def _load_task_state_latency_benchmark():
     )
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    sys.modules[spec.name] = module
+    try:
+        spec.loader.exec_module(module)
+    except Exception:
+        sys.modules.pop(spec.name, None)
+        raise
     return module
 
 
@@ -317,6 +332,21 @@ def _signed(packet_id: str, *, task_count: int = 1) -> DevTaskPacket:
     return sign_packet(_packet(packet_id, task_count=task_count), key_store=KEY_STORE)
 
 
+def _signed_without_dependencies(packet_id: str) -> DevTaskPacket:
+    packet = _packet(packet_id)
+    return sign_packet(
+        packet.model_copy(
+            update={
+                "tasks": [
+                    task.model_copy(update={"depends_on": []})
+                    for task in packet.tasks
+                ]
+            }
+        ),
+        key_store=KEY_STORE,
+    )
+
+
 def test_packet_task_count_is_bounded() -> None:
     with pytest.raises(ValueError, match="at most 16 items"):
         _packet("pkt_too_many_tasks", task_count=MAX_TASKS_PER_PACKET + 1)
@@ -375,6 +405,17 @@ def _authoritative_status_root(tmp_path: Path) -> tuple[Path, Path, dict]:
     event_log.parent.mkdir()
     AI_STATUS.append_state_commit(event_log, state, source="bridge-test-fixture")
     return root, event_log, state
+
+
+def _canonical_identity_json(status_root: Path, event_log: Path) -> str:
+    return json.dumps(
+        canonical_task_state_identity_for_paths(
+            status_root=status_root,
+            event_log=event_log,
+        ),
+        sort_keys=True,
+        separators=(",", ":"),
+    )
 
 
 def _nonzero_command_fixture(tmp_path: Path) -> tuple[Path, dict[str, str]]:
@@ -534,6 +575,10 @@ def test_authoritative_bridge_dispatch_survives_next_projection_cycle(
     monkeypatch.setenv("PANTHEON_COMMAND_BASE_REF", "HEAD")
     monkeypatch.setenv("PANTHEON_TASK_STATE_STORE_MODE", "authoritative")
     monkeypatch.setenv("PANTHEON_TASK_STATE_EVENT_LOG", str(event_log))
+    monkeypatch.setenv(
+        CANONICAL_TASK_STATE_IDENTITY_ENV,
+        _canonical_identity_json(status_root, event_log),
+    )
     for marker in (
         "ORCH_RUN_ID",
         "ORCH_TASK_ID",
@@ -543,7 +588,7 @@ def test_authoritative_bridge_dispatch_survives_next_projection_cycle(
         "ORCH_HEARTBEAT_PATH",
     ):
         monkeypatch.delenv(marker, raising=False)
-    packet = _signed("pkt_authoritative_projection")
+    packet = _signed_without_dependencies("pkt_authoritative_projection")
     initial_event_count = AI_STATUS.load_snapshot(event_log)["event_count"]
 
     queued = queue_task_packet(
@@ -659,13 +704,16 @@ def test_full_supervisor_cycle_drains_signed_packet_with_authoritative_readback(
         "PANTHEON_COMMAND_BASE_REF": command_binding["base_ref"],
         "PANTHEON_TASK_STATE_STORE_MODE": "authoritative",
         "PANTHEON_TASK_STATE_EVENT_LOG": str(event_log),
+        CANONICAL_TASK_STATE_IDENTITY_ENV: _canonical_identity_json(
+            status_root, event_log
+        ),
     }
     for name, value in runtime_env.items():
         monkeypatch.setenv(name, value)
     for marker in dev_bridge_dispatcher.AUTO_WORKER_ENV_NAMES:
         monkeypatch.delenv(marker, raising=False)
 
-    packet = _signed("pkt_full_supervisor_authoritative")
+    packet = _signed_without_dependencies("pkt_full_supervisor_authoritative")
     queued = queue_task_packet(
         packet,
         repo_root=str(status_root),
@@ -774,6 +822,9 @@ def test_full_supervisor_cycle_never_queues_partially_materialized_packet(
         "PANTHEON_COMMAND_BASE_REF": command_binding["base_ref"],
         "PANTHEON_TASK_STATE_STORE_MODE": "authoritative",
         "PANTHEON_TASK_STATE_EVENT_LOG": str(event_log),
+        CANONICAL_TASK_STATE_IDENTITY_ENV: _canonical_identity_json(
+            status_root, event_log
+        ),
     }
     for name, value in runtime_env.items():
         monkeypatch.setenv(name, value)
@@ -865,6 +916,9 @@ def test_activity_log_and_projection_only_dispatch_cannot_create_admission(
         "PANTHEON_COMMAND_BASE_REF": "origin/dev",
         "PANTHEON_TASK_STATE_STORE_MODE": "authoritative",
         "PANTHEON_TASK_STATE_EVENT_LOG": str(event_log),
+        CANONICAL_TASK_STATE_IDENTITY_ENV: _canonical_identity_json(
+            status_root, event_log
+        ),
         "PANTHEON_ASSISTANT_DEV_BRIDGE_REQUIRE_TASK_STATE_READBACK": "1",
     }
 
@@ -1424,6 +1478,9 @@ def test_authoritative_admission_projection_retry_adds_no_task_state_event(
         "PANTHEON_TASK_STATE_STORE_MODE": "authoritative",
         "PANTHEON_TASK_STATE_EVENT_LOG": str(event_log),
         "PANTHEON_ASSISTANT_DEV_BRIDGE_REQUIRE_TASK_STATE_READBACK": "1",
+        CANONICAL_TASK_STATE_IDENTITY_ENV: _canonical_identity_json(
+            status_root, event_log
+        ),
     }
     unsigned = _packet("pkt_authoritative_admission_projection_retry", task_count=2)
     unsigned = unsigned.model_copy(
