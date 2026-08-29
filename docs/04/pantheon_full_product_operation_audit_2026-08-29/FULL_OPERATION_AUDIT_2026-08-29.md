@@ -4,8 +4,8 @@
 |---|---|
 | 文件狀態 | 完整稽核結論（2026-08-29T22:54Z 最新重審與 delta 盤點）；舊 FE/BFF pair 已由補償恢復，但 current source promotion 仍受阻，第三遍 current UI 明確保留為未驗證 |
 | 稽核範圍 | Pantheon 系統、十二循環、Management、Management AI、Agora、Source Ingestion、操作 UI、dev hosted runtime |
-| Pantheon repository 基線 | `origin/dev@954caefa519ab89827b4d3030a511f2f7c73138a`；包含 `b3b26a7` 後新增的 `f227360` Source frontier recovery、`9e9ab33` Active symbol snapshot recovery、`44895a2` Official snapshot min closes、`394eb05` Taiwan market-session freshness 及 `e5b4d10` dev tooling cleanup |
-| Pantheon product runtime 基線 | `394eb0501676f4520973a216db7eb7010f368bb3` |
+| Pantheon repository 基線 | `origin/dev@8f8383b507b1fb631d44422031f01ebea5024d5e`；包含 `b3b26a7` 後新增的 `f227360` Source frontier recovery、`9e9ab33` Active symbol snapshot recovery、`44895a2` Official snapshot min closes、`394eb05` Taiwan market-session freshness、`e5b4d10` dev tooling cleanup 及 `254d2e7` Source frontier scope recovery |
+| Pantheon product runtime 基線 | `8f8383b507b1fb631d44422031f01ebea5024d5e`（含 `254d2e7b05096dad3f6c7512db089ae2cbd8fe08`） |
 | execute-plans source 基線 | `origin/dev@bd03c863e3c2c1c64b9b7797f27cefaf84df17c1`（包含 PR #694 evidence manifest，前端 UI 程式碼同 `5ffee3db8c2b37b4070d43d091ed4207ef5d70e5`） |
 | current hosted BFF | `dcb14231d29f08f1646a4ee962b83fd2d4b67560`；`22:54Z` 直接確認：舊 accepted pair 運行中，PostgreSQL checkpoint `7,635,368`，backlog 0，quarantine 0 |
 | current hosted FE | `c230fc76bef78fc297135152f2acba690314bb9d`；前一個 accepted release |
@@ -109,7 +109,7 @@ release workflow顯示success但必要steps被skip、current FE source通過type
 
 | 項目 | 觀察 | 判定 |
 |---|---|---|
-| Pantheon current source | `origin/dev@394eb05`；包含 `f227360` Source frontier recovery、`9e9ab33` active symbol snapshot recovery、`44895a2` official snapshot min closes 及 `394eb05` Taiwan market session freshness | source 基線已前進；包含四大 Agora/Source/Paper 恢復變更 |
+| Pantheon current source | `origin/dev@8f8383b`；包含 `f227360` Source frontier recovery、`9e9ab33` active symbol snapshot recovery、`44895a2` official snapshot min closes、`394eb05` Taiwan market session freshness 及 `254d2e7` Source frontier scope recovery | source 基線已前進；包含五大 Agora/Source/Paper 恢復變更 |
 | execute-plans current source | `origin/dev@bd03c86` | source 基線包含 PR #694 closeout manifest；UI 程式碼同 `5ffee3d`（Workshop tenant submission 修正） |
 | Hosted release pair | FE `c230fc7` / BFF `dcb1423`，pair id `0429052b...` | exact hosted pair 可識別且維持一致 |
 | Source vs hosted | 目前兩個 repo 的 hosted SHA 仍落後 current source | `PARTIAL`；live 服務已由補償維持自洽舊版，但未部署 current candidate |
@@ -549,7 +549,7 @@ cleanup仍有直接落差。在atomic promotion、第三遍exact desktop journey
 
 - Public FE `/deployment.json`、BFF `/bff/version`、`/livez`、`/readyz` 於 2026-08-29 各觀察時間點（包含 22:54:17Z 最新 probe）的直接回應。
 - GitHub workflow runs `33272385942`、`33271993547`、`33271922125`、`33268311841`、`33266252692`、`33262293025`、`33260583008`、`33256001457`、`33146133499`、`33144815565` 及 execute-plans `33264640000`、`33263289212` 的 raw jobs/logs；判定以原始 step 狀態為準，不採只列 count 的 closeout 摘要。
-- Pantheon PRs 關聯：PR #5409（Audit 盤點主 PR）、PR #5410（`b3b26a7` Deploy recovery & bounded source refresh）、PR #5412（`f227360` Source frontier recovery）、PR #5413（`9e9ab33` Active symbol snapshot recovery & alias view）、PR #5415（`44895a2` Official snapshot min closes）、PR #5416（`394eb05` Taiwan market session freshness）。
+- Pantheon PRs 關聯：PR #5409（Audit 盤點主 PR）、PR #5410（`b3b26a7` Deploy recovery & bounded source refresh）、PR #5411（`254d2e7` Source frontier scope recovery）、PR #5412（`f227360` Source frontier recovery）、PR #5413（`9e9ab33` Active symbol snapshot recovery & alias view）、PR #5415（`44895a2` Official snapshot min closes）、PR #5416（`394eb05` Taiwan market session freshness）、PR #5419（`e5b4d10` dev tooling cleanup）。
 - Pantheon focused validation：
   - route no-shadowing、normalized route uniqueness 與 development route boundary 共 23 passed；
   - Source reconcile-only contract 1 passed；
