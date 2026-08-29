@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, os.path.dirname(__file__))
 
 import main as bff_main
-from read_store import ReadSurfaceStore
+from ports import create_in_memory_read_surface_ports
 
 
 OPERATOR_TOKEN = "Bearer op-2:operator"
@@ -18,10 +18,7 @@ OPERATOR_TOKEN = "Bearer op-2:operator"
 def test_pkt011_health_status_board_returns_contract_payload() -> None:
     with tempfile.TemporaryDirectory() as td:
         original_store = bff_main.read_store
-        store = ReadSurfaceStore(
-            os.path.join(td, "read_surfaces.json"),
-            allow_local_snapshot_fallback=False,
-        )
+        store = create_in_memory_read_surface_ports()
         store.list_runtime_bindings = lambda: [
             {
                 "id": "runtime-042",
@@ -144,10 +141,7 @@ def test_pkt011_health_status_board_returns_contract_payload() -> None:
 def test_pkt011_health_status_board_returns_unavailable_when_primary_surfaces_missing() -> None:
     with tempfile.TemporaryDirectory() as td:
         original_store = bff_main.read_store
-        store = ReadSurfaceStore(
-            os.path.join(td, "read_surfaces.json"),
-            allow_local_snapshot_fallback=False,
-        )
+        store = create_in_memory_read_surface_ports()
         store.list_runtime_bindings = lambda: []
         store.get_telemetry_summary = lambda runtime_id: None
         store.list_incidents = lambda **kwargs: []
@@ -180,10 +174,7 @@ def test_pkt011_health_status_board_returns_unavailable_when_primary_surfaces_mi
 def test_pkt011_health_status_board_escalates_secondary_path_when_safe_mode_active() -> None:
     with tempfile.TemporaryDirectory() as td:
         original_store = bff_main.read_store
-        store = ReadSurfaceStore(
-            os.path.join(td, "read_surfaces.json"),
-            allow_local_snapshot_fallback=False,
-        )
+        store = create_in_memory_read_surface_ports()
         store.list_runtime_bindings = lambda: [
             {
                 "id": "runtime-042",

@@ -18,8 +18,84 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 import main as bff_main
 from typing import Any
-from read_store import _load_default_fixture_pack_datasets
+from pathlib import Path
 from ports import create_in_memory_read_surface_ports
+
+# Local re-implementation of read_store._load_default_fixture_pack_datasets:
+# merges the same static, committed fixture-pack JSON files directly off
+# disk, with no import from / coupling to read_store.py's adapter machinery.
+_FIXTURE_PACK_DIR = Path(os.path.dirname(os.path.dirname(__file__))) / "data"
+_FIXTURE_PACK_PATHS = (
+    _FIXTURE_PACK_DIR / "fixtures_pack_a.json",
+    _FIXTURE_PACK_DIR / "fixtures_pack_b.json",
+    _FIXTURE_PACK_DIR / "fixtures_pack_c.json",
+)
+_FIXTURE_DATASET_ALIASES = {
+    "deployments": "deployment_plans",
+    "runtimes": "runtime_bindings",
+}
+_FIXTURE_RECORD_KEYS = [
+    "id", "analysis_id", "entry_id", "decision_id", "intervention_id", "job_id",
+    "plan_id", "program_id", "pool_id", "persona_id", "server_id", "signal_id",
+    "skill_id", "session_id", "sessionId", "packet_id", "strategy_id",
+    "experiment_id", "artifact_id", "rebalance_id", "binding_id", "runtime_id",
+    "tool_id", "channel_id",
+]
+
+
+def _fixture_pack_record_key(record: Any) -> str:
+    if isinstance(record, dict):
+        for key in _FIXTURE_RECORD_KEYS:
+            value = record.get(key)
+            if value not in (None, ""):
+                return str(value)
+    return json.dumps(record, sort_keys=True, ensure_ascii=True)
+
+
+def _load_fixture_pack_file(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, json.JSONDecodeError):
+        return {}
+    datasets = payload.get("datasets") if isinstance(payload, dict) else None
+    if not isinstance(datasets, dict):
+        return {}
+    return json.loads(json.dumps(datasets))
+
+
+def _merge_fixture_pack(target: dict[str, Any], fixture: dict[str, Any]) -> None:
+    for raw_key, incoming in fixture.items():
+        key = _FIXTURE_DATASET_ALIASES.get(raw_key, raw_key)
+        if isinstance(incoming, dict):
+            existing = target.get(key)
+            if not isinstance(existing, dict):
+                target[key] = json.loads(json.dumps(incoming))
+                continue
+            for record_key, record in incoming.items():
+                if record_key not in existing:
+                    existing[record_key] = json.loads(json.dumps(record))
+            continue
+        if isinstance(incoming, list):
+            existing = target.get(key)
+            if not isinstance(existing, list):
+                target[key] = json.loads(json.dumps(incoming))
+                continue
+            seen = {_fixture_pack_record_key(record) for record in existing}
+            for record in incoming:
+                record_key = _fixture_pack_record_key(record)
+                if record_key in seen:
+                    continue
+                existing.append(json.loads(json.dumps(record)))
+                seen.add(record_key)
+
+
+def _load_default_fixture_pack_datasets() -> dict[str, Any]:
+    merged: dict[str, Any] = {}
+    for path in _FIXTURE_PACK_PATHS:
+        _merge_fixture_pack(merged, _load_fixture_pack_file(path))
+    return merged
 
 OPERATOR_HEADERS = {"Authorization": "Bearer op-b3-persona-intent:operator"}
 

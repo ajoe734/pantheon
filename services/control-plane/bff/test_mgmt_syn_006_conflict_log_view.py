@@ -16,7 +16,7 @@ BFF_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(BFF_DIR))
 
 import main as bff_main  # noqa: E402
-from read_store import ReadSurfaceStore  # noqa: E402
+from ports import create_in_memory_read_surface_ports  # noqa: E402
 
 
 HEADERS = {"Authorization": "Bearer op-mgmt-syn:operator,reviewer,admin:mfa"}
@@ -102,6 +102,83 @@ COMMITTEE_LOG = {
 }
 
 
+def _normalize_conflict_log_item(item: Any) -> Optional[dict]:
+    if not isinstance(item, dict):
+        return None
+    payload = item.get("payload") if isinstance(item.get("payload"), dict) else item
+    log_payload = (
+        payload.get("conflict_resolution_log")
+        or payload.get("conflictResolutionLog")
+        or payload.get("log")
+        if isinstance(payload, dict)
+        else None
+    )
+    if log_payload is None and isinstance(payload, dict):
+        log_payload = payload
+    if not isinstance(log_payload, dict):
+        return None
+    log_id = log_payload.get("log_id") or log_payload.get("id") or log_payload.get("conflict_resolution_log_id")
+    if not log_id:
+        return None
+    projected = json.loads(json.dumps(log_payload))
+    projected.setdefault("log_id", str(log_id))
+    projected.setdefault("id", str(log_id))
+
+    artifact = payload.get("allocation_policy_artifact") or payload.get("artifact")
+    if isinstance(artifact, dict):
+        aid = artifact.get("artifact_id") or artifact.get("id")
+        if aid:
+            projected.setdefault("allocation_policy_artifact_id", str(aid))
+        for field in (
+            "target_weights",
+            "constraints_bundle",
+            "risk_budget",
+            "provenance_refs",
+            "sponsor_persona_id",
+            "synthesis_method",
+        ):
+            if field in artifact and field not in projected:
+                projected[field] = json.loads(json.dumps(artifact[field]))
+    approval = payload.get("governance_approval_packet") or payload.get("approval") or payload.get("governanceApprovalPacket")
+    if isinstance(approval, dict):
+        approval_id = approval.get("approval_decision_id") or approval.get("decision_id") or approval.get("id")
+        if approval_id:
+            projected.setdefault("governance_approval_id", str(approval_id))
+        for source, target in (
+            ("decision", "governance_decision"),
+            ("decision_state", "governance_decision_state"),
+            ("can_proceed", "governance_can_proceed"),
+            ("rationale", "governance_rationale"),
+            ("risk_level", "governance_risk_level"),
+        ):
+            if source in approval and target not in projected:
+                projected[target] = json.loads(json.dumps(approval[source]))
+        if "evidence_refs" in approval and "evidence_refs" not in projected:
+            projected["evidence_refs"] = json.loads(json.dumps(approval["evidence_refs"]))
+    return projected
+
+
+def _normalize_conflict_logs(payload: Optional[object]) -> list[dict]:
+    if payload is None:
+        return []
+    raw_list: list[Any] = []
+    if isinstance(payload, dict):
+        items = payload.get("items") or payload.get("records") or payload.get("data")
+        if isinstance(items, list):
+            raw_list = items
+        else:
+            raw_list = [payload]
+    elif isinstance(payload, list):
+        raw_list = payload
+
+    normalized = []
+    for item in raw_list:
+        p = _normalize_conflict_log_item(item)
+        if p is not None:
+            normalized.append(p)
+    return normalized
+
+
 @contextmanager
 def _conflict_log_client(
     monkeypatch,
@@ -117,12 +194,16 @@ def _conflict_log_client(
             store_path = Path(td) / "synthesis_conflict_logs.json"
             store_path.write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
             monkeypatch.setenv("PANTHEON_BFF_SYNTHESIS_CONFLICT_LOG_STORE", str(store_path))
+            logs = _normalize_conflict_logs(payload)
+            store = create_in_memory_read_surface_ports(
+                ooda_management_kwargs={"synthesis_conflict_logs": logs}
+            )
+            store.dataset_source = lambda ds: "service_store" if ds == "synthesis_conflict_logs" else "typed_store"
         else:
             monkeypatch.delenv("PANTHEON_BFF_SYNTHESIS_CONFLICT_LOG_STORE", raising=False)
-        bff_main.read_store = ReadSurfaceStore(
-            os.path.join(td, "read_surfaces.json"),
-            allow_local_snapshot_fallback=False,
-        )
+            store = create_in_memory_read_surface_ports()
+            store.dataset_source = lambda ds: "missing" if ds == "synthesis_conflict_logs" else "typed_store"
+        bff_main.read_store = store
         try:
             yield TestClient(bff_main.app, raise_server_exceptions=False)
         finally:

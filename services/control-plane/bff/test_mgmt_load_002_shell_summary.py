@@ -16,20 +16,17 @@ os.environ.setdefault("PANTHEON_BFF_AUTH_STUB", "true")
 sys.path.insert(0, os.path.dirname(__file__))
 
 import main as bff_main  # noqa: E402
-from read_store import ReadSurfaceStore  # noqa: E402
+from ports import ReadSurfacePorts, create_read_surface_ports  # noqa: E402
 
 
 HEADERS = {"Authorization": "Bearer op-mgmt-load-002:operator,admin:mfa"}
 
 
 @contextmanager
-def _isolated_bff(monkeypatch) -> Iterator[tuple[TestClient, ReadSurfaceStore]]:
+def _isolated_bff(monkeypatch) -> Iterator[tuple[TestClient, ReadSurfacePorts]]:
     with tempfile.TemporaryDirectory() as td:
         original_store = bff_main.read_store
-        store = ReadSurfaceStore(
-            os.path.join(td, "read_surfaces.json"),
-            allow_local_snapshot_fallback=True,
-        )
+        store = create_read_surface_ports()
         bff_main.read_store = store
         bff_main._SHELL_SUMMARY_COUNT_CACHE.clear()
         bff_main._GOV_BFF_JOB_OVERLAY.clear()

@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, os.path.dirname(__file__))
 
 import main as bff_main
-from read_store import ReadSurfaceStore
+from ports import create_in_memory_read_surface_ports
 
 
 OPERATOR_TOKEN = "Bearer op-2:operator"
@@ -18,10 +18,7 @@ OPERATOR_TOKEN = "Bearer op-2:operator"
 def test_pkt012_alerts_rail_returns_backend_owned_alert_feed() -> None:
     with tempfile.TemporaryDirectory() as td:
         original_store = bff_main.read_store
-        store = ReadSurfaceStore(
-            os.path.join(td, "read_surfaces.json"),
-            allow_local_snapshot_fallback=False,
-        )
+        store = create_in_memory_read_surface_ports()
         store.list_incidents = lambda **kwargs: [
             {
                 "incident_id": "inc-001",
@@ -155,10 +152,7 @@ def test_pkt012_alerts_rail_returns_backend_owned_alert_feed() -> None:
 def test_pkt012_alerts_rail_returns_unavailable_when_all_sources_are_missing() -> None:
     with tempfile.TemporaryDirectory() as td:
         original_store = bff_main.read_store
-        store = ReadSurfaceStore(
-            os.path.join(td, "read_surfaces.json"),
-            allow_local_snapshot_fallback=False,
-        )
+        store = create_in_memory_read_surface_ports()
         store.list_incidents = lambda **kwargs: []
         store.list_governance_review_queue_items = lambda **kwargs: []
         store.list_approval_queue_items = lambda **kwargs: []
@@ -193,10 +187,7 @@ def test_pkt012_alerts_rail_returns_unavailable_when_all_sources_are_missing() -
 def test_alt001_bff_alerts_endpoint_returns_operator_alert_projection_and_detail() -> None:
     with tempfile.TemporaryDirectory() as td:
         original_store = bff_main.read_store
-        store = ReadSurfaceStore(
-            os.path.join(td, "read_surfaces.json"),
-            allow_local_snapshot_fallback=False,
-        )
+        store = create_in_memory_read_surface_ports()
         store.list_incidents = lambda **kwargs: [
             {
                 "incident_id": "inc-alt-001",

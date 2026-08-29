@@ -66,7 +66,7 @@ if _saved_bff_models is not None:
     sys.modules["models"] = _saved_bff_models
 
 # ---- Constants ----
-_BFF_HEADERS = {"Authorization": "Bearer bff004-drill:operator,reviewer,admin:mfa"}
+_BFF_HEADERS = {"Authorization": "Bearer bff004-drill:operator,reviewer,admin:mfa::tenant-dev"}
 
 # ---------------------------------------------------------------------------
 # Drill fixtures
@@ -242,9 +242,14 @@ class TestDrill1SourceToHealth:
         """
         monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "true")
 
-        health_path = tmp_path / "loop_health.json"
-        health_path.write_text(json.dumps(_LOOP_HEALTH_STORE), encoding="utf-8")
-        monkeypatch.setenv("PANTHEON_BFF_LOOP_HEALTH_STORE", str(health_path))
+        async def _fetch_controller_records(tenant_id: str, environment: str):
+            return True, list(_LOOP_HEALTH_STORE.values())
+
+        monkeypatch.setattr(
+            bff_main.loop_truth,
+            "fetch_controller_store_health_records",
+            _fetch_controller_records,
+        )
 
         client = TestClient(bff_main.app, raise_server_exceptions=False)
         response = client.get("/bff/v5/loop-health/source_ingestion", headers=_BFF_HEADERS)
@@ -267,7 +272,7 @@ class TestDrill1SourceToHealth:
         # The claimed level remains inspectable, but it is not accepted.
         assert packet["operator_truth"]["source_type"] == "live_truth"
         assert data["controller_health"]["reported_status"] == "healthy"
-        assert data["controller_health"]["status"] == "not_implemented"
+        assert data["controller_health"]["status"] == "unobserved"
         assert data["controller_health"]["source"] == "registry_metadata"
         assert data["controller_health"]["current_record_accepted"] is False
         assert data["live_status"]["is_reconciled"] is False
