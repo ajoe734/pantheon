@@ -63,6 +63,9 @@ class WakeupMessageRoleGuardrailTests(unittest.TestCase):
         self.assertIn("不得執行 `assign`、`start`、`progress`、`handoff`、`done`", message)
         self.assertIn("ai-status.sh approve AG-WS-OPS-002", message)
         self.assertIn("ai-status.sh reopen AG-WS-OPS-002", message)
+        self.assertIn("唯一權威判定", message)
+        self.assertIn("不得只因 current dev 在線性前進後顯示 BEHIND 就 reopen", message)
+        self.assertIn("衝突、head/branch/manifest 已變，或 base 非線性倒退／分歧", message)
 
     def test_finalize_dispatch_identifies_owner(self) -> None:
         self.event["reason"] = "owned_finalize_dispatch"
