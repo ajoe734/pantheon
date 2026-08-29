@@ -1,7 +1,7 @@
 {
   "schema_version": "pantheon.agora-active-symbol-snapshot-recovery-review.v1",
   "task_id": "AGORA-ACTIVE-SYMBOL-SNAPSHOT-RECOVERY-V1-20260829",
-  "generated_at": "2026-08-29T19:15:30Z",
+  "generated_at": "2026-08-29T19:38:05Z",
   "owner": "Codex",
   "reviewer": "Antigravity2",
   "status": "implementation_ready_for_review",
@@ -37,15 +37,28 @@
       "The paper-signal-producer was the sole unhealthy component after repeated 2330.TW Source snapshot reads."
     ]
   },
+  "review_rejection_reproduction": {
+    "rejected_head": "c69546bb140dac90df0fc9c91715631f4df30d1c",
+    "runtime_binding_symbol": "2330.TW",
+    "source_response_symbol": "2330.TWSE",
+    "producer_admission": {
+      "admitted": false,
+      "reason_code": "market_input_invalid",
+      "cause": "The Source read alias selected the correct official snapshot but exposed its stored .TWSE symbol instead of the RuntimeBinding execution identity required by strict producer admission."
+    },
+    "disposition": "Do not merge or deploy the rejected head; the correction must preserve the official stored identity while emitting the requested execution alias in the read-only response."
+  },
   "implementation": {
     "anchor_commit": "adbe705b64364f24b7c80887e52244f112ae64ef",
+    "correction_anchor_commit": "bc84d990e72a8f11c6888bdb29a2b76c233993a3",
     "owned_layer": "Bounded Taiwan official record selection, Source snapshot read aliases, and nonprod deployment proof/diagnostics.",
     "behavior": [
       "The deployment reads only the durable RuntimeBinding volume through a one-off runtime-manager container and extracts unique active paper Taiwan symbols without mutating bindings.",
       "The source-ingest service receives those symbols as priority metadata; the Taiwan official adapter stable-partitions matching TWSE/TPEx rows before the unchanged per-venue and global max-record bounds.",
       "The provider dispatcher fails closed when active symbols exceed the cap or an active Taiwan symbol is absent from the official payload.",
-      "Read-only snapshot lookup maps .TW to .TWSE and .TWO to .TPEX. Persisted checksums, historical snapshot ids, and write identities are unchanged.",
-      "The bounded deploy gate reads every active paper snapshot, requires the explicit canonical venue identity, an event_time no older than 24 hours, and matching official connector/source lineage.",
+      "Read-only snapshot lookup maps .TW to .TWSE and .TWO to .TPEX, then emits the exact requested RuntimeBinding alias in the HTTP view. The official persisted symbol, checksum-derived snapshot id, lineage, and write identity are unchanged.",
+      "The paper producer keeps strict exact-symbol admission; a 2330.TW response backed by the official TWSE snapshot now passes that unchanged gate and emits a 2330.TW signal.",
+      "The bounded deploy gate reads every active paper snapshot, requires the requested execution identity, an event_time no older than 24 hours, and matching canonical official connector/source lineage.",
       "Root failure diagnostics now capture paper-signal-producer logs plus restart and health state."
     ],
     "not_changed": [
@@ -68,10 +81,24 @@
       "command": ".venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_taiwan_official_connectors.py services/source_ingestion/tests/test_latest_market_snapshot.py services/source_ingestion/test_compose_activation.py scripts/test_source_ingest_deploy_diagnostics_contract.py",
       "result": "29 passed, 1 skipped, 1 warning in 10.63s"
     },
+    "alias_and_producer_admission": {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_latest_market_snapshot.py services/execution/lean_runtime/test_paper_signal_producer.py scripts/test_source_ingest_deploy_diagnostics_contract.py",
+      "result": "31 passed, 1 warning in 9.88s",
+      "assertions": [
+        "2330.TW and 2330.TWSE reads retain the same official checksum-derived snapshot id and lineage while exposing their respective requested symbols.",
+        "CurrentArtifactStrategy plus the real shared snapshot admission rule accepts the 2330.TW view, preserves official TWSE lineage metadata, and enqueues a 2330.TW paper signal."
+      ]
+    },
     "source_ingestion_regression": {
       "command": ".venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests services/source_ingestion/test_compose_activation.py services/source_ingestion/test_service.py scripts/test_source_ingest_deploy_diagnostics_contract.py",
-      "result": "855 passed, 1 skipped, 5 warnings in 265.43s",
+      "result": "855 passed, 1 skipped, 5 warnings in 292.01s",
       "warnings": "Existing Starlette and jsonschema deprecation warnings only."
+    },
+    "multiprocess_stability_observation": {
+      "initial_combined_regression": "876 passed, 1 skipped and one BrokenBarrierError failure in test_two_process_workers_create_one_connector_schedule_run_and_source_record.",
+      "isolated_rerun": "1 passed in 3.39s.",
+      "clean_source_regression_rerun": "855 passed, 1 skipped in 292.01s, including the previously failing multi-process case.",
+      "classification": "Transient multiprocessing barrier flake; not hidden and not reproduced in either rerun."
     },
     "official_read_only_smoke": {
       "command": "PANTHEON_TW_OFFICIAL_LIVE_SMOKE=1 .venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_taiwan_official_connectors.py::test_taiwan_official_live_read_only_smoke_for_one_twse_and_tpex_symbol",
@@ -101,7 +128,7 @@
   "release_closeout_gate": {
     "status": "pending_post_merge",
     "success_claimed": false,
-    "required_backend": "The exact Pantheon dev merge commit containing anchor adbe705b64364f24b7c80887e52244f112ae64ef.",
+    "required_backend": "The exact Pantheon dev merge commit containing anchors adbe705b64364f24b7c80887e52244f112ae64ef and bc84d990e72a8f11c6888bdb29a2b76c233993a3 plus this updated evidence manifest.",
     "required_frontend_sha": "5ffee3db8c2b37b4070d43d091ed4207ef5d70e5",
     "required_dispatch": {
       "environment": "dev",
@@ -112,7 +139,7 @@
     },
     "required_proofs": [
       "The release passes all 28 exact backend component checks.",
-      "2330.TW resolves to the same stored snapshot id and 2330.TWSE canonical identity.",
+      "The 2330.TW execution-facing response resolves to the same stored snapshot id and official TWSE lineage as the 2330.TWSE read.",
       "The 2330 snapshot event_time is no older than 24 hours and lineage names the official TWSE connector/source.",
       "paper-signal-producer is healthy and reports successful ticks against the fresh official snapshot.",
       "The admitted hosted deployment exposes the exact backend plus execute-plans 5ffee3db identities.",
