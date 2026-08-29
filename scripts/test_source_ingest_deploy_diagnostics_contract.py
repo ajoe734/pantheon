@@ -106,10 +106,13 @@ def test_bounded_source_refresh_profile_is_fail_closed() -> None:
     assert "SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY <= 4" in gate
     assert "SOURCE_INGEST_MAX_RECORDS <= 500" in gate
     assert "SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS <= 3600" in gate
-    assert 'required = {"openapi.twse.com.tw", "www.tpex.org.tw"}' in gate
+    assert 'required = {"openapi.twse.com.tw", "www.twse.com.tw", "www.tpex.org.tw"}' in gate
     assert 'export SOURCE_INGEST_CONTROLLER_FORCE_CONNECTOR_IDS="${SOURCE_INGEST_BOUNDED_CONNECTOR_ID}"' in gate
     assert 'export SOURCE_INGEST_CONTROLLER_EXCLUSIVE_CONNECTOR_IDS="${SOURCE_INGEST_BOUNDED_CONNECTOR_ID}"' in gate
     assert "from services.external_egress import allowed_hosts" in gate
+
+    assert 'SOURCE_REFRESH_CONNECTOR_ID}" == "tw-twse-tpex-official-market"' in deploy
+    assert 'SOURCE_REFRESH_ALLOWED_HOSTS:+${SOURCE_REFRESH_ALLOWED_HOSTS},}www.twse.com.tw' in deploy
 
     root_start = deploy.index("  root)\n")
     root_end = deploy.index("\n  bff)\n", root_start)
@@ -188,6 +191,9 @@ def test_bounded_source_refresh_deploy_waits_and_gates_readback() -> None:
     assert 'snapshot.get("symbol") != execution_symbol' in gate
     assert "canonical_taiwan_symbol(execution_symbol)" in gate
     assert "active paper snapshot is outside 24h" in gate
+    assert "active paper snapshot requires at least two finite official closes" in gate
+    assert "len(closes) < 2" in gate
+    assert "math.isfinite(float(close))" in gate
     assert "active paper snapshot lacks official exchange lineage" in gate
 
     root_start = deploy.index("  root)\n")

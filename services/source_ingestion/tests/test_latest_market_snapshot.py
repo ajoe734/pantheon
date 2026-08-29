@@ -3,10 +3,13 @@ from __future__ import annotations
 import importlib
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import patch
 
 from fastapi.testclient import TestClient
+
+from services.source_ingestion.requirement_state import LatestMarketSnapshotStore
 
 
 def _load_source_main(monkeypatch: Any, tmp_path: Path) -> Any:
@@ -159,6 +162,18 @@ def test_tw_execution_alias_reads_only_the_official_twse_snapshot(
                         },
                     },
                     {
+                        "source_id": "tw-official:tw_price_daily:TWSE:2330:prior",
+                        "title": "official 2330.TWSE prior snapshot",
+                        "content_ref": "tw-official://tw_price_daily/TWSE/2330/2026-08-28/prior",
+                        "metadata": {
+                            "normalized_row": {
+                                "symbol_canonical": "2330.TWSE",
+                                "trade_date": "2026-08-28T05:30:00Z",
+                                "close": 950.0,
+                            }
+                        },
+                    },
+                    {
                         "source_id": "tw-official:tw_price_daily:TWSE:2330:official",
                         "title": "official 2330.TWSE snapshot",
                         "content_ref": "tw-official://tw_price_daily/TWSE/2330/2026-08-29/official",
@@ -198,10 +213,63 @@ def test_tw_execution_alias_reads_only_the_official_twse_snapshot(
     }
     assert alias_body["snapshot_id"] == official_body["snapshot_id"]
     assert module.latest_market_snapshot_store.get("2330.TW").symbol == "2330.TWSE"
-    assert alias_body["closes"] == [955.0]
+    assert alias_body["closes"] == [950.0, 955.0]
     assert alias_body["lineage"]["source_ids"] == [
-        "tw-official:tw_price_daily:TWSE:2330:official"
+        "tw-official:tw_price_daily:TWSE:2330:official",
+        "tw-official:tw_price_daily:TWSE:2330:prior",
     ]
+
+
+def test_snapshot_store_deduplicates_reingested_official_trade_dates(
+    tmp_path: Path,
+) -> None:
+    store = LatestMarketSnapshotStore(tmp_path / "market-snapshots.jsonl")
+
+    def record(*, source_id: str, event_time: str, close: float) -> Any:
+        return SimpleNamespace(
+            source_id=source_id,
+            connector_id="tw-twse-tpex-official-market",
+            content_ref=f"tw-official://tw_price_daily/TWSE/2330/{event_time}/{source_id}",
+            metadata={
+                "normalized_row": {
+                    "symbol_canonical": "2330.TWSE",
+                    "trade_date": event_time,
+                    "close": close,
+                }
+            },
+            is_rejected=False,
+        )
+
+    store.append_normalized_records(
+        [
+            record(source_id="daily-2026-08-28", event_time="2026-08-28", close=950.0),
+            record(source_id="daily-2026-08-29", event_time="2026-08-29", close=955.0),
+        ],
+        ingest_run_id="ingest-daily",
+        observed_at="2026-08-29T06:00:00Z",
+    )
+    store.append_normalized_records(
+        [
+            record(source_id="monthly-2026-08-28", event_time="2026-08-28", close=950.0),
+            record(source_id="monthly-2026-08-29", event_time="2026-08-29", close=955.0),
+        ],
+        ingest_run_id="ingest-monthly",
+        observed_at="2026-08-29T06:05:00Z",
+    )
+
+    reloaded = LatestMarketSnapshotStore(tmp_path / "market-snapshots.jsonl")
+    snapshot = reloaded.get("2330.TW")
+    assert snapshot is not None
+    assert [point.event_time for point in snapshot.points] == [
+        "2026-08-28T00:00:00Z",
+        "2026-08-29T00:00:00Z",
+    ]
+    assert snapshot.closes == (950.0, 955.0)
+    assert snapshot.lineage["source_ids"] == [
+        "monthly-2026-08-28",
+        "monthly-2026-08-29",
+    ]
+    assert snapshot.lineage["ingest_run_ids"] == ["ingest-monthly"]
 
 
 def test_missing_snapshot_has_a_typed_not_found_response(
