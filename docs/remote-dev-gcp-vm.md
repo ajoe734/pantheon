@@ -120,21 +120,22 @@ bash scripts/remote_dev_stack.sh down
 
 ## Remote Orchestrator Control
 
-Use the helper below to manage repo-writer processes on the VM:
+Use the diagnostic-only helper below to inspect repo-writer processes on the VM:
 
 ```bash
 bash scripts/remote_orchestrator.sh status
-bash scripts/remote_orchestrator.sh stop
-bash scripts/remote_orchestrator.sh start
 bash scripts/remote_orchestrator.sh logs
 ```
 
-Recommended handoff sequence:
+Supervisor lifecycle changes must use immutable runtime promotion and the
+persistent watchdog. The helper deliberately has no start, stop, or restart
+command; broad process killing and mutable-checkout launch are retired.
+
+Recommended source handoff sequence:
 
 ```bash
-bash scripts/remote_orchestrator.sh stop
 bash scripts/sync_remote_handoff.sh
-bash scripts/remote_orchestrator.sh start
+python3 scripts/supervisor_runtime_health.py --require-watchdog --json
 ```
 
 If you want to access the router from your local browser, open an SSH tunnel:

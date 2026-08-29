@@ -4,6 +4,11 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
+# This entrypoint is deliberately local-only. The Python supervisor enforces
+# the authoritative live-config identity before acquiring its singleton lock;
+# promoted/live operation belongs exclusively to the immutable watchdog
+# command rendered by provision_live_supervisor_config.py.
+
 # Guard: --poll-interval without --allow-fast-poll is the recurring footgun.
 # Supervisor cycle time scales with worker-log size; sub-config polling
 # manufactures lag and looks like the supervisor hanging. Force callers to be

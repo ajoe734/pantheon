@@ -31,7 +31,6 @@
 auto worker 的狀態命令會由 supervisor 提供的 `PANTHEON_COMMAND_ROOT` / `PANTHEON_COMMAND_RUNTIME_SHA` 執行；不要自行改用其他 checkout。
 不要用臨時 Python/heredoc 直接改 `ai-status.json`、`current-work.md` 或 `ai-activity-log.jsonl`。
 你在 background auto worker 裡執行，請不要使用 `git add -p`、`git add -i`、`git commit --interactive`、`git rebase -i` 或其他需要人工輸入的互動式命令。
-{{sidecar_guardrails}}
 
 Task ID: {{task_id}}
 原因: {{reason}}

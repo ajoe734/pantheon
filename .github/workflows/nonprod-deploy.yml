@@ -61,6 +61,11 @@ on:
         required: false
         default: false
         type: boolean
+      run_bounded_source_refresh:
+        description: "Dev strict/root only: run one allowlisted TWSE/TPEx source refresh before readiness gates"
+        required: false
+        default: false
+        type: boolean
       run_evolution_dispatch_probe:
         description: "Dev root only: run and upload the EVOLOOP-001 hosted dispatch probe"
         required: false
@@ -118,6 +123,7 @@ jobs:
       ALLOW_DIRTY: ${{ inputs.allow_dirty }}
       DEV_AUTH_PROFILE: ${{ inputs.dev_auth_profile }}
       PPL_ALLOC_009_DEV_PROOF_ENABLED: ${{ inputs.ppl_alloc_009_dev_proof_enabled }}
+      BOUNDED_SOURCE_REFRESH_ENABLED: ${{ inputs.run_bounded_source_refresh }}
       DEV_DEPLOY_SSH_HOST: ${{ vars.DEV_DEPLOY_SSH_HOST || '35.201.204.12' }}
       DEV_DEPLOY_SSH_USER: ${{ vars.NONPROD_REMOTE_USER || 'lupin' }}
     steps:
@@ -188,6 +194,10 @@ jobs:
             true|false) ;;
             *) echo "PPL-ALLOC-009 dev proof flag must be true or false." >&2; exit 1 ;;
           esac
+          case "${BOUNDED_SOURCE_REFRESH_ENABLED}" in
+            true|false) ;;
+            *) echo "Bounded source refresh flag must be true or false." >&2; exit 1 ;;
+          esac
           if [[ "${PPL_ALLOC_009_DEV_PROOF_ENABLED}" == "true" && (
             "${TARGET_COMPONENT}" != "root" ||
             "${DEV_AUTH_PROFILE}" != "strict" ||
@@ -196,6 +206,17 @@ jobs:
             "${RUN_LOOP_PROD_TEL_002_PROBE}" != "false"
           ) ]]; then
             echo "PPL-ALLOC-009 dev proof requires an isolated clean dev/root deploy with strict auth." >&2
+            exit 1
+          fi
+          if [[ "${BOUNDED_SOURCE_REFRESH_ENABLED}" == "true" && (
+            ( "${TARGET_COMPONENT}" != "auto" && "${TARGET_COMPONENT}" != "root" ) ||
+            "${DEV_AUTH_PROFILE}" != "strict" ||
+            "${ALLOW_DIRTY}" != "false" ||
+            "${PPL_ALLOC_009_DEV_PROOF_ENABLED}" != "false" ||
+            "${RUN_EVOLUTION_DISPATCH_PROBE}" != "false" ||
+            "${RUN_LOOP_PROD_TEL_002_PROBE}" != "false"
+          ) ]]; then
+            echo "Bounded source refresh requires an isolated clean dev/root deploy with strict auth." >&2
             exit 1
           fi
           echo "sha=${sha}" >> "${GITHUB_OUTPUT}"
@@ -863,6 +884,17 @@ jobs:
           DEV_MANAGEMENT_AI_ATTACH_BUCKET: ${{ vars.DEV_MANAGEMENT_AI_ATTACH_BUCKET }}
           DEV_MANAGEMENT_AI_ATTACH_LOCATION: ${{ vars.DEV_MANAGEMENT_AI_ATTACH_LOCATION || 'asia-east1' }}
           DEV_PPL_ALLOC_009_DEV_PROOF_ENABLED: ${{ env.PPL_ALLOC_009_DEV_PROOF_ENABLED }}
+          # The recovery switch is deliberately one boolean with a fixed
+          # connector and exact reviewed hosts. Callers cannot inject profiles,
+          # wildcard domains, credentials, query strings, or arbitrary egress.
+          PANTHEON_DEV_COMPOSE_PROFILES: ${{ env.BOUNDED_SOURCE_REFRESH_ENABLED == 'true' && 'openclaw,source-ingest-scheduler' || 'openclaw' }}
+          PANTHEON_EXTERNAL_EGRESS: ${{ env.BOUNDED_SOURCE_REFRESH_ENABLED == 'true' && 'allowlist' || 'deny' }}
+          PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS: ${{ env.BOUNDED_SOURCE_REFRESH_ENABLED == 'true' && 'openapi.twse.com.tw,www.tpex.org.tw' || '' }}
+          SOURCE_INGEST_BOUNDED_CONNECTOR_ID: tw-twse-tpex-official-market
+          SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS: "1800"
+          SOURCE_INGEST_CONTROLLER_MAX_TICKS: "1"
+          SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY: "1"
+          SOURCE_INGEST_MAX_RECORDS: "100"
           PANTHEON_DEV_DOCKER_PRUNE: ${{ vars.PANTHEON_DEV_DOCKER_PRUNE || 'true' }}
           DEV_DEPLOY_DEADLINE_SECONDS: ${{ vars.DEV_DEPLOY_DEADLINE_SECONDS || '7200' }}
           PANTHEON_DEV_ROLLBACK_BACKEND_SHA: ${{ steps.rollback_baseline.outputs.sha }}

@@ -73,7 +73,11 @@ if [[ "$CURRENT" != "$TASK_BRANCH" ]]; then
   exit 2
 fi
 
-git fetch origin "+refs/heads/${DEV_BRANCH}:refs/remotes/origin/${DEV_BRANCH}" --quiet
+# Task worktrees share the repository's refs directory but are deliberately
+# denied writes to release-tag refs.  This helper only needs the base branch;
+# prevent Git's automatic tag following from trying to update those shared
+# refs while finalising a worker task.
+git fetch --no-tags origin "+refs/heads/${DEV_BRANCH}:refs/remotes/origin/${DEV_BRANCH}" --quiet
 AHEAD=$(git rev-list --count "origin/${DEV_BRANCH}..HEAD")
 if [[ "$AHEAD" -eq 0 ]]; then
   echo "ERROR: $TASK_BRANCH has no commits ahead of origin/${DEV_BRANCH}; nothing to PR." >&2

@@ -5,6 +5,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 DEPLOY_SCRIPT = ROOT / "scripts/deploy_nonprod_vm.sh"
+DEPLOY_WORKFLOW = ROOT / ".github" / "workflows" / "nonprod-deploy.yml"
 
 
 def _failure_diagnostics_function() -> str:
@@ -111,6 +112,29 @@ def test_bounded_source_refresh_profile_is_fail_closed() -> None:
         if line.strip().startswith('PANTHEON_DEV_COMPOSE_PROFILES="${PANTHEON_DEV_COMPOSE_PROFILES:-')
     )
     assert "source-ingest-scheduler" not in default_profiles
+
+
+def test_nonprod_workflow_exposes_only_fixed_bounded_source_refresh() -> None:
+    workflow = DEPLOY_WORKFLOW.read_text(encoding="utf-8")
+
+    assert "run_bounded_source_refresh:" in workflow
+    assert "Bounded source refresh requires an isolated clean dev/root deploy with strict auth." in workflow
+    assert (
+        "PANTHEON_DEV_COMPOSE_PROFILES: ${{ env.BOUNDED_SOURCE_REFRESH_ENABLED == 'true' "
+        "&& 'openclaw,source-ingest-scheduler' || 'openclaw' }}"
+    ) in workflow
+    assert (
+        "PANTHEON_EXTERNAL_EGRESS: ${{ env.BOUNDED_SOURCE_REFRESH_ENABLED == 'true' "
+        "&& 'allowlist' || 'deny' }}"
+    ) in workflow
+    assert (
+        "PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS: ${{ env.BOUNDED_SOURCE_REFRESH_ENABLED == 'true' "
+        "&& 'openapi.twse.com.tw,www.tpex.org.tw' || '' }}"
+    ) in workflow
+    assert "SOURCE_INGEST_BOUNDED_CONNECTOR_ID: tw-twse-tpex-official-market" in workflow
+    assert 'SOURCE_INGEST_CONTROLLER_MAX_TICKS: "1"' in workflow
+    assert 'SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY: "1"' in workflow
+    assert 'SOURCE_INGEST_MAX_RECORDS: "100"' in workflow
 
 
 def test_default_source_owner_is_unbounded_reconcile_only() -> None:

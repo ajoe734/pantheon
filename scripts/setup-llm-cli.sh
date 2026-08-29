@@ -30,8 +30,11 @@ cat <<EOF
 LLM CLI setup applied for: $ROOT_DIR
 
 Next steps:
-1. Start supervisor
-   bash scripts/run-supervisor.sh --verbose
+1. Verify the promoted supervisor/watchdog
+   python3 scripts/supervisor_runtime_health.py --require-watchdog --json
+
+   For an isolated repository-local development fixture only:
+   bash scripts/run-supervisor.sh --once --quiet
 
 2. Start dashboard
    bash scripts/run-dashboard.sh

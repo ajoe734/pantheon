@@ -69,13 +69,6 @@ def render_wakeup_message(
             "只核對 approval、merged ancestry 與乾淨工作樹後收尾。\n"
         )
 
-    sidecar_guardrails = ""
-    if str(task_payload.get("task_class") or "").lower() == "sidecar":
-        sidecar_guardrails = (
-            "\n這是 canonical sidecar support task；只處理其明列 scope，"
-            "不得擴張成主線 governance 或 runtime 修改。\n"
-        )
-
     dependency_truth = [
         item
         for item in (task_payload.get("dependency_truth") or [])
@@ -128,7 +121,6 @@ def render_wakeup_message(
         "target_files": "\n".join(f"- {path}" for path in target_files)
         or "- (none inferred)",
         "dispatch_guardrails": role_guardrails.rstrip(),
-        "sidecar_guardrails": sidecar_guardrails.rstrip(),
         "dependency_truth": dependency_lines,
         "target_agent_display_name": display_name_for(config, agent["id"]),
     }
