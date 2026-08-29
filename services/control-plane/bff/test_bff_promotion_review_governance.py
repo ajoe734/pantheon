@@ -18,12 +18,285 @@ sys.path.insert(0, os.path.dirname(__file__))
 import main as bff_main
 from command_queue import CommandStore
 from models import CommandStatus, CommandType, ObjectType, TargetObject
-from read_store import ReadSurfaceStore
+from ports import ReadSurfacePorts
+from read_store import _default_read_data
 
 
 OPERATOR_HEADERS = {"Authorization": "Bearer op-promo:operator"}
 APPROVER_HEADERS = {"Authorization": "Bearer op-promo-approver:approver"}
 ADMIN_HEADERS = {"Authorization": "Bearer op-promo-admin:admin"}
+
+
+class PromotionReviewTestReadPorts(ReadSurfacePorts):
+    def __init__(self, seed_data: dict[str, Any] | None = None, *, allow_fallback: bool = True) -> None:
+        super().__init__()
+        if seed_data is not None:
+            self._data = seed_data
+        else:
+            self._data = _default_read_data()
+        self._data.setdefault("personas", {})["persona-alpha"] = {
+            "id": "persona-alpha",
+            "persona_id": "persona-alpha",
+            "name": "Alpha Persona",
+            "lifecycle_state": "active",
+            "mandate": "systematic_crypto_trading",
+            "strategy_family": "momentum",
+            "created_at": "2026-03-01T00:00:00Z",
+            "last_active_at": "2026-04-11T10:00:00Z",
+            "metadata": {
+                "archetype": "momentum",
+                "risk_level": "low",
+                "success_rate": 0.95,
+            },
+        }
+        self._data.setdefault("bindings", {})["binding-alpha"] = {
+            "id": "binding-alpha",
+            "persona_id": "persona-alpha",
+            "capital_pool_id": "pool-main",
+            "status": "active",
+            "validity": "active",
+            "allowed_deployment_scope": "paper",
+            "deployment_stage": "paper",
+        }
+        self._data.setdefault("runtime_bindings", {})["runtime-042"] = {
+            "id": "runtime-042",
+            "runtime_id": "runtime-042",
+            "persona_id": "persona-alpha",
+            "deployment_stage": "paper",
+            "deployment_mode": "paper",
+            "status": "running",
+            "plan_id": "plan-F-042",
+        }
+        self._data.setdefault("telemetry_summaries", {})["runtime-042"] = {
+            "runtime_id": "runtime-042",
+            "window": "1h",
+            "pnl": 0.85,
+            "drawdown": 0.01,
+            "sharpe_ratio": 3.2,
+            "total_trades": 120,
+            "fill_rate": 0.99,
+            "avg_slippage_bps": 0.2,
+            "collected_at": "2026-04-10T15:00:00Z",
+        }
+        self._data.setdefault("sessions", {})["sess-001"] = {
+            "id": "sess-001",
+            "session_id": "sess-001",
+            "persona_id": "persona-alpha",
+            "status": "active",
+            "deployment_stage": "paper",
+            "runtime_binding_id": "runtime-042",
+        }
+        self._data.setdefault("capability_snapshots", {})["cap-001"] = {
+            "id": "cap-001",
+            "snapshot_id": "cap-001",
+            "persona_id": "persona-alpha",
+            "status": "verified",
+        }
+        for pid, rid, bid in (
+            ("persona-us-equity", "runtime-us-equity-paper", "binding-us-equity-paper"),
+            ("persona-crypto-perp", "runtime-crypto-paper", "binding-crypto-paper"),
+        ):
+            self._data.setdefault("personas", {})[pid] = {
+                "id": pid,
+                "persona_id": pid,
+                "name": f"{pid} Persona",
+                "lifecycle_state": "active",
+                "mandate": "alpha_research_and_paper_execution",
+                "strategy_family": "momentum",
+                "created_at": "2026-03-01T00:00:00Z",
+                "last_active_at": "2026-04-11T10:00:00Z",
+                "metadata": {
+                    "archetype": "momentum",
+                    "risk_level": "low",
+                    "success_rate": 0.95,
+                },
+            }
+            self._data.setdefault("bindings", {})[bid] = {
+                "id": bid,
+                "persona_id": pid,
+                "capital_pool_id": "pool-main",
+                "runtime_binding_id": rid,
+                "status": "active",
+                "validity": "active",
+                "allowed_deployment_scope": "paper",
+                "deployment_stage": "paper",
+            }
+            self._data.setdefault("runtime_bindings", {})[rid] = {
+                "id": rid,
+                "runtime_id": rid,
+                "persona_id": pid,
+                "binding_id": bid,
+                "persona_capital_binding_id": bid,
+                "deployment_stage": "paper",
+                "deployment_mode": "paper",
+                "status": "running",
+                "plan_id": f"plan-{pid}",
+            }
+            self._data.setdefault("telemetry_summaries", {})[rid] = {
+                "runtime_id": rid,
+                "window": "1h",
+                "pnl": 0.85,
+                "drawdown": 0.01,
+                "sharpe_ratio": 3.2,
+                "total_trades": 120,
+                "fill_rate": 0.99,
+                "avg_slippage_bps": 0.2,
+                "collected_at": "2026-04-10T15:00:00Z",
+            }
+            self._data.setdefault("sessions", {})[f"sess-{pid}"] = {
+                "id": f"sess-{pid}",
+                "session_id": f"sess-{pid}",
+                "persona_id": pid,
+                "status": "active",
+                "deployment_stage": "paper",
+                "runtime_binding_id": rid,
+            }
+            self._data.setdefault("capability_snapshots", {})[f"cap-{pid}"] = {
+                "id": f"cap-{pid}",
+                "snapshot_id": f"cap-{pid}",
+                "persona_id": pid,
+                "status": "verified",
+            }
+        self.allow_fallback = allow_fallback
+        self._ranking_snapshots: dict[str, Any] = {}
+
+    def dataset_source(self, dataset: str, **kwargs: Any) -> str:
+        return "local_snapshot"
+
+    def dataset_surface_status(self, dataset: str, *, snapshot_at: str, **kwargs: Any) -> dict[str, Any]:
+        return {
+            "status": "ok",
+            "source": "local_snapshot",
+            "snapshot_at": snapshot_at,
+            "freshness": "fresh",
+            "observed_time": snapshot_at,
+            "coverage": 1.0,
+            "missing_bindings": False,
+        }
+
+    def _get_dataset(self, name: str) -> dict[str, Any] | list[Any]:
+        return self._data.setdefault(name, [])
+
+    def get_persona(self, persona_id: str | None) -> dict[str, Any] | None:
+        ds = self._data.get("personas", {})
+        if isinstance(ds, dict):
+            return ds.get(str(persona_id or ""))
+        return next((p for p in ds if p.get("id") == persona_id or p.get("persona_id") == persona_id), None)
+
+    def list_personas(self, **kwargs: Any) -> list[dict[str, Any]]:
+        ds = self._data.get("personas", {})
+        return list(ds.values()) if isinstance(ds, dict) else list(ds)
+
+    def list_capital_pools(self, **kwargs: Any) -> list[dict[str, Any]]:
+        ds = self._data.get("capital_pools", {})
+        return list(ds.values()) if isinstance(ds, dict) else list(ds)
+
+    def list_bindings(self, **kwargs: Any) -> list[dict[str, Any]]:
+        ds = self._data.get("bindings", {})
+        return list(ds.values()) if isinstance(ds, dict) else list(ds)
+
+    def list_deployment_plans(self, **kwargs: Any) -> list[dict[str, Any]]:
+        ds = self._data.get("deployment_plans", {})
+        return list(ds.values()) if isinstance(ds, dict) else list(ds)
+
+    def list_runtime_bindings(self, **kwargs: Any) -> list[dict[str, Any]]:
+        ds = self._data.get("runtime_bindings") or self._data.get("runtime_instances") or self._data.get("runtimes") or {}
+        return list(ds.values()) if isinstance(ds, dict) else list(ds)
+
+    def list_persona_league(self, **kwargs: Any) -> list[dict[str, Any]]:
+        ds = self._data.get("persona_league", [])
+        return list(ds.values()) if isinstance(ds, dict) else list(ds)
+
+    def list_governance_review_queue_items(self, **kwargs: Any) -> list[dict[str, Any]]:
+        return []
+
+    def list_approval_queue_items(self, **kwargs: Any) -> list[dict[str, Any]]:
+        return []
+
+    def list_v5_interventions(self, **kwargs: Any) -> list[dict[str, Any]]:
+        return []
+
+    def list_sentinel_findings(self, **kwargs: Any) -> tuple[bool, list[dict[str, Any]]]:
+        return (False, [])
+
+    def list_authoritative_paper_runtime_monitoring_sessions(self) -> list[dict[str, Any]]:
+        return []
+
+    def get_bindings_for_persona(self, persona_id: str | None) -> list[dict[str, Any]]:
+        ds = self._data.get("bindings", {})
+        items = list(ds.values()) if isinstance(ds, dict) else list(ds)
+        if persona_id:
+            items = [b for b in items if b.get("persona_id") == persona_id]
+        return items
+
+    def get_bindings_for_pool(self, pool_id: str | None) -> list[dict[str, Any]]:
+        ds = self._data.get("bindings", {})
+        items = list(ds.values()) if isinstance(ds, dict) else list(ds)
+        if pool_id:
+            items = [b for b in items if b.get("capital_pool_id") == pool_id or b.get("pool_id") == pool_id]
+        return items
+
+    def get_capital_pool(self, pool_id: str | None) -> dict[str, Any] | None:
+        ds = self._data.get("capital_pools", {})
+        if isinstance(ds, dict):
+            return ds.get(str(pool_id or ""))
+        return next((p for p in ds if p.get("id") == pool_id or p.get("pool_id") == pool_id), None)
+
+    def get_sessions_for_persona(self, persona_id: str | None) -> list[dict[str, Any]]:
+        ds = self._data.get("sessions", {})
+        items = list(ds.values()) if isinstance(ds, dict) else list(ds)
+        if persona_id:
+            items = [s for s in items if s.get("persona_id") == persona_id]
+        return items
+
+    def list_sessions_for_persona(self, persona_id: str | None, **kwargs: Any) -> list[dict[str, Any]]:
+        return self.get_sessions_for_persona(persona_id)
+
+    def get_teaching_sessions_for_persona(self, persona_id: str | None) -> list[dict[str, Any]]:
+        return []
+
+    def list_teaching_sessions_for_persona(self, persona_id: str | None, **kwargs: Any) -> list[dict[str, Any]]:
+        return []
+
+    def get_persona_route_summary(self, persona_id: str | None) -> dict[str, Any]:
+        return {}
+
+    def get_telemetry_summary(self, runtime_id: str | None) -> dict[str, Any] | None:
+        ds = self._data.get("telemetry_summaries", {})
+        if isinstance(ds, dict):
+            return ds.get(str(runtime_id or ""))
+        return next((t for t in ds if t.get("runtime_id") == runtime_id), None)
+
+    def get_runtime_binding(self, binding_id: str | None) -> dict[str, Any] | None:
+        ds = self._data.get("runtime_bindings") or self._data.get("runtime_instances") or self._data.get("runtimes") or {}
+        if isinstance(ds, dict):
+            return ds.get(str(binding_id or ""))
+        return next((r for r in ds if r.get("id") == binding_id or r.get("binding_id") == binding_id), None)
+
+    def get_runtime_binding_by_runtime_id(self, runtime_id: str | None) -> dict[str, Any] | None:
+        ds = self._data.get("runtime_bindings") or self._data.get("runtime_instances") or self._data.get("runtimes") or {}
+        if isinstance(ds, dict):
+            return ds.get(str(runtime_id or ""))
+        return next((r for r in ds if r.get("id") == runtime_id or r.get("runtime_id") == runtime_id), None)
+
+    def get_capability_snapshot_for_persona(self, persona_id: str | None) -> dict[str, Any] | None:
+        ds = self._data.get("capability_snapshots", {})
+        if isinstance(ds, dict):
+            for item in ds.values():
+                if isinstance(item, dict) and item.get("persona_id") == persona_id:
+                    return item
+        return None
+
+    def get_persona_capabilities(self, persona_id: str | None) -> dict[str, Any] | None:
+        return {}
+
+    def put_ranking_snapshot(self, payload: dict[str, Any]) -> dict[str, Any]:
+        snapshot_id = payload.get("id") or payload.get("ranking_snapshot_id") or "snap-1"
+        self._ranking_snapshots[snapshot_id] = payload
+        return payload
+
+    def get_ranking_snapshot(self, snapshot_id: str | None) -> dict[str, Any] | None:
+        return self._ranking_snapshots.get(str(snapshot_id or ""))
 
 
 @contextmanager
@@ -32,10 +305,7 @@ def _isolated_client() -> Iterator[TestClient]:
         original_read_store = bff_main.read_store
         original_command_store = bff_main.command_store
         original_final_idem = dict(bff_main._FINAL_CONTRACT_IDEMPOTENCY)
-        bff_main.read_store = ReadSurfaceStore(
-            os.path.join(td, "read_surfaces.json"),
-            allow_local_snapshot_fallback=True,
-        )
+        bff_main.read_store = PromotionReviewTestReadPorts(allow_fallback=True)
         bff_main.command_store = CommandStore(os.path.join(td, "commands.jsonl"))
         bff_main._FINAL_CONTRACT_IDEMPOTENCY.clear()
         try:

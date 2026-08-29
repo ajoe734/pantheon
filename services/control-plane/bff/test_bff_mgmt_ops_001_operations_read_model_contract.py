@@ -26,9 +26,10 @@ sys.path.insert(0, os.path.dirname(__file__))
 os.environ.setdefault("PANTHEON_BFF_AUTH_STUB", "true")
 os.environ.setdefault("PANTHEON_BFF_AUTH_MODE", "permissive")
 
+import json
 import main as bff_main  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
-from read_store import ReadSurfaceStore  # noqa: E402
+from ports import ReadSurfacePorts  # noqa: E402
 from operations_read_model import (  # noqa: E402
     DataConfidence,
     SourceState,
@@ -42,8 +43,108 @@ HEADERS = {"Authorization": "Bearer op-mgmt-ops-001:reader,operator,admin:mfa"}
 FOCUS_PERSONA_ID = "persona-20260528-04688755"
 
 
+def _load_fallback_data() -> dict[str, Any]:
+    fallback_path = os.path.join(os.path.dirname(__file__), "data", "read_surfaces.json")
+    if os.path.exists(fallback_path):
+        try:
+            with open(fallback_path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {}
+
+
+class OperationsReadModelTestReadPorts(ReadSurfacePorts):
+    def __init__(self, seed_data: dict[str, Any] | None = None, *, allow_fallback: bool = True) -> None:
+        super().__init__()
+        if seed_data is not None:
+            self._data: dict[str, Any] = seed_data
+        elif allow_fallback:
+            self._data = _load_fallback_data()
+        else:
+            self._data = {}
+        self.allow_fallback = allow_fallback
+        self._telemetries: dict[str, Any] = {}
+
+    def dataset_source(self, dataset: str, **kwargs: Any) -> str:
+        return "local_snapshot"
+
+    def dataset_surface_status(self, dataset: str, *, snapshot_at: str, **kwargs: Any) -> dict[str, Any]:
+        return {"status": "ok", "source": "local_snapshot", "snapshot_at": snapshot_at}
+
+    def _get_dataset(self, name: str) -> dict[str, Any] | list[Any]:
+        return self._data.setdefault(name, [])
+
+    def create_persona(self, **kwargs: Any) -> dict[str, Any]:
+        persona_id = kwargs.get("persona_id") or kwargs.get("id") or "p-new"
+        persona = {
+            "id": persona_id,
+            "persona_id": persona_id,
+            "name": kwargs.get("name") or persona_id,
+            "lifecycle_state": kwargs.get("lifecycle_state") or "active",
+            "metadata": kwargs.get("metadata") or {},
+        }
+        ds = self._data.setdefault("personas", {})
+        if isinstance(ds, dict):
+            ds[persona_id] = persona
+        elif isinstance(ds, list):
+            ds.append(persona)
+        return persona
+
+    def get_persona(self, persona_id: str | None) -> dict[str, Any] | None:
+        ds = self._data.get("personas", {})
+        if isinstance(ds, dict):
+            return ds.get(str(persona_id or ""))
+        return next((p for p in ds if p.get("id") == persona_id or p.get("persona_id") == persona_id), None)
+
+    def list_personas(self, **kwargs: Any) -> list[dict[str, Any]]:
+        ds = self._data.get("personas", {})
+        return list(ds.values()) if isinstance(ds, dict) else list(ds)
+
+    def list_capital_pools(self, **kwargs: Any) -> list[dict[str, Any]]:
+        ds = self._data.get("capital_pools", {})
+        return list(ds.values()) if isinstance(ds, dict) else list(ds)
+
+    def get_capital_pool(self, pool_id: str | None) -> dict[str, Any] | None:
+        ds = self._data.get("capital_pools", {})
+        if isinstance(ds, dict):
+            return ds.get(str(pool_id or ""))
+        return next((p for p in ds if p.get("id") == pool_id or p.get("pool_id") == pool_id), None)
+
+    def list_bindings(self, **kwargs: Any) -> list[dict[str, Any]]:
+        ds = self._data.get("bindings", {})
+        items = list(ds.values()) if isinstance(ds, dict) else list(ds)
+        persona_id = kwargs.get("persona_id")
+        if persona_id:
+            items = [b for b in items if b.get("persona_id") == persona_id]
+        return items
+
+    def list_deployment_plans(self, **kwargs: Any) -> list[dict[str, Any]]:
+        ds = self._data.get("deployment_plans", {})
+        return list(ds.values()) if isinstance(ds, dict) else list(ds)
+
+    def get_deployment_plan(self, plan_id: str | None) -> dict[str, Any] | None:
+        ds = self._data.get("deployment_plans", {})
+        if isinstance(ds, dict):
+            return ds.get(str(plan_id or ""))
+        return next((p for p in ds if p.get("id") == plan_id or p.get("plan_id") == plan_id), None)
+
+    def list_runtime_bindings(self, **kwargs: Any) -> list[dict[str, Any]]:
+        ds = self._data.get("runtime_bindings") or self._data.get("runtime_instances") or self._data.get("runtimes") or {}
+        return list(ds.values()) if isinstance(ds, dict) else list(ds)
+
+    def get_runtime_binding(self, runtime_id: str | None) -> dict[str, Any] | None:
+        ds = self._data.get("runtime_bindings") or self._data.get("runtime_instances") or self._data.get("runtimes") or {}
+        if isinstance(ds, dict):
+            return ds.get(str(runtime_id or ""))
+        return next((r for r in ds if r.get("id") == runtime_id or r.get("runtime_id") == runtime_id), None)
+
+    def get_telemetry_summary(self, runtime_id: str | None) -> dict[str, Any] | None:
+        return self._telemetries.get(str(runtime_id or ""))
+
+
 @contextmanager
-def _client_with_store(store: ReadSurfaceStore) -> Iterator[TestClient]:
+def _client_with_store(store: OperationsReadModelTestReadPorts) -> Iterator[TestClient]:
     original_store = bff_main.read_store
     bff_main.read_store = store
     try:
@@ -52,12 +153,8 @@ def _client_with_store(store: ReadSurfaceStore) -> Iterator[TestClient]:
         bff_main.read_store = original_store
 
 
-def _fresh_store(*, allow_local_snapshot_fallback: bool) -> ReadSurfaceStore:
-    td = tempfile.TemporaryDirectory(prefix="bff_mgmt_ops_001_")
-    return ReadSurfaceStore(
-        os.path.join(td.name, "read_surfaces.json"),
-        allow_local_snapshot_fallback=allow_local_snapshot_fallback,
-    )
+def _fresh_store(*, allow_local_snapshot_fallback: bool) -> OperationsReadModelTestReadPorts:
+    return OperationsReadModelTestReadPorts(allow_fallback=allow_local_snapshot_fallback)
 
 
 def _get(client: TestClient, persona_id: str) -> Any:
@@ -274,7 +371,7 @@ def test_focus_persona_represents_missing_attribution_as_fallback_not_nan() -> N
 # ---------------------------------------------------------------------------
 
 
-def _seed_isolated_sources(store: ReadSurfaceStore) -> None:
+def _seed_isolated_sources(store: OperationsReadModelTestReadPorts) -> None:
     bindings = [
         {
             "id": "b-formal",

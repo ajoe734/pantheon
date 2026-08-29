@@ -15,17 +15,72 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, os.path.dirname(__file__))
 
 import main as bff_main
-from read_store import ReadSurfaceStore
+from typing import Any
+
+from ports import ReadSurfacePorts, create_in_memory_read_surface_ports
 
 OPERATOR_HEADERS = {"Authorization": "Bearer op-aud:operator"}
 ANON_HEADERS: dict = {}
 
 
+class AuditTestReadPorts(ReadSurfacePorts):
+    def __init__(self, data: dict | None = None, *, allow_fallback: bool = True) -> None:
+        super().__init__()
+        self._allow_fallback = allow_fallback
+        if data is not None:
+            self._data = data
+        elif allow_fallback:
+            self._data = {
+                "governance_audit_events": {
+                    "aud-001": {
+                        "entry_id": "aud-001",
+                        "auditId": "aud-001",
+                        "id": "aud-001",
+                        "actor": "fixture-governance-reviewer",
+                        "target_type": "strategy",
+                        "action_type": "route_policy_published",
+                        "created_at": "2026-05-01T12:00:00Z",
+                    },
+                    "aud-002": {
+                        "entry_id": "aud-002",
+                        "auditId": "aud-002",
+                        "id": "aud-002",
+                        "actor": "fixture-governance-reviewer",
+                        "target_type": "strategy",
+                        "action_type": "route_policy_published",
+                        "created_at": "2026-05-01T12:05:00Z",
+                    },
+                }
+            }
+        else:
+            self._data = {}
+
+    def list_governance_audit_events(
+        self,
+        *,
+        actor: str | None = None,
+        action_types: list[str] | None = None,
+        target_type: str | None = None,
+        from_ts: Any = None,
+        to_ts: Any = None,
+        include_fixture_pack: bool = True,
+        **kwargs: Any,
+    ) -> list[dict[str, Any]]:
+        events = list(self._data.get("governance_audit_events", {}).values())
+        filtered = []
+        for e in events:
+            if actor and e.get("actor") != actor:
+                continue
+            if target_type and e.get("target_type") != target_type:
+                continue
+            if action_types and e.get("action_type") not in action_types:
+                continue
+            filtered.append(e)
+        return filtered
+
+
 def _fresh_client(td: str, *, allow_fallback: bool = True) -> TestClient:
-    bff_main.read_store = ReadSurfaceStore(
-        os.path.join(td, "read_surfaces.json"),
-        allow_local_snapshot_fallback=allow_fallback,
-    )
+    bff_main.read_store = AuditTestReadPorts(allow_fallback=allow_fallback)
     return TestClient(bff_main.app, raise_server_exceptions=False)
 
 
