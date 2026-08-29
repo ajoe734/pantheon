@@ -27,7 +27,6 @@ from downstream_health_monitor import (  # noqa: E402
     DownstreamProbeResult,
 )
 from ports import ReadSurfacePorts  # noqa: E402
-from read_store import _default_read_data  # noqa: E402
 from services.runtime_auth_inbound import encode_jwt_hs256  # noqa: E402
 import services.telemetry.main as telemetry_main  # noqa: E402
 from services.telemetry.ingest_svc import TelemetryIngestService  # noqa: E402
