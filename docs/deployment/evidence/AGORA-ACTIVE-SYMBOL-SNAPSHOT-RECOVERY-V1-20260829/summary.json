@@ -1,0 +1,128 @@
+{
+  "schema_version": "pantheon.agora-active-symbol-snapshot-recovery-review.v1",
+  "task_id": "AGORA-ACTIVE-SYMBOL-SNAPSHOT-RECOVERY-V1-20260829",
+  "generated_at": "2026-08-29T19:15:30Z",
+  "owner": "Codex",
+  "reviewer": "Antigravity2",
+  "status": "implementation_ready_for_review",
+  "acceptance_state": "post_merge_exact_release_required",
+  "failure_reproduction": {
+    "workflow_run_id": 33268311841,
+    "workflow_url": "https://github.com/ajoe734/pantheon/actions/runs/33268311841",
+    "requested_backend_sha": "f227360f7fc3ff7b9678a7f57c8b985b87601445",
+    "requested_frontend_sha": "5ffee3db8c2b37b4070d43d091ed4207ef5d70e5",
+    "conclusion": "failure",
+    "failed_step": "Deploy dev VM stack under lease",
+    "bounded_refresh": {
+      "connector_id": "tw-twse-tpex-official-market",
+      "ingest_run_id": "ingest-c6eedcd2ee73",
+      "accepted_source_id": "tw-official:tw_price_daily:TWSE:00400A:fa154224902c660d",
+      "receipt_and_projection_advanced": true
+    },
+    "component_gate": {
+      "required_component_count": 28,
+      "only_unhealthy_component": "paper-signal-producer",
+      "health": "unhealthy",
+      "observed_snapshot_requests": "Repeated GET /api/source-ingest/snapshots/latest?symbol=2330.TW returned HTTP 200 during the failed health window."
+    },
+    "rollback_backend_sha": "dcb14231d29f08f1646a4ee962b83fd2d4b67560"
+  },
+  "diagnosis": {
+    "global_cap": 100,
+    "cause": "The official provider path truncated each venue before active RuntimeBinding symbols were considered and the provider dispatcher then applied a second global cap. The first retained TWSE record was 00400A, while active paper symbol 2330 was outside the bounded prefix.",
+    "identity_gap": "Official TWSE rows persist as 2330.TWSE, while the active RuntimeBinding reads 2330.TW. Exact lookup could therefore continue serving a separately persisted legacy 2330.TW series rather than the new official exchange series.",
+    "immutable_log_facts": [
+      "The bounded refresh completed and advanced receipt/projection readback.",
+      "The admitted source identity was TWSE symbol 00400A rather than active symbol 2330.",
+      "The paper-signal-producer was the sole unhealthy component after repeated 2330.TW Source snapshot reads."
+    ]
+  },
+  "implementation": {
+    "anchor_commit": "adbe705b64364f24b7c80887e52244f112ae64ef",
+    "owned_layer": "Bounded Taiwan official record selection, Source snapshot read aliases, and nonprod deployment proof/diagnostics.",
+    "behavior": [
+      "The deployment reads only the durable RuntimeBinding volume through a one-off runtime-manager container and extracts unique active paper Taiwan symbols without mutating bindings.",
+      "The source-ingest service receives those symbols as priority metadata; the Taiwan official adapter stable-partitions matching TWSE/TPEx rows before the unchanged per-venue and global max-record bounds.",
+      "The provider dispatcher fails closed when active symbols exceed the cap or an active Taiwan symbol is absent from the official payload.",
+      "Read-only snapshot lookup maps .TW to .TWSE and .TWO to .TPEX. Persisted checksums, historical snapshot ids, and write identities are unchanged.",
+      "The bounded deploy gate reads every active paper snapshot, requires the explicit canonical venue identity, an event_time no older than 24 hours, and matching official connector/source lineage.",
+      "Root failure diagnostics now capture paper-signal-producer logs plus restart and health state."
+    ],
+    "not_changed": [
+      "SOURCE_INGEST_MAX_RECORDS remains 100 in the release workflow and no max-record bypass exists.",
+      "No fixture price, manual SourceRecord write, provider credential, or recurring external egress was added.",
+      "RuntimeBinding write authority and paper-signal-producer health thresholds remain unchanged.",
+      "The Source snapshot endpoint remains read-only and performs no provider or scheduler work."
+    ]
+  },
+  "validation": {
+    "syntax": {
+      "commands": [
+        "bash -n scripts/deploy_nonprod_vm.sh",
+        "python3 -m py_compile <changed Python files>",
+        "git diff --check"
+      ],
+      "result": "passed"
+    },
+    "focused": {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_taiwan_official_connectors.py services/source_ingestion/tests/test_latest_market_snapshot.py services/source_ingestion/test_compose_activation.py scripts/test_source_ingest_deploy_diagnostics_contract.py",
+      "result": "29 passed, 1 skipped, 1 warning in 10.63s"
+    },
+    "source_ingestion_regression": {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests services/source_ingestion/test_compose_activation.py services/source_ingestion/test_service.py scripts/test_source_ingest_deploy_diagnostics_contract.py",
+      "result": "855 passed, 1 skipped, 5 warnings in 265.43s",
+      "warnings": "Existing Starlette and jsonschema deprecation warnings only."
+    },
+    "official_read_only_smoke": {
+      "command": "PANTHEON_TW_OFFICIAL_LIVE_SMOKE=1 .venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_taiwan_official_connectors.py::test_taiwan_official_live_read_only_smoke_for_one_twse_and_tpex_symbol",
+      "result": "1 passed in 1.60s",
+      "bounded_priority_observation": {
+        "observed_at": "2026-08-29T19:15:00Z",
+        "priority_symbols": [
+          "2330.TW",
+          "3105.TWO"
+        ],
+        "first_two_records": [
+          {
+            "symbol": "2330.TWSE",
+            "source_date": "2026-08-28",
+            "source_dataset": "STOCK_DAY_ALL"
+          },
+          {
+            "symbol": "3105.TPEX",
+            "source_date": "2026-08-28",
+            "source_dataset": "tpex_mainboard_daily_close_quotes"
+          }
+        ],
+        "bounded_record_count": 100
+      }
+    }
+  },
+  "release_closeout_gate": {
+    "status": "pending_post_merge",
+    "success_claimed": false,
+    "required_backend": "The exact Pantheon dev merge commit containing anchor adbe705b64364f24b7c80887e52244f112ae64ef.",
+    "required_frontend_sha": "5ffee3db8c2b37b4070d43d091ed4207ef5d70e5",
+    "required_dispatch": {
+      "environment": "dev",
+      "component": "root",
+      "dev_auth_profile": "strict",
+      "run_bounded_source_refresh": true,
+      "allow_dirty": false
+    },
+    "required_proofs": [
+      "The release passes all 28 exact backend component checks.",
+      "2330.TW resolves to the same stored snapshot id and 2330.TWSE canonical identity.",
+      "The 2330 snapshot event_time is no older than 24 hours and lineage names the official TWSE connector/source.",
+      "paper-signal-producer is healthy and reports successful ticks against the fresh official snapshot.",
+      "The admitted hosted deployment exposes the exact backend plus execute-plans 5ffee3db identities.",
+      "AGORA-AGC-14 receives immutable release, Source snapshot, and producer evidence."
+    ],
+    "current_official_source_time_note": "The read-only verification on Saturday 2026-08-29 observed exchange source date 2026-08-28. This manifest does not claim the post-merge 24-hour hosted gate has passed; the deployment gate remains fail-closed until the exact release observes a qualifying official event_time."
+  },
+  "agc_14": {
+    "blocked_task_id": "AGORA-AGC-14-HOSTED-DEMO-AUTHENTIC-V5-20260829",
+    "status": "active_symbol_implementation_ready_release_evidence_pending",
+    "claim": "AGORA-AGC-14 remains blocked until the exact post-merge release and immutable Source/producer proofs pass."
+  }
+}
