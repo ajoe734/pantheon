@@ -202,6 +202,8 @@ def test_sync_uses_explicit_coordination_root_and_never_inspects_live_cwd(tmp_pa
         str(coordination),
         "--live-config",
         str(live_config),
+        "--authority-env-file",
+        "/home/lupin/pantheon-ci-deploy/runtime/supervisor-authority-public.env",
         "--repository-source-root",
         f"pantheon={dev_root}",
         "--repository-source-root",

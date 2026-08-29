@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 import subprocess
 from pathlib import Path
@@ -265,3 +266,428 @@ def test_postgres_db_behavior_vacuum_succeeds_without_enospc() -> None:
             await conn.close()
 
     asyncio.run(_test())
+
+
+def test_agora_interaction_worker_compose_entrypoint_and_healthcheck() -> None:
+    """agora-interaction-worker in docker-compose.yml must point command and healthcheck at scripts/run_agora_interaction_worker.py."""
+    content = COMPOSE_PATH.read_text(encoding="utf-8")
+    compose_data = yaml.safe_load(content)
+    services = compose_data.get("services", {})
+    worker = services.get("agora-interaction-worker")
+    assert worker is not None, "agora-interaction-worker service must be defined in docker-compose.yml"
+
+    build_info = worker.get("build", {})
+    assert build_info.get("dockerfile") == "services/control-plane/bff/Dockerfile"
+    assert worker.get("command") == ["python", "scripts/run_agora_interaction_worker.py"]
+
+    healthcheck = worker.get("healthcheck", {})
+    assert healthcheck.get("test") == [
+        "CMD",
+        "python",
+        "scripts/run_agora_interaction_worker.py",
+        "--healthcheck",
+    ]
+    assert worker.get("restart") == "unless-stopped"
+
+
+def test_required_loop_workers_includes_agora_interaction_worker() -> None:
+    """REQUIRED_LOOP_WORKERS in deploy_nonprod_vm.sh must include agora-interaction-worker."""
+    deploy_script = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    array_lines = deploy_script.split("REQUIRED_LOOP_WORKERS=(", 1)[1].split(")", 1)[0].splitlines()
+    required = [line.split("#")[0].strip() for line in array_lines if line.split("#")[0].strip()]
+
+    assert len(required) == 28
+    assert "agora-interaction-worker" in required
+    assert "policy-learning-svc" in required
+    assert "operator-bff" in required
+    assert "loop-run-projector-scheduler" in required
+
+
+def test_bff_deployment_service_set_includes_agora_interaction_worker() -> None:
+    """BFF deployment build, recreate, and rollback in deploy_nonprod_vm.sh must include agora-interaction-worker."""
+    deploy_script = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+
+    # Rollback must include all 3 BFF-owned persistent processes
+    assert "docker compose -p pantheon -f docker-compose.yml up -d --build --force-recreate --no-deps operator-bff agora-interaction-worker loop-run-projector-scheduler" in deploy_script
+
+    # BFF Phase 2 build must build all 3 services
+    assert "docker compose -p pantheon -f docker-compose.yml build operator-bff agora-interaction-worker loop-run-projector-scheduler" in deploy_script
+
+    # BFF Phase 3 recreate must recreate all 3 services
+    assert "docker compose -p pantheon -f docker-compose.yml up -d --force-recreate --no-deps operator-bff agora-interaction-worker loop-run-projector-scheduler" in deploy_script
+
+    # BFF Phase 4 verification must verify all 3 services
+    assert "verify_exact_component_deployment operator-bff agora-interaction-worker loop-run-projector-scheduler" in deploy_script
+
+
+def test_verify_exact_component_deployment_function_contract() -> None:
+    """deploy_nonprod_vm.sh must define verify_exact_component_deployment checking status, health, and OCI revision."""
+    deploy_script = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    assert "verify_exact_component_deployment()" in deploy_script
+    assert "org.opencontainers.image.revision" in deploy_script
+    assert "backend_required_components_receipt" in deploy_script
+    assert "duplicate containers found for required singleton service" in deploy_script
+    assert "pantheon-ci-deploy/deployment-receipts" in deploy_script
+    assert "unable to atomically write backend component receipt" in deploy_script
+    assert "PANTHEON_DEV_FRONTEND_SHA=$(shell_quote" in deploy_script
+
+
+def _extract_verify_exact_component_deployment_func() -> str:
+    """Extract verify_exact_component_deployment function definition from deploy_nonprod_vm.sh."""
+    script_text = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    start = script_text.find("verify_exact_component_deployment() {")
+    assert start != -1, "verify_exact_component_deployment() not found in deploy_nonprod_vm.sh"
+    next_func = script_text.find("\ndocker_storage_diagnostics() {", start)
+    assert next_func != -1, "next function boundary after verify_exact_component_deployment not found"
+    end = script_text.rfind("\n}\n", start, next_func)
+    assert end != -1, "closing brace for verify_exact_component_deployment not found"
+    return script_text[start : end + 2]
+
+
+def _write_mock_git(bin_dir: Path, sha: str) -> None:
+    mock_git = bin_dir / "git"
+    mock_git.write_text(
+        f"""#!/usr/bin/env bash
+if [[ "$1" == "rev-parse" && "$2" == "HEAD" ]]; then
+  echo "{sha}"
+  exit 0
+fi
+exit 2
+""",
+        encoding="utf-8",
+    )
+    mock_git.chmod(0o755)
+
+
+def test_verify_exact_component_deployment_execution_end_to_end(tmp_path: Path) -> None:
+    """Execute verify_exact_component_deployment end to end with mock docker and verify receipt generation."""
+    import json
+    import os
+
+    func_def = _extract_verify_exact_component_deployment_func()
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    mock_docker = bin_dir / "docker"
+    mock_docker.write_text(
+        """#!/usr/bin/env bash
+if [[ "$1" == "compose" ]]; then
+  svc="${@: -1}"
+  if [[ " $* " == *" images -q "* ]]; then
+    echo "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  elif [[ "$svc" == "operator-bff" ]]; then
+    echo "cid_bff_1"
+  elif [[ "$svc" == "agora-interaction-worker" ]]; then
+    echo "cid_agora_1"
+  elif [[ "$svc" == "loop-run-projector-scheduler" ]]; then
+    echo "cid_loop_1"
+  else
+    exit 0
+  fi
+elif [[ "$1" == "inspect" ]]; then
+  fmt="$3"
+  cid="$4"
+  if [[ "$fmt" == "{{.State.Status}}" ]]; then
+    echo "running"
+  elif [[ "$fmt" == "{{.RestartCount}}" ]]; then
+    echo "0"
+  elif [[ "$fmt" == *"{{.State.Health.Status}}"* ]]; then
+    echo "healthy"
+  elif [[ "$fmt" == "{{.Config.Image}}" ]]; then
+    echo "pantheon-bff:latest"
+  elif [[ "$fmt" == "{{.Image}}" ]]; then
+    echo "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  elif [[ "$fmt" == *"org.opencontainers.image.revision"* ]]; then
+    echo "7a9674ea259bbac883e42f3ee217b3e8f68170fe"
+  elif [[ "$fmt" == *"{{json .Config.Cmd}}"* ]]; then
+    echo '["python", "scripts/run_agora_interaction_worker.py"]'
+  fi
+fi
+""",
+        encoding="utf-8",
+    )
+    mock_docker.chmod(0o755)
+    _write_mock_git(bin_dir, "7a9674ea259bbac883e42f3ee217b3e8f68170fe")
+
+    receipt_path = tmp_path / "receipts" / "backend-components-receipt.json"
+    runner_script = tmp_path / "run_verifier.sh"
+    runner_script.write_text(
+        f"""#!/usr/bin/env bash
+set -euo pipefail
+info() {{ echo "[info] $*"; }}
+error() {{ echo "[error] $*" >&2; exit 1; }}
+
+{func_def}
+
+export PATH="{bin_dir}:$PATH"
+export PANTHEON_BACKEND_COMPONENTS_RECEIPT_PATH="{receipt_path}"
+export PANTHEON_DEV_FRONTEND_SHA="8337b19a0cf6ac41aa2a4c2fa3950f6af3a87abf"
+export PANTHEON_BFF_BASE_URL="https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io"
+export PANTHEON_FE_BASE_URL="https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io"
+export PANTHEON_DEPLOY_ENV="dev"
+export PANTHEON_DEPLOY_COMPONENT="bff"
+export GIT_SHA="7a9674ea259bbac883e42f3ee217b3e8f68170fe"
+
+verify_exact_component_deployment operator-bff agora-interaction-worker loop-run-projector-scheduler
+""",
+        encoding="utf-8",
+    )
+    runner_script.chmod(0o755)
+
+    env = dict(os.environ)
+    env["PATH"] = f"{bin_dir}:{env.get('PATH', '')}"
+
+    proc = subprocess.run(
+        ["bash", str(runner_script)],
+        capture_output=True,
+        text=True,
+        check=False,
+        cwd=tmp_path,
+        env=env,
+    )
+    assert proc.returncode == 0, f"Verifier failed with stderr: {proc.stderr}\nstdout: {proc.stdout}"
+    assert receipt_path.exists(), "backend-components-receipt.json was not written by verify_exact_component_deployment"
+
+    receipt_data = json.loads(receipt_path.read_text(encoding="utf-8"))
+    assert receipt_data["schema_version"] == "pantheon.deployment.backend_required_components_receipt.v1"
+    assert receipt_data["task_id"] == "ACG-DEPLOY-EXACT-GATES-20260828"
+    assert receipt_data["status"] == "passed"
+    assert receipt_data["expected_sha"] == "7a9674ea259bbac883e42f3ee217b3e8f68170fe"
+    assert receipt_data["exact_pair"]["frontend_sha"] == "8337b19a0cf6ac41aa2a4c2fa3950f6af3a87abf"
+    assert receipt_data["exact_pair"]["backend_sha"] == "7a9674ea259bbac883e42f3ee217b3e8f68170fe"
+    assert receipt_data["deployment_environment"] == "dev"
+    assert receipt_data["deployment_component"] == "bff"
+    assert receipt_data["total_services"] == 3
+    expected_services = {
+        "operator-bff",
+        "agora-interaction-worker",
+        "loop-run-projector-scheduler",
+    }
+    assert set(receipt_data["required_services"]) == expected_services
+    assert set(receipt_data["services"].keys()) == expected_services
+    assert all(not entries for entries in receipt_data["verification_failures"].values())
+    for s_name, s_info in receipt_data["services"].items():
+        assert s_info["status"] == "running"
+        assert s_info["health"] == "healthy"
+        assert s_info["matches_expected_sha"] is True
+        assert s_info["matches_expected_image"] is True
+        assert s_info["image_id"] == s_info["compose_image_id"]
+        assert s_info["source_revision"] == receipt_data["expected_sha"]
+
+
+def test_verify_exact_component_deployment_missing_service_fails(tmp_path: Path) -> None:
+    """verify_exact_component_deployment must exit with error when a required service has no container."""
+    import os
+
+    func_def = _extract_verify_exact_component_deployment_func()
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    mock_docker = bin_dir / "docker"
+    mock_docker.write_text(
+        """#!/usr/bin/env bash
+if [[ "$1" == "compose" ]]; then
+  # No containers found for any service
+  exit 0
+fi
+""",
+        encoding="utf-8",
+    )
+    mock_docker.chmod(0o755)
+    _write_mock_git(bin_dir, "7a9674ea259bbac883e42f3ee217b3e8f68170fe")
+
+    receipt_path = tmp_path / "backend-components-receipt.json"
+    runner_script = tmp_path / "run_verifier_missing.sh"
+    runner_script.write_text(
+        f"""#!/usr/bin/env bash
+set -euo pipefail
+info() {{ echo "[info] $*"; }}
+error() {{ echo "[error] $*" >&2; exit 1; }}
+
+{func_def}
+
+export PATH="{bin_dir}:$PATH"
+export PANTHEON_BACKEND_COMPONENTS_RECEIPT_PATH="{receipt_path}"
+export PANTHEON_DEV_FRONTEND_SHA="8337b19a0cf6ac41aa2a4c2fa3950f6af3a87abf"
+export GIT_SHA="7a9674ea259bbac883e42f3ee217b3e8f68170fe"
+
+verify_exact_component_deployment missing-worker
+""",
+        encoding="utf-8",
+    )
+    runner_script.chmod(0o755)
+
+    env = dict(os.environ)
+    env["PATH"] = f"{bin_dir}:{env.get('PATH', '')}"
+
+    proc = subprocess.run(
+        ["bash", str(runner_script)],
+        capture_output=True,
+        text=True,
+        check=False,
+        cwd=tmp_path,
+        env=env,
+    )
+    assert proc.returncode != 0
+    assert "required component(s) missing: missing-worker" in proc.stderr
+    receipt_data = json.loads(receipt_path.read_text(encoding="utf-8"))
+    assert receipt_data["status"] == "failed"
+    assert receipt_data["all_passed"] is False
+    assert receipt_data["required_services"] == ["missing-worker"]
+    assert receipt_data["verification_failures"]["missing"] == ["missing-worker"]
+
+
+def test_verify_exact_component_deployment_unhealthy_or_mismatched_sha_fails(tmp_path: Path) -> None:
+    """verify_exact_component_deployment must fail on unhealthy status or mismatched image revision."""
+    import os
+
+    func_def = _extract_verify_exact_component_deployment_func()
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    mock_docker = bin_dir / "docker"
+    mock_docker.write_text(
+        """#!/usr/bin/env bash
+if [[ "$1" == "compose" ]]; then
+  if [[ " $* " == *" images -q "* ]]; then
+    echo "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  else
+    echo "cid_test_1"
+  fi
+elif [[ "$1" == "inspect" ]]; then
+  fmt="$3"
+  if [[ "$fmt" == "{{.State.Status}}" ]]; then
+    echo "running"
+  elif [[ "$fmt" == "{{.RestartCount}}" ]]; then
+    echo "0"
+  elif [[ "$fmt" == *"{{.State.Health.Status}}"* ]]; then
+    echo "unhealthy"
+  elif [[ "$fmt" == "{{.Config.Image}}" ]]; then
+    echo "pantheon-bff:latest"
+  elif [[ "$fmt" == "{{.Image}}" ]]; then
+    echo "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  elif [[ "$fmt" == *"org.opencontainers.image.revision"* ]]; then
+    echo "wrong_sha_00000000000000000000000000000000"
+  elif [[ "$fmt" == *"{{json .Config.Cmd}}"* ]]; then
+    echo '["python", "main.py"]'
+  fi
+fi
+""",
+        encoding="utf-8",
+    )
+    mock_docker.chmod(0o755)
+    _write_mock_git(bin_dir, "7a9674ea259bbac883e42f3ee217b3e8f68170fe")
+
+    receipt_path = tmp_path / "backend-components-receipt.json"
+    runner_script = tmp_path / "run_verifier_unhealthy.sh"
+    runner_script.write_text(
+        f"""#!/usr/bin/env bash
+set -euo pipefail
+info() {{ echo "[info] $*"; }}
+error() {{ echo "[error] $*" >&2; exit 1; }}
+
+{func_def}
+
+export PATH="{bin_dir}:$PATH"
+export PANTHEON_BACKEND_COMPONENTS_RECEIPT_PATH="{receipt_path}"
+export PANTHEON_DEV_FRONTEND_SHA="8337b19a0cf6ac41aa2a4c2fa3950f6af3a87abf"
+export GIT_SHA="7a9674ea259bbac883e42f3ee217b3e8f68170fe"
+
+verify_exact_component_deployment agora-interaction-worker
+""",
+        encoding="utf-8",
+    )
+    runner_script.chmod(0o755)
+
+    env = dict(os.environ)
+    env["PATH"] = f"{bin_dir}:{env.get('PATH', '')}"
+
+    proc = subprocess.run(
+        ["bash", str(runner_script)],
+        capture_output=True,
+        text=True,
+        check=False,
+        cwd=tmp_path,
+        env=env,
+    )
+    assert proc.returncode != 0
+    assert "required component(s) unhealthy" in proc.stderr or "mismatched image revision" in proc.stderr
+
+
+def test_verify_exact_component_receipt_write_failure_reaches_rollback_caller(
+    tmp_path: Path,
+) -> None:
+    """A receipt write failure must return non-zero instead of exiting past the rollback caller."""
+    import os
+
+    func_def = _extract_verify_exact_component_deployment_func()
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    mock_docker = bin_dir / "docker"
+    mock_docker.write_text(
+        """#!/usr/bin/env bash
+if [[ "$1" == "compose" ]]; then
+  if [[ " $* " == *" images -q "* ]]; then
+    echo "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+  else
+    echo "cid_bff_1"
+  fi
+elif [[ "$1" == "inspect" ]]; then
+  fmt="$3"
+  if [[ "$fmt" == "{{.State.Status}}" ]]; then
+    echo "running"
+  elif [[ "$fmt" == "{{.RestartCount}}" ]]; then
+    echo "0"
+  elif [[ "$fmt" == *"{{.State.Health.Status}}"* ]]; then
+    echo "healthy"
+  elif [[ "$fmt" == "{{.Config.Image}}" ]]; then
+    echo "pantheon-bff:latest"
+  elif [[ "$fmt" == "{{.Image}}" ]]; then
+    echo "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+  elif [[ "$fmt" == *"org.opencontainers.image.revision"* ]]; then
+    echo "7a9674ea259bbac883e42f3ee217b3e8f68170fe"
+  elif [[ "$fmt" == *"{{json .Config.Cmd}}"* ]]; then
+    echo '["python", "-m", "services.control_plane.bff.main"]'
+  fi
+fi
+""",
+        encoding="utf-8",
+    )
+    mock_docker.chmod(0o755)
+    _write_mock_git(bin_dir, "7a9674ea259bbac883e42f3ee217b3e8f68170fe")
+
+    non_directory = tmp_path / "not-a-directory"
+    non_directory.write_text("blocks mkdir", encoding="utf-8")
+    receipt_path = non_directory / "backend-components-receipt.json"
+    rollback_marker = tmp_path / "rollback-called"
+    runner_script = tmp_path / "run_verifier_write_failure.sh"
+    runner_script.write_text(
+        f"""#!/usr/bin/env bash
+set -euo pipefail
+info() {{ echo "[info] $*"; }}
+error() {{ echo "[error] $*" >&2; exit 1; }}
+
+{func_def}
+
+export PATH="{bin_dir}:$PATH"
+export PANTHEON_BACKEND_COMPONENTS_RECEIPT_PATH="{receipt_path}"
+export PANTHEON_DEV_FRONTEND_SHA="8337b19a0cf6ac41aa2a4c2fa3950f6af3a87abf"
+export GIT_SHA="7a9674ea259bbac883e42f3ee217b3e8f68170fe"
+
+verify_exact_component_deployment operator-bff || printf 'rollback\n' >"{rollback_marker}"
+test -f "{rollback_marker}"
+""",
+        encoding="utf-8",
+    )
+    runner_script.chmod(0o755)
+
+    env = dict(os.environ)
+    env["PATH"] = f"{bin_dir}:{env.get('PATH', '')}"
+    proc = subprocess.run(
+        ["bash", str(runner_script)],
+        capture_output=True,
+        text=True,
+        check=False,
+        cwd=tmp_path,
+        env=env,
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert rollback_marker.read_text(encoding="utf-8") == "rollback\n"
+    assert "unable to create backend component receipt directory" in proc.stderr

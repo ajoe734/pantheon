@@ -12,6 +12,7 @@ import argparse
 import hashlib
 import json
 import os
+import shlex
 import shutil
 import signal
 import stat
@@ -45,6 +46,14 @@ LIVE_SUPERVISOR_CONFIG_PATH = Path(
 )
 COMMAND_RUNTIME_PARENT = Path("/home/lupin/pantheon-ci-deploy/command-runtimes")
 TASK_STATE_MODE = "authoritative"
+SUPERVISOR_PUBLIC_AUTHORITY_ENV_NAMES = (
+    "BRIDGE_SIGNING_PUBLIC_KEYS_JSON",
+)
+SUPERVISOR_FORBIDDEN_AUTHORITY_ENV_NAMES = (
+    "BRIDGE_SIGNING_PRIVATE_KEY",
+    "BRIDGE_SIGNING_KEY",
+    "BRIDGE_SIGNING_KEY_ID",
+)
 
 
 def _utc_now() -> str:
@@ -63,6 +72,61 @@ def _load_json(path: Path, *, label: str) -> dict[str, Any]:
     if path.is_symlink() or not path.is_file():
         raise ValueError(f"{label} must be a regular non-symlink file: {path}")
     return load_json_object(path)
+
+
+def _public_authority_environment(path: Path) -> dict[str, str]:
+    """Read the fixed public verifier file without evaluating shell content."""
+
+    if not path.is_absolute() or path.is_symlink() or not path.is_file():
+        raise ValueError(f"supervisor verifier env must be an absolute regular file: {path}")
+    if stat.S_IMODE(path.stat(follow_symlinks=False).st_mode) != 0o600:
+        raise ValueError("supervisor verifier env must have mode 600")
+    parsed: dict[str, str] = {}
+    for number, raw_line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        name, separator, raw_value = line.partition("=")
+        if not separator or name not in SUPERVISOR_PUBLIC_AUTHORITY_ENV_NAMES:
+            raise ValueError(f"invalid public supervisor authority entry at line {number}")
+        try:
+            values = shlex.split(raw_value, posix=True)
+        except ValueError as exc:
+            raise ValueError(f"invalid public supervisor authority entry at line {number}") from exc
+        if len(values) != 1 or not values[0].strip() or name in parsed:
+            raise ValueError(f"invalid public supervisor authority entry at line {number}")
+        parsed[name] = values[0]
+    if set(parsed) != set(SUPERVISOR_PUBLIC_AUTHORITY_ENV_NAMES):
+        raise ValueError("supervisor verifier env must define every public verifier map")
+    return parsed
+
+
+def supervisor_launch_environment(
+    source: Mapping[str, str], *, authority_env_file: Path | None = None
+) -> dict[str, str]:
+    """Return the verifier-only environment for a directly promoted supervisor."""
+
+    environment = dict(source)
+    for name in SUPERVISOR_FORBIDDEN_AUTHORITY_ENV_NAMES:
+        environment.pop(name, None)
+    if authority_env_file is not None:
+        environment.update(_public_authority_environment(authority_env_file))
+    for name in SUPERVISOR_PUBLIC_AUTHORITY_ENV_NAMES:
+        raw = str(environment.get(name) or "").strip()
+        try:
+            payload = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"{name} must be valid JSON") from exc
+        if not isinstance(payload, dict) or not payload or any(
+            not isinstance(key, str)
+            or not key.strip()
+            or not isinstance(value, str)
+            or not value.strip()
+            for key, value in payload.items()
+        ):
+            raise ValueError(f"{name} must be a non-empty public-key map")
+        environment[name] = raw
+    return environment
 
 
 def _git_output(root: Path, *args: str) -> str:
@@ -207,6 +271,7 @@ def launch_v2_supervisor(
     *,
     identity: Mapping[str, str],
     status_root: Path,
+    authority_env_file: Path | None = None,
 ) -> int:
     watchdog = rendered.get("watchdog")
     if not isinstance(watchdog, Mapping):
@@ -215,7 +280,9 @@ def launch_v2_supervisor(
     if not isinstance(argv, list) or not argv or any(not isinstance(item, str) for item in argv):
         raise ValueError("V2 supervisor command is invalid")
     root = Path(identity["root"])
-    environment = os.environ.copy()
+    environment = supervisor_launch_environment(
+        os.environ, authority_env_file=authority_env_file
+    )
     environment.update(
         {
             "PANTHEON_COMMAND_ROOT": str(root),
@@ -418,10 +485,10 @@ def sync_coordination_root_code(candidate_root: Path, status_root: Path) -> dict
 
     Best-effort and independent of the supervisor replacement outcome: a
     failure here must never fail or roll back an otherwise-successful
-    supervisor replacement. It only affects a bare manual Human/Ops
-    invocation of status_root/scripts/ai-status.sh -- real auto workers
-    always route through PANTHEON_COMMAND_ROOT (the exact candidate_root
-    this copies from), so they are unaffected either way.
+    supervisor replacement. The supervisor dynamically imports the local
+    development_bridge package while draining governed task packets, so that
+    pure-code package is also explicitly synchronized. It must not lag the
+    exact candidate runtime or signer/model compatibility can diverge.
     """
 
     result: dict[str, Any] = {"outcome": "skipped", "paths": []}
@@ -437,6 +504,13 @@ def sync_coordination_root_code(candidate_root: Path, status_root: Path) -> dict
             status_root / ".orchestrator" / "rewrite",
         )
         result["paths"].append(".orchestrator/rewrite")
+        bridge_source = candidate_root / ".orchestrator" / "development_bridge"
+        if bridge_source.is_dir():
+            _sync_directory_tree(
+                bridge_source,
+                status_root / ".orchestrator" / "development_bridge",
+            )
+            result["paths"].append(".orchestrator/development_bridge")
         result["outcome"] = "synced"
     except Exception as exc:
         result["outcome"] = "failed"
@@ -452,6 +526,7 @@ def _replace_supervisor_locked(
     python_executable: Path,
     termination_timeout: float,
     evidence_path: Path | None = None,
+    authority_env_file: Path | None = None,
     repository_source_roots: Mapping[str, Path | str] | None = None,
     repository_integration_roots: Mapping[str, Path | str] | None = None,
 ) -> dict[str, Any]:
@@ -467,6 +542,10 @@ def _replace_supervisor_locked(
         repository_source_roots=repository_source_roots,
         repository_integration_roots=repository_integration_roots,
     )
+    # A direct promotion bypasses the watchdog wrapper, so prove that the
+    # verifier-only child environment is complete before stopping the healthy
+    # incumbent. This keeps a bad authority file from turning into downtime.
+    supervisor_launch_environment(os.environ, authority_env_file=authority_env_file)
     rendered_bytes = (json.dumps(rendered, indent=2, ensure_ascii=False) + "\n").encode("utf-8")
     approval_queue_value = rendered.get("paths", {}).get("approval_queue")
     if not isinstance(approval_queue_value, str) or not approval_queue_value.strip():
@@ -496,6 +575,7 @@ def _replace_supervisor_locked(
             if isinstance(entry, dict) and entry.get("integration_path")
         },
         "approval_queue": str(approval_queue_path),
+        "supervisor_verifier_env_file": str(authority_env_file) if authority_env_file else None,
         "incumbent_pid_file": str(incumbent_pid_path),
         "stopped_pid": None,
         "launched_pid": None,
@@ -516,6 +596,7 @@ def _replace_supervisor_locked(
             rendered,
             identity=identity,
             status_root=status_root,
+            authority_env_file=authority_env_file,
         )
         result["outcome"] = "launched"
         result["exit_code"] = 0
@@ -543,6 +624,7 @@ def replace_supervisor(
     python_executable: Path,
     termination_timeout: float,
     evidence_path: Path | None = None,
+    authority_env_file: Path | None = None,
     repository_source_roots: Mapping[str, Path | str] | None = None,
     repository_integration_roots: Mapping[str, Path | str] | None = None,
 ) -> dict[str, Any]:
@@ -556,6 +638,7 @@ def replace_supervisor(
             python_executable=python_executable,
             termination_timeout=termination_timeout,
             evidence_path=evidence_path,
+            authority_env_file=authority_env_file,
             repository_source_roots=repository_source_roots,
             repository_integration_roots=repository_integration_roots,
         )
@@ -569,6 +652,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--python", default=sys.executable)
     parser.add_argument("--termination-timeout", type=float, default=15.0)
     parser.add_argument("--evidence-path")
+    parser.add_argument(
+        "--authority-env-file",
+        help=(
+            "Absolute mode-600 public-verifier environment file. Required when "
+            "the calling environment does not already provide the verifier map."
+        ),
+    )
     parser.add_argument(
         "--repository-source-root",
         action="append",
@@ -642,6 +732,9 @@ def main(argv: list[str] | None = None) -> int:
             }
         else:
             evidence_path = _path(args.evidence_path) if args.evidence_path else None
+            authority_env_file = (
+                _path(args.authority_env_file) if args.authority_env_file else None
+            )
             result = replace_supervisor(
                 repo_root,
                 status_root=status_root,
@@ -649,6 +742,7 @@ def main(argv: list[str] | None = None) -> int:
                 python_executable=python_executable,
                 termination_timeout=args.termination_timeout,
                 evidence_path=evidence_path,
+                authority_env_file=authority_env_file,
                 repository_source_roots=repository_source_roots,
                 repository_integration_roots=repository_integration_roots,
             )

@@ -614,7 +614,7 @@ def queue_events(state: Mapping[str, Any]) -> list[dict[str, Any]]:
         intent = raw_record.get("intent")
         if not isinstance(intent, Mapping):
             continue
-        event = deepcopy(dict(intent))
+        event = dict(intent)
         event["event_id"] = event_id
         result.append(event)
     return result
@@ -630,7 +630,7 @@ def queue_event_by_id(state: Mapping[str, Any], event_id: str | None) -> dict[st
     intent = record.get("intent") if isinstance(record, Mapping) else None
     if not isinstance(intent, Mapping):
         return None
-    event = deepcopy(dict(intent))
+    event = dict(intent)
     event["event_id"] = normalized
     return event
 

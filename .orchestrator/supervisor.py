@@ -1206,15 +1206,15 @@ def queued_account_counts(
         events = queue_events(state)
     queued_events = events
     for event in queued_events:
-        if task_map is not None and stale_dispatch_skip_message(config, event, task_map):
-            continue
         event_id = str(event.get("event_id") or "")
         if not event_id:
             continue
         if event_id in active_queue_event_ids:
             continue
         record = queue_records.get(event_id, {})
-        if record.get("status") in {"completed", "failed"}:
+        if str(record.get("status") or "") in {"completed", "failed"}:
+            continue
+        if task_map is not None and stale_dispatch_skip_message(config, event, task_map):
             continue
         group_id = agent_account_id(config, str(event.get("target_agent") or ""))
         if not group_id:
@@ -1275,8 +1275,6 @@ def queued_execution_resource_counts(
     for event in queued_events:
         if not isinstance(event, Mapping):
             continue
-        if stale_dispatch_skip_message(config, event, task_map):
-            continue
         event_id = str(event.get("event_id") or "")
         if not event_id or event_id in active_queue_event_ids:
             continue
@@ -1284,6 +1282,8 @@ def queued_execution_resource_counts(
         if not isinstance(record, Mapping):
             record = {}
         if str(record.get("status") or "") in {"completed", "failed"}:
+            continue
+        if stale_dispatch_skip_message(config, event, task_map):
             continue
         task_id = str(event.get("task_id") or "")
         task = task_map.get(task_id)
@@ -1490,6 +1490,7 @@ def build_delivery_admission_snapshot(
     pending_resource_loads: Mapping[str, int] | None = None,
     resource_limits: Mapping[str, int] | None = None,
     live_total: int | None = None,
+    provisional_reserved_endpoint_ids: set[str] | None = None,
 ) -> rewrite_dispatch_admission.AdmissionSnapshot:
     """Build the shared immutable input used by plan and queue delivery."""
 
@@ -1508,6 +1509,13 @@ def build_delivery_admission_snapshot(
         # Queue rows predate V2 endpoint binding.  Their logical target still
         # reserves capacity, but only new V2 events reserve an exact slot.
         endpoint = normalize_agent_id(str(record.get("delivery_endpoint_id") or ""))
+        if endpoint:
+            reserved_endpoints.add(endpoint)
+    # Planning uses an in-memory event sink and deliberately does not write
+    # queue rows. Preserve physical-slot choices already made in this plan so
+    # the next candidate cannot select the same exclusive endpoint again.
+    for endpoint_id in provisional_reserved_endpoint_ids or set():
+        endpoint = normalize_agent_id(str(endpoint_id or ""))
         if endpoint:
             reserved_endpoints.add(endpoint)
 
@@ -1574,6 +1582,7 @@ def evaluate_task_delivery_admission(
     resource_limits: Mapping[str, int] | None = None,
     live_total: int | None = None,
     requested_endpoint_id: str | None = None,
+    provisional_reserved_endpoint_ids: set[str] | None = None,
 ) -> rewrite_dispatch_admission.DispatchDecision:
     """Run the exact same task/health/capacity predicate in plan and delivery."""
 
@@ -1610,6 +1619,7 @@ def evaluate_task_delivery_admission(
             pending_resource_loads=pending_resource_loads,
             resource_limits=resource_limits,
             live_total=live_total,
+            provisional_reserved_endpoint_ids=provisional_reserved_endpoint_ids,
         ),
         requested_endpoint_id=requested_endpoint_id,
     )
@@ -1618,6 +1628,7 @@ def evaluate_task_delivery_admission(
 def idle_delivery_health_refresh_targets(
     config: dict[str, Any],
     state: Mapping[str, Any],
+    status_snapshot: Mapping[str, Any] | None = None,
 ) -> list[dict[str, str]]:
     """Return due probes for configured endpoints without task demand.
 
@@ -1627,12 +1638,40 @@ def idle_delivery_health_refresh_targets(
     leaves an expired auth or quota observation closed until an unrelated task
     happens to target that lane.
 
-    This remains a pure projection over the runtime snapshot.  The slow probe
-    runs after delivery, and the resulting observation is committed only by
-    the existing reserved runtime-maintenance transaction.  Enumerating
-    ``delivery_lane_for_agent`` also means an orphaned physical-agent record
-    which is not a configured delivery endpoint never receives a probe.
+    When ``status_snapshot`` is supplied, only active delivery lanes (lanes with
+    active tasks, active workers, or queued delivery intents) are considered for
+    idle refresh.  Idle lanes without tasks or workers never receive expensive
+    probes.
     """
+
+    active_agent_ids: set[str] | None = None
+    if status_snapshot is not None:
+        active_agent_ids = set()
+        for task in status_snapshot.get("tasks", []) or []:
+            if not isinstance(task, Mapping):
+                continue
+            status = str(task.get("status") or "").lower()
+            owner = normalize_agent_id(str(task.get("owner") or ""))
+            reviewer = normalize_agent_id(str(task.get("reviewer") or ""))
+            if status in {"todo", "in_progress", "review_approved", "blocked"}:
+                if owner:
+                    active_agent_ids.add(owner)
+            elif status == "review":
+                if reviewer:
+                    active_agent_ids.add(reviewer)
+        for worker in (state.get("workers") or {}).values():
+            if not isinstance(worker, Mapping):
+                continue
+            agent_id = normalize_agent_id(str(worker.get("agent_id") or worker.get("logical_agent_id") or ""))
+            if agent_id:
+                active_agent_ids.add(agent_id)
+        for record in ((state.get("queue") or {}).get("events") or {}).values():
+            if not isinstance(record, Mapping) or str(record.get("status") or "") in {"completed", "failed"}:
+                continue
+            intent = record.get("intent") if isinstance(record.get("intent"), Mapping) else record
+            agent_id = normalize_agent_id(str(intent.get("target_agent") or ""))
+            if agent_id:
+                active_agent_ids.add(agent_id)
 
     health = runtime_delivery_health(state)
     endpoint_health = _admission_health_records(health, "endpoints")
@@ -1642,6 +1681,8 @@ def idle_delivery_health_refresh_targets(
     seen: set[str] = set()
 
     for logical_agent_id in dispatch_loop_agent_ids(config):
+        if active_agent_ids is not None and logical_agent_id not in active_agent_ids:
+            continue
         lane = delivery_lane_for_agent(config, logical_agent_id)
         for endpoint in lane.endpoints:
             endpoint_id = normalize_agent_id(endpoint.endpoint_id)
@@ -4080,7 +4121,8 @@ def process_queue(
     changed = False
     task_map = task_index_from_status(config, load_status(config))
     active_statuses = {str(value) for value in ready_dispatch_settings(config).get("active_worker_statuses", [])}
-    for event in sorted(queue_events(state), key=queue_event_sort_key):
+    queued_events = sorted(queue_events(state), key=queue_event_sort_key)
+    for event in queued_events:
         event_id = event.get("event_id")
         if not event_id:
             continue
@@ -4218,7 +4260,7 @@ def process_queue(
             state,
             event,
             task_map,
-            queue_events(state),
+            queued_events,
         )
         if decision is None:
             record["status"] = "completed"
@@ -4464,11 +4506,14 @@ def pid_is_alive(pid: int | None) -> bool:
     proc_stat = Path(f"/proc/{pid}/stat")
     if proc_stat.exists():
         try:
-            parts = proc_stat.read_text(encoding="utf-8", errors="ignore").split()
+            content = proc_stat.read_text(encoding="utf-8", errors="ignore")
         except OSError:
-            parts = []
-        if len(parts) >= 3 and parts[2] == "Z":
-            return False
+            content = ""
+        rparen = content.rfind(")")
+        if rparen != -1:
+            rest = content[rparen + 1:].strip().split()
+            if rest and rest[0] in {"Z", "X"}:
+                return False
     try:
         os.kill(pid, 0)
     except OSError:
@@ -4642,6 +4687,19 @@ def scan_live_worker_pids_by_agent(proc_root: Path | None = None) -> dict[str, l
             continue
         pid = int(name)
         if pid == self_pid:
+            continue
+        proc_stat = entry / "stat"
+        if proc_stat.exists():
+            try:
+                stat_content = proc_stat.read_text(encoding="utf-8", errors="ignore")
+            except OSError:
+                stat_content = ""
+            rparen = stat_content.rfind(")")
+            if rparen != -1:
+                rest = stat_content[rparen + 1:].strip().split()
+                if rest and rest[0] in {"Z", "X"}:
+                    continue
+        if proc_root is None and not pid_is_alive(pid):
             continue
         cmdline_path = entry / "cmdline"
         try:
@@ -5446,6 +5504,94 @@ def worker_runner_succeeded(worker: dict[str, Any]) -> bool:
     except (TypeError, ValueError):
         return False
     return exit_code == 0 and not worker.get("runner_signal")
+
+
+def worker_dispatch_responsibility(worker: Mapping[str, Any]) -> str | None:
+    """Return the task lane that was assigned to this worker run.
+
+    The dispatch reason is captured with the worker request and is therefore
+    stable even after the task has advanced to its next lifecycle phase.
+    """
+
+    dispatch_reason = str(
+        (worker.get("request_snapshot") or {}).get("reason") or ""
+    ).strip()
+    if dispatch_reason == REASON_REVIEW_READY:
+        return "reviewer"
+    if dispatch_reason in {
+        REASON_OWNED_READY,
+        REASON_OWNED_IN_PROGRESS,
+        REASON_OWNED_FINALIZE,
+    }:
+        return "owner"
+    return None
+
+
+def task_current_dispatch_responsibility(
+    config: dict[str, Any], task: Mapping[str, Any]
+) -> str | None:
+    """Return the lane currently responsible for an open task lifecycle phase."""
+
+    settings = ready_dispatch_settings(config)
+    task_status = str(task.get("status") or "").strip().lower()
+    if task_status in normalized_status_set(settings.get("review_statuses"), ["review"]):
+        return "reviewer"
+    if task_status in (
+        normalized_status_set(settings.get("owned_statuses"), ["todo", "in_progress"])
+        | normalized_status_set(settings.get("finalize_statuses"), ["review_approved"])
+    ):
+        return "owner"
+    return None
+
+
+def worker_completed_after_responsibility_transition(
+    config: dict[str, Any],
+    worker: Mapping[str, Any],
+    task: Mapping[str, Any] | None,
+) -> bool:
+    """Whether a successful exited worker already handed responsibility onward.
+
+    This is intentionally narrower than a task completion proof.  It does
+    not approve product delivery or infer a lifecycle event.  It only prevents
+    a dead worker that reported success from creating a lost-lease recovery
+    fence after canonical task state has already moved to another lane (or a
+    terminal state).
+    """
+
+    if not isinstance(task, Mapping) or not worker_runner_succeeded(dict(worker)):
+        return False
+    dispatched_role = worker_dispatch_responsibility(worker)
+    if dispatched_role is None:
+        return False
+    return task_current_dispatch_responsibility(config, task) != dispatched_role
+
+
+def complete_worker_after_responsibility_transition(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    worker: dict[str, Any],
+    *,
+    message: str,
+    last_event_at: str | None = None,
+) -> None:
+    """Close a successful run whose canonical responsibility already moved."""
+
+    worker["status"] = "completed"
+    worker["last_event_at"] = last_event_at or utc_now()
+    worker.pop("last_error", None)
+    finalize_queue_event_record(config, state, worker, "completed")
+    write_activity_log(
+        config,
+        {
+            "type": "worker_completed",
+            "provider": worker.get("provider"),
+            "task_id": worker.get("task_id"),
+            "message": message,
+            "worker_run_id": worker.get("run_id"),
+            "pr_url": worker.get("pr_url"),
+            "session_url": worker.get("session_url"),
+        },
+    )
 
 
 def worker_heartbeat_is_stale(config: dict[str, Any], worker: dict[str, Any], now: datetime | None = None) -> bool:
@@ -7916,6 +8062,7 @@ GOVERNANCE_LIFECYCLE_EVENT_TYPES = frozenset(
         "reopen",
         "handoff",
         "review_approved",
+        "integration_resumed",
         "blocker",
         "done",
         "supersede",
@@ -8806,6 +8953,116 @@ def persist_worker_recovery_receipt(
     if not applied:
         return False
     return sync_status_pipeline(config)
+
+
+def worker_recovery_responsibility_is_obsolete(
+    config: dict[str, Any],
+    task: Mapping[str, Any],
+    receipt: Mapping[str, Any],
+) -> bool:
+    """Whether a pending recovery no longer owns the task's current lane."""
+
+    recovery_role = str(receipt.get("recovery_role") or "").strip()
+    if recovery_role not in {"owner", "reviewer"}:
+        return False
+    return task_current_dispatch_responsibility(config, task) != recovery_role
+
+
+def _resolve_obsolete_worker_recovery_receipt_locked(
+    config: dict[str, Any],
+    *,
+    receipt_id: str,
+    task_id: str,
+) -> bool:
+    """Release a pending fence after canonical responsibility moved onward.
+
+    A recovery receipt protects reassignment while its lane remains current.
+    Once canonical state has moved to another lane, retaining that fence only
+    blocks the successor.  This transaction changes receipt bookkeeping and
+    emits an auditable event; it deliberately leaves task status, assignment,
+    and generation untouched.
+    """
+
+    status = load_status(config)
+    if status.get("status_activity_outbox") not in (None, {}, []):
+        return False
+    task = task_index_from_status(config, status).get(task_id)
+    if task is None:
+        return False
+    receipt = _canonical_worker_recovery_receipt(status, task)
+    if (
+        receipt is None
+        or str(receipt.get("receipt_id") or "") != receipt_id
+        or str(receipt.get("status") or "") != "pending"
+        or not worker_recovery_responsibility_is_obsolete(config, task, receipt)
+    ):
+        return False
+
+    timestamp = utc_now()
+    previous_role = str(receipt.get("recovery_role") or "owner")
+    current_role = task_current_dispatch_responsibility(config, task)
+    receipt.update(
+        {
+            "status": "resolved",
+            "resolved_at": timestamp,
+            "resolved_reason": (
+                "canonical task responsibility moved from "
+                f"{previous_role} to {current_role or 'terminal/non-dispatch'}"
+            ),
+        }
+    )
+    receipts = status.get(WORKER_RECOVERY_RECEIPTS_KEY)
+    if not isinstance(receipts, dict):
+        return False
+    receipts[receipt_id] = deepcopy(receipt)
+    task.pop(WORKER_RECOVERY_TASK_KEY, None)
+    task["last_update"] = timestamp
+    task["next"] = (
+        f"Supervisor released stale lost-lease fence {receipt_id}: "
+        f"canonical responsibility moved from {previous_role} to "
+        f"{current_role or 'terminal/non-dispatch'}.")
+    event = _worker_recovery_activity_event(
+        receipt,
+        event_type="worker_lost_lease_recovery_resolved",
+        timestamp=timestamp,
+        message=str(task["next"]),
+    )
+    composed = _compose_status_activity_outbox(
+        status.get("status_activity_outbox"), event
+    )
+    if composed is None:
+        return False
+    status["status_activity_outbox"] = composed
+    _prune_worker_recovery_receipts(status, current_receipt_id=receipt_id)
+    write_status(config, status, source="supervisor-worker-recovery-resolved")
+    return True
+
+
+def resolve_obsolete_worker_recovery_receipt(
+    config: dict[str, Any],
+    *,
+    receipt_id: str,
+    task_id: str,
+) -> bool:
+    """Atomically release a recovery fence made obsolete by a handoff."""
+
+    if not receipt_id or not task_id:
+        return False
+    status_path = config_path(config, "status_file")
+    with canonical_task_state_lock_file(
+        status_path,
+        shared=False,
+        nonblocking=False,
+    ):
+        applied = _resolve_obsolete_worker_recovery_receipt_locked(
+            config,
+            receipt_id=receipt_id,
+            task_id=task_id,
+        )
+    if not applied:
+        return False
+    sync_status_pipeline(config)
+    return True
 
 
 def _persist_task_reassignment_locked(
@@ -10931,6 +11188,20 @@ def poll_workers(
         )
         if lease_expired or missing_process:
             task = task_map.get(str(worker.get("task_id") or ""))
+            if missing_process and worker_completed_after_responsibility_transition(
+                config, worker, task
+            ):
+                complete_worker_after_responsibility_transition(
+                    config,
+                    state,
+                    worker,
+                    message=(
+                        "Worker runner succeeded and canonical task responsibility "
+                        "already advanced to its successor lane."
+                    ),
+                )
+                changed = True
+                continue
             terminal = canonical_worker_terminal_status(
                 config,
                 worker,
@@ -11043,7 +11314,6 @@ def poll_workers(
         )
         changed = bool(completion["changed"]) or changed
     changed = reconcile_pending_worker_recoveries(config, state) or changed
-    changed = cleanup_inactive_worker_worktrees(config, state) or changed
     record_worker_runtime_measurement(
         config,
         state,
@@ -11714,9 +11984,16 @@ def reconcile_queue_records(config: dict[str, Any], state: dict[str, Any]) -> bo
     if not queue_events:
         return False
     active_statuses = {str(value) for value in ready_dispatch_settings(config).get("active_worker_statuses", [])}
-    for event_id, record in queue_events.items():
-        workers = [worker for worker in state.get("workers", {}).values() if worker.get("queue_event_id") == event_id]
-        if not workers:
+    workers_by_event: dict[str, list[dict[str, Any]]] = {}
+    for worker in (state.get("workers") or {}).values():
+        if isinstance(worker, Mapping):
+            qid = str(worker.get("queue_event_id") or "").strip()
+            if qid:
+                workers_by_event.setdefault(qid, []).append(worker)
+
+    for event_id, workers in workers_by_event.items():
+        record = queue_events.get(event_id)
+        if not isinstance(record, dict):
             continue
         if any(worker.get("status") in active_statuses for worker in workers):
             continue
@@ -12433,6 +12710,21 @@ def reconcile_pending_worker_recoveries(
         if receipt is None:
             continue
         changed = _adopt_worker_recovery_receipt(state, receipt) or changed
+        if (
+            str(receipt.get("status") or "") == "pending"
+            and worker_recovery_responsibility_is_obsolete(config, task, receipt)
+        ):
+            if resolve_obsolete_worker_recovery_receipt(
+                config,
+                receipt_id=str(receipt.get("receipt_id") or ""),
+                task_id=str(task.get("id") or ""),
+            ):
+                runtime_receipts = state.get(WORKER_RECOVERY_RECEIPTS_KEY)
+                if isinstance(runtime_receipts, dict):
+                    runtime_receipts.pop(str(receipt.get("receipt_id") or ""), None)
+                changed = True
+                status = load_status(config)
+            continue
         if str(receipt.get("status") or "") == "reassigned":
             receipt_id = str(receipt.get("receipt_id") or "")
             task_id = str(task.get("id") or "")
@@ -12892,6 +13184,28 @@ def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> 
             else "Worker process missing during supervisor boot reconciliation."
         )
         task = task_map.get(str(worker.get("task_id") or ""))
+        # A supervisor restart can observe the owner process only after it has
+        # successfully handed the task to review.  This is the same condition
+        # handled in the ordinary polling path: the dead PID is historical,
+        # not a lost lease.  Re-check it here before creating a recovery
+        # receipt, otherwise every restart briefly fences an already-valid
+        # handoff and wastes a recovery cycle.
+        if missing_process and worker_completed_after_responsibility_transition(
+            config, worker, task
+        ):
+            complete_worker_after_responsibility_transition(
+                config,
+                state,
+                worker,
+                message=(
+                    "Worker runner succeeded and canonical task responsibility "
+                    "already advanced to its successor lane during supervisor "
+                    "boot reconciliation."
+                ),
+                last_event_at=worker.get("runner_finished_at"),
+            )
+            changed = True
+            continue
         handoff_status = canonical_worker_terminal_status(
             config,
             worker,
@@ -13091,13 +13405,13 @@ def outstanding_delivery_indexes(
     queue_records = state.get("queue", {}).get("events", {})
     queued_events = queue_events(state) if events is None else events
     for event in queued_events:
-        if task_map is not None and stale_dispatch_skip_message(config, event, task_map):
-            continue
         event_id = event.get("event_id")
         if not event_id:
             continue
         record = queue_records.get(event_id, {})
-        if record.get("status") in {"completed", "failed"}:
+        if str(record.get("status") or "") in {"completed", "failed"}:
+            continue
+        if task_map is not None and stale_dispatch_skip_message(config, event, task_map):
             continue
         event_key = str(event.get("event_key") or "")
         if event_key:
@@ -13151,25 +13465,34 @@ def reconcile_queue_intents(config: dict[str, Any], state: dict[str, Any]) -> bo
     changed = False
     now = datetime.now(timezone.utc)
 
+    workers_by_event: dict[str, list[tuple[str, dict[str, Any]]]] = {}
+    for run_id, worker in workers.items():
+        if isinstance(worker, Mapping):
+            qid = str(worker.get("queue_event_id") or "").strip()
+            if qid:
+                workers_by_event.setdefault(qid, []).append((run_id, worker))
+
     for event in events:
         event_id = event.get("event_id")
         if not event_id:
             continue
 
         record = queue_records.get(event_id, {})
-        related_worker_items = [
-            (run_id, worker)
-            for run_id, worker in workers.items()
-            if worker.get("queue_event_id") == event_id
-        ]
+        record_status = str(record.get("status") or "")
+        related_worker_items = workers_by_event.get(event_id, [])
         related_workers = [worker for _, worker in related_worker_items]
+
+        # Fast path for completed records without related workers
+        if record_status in {"completed", "done"} and not related_worker_items:
+            continue
+
         has_active_worker = any(worker.get("status") in active_statuses for worker in related_workers)
 
         # ``retry_backoff`` is a scheduler hold, not a live process.  When its
         # process is gone, release only the lease; preserve the exact intent so
         # a later delivery uses the same generation-bound work item.
         stale_retry_workers = (
-            record.get("status") in {"started", "retry_backoff"}
+            record_status in {"started", "retry_backoff"}
             and bool(related_worker_items)
             and all(
                 str(worker.get("status") or "") == "retry_backoff"
@@ -13206,6 +13529,7 @@ def reconcile_queue_intents(config: dict[str, Any], state: dict[str, Any]) -> bo
             record.pop("lease_expires_at", None)
             changed = True
             continue
+
         skip_message = stale_dispatch_skip_message(config, event, task_map)
 
         if skip_message and not has_active_worker:
@@ -13216,7 +13540,7 @@ def reconcile_queue_intents(config: dict[str, Any], state: dict[str, Any]) -> bo
             changed = True
             continue
 
-        if not related_workers and record.get("status") in {"started", "waiting_approval", "retry_backoff", "stalled"}:
+        if not related_workers and record_status in {"started", "waiting_approval", "retry_backoff", "stalled"}:
             record["status"] = "queued"
             record.pop("processed_at", None)
             record.pop("error", None)
@@ -13226,7 +13550,7 @@ def reconcile_queue_intents(config: dict[str, Any], state: dict[str, Any]) -> bo
         current_task = task_map.get(str(event.get("task_id") or ""))
         current_status = str(current_task.get("status") or "").lower() if current_task else ""
 
-        if record.get("status") == "failed" and not has_active_worker and current_status in redispatch_statuses:
+        if record_status == "failed" and not has_active_worker and current_status in redispatch_statuses:
             record["status"] = "queued"
             record.pop("processed_at", None)
             record.pop("error", None)
@@ -13549,15 +13873,15 @@ def agent_dispatch_loads(
     queue_records = state.get("queue", {}).get("events", {})
     queued_events = queue_events(state) if events is None else events
     for event in queued_events:
-        if task_map is not None and stale_dispatch_skip_message(config, event, task_map):
-            continue
         event_id = str(event.get("event_id") or "")
         if not event_id:
             continue
         if event_id in represented_queue_event_ids:
             continue
         record = queue_records.get(event_id, {})
-        if record.get("status") in {"completed", "failed"}:
+        if str(record.get("status") or "") in {"completed", "failed"}:
+            continue
+        if task_map is not None and stale_dispatch_skip_message(config, event, task_map):
             continue
         reason = str(event.get("reason") or "")
         priority = dispatch_reason_priority(reason)
@@ -13965,6 +14289,43 @@ def task_review_reopen_revision(
     return counted
 
 
+def task_integration_resume_revision(
+    task: Mapping[str, Any] | None,
+    activity_events: list[dict[str, Any]] | None = None,
+    *,
+    config: dict[str, Any] | None = None,
+) -> int:
+    """Return the number of exact reviewed integrations restored for ``task``.
+
+    A Human/Ops ``resume_integration`` preserves the existing delivery and
+    approval bindings; it deliberately does not change the assignment
+    generation.  Its owner-finalize dispatch must nevertheless be a fresh
+    delivery request.  Otherwise the cooldown key from the failed integration
+    attempt suppresses the restored closeout for the whole cooldown window.
+
+    The canonical ``integration_resumed`` activity event is already append-only
+    and task-scoped, so it is the single source of this revision.  Once that
+    fresh dispatch has been attempted, its new key is again protected by the
+    ordinary cooldown gate.
+    """
+
+    if activity_events is None and config is not None:
+        activity_events = recent_governance_activity_events(config)
+    if not isinstance(activity_events, (list, tuple)) or not isinstance(task, Mapping):
+        return 0
+    task_id = str(task.get("id") or "").strip()
+    if not task_id:
+        return 0
+    return sum(
+        1
+        for event in activity_events
+        if isinstance(event, Mapping)
+        and str(event.get("task_id") or "").strip() == task_id
+        and str(event.get("type") or "").strip().lower()
+        == "integration_resumed"
+    )
+
+
 def ready_dispatch_signature(
     task: dict[str, Any],
     reason: str,
@@ -13980,8 +14341,7 @@ def ready_dispatch_signature(
     # Otherwise the checker recomputes a different key and discards the one
     # durable event before it can launch a worker.
     requeue_intent = task_review_requeue_record(task)
-    return json.dumps(
-        {
+    signature = {
             "delivery_binding_digest": rewrite_task_machine.delivery_binding_digest(task),
             "dependency_signature": task_dependency_signature(task, task_lookup),
             "depends_on": list(task.get("depends_on", []) or []),
@@ -13998,10 +14358,14 @@ def ready_dispatch_signature(
             "status": task.get("status"),
             "task_generation": task_generation(task),
             "task_id": task.get("id"),
-        },
-        sort_keys=True,
-        ensure_ascii=True,
-    )
+    }
+    if reason == REASON_OWNED_FINALIZE:
+        resume_revision = task_integration_resume_revision(
+            task, activity_events=activity_events, config=config
+        )
+        if resume_revision > 0:
+            signature["integration_resume_revision"] = resume_revision
+    return json.dumps(signature, sort_keys=True, ensure_ascii=True)
 
 
 def build_dispatch_event(
@@ -14021,6 +14385,13 @@ def build_dispatch_event(
     ]
     reopen_revision = task_review_reopen_revision(
         task, activity_events=activity_events, config=config
+    )
+    resume_revision = (
+        task_integration_resume_revision(
+            task, activity_events=activity_events, config=config
+        )
+        if reason == REASON_OWNED_FINALIZE
+        else 0
     )
     requeue_intent = task_review_requeue_intent(task)
     task_payload = {
@@ -14075,6 +14446,8 @@ def build_dispatch_event(
             task_payload[key] = task.get(key)
     if reopen_revision > 0:
         task_payload["review_reopen_revision"] = reopen_revision
+    if resume_revision > 0:
+        task_payload["integration_resume_revision"] = resume_revision
     if requeue_intent is not None:
         task_payload[REVIEW_REQUEUE_INTENT_KEY] = deepcopy(requeue_intent)
     recovery_pointer = task.get(WORKER_RECOVERY_TASK_KEY)
@@ -14100,6 +14473,8 @@ def build_dispatch_event(
     }
     if reopen_revision > 0:
         event["review_reopen_revision"] = reopen_revision
+    if resume_revision > 0:
+        event["integration_resume_revision"] = resume_revision
     if requeue_intent is not None:
         event["review_requeue_intent_id"] = requeue_intent["intent_id"]
     if recovery_receipt_id:
@@ -14130,6 +14505,7 @@ def evaluate_dispatch_candidate(
     cooldown_seconds: float,
     live_total: int | None = None,
     activity_events: list[dict[str, Any]] | None = None,
+    provisional_reserved_endpoint_ids: set[str] | None = None,
 ) -> dict[str, Any]:
     """Pure candidate decision shared by planning and late delivery.
 
@@ -14174,6 +14550,7 @@ def evaluate_dispatch_candidate(
         pending_resource_loads=pending_resource_loads,
         resource_limits=resource_limits,
         live_total=live_total,
+        provisional_reserved_endpoint_ids=provisional_reserved_endpoint_ids,
     )
     if not admission.eligible:
         reason_code = admission.reason.value if admission.reason is not None else "task_not_dispatchable"
@@ -14279,10 +14656,16 @@ def evaluate_queued_delivery_admission(
         if str(candidate.get("event_id") or "") != event_id
         and queue_event_sort_key(candidate) < current_key
     ]
-    delivery_state = deepcopy(state)
-    queue_records = ((delivery_state.get("queue") or {}).get("events") or {})
-    if isinstance(queue_records, dict):
-        queue_records.pop(event_id, None)
+    queue = state.get("queue", {})
+    queue_events_dict = dict(queue.get("events", {})) if isinstance(queue, dict) else {}
+    queue_events_dict.pop(event_id, None)
+    delivery_state = {
+        **state,
+        "queue": {
+            **queue,
+            "events": queue_events_dict,
+        },
+    }
     settings = ready_dispatch_settings(config)
     active_statuses = normalized_status_set(settings.get("active_worker_statuses"), [])
     _active_agents, active_pairs = active_worker_indexes(delivery_state, active_statuses)
@@ -14487,6 +14870,7 @@ def dispatch_ready_tasks(
         agent_ids = []
     considered = 0
     dispatches = 0
+    provisional_reserved_endpoint_ids: set[str] = set()
     refresh_demands = state.setdefault("delivery_health_refresh_demands", [])
     if not isinstance(refresh_demands, list):
         refresh_demands = []
@@ -14570,7 +14954,48 @@ def dispatch_ready_tasks(
 
         candidates.sort(key=lambda item: item[:2])
         occurrence_limit = min(available_slots, max_dispatches - dispatches)
-        for _, _, task, decision in candidates[:occurrence_limit]:
+        selected = 0
+        for _, _, task, _initial_decision in candidates:
+            if selected >= occurrence_limit or dispatches >= max_dispatches:
+                break
+            # Candidate discovery is intentionally side-effect free. Re-run
+            # the same admission predicate immediately before reservation so
+            # each accepted event contributes its exact endpoint to the
+            # remainder of this plan.
+            decision = evaluate_dispatch_candidate(
+                config,
+                state,
+                status,
+                task,
+                target_agent,
+                task_resolver,
+                settings=settings,
+                active_task_ids=active_task_ids,
+                pending_task_ids=pending_task_ids,
+                pending_event_keys=pending_event_keys,
+                agent_loads=agent_loads,
+                active_account_loads=active_quota_counts,
+                pending_account_loads=pending_quota_counts,
+                active_resource_loads=active_resource_counts,
+                pending_resource_loads=pending_resource_counts,
+                resource_limits=resource_limits,
+                seen_event_keys=seen,
+                checked_at=dispatch_started_at,
+                cooldown_seconds=unchanged_cooldown_seconds,
+                live_total=live_total,
+                activity_events=activity_events,
+                provisional_reserved_endpoint_ids=provisional_reserved_endpoint_ids,
+            )
+            if not decision["eligible"]:
+                for target in decision.get("health_refresh_targets", []) or []:
+                    if not isinstance(target, Mapping):
+                        continue
+                    scope = str(target.get("scope") or "")
+                    identity = str(target.get("id") or "")
+                    demand = {"scope": scope, "id": identity}
+                    if scope in {"endpoint", "account"} and identity and demand not in refresh_demands:
+                        refresh_demands.append(demand)
+                continue
             req_resources = task_execution_resources(task)
             if any(
                 active_resource_counts.get(res, 0) + pending_resource_counts.get(res, 0)
@@ -14596,8 +15021,12 @@ def dispatch_ready_tasks(
                 pending_quota_counts[quota_group] = pending_quota_counts.get(quota_group, 0) + 1
             for res in req_resources:
                 pending_resource_counts[res] = pending_resource_counts.get(res, 0) + 1
+            endpoint_id = normalize_agent_id(str(decision.get("delivery_endpoint_id") or ""))
+            if endpoint_id:
+                provisional_reserved_endpoint_ids.add(endpoint_id)
             changed = True
             dispatches += 1
+            selected += 1
 
     if sequence and considered and not agent_ids_override:
         dispatch_state["dispatch_cursor"] = (cursor + considered) % len(sequence)
@@ -14641,7 +15070,9 @@ def build_dispatch_plan(
     # A startup or otherwise idle supervisor still needs to repair due
     # evidence.  Keep these targets after task/fallback demand so bounded
     # probing spends the current cycle on an immediately blocked task first.
-    for target in idle_delivery_health_refresh_targets(config, scratch):
+    for target in idle_delivery_health_refresh_targets(
+        config, scratch, status_snapshot=status_snapshot
+    ):
         if target not in refresh_targets:
             refresh_targets.append(target)
     # Startup, a config-topology change, or an explicit Human/Ops request may
@@ -15693,9 +16124,10 @@ def _run_reserved_worktree_prunes(
     config: dict[str, Any],
     state: dict[str, Any],
 ) -> bool:
-    """Prune ordinary orphaned worker worktrees."""
+    """Prune ordinary orphaned and inactive worker worktrees."""
 
-    return prune_orphan_worktrees(config, state)
+    changed = prune_orphan_worktrees(config, state)
+    return cleanup_inactive_worker_worktrees(config, state) or changed
 
 
 def _finalize_runtime_cycle_locked(

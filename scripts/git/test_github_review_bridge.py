@@ -23,6 +23,7 @@ class FakeRunner:
         review_error: str = "",
         context_required: bool = True,
         actual_head: str = HEAD,
+        head_branch: str = "task/AUDIT-001",
         dispatch_error: str = "",
         pr_state: str = "OPEN",
         merge_state: str = "CLEAN",
@@ -38,10 +39,15 @@ class FakeRunner:
         base_manifest_error: str = "",
         pr_files: Sequence[Mapping[str, Any]] | None = None,
         is_draft: bool = False,
+        workflow_id: int = 842691579,
+        workflow_path: str = ".github/workflows/canonical-review-gate.yml",
+        workflow_name: str = "Canonical Review Gate",
+        dispatch_requires_delivery_class: bool = False,
     ) -> None:
         self.review_error = review_error
         self.context_required = context_required
         self.actual_head = actual_head
+        self.head_branch = head_branch
         self.dispatch_error = dispatch_error
         self.pr_state = pr_state
         self.merge_state = merge_state
@@ -65,6 +71,10 @@ class FakeRunner:
         self.base_manifest_error = base_manifest_error
         self.pr_files = [dict(item) for item in (pr_files or [])]
         self.is_draft = is_draft
+        self.workflow_id = workflow_id
+        self.workflow_path = workflow_path
+        self.workflow_name = workflow_name
+        self.dispatch_requires_delivery_class = dispatch_requires_delivery_class
         self.reviews: list[dict[str, Any]] = []
         self.statuses: list[dict[str, Any]] = []
         self.calls: list[tuple[list[str], Mapping[str, Any] | None]] = []
@@ -87,7 +97,7 @@ class FakeRunner:
                 "number": 4269,
                 "url": PR_URL,
                 "state": self.pr_state,
-                "headRefName": "task/AUDIT-001",
+                "headRefName": self.head_branch,
                 "headRefOid": self.actual_head,
                 "baseRefName": "dev",
                 "isDraft": self.is_draft,
@@ -149,6 +159,18 @@ class FakeRunner:
         if joined.endswith("/protection/required_status_checks"):
             contexts = [bridge.CANONICAL_REVIEW_CONTEXT] if self.context_required else []
             return {"contexts": contexts, "checks": []}
+        if joined == f"gh api repos/{REPOSITORY}/actions/workflows?per_page=100":
+            return {
+                "total_count": 1,
+                "workflows": [
+                    {
+                        "id": self.workflow_id,
+                        "name": self.workflow_name,
+                        "path": self.workflow_path,
+                        "state": "active",
+                    }
+                ],
+            }
         if joined.endswith(f"/commits/{HEAD}/statuses?per_page=100"):
             return list(reversed(self.statuses))
         if f"/statuses/{HEAD}" in joined and "--method POST" in joined:
@@ -180,12 +202,20 @@ class FakeRunner:
             return dict(ref_payload)
         if (
             f"repos/{REPOSITORY}/actions/workflows/"
-            f"{bridge.CANONICAL_REVIEW_GATE_WORKFLOW_FILE}/dispatches" in joined
+            f"{self.workflow_id}/dispatches" in joined
             and "--method POST" in joined
         ):
             if self.dispatch_error:
                 raise bridge.GitHubReviewBridgeError(self.dispatch_error)
             assert payload is not None
+            if (
+                self.dispatch_requires_delivery_class
+                and bridge.WORKFLOW_DISPATCH_DELIVERY_CLASS_INPUT
+                not in payload.get("inputs", {})
+            ):
+                raise bridge.GitHubReviewBridgeError(
+                    "gh: Required input 'delivery_class' not provided (HTTP 422)"
+                )
             self.dispatches.append(dict(payload))
             return None
         raise AssertionError(f"unexpected fake gh call: {command}")
@@ -930,6 +960,75 @@ class GitHubReviewBridgeTests(unittest.TestCase):
                 runner=FakeRunner(),
             )
 
+    def test_rehabilitate_operator_admission_reconstructs_minimal_binding_without_manifest(self) -> None:
+        runner = FakeRunner()
+        admission = bridge.rehabilitate_operator_admission(
+            repository=REPOSITORY,
+            binding=binding(),
+            runner=runner,
+        )
+        self.assertEqual(admission.pr, 4269)
+        self.assertEqual(admission.head_sha, HEAD)
+        self.assertEqual(admission.head_branch, "task/AUDIT-001")
+        self.assertEqual(admission.base, "dev")
+        self.assertEqual(admission.base_sha, "c" * 40)
+        self.assertEqual(admission.required_merge_method, "MERGE")
+        self.assertIsNone(admission.manifest_path)
+        self.assertIsNone(admission.manifest_blob_sha)
+
+    def test_rehabilitate_operator_admission_rejects_closed_pr(self) -> None:
+        with self.assertRaisesRegex(
+            bridge.ReviewBindingMismatch, "closed, expected open"
+        ):
+            bridge.rehabilitate_operator_admission(
+                repository=REPOSITORY,
+                binding=binding(),
+                runner=FakeRunner(pr_state="CLOSED"),
+            )
+
+    def test_rehabilitate_operator_admission_rejects_head_mismatch(self) -> None:
+        with self.assertRaisesRegex(
+            bridge.ReviewBindingMismatch, "head .* != .*"
+        ):
+            bridge.rehabilitate_operator_admission(
+                repository=REPOSITORY,
+                binding=binding(),
+                runner=FakeRunner(actual_head="f" * 40),
+            )
+
+    def test_rehabilitate_operator_admission_rejects_changed_branch(self) -> None:
+        with self.assertRaisesRegex(
+            bridge.ReviewBindingMismatch, "branch .* != .*"
+        ):
+            bridge.rehabilitate_operator_admission(
+                repository=REPOSITORY,
+                binding=binding(),
+                runner=FakeRunner(head_branch="feature/other"),
+            )
+
+    def test_revalidate_operator_admission_revalidates_legacy_delivery_without_manifest(self) -> None:
+        legacy_binding = {
+            "kind": "pull_request",
+            "pr": 4269,
+            "head_sha": HEAD,
+            "head_branch": "task/AUDIT-001",
+            "base": "dev",
+            "base_sha": "c" * 40,
+            "required_merge_method": "MERGE",
+        }
+        current = bridge.revalidate_operator_admission(
+            repository=REPOSITORY,
+            delivery_binding=legacy_binding,
+            allow_base_advance=True,
+            runner=FakeRunner(
+                base_sha="e" * 40,
+                compare_status="diverged",
+                behind_by=2,
+            ),
+        )
+        self.assertEqual(current.base_sha, "e" * 40)
+        self.assertIsNone(current.manifest_path)
+
     def test_review_approval_allows_new_base_already_contained_in_head(self) -> None:
         frozen = bridge.validate_review_admission(
             repository=REPOSITORY,
@@ -1002,6 +1101,67 @@ class GitHubReviewBridgeTests(unittest.TestCase):
                 "inputs": {"head_ref": "task/AUDIT-001", "head_sha": HEAD},
             },
         )
+
+    def test_operator_acceptance_resolves_execute_plans_workflow_by_name(self) -> None:
+        """The frontend repo uses a different workflow filename than Pantheon."""
+
+        runner = FakeRunner(
+            workflow_id=342891579,
+            workflow_path=".github/workflows/pantheon-canonical-review-gate.yml",
+            workflow_name="Pantheon canonical review gate",
+            dispatch_requires_delivery_class=True,
+        )
+        bridge.bridge_operator_acceptance(
+            repository=REPOSITORY,
+            task_id="AUDIT-001",
+            actor="Human/Ops",
+            message="Use the repository's canonical gate workflow.",
+            binding=binding(),
+            runner=runner,
+        )
+
+        dispatched = [
+            command
+            for command, _payload in runner.calls
+            if "actions/workflows/342891579/dispatches" in " ".join(command)
+        ]
+        self.assertEqual(len(dispatched), 2)
+        self.assertEqual(
+            runner.dispatches,
+            [
+                {
+                    "ref": "dev",
+                    "inputs": {
+                        "head_ref": "task/AUDIT-001",
+                        "head_sha": HEAD,
+                        "delivery_class": "product",
+                    },
+                }
+            ],
+        )
+
+    def test_operator_acceptance_does_not_retry_unknown_required_input(self) -> None:
+        runner = FakeRunner(
+            dispatch_error="gh: Required input 'unexpected' not provided (HTTP 422)"
+        )
+
+        with self.assertRaisesRegex(bridge.GitHubReviewBridgeError, "unexpected"):
+            bridge.bridge_operator_acceptance(
+                repository=REPOSITORY,
+                task_id="AUDIT-001",
+                actor="Human/Ops",
+                message="Do not guess unknown workflow inputs.",
+                binding=binding(),
+                runner=runner,
+            )
+
+        dispatches = [
+            command
+            for command, _payload in runner.calls
+            if "/actions/workflows/" in " ".join(command)
+            and "/dispatches" in " ".join(command)
+        ]
+        self.assertEqual(len(dispatches), 1)
 
     def test_reopen_does_not_dispatch_canonical_review_gate_workflow(self) -> None:
         runner = FakeRunner(
