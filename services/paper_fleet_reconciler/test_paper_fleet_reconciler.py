@@ -1971,7 +1971,8 @@ class TestPaperFleetStaleSessionAdmissionAndResume(unittest.TestCase):
         now = datetime.now(timezone.utc)
         old_time = (now - timedelta(seconds=50000)).isoformat().replace("+00:00", "Z")
 
-        # Future snapshot (>300s)
+        # Any future snapshot is rejected; use a large offset here and cover
+        # the one-second boundary in the shared admission tests.
         future_snap = {
             "snapshot_id": "snap-future-001",
             "symbol": "AAPL.US",
@@ -2207,6 +2208,31 @@ class TestPaperFleetTaiwanSessionFreshness(unittest.TestCase):
             "closes": [950.0, 955.0],
         }
 
+    @staticmethod
+    def _twse_lny_calendar_evidence() -> Dict[str, Any]:
+        return {
+            "market": "TW",
+            "venue": "TWSE",
+            "timezone": "Asia/Taipei",
+            "authority": "Taiwan Stock Exchange 115 年市場開休市日期",
+            "source_url": "https://www.twse.com.tw/holidaySchedule/holidaySchedule?response=json&queryYear=115",
+            "fetched_at": "2026-02-23T05:00:00Z",
+            "version": "twse-2026-lny-v1",
+            "checksum": "7690e51b3231f1fbde5df4ca7bb8d090b6252b70419672bce5a7969c11df41a3",
+            "coverage_start": "2026-02-11",
+            "coverage_end": "2026-02-23",
+            "holidays": {
+                "2026-02-12": {"name": "市場無交易，僅辦理結算交割作業"},
+                "2026-02-13": {"name": "市場無交易，僅辦理結算交割作業"},
+                "2026-02-16": {"name": "農曆除夕及春節"},
+                "2026-02-17": {"name": "農曆除夕及春節"},
+                "2026-02-18": {"name": "農曆除夕及春節"},
+                "2026-02-19": {"name": "農曆除夕及春節"},
+                "2026-02-20": {"name": "農曆除夕及春節"},
+            },
+            "trading_days": ["2026-02-23"],
+        }
+
     @patch(
         "services.paper_fleet_reconciler.paper_fleet_reconciler._iso_now",
         return_value="2026-08-29T12:00:00Z",
@@ -2228,24 +2254,11 @@ class TestPaperFleetTaiwanSessionFreshness(unittest.TestCase):
 
     @patch(
         "services.paper_fleet_reconciler.paper_fleet_reconciler._iso_now",
-        return_value="2026-08-31T06:00:00Z",
+        return_value="2026-02-23T06:00:00Z",
     )
-    def test_tw_friday_close_paused_once_monday_session_closes(self, _mock_now) -> None:
-        snap = self._tw_snapshot("2026-08-28T05:30:00Z", "2026-08-31T05:45:00Z")
-        snap["calendar_evidence"] = {
-            "market": "TW",
-            "venue": "TWSE",
-            "timezone": "Asia/Taipei",
-            "authority": "TWSE/TPEx announced holiday schedule",
-            "source_url": "https://www.twse.com.tw/en/trading/calendar.html",
-            "fetched_at": "2026-08-31T05:00:00Z",
-            "version": "2026.1",
-            "checksum": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-            "coverage_start": "2026-01-01",
-            "coverage_end": "2026-12-31",
-            "trading_days": ["2026-08-31"],
-            "holidays": {},
-        }
+    def test_tw_prior_close_paused_once_reopening_session_closes(self, _mock_now) -> None:
+        snap = self._tw_snapshot("2026-02-11T05:30:00Z", "2026-02-23T05:45:00Z")
+        snap["calendar_evidence"] = self._twse_lny_calendar_evidence()
         b = _make_binding(
             "b-tw-monday-stale-001",
             symbol="2330.TWSE",
@@ -2289,4 +2302,3 @@ if __name__ == "__main__":
     import sys
     sys.path.insert(0, str(Path(__file__).parent))
     unittest.main()
-

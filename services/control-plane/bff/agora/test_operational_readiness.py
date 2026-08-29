@@ -361,7 +361,7 @@ def test_operational_readiness_tw_holiday_with_calendar_evidence(
         "snapshot_id": "mss-tw-readiness-003",
         "source_instance_id": "src-tw-twse-2330",
         "symbol": "2330.TWSE",
-        "event_time": "2026-02-13T05:30:00Z",
+        "event_time": "2026-02-11T05:30:00Z",
         "observed_at": "2026-02-23T02:00:00Z",
         "sla_seconds": 86400,
         "lineage": {
@@ -372,20 +372,23 @@ def test_operational_readiness_tw_holiday_with_calendar_evidence(
             "market": "TW",
             "venue": "TWSE",
             "timezone": "Asia/Taipei",
-            "authority": "TWSE/TPEx announced holiday schedule",
-            "source_url": "https://www.twse.com.tw/en/trading/calendar.html",
+            "authority": "Taiwan Stock Exchange 115 年市場開休市日期",
+            "source_url": "https://www.twse.com.tw/holidaySchedule/holidaySchedule?response=json&queryYear=115",
             "fetched_at": "2026-02-23T01:00:00Z",
-            "version": "2026.1",
-            "checksum": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-            "coverage_start": "2026-01-01",
-            "coverage_end": "2026-12-31",
+            "version": "twse-2026-lny-v1",
+            "checksum": "7690e51b3231f1fbde5df4ca7bb8d090b6252b70419672bce5a7969c11df41a3",
+            "coverage_start": "2026-02-11",
+            "coverage_end": "2026-02-23",
             "holidays": {
-                "2026-02-16": {"name": "Lunar New Year (eve)"},
-                "2026-02-17": {"name": "Lunar New Year"},
-                "2026-02-18": {"name": "Lunar New Year"},
-                "2026-02-19": {"name": "Lunar New Year"},
-                "2026-02-20": {"name": "Lunar New Year (makeup)"},
+                "2026-02-12": {"name": "市場無交易，僅辦理結算交割作業"},
+                "2026-02-13": {"name": "市場無交易，僅辦理結算交割作業"},
+                "2026-02-16": {"name": "農曆除夕及春節"},
+                "2026-02-17": {"name": "農曆除夕及春節"},
+                "2026-02-18": {"name": "農曆除夕及春節"},
+                "2026-02-19": {"name": "農曆除夕及春節"},
+                "2026-02-20": {"name": "農曆除夕及春節"},
             },
+            "trading_days": ["2026-02-23"],
         },
     })
     readiness_service.set_signal_producer({
@@ -399,3 +402,39 @@ def test_operational_readiness_tw_holiday_with_calendar_evidence(
 
     assert data.source.freshness == "fresh"
     assert data.status == "ok"
+
+
+@pytest.mark.parametrize(
+    ("event_time", "observed_at"),
+    [
+        ("2026-08-29T12:00:01Z", "2026-08-29T12:00:00Z"),
+        ("2026-08-28T05:30:00Z", "2026-08-29T12:00:01Z"),
+    ],
+)
+def test_operational_readiness_tw_any_future_timestamp_is_stale(
+    readiness_service: AgoraOperationalReadinessService,
+    event_time: str,
+    observed_at: str,
+) -> None:
+    readiness_service.set_source_snapshot({
+        "snapshot_id": "mss-tw-readiness-future",
+        "source_instance_id": "src-tw-twse-2330",
+        "symbol": "2330.TWSE",
+        "event_time": event_time,
+        "observed_at": observed_at,
+        "sla_seconds": 86400,
+        "lineage": {
+            "source_ids": ["tw-official:tw_price_daily:TWSE:2330:checksummed"],
+            "connector_ids": ["tw-twse-tpex-official-market"],
+        },
+    })
+    readiness_service.set_signal_producer({
+        "status": "ok",
+        "consumed_snapshot_id": "mss-tw-readiness-future",
+        "enqueued": 0,
+    })
+
+    envelope = readiness_service.compose_readiness(now_iso="2026-08-29T12:00:00Z")
+
+    assert envelope.data.source.freshness == "stale"
+    assert envelope.data.status == "degraded"

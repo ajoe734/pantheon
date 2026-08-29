@@ -14,6 +14,8 @@ market-session freshness rule instead of divergent local heuristics.
 """
 from __future__ import annotations
 
+import hashlib
+import json
 import math
 from dataclasses import asdict, dataclass
 from datetime import date, datetime, timedelta, timezone
@@ -44,16 +46,23 @@ TW_OFFICIAL_CALENDAR_DOMAINS = {
     "openapi.tpex.org.tw",
 }
 TW_VALID_MARKETS = {"TW", "TWSE", "TPEX", "TWSE/TPEX"}
-TW_VALID_CASH_VENUES = {"TWSE", "TPEX", "TWSE/TPEX"}
+TW_VALID_CASH_VENUES = {"TWSE", "TPEX"}
 TW_VALID_TIMEZONES = {"Asia/Taipei"}
 
 # Governed external trusted pins for Taiwan exchange calendar evidence.
 # An untrusted evidence object cannot self-assert its own expected checksum.
-# The 64-hex SHA-256 digest in the evidence must match an entry in this
-# externally pinned catalog (or an externally supplied trusted pin).
+# The 64-hex SHA-256 digest in the evidence must equal the recomputed digest
+# of its canonical decision payload *and* the exact version pin below.
+#
+# twse-2026-lny-v1 is the bounded 2026-02-11..2026-02-23 cash-market payload
+# derived from the official TWSE 115-year schedule.  It records 2/11 as the
+# final trading day, 2/12..2/20 as no-trading/holiday dates, and 2/23 as the
+# reopening date.  The source is the official TWSE response at:
+# https://www.twse.com.tw/holidaySchedule/holidaySchedule?response=json&queryYear=115
 TW_GOVERNED_CALENDAR_PINS: Mapping[str, str] = {
-    "2026.1": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "twse-2026-lny-v1": "7690e51b3231f1fbde5df4ca7bb8d090b6252b70419672bce5a7969c11df41a3",
 }
+EMPTY_SHA256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 
 # Sentinel returned by a calendar_evidence lookup to signal that evidence
 # was consulted but could not be verified (malformed record, missing source
@@ -76,22 +85,35 @@ def parse_iso_date(value: Any, *, field_name: str = "date") -> Tuple[Optional[da
         return None, f"{field_name} {value!r} is not a valid strict ISO date: {exc}"
 
 
+def _canonical_calendar_payload_sha256(payload: Mapping[str, Any]) -> str:
+    """Return SHA-256 over the stable JSON representation of calendar truth."""
+    encoded = json.dumps(
+        payload,
+        allow_nan=False,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
 def validate_taiwan_calendar_evidence(
     evidence: Any,
     *,
-    expected_sha256: Optional[str] = None,
-    trusted_pins: Optional[Any] = None,
+    trusted_pins: Optional[Mapping[str, str]] = None,
     now_dt: Optional[datetime] = None,
 ) -> Tuple[bool, Optional[str], Optional[Dict[str, Any]]]:
     """Validate explicit Taiwan exchange market calendar evidence.
 
     Enforces:
-      - cash venue is explicitly TWSE, TPEX, or TWSE/TPEX
+      - cash venue is explicitly and exactly TWSE or TPEX
       - timezone is exactly 'Asia/Taipei' (no UTC/offset aliases)
       - authority is present and non-empty
       - source_url uses HTTPS and an official TWSE/TPEx domain
-      - fetched_at is valid strict RFC3339 and non-future (within 300s)
-      - checksum is an exact 64-hex SHA-256 digest matching external trusted pin
+      - fetched_at is valid strict RFC3339 and never future-dated
+      - version is present and maps to one exact external trusted pin
+      - checksum is recomputed over the actual canonical calendar payload
+        and matches both the evidence claim and the version pin
       - no self-asserted checksum within the evidence object is trusted
       - coverage dates, session dates, and holiday dates are strict ISO dates
     """
@@ -102,15 +124,17 @@ def validate_taiwan_calendar_evidence(
 
     market = str(evidence.get("market") or "").strip().upper()
     venue = str(evidence.get("venue") or "").strip().upper()
-    if not market and not venue:
-        return False, "calendar evidence missing required market or venue", None
-    if market and market not in TW_VALID_MARKETS:
+    if not market:
+        return False, "calendar evidence missing required market", None
+    if market not in TW_VALID_MARKETS:
         return False, f"calendar evidence market {market!r} is not a valid Taiwan market (TW, TWSE, TPEX, TWSE/TPEX)", None
 
-    # Exact cash venue check: must be TWSE, TPEX, or TWSE/TPEX (no TAIFEX, no raw "TW" as venue)
-    resolved_venue = venue or (market if market in TW_VALID_CASH_VENUES else "")
-    if not resolved_venue or resolved_venue not in TW_VALID_CASH_VENUES:
-        return False, f"calendar evidence venue {venue or market!r} is not an official Taiwan cash venue (expected TWSE or TPEX)", None
+    # Venue is a required atomic identity.  A market fallback or the combined
+    # value TWSE/TPEX cannot prove which venue's sessions were attested.
+    if not venue:
+        return False, "calendar evidence missing required explicit venue (expected TWSE or TPEX)", None
+    if venue not in TW_VALID_CASH_VENUES:
+        return False, f"calendar evidence venue {venue!r} is not an official Taiwan cash venue (expected exactly TWSE or TPEX)", None
 
     tz = str(evidence.get("timezone") or evidence.get("tz") or "").strip()
     if tz != "Asia/Taipei":
@@ -155,38 +179,21 @@ def validate_taiwan_calendar_evidence(
         return False, f"calendar evidence invalid fetched_at: {err}", None
 
     ref_now = now_dt if now_dt is not None else datetime.now(timezone.utc)
-    if (fetched_dt - ref_now).total_seconds() > 300:
+    if fetched_dt > ref_now:
         return False, f"calendar evidence fetched_at {fetched_raw!r} is in the future", None
 
-    # Checksum: require exact 64-hex SHA-256 matching external trusted pin
+    version_str = str(evidence.get("version") or "").strip()
+    if not version_str:
+        return False, "calendar evidence missing required governed version", None
+
+    # The checksum claim is only parsed here.  It is verified against the
+    # recomputed payload digest after all session/holiday content is normalized.
     raw_checksum = evidence.get("checksum") or evidence.get("sha256")
     if not raw_checksum:
         return False, "calendar evidence must include a 64-hex sha256 checksum", None
     cs = str(raw_checksum).strip().lower()
     if len(cs) != 64 or not all(c in "0123456789abcdef" for c in cs):
         return False, f"calendar evidence checksum {raw_checksum!r} must be a 64-hex SHA-256 digest", None
-
-    version_str = str(evidence.get("version") or "").strip()
-
-    if expected_sha256 is not None:
-        pin = expected_sha256.strip().lower()
-        if cs != pin:
-            return False, f"calendar evidence sha256 {cs!r} does not match external expected sha256 {pin!r}", None
-    else:
-        pins_source = trusted_pins if trusted_pins is not None else TW_GOVERNED_CALENDAR_PINS
-        if isinstance(pins_source, Mapping):
-            if version_str and version_str in pins_source:
-                expected_pin = str(pins_source[version_str]).strip().lower()
-                if cs != expected_pin:
-                    return False, f"calendar evidence sha256 {cs!r} does not match trusted pin for version {version_str!r} ({expected_pin!r})", None
-            elif cs not in {str(v).strip().lower() for v in pins_source.values()}:
-                return False, f"calendar evidence sha256 {cs!r} is not in trusted external pins", None
-        elif isinstance(pins_source, (set, list, tuple)):
-            allowed = {str(v).strip().lower() for v in pins_source}
-            if cs not in allowed:
-                return False, f"calendar evidence sha256 {cs!r} is not in trusted external pins", None
-        else:
-            return False, "trusted_pins must be a mapping, set, or sequence", None
 
     coverage_start_raw = evidence.get("coverage_start") or evidence.get("start_date")
     coverage_end_raw = evidence.get("coverage_end") or evidence.get("end_date")
@@ -234,6 +241,8 @@ def validate_taiwan_calendar_evidence(
                     return False, f"calendar evidence session {d_iso} has unrecognized type {s_info!r}", None
             else:
                 return False, f"calendar evidence session for {d_iso} must be an object or string", None
+    elif raw_sessions is not None:
+        return False, "calendar evidence sessions must be a mapping", None
 
     raw_holidays = evidence.get("holidays")
     if isinstance(raw_holidays, Mapping):
@@ -280,16 +289,68 @@ def validate_taiwan_calendar_evidence(
                 trading_days.add(parsed_d.isoformat())
             else:
                 return False, "calendar evidence trading_days entry must be a date string or object with date", None
+    elif raw_trading_days is not None:
+        return False, "calendar evidence trading_days must be a list or sequence", None
+
+    overlapping_dates = sorted(set(holidays_map).intersection(trading_days))
+    if overlapping_dates:
+        return False, (
+            "calendar evidence marks dates as both holiday and trading: "
+            + ", ".join(overlapping_dates)
+        ), None
+    if not holidays_map and not trading_days:
+        return False, "calendar evidence contains no explicit session, holiday, or trading-day records", None
+
+    canonical_payload = {
+        "authority": authority,
+        "coverage_end": c_end_iso,
+        "coverage_start": c_start_iso,
+        "holidays": holidays_map,
+        "market": market,
+        "source_url": source_url,
+        "timezone": tz,
+        "trading_days": sorted(trading_days),
+        "venue": venue,
+        "version": version_str,
+    }
+    try:
+        computed_sha256 = _canonical_calendar_payload_sha256(canonical_payload)
+    except (TypeError, ValueError) as exc:
+        return False, f"calendar evidence canonical payload is not valid JSON: {exc}", None
+
+    if cs != computed_sha256:
+        return False, (
+            f"calendar evidence claimed sha256 {cs!r} does not match canonical "
+            f"payload sha256 {computed_sha256!r}"
+        ), None
+
+    pins_source = trusted_pins if trusted_pins is not None else TW_GOVERNED_CALENDAR_PINS
+    if not isinstance(pins_source, Mapping):
+        return False, "trusted_pins must be an exact version-to-sha256 mapping", None
+    if version_str not in pins_source:
+        return False, f"calendar evidence version {version_str!r} is not governed by a trusted pin", None
+    expected_pin = str(pins_source[version_str]).strip().lower()
+
+    if len(expected_pin) != 64 or not all(c in "0123456789abcdef" for c in expected_pin):
+        return False, f"trusted pin for version {version_str!r} is not a full SHA-256 digest", None
+    if expected_pin == EMPTY_SHA256:
+        return False, f"trusted pin for version {version_str!r} is the forbidden empty-payload SHA-256", None
+    if computed_sha256 != expected_pin:
+        return False, (
+            f"calendar evidence canonical payload sha256 {computed_sha256!r} does not "
+            f"match trusted pin for version {version_str!r} ({expected_pin!r})"
+        ), None
 
     norm = {
-        "market": market or "TW",
-        "venue": resolved_venue,
+        "market": market,
+        "venue": venue,
         "timezone": "Asia/Taipei",
         "authority": authority,
         "source_url": source_url,
         "fetched_at": fetched_raw,
-        "version": version_str if version_str else None,
+        "version": version_str,
         "checksum": cs,
+        "computed_sha256": computed_sha256,
         "coverage_start": c_start_iso,
         "coverage_end": c_end_iso,
         "holidays": holidays_map,
@@ -335,8 +396,7 @@ def evaluate_taiwan_market_freshness(
     max_refresh_age_seconds: int,
     calendar_evidence: Optional[Any] = None,
     holiday_lookup: Optional[Any] = None,
-    expected_sha256: Optional[str] = None,
-    trusted_pins: Optional[Any] = None,
+    trusted_pins: Optional[Mapping[str, str]] = None,
 ) -> Tuple[bool, Optional[str], Optional[str]]:
     """Deterministic Taiwan (Asia/Taipei) market-session freshness rule.
 
@@ -348,14 +408,17 @@ def evaluate_taiwan_market_freshness(
     distinguish weekday staleness, a stale refresh receipt, unverifiable
     calendar evidence, non-official lineage, and future timestamps.
     """
+    if event_time_dt > now_dt:
+        return False, "market_input_invalid", "event_time is in the future"
+
     if not _is_official_tw_lineage(lineage):
         return False, "market_input_non_official_lineage", "snapshot lineage is not an official TWSE/TPEx source"
 
     if refresh_receipt_dt is None:
         return False, "market_input_stale_refresh", "no refresh receipt (observed_at) present"
 
-    if (refresh_receipt_dt - now_dt).total_seconds() > 300:
-        return False, "market_input_invalid", "refresh receipt observed_at is too far in the future"
+    if refresh_receipt_dt > now_dt:
+        return False, "market_input_invalid", "refresh receipt observed_at is in the future"
 
     refresh_age_seconds = (now_dt - refresh_receipt_dt).total_seconds()
     if refresh_age_seconds > max_refresh_age_seconds:
@@ -375,7 +438,6 @@ def evaluate_taiwan_market_freshness(
     if calendar_evidence is not None:
         val_ok, val_err, val_norm = validate_taiwan_calendar_evidence(
             calendar_evidence,
-            expected_sha256=expected_sha256,
             trusted_pins=trusted_pins,
             now_dt=now_dt,
         )
@@ -424,7 +486,6 @@ def evaluate_taiwan_market_freshness(
             # Full evidence contract validation (no authority-only bypass)
             h_ok, h_err, h_norm = validate_taiwan_calendar_evidence(
                 evidence_rec,
-                expected_sha256=expected_sha256,
                 trusted_pins=trusted_pins,
                 now_dt=now_dt,
             )
@@ -580,6 +641,7 @@ def admit_market_snapshot(
     now_iso: Optional[str] = None,
     binding_id: Optional[str] = None,
     calendar_evidence: Optional[Any] = None,
+    trusted_calendar_pins: Optional[Mapping[str, str]] = None,
 ) -> SnapshotAdmissionDecision:
     """Pure, side-effect-free admission check for a market snapshot.
 
@@ -597,6 +659,10 @@ def admit_market_snapshot(
         Current time for deterministic evaluation. If omitted, uses UTC now.
     binding_id : Optional[str]
         Identifier of the binding for logging / error context.
+    trusted_calendar_pins : Optional[Mapping[str, str]]
+        Externally governed version-to-SHA256 pins. Production callers use
+        the module's governed catalog; deterministic tests may inject an
+        isolated trust catalog without accepting pins from snapshot data.
 
     Returns
     -------
@@ -697,10 +763,10 @@ def admit_market_snapshot(
     age_seconds = (now_dt - event_time_dt).total_seconds()
     event_time_str = event_time_dt.isoformat().replace("+00:00", "Z")
 
-    if age_seconds < -300:
+    if age_seconds < 0:
         return rejected(
             "market_input_invalid",
-            f"Source snapshot event_time is too far in the future ({int(age_seconds)}s){b_ctx}",
+            f"Source snapshot event_time is in the future ({age_seconds:.6f}s){b_ctx}",
             snapshot_id=snapshot_id,
             event_time=event_time_str,
             age_seconds=age_seconds,
@@ -732,6 +798,7 @@ def admit_market_snapshot(
             lineage=snapshot.get("lineage"),
             max_refresh_age_seconds=max_age_seconds,
             calendar_evidence=ev,
+            trusted_pins=trusted_calendar_pins,
         )
         if not ok:
             return rejected(
