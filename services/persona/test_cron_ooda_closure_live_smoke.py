@@ -1,5 +1,5 @@
 """Live smoke: force-run a real persona OpenClaw cron job and prove it closes
-into a packet the BFF `/bff/ooda/packets` read surface actually accepts.
+into a packet an explicit, local OODA-packet-store reader actually accepts.
 
 This is NOT a mock test. When a live OpenClaw gateway + adapter are reachable
 (the same `pantheon-openclaw-gateway` / `pantheon-openclaw-gateway-adapter`
@@ -8,8 +8,18 @@ evidence chain end to end:
 
     cron.run (force) -> cron.runs (status "ok") -> a real /v1/responses OODA
     turn on the persona's own agent -> a persisted packet whose refs carry
-    that exact cron run id -> the BFF's own file-parsing code
-    (`ServiceBackedReadAdapter.list_records("ooda_packets")`) reading it back.
+    that exact cron run id -> `_read_ooda_packet_store_records` below (a
+    local, typed reader for exactly the on-disk envelope shape
+    `services/persona/cron_ooda_closure.append_ooda_packet` writes) reading
+    it back.
+
+`services/control-plane/bff/read_store.py`'s legacy `ServiceBackedReadAdapter`
+is not the production read path any more -- `services/control-plane/bff/main.py`
+defaults `read_store` to `create_read_surface_ports()` -- so this module no
+longer depends on it; the reader below is this test's own explicit parser for
+the packet-store envelope format `append_ooda_packet` documents (`.jsonl`
+newline-delimited records, or a single JSON array of the same record
+envelopes for any other suffix).
 
 If no live gateway is configured, this SKIPS with an explicit reason instead
 of silently passing — never "skip as green". See
@@ -27,11 +37,11 @@ from __future__ import annotations
 
 import json
 import os
-import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
@@ -41,38 +51,82 @@ _CRON_DIR = REPO_ROOT / "services" / "control-plane" / "cron"
 if str(_CRON_DIR) not in sys.path:
     sys.path.insert(0, str(_CRON_DIR))
 
-_BFF_DIR = REPO_ROOT / "services" / "control-plane" / "bff"
+_OODA_PACKET_RECORD_SCHEMA_VERSION = "ooda_loop_packet_record.v1"
 
-# `services/control-plane/cron/models.py` and `services/control-plane/bff/models.py`
-# are two unrelated modules that both import under the bare name `models` (an
-# existing convention in this repo's cross-service sys.path imports). Importing
-# both in the same interpreter would silently shadow one with the other via
-# `sys.modules`, so the BFF read-surface check below runs in a fresh
-# subprocess instead of importing `read_store` inline here.
-_BFF_READ_CHECK_SCRIPT = """
-import json, os, sys
-sys.path.insert(0, {bff_dir!r})
-from read_store import ServiceBackedReadAdapter
 
-os.environ["PANTHEON_BFF_OODA_PACKET_STORE"] = {store_path!r}
-adapter = ServiceBackedReadAdapter(allow_snapshot_fallback=False)
-available, records = adapter.list_records("ooda_packets")
-print(json.dumps({{"available": available, "records": records}}))
-"""
+def _extract_packet_from_record(record: Any) -> "dict[str, Any] | None":
+    """Pull the packet dict out of one stored record envelope.
+
+    Mirrors the envelope shape `cron_ooda_closure.append_ooda_packet` and
+    `jsonl_store.OodaJsonlAppendStore` write: either a raw packet dict, or a
+    `{"schema_version": ..., "record_type": "packet_snapshot"|"stage_transition",
+    "payload": {...}}` envelope.
+    """
+    if not isinstance(record, dict):
+        return None
+    packet: Any = record
+    if str(record.get("schema_version") or "") == _OODA_PACKET_RECORD_SCHEMA_VERSION:
+        payload = record.get("payload")
+        record_type = str(record.get("record_type") or "")
+        if record_type == "packet_snapshot":
+            packet = payload if isinstance(payload, dict) else None
+        elif record_type == "stage_transition":
+            packet = payload.get("packet") if isinstance(payload, dict) else None
+        else:
+            packet = None
+        if isinstance(packet, dict):
+            packet = dict(packet)
+            packet.setdefault("packet_id", record.get("packet_id"))
+    return packet if isinstance(packet, dict) else None
+
+
+def _read_ooda_packet_store_records(store_path: Path) -> "list[dict[str, Any]]":
+    """Read every packet persisted at *store_path*.
+
+    Handles both on-disk shapes `append_ooda_packet` documents: `.jsonl`
+    newline-delimited record envelopes, and a single JSON array of the same
+    envelopes for any other file suffix.
+    """
+    if not store_path.exists():
+        return []
+    text = store_path.read_text(encoding="utf-8").strip()
+    if not text:
+        return []
+
+    raw_records: list[Any] = []
+    if store_path.suffix.lower() == ".jsonl":
+        for line in text.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                raw_records.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+    else:
+        try:
+            loaded = json.loads(text)
+        except json.JSONDecodeError:
+            loaded = []
+        if isinstance(loaded, list):
+            raw_records = loaded
+        elif isinstance(loaded, dict):
+            raw_records = [loaded]
+
+    packets_by_id: dict[str, dict[str, Any]] = {}
+    for raw_record in raw_records:
+        packet = _extract_packet_from_record(raw_record)
+        if packet is None:
+            continue
+        packet_id = str(packet.get("packet_id") or packet.get("id") or "")
+        if packet_id:
+            packets_by_id[packet_id] = packet
+    return list(packets_by_id.values())
 
 
 def _bff_read_ooda_packets(store_path: Path) -> tuple[bool, list[dict]]:
-    script = _BFF_READ_CHECK_SCRIPT.format(bff_dir=str(_BFF_DIR), store_path=str(store_path))
-    completed = subprocess.run(
-        [sys.executable, "-c", script],
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
-    if completed.returncode != 0:
-        raise RuntimeError(f"BFF read-surface subprocess failed: {completed.stderr[-2000:]}")
-    payload = json.loads(completed.stdout.strip().splitlines()[-1])
-    return bool(payload["available"]), list(payload["records"])
+    records = _read_ooda_packet_store_records(store_path)
+    return bool(records) or store_path.exists(), records
 
 
 def _live_gateway_configured() -> bool:
