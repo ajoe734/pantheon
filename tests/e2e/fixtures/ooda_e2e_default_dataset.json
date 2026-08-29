@@ -1,0 +1,2489 @@
+{
+  "alerts": {
+    "alert-pack-c-incident-001": {
+      "alert_id": "alert-pack-c-incident-001",
+      "category": "incident",
+      "id": "alert-pack-c-incident-001",
+      "linked_incident_id": "inc-pack-c-001",
+      "raised_at": "2026-05-13T03:40:00Z",
+      "severity": "high",
+      "summary": "Pack C active incident requires operator triage.",
+      "target_ref": {
+        "href": "/incidents/inc-pack-c-001",
+        "label": "Open incident response",
+        "surface_id": "PKT-002",
+        "target_id": "inc-pack-c-001"
+      }
+    }
+  },
+  "allowed_actions": {
+    "plan-F-042": {
+      "canApprove": false,
+      "canPromoteToPaper": true,
+      "canReject": false
+    }
+  },
+  "approval_decisions": {
+    "appr-dec-c5a9f11e": {
+      "actor_role": "reviewer",
+      "decided_at": null,
+      "id": "appr-dec-c5a9f11e",
+      "outcome": null,
+      "rationale": "Medium-risk freeze proposal is awaiting final approval.",
+      "reviewer": "reviewer-001",
+      "risk_level": "medium",
+      "state": "under_review"
+    },
+    "approval-042": {
+      "decided_at": "2026-04-11T07:55:00Z",
+      "id": "approval-042",
+      "outcome": "approved",
+      "reviewer": "governance",
+      "risk_level": "low",
+      "state": "decided"
+    },
+    "approval-pack-a-deploy": {
+      "actor_role": "reviewer",
+      "decided_at": "2026-05-13T00:29:00Z",
+      "decision_id": "approval-pack-a-deploy",
+      "id": "approval-pack-a-deploy",
+      "outcome": "approved",
+      "rationale": "Fixture paper deployment approved for BFF smoke; no live or canary authority granted.",
+      "reviewer": "fixture-governance-reviewer",
+      "risk_level": "low",
+      "state": "decided"
+    },
+    "approval-pack-b-deploy": {
+      "actor_role": "reviewer",
+      "decided_at": "2026-05-13T00:51:00Z",
+      "decision_id": "approval-pack-b-deploy",
+      "id": "approval-pack-b-deploy",
+      "outcome": "approved",
+      "rationale": "Fixture paper deployment approved for BFF smoke; no live or canary authority granted.",
+      "reviewer": "fixture-governance-reviewer",
+      "risk_level": "low",
+      "state": "decided"
+    },
+    "approval-pack-c-deploy": {
+      "actor_id": "fixture-governance-reviewer",
+      "created_at": "2026-05-13T03:30:00Z",
+      "created_by": "fixture-governance-reviewer",
+      "decision_id": "approval-pack-c-deploy",
+      "decision_state": "in_review",
+      "decision_type": "DeploymentPlan",
+      "evidence_refs": [
+        {
+          "ref_id": "fixture-pack-c-incident",
+          "type": "IncidentReport",
+          "url": null
+        }
+      ],
+      "id": "approval-pack-c-deploy",
+      "outcome": null,
+      "rationale": "Pack C paper deployment approval fixture linked to incident-response smoke; no canary or live authority.",
+      "risk_level": "medium",
+      "state": "in_review",
+      "submitted_at": "2026-05-13T03:30:00Z",
+      "target_id": "plan-pack-c-paper-001",
+      "target_type": "DeploymentPlan",
+      "target_version": "v1.0.0"
+    }
+  },
+  "bindings": {
+    "binding-042": {
+      "allowed_deployment_scope": "paper",
+      "capital_pool_id": "pool-main",
+      "id": "binding-042",
+      "persona_id": "persona-alpha",
+      "role": "primary",
+      "status": "active",
+      "validity": "active"
+    },
+    "binding-crypto-paper": {
+      "allowed_deployment_scope": "paper",
+      "approval_decision_id": "approval-crypto-paper",
+      "binding_id": "binding-crypto-paper",
+      "capital_pool_id": "pool-crypto-paper",
+      "id": "binding-crypto-paper",
+      "persona_id": "persona-crypto",
+      "role": "paper_owner",
+      "status": "active",
+      "validity": "active"
+    },
+    "binding-pack-a-persona-pool": {
+      "allowed_deployment_scope": "paper",
+      "binding_id": "binding-pack-a-persona-pool",
+      "capital_pool_id": "pool-pack-a-ops",
+      "id": "binding-pack-a-persona-pool",
+      "persona_id": "persona-pack-a-momentum",
+      "role": "paper_owner",
+      "status": "active",
+      "validity": "active"
+    },
+    "binding-pack-b-persona-pool": {
+      "allowed_deployment_scope": "paper",
+      "binding_id": "binding-pack-b-persona-pool",
+      "capital_pool_id": "pool-pack-b-ops",
+      "id": "binding-pack-b-persona-pool",
+      "persona_id": "persona-pack-b-execution",
+      "role": "paper_owner",
+      "status": "active",
+      "validity": "active"
+    },
+    "binding-tw-equity-paper": {
+      "allowed_deployment_scope": "paper",
+      "approval_decision_id": "approval-tw-equity-paper",
+      "binding_id": "binding-tw-equity-paper",
+      "capital_pool_id": "pool-tw-equity-paper",
+      "id": "binding-tw-equity-paper",
+      "persona_id": "persona-tw-equity",
+      "role": "paper_owner",
+      "status": "active",
+      "validity": "active"
+    },
+    "binding-us-equity-paper": {
+      "allowed_deployment_scope": "paper",
+      "approval_decision_id": "approval-us-equity-paper",
+      "binding_id": "binding-us-equity-paper",
+      "capital_pool_id": "pool-us-equity-paper",
+      "id": "binding-us-equity-paper",
+      "persona_id": "persona-us-equity",
+      "role": "paper_owner",
+      "status": "active",
+      "validity": "active"
+    }
+  },
+  "capability_snapshots": {
+    "cap-001": {
+      "effective_skills": [
+        "risk_review",
+        "incident_triage"
+      ],
+      "effective_tools": [
+        "signal_read",
+        "artifact_load",
+        "telemetry_query"
+      ],
+      "effective_workflows": [
+        "promotion_review",
+        "incident_response"
+      ],
+      "generated_at": "2026-04-11T07:55:00Z",
+      "persona_id": "persona-alpha",
+      "restrictions": [
+        "no_live_trade_without_approval"
+      ],
+      "snapshot_id": "cap-001",
+      "source_refs": [
+        "persona:persona-alpha",
+        "policy:risk-policy-main"
+      ]
+    },
+    "cap-crypto": {
+      "effective_skills": [
+        "qlib_research",
+        "vectorbt_backtest",
+        "statsmodels_analysis",
+        "quantlib_risk",
+        "finrl_rllib_simulation"
+      ],
+      "effective_tools": [
+        "market_data_read",
+        "research_backend_run",
+        "strategy_spec_write",
+        "telemetry_query",
+        "governance_handoff"
+      ],
+      "effective_workflows": [
+        "observe_market",
+        "orient_research",
+        "submit_governance_candidate",
+        "paper_runtime_monitor",
+        "learn_from_postmortem"
+      ],
+      "generated_at": "2026-06-07T12:00:00Z",
+      "persona_id": "persona-crypto",
+      "restrictions": [
+        "no_live_trade_without_approval",
+        "approved_artifact_only_for_execution",
+        "human_gate_required_for_capital_changes"
+      ],
+      "snapshot_id": "cap-crypto",
+      "source_refs": [
+        "persona:persona-crypto",
+        "policy:risk-policy-crypto-paper"
+      ]
+    },
+    "cap-tw-equity": {
+      "effective_skills": [
+        "qlib_research",
+        "vectorbt_backtest",
+        "statsmodels_analysis",
+        "quantlib_risk",
+        "finrl_rllib_simulation"
+      ],
+      "effective_tools": [
+        "market_data_read",
+        "research_backend_run",
+        "strategy_spec_write",
+        "telemetry_query",
+        "governance_handoff"
+      ],
+      "effective_workflows": [
+        "observe_market",
+        "orient_research",
+        "submit_governance_candidate",
+        "paper_runtime_monitor",
+        "learn_from_postmortem"
+      ],
+      "generated_at": "2026-06-07T12:00:00Z",
+      "persona_id": "persona-tw-equity",
+      "restrictions": [
+        "no_live_trade_without_approval",
+        "approved_artifact_only_for_execution",
+        "human_gate_required_for_capital_changes"
+      ],
+      "snapshot_id": "cap-tw-equity",
+      "source_refs": [
+        "persona:persona-tw-equity",
+        "policy:risk-policy-tw-paper"
+      ]
+    },
+    "cap-us-equity": {
+      "effective_skills": [
+        "qlib_research",
+        "vectorbt_backtest",
+        "statsmodels_analysis",
+        "quantlib_risk",
+        "finrl_rllib_simulation"
+      ],
+      "effective_tools": [
+        "market_data_read",
+        "research_backend_run",
+        "strategy_spec_write",
+        "telemetry_query",
+        "governance_handoff"
+      ],
+      "effective_workflows": [
+        "observe_market",
+        "orient_research",
+        "submit_governance_candidate",
+        "paper_runtime_monitor",
+        "learn_from_postmortem"
+      ],
+      "generated_at": "2026-06-07T12:00:00Z",
+      "persona_id": "persona-us-equity",
+      "restrictions": [
+        "no_live_trade_without_approval",
+        "approved_artifact_only_for_execution",
+        "human_gate_required_for_capital_changes"
+      ],
+      "snapshot_id": "cap-us-equity",
+      "source_refs": [
+        "persona:persona-us-equity",
+        "policy:risk-policy-us-paper"
+      ]
+    }
+  },
+  "capital_pools": {
+    "pool-crypto-paper": {
+      "capital_mode": "paper",
+      "cash": 1015000.0,
+      "currency": "USD",
+      "drawdown": 0.044,
+      "fill_ratio": 0.974,
+      "gross_exposure": 0.37,
+      "id": "pool-crypto-paper",
+      "leverage": 0.42,
+      "live_capital_enabled": false,
+      "market_scope": [
+        "CRYPTO"
+      ],
+      "name": "CRYPTO Paper Capital Pool",
+      "nav": 1200000.0,
+      "net_exposure": 0.22,
+      "order_reject_rate": 0.002,
+      "owner_id": "pathreon-management",
+      "owner_type": "control-plane",
+      "pool_id": "pool-crypto-paper",
+      "realized_pnl": 36200.0,
+      "risk_policy_ref": "risk-policy-crypto-paper",
+      "single_runtime_enforced": true,
+      "slippage_bps": 4.8,
+      "status": "ready",
+      "unrealized_pnl": 11800.0,
+      "var_95": 0.029
+    },
+    "pool-main": {
+      "id": "pool-main",
+      "name": "Primary Capital Pool",
+      "owner_id": "ops-team",
+      "owner_type": "control-plane",
+      "risk_policy_ref": "risk-policy-main",
+      "single_runtime_enforced": true,
+      "status": "ready"
+    },
+    "pool-pack-a-ops": {
+      "capital_allocation": 1000000,
+      "currency": "USD",
+      "id": "pool-pack-a-ops",
+      "max_drawdown_pct": 8.0,
+      "name": "Pack A Paper Operations Pool",
+      "owner_id": "fixture-ops-team",
+      "owner_type": "control-plane",
+      "pool_id": "pool-pack-a-ops",
+      "risk_policy_ref": "risk-policy-pack-a-paper",
+      "single_runtime_enforced": true,
+      "status": "ready"
+    },
+    "pool-pack-b-ops": {
+      "capital_allocation": 1000000,
+      "currency": "USD",
+      "id": "pool-pack-b-ops",
+      "max_drawdown_pct": 8.0,
+      "name": "Pack B Paper Operations Pool",
+      "owner_id": "fixture-ops-team",
+      "owner_type": "control-plane",
+      "pool_id": "pool-pack-b-ops",
+      "risk_policy_ref": "risk-policy-pack-b-paper",
+      "single_runtime_enforced": true,
+      "status": "ready"
+    },
+    "pool-tw-equity-paper": {
+      "capital_mode": "paper",
+      "cash": 82400000.0,
+      "currency": "TWD",
+      "drawdown": 0.033,
+      "fill_ratio": 0.951,
+      "gross_exposure": 0.24,
+      "id": "pool-tw-equity-paper",
+      "leverage": 0.28,
+      "live_capital_enabled": false,
+      "market_scope": [
+        "TW"
+      ],
+      "name": "TW Paper Capital Pool",
+      "nav": 90000000.0,
+      "net_exposure": 0.11,
+      "order_reject_rate": 0.004,
+      "owner_id": "pathreon-management",
+      "owner_type": "control-plane",
+      "pool_id": "pool-tw-equity-paper",
+      "realized_pnl": 512000.0,
+      "risk_policy_ref": "risk-policy-tw-paper",
+      "single_runtime_enforced": true,
+      "slippage_bps": 5.9,
+      "status": "ready",
+      "unrealized_pnl": -86000.0,
+      "var_95": 0.021
+    },
+    "pool-us-equity-paper": {
+      "capital_mode": "paper",
+      "cash": 2180000.0,
+      "currency": "USD",
+      "drawdown": 0.021,
+      "fill_ratio": 0.982,
+      "gross_exposure": 0.31,
+      "id": "pool-us-equity-paper",
+      "leverage": 0.34,
+      "live_capital_enabled": false,
+      "market_scope": [
+        "US"
+      ],
+      "name": "US Paper Capital Pool",
+      "nav": 2500000.0,
+      "net_exposure": 0.18,
+      "order_reject_rate": 0.001,
+      "owner_id": "pathreon-management",
+      "owner_type": "control-plane",
+      "pool_id": "pool-us-equity-paper",
+      "realized_pnl": 18420.0,
+      "risk_policy_ref": "risk-policy-us-paper",
+      "single_runtime_enforced": true,
+      "slippage_bps": 2.7,
+      "status": "ready",
+      "unrealized_pnl": 6140.0,
+      "var_95": 0.018
+    }
+  },
+  "deployment_plans": {
+    "plan-F-042": {
+      "approval_decision_id": "approval-042",
+      "artifact_id": "artifact-042",
+      "artifact_version": "v1.4.2",
+      "binding_ids": [
+        "binding-042"
+      ],
+      "capital_pool_id": "pool-main",
+      "current_stage": "none",
+      "id": "plan-F-042",
+      "plan_id": "plan-F-042",
+      "runtime_binding_id": "runtime-042",
+      "stage": "paper",
+      "status": "approved",
+      "submitted_at": "2026-04-11T07:45:00Z",
+      "target_stage": "paper",
+      "transition_type": "activate"
+    },
+    "plan-pack-a-paper-001": {
+      "approval_decision_id": "approval-pack-a-deploy",
+      "approval_ref": {
+        "approval_decision_id": "approval-pack-a-deploy",
+        "href": "/bff/approvals/approval-pack-a-deploy"
+      },
+      "artifact_id": "artifact-pack-a-momentum-v1",
+      "artifact_version": "v1.0.0",
+      "binding_ids": [
+        "binding-pack-a-persona-pool"
+      ],
+      "capital_pool_id": "pool-pack-a-ops",
+      "current_stage": "none",
+      "id": "plan-pack-a-paper-001",
+      "plan_id": "plan-pack-a-paper-001",
+      "runtime_binding_id": "runtime-pack-a-paper-001",
+      "stage": "paper",
+      "stages": [
+        {
+          "approved_at": "2026-05-13T00:29:00Z",
+          "approved_by": "fixture-governance-reviewer",
+          "stage": "paper",
+          "status": "approved"
+        }
+      ],
+      "status": "approved",
+      "submitted_at": "2026-05-13T00:28:00Z",
+      "target_stage": "paper",
+      "transition_type": "activate"
+    },
+    "plan-pack-b-paper-001": {
+      "approval_decision_id": "approval-pack-b-deploy",
+      "approval_ref": {
+        "approval_decision_id": "approval-pack-b-deploy",
+        "href": "/bff/approvals/approval-pack-b-deploy"
+      },
+      "artifact_id": "artifact-pack-b-001",
+      "artifact_version": "v1.0.0",
+      "binding_ids": [
+        "binding-pack-b-persona-pool"
+      ],
+      "capital_pool_id": "pool-pack-b-ops",
+      "current_stage": "none",
+      "id": "plan-pack-b-paper-001",
+      "plan_id": "plan-pack-b-paper-001",
+      "runtime_binding_id": "runtime-pack-b-paper-001",
+      "stage": "paper",
+      "stages": [
+        {
+          "approved_at": "2026-05-13T00:51:00Z",
+          "approved_by": "fixture-governance-reviewer",
+          "stage": "paper",
+          "status": "approved"
+        }
+      ],
+      "status": "approved",
+      "submitted_at": "2026-05-13T00:50:00Z",
+      "target_stage": "paper",
+      "transition_type": "activate"
+    },
+    "plan-pack-c-paper-001": {
+      "approval_decision_id": "approval-pack-c-deploy",
+      "approval_ref": {
+        "approval_decision_id": "approval-pack-c-deploy",
+        "href": "/bff/approvals/approval-pack-c-deploy"
+      },
+      "artifact_id": "artifact-pack-b-001",
+      "artifact_version": "v1.0.0",
+      "binding_ids": [
+        "binding-pack-a-persona-pool"
+      ],
+      "capital_pool_id": "pool-pack-a-ops",
+      "current_stage": "none",
+      "id": "plan-pack-c-paper-001",
+      "plan_id": "plan-pack-c-paper-001",
+      "runtime_binding_id": "runtime-pack-c-paper-001",
+      "stage": "paper",
+      "stages": [
+        {
+          "approved_at": null,
+          "approved_by": null,
+          "stage": "paper",
+          "status": "pending_approval"
+        }
+      ],
+      "status": "pending_approval",
+      "submitted_at": "2026-05-13T03:29:00Z",
+      "target_stage": "paper",
+      "transition_type": "activate"
+    }
+  },
+  "evolution_decisions": {
+    "evo-dec-001": {
+      "action_type": "retrain",
+      "artifact_id": "artifact-042",
+      "created_at": "2026-04-10T16:00:00Z",
+      "id": "evo-dec-001",
+      "incident_ref": "inc-20260410-001",
+      "notes": "Approved for retrain after promotion gate timeout root cause confirmed.",
+      "risk_level": "medium",
+      "status": "approved",
+      "updated_at": "2026-04-11T09:00:00Z"
+    },
+    "evo-dec-88f3a2c1": {
+      "action_type": "freeze_canary",
+      "approval_decision_id": "appr-dec-c5a9f11e",
+      "created_at": "2026-04-18T09:32:00Z",
+      "created_by_id": "evo-controller-01",
+      "created_by_role": "evolution_controller",
+      "decision_id": "evo-dec-88f3a2c1",
+      "decision_state": "reviewed",
+      "evidence_refs": [
+        {
+          "ref_id": "drift-rpt-b7c2d3e4",
+          "ref_type": "drift_report",
+          "summary": "Execution drift report: 3-day slippage anomaly on artifact-44d7e9b0 canary stage (2026-04-15 \u2013 2026-04-17)."
+        },
+        {
+          "ref_id": "telem-sum-9a1f0e22",
+          "ref_type": "telemetry_summary",
+          "summary": "Telemetry summary: realized slippage drift at 31% above 20-day baseline."
+        }
+      ],
+      "id": "evo-dec-88f3a2c1",
+      "linked_incident_id": null,
+      "linked_postmortem_id": null,
+      "notes": "Slippage drift confirmed. Forwarded to Risk Owner for final approval.",
+      "proposed_changes": {
+        "change_details": [
+          {
+            "current_value": "canary",
+            "field": "artifact_stage",
+            "note": "Governance quarantine only; existing canary runtime not automatically stopped unless a companion operational follow-through is initiated.",
+            "proposed_value": "frozen"
+          },
+          {
+            "current_value": "eligible",
+            "field": "admissibility",
+            "note": null,
+            "proposed_value": "quarantined"
+          }
+        ],
+        "downstream_plane": "governance",
+        "summary": "Freeze candidate artifact 'artifact-44d7e9b0' at canary stage due to sustained slippage drift exceeding the 25% execution drift threshold over three consecutive trading days.",
+        "target_stage": "canary"
+      },
+      "rationale": "Freeze candidate artifact at canary stage due to sustained slippage drift exceeding the 25% execution drift threshold over three consecutive trading days.",
+      "required_approvals": [
+        {
+          "approved_at": "2026-04-18T11:05:00Z",
+          "approved_by": "reviewer-001",
+          "role": "reviewer",
+          "status": "approved"
+        },
+        {
+          "approved_at": null,
+          "approved_by": null,
+          "role": "risk_owner",
+          "status": "pending"
+        }
+      ],
+      "review_chain": [
+        {
+          "actor_id": "reviewer-001",
+          "actor_role": "reviewer",
+          "note": "Slippage drift confirmed. Forwarded to Risk Owner for final approval.",
+          "step_type": "reviewed",
+          "timestamp": "2026-04-18T11:05:00Z"
+        }
+      ],
+      "risk_assessment": {
+        "risk_summary": "Sustained execution drift on canary stage triggered medium-risk freeze proposal. Slippage drift observed at 31% above the 20-day baseline, exceeding the 25% threshold defined in DriftPolicy.",
+        "severity": null,
+        "threshold_triggers": [
+          {
+            "metric": "realized_slippage_drift_pct",
+            "observed_value": "0.31",
+            "threshold_source": "EVOLUTION_REVIEW_AND_THRESHOLDS.md \u00a77.2",
+            "threshold_value": "0.25",
+            "trigger_type": "execution_drift"
+          },
+          {
+            "metric": "consecutive_anomaly_days",
+            "observed_value": "3",
+            "threshold_source": "EVOLUTION_REVIEW_AND_THRESHOLDS.md \u00a77.2",
+            "threshold_value": "3",
+            "trigger_type": "execution_drift"
+          }
+        ]
+      },
+      "risk_level": "medium",
+      "rollback_followthrough": null,
+      "status": "reviewed",
+      "target_id": "artifact-44d7e9b0",
+      "target_stage": "canary",
+      "target_type": "candidate_artifact",
+      "target_version": "v3.1.2",
+      "threshold_snapshots": [
+        {
+          "metric_name": "realized_slippage_drift_pct",
+          "observed_value": "0.31",
+          "policy_source": "EVOLUTION_REVIEW_AND_THRESHOLDS.md \u00a77.2",
+          "signal_type": "execution_drift",
+          "threshold_value": "0.25"
+        },
+        {
+          "metric_name": "consecutive_anomaly_days",
+          "observed_value": "3",
+          "policy_source": "EVOLUTION_REVIEW_AND_THRESHOLDS.md \u00a77.2",
+          "signal_type": "execution_drift",
+          "threshold_value": "3"
+        }
+      ],
+      "updated_at": "2026-04-18T11:05:00Z"
+    },
+    "evo-dec-pack-b-001": {
+      "action_type": "promote_paper",
+      "created_at": "2026-05-13T01:00:00Z",
+      "created_by_id": "evo-controller-fixture",
+      "created_by_role": "evolution_controller",
+      "decision_id": "evo-dec-pack-b-001",
+      "decision_state": "pending",
+      "evidence_refs": [
+        {
+          "ref_id": "exp-pack-b-001",
+          "ref_type": "experiment_result",
+          "summary": "Pack B experiment completed with Sharpe > 1.2; eligible for paper promotion."
+        }
+      ],
+      "id": "evo-dec-pack-b-001",
+      "linked_incident_id": null,
+      "linked_postmortem_id": null,
+      "notes": "Fixture decision only; no live side effect.",
+      "program_id": "evoprog-pack-b-001",
+      "proposed_changes": {
+        "change_details": [
+          {
+            "current_value": "sealed",
+            "field": "artifact_stage",
+            "note": "Fixture paper promotion only; fail-closed, no live or canary authority.",
+            "proposed_value": "paper"
+          }
+        ],
+        "downstream_plane": "governance",
+        "summary": "Promote artifact-pack-b-001 from sealed to paper-stage runtime.",
+        "target_stage": "paper"
+      },
+      "rationale": "Pack B fixture: promote candidate artifact to paper stage for smoke coverage.",
+      "review_chain": [],
+      "risk_assessment": {
+        "risk_summary": "Low-risk paper promotion within fixture universe; no capital at risk.",
+        "severity": "low",
+        "threshold_triggers": []
+      },
+      "risk_level": "low",
+      "status": "pending",
+      "target_id": "artifact-pack-b-001",
+      "target_stage": "paper",
+      "target_type": "candidate_artifact",
+      "target_version": "v1.0.0",
+      "threshold_snapshots": [
+        {
+          "metric_name": "sharpe_ratio",
+          "observed_value": "1.25",
+          "policy_source": "EVOLUTION_REVIEW_AND_THRESHOLDS.md \u00a74.1",
+          "signal_type": "performance",
+          "threshold_value": "1.0"
+        }
+      ],
+      "updated_at": "2026-05-13T01:00:00Z"
+    }
+  },
+  "evolution_programs": {
+    "evoprog-pack-b-001": {
+      "created_at": "2026-05-13T00:30:00Z",
+      "created_by": "BFF-CONSOL-009",
+      "id": "evoprog-pack-b-001",
+      "name": "Pack B Momentum Carry Evolution Program",
+      "params": {
+        "max_concurrent_candidates": 2,
+        "promotion_gate": "paper_only",
+        "target_artifact_family": "momentum_carry"
+      },
+      "program_id": "evoprog-pack-b-001",
+      "status": "active",
+      "updated_at": "2026-05-13T01:00:00Z"
+    }
+  },
+  "governance_audit_events": [
+    {
+      "action_type": "ApproveDecision",
+      "actor": "operator-jane",
+      "audit_context": {
+        "reason": "Risk review completed; all evidence within acceptable bounds."
+      },
+      "entry_id": "audit-001",
+      "evidence_refs": [
+        {
+          "ref_id": "ev-101",
+          "type": "BacktestResult",
+          "url": null
+        }
+      ],
+      "outcome": "success",
+      "target_id": "appr-001",
+      "target_type": "ApprovalDecision",
+      "timestamp": "2026-04-16T10:05:00Z"
+    },
+    {
+      "action_type": "ForwardToApprovalQueue",
+      "actor": "operator-jane",
+      "audit_context": {
+        "reason": "Review complete; forwarding to approval."
+      },
+      "entry_id": "audit-002",
+      "evidence_refs": [],
+      "outcome": "success",
+      "target_id": "gov-review-001",
+      "target_type": "GovernanceReviewItem",
+      "timestamp": "2026-04-16T09:58:00Z"
+    },
+    {
+      "action_type": "EscalateGovernanceItem",
+      "actor": "risk-monitor",
+      "audit_context": {
+        "reason": null
+      },
+      "entry_id": "audit-003",
+      "evidence_refs": [
+        {
+          "ref_id": "ev-103",
+          "type": "EvolutionDecision",
+          "url": null
+        }
+      ],
+      "outcome": "escalated",
+      "target_id": "gov-review-002",
+      "target_type": "GovernanceReviewItem",
+      "timestamp": "2026-04-16T09:45:00Z"
+    },
+    {
+      "action_type": "RejectRollback",
+      "actor": "operator-bob",
+      "audit_context": {
+        "reason": "Position data is stale; cannot safely approve rollback at this time."
+      },
+      "entry_id": "audit-004",
+      "evidence_refs": [],
+      "outcome": "success",
+      "target_id": "rollback-rb-001",
+      "target_type": "Rollback",
+      "timestamp": "2026-04-16T09:40:00Z"
+    },
+    {
+      "action_type": "RequestGovernanceChanges",
+      "actor": "operator-jane",
+      "audit_context": {
+        "reason": "Capital pool reference needs correction before approval."
+      },
+      "entry_id": "audit-005",
+      "evidence_refs": [],
+      "outcome": "success",
+      "target_id": "gov-review-003",
+      "target_type": "GovernanceReviewItem",
+      "timestamp": "2026-04-16T09:20:00Z"
+    },
+    {
+      "action_type": "strategy_spec_approved",
+      "actor": "fixture-governance-reviewer",
+      "entry_id": "audit-pack-a-strategy-approved",
+      "evidence_ref": "fixture://bff-consol-008/strategy-pack-a-momentum",
+      "summary": "Fixture strategy approved for BFF management-console smoke only.",
+      "target_id": "strategy-pack-a-momentum",
+      "target_type": "strategy",
+      "timestamp": "2026-05-13T00:19:00Z"
+    },
+    {
+      "action_type": "route_policy_published",
+      "actor": "fixture-persona-reviewer",
+      "entry_id": "audit-pack-a-persona-policy",
+      "summary": "Fixture persona route policy and evaluation skeleton published.",
+      "target_id": "persona-pack-a-momentum",
+      "target_type": "persona",
+      "timestamp": "2026-05-13T00:21:00Z"
+    },
+    {
+      "action_type": "artifact_sealed",
+      "actor": "fixture-governance-reviewer",
+      "entry_id": "audit-pack-b-artifact-sealed",
+      "evidence_ref": "fixture://bff-consol-009/artifact-pack-b-001",
+      "summary": "Pack B fixture artifact sealed after completing low-liquidity regime validation experiment.",
+      "target_id": "artifact-pack-b-001",
+      "target_type": "artifact",
+      "timestamp": "2026-05-13T00:46:00Z"
+    },
+    {
+      "action_type": "deployment_approved",
+      "actor": "fixture-governance-reviewer",
+      "entry_id": "audit-pack-b-paper-approved",
+      "evidence_ref": "fixture://bff-consol-009/plan-pack-b-paper-001",
+      "summary": "Pack B fixture paper deployment approved; no live or canary authority.",
+      "target_id": "plan-pack-b-paper-001",
+      "target_type": "deployment_plan",
+      "timestamp": "2026-05-13T00:51:00Z"
+    },
+    {
+      "action_type": "v5_intervention_triggered",
+      "actor": "sentinel",
+      "entry_id": "audit-pack-b-sentinel-triggered",
+      "evidence_ref": "fixture://bff-consol-009/intv-pack-b-001",
+      "summary": "HIQ Sentinel triggered v5 intervention intv-pack-b-001 for Pack B paper runtime anomaly.",
+      "target_id": "runtime-pack-b-paper-001",
+      "target_type": "Runtime",
+      "timestamp": "2026-05-13T02:00:00Z"
+    },
+    {
+      "action_type": "append_immutable_record",
+      "actor": "fixture-audit-writer",
+      "append_only": true,
+      "content_hash": "sha256:fixture-pack-c-immutable-001",
+      "entry_id": "audit-pack-c-immutable-001",
+      "evidence_ref": "fixture://bff-consol-010/inc-pack-c-001",
+      "immutable_record": true,
+      "outcome": "success",
+      "summary": "Immutable audit sample recorded for Pack C incident-response fixture.",
+      "target_id": "inc-pack-c-001",
+      "target_type": "Incident",
+      "timestamp": "2026-05-13T03:42:00Z"
+    },
+    {
+      "action_type": "approval_review_opened",
+      "actor": "fixture-governance-reviewer",
+      "entry_id": "audit-pack-c-approval-linked",
+      "evidence_ref": "fixture://bff-consol-010/approval-pack-c-deploy",
+      "outcome": "success",
+      "summary": "Deployment approval fixture opened for plan-pack-c-paper-001.",
+      "target_id": "approval-pack-c-deploy",
+      "target_type": "ApprovalDecision",
+      "timestamp": "2026-05-13T03:43:00Z"
+    }
+  ],
+  "governance_review_queue_items": {
+    "gov-review-001": {
+      "allowedActions": {
+        "canEscalate": false,
+        "canForwardToApproval": true,
+        "canRequestChanges": true,
+        "canReview": true
+      },
+      "governance_outcome": "pending",
+      "item_id": "gov-review-001",
+      "item_type": "DeploymentPlan",
+      "review_summary": {
+        "evidence_refs": [
+          {
+            "ref_id": "ev-001",
+            "type": "IncidentReport",
+            "url": null
+          },
+          {
+            "ref_id": "ev-002",
+            "type": "BacktestResult",
+            "url": null
+          }
+        ],
+        "linked_approval_decision_id": null,
+        "risk_assessment": "Medium risk - parameter drift within acceptable bounds; no open severity-1 or severity-2 incidents."
+      },
+      "risk_level": "medium",
+      "status": "pending",
+      "submitted_at": "2026-04-14T06:15:00Z",
+      "submitted_by": "orchestrator"
+    },
+    "gov-review-002": {
+      "allowedActions": {
+        "canEscalate": false,
+        "canForwardToApproval": false,
+        "canRequestChanges": false,
+        "canReview": false
+      },
+      "governance_outcome": "escalated",
+      "item_id": "gov-review-002",
+      "item_type": "EvolutionProposal",
+      "review_summary": {
+        "evidence_refs": [
+          {
+            "ref_id": "ev-003",
+            "type": "IncidentReport",
+            "url": null
+          }
+        ],
+        "linked_approval_decision_id": null,
+        "risk_assessment": "High risk - escalated due to open severity-2 incident; no further routing CTAs available until resolved."
+      },
+      "risk_level": "high",
+      "status": "escalated",
+      "submitted_at": "2026-04-14T05:45:00Z",
+      "submitted_by": "orchestrator"
+    },
+    "gov-review-003": {
+      "allowedActions": {
+        "canEscalate": true,
+        "canForwardToApproval": true,
+        "canRequestChanges": true,
+        "canReview": true
+      },
+      "governance_outcome": "pending",
+      "item_id": "gov-review-003",
+      "item_type": "PersonaBinding",
+      "review_summary": {
+        "evidence_refs": [],
+        "linked_approval_decision_id": null,
+        "risk_assessment": "Low risk - new persona binding within established capital pool; no open incidents."
+      },
+      "risk_level": "low",
+      "status": "in_review",
+      "submitted_at": "2026-04-14T07:00:00Z",
+      "submitted_by": "orchestrator"
+    }
+  },
+  "incidents": {
+    "inc-20260409-002": {
+      "artifact_id": "artifact-042",
+      "artifact_version": "v2.1.0",
+      "binding_id": "runtime-042",
+      "capital_pool_id": "pool-main",
+      "created_at": "2026-04-09T08:00:00Z",
+      "deployment_plan_id": "plan-F-042",
+      "deployment_stage": "paper",
+      "evidence_summary": "Promotion gate timeout during artifact validation.",
+      "incident_id": "inc-20260409-002",
+      "lineage_ref": "artifact-042@v2.1.0",
+      "persona_capital_binding_id": "binding-042",
+      "resolved_at": "2026-04-09T10:30:00Z",
+      "runtime_id": "runtime-042",
+      "severity": "medium",
+      "status": "resolved",
+      "telemetry_event_ids": [],
+      "title": "Deployment plan plan-F-042 stalled at paper stage",
+      "trace_id": "trace-inc-20260409-002"
+    },
+    "inc-20260410-001": {
+      "artifact_id": "artifact-042",
+      "artifact_version": "v2.1.0",
+      "binding_id": "runtime-042",
+      "capital_pool_id": "pool-main",
+      "created_at": "2026-04-10T14:30:00Z",
+      "deployment_plan_id": "plan-F-042",
+      "deployment_stage": "live",
+      "evidence_summary": "12% drawdown exceeded 10% threshold; runtime paused pending review.",
+      "incident_id": "inc-20260410-001",
+      "lineage_ref": "artifact-042@v2.1.0",
+      "persona_capital_binding_id": "binding-042",
+      "runtime_id": "runtime-042",
+      "severity": "high",
+      "status": "open",
+      "telemetry_event_ids": [
+        "tl-001"
+      ],
+      "title": "Unexpected drawdown in persona-alpha",
+      "trace_id": "trace-inc-20260410-001"
+    },
+    "inc-pack-c-001": {
+      "binding_id": "runtime-pack-c-paper-001",
+      "capital_pool_id": "pool-pack-a-ops",
+      "created_at": "2026-05-13T03:39:00Z",
+      "deployment_plan_id": "plan-pack-c-paper-001",
+      "deployment_stage": "paper",
+      "evidence_summary": "Paper runtime command latency exceeded the operator-console warning threshold; no live orders were enabled.",
+      "id": "inc-pack-c-001",
+      "incident_id": "inc-pack-c-001",
+      "lineage_ref": "artifact-pack-b-001@v1.0.0",
+      "opened_at": "2026-05-13T03:39:00Z",
+      "runtime_id": "runtime-pack-c-paper-001",
+      "severity": "high",
+      "status": "open",
+      "telemetry_event_ids": [
+        "telemetry-pack-c-latency-001"
+      ],
+      "title": "Pack C paper runtime latency breach",
+      "trace_id": "trace-pack-c-incident-001"
+    }
+  },
+  "jobs": {
+    "job-pack-c-tool-import-001": {
+      "created_at": "2026-05-13T03:44:00Z",
+      "id": "job-pack-c-tool-import-001",
+      "job_id": "job-pack-c-tool-import-001",
+      "job_type": "mcp_tool_import",
+      "logs": [
+        {
+          "level": "info",
+          "message": "Pack C MCP tool import fixture started.",
+          "ts": "2026-05-13T03:44:01Z"
+        },
+        {
+          "level": "info",
+          "message": "Schema validation reached 50 percent.",
+          "ts": "2026-05-13T03:45:00Z"
+        }
+      ],
+      "name": "Pack C MCP tool import dry run",
+      "progress": {
+        "percent": 50,
+        "stage": "schema_validation"
+      },
+      "status": "running",
+      "submitted_at": "2026-05-13T03:44:00Z",
+      "target_ref": {
+        "id": "mcp-server-pack-c-research",
+        "type": "mcp_server"
+      },
+      "updated_at": "2026-05-13T03:45:00Z"
+    }
+  },
+  "kill_switch": {
+    "active": false,
+    "active_commands": [],
+    "active_freeze_orders": [],
+    "last_checked_at": "2026-04-11T12:00:00Z",
+    "last_confirmed_at": "2026-04-11T12:00:00Z",
+    "last_triggered_at": null,
+    "safe_mode_status": "off",
+    "secondary_path_available": true,
+    "status": "armed"
+  },
+  "persona_league": {
+    "persona-crypto": {
+      "capital_pool_id": "pool-crypto-paper",
+      "deployment_stage": "paper",
+      "governance_required": true,
+      "id": "persona-crypto",
+      "league_score": 91.8,
+      "market_scope": [
+        "CRYPTO"
+      ],
+      "metrics": {
+        "human_interventions": 1,
+        "max_drawdown": 0.064,
+        "pnl": 48000.0,
+        "sharpe": 1.76,
+        "sortino": 2.31,
+        "stability_score": 0.91,
+        "trading_cost_bps": 6.1,
+        "training_improvement_pct": 18.2,
+        "violation_count": 0,
+        "win_rate": 0.59
+      },
+      "name": "Crypto Persona",
+      "ooda_stage": "act",
+      "persona_id": "persona-crypto",
+      "quarter": "2026Q2",
+      "rank": 1,
+      "recommendation": null,
+      "risk_flags": [],
+      "runtime_id": "runtime-crypto-paper",
+      "status": "paper_running",
+      "updated_at": "2026-06-07T13:00:00Z"
+    },
+    "persona-tw-equity": {
+      "capital_pool_id": "pool-tw-equity-paper",
+      "deployment_stage": "paper",
+      "governance_required": true,
+      "id": "persona-tw-equity",
+      "league_score": 79.1,
+      "market_scope": [
+        "TW"
+      ],
+      "metrics": {
+        "human_interventions": 3,
+        "max_drawdown": 0.071,
+        "pnl": 426000.0,
+        "sharpe": 1.08,
+        "sortino": 1.62,
+        "stability_score": 0.78,
+        "trading_cost_bps": 7.6,
+        "training_improvement_pct": 9.5,
+        "violation_count": 0,
+        "win_rate": 0.53
+      },
+      "name": "Taiwan Equity Persona",
+      "ooda_stage": "decide",
+      "persona_id": "persona-tw-equity",
+      "quarter": "2026Q2",
+      "rank": 3,
+      "recommendation": null,
+      "risk_flags": [
+        "slippage_watch"
+      ],
+      "runtime_id": "runtime-tw-equity-paper",
+      "status": "needs_human_approval",
+      "updated_at": "2026-06-07T13:00:00Z"
+    },
+    "persona-us-equity": {
+      "capital_pool_id": "pool-us-equity-paper",
+      "deployment_stage": "paper",
+      "governance_required": true,
+      "id": "persona-us-equity",
+      "league_score": 87.4,
+      "market_scope": [
+        "US"
+      ],
+      "metrics": {
+        "human_interventions": 1,
+        "max_drawdown": 0.057,
+        "pnl": 24560.0,
+        "sharpe": 1.41,
+        "sortino": 2.03,
+        "stability_score": 0.87,
+        "trading_cost_bps": 4.2,
+        "training_improvement_pct": 14.0,
+        "violation_count": 0,
+        "win_rate": 0.56
+      },
+      "name": "US Equity Persona",
+      "ooda_stage": "orient",
+      "persona_id": "persona-us-equity",
+      "quarter": "2026Q2",
+      "rank": 2,
+      "recommendation": null,
+      "risk_flags": [],
+      "runtime_id": "runtime-us-equity-paper",
+      "status": "researching",
+      "updated_at": "2026-06-07T13:00:00Z"
+    }
+  },
+  "personas": {
+    "p-compliance-sponsor": {
+      "created_at": "2026-02-28T00:00:00Z",
+      "id": "p-compliance-sponsor",
+      "last_active_at": "2026-04-19T17:11:00Z",
+      "lifecycle_state": "active",
+      "mandate": "governance_sponsorship",
+      "name": "Compliance Sponsor",
+      "strategy_family": "governance"
+    },
+    "p-execution-lead": {
+      "created_at": "2026-02-24T00:00:00Z",
+      "id": "p-execution-lead",
+      "last_active_at": "2026-04-19T17:09:20Z",
+      "lifecycle_state": "active",
+      "mandate": "execution_quality",
+      "name": "Execution Lead",
+      "strategy_family": "execution"
+    },
+    "p-macro-observer": {
+      "created_at": "2026-02-20T00:00:00Z",
+      "id": "p-macro-observer",
+      "last_active_at": "2026-04-19T17:08:00Z",
+      "lifecycle_state": "active",
+      "mandate": "macro_regime_review",
+      "name": "Macro Observer",
+      "strategy_family": "macro"
+    },
+    "p-risk-analyst": {
+      "created_at": "2026-02-15T00:00:00Z",
+      "id": "p-risk-analyst",
+      "last_active_at": "2026-04-10T10:14:00Z",
+      "lifecycle_state": "active",
+      "mandate": "risk_review",
+      "name": "Risk Analyst Persona",
+      "strategy_family": "risk_management"
+    },
+    "persona-alpha": {
+      "created_at": "2026-03-01T00:00:00Z",
+      "id": "persona-alpha",
+      "last_active_at": "2026-04-11T10:00:00Z",
+      "lifecycle_state": "active",
+      "mandate": "systematic_crypto_trading",
+      "name": "Alpha Persona",
+      "strategy_family": "momentum"
+    },
+    "persona-crypto": {
+      "created_at": "2026-02-01T00:00:00Z",
+      "id": "persona-crypto",
+      "last_active_at": "2026-06-07T13:00:00Z",
+      "lifecycle_state": "paper_owner",
+      "mandate": "crypto_24x7_alpha_research_and_paper_execution",
+      "metadata": {
+        "asset_classes": [
+          "crypto",
+          "perpetual_future",
+          "dated_future"
+        ],
+        "broker_adapter": "kraken-sandbox",
+        "capital_pool_id": "pool-crypto-paper",
+        "current_research_projects": [
+          {
+            "artifact_id": "artifact-crypto-trend-carry-v1",
+            "can_deploy": false,
+            "frameworks": [
+              "vectorbt",
+              "statsmodels",
+              "finrl-rllib"
+            ],
+            "project_id": "research-crypto-paper-001",
+            "stage": "act",
+            "status": "paper_running",
+            "strategy_id": "strategy-crypto-trend-carry",
+            "title": "CRYPTO paper research loop"
+          }
+        ],
+        "current_work": null,
+        "data_source_refs": [
+          "support/evidence/MGMT-BROKER-006/datasource-smoke/datasource-smoke.json",
+          "support/evidence/P2-MARKETDATA-CREDENTIAL-SMOKE-001/repo-local-uncredentialed/coingecko.json"
+        ],
+        "data_source_status": {
+          "capital_side_effects_allowed": false,
+          "live_ingestion_enabled": false,
+          "order_side_effects_allowed": false,
+          "provider_statuses": {
+            "coingecko": "read_unavailable",
+            "kraken": "datasource_smoke_ok"
+          },
+          "read_only": true,
+          "readback_captured_at": "2026-05-15T17:34:44Z",
+          "readback_refs": [
+            "support/evidence/MGMT-BROKER-006/datasource-smoke/datasource-smoke.json"
+          ],
+          "state": "datasource_smoke_ok",
+          "summary": "Kraken datasource smoke has a normalized quote projection; repo-local network readback remains disabled.",
+          "unavailable_refs": [
+            "support/evidence/P2-MARKETDATA-CREDENTIAL-SMOKE-001/repo-local-uncredentialed/coingecko.json"
+          ]
+        },
+        "data_sources": [
+          {
+            "capital_side_effects_allowed": false,
+            "evidence_ref": "support/evidence/MGMT-BROKER-006/datasource-smoke/datasource-smoke.json",
+            "live_ingestion_enabled": false,
+            "market": "CRYPTO",
+            "order_capable_provider": true,
+            "order_path": "validate_only",
+            "order_side_effects_allowed": false,
+            "provider": "Kraken market data",
+            "provider_key": "kraken",
+            "read_intent": {
+              "interval": 1,
+              "pair": "BTC/USD",
+              "venue": "KRAKEN"
+            },
+            "read_only": true,
+            "reason": null,
+            "source_class": "broker_execution",
+            "status": "datasource_smoke_ok"
+          },
+          {
+            "capital_side_effects_allowed": false,
+            "evidence_ref": "support/evidence/P2-MARKETDATA-CREDENTIAL-SMOKE-001/repo-local-uncredentialed/coingecko.json",
+            "live_ingestion_enabled": false,
+            "market": "CRYPTO",
+            "order_capable_provider": false,
+            "order_path": "not_applicable",
+            "order_side_effects_allowed": false,
+            "provider": "CoinGecko",
+            "provider_key": "coingecko",
+            "read_intent": null,
+            "read_only": true,
+            "reason": "repo-local smoke did not open a CoinGecko network session",
+            "source_class": "research_grade",
+            "status": "read_unavailable"
+          }
+        ],
+        "deployment_stage": "paper",
+        "governance_required": true,
+        "has_trading_telemetry": false,
+        "is_market_persona_default": true,
+        "league_rank": 1,
+        "league_score": 91.8,
+        "market_scope": [
+          "CRYPTO"
+        ],
+        "ooda_stage": "act",
+        "performance": {
+          "human_interventions": 1,
+          "max_drawdown": 0.064,
+          "pnl": 48000.0,
+          "sharpe": 1.76,
+          "sortino": 2.31,
+          "stability_score": 0.91,
+          "trading_cost_bps": 6.1,
+          "training_improvement_pct": 18.2,
+          "violation_count": 0,
+          "win_rate": 0.59
+        },
+        "persona_status": "paper_running",
+        "recommended_governance_action": null,
+        "research_refs": [],
+        "research_status": {
+          "artifact_id": "artifact-crypto-trend-carry-v1",
+          "can_deploy": false,
+          "deployment_stage": "paper",
+          "frameworks": [
+            "vectorbt",
+            "statsmodels",
+            "finrl-rllib"
+          ],
+          "registry_admission_status": "not_requested",
+          "safety_assertions": {
+            "broker_session_opened": false,
+            "live_capital_side_effects": false,
+            "order_route": "none",
+            "registry_write_performed": false
+          },
+          "stage": "act",
+          "strategy_id": "strategy-crypto-trend-carry",
+          "summary": ""
+        },
+        "risk_flags": [],
+        "risk_level": "low",
+        "runtime_binding_id": "runtime-crypto-paper",
+        "seed_row": true,
+        "success_rate": 0.59,
+        "timezone": "UTC"
+      },
+      "name": "Crypto Persona",
+      "persona_id": "persona-crypto",
+      "required_data_sources": [],
+      "status": "paper_running",
+      "strategy_family": "crypto_trend_carry",
+      "updated_at": "2026-06-07T13:00:00Z"
+    },
+    "persona-pack-a-momentum": {
+      "created_at": "2026-05-13T00:00:00Z",
+      "id": "persona-pack-a-momentum",
+      "last_active_at": "2026-05-13T00:21:00Z",
+      "lifecycle_state": "active",
+      "mandate": "systematic_momentum_paper_ops",
+      "metadata": {
+        "evaluation_profile_id": "eval-pack-a-momentum",
+        "route_policy_id": "route-policy-pack-a-momentum"
+      },
+      "name": "Pack A Momentum Operator",
+      "persona_id": "persona-pack-a-momentum",
+      "strategy_family": "momentum"
+    },
+    "persona-tw-equity": {
+      "created_at": "2026-02-01T00:00:00Z",
+      "id": "persona-tw-equity",
+      "last_active_at": "2026-06-07T13:00:00Z",
+      "lifecycle_state": "paper_owner",
+      "mandate": "taiwan_equity_session_research_and_paper_execution",
+      "metadata": {
+        "asset_classes": [
+          "equity",
+          "etf",
+          "future",
+          "option"
+        ],
+        "broker_adapter": "shioaji-sandbox",
+        "capital_pool_id": "pool-tw-equity-paper",
+        "current_research_projects": [
+          {
+            "artifact_id": "qlib-tw-cross-sectional-alpha-model-draft-v1",
+            "blocked_by_task_ids": [
+              "MGMT-QLIB-003",
+              "MGMT-QLIB-005"
+            ],
+            "can_deploy": false,
+            "dataset_ref": "dataset:tw-equity-ohlcv-top50-2024-daily",
+            "evidence_refs": [
+              {
+                "ref": "support/evidence/MGMT-QLIB-006/management_linkage_packet.json",
+                "ref_id": "mgmt-qlib-006-management-linkage-v1",
+                "ref_type": "management_linkage_packet"
+              },
+              {
+                "ref": "support/evidence/MGMT-QLIB-001/dataset_manifest.json",
+                "ref_id": "qlib-dataset-manifest:dataset-tw-equity-ohlcv-top50-2024-daily",
+                "ref_type": "dataset_manifest"
+              },
+              {
+                "ref_id": "exp-mgmt-qlib-006",
+                "ref_type": "research_experiment",
+                "route": "/bff/research-experiments/exp-mgmt-qlib-006"
+              },
+              {
+                "ref_id": "tw-cross-sectional-equity-alpha",
+                "ref_type": "strategy_artifacts",
+                "route": "/bff/strategies/tw-cross-sectional-equity-alpha/artifacts"
+              }
+            ],
+            "experiment_id": "exp-mgmt-qlib-006",
+            "frameworks": [
+              "qlib",
+              "vectorbt",
+              "statsmodels"
+            ],
+            "project_id": "MGMT-QLIB-006",
+            "stage": "management_review_linked",
+            "status": "needs_human_approval",
+            "title": "Qlib TW cross-sectional equity alpha admission linkage"
+          }
+        ],
+        "current_work": null,
+        "data_source_refs": [
+          "support/evidence/P2-MARKETDATA-CREDENTIAL-SMOKE-001/repo-local-quote-readback/shioaji.json",
+          "support/evidence/P2-MARKETDATA-CREDENTIAL-SMOKE-001/repo-local-uncredentialed/twse.json",
+          "support/evidence/P2-MARKETDATA-CREDENTIAL-SMOKE-001/repo-local-uncredentialed/tpex.json",
+          "support/evidence/P2-MARKETDATA-CREDENTIAL-SMOKE-001/repo-local-uncredentialed/mops.json",
+          "support/evidence/P2-MARKETDATA-CREDENTIAL-SMOKE-001/repo-local-uncredentialed/finmind.json"
+        ],
+        "data_source_status": {
+          "capital_side_effects_allowed": false,
+          "live_ingestion_enabled": false,
+          "order_side_effects_allowed": false,
+          "provider_statuses": {
+            "finmind": "read_unavailable",
+            "mops": "public_reference_unavailable",
+            "shioaji": "read_ok",
+            "tpex": "read_unavailable",
+            "twse": "read_unavailable"
+          },
+          "read_only": true,
+          "readback_captured_at": "2026-05-01T17:20:00Z",
+          "readback_refs": [
+            "support/evidence/P2-MARKETDATA-CREDENTIAL-SMOKE-001/repo-local-quote-readback/shioaji.json"
+          ],
+          "research_dataset_as_of": "2026-01-05T00:00:00Z",
+          "research_dataset_manifest_ref": "support/evidence/MGMT-QLIB-001/dataset_manifest.json",
+          "research_dataset_ref": "dataset:tw-equity-ohlcv-top50-2024-daily",
+          "state": "partial_readback",
+          "summary": "Shioaji quote readback is present; TWSE, TPEx, MOPS, and FinMind default to unavailable repo-local smoke evidence; FinMind flips to read_ok when source-ingest reports live health.",
+          "unavailable_refs": [
+            "support/evidence/P2-MARKETDATA-CREDENTIAL-SMOKE-001/repo-local-uncredentialed/twse.json",
+            "support/evidence/P2-MARKETDATA-CREDENTIAL-SMOKE-001/repo-local-uncredentialed/tpex.json",
+            "support/evidence/P2-MARKETDATA-CREDENTIAL-SMOKE-001/repo-local-uncredentialed/mops.json",
+            "support/evidence/P2-MARKETDATA-CREDENTIAL-SMOKE-001/repo-local-uncredentialed/finmind.json"
+          ]
+        },
+        "data_sources": [
+          {
+            "capital_side_effects_allowed": false,
+            "evidence_ref": "support/evidence/P2-MARKETDATA-CREDENTIAL-SMOKE-001/repo-local-quote-readback/shioaji.json",
+            "live_ingestion_enabled": false,
+            "market": "TW",
+            "order_capable_provider": true,
+            "order_path": "disabled_for_marketdata_smoke",
+            "order_side_effects_allowed": false,
+            "provider": "Shioaji quote",
+            "provider_key": "shioaji",
+            "read_intent": {
+              "bind": true,
+              "exchange": "TSE",
+              "quote_type": "tick",
+              "symbol": "2330",
+              "version": "v1"
+            },
+            "read_only": true,
+            "reason": null,
+            "source_class": "broker_execution",
+            "status": "read_ok"
+          },
+          {
+            "capital_side_effects_allowed": false,
+            "evidence_ref": "support/evidence/P2-MARKETDATA-CREDENTIAL-SMOKE-001/repo-local-uncredentialed/twse.json",
+            "live_ingestion_enabled": false,
+            "market": "TW",
+            "order_capable_provider": false,
+            "order_path": "not_applicable",
+            "order_side_effects_allowed": false,
+            "provider": "TWSE OpenAPI",
+            "provider_key": "twse",
+            "read_intent": null,
+            "read_only": true,
+            "reason": "repo-local smoke did not open a TWSE network session",
+            "source_class": "official_reference",
+            "status": "read_unavailable"
+          },
+          {
+            "capital_side_effects_allowed": false,
+            "evidence_ref": "support/evidence/P2-MARKETDATA-CREDENTIAL-SMOKE-001/repo-local-uncredentialed/tpex.json",
+            "live_ingestion_enabled": false,
+            "market": "TW",
+            "order_capable_provider": false,
+            "order_path": "not_applicable",
+            "order_side_effects_allowed": false,
+            "provider": "TPEx E-Data",
+            "provider_key": "tpex",
+            "read_intent": null,
+            "read_only": true,
+            "reason": "repo-local smoke did not open a TPEx network session",
+            "source_class": "official_reference",
+            "status": "read_unavailable"
+          },
+          {
+            "capital_side_effects_allowed": false,
+            "evidence_ref": "support/evidence/P2-MARKETDATA-CREDENTIAL-SMOKE-001/repo-local-uncredentialed/mops.json",
+            "live_ingestion_enabled": false,
+            "market": "TW",
+            "order_capable_provider": false,
+            "order_path": "not_applicable",
+            "order_side_effects_allowed": false,
+            "provider": "MOPS",
+            "provider_key": "mops",
+            "read_intent": null,
+            "read_only": true,
+            "reason": "repo-local smoke has no public-reference readback",
+            "source_class": "official_reference",
+            "status": "public_reference_unavailable"
+          },
+          {
+            "capital_side_effects_allowed": false,
+            "evidence_ref": "support/evidence/P2-MARKETDATA-CREDENTIAL-SMOKE-001/repo-local-uncredentialed/finmind.json",
+            "live_ingestion_enabled": false,
+            "market": "TW",
+            "order_capable_provider": false,
+            "order_path": "not_applicable",
+            "order_side_effects_allowed": false,
+            "provider": "FinMind",
+            "provider_key": "finmind",
+            "read_intent": null,
+            "read_only": true,
+            "reason": "live FinMind readback overlaid from source-ingest health when available",
+            "source_class": "research_grade",
+            "status": "read_unavailable"
+          }
+        ],
+        "deployment_stage": "paper",
+        "governance_required": true,
+        "has_trading_telemetry": false,
+        "is_market_persona_default": true,
+        "league_rank": 3,
+        "league_score": 79.1,
+        "market_scope": [
+          "TW"
+        ],
+        "ooda_stage": "decide",
+        "performance": {
+          "human_interventions": 3,
+          "max_drawdown": 0.071,
+          "pnl": 426000.0,
+          "sharpe": 1.08,
+          "sortino": 1.62,
+          "stability_score": 0.78,
+          "trading_cost_bps": 7.6,
+          "training_improvement_pct": 9.5,
+          "violation_count": 0,
+          "win_rate": 0.53
+        },
+        "persona_status": "needs_human_approval",
+        "recommended_governance_action": null,
+        "research_refs": [
+          {
+            "ref": "support/evidence/MGMT-QLIB-006/management_linkage_packet.json",
+            "ref_id": "mgmt-qlib-006-management-linkage-v1",
+            "ref_type": "management_linkage_packet"
+          },
+          {
+            "ref": "support/evidence/MGMT-QLIB-001/dataset_manifest.json",
+            "ref_id": "qlib-dataset-manifest:dataset-tw-equity-ohlcv-top50-2024-daily",
+            "ref_type": "dataset_manifest"
+          },
+          {
+            "ref_id": "exp-mgmt-qlib-006",
+            "ref_type": "research_experiment",
+            "route": "/bff/research-experiments/exp-mgmt-qlib-006"
+          },
+          {
+            "ref_id": "tw-cross-sectional-equity-alpha",
+            "ref_type": "strategy_artifacts",
+            "route": "/bff/strategies/tw-cross-sectional-equity-alpha/artifacts"
+          }
+        ],
+        "research_status": {
+          "artifact_id": "qlib-tw-cross-sectional-alpha-model-draft-v1",
+          "artifact_state": "draft",
+          "can_deploy": false,
+          "dataset_manifest_id": "qlib-dataset-manifest:dataset-tw-equity-ohlcv-top50-2024-daily",
+          "dataset_ref": "dataset:tw-equity-ohlcv-top50-2024-daily",
+          "deployment_stage": "none",
+          "experiment_id": "exp-mgmt-qlib-006",
+          "framework": "qlib",
+          "frameworks": [
+            "qlib",
+            "vectorbt",
+            "statsmodels"
+          ],
+          "pending_task_ids": [
+            "MGMT-QLIB-003",
+            "MGMT-QLIB-005"
+          ],
+          "registry_admission_status": "pending_upstream_task",
+          "safety_assertions": {
+            "broker_session_opened": false,
+            "deployment_stage": "none",
+            "live_capital_side_effects": false,
+            "order_route": "none",
+            "registry_write_authority": "registry_service_only",
+            "registry_write_performed": false
+          },
+          "stage": "management_review_linked",
+          "strategy_id": "tw-cross-sectional-equity-alpha",
+          "strategy_spec_id": "qlib-tw-cross-sectional-alpha-spec-v1",
+          "summary": "Qlib TW cross-sectional alpha draft is linked for Management review; registry admission and deployment are still pending upstream evidence."
+        },
+        "risk_flags": [
+          "slippage_watch"
+        ],
+        "risk_level": "medium",
+        "runtime_binding_id": "runtime-tw-equity-paper",
+        "seed_row": true,
+        "success_rate": 0.53,
+        "timezone": "Asia/Taipei"
+      },
+      "name": "Taiwan Equity Persona",
+      "persona_id": "persona-tw-equity",
+      "required_data_sources": [
+        {
+          "cadence": "daily",
+          "connector_candidates": [
+            "tw-finmind-datasets",
+            "tw-twse-tpex-official-market"
+          ],
+          "dataset": "tw_price_daily",
+          "market": "TW",
+          "policy_gates": [
+            "require_connector_approved",
+            "require_schedule_active",
+            "require_source_health_ok"
+          ],
+          "source_class": "live_pull"
+        },
+        {
+          "cadence": "daily",
+          "connector_candidates": [
+            "tw-finmind-broker-daily-report",
+            "tw-finmind-broker-bulk-parquet"
+          ],
+          "dataset": "tw_broker_top",
+          "market": "TW",
+          "policy_gates": [
+            "require_connector_approved",
+            "require_schedule_active",
+            "require_payload_push_health"
+          ],
+          "source_class": "live_push"
+        }
+      ],
+      "status": "needs_human_approval",
+      "strategy_family": "tw_session_momentum",
+      "updated_at": "2026-06-07T13:00:00Z"
+    },
+    "persona-us-equity": {
+      "created_at": "2026-02-01T00:00:00Z",
+      "id": "persona-us-equity",
+      "last_active_at": "2026-06-07T13:00:00Z",
+      "lifecycle_state": "paper_owner",
+      "mandate": "us_equity_alpha_research_and_paper_execution",
+      "metadata": {
+        "asset_classes": [
+          "equity",
+          "etf",
+          "option"
+        ],
+        "broker_adapter": "ibkr-paper",
+        "capital_pool_id": "pool-us-equity-paper",
+        "current_research_projects": [
+          {
+            "artifact_id": "artifact-us-equity-momentum-v1",
+            "can_deploy": false,
+            "frameworks": [
+              "vectorbt",
+              "statsmodels",
+              "quantlib"
+            ],
+            "project_id": "research-us-paper-001",
+            "stage": "orient",
+            "status": "researching",
+            "strategy_id": "strategy-us-equity-momentum",
+            "title": "US paper research loop"
+          }
+        ],
+        "current_work": null,
+        "data_source_refs": [
+          "support/evidence/P2-MARKETDATA-CREDENTIAL-SMOKE-001/repo-local-quote-readback/ibkr.json",
+          "support/evidence/P2-MARKETDATA-CREDENTIAL-SMOKE-001/repo-local-uncredentialed/us-yahoo.json",
+          "support/evidence/P2-MARKETDATA-CREDENTIAL-SMOKE-001/repo-local-uncredentialed/us-sec-edgar.json",
+          "support/evidence/P2-MARKETDATA-CREDENTIAL-SMOKE-001/repo-local-uncredentialed/us-finra.json",
+          "support/evidence/P2-MARKETDATA-CREDENTIAL-SMOKE-001/repo-local-uncredentialed/us-fred.json",
+          "support/evidence/P2-MARKETDATA-CREDENTIAL-SMOKE-001/repo-local-uncredentialed/us-polygon.json",
+          "support/evidence/P2-MARKETDATA-CREDENTIAL-SMOKE-001/repo-local-uncredentialed/us-alphavantage.json"
+        ],
+        "data_source_status": {
+          "capital_side_effects_allowed": false,
+          "live_ingestion_enabled": false,
+          "order_side_effects_allowed": false,
+          "provider_statuses": {
+            "alphavantage": "credential_unavailable",
+            "finra": "read_unavailable",
+            "fred": "credential_unavailable",
+            "ibkr": "read_ok",
+            "polygon": "credential_unavailable",
+            "sec_edgar": "read_unavailable",
+            "yahoo": "read_unavailable"
+          },
+          "read_only": true,
+          "readback_captured_at": "2026-05-01T17:20:00Z",
+          "readback_refs": [
+            "support/evidence/P2-MARKETDATA-CREDENTIAL-SMOKE-001/repo-local-quote-readback/ibkr.json"
+          ],
+          "state": "partial_readback",
+          "summary": "IBKR broker readback is present; Yahoo, SEC EDGAR, and FINRA default to read_unavailable and flip to read_ok when source-ingest reports live health; FRED, Polygon, and Alpha Vantage require API credentials before they can become read_ok.",
+          "unavailable_refs": [
+            "support/evidence/P2-MARKETDATA-CREDENTIAL-SMOKE-001/repo-local-uncredentialed/us-yahoo.json",
+            "support/evidence/P2-MARKETDATA-CREDENTIAL-SMOKE-001/repo-local-uncredentialed/us-sec-edgar.json",
+            "support/evidence/P2-MARKETDATA-CREDENTIAL-SMOKE-001/repo-local-uncredentialed/us-finra.json",
+            "support/evidence/P2-MARKETDATA-CREDENTIAL-SMOKE-001/repo-local-uncredentialed/us-fred.json",
+            "support/evidence/P2-MARKETDATA-CREDENTIAL-SMOKE-001/repo-local-uncredentialed/us-polygon.json",
+            "support/evidence/P2-MARKETDATA-CREDENTIAL-SMOKE-001/repo-local-uncredentialed/us-alphavantage.json"
+          ]
+        },
+        "data_sources": [
+          {
+            "capital_side_effects_allowed": false,
+            "evidence_ref": "support/evidence/P2-MARKETDATA-CREDENTIAL-SMOKE-001/repo-local-quote-readback/ibkr.json",
+            "live_ingestion_enabled": false,
+            "market": "US",
+            "order_capable_provider": true,
+            "order_path": "disabled_for_marketdata_smoke",
+            "order_side_effects_allowed": false,
+            "provider": "IBKR market data",
+            "provider_key": "ibkr",
+            "read_intent": {
+              "contract": {
+                "currency": "USD",
+                "exchange": "SMART",
+                "secType": "STK",
+                "symbol": "AAPL"
+              },
+              "readonly": true,
+              "snapshot": true
+            },
+            "read_only": true,
+            "reason": null,
+            "source_class": "broker_execution",
+            "status": "read_ok"
+          },
+          {
+            "capital_side_effects_allowed": false,
+            "evidence_ref": "support/evidence/P2-MARKETDATA-CREDENTIAL-SMOKE-001/repo-local-uncredentialed/us-yahoo.json",
+            "live_ingestion_enabled": false,
+            "market": "US",
+            "order_capable_provider": false,
+            "order_path": "not_applicable",
+            "order_side_effects_allowed": false,
+            "provider": "Yahoo Finance chart daily OHLCV",
+            "provider_key": "yahoo",
+            "read_intent": null,
+            "read_only": true,
+            "reason": "Yahoo chart API replaces blocked Stooq CSV; flips to read_ok when source-ingest connector reports live health",
+            "source_class": "research_grade",
+            "status": "read_unavailable"
+          },
+          {
+            "capital_side_effects_allowed": false,
+            "evidence_ref": "support/evidence/P2-MARKETDATA-CREDENTIAL-SMOKE-001/repo-local-uncredentialed/us-sec-edgar.json",
+            "live_ingestion_enabled": false,
+            "market": "US",
+            "order_capable_provider": false,
+            "order_path": "not_applicable",
+            "order_side_effects_allowed": false,
+            "provider": "SEC EDGAR filings",
+            "provider_key": "sec_edgar",
+            "read_intent": null,
+            "read_only": true,
+            "reason": "SEC EDGAR batch connector requires configured user-agent; flips to read_ok when source-ingest reports ok",
+            "source_class": "official_reference",
+            "status": "read_unavailable"
+          },
+          {
+            "capital_side_effects_allowed": false,
+            "evidence_ref": "support/evidence/P2-MARKETDATA-CREDENTIAL-SMOKE-001/repo-local-uncredentialed/us-finra.json",
+            "live_ingestion_enabled": false,
+            "market": "US",
+            "order_capable_provider": false,
+            "order_path": "not_applicable",
+            "order_side_effects_allowed": false,
+            "provider": "FINRA short-sale volume",
+            "provider_key": "finra",
+            "read_intent": null,
+            "read_only": true,
+            "reason": "FINRA public short-volume files; flips to read_ok when source-ingest connector reports live health",
+            "source_class": "official_reference",
+            "status": "read_unavailable"
+          },
+          {
+            "capital_side_effects_allowed": false,
+            "evidence_ref": "support/evidence/P2-MARKETDATA-CREDENTIAL-SMOKE-001/repo-local-uncredentialed/us-fred.json",
+            "live_ingestion_enabled": false,
+            "market": "GLOBAL",
+            "order_capable_provider": false,
+            "order_path": "not_applicable",
+            "order_side_effects_allowed": false,
+            "provider": "FRED macro series",
+            "provider_key": "fred",
+            "read_intent": null,
+            "read_only": true,
+            "reason": "FRED keyed API requires FRED_API_KEY; flips to read_ok when source-ingest connector reports live health",
+            "secret_ref": "env://FRED_API_KEY",
+            "source_class": "official_reference",
+            "status": "credential_unavailable"
+          },
+          {
+            "capital_side_effects_allowed": false,
+            "evidence_ref": "support/evidence/P2-MARKETDATA-CREDENTIAL-SMOKE-001/repo-local-uncredentialed/us-polygon.json",
+            "live_ingestion_enabled": false,
+            "market": "US",
+            "order_capable_provider": false,
+            "order_path": "not_applicable",
+            "order_side_effects_allowed": false,
+            "provider": "Polygon.io daily OHLCV",
+            "provider_key": "polygon",
+            "read_intent": null,
+            "read_only": true,
+            "reason": "Polygon API key required; set POLYGON_API_KEY (or MASSIVE_API_KEY / US_MARKET_DATA_API_KEY)",
+            "secret_ref": "env://POLYGON_API_KEY",
+            "source_class": "research_grade",
+            "status": "credential_unavailable"
+          },
+          {
+            "capital_side_effects_allowed": false,
+            "evidence_ref": "support/evidence/P2-MARKETDATA-CREDENTIAL-SMOKE-001/repo-local-uncredentialed/us-alphavantage.json",
+            "live_ingestion_enabled": false,
+            "market": "US",
+            "order_capable_provider": false,
+            "order_path": "not_applicable",
+            "order_side_effects_allowed": false,
+            "provider": "Alpha Vantage daily OHLCV",
+            "provider_key": "alphavantage",
+            "read_intent": null,
+            "read_only": true,
+            "reason": "Alpha Vantage API key required; set ALPHA_VANTAGE_API_KEY",
+            "secret_ref": "env://ALPHA_VANTAGE_API_KEY",
+            "source_class": "research_grade",
+            "status": "credential_unavailable"
+          }
+        ],
+        "deployment_stage": "paper",
+        "governance_required": true,
+        "has_trading_telemetry": false,
+        "is_market_persona_default": true,
+        "league_rank": 2,
+        "league_score": 87.4,
+        "market_scope": [
+          "US"
+        ],
+        "ooda_stage": "orient",
+        "performance": {
+          "human_interventions": 1,
+          "max_drawdown": 0.057,
+          "pnl": 24560.0,
+          "sharpe": 1.41,
+          "sortino": 2.03,
+          "stability_score": 0.87,
+          "trading_cost_bps": 4.2,
+          "training_improvement_pct": 14.0,
+          "violation_count": 0,
+          "win_rate": 0.56
+        },
+        "persona_status": "researching",
+        "recommended_governance_action": null,
+        "research_refs": [],
+        "research_status": {
+          "artifact_id": "artifact-us-equity-momentum-v1",
+          "can_deploy": false,
+          "deployment_stage": "paper",
+          "frameworks": [
+            "vectorbt",
+            "statsmodels",
+            "quantlib"
+          ],
+          "registry_admission_status": "not_requested",
+          "safety_assertions": {
+            "broker_session_opened": false,
+            "live_capital_side_effects": false,
+            "order_route": "none",
+            "registry_write_performed": false
+          },
+          "stage": "orient",
+          "strategy_id": "strategy-us-equity-momentum",
+          "summary": ""
+        },
+        "risk_flags": [],
+        "risk_level": "low",
+        "runtime_binding_id": "runtime-us-equity-paper",
+        "seed_row": true,
+        "success_rate": 0.56,
+        "timezone": "America/New_York"
+      },
+      "name": "US Equity Persona",
+      "persona_id": "persona-us-equity",
+      "required_data_sources": [],
+      "status": "researching",
+      "strategy_family": "cross_sectional_momentum",
+      "updated_at": "2026-06-07T13:00:00Z"
+    }
+  },
+  "rebalances": {
+    "rebalance-pack-a-001": {
+      "capital_pool_id": "pool-pack-a-ops",
+      "command_audit": {
+        "side_effect_scope": "fixture_only",
+        "submitted_at": "2026-05-13T00:30:00Z",
+        "submitted_by": "BFF-CONSOL-008"
+      },
+      "created_at": "2026-05-13T00:30:00Z",
+      "created_by": "BFF-CONSOL-008",
+      "id": "rebalance-pack-a-001",
+      "params": {
+        "target_weights": [
+          {
+            "strategy_id": "strategy-pack-a-momentum",
+            "weight": 1.0
+          }
+        ]
+      },
+      "reason": "Fixture rebalance keeps pack A pool weights aligned to the paper strategy.",
+      "rebalance_id": "rebalance-pack-a-001",
+      "status": "completed",
+      "updated_at": "2026-05-13T00:31:00Z"
+    }
+  },
+  "runtime_bindings": {
+    "runtime-042": {
+      "artifact_id": "artifact-042",
+      "artifact_version": "v2.1.0",
+      "binding_id": "binding-042",
+      "deployment_mode": "paper",
+      "deployment_stage": "none",
+      "id": "runtime-042",
+      "persona_capital_binding_id": "binding-042",
+      "persona_id": "persona-alpha",
+      "plan_id": "plan-F-042",
+      "runtime_binding_id": "binding-042",
+      "runtime_id": "runtime-042",
+      "status": "idle"
+    },
+    "runtime-crypto-paper": {
+      "artifact_id": "artifact-crypto-trend-carry-v1",
+      "artifact_version": "v1.0.0",
+      "binding_id": "runtime-crypto-paper",
+      "capital_pool_id": "pool-crypto-paper",
+      "deployment_mode": "paper",
+      "deployment_stage": "paper",
+      "effective_at": "2026-06-07T12:00:00Z",
+      "id": "runtime-crypto-paper",
+      "metadata": {
+        "artifact_loader": "approved_artifact_loader",
+        "broker_adapter": "kraken-sandbox",
+        "fail_closed": true,
+        "live_write_enabled": false,
+        "market_scope": [
+          "CRYPTO"
+        ],
+        "runtime_kind": "lean"
+      },
+      "persona_capital_binding_id": "binding-crypto-paper",
+      "plan_id": "plan-crypto-paper",
+      "runtime_binding_id": "runtime-crypto-paper",
+      "runtime_id": "runtime-crypto-paper",
+      "status": "active"
+    },
+    "runtime-pack-a-paper-001": {
+      "artifact_id": "artifact-pack-a-momentum-v1",
+      "artifact_version": "v1.0.0",
+      "binding_id": "runtime-pack-a-paper-001",
+      "capital_pool_id": "pool-pack-a-ops",
+      "deployment_stage": "paper",
+      "id": "runtime-pack-a-paper-001",
+      "plan_id": "plan-pack-a-paper-001",
+      "runtime_id": "runtime-pack-a-paper-001",
+      "status": "bound"
+    },
+    "runtime-pack-b-paper-001": {
+      "artifact_id": "artifact-pack-b-001",
+      "artifact_version": "v1.0.0",
+      "binding_id": "runtime-pack-b-paper-001",
+      "capital_pool_id": "pool-pack-b-ops",
+      "deployment_stage": "paper",
+      "fail_closed": true,
+      "id": "runtime-pack-b-paper-001",
+      "live_write_enabled": false,
+      "note": "Fixture paper-canary runtime; fail-closed. No live capital authority. Broker production live and capital binding remain fail-closed per PAPER_CANARY_LIVE_POLICY.md.",
+      "paper_canary_mode": "paper_only",
+      "plan_id": "plan-pack-b-paper-001",
+      "runtime_id": "runtime-pack-b-paper-001",
+      "status": "bound"
+    },
+    "runtime-pack-c-paper-001": {
+      "artifact_id": "artifact-pack-b-001",
+      "artifact_version": "v1.0.0",
+      "binding_id": "runtime-pack-c-paper-001",
+      "capital_pool_id": "pool-pack-a-ops",
+      "deployment_stage": "paper",
+      "fail_closed": true,
+      "id": "runtime-pack-c-paper-001",
+      "live_write_enabled": false,
+      "paper_canary_mode": "paper_only",
+      "plan_id": "plan-pack-c-paper-001",
+      "runtime_id": "runtime-pack-c-paper-001",
+      "status": "degraded",
+      "updated_at": "2026-05-13T03:41:00Z"
+    },
+    "runtime-tw-equity-paper": {
+      "artifact_id": "artifact-tw-equity-session-v1",
+      "artifact_version": "v1.0.0",
+      "binding_id": "runtime-tw-equity-paper",
+      "capital_pool_id": "pool-tw-equity-paper",
+      "deployment_mode": "paper",
+      "deployment_stage": "paper",
+      "effective_at": "2026-06-07T12:00:00Z",
+      "id": "runtime-tw-equity-paper",
+      "metadata": {
+        "artifact_loader": "approved_artifact_loader",
+        "broker_adapter": "shioaji-sandbox",
+        "fail_closed": true,
+        "live_write_enabled": false,
+        "market_scope": [
+          "TW"
+        ],
+        "runtime_kind": "lean"
+      },
+      "persona_capital_binding_id": "binding-tw-equity-paper",
+      "plan_id": "plan-tw-equity-paper",
+      "runtime_binding_id": "runtime-tw-equity-paper",
+      "runtime_id": "runtime-tw-equity-paper",
+      "status": "active"
+    },
+    "runtime-us-equity-paper": {
+      "artifact_id": "artifact-us-equity-momentum-v1",
+      "artifact_version": "v1.0.0",
+      "binding_id": "runtime-us-equity-paper",
+      "capital_pool_id": "pool-us-equity-paper",
+      "deployment_mode": "paper",
+      "deployment_stage": "paper",
+      "effective_at": "2026-06-07T12:00:00Z",
+      "id": "runtime-us-equity-paper",
+      "metadata": {
+        "artifact_loader": "approved_artifact_loader",
+        "broker_adapter": "ibkr-paper",
+        "fail_closed": true,
+        "live_write_enabled": false,
+        "market_scope": [
+          "US"
+        ],
+        "runtime_kind": "lean"
+      },
+      "persona_capital_binding_id": "binding-us-equity-paper",
+      "plan_id": "plan-us-equity-paper",
+      "runtime_binding_id": "runtime-us-equity-paper",
+      "runtime_id": "runtime-us-equity-paper",
+      "status": "active"
+    }
+  },
+  "sessions": {
+    "agora-crypto-session": {
+      "capability_snapshot_id": "cap-crypto",
+      "capital_pool_id": "pool-crypto-paper",
+      "deployment_stage": "paper",
+      "id": "agora-crypto-session",
+      "last_heartbeat_at": "2026-06-07T13:00:00Z",
+      "persona_id": "persona-crypto",
+      "pool_scope": "pool-crypto-paper",
+      "request_id": "req-agora-crypto-session",
+      "runtime_binding_id": "runtime-crypto-paper",
+      "session_id": "agora-crypto-session",
+      "session_type": "interactive",
+      "started_at": "2026-06-07T12:05:00Z",
+      "status": "active",
+      "tools_enabled": [
+        "market_data_read",
+        "strategy_research",
+        "telemetry_query"
+      ],
+      "trace_id": "trace-agora-crypto-session"
+    },
+    "agora-tw-equity-session": {
+      "capability_snapshot_id": "cap-tw-equity",
+      "capital_pool_id": "pool-tw-equity-paper",
+      "deployment_stage": "paper",
+      "id": "agora-tw-equity-session",
+      "last_heartbeat_at": "2026-06-07T13:00:00Z",
+      "persona_id": "persona-tw-equity",
+      "pool_scope": "pool-tw-equity-paper",
+      "request_id": "req-agora-tw-equity-session",
+      "runtime_binding_id": "runtime-tw-equity-paper",
+      "session_id": "agora-tw-equity-session",
+      "session_type": "interactive",
+      "started_at": "2026-06-07T12:05:00Z",
+      "status": "active",
+      "tools_enabled": [
+        "market_data_read",
+        "strategy_research",
+        "telemetry_query"
+      ],
+      "trace_id": "trace-agora-tw-equity-session"
+    },
+    "agora-us-equity-session": {
+      "capability_snapshot_id": "cap-us-equity",
+      "capital_pool_id": "pool-us-equity-paper",
+      "deployment_stage": "paper",
+      "id": "agora-us-equity-session",
+      "last_heartbeat_at": "2026-06-07T13:00:00Z",
+      "persona_id": "persona-us-equity",
+      "pool_scope": "pool-us-equity-paper",
+      "request_id": "req-agora-us-equity-session",
+      "runtime_binding_id": "runtime-us-equity-paper",
+      "session_id": "agora-us-equity-session",
+      "session_type": "interactive",
+      "started_at": "2026-06-07T12:05:00Z",
+      "status": "active",
+      "tools_enabled": [
+        "market_data_read",
+        "strategy_research",
+        "telemetry_query"
+      ],
+      "trace_id": "trace-agora-us-equity-session"
+    },
+    "sess-001": {
+      "capability_snapshot_id": "cap-001",
+      "capital_pool_id": "pool-main",
+      "deployment_stage": "paper",
+      "id": "sess-001",
+      "last_heartbeat_at": "2026-04-11T11:55:00Z",
+      "persona_id": "persona-alpha",
+      "pool_scope": "pool-main",
+      "request_id": "req-sess-001",
+      "runtime_binding_id": "runtime-042",
+      "session_id": "sess-001",
+      "session_type": "interactive",
+      "started_at": "2026-04-11T08:00:00Z",
+      "status": "active",
+      "tools_enabled": [
+        "signal_read",
+        "artifact_load",
+        "telemetry_query"
+      ],
+      "trace_id": "trace-sess-001"
+    },
+    "sess-002": {
+      "capability_snapshot_id": "cap-001",
+      "capital_pool_id": "pool-main",
+      "deployment_stage": "paper",
+      "id": "sess-002",
+      "last_heartbeat_at": "2026-04-10T18:00:00Z",
+      "persona_id": "persona-alpha",
+      "pool_scope": "pool-main",
+      "request_id": "req-sess-002",
+      "runtime_binding_id": "runtime-042",
+      "session_id": "sess-002",
+      "session_type": "interactive",
+      "started_at": "2026-04-10T14:00:00Z",
+      "status": "idle",
+      "tools_enabled": [
+        "signal_read",
+        "artifact_load"
+      ],
+      "trace_id": "trace-sess-002"
+    },
+    "session-pack-a-momentum-activity": {
+      "ended_at": "2026-05-13T00:22:30Z",
+      "id": "session-pack-a-momentum-activity",
+      "persona_id": "persona-pack-a-momentum",
+      "session_id": "session-pack-a-momentum-activity",
+      "session_type": "operator_activity",
+      "started_at": "2026-05-13T00:21:30Z",
+      "status": "completed",
+      "summary": "Fixture activity row for persona detail smoke; no runtime side effect.",
+      "topic": "Pack A persona routed strategy activity"
+    }
+  },
+  "teaching_sessions": {
+    "eval-pack-a-momentum-001": {
+      "ended_at": "2026-05-13T00:27:00Z",
+      "evaluation": {
+        "notes": "Non-empty evaluation skeleton for BFF persona detail smoke.",
+        "passed": true,
+        "score": 0.82,
+        "suite_id": "eval-suite-pack-a"
+      },
+      "objective": "Fixture evaluation skeleton for Pack A persona routing behavior.",
+      "persona_id": "persona-pack-a-momentum",
+      "session_id": "eval-pack-a-momentum-001",
+      "started_at": "2026-05-13T00:22:00Z",
+      "status": "completed"
+    },
+    "trn-20260418-003": {
+      "actor_context": {
+        "persona_display_name": "Alpha Persona",
+        "persona_role_context": "systematic momentum coach"
+      },
+      "context_refs": [],
+      "ended_at": "2026-04-18T08:42:00Z",
+      "events": [
+        {
+          "actor": "operator",
+          "emitted_at": "2026-04-18T08:00:12Z",
+          "event_id": "tevt-20260418-001",
+          "message_body": "Focus on drawdown containment and reduce sensitivity to short-lived regime flips.",
+          "outcome_signal": null,
+          "sequence_number": 1,
+          "session_id": "trn-20260418-003"
+        },
+        {
+          "actor": "persona",
+          "emitted_at": "2026-04-18T08:42:00Z",
+          "event_id": "tevt-20260418-002",
+          "message_body": "I can widen confirmation requirements before reversing the posture in containment mode.",
+          "outcome_signal": "teaching-complete",
+          "sequence_number": 2,
+          "session_id": "trn-20260418-003"
+        }
+      ],
+      "id": "trn-20260418-003",
+      "objective": "Reduce regime-switch whipsaw sensitivity in drawdown containment mode.",
+      "opened_by": "operator-risk-desk",
+      "outcomes": [
+        "teaching-complete"
+      ],
+      "persona_id": "persona-alpha",
+      "session_id": "trn-20260418-003",
+      "session_type": "trainer",
+      "started_at": "2026-04-18T08:00:00Z",
+      "status": "completed",
+      "topic": "drawdown containment coaching"
+    },
+    "trn-20260419-001": {
+      "actor_context": {
+        "persona_display_name": "Alpha Persona",
+        "persona_role_context": "systematic momentum coach"
+      },
+      "context_refs": [
+        {
+          "id": "rt-20260419-007",
+          "type": "research_ticket"
+        },
+        {
+          "id": "mem-8f3c6d45-7d61-4c61-a0c6-3c5e8d1740f1",
+          "type": "memory_entry"
+        }
+      ],
+      "ended_at": null,
+      "events": [
+        {
+          "actor": "operator",
+          "emitted_at": "2026-04-19T19:30:11Z",
+          "event_id": "tevt-20260419-001",
+          "message_body": "Focus on macro surprise windows where the current policy reverses within the first three bars after a data release.",
+          "outcome_signal": null,
+          "sequence_number": 1,
+          "session_id": "trn-20260419-001"
+        },
+        {
+          "actor": "persona",
+          "emitted_at": "2026-04-19T19:31:04Z",
+          "event_id": "tevt-20260419-002",
+          "message_body": "I am overweighting immediate reversal probability after event spikes. I can hold the initial directional bias longer when volatility expands with breadth confirmation.",
+          "outcome_signal": "acknowledged-adjustment",
+          "sequence_number": 2,
+          "session_id": "trn-20260419-001"
+        },
+        {
+          "actor": "operator",
+          "emitted_at": "2026-04-19T19:37:40Z",
+          "event_id": "tevt-20260419-003",
+          "message_body": "Constrain reversal sensitivity during the first five minutes unless the spread regime also deteriorates.",
+          "outcome_signal": "candidate-adjustment-ready",
+          "sequence_number": 3,
+          "session_id": "trn-20260419-001"
+        }
+      ],
+      "id": "trn-20260419-001",
+      "objective": "Tighten event-window response and reduce premature signal reversals during macro surprise sessions.",
+      "opened_by": "operator-hedging-desk",
+      "outcomes": [
+        "candidate-adjustment-ready"
+      ],
+      "persona_id": "persona-alpha",
+      "session_id": "trn-20260419-001",
+      "session_type": "trainer",
+      "started_at": "2026-04-19T19:30:00Z",
+      "status": "active",
+      "topic": "macro surprise window coaching"
+    },
+    "trn-crypto-20260607": {
+      "actor_context": {
+        "persona_display_name": "Crypto Persona",
+        "persona_role_context": "crypto_24x7_alpha_research_and_paper_execution"
+      },
+      "context_refs": [
+        {
+          "id": "persona-crypto",
+          "type": "persona"
+        }
+      ],
+      "ended_at": "2026-06-07T10:35:00Z",
+      "id": "trn-crypto-20260607",
+      "objective": "Align Crypto Persona to trader questions while preserving governance boundaries.",
+      "opened_by": "operator-desk",
+      "outcomes": [
+        "training-example-created",
+        "risk-boundary-preserved"
+      ],
+      "persona_id": "persona-crypto",
+      "session_id": "trn-crypto-20260607",
+      "session_type": "trainer",
+      "started_at": "2026-06-07T10:00:00Z",
+      "status": "completed",
+      "topic": "CRYPTO trader preference alignment"
+    },
+    "trn-tw-equity-20260607": {
+      "actor_context": {
+        "persona_display_name": "Taiwan Equity Persona",
+        "persona_role_context": "taiwan_equity_session_research_and_paper_execution"
+      },
+      "context_refs": [
+        {
+          "id": "persona-tw-equity",
+          "type": "persona"
+        }
+      ],
+      "ended_at": "2026-06-07T10:35:00Z",
+      "id": "trn-tw-equity-20260607",
+      "objective": "Align Taiwan Equity Persona to trader questions while preserving governance boundaries.",
+      "opened_by": "operator-desk",
+      "outcomes": [
+        "training-example-created",
+        "risk-boundary-preserved"
+      ],
+      "persona_id": "persona-tw-equity",
+      "session_id": "trn-tw-equity-20260607",
+      "session_type": "trainer",
+      "started_at": "2026-06-07T10:00:00Z",
+      "status": "completed",
+      "topic": "TW trader preference alignment"
+    },
+    "trn-us-equity-20260607": {
+      "actor_context": {
+        "persona_display_name": "US Equity Persona",
+        "persona_role_context": "us_equity_alpha_research_and_paper_execution"
+      },
+      "context_refs": [
+        {
+          "id": "persona-us-equity",
+          "type": "persona"
+        }
+      ],
+      "ended_at": "2026-06-07T10:35:00Z",
+      "id": "trn-us-equity-20260607",
+      "objective": "Align US Equity Persona to trader questions while preserving governance boundaries.",
+      "opened_by": "operator-desk",
+      "outcomes": [
+        "training-example-created",
+        "risk-boundary-preserved"
+      ],
+      "persona_id": "persona-us-equity",
+      "session_id": "trn-us-equity-20260607",
+      "session_type": "trainer",
+      "started_at": "2026-06-07T10:00:00Z",
+      "status": "completed",
+      "topic": "US trader preference alignment"
+    }
+  },
+  "telemetry_summaries": {
+    "runtime-042": {
+      "avg_slippage_bps": 3.2,
+      "collected_at": "2026-04-10T15:00:00Z",
+      "drawdown": 0.125,
+      "fill_rate": 0.94,
+      "pnl": -0.12,
+      "runtime_id": "runtime-042",
+      "sharpe_ratio": -0.8,
+      "total_trades": 47,
+      "window": "1h"
+    },
+    "runtime-crypto-paper": {
+      "avg_slippage_bps": 4.8,
+      "collected_at": "2026-06-07T13:00:00Z",
+      "drawdown": 0.044,
+      "fill_rate": 0.974,
+      "fill_ratio": 0.974,
+      "order_reject_rate": 0.002,
+      "pnl": 48000.0,
+      "runtime_id": "runtime-crypto-paper",
+      "sharpe_ratio": 1.76,
+      "sortino_ratio": 2.31,
+      "total_trades": 38,
+      "window": "1d"
+    },
+    "runtime-pack-c-paper-001": {
+      "avg_slippage_bps": 1.2,
+      "collected_at": "2026-05-13T03:41:00Z",
+      "drawdown": 0.021,
+      "fill_rate": 1.0,
+      "pnl": 0.0,
+      "runtime_id": "runtime-pack-c-paper-001",
+      "sharpe_ratio": 0.1,
+      "total_trades": 0,
+      "window": "5m"
+    },
+    "runtime-tw-equity-paper": {
+      "avg_slippage_bps": 5.9,
+      "collected_at": "2026-06-07T13:00:00Z",
+      "drawdown": 0.033,
+      "fill_rate": 0.951,
+      "fill_ratio": 0.951,
+      "order_reject_rate": 0.004,
+      "pnl": 426000.0,
+      "runtime_id": "runtime-tw-equity-paper",
+      "sharpe_ratio": 1.08,
+      "sortino_ratio": 1.62,
+      "total_trades": 38,
+      "window": "1d"
+    },
+    "runtime-us-equity-paper": {
+      "avg_slippage_bps": 2.7,
+      "collected_at": "2026-06-07T13:00:00Z",
+      "drawdown": 0.021,
+      "fill_rate": 0.982,
+      "fill_ratio": 0.982,
+      "order_reject_rate": 0.001,
+      "pnl": 24560.0,
+      "runtime_id": "runtime-us-equity-paper",
+      "sharpe_ratio": 1.41,
+      "sortino_ratio": 2.03,
+      "total_trades": 38,
+      "window": "1d"
+    }
+  },
+  "v5_interventions": {
+    "intv-pack-b-001": {
+      "correlation_id": "corr-pack-b-sentinel-001",
+      "description": "HIQ Sentinel detected anomalous loop latency spike on Pack B paper runtime; governed remediation flow initiated.",
+      "id": "intv-pack-b-001",
+      "intervention_id": "intv-pack-b-001",
+      "kind": "hiq_sentinel",
+      "remediated_at": null,
+      "remediation_action": null,
+      "remediation_skeleton": {
+        "approval_decision_required": true,
+        "audit_trail_required": true,
+        "governance_policy_ref": "KILL_SWITCH_AND_SAFE_MODE_EXECUTION_POLICY.md \u00a73.2",
+        "remediation_actions_available": [
+          "pause_runtime",
+          "rollback_to_previous",
+          "escalate_to_risk_owner"
+        ],
+        "required_approvers": 2,
+        "status_note": "Awaiting two-man check before any remediation action is applied.",
+        "two_man_rule_enforced": true
+      },
+      "status": "pending",
+      "target_id": "runtime-pack-b-paper-001",
+      "target_type": "Runtime",
+      "triggered_at": "2026-05-13T02:00:00Z",
+      "triggered_by": "sentinel",
+      "two_man_signature_id": null
+    }
+  }
+}

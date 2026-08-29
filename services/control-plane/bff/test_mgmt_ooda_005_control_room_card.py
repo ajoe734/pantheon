@@ -22,7 +22,7 @@ BFF_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(BFF_DIR))
 
 import main as bff_main  # noqa: E402
-from read_store import ReadSurfaceStore  # noqa: E402
+from ports import create_in_memory_read_surface_ports  # noqa: E402
 
 
 HEADERS = {"Authorization": "Bearer op-mgmt-ooda005:operator,reviewer,admin:mfa"}
@@ -112,12 +112,15 @@ def _cr_client(
                 encoding="utf-8",
             )
             monkeypatch.setenv("PANTHEON_BFF_OODA_PACKET_STORE", str(store_path))
+            store = create_in_memory_read_surface_ports(
+                ooda_management_kwargs={"ooda_packets": packets}
+            )
+            store.dataset_source = lambda ds: "service_store" if ds == "ooda_packets" else "typed_store"
         else:
             monkeypatch.delenv("PANTHEON_BFF_OODA_PACKET_STORE", raising=False)
-        bff_main.read_store = ReadSurfaceStore(
-            os.path.join(td, "read_surfaces.json"),
-            allow_local_snapshot_fallback=False,
-        )
+            store = create_in_memory_read_surface_ports()
+            store.dataset_source = lambda ds: "missing" if ds == "ooda_packets" else "typed_store"
+        bff_main.read_store = store
         try:
             yield TestClient(bff_main.app, raise_server_exceptions=False)
         finally:

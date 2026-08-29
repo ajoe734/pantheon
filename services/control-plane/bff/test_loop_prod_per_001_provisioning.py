@@ -8,6 +8,7 @@ import os
 import sys
 import tempfile
 from datetime import datetime, timezone
+from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
@@ -15,7 +16,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 
 import main as bff_main
 from persona_provisioning import MemoryPersonaProvisioningStore
-from read_store import ReadSurfaceStore
+from ports import create_read_surface_ports
 from test_persona_provisioning_coordinator import FakeOwnerTransport, _schedule_receipt
 
 OPERATOR_TOKEN = "Bearer op-2:operator"
@@ -23,6 +24,133 @@ HEADERS = {
     "Authorization": OPERATOR_TOKEN,
     "Idempotency-Key": "test-provisioning-idempotency",
 }
+
+
+def _provisioning_read_surface_double():
+    """Return typed read ports with the legacy write seams this route exercises.
+
+    Persona provisioning still coordinates writes through ``main.read_store``.
+    The production write-owner migration is outside this test-retirement task,
+    so the fixture keeps those few write seams local instead of constructing the
+    retired aggregate read-store fixture.
+    """
+    store = create_read_surface_ports()
+    personas: dict[str, dict[str, Any]] = {}
+    runtime_bindings: dict[str, dict[str, Any]] = {}
+
+    def clone(value: Any) -> Any:
+        return json.loads(json.dumps(value))
+
+    def create_persona(
+        *,
+        persona_id: str,
+        name: str,
+        actor_id: str,
+        created_at: str | None = None,
+        archetype: str = "generalist",
+        lifecycle_state: str = "draft",
+        risk_level: str = "low",
+        mandate: str | None = None,
+        strategy_family: str | None = None,
+        traits: dict[str, Any] | None = None,
+        metadata: dict[str, Any] | None = None,
+        required_data_sources: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
+        timestamp = created_at or bff_main.utc_now()
+        clean_metadata = clone(metadata or {})
+        clean_metadata.update(
+            {"owner": actor_id, "archetype": archetype, "risk_level": risk_level}
+        )
+        if traits:
+            clean_metadata["traits"] = clone(traits)
+        record = {
+            "id": persona_id,
+            "persona_id": persona_id,
+            "name": name,
+            "mandate": mandate or archetype,
+            "strategy_family": strategy_family or archetype,
+            "lifecycle_state": lifecycle_state,
+            "status": lifecycle_state,
+            "created_at": timestamp,
+            "updated_at": timestamp,
+            "created_by": actor_id,
+            "required_data_sources": clone(required_data_sources or []),
+            "metadata": clean_metadata,
+        }
+        personas[persona_id] = record
+        return clone(record)
+
+    def update_persona(
+        persona_id: str,
+        *,
+        name: str | None = None,
+        actor_id: str | None = None,
+        updated_at: str | None = None,
+        archetype: str | None = None,
+        lifecycle_state: str | None = None,
+        risk_level: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any] | None:
+        existing = personas.get(persona_id)
+        if existing is None:
+            return None
+        record = clone(existing)
+        if name is not None:
+            record["name"] = name
+        if lifecycle_state is not None:
+            record["lifecycle_state"] = lifecycle_state
+            record["status"] = lifecycle_state
+        if archetype is not None:
+            record["mandate"] = archetype
+            record["strategy_family"] = archetype
+        clean_metadata = dict(record.get("metadata") or {})
+        clean_metadata.update(clone(metadata or {}))
+        if actor_id is not None:
+            clean_metadata["owner"] = actor_id
+        if archetype is not None:
+            clean_metadata["archetype"] = archetype
+        if risk_level is not None:
+            clean_metadata["risk_level"] = risk_level
+        record["metadata"] = clean_metadata
+        record["updated_at"] = updated_at or bff_main.utc_now()
+        personas[persona_id] = record
+        return clone(record)
+
+    def create_runtime_binding(**payload: Any) -> dict[str, Any]:
+        binding_id = str(payload["binding_id"])
+        runtime_id = str(payload["runtime_id"])
+        params = clone(payload.get("params") or {})
+        record = {
+            "id": runtime_id,
+            "runtime_id": runtime_id,
+            "binding_id": binding_id,
+            "runtime_binding_id": binding_id,
+            "persona_capital_binding_id": binding_id,
+            "persona_id": payload.get("persona_id"),
+            "deployment_plan_id": payload.get("deployment_plan_id"),
+            "plan_id": payload.get("deployment_plan_id"),
+            "deployment_mode": payload.get("runtime_kind") or "paper",
+            "deployment_stage": payload.get("runtime_kind") or "paper",
+            "state": payload.get("state") or "running",
+            "status": payload.get("state") or "running",
+            "capital_pool_id": params.get("capital_pool_id"),
+            "params": params,
+        }
+        runtime_bindings[binding_id] = record
+        return clone(record)
+
+    store.create_persona = create_persona
+    store.update_persona = update_persona
+    store.get_persona = lambda persona_id: clone(personas.get(str(persona_id))) if persona_id in personas else None
+    store.list_personas = lambda **_kwargs: clone(list(personas.values()))
+    store.create_runtime_binding = create_runtime_binding
+    store.get_runtime_binding = lambda binding_id: clone(runtime_bindings.get(str(binding_id))) if binding_id in runtime_bindings else None
+    store.list_runtime_bindings = lambda **_kwargs: clone(list(runtime_bindings.values()))
+    store._ensure_local_overlay_records = lambda dataset: (
+        runtime_bindings if dataset == "runtime_bindings" else personas if dataset == "personas" else {}
+    )
+    store.list_authoritative_paper_runtime_monitoring_sessions = lambda: []
+    return store
 
 
 @pytest.fixture(autouse=True)
@@ -42,6 +170,8 @@ def mock_external_services(monkeypatch):
     )
     # Mock create_capital_binding
     monkeypatch.setattr(bff_main, "create_capital_binding", lambda payload: {"status": "created"})
+    from services.persona.runtime_profile import build_persona_runtime_profile
+    monkeypatch.setattr(bff_main, "build_persona_runtime_profile", build_persona_runtime_profile, raising=False)
     
     # Mock _post_json to do nothing and return empty dict
     monkeypatch.setattr(bff_main, "_post_json", lambda *args, **kwargs: {})
@@ -94,10 +224,7 @@ def mock_external_services(monkeypatch):
 
 
 def _fresh_client(td: str) -> TestClient:
-    bff_main.read_store = ReadSurfaceStore(
-        os.path.join(td, "read_surfaces.json"),
-        allow_local_snapshot_fallback=True,
-    )
+    bff_main.read_store = _provisioning_read_surface_double()
     bff_main.command_store = bff_main.CommandStore(os.path.join(td, "commands.jsonl"))
     bff_main._STRATEGY_PERSONA_BFF_IDEMPOTENCY.clear()
     bff_main._STRATEGY_BFF_OVERLAY.clear()

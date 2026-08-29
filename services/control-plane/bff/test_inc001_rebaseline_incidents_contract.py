@@ -13,7 +13,7 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, os.path.dirname(__file__))
 
 import main as bff_main  # noqa: E402
-from read_store import ReadSurfaceStore  # noqa: E402
+from ports import create_read_surface_ports  # noqa: E402
 
 
 HEADERS = {"Authorization": "Bearer inc001-operator:operator"}
@@ -59,10 +59,19 @@ def _isolated_incident_bff(
             )
             os.environ["INCIDENTS_DATA_DIR"] = str(incident_dir)
 
-        bff_main.read_store = ReadSurfaceStore(
-            str(root / "read_surfaces.json"),
-            allow_local_snapshot_fallback=False,
-        )
+        from ports import create_in_memory_read_surface_ports
+
+        if incidents is not None:
+            store = create_in_memory_read_surface_ports(
+                lifecycle_telemetry_governance_kwargs={
+                    "incidents": {i["incident_id"]: i for i in incidents},
+                }
+            )
+            store.dataset_source = lambda ds: "service_store" if ds == "incidents" else "typed_store"
+        else:
+            store = create_in_memory_read_surface_ports()
+            store.dataset_source = lambda ds: "missing" if ds == "incidents" else "typed_store"
+        bff_main.read_store = store
         bff_main._GOV_BFF_INCIDENT_OVERLAY.clear()
         bff_main._GOV_BFF_IDEMPOTENCY.clear()
         try:

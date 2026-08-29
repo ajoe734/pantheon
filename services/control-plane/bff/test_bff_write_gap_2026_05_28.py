@@ -32,7 +32,6 @@ os.environ.setdefault("PANTHEON_BFF_AUTH_STUB", "true")
 import main as bff_main  # noqa: E402
 from command_queue import CommandStore  # noqa: E402
 from ports import ReadSurfacePorts  # noqa: E402
-from read_store import _default_read_data  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -65,6 +64,54 @@ _APPROVER_TOKEN = "Bearer test-approver:approver"
 _VIEWER_TOKEN = "Bearer test-viewer:reviewer"
 
 
+def _local_write_gap_read_data() -> dict[str, Any]:
+    return {
+        "personas": {
+            "persona-alpha": {
+                "id": "persona-alpha",
+                "persona_id": "persona-alpha",
+                "name": "Alpha Persona",
+                "lifecycle_state": "active",
+                "status": "active",
+                "mandate": "alpha_trading",
+                "strategy_family": "momentum",
+                "created_at": "2026-05-01T00:00:00Z",
+                "updated_at": "2026-05-01T00:00:00Z",
+                "metadata": {
+                    "archetype": "momentum",
+                    "risk_level": "low",
+                },
+            }
+        },
+        "strategies": {},
+        "persona_league": [],
+        "registry_entries": {},
+        "runtime_bindings": {},
+        "deployment_plans": {},
+        "governance_review_queue": {},
+        "approvals": {},
+        "capital_pools": {},
+        "bindings": {
+            "binding-alpha": {
+                "id": "binding-alpha",
+                "binding_id": "binding-alpha",
+                "persona_id": "persona-alpha",
+                "capital_pool_id": "pool-main",
+                "status": "active",
+            }
+        },
+        "sessions": {},
+        "teaching_sessions": {},
+        "allowed_actions": {},
+        "incidents": {},
+        "evolution_decisions": {},
+        "telemetry_summaries": {},
+        "agora_signals": {},
+        "agora_audit_events": {},
+        "agora_signal_feedback": {},
+    }
+
+
 @pytest.fixture(autouse=True)
 def _ensure_auth_stub(monkeypatch):
     monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "true")
@@ -78,7 +125,7 @@ class WriteGapTestReadPorts(ReadSurfacePorts):
         allow_local_snapshot_fallback: bool = True,
     ) -> None:
         super().__init__()
-        self._data = seed_data if seed_data is not None else _default_read_data()
+        self._data = seed_data if seed_data is not None else _local_write_gap_read_data()
         self.allow_local_snapshot_fallback = allow_local_snapshot_fallback
         self._ranking_snapshots: dict[str, Any] = {}
 

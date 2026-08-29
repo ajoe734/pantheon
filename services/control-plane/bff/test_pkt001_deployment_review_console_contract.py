@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, os.path.dirname(__file__))
 
 import main as bff_main
-from read_store import ReadSurfaceStore
+from ports import create_in_memory_read_surface_ports
 
 
 OPERATOR_TOKEN = "Bearer op-2:operator"
@@ -18,10 +18,7 @@ OPERATOR_TOKEN = "Bearer op-2:operator"
 def test_pkt001_deployment_review_console_list_route_matches_contract() -> None:
     with tempfile.TemporaryDirectory() as td:
         original_store = bff_main.read_store
-        store = ReadSurfaceStore(
-            os.path.join(td, "read_surfaces.json"),
-            allow_local_snapshot_fallback=False,
-        )
+        store = create_in_memory_read_surface_ports()
         plans = [
             {
                 "id": "plan-approved-001",
@@ -135,10 +132,9 @@ def test_pkt001_deployment_review_console_list_route_matches_contract() -> None:
 def test_pkt001_deployment_review_console_list_route_honest_mode_returns_unavailable_surfaces() -> None:
     with tempfile.TemporaryDirectory() as td:
         original_store = bff_main.read_store
-        bff_main.read_store = ReadSurfaceStore(
-            os.path.join(td, "read_surfaces.json"),
-            allow_local_snapshot_fallback=False,
-        )
+        store = create_in_memory_read_surface_ports()
+        store.dataset_source = lambda dataset: "missing"
+        bff_main.read_store = store
         client = TestClient(bff_main.app)
 
         try:
@@ -160,10 +156,19 @@ def test_pkt001_deployment_review_console_list_route_honest_mode_returns_unavail
 def test_pkt001_deployment_review_detail_includes_full_allowed_actions_shape() -> None:
     with tempfile.TemporaryDirectory() as td:
         original_store = bff_main.read_store
-        bff_main.read_store = ReadSurfaceStore(
-            os.path.join(td, "read_surfaces.json"),
-            allow_local_snapshot_fallback=True,
-        )
+        store = create_in_memory_read_surface_ports()
+        store.get_deployment_plan = lambda plan_id: {
+            "plan_id": "plan-F-042",
+            "capital_pool_id": "pool-main",
+            "approval_decision_id": "approval-042",
+        } if plan_id == "plan-F-042" else None
+        store.get_allowed_actions = lambda plan_id: {
+            "canApprove": False,
+            "canReject": False,
+            "canPromoteToPaper": True,
+        } if plan_id == "plan-F-042" else {}
+        store.dataset_source = lambda dataset: "local_snapshot"
+        bff_main.read_store = store
         client = TestClient(bff_main.app)
 
         try:

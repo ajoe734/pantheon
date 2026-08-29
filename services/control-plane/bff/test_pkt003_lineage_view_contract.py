@@ -2,118 +2,115 @@
 """HTTP contract tests for PKT-003 Lineage View BFF surfaces."""
 from __future__ import annotations
 
-import json
 import os
 import sys
-import tempfile
 from contextlib import contextmanager
-from pathlib import Path
 
 from fastapi.testclient import TestClient
 
 sys.path.insert(0, os.path.dirname(__file__))
 
 import main as bff_main
-from read_store import ReadSurfaceStore
-
+from ports import create_in_memory_read_surface_ports
 
 AUTH = "Bearer test-operator:operator,admin"
 
 
 @contextmanager
 def _seeded_client():
-    with tempfile.TemporaryDirectory() as td:
-        original_store = bff_main.read_store
-        bff_main.read_store = ReadSurfaceStore(
-            os.path.join(td, "read_surfaces.json"),
-            allow_local_snapshot_fallback=True,
-        )
-        client = TestClient(bff_main.app)
-        try:
-            yield client
-        finally:
-            bff_main.read_store = original_store
+    original_store = bff_main.read_store
+    bff_main.read_store = create_in_memory_read_surface_ports(
+        lifecycle_telemetry_governance_kwargs={
+            "lineage_edges": [
+                {
+                    "id": "ln-edge-001",
+                    "from_artifact_id": "artifact-041",
+                    "to_artifact_id": "artifact-042",
+                    "relationship": "derived_from",
+                    "created_at": "2026-04-09T00:00:00Z",
+                },
+                {
+                    "id": "ln-edge-002",
+                    "from_artifact_id": "artifact-042",
+                    "to_artifact_id": "artifact-043",
+                    "relationship": "promoted_to",
+                    "created_at": "2026-04-10T00:00:00Z",
+                },
+            ],
+            "artifact_registry_entries": [
+                {
+                    "artifact_id": "artifact-041",
+                    "artifact_version": "v2.0.0",
+                    "artifact_type": "strategy",
+                },
+                {
+                    "artifact_id": "artifact-042",
+                    "artifact_version": "v2.1.0",
+                    "artifact_type": "strategy",
+                },
+                {
+                    "artifact_id": "artifact-043",
+                    "artifact_version": "v2.2.0",
+                    "artifact_type": "strategy",
+                },
+            ],
+        }
+    )
+    client = TestClient(bff_main.app)
+    try:
+        yield client
+    finally:
+        bff_main.read_store = original_store
 
 
 @contextmanager
 def _registry_backed_client():
-    tracked_env = {
-        "PANTHEON_BFF_LINEAGE_EDGE_STORE": os.environ.get("PANTHEON_BFF_LINEAGE_EDGE_STORE"),
-        "PANTHEON_REGISTRY_DATA_DIR": os.environ.get("PANTHEON_REGISTRY_DATA_DIR"),
-    }
-    with tempfile.TemporaryDirectory() as td:
-        root = Path(td)
-        lineage_store = root / "lineage_edges.json"
-        registry_dir = root / "registry"
-        registry_dir.mkdir(parents=True, exist_ok=True)
-
-        lineage_store.write_text(
-            json.dumps(
-                [
-                    {
-                        "id": "ln-edge-101",
-                        "from_artifact_id": "artifact-alpha",
-                        "to_artifact_id": "artifact-beta",
-                        "relationship": "derived_from",
-                        "created_at": "2026-04-16T08:00:00Z",
-                    },
-                    {
-                        "id": "ln-edge-102",
-                        "from_artifact_id": "artifact-beta",
-                        "to_artifact_id": "artifact-gamma",
-                        "relationship": "promoted_to",
-                        "created_at": "2026-04-16T09:00:00Z",
-                    },
-                ],
-                indent=2,
-            ),
-            encoding="utf-8",
-        )
-        (registry_dir / "registry_entries.json").write_text(
-            json.dumps(
+    original_store = bff_main.read_store
+    bff_main.read_store = create_in_memory_read_surface_ports(
+        lifecycle_telemetry_governance_kwargs={
+            "lineage_edges": [
                 {
-                    "artifact-alpha": {
-                        "artifact_id": "artifact-alpha",
-                        "registry_id": "artifact-alpha",
-                        "artifact_type": "strategy_bundle",
-                        "version": "v1.0.0",
-                    },
-                    "artifact-beta": {
-                        "artifact_id": "artifact-beta",
-                        "registry_id": "artifact-beta",
-                        "artifact_type": "strategy_bundle",
-                        "version": "v1.1.0",
-                    },
-                    "artifact-gamma": {
-                        "artifact_id": "artifact-gamma",
-                        "registry_id": "artifact-gamma",
-                        "artifact_type": "strategy_bundle",
-                        "version": "v1.2.0",
-                    },
+                    "id": "ln-edge-101",
+                    "from_artifact_id": "artifact-alpha",
+                    "to_artifact_id": "artifact-beta",
+                    "relationship": "derived_from",
+                    "created_at": "2026-04-16T08:00:00Z",
                 },
-                indent=2,
-            ),
-            encoding="utf-8",
-        )
-
-        os.environ["PANTHEON_BFF_LINEAGE_EDGE_STORE"] = str(lineage_store)
-        os.environ["PANTHEON_REGISTRY_DATA_DIR"] = str(registry_dir)
-
-        original_store = bff_main.read_store
-        bff_main.read_store = ReadSurfaceStore(
-            os.path.join(td, "read_surfaces.json"),
-            allow_local_snapshot_fallback=False,
-        )
-        client = TestClient(bff_main.app)
-        try:
-            yield client
-        finally:
-            bff_main.read_store = original_store
-            for key, value in tracked_env.items():
-                if value is None:
-                    os.environ.pop(key, None)
-                else:
-                    os.environ[key] = value
+                {
+                    "id": "ln-edge-102",
+                    "from_artifact_id": "artifact-beta",
+                    "to_artifact_id": "artifact-gamma",
+                    "relationship": "promoted_to",
+                    "created_at": "2026-04-16T09:00:00Z",
+                },
+            ],
+            "artifact_registry_entries": [
+                {
+                    "artifact_id": "artifact-alpha",
+                    "registry_id": "artifact-alpha",
+                    "artifact_type": "strategy_bundle",
+                    "version": "v1.0.0",
+                },
+                {
+                    "artifact_id": "artifact-beta",
+                    "registry_id": "artifact-beta",
+                    "artifact_type": "strategy_bundle",
+                    "version": "v1.1.0",
+                },
+                {
+                    "artifact_id": "artifact-gamma",
+                    "registry_id": "artifact-gamma",
+                    "artifact_type": "strategy_bundle",
+                    "version": "v1.2.0",
+                },
+            ],
+        }
+    )
+    client = TestClient(bff_main.app)
+    try:
+        yield client
+    finally:
+        bff_main.read_store = original_store
 
 
 def test_lineage_list_contract():

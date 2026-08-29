@@ -12,7 +12,7 @@ from typing import Any
 import pytest
 
 import main as bff_main
-from read_store import ReadSurfaceStore
+from ports import ReadSurfacePorts, create_read_surface_ports
 
 
 PERSONA_ID = "persona-dynamic-alpha"
@@ -1180,24 +1180,16 @@ def test_stable_terminal_failure_reconciliation_does_not_write_churn(
 
 
 def test_authoritative_worker_read_never_enables_snapshot_fallback(tmp_path) -> None:
-    store = ReadSurfaceStore(
-        str(tmp_path / "read-surfaces.json"),
-        allow_local_snapshot_fallback=True,
+    calls: list[str] = []
+
+    class AuthoritativePaperSessionPort:
+        def list_paper_live_drift_reports(self) -> list[dict[str, Any]]:
+            calls.append("authoritative_sessions")
+            return []
+
+    store = create_read_surface_ports(
+        lifecycle_telemetry_governance=AuthoritativePaperSessionPort(),
     )
-    calls: list[bool] = []
-
-    class Canonical:
-        def list_records(
-            self,
-            dataset: str,
-            *,
-            include_snapshot_fallback: bool = True,
-        ) -> tuple[bool, list[dict[str, Any]]]:
-            assert dataset == "paper_runtime_monitoring_sessions"
-            calls.append(include_snapshot_fallback)
-            return False, [{"session_id": "snapshot-must-not-pass"}]
-
-    store._canonical = Canonical()  # type: ignore[attr-defined]
 
     assert store.list_authoritative_paper_runtime_monitoring_sessions() == []
-    assert calls == [False]
+    assert calls == ["authoritative_sessions"]
