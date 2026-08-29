@@ -1625,6 +1625,45 @@ class OrphanUnmergedWorktreeStalenessTests(unittest.TestCase):
     task branch's worktree -- it never deletes the branch or its commits, only
     the checkout, which git can recreate on demand."""
 
+    def test_missing_registered_lease_outside_current_base_is_removed(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            current_base = root / "current-worker-root"
+            current_base.mkdir()
+            missing_old_path = root / "old-worker-root" / "missing-task"
+            config = config_fixture(root)
+            config["worker_worktrees"] = {"root": str(current_base)}
+            config["worker_worktree_cleanup"] = {
+                "enabled": True,
+                "cleanup_inactive_leases": True,
+                "archive_dirty_worktrees": False,
+                "force_remove_archived_dirty": False,
+                "archive_root": str(root / "archive"),
+                "archive_max_file_bytes": 1024,
+                "max_removals_per_tick": 25,
+                "orphan_unmerged_max_age_days": 0,
+            }
+            state: dict[str, object] = {
+                "workers": {},
+                "worker_worktrees": {
+                    "leases": {
+                        "stale": {
+                            "path": str(missing_old_path),
+                            "repository_id": "pantheon",
+                        }
+                    }
+                },
+            }
+
+            changed = supervisor.cleanup_inactive_worker_worktrees(config, state)
+
+            self.assertTrue(changed)
+            self.assertEqual(state["worker_worktrees"]["leases"], {})
+            self.assertEqual(
+                state["worker_worktree_cleanup"]["last_run"]["missing_leases"],
+                1,
+            )
+
     @staticmethod
     def _git(cwd: Path, *args: str, env: dict[str, str] | None = None) -> str:
         proc = subprocess.run(

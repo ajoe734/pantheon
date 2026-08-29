@@ -17,6 +17,7 @@ if str(ORCHESTRATOR) not in sys.path:
 
 from common import canonical_task_state_lock_file
 from rewrite.task_state_store import (
+    HistoricalArchiveUnavailableError,
     TaskStateStoreError,
     audit_full_journal,
     load_snapshot,
@@ -48,6 +49,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="Offline-only: additionally hash the immutable legacy V1 archive.",
     )
+    parser.add_argument(
+        "--archive-path",
+        help=(
+            "Relocated immutable V1 archive to verify against the existing "
+            "anchor; valid only with --verify-archive."
+        ),
+    )
     return parser.parse_args(argv)
 
 
@@ -66,6 +74,14 @@ def emit(payload: dict[str, Any], *, as_json: bool) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
+    if args.archive_path and not args.verify_archive:
+        payload = {
+            "ok": False,
+            "error": "--archive-path requires --verify-archive",
+            "error_kind": "usage",
+        }
+        emit(payload, as_json=args.json)
+        return 3
     if not args.event_log:
         payload = {"ok": False, "error": "task-state event log path is not configured"}
         emit(payload, as_json=args.json)
@@ -95,9 +111,20 @@ def main(argv: list[str] | None = None) -> int:
             }
             report["ok"] = bool(report["ok"] and audit["state_sha256"] == snapshot["state_sha256"])
         if args.verify_archive:
-            archive = verify_archive_anchor(Path(args.event_log).expanduser())
+            archive = verify_archive_anchor(
+                Path(args.event_log).expanduser(),
+                archive_path=args.archive_path,
+            )
             report["archive_audit"] = archive
             report["ok"] = bool(report["ok"] and archive["ok"])
+    except HistoricalArchiveUnavailableError as exc:
+        payload = {
+            "ok": False,
+            "error": str(exc),
+            "error_kind": "historical_archive_unavailable",
+        }
+        emit(payload, as_json=args.json)
+        return 3
     except TaskStateStoreError as exc:
         payload = {"ok": False, "error": str(exc), "error_kind": "integrity"}
         emit(payload, as_json=args.json)
