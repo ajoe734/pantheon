@@ -47,6 +47,49 @@ def _record(*, source_id: str, event_time: str, close: float) -> dict[str, Any]:
     }
 
 
+def _twse_lny_calendar_evidence() -> dict[str, Any]:
+    """Checksummed TWSE 2026 LNY source payload used by the governed gate."""
+    return {
+        "market": "TW",
+        "venue": "TWSE",
+        "timezone": "Asia/Taipei",
+        "authority": "Taiwan Stock Exchange 115 年市場開休市日期",
+        "source_url": "https://www.twse.com.tw/holidaySchedule/holidaySchedule?response=json&queryYear=115",
+        "fetched_at": "2026-02-23T01:00:00Z",
+        "version": "twse-2026-lny-v1",
+        "checksum": "55b2e23b9bd30af666a99c98da2dbbfad568dcd655631b1c6347d12ee8381596",
+        "coverage_start": "2026-02-11",
+        "coverage_end": "2026-02-23",
+        "holidays": {
+            "2026-02-12": {"name": "市場無交易，僅辦理結算交割作業"},
+            "2026-02-13": {"name": "市場無交易，僅辦理結算交割作業"},
+            "2026-02-16": {"name": "農曆除夕及春節"},
+            "2026-02-17": {"name": "農曆除夕及春節"},
+            "2026-02-18": {"name": "農曆除夕及春節"},
+            "2026-02-19": {"name": "農曆除夕及春節"},
+            "2026-02-20": {"name": "農曆除夕及春節"},
+        },
+        "trading_days": ["2026-02-11", "2026-02-23"],
+    }
+
+
+def _tw_official_record(*, source_id: str, event_time: str, close: float, calendar_evidence: Any) -> Any:
+    return SimpleNamespace(
+        source_id=source_id,
+        connector_id="tw-twse-tpex-official-market",
+        content_ref=f"tw-official://tw_price_daily/TWSE/2330/{event_time}/{source_id}",
+        metadata={
+            "normalized_row": {
+                "symbol_canonical": "2330.TWSE",
+                "trade_date": event_time,
+                "close": close,
+                "calendar_evidence": calendar_evidence,
+            }
+        },
+        is_rejected=False,
+    )
+
+
 def _ingest_prices(client: TestClient) -> None:
     configured = client.post(
         "/api/source-ingest/connectors",
@@ -128,6 +171,87 @@ def test_snapshot_read_performs_no_provider_egress_or_scheduler_work(
 
     assert response.status_code == 200, response.text
     assert response.json()["closes"][-1] == 223.0
+
+
+def test_source_snapshot_persists_and_publishes_governed_calendar_evidence(
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    """The Source-owned API, not a consumer fixture, carries holiday proof."""
+    module = _load_source_main(monkeypatch, tmp_path)
+    evidence = _twse_lny_calendar_evidence()
+    updated = module.latest_market_snapshot_store.append_normalized_records(
+        [
+            _tw_official_record(
+                source_id="tw-official:tw_price_daily:TWSE:2330:2026-02-10",
+                event_time="2026-02-10T05:30:00Z",
+                close=950.0,
+                calendar_evidence=evidence,
+            ),
+            _tw_official_record(
+                source_id="tw-official:tw_price_daily:TWSE:2330:2026-02-11",
+                event_time="2026-02-11T05:30:00Z",
+                close=955.0,
+                calendar_evidence=evidence,
+            ),
+        ],
+        ingest_run_id="ingest-twse-lny-calendar",
+        observed_at="2026-02-23T02:00:00Z",
+    )
+    assert updated["updated_snapshot_count"] == 1
+
+    response = TestClient(module.app).get(
+        "/api/source-ingest/snapshots/latest?symbol=2330.TW"
+    )
+    assert response.status_code == 200, response.text
+    snapshot = response.json()
+    assert snapshot["symbol"] == "2330.TW"
+    assert snapshot["calendar_evidence"] == evidence
+    assert module.latest_market_snapshot_store.get("2330.TW").calendar_evidence == evidence
+
+    # The public contract is checksummed and durable through a new Source
+    # store instance; it is not merely attached to an in-process fixture.
+    reloaded = LatestMarketSnapshotStore(module.runtime.LATEST_MARKET_SNAPSHOT_PATH)
+    assert reloaded.get("2330.TW").to_public_dict(requested_symbol="2330.TW")[
+        "calendar_evidence"
+    ] == evidence
+
+
+def test_source_snapshot_reissues_current_refresh_receipt_without_new_close(
+    tmp_path: Path,
+) -> None:
+    """Same official closes may receive a new Source refresh receipt."""
+    store = LatestMarketSnapshotStore(tmp_path / "market-snapshots.jsonl")
+    evidence = _twse_lny_calendar_evidence()
+    records = [
+        _tw_official_record(
+            source_id="tw-official:tw_price_daily:TWSE:2330:2026-02-10",
+            event_time="2026-02-10T05:30:00Z",
+            close=950.0,
+            calendar_evidence=evidence,
+        ),
+        _tw_official_record(
+            source_id="tw-official:tw_price_daily:TWSE:2330:2026-02-11",
+            event_time="2026-02-11T05:30:00Z",
+            close=955.0,
+            calendar_evidence=evidence,
+        ),
+    ]
+    store.append_normalized_records(
+        records,
+        ingest_run_id="ingest-first-receipt",
+        observed_at="2026-02-23T01:00:00Z",
+    )
+    refreshed = store.append_normalized_records(
+        records,
+        ingest_run_id="ingest-current-receipt",
+        observed_at="2026-02-23T02:00:00Z",
+    )
+    assert refreshed["updated_snapshot_count"] == 1
+    snapshot = LatestMarketSnapshotStore(tmp_path / "market-snapshots.jsonl").get("2330.TW")
+    assert snapshot is not None
+    assert snapshot.observed_at == "2026-02-23T02:00:00Z"
+    assert snapshot.calendar_evidence == evidence
 
 
 def test_tw_execution_alias_reads_only_the_official_twse_snapshot(

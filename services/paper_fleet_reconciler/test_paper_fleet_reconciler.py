@@ -2233,6 +2233,65 @@ class TestPaperFleetTaiwanSessionFreshness(unittest.TestCase):
             "trading_days": ["2026-02-11", "2026-02-23"],
         }
 
+    @classmethod
+    def _tw_source_projection_holiday_snapshot(cls) -> Dict[str, Any]:
+        """Build the exact public Source snapshot shape consumed by the fleet."""
+        from services.source_ingestion.requirement_state import (
+            LatestMarketSnapshot,
+            MarketSnapshotPoint,
+        )
+
+        evidence = cls._twse_lny_calendar_evidence()
+        evidence["fetched_at"] = "2026-02-23T01:00:00Z"
+
+        return LatestMarketSnapshot(
+            symbol="2330.TWSE",
+            points=(
+                MarketSnapshotPoint(
+                    event_time="2026-02-10T05:30:00Z",
+                    close=950.0,
+                    source_id="tw-official:tw_price_daily:TWSE:2330:2026-02-10",
+                    connector_id="tw-twse-tpex-official-market",
+                    content_ref="tw-official://tw_price_daily/TWSE/2330/2026-02-10",
+                    ingest_run_id="ingest-twse-lny-calendar",
+                ),
+                MarketSnapshotPoint(
+                    event_time="2026-02-11T05:30:00Z",
+                    close=955.0,
+                    source_id="tw-official:tw_price_daily:TWSE:2330:2026-02-11",
+                    connector_id="tw-twse-tpex-official-market",
+                    content_ref="tw-official://tw_price_daily/TWSE/2330/2026-02-11",
+                    ingest_run_id="ingest-twse-lny-calendar",
+                ),
+            ),
+            observed_at="2026-02-23T02:00:00Z",
+            calendar_evidence=evidence,
+        ).to_public_dict()
+
+    @patch(
+        "services.paper_fleet_reconciler.paper_fleet_reconciler._iso_now",
+        return_value="2026-02-23T03:00:00Z",
+    )
+    def test_tw_source_projection_holiday_snapshot_retains_active_worker(self, _mock_now) -> None:
+        snap = self._tw_source_projection_holiday_snapshot()
+        binding = _make_binding(
+            "b-tw-source-projection-holiday",
+            symbol="2330.TWSE",
+            market_data_policy={
+                "owner": "source-ingest",
+                "contract": "latest_stored_normalized",
+                "max_age_seconds": 86400,
+                "minimum_closes": 2,
+            },
+            market_input=snap,
+        )
+        _store, reconciler = self._make_store_and_recon([binding], source_snapshot=snap)
+
+        result = reconciler.reconcile_once()
+        self.assertEqual(result["worker_count"], 1)
+        self.assertEqual(result["running_count"], 1)
+        self.assertEqual(self.transitions, [])
+
     @patch(
         "services.paper_fleet_reconciler.paper_fleet_reconciler._iso_now",
         return_value="2026-08-29T12:00:00Z",

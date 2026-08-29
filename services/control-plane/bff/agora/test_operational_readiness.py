@@ -28,6 +28,63 @@ def _utc_now_iso(offset_seconds: float = 0.0) -> str:
     return dt.replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
+def _twse_lny_calendar_evidence() -> dict[str, Any]:
+    return {
+        "market": "TW",
+        "venue": "TWSE",
+        "timezone": "Asia/Taipei",
+        "authority": "Taiwan Stock Exchange 115 年市場開休市日期",
+        "source_url": "https://www.twse.com.tw/holidaySchedule/holidaySchedule?response=json&queryYear=115",
+        "fetched_at": "2026-02-23T01:00:00Z",
+        "version": "twse-2026-lny-v1",
+        "checksum": "55b2e23b9bd30af666a99c98da2dbbfad568dcd655631b1c6347d12ee8381596",
+        "coverage_start": "2026-02-11",
+        "coverage_end": "2026-02-23",
+        "holidays": {
+            "2026-02-12": {"name": "市場無交易，僅辦理結算交割作業"},
+            "2026-02-13": {"name": "市場無交易，僅辦理結算交割作業"},
+            "2026-02-16": {"name": "農曆除夕及春節"},
+            "2026-02-17": {"name": "農曆除夕及春節"},
+            "2026-02-18": {"name": "農曆除夕及春節"},
+            "2026-02-19": {"name": "農曆除夕及春節"},
+            "2026-02-20": {"name": "農曆除夕及春節"},
+        },
+        "trading_days": ["2026-02-11", "2026-02-23"],
+    }
+
+
+def _twse_source_public_holiday_snapshot() -> dict[str, Any]:
+    """Return the same Source public contract passed to operational readiness."""
+    from services.source_ingestion.requirement_state import (
+        LatestMarketSnapshot,
+        MarketSnapshotPoint,
+    )
+
+    return LatestMarketSnapshot(
+        symbol="2330.TWSE",
+        points=(
+            MarketSnapshotPoint(
+                event_time="2026-02-10T05:30:00Z",
+                close=950.0,
+                source_id="tw-official:tw_price_daily:TWSE:2330:2026-02-10",
+                connector_id="tw-twse-tpex-official-market",
+                content_ref="tw-official://tw_price_daily/TWSE/2330/2026-02-10",
+                ingest_run_id="ingest-twse-lny-calendar",
+            ),
+            MarketSnapshotPoint(
+                event_time="2026-02-11T05:30:00Z",
+                close=955.0,
+                source_id="tw-official:tw_price_daily:TWSE:2330:2026-02-11",
+                connector_id="tw-twse-tpex-official-market",
+                content_ref="tw-official://tw_price_daily/TWSE/2330/2026-02-11",
+                ingest_run_id="ingest-twse-lny-calendar",
+            ),
+        ),
+        observed_at="2026-02-23T02:00:00Z",
+        calendar_evidence=_twse_lny_calendar_evidence(),
+    ).to_public_dict()
+
+
 @pytest.fixture
 def readiness_service() -> AgoraOperationalReadinessService:
     svc = AgoraOperationalReadinessService(default_sla_seconds=86400)
@@ -355,45 +412,16 @@ def test_operational_readiness_tw_friday_close_stale_after_monday_session(
 def test_operational_readiness_tw_holiday_with_calendar_evidence(
     readiness_service: AgoraOperationalReadinessService,
 ) -> None:
-    """A valid Friday official close evaluated after a holiday span (e.g. Lunar New Year)
-    reads 'fresh' when valid official calendar evidence is attached."""
-    readiness_service.set_source_snapshot({
-        "snapshot_id": "mss-tw-readiness-003",
+    """A persisted Source public snapshot stays fresh across the LNY span."""
+    source_snapshot = _twse_source_public_holiday_snapshot()
+    source_snapshot.update({
         "source_instance_id": "src-tw-twse-2330",
-        "symbol": "2330.TWSE",
-        "event_time": "2026-02-11T05:30:00Z",
-        "observed_at": "2026-02-23T02:00:00Z",
         "sla_seconds": 86400,
-        "lineage": {
-            "source_ids": ["tw-official:tw_price_daily:TWSE:2330:checksummed"],
-            "connector_ids": ["tw-twse-tpex-official-market"],
-        },
-        "calendar_evidence": {
-            "market": "TW",
-            "venue": "TWSE",
-            "timezone": "Asia/Taipei",
-            "authority": "Taiwan Stock Exchange 115 年市場開休市日期",
-            "source_url": "https://www.twse.com.tw/holidaySchedule/holidaySchedule?response=json&queryYear=115",
-            "fetched_at": "2026-02-23T01:00:00Z",
-            "version": "twse-2026-lny-v1",
-            "checksum": "55b2e23b9bd30af666a99c98da2dbbfad568dcd655631b1c6347d12ee8381596",
-            "coverage_start": "2026-02-11",
-            "coverage_end": "2026-02-23",
-            "holidays": {
-                "2026-02-12": {"name": "市場無交易，僅辦理結算交割作業"},
-                "2026-02-13": {"name": "市場無交易，僅辦理結算交割作業"},
-                "2026-02-16": {"name": "農曆除夕及春節"},
-                "2026-02-17": {"name": "農曆除夕及春節"},
-                "2026-02-18": {"name": "農曆除夕及春節"},
-                "2026-02-19": {"name": "農曆除夕及春節"},
-                "2026-02-20": {"name": "農曆除夕及春節"},
-            },
-            "trading_days": ["2026-02-11", "2026-02-23"],
-        },
     })
+    readiness_service.set_source_snapshot(source_snapshot)
     readiness_service.set_signal_producer({
         "status": "ok",
-        "consumed_snapshot_id": "mss-tw-readiness-003",
+        "consumed_snapshot_id": source_snapshot["snapshot_id"],
         "enqueued": 3,
     })
 

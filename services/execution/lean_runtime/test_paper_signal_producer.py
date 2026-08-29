@@ -426,6 +426,68 @@ class TestPaperSignalProducer(unittest.TestCase):
         )
         self.assertEqual(producer.degraded_bindings, {})
 
+    def test_source_projection_holiday_snapshot_produces_healthy_tick(self) -> None:
+        """A Source-owned stored snapshot, rather than a hand-attached fixture,
+        admits through the real paper producer on an evidenced holiday span."""
+        from services.execution.lean_runtime.paper_signal_producer import CurrentArtifactStrategy
+        from services.execution.lean_runtime.test_current_artifact_signal import _artifact, _binding
+        from services.source_ingestion.requirement_state import (
+            LatestMarketSnapshot,
+            MarketSnapshotPoint,
+        )
+
+        evidence = TestSharedSnapshotAdmissionDecisions._tw_calendar_evidence()
+        source_snapshot = LatestMarketSnapshot(
+            symbol="2330.TWSE",
+            points=(
+                MarketSnapshotPoint(
+                    event_time="2026-02-10T05:30:00Z",
+                    close=950.0,
+                    source_id="tw-official:tw_price_daily:TWSE:2330:2026-02-10",
+                    connector_id="tw-twse-tpex-official-market",
+                    content_ref="tw-official://tw_price_daily/TWSE/2330/2026-02-10",
+                    ingest_run_id="ingest-twse-lny-calendar",
+                ),
+                MarketSnapshotPoint(
+                    event_time="2026-02-11T05:30:00Z",
+                    close=955.0,
+                    source_id="tw-official:tw_price_daily:TWSE:2330:2026-02-11",
+                    connector_id="tw-twse-tpex-official-market",
+                    content_ref="tw-official://tw_price_daily/TWSE/2330/2026-02-11",
+                    ingest_run_id="ingest-twse-lny-calendar",
+                ),
+            ),
+            observed_at="2026-02-23T02:00:00Z",
+            calendar_evidence=evidence,
+        ).to_public_dict()
+
+        artifact = _artifact()
+        artifact["parameters"]["symbols"] = ["2330.TWSE"]
+        binding = _binding(
+            artifact,
+            binding_id="rb-source-projection-holiday",
+            include_market_input=False,
+        )
+        binding["symbol"] = "2330.TWSE"
+        binding["market_data_policy"] = {
+            "owner": "source-ingest",
+            "contract": "latest_stored_normalized",
+            "max_age_seconds": 86400,
+            "minimum_closes": 2,
+        }
+        binding["market_input"] = source_snapshot
+
+        store = InMemoryPendingSignalStore()
+        producer = PaperSignalProducer(
+            store_for=lambda _: store,
+            strategy=CurrentArtifactStrategy(),
+        )
+        self.assertEqual(producer.tick([binding], "2026-02-23T03:00:00Z"), {
+            "rb-source-projection-holiday": 1,
+        })
+        self.assertEqual(store.queue_depth(), 1)
+        self.assertEqual(producer.degraded_bindings, {})
+
     @patch("urllib.request.urlopen")
     def test_stale_source_snapshot_emits_no_signal_with_typed_reason(self, mock_urlopen) -> None:
         from services.execution.lean_runtime.paper_signal_producer import CurrentArtifactStrategy
