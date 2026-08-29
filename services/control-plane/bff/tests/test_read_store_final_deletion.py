@@ -34,9 +34,16 @@ TASK_REVIEW_EVIDENCE = {
         "read_store.py retains only the two pure helpers imported by main.py; "
         "they perform no I/O and own no source of truth."
     ),
+    "caller_collection": (
+        "Production Python under services/, scripts/, and integrations/ may "
+        "only import redact_evidence_refs and "
+        "_market_persona_required_data_sources from read_store.py, and the "
+        "only permitted caller is services/control-plane/bff/main.py."
+    ),
     "verification": (
-        "pytest -q services/control-plane/bff/tests/"
-        "test_read_store_final_deletion.py and focused BFF startup/cutover tests"
+        "Run test_read_store_final_deletion.py, "
+        "test_read_surface_caller_migration.py, test_read_surface_port_cutover.py, "
+        "and the six domain-port suites listed in the task handoff."
     ),
     "review_requirement": (
         "Review the exact PR head; confirm the removed store cannot be imported "
@@ -122,6 +129,37 @@ def test_production_python_has_no_read_surface_store_symbol() -> None:
                     if any(alias.name == "ReadSurfaceStore" for alias in node.names):
                         offenders.append(f"{path.relative_to(REPO_ROOT)}:{node.lineno}")
     assert offenders == []
+
+
+def test_production_python_only_imports_the_two_retained_helpers() -> None:
+    imported_names: dict[str, set[str]] = {}
+    module_imports: list[str] = []
+    for root_name in ("services", "scripts", "integrations"):
+        root = REPO_ROOT / root_name
+        if not root.exists():
+            continue
+        for path in root.rglob("*.py"):
+            if path == READ_STORE_PATH or _is_test_path(path):
+                continue
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+            relative = str(path.relative_to(REPO_ROOT))
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Import):
+                    if any(alias.name.partition(".")[0] == "read_store" for alias in node.names):
+                        module_imports.append(f"{relative}:{node.lineno}")
+                elif isinstance(node, ast.ImportFrom) and node.module:
+                    if node.module.rpartition(".")[2] == "read_store":
+                        imported_names.setdefault(relative, set()).update(
+                            alias.name for alias in node.names
+                        )
+
+    assert module_imports == []
+    assert imported_names == {
+        "services/control-plane/bff/main.py": {
+            "_market_persona_required_data_sources",
+            "redact_evidence_refs",
+        }
+    }
 
 
 def test_retained_persona_requirement_projection_is_narrow_and_fresh() -> None:
