@@ -2392,6 +2392,15 @@ verify_exact_component_deployment() {
       image="$(docker inspect --format '{{.Config.Image}}' "$container_id" 2>/dev/null || true)"
       image_id="$(docker inspect --format '{{.Image}}' "$container_id" 2>/dev/null || true)"
       compose_image_id="$(docker compose -p pantheon -f docker-compose.yml images -q "$service" 2>/dev/null || true)"
+      # Docker Compose v2 has emitted both canonical ``sha256:<digest>`` and
+      # bare 64-character digests from ``images -q`` across supported
+      # releases. Docker inspect remains canonical, so normalize only the
+      # well-formed bare representation before comparing the two identities.
+      # Any other output (including multiple IDs) stays unchanged and fails
+      # the strict format check below.
+      if [[ "$compose_image_id" =~ ^[0-9a-f]{64}$ ]]; then
+        compose_image_id="sha256:${compose_image_id}"
+      fi
       image_rev="$(docker inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$container_id" 2>/dev/null || true)"
       cmd="$(docker inspect --format '{{json .Config.Cmd}}' "$container_id" 2>/dev/null || true)"
 

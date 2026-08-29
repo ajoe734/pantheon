@@ -373,7 +373,10 @@ def test_verify_exact_component_deployment_execution_end_to_end(tmp_path: Path) 
 if [[ "$1" == "compose" ]]; then
   svc="${@: -1}"
   if [[ " $* " == *" images -q "* ]]; then
-    echo "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    # Docker Compose v2 may return a well-formed digest without the algorithm
+    # prefix. The verifier must normalize this before comparing it with the
+    # canonical Docker inspect image ID.
+    echo "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
   elif [[ "$svc" == "operator-bff" ]]; then
     echo "cid_bff_1"
   elif [[ "$svc" == "agora-interaction-worker" ]]; then
