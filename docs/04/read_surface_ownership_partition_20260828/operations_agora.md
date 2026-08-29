@@ -128,56 +128,56 @@ The table below catalogs all 54 methods evaluated in the Operations & Agora doma
 | 2 | `list_tools` | **READ** | 1 | `WorkflowHookCatalogReaderPort.list_tools()` | `services/control-plane/bff/domain_ports/operations_consultation.py::DomainWorkflowCatalogPort` | Existing port in operations_consultation.py |
 | 3 | `list_mcp_servers` | **READ** | 1 | `WorkflowHookCatalogReaderPort.list_mcp_servers()` | `services/control-plane/bff/domain_ports/operations_consultation.py::DomainWorkflowCatalogPort` | Existing port in operations_consultation.py |
 | 4 | `list_mcp_tools` | **READ** | 1 | `WorkflowHookCatalogReaderPort.list_mcp_tools()` | `services/control-plane/bff/domain_ports/operations_consultation.py::DomainWorkflowCatalogPort` | Existing port in operations_consultation.py |
-| 5 | `get_job_bff` | **READ** | 1 | `JobReaderPort.get_job(job_id)` | `services/control-plane/bff/jobs / Temporal / Celery job store` | Extract typed JobReaderPort (Research & Knowledge domain seam) |
-| 6 | `list_jobs_bff` | **READ** | 1 | `JobReaderPort.list_jobs()` | `services/control-plane/bff/jobs / Temporal / Celery job store` | Extract typed JobReaderPort (Research & Knowledge domain seam) |
-| 7 | `list_events_bff` | **READ** | 1 | `EventsReaderPort.list_events(page_size)` | `services/control-plane/bff/events / SSE event buffer / services/telemetry/` | Extract typed EventsReaderPort (Research & Knowledge domain seam) |
+| 5 | `get_job_bff` | **READ** | 1 | `JobReaderPort.get_job(job_id)` | `services/control-plane/bff/domain_ports/research_knowledge_source.py` / jobs | Extract typed JobReaderPort (Research & Knowledge domain seam) |
+| 6 | `list_jobs_bff` | **READ** | 1 | `JobReaderPort.list_jobs()` | `services/control-plane/bff/domain_ports/research_knowledge_source.py` / jobs | Extract typed JobReaderPort (Research & Knowledge domain seam) |
+| 7 | `list_events_bff` | **READ** | 1 | `EventsReaderPort.list_events(page_size)` | `services/control-plane/bff/domain_ports/lifecycle_telemetry_governance.py` / SSE | Extract typed EventsReaderPort (Lifecycle & Telemetry domain seam) |
 | 8 | `get_openclaw_ops_snapshot` | **READ** | 1 | `OpenClawOperationsReaderPort.get_openclaw_ops_snapshot()` | `services/control-plane/bff/domain_ports/operations_consultation.py::DomainOpenClawOperationsPort` | Existing port in operations_consultation.py (Lifecycle domain seam) |
 | 9 | `get_openclaw_broker_adapter_readiness` | **READ** | 2 | `OpenClawOperationsReaderPort.get_openclaw_broker_adapter_readiness()` | `services/control-plane/bff/domain_ports/operations_consultation.py::DomainOpenClawOperationsPort` | Existing port in operations_consultation.py (Lifecycle domain seam) |
 | 10 | `get_research_oss_preactivation_snapshot` | **READ** | 1 | `OpenClawOperationsReaderPort.get_research_oss_preactivation_snapshot()` | `services/control-plane/bff/domain_ports/operations_consultation.py::DomainOpenClawOperationsPort` | Existing port in operations_consultation.py (Research domain seam) |
-| 11 | `create_agora_session` | **WRITE** | 1 | `AgoraCommitteePort.create_agora_session()` | `services/agora/ / AgoraSessionStore` | Extract typed AgoraCommitteePort command |
-| 12 | `get_agora_session` | **READ** | 6 | `AgoraCommitteePort.get_agora_session()` | `services/agora/ / AgoraSessionStore` | Extract typed AgoraCommitteePort reader |
-| 13 | `list_agora_sessions` | **READ** | 1 | `AgoraCommitteePort.list_agora_sessions()` | `services/agora/ / AgoraSessionStore` | Extract typed AgoraCommitteePort reader |
-| 14 | `open_committee_session` | **WRITE** | 1 | `AgoraCommitteePort.open_committee_session()` | `services/agora/ / AgoraCommitteeStore` | Extract typed AgoraCommitteePort command |
-| 15 | `close_committee_session` | **WRITE** | 1 | `AgoraCommitteePort.close_committee_session()` | `services/agora/ / AgoraCommitteeStore` | Extract typed AgoraCommitteePort command |
-| 16 | `list_committee_session_memos` | **READ** | 1 | `AgoraCommitteePort.list_committee_session_memos()` | `services/agora/ / AgoraCommitteeStore` | Extract typed AgoraCommitteePort reader |
-| 17 | `get_committee_session_memo` | **READ** | 2 | `AgoraCommitteePort.get_committee_session_memo()` | `services/agora/ / AgoraCommitteeStore` | Extract typed AgoraCommitteePort reader |
-| 18 | `submit_committee_session_memo` | **WRITE** | 1 | `AgoraCommitteePort.submit_committee_session_memo()` | `services/agora/ / AgoraCommitteeStore` | Extract typed AgoraCommitteePort command |
-| 19 | `publish_committee_session_memo` | **WRITE** | 1 | `AgoraCommitteePort.publish_committee_session_memo()` | `services/agora/ / AgoraCommitteeStore` | Extract typed AgoraCommitteePort command |
-| 20 | `create_agora_handoff` | **WRITE** | 2 | `AgoraCommitteePort.create_agora_handoff()` | `services/agora/ / AgoraHandoffStore` | Extract typed AgoraCommitteePort command |
-| 21 | `create_agora_committee_evidence_pack` | **WRITE** | 1 | `AgoraCommitteePort.create_committee_evidence_pack()` | `services/agora/ / AgoraEvidencePackStore` | Extract typed AgoraCommitteePort command |
-| 22 | `get_agora_committee_evidence_pack` | **READ** | 1 | `AgoraCommitteePort.get_committee_evidence_pack()` | `services/agora/ / AgoraEvidencePackStore` | Extract typed AgoraCommitteePort reader |
-| 23 | `append_agora_committee_evidence_files` | **WRITE** | 1 | `AgoraCommitteePort.append_committee_evidence_files()` | `services/agora/ / AgoraEvidencePackStore` | Extract typed AgoraCommitteePort command |
-| 24 | `create_agora_feedback` | **WRITE** | 1 | `AgoraFeedbackPort.create_feedback()` | `services/agora/ / AgoraFeedbackStore` | Extract typed AgoraFeedbackPort command |
-| 25 | `create_agora_note` | **WRITE** | 1 | `AgoraNotesPort.create_note()` | `services/agora/ / AgoraNoteStore` | Extract typed AgoraNotesPort command |
-| 26 | `list_agora_notes` | **READ** | 1 | `AgoraNotesPort.list_notes()` | `services/agora/ / AgoraNoteStore` | Extract typed AgoraNotesPort reader |
-| 27 | `create_agora_signal` | **WRITE** | 1 | `AgoraSignalPort.create_signal()` | `services/agora/ / AgoraSignalStore` | Extract typed AgoraSignalPort command |
-| 28 | `get_agora_signal` | **READ** | 5 | `AgoraSignalPort.get_signal()` | `services/agora/ / AgoraSignalStore` | Extract typed AgoraSignalPort reader |
-| 29 | `list_agora_signals` | **READ** | 2 | `AgoraSignalPort.list_signals()` | `services/agora/ / AgoraSignalStore` | Extract typed AgoraSignalPort reader |
-| 30 | `record_agora_signal_feedback` | **WRITE** | 1 | `AgoraSignalPort.record_signal_feedback()` | `services/agora/ / AgoraSignalStore` | Extract typed AgoraSignalPort command |
-| 31 | `list_agora_insights` | **READ** | 1 | `AgoraInsightPort.list_insights()` | `services/agora/ / AgoraInsightStore` | Extract typed AgoraInsightPort reader |
-| 32 | `list_agora_watchlist` | **READ** | 2 | `AgoraWatchlistPort.list_watchlist()` | `services/agora/ / AgoraWatchlistStore` | Extract typed AgoraWatchlistPort reader |
-| 33 | `create_agora_training_example` | **WRITE** | 1 | `AgoraTrainingPort.create_training_example()` | `services/agora/ / AgoraTrainingExampleStore` | Extract typed AgoraTrainingPort command |
-| 34 | `list_agora_training_examples` | **READ** | 1 | `AgoraTrainingPort.list_training_examples()` | `services/agora/ / AgoraTrainingExampleStore` | Extract typed AgoraTrainingPort reader |
-| 35 | `record_agora_audit_event` | **WRITE** | 9 | `AgoraAuditPort.record_audit_event()` | `services/agora/ / AgoraAuditStore / services/telemetry/` | Extract typed AgoraAuditPort command |
-| 36 | `create_decision_journal_entry` | **WRITE** | 1 | `DecisionJournalPort.create_entry()` | `services/agora/ / DecisionJournalStore` | Extract typed DecisionJournalPort command |
-| 37 | `patch_decision_journal_entry` | **WRITE** | 1 | `DecisionJournalPort.patch_entry()` | `services/agora/ / DecisionJournalStore` | Extract typed DecisionJournalPort command |
-| 38 | `list_decision_journal_entries` | **READ** | 4 | `DecisionJournalPort.list_entries()` | `services/agora/ / DecisionJournalStore` | Extract typed DecisionJournalPort reader |
-| 39 | `get_committee` | **READ** | 2 | `AgoraCommitteePort.get_committee()` | `services/agora/ / CommitteeRegistry` | Extract typed AgoraCommitteePort reader |
-| 40 | `list_committees` | **READ** | 1 | `AgoraCommitteePort.list_committees()` | `services/agora/ / CommitteeRegistry` | Extract typed AgoraCommitteePort reader |
-| 41 | `record_sponsor_decision` | **WRITE** | 1 | `SponsorDecisionCommandPort.record_sponsor_decision()` | `services/control-plane/governance / GovernancePolicyStore` | Extract GovernancePolicyStore command |
-| 42 | `get_consult_policy` | **READ** | 1 | `ConsultationReaderPort.get_consult_policy()` | `services/consultation/ / services/control-plane/bff/domain_ports/operations_consultation.py` | Extract typed ConsultationReaderPort reader |
-| 43 | `create_consult_request` | **WRITE** | 1 | `ConsultationReaderPort.create_consult_request()` | `services/consultation/client.py::ConsultationServiceClient / ConsultationStore` | Existing port in operations_consultation.py |
-| 44 | `cancel_consult_request` | **WRITE** | 1 | `ConsultationReaderPort.cancel_consult_request()` | `services/consultation/client.py::ConsultationServiceClient / ConsultationStore` | Existing port in operations_consultation.py |
-| 45 | `get_consult_request` | **READ** | 3 | `ConsultationReaderPort.get_consult_request()` | `services/control-plane/bff/domain_ports/operations_consultation.py::DomainConsultationPort` | Existing port in operations_consultation.py |
-| 46 | `list_consult_requests` | **READ** | 1 | `ConsultationReaderPort.list_consult_requests()` | `services/control-plane/bff/domain_ports/operations_consultation.py::DomainConsultationPort` | Existing port in operations_consultation.py |
-| 47 | `get_consult_memo` | **READ** | 2 | `ConsultationReaderPort.get_consult_memo()` | `services/control-plane/bff/domain_ports/operations_consultation.py::DomainConsultationPort` | Existing port in operations_consultation.py |
-| 48 | `list_consult_memos` | **READ** | 1 | `ConsultationReaderPort.list_consult_memos()` | `services/control-plane/bff/domain_ports/operations_consultation.py::DomainConsultationPort` | Existing port in operations_consultation.py |
-| 49 | `list_consultations_for_persona` | **READ** | 1 | `ConsultationReaderPort.list_consultations_for_persona()` | `services/control-plane/bff/domain_ports/operations_consultation.py::DomainConsultationPort` | Existing port in operations_consultation.py |
-| 50 | `get_consultation` | **READ** | 1 | `ConsultationReaderPort.get_consultation()` | `services/control-plane/bff/domain_ports/operations_consultation.py::DomainConsultationPort` | Existing port in operations_consultation.py |
-| 51 | `get_consultation_participants` | **READ** | 1 | `ConsultationReaderPort.get_consultation_participants()` | `services/control-plane/bff/domain_ports/operations_consultation.py::DomainConsultationPort` | Existing port in operations_consultation.py |
-| 52 | `get_consultation_outcome` | **READ** | 1 | `ConsultationReaderPort.get_consultation_outcome()` | `services/control-plane/bff/domain_ports/operations_consultation.py::DomainConsultationPort` | Existing port in operations_consultation.py |
-| 53 | `get_consultation_evidence` | **READ** | 1 | `ConsultationReaderPort.get_consultation_evidence()` | `services/control-plane/bff/domain_ports/operations_consultation.py::DomainConsultationPort` | Existing port in operations_consultation.py |
-| 54 | `get_consult_transcript` | **READ** | 1 | `ConsultationReaderPort.get_consult_transcript()` | `services/control-plane/bff/domain_ports/operations_consultation.py::DomainConsultationPort` | Existing port in operations_consultation.py |
+| 11 | `create_agora_session` | **WRITE** | 1 | `StrategyWorkshopStore.create_session()` / `InteractionLifecycleStore.create_request()` | `services/control-plane/bff/agora/strategy_workshop/store.py` & `interaction/store.py` | Concrete durable store in strategy_workshop & interaction |
+| 12 | `get_agora_session` | **READ** | 6 | `StrategyWorkshopStore.get_session()` / `InteractionLifecycleStore.get_request()` | `services/control-plane/bff/agora/strategy_workshop/store.py` & `interaction/store.py` | Concrete durable store in strategy_workshop & interaction |
+| 13 | `list_agora_sessions` | **READ** | 1 | `StrategyWorkshopStore.list_sessions()` / `InteractionLifecycleStore.list_requests()` | `services/control-plane/bff/agora/strategy_workshop/store.py` & `interaction/store.py` | Concrete durable store in strategy_workshop & interaction |
+| 14 | `open_committee_session` | **WRITE** | 1 | `StrategyWorkshopStore.update_session_status()` | `services/control-plane/bff/agora/strategy_workshop/store.py` | Concrete durable store in strategy_workshop |
+| 15 | `close_committee_session` | **WRITE** | 1 | `StrategyWorkshopStore.conclude_session()` | `services/control-plane/bff/agora/strategy_workshop/store.py` | Concrete durable store in strategy_workshop |
+| 16 | `list_committee_session_memos` | **READ** | 1 | `ConsultationStore.list_memos()` | `services/consultation/store.py` / `ConsultationServiceClient` | Concrete durable store in consultation |
+| 17 | `get_committee_session_memo` | **READ** | 2 | `ConsultationStore.get_memo()` | `services/consultation/store.py` / `ConsultationServiceClient` | Concrete durable store in consultation |
+| 18 | `submit_committee_session_memo` | **WRITE** | 1 | `ConsultationStore.create_memo()` / `StrategyWorkshopStore.record_version_link()` | `services/consultation/store.py` & `services/control-plane/bff/agora/strategy_workshop/store.py` | Concrete durable store in consultation & strategy_workshop |
+| 19 | `publish_committee_session_memo` | **WRITE** | 1 | `ConsultationStore.update_memo_status()` | `services/consultation/store.py` / `ConsultationServiceClient` | Concrete durable store in consultation |
+| 20 | `create_agora_handoff` | **WRITE** | 2 | `TradingRoomStore.upsert_handoff()` | `services/control-plane/bff/agora/trading_room/store.py` | Concrete durable store in trading_room |
+| 21 | `create_agora_committee_evidence_pack` | **WRITE** | 1 | `StrategyWorkshopStore.append_event()` / `ConsultationStore.create_evidence()` | `services/control-plane/bff/agora/strategy_workshop/store.py` & `services/consultation/store.py` | Concrete durable store in strategy_workshop & consultation |
+| 22 | `get_agora_committee_evidence_pack` | **READ** | 1 | `StrategyWorkshopStore.get_events()` / `ConsultationStore.get_evidence()` | `services/control-plane/bff/agora/strategy_workshop/store.py` & `services/consultation/store.py` | Concrete durable store in strategy_workshop & consultation |
+| 23 | `append_agora_committee_evidence_files` | **WRITE** | 1 | `StrategyWorkshopStore.append_event()` / `ConsultationStore.create_evidence()` | `services/control-plane/bff/agora/strategy_workshop/store.py` & `services/consultation/store.py` | Concrete durable store in strategy_workshop & consultation |
+| 24 | `create_agora_feedback` | **WRITE** | 1 | `TradingRoomStore.upsert_decision_event()` / `DashboardRecipeStore.add_feedback()` | `services/control-plane/bff/agora/trading_room/store.py` & `dashboard/store.py` | Concrete durable store in trading_room & dashboard |
+| 25 | `create_agora_note` | **WRITE** | 1 | `DefaultResearchKnowledgeSourcePort.create_research_note()` | `services/control-plane/bff/domain_ports/research_knowledge_source.py` / `services/knowledge/` | Concrete port in research_knowledge_source |
+| 26 | `list_agora_notes` | **READ** | 1 | `DefaultResearchKnowledgeSourcePort.list_research_notes()` | `services/control-plane/bff/domain_ports/research_knowledge_source.py` / `services/knowledge/` | Concrete port in research_knowledge_source |
+| 27 | `create_agora_signal` | **WRITE** | 1 | `TradingRoomStore.upsert_decision_event()` / `TradingRoomStore.upsert_intent()` | `services/control-plane/bff/agora/trading_room/store.py` | Concrete durable store in trading_room |
+| 28 | `get_agora_signal` | **READ** | 5 | `TradingRoomStore.get_decision_event()` / `TradingRoomStore.get_intent()` | `services/control-plane/bff/agora/trading_room/store.py` | Concrete durable store in trading_room |
+| 29 | `list_agora_signals` | **READ** | 2 | `TradingRoomStore.list_decision_events()` | `services/control-plane/bff/agora/trading_room/store.py` | Concrete durable store in trading_room |
+| 30 | `record_agora_signal_feedback` | **WRITE** | 1 | `TradingRoomStore.record_trader_decision()` | `services/control-plane/bff/agora/trading_room/store.py` | Concrete durable store in trading_room |
+| 31 | `list_agora_insights` | **READ** | 1 | `DefaultResearchKnowledgeSourcePort.list_insight_cards()` | `services/control-plane/bff/domain_ports/research_knowledge_source.py` | Concrete port in research_knowledge_source |
+| 32 | `list_agora_watchlist` | **READ** | 2 | `TradingRoomStore.list_workspaces()` | `services/control-plane/bff/agora/trading_room/store.py` | Concrete durable store in trading_room |
+| 33 | `create_agora_training_example` | **WRITE** | 1 | `PersonaTrainingDomainPort.create_training_example()` | `services/control-plane/bff/domain_ports/persona_training.py` / `services/training-session/` | Concrete port in persona_training |
+| 34 | `list_agora_training_examples` | **READ** | 1 | `PersonaTrainingDomainPort.list_training_examples()` | `services/control-plane/bff/domain_ports/persona_training.py` / `services/training-session/` | Concrete port in persona_training |
+| 35 | `record_agora_audit_event` | **WRITE** | 9 | `ProposalStore.once()` / `InteractionLifecycleStore.record_invocation()` | `services/control-plane/bff/agora/governance/store.py` & `interaction/store.py` | Concrete durable store in governance & interaction |
+| 36 | `create_decision_journal_entry` | **WRITE** | 1 | `CandidateDecisionStore.create_candidate()` / `CandidateDecisionStore.append_decision()` | `services/control-plane/bff/agora/candidate_decisions/store.py` & `trading_room/store.py` | Concrete durable store in candidate_decisions & trading_room |
+| 37 | `patch_decision_journal_entry` | **WRITE** | 1 | `CandidateDecisionStore.append_decision()` | `services/control-plane/bff/agora/candidate_decisions/store.py` | Concrete durable store in candidate_decisions |
+| 38 | `list_decision_journal_entries` | **READ** | 4 | `CandidateDecisionStore.decisions()` / `history()` | `services/control-plane/bff/agora/candidate_decisions/store.py` | Concrete durable store in candidate_decisions |
+| 39 | `get_committee` | **READ** | 2 | `DomainConsultationPort.get_committee()` | `services/consultation/store.py` / `services/control-plane/bff/domain_ports/operations_consultation.py` | Existing port in operations_consultation.py |
+| 40 | `list_committees` | **READ** | 1 | `DomainConsultationPort.list_committees()` | `services/consultation/store.py` / `services/control-plane/bff/domain_ports/operations_consultation.py` | Existing port in operations_consultation.py |
+| 41 | `record_sponsor_decision` | **WRITE** | 1 | `ConsultationStore.record_sponsor_decision()` | `services/consultation/store.py` / `ConsultationServiceClient` | Concrete durable store in consultation |
+| 42 | `get_consult_policy` | **READ** | 1 | `DomainConsultationPort.get_consult_policy()` | `services/consultation/store.py` / `services/control-plane/bff/domain_ports/operations_consultation.py` | Existing port in operations_consultation.py |
+| 43 | `create_consult_request` | **WRITE** | 1 | `ConsultationStore.create_request()` | `services/consultation/client.py::ConsultationServiceClient` / `ConsultationStore` | Concrete durable store in consultation |
+| 44 | `cancel_consult_request` | **WRITE** | 1 | `ConsultationStore.cancel_request()` | `services/consultation/client.py::ConsultationServiceClient` / `ConsultationStore` | Concrete durable store in consultation |
+| 45 | `get_consult_request` | **READ** | 3 | `ConsultationStore.get_request()` | `services/control-plane/bff/domain_ports/operations_consultation.py::DomainConsultationPort` | Existing port in operations_consultation.py |
+| 46 | `list_consult_requests` | **READ** | 1 | `ConsultationStore.list_requests()` | `services/control-plane/bff/domain_ports/operations_consultation.py::DomainConsultationPort` | Existing port in operations_consultation.py |
+| 47 | `get_consult_memo` | **READ** | 2 | `ConsultationStore.get_memo()` | `services/control-plane/bff/domain_ports/operations_consultation.py::DomainConsultationPort` | Existing port in operations_consultation.py |
+| 48 | `list_consult_memos` | **READ** | 1 | `ConsultationStore.list_memos()` | `services/control-plane/bff/domain_ports/operations_consultation.py::DomainConsultationPort` | Existing port in operations_consultation.py |
+| 49 | `list_consultations_for_persona` | **READ** | 1 | `ConsultationStore.list_consultations()` | `services/control-plane/bff/domain_ports/operations_consultation.py::DomainConsultationPort` | Existing port in operations_consultation.py |
+| 50 | `get_consultation` | **READ** | 1 | `ConsultationStore.get_consultation()` | `services/control-plane/bff/domain_ports/operations_consultation.py::DomainConsultationPort` | Existing port in operations_consultation.py |
+| 51 | `get_consultation_participants` | **READ** | 1 | `ConsultationStore.get_participants()` | `services/control-plane/bff/domain_ports/operations_consultation.py::DomainConsultationPort` | Existing port in operations_consultation.py |
+| 52 | `get_consultation_outcome` | **READ** | 1 | `ConsultationStore.get_outcome()` | `services/control-plane/bff/domain_ports/operations_consultation.py::DomainConsultationPort` | Existing port in operations_consultation.py |
+| 53 | `get_consultation_evidence` | **READ** | 1 | `ConsultationStore.get_evidence()` | `services/control-plane/bff/domain_ports/operations_consultation.py::DomainConsultationPort` | Existing port in operations_consultation.py |
+| 54 | `get_consult_transcript` | **READ** | 1 | `ConsultationStore.get_transcript()` | `services/control-plane/bff/domain_ports/operations_consultation.py::DomainConsultationPort` | Existing port in operations_consultation.py |
 
 ---
 
@@ -273,58 +273,71 @@ Below is the exhaustive, line-by-line audit of all 83 `read_store` call sites in
 
 ---
 
-## 5. Domain Sub-Surface Breakdown & Narrow Port Architecture
+## 5. Domain Sub-Surface Breakdown & Concrete Durable Owner Architecture
 
 The 54 methods of the Operations, Agora, OpenClaw, and Consultation domain matrix partition into 7 distinct cohesive sub-surfaces:
 
 ### 5.1 Workflows, Tooling, Skills & MCP Catalogs (4 methods, 4 call sites)
 - **Methods**: `list_skills`, `list_tools`, `list_mcp_servers`, `list_mcp_tools`
-- **Domain Port**: `WorkflowHookCatalogReaderPort` / `DomainWorkflowCatalogPort` in `services/control-plane/bff/domain_ports/operations_consultation.py`.
+- **Concrete Owner**: `DomainWorkflowCatalogPort` / `WorkflowHookCatalogReaderPort` in `services/control-plane/bff/domain_ports/operations_consultation.py`.
 - **Target Seam**: Direct typed resolution via `DomainWorkflowCatalogPort` backed by catalog stores and in-memory test fixtures.
 - **Call Classification**: 0 WRITE, 4 READ (4 call sites: 0 WRITE, 4 READ).
 
 ### 5.2 Background Jobs & Real-Time Event Projections (3 methods, 3 call sites - Cross-Domain Seam)
 - **Methods**: `get_job_bff`, `list_jobs_bff`, `list_events_bff`
-- **Domain Port**: `JobReaderPort` and `EventsReaderPort` (Research & Knowledge / Telemetry domain ports).
-- **Target Seam**: Decoupled from monolithic store into dedicated job runner client (Temporal / Celery) and telemetry SSE event ring-buffer.
+- **Concrete Owner**: `JobReaderPort` in `domain_ports/research_knowledge_source.py` and `EventsReaderPort` in `domain_ports/lifecycle_telemetry_governance.py`.
+- **Target Seam**: Decoupled from monolithic store into dedicated job runner client and telemetry SSE event ring-buffer.
 - **Call Classification**: 0 WRITE, 3 READ (3 call sites: 0 WRITE, 3 READ).
 
 ### 5.3 OpenClaw Operations & Research OSS Preactivation (3 methods, 4 call sites)
 - **Methods**: `get_openclaw_ops_snapshot`, `get_openclaw_broker_adapter_readiness`, `get_research_oss_preactivation_snapshot`
-- **Domain Port**: `OpenClawOperationsReaderPort` / `DomainOpenClawOperationsPort` in `services/control-plane/bff/domain_ports/operations_consultation.py`.
+- **Concrete Owner**: `DomainOpenClawOperationsPort` / `OpenClawOperationsReaderPort` in `services/control-plane/bff/domain_ports/operations_consultation.py`.
 - **Target Seam**: Implemented and verified with fail-closed gating (`fail_closed_explicit_gate_required`, `live_execution_enabled: False`) and truthful error forwarding.
 - **Call Classification**: 0 WRITE, 3 READ (4 call sites: 0 WRITE, 4 READ).
 
-### 5.4 Agora Core Sessions, Committees & Evidence Packs (13 methods, 20 call sites)
+### 5.4 Agora Strategy Workshop & Sessions (13 methods, 20 call sites)
 - **Methods**: `create_agora_session`, `get_agora_session`, `list_agora_sessions`, `open_committee_session`, `close_committee_session`, `list_committee_session_memos`, `get_committee_session_memo`, `submit_committee_session_memo`, `publish_committee_session_memo`, `create_agora_handoff`, `create_agora_committee_evidence_pack`, `get_agora_committee_evidence_pack`, `append_agora_committee_evidence_files`
-- **Domain Port**: `AgoraCommitteePort` / `AgoraSessionPort` backed by `services/agora/` store.
-- **Target Seam**: Move committee lifecycle and memo state transitions from `ReadSurfaceStore` to dedicated Agora service handlers.
+- **Concrete Owner**:
+  - `StrategyWorkshopStore` / `PostgresWorkshopStore` in `services/control-plane/bff/agora/strategy_workshop/store.py` (session lifecycle, event log, version links, completeness snapshots).
+  - `InteractionLifecycleStore` in `services/control-plane/bff/agora/interaction/store.py` (persona interaction requests, invocations, outbox).
+  - `ConsultationStore` / `ConsultationServiceClient` in `services/consultation/store.py` (memos, evidence attachments, publish lifecycle).
+  - `TradingRoomStore` in `services/control-plane/bff/agora/trading_room/store.py` (handoffs).
+- **Target Seam**: Move committee lifecycle and memo state transitions from `ReadSurfaceStore` to dedicated concrete Agora and Consultation store owners.
 - **Call Classification**: 8 WRITE, 5 READ (20 call sites: 9 WRITE, 11 READ).
 
-### 5.5 Agora Signals, Feedback, Notes, Insights & Audits (12 methods, 26 call sites)
+### 5.5 Agora Signals, Feedback, Notes, Insights, Trading Room & Audits (12 methods, 26 call sites)
 - **Methods**: `create_agora_feedback`, `create_agora_note`, `list_agora_notes`, `create_agora_signal`, `get_agora_signal`, `list_agora_signals`, `record_agora_signal_feedback`, `list_agora_insights`, `list_agora_watchlist`, `create_agora_training_example`, `list_agora_training_examples`, `record_agora_audit_event`
-- **Domain Port**: `AgoraSignalPort`, `AgoraFeedbackPort`, `AgoraNotesPort`, `AgoraAuditPort`.
-- **Target Seam**: Signal ingestion, market insight streaming, watchlist persistence, and audit logging routed to `services/agora/` and `services/telemetry/`.
+- **Concrete Owner**:
+  - `TradingRoomStore` / `PostgresTradingRoomStore` in `services/control-plane/bff/agora/trading_room/store.py` (signals, decision events, intents, trader decisions, workspaces).
+  - `PostgresDashboardRecipeStore` / `MemoryDashboardRecipeStore` in `services/control-plane/bff/agora/dashboard/store.py` (feedback).
+  - `DefaultResearchKnowledgeSourcePort` in `services/control-plane/bff/domain_ports/research_knowledge_source.py` (notes, insight cards).
+  - `PersonaTrainingDomainPort` in `services/control-plane/bff/domain_ports/persona_training.py` (training examples).
+  - `ProposalStore` (`once` command outbox) in `services/control-plane/bff/agora/governance/store.py` & `InteractionLifecycleStore` in `interaction/store.py` (audit events).
+- **Target Seam**: Signal ingestion, market insight streaming, workspace persistence, and audit logging routed to existing concrete domain stores.
 - **Call Classification**: 6 WRITE, 6 READ (26 call sites: 14 WRITE, 12 READ).
 
 ### 5.6 Decision Journal & Governance Sponsor Decisions (6 methods, 10 call sites)
 - **Methods**: `create_decision_journal_entry`, `patch_decision_journal_entry`, `list_decision_journal_entries`, `get_committee`, `list_committees`, `record_sponsor_decision`
-- **Domain Port**: `DecisionJournalPort`, `AgoraCommitteePort`, `SponsorDecisionCommandPort`.
-- **Target Seam**: Decision journal entries routed to immutable journal store; sponsor decisions routed to governance command service.
+- **Concrete Owner**:
+  - `CandidateDecisionStore` in `services/control-plane/bff/agora/candidate_decisions/store.py` (candidate revisions, journal decisions, validation/approval receipts).
+  - `TradingRoomStore` in `services/control-plane/bff/agora/trading_room/store.py` (trader decisions).
+  - `ConsultationStore` / `ConsultationServiceClient` in `services/consultation/store.py` (sponsor decisions, committee queries).
+- **Target Seam**: Decision journal entries routed to `CandidateDecisionStore`; sponsor decisions routed to `ConsultationStore`.
 - **Call Classification**: 3 WRITE, 3 READ (10 call sites: 3 WRITE, 7 READ).
 
 ### 5.7 Consultation Lifecycle & Transcripts (13 methods, 16 call sites)
 - **Methods**: `get_consult_policy`, `create_consult_request`, `cancel_consult_request`, `get_consult_request`, `list_consult_requests`, `get_consult_memo`, `list_consult_memos`, `list_consultations_for_persona`, `get_consultation`, `get_consultation_participants`, `get_consultation_outcome`, `get_consultation_evidence`, `get_consult_transcript`
-- **Domain Port**: `ConsultationReaderPort` / `DomainConsultationPort` in `services/control-plane/bff/domain_ports/operations_consultation.py`.
-- **Target Seam**: Backed directly by `ConsultationServiceClient` and `ConsultationStore` (from `services/consultation/`). Implemented with payload redaction for persona-internal states and contiguous transcript gap detection. `get_consult_policy` will be extracted and added to `ConsultationReaderPort` during migration.
+- **Concrete Owner**: `ConsultationServiceClient` and `ConsultationStore` (from `services/consultation/`) / `DomainConsultationPort` in `services/control-plane/bff/domain_ports/operations_consultation.py`.
+- **Target Seam**: Backed directly by `ConsultationServiceClient` and `ConsultationStore` (from `services/consultation/`). Implemented with payload redaction for persona-internal states and contiguous transcript gap detection.
 - **Call Classification**: 2 WRITE, 11 READ (16 call sites: 2 WRITE, 14 READ).
 
 ---
 
 ## 6. Migration Recommendations & Architecture Invariants
 
-1. **Zero Product Code Modifications in this Task**: In strict adherence to acceptance criteria, no production files in `services/control-plane/bff/` are modified in this mapping task.
-2. **Direct Domain Port Wiring**: Downstream migration tasks (`ACG-RS-CALLER-MIGRATION-20260828`) will inject `operations_consultation.py` ports directly into route factories instead of delegating through `read_store`.
-3. **No Compatibility Shims**: Do not introduce intermediate wrapper layers that bounce calls back to `read_store`. Calls must migrate cleanly to typed domain ports.
-4. **Fail-Closed Safety**: OpenClaw broker readiness and Agora committee handoffs must maintain strict fail-closed safety constraints during cutover.
-5. **Exact Mathematical Parity**: Total method count across all 6 sibling tasks equals exactly 202 direct methods and 598 direct member references in AST space (203 methods and 600 direct occurrences in lexical space, 613 total AST references / 615 total lexical references), providing an unassailable baseline for complete legacy retirement in `ACG-RS-FINAL-DELETE-20260828`.
+1. **No Standalone `services/agora/` or `services/signal-store/` Microservices**: In strict accordance with repository rules, no separate microservice directory was created. All persistence is owned by existing durable stores under `services/control-plane/bff/agora/` and `services/consultation/`.
+2. **Independent Persistent Owners**: All concrete stores (`CandidateDecisionStore`, `ProposalStore`, `StrategyWorkshopStore`, `TradingRoomStore`, `DashboardRecipeStore`, `InteractionLifecycleStore`, `PerformanceSuggestionStore`, `ResearchPlanStore`) are independent persistent stores with zero `read_store` imports.
+3. **Source Ingestion Reconcile-Only**: Source Ingestion (`services/source_ingestion/`) remains strictly reconcile-only and contains no Agora write mutations.
+4. **Zero Product Code Modifications to Hot Files**: In strict adherence to acceptance criteria, `services/control-plane/bff/main.py` and `services/control-plane/bff/read_store.py` remain untouched.
+5. **Fresh-Reader Test Verification**: All concrete owners are verified with fresh-reader tests ensuring durable persistence across restarted instances and AST import isolation from `read_store`.
+6. **Exact Mathematical Parity**: Total method count across all 6 sibling tasks equals exactly 202 direct methods and 598 direct member references in AST space (203 methods and 600 direct occurrences in lexical space, 613 total AST references / 615 total lexical references), providing an unassailable baseline for complete legacy retirement in `ACG-RS-FINAL-DELETE-20260828`.
