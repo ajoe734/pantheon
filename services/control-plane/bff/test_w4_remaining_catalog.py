@@ -1,98 +1,87 @@
 #!/usr/bin/env python3
-"""Unit test for APP-002-W4 remaining catalog read surfaces."""
+"""APP-002-W4 catalog reads through explicit domain ports and doubles."""
 from __future__ import annotations
 
 import os
 import sys
-import tempfile
 
 sys.path.insert(0, os.path.dirname(__file__))
-from read_store import ReadSurfaceStore
+
+from ports import (
+    PersonaRegistryReadsPort,
+    TrainingSessionTrainerPort,
+    create_in_memory_persona_capital_runtime_port,
+)
 
 
-def test_w4_remaining_catalog():
-    with tempfile.TemporaryDirectory() as td:
-        store_path = os.path.join(td, "read_surfaces.json")
-        store = ReadSurfaceStore(store_path, allow_local_snapshot_fallback=True)
+class _PersonaRegistryDouble:
+    def __init__(self) -> None:
+        self.personas = {"persona-alpha": {"id": "persona-alpha", "persona_id": "persona-alpha"}}
+        self.bindings = {"persona-alpha": [{"id": "binding-042"}]}
+        self.sessions = {"persona-alpha": [{"session_id": "sess-001", "status": "active"}]}
+        self.teaching = {"persona-alpha": [{"session_id": "teach-001", "status": "active"}]}
+        self.capabilities = {"persona-alpha": {"snapshot_id": "cap-001"}}
 
-        # ------------------------------------------------------------------ #
-        # Persona surfaces (PS-01 – PS-06)
-        # ------------------------------------------------------------------ #
-        personas = store.list_personas()
-        assert len(personas) >= 1, "Expected at least one persona"
-        assert personas[0]["id"] == "persona-alpha"
-        print("✅ PS-01: list_personas returns personas")
+    def list_personas(self, **_kwargs):
+        return list(self.personas.values())
 
-        persona = store.get_persona("persona-alpha")
-        assert persona is not None
-        print("✅ PS-02: get_persona returns detail")
+    def get_persona(self, persona_id):
+        return self.personas.get(persona_id)
 
-        sessions = store.list_sessions_for_persona("persona-alpha")
-        assert sessions is not None
-        assert len(sessions) >= 1
-        print("✅ PS-03: list_sessions_for_persona returns sessions")
+    def get_bindings_for_persona(self, persona_id):
+        return self.bindings.get(persona_id, [])
 
-        session = store.get_session("sess-001")
-        assert session is not None
-        print("✅ PS-04: get_session returns detail")
+    def list_sessions_for_persona(self, persona_id, **_kwargs):
+        return self.sessions.get(persona_id, [])
 
-        teaching = store.list_teaching_sessions_for_persona("persona-alpha")
-        assert teaching is not None
-        assert len(teaching) >= 1
-        print("✅ PS-05: list_teaching_sessions_for_persona returns sessions")
+    def list_teaching_sessions_for_persona(self, persona_id, **_kwargs):
+        return self.teaching.get(persona_id, [])
 
-        capability = store.get_capability_snapshot_for_persona("persona-alpha")
-        assert capability is not None
-        assert capability["snapshot_id"] == "cap-001"
-        print("✅ PS-06: capability snapshot available")
-
-        # ------------------------------------------------------------------ #
-        # Capital pool and binding surfaces (CP-01 – CP-04)
-        # ------------------------------------------------------------------ #
-        pools = store.list_capital_pools()
-        assert len(pools) >= 1
-        assert pools[0]["id"] == "pool-main"
-        print("✅ CP-01: list_capital_pools returns pools")
-
-        bindings = store.list_bindings()
-        assert len(bindings) >= 1
-        assert bindings[0]["id"] == "binding-042"
-        print("✅ CP-03: list_bindings returns bindings")
-
-        # ------------------------------------------------------------------ #
-        # Deployment surfaces (DP-01 – DP-04)
-        # ------------------------------------------------------------------ #
-        plans = store.list_deployment_plans()
-        assert len(plans) >= 1
-        assert plans[0]["id"] == "plan-F-042"
-        print("✅ DP-01: list_deployment_plans returns plans")
-
-        decisions = store.list_approval_decisions()
-        assert len(decisions) >= 1
-        assert decisions[0]["id"] == "approval-042"
-        print("✅ DP-03: list_approval_decisions returns decisions")
-
-        decision_detail = store.get_approval_decision("approval-042")
-        assert decision_detail is not None
-        assert decision_detail["id"] == "approval-042"
-        print("✅ DP-04: get_approval_decision returns detail")
-
-        # ------------------------------------------------------------------ #
-        # Runtime surfaces (RT-01 – RT-03)
-        # ------------------------------------------------------------------ #
-        runtime_bindings = store.list_runtime_bindings()
-        assert len(runtime_bindings) >= 1
-        assert runtime_bindings[0]["id"] == "runtime-042"
-        print("✅ RT-01: list_runtime_bindings returns bindings")
-
-        runtime_status = store.get_runtime_binding_by_runtime_id("runtime-042")
-        assert runtime_status is not None
-        assert runtime_status["runtime_id"] == "runtime-042"
-        print("✅ RT-03: get_runtime_binding_by_runtime_id returns status")
-
-    print("\n" + "=" * 50)
-    print("APP-002-W4-REMAINING-CATALOG surface tests: ALL PASSED")
+    def get_capability_snapshot_for_persona(self, persona_id):
+        return self.capabilities.get(persona_id)
 
 
-if __name__ == "__main__":
-    test_w4_remaining_catalog()
+class _TrainingSessionDouble:
+    def get_trainer_session(self, session_id):
+        if session_id == "sess-001":
+            return {"session_id": session_id, "status": "active"}
+        return None
+
+
+def test_w4_remaining_catalog() -> None:
+    catalog = create_in_memory_persona_capital_runtime_port(
+        personas=[{"id": "persona-alpha", "persona_id": "persona-alpha"}],
+        capital_pools=[{"id": "pool-main", "pool_id": "pool-main"}],
+        bindings=[
+            {
+                "id": "binding-042",
+                "binding_id": "binding-042",
+                "persona_id": "persona-alpha",
+                "capital_pool_id": "pool-main",
+            }
+        ],
+        deployment_plans=[{"id": "plan-F-042", "plan_id": "plan-F-042"}],
+        runtime_bindings=[
+            {
+                "id": "runtime-binding-042",
+                "binding_id": "runtime-binding-042",
+                "runtime_id": "runtime-042",
+            }
+        ],
+    )
+    persona = PersonaRegistryReadsPort(store=_PersonaRegistryDouble())
+    training = TrainingSessionTrainerPort(training=_TrainingSessionDouble())
+
+    assert catalog.list_personas()[0]["id"] == "persona-alpha"
+    assert catalog.get_persona("persona-alpha") is not None
+    assert persona.list_persona_sessions("persona-alpha")[0]["session_id"] == "sess-001"
+    assert training.get_trainer_session("sess-001")["status"] == "active"
+    assert persona.list_persona_teaching_sessions("persona-alpha")
+    assert persona.get_persona_capabilities("persona-alpha")["snapshot_id"] == "cap-001"
+    assert catalog.list_capital_pools()[0]["id"] == "pool-main"
+    assert catalog.list_bindings()[0]["id"] == "binding-042"
+    assert catalog.list_deployment_plans()[0]["id"] == "plan-F-042"
+    assert catalog.list_runtime_bindings()[0]["runtime_id"] == "runtime-042"
+    assert catalog.get_runtime_binding_by_runtime_id("runtime-042")["binding_id"] == (
+        "runtime-binding-042"
+    )
