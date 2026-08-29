@@ -3,8 +3,10 @@ from __future__ import annotations
 import ast
 import json
 from pathlib import Path
+from typing import Any
 
 from fastapi.testclient import TestClient
+import pytest
 
 from services.capital import main as capital_main
 from services.capital.allocation_store import AllocationAuthorityStore
@@ -29,27 +31,42 @@ from services.persona.write_owner import (
 from services.runtime_manager import RuntimeManagerService
 
 
-def test_persona_http_write_is_read_by_fresh_owner_instance(tmp_path: Path) -> None:
+def _persona_headers(actor_id: str, *roles: str) -> dict[str, str]:
+    return {"Authorization": f"Bearer {actor_id}:{','.join(roles)}"}
+
+
+def _persona_create_payload(**overrides: Any) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "actor_id": "operator-persona",
+        "persona_id": "persona-owner-proof",
+        "name": "Owner Proof Persona",
+        "mandate": "paper research only",
+        "strategy_family": "factor",
+        "required_data_sources": [
+            {
+                "dataset": "tw_price_daily",
+                "market": "TW",
+                "cadence": "daily",
+                "source_class": "seed_only",
+            }
+        ],
+    }
+    payload.update(overrides)
+    return payload
+
+
+def test_persona_http_write_is_read_by_fresh_owner_instance(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("PERSONA_AUTH_MODE", "permissive")
     store_path = tmp_path / "personas.json"
     first_app = create_app(PersistentPersonaOwner.from_json_path(store_path))
 
     created = TestClient(first_app).post(
         "/api/personas",
-        json={
-            "actor_id": "operator-persona",
-            "persona_id": "persona-owner-proof",
-            "name": "Owner Proof Persona",
-            "mandate": "paper research only",
-            "strategy_family": "factor",
-            "required_data_sources": [
-                {
-                    "dataset": "tw_price_daily",
-                    "market": "TW",
-                    "cadence": "daily",
-                    "source_class": "seed_only",
-                }
-            ],
-        },
+        json=_persona_create_payload(),
+        headers=_persona_headers("operator-persona", "persona.admin"),
     )
     assert created.status_code == 201
 
@@ -60,6 +77,227 @@ def test_persona_http_write_is_read_by_fresh_owner_instance(tmp_path: Path) -> N
     assert readback.json()["persona_id"] == "persona-owner-proof"
     assert readback.json()["required_data_sources"][0]["source_class"] == "seed_only"
     assert "persistenceMode" not in readback.json()
+
+
+def test_persona_http_rejects_unauthenticated_direct_live_owner_create(
+    tmp_path: Path,
+) -> None:
+    store_path = tmp_path / "personas.json"
+    owner = PersistentPersonaOwner.from_json_path(store_path)
+    client = TestClient(create_app(owner))
+
+    response = client.post(
+        "/api/personas",
+        json=_persona_create_payload(lifecycle_state="live_owner"),
+    )
+
+    assert response.status_code == 401
+    assert owner.list() == []
+
+
+def test_persona_http_rejects_untrusted_role_and_spoofed_actor_create(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("PERSONA_AUTH_MODE", "permissive")
+    owner = PersistentPersonaOwner.from_json_path(tmp_path / "personas.json")
+    client = TestClient(create_app(owner))
+
+    wrong_role = client.post(
+        "/api/personas",
+        json=_persona_create_payload(actor_id="untrusted-operator"),
+        headers=_persona_headers("untrusted-operator", "operator"),
+    )
+    spoofed_actor = client.post(
+        "/api/personas",
+        json=_persona_create_payload(actor_id="governance-actor"),
+        headers=_persona_headers("persona-admin", "persona.admin"),
+    )
+
+    assert wrong_role.status_code == 403
+    assert spoofed_actor.status_code == 403
+    assert owner.list() == []
+
+
+def test_persona_http_policy_owner_cannot_skip_directly_to_live_owner(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("PERSONA_AUTH_MODE", "permissive")
+    owner = PersistentPersonaOwner.from_json_path(tmp_path / "personas.json")
+    client = TestClient(create_app(owner))
+
+    response = client.post(
+        "/api/personas",
+        json=_persona_create_payload(lifecycle_state="live_owner"),
+        headers=_persona_headers("operator-persona", "persona.admin"),
+    )
+
+    assert response.status_code == 422
+    assert owner.list() == []
+
+
+def test_persona_http_untrusted_caller_cannot_self_promote(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("PERSONA_AUTH_MODE", "permissive")
+    owner = PersistentPersonaOwner.from_json_path(tmp_path / "personas.json")
+    client = TestClient(create_app(owner))
+    admin_headers = _persona_headers("operator-persona", "persona.admin")
+    assert client.post(
+        "/api/personas",
+        json=_persona_create_payload(),
+        headers=admin_headers,
+    ).status_code == 201
+    assert client.patch(
+        "/api/personas/persona-owner-proof/lifecycle",
+        json={"actor_id": "operator-persona", "target_state": "research_only"},
+        headers=admin_headers,
+    ).status_code == 200
+
+    unauthenticated = client.patch(
+        "/api/personas/persona-owner-proof/lifecycle",
+        json={"actor_id": "governance-actor", "target_state": "consultable"},
+    )
+    untrusted_role = client.patch(
+        "/api/personas/persona-owner-proof/lifecycle",
+        json={"actor_id": "untrusted-operator", "target_state": "consultable"},
+        headers=_persona_headers("untrusted-operator", "operator"),
+    )
+    caller_supplied_decision = client.patch(
+        "/api/personas/persona-owner-proof/lifecycle",
+        json={
+            "actor_id": "untrusted-operator",
+            "target_state": "consultable",
+            "governance_decision_id": "caller-invented-decision",
+        },
+        headers=_persona_headers("untrusted-operator", "operator"),
+    )
+    actor_spoof = client.patch(
+        "/api/personas/persona-owner-proof/lifecycle",
+        json={"actor_id": "governance-actor", "target_state": "consultable"},
+        headers=_persona_headers("persona-admin", "persona.admin"),
+    )
+    patch_bypass = client.patch(
+        "/api/personas/persona-owner-proof",
+        json={"actor_id": "operator-persona", "lifecycle_state": "consultable"},
+        headers=admin_headers,
+    )
+
+    assert unauthenticated.status_code == 401
+    assert untrusted_role.status_code == 403
+    assert caller_supplied_decision.status_code == 403
+    assert actor_spoof.status_code == 403
+    assert patch_bypass.status_code == 422
+    assert owner.get("persona-owner-proof").lifecycle_state == "research_only"
+
+
+def test_persona_http_governance_owner_controls_promotion_chain(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("PERSONA_AUTH_MODE", "permissive")
+    owner = PersistentPersonaOwner.from_json_path(tmp_path / "personas.json")
+    client = TestClient(create_app(owner))
+    admin_headers = _persona_headers("operator-persona", "persona.admin")
+    governance_headers = _persona_headers(
+        "governance-actor",
+        "governance_reviewer",
+    )
+    assert client.post(
+        "/api/personas",
+        json=_persona_create_payload(),
+        headers=admin_headers,
+    ).status_code == 201
+    assert client.patch(
+        "/api/personas/persona-owner-proof/lifecycle",
+        json={"actor_id": "operator-persona", "target_state": "research_only"},
+        headers=admin_headers,
+    ).status_code == 200
+
+    denied_persona_plane = client.patch(
+        "/api/personas/persona-owner-proof/lifecycle",
+        json={"actor_id": "operator-persona", "target_state": "consultable"},
+        headers=admin_headers,
+    )
+    assert denied_persona_plane.status_code == 403
+
+    for target_state in ("consultable", "paper_owner", "live_owner"):
+        promoted = client.patch(
+            "/api/personas/persona-owner-proof/lifecycle",
+            json={"actor_id": "governance-actor", "target_state": target_state},
+            headers=governance_headers,
+        )
+        assert promoted.status_code == 200
+        assert promoted.json()["lifecycle_state"] == target_state
+
+
+class _ExactGovernanceDecisionVerifier:
+    def verify_persona_lifecycle_decision(
+        self,
+        *,
+        decision_id: str,
+        persona_id: str,
+        source_state: str,
+        target_state: str,
+    ) -> bool:
+        return (
+            decision_id == "decision-consultable"
+            and persona_id == "persona-owner-proof"
+            and source_state == "research_only"
+            and target_state == "consultable"
+        )
+
+
+def test_persona_http_decision_executor_requires_exact_governance_binding(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("PERSONA_AUTH_MODE", "permissive")
+    owner = PersistentPersonaOwner.from_json_path(tmp_path / "personas.json")
+    client = TestClient(
+        create_app(
+            owner,
+            governance_decision_verifier=_ExactGovernanceDecisionVerifier(),
+        )
+    )
+    admin_headers = _persona_headers("operator-persona", "persona.admin")
+    assert client.post(
+        "/api/personas",
+        json=_persona_create_payload(),
+        headers=admin_headers,
+    ).status_code == 201
+    assert client.patch(
+        "/api/personas/persona-owner-proof/lifecycle",
+        json={"actor_id": "operator-persona", "target_state": "research_only"},
+        headers=admin_headers,
+    ).status_code == 200
+
+    wrong_decision = client.patch(
+        "/api/personas/persona-owner-proof/lifecycle",
+        json={
+            "actor_id": "governance-executor",
+            "target_state": "consultable",
+            "governance_decision_id": "decision-wrong-target",
+        },
+        headers=_persona_headers("governance-executor", "operator"),
+    )
+    accepted = client.patch(
+        "/api/personas/persona-owner-proof/lifecycle",
+        json={
+            "actor_id": "governance-executor",
+            "target_state": "consultable",
+            "governance_decision_id": "decision-consultable",
+        },
+        headers=_persona_headers("governance-executor", "operator"),
+    )
+
+    assert wrong_decision.status_code == 403
+    assert accepted.status_code == 200
+    assert accepted.json()["metadata"]["last_lifecycle_governance_decision_id"] == (
+        "decision-consultable"
+    )
 
 
 def _capital_service(tmp_path: Path) -> capital_main.CapitalBoundaryService:

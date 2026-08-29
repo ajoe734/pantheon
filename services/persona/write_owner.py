@@ -12,15 +12,17 @@ import os
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
+from dataclasses import dataclass
 from typing import Any, Mapping, Protocol
 
-from fastapi import FastAPI, HTTPException, Query, status
+from fastapi import FastAPI, Header, HTTPException, Query, status
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from services.foundation.reliable_delivery import (
     AtomicJsonRecordStore,
     build_record_store,
 )
+from services.runtime_auth_inbound import AuthContext, AuthError, validate_request_auth
 
 
 def _utc_now() -> str:
@@ -41,6 +43,32 @@ _DATA_SOURCE_CADENCES = frozenset(
     {"realtime", "minutely", "hourly", "daily", "weekly", "on_demand"}
 )
 _DATA_SOURCE_CLASSES = frozenset({"live_push", "live_pull", "seed_only"})
+_PERSONA_PLANE_ROLES = frozenset({"persona.admin"})
+_GOVERNANCE_PLANE_ROLES = frozenset(
+    {
+        "automated_gate",
+        "governance_committee",
+        "governance_reviewer",
+        "risk_owner",
+    }
+)
+_DECISION_EXECUTOR_ROLES = frozenset({"admin", "approver", "operator"})
+_AUTHENTICATED_MUTATION_ROLES = (
+    _PERSONA_PLANE_ROLES | _GOVERNANCE_PLANE_ROLES | _DECISION_EXECUTOR_ROLES
+)
+_LIFECYCLE_POLICY_ROLES = {
+    ("draft", "research_only"): _PERSONA_PLANE_ROLES,
+    ("research_only", "consultable"): _GOVERNANCE_PLANE_ROLES,
+    ("consultable", "paper_owner"): _GOVERNANCE_PLANE_ROLES,
+    ("paper_owner", "live_owner"): _GOVERNANCE_PLANE_ROLES,
+    ("research_only", "frozen"): _GOVERNANCE_PLANE_ROLES,
+    ("consultable", "frozen"): _GOVERNANCE_PLANE_ROLES,
+    ("paper_owner", "frozen"): _GOVERNANCE_PLANE_ROLES,
+    ("live_owner", "frozen"): _GOVERNANCE_PLANE_ROLES,
+    ("frozen", "research_only"): _GOVERNANCE_PLANE_ROLES,
+    ("frozen", "retired"): _GOVERNANCE_PLANE_ROLES,
+    ("live_owner", "retired"): _GOVERNANCE_PLANE_ROLES,
+}
 
 
 class PersonaOwnerError(ValueError):
@@ -57,6 +85,189 @@ class PersonaNotFound(PersonaOwnerError):
 
 class PersonaConcurrentUpdate(PersonaOwnerError):
     """Raised when repeated compare-and-set attempts lose a write race."""
+
+
+class PersonaAuthorityError(PersonaOwnerError):
+    """Raised when verified caller authority does not own a Persona write."""
+
+    def __init__(self, code: str, message: str, status_code: int) -> None:
+        super().__init__(message)
+        self.code = code
+        self.message = message
+        self.status_code = status_code
+
+
+@dataclass(frozen=True)
+class PersonaInboundAuthority:
+    """Authenticated identity used for Persona mutation policy decisions."""
+
+    actor_id: str
+    roles: frozenset[str]
+    token_kind: str
+
+
+class GovernanceDecisionVerifier(Protocol):
+    """Verify one exact Persona lifecycle decision against Governance truth."""
+
+    def verify_persona_lifecycle_decision(
+        self,
+        *,
+        decision_id: str,
+        persona_id: str,
+        source_state: str,
+        target_state: str,
+    ) -> bool: ...
+
+
+def _persona_auth_env() -> dict[str, str]:
+    """Resolve Persona auth configuration without enabling a permissive default."""
+
+    return {
+        "PANTHEON_RUNTIME_AUTH_MODE": (
+            os.getenv("PERSONA_AUTH_MODE")
+            or os.getenv("PANTHEON_RUNTIME_AUTH_MODE")
+            or "strict"
+        ),
+        "PANTHEON_RUNTIME_JWT_SECRET": (
+            os.getenv("PERSONA_JWT_SECRET")
+            or os.getenv("PANTHEON_RUNTIME_JWT_SECRET")
+            or ""
+        ),
+        "PANTHEON_RUNTIME_JWT_ISSUER": (
+            os.getenv("PERSONA_JWT_ISSUER")
+            or os.getenv("PANTHEON_RUNTIME_JWT_ISSUER")
+            or ""
+        ),
+        "PANTHEON_RUNTIME_JWT_AUDIENCE": (
+            os.getenv("PERSONA_JWT_AUDIENCE")
+            or os.getenv("PANTHEON_RUNTIME_JWT_AUDIENCE")
+            or ""
+        ),
+        "PANTHEON_RUNTIME_JWKS_URI": (
+            os.getenv("PERSONA_JWKS_URI")
+            or os.getenv("PANTHEON_RUNTIME_JWKS_URI")
+            or ""
+        ),
+        "PANTHEON_RUNTIME_OIDC_DISCOVERY_URL": (
+            os.getenv("PERSONA_OIDC_DISCOVERY_URL")
+            or os.getenv("PANTHEON_RUNTIME_OIDC_DISCOVERY_URL")
+            or ""
+        ),
+        "PANTHEON_RUNTIME_OIDC_ISSUER": (
+            os.getenv("PERSONA_OIDC_ISSUER")
+            or os.getenv("PANTHEON_RUNTIME_OIDC_ISSUER")
+            or ""
+        ),
+        "PANTHEON_RUNTIME_OIDC_AUDIENCE": (
+            os.getenv("PERSONA_OIDC_AUDIENCE")
+            or os.getenv("PANTHEON_RUNTIME_OIDC_AUDIENCE")
+            or ""
+        ),
+        "PANTHEON_RUNTIME_ROLE_CLAIMS": (
+            os.getenv("PERSONA_ROLE_CLAIMS")
+            or os.getenv("PANTHEON_RUNTIME_ROLE_CLAIMS")
+            or ""
+        ),
+        "PANTHEON_RUNTIME_ROLE_MAP": (
+            os.getenv("PERSONA_ROLE_MAP")
+            or os.getenv("PANTHEON_RUNTIME_ROLE_MAP")
+            or ""
+        ),
+        "PANTHEON_RUNTIME_ROLE_MAP_MODE": (
+            os.getenv("PERSONA_ROLE_MAP_MODE")
+            or os.getenv("PANTHEON_RUNTIME_ROLE_MAP_MODE")
+            or ""
+        ),
+        "PANTHEON_RUNTIME_MFA_REQUIRED": "false",
+    }
+
+
+def _authenticate_persona_mutation(
+    authorization: str | None,
+) -> PersonaInboundAuthority:
+    try:
+        context: AuthContext = validate_request_auth(
+            authorization=authorization,
+            required_roles=tuple(sorted(_AUTHENTICATED_MUTATION_ROLES)),
+            mfa_required=False,
+            env=_persona_auth_env(),
+        )
+    except AuthError as exc:
+        raise PersonaAuthorityError(exc.code, exc.message, exc.status_code) from exc
+    return PersonaInboundAuthority(
+        actor_id=context.actor_id,
+        roles=context.roles,
+        token_kind=context.token_kind,
+    )
+
+
+def _bind_authenticated_actor(
+    request: BaseModel,
+    authority: PersonaInboundAuthority,
+) -> Any:
+    declared_actor_id = str(getattr(request, "actor_id", None) or "").strip()
+    if declared_actor_id != authority.actor_id:
+        raise PersonaAuthorityError(
+            "ACTOR_ID_MISMATCH",
+            "Mutation actor_id does not match the authenticated actor",
+            403,
+        )
+    return request.model_copy(update={"actor_id": authority.actor_id})
+
+
+def _require_persona_plane_owner(authority: PersonaInboundAuthority) -> None:
+    if authority.roles.isdisjoint(_PERSONA_PLANE_ROLES):
+        raise PersonaAuthorityError(
+            "PERSONA_OWNER_REQUIRED",
+            "Persona creation and registry edits require persona.admin authority",
+            403,
+        )
+
+
+def _require_lifecycle_authority(
+    *,
+    authority: PersonaInboundAuthority,
+    verifier: GovernanceDecisionVerifier | None,
+    decision_id: str | None,
+    persona_id: str,
+    source_state: str,
+    target_state: str,
+) -> None:
+    transition = (source_state, target_state)
+    policy_roles = _LIFECYCLE_POLICY_ROLES.get(transition)
+    if policy_roles is None:
+        raise PersonaOwnerError(
+            f"invalid lifecycle transition {source_state!r} -> {target_state!r}"
+        )
+    if not authority.roles.isdisjoint(policy_roles):
+        return
+
+    clean_decision_id = str(decision_id or "").strip()
+    if not clean_decision_id or verifier is None:
+        raise PersonaAuthorityError(
+            "LIFECYCLE_AUTHORITY_REQUIRED",
+            "Lifecycle transition requires its policy owner or a verified Governance decision",
+            403,
+        )
+    try:
+        verified = verifier.verify_persona_lifecycle_decision(
+            decision_id=clean_decision_id,
+            persona_id=persona_id,
+            source_state=source_state,
+            target_state=target_state,
+        )
+    except Exception as exc:
+        raise PersonaAuthorityError(
+            "GOVERNANCE_AUTHORITY_UNAVAILABLE",
+            "Governance decision authority is unavailable",
+            503,
+        ) from exc
+    if not verified:
+        raise PersonaAuthorityError(
+            "GOVERNANCE_DECISION_INVALID",
+            "Governance decision is not approved for this exact Persona lifecycle transition",
+            403,
+        )
 
 
 class _OwnerRecordStore(Protocol):
@@ -176,6 +387,7 @@ class AdvancePersonaLifecycleRequest(BaseModel):
 
     actor_id: str = Field(min_length=1)
     target_state: str = Field(min_length=1)
+    governance_decision_id: str | None = Field(default=None, min_length=1)
 
 
 class PersistentPersonaOwner:
@@ -189,6 +401,10 @@ class PersistentPersonaOwner:
         return cls(AtomicJsonRecordStore(path))
 
     def create(self, request: CreatePersonaRequest) -> PersonaBody:
+        if request.lifecycle_state != "draft":
+            raise PersonaOwnerError(
+                "Persona creation must start in 'draft'; use the governed lifecycle endpoint"
+            )
         persona_id = str(request.persona_id or f"persona-{uuid.uuid4().hex[:12]}")
         created_at = _utc_now()
         record = PersonaBody(
@@ -256,25 +472,53 @@ class PersistentPersonaOwner:
         persona_id: str,
         request: AdvancePersonaLifecycleRequest,
     ) -> PersonaBody:
-        return self.patch(
-            persona_id,
-            PatchPersonaRequest(
-                actor_id=request.actor_id,
-                lifecycle_state=request.target_state,
-            ),
+        lifecycle_patch = PatchPersonaRequest(
+            actor_id=request.actor_id,
+            lifecycle_state=request.target_state,
+        )
+        for _attempt in range(4):
+            current = self._records.get(persona_id)
+            if current is None:
+                raise PersonaNotFound(f"Persona {persona_id!r} not found")
+            updated = self._patched_record(
+                current,
+                lifecycle_patch,
+                allow_lifecycle=True,
+            )
+            if request.governance_decision_id:
+                metadata = dict(updated.get("metadata") or {})
+                metadata["last_lifecycle_governance_decision_id"] = (
+                    request.governance_decision_id
+                )
+                updated["metadata"] = metadata
+            committed, canonical = self._records.compare_and_set(
+                persona_id,
+                current,
+                updated,
+            )
+            if committed:
+                return PersonaBody.model_validate(canonical or updated)
+        raise PersonaConcurrentUpdate(
+            f"Persona {persona_id!r} changed concurrently; retry against a fresh read"
         )
 
     @staticmethod
     def _patched_record(
         current: Mapping[str, Any],
         request: PatchPersonaRequest,
+        *,
+        allow_lifecycle: bool = False,
     ) -> dict[str, Any]:
         record = dict(current)
         patch_fields = request.model_fields_set - {"actor_id"}
         if "lifecycle_state" in patch_fields:
+            if not allow_lifecycle:
+                raise PersonaOwnerError(
+                    "lifecycle_state may only be changed through the governed lifecycle endpoint"
+                )
             target_state = str(request.lifecycle_state or "")
             current_state = str(record.get("lifecycle_state") or "")
-            if target_state != current_state and target_state not in _LIFECYCLE_TRANSITIONS.get(
+            if target_state == current_state or target_state not in _LIFECYCLE_TRANSITIONS.get(
                 current_state, frozenset()
             ):
                 raise PersonaOwnerError(
@@ -317,7 +561,11 @@ def build_persona_owner() -> PersistentPersonaOwner:
     return PersistentPersonaOwner(records)
 
 
-def create_app(owner: PersistentPersonaOwner | None = None) -> FastAPI:
+def create_app(
+    owner: PersistentPersonaOwner | None = None,
+    *,
+    governance_decision_verifier: GovernanceDecisionVerifier | None = None,
+) -> FastAPI:
     persistent_owner = owner or build_persona_owner()
     app = FastAPI(
         title="Pantheon Persona Registry Owner",
@@ -330,9 +578,17 @@ def create_app(owner: PersistentPersonaOwner | None = None) -> FastAPI:
         response_model=PersonaBody,
         status_code=status.HTTP_201_CREATED,
     )
-    def create_persona(body: CreatePersonaRequest) -> PersonaBody:
+    def create_persona(
+        body: CreatePersonaRequest,
+        authorization: str | None = Header(default=None),
+    ) -> PersonaBody:
         try:
+            authority = _authenticate_persona_mutation(authorization)
+            _require_persona_plane_owner(authority)
+            body = _bind_authenticated_actor(body, authority)
             return persistent_owner.create(body)
+        except PersonaAuthorityError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
         except PersonaAlreadyExists as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         except PersonaOwnerError as exc:
@@ -356,9 +612,18 @@ def create_app(owner: PersistentPersonaOwner | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 
     @app.patch("/api/personas/{persona_id}", response_model=PersonaBody)
-    def patch_persona(persona_id: str, body: PatchPersonaRequest) -> PersonaBody:
+    def patch_persona(
+        persona_id: str,
+        body: PatchPersonaRequest,
+        authorization: str | None = Header(default=None),
+    ) -> PersonaBody:
         try:
+            authority = _authenticate_persona_mutation(authorization)
+            _require_persona_plane_owner(authority)
+            body = _bind_authenticated_actor(body, authority)
             return persistent_owner.patch(persona_id, body)
+        except PersonaAuthorityError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
         except PersonaNotFound as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except PersonaConcurrentUpdate as exc:
@@ -373,9 +638,23 @@ def create_app(owner: PersistentPersonaOwner | None = None) -> FastAPI:
     def advance_persona_lifecycle(
         persona_id: str,
         body: AdvancePersonaLifecycleRequest,
+        authorization: str | None = Header(default=None),
     ) -> PersonaBody:
         try:
+            authority = _authenticate_persona_mutation(authorization)
+            current = persistent_owner.get(persona_id)
+            _require_lifecycle_authority(
+                authority=authority,
+                verifier=governance_decision_verifier,
+                decision_id=body.governance_decision_id,
+                persona_id=persona_id,
+                source_state=current.lifecycle_state,
+                target_state=body.target_state,
+            )
+            body = _bind_authenticated_actor(body, authority)
             return persistent_owner.advance_lifecycle(persona_id, body)
+        except PersonaAuthorityError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
         except PersonaNotFound as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except PersonaConcurrentUpdate as exc:
@@ -403,10 +682,13 @@ __all__ = [
     "PatchPersonaRequest",
     "PersistentPersonaOwner",
     "PersonaAlreadyExists",
+    "PersonaAuthorityError",
     "PersonaBody",
     "PersonaConcurrentUpdate",
+    "PersonaInboundAuthority",
     "PersonaNotFound",
     "PersonaOwnerError",
+    "GovernanceDecisionVerifier",
     "RequiredDataSourceBody",
     "app",
     "build_persona_owner",
