@@ -12,11 +12,21 @@ from fastapi.testclient import TestClient
 
 sys.path.insert(0, os.path.dirname(__file__))
 
+import json
+from pathlib import Path
+from typing import Any, Iterator
+from unittest import mock
+
+from fastapi.testclient import TestClient
+
+sys.path.insert(0, os.path.dirname(__file__))
+
 import main as bff_main
-from read_store import ReadSurfaceStore
+from ports import ReadSurfacePorts
 
 
 HEADERS = {"Authorization": "Bearer op-2:operator"}
+FIXTURE_PATH = Path(__file__).resolve().parent / "data" / "fixtures_pack_b.json"
 
 PACK_B = {
     "evolution_program_id": "evoprog-pack-b-001",
@@ -45,6 +55,133 @@ SERVICE_ENV_BLANKS = {
 }
 
 
+class DetailSmokeBTestReadPorts(ReadSurfacePorts):
+    def __init__(self, *, allow_local_snapshot_fallback: bool = True) -> None:
+        super().__init__()
+        self._allow_fallback = allow_local_snapshot_fallback
+        self._data: dict[str, Any] = {}
+        if allow_local_snapshot_fallback and FIXTURE_PATH.exists():
+            payload = json.loads(FIXTURE_PATH.read_text(encoding="utf-8"))
+            self._data = payload.get("datasets", {})
+
+    def dataset_source(self, dataset: str) -> str:
+        return "local_snapshot" if self._allow_fallback else "missing"
+
+    def dataset_surface_status(self, dataset: str, *, snapshot_at: str, **kwargs: Any) -> dict[str, Any]:
+        src = self.dataset_source(dataset)
+        status = "unavailable" if src == "missing" else "ok"
+        return {"status": status, "source": src, "snapshot_at": snapshot_at}
+
+    def _get_dataset(self, name: str) -> dict[str, Any] | list[Any]:
+        return self._data.get(name, {})
+
+    def list_evolution_programs(self, **kwargs: Any) -> list[dict[str, Any]]:
+        ds = self._get_dataset("evolution_programs")
+        return list(ds.values()) if isinstance(ds, dict) else list(ds)
+
+    def get_evolution_program(self, program_id: str | None) -> dict[str, Any] | None:
+        ds = self._get_dataset("evolution_programs")
+        if isinstance(ds, dict):
+            return ds.get(str(program_id or ""))
+        return next((p for p in ds if p.get("id") == program_id or p.get("program_id") == program_id), None)
+
+    def list_research_experiments(self, **kwargs: Any) -> list[dict[str, Any]]:
+        ds = self._get_dataset("research_experiments")
+        return list(ds.values()) if isinstance(ds, dict) else list(ds)
+
+    def get_research_experiment(self, experiment_id: str | None) -> dict[str, Any] | None:
+        ds = self._get_dataset("research_experiments")
+        if isinstance(ds, dict):
+            return ds.get(str(experiment_id or ""))
+        return next((e for e in ds if e.get("id") == experiment_id or e.get("experiment_id") == experiment_id), None)
+
+    def get_experiment_bff(self, experiment_id: str | None) -> dict[str, Any] | None:
+        return self.get_research_experiment(experiment_id)
+
+    def list_research_analyses(self, experiment_id: str | None = None, **kwargs: Any) -> list[dict[str, Any]]:
+        ds = self._get_dataset("research_analyses")
+        items = list(ds.values()) if isinstance(ds, dict) else list(ds)
+        if experiment_id:
+            return [a for a in items if a.get("experiment_id") == experiment_id]
+        return items
+
+    def get_research_analysis(self, analysis_id: str | None) -> dict[str, Any] | None:
+        ds = self._get_dataset("research_analyses")
+        if isinstance(ds, dict):
+            return ds.get(str(analysis_id or ""))
+        return next((a for a in ds if a.get("id") == analysis_id or a.get("analysis_id") == analysis_id), None)
+
+    def list_v5_interventions(self, **kwargs: Any) -> list[dict[str, Any]]:
+        ds = self._get_dataset("v5_interventions")
+        return list(ds.values()) if isinstance(ds, dict) else list(ds)
+
+    def get_v5_intervention(self, intv_id: str | None) -> dict[str, Any] | None:
+        ds = self._get_dataset("v5_interventions")
+        if isinstance(ds, dict):
+            return ds.get(str(intv_id or ""))
+        return next((i for i in ds if i.get("id") == intv_id or i.get("intervention_id") == intv_id), None)
+
+    def list_agora_sessions(self, **kwargs: Any) -> list[dict[str, Any]]:
+        ds = self._get_dataset("agora_sessions")
+        return list(ds.values()) if isinstance(ds, dict) else list(ds)
+
+    def get_agora_session(self, session_id: str | None) -> dict[str, Any] | None:
+        ds = self._get_dataset("agora_sessions")
+        if isinstance(ds, dict):
+            return ds.get(str(session_id or ""))
+        return next((s for s in ds if s.get("sessionId") == session_id or s.get("session_id") == session_id or s.get("id") == session_id), None)
+
+    def list_agora_session_messages(self, session_id: str | None = None, **kwargs: Any) -> list[dict[str, Any]]:
+        ds = self._get_dataset("agora_sessions")
+        if isinstance(ds, dict) and session_id and str(session_id) in ds:
+            return list(ds[str(session_id)].get("messages") or [])
+        session = self.get_agora_session(session_id)
+        if session and isinstance(session.get("messages"), list):
+            return list(session["messages"])
+        return []
+
+    def list_agora_messages(self, session_id: str | None = None, **kwargs: Any) -> list[dict[str, Any]]:
+        return self.list_agora_session_messages(session_id, **kwargs)
+
+    def list_research_artifacts(self, **kwargs: Any) -> list[dict[str, Any]]:
+        ds = self._get_dataset("research_artifacts")
+        return list(ds.values()) if isinstance(ds, dict) else list(ds)
+
+    def get_research_artifact(self, artifact_id: str | None) -> dict[str, Any] | None:
+        ds = self._get_dataset("research_artifacts")
+        if isinstance(ds, dict):
+            return ds.get(str(artifact_id or ""))
+        return next((a for a in ds if a.get("id") == artifact_id or a.get("artifact_id") == artifact_id), None)
+
+    def list_lineage_edges(self, **kwargs: Any) -> list[dict[str, Any]]:
+        ds = self._get_dataset("lineage_edges")
+        return list(ds.values()) if isinstance(ds, dict) else list(ds)
+
+    def artifact_exists(self, artifact_id: str | None) -> bool:
+        return self.get_research_artifact(artifact_id) is not None
+
+    def get_inspiration_graph(self, artifact_id: str | None) -> dict[str, Any] | None:
+        if not self.artifact_exists(artifact_id):
+            return None
+        edges = self.list_lineage_edges()
+        filtered = [e for e in edges if e.get("to_artifact_id") == artifact_id or e.get("from_artifact_id") == artifact_id or e.get("artifact_id") == artifact_id]
+        return {
+            "artifact_id": artifact_id,
+            "inspiration_edges": [
+                {
+                    "lineage_edge_id": e.get("id") or e.get("lineage_edge_id") or "lineage-pack-b-001",
+                    "from_artifact_id": e.get("from_artifact_id"),
+                    "to_artifact_id": e.get("to_artifact_id"),
+                    "edge_type": e.get("edge_type"),
+                }
+                for e in (filtered or edges)
+            ],
+        }
+
+    def get_inspiration_lineage(self, artifact_id: str | None) -> dict[str, Any]:
+        return self.get_inspiration_graph(artifact_id) or {"artifact_id": artifact_id, "inspiration_edges": []}
+
+
 @contextmanager
 def _pack_b_client() -> Iterator[TestClient]:
     with tempfile.TemporaryDirectory() as td:
@@ -60,8 +197,7 @@ def _pack_b_client() -> Iterator[TestClient]:
         }
         try:
             with mock.patch.dict(os.environ, env, clear=False):
-                bff_main.read_store = ReadSurfaceStore(
-                    os.path.join(td, "read_surfaces.json"),
+                bff_main.read_store = DetailSmokeBTestReadPorts(
                     allow_local_snapshot_fallback=True,
                 )
                 bff_main._GOV_BFF_EVOLUTION_PROGRAM_OVERLAY.clear()
