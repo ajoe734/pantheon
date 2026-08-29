@@ -20,20 +20,21 @@ os.environ.setdefault("PANTHEON_BFF_AUTH_STUB", "true")
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 import main as bff_main  # noqa: E402
-from read_store import ReadSurfaceStore  # noqa: E402
+from ports import ReadSurfacePorts  # noqa: E402
+from rebalance_authority_test_support import (  # noqa: E402
+    create_market_persona_projection_test_double,
+)
 
 
 HEADERS = {"Authorization": "Bearer pfg-mgmt-read-budget:operator"}
 
 
 @contextmanager
-def _isolated_store() -> Iterator[ReadSurfaceStore]:
+def _isolated_store(**factory_kwargs: Any) -> Iterator[ReadSurfacePorts]:
     with tempfile.TemporaryDirectory(prefix="pfg_mgmt_read_budget_") as td:
         original = bff_main.read_store
-        store = ReadSurfaceStore(
-            os.path.join(td, "read_surfaces.json"),
-            allow_local_snapshot_fallback=False,
-        )
+        del td
+        store = create_market_persona_projection_test_double(**factory_kwargs)
         bff_main.read_store = store
         try:
             yield store
@@ -77,14 +78,18 @@ def test_cockpit_reuses_alert_and_health_composition(monkeypatch) -> None:
 
 def test_operations_read_model_never_expands_full_persona_fleet(monkeypatch) -> None:
     """A single-persona response uses direct canonical projections only."""
-    with _isolated_store() as store:
-        store.create_persona(
-            persona_id="persona-budget-direct",
-            name="Budget Direct Persona",
-            actor_id="test",
-            lifecycle_state="deployed",
-            metadata={},
-        )
+    with _isolated_store(
+        persona_capital_runtime_kwargs={
+            "personas": [
+                {
+                    "persona_id": "persona-budget-direct",
+                    "name": "Budget Direct Persona",
+                    "lifecycle_state": "deployed",
+                    "metadata": {},
+                }
+            ],
+        },
+    ) as store:
 
         def full_fleet_is_forbidden(**_kwargs: Any) -> dict[str, Any]:
             raise AssertionError("operations read model must not build the full fleet")
