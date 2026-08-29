@@ -25,8 +25,8 @@ import read_store_fixtures as fixtures  # noqa: E402
 # canonical task state rather than modifying the reviewed head.
 TASK_REVIEW_EVIDENCE = {
     "task": "ACG-RS-RETIRE-NESTED-CONSOLE-V2-20260829",
-    "owner": "Codex2",
-    "reviewer": "Antigravity",
+    "owner": "Antigravity",
+    "reviewer": "Codex2",
     "base": "dev",
     "scope": (
         "Retire ReadSurfaceStore imports and runtime construction from the "
@@ -37,9 +37,8 @@ TASK_REVIEW_EVIDENCE = {
         "canonical task data are outside this task."
     ),
     "verification": (
-        "pytest -q test_management_real_read_models.py (4 passed); "
-        "pytest -q test_ppl_alloc_012_ranking_projection.py (27 passed); "
-        "declared focused subset completed without a reported test failure."
+        "pytest -q declared 12-file nested-console and Management projection "
+        "subset (119 passed without errors)."
     ),
     "review_requirement": (
         "Review this exact PR head, confirm each declared test artifact has "

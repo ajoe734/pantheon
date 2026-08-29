@@ -6,6 +6,7 @@ import json
 import os
 import sys
 import threading
+import uuid
 from pathlib import Path
 from typing import Any
 from unittest import mock
@@ -297,6 +298,17 @@ def _seeded_client(tmp_path: Path, monkeypatch) -> TestClient:
     )
     store._data = json.loads(json.dumps(seeded_surfaces))
     store.get_agora_session = lambda session_id: store._data["agora_sessions"].get(session_id)
+    def _record_agora_audit_event(event: dict) -> dict:
+        event_id = str(event.get("auditId") or event.get("eventId") or f"aud-agora-{uuid.uuid4().hex[:12]}")
+        record = {
+            "auditId": event_id,
+            "eventId": event_id,
+            "recordedAt": event.get("recordedAt") or "2026-05-25T12:00:00Z",
+            **json.loads(json.dumps(event)),
+        }
+        store._data.setdefault("agora_audit_events", {})[event_id] = record
+        return json.loads(json.dumps(record))
+    store.record_agora_audit_event = _record_agora_audit_event
     bff_main.read_store = store
     bff_main._MGMT_NL_IDEMPOTENCY.clear()
     bff_main._MGMT_AI_AUDIT_EVENTS.clear()
