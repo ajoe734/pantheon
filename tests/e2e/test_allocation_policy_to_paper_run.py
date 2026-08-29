@@ -32,38 +32,15 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 _GOVERNANCE_DIR = REPO_ROOT / "services" / "control-plane" / "governance"
-_EXEC_RUNTIME_MANAGER_DIR = REPO_ROOT / "services" / "execution" / "runtime-manager"
-
 for _p in (_GOVERNANCE_DIR,):
     if str(_p) not in sys.path:
         sys.path.insert(0, str(_p))
 
-
-# ---------------------------------------------------------------------------
-# Runtime-manager module loader (hyphenated dir requires dynamic import)
-# ---------------------------------------------------------------------------
-
-def _load_module_from_path(module_name: str, file_path: Path):
-    if module_name in sys.modules:
-        return sys.modules[module_name]
-    spec = _ilu.spec_from_file_location(module_name, file_path)
-    mod = _ilu.module_from_spec(spec)
-    sys.modules[module_name] = mod
-    spec.loader.exec_module(mod)
-    return mod
-
-
-def _ensure_runtime_manager_modules():
-    for name in ("runtime_binding", "kill_switch_controller"):
-        _load_module_from_path(name, _EXEC_RUNTIME_MANAGER_DIR / f"{name}.py")
-    return _load_module_from_path("runtime_manager", _EXEC_RUNTIME_MANAGER_DIR / "runtime_manager.py")
-
-
-_rm_mod = _ensure_runtime_manager_modules()
-RuntimeBindingStore = sys.modules["runtime_binding"].RuntimeBindingStore
-RuntimeBindingStatus = sys.modules["runtime_binding"].RuntimeBindingStatus
-RuntimeManager = _rm_mod.RuntimeManager
-DeployRuntimeRequest = _rm_mod.DeployRuntimeRequest
+from services.runtime_manager import (
+    RuntimeBindingStatus,
+    RuntimeBindingStore,
+    RuntimeManagerService,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -250,20 +227,26 @@ def _deploy_runtime_binding(plan):
     target_stage = plan.target_stage.value if hasattr(plan.target_stage, "value") else plan.target_stage
     plan_status = plan.status.value if hasattr(plan.status, "value") else plan.status
 
-    store = RuntimeBindingStore()
-    manager = RuntimeManager(store)
-    request = DeployRuntimeRequest(
-        plan_id=plan.plan_id,
-        persona_capital_binding_id=ALLOC_PERSONA_CAPITAL_BINDING_ID,
-        runtime_id=ALLOC_RUNTIME_ID,
-        capital_pool_id=plan.capital_pool_id,
-        artifact_id=plan.artifact_id,
-        artifact_version=plan.artifact_version,
-        deployment_mode=target_stage,
-        plan_status=plan_status,
-    )
-    outcome = manager.deploy(request)
-    return store, outcome.binding
+    service = RuntimeManagerService()
+    binding = service.deploy({
+        "plan_id": plan.plan_id,
+        "plan_status": plan_status,
+        "target_stage": target_stage,
+        "artifact_id": plan.artifact_id,
+        "artifact_version": plan.artifact_version,
+        "capital_pool_id": plan.capital_pool_id,
+        "persona_capital_binding_id": ALLOC_PERSONA_CAPITAL_BINDING_ID,
+        "persona_capital_binding_status": "active",
+        "allowed_deployment_scope": "paper",
+        "loader_checks_passed": True,
+        "runtime_id": ALLOC_RUNTIME_ID,
+        "strategy_id": plan.strategy_id,
+        "sponsor_persona_id": ALLOC_SPONSOR_PERSONA_ID,
+        "metadata": {
+            "persona_capital_binding_id": ALLOC_PERSONA_CAPITAL_BINDING_ID,
+        },
+    })
+    return service.store, binding
 
 
 # ---------------------------------------------------------------------------

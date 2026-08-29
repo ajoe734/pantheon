@@ -16,20 +16,17 @@ os.environ.setdefault("PANTHEON_BFF_AUTH_STUB", "true")
 sys.path.insert(0, os.path.dirname(__file__))
 
 import main as bff_main  # noqa: E402
-from read_store import ReadSurfaceStore  # noqa: E402
+from ports import ReadSurfacePorts, create_read_surface_ports  # noqa: E402
 
 
 HEADERS = {"Authorization": "Bearer op-mgmt-load-002:operator,admin:mfa"}
 
 
 @contextmanager
-def _isolated_bff(monkeypatch) -> Iterator[tuple[TestClient, ReadSurfaceStore]]:
+def _isolated_bff(monkeypatch) -> Iterator[tuple[TestClient, ReadSurfacePorts]]:
     with tempfile.TemporaryDirectory() as td:
         original_store = bff_main.read_store
-        store = ReadSurfaceStore(
-            os.path.join(td, "read_surfaces.json"),
-            allow_local_snapshot_fallback=True,
-        )
+        store = create_read_surface_ports()
         bff_main.read_store = store
         bff_main._SHELL_SUMMARY_COUNT_CACHE.clear()
         bff_main._GOV_BFF_JOB_OVERLAY.clear()
@@ -164,16 +161,15 @@ def test_shell_summary_is_registered_in_openapi(monkeypatch) -> None:
     assert "get" in schema["paths"]["/bff/management/shell-summary"]
 
 
-def test_jobs_route_has_one_canonical_get_handler() -> None:
-    routes = [
-        route
-        for route in bff_main.app.routes
-        if isinstance(route, Route)
-        and getattr(route, "path", "") == "/bff/jobs"
-        and "GET" in (route.methods or set())
-    ]
-    assert len(routes) == 1
-    assert routes[0].endpoint.__name__ == "bff_list_jobs"
+def test_jobs_route_has_one_canonical_get_handler(monkeypatch) -> None:
+    # ACG-01-002: the handler now lives in jobs/router.py (app.include_router),
+    # so it is a Starlette _IncludedRouter node rather than a flat Route in
+    # bff_main.app.routes. Assert via the compiled OpenAPI schema instead,
+    # which is what actually governs duplicate-route detection for clients.
+    with _isolated_bff(monkeypatch):
+        schema = bff_main.app.openapi()
+    operations = schema["paths"]["/bff/jobs"]
+    assert list(operations.keys()) == ["get"]
 
     source = Path(bff_main.__file__).read_text()
-    assert source.count('@app.get("/bff/jobs")') == 1
+    assert source.count('@app.get("/bff/jobs")') == 0

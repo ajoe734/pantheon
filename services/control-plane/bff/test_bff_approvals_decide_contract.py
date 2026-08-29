@@ -19,7 +19,9 @@ sys.path.insert(0, os.path.dirname(__file__))
 
 import main as bff_main
 from command_queue import CommandStore
-from read_store import ReadSurfaceStore
+from typing import Any
+
+from ports import ReadSurfacePorts, create_in_memory_read_surface_ports
 
 APPROVER_HEADERS = {"Authorization": "Bearer op-app001:approver"}
 ADMIN_HEADERS = {"Authorization": "Bearer op-app001-admin:admin"}
@@ -31,6 +33,54 @@ PENDING_APPROVAL_ID = "appr-dec-c5a9f11e"
 # fixture id with state=decided (already resolved, but endpoint still accepts commands)
 DECIDED_APPROVAL_ID = "approval-042"
 UNKNOWN_ID = "unknown-approval-xyz"
+
+
+class ApprovalsDecideTestReadPorts(ReadSurfacePorts):
+    def __init__(self, data: dict | None = None, *, allow_fallback: bool = True) -> None:
+        super().__init__()
+        self._allow_fallback = allow_fallback
+        if data is not None:
+            self._data = data
+        elif allow_fallback:
+            self._data = {
+                "approval_decisions": {
+                    PENDING_APPROVAL_ID: {
+                        "id": PENDING_APPROVAL_ID,
+                        "decision_id": PENDING_APPROVAL_ID,
+                        "approval_id": PENDING_APPROVAL_ID,
+                        "status": "pending",
+                        "state": "under_review",
+                        "scope": "strategy",
+                        "target_id": "strat-001",
+                    },
+                    DECIDED_APPROVAL_ID: {
+                        "id": DECIDED_APPROVAL_ID,
+                        "decision_id": DECIDED_APPROVAL_ID,
+                        "approval_id": DECIDED_APPROVAL_ID,
+                        "status": "approved",
+                        "state": "decided",
+                        "scope": "strategy",
+                        "target_id": "strat-002",
+                    },
+                }
+            }
+        else:
+            self._data = {}
+
+    def dataset_source(self, dataset: str) -> str:
+        return "local_snapshot" if self._data else "missing"
+
+    def get_approval_decision(self, decision_id: str | None) -> dict[str, Any] | None:
+        return self._data.get("approval_decisions", {}).get(str(decision_id or ""))
+
+    def list_approval_decisions(self, **kwargs: Any) -> list[dict[str, Any]]:
+        return list(self._data.get("approval_decisions", {}).values())
+
+    def get_approval(self, approval_id: str | None) -> dict[str, Any] | None:
+        return self.get_approval_decision(approval_id)
+
+    def list_approvals(self, **kwargs: Any) -> list[dict[str, Any]]:
+        return self.list_approval_decisions(**kwargs)
 
 
 @pytest.fixture(autouse=True)
@@ -56,11 +106,8 @@ def _isolated_command_admission():
             bff_main._sse_subscribers["approval"].extend(original_approval_subscribers)
 
 
-def _fresh_client(td: str, *, allow_fallback: bool = True) -> tuple[TestClient, ReadSurfaceStore]:
-    store = ReadSurfaceStore(
-        os.path.join(td, "read_surfaces.json"),
-        allow_local_snapshot_fallback=allow_fallback,
-    )
+def _fresh_client(td: str, *, allow_fallback: bool = True) -> tuple[TestClient, ApprovalsDecideTestReadPorts]:
+    store = ApprovalsDecideTestReadPorts(allow_fallback=allow_fallback)
     bff_main.read_store = store
     return TestClient(bff_main.app, raise_server_exceptions=False), store
 
@@ -186,10 +233,7 @@ def test_bff_approvals_decide_second_operator_conflict_does_not_publish_sse() ->
         original_approval_buffer = list(bff_main._sse_buffers["approval"])
         original_approval_subscribers = list(bff_main._sse_subscribers["approval"])
         try:
-            bff_main.read_store = ReadSurfaceStore(
-                os.path.join(td, "read_surfaces.json"),
-                allow_local_snapshot_fallback=True,
-            )
+            bff_main.read_store = ApprovalsDecideTestReadPorts(allow_fallback=True)
             bff_main.command_store = CommandStore(os.path.join(td, "commands.jsonl"))
             bff_main._FINAL_CONTRACT_IDEMPOTENCY.clear()
             bff_main._sse_buffers["approval"].clear()
@@ -236,10 +280,7 @@ def test_bff_approvals_decide_concurrent_operators_admit_only_one_command_and_on
         original_approval_buffer = list(bff_main._sse_buffers["approval"])
         original_approval_subscribers = list(bff_main._sse_subscribers["approval"])
         try:
-            bff_main.read_store = ReadSurfaceStore(
-                os.path.join(td, "read_surfaces.json"),
-                allow_local_snapshot_fallback=True,
-            )
+            bff_main.read_store = ApprovalsDecideTestReadPorts(allow_fallback=True)
             bff_main.command_store = CommandStore(os.path.join(td, "commands.jsonl"))
             bff_main._FINAL_CONTRACT_IDEMPOTENCY.clear()
             bff_main._sse_buffers["approval"].clear()

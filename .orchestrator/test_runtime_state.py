@@ -209,6 +209,11 @@ class LoadRuntimeStateTests(unittest.TestCase):
                 "unrecognized_control_plane": {"value": 1},
                 "supervisor": {
                     "pid": 42,
+                    "command_runtime_health": {
+                        "healthy": True,
+                        "checked_at": "2026-08-21T11:30:00Z",
+                        "reason": "healthy",
+                    },
                     "task_state_projection": {
                         "mode": "authoritative",
                         "ok": True,
@@ -241,6 +246,14 @@ class LoadRuntimeStateTests(unittest.TestCase):
         self.assertEqual(
             state["supervisor"]["last_cycle_metrics"]["cycle_elapsed_seconds"],
             4.25,
+        )
+        self.assertEqual(
+            state["supervisor"]["command_runtime_health"],
+            {
+                "healthy": True,
+                "checked_at": "2026-08-21T11:30:00Z",
+                "reason": "healthy",
+            },
         )
         self.assertEqual(state["supervisor"]["cycle_elapsed_seconds"], 4.25)
         self.assertNotIn("queue_to_start", state["supervisor"]["last_cycle_metrics"])
@@ -299,13 +312,20 @@ class LoadRuntimeStateTests(unittest.TestCase):
                 "version": 2,
                 "workers": {},
                 "queue": {"version": 2, "events": {}},
-                "worker_worktree_cleanup": {"last_run": last_run},
+                "worker_worktree_cleanup": {
+                    "last_run": last_run,
+                    "last_orphan_prune_at": "2026-06-20T07:00:00Z",
+                },
             },
         )
 
         state = runtime_state.load_runtime_state(self.config)
 
         self.assertEqual(state["worker_worktree_cleanup"]["last_run"], last_run)
+        self.assertEqual(
+            state["worker_worktree_cleanup"]["last_orphan_prune_at"],
+            "2026-06-20T07:00:00Z",
+        )
 
     def test_ordinary_v2_load_rejects_a_retired_cache_shape(self) -> None:
         self._write_json(

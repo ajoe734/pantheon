@@ -455,25 +455,20 @@ def test_shadow_eval_tick_empty_tenant_creates_no_candidates() -> None:
         assert payload["seed_fallback_used"] is False
 
 
-def test_shadow_eval_tick_fails_closed_without_dataset_authority() -> None:
-    """No authority means no candidates and no seed substitution."""
+def test_shadow_eval_tick_no_refs_proposes_zero_candidates() -> None:
+    """Explicit refs are required; no-ref tick creates 0 candidates."""
     with tempfile.TemporaryDirectory() as data_dir:
         svc = _load_service_module(data_dir)
-        from agora_dataset_authority import AgoraDatasetAuthority
-
-        svc.DATASET_AUTHORITY = AgoraDatasetAuthority(backend="", dsn="")
         client = authorized_client(svc.app)
 
         resp = client.post(
             "/api/policy-learning/shadow-eval-tick",
-            json={"tick_id": "tick-unconfigured", "eval_type": "shadow"},
+            json={"tick_id": "tick-no-refs", "eval_type": "shadow"},
         )
-        assert resp.status_code == 503
-        detail = resp.json()["detail"]
-        assert detail["status"] == "degraded"
-        assert detail["reason"] == "agora_authority_unconfigured"
-        assert detail["seed_fallback_used"] is False
-        assert detail["candidate_count"] == 0
+        assert resp.status_code == 201
+        body = resp.json()
+        assert body["candidate_count"] == 0
+        assert body["dataset_source"] == "explicit_refs"
         assert client.get("/api/policy-learning/candidates").json() == []
 
 
@@ -664,7 +659,14 @@ def test_worker_backlog_dlq_process_retry_replay_restart_endpoints() -> None:
         # 1. Propose candidates
         resp = client.post(
             "/api/policy-learning/shadow-eval-tick",
-            json={"tick_id": "tick-worker-test", "eval_type": "shadow"},
+            json={
+                "tick_id": "tick-worker-test",
+                "eval_type": "shadow",
+                "dataset_refs": [
+                    {"id": "dsv-limit-1", "dataset_version_id": "dsv-limit-1"},
+                    {"id": "dsv-limit-2", "dataset_version_id": "dsv-limit-2"},
+                ],
+            },
         )
         assert resp.status_code == 201
         assert resp.json()["candidate_count"] == 2

@@ -27,15 +27,249 @@ import main as bff_main
 from action_catalog import get_catalog_entry
 from models import CommandType
 from persona_provisioning import MemoryPersonaProvisioningStore
-from read_store import ReadSurfaceStore
+from ports import ReadSurfacePorts
 from test_persona_provisioning_coordinator import FakeOwnerTransport, _schedule_receipt
 
 OPERATOR_TOKEN = "Bearer op-2:operator"
 HEADERS = {"Authorization": OPERATOR_TOKEN}
 
 
+def _local_strategy_persona_read_data() -> dict[str, Any]:
+    return {
+        "strategies": {
+            "strat-1": {
+                "id": "strat-1",
+                "strategy_id": "strat-1",
+                "name": "Strategy 1",
+                "state": "active",
+                "risk": "medium",
+                "personaIds": ["persona-1"],
+                "capitalPoolId": "pool-1",
+                "created_at": "2026-05-01T00:00:00Z",
+                "updated_at": "2026-05-01T00:00:00Z",
+            }
+        },
+        "personas": {
+            "persona-1": {
+                "id": "persona-1",
+                "persona_id": "persona-1",
+                "name": "Persona 1",
+                "state": "active",
+                "status": "active",
+                "archetype": "macro",
+                "routedStrategies": ["strat-1"],
+                "successRate": 0.8,
+                "metadata": {
+                    "owner": "op-1",
+                    "archetype": "macro",
+                    "risk_level": "medium",
+                },
+                "created_at": "2026-05-01T00:00:00Z",
+                "updated_at": "2026-05-01T00:00:00Z",
+            }
+        },
+        "runtime_bindings": {},
+        "persona_league": [],
+        "bindings": {},
+        "capital_pools": {},
+    }
+
+
+class StrategyPersonaTestReadPorts(ReadSurfacePorts):
+    def __init__(
+        self,
+        seed_data: dict[str, Any] | None = None,
+        *,
+        allow_local_snapshot_fallback: bool = True,
+    ) -> None:
+        super().__init__()
+        self._data = seed_data if seed_data is not None else _local_strategy_persona_read_data()
+        self.allow_local_snapshot_fallback = allow_local_snapshot_fallback
+        self._ranking_snapshots: dict[str, Any] = {}
+
+    def dataset_source(self, dataset: str, **kwargs: Any) -> str:
+        return "bff_local_dev_store"
+
+    def dataset_surface_status(self, dataset: str, *, snapshot_at: str, **kwargs: Any) -> dict[str, Any]:
+        return {
+            "status": "ok",
+            "source": "bff_local_dev_store",
+            "snapshot_at": snapshot_at,
+            "freshness": "fresh",
+            "observed_time": snapshot_at,
+            "coverage": 1.0,
+            "missing_bindings": False,
+        }
+
+    def _ensure_local_overlay_records(self, dataset: str) -> dict[str, Any]:
+        return self._data.setdefault(dataset, {})
+
+    def get_persona(self, persona_id: str | None) -> dict[str, Any] | None:
+        ds = self._data.get("personas", {})
+        if isinstance(ds, dict):
+            return ds.get(str(persona_id or ""))
+        return next((p for p in ds if p.get("id") == persona_id or p.get("persona_id") == persona_id), None)
+
+    def list_personas(self, **kwargs: Any) -> list[dict[str, Any]]:
+        ds = self._data.get("personas", {})
+        return list(ds.values()) if isinstance(ds, dict) else list(ds)
+
+    def upsert_persona(self, persona: dict[str, Any]) -> dict[str, Any]:
+        pid = persona.get("id") or persona.get("persona_id")
+        self._data.setdefault("personas", {})[pid] = persona
+        return persona
+
+    def get_strategy(self, strategy_id: str | None) -> dict[str, Any] | None:
+        ds = self._data.get("strategies", {})
+        if isinstance(ds, dict):
+            return ds.get(str(strategy_id or ""))
+        return next((s for s in ds if s.get("id") == strategy_id or s.get("strategy_id") == strategy_id), None)
+
+    def list_strategies(self, **kwargs: Any) -> list[dict[str, Any]]:
+        ds = self._data.get("strategies", {})
+        return list(ds.values()) if isinstance(ds, dict) else list(ds)
+
+    def upsert_strategy(self, strategy: dict[str, Any]) -> dict[str, Any]:
+        sid = strategy.get("id") or strategy.get("strategy_id")
+        self._data.setdefault("strategies", {})[sid] = strategy
+        return strategy
+
+    def list_runtime_bindings(self, **kwargs: Any) -> list[dict[str, Any]]:
+        ds = self._data.get("runtime_bindings") or {}
+        return list(ds.values()) if isinstance(ds, dict) else list(ds)
+
+    def get_runtime_binding(self, binding_id: str | None) -> dict[str, Any] | None:
+        ds = self._data.get("runtime_bindings") or {}
+        if isinstance(ds, dict):
+            return ds.get(str(binding_id or ""))
+        return next((r for r in ds if r.get("id") == binding_id or r.get("binding_id") == binding_id), None)
+
+    def create_runtime_binding(self, **kwargs: Any) -> dict[str, Any]:
+        binding_id = kwargs.get("binding_id") or kwargs.get("runtime_binding_id") or kwargs.get("id") or "rb-1"
+        record = dict(kwargs)
+        record["id"] = binding_id
+        record["binding_id"] = binding_id
+        self._data.setdefault("runtime_bindings", {})[binding_id] = record
+        return record
+
+    def create_persona(
+        self,
+        *,
+        persona_id: str,
+        name: str,
+        actor_id: str,
+        created_at: str | None = None,
+        archetype: str = "generalist",
+        lifecycle_state: str = "draft",
+        risk_level: str = "low",
+        mandate: str | None = None,
+        strategy_family: str | None = None,
+        traits: dict[str, Any] | None = None,
+        metadata: dict[str, Any] | None = None,
+        required_data_sources: list[dict[str, Any]] | None = None,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        clean_metadata = dict(metadata or {})
+        clean_metadata.update({
+            "owner": actor_id,
+            "archetype": archetype,
+            "risk_level": risk_level,
+        })
+        if traits:
+            clean_metadata["traits"] = dict(traits)
+        record = {
+            "id": persona_id,
+            "persona_id": persona_id,
+            "name": name,
+            "created_by": actor_id,
+            "created_at": created_at or bff_main.utc_now(),
+            "updated_at": created_at or bff_main.utc_now(),
+            "archetype": archetype,
+            "lifecycle_state": lifecycle_state,
+            "mandate": mandate or archetype,
+            "strategy_family": strategy_family or archetype,
+            "metadata": clean_metadata,
+            "required_data_sources": required_data_sources or [],
+        }
+        self._data.setdefault("personas", {})[persona_id] = record
+        return record
+
+    def update_persona(
+        self,
+        persona_id: str,
+        *,
+        name: str | None = None,
+        actor_id: str | None = None,
+        updated_at: str | None = None,
+        archetype: str | None = None,
+        lifecycle_state: str | None = None,
+        risk_level: str | None = None,
+        metadata: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> dict[str, Any] | None:
+        if not persona_id:
+            return None
+        existing = self.get_persona(persona_id)
+        if existing is None:
+            return None
+        record = dict(existing)
+        record["id"] = persona_id
+        record["persona_id"] = persona_id
+        if name is not None:
+            record["name"] = name
+        if lifecycle_state is not None:
+            record["lifecycle_state"] = lifecycle_state
+            record["status"] = lifecycle_state
+        if archetype is not None:
+            record["mandate"] = archetype
+            record["strategy_family"] = archetype
+        record["updated_at"] = updated_at or bff_main.utc_now()
+
+        clean_metadata = dict(record.get("metadata") if isinstance(record.get("metadata"), dict) else {})
+        if metadata:
+            clean_metadata.update(metadata)
+        if actor_id is not None:
+            clean_metadata["owner"] = actor_id
+        if archetype is not None:
+            clean_metadata["archetype"] = archetype
+        if risk_level is not None:
+            clean_metadata["risk_level"] = risk_level
+        record["metadata"] = clean_metadata
+        self._data.setdefault("personas", {})[persona_id] = record
+        return record
+
+    def get_capability_snapshot_for_persona(self, persona_id: str | None) -> dict[str, Any] | None:
+        return None
+
+    def get_persona_capabilities(self, persona_id: str | None) -> dict[str, Any] | None:
+        return None
+
+    def list_persona_league(self, **kwargs: Any) -> list[dict[str, Any]]:
+        ds = self._data.get("persona_league", [])
+        return list(ds.values()) if isinstance(ds, dict) else list(ds)
+
+    def list_bindings(self, **kwargs: Any) -> list[dict[str, Any]]:
+        ds = self._data.get("bindings", {})
+        return list(ds.values()) if isinstance(ds, dict) else list(ds)
+
+    def list_capital_pools(self, **kwargs: Any) -> list[dict[str, Any]]:
+        ds = self._data.get("capital_pools", {})
+        return list(ds.values()) if isinstance(ds, dict) else list(ds)
+
+    def get_route_policy_for_persona(self, persona_id: str | None) -> dict[str, Any] | None:
+        return None
+
+    def list_authoritative_paper_runtime_monitoring_sessions(self) -> list[dict[str, Any]]:
+        return []
+
+
+_CURRENT_STORE_DATA: dict[str, Any] = {}
+
+
 @pytest.fixture(autouse=True)
 def mock_external_services(monkeypatch):
+    from services.persona.runtime_profile import build_persona_runtime_profile
+    monkeypatch.setattr(bff_main, "build_persona_runtime_profile", build_persona_runtime_profile, raising=False)
     transport = FakeOwnerTransport()
     monkeypatch.setattr(bff_main, "_PERSONA_PROVISIONING_STORE", MemoryPersonaProvisioningStore())
     monkeypatch.setattr(bff_main, "_PersonaOwnerHttpTransport", lambda: transport)
@@ -104,8 +338,10 @@ def _error(resp):
 
 
 def _fresh_client(td: str) -> TestClient:
-    bff_main.read_store = ReadSurfaceStore(
-        os.path.join(td, "read_surfaces.json"),
+    global _CURRENT_STORE_DATA
+    _CURRENT_STORE_DATA = _local_strategy_persona_read_data()
+    bff_main.read_store = StrategyPersonaTestReadPorts(
+        seed_data=_CURRENT_STORE_DATA,
         allow_local_snapshot_fallback=True,
     )
     bff_main.command_store = bff_main.CommandStore(os.path.join(td, "commands.jsonl"))
@@ -365,8 +601,8 @@ def test_bff_personas_create_then_subresources_round_trip() -> None:
             assert create_body["meta"]["human_review_required_for_live"] is True
 
             bff_main._PERSONA_BFF_OVERLAY.clear()
-            bff_main.read_store = ReadSurfaceStore(
-                os.path.join(td, "read_surfaces.json"),
+            bff_main.read_store = StrategyPersonaTestReadPorts(
+                seed_data=_CURRENT_STORE_DATA,
                 allow_local_snapshot_fallback=False,
             )
             binding_id = "rb-macro-macro-authoritative"
@@ -630,8 +866,8 @@ def test_bff_personas_patch_persists_without_snapshot_fallback() -> None:
             assert patch.status_code == 200, patch.text
 
             bff_main._PERSONA_BFF_OVERLAY.clear()
-            bff_main.read_store = ReadSurfaceStore(
-                os.path.join(td, "read_surfaces.json"),
+            bff_main.read_store = StrategyPersonaTestReadPorts(
+                seed_data=_CURRENT_STORE_DATA,
                 allow_local_snapshot_fallback=False,
             )
             detail = client.get(f"/bff/personas/{persona_id}", headers=HEADERS)

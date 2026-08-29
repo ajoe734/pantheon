@@ -1,0 +1,82 @@
+{
+  "schema_version": "pantheon.product_functional_closure.task_review.v1",
+  "task": {
+    "id": "OPS-DEV-POSTGRES-SHM-20260825",
+    "title": "Fix dev Postgres container shared-memory floor",
+    "owner": "Antigravity",
+    "reviewer": "Codex2",
+    "status": "review_pending",
+    "repository": "ajoe734/pantheon",
+    "base_branch": "dev",
+    "task_branch": "task/OPS-DEV-POSTGRES-SHM-20260825",
+    "review_file": "docs/deployment/evidence/product-functional-closure/OPS-DEV-POSTGRES-SHM-20260825/evidence.json"
+  },
+  "scope": {
+    "owned_layer": "PostgreSQL container shared memory configuration (shm_size: 256m) in docker-compose.yml, regression/contract test suite in scripts/test_deploy_nonprod_vm.py, compose contract in tests/integration/test_product_functional_compose_contract.py, and CI stage0 baseline integration in .github/pantheon-stage0-matrix.json",
+    "not_changing": [
+      "Source Ingestion continuous pull remains disabled (reconcile_only mode with max_ticks=0 default)",
+      "Strict live write posture preserved (PANTHEON_LIVE_BROKER_ENABLED=false, PANTHEON_CANARY_EXECUTION_ENABLED=false)",
+      "Single telemetry prune authority in deploy_nonprod_vm.sh remains unchanged",
+      "Release admission and rollback behavior remain fail-closed"
+    ],
+    "changed_files": [
+      "docker-compose.yml",
+      "scripts/test_deploy_nonprod_vm.py",
+      "tests/integration/test_product_functional_compose_contract.py",
+      ".github/pantheon-stage0-matrix.json",
+      "docs/deployment/evidence/product-functional-closure/OPS-DEV-POSTGRES-SHM-20260825/README.md",
+      "docs/deployment/evidence/product-functional-closure/OPS-DEV-POSTGRES-SHM-20260825/evidence.json",
+      "docs/deployment/evidence/product-functional-closure/OPS-DEV-POSTGRES-SHM-20260825/vacuum_output.txt"
+    ],
+    "composes_with": [
+      "scripts/deploy_nonprod_vm.sh",
+      "docker-compose.yml",
+      "tests/integration/test_product_functional_compose_contract.py",
+      ".github/pantheon-stage0-matrix.json"
+    ]
+  },
+  "behavioral_proof": {
+    "shared_memory_floor": "docker-compose.yml declares postgres shm_size: 256m (268435456 bytes), raising the container shared memory limit from the 64MB default to 256MB (>3.8x incident failure floor of 66379584 bytes).",
+    "live_vacuum_success": "Live VACUUM, VACUUM ANALYZE, and bounded table VACUUM FULL execution on the 256MB container executes cleanly with 0 errors and zero ENOSPC shared memory resize failures (see docs/deployment/evidence/product-functional-closure/OPS-DEV-POSTGRES-SHM-20260825/vacuum_output.txt).",
+    "source_ingestion_reconcile_only": "docker-compose.yml keeps SOURCE_INGEST_CONTROLLER_MODE=${SOURCE_INGEST_CONTROLLER_MODE:-reconcile_only} and SOURCE_INGEST_CONTROLLER_MAX_TICKS=${SOURCE_INGEST_CONTROLLER_MAX_TICKS:-0}.",
+    "strict_write_posture": "All services in docker-compose.yml maintain PANTHEON_LIVE_BROKER_ENABLED=false and PANTHEON_CANARY_EXECUTION_ENABLED=false default posture.",
+    "ci_execution": ".github/pantheon-stage0-matrix.json includes scripts/test_deploy_nonprod_vm.py in baseline commands and global paths, ensuring CI executes the test suite on every run."
+  },
+  "validation": {
+    "commands": [
+      {
+        "command": "bash -n scripts/deploy_nonprod_vm.sh",
+        "result": "passed"
+      },
+      {
+        "command": "docker compose config --quiet",
+        "result": "passed"
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -v scripts/test_deploy_nonprod_vm.py",
+        "result": "14 passed, 1 skipped (fast non-blocking default suite)"
+      },
+      {
+        "command": "PANTHEON_VERIFY_LIVE_POSTGRES_VACUUM=1 .venv-pantheon/bin/python3 -m pytest -v scripts/test_deploy_nonprod_vm.py",
+        "result": "15 passed (opt-in bounded live DB vacuum suite)"
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -v tests/integration/test_product_functional_compose_contract.py",
+        "result": "6 passed"
+      },
+      {
+        "command": "python3 scripts/ci_stage0.py validate",
+        "result": "passed (schema_version: 1, 8 global_path_rules, 22 targets)"
+      },
+      {
+        "command": "docker inspect pantheon-postgres-1 --format '{{.HostConfig.ShmSize}}'",
+        "result": "268435456 (256MB)"
+      }
+    ]
+  },
+  "review": {
+    "status": "pending_independent_review",
+    "reviewer_instruction": "Bind this already-committed manifest with AI_NAME=Codex2 REVIEW_FILE=docs/deployment/evidence/product-functional-closure/OPS-DEV-POSTGRES-SHM-20260825/evidence.json through the governed approve command only after independently checking the exact PR head.",
+    "owner_claim": "Owner evidence ready for independent review; this file makes no approval claim."
+  }
+}

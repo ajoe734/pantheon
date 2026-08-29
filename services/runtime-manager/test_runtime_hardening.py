@@ -27,10 +27,8 @@ from unittest import mock
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 SERVICE_DIR = Path(__file__).resolve().parent
-EXEC_RUNTIME_DIR = REPO_ROOT / "services" / "execution" / "runtime-manager"
 
-os.environ["PANTHEON_EXEC_RUNTIME_MANAGER_DIR"] = str(EXEC_RUNTIME_DIR)
-for path in (REPO_ROOT, SERVICE_DIR, EXEC_RUNTIME_DIR):
+for path in (REPO_ROOT, SERVICE_DIR):
     path_str = str(path)
     if path_str not in sys.path:
         sys.path.insert(0, path_str)

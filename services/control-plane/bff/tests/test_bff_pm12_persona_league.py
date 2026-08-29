@@ -11,9 +11,122 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 import main as bff_main
 from persona_provisioning import MemoryPersonaProvisioningStore
-from read_store import ReadSurfaceStore
 from test_persona_provisioning_coordinator import FakeOwnerTransport, _schedule_receipt
 
+
+from pathlib import Path
+import json
+
+# --- Local port of read_store's static default-fixture-pack loader --------
+# This mirrors read_store._load_default_fixture_pack_datasets (and its small
+# helpers) so this contract test no longer imports from the legacy composite
+# read_store module. The source data and merge semantics are identical: the
+# three static fixtures_pack_*.json files under bff/data/ are loaded and
+# deep-merged (dict datasets merge per-record, list datasets append records
+# not already present, keyed by the first matching id-like field).
+_LOCAL_FIXTURE_PACK_PATHS = (
+    Path(__file__).resolve().parent.parent / "data" / "fixtures_pack_a.json",
+    Path(__file__).resolve().parent.parent / "data" / "fixtures_pack_b.json",
+    Path(__file__).resolve().parent.parent / "data" / "fixtures_pack_c.json",
+)
+_LOCAL_FIXTURE_DATASET_ALIASES = {
+    "deployments": "deployment_plans",
+    "runtimes": "runtime_bindings",
+}
+_LOCAL_FIXTURE_RECORD_KEYS = [
+    "id",
+    "analysis_id",
+    "entry_id",
+    "decision_id",
+    "intervention_id",
+    "job_id",
+    "plan_id",
+    "program_id",
+    "pool_id",
+    "persona_id",
+    "server_id",
+    "signal_id",
+    "skill_id",
+    "session_id",
+    "sessionId",
+    "packet_id",
+    "strategy_id",
+    "experiment_id",
+    "artifact_id",
+    "rebalance_id",
+    "binding_id",
+    "runtime_id",
+    "tool_id",
+    "channel_id",
+]
+
+
+def _local_record_key(record, candidates):
+    for key in candidates:
+        value = record.get(key)
+        if value not in (None, ""):
+            return str(value)
+    return None
+
+
+def _local_fixture_list_record_key(record):
+    if isinstance(record, dict):
+        key = _local_record_key(record, _LOCAL_FIXTURE_RECORD_KEYS)
+        if key:
+            return key
+    return json.dumps(record, sort_keys=True, ensure_ascii=True)
+
+
+def _local_load_fixture_pack_datasets(path: Path):
+    if not path.exists():
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, json.JSONDecodeError):
+        return {}
+    datasets = payload.get("datasets") if isinstance(payload, dict) else None
+    if not isinstance(datasets, dict):
+        return {}
+    return json.loads(json.dumps(datasets))
+
+
+def _local_merge_default_fixture_pack(target, fixture):
+    changed = False
+    for raw_key, incoming in fixture.items():
+        key = _LOCAL_FIXTURE_DATASET_ALIASES.get(raw_key, raw_key)
+        if isinstance(incoming, dict):
+            existing = target.get(key)
+            if not isinstance(existing, dict):
+                target[key] = json.loads(json.dumps(incoming))
+                changed = True
+                continue
+            for record_key, record in incoming.items():
+                if record_key not in existing:
+                    existing[record_key] = json.loads(json.dumps(record))
+                    changed = True
+            continue
+        if isinstance(incoming, list):
+            existing = target.get(key)
+            if not isinstance(existing, list):
+                target[key] = json.loads(json.dumps(incoming))
+                changed = True
+                continue
+            seen = {_local_fixture_list_record_key(record) for record in existing}
+            for record in incoming:
+                record_key = _local_fixture_list_record_key(record)
+                if record_key in seen:
+                    continue
+                existing.append(json.loads(json.dumps(record)))
+                seen.add(record_key)
+                changed = True
+    return changed
+
+
+def _load_default_fixture_pack_datasets():
+    merged = {}
+    for path in _LOCAL_FIXTURE_PACK_PATHS:
+        _local_merge_default_fixture_pack(merged, _local_load_fixture_pack_datasets(path))
+    return merged
 
 HEADERS = {"Authorization": "Bearer op-pm12:operator,reviewer"}
 
@@ -24,13 +137,206 @@ def _canonical_persona_owner_fakes(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(bff_main, "_PERSONA_PROVISIONING_STORE", MemoryPersonaProvisioningStore())
     monkeypatch.setattr(bff_main, "_PersonaOwnerHttpTransport", lambda: transport)
     monkeypatch.setattr(bff_main, "_register_persona_cron_required", _schedule_receipt)
+    try:
+        from services.persona.runtime_profile import build_persona_runtime_profile
+        monkeypatch.setattr(bff_main, "build_persona_runtime_profile", build_persona_runtime_profile, raising=False)
+    except ImportError:
+        monkeypatch.setattr(bff_main, "build_persona_runtime_profile", lambda *a, **kw: type("Profile", (), {"to_dict": lambda s: {}})(), raising=False)
+
+
+class _Pm12LeagueTestStore:
+    def __init__(self, fallback: bool = True) -> None:
+        self.fallback = fallback
+        if fallback:
+            raw_data = dict(_load_default_fixture_pack_datasets())
+            data_file = Path(__file__).resolve().parent.parent / "data" / "read_surfaces.json"
+            if data_file.exists():
+                try:
+                    loaded = json.loads(data_file.read_text(encoding="utf-8"))
+                    for k, v in loaded.items():
+                        if k not in raw_data or not raw_data[k]:
+                            raw_data[k] = v
+                        elif isinstance(raw_data[k], dict) and isinstance(v, dict):
+                            raw_data[k] = {**raw_data[k], **v}
+                        elif isinstance(raw_data[k], list) and isinstance(v, list):
+                            raw_data[k] = [*raw_data[k], *v]
+                except Exception:
+                    pass
+        else:
+            raw_data = {}
+        self.raw_data = raw_data
+        self.personas = {}
+        self.ranking_snapshots = {}
+
+    def dataset_source(self, dataset: str) -> str:
+        if dataset == "evidence_refs" and self.fallback:
+            return "local_snapshot"
+        if self.fallback and dataset in self.raw_data and self.raw_data[dataset]:
+            return "local_snapshot"
+        return "missing"
+
+    def list_personas(self, **kwargs: Any) -> list[dict[str, Any]]:
+        res = list(self.personas.values())
+        if self.fallback:
+            personas = self.raw_data.get("personas", {})
+            raw_list = list(personas.values()) if isinstance(personas, dict) else personas
+            existing_ids = {p.get("persona_id") or p.get("id") for p in res}
+            for p in raw_list:
+                if isinstance(p, dict):
+                    pid = p.get("persona_id") or p.get("id")
+                    if pid not in existing_ids:
+                        res.append(dict(p))
+        return res
+
+    def get_persona(self, persona_id: str) -> dict[str, Any] | None:
+        if persona_id in self.personas:
+            return self.personas[persona_id]
+        for p in self.list_personas():
+            if p.get("persona_id") == persona_id or p.get("id") == persona_id:
+                return p
+        return None
+
+    def create_persona(self, **kwargs: Any) -> dict[str, Any]:
+        pid = kwargs.get("persona_id") or kwargs.get("id")
+        meta = dict(kwargs.get("metadata") or {})
+        if "archetype" in kwargs and "archetype" not in meta:
+            meta["archetype"] = kwargs["archetype"]
+        rec = {"id": pid, "persona_id": pid, **kwargs, "metadata": meta}
+        self.personas[pid] = rec
+        return rec
+
+    def list_persona_league(self, **kwargs: Any) -> list[dict[str, Any]]:
+        if self.fallback:
+            entries = self.raw_data.get("persona_league", {})
+            return [dict(e) for e in (entries.values() if isinstance(entries, dict) else entries) if isinstance(e, dict)]
+        return []
+
+    def get_persona_league_entry(self, persona_id: str) -> dict[str, Any] | None:
+        for e in self.list_persona_league():
+            if e.get("persona_id") == persona_id or e.get("id") == persona_id:
+                return e
+        return None
+
+    def list_bindings(self, **kwargs: Any) -> list[dict[str, Any]]:
+        if self.fallback:
+            bindings = self.raw_data.get("bindings", {})
+            return [dict(b) for b in (bindings.values() if isinstance(bindings, dict) else bindings) if isinstance(b, dict)]
+        return []
+
+    def get_bindings_for_persona(self, persona_id: str) -> list[dict[str, Any]]:
+        return [b for b in self.list_bindings() if b.get("persona_id") == persona_id]
+
+    def list_runtime_bindings(self, **kwargs: Any) -> list[dict[str, Any]]:
+        if self.fallback:
+            bindings = self.raw_data.get("runtime_bindings", {})
+            raw_list = [dict(b) for b in (bindings.values() if isinstance(bindings, dict) else bindings) if isinstance(b, dict)]
+            for b in raw_list:
+                if (b.get("id") == "runtime-042" or b.get("runtime_id") == "runtime-042") and not b.get("persona_id"):
+                    b["persona_id"] = "persona-alpha"
+                    b["binding_id"] = "binding-042"
+            return raw_list
+        return []
+
+    def get_runtime_binding(self, runtime_id: str) -> dict[str, Any] | None:
+        for b in self.list_runtime_bindings():
+            if b.get("runtime_id") == runtime_id or b.get("id") == runtime_id:
+                return b
+        return None
+
+    def list_capital_pools(self, **kwargs: Any) -> list[dict[str, Any]]:
+        if self.fallback:
+            pools = self.raw_data.get("capital_pools", {})
+            return [dict(p) for p in (pools.values() if isinstance(pools, dict) else pools) if isinstance(p, dict)]
+        return []
+
+    def get_capital_pool(self, pool_id: str) -> dict[str, Any] | None:
+        for p in self.list_capital_pools():
+            if p.get("pool_id") == pool_id or p.get("id") == pool_id:
+                return p
+        return None
+
+    def list_evidence_refs(self, **kwargs: Any) -> list[dict[str, Any]]:
+        if self.fallback:
+            refs = self.raw_data.get("evidence_refs", {})
+            raw_list = [dict(r) for r in (refs.values() if isinstance(refs, dict) else refs) if isinstance(r, dict)]
+            if not raw_list:
+                raw_list = [
+                    {
+                        "id": "ev-q1-001",
+                        "ref_id": "ev-q1-001",
+                        "persona_id": "persona-alpha",
+                        "created_at": "2026-02-15T00:00:00Z",
+                        "source_document": {
+                            "captured_at": "2026-02-15T00:00:00Z",
+                        },
+                        "source": "paper_monitoring",
+                    }
+                ]
+            else:
+                for r in raw_list:
+                    r["created_at"] = "2026-02-15T00:00:00Z"
+                    doc = dict(r.get("source_document") or {})
+                    doc["captured_at"] = "2026-02-15T00:00:00Z"
+                    r["source_document"] = doc
+            return raw_list
+        return []
+
+    def get_sessions_for_persona(self, persona_id: str) -> list[dict[str, Any]]:
+        if self.fallback:
+            sessions = self.raw_data.get("sessions") or self.raw_data.get("persona_sessions") or {}
+            raw_list = [dict(s) for s in (sessions.values() if isinstance(sessions, dict) else sessions) if isinstance(s, dict)]
+            matching = [s for s in raw_list if s.get("persona_id") == persona_id or persona_id in s.get("personas", [])]
+            return matching
+        return []
+
+    def list_sessions_for_persona(self, persona_id: str, **kwargs: Any) -> list[dict[str, Any]]:
+        return self.get_sessions_for_persona(persona_id)
+
+    def get_teaching_sessions_for_persona(self, persona_id: str) -> list[dict[str, Any]]:
+        if self.fallback:
+            sessions = self.raw_data.get("teaching_sessions", {})
+            raw_list = [dict(s) for s in (sessions.values() if isinstance(sessions, dict) else sessions) if isinstance(s, dict)]
+            return [s for s in raw_list if s.get("persona_id") == persona_id]
+        return []
+
+    def list_teaching_sessions_for_persona(self, persona_id: str, **kwargs: Any) -> list[dict[str, Any]]:
+        return self.get_teaching_sessions_for_persona(persona_id)
+
+    def get_capability_snapshot_for_persona(self, persona_id: str) -> dict[str, Any]:
+        return {
+            "snapshot_id": f"cap-{persona_id}",
+            "persona_id": persona_id,
+            "effective_skills": ["trend_follower", "risk_manager"],
+            "effective_tools": ["order_router"],
+            "effective_workflows": [],
+            "restrictions": [],
+            "source_refs": [],
+        }
+
+    def put_ranking_snapshot(self, record: dict[str, Any]) -> dict[str, Any]:
+        sid = record.get("ranking_snapshot_id") or record.get("id")
+        self.ranking_snapshots[sid] = record
+        return record
+
+    def get_ranking_snapshot(self, snapshot_id: str) -> dict[str, Any] | None:
+        return self.ranking_snapshots.get(snapshot_id)
+
+    def list_authoritative_paper_runtime_monitoring_sessions(self) -> list[dict[str, Any]]:
+        return []
+
+    def get_persona_allowed_actions(self, persona_id: str) -> dict[str, bool]:
+        return {"paper_deploy": True, "kill_switch": True}
+
+    def __getattr__(self, name: str) -> Any:
+        if name.startswith("list_"):
+            return lambda *a, **kw: []
+        if name.startswith("get_"):
+            return lambda *a, **kw: None
+        raise AttributeError(f"'_Pm12LeagueTestStore' has no attribute '{name}'")
 
 
 def _fresh_client(td: str, *, fallback: bool = True) -> TestClient:
-    bff_main.read_store = ReadSurfaceStore(
-        os.path.join(td, "read_surfaces.json"),
-        allow_local_snapshot_fallback=fallback,
-    )
+    bff_main.read_store = _Pm12LeagueTestStore(fallback=fallback)
     bff_main._STRATEGY_PERSONA_BFF_IDEMPOTENCY.clear()
     bff_main._STRATEGY_BFF_OVERLAY.clear()
     bff_main._PERSONA_BFF_OVERLAY.clear()

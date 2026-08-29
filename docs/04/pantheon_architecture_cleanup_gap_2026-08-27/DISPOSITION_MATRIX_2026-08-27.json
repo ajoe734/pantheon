@@ -1,0 +1,891 @@
+{
+  "schema_version": "pantheon.architecture-cleanup-disposition.v1",
+  "status": "planning_only",
+  "audit_date": "2026-08-27",
+  "baselines": {
+    "pantheon_dev": "f4a14b29789d6a0e53d64df066042c53bb6c5534",
+    "execute_plans_dev": "6766ebe4c95153c019b206cc6326a5a0d9771138",
+    "hosted_frontend": "a10767709b01ed20d32c2590543c37902ad1b671",
+    "hosted_bff": "3c79a185a97d920f41005bd41675433a046b6ece",
+    "runtime_root_stack": "c6202636beddb906f59e67596b7469f02049a87f"
+  },
+  "labels": {
+    "KEEP": "sole canonical owner remains",
+    "MIGRATE": "callers move to the canonical owner",
+    "MERGE": "required behavior from multiple implementations becomes one implementation",
+    "REMOVE": "artifact is unreachable, replaced, or no longer owns valid behavior",
+    "VERIFY": "runtime or caller evidence is required before final disposition"
+  },
+  "priorities": [
+    {
+      "priority": 1,
+      "area": "BFF main.py route ownership and duplicate routes",
+      "items": [
+        {
+          "id": "ACG-01-001",
+          "artifact": "services/control-plane/bff/main.py app construction, middleware, lifecycle and router inclusion",
+          "disposition": "KEEP",
+          "canonical_owner": "BFF composition root",
+          "action": "Retain only process composition and platform-level health/version wiring.",
+          "gate": "No domain route body, domain schema, mutable domain overlay, or domain SSE buffer remains."
+        },
+        {
+          "id": "ACG-01-002",
+          "artifact": "domain route bodies among 493 source-level @app decorators",
+          "disposition": "MIGRATE",
+          "canonical_owner": "existing or focused domain routers",
+          "action": "Move routes by domain with explicit dependencies, then delete each original decorator and body.",
+          "gate": "Constructed app has one owner module and one operation ID per normalized method/path."
+        },
+        {
+          "id": "ACG-01-003",
+          "artifact": "_BFF_GAP004_ROUTE_PATHS and _prefer_latest_bff_gap004_routes",
+          "disposition": "REMOVE",
+          "canonical_owner": "structurally unique router registrations",
+          "action": "Delete runtime mutation of app.router.routes after the fifteen masked families are consolidated.",
+          "gate": "Zero duplicate normalized routes without post-registration pruning."
+        },
+        {
+          "id": "ACG-01-004",
+          "artifact": "GET /bff/events duplicate handlers",
+          "disposition": "MERGE",
+          "canonical_owner": "BFF Events router",
+          "action": "Combine the retained items/filter contract with durable event/audit semantics.",
+          "gate": "One route, one envelope, filter and pagination characterization passes."
+        },
+        {
+          "id": "ACG-01-005",
+          "artifact": "GET /bff/events/stream triple registration",
+          "disposition": "MERGE",
+          "canonical_owner": "authenticated Events SSE handler",
+          "action": "Keep replay, auth, liveness and reconnect behavior; migrate alias callers and delete two aliases.",
+          "gate": "One SSE registration and reconnect/replay tests pass."
+        },
+        {
+          "id": "ACG-01-006",
+          "artifact": "Evolution Programs duplicate route family",
+          "disposition": "MERGE",
+          "canonical_owner": "Evolution domain router over durable owner",
+          "action": "Merge later compatibility envelopes and validation with durable reads/writes/actions.",
+          "gate": "All six normalized route shapes have one registration and restart readback."
+        },
+        {
+          "id": "ACG-01-007",
+          "artifact": "_GOV_BFF evolution process overlays",
+          "disposition": "REMOVE",
+          "canonical_owner": "durable Evolution owner",
+          "action": "Delete process-memory authority after merged routes use the durable path.",
+          "gate": "No overlay reference and create/patch/action survives restart."
+        },
+        {
+          "id": "ACG-01-008",
+          "artifact": "Experiments duplicate route family",
+          "disposition": "MERGE",
+          "canonical_owner": "Research Experiments router over durable owner",
+          "action": "Merge response compatibility, logs, metrics, artifacts and actions into one family.",
+          "gate": "All seven normalized route shapes have one registration and contract parity."
+        },
+        {
+          "id": "ACG-01-009",
+          "artifact": "_GOV_BFF experiment process overlays",
+          "disposition": "REMOVE",
+          "canonical_owner": "durable Research/Experiment owner",
+          "action": "Delete process-memory experiment authority after restart parity.",
+          "gate": "No overlay reference and experiment journey persists across restart."
+        },
+        {
+          "id": "ACG-01-010",
+          "artifact": "generic Agora signal detail/feedback and journal patch decorators",
+          "disposition": "REMOVE",
+          "canonical_owner": "dedicated Agora handlers",
+          "action": "Delete generic echo/accepted aliases after moving dedicated handlers into Agora routers.",
+          "gate": "Dedicated validation, idempotency and persistence tests pass; zero generic registration."
+        },
+        {
+          "id": "ACG-01-011",
+          "artifact": "second POST /bff/actions/{}/{}/{} registration",
+          "disposition": "REMOVE",
+          "canonical_owner": "canonical action command adapter",
+          "action": "Preserve schema naming in the shared helper, not a second unreachable route.",
+          "gate": "One runtime handler and one OpenAPI operation."
+        },
+        {
+          "id": "ACG-01-012",
+          "artifact": "generic POST /bff/ranking-formulas decorator",
+          "disposition": "REMOVE",
+          "canonical_owner": "durable ranking formula handler",
+          "action": "Delete generic create echo and migrate the real handler to its focused router.",
+          "gate": "Validation, idempotency and persistence contract passes through one route."
+        },
+        {
+          "id": "ACG-01-013",
+          "artifact": "test_route_resolution_no_shadowing hard-coded duplicate allowlist",
+          "disposition": "REMOVE",
+          "canonical_owner": "post-mount normalized route uniqueness gate",
+          "action": "Replace winner exceptions with a zero-collision invariant including parameter normalization.",
+          "gate": "Gate reports owner module, qualname, operation ID and route order for any violation."
+        }
+      ]
+    },
+    {
+      "priority": 2,
+      "area": "read_store.py 457-method God class",
+      "items": [
+        {
+          "id": "ACG-02-001",
+          "artifact": "existing ReadSurfaceStore constructor/delegation seam",
+          "disposition": "KEEP",
+          "canonical_owner": "temporary migration seam only",
+          "action": "Keep the existing class temporarily for 162 concrete test callers; do not create a replacement facade.",
+          "gate": "The class is deleted after product and test caller count reaches zero."
+        },
+        {
+          "id": "ACG-02-002",
+          "artifact": "_default_read_data, fixture-pack merge and local production seeding",
+          "disposition": "MIGRATE",
+          "canonical_owner": "explicit test-only fixture factories",
+          "action": "Move required test data outside product source and inject typed fakes per domain.",
+          "gate": "Product image cannot seed examples or load fixture packs."
+        },
+        {
+          "id": "ACG-02-003",
+          "artifact": "PANTHEON_BFF_ALLOW_LOCAL_SNAPSHOT_FALLBACK production path",
+          "disposition": "REMOVE",
+          "canonical_owner": "truthful owner availability",
+          "action": "Delete fallback env/config and local success path after tests use explicit fixtures.",
+          "gate": "Missing owner returns unavailable/degraded rather than local data."
+        },
+        {
+          "id": "ACG-02-004",
+          "artifact": "CanonicalSnapshotAdapter generic dataset selection",
+          "disposition": "VERIFY",
+          "canonical_owner": "named historical read contracts only",
+          "action": "Prove dataset-by-dataset whether a bounded snapshot contract and caller exist.",
+          "gate": "Every retained dataset has a named owner, typed interface and retention purpose."
+        },
+        {
+          "id": "ACG-02-005",
+          "artifact": "ServiceBackedReadAdapter generic HTTP/store arbitration",
+          "disposition": "MERGE",
+          "canonical_owner": "typed domain service clients",
+          "action": "Move URL, timeout, error and projection behavior into existing domain clients.",
+          "gate": "No string-dispatched cross-domain client remains."
+        },
+        {
+          "id": "ACG-02-006",
+          "artifact": "workflows/hooks and catalog methods at lines 7585-7612 and 20401-20459",
+          "disposition": "MERGE",
+          "canonical_owner": "existing console/catalog providers",
+          "action": "Move methods behind already-isolated routers; delete the God-store methods.",
+          "gate": "Only focused providers are called and empty alpha stub is separately resolved."
+        },
+        {
+          "id": "ACG-02-007",
+          "artifact": "OpenClaw, dormant-provider and Research OSS methods at lines 7614-8549",
+          "disposition": "MERGE",
+          "canonical_owner": "OpenClawOpsClient plus focused operational read model",
+          "action": "Unify transport and move only required projection behavior.",
+          "gate": "No duplicate OpenClaw transport or local operational snapshot authority."
+        },
+        {
+          "id": "ACG-02-008",
+          "artifact": "Consultation clusters at lines 8551-8952 and 18188-19724",
+          "disposition": "MERGE",
+          "canonical_owner": "ConsultationServiceClient and ConsultationStore",
+          "action": "Move request, memo, transcript, handoff and decision calls to the existing owner.",
+          "gate": "God-store consultation methods and discovery logic have zero callers."
+        },
+        {
+          "id": "ACG-02-009",
+          "artifact": "Decision Journal methods at lines 9552-9795",
+          "disposition": "VERIFY",
+          "canonical_owner": "one dedicated durable Decision Journal store",
+          "action": "Resolve the current durable owner before moving create/list/patch and idempotency maps.",
+          "gate": "Owner and restart behavior are proven before deleting current persistence."
+        },
+        {
+          "id": "ACG-02-010",
+          "artifact": "legacy Agora methods at lines 9797-10603",
+          "disposition": "MERGE",
+          "canonical_owner": "existing Agora bounded stores and application operations",
+          "action": "Reconcile datasets one by one; move unmatched projections and delete BFF-local writes.",
+          "gate": "No duplicate Agora record owner remains."
+        },
+        {
+          "id": "ACG-02-011",
+          "artifact": "Persona, Capital, Deployment and Runtime methods at lines 10604-12068",
+          "disposition": "MERGE",
+          "canonical_owner": "existing Persona, Capital, Deployment and Runtime stores/clients",
+          "action": "Route reads and all command-shaped writes through domain owners; extract pure DTO projectors.",
+          "gate": "No BFF-local foreign-domain mutation or shadow record."
+        },
+        {
+          "id": "ACG-02-012",
+          "artifact": "ranking, rebalance, allocation, containment, league and Evolution methods at lines 12074-12584",
+          "disposition": "MIGRATE",
+          "canonical_owner": "Capital authority plus named BFF ranking/Evolution projections",
+          "action": "Separate capital-owned behavior from BFF-owned composition and remove mixed storage.",
+          "gate": "Each dataset has exactly one named writer and narrow reader."
+        },
+        {
+          "id": "ACG-02-013",
+          "artifact": "OODA, intervention, compatibility and review-queue methods at lines 12591-13430",
+          "disposition": "MERGE",
+          "canonical_owner": "OODA store and Management read models",
+          "action": "Move primitive OODA records to its store and compositions to focused Management read models.",
+          "gate": "Experiment/job/event compatibility methods disappear after route consolidation."
+        },
+        {
+          "id": "ACG-02-014",
+          "artifact": "Research, Knowledge, Memory, Search and Source methods at lines 13437-16511",
+          "disposition": "MERGE",
+          "canonical_owner": "existing Knowledge, Research, Memory, Search and Source owners",
+          "action": "Move primitive access to existing stores/clients and keep only explicit BFF envelope composition.",
+          "gate": "No cross-domain dataset reader or local duplicate write remains."
+        },
+        {
+          "id": "ACG-02-015",
+          "artifact": "Incident, postmortem, loop, governance, lineage and telemetry methods at lines 16517-17334",
+          "disposition": "MIGRATE",
+          "canonical_owner": "domain stores plus BFF Management operations read models",
+          "action": "Merge primitives with owners and move cross-domain composition out of the God store.",
+          "gate": "Management receives injected narrow readers only."
+        },
+        {
+          "id": "ACG-02-016",
+          "artifact": "Persona and Training methods at lines 17340-18182 and trainer replay at 19733-20397",
+          "disposition": "MERGE",
+          "canonical_owner": "Persona Registry and Training Session service/store",
+          "action": "Move sessions, capabilities, controls, preview and replay to their existing services.",
+          "gate": "Session/control/replay journeys use service APIs and persist across restart."
+        },
+        {
+          "id": "ACG-02-017",
+          "artifact": "rapid-evaluation methods at lines 19733-20397",
+          "disposition": "VERIFY",
+          "canonical_owner": "Training or Research owner to be proven",
+          "action": "Trace production/test callers and select an existing owner before migration.",
+          "gate": "No new owner is invented solely to retain unused JSON behavior."
+        },
+        {
+          "id": "ACG-02-018",
+          "artifact": "five Management read-model methods at lines 20463-20883",
+          "disposition": "MERGE",
+          "canonical_owner": "services/control-plane/bff/management_read_models",
+          "action": "First extraction: move the five composed operations to their sole caller package.",
+          "gate": "Router contract passes and five old methods are deleted."
+        },
+        {
+          "id": "ACG-02-019",
+          "artifact": "get_job_logs_bff and get_evolution_decision",
+          "disposition": "REMOVE",
+          "canonical_owner": "none",
+          "action": "Delete after a focused source/reflection reference check confirms zero callers.",
+          "gate": "Zero production, test, reflective-string and generated caller."
+        },
+        {
+          "id": "ACG-02-020",
+          "artifact": "create_persona_binding, create_capital_pool, get_loop_health_record, list_telemetry_events and list_alpha_factory_cards",
+          "disposition": "VERIFY",
+          "canonical_owner": "existing domain owners or no owner",
+          "action": "Migrate test-only/indirect callers or delete unused/empty behavior based on caller proof.",
+          "gate": "Per-method caller inventory and replacement contract are recorded."
+        },
+        {
+          "id": "ACG-02-021",
+          "artifact": "final ReadSurfaceStore compatibility object",
+          "disposition": "REMOVE",
+          "canonical_owner": "narrow typed ports and existing owners",
+          "action": "Delete after product and test callers reach zero; do not leave a forwarding registry.",
+          "gate": "Production import search and 457-method migration inventory are closed."
+        }
+      ]
+    },
+    {
+      "priority": 3,
+      "area": "execute-plans bff, bff-v1 and v5 dependency direction",
+      "items": [
+        {
+          "id": "ACG-03-001",
+          "artifact": "low-level fetch, auth, timeout, request ID and error normalization",
+          "disposition": "KEEP",
+          "canonical_owner": "existing bff-v1 transport, status, runtime-environment and SSE modules",
+          "action": "Keep the stricter existing bff-v1 production surface; do not create a fourth API directory or wrapper.",
+          "gate": "Transport imports no domain client or version layer."
+        },
+        {
+          "id": "ACG-03-002",
+          "artifact": "domain client functions distributed across bff, bff-v1 and v5",
+          "disposition": "MERGE",
+          "canonical_owner": "one existing bff-v1 client module per backend domain/contract family",
+          "action": "Combine compatibility mapping in the existing domain module and move callers directly without a wrapper.",
+          "gate": "One request implementation per endpoint family."
+        },
+        {
+          "id": "ACG-03-003",
+          "artifact": "bff-v1 package-internal imports from its own public barrel",
+          "disposition": "MIGRATE",
+          "canonical_owner": "direct relative imports between implementation modules",
+          "action": "Keep the public entry point for external consumers while preventing internal self-barrel cycles.",
+          "gate": "No package-internal module imports @/lib/bff-v1."
+        },
+        {
+          "id": "ACG-03-004",
+          "artifact": "runActionSafe re-export through legacy and public index",
+          "disposition": "MIGRATE",
+          "canonical_owner": "direct action module",
+          "action": "Retain runActionSafe and its eleven live caller files, but import tryRunAction directly from ./writes and later delete legacy forwarding.",
+          "gate": "Rollup emits no circular chunk warning and action tests pass."
+        },
+        {
+          "id": "ACG-03-005",
+          "artifact": "bff to bff-v1 and bff-v1 to bff inverse imports",
+          "disposition": "MIGRATE",
+          "canonical_owner": "existing bff-v1 clients, writes, transport and SSE",
+          "action": "Merge needed legacy behavior into bff-v1 and drain bff callers by domain.",
+          "gate": "Import graph rejects both inverse edge classes."
+        },
+        {
+          "id": "ACG-03-006",
+          "artifact": "bff-v1 to v5 and v5 to bff-v1 inverse imports",
+          "disposition": "MIGRATE",
+          "canonical_owner": "shared contracts and domain clients",
+          "action": "Remove upward v1 dependencies and collapse duplicate client behavior.",
+          "gate": "No runtime inverse pair or SCC remains."
+        },
+        {
+          "id": "ACG-03-007",
+          "artifact": "bff-v1 client/liveStatus and Management reads/data-source SCCs",
+          "disposition": "MERGE",
+          "canonical_owner": "acyclic domain modules with shared types below them",
+          "action": "Move types to contract-only modules and leave one directional runtime call path.",
+          "gate": "Production SCC report is empty."
+        },
+        {
+          "id": "ACG-03-008",
+          "artifact": "generated Agora and backend contract types",
+          "disposition": "VERIFY",
+          "canonical_owner": "generated contract directory",
+          "action": "Prove generator, input source/hash and live consumers before retaining or moving.",
+          "gate": "Generated files import no runtime client code and regeneration is reproducible."
+        },
+        {
+          "id": "ACG-03-009",
+          "artifact": "legacy bff implementation files and empty compatibility barrels after caller migration",
+          "disposition": "REMOVE",
+          "canonical_owner": "bff-v1 production surface and pure v5 models/adapters",
+          "action": "Delete drained legacy files and barrels rather than re-exporting canonical modules.",
+          "gate": "Zero production/test importers and strict-live build passes."
+        },
+        {
+          "id": "ACG-03-010",
+          "artifact": "bff/liveRead.ts, bff/liveTransport.ts and bff/client.ts",
+          "disposition": "MERGE",
+          "canonical_owner": "bff-v1 liveTransport/liveStatus and managementConsoleReads",
+          "action": "Merge strict transport/status behavior and move the sole external OODA detail read, then delete the legacy modules.",
+          "gate": "Seven live status UI callers and OODA detail use bff-v1; legacy modules have zero imports."
+        },
+        {
+          "id": "ACG-03-011",
+          "artifact": "bff/runAction.ts and bff/commandClient.ts",
+          "disposition": "MERGE",
+          "canonical_owner": "bff-v1/writes.ts",
+          "action": "Move required decision/alert/command adaptation into the stricter live-write owner; delete unused old confirm-token behavior.",
+          "gate": "All real action callers use bff-v1 writes and no forwarding facade remains."
+        },
+        {
+          "id": "ACG-03-012",
+          "artifact": "bff-v1/writeFallback.ts local overlay success",
+          "disposition": "REMOVE",
+          "canonical_owner": "truthful canonical write result",
+          "action": "Migrate PersonaOnboarding to typed writes and render failure/unavailability rather than completed local overlay.",
+          "gate": "Strict-live negative test proves disabled/offline writes never synthesize success."
+        },
+        {
+          "id": "ACG-03-013",
+          "artifact": "production callers of bff/mutations.ts, writeOverlay.ts and mock persistence from main.tsx",
+          "disposition": "MIGRATE",
+          "canonical_owner": "typed bff-v1 domain writes and compile-time demo/test bootstrap",
+          "action": "Move real UI actions by domain and isolate mock seed/persistence outside strict production reachability.",
+          "gate": "Production graph from main.tsx cannot reach mocks/seed, mutation fixtures, overlays or synthetic-success receipts."
+        },
+        {
+          "id": "ACG-03-014",
+          "artifact": "bff/realtime.ts and transport behavior in v5/events.ts",
+          "disposition": "MERGE",
+          "canonical_owner": "existing bff-v1/sse bridge and liveSse modules",
+          "action": "Move emit/subscribe behavior to one SSE owner while retaining pure event DTOs in v5.",
+          "gate": "Realtime callers pass and v5 performs no side effect."
+        },
+        {
+          "id": "ACG-03-015",
+          "artifact": "bff/v5.ts and network behavior in v5 models",
+          "disposition": "MERGE",
+          "canonical_owner": "bff-v1/v5.ts for live API and v5 for pure transforms",
+          "action": "Move live calls into the existing canonical V5 entry, isolate fixture logic, and remove network/mutation imports from v5.",
+          "gate": "Seven active V5 facade callers work and v5 has no import to bff or bff-v1 runtime code."
+        },
+        {
+          "id": "ACG-03-016",
+          "artifact": "bff-v1/legacy.ts and 53 live seed-accessor consumer files",
+          "disposition": "MIGRATE",
+          "canonical_owner": "typed bff-v1 domain clients",
+          "action": "Move consumers by entity family; do not delete or wrap legacy until every caller moves.",
+          "gate": "legacy.ts, seed.ts and associated bff files have zero production/test importers."
+        }
+      ]
+    },
+    {
+      "priority": 4,
+      "area": "Management loop truth",
+      "items": [
+        {
+          "id": "ACG-04-001",
+          "artifact": "docs/deployment/loop-catalog.registry.json",
+          "disposition": "KEEP",
+          "canonical_owner": "static loop identity and expected-controller metadata",
+          "action": "Keep twelve stable identities and contracts; never project catalog fields as current runtime truth.",
+          "gate": "Catalog contains no live maturity, task, heartbeat or success claim."
+        },
+        {
+          "id": "ACG-04-002",
+          "artifact": "LoopControllerStore and shared conformance/writer contract",
+          "disposition": "KEEP",
+          "canonical_owner": "sole current loop controller record store",
+          "action": "Use scoped fenced records for all accepted loop runtime truth.",
+          "gate": "Tenant/environment, lease, fencing and restart readback tests pass."
+        },
+        {
+          "id": "ACG-04-003",
+          "artifact": "loop_inventory admission/projection",
+          "disposition": "MERGE",
+          "canonical_owner": "one pure catalog plus controller-record projection",
+          "action": "Add complete controller contract, exact SHA, cadence, desired/actual state and evidence/receipt predicates to the existing projection.",
+          "gate": "No second validator and no permissive blank catalog controller match."
+        },
+        {
+          "id": "ACG-04-004",
+          "artifact": "Loops 4-12 missing stable controller contracts/writers",
+          "disposition": "MIGRATE",
+          "canonical_owner": "each real domain loop controller through LoopControllerWriter",
+          "action": "Declare and publish only when each real controller exists; do not synthesize through BFF probes.",
+          "gate": "Each accepted row names the real controller, deployed SHA and conforming evidence."
+        },
+        {
+          "id": "ACG-04-005",
+          "artifact": "ReadSurfaceStore loop_health snapshot fallback",
+          "disposition": "REMOVE",
+          "canonical_owner": "LoopControllerStore",
+          "action": "Remove local snapshot from current operator truth; archive remains historical evidence only.",
+          "gate": "Current endpoint never reads loop-health JSON fallback."
+        },
+        {
+          "id": "ACG-04-006",
+          "artifact": "read-side publish_loop_12_controller_truth call",
+          "disposition": "REMOVE",
+          "canonical_owner": "Loop 12 background writer",
+          "action": "Make GET side-effect free and publish only from the owner cycle.",
+          "gate": "GET produces no controller write/task and a background writer test proves publication."
+        },
+        {
+          "id": "ACG-04-007",
+          "artifact": "nonconforming Loop 12 monitor payload",
+          "disposition": "MIGRATE",
+          "canonical_owner": "LoopControllerWriter conformance contract",
+          "action": "Emit required desired/actual state, controller identity, exact SHA and evidence through the existing writer.",
+          "gate": "Store validation accepts the row and projection admission is truthful."
+        },
+        {
+          "id": "ACG-04-008",
+          "artifact": "DownstreamHealthMonitor cross-loop row manufacture/override",
+          "disposition": "REMOVE",
+          "canonical_owner": "domain loop controllers",
+          "action": "Retain raw component probes only under downstream-health; never create or rewrite Loops 1-11.",
+          "gate": "Probe failure cannot change canonical controller rows."
+        },
+        {
+          "id": "ACG-04-009",
+          "artifact": "composite overlay appended to /bff/v5/loop-health items",
+          "disposition": "MIGRATE",
+          "canonical_owner": "noncanonical inventory/overlay section",
+          "action": "Return exactly twelve canonical health rows and expose overlay separately if still needed.",
+          "gate": "Backend, frontend and deployed E2E agree on exactly twelve canonical IDs."
+        },
+        {
+          "id": "ACG-04-010",
+          "artifact": "frontend current_maturity, target_maturity and top-level operator_truth_source expectations",
+          "disposition": "REMOVE",
+          "canonical_owner": "runtime_maturity and nested accepted operator-truth packet",
+          "action": "Migrate the view/type consumer to the real backend contract and delete stale fields.",
+          "gate": "A backend-accepted row is counted live by the frontend contract test."
+        }
+      ]
+    },
+    {
+      "priority": 5,
+      "area": "Runtime Manager dual-directory ownership",
+      "items": [
+        {
+          "id": "ACG-05-001",
+          "artifact": "services/runtime-manager HTTP service and RuntimeManagerService",
+          "disposition": "KEEP",
+          "canonical_owner": "sole deployed Runtime Binding mutation state machine",
+          "action": "Retain Compose-deployed HTTP and service behavior.",
+          "gate": "All mutation paths and E2E exercise this owner."
+        },
+        {
+          "id": "ACG-05-002",
+          "artifact": "execution runtime binding/schema/contract/kill-switch primitives",
+          "disposition": "KEEP",
+          "canonical_owner": "one importable runtime-control kernel package",
+          "action": "Retain primitives while moving them to normal import paths where needed.",
+          "gate": "No path-based importlib or sys.path sibling loading."
+        },
+        {
+          "id": "ACG-05-003",
+          "artifact": "services/execution/runtime-manager/runtime_manager.py RuntimeManager",
+          "disposition": "MERGE",
+          "canonical_owner": "RuntimeManagerService",
+          "action": "Characterize unique deploy/pause/resume/replace/rollback/emergency semantics, merge valid gaps, then delete the duplicate class/file.",
+          "gate": "One production Runtime Manager state machine remains."
+        },
+        {
+          "id": "ACG-05-004",
+          "artifact": "two E2E tests importing the old RuntimeManager by path",
+          "disposition": "MIGRATE",
+          "canonical_owner": "deployed service or real HTTP client",
+          "action": "Run deployment-plan and allocation-policy journeys through Compose semantics.",
+          "gate": "Tests fail if the deployed owner is absent or behavior differs."
+        },
+        {
+          "id": "ACG-05-005",
+          "artifact": "Runtime Manager-named Dockerfile that only runs paper_fleet_reconciler",
+          "disposition": "MIGRATE",
+          "canonical_owner": "explicit paper-fleet worker package/image",
+          "action": "Rename physical ownership while retaining the stable Compose service identity if safe.",
+          "gate": "Image command and package name describe the paper worker, not a second manager."
+        },
+        {
+          "id": "ACG-05-006",
+          "artifact": "paper_fleet_reconciler behavior",
+          "disposition": "KEEP",
+          "canonical_owner": "paper-fleet reconciler worker",
+          "action": "Retain reconciliation behavior against canonical Runtime Binding.",
+          "gate": "Worker and Runtime Manager containers start at exact candidate revision."
+        }
+      ]
+    },
+    {
+      "priority": 6,
+      "area": "Agora Workshop router, store and page",
+      "items": [
+        {
+          "id": "ACG-06-001",
+          "artifact": "agora.strategy_workshop package",
+          "disposition": "KEEP",
+          "canonical_owner": "sole Workshop domain owner",
+          "action": "Refactor inside the existing package; do not create another service or facade.",
+          "gate": "All Workshop routes/stores/operations remain within one bounded domain."
+        },
+        {
+          "id": "ACG-06-002",
+          "artifact": "private _ws_publish and replay state imported by Research/Interaction",
+          "disposition": "MIGRATE",
+          "canonical_owner": "public Workshop events/stream module",
+          "action": "Move helper and all publishers before splitting routes.",
+          "gate": "No cross-router underscore import and SSE replay tests pass."
+        },
+        {
+          "id": "ACG-06-003",
+          "artifact": "private _build_readiness_assessment imported by Trading Room",
+          "disposition": "MIGRATE",
+          "canonical_owner": "public Workshop readiness projection module",
+          "action": "Move computation and callers without duplicating policy.",
+          "gate": "One readiness implementation and no private router import."
+        },
+        {
+          "id": "ACG-06-004",
+          "artifact": "4,073-line Workshop router route bodies",
+          "disposition": "MIGRATE",
+          "canonical_owner": "session, version, execution and stream subrouters in the same package",
+          "action": "Move the 18 handlers intact; package router becomes composition only.",
+          "gate": "All 18 contracts registered once and restart persistence passes."
+        },
+        {
+          "id": "ACG-06-005",
+          "artifact": "PostgresWorkshopStore",
+          "disposition": "KEEP",
+          "canonical_owner": "sole production Workshop persistence",
+          "action": "Retain and absorb required schema/bootstrap behavior.",
+          "gate": "Production configuration fails rather than silently falling back."
+        },
+        {
+          "id": "ACG-06-006",
+          "artifact": "PostgresStrategyWorkshopStore bootstrap-only class",
+          "disposition": "MERGE",
+          "canonical_owner": "canonical Workshop schema/Postgres store",
+          "action": "Fold its three bootstrap methods into the schema/store and delete the class.",
+          "gate": "One Postgres implementation and bootstrap test passes."
+        },
+        {
+          "id": "ACG-06-007",
+          "artifact": "MemoryWorkshopStore",
+          "disposition": "KEEP",
+          "canonical_owner": "explicit test adapter only",
+          "action": "Require explicit injection; never select it as a production fallback.",
+          "gate": "Production startup cannot construct memory persistence implicitly."
+        },
+        {
+          "id": "ACG-06-008",
+          "artifact": "StrategyWorkshopPage.tsx monolithic implementation",
+          "disposition": "MIGRATE",
+          "canonical_owner": "thin route switch plus WorkshopListView and URL-selected WorkshopSessionView",
+          "action": "Split rendering and pure helpers only; retain bff-v1/agora/workshops.ts as the sole network owner.",
+          "gate": "One Workshop client, canonical detail URL and hosted full Workshop journey pass."
+        },
+        {
+          "id": "ACG-06-009",
+          "artifact": "local selectedWorkshopId and list auto-selection",
+          "disposition": "REMOVE",
+          "canonical_owner": "AgoraStrategyWorkshopRoute URL identity",
+          "action": "Navigate on list select/create and render sessions only from /agora/strategy-workshop/:id.",
+          "gate": "Tests no longer expect detail state at the collection URL."
+        },
+        {
+          "id": "ACG-06-010",
+          "artifact": "TradingDeskLayout useServantWorkshopContext duplicate projection fetch",
+          "disposition": "REMOVE",
+          "canonical_owner": "URL-owned Workshop session/client call",
+          "action": "Make the drawer ID-only/presentational or render Workshop-aware content inside the session; do not add a global store.",
+          "gate": "One Workshop projection GET owner per detail navigation."
+        },
+        {
+          "id": "ACG-06-011",
+          "artifact": "Workshop message and optional Persona interaction coupled as one transaction",
+          "disposition": "MIGRATE",
+          "canonical_owner": "existing Workshop client operation plus separate Persona action",
+          "action": "Group ETag, message POST and durable event readback; keep reconstruction and Persona interaction as separate receipts.",
+          "gate": "Persona failure cannot relabel an already durable Workshop message as failed."
+        },
+        {
+          "id": "ACG-06-012",
+          "artifact": "initial request error swallowing and lastEventId SSE dependency",
+          "disposition": "VERIFY",
+          "canonical_owner": "truthful Workshop page state and one stable SSE lifecycle",
+          "action": "Characterize unavailable versus empty and measure reconnect count per event before restructuring.",
+          "gate": "Unavailable is explicit and SSE does not reconnect for each received event."
+        }
+      ]
+    },
+    {
+      "priority": 7,
+      "area": "Source Ingestion main.py",
+      "items": [
+        {
+          "id": "ACG-07-001",
+          "artifact": "Source Ingestion FastAPI composition and health/version wiring",
+          "disposition": "KEEP",
+          "canonical_owner": "small Source Ingestion app factory/entrypoint",
+          "action": "Retain deployable service composition only.",
+          "gate": "No domain route or pipeline body remains in main.py."
+        },
+        {
+          "id": "ACG-07-002",
+          "artifact": "module-global env/path parsing and object construction",
+          "disposition": "MIGRATE",
+          "canonical_owner": "explicit Source Ingestion runtime/composition module",
+          "action": "Construct existing managers/stores once and inject narrow operations into routers.",
+          "gate": "Routers do not import main globals."
+        },
+        {
+          "id": "ACG-07-003",
+          "artifact": "27 request/response model classes in main.py",
+          "disposition": "MIGRATE",
+          "canonical_owner": "route-family API model module",
+          "action": "Move shared models once; do not copy them per router.",
+          "gate": "OpenAPI schema remains compatible."
+        },
+        {
+          "id": "ACG-07-004",
+          "artifact": "68 Source Ingestion route handlers",
+          "disposition": "MIGRATE",
+          "canonical_owner": "five ingest, catalog/controller, proposal, observability and Management routers",
+          "action": "Move handlers by existing domain module ownership and delete original decorators.",
+          "gate": "All 68 contracts registered once."
+        },
+        {
+          "id": "ACG-07-005",
+          "artifact": "_run_job and duplicated trigger post-processing paths",
+          "disposition": "MERGE",
+          "canonical_owner": "one Source Ingestion application operation",
+          "action": "Unify manual, scheduled, frontier, source-record and controller execution over existing scheduler/stores.",
+          "gate": "Evidence, storage, receipts, watermark, DLQ, health, usage, distillation and search refresh have one path."
+        },
+        {
+          "id": "ACG-07-006",
+          "artifact": "original route and helper bodies left in main.py after migration",
+          "disposition": "REMOVE",
+          "canonical_owner": "new focused modules in the same service",
+          "action": "Delete in each caller-switch wave rather than retaining compatibility copies.",
+          "gate": "main.py is composition-only and no subrouter imports it."
+        }
+      ]
+    },
+    {
+      "priority": 8,
+      "area": "frontend dead NL and stub surfaces",
+      "items": [
+        {
+          "id": "ACG-08-001",
+          "artifact": "management/pages/oversight/NlConsole.tsx ManagementNlConsole",
+          "disposition": "REMOVE",
+          "canonical_owner": "live Management AI surface only",
+          "action": "Delete the page after removing its sole dead _stubs re-export.",
+          "gate": "Production import and route scans show zero callers; build/navigation tests pass."
+        },
+        {
+          "id": "ACG-08-002",
+          "artifact": "src/management/components/nl/NlAssistantDrawer.tsx",
+          "disposition": "REMOVE",
+          "canonical_owner": "live Management AI surface only",
+          "action": "Delete after zero-caller proof and remove drawer-only support code.",
+          "gate": "No bundle chunk or lazy import remains."
+        },
+        {
+          "id": "ACG-08-003",
+          "artifact": "src/management/pages/oversight/_stubs.tsx",
+          "disposition": "REMOVE",
+          "canonical_owner": "real oversight pages",
+          "action": "Delete obsolete stub page collection and dead exports.",
+          "gate": "Every oversight route resolves to a real page and build passes."
+        },
+        {
+          "id": "ACG-08-004",
+          "artifact": "bff-v1/managementNl.ts deprecated fixed responder",
+          "disposition": "REMOVE",
+          "canonical_owner": "managementAi.ts live POST /bff/management/nl/ask client",
+          "action": "Delete fixed responder with its two dead UI callers.",
+          "gate": "No fixed mock answer is reachable in strict production."
+        },
+        {
+          "id": "ACG-08-005",
+          "artifact": "v5/management/nl.ts fixed classifier/responder plus ManagementNlContext",
+          "disposition": "MIGRATE",
+          "canonical_owner": "active useManagementNlContext hook or existing Management AI UI snapshot type",
+          "action": "Move the one live interface, then delete fixed-response behavior and types.",
+          "gate": "AgentPanelBody context works without importing fixed NL code."
+        },
+        {
+          "id": "ACG-08-006",
+          "artifact": "useManagementNlContext.ts",
+          "disposition": "KEEP",
+          "canonical_owner": "active AgentPanelBody UI context",
+          "action": "Retain the hook and remove only its stale /management/ask label.",
+          "gate": "Floating AgentPanel remains functional."
+        },
+        {
+          "id": "ACG-08-007",
+          "artifact": "v5/management/index.ts NL export, old NL env flags and mgmt.nl/stubNotice locale keys",
+          "disposition": "REMOVE",
+          "canonical_owner": "none after dead UI deletion",
+          "action": "Delete dead export, flags and keys; verify the entire v5 barrel separately before deleting the barrel itself.",
+          "gate": "Zero references and localization/typecheck/build pass."
+        },
+        {
+          "id": "ACG-08-008",
+          "artifact": "zero-TypeScript-caller Agora dashboard/research/servant and SSE payload modules",
+          "disposition": "VERIFY",
+          "canonical_owner": "generated/test contract owner or none",
+          "action": "Check generated, test and future route-contract ownership; do not delete solely from production TS count.",
+          "gate": "Complete caller/provenance evidence determines final disposition."
+        },
+        {
+          "id": "ACG-08-009",
+          "artifact": "managementAi.ts, AgentPanelBody and FloatingAgentPanel live Management AI path",
+          "disposition": "KEEP",
+          "canonical_owner": "live Management AI UI and /bff/management/nl/ask client",
+          "action": "Retain request/stream behavior and mounted floating panel.",
+          "gate": "Browser proof reaches the BFF or renders truthful provider degradation."
+        }
+      ]
+    },
+    {
+      "priority": 9,
+      "area": "container entrypoint and exact deployment tests",
+      "items": [
+        {
+          "id": "ACG-09-001",
+          "artifact": "Agora interaction worker durable behavior",
+          "disposition": "KEEP",
+          "canonical_owner": "Agora Interaction worker package",
+          "action": "Retain durable interaction execution while replacing only broken bootstrapping.",
+          "gate": "One interaction is processed and read back after worker restart."
+        },
+        {
+          "id": "ACG-09-002",
+          "artifact": "scripts/run_agora_interaction_worker.py path-dependent launcher",
+          "disposition": "MIGRATE",
+          "canonical_owner": "package-safe worker CLI or thin import shim",
+          "action": "Make imports independent of current working directory and image layout luck.",
+          "gate": "Exact command and --healthcheck run from a foreign CWD in the built image."
+        },
+        {
+          "id": "ACG-09-003",
+          "artifact": "nonexistent FastBffReadStore import branch",
+          "disposition": "REMOVE",
+          "canonical_owner": "typed Persona discovery client/port",
+          "action": "Replace with the existing canonical Persona dependency.",
+          "gate": "Dependency construction either succeeds with canonical data or fails startup truthfully."
+        },
+        {
+          "id": "ACG-09-004",
+          "artifact": "catch-all MinimalReadStore empty fallback",
+          "disposition": "REMOVE",
+          "canonical_owner": "truthful dependency failure",
+          "action": "Delete false-success fallback and broad exception suppression.",
+          "gate": "Health cannot pass with an unconstructable Persona dependency."
+        },
+        {
+          "id": "ACG-09-005",
+          "artifact": "Compose worker command and healthcheck",
+          "disposition": "MIGRATE",
+          "canonical_owner": "same validated package entrypoint",
+          "action": "Point command and healthcheck at one executable and verify imports before success.",
+          "gate": "Container remains running/healthy with restart count stable at zero."
+        },
+        {
+          "id": "ACG-09-006",
+          "artifact": "REQUIRED_LOOP_WORKERS manifest omission",
+          "disposition": "MIGRATE",
+          "canonical_owner": "deployment required-service manifest",
+          "action": "Add Agora interaction worker under Loop 5.",
+          "gate": "Deployment contract fails when the worker is missing."
+        },
+        {
+          "id": "ACG-09-007",
+          "artifact": "BFF-only build/recreate/rollback service set",
+          "disposition": "MIGRATE",
+          "canonical_owner": "BFF component delivery",
+          "action": "Include every BFF-image-owned persistent process, including Agora interaction worker.",
+          "gate": "Deploy and rollback change/restore the same exact service set."
+        },
+        {
+          "id": "ACG-09-008",
+          "artifact": "root and BFF deployment verification",
+          "disposition": "MERGE",
+          "canonical_owner": "one reusable exact-component verifier",
+          "action": "Check service existence, unique active container, running/health state, command and OCI revision.",
+          "gate": "Fixture contracts and live dev verification reject missing, restarting, unhealthy or wrong-SHA services."
+        },
+        {
+          "id": "ACG-09-009",
+          "artifact": "hosted acceptance based only on FE/BFF pair",
+          "disposition": "MIGRATE",
+          "canonical_owner": "pair receipt plus backend required-component receipt",
+          "action": "Block acceptance until the exact required-component gate passes while retaining FE/BFF pair identity.",
+          "gate": "A broken required worker makes the candidate unaccepted."
+        }
+      ]
+    }
+  ]
+}

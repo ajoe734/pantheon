@@ -54,14 +54,19 @@ def render_wakeup_message(
             "\n這次 dispatch 的角色是 reviewer，不是 task owner。\n"
             "- 獨立核對 acceptance、diff、PR/head evidence 與驗證。\n"
             "- 不得執行 `assign`、`start`、`progress`、`handoff`、`done`。\n"
-            f"- 通過時執行 ai-status.sh approve {task_id}；不通過時執行 "
-            f"ai-status.sh reopen {task_id}。\n"
+            f"- 通過時先執行 ai-status.sh approve {task_id}；這是 PR admission 的唯一"
+            "權威判定。不得只因 current dev 在線性前進後顯示 BEHIND 就 reopen。\n"
+            "- canonical approve 會接受 frozen base 的線性前進；若它拒絕（衝突、"
+            "head/branch/manifest 已變，或 base 非線性倒退／分歧），或 acceptance"
+            f" 本身不通過，才執行 ai-status.sh reopen {task_id}。\n"
         )
     elif reason == "owned_finalize_dispatch":
         role_guardrails = (
             "\n這次 dispatch 的角色是已通過審查後的 task owner。\n"
             "- 不得重新指派 owner/reviewer。\n"
             "- 核對 exact-head approval 與必要交付後才執行 `done`。\n"
+            "- 若 frozen approved head 未變，不得重跑 reviewer 已完成並綁定的測試；"
+            "只核對 approval、merged ancestry 與乾淨工作樹後收尾。\n"
         )
 
     sidecar_guardrails = ""
@@ -70,6 +75,20 @@ def render_wakeup_message(
             "\n這是 canonical sidecar support task；只處理其明列 scope，"
             "不得擴張成主線 governance 或 runtime 修改。\n"
         )
+
+    dependency_truth = [
+        item
+        for item in (task_payload.get("dependency_truth") or [])
+        if isinstance(item, dict) and str(item.get("task_id") or "").strip()
+    ]
+    dependency_lines = "\n".join(
+        "- {task_id}: status={status}, satisfied={satisfied}".format(
+            task_id=str(item.get("task_id") or "").strip(),
+            status=str(item.get("status") or "missing").strip(),
+            satisfied=str(bool(item.get("satisfied"))).lower(),
+        )
+        for item in dependency_truth
+    ) or "- (none)"
 
     branch_workflow = (
         config.get("branch_workflow")
@@ -110,6 +129,7 @@ def render_wakeup_message(
         or "- (none inferred)",
         "dispatch_guardrails": role_guardrails.rstrip(),
         "sidecar_guardrails": sidecar_guardrails.rstrip(),
+        "dependency_truth": dependency_lines,
         "target_agent_display_name": display_name_for(config, agent["id"]),
     }
     return render_template(template_path, variables).strip() + "\n"
@@ -160,6 +180,11 @@ def _queue_delivery_event_locked(
             "task": prepared.get("task") or {},
         },
     }
+    for lineage_key in ("review_requeue_intent_id", "recovery_receipt_id"):
+        lineage_value = str(prepared.get(lineage_key) or "").strip()
+        if lineage_value:
+            queue_payload[lineage_key] = lineage_value
+            queue_payload["metadata"][lineage_key] = lineage_value
     if not store_queue_event(state, queue_payload):
         return False
     write_activity_log(

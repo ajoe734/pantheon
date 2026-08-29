@@ -12,7 +12,7 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, os.path.dirname(__file__))
 
 import main as bff_main
-from read_store import ReadSurfaceStore, _default_read_data
+from test_training_session_service_client import create_training_read_surface_double
 
 
 OPERATOR_AUTH = "Bearer test-operator:operator"
@@ -29,7 +29,17 @@ def _seeded_client(*, service_backed_control_store: bool = False):
             control_store_path = Path(td) / "trainer_controls.json"
             control_store_path.write_text(
                 json.dumps(
-                    _default_read_data()["trainer_controls"],
+                    {
+                        "trn-20260419-001": {
+                            "session_id": "trn-20260419-001",
+                            "status": "active",
+                            "controls": [
+                                {"parameter_key": "reversal_threshold", "current_value": 0.55},
+                                {"parameter_key": "minimum_hold_bars", "current_value": 3},
+                            ],
+                        },
+                        "trn-20260418-003": {"session_id": "trn-20260418-003", "status": "completed", "controls": []},
+                    },
                     indent=2,
                     ensure_ascii=True,
                 ),
@@ -40,10 +50,7 @@ def _seeded_client(*, service_backed_control_store: bool = False):
             os.environ.pop("PANTHEON_BFF_TRAINER_CONTROL_STORE", None)
 
         original_store = bff_main.read_store
-        bff_main.read_store = ReadSurfaceStore(
-            os.path.join(td, "read_surfaces.json"),
-            allow_local_snapshot_fallback=True,
-        )
+        bff_main.read_store = create_training_read_surface_double()
         client = TestClient(bff_main.app)
         try:
             yield client, control_store_path

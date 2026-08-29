@@ -13,11 +13,147 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, os.path.dirname(__file__))
 
 import main as bff_main
-from read_store import ReadSurfaceStore
+import uuid
+from typing import Any
+
+from ports import ReadSurfacePorts, create_in_memory_read_surface_ports
 
 OPERATOR_TOKEN = "Bearer op-2:operator"
 HEADERS = {"Authorization": OPERATOR_TOKEN}
 IDEM_HEADERS = {**HEADERS, "Idempotency-Key": "test-key-001"}
+
+
+class CanonicalMock:
+    def __init__(self) -> None:
+        self.list_records = lambda dataset, **kwargs: (True, [])
+        self.capital_pool = lambda pool_id: (True, None)
+        self.bindings_for_pool = lambda pool_id: (True, [])
+
+
+class CapitalRankingTestReadPorts(ReadSurfacePorts):
+    def __init__(self, data: dict | None = None, *, allow_local_snapshot_fallback: bool = True) -> None:
+        super().__init__()
+        self._allow_fallback = allow_local_snapshot_fallback
+        self._data = data if data is not None else {
+            "capital_pools": {},
+            "ranking_formulas": {},
+            "rebalances": {},
+            "rankings": {},
+        }
+        self._canonical = CanonicalMock()
+
+    def dataset_source(self, dataset: str) -> str:
+        if dataset == "persona_bindings":
+            ok, _ = self._canonical.bindings_for_pool("probe")
+            return "canonical" if ok else "missing"
+        if not self._allow_fallback:
+            if os.environ.get("PANTHEON_CAPITAL_API_URL") or os.environ.get("PANTHEON_CAPITAL_SERVICE_URL") or os.environ.get("PANTHEON_BFF_CAPITAL_POOL_STORE"):
+                return "canonical"
+            ok, records = self._canonical.list_records(dataset)
+            if ok and records:
+                return "canonical"
+            if self._data.get(dataset):
+                return "canonical"
+            return "missing"
+        return "canonical"
+
+    def dataset_surface_status(self, dataset: str, *, snapshot_at: str, **kwargs: Any) -> dict[str, Any]:
+        src = self.dataset_source(dataset)
+        status = "unavailable" if src == "missing" else "ok"
+        return {"status": status, "source": src, "snapshot_at": snapshot_at}
+
+    def list_capital_pools(self, **kwargs: Any) -> list[dict[str, Any]]:
+        ok, records = self._canonical.list_records("capital_pools", **kwargs)
+        if ok and records:
+            status = kwargs.get("status")
+            rp = kwargs.get("risk_policy_ref")
+            res = [dict(r) for r in records]
+            if status:
+                res = [r for r in res if r.get("status") == status]
+            if rp:
+                res = [r for r in res if r.get("risk_policy_ref") == rp]
+            for r in res:
+                r.setdefault("id", r.get("pool_id"))
+            return res
+        res = [dict(r) for r in self._data.get("capital_pools", {}).values()]
+        for r in res:
+            r.setdefault("id", r.get("pool_id"))
+        return res
+
+    def get_capital_pool(self, pool_id: str | None) -> dict[str, Any] | None:
+        ok, pool = self._canonical.capital_pool(pool_id)
+        if ok and pool:
+            p = dict(pool)
+            p.setdefault("id", p.get("pool_id"))
+            return p
+        raw = self._data.get("capital_pools", {}).get(str(pool_id or ""))
+        if raw:
+            p = dict(raw)
+            p.setdefault("id", p.get("pool_id"))
+            return p
+        return None
+
+    def get_bindings_for_pool(self, pool_id: str | None) -> list[dict[str, Any]]:
+        ok, bindings = self._canonical.bindings_for_pool(pool_id)
+        if ok:
+            return bindings
+        return []
+
+    def create_capital_pool(self, *, pool_id: str | None = None, name: str = "", actor_id: str | None = None, **kwargs: Any) -> dict[str, Any]:
+        pid = pool_id or f"pool-{uuid.uuid4().hex[:8]}"
+        p = {"id": pid, "pool_id": pid, "name": name, "status": kwargs.get("status", "active"), "owner_id": kwargs.get("owner_id", actor_id or "op-1"), "owner_type": kwargs.get("owner_type", "operator"), **kwargs}
+        self._data.setdefault("capital_pools", {})[pid] = p
+        return p
+
+    def patch_capital_pool(self, pool_id: str, *, patch: dict[str, Any] | None = None, **kwargs: Any) -> dict[str, Any] | None:
+        p = self.get_capital_pool(pool_id) or self._data.get("capital_pools", {}).get(pool_id)
+        if p:
+            p.update(patch or kwargs)
+            return p
+        return None
+
+    def list_ranking_formulas(self, **kwargs: Any) -> list[dict[str, Any]]:
+        return list(self._data.get("ranking_formulas", {}).values())
+
+    def get_ranking_formula(self, formula_id: str | None) -> dict[str, Any] | None:
+        return self._data.get("ranking_formulas", {}).get(str(formula_id or ""))
+
+    def create_ranking_formula(self, *, name: str = "", description: str = "", actor_id: str | None = None, formula_id: str | None = None, **kwargs: Any) -> dict[str, Any]:
+        fid = formula_id or f"rf-{uuid.uuid4().hex[:8]}"
+        f = {"id": fid, "formula_id": fid, "name": name, "description": description, "status": kwargs.get("status", "active"), "params": kwargs.get("params", {}), "actor_id": actor_id or "op-1", **kwargs}
+        self._data.setdefault("ranking_formulas", {})[fid] = f
+        return f
+
+    def patch_ranking_formula(self, formula_id: str, *, patch: dict[str, Any] | None = None, **kwargs: Any) -> dict[str, Any] | None:
+        f = self.get_ranking_formula(formula_id)
+        if f:
+            f.update(patch or kwargs)
+            return f
+        return None
+
+    def list_rebalances(self, *, pool_id: str | None = None, **kwargs: Any) -> list[dict[str, Any]]:
+        rbs = list(self._data.get("rebalances", {}).values())
+        if pool_id:
+            return [r for r in rbs if r.get("capital_pool_id") == pool_id or r.get("pool_id") == pool_id]
+        return rbs
+
+    def get_rebalance(self, rebalance_id: str | None) -> dict[str, Any] | None:
+        return self._data.get("rebalances", {}).get(str(rebalance_id or ""))
+
+    def create_rebalance(self, *, capital_pool_id: str = "", actor_id: str | None = None, reason: str = "", **kwargs: Any) -> dict[str, Any]:
+        rid = f"rb-{uuid.uuid4().hex[:8]}"
+        rb = {"id": rid, "rebalance_id": rid, "capital_pool_id": capital_pool_id, "pool_id": capital_pool_id, "actor_id": actor_id or "op-1", "reason": reason, **kwargs}
+        self._data.setdefault("rebalances", {})[rid] = rb
+        return rb
+
+    def list_rankings(self, **kwargs: Any) -> list[dict[str, Any]]:
+        return list(self._data.get("rankings", {}).values())
+
+    def get_ranking(self, ranking_id: str | None) -> dict[str, Any] | None:
+        return self._data.get("rankings", {}).get(str(ranking_id or ""))
+
+    def list_capital_allocations(self, **kwargs: Any) -> list[dict[str, Any]]:
+        return []
 
 
 def _error(resp):
@@ -31,10 +167,7 @@ def _error(resp):
 
 
 def _fresh_client(td: str):
-    bff_main.read_store = ReadSurfaceStore(
-        os.path.join(td, "read_surfaces.json"),
-        allow_local_snapshot_fallback=True,
-    )
+    bff_main.read_store = CapitalRankingTestReadPorts(allow_local_snapshot_fallback=True)
     bff_main._CAPITAL_BFF_IDEMPOTENCY.clear()
     bff_main.command_store._update_commands([])
     return TestClient(bff_main.app)
@@ -75,11 +208,11 @@ def test_bff_capital_pools_list_returns_200() -> None:
 
 def test_bff_capital_pools_list_returns_strict_items_envelope(monkeypatch) -> None:
     with tempfile.TemporaryDirectory() as td:
-        store = ReadSurfaceStore(
-            os.path.join(td, "read_surfaces.json"),
+        store = CapitalRankingTestReadPorts(
             allow_local_snapshot_fallback=False,
         )
         seed_pool = {
+            "id": "pool-alpha",
             "pool_id": "pool-alpha",
             "name": "Alpha Pool",
             "status": "active",
@@ -91,6 +224,7 @@ def test_bff_capital_pools_list_returns_strict_items_envelope(monkeypatch) -> No
             "created_at": "2026-05-15T00:00:00Z",
         }
         other_pool = {
+            "id": "pool-beta",
             "pool_id": "pool-beta",
             "name": "Beta Pool",
             "status": "suspended",
@@ -193,8 +327,8 @@ def test_bff_capital_pool_patch_requires_idempotency_key() -> None:
         try:
             client = _fresh_client(td)
             resp = client.patch(
-                "/bff/capital-pools/pool-main",
-                json={"status": "active"},
+                "/bff/capital-pools/pool-001",
+                json={"status": "suspended"},
                 headers=HEADERS,
             )
             assert resp.status_code == 400, resp.text
@@ -205,11 +339,11 @@ def test_bff_capital_pool_patch_requires_idempotency_key() -> None:
 def test_bff_capital_pool_detail_with_seed_data() -> None:
     with tempfile.TemporaryDirectory() as td:
         original = bff_main.read_store
-        store = ReadSurfaceStore(
-            os.path.join(td, "read_surfaces.json"),
+        store = CapitalRankingTestReadPorts(
             allow_local_snapshot_fallback=True,
         )
         seed_pool = {
+            "id": "pool-alpha",
             "pool_id": "pool-alpha",
             "name": "Alpha Pool",
             "status": "active",
@@ -241,11 +375,11 @@ def test_bff_capital_pool_detail_with_seed_data() -> None:
 
 def test_bff_capital_pool_detail_reports_binding_surface_unavailable(monkeypatch) -> None:
     with tempfile.TemporaryDirectory() as td:
-        store = ReadSurfaceStore(
-            os.path.join(td, "read_surfaces.json"),
+        store = CapitalRankingTestReadPorts(
             allow_local_snapshot_fallback=False,
         )
         seed_pool = {
+            "id": "pool-alpha",
             "pool_id": "pool-alpha",
             "name": "Alpha Pool",
             "status": "active",
@@ -286,8 +420,7 @@ def test_bff_capital_pool_detail_503_when_pool_source_unavailable(monkeypatch) -
     monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "true")
 
     with tempfile.TemporaryDirectory() as td:
-        store = ReadSurfaceStore(
-            os.path.join(td, "read_surfaces.json"),
+        store = CapitalRankingTestReadPorts(
             allow_local_snapshot_fallback=False,
         )
         monkeypatch.setattr(bff_main, "read_store", store)
@@ -536,7 +669,7 @@ def test_bff_ranking_action_404_for_unknown_entity() -> None:
 
 def test_read_store_default_write_through_roundtrip() -> None:
     with tempfile.TemporaryDirectory() as td:
-        store = ReadSurfaceStore(os.path.join(td, "read_surfaces.json"))
+        store = CapitalRankingTestReadPorts()
 
         pool = store.create_capital_pool(
             pool_id="pool-write-through",
@@ -581,8 +714,7 @@ def test_read_store_default_write_through_roundtrip() -> None:
 
 def test_read_store_ranking_formula_roundtrip() -> None:
     with tempfile.TemporaryDirectory() as td:
-        store = ReadSurfaceStore(
-            os.path.join(td, "read_surfaces.json"),
+        store = CapitalRankingTestReadPorts(
             allow_local_snapshot_fallback=True,
         )
         assert store.list_ranking_formulas() == []
@@ -602,8 +734,7 @@ def test_read_store_ranking_formula_roundtrip() -> None:
 
 def test_read_store_rebalance_roundtrip() -> None:
     with tempfile.TemporaryDirectory() as td:
-        store = ReadSurfaceStore(
-            os.path.join(td, "read_surfaces.json"),
+        store = CapitalRankingTestReadPorts(
             allow_local_snapshot_fallback=False,
         )
         assert store.list_rebalances() == []
@@ -622,9 +753,106 @@ def test_read_store_rebalance_roundtrip() -> None:
 
 def test_read_store_rankings_empty_by_default() -> None:
     with tempfile.TemporaryDirectory() as td:
-        store = ReadSurfaceStore(
-            os.path.join(td, "read_surfaces.json"),
+        store = CapitalRankingTestReadPorts(
             allow_local_snapshot_fallback=True,
         )
         assert store.list_rankings() == []
         assert store.get_ranking("nonexistent") is None
+
+
+# ---------------------------------------------------------------------------
+# Dedicated Ranking Router (ACG-01-012)
+# ---------------------------------------------------------------------------
+
+def test_ranking_router_routes_uniqueness() -> None:
+    from fastapi import FastAPI
+    from management_read_models.ranking_router import create_ranking_formulas_router
+
+    router = create_ranking_formulas_router()
+    app = FastAPI()
+    app.include_router(router)
+
+    routes = [(getattr(r, "methods", set()), getattr(r, "path", "")) for r in router.routes]
+    list_routes = [r for r in routes if r[1] == "/bff/ranking-formulas" and "GET" in r[0]]
+    detail_routes = [r for r in routes if r[1] == "/bff/ranking-formulas/{formula_id}" and "GET" in r[0]]
+    create_routes = [r for r in routes if r[1] == "/bff/ranking-formulas" and "POST" in r[0]]
+    patch_routes = [r for r in routes if r[1] == "/bff/ranking-formulas/{formula_id}" and "PATCH" in r[0]]
+
+    assert len(list_routes) == 1
+    assert len(detail_routes) == 1
+    assert len(create_routes) == 1
+    assert len(patch_routes) == 1
+    assert len(router.routes) == 4
+
+
+def test_ranking_router_standalone_crud_and_idempotency() -> None:
+    from fastapi import FastAPI
+    from management_read_models.ranking_router import create_ranking_formulas_router
+
+    with tempfile.TemporaryDirectory() as td:
+        store = CapitalRankingTestReadPorts(
+            allow_local_snapshot_fallback=True,
+        )
+        router = create_ranking_formulas_router(get_read_store=lambda: store)
+        app = FastAPI()
+        app.include_router(router)
+        client = TestClient(app)
+
+        # 1. Create formula
+        create_payload = {
+            "name": "Alpha Momentum Formula",
+            "description": "Momentum ranking formula",
+            "params": {"window": 20, "factor": "momentum"},
+        }
+        create_headers = {**HEADERS, "Idempotency-Key": "rf-acg-001"}
+        resp = client.post("/bff/ranking-formulas", json=create_payload, headers=create_headers)
+        assert resp.status_code == 201, resp.text
+        created = resp.json()["data"]
+        formula_id = created["formula_id"]
+        assert created["name"] == "Alpha Momentum Formula"
+
+        # 2. Replay same request with same idempotency key
+        replay_resp = client.post("/bff/ranking-formulas", json=create_payload, headers=create_headers)
+        assert replay_resp.status_code == 201
+        assert replay_resp.json()["data"]["formula_id"] == formula_id
+
+        # 3. Get detail
+        get_resp = client.get(f"/bff/ranking-formulas/{formula_id}", headers=HEADERS)
+        assert get_resp.status_code == 200
+        assert get_resp.json()["data"]["name"] == "Alpha Momentum Formula"
+
+        # 4. List formulas
+        list_resp = client.get("/bff/ranking-formulas", headers=HEADERS)
+        assert list_resp.status_code == 200
+        assert len(list_resp.json()["data"]) == 1
+
+        # 5. Patch formula
+        patch_resp = client.patch(
+            f"/bff/ranking-formulas/{formula_id}",
+            json={"status": "inactive", "description": "Updated description"},
+            headers=HEADERS,
+        )
+        assert patch_resp.status_code == 200
+        assert patch_resp.json()["data"]["status"] == "inactive"
+        assert patch_resp.json()["data"]["description"] == "Updated description"
+
+        # 6. Reject body idempotency key
+        body_key_resp = client.post(
+            "/bff/ranking-formulas",
+            json={"name": "Bad Key Formula", "idempotencyKey": "bad-key"},
+            headers=HEADERS,
+        )
+        assert body_key_resp.status_code == 400
+
+        # 7. Require name
+        no_name_resp = client.post(
+            "/bff/ranking-formulas",
+            json={"description": "No name"},
+            headers={**HEADERS, "Idempotency-Key": "rf-acg-noname"},
+        )
+        assert no_name_resp.status_code == 422
+
+        # 8. 404 on unknown formula id
+        not_found_resp = client.get("/bff/ranking-formulas/rf-unknown-999", headers=HEADERS)
+        assert not_found_resp.status_code == 404
+

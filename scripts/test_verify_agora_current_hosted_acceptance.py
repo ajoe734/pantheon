@@ -234,7 +234,13 @@ def _transport(
     return transport
 
 
-def _config(tmp_path: Path, paths: Mapping[str, Path], *, strict: bool = False) -> AcceptanceConfig:
+def _config(
+    tmp_path: Path,
+    paths: Mapping[str, Path],
+    *,
+    strict: bool = False,
+    profile: str = "privileged",
+) -> AcceptanceConfig:
     return AcceptanceConfig(
         expected_bff_sha=BFF_SHA,
         expected_fe_sha=FE_SHA,
@@ -246,6 +252,7 @@ def _config(tmp_path: Path, paths: Mapping[str, Path], *, strict: bool = False) 
         fe_base_url=FE_URL,
         evidence_dir=tmp_path / "output",
         strict=strict,
+        profile=profile,
     )
 
 
@@ -267,6 +274,29 @@ def test_real_hosted_acceptance_passes_only_with_all_live_and_run_evidence(tmp_p
     assert report.exact_pair["deployment_profile"] == "accepted"
     assert all(row["status"] == "RESOLVED" for row in report.gap_matrix)
     assert json.loads((tmp_path / "output" / "evidence.json").read_text())["overall_status"] == "PASSED"
+
+
+def test_hosted_functional_profile_does_not_require_independent_reviewer(tmp_path: Path) -> None:
+    paths = _write_artifacts(tmp_path)
+    service = json.loads(paths["service_journey"].read_text())
+    service["authentication"].pop("independent_reviewer_subject")
+    paths["service_journey"].write_text(json.dumps(service), encoding="utf-8")
+
+    report = AgoraHostedAcceptanceVerifier(
+        _config(tmp_path, paths, profile="hosted-functional"),
+        transport=_transport(),
+    ).run_full_acceptance()
+
+    assert report.overall_status == "PASSED"
+    assert report.exact_pair["deployment_profile"] == "functional-accepted"
+    assert report.exact_pair["acceptance_profile"] == "hosted-functional"
+    assert report.summary["total_gates"] == 5
+    assert report.summary["skipped_privileged_gates"] == [
+        "gate_04_security_and_boundaries",
+        "gate_06_rollback_safety",
+    ]
+    skipped = set(report.summary["skipped_privileged_gates"])
+    assert all(row["status"] == "RESOLVED" for row in report.gap_matrix if row["gate"] not in skipped)
 
 
 def test_simulated_mode_is_not_supported(tmp_path: Path) -> None:

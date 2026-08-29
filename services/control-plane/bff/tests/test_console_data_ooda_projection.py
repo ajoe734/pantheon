@@ -29,7 +29,7 @@ sys.path.insert(0, str(SCRIPTS_ROOT))
 
 import project_ooda_to_bff_surfaces as projector  # noqa: E402
 import main as bff_main  # noqa: E402
-from read_store import ReadSurfaceStore  # noqa: E402
+from ports import create_in_memory_read_surface_ports  # noqa: E402
 
 
 HEADERS = {"Authorization": "Bearer op-dev:admin:mfa"}
@@ -49,10 +49,11 @@ def _projected_bff(monkeypatch) -> Iterator[TestClient]:
         monkeypatch.setenv("PANTHEON_OODA_PACKET_ENABLED", "1")
 
         original_store = bff_main.read_store
-        bff_main.read_store = ReadSurfaceStore(
-            os.path.join(td, "read_surfaces.json"),
-            allow_local_snapshot_fallback=False,
+        ports = create_in_memory_read_surface_ports(
+            ooda_management_kwargs={"ooda_packets": list(store.values())},
         )
+        ports.dataset_source = lambda _dataset: "test_projection"
+        bff_main.read_store = ports
         try:
             yield TestClient(bff_main.app)
         finally:

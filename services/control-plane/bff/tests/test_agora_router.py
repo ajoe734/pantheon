@@ -21,10 +21,158 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 import main as bff_main
-from read_store import ReadSurfaceStore
+from ports import create_in_memory_read_surface_ports
 
 _OPERATOR_AUTH = "Bearer agora-test-user:operator"
 _NO_AUTH = None
+
+
+def _create_test_agora_store(*, allow_fallback: bool = True):
+    personas_map: dict[str, dict] = {}
+    snapshots_map: dict[str, dict] = {}
+
+    store = create_in_memory_read_surface_ports()
+
+    def create_persona(
+        *,
+        persona_id: str,
+        name: str,
+        actor_id: str,
+        created_at: str | None = None,
+        archetype: str = "generalist",
+        lifecycle_state: str = "draft",
+        risk_level: str = "low",
+        mandate: str | None = None,
+        strategy_family: str | None = None,
+        traits: dict | None = None,
+        metadata: dict | None = None,
+        required_data_sources: list | None = None,
+    ) -> dict:
+        timestamp = created_at or "2026-08-29T00:00:00Z"
+        clean_metadata = dict(metadata or {})
+        clean_metadata.update({
+            "owner": actor_id,
+            "archetype": archetype,
+            "risk_level": risk_level,
+        })
+        if traits:
+            clean_metadata["traits"] = dict(traits)
+        record = {
+            "id": persona_id,
+            "persona_id": persona_id,
+            "name": name,
+            "mandate": mandate or archetype,
+            "strategy_family": strategy_family or archetype,
+            "lifecycle_state": lifecycle_state,
+            "status": lifecycle_state,
+            "created_at": timestamp,
+            "updated_at": timestamp,
+            "created_by": actor_id,
+            "tenant_id": "pantheon-dev",
+            "tenantId": "pantheon-dev",
+            "required_data_sources": list(required_data_sources or []),
+            "metadata": clean_metadata,
+            "canonicalWriteAuthority": "persona_registry_service",
+            "persistenceMode": "bff_local_dev_store",
+        }
+        personas_map[persona_id] = record
+        return record
+
+    def update_persona(
+        persona_id: str,
+        *,
+        name: str | None = None,
+        actor_id: str | None = None,
+        updated_at: str | None = None,
+        archetype: str | None = None,
+        lifecycle_state: str | None = None,
+        risk_level: str | None = None,
+        metadata: dict | None = None,
+    ) -> dict | None:
+        if not persona_id or persona_id not in personas_map:
+            return None
+        record = dict(personas_map[persona_id])
+        timestamp = updated_at or "2026-08-29T00:00:00Z"
+        if name is not None:
+            record["name"] = name
+        if lifecycle_state is not None:
+            record["lifecycle_state"] = lifecycle_state
+            record["status"] = lifecycle_state
+        if archetype is not None:
+            record["mandate"] = archetype
+            record["strategy_family"] = archetype
+        record["updated_at"] = timestamp
+        clean_metadata = dict(record.get("metadata") or {})
+        if metadata:
+            clean_metadata.update(metadata)
+        if actor_id is not None:
+            clean_metadata["owner"] = actor_id
+        if archetype is not None:
+            clean_metadata["archetype"] = archetype
+        if risk_level is not None:
+            clean_metadata["risk_level"] = risk_level
+        record["metadata"] = clean_metadata
+        personas_map[persona_id] = record
+        return record
+
+    def upsert_persona(record: dict) -> dict:
+        pid = record.get("persona_id") or record.get("id")
+        personas_map[pid] = dict(record)
+        return personas_map[pid]
+
+    def get_persona(pid: str) -> dict | None:
+        return personas_map.get(pid)
+
+    def list_personas(**kw) -> list[dict]:
+        res = list(personas_map.values())
+        if kw.get("lifecycle_state"):
+            res = [p for p in res if p.get("lifecycle_state") == kw["lifecycle_state"]]
+        return res
+
+    def upsert_persona_capability_snapshot(
+        snapshot_id: str,
+        persona_id: str,
+        capabilities: list[str],
+        generated_at: str,
+        source_refs: list[str] | None = None,
+        metadata: dict | None = None,
+        **kw,
+    ) -> dict:
+        snap = {
+            "snapshot_id": snapshot_id,
+            "persona_id": persona_id,
+            "capabilities": list(capabilities),
+            "allowed_capabilities": list(capabilities),
+            "generated_at": generated_at,
+            "source_refs": source_refs or [],
+            "metadata": dict(metadata or {}),
+        }
+        snapshots_map[snapshot_id] = snap
+        return snap
+
+    def get_capability_snapshot(snap_id: str) -> dict | None:
+        return snapshots_map.get(snap_id)
+
+    def get_capability_snapshot_for_persona(pid: str) -> dict | None:
+        for snap in snapshots_map.values():
+            if snap.get("persona_id") == pid:
+                return snap
+        return None
+
+    store.create_persona = create_persona
+    store.update_persona = update_persona
+    store.upsert_persona = upsert_persona
+    store.get_persona = get_persona
+    store.list_personas = list_personas
+    store.upsert_persona_capability_snapshot = upsert_persona_capability_snapshot
+    store.get_capability_snapshot = get_capability_snapshot
+    store.get_capability_snapshot_for_persona = get_capability_snapshot_for_persona
+    store._local_dataset = lambda name: snapshots_map if name == "capability_snapshots" else {}
+    store.dataset_source = lambda d: "typed_store"
+    store.list_agora_signals = lambda **kw: []
+    store.list_agora_sessions = lambda **kw: []
+    store.list_agora_watchlist = lambda **kw: []
+    return store
 
 
 def _client(monkeypatch) -> TestClient:
@@ -208,7 +356,7 @@ def test_agora_capabilities_unauthenticated_returns_401(monkeypatch):
 
 def test_agora_servant_ensure_provisions_profile(monkeypatch, tmp_path):
     """New route — creates the user-private Persona Registry object and syncs OpenClaw."""
-    store = ReadSurfaceStore(str(tmp_path / "read_surfaces.json"), allow_local_snapshot_fallback=True)
+    store = _create_test_agora_store(allow_fallback=True)
     calls = []
 
     def fake_sync(persona):
@@ -257,7 +405,7 @@ def test_agora_servant_ensure_provisions_profile(monkeypatch, tmp_path):
 
 
 def test_agora_servant_ensure_reconciles_existing_profile(monkeypatch, tmp_path):
-    store = ReadSurfaceStore(str(tmp_path / "read_surfaces.json"), allow_local_snapshot_fallback=True)
+    store = _create_test_agora_store(allow_fallback=True)
     monkeypatch.setattr(bff_main, "read_store", store)
 
     calls = []
@@ -300,10 +448,7 @@ def test_agora_servant_ensure_reconciles_existing_profile(monkeypatch, tmp_path)
 
 def test_ensured_servant_is_exactly_eligible_for_paper_persona_opinion(monkeypatch, tmp_path):
     """The supported proof path uses ensure, not full trading Persona provisioning."""
-    store = ReadSurfaceStore(
-        str(tmp_path / "read_surfaces.json"),
-        allow_local_snapshot_fallback=False,
-    )
+    store = _create_test_agora_store(allow_fallback=False)
     monkeypatch.setattr(bff_main, "read_store", store)
     expected_persona_id = "agora-servant-" + hashlib.sha256(
         "pantheon-dev\0agora-test-user\0agora_servant".encode("utf-8")
@@ -396,7 +541,7 @@ def test_agora_servant_ensure_requires_idempotency_headers(monkeypatch, tmp_path
     monkeypatch.setattr(
         bff_main,
         "read_store",
-        ReadSurfaceStore(str(tmp_path / "read_surfaces.json"), allow_local_snapshot_fallback=True),
+        _create_test_agora_store(allow_fallback=True),
     )
     monkeypatch.setattr(bff_main, "_ensure_agora_servant_openclaw_agent", lambda persona: {})
     client = _client(monkeypatch)
@@ -406,10 +551,7 @@ def test_agora_servant_ensure_requires_idempotency_headers(monkeypatch, tmp_path
 
 
 def test_agora_servant_ensure_viewer_cannot_create_persona_or_capability_snapshot(monkeypatch, tmp_path):
-    store = ReadSurfaceStore(
-        str(tmp_path / "read_surfaces.json"),
-        allow_local_snapshot_fallback=False,
-    )
+    store = _create_test_agora_store(allow_fallback=False)
     monkeypatch.setattr(bff_main, "read_store", store)
     sync_calls = []
     monkeypatch.setattr(
@@ -438,10 +580,7 @@ def test_agora_servant_ensure_viewer_cannot_create_persona_or_capability_snapsho
 
 
 def test_agora_servant_sync_failure_leaves_new_persona_ineligible(monkeypatch, tmp_path):
-    store = ReadSurfaceStore(
-        str(tmp_path / "read_surfaces.json"),
-        allow_local_snapshot_fallback=False,
-    )
+    store = _create_test_agora_store(allow_fallback=False)
     monkeypatch.setattr(bff_main, "read_store", store)
 
     def fail_sync(_persona):
@@ -486,12 +625,16 @@ def test_existing_bff_health_not_broken(monkeypatch):
 
 def test_existing_agora_sessions_not_broken(monkeypatch):
     """Existing main.py route must still respond (not shadowed by package router)."""
+    store = _create_test_agora_store()
+    monkeypatch.setattr(bff_main, "read_store", store)
     client = _client(monkeypatch)
     resp = client.get("/bff/agora/sessions", headers={"Authorization": _OPERATOR_AUTH})
     assert resp.status_code == 200, f"Existing /bff/agora/sessions broken: {resp.status_code}"
 
 
 def test_existing_agora_signals_not_broken(monkeypatch):
+    store = _create_test_agora_store()
+    monkeypatch.setattr(bff_main, "read_store", store)
     client = _client(monkeypatch)
     resp = client.get("/bff/agora/signals", headers={"Authorization": _OPERATOR_AUTH})
     assert resp.status_code == 200, f"Existing /bff/agora/signals broken: {resp.status_code}"

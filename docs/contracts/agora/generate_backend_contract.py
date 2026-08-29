@@ -70,6 +70,7 @@ LEAVES = (
 )
 
 EXPECTED_ROUTES = {
+    "GET /bff/agora/trading-room/performance-attribution/by-strategy",
     "GET /bff/agora/trading-room/strategies/{strategy_id}/performance",
     "POST /bff/agora/trading-room/strategies/{strategy_id}/performance/suggestions/{suggestion_id}/actions",
     "GET /bff/agora/performance/action-receipts/{receipt_id}",
@@ -273,6 +274,270 @@ def _build_openapi() -> dict[str, Any]:
                 raise ContractError(f"duplicate aggregate route path: {path}")
             paths[path] = _rewrite_local_refs(path_item, mapping)
 
+    paths["/bff/agora/trading-room/performance-attribution/by-strategy"] = {
+        "get": {
+            "summary": "Get owner-scoped Strategy Performance attribution grouped by strategy",
+            "description": (
+                "Returns owner-scoped performance attribution for strategies owned or visible "
+                "to the authenticated user. Missing telemetry or trade journeys are typed "
+                "unavailable. Non-execution boundary is guaranteed."
+            ),
+            "operationId": "getAgoraPerformanceAttributionByStrategy",
+            "security": [
+                {"BearerAuth": []},
+            ],
+            "parameters": [
+                {
+                    "name": "period",
+                    "in": "query",
+                    "required": False,
+                    "schema": {
+                        "type": "string",
+                        "enum": ["latest", "7d", "30d", "all"],
+                        "default": "latest",
+                    },
+                },
+                {
+                    "name": "page_size",
+                    "in": "query",
+                    "required": False,
+                    "schema": {
+                        "type": "integer",
+                        "default": 50,
+                        "minimum": 1,
+                        "maximum": 200,
+                    },
+                },
+                {
+                    "name": "page_token",
+                    "in": "query",
+                    "required": False,
+                    "schema": {"type": "string"},
+                },
+                {
+                    "name": "strategy_id",
+                    "in": "query",
+                    "required": False,
+                    "schema": {"type": "string"},
+                },
+                {"$ref": "#/components/parameters/XTenantId"},
+            ],
+            "responses": {
+                "200": {
+                    "description": "Owner-scoped performance attribution projection envelope",
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/TradingRoomPerformanceAttributionEnvelope"
+                            }
+                        }
+                    },
+                },
+                "401": {
+                    "description": "Authentication required",
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/ErrorEnvelope"
+                            }
+                        }
+                    },
+                },
+                "403": {
+                    "description": "Permission denied",
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/ErrorEnvelope"
+                            }
+                        }
+                    },
+                },
+            },
+        }
+    }
+
+    schemas = components.setdefault("schemas", {})
+    schemas["TradingRoomPerformanceAttributionMetrics"] = {
+        "type": "object",
+        "properties": {
+            "runtime_count": {"type": "integer"},
+            "telemetry_runtime_count": {"type": "integer"},
+            "holding_count": {"type": "integer"},
+            "total_pnl": {"type": ["number", "null"]},
+            "unrealized_pnl": {"type": ["number", "null"]},
+            "realized_pnl": {"type": ["number", "null"]},
+            "total_notional": {"type": ["number", "null"]},
+            "total_market_value": {"type": ["number", "null"]},
+            "total_exposure": {"type": ["number", "null"]},
+            "worst_drawdown": {"type": ["number", "null"]},
+            "average_fill_rate": {"type": ["number", "null"]},
+            "average_slippage_bps": {"type": ["number", "null"]},
+            "total_trades": {"type": "integer"},
+            "latest_telemetry_at": {"type": ["string", "null"]},
+            "pnl_contribution_pct": {"type": ["number", "null"]},
+            "notional_weight": {"type": ["number", "null"]},
+            "data_confidence": {"type": ["string", "null"]},
+        },
+        "additionalProperties": True,
+    }
+    schemas["TradingRoomPerformanceAttributionRow"] = {
+        "type": "object",
+        "required": [
+            "id",
+            "dimension",
+            "dimension_key",
+            "label",
+            "period",
+            "rank",
+            "metrics",
+        ],
+        "properties": {
+            "id": {"type": "string"},
+            "dimension": {"type": "string"},
+            "dimension_key": {"type": "string"},
+            "label": {"type": "string"},
+            "period": {"type": "string"},
+            "rank": {"type": "integer"},
+            "metrics": {
+                "$ref": "#/components/schemas/TradingRoomPerformanceAttributionMetrics"
+            },
+            "total_pnl": {"type": ["number", "null"]},
+            "pnl_contribution_pct": {"type": ["number", "null"]},
+            "notional_weight": {"type": ["number", "null"]},
+            "runtime_count": {"type": "integer"},
+            "holding_count": {"type": "integer"},
+            "data_confidence": {"type": ["string", "null"]},
+            "source_status": {"type": ["string", "null"]},
+            "source_refs": {
+                "type": "object",
+                "additionalProperties": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                },
+            },
+            "links": {
+                "type": "object",
+                "additionalProperties": {"type": ["string", "null"]},
+            },
+        },
+        "additionalProperties": True,
+    }
+    schemas["TradingRoomPerformanceAttributionSummary"] = {
+        "type": "object",
+        "required": [
+            "period",
+            "dimensions",
+            "supported_dimensions",
+            "row_count",
+            "returned_row_count",
+            "runtime_count",
+            "telemetry_runtime_count",
+            "holding_count",
+            "total_trades",
+            "basis",
+        ],
+        "properties": {
+            "period": {"type": "string"},
+            "dimensions": {"type": "array", "items": {"type": "string"}},
+            "supported_dimensions": {"type": "array", "items": {"type": "string"}},
+            "row_count": {"type": "integer"},
+            "returned_row_count": {"type": "integer"},
+            "runtime_count": {"type": "integer"},
+            "telemetry_runtime_count": {"type": "integer"},
+            "holding_count": {"type": "integer"},
+            "total_pnl": {"type": ["number", "null"]},
+            "total_notional": {"type": ["number", "null"]},
+            "total_exposure": {"type": ["number", "null"]},
+            "worst_drawdown": {"type": ["number", "null"]},
+            "average_fill_rate": {"type": ["number", "null"]},
+            "average_slippage_bps": {"type": ["number", "null"]},
+            "total_trades": {"type": "integer"},
+            "latest_telemetry_at": {"type": ["string", "null"]},
+            "basis": {"type": "string"},
+        },
+        "additionalProperties": True,
+    }
+    schemas["PerformanceAttributionPageInfo"] = {
+        "type": "object",
+        "required": ["total", "page_size"],
+        "properties": {
+            "next_page_token": {"type": ["string", "null"]},
+            "total": {"type": "integer"},
+            "page_size": {"type": "integer"},
+        },
+        "additionalProperties": True,
+    }
+    schemas["TradingRoomPerformanceAttributionData"] = {
+        "type": "object",
+        "required": ["id", "period", "dimensions", "items", "summary"],
+        "properties": {
+            "id": {"type": "string"},
+            "period": {"type": "string"},
+            "dimensions": {"type": "array", "items": {"type": "string"}},
+            "items": {
+                "type": "array",
+                "items": {
+                    "$ref": "#/components/schemas/TradingRoomPerformanceAttributionRow"
+                },
+            },
+            "summary": {
+                "$ref": "#/components/schemas/TradingRoomPerformanceAttributionSummary"
+            },
+            "page_info": {
+                "$ref": "#/components/schemas/PerformanceAttributionPageInfo"
+            },
+        },
+        "additionalProperties": True,
+    }
+    schemas["TradingRoomPerformanceAttributionMeta"] = {
+        "type": "object",
+        "required": [
+            "scope",
+            "period",
+            "snapshot_at",
+            "composition_sources",
+            "surfaces",
+            "policy",
+            "no_order_route_proof",
+        ],
+        "properties": {
+            "scope": {
+                "type": "object",
+                "additionalProperties": {"type": "string"},
+            },
+            "period": {"type": "string"},
+            "snapshot_at": {"type": "string"},
+            "composition_sources": {
+                "type": "array",
+                "items": {"type": "string"},
+            },
+            "surfaces": {"type": "object", "additionalProperties": True},
+            "policy": {"type": "string"},
+            "no_order_route_proof": {
+                "type": "string",
+                "enum": ["agora_performance_read_only"],
+            },
+        },
+        "additionalProperties": True,
+    }
+    schemas["TradingRoomPerformanceAttributionEnvelope"] = {
+        "type": "object",
+        "required": ["data", "page_info", "meta"],
+        "properties": {
+            "data": {
+                "$ref": "#/components/schemas/TradingRoomPerformanceAttributionData"
+            },
+            "page_info": {
+                "$ref": "#/components/schemas/PerformanceAttributionPageInfo"
+            },
+            "meta": {
+                "$ref": "#/components/schemas/TradingRoomPerformanceAttributionMeta"
+            },
+        },
+        "additionalProperties": True,
+    }
+
     openapi = {
         "openapi": "3.1.0",
         "info": {
@@ -348,7 +613,17 @@ def _build_capability_manifest() -> dict[str, Any]:
             if not name or name in seen_names:
                 raise ContractError(f"missing or duplicate capability name: {name!r}")
             seen_names.add(name)
-            capabilities.append(copy.deepcopy(capability))
+            cap_copy = copy.deepcopy(capability)
+            if name == "agora.performance.truth.v1" or capability.get("id") == "strategy_performance_truth":
+                routes = cap_copy.setdefault("routes", [])
+                attr_route = "GET /bff/agora/trading-room/performance-attribution/by-strategy"
+                if attr_route not in routes:
+                    routes.append(attr_route)
+                schemas = cap_copy.setdefault("schemas", [])
+                attr_schema = "TradingRoomPerformanceAttributionEnvelope"
+                if attr_schema not in schemas:
+                    schemas.append(attr_schema)
+            capabilities.append(cap_copy)
 
     return {
         "manifest_version": CONTRACT_VERSION,

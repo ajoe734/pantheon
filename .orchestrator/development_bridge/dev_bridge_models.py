@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 # Sixteen tasks keep the worst-case governed assign + per-task authoritative
@@ -20,6 +20,10 @@ from pydantic import BaseModel, ConfigDict, Field
 # dispatcher remains the concurrency authority; this bound also prevents one
 # signed packet from monopolising a supervisor tick indefinitely.
 MAX_TASKS_PER_PACKET = 16
+try:
+    from ..dispatch_policy import normalize_execution_resources
+except ImportError:
+    from dispatch_policy import normalize_execution_resources
 
 
 class BridgeBaseModel(BaseModel):
@@ -52,9 +56,22 @@ class BridgeTask(BridgeBaseModel):
     reviewer: str
     phase: Optional[str] = None
     depends_on: List[str] = Field(default_factory=list, alias="dependsOn")
+    dependency_tracks: Dict[str, str] = Field(
+        default_factory=dict,
+        alias="dependencyTracks",
+    )
+    execution_resources: List[str] = Field(
+        default_factory=list,
+        alias="executionResources",
+    )
     artifacts: List[str] = Field(default_factory=list)
     acceptance: List[str] = Field(default_factory=list)
     summary: Optional[str] = None
+
+    @field_validator("execution_resources", mode="before")
+    @classmethod
+    def validate_execution_resources(cls, v: Any) -> List[str]:
+        return normalize_execution_resources(v)
 
 
 class BridgeConstraints(BridgeBaseModel):
@@ -103,6 +120,11 @@ class DevTaskPacket(BridgeBaseModel):
     operator_authorization: Optional[BridgeOperatorAuthorization] = Field(
         default=None, alias="operatorAuthorization"
     )
+    # Functional/paper/read-only work is deliberately independent from the
+    # hosted/live operator authorization window. Privileged lanes retain the
+    # existing one-shot operator authorization requirement; this explicit
+    # class keeps that distinction in the signed packet.
+    work_class: str = Field(default="security", alias="workClass")
     mode: str
 
     source_conversation_id: str = Field(alias="sourceConversationId")

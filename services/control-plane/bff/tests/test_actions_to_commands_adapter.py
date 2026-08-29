@@ -25,6 +25,8 @@ OPERATOR_HEADERS = {
 
 @contextmanager
 def _isolated_action_adapter() -> Iterator[TestClient]:
+    old_auth = os.environ.get("PANTHEON_BFF_AUTH_MODE")
+    os.environ["PANTHEON_BFF_AUTH_MODE"] = "permissive"
     with tempfile.TemporaryDirectory() as td:
         original_command_store = bff_main.command_store
         bff_main.command_store = CommandStore(os.path.join(td, "commands.jsonl"))
@@ -32,6 +34,10 @@ def _isolated_action_adapter() -> Iterator[TestClient]:
             yield TestClient(bff_main.app)
         finally:
             bff_main.command_store = original_command_store
+            if old_auth is None:
+                os.environ.pop("PANTHEON_BFF_AUTH_MODE", None)
+            else:
+                os.environ["PANTHEON_BFF_AUTH_MODE"] = old_auth
 
 
 def test_bff_actions_openapi_exposes_frontend_and_generic_action_templates() -> None:
@@ -39,17 +45,11 @@ def test_bff_actions_openapi_exposes_frontend_and_generic_action_templates() -> 
     schema = bff_main.app.openapi()
 
     assert "/bff/actions/{type}/{id}/{action}" in schema["paths"]
-    assert "/bff/actions/{entityType}/{entityId}/{actionId}" in schema["paths"]
     generic = schema["paths"]["/bff/actions/{type}/{id}/{action}"]["post"]
-    named = schema["paths"]["/bff/actions/{entityType}/{entityId}/{actionId}"]["post"]
     generic_path_params = [param["name"] for param in generic["parameters"] if param.get("in") == "path"]
-    named_path_params = [param["name"] for param in named["parameters"] if param.get("in") == "path"]
     assert generic_path_params == ["type", "id", "action"]
-    assert named_path_params == ["entityType", "entityId", "actionId"]
     assert generic["operationId"] == "submit_bff_action_generic"
-    assert named["operationId"] == "submit_bff_action_named"
     assert generic["deprecated"] is True
-    assert named["deprecated"] is True
 
 
 def test_bff_actions_adapter_records_final_command_foundation_context() -> None:
@@ -190,3 +190,92 @@ def test_bff_actions_adapter_policy_denial_records_foundation_error() -> None:
             == "POST /bff/actions/{entityType}/{entityId}/{actionId}"
         )
         assert bff_main.command_store._get_all_commands() == []
+
+
+def test_command_adapters_router_single_route_uniqueness() -> None:
+    from command_adapters.router import create_action_command_router
+    from fastapi import FastAPI
+
+    router = create_action_command_router()
+    app = FastAPI()
+    app.include_router(router)
+
+    schema = app.openapi()
+    action_paths = [p for p in schema["paths"] if p.startswith("/bff/actions/")]
+    assert action_paths == ["/bff/actions/{type}/{id}/{action}"]
+    assert len(router.routes) == 1
+    route = router.routes[0]
+    assert route.path == "/bff/actions/{type}/{id}/{action}"
+    assert "POST" in getattr(route, "methods", set())
+    assert getattr(route, "operation_id", None) == "submit_bff_action_generic"
+
+
+def test_command_adapters_router_standalone_execution() -> None:
+    from command_adapters.router import create_action_command_router
+    from fastapi import FastAPI
+
+    with tempfile.TemporaryDirectory() as td:
+        cstore = CommandStore(os.path.join(td, "commands.jsonl"))
+        router = create_action_command_router(command_store=cstore)
+        app = FastAPI()
+        app.include_router(router)
+        client = TestClient(app)
+
+        resp = client.post(
+            "/bff/actions/strategy/stg-bff-019/submit_review",
+            headers=OPERATOR_HEADERS,
+            json={"reason": "submit strategy review through standalone action router"},
+        )
+        assert resp.status_code == 202
+        assert resp.headers["Deprecation"] == "true"
+        assert resp.headers["Sunset"] == "Mon, 15 Jun 2026 00:00:00 GMT"
+        assert resp.headers["X-Pantheon-Deprecated-Route"] == "/bff/actions/*"
+        body = resp.json()
+        assert body["status"] == "accepted"
+        assert body["data"]["command"] == "StrategyAction"
+
+        records = cstore._get_all_commands()
+        assert len(records) == 1
+        assert records[0]["type"] == "StrategyAction"
+        assert records[0]["target"] == {"type": "Strategy", "id": "stg-bff-019"}
+
+
+def test_command_adapters_router_validations() -> None:
+    from command_adapters.router import create_action_command_router
+    from fastapi import FastAPI
+
+    router = create_action_command_router()
+    app = FastAPI()
+    app.include_router(router)
+    client = TestClient(app)
+
+    # 1. Reject body idempotency key
+    resp = client.post(
+        "/bff/actions/strategy/stg-01/submit_review",
+        headers=OPERATOR_HEADERS,
+        json={"idempotencyKey": "body-key", "reason": "test"},
+    )
+    assert resp.status_code == 400
+    err = resp.json().get("detail", {}).get("error", {}) or resp.json().get("error", {})
+    assert err.get("details", {}).get("precondition_failed") == "body_idempotency_key"
+
+    # 2. Require header idempotency key
+    resp = client.post(
+        "/bff/actions/strategy/stg-01/submit_review",
+        headers={"Authorization": "Bearer op-1:operator"},
+        json={"reason": "test"},
+    )
+    assert resp.status_code == 400
+    err = resp.json().get("detail", {}).get("error", {}) or resp.json().get("error", {})
+    assert err.get("details", {}).get("precondition_failed") == "idempotency_key"
+
+    # 3. Reject unsupported entity type
+    resp = client.post(
+        "/bff/actions/invalid_entity_type/stg-01/submit_review",
+        headers=OPERATOR_HEADERS,
+        json={"reason": "test"},
+    )
+    assert resp.status_code == 422
+    err = resp.json().get("detail", {}).get("error", {}) or resp.json().get("error", {})
+    assert err.get("details", {}).get("precondition_failed") == "entity_type"
+

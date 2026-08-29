@@ -12,6 +12,7 @@ from .models import (
     SuggestionActionRequest,
     SuggestionActionReceipt,
 )
+from .attribution import TradingRoomPerformanceAttributionEnvelope
 from .service import PerformanceProjectionService
 from .store import (
     PerformanceSuggestionConflict,
@@ -28,6 +29,7 @@ def create_performance_router(
     bff_error: Callable[..., HTTPException],
     utc_now: Callable[[], str],
     get_trade_journey_store: Callable[[], Any],
+    workshop_store: Optional[Any] = None,
     suggestion_store: Optional[PerformanceSuggestionStore] = None,
 ) -> APIRouter:
     router = APIRouter(tags=["agora-performance"])
@@ -171,4 +173,33 @@ def create_performance_router(
             "meta": meta(scope),
         }
 
+    @router.get(
+        "/bff/agora/trading-room/performance-attribution/by-strategy",
+        response_model=TradingRoomPerformanceAttributionEnvelope,
+    )
+    def get_agora_performance_attribution_by_strategy(
+        period: Literal["latest", "7d", "30d", "all"] = Query(default="latest"),
+        page_size: int = Query(default=50, ge=1, le=200),
+        pageSize: Optional[int] = Query(default=None, ge=1, le=200),
+        page_token: Optional[str] = Query(default=None),
+        pageToken: Optional[str] = Query(default=None),
+        strategy_id: Optional[str] = Query(default=None),
+        strategyId: Optional[str] = Query(default=None),
+        authorization: Optional[str] = Header(default=None),
+        x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
+        x_pantheon_tenant: Optional[str] = Header(default=None, alias="X-Pantheon-Tenant"),
+    ) -> dict[str, Any]:
+        scope = resolve_scope(authorization, x_tenant_id or x_pantheon_tenant)
+        envelope = service.project_attribution(
+            tenant_id=scope.tenant_id,
+            owner_user_id=scope.user_id,
+            period=period,
+            page_size=pageSize if pageSize is not None else page_size,
+            page_token=pageToken or page_token,
+            strategy_id_filter=strategyId or strategy_id,
+            workshop_store=workshop_store,
+        )
+        return envelope.model_dump(mode="json")
+
     return router
+

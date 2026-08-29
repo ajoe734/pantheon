@@ -13,17 +13,96 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, os.path.dirname(__file__))
 
 import main as bff_main  # noqa: E402
-from read_store import ReadSurfaceStore  # noqa: E402
+from ports import ReadSurfacePorts  # noqa: E402
 
 
 HEADERS = {"Authorization": "Bearer rt-003-operator:operator"}
-_TRACKED_ENV = (
-    "PANTHEON_BFF_RUNTIME_BINDING_STORE",
-    "PANTHEON_RUNTIME_DATA_DIR",
-    "PANTHEON_RUNTIME_MANAGER_URL",
-    "PANTHEON_INTERNAL_API_URL",
-    "PANTHEON_RUNTIME_MANAGER_TOKEN",
-)
+
+
+class RuntimesTestReadPorts(ReadSurfacePorts):
+    def __init__(self, runtime_bindings: list[dict[str, Any]] | None = None) -> None:
+        super().__init__()
+        self._runtime_bindings = runtime_bindings
+
+    @staticmethod
+    def _project(raw: dict[str, Any]) -> dict[str, Any]:
+        binding_id = raw.get("binding_id") or raw.get("id")
+        deployment_mode = raw.get("deployment_mode") or raw.get("deployment_stage")
+        deployment_stage = raw.get("deployment_stage") or raw.get("deployment_mode")
+        projected = dict(raw)
+        projected["id"] = binding_id
+        projected["binding_id"] = binding_id
+        projected["runtime_binding_id"] = raw.get("runtime_binding_id") or binding_id
+        projected["runtime_id"] = raw.get("runtime_id") or binding_id
+        projected["deployment_mode"] = deployment_mode
+        projected["deployment_stage"] = deployment_stage
+        return projected
+
+    def dataset_source(self, dataset: str, **kwargs: Any) -> str:
+        if self._runtime_bindings is not None:
+            return "canonical"
+        return "missing"
+
+    def dataset_surface_status(self, dataset: str, *, snapshot_at: str, **kwargs: Any) -> dict[str, Any]:
+        if self._runtime_bindings is not None:
+            return {
+                "status": "ok",
+                "source": "canonical",
+                "snapshot_at": snapshot_at,
+                "freshness": "fresh",
+                "observed_time": snapshot_at,
+                "coverage": 1.0,
+                "missing_bindings": False,
+            }
+        return {
+            "status": "unavailable",
+            "source": "missing",
+            "snapshot_at": snapshot_at,
+            "freshness": "unavailable",
+            "observed_time": snapshot_at,
+            "coverage": 0.0,
+            "missing_bindings": True,
+        }
+
+    def list_runtime_bindings(
+        self,
+        status: str | None = None,
+        deployment_stage: str | None = None,
+        **kwargs: Any,
+    ) -> list[dict[str, Any]]:
+        if self._runtime_bindings is None:
+            return []
+        items = [self._project(item) for item in self._runtime_bindings]
+        if status:
+            items = [item for item in items if str(item.get("status") or "").lower() == status.lower()]
+        if deployment_stage:
+            items = [
+                item
+                for item in items
+                if str(item.get("deployment_stage") or item.get("deployment_mode") or "").lower()
+                == deployment_stage.lower()
+            ]
+        return items
+
+    def get_runtime_binding(self, binding_id: str | None) -> dict[str, Any] | None:
+        if self._runtime_bindings is None or not binding_id:
+            return None
+        target = str(binding_id).strip()
+        record = next(
+            (
+                r
+                for r in self._runtime_bindings
+                if str(r.get("id") or "").strip() == target
+                or str(r.get("binding_id") or "").strip() == target
+                or str(r.get("runtime_binding_id") or "").strip() == target
+                or str(r.get("runtime_id") or "").strip() == target
+            ),
+            None,
+        )
+        return self._project(record) if record else None
+
+    def get_runtime_binding_by_runtime_id(self, runtime_id: str | None) -> dict[str, Any] | None:
+        return self.get_runtime_binding(runtime_id)
 
 
 @contextmanager
@@ -31,33 +110,11 @@ def _isolated_runtime_bff(
     runtime_bindings: list[dict[str, Any]] | None,
 ) -> Iterator[TestClient]:
     original_store = bff_main.read_store
-    original_env = {key: os.environ.get(key) for key in _TRACKED_ENV}
-    with tempfile.TemporaryDirectory(prefix="rt003_bff_") as td:
-        root = Path(td)
-        runtime_dir = root / "runtime"
-        for key in _TRACKED_ENV:
-            os.environ.pop(key, None)
-        if runtime_bindings is not None:
-            runtime_dir.mkdir(parents=True, exist_ok=True)
-            (runtime_dir / "runtime_bindings.json").write_text(
-                json.dumps(runtime_bindings, indent=2),
-                encoding="utf-8",
-            )
-            os.environ["PANTHEON_RUNTIME_DATA_DIR"] = str(runtime_dir)
-
-        bff_main.read_store = ReadSurfaceStore(
-            str(root / "read_surfaces.json"),
-            allow_local_snapshot_fallback=False,
-        )
-        try:
-            yield TestClient(bff_main.app)
-        finally:
-            bff_main.read_store = original_store
-            for key, value in original_env.items():
-                if value is None:
-                    os.environ.pop(key, None)
-                else:
-                    os.environ[key] = value
+    bff_main.read_store = RuntimesTestReadPorts(runtime_bindings)
+    try:
+        yield TestClient(bff_main.app)
+    finally:
+        bff_main.read_store = original_store
 
 
 def _runtime_records() -> list[dict[str, Any]]:

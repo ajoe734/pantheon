@@ -346,6 +346,33 @@ class WorkerCommitWrapperTests(unittest.TestCase):
         finally:
             import shutil; shutil.rmtree(root); shutil.rmtree(status_root)
 
+    def test_cross_repo_worker_uses_command_runtime_orchestrator(self) -> None:
+        """The target checkout may not contain Pantheon's ``common`` module."""
+        root = self._setup_repo()
+        runtime = Path(tempfile.mkdtemp())
+        try:
+            target_common = root / ".orchestrator" / "common.py"
+            target_common.unlink()
+            runtime_orchestrator = runtime / ".orchestrator"
+            runtime_orchestrator.mkdir()
+            (runtime_orchestrator / "common.py").write_text(
+                (REPO_ROOT / ".orchestrator" / "common.py").read_text()
+            )
+            (root / "cross_repo.py").write_text("runtime\n")
+            msg = root / "msg.txt"
+            msg.write_text("BAR-007: cross repo commit\n\nTask-ID: BAR-007\n")
+            proc = self._wrapper(
+                root,
+                "--task-id", "BAR-007",
+                "--message-file", str(msg),
+                "--scope", "cross_repo.py",
+                env_extra={"PANTHEON_COMMAND_ROOT": str(runtime)},
+            )
+            self.assertEqual(proc.returncode, 0, msg=proc.stderr + proc.stdout)
+            self.assertIn("cross_repo.py", _git(root, "show", "--name-only", "--format=", "HEAD").stdout)
+        finally:
+            import shutil; shutil.rmtree(root); shutil.rmtree(runtime)
+
     def test_directory_scope_does_not_force_add_ignored_children(self) -> None:
         root = self._setup_repo()
         try:

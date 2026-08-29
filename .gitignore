@@ -21,11 +21,11 @@ __pycache__/
 .orchestrator/runtime-admission.lock
 .orchestrator/task-state.lock
 .orchestrator/activity-audit.lock
+.orchestrator/auto-integrator.lock
 .orchestrator/runtime-lock-verifier-policy.json
 .orchestrator/runtime-task-audit-lock-capability.json
 .orchestrator/event-queue.jsonl
 .orchestrator/evidence/
-.orchestrator/github-bus-state.json
 .orchestrator/model-rotation-cooldowns.json
 .orchestrator/provider_capabilities.json
 .orchestrator/state.json

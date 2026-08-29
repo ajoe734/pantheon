@@ -1,6 +1,6 @@
 # Pantheon Git Workflow
 
-Status: canonical · Owner: chair-review · Last reviewed: 2026-05-17
+Status: canonical · Owner: chair-review · Last reviewed: 2026-08-28
 
 Operational source of truth for Pantheon branching, per-task PR flow,
 nightly publish, promote to master, hotfixes, and CI gates. If anything
@@ -36,7 +36,7 @@ task/<TASK-ID>  ── ephemeral, auto-deleted by GitHub when PR merges
 | Type        | Naming                                | Lifetime          | Writer                                |
 |-------------|---------------------------------------|-------------------|---------------------------------------|
 | canonical   | `master`                              | permanent         | PR auto-merge only (promote / hotfix) |
-| integration | `dev`                                 | permanent         | PR auto-merge only (task / hotfix)    |
+| integration | `dev`                                 | permanent         | canonical exact-head supervisor runner (task); explicit policy lane for hotfix/tooling |
 | task        | `task/<TASK-ID>`                      | minutes to hours  | one autoworker / human; PR + auto-delete |
 | publish     | `publish/v<YYYY>.<MM>.<DD>.<N>`       | permanent (snapshot) | nightly cron after release-state discipline; immutable after cut |
 | hotfix      | `hotfix/<topic>`                      | < 24 h            | one author; dual-PR (master + dev)    |
@@ -118,7 +118,8 @@ gh pr create --base dev --head task/<TASK-ID> \
 ```
 
 Merge and **auto-delete of the `task/<TASK-ID>` branch** still happen on
-GitHub, but only once both CI and the review gate are satisfied.
+GitHub, but only the canonical supervisor integration runner requests the
+merge after CI and the review gate are satisfied.
 
 #### 2.3.1 Review-before-merge gate
 
@@ -130,29 +131,57 @@ or PR field can open it.
 | Canonical contract | Policy | What the helper does |
 |--------------------|--------|----------------------|
 | independent reviewer assigned (the normal task) | `review_before_merge` | opens the PR with auto-merge **off** and revokes any auto-merge request found on the head |
-| row declares `merge_policy: merge_then_review` **and** requires no independent review | `merge_then_review` | `--label auto-merge` + `gh pr merge --auto --merge`, unchanged |
+| row declares `merge_policy: merge_then_review` **and** requires no independent review | `merge_then_review` | opens the PR with auto-merge **off**; the canonical runner alone evaluates and merges it |
 | task row missing, unreadable, or gate error | `review_before_merge` | fail closed: auto-merge is never enabled |
 
-Under `review_before_merge` the approval must name the exact head it
-covers, and the merge is performed afterwards by the integrator:
+Under `review_before_merge`, the owner first freezes the exact delivery at
+handoff. The committed evidence manifest, current base SHA, and required
+`MERGE` method become part of the canonical delivery binding. Handoff rejects
+an armed auto-merge request or a head which does not contain the current base,
+without changing task state:
 
 ```bash
-AI_NAME=<reviewer> REVIEW_PR=<pr-number> REVIEW_HEAD_SHA=<40-hex head oid> \
-  "$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh" approve <TASK-ID> "<review evidence>"
-python3 scripts/git/auto_integrator.py --execute --task-id <TASK-ID>
+AI_NAME=<owner> \
+REVIEW_PR=<pr-number> \
+REVIEW_HEAD_SHA=<40-hex-head-oid> \
+REVIEW_FILE=<task-artifact-contract-relative-evidence-manifest> \
+  "$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh" handoff \
+  <TASK-ID> <reviewer> "<ready for exact-head review>"
+
+AI_NAME=<reviewer> \
+  "$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh" approve \
+  <TASK-ID> "<review evidence>"
 ```
 
-`approve` records that PR number, head sha, expected base (`REVIEW_BASE`,
-default `dev`) and head branch as a `review_binding` on both the immutable
-`review_approved` audit event and the task row; `task_finalize.sh` and
-`safe_pr.sh` print the command with the values already filled in. The gate
-compares each identity against the PR standing at merge time. An approval
-that carries no binding cannot open the gate — the merge blocks with
-`approval_head_binding_missing` and the reviewer re-approves naming the
-head.
+`handoff` records the PR number, exact head SHA, expected base (`REVIEW_BASE`,
+default `dev`), head branch, current base SHA, `MERGE` requirement, and manifest
+path/blob SHA. The path must be authorized by the task's `artifacts` contract
+and the blob must be absent from or different on the exact base (or have an
+exact matching PR-files change row). PR discovery uses `state=all`; a closed or
+merged match is not an artifact-only delivery. `approve` consumes that frozen
+binding and cannot replace it.
+It also revalidates the current base: if `dev` advanced to a commit the exact
+head does not already contain, the owner refreshes and re-hands off before a
+review can be approved. Approval/reviewer-reopen GitHub writes run from a
+canonical pending intent outside the TaskStore lock; the same nonce is replayed
+after a crash, and every competing task mutation or dispatch remains fenced
+until finalization. The approval bridge accepts only an `OPEN` second snapshot;
+`MERGED` is handled only by explicit reconciliation. The gate compares the
+approved identity against the PR standing at merge time.
+
+No owner or reviewer merge command follows approval. The scheduled canonical
+supervisor integration runner discovers the approved row and performs the
+locked merge pass.
+
+For a contract that genuinely permits `merge_then_review`, the same runner
+discovers the active `in_progress`/`review` row without fabricating a
+`review_approved` event. It resolves the canonical policy again against the
+live PR before it can merge; assigning an independent reviewer converts the
+row back to the gated review-before-merge path.
 
 The integrator merges only the exact head the assigned reviewer approved
-(`gh pr merge --match-head-commit <oid>`), never enables auto-merge, and
+(synchronous `PUT /repos/<owner>/<repo>/pulls/<n>/merge` with `sha=<oid>`),
+accepts only `merged: true`, never enables auto-merge, and
 never force-pushes a rebase over the reviewed head. Reviewer rejection, a
 head change after approval, a head *replaced* with an older commit, an
 approval by anyone other than the assigned reviewer, missing canonical
@@ -201,9 +230,9 @@ reviewer's `review_approved` record does. An explicit `do not merge` /
 `changes required` note in the activity audit revokes a standing approval,
 the same as a `reopen` or `blocker`.
 
-The gate binds every repository path to merge: `task_finalize.sh`,
-`safe_pr.sh`, `auto_integrator.py`, auto-merge creation, and auto-merge
-finalization. It cannot stop a human holding the GitHub credential from
+`task_finalize.sh` and `safe_pr.sh` only push/open PRs and revoke stale grants;
+`auto_integrator.py` is the sole task merge entry point. The gate covers its
+merge and any auto-merge finalization. It cannot stop a human holding the GitHub credential from
 pressing merge in the web UI — that would need branch protection to require
 a review — but no Pantheon tooling grants the authority, and the canonical
 state at merge time stays auditable.
@@ -265,10 +294,17 @@ Pantheon implementation:
   and launches auto workers from that isolated cwd while routing
   `ai-status.sh` updates back to the supervisor root with
   `PANTHEON_STATUS_ROOT`
-- `worker_worktrees.source_root` may point at a writable git checkout
-  when the supervisor runs split-root: status/activity files remain in
-  the shared supervisor root, while `git worktree add` writes metadata
-  under the configured source checkout
+- `coordination.repositories.<id>.local_path` continues to own each worker
+  source checkout. Promotion separately renders an explicit
+  `integration_path` pointing at a versioned, clean, standalone writable clone
+  used only by the merge owner. Pantheon and `execute_plans` each receive their
+  own clone; status/activity paths are never inferred as Git source roots
+- before each dispatch cycle, Worker Manager fetches each selected
+  repository's `origin/<default_branch>` once, resolves one exact SHA, and
+  records that SHA on every worker lease created in the cycle. A reused task
+  branch may only fast-forward to that pinned SHA; divergent work is preserved
+  with its base relation recorded, while dirty work blocks dispatch rather
+  than being merged or reset
 - `worker_tree_guard` may be enabled in warn or block mode to detect
   dirty high-fragility surfaces inside the task worktree before
   dispatch; it is disabled by default and does not auto-restore state

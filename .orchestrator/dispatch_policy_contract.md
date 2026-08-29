@@ -35,6 +35,16 @@ The extracted policy preserves these current-master defaults:
 - max dispatches per tick: `4`
 - orphaned queue event grace seconds: `300`
 
+## Completion tracks
+
+String entries in `depends_on` remain terminal dependencies. A task may opt an
+entry into `functional` or `hosted` completion through `dependency_tracks`.
+Those tracks are satisfied only by an explicit `completion_tracks.<track>`
+record with status `done`; terminal status is never inferred as functional
+success. This lets local paper/replay work proceed while a hosted
+`operator-live/write-proof` remains an external wait. The shared dev lease is
+still required by the hosted controller and is not bypassed by this feature.
+
 There is no file-inbox/manual-pending fallback, chair lane, discussion-planning
 lane, helper claim, priority preemption, or direct retry launch.
 

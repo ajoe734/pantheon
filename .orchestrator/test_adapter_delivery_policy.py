@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import sys
 import tempfile
@@ -16,7 +17,6 @@ from adapters.antigravity import AntigravityAdapter
 from adapters.claude_cli import ClaudeCLIAdapter
 from adapters.copilot_local import CopilotLocalAdapter
 from adapters.codex import CodexAdapter
-from adapters.gemini import GeminiAdapter
 
 
 class AdapterDeliveryPolicyTests(unittest.TestCase):
@@ -32,8 +32,17 @@ class AdapterDeliveryPolicyTests(unittest.TestCase):
             },
         )
         self._task_state_env.start()
+        self._status_command_env = mock.patch(
+            "common.status_command_runtime_env",
+            return_value={
+                "PANTHEON_COMMAND_ROOT": "/tmp/mock-command-root",
+                "PANTHEON_COMMAND_RUNTIME_SHA": "mocksha",
+            },
+        )
+        self._status_command_env.start()
 
     def tearDown(self) -> None:
+        self._status_command_env.stop()
         self._task_state_env.stop()
 
     def test_codex_alias_sets_agent_identity_env(self) -> None:
@@ -66,6 +75,7 @@ class AdapterDeliveryPolicyTests(unittest.TestCase):
                 message="wake",
                 task_id="T-REVIEW",
                 reason="review_ready_dispatch",
+                metadata={"execution_resources": ["pantheon-dev"]},
             )
             adapter = CodexAdapter(config=config, provider_capabilities={})
             fake_process = mock.Mock(pid=1234)
@@ -92,6 +102,7 @@ class AdapterDeliveryPolicyTests(unittest.TestCase):
         self.assertEqual(env["ORCH_PROVIDER"], "codex2")
         self.assertEqual(env["ORCH_TASK_ID"], "T-REVIEW")
         self.assertEqual(env["ORCH_REASON"], "review_ready_dispatch")
+        self.assertEqual(env["ORCH_TASK_EXECUTION_RESOURCES"], '["pantheon-dev"]')
         self.assertEqual(env["OPENAI_API_KEY"], "codex2-key")
         self.assertEqual(env["CODEX_HOME"], os.path.expanduser("~/.codex2"))
         self.assertNotIn("CODEX_THREAD_ID", env)
@@ -350,6 +361,59 @@ class AdapterDeliveryPolicyTests(unittest.TestCase):
         self.assertIn("--effort", result.command)
         self.assertEqual(result.command[result.command.index("--effort") + 1], "medium")
 
+    def test_claude_runtime_uses_explicit_promoted_worker_settings(self) -> None:
+        config = {
+            "paths": {"status_file": "ai-status.json"},
+            "providers": {
+                "claude": {
+                    "runtime": {
+                        "cli": ".orchestrator/bin/claude",
+                        "output_format": "stream-json",
+                    },
+                }
+            },
+        }
+        request = DeliveryRequest(
+            agent_id="claude",
+            provider="claude",
+            delivery_mode="claude_cli",
+            message="wake",
+        )
+        adapter = ClaudeCLIAdapter(config=config, provider_capabilities={})
+        fake_process = mock.Mock(pid=1234)
+
+        with (
+            mock.patch(
+                "adapters.claude_cli._configured_claude_cli",
+                return_value=".orchestrator/bin/claude",
+            ),
+            mock.patch("adapters.claude_cli._claude_auth_ready", return_value=True),
+            mock.patch(
+                "adapters.claude_cli.spawn_background_process",
+                return_value=(fake_process, Path("/tmp/claude.log")),
+            ),
+        ):
+            result = adapter.deliver(request)
+
+        self.assertTrue(result.ok)
+        source_index = result.command.index("--setting-sources")
+        self.assertEqual(result.command[source_index + 1], "user")
+        settings_index = result.command.index("--settings")
+        settings = json.loads(result.command[settings_index + 1])
+        hook_commands = [
+            hook["command"]
+            for event_entries in settings["hooks"].values()
+            for entry in event_entries
+            for hook in entry["hooks"]
+        ]
+        self.assertTrue(hook_commands)
+        self.assertTrue(
+            all("${PANTHEON_COMMAND_ROOT:-" in command for command in hook_commands)
+        )
+        self.assertTrue(
+            all("/home/lupin/pantheon/.orchestrator" not in command for command in hook_commands)
+        )
+
     def test_claude_runtime_auto_permission_does_not_require_retired_provider_cache(self) -> None:
         config = {
             "paths": {"status_file": "ai-status.json"},
@@ -520,95 +584,6 @@ class AdapterDeliveryPolicyTests(unittest.TestCase):
         self.assertNotIn("--model", result.command)
         self.assertNotIn("--effort", result.command)
 
-    def test_gemini_unavailable_fails_closed(self) -> None:
-        config = {
-            "agents": {"gemini": {"id": "gemini", "display_name": "Gemini", "provider": "gemini"}},
-            "providers": {
-                "gemini": {
-                    "gemini": {"cli": "gemini"},
-                }
-            },
-        }
-        request = DeliveryRequest(agent_id="gemini", provider="gemini", delivery_mode="gemini", message="wake")
-        adapter = GeminiAdapter(config=config, provider_capabilities={})
-        with mock.patch("adapters.gemini.command_exists", return_value=None):
-            result = adapter.deliver(request)
-        self.assertFalse(result.ok)
-        self.assertFalse(result.manual_confirmation_required)
-        self.assertEqual(result.mode, "gemini")
-
-    def test_gemini_alias_uses_provider_specific_config_and_identity_env(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir)
-            config = {
-                "paths": {"status_file": str(root / "ai-status.json")},
-                "agents": {
-                    "gemini2": {
-                        "id": "gemini2",
-                        "display_name": "Gemini2",
-                        "provider": "gemini2",
-                        "adapter": "gemini",
-                    }
-                },
-                "providers": {
-                    "gemini2": {
-                        "delivery_mode": "gemini",
-                        "gemini": {
-                            "cli": "gemini",
-                            "config_home": str(root / "gemini2-home"),
-                            "include_directories": True,
-                            "model": "gemini-2.5-flash-lite",
-                            "output_format": "json",
-                            "env": {"GOOGLE_CLOUD_PROJECT": "gemini2-project"},
-                        },
-                        "approval": {"default_approval_mode": "yolo"},
-                    }
-                },
-            }
-            request = DeliveryRequest(
-                agent_id="gemini2",
-                provider="gemini2",
-                delivery_mode="gemini",
-                message="wake",
-                task_id="T-GEMINI2",
-                reason="owned_ready_dispatch",
-                metadata={
-                    "workspace_path": str(root / "task-worktree"),
-                    "status_root": str(root / "supervisor-root"),
-                },
-            )
-            adapter = GeminiAdapter(config=config, provider_capabilities={})
-            fake_process = mock.Mock(pid=1234)
-            with (
-                mock.patch("adapters.gemini.command_exists", return_value="gemini"),
-                mock.patch("adapters.gemini._gemini_auth_ready", return_value=True),
-                mock.patch("adapters.gemini.spawn_background_process", return_value=(fake_process, root / "gemini2.log")) as spawn,
-            ):
-                result = adapter.deliver(request)
-
-        self.assertTrue(result.ok)
-        self.assertEqual(result.target, "Gemini2")
-        self.assertIn("-gemini2-gemini2-", Path(str(result.log_path)).name)
-        self.assertIn("--model", result.command)
-        self.assertEqual(result.command[result.command.index("--model") + 1], "gemini-2.5-flash-lite")
-        self.assertIn("--output-format", result.command)
-        self.assertEqual(result.command[result.command.index("--output-format") + 1], "json")
-        self.assertIn("--approval-mode", result.command)
-        self.assertEqual(result.command[result.command.index("--approval-mode") + 1], "yolo")
-        self.assertIn("--include-directories", result.command)
-        self.assertEqual(result.command[result.command.index("--include-directories") + 1], str(root / "task-worktree"))
-        self.assertEqual(spawn.call_args.kwargs["cwd"], root / "task-worktree")
-        env = spawn.call_args.kwargs["env"]
-        self.assertEqual(env["AI_NAME"], "Gemini2")
-        self.assertEqual(env["ORCH_AGENT_ID"], "gemini2")
-        self.assertEqual(env["ORCH_PROVIDER"], "gemini2")
-        self.assertEqual(env["GEMINI_CLI_HOME"], str(root / "gemini2-home"))
-        self.assertEqual(env["GOOGLE_CLOUD_PROJECT"], "gemini2-project")
-        self.assertEqual(env["GEMINI_CLI_TRUST_WORKSPACE"], "true")
-        self.assertEqual(env["ORCH_TASK_ID"], "T-GEMINI2")
-        self.assertEqual(env["ORCH_REASON"], "owned_ready_dispatch")
-        self.assertEqual(env["PANTHEON_STATUS_ROOT"], str(root / "supervisor-root"))
-
     def test_antigravity_unavailable_fails_closed(self) -> None:
         config = {
             "agents": {"antigravity": {"id": "antigravity", "display_name": "Antigravity", "provider": "antigravity"}},
@@ -683,6 +658,8 @@ class AdapterDeliveryPolicyTests(unittest.TestCase):
         self.assertEqual(result.target, "Antigravity2")
         self.assertIn("--model", result.command)
         self.assertEqual(result.command[result.command.index("--model") + 1], "gemini-2.5-flash-lite")
+        self.assertIn("--output-format", result.command)
+        self.assertEqual(result.command[result.command.index("--output-format") + 1], "stream-json")
         self.assertIn("--print-timeout", result.command)
         self.assertEqual(result.command[result.command.index("--print-timeout") + 1], "15m")
         self.assertIn("--dangerously-skip-permissions", result.command)

@@ -2343,6 +2343,52 @@ class TestSessions(unittest.TestCase):
         self.assertEqual(body["error_code"], "UPSTREAM_TIMEOUT")
         self.assertTrue(body["retryable"])
 
+    def test_list_sessions_normalizes_missing_upstream_collection_route_to_degraded(self):
+        mock_client = MagicMock()
+        mock_client.list_sessions.side_effect = adapter_main.UpstreamClientError(
+            status_code=404,
+            error_code="UPSTREAM_NOT_FOUND",
+            message="OpenClaw upstream returned HTTP 404.",
+            retryable=False,
+            upstream_status=404,
+        )
+        with patch.object(adapter_main, "_client", return_value=mock_client):
+            resp = client.get("/api/openclaw-adapter/sessions")
+
+        self.assertEqual(resp.status_code, 503)
+        body = resp.json()
+        self.assertEqual(body["status"], "upstream_unavailable")
+        self.assertEqual(body["sessions"], [])
+        self.assertEqual(body["upstream"]["error_code"], "UPSTREAM_UNAVAILABLE")
+        self.assertTrue(body["upstream"]["retryable"])
+        self.assertEqual(body["upstream"]["upstream_status"], 404)
+        self.assertEqual(body["upstream"]["details"]["route"], "/api/sessions")
+
+    def test_create_session_normalizes_missing_upstream_collection_route_to_degraded(self):
+        mock_client = MagicMock()
+        mock_client.create_session.side_effect = adapter_main.UpstreamClientError(
+            status_code=404,
+            error_code="UPSTREAM_NOT_FOUND",
+            message="OpenClaw upstream returned HTTP 404.",
+            retryable=False,
+            upstream_status=404,
+        )
+        with patch.object(adapter_main, "_client", return_value=mock_client):
+            resp = client.post(
+                "/api/openclaw-adapter/sessions",
+                json={"agent_id": "agent-test", "session_type": "interactive"},
+            )
+
+        self.assertEqual(resp.status_code, 503)
+        body = resp.json()
+        self.assertEqual(body["status"], "upstream_error")
+        self.assertEqual(body["error_code"], "UPSTREAM_UNAVAILABLE")
+        self.assertTrue(body["retryable"])
+        self.assertEqual(body["owner_plane"], "openclaw_runtime")
+        self.assertEqual(body["error_layer"], "upstream")
+        self.assertEqual(body["upstream_status"], 404)
+        self.assertEqual(body["details"]["route"], "/api/sessions")
+
 
 class TestUpstreamClient(unittest.TestCase):
     def test_http_session_list_is_normalized(self):
@@ -2959,16 +3005,17 @@ class TestOpenClawAssistantProvider(unittest.TestCase):
         self.assertEqual(data["status"], "degraded")
         self.assertEqual(data["output"]["reason"], "OPENCLAW_GATEWAY_UNREACHABLE")
 
-    def test_openclaw_readiness_ready_when_url_configured(self):
+    def test_openclaw_readiness_is_not_ready_until_answer_probe_runs(self):
         with patch.dict(os.environ, {"OPENCLAW_GATEWAY_URL": "http://openclaw-gateway:18789"}):
             # Re-read via the readiness endpoint directly
             from assistant_openclaw_provider import AssistantOpenClawProvider
             prov = AssistantOpenClawProvider(gateway_url="http://openclaw-gateway:18789")
             result = prov.readiness(auth_probe=False)
 
-        self.assertEqual(result["status"], "ready")
-        self.assertTrue(result["ready"])
+        self.assertEqual(result["status"], "not_checked")
+        self.assertFalse(result["ready"])
         self.assertEqual(result["provider"], "openclaw")
+        self.assertEqual(result["reason"], "answer_probe_not_run")
 
     def test_openclaw_readiness_not_configured_when_url_absent(self):
         from assistant_openclaw_provider import AssistantOpenClawProvider

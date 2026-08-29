@@ -46,7 +46,6 @@ Generated ephemera that should not ship in the release tarball:
 - `.orchestrator/state.json`
 - `.orchestrator/approval-queue.json`
 - `.orchestrator/event-queue.jsonl`
-- `.orchestrator/github-bus-state.json`
 - `.orchestrator/provider_capabilities.json`
 - `.orchestrator/supervisor.pid`
 - `dashboard-bundle.json`

@@ -54,8 +54,8 @@ Use the script, not manual Markdown edits:
 AI_NAME=Gemini bash scripts/ai-status.sh start P2-001 "Started signal payload draft"
 AI_NAME=Gemini bash scripts/ai-status.sh progress P2-001 "Aligned worker API with signal schema"
 AI_NAME=Gemini bash scripts/ai-status.sh blocker P2-001 "Waiting for SignalStoreClient contract" Codex
-AI_NAME=Gemini bash scripts/ai-status.sh handoff P2-001 Claude "Signal schema is ready for execution/control-plane review"
-AI_NAME=Gemini REVIEW_FILE=path/to/review.md REVIEW_NOTES_ZH="契約一致||可交回 owner 收尾" bash scripts/ai-status.sh approve P1-001 "Review approved and returned to owner for finalization"
+AI_NAME=Gemini REVIEW_PR="$PR_NUMBER" REVIEW_HEAD_SHA="$PR_HEAD_SHA" REVIEW_FILE=path/declared-in-task-artifacts/evidence.json bash scripts/ai-status.sh handoff P2-001 Claude "Exact PR head and manifest are ready for review"
+AI_NAME=Gemini REVIEW_NOTES_ZH="契約一致||可交回 owner 收尾" bash scripts/ai-status.sh approve P1-001 "Review approved and returned to owner for finalization"
 AI_NAME=Gemini bash scripts/ai-status.sh done P2-001 "Owner finalized approved schema and worker payload contract"
 ```
 

@@ -58,6 +58,28 @@ before routing work to the new target.
 
 ## Historical Verified Dev Deployment
 
+Verified on 2026-08-27 (Product Functional Closure / Wave 6 PFG-HOSTED-ACCEPT-20260820):
+
+- Backend/BFF repo: `ajoe734/pantheon`
+- Backend/BFF branch: `dev`
+- Backend/BFF merge target: `dev`
+- Frontend repo: `ajoe734/execute-plans`
+- Frontend branch: `dev`
+- Frontend merge target: `dev`
+- Exact deployment manifest contract:
+  `https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io/deployment.json`
+  reports `deploymentState=accepted` (or `functional-accepted`), `profile=read-only`,
+  `VITE_BFF_MODE=live`, `VITE_BFF_FALLBACK=strict`,
+  `VITE_BFF_REAL_WRITES=false`, `VITE_BFF_ALLOW_DEV_STUB_WRITES=false`,
+  `VITE_BFF_EMBEDDED_BEARER_TOKEN=false`.
+- Public BFF version endpoint:
+  `https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io/bff/version`
+  reports `config_posture.auth_mode=strict`, `config_posture.auth_stub=false`.
+- Source Ingestion policy: `SOURCE_INGEST_CONTROLLER_MODE=reconcile_only` with zero recurring provider egress.
+- Product journey validation: required L12 cross-loop truth, Agora workshop/trading-room, Management real read models & domain actions, and Management AI NL journeys qualified with zero required skips.
+- Rollback candidate release preserved at:
+  `/var/www/pantheon-dev-fe-releases/20260726T072219Z-6a8d2d9b4f72-gate-30192097967-30192435033-1-887536`.
+
 Verified on 2026-08-14 (Twelve-Loop Closeout / Wave 6):
 
 - Backend/BFF repo: `ajoe734/pantheon`

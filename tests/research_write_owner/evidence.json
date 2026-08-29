@@ -1,0 +1,57 @@
+{
+  "task_id": "ACG-WRITE-OWNER-RESEARCH-20260829",
+  "program_id": "acg-write-owner-research-20260829",
+  "status": "ready_for_review",
+  "owner": "Antigravity2",
+  "reviewer": "Codex2",
+  "timestamp": "2026-08-29T03:57:00Z",
+  "scope": {
+    "repository": "pantheon",
+    "deliverables": [
+      "services/research/__init__.py",
+      "services/research/write_owner.py",
+      "tests/research_write_owner/__init__.py",
+      "tests/research_write_owner/evidence.json",
+      "tests/research_write_owner/test_research_write_owner.py"
+    ]
+  },
+  "acceptance_criteria_verification": {
+    "criterion_1_independent_persistent_owner": {
+      "verified": true,
+      "details": "ResearchWriteOwner implements a dedicated domain write owner using PostgresJsonOwnerStore across research.research_tickets, research.research_experiments, and research.research_notes tables with owner_service='research-svc'."
+    },
+    "criterion_2_no_read_store_import": {
+      "verified": true,
+      "details": "AST-verified zero imports or references to read_store or generic persistence in services/research/write_owner.py."
+    },
+    "criterion_3_write_then_fresh_read_proof": {
+      "verified": true,
+      "details": "Tested cross-instance mutation and immediate fresh read retrieval with zero in-memory caching, dictionary overlays, or JSON fallbacks."
+    },
+    "criterion_4_no_main_py_change": {
+      "verified": true,
+      "details": "services/control-plane/bff/main.py and services/research/main.py remain completely untouched."
+    },
+    "criterion_5_caller_mutation_operations_scoped": {
+      "verified": true,
+      "details": "Scoped and implemented all 6 caller write operations (create_research_ticket, patch_research_ticket, create_research_experiment, cancel_research_experiment, create_research_note) plus query/list methods."
+    }
+  },
+  "test_suites_executed": [
+    {
+      "suite": "tests/research_write_owner/test_research_write_owner.py",
+      "passed": 7,
+      "failed": 0
+    },
+    {
+      "suite": "services/research/tests/",
+      "passed": 17,
+      "failed": 0
+    }
+  ],
+  "conclusions": [
+    "Discarded generic persistence.py candidate.",
+    "Built independent persistent ResearchWriteOwner on top of PostgresJsonOwnerStore foundation.",
+    "100% test pass rate across all unit test suites."
+  ]
+}

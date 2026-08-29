@@ -16,15 +16,21 @@ runtime activation guard.
 from __future__ import annotations
 
 import logging
+import math
 import os
 import sys
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any, Callable, Mapping, Sequence
 
 from services.execution.artifact_loader import (
     ArtifactLoadError,
     ArtifactLoader,
     ExecutionMode,
+)
+from services.execution.market_snapshot_admission import (
+    SnapshotAdmissionDecision,
+    admit_market_snapshot,
 )
 
 from services.worker_health import healthcheck as check_worker_health
@@ -331,7 +337,7 @@ class CurrentArtifactStrategy:
                 f"binding {binding_id} requested unsupported interpreter {interpreter!r}",
             )
 
-        market_input = _market_input_for_binding(b_dict, metadata)
+        market_input = _market_input_for_binding(b_dict, metadata, now_iso=now_iso)
         closes = market_input["closes"]
         try:
             from services.registry.strategy_artifact import (
@@ -418,6 +424,9 @@ class CurrentArtifactStrategy:
                 "artifact_interpreter": interpreter,
                 "market_input_ref": market_input.get("source_ref"),
                 "market_input_observed_at": market_input.get("observed_at"),
+                "market_input_snapshot_id": market_input.get("snapshot_id"),
+                "market_input_event_time": market_input.get("event_time"),
+                "market_input_lineage": market_input.get("lineage"),
                 "is_real_order": False,
                 "is_real_capital": False,
             },
@@ -460,17 +469,71 @@ def _required_binding_text(binding: Mapping[str, Any], field: str) -> str:
 def _market_input_for_binding(
     binding: Mapping[str, Any],
     metadata: Mapping[str, Any],
+    *,
+    now_iso: str,
 ) -> dict[str, Any]:
+    """Resolve a paper market input without a provider or static-close fallback.
+
+    A RuntimeBinding that asks the worker to fetch market input must name the
+    Source-owned ``latest_stored_normalized`` policy.  The only network request
+    is then to Source's single read-only snapshot endpoint.  Inline
+    ``market_input`` remains an explicit test/compatibility input, but the old
+    ``recent_closes`` fallback is intentionally not accepted.
+    """
+
     raw = binding.get("market_input") or metadata.get("market_input")
+    policy = _market_input_policy(binding, metadata)
     if raw is None:
-        closes = binding.get("recent_closes") or metadata.get("recent_closes")
-        if closes is not None:
-            raw = {
-                "closes": closes,
-                "source_ref": binding.get("market_input_ref")
-                or metadata.get("market_input_ref")
-                or "runtime-binding:recent_closes",
-            }
+        if policy is None:
+            binding_id = str(binding.get("binding_id") or "<unknown>")
+            raise SignalDecisionUnavailable(
+                "market_input_missing",
+                f"binding {binding_id} has no RuntimeBinding market_data_policy",
+            )
+        source_ingest_url = (
+            os.getenv("PANTHEON_SOURCE_INGEST_URL")
+            or os.getenv("PANTHEON_SOURCE_INGEST_API_URL")
+            or ""
+        ).rstrip("/")
+        symbol = str(binding.get("symbol") or metadata.get("symbol") or "").strip()
+        if not source_ingest_url:
+            raise SignalDecisionUnavailable(
+                "market_input_unavailable",
+                "PANTHEON_SOURCE_INGEST_URL is required by the RuntimeBinding market_data_policy",
+            )
+        if not symbol:
+            raise SignalDecisionUnavailable(
+                "market_input_missing",
+                f"binding {binding.get('binding_id') or '<unknown>'} has no market symbol",
+            )
+        try:
+            import json
+            import urllib.parse
+            import urllib.request
+
+            url = (
+                f"{source_ingest_url}/api/source-ingest/snapshots/latest"
+                f"?symbol={urllib.parse.quote(symbol, safe='')}"
+            )
+            req = urllib.request.Request(
+                url,
+                headers={"Accept": "application/json"},
+                method="GET",
+            )
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                payload = json.loads(resp.read().decode("utf-8"))
+        except Exception as exc:
+            raise SignalDecisionUnavailable(
+                "market_input_unavailable",
+                f"Source stored snapshot is unavailable for {symbol}: {exc}",
+            ) from exc
+        if not isinstance(payload, Mapping):
+            raise SignalDecisionUnavailable(
+                "market_input_invalid",
+                f"Source stored snapshot for {symbol} is not an object",
+            )
+        raw = payload
+
     if not isinstance(raw, Mapping):
         binding_id = str(binding.get("binding_id") or "<unknown>")
         raise SignalDecisionUnavailable(
@@ -488,11 +551,105 @@ def _market_input_for_binding(
             "market_input_missing",
             f"binding {binding_id} has no market_input.closes snapshot",
         )
+    minimum_closes = policy["minimum_closes"] if policy is not None else 1
+    if len(closes) < minimum_closes:
+        binding_id = str(binding.get("binding_id") or "<unknown>")
+        raise SignalDecisionUnavailable(
+            "market_input_insufficient",
+            f"binding {binding_id} requires {minimum_closes} closes, got {len(closes)}",
+        )
+    try:
+        normalized_closes = [float(close) for close in closes]
+    except (TypeError, ValueError) as exc:
+        raise SignalDecisionUnavailable(
+            "market_input_invalid",
+            f"binding {binding.get('binding_id') or '<unknown>'} market closes are not numeric",
+        ) from exc
+    if any(not math.isfinite(close) or close <= 0 for close in normalized_closes):
+        raise SignalDecisionUnavailable(
+            "market_input_invalid",
+            f"binding {binding.get('binding_id') or '<unknown>'} market closes must be positive",
+        )
+
+    requested_symbol = str(binding.get("symbol") or metadata.get("symbol") or "").strip()
+    snapshot_symbol = str(raw.get("symbol") or requested_symbol).strip()
+    if requested_symbol and snapshot_symbol and snapshot_symbol != requested_symbol:
+        raise SignalDecisionUnavailable(
+            "market_input_invalid",
+            f"Source snapshot symbol {snapshot_symbol!r} does not match binding symbol {requested_symbol!r}",
+        )
+    if policy is not None:
+        decision = admit_market_snapshot(
+            raw,
+            expected_symbol=requested_symbol or None,
+            max_age_seconds=policy["max_age_seconds"],
+            minimum_closes=policy["minimum_closes"],
+            now_iso=now_iso,
+            binding_id=str(binding.get("binding_id") or "<unknown>"),
+        )
+        if not decision.admitted:
+            raise SignalDecisionUnavailable(
+                decision.reason_code or "market_input_invalid",
+                decision.detail or f"Snapshot admission rejected: {decision.reason_code}",
+            )
     return {
-        "closes": list(closes),
-        "symbol": raw.get("symbol"),
+        "closes": normalized_closes,
+        "symbol": snapshot_symbol or raw.get("symbol"),
         "source_ref": raw.get("source_ref"),
         "observed_at": raw.get("observed_at"),
+        "snapshot_id": raw.get("snapshot_id"),
+        "event_time": raw.get("event_time"),
+        "lineage": raw.get("lineage"),
+    }
+
+
+def _market_input_policy(
+    binding: Mapping[str, Any],
+    metadata: Mapping[str, Any],
+) -> dict[str, int] | None:
+    raw = binding.get("market_data_policy") or metadata.get("market_data_policy")
+    if raw is None:
+        return None
+    if not isinstance(raw, Mapping):
+        raise SignalDecisionUnavailable(
+            "market_input_policy_invalid",
+            "RuntimeBinding market_data_policy must be an object",
+        )
+    owner = str(raw.get("owner") or raw.get("source") or "").strip()
+    if owner != "source-ingest":
+        raise SignalDecisionUnavailable(
+            "market_input_policy_invalid",
+            "RuntimeBinding market_data_policy must select owner 'source-ingest'",
+        )
+    contract = str(raw.get("contract") or "latest_stored_normalized").strip()
+    if contract != "latest_stored_normalized":
+        raise SignalDecisionUnavailable(
+            "market_input_policy_invalid",
+            "RuntimeBinding market_data_policy must select contract 'latest_stored_normalized'",
+        )
+    max_age_seconds = raw.get("max_age_seconds")
+    minimum_closes = raw.get("minimum_closes", 2)
+    if (
+        isinstance(max_age_seconds, bool)
+        or not isinstance(max_age_seconds, int)
+        or max_age_seconds < 1
+    ):
+        raise SignalDecisionUnavailable(
+            "market_input_policy_invalid",
+            "RuntimeBinding market_data_policy.max_age_seconds must be a positive integer",
+        )
+    if (
+        isinstance(minimum_closes, bool)
+        or not isinstance(minimum_closes, int)
+        or minimum_closes < 2
+    ):
+        raise SignalDecisionUnavailable(
+            "market_input_policy_invalid",
+            "RuntimeBinding market_data_policy.minimum_closes must be an integer >= 2",
+        )
+    return {
+        "max_age_seconds": max_age_seconds,
+        "minimum_closes": minimum_closes,
     }
 
 

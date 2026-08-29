@@ -1,0 +1,333 @@
+{
+  "schema_version": "pantheon.lifecycle-projection-cutover-evidence.v1",
+  "task": {
+    "id": "LIFECYCLE-PROJ-CUTOVER-001",
+    "title": "Canary and cut over target-dev lifecycle reads",
+    "owner": "Antigravity2",
+    "reviewer": "Codex2",
+    "status": "in_progress",
+    "base_branch": "dev",
+    "task_branch": "task/LIFECYCLE-PROJ-CUTOVER-001",
+    "depends_on": {
+      "LIFECYCLE-PROJ-HOTFIX-REVIEW-20260801": "done",
+      "LIFECYCLE-PROJ-MIGRATE-001": "done",
+      "LIFECYCLE-PROJ-CAPACITY-001": "done"
+    }
+  },
+  "scope": {
+    "owned": [
+      "docker-compose.yml",
+      "scripts/lifecycle_projector_migrate.py",
+      "scripts/lifecycle_projector_parity.py",
+      "services/trade_journey/projection_migration.py",
+      "services/trade_journey/projection_store.py recovery-only legacy baseline adoption",
+      "services/trade_journey/test_projection_migration.py",
+      "services/trade_journey/hosted_lifecycle_probe.py",
+      "services/trade_journey/hosted_bff_readback.py",
+      "services/trade_journey/test_hosted_lifecycle_probe.py",
+      "services/trade_journey/test_hosted_bff_readback.py",
+      "services/control-plane/bff/main.py lifecycle readiness and safe version posture only",
+      "services/control-plane/bff/test_lifecycle_projector_readiness.py",
+      "services/trade_journey/test_lifecycle_projector_compose.py",
+      "docs/operations/lifecycle-projector-incremental-runbook.md",
+      "docs/deployment/evidence/lifecycle-projector/LIFECYCLE-PROJ-CUTOVER-001/evidence.json"
+    ],
+    "not_changing": [
+      "services/trade_journey/projection_store.py schema and normal live transaction semantics",
+      "scripts/deploy_nonprod_vm.sh deployment authority",
+      "production or live-capital configuration",
+      "legacy JSON data or bff-data volume retirement"
+    ]
+  },
+  "artifact_checksums_sha256": {
+    "docker-compose.yml": "691c75bdf661f4df1c30f813c8b65f7fabff73012bc1601ce15363bc1c5fbde4",
+    "scripts/lifecycle_projector_migrate.py": "04ecbb39e70185c0d73c720af9a29c34161ec04eef99b597b88b9e73a7574d8e",
+    "scripts/lifecycle_projector_parity.py": "9b66b7904d894707b615623e11200202a994d2402e649db54608cea2afd75e1a",
+    "services/trade_journey/projection_migration.py": "cfe64e8361d583c9b33c386e2d7685b91c5c00d5c5d44405e5639fcd445aef86",
+    "services/trade_journey/projection_store.py": "d75b25c629235afff4dc07c69160c54869428f5f17463466e8d06b830ba76a86",
+    "services/trade_journey/test_projection_migration.py": "0bb43b433abcb1357305a1ccf3962d593be5f7e3f214a3461e7320df3f808f35",
+    "services/trade_journey/hosted_lifecycle_probe.py": "11a752db9fb46ff2e83a1ee4f7d496766261a401d4270265cba520b9ccfba7db",
+    "services/trade_journey/hosted_bff_readback.py": "be15238e52eb8c3a3aa9c69a0c44a0156866f45bacb739011feb24f5017c7987",
+    "services/trade_journey/test_hosted_lifecycle_probe.py": "f26f18e92d9c3ef65931d48fe6dc0c271e4a9618547c62a7f22d16366b9e5750",
+    "services/trade_journey/test_hosted_bff_readback.py": "787ee1dabf5b183af0920b58d8746501da16a77e26eb41fae1b0e8e6f84a829b",
+    "services/control-plane/bff/main.py": "da34f368bba48e628a5d89ab2ef1732def2d1847e3a30b7741490cf0b9984a27",
+    "services/control-plane/bff/test_lifecycle_projector_readiness.py": "533e3fcc5928a8ed5f1189c19c5ab5f1dbbe7e083b4b8f4bf2e69ecd15ecff15",
+    "services/trade_journey/test_lifecycle_projector_compose.py": "2b7ddc49fbc7e79a89a38f2560403a489c895db55b2ae83a4aaea67ec5c006fb",
+    "docs/operations/lifecycle-projector-incremental-runbook.md": "ef9c3a9c2cbba73f0ea7bf43b547e1ba9c9efba2b739652c62dae0c8954c9e6f",
+    "services/trade_journey/migrations/001_create_trade_journey_projection_schema.sql": "732939a70680f8561f1d4cbbf4b075c6f2ae0a23403b0e4adf90b47103525374"
+  },
+  "pre_switch_verification": {
+    "verified_at_utc": "2026-08-21T20:52:00Z",
+    "implementation_validation_head": "048d9cb6b32f0ed97e3a38d1e4cc5366066cf092",
+    "database_gate": {
+      "command": "TEST_DATABASE_URL=<redacted-test-postgres-dsn> .venv-pantheon/bin/python -m pytest -q services/trade_journey/test_projection_migration.py -rs",
+      "result": "21 passed in 3.12s",
+      "skipped": 0,
+      "non_skipped_real_postgres_tests": [
+        "test_backfill_reaches_backlog_zero_and_restart_resumes_against_real_store",
+        "test_backfill_duplicate_and_interruption_against_real_store"
+      ]
+    },
+    "legacy_baseline_recovery_gate": {
+      "command": "TEST_DATABASE_URL=<redacted-test-postgres-dsn> .venv-pantheon/bin/python -m pytest -q services/trade_journey/test_projection_migration.py -rs",
+      "result": "26 passed in 5.34s",
+      "skipped": 0,
+      "coverage": [
+        "multi-GiB-safe streaming JSON member and aggregate parsing",
+        "exact legacy controller-state SHA-256 binding",
+        "transactional aggregate import with durable receipts",
+        "count/quarantine/offset-gated recovery-only live controller seed",
+        "idempotent exact-checksum rerun",
+        "order-independent duplicate-sensitive streaming parity digest"
+      ]
+    },
+    "review_reopen_controller_binding_gate": {
+      "verified_at_utc": "2026-08-22T14:56:06Z",
+      "implementation_validation_head": "8b38da1f2134c80faa36403a6ef988f767e4c4d1",
+      "focused_command": ".venv-pantheon/bin/python -m pytest -q services/trade_journey/test_projection_migration.py -k 'legacy_bundle or streaming_parity or json_stream or streaming_multiset' -rs",
+      "focused_result": "18 passed, 22 deselected in 4.35s",
+      "database_command": "TEST_DATABASE_URL=<redacted-local-test-postgres-dsn> .venv-pantheon/bin/python -m pytest -q services/trade_journey/test_projection_migration.py -rs",
+      "database_result": "40 passed in 5.45s",
+      "adjacent_store_command": "TEST_DATABASE_URL=<redacted-local-test-postgres-dsn> .venv-pantheon/bin/python -m pytest -q services/trade_journey/test_projection_store.py::test_projection_store_mixed_batch_filters_duplicate_owned_mutations services/trade_journey/test_projection_store.py::test_projection_store_contiguous_checkpoint_advancement -rs",
+      "adjacent_store_result": "2 passed in 1.36s",
+      "compose_and_static_result": "7 compose tests passed in 2.96s; docker compose config valid; py_compile and git diff --check clean",
+      "dev_composition": {
+        "verified_at_utc": "2026-08-22T14:58:32Z",
+        "origin_dev_sha": "4caa25e509831171f727b2edcdea4677566d8236",
+        "composition_head": "ea3aed312e41fba076f772f35bf54dfc991627e5",
+        "database_result": "40 migration tests plus 2 adjacent store tests passed in 6.29s",
+        "compose_and_bff_readiness_result": "7 compose tests plus 4 BFF readiness tests passed in 9.63s; docker compose config and git diff check valid"
+      },
+      "coverage": [
+        "source controller checkpoint 8 rejected when reviewed CLI checkpoint is 999 before any projection transaction, adoption, or snapshot write",
+        "source deployment SHA a... rejected when reviewed CLI deployment SHA is f... before any projection transaction, adoption, or snapshot write",
+        "strict controller ID, checkpoint, deployment SHA, backlog, quarantine, accepted-live, last-error, required-field, and scalar-type validation",
+        "streaming parity rejects unbound controller identity or checkpoint before PostgreSQL reads",
+        "positive exact-bound legacy baseline import, idempotent retry, real-PostgreSQL adoption, and zero-mismatch streaming parity"
+      ]
+    },
+    "adjacent_store_gate": {
+      "command": "TEST_DATABASE_URL=<redacted-test-postgres-dsn> .venv-pantheon/bin/python -m pytest -q services/trade_journey/test_projection_store.py::test_projection_store_mixed_batch_filters_duplicate_owned_mutations services/trade_journey/test_projection_store.py::test_projection_store_contiguous_checkpoint_advancement -rs",
+      "result": "2 passed in 1.16s",
+      "skipped": 0
+    },
+    "full_trade_journey_gate": {
+      "command": "TEST_DATABASE_URL=<redacted-test-postgres-dsn> TEST_DATABASE_ADMIN_URL=<redacted-test-postgres-admin-dsn> .venv-pantheon/bin/python -m pytest -q services/trade_journey -rs",
+      "result": "237 passed in 100.21s",
+      "skipped": 0
+    },
+    "hosted_probe_and_readback_gate": {
+      "command": ".venv-pantheon/bin/python -m pytest -q services/trade_journey/test_hosted_lifecycle_probe.py services/trade_journey/test_hosted_bff_readback.py",
+      "result": "27 passed in 5.70s",
+      "coverage": [
+        "relational repeatable-read projection snapshot",
+        "exact SHA/controller/stable identity/event ID/source offset correlation",
+        "authenticated list/detail/timeline/graph/evidence/loop/controller readback",
+        "401 unauthorized, 404 protected cross-scope, 400 stale/conflicting token",
+        "allowlist-only redacted evidence"
+      ]
+    },
+    "bff_readiness_gate": {
+      "command": ".venv-pantheon/bin/python -m pytest -q services/control-plane/bff/test_lifecycle_projector_readiness.py",
+      "result": "4 passed in 8.12s",
+      "coverage": "explicit Postgres reader routes readiness to the exact relational controller and rejects a stale deployment SHA"
+    },
+    "bff_postgres_scope_and_sensitive_gate": {
+      "command": ".venv-pantheon/bin/python -m pytest -q services/trade_journey/test_hosted_bff_readback.py services/trade_journey/test_hosted_lifecycle_probe.py services/control-plane/bff/test_lifecycle_projector_readiness.py services/control-plane/bff/test_tj_e2e_005_trade_journeys_read_api.py -k 'postgres or scope or sensitive'",
+      "result": "7 passed, 60 deselected in 14.41s",
+      "coverage": "Postgres reader selection, scoped/bounded queries, signed-token scope rejection, cross-tenant protection, and live-sensitive masking"
+    },
+    "loop_surface_gate": {
+      "command": ".venv-pantheon/bin/python -m pytest -q services/control-plane/bff/test_bff_v5_loop_sentinel_contract.py",
+      "result": "41 passed in 15.86s"
+    },
+    "compose_gate": {
+      "commands": [
+        ".venv-pantheon/bin/python -m pytest -q services/trade_journey/test_lifecycle_projector_compose.py",
+        "docker compose -f docker-compose.yml config --quiet",
+        "git diff --check"
+      ],
+      "result": "7 passed in 2.47s; compose config valid; diff check clean"
+    },
+    "telemetry_prune_composition_gate": {
+      "merge_sha": "5517afdda923774c1d5f2c80688c76827dae5f91",
+      "pull_request": "https://github.com/ajoe734/pantheon/pull/5139",
+      "command": ".venv-pantheon/bin/python -m pytest -q scripts/test_deploy_nonprod_telemetry_prune.py",
+      "result": "18 passed in 3.54s",
+      "meaning": "the exact merged dev deployment helper scopes telemetry pruning to the configured private telemetry schema and fails closed for public"
+    },
+    "diagnostic_non_gate": {
+      "command": "combined services/trade_journey plus three BFF modules in one pytest process",
+      "result": "298 passed, 1 failed in 121.20s",
+      "failure": "test_tj_e2e_005_static_siblings_are_registered_before_journey_id_param_route observes FastAPI _IncludedRouter objects rather than flattened Route objects in this local dependency version; the required Postgres/scope/sensitive route gates above passed and this combined diagnostic is not represented as a passing suite"
+    },
+    "mixed_batch_assertions": {
+      "fetched_source_ordinals": [
+        7,
+        8,
+        9,
+        10
+      ],
+      "ordinal_9": "exact re-delivery of durable source row 1 with its original ingested_seq",
+      "ordinal_10": "new same-journey and same-loop event at ingested_seq 9",
+      "same_fetch_and_database_transaction": true,
+      "single_projection_revision_increment": true,
+      "accepted": 3,
+      "duplicates": 1,
+      "receipt_count": 9,
+      "stage_count": 9,
+      "journey_count": 1,
+      "loop_run_count": 1,
+      "controller_count": 1,
+      "checkpoint": 9,
+      "source_high_watermark": 9,
+      "backlog_count": 0,
+      "duplicate_receipt_and_stage_unchanged": true,
+      "category_hash_mismatch_count": 0,
+      "sample_hash_mismatch_count": 0,
+      "unexplained_mismatch_count": 0
+    }
+  },
+  "deployment_and_rollout": {
+    "pr": "https://github.com/ajoe734/pantheon/pull/5124",
+    "independent_review": "Codex2 approved the exact predeployment head 1dcebbfaf6c7ec3cc0ed3be4a23a232657d9e751; operational acceptance was explicitly not approved",
+    "merge_sha": "f0bf28344f3467238cd9d9cdfd0f2c8f6dc65db5",
+    "deployment_run": "https://github.com/ajoe734/pantheon/actions/runs/32554078801",
+    "deployed_dev_sha": "97945de7c5193baa9832f6c02674714d889577b9",
+    "deployed_at_utc": "2026-08-22T05:53:19Z",
+    "bff_image_id": "sha256:dd09aab20c3d4dd7b68509bdec1cbd312cdecb87c39b191e2a5fbec22717222c",
+    "projector_image_id": "sha256:ac0a5d15845e3edce837b747241809603a7c7c0cbf014e207dd726ae5b62616b",
+    "migration_apply": {
+      "status": "schema_only",
+      "applied_at_utc": "2026-08-22T06:26:28Z",
+      "tables_present": 7,
+      "backfill": "not_started",
+      "reason": "the initial module-unsafe runbook command failed before BackfillCoordinator started; the invocation was corrected in anchor commit 020fe393ab35781846d9210594fe865c862ba32d"
+    },
+    "rendered_config_identity": {
+      "bff_reader_backend": "json",
+      "relational_writer_backend": "disabled",
+      "projection_schema": "trade_journey_projection",
+      "strict_auth": true,
+      "live_broker_enabled": false
+    },
+    "live_controller_before_reads": {
+      "backend": "legacy_json",
+      "checkpoint": 7100730,
+      "source_high_watermark": 0,
+      "backlog": 0,
+      "accepted_live": true,
+      "deployment_sha": "97945de7c5193baa9832f6c02674714d889577b9",
+      "relational_controller_present": false
+    },
+    "shadow_backlog_zero": "not_run",
+    "pre_switch_target_parity": "pending_reviewed_fresh_legacy_baseline_import",
+    "authorized_target_dev_paper_canary": "not_run",
+    "all_target_dev_paper_reads": "not_run",
+    "authenticated_real_paper_lifecycle": "not_run",
+    "negative_probes": "not_run",
+    "rollback_to_json": "not_run",
+    "stale_json_label": "not_run",
+    "forward_recovery": "not_run",
+    "legacy_volume_preserved": {
+      "verified_at_utc": "2026-08-22T14:23:00Z",
+      "trade_journey_events_bytes": 2102154569,
+      "trade_journey_events_sha256": "774e6c3b8871704e6d19cfc2db9783b7c7b97702129f97208d50ea929321c7bb",
+      "loop_runs_bytes": 317514745,
+      "loop_runs_sha256": "6ba7cde66e7d7b6c1a4bd6352e7fd2a6918f7a7b0f651b76e7c0b204598baacc",
+      "controller_state_bytes": 3170778131,
+      "controller_state_sha256": "c138b59620b6765c3e81294ff346d33790a5d19205ce1299ba8fabae2c08cab0",
+      "stable_during_checksum": true
+    },
+    "canary_readiness": "not_claimed"
+  },
+  "runtime_attempt_2026_08_22": {
+    "outcome": "historical_hold_resolved_by_human_ops_disposition",
+    "last_verified_at_utc": "2026-08-22T06:30:50Z",
+    "safe_precondition": {
+      "reader_remained": "json",
+      "writer_remained": "disabled",
+      "bff_restart_count": 0,
+      "projector_restart_count": 0,
+      "read_switch_occurred": false,
+      "shadow_activation_occurred": false
+    },
+    "canonical_source": {
+      "table": "public.telemetry_events",
+      "retained_lifecycle_rows": 0,
+      "minimum_lifecycle_ingested_seq": 0,
+      "maximum_lifecycle_ingested_seq": 0,
+      "projection_receipts": 0
+    },
+    "destructive_upstream_event": {
+      "deployment_run": "https://github.com/ajoe734/pantheon/actions/runs/32554078801",
+      "observed_at_utc": "2026-08-22T05:21:28Z",
+      "workflow_evidence": "job 96985411002 lines 9047-9064 report the default root-deploy telemetry prune, NOTICE truncating public.telemetry_events, and table size reducing from 4880 kB to 96 kB",
+      "repository_source": "scripts/deploy_nonprod_vm.sh:1755 prune_dev_management_ai_telemetry_for_disk",
+      "backup_search": "no workflow backup artifact, GCP snapshot, machine image, local PostgreSQL dump, or telemetry backup was found by read-only inspection"
+    },
+    "why_cutover_stopped": "Backfill authority is canonical telemetry_events, not the derived legacy JSON bundle. Backfilling from the 5.2 GiB preserved derived bundle would forge source authority; clearing that bundle to manufacture parity would violate legacy preservation and non-destructive scope. With zero canonical lifecycle rows and a non-empty legacy projection, pre-switch parity and rollback-without-data-loss cannot be truthfully accepted.",
+    "required_external_recovery": "Satisfied on 2026-08-22 by the explicit Human/Ops baseline and lost-row disposition below; do not attempt to restore the unrecoverable truncated rows."
+  },
+  "human_ops_disposition_2026_08_22": {
+    "decision": "Do not attempt to restore the truncated PostgreSQL telemetry rows. Re-run a fresh relational projection baseline from the exact intact legacy JSON bundle, then continue parity, canary, rollback/forward, and observation.",
+    "facts_accepted": {
+      "truncated_postgres_content": "in-progress backfill state only",
+      "reader_ever_cut_over": false,
+      "relational_writer_ever_enabled": false,
+      "product_facing_loss": false,
+      "legacy_bundle_intact_and_non_empty": true,
+      "cloud_sql_backup_or_compute_snapshot_found": false
+    },
+    "fresh_baseline_guard": {
+      "source": "controller_state.json folded aggregates",
+      "required_sha256": "c138b59620b6765c3e81294ff346d33790a5d19205ce1299ba8fabae2c08cab0",
+      "reviewed_controller_id": "canonical-lifecycle-projector",
+      "reviewed_controller_checkpoint": 7100730,
+      "reviewed_controller_deployment_sha": "97945de7c5193baa9832f6c02674714d889577b9",
+      "reviewed_controller_backlog": 0,
+      "reviewed_controller_accepted_live": true,
+      "projection_tables_verified_empty": true,
+      "projection_receipts": 0,
+      "projection_journeys": 0,
+      "projection_loop_runs": 0,
+      "projection_controllers": 0,
+      "telemetry_lifecycle_rows": 0,
+      "available_disk_bytes_before_import": 75741638656,
+      "reader_must_remain": "json",
+      "writer_must_remain": "disabled",
+      "seeded_controller_must_remain_non_live": true
+    }
+  },
+  "hosted_identity_audit_after_disposition": {
+    "audited_at_utc": "2026-08-22T14:23:00Z",
+    "hosted_bff_sha": "0acd7720d0eb7fd65bdde7d189ab4f6442f6fec8",
+    "hosted_source_branch": "task/PFG-DATA-TELEMETRY-PRUNE-20260822",
+    "merged_dev_identity": false,
+    "auth_mode": "permissive",
+    "reader_backend": "json",
+    "relational_writer_backend": "disabled",
+    "bff_restart_count": 0,
+    "projector_restart_count": 0,
+    "eligible_for_cutover": false,
+    "telemetry_prune_fix_merged_to_dev": true,
+    "telemetry_prune_fix_merge_sha": "5517afdda923774c1d5f2c80688c76827dae5f91",
+    "exact_redeployment_required": true,
+    "reason": "The public-telemetry prune fix is merged to dev, but the currently hosted candidate branch is still not a merged-SHA strict-auth deployment. No reader switch was attempted."
+  },
+  "observation_24h": {
+    "status": "not_started",
+    "started_at_utc": null,
+    "ended_at_utc": null,
+    "actual_duration_seconds": 0,
+    "sample_manifest_sha256": null,
+    "accepted": false
+  },
+  "closeout": {
+    "ready_for_pr": true,
+    "implementation_review_ready": true,
+    "operational_acceptance_review_ready": false,
+    "ready_for_done": false,
+    "reason": "Human/Ops accepted the exact intact legacy bundle as the fresh target-dev baseline. Streaming import/parity tooling is locally validated; a new reviewed exact merged deployment, hosted baseline import, shadow/canary, rollback/forward, and actual 24-hour observation remain required."
+  }
+}

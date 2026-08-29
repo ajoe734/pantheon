@@ -7,7 +7,11 @@ from typing import Any, Dict, List, Optional
 
 from .adapters import (
     AccountPositionsWidgetAdapter,
+    CandidateFunnelWidgetAdapter,
+    CandidateRankingWidgetAdapter,
+    EvidenceTraceWidgetAdapter,
     RiskMetricsWidgetAdapter,
+    SignalDecisionQueueWidgetAdapter,
     StrategyPerformanceWidgetAdapter,
     WidgetAdapterRegistry,
 )
@@ -33,6 +37,10 @@ class TradingDataService:
             registry.register(StrategyPerformanceWidgetAdapter())
             registry.register(AccountPositionsWidgetAdapter())
             registry.register(RiskMetricsWidgetAdapter())
+            registry.register(SignalDecisionQueueWidgetAdapter())
+            registry.register(CandidateFunnelWidgetAdapter())
+            registry.register(CandidateRankingWidgetAdapter())
+            registry.register(EvidenceTraceWidgetAdapter())
         self.registry = registry
 
         if is_live_profile is None:

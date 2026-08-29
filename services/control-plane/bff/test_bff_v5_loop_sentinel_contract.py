@@ -8,10 +8,11 @@ import os
 import sys
 import tempfile
 import threading
+import urllib.error
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator, Optional
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -25,7 +26,7 @@ from downstream_health_monitor import (  # noqa: E402
     DownstreamHealthMonitor,
     DownstreamProbeResult,
 )
-from read_store import ReadSurfaceStore, ServiceBackedReadAdapter  # noqa: E402
+from ports import ReadSurfacePorts  # noqa: E402
 from services.runtime_auth_inbound import encode_jwt_hs256  # noqa: E402
 import services.telemetry.main as telemetry_main  # noqa: E402
 from services.telemetry.ingest_svc import TelemetryIngestService  # noqa: E402
@@ -34,7 +35,7 @@ from services.telemetry.test_infrastructure_health_ingest import (  # noqa: E402
     _DurableFileBroker,
 )
 
-HEADERS = {"Authorization": "Bearer op-execute-plans:operator,reviewer,admin:mfa"}
+HEADERS = {"Authorization": "Bearer op-execute-plans:operator,reviewer,admin:mfa::tenant-dev"}
 
 _INCIDENT_SEED = {
     "inc-loop-1": {
@@ -62,24 +63,223 @@ _INCIDENT_SEED = {
 }
 
 
+class V5LoopSentinelTestReadPorts(ReadSurfacePorts):
+    def __init__(
+        self,
+        *,
+        seed_incidents: bool | dict[str, Any] = True,
+        loop_runs_data: dict[str, Any] | None = None,
+        sentinel_findings_data: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__()
+        self._seed_incidents = seed_incidents
+        self._loop_runs_data = loop_runs_data
+        self._sentinel_findings_data = sentinel_findings_data
+        self._data: dict[str, Any] = {}
+
+    def trade_journey_projection_reader(self) -> None:
+        return None
+
+    def _get_env_loop_runs(self) -> tuple[bool, dict[str, Any], dict[str, Any]]:
+        path = os.environ.get("PANTHEON_BFF_LOOP_RUN_STORE")
+        if path and os.path.exists(path):
+            try:
+                import json
+                data = json.loads(Path(path).read_text(encoding="utf-8"))
+                records = data.get("records") or data
+                return True, records, data
+            except Exception:
+                pass
+        return False, {}, {}
+
+    def loop_run_projection_metadata(self) -> dict[str, Any]:
+        has_file, _, metadata = self._get_env_loop_runs()
+        if has_file:
+            return metadata
+        return {}
+
+    def _get_env_sentinel_findings(self) -> tuple[bool, dict[str, Any]]:
+        path = os.environ.get("PANTHEON_BFF_SENTINEL_FINDING_STORE")
+        if path and os.path.exists(path):
+            try:
+                import json
+                data = json.loads(Path(path).read_text(encoding="utf-8"))
+                records = data.get("records") or data
+                return True, records
+            except Exception:
+                pass
+        return False, {}
+
+    def dataset_source(self, dataset: str, **kwargs: Any) -> str:
+        if dataset == "loop_runs":
+            has_env, _, _ = self._get_env_loop_runs()
+            if has_env:
+                return "local_fallback"
+            if self._loop_runs_data is not None:
+                return "local_fallback"
+            return "missing"
+        if dataset == "sentinel_findings":
+            has_env, _ = self._get_env_sentinel_findings()
+            if has_env:
+                return "local_fallback"
+            if self._sentinel_findings_data is not None:
+                return "local_fallback"
+            return "missing"
+        if dataset == "incidents":
+            if self._seed_incidents is not False:
+                return "legacy_incident_backfill"
+            return "missing"
+        return "missing"
+
+    def dataset_surface_status(self, dataset: str, *, snapshot_at: str, **kwargs: Any) -> dict[str, Any]:
+        source = self.dataset_source(dataset, **kwargs)
+        if source == "missing":
+            return {
+                "status": "unavailable",
+                "source": "missing",
+                "snapshot_at": snapshot_at,
+                "freshness": "unavailable",
+                "observed_time": snapshot_at,
+                "coverage": 0.0,
+                "missing_bindings": True,
+            }
+        return {
+            "status": "ok",
+            "source": source,
+            "snapshot_at": snapshot_at,
+            "freshness": "fresh",
+            "observed_time": snapshot_at,
+            "coverage": 1.0,
+            "missing_bindings": False,
+        }
+
+    def list_loop_runs(self, **kwargs: Any) -> tuple[bool, list[dict[str, Any]]]:
+        has_env, env_records, _ = self._get_env_loop_runs()
+        if has_env:
+            return True, list(env_records.values())
+        if self._loop_runs_data is not None:
+            return True, list(self._loop_runs_data.values())
+        if self._seed_incidents is not False:
+            if isinstance(self._seed_incidents, dict) and not self._seed_incidents:
+                return True, []
+            return (
+                True,
+                [
+                    {
+                        "id": "inc-loop-1",
+                        "status": "open",
+                        "activePeriod": {"start": "2026-05-09T10:00:00Z", "end": None},
+                        "derived_from_incident_id": "inc-loop-1",
+                        "runtime_id": "rt-loop-1",
+                        "binding_id": "binding-loop-1",
+                        "capital_pool_id": "pool-main",
+                        "source": "legacy_incident_backfill",
+                        "projection_mode": "backfill",
+                        "truth_level": "legacy_backfill",
+                        "accepted_live": False,
+                        "read_state": "degraded",
+                        "title": "Loop Anomaly Detected",
+                        "severity": "high",
+                    }
+                ],
+            )
+        return False, []
+
+    def get_loop_run(self, loop_run_id: str) -> tuple[bool, dict[str, Any] | None]:
+        available, records = self.list_loop_runs()
+        if not available:
+            return False, None
+        record = next((r for r in records if r.get("id") == loop_run_id), None)
+        return True, record
+
+    def list_sentinel_findings(self, **kwargs: Any) -> tuple[bool, list[dict[str, Any]]]:
+        has_env, env_records = self._get_env_sentinel_findings()
+        if has_env:
+            return True, list(env_records.values())
+        if self._sentinel_findings_data is not None:
+            return True, list(self._sentinel_findings_data.values())
+        if self._seed_incidents is not False:
+            if isinstance(self._seed_incidents, dict) and not self._seed_incidents:
+                return True, []
+            return (
+                True,
+                [
+                    {
+                        "id": "inc-sentinel-1",
+                        "incident_id": "inc-sentinel-1",
+                        "status": "open",
+                        "kind": "loop_anomaly",
+                        "derived_from_incident_id": "inc-sentinel-1",
+                        "runtime_id": "rt-sentinel-1",
+                        "binding_id": "binding-sentinel-1",
+                        "capital_pool_id": "pool-secondary",
+                        "severity": "medium",
+                        "title": "Sentinel Finding Triggered",
+                        "source": "legacy_incident_backfill",
+                    }
+                ],
+            )
+        return False, []
+
+    def get_sentinel_finding(self, finding_id: str) -> tuple[bool, dict[str, Any] | None]:
+        available, records = self.list_sentinel_findings()
+        if not available:
+            return False, None
+        record = next((r for r in records if r.get("id") == finding_id or r.get("incident_id") == finding_id), None)
+        return True, record
+
+    def list_persona_league(self, **kwargs: Any) -> list[dict[str, Any]]:
+        ds = self._data.get("persona_league", [])
+        return list(ds.values()) if isinstance(ds, dict) else list(ds)
+
+    def list_bindings(self, **kwargs: Any) -> list[dict[str, Any]]:
+        ds = self._data.get("bindings", {})
+        return list(ds.values()) if isinstance(ds, dict) else list(ds)
+
+    def list_capital_pools(self, **kwargs: Any) -> list[dict[str, Any]]:
+        ds = self._data.get("capital_pools", {})
+        return list(ds.values()) if isinstance(ds, dict) else list(ds)
+
+    def list_personas(self, **kwargs: Any) -> list[dict[str, Any]]:
+        ds = self._data.get("personas", {})
+        return list(ds.values()) if isinstance(ds, dict) else list(ds)
+
+    def get_persona(self, persona_id: str | None) -> dict[str, Any] | None:
+        ds = self._data.get("personas", {})
+        if isinstance(ds, dict):
+            return ds.get(str(persona_id or ""))
+        return next((p for p in ds if p.get("id") == persona_id or p.get("persona_id") == persona_id), None)
+
+    def get_telemetry_summary(self, runtime_id: str | None) -> dict[str, Any] | None:
+        ds = self._data.get("telemetry_summaries", {})
+        if isinstance(ds, dict):
+            return ds.get(str(runtime_id or ""))
+        return next((t for t in ds if t.get("runtime_id") == runtime_id), None)
+
+    def get_runtime_binding(self, binding_id: str | None) -> dict[str, Any] | None:
+        ds = self._data.get("runtime_bindings") or {}
+        if isinstance(ds, dict):
+            return ds.get(str(binding_id or ""))
+        return next((r for r in ds if r.get("id") == binding_id or r.get("binding_id") == binding_id), None)
+
+    def get_runtime_binding_by_runtime_id(self, runtime_id: str | None) -> dict[str, Any] | None:
+        return self.get_runtime_binding(runtime_id)
+
+    def get_capability_snapshot_for_persona(self, persona_id: str | None) -> dict[str, Any] | None:
+        return None
+
+    def get_persona_capabilities(self, persona_id: str | None) -> dict[str, Any] | None:
+        return None
+
+
 @contextmanager
 def _v5_store(*, seed_incidents: bool = True) -> Iterator[TestClient]:
-    import json as _json
-    with tempfile.TemporaryDirectory() as td:
-        snapshot_path = os.path.join(td, "read_surfaces.json")
-        if seed_incidents:
-            with open(snapshot_path, "w") as f:
-                _json.dump({"incidents": _INCIDENT_SEED}, f)
-        original_store = bff_main.read_store
-        store = ReadSurfaceStore(
-            snapshot_path,
-            allow_local_snapshot_fallback=seed_incidents,
-        )
-        bff_main.read_store = store
-        try:
-            yield TestClient(bff_main.app, raise_server_exceptions=False)
-        finally:
-            bff_main.read_store = original_store
+    original_store = bff_main.read_store
+    bff_main.read_store = V5LoopSentinelTestReadPorts(seed_incidents=seed_incidents)
+    try:
+        yield TestClient(bff_main.app, raise_server_exceptions=False)
+    finally:
+        bff_main.read_store = original_store
 
 
 def test_v5_loop_runs_list_returns_200(monkeypatch):
@@ -380,32 +580,16 @@ def _v5_fallback_store(
     loop_runs_data: Optional[dict] = None,
     sentinel_findings_data: Optional[dict] = None,
 ) -> Iterator[TestClient]:
-    import json as _json
-    from unittest.mock import patch
-
-    with tempfile.TemporaryDirectory() as td:
-        env_overrides: dict = {}
-        if loop_runs_data is not None:
-            lr_path = os.path.join(td, "loop_runs.json")
-            with open(lr_path, "w") as f:
-                _json.dump(loop_runs_data, f)
-            env_overrides["PANTHEON_BFF_LOOP_RUN_STORE"] = lr_path
-        if sentinel_findings_data is not None:
-            sf_path = os.path.join(td, "sentinel_findings.json")
-            with open(sf_path, "w") as f:
-                _json.dump(sentinel_findings_data, f)
-            env_overrides["PANTHEON_BFF_SENTINEL_FINDING_STORE"] = sf_path
-
-        # No incidents seeded — snapshot path points to a non-existent file
-        snapshot_path = os.path.join(td, "read_surfaces.json")
-        original_store = bff_main.read_store
-        store = ReadSurfaceStore(snapshot_path, allow_local_snapshot_fallback=False)
-        bff_main.read_store = store
-        with patch.dict(os.environ, env_overrides):
-            try:
-                yield TestClient(bff_main.app, raise_server_exceptions=False)
-            finally:
-                bff_main.read_store = original_store
+    original_store = bff_main.read_store
+    bff_main.read_store = V5LoopSentinelTestReadPorts(
+        seed_incidents=False,
+        loop_runs_data=loop_runs_data,
+        sentinel_findings_data=sentinel_findings_data,
+    )
+    try:
+        yield TestClient(bff_main.app, raise_server_exceptions=False)
+    finally:
+        bff_main.read_store = original_store
 
 
 _LOOP_RUNS_SEED = {
@@ -472,20 +656,13 @@ def test_v5_loop_runs_empty_incidents_source_not_missing(monkeypatch):
     """Regression: when incidents source is available but has zero records,
     meta.surfaces.loop_runs.source must NOT be 'missing' and items must be []."""
     monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "true")
-    # Seed an empty incidents dict in snapshot
-    import json as _json
-    with tempfile.TemporaryDirectory() as td:
-        snapshot_path = os.path.join(td, "read_surfaces.json")
-        with open(snapshot_path, "w") as f:
-            _json.dump({"incidents": {}}, f)
-        original_store = bff_main.read_store
-        store = ReadSurfaceStore(snapshot_path, allow_local_snapshot_fallback=True)
-        bff_main.read_store = store
-        try:
-            client = TestClient(bff_main.app, raise_server_exceptions=False)
-            response = client.get("/bff/v5/loop-runs", headers=HEADERS)
-        finally:
-            bff_main.read_store = original_store
+    original_store = bff_main.read_store
+    bff_main.read_store = V5LoopSentinelTestReadPorts(seed_incidents={})
+    try:
+        client = TestClient(bff_main.app, raise_server_exceptions=False)
+        response = client.get("/bff/v5/loop-runs", headers=HEADERS)
+    finally:
+        bff_main.read_store = original_store
     assert response.status_code == 200, response.text
     payload = response.json()
     surface = payload.get("meta", {}).get("surfaces", {}).get("loop_runs", {})
@@ -763,6 +940,14 @@ def test_l12_bff_replay_route_requires_mfa_approval_and_audits_actor(
     bff_main.downstream_health_monitor = monitor
     try:
         client = TestClient(bff_main.app, raise_server_exceptions=False)
+        no_mfa_headers = {"Authorization": "Bearer op-execute-plans:operator,reviewer,admin:tenant-dev"}
+        unauthorized = client.post(
+            "/bff/v5/downstream-health/dlq/replay",
+            headers=no_mfa_headers,
+            json={"event_id": event_id},
+        )
+        assert unauthorized.status_code == 403
+
         missing_approval = client.post(
             "/bff/v5/downstream-health/dlq/replay",
             headers=HEADERS,
@@ -1097,3 +1282,114 @@ def test_l12_bff_recovery_survives_delivered_history_retention(
     assert resolved["status"] == "resolved"
     assert resolved["incident_id"] == incident["incident_id"]
     assert restarted.get_state()["delivery"]["backlog"] == 0
+
+
+def test_command_executor_post_and_get_json_integration_with_downstream_monitor(tmp_path, monkeypatch):
+    import command_executor
+    target_url = "http://127.0.0.1:28097"
+    monkeypatch.setenv("PANTHEON_SOURCE_INGEST_API_URL", target_url)
+    monitor = DownstreamHealthMonitor(
+        state_path=str(tmp_path / "test_downstream.sqlite3"),
+        incidents_url="",
+        error_rate_window_seconds=300,
+        error_rate_threshold=0.5,
+        error_rate_min_samples=1,
+    )
+    bff_main.downstream_health_monitor = monitor
+
+    class MockResponse:
+        def __init__(self, status=200, body=b'{"status":"ok"}'):
+            self.status = status
+            self._body = body
+        def read(self):
+            return self._body
+        def __enter__(self):
+            return self
+        def __exit__(self, exc_type, exc_val, exc_tb):
+            pass
+
+    def mock_urlopen(req, timeout=None):
+        if req.full_url.startswith(target_url):
+            return MockResponse(200, b'{"result":"success"}')
+        raise urllib.error.HTTPError(req.full_url, 500, "Internal Error", {}, None)
+
+    monkeypatch.setattr("urllib.request.urlopen", mock_urlopen)
+
+    res_post = command_executor._post_json(f"{target_url}/api/ingest", {"test": 1})
+    assert res_post == {"result": "success"}
+
+    res_get = command_executor._get_json(f"{target_url}/api/status")
+    assert res_get == {"result": "success"}
+
+    state = monitor.get_state()
+    target_state = state["targets"].get("source-ingest")
+    assert target_state is not None
+    assert target_state["ok"] is True
+
+
+def test_worker_functional_health_probing_and_paper_signal_producer_attribution(tmp_path, monkeypatch):
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "true")
+    health_file = tmp_path / "paper-signal-producer-health.json"
+    health_payload = {
+        "worker_name": "paper-signal-producer",
+        "status": "degraded",
+        "ready": False,
+        "ok": False,
+        "reason": "artifact_store_missing",
+        "ticks": 5,
+    }
+    health_file.write_text(json.dumps(health_payload), encoding="utf-8")
+    monkeypatch.setenv("PAPER_PRODUCER_HEALTH_FILE", str(health_file))
+
+    monitor = DownstreamHealthMonitor(
+        state_path=str(tmp_path / "downstream_worker.sqlite3"),
+        incidents_url="",
+    )
+    bff_main.downstream_health_monitor = monitor
+
+    asyncio.run(monitor._probe_all())
+    state = monitor.get_state()
+    target_info = state["targets"].get("paper-signal-producer")
+    assert target_info is not None
+    assert target_info["ok"] is False
+    assert "artifact_store_missing" in str(target_info.get("failure_reason"))
+
+    with _v5_store(seed_incidents=False) as client:
+        response = client.get("/bff/v5/downstream-health", headers=HEADERS)
+        assert response.status_code == 200, response.text
+        data = response.json().get("data", {})
+        assert data.get("targets", {}).get("paper-signal-producer", {}).get("ok") is False
+        assert "artifact_store_missing" in str(data.get("targets", {}).get("paper-signal-producer", {}).get("failure_reason"))
+
+        response_loop = client.get("/bff/v5/loop-health", headers=HEADERS)
+        assert response_loop.status_code == 200, response_loop.text
+        items = response_loop.json().get("items", [])
+        capital_loop = next((item for item in items if item.get("loop_id") == "capital_pool_execution"), None)
+        assert capital_loop is not None
+        downstream_state = capital_loop.get("downstream_actual_state", {})
+        assert downstream_state.get("status") == "unobserved"
+
+
+def test_loop_12_controller_truth_publication(tmp_path, monkeypatch):
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "true")
+    monitor = DownstreamHealthMonitor(
+        state_path=str(tmp_path / "downstream_loop12.sqlite3"),
+        incidents_url="",
+    )
+    bff_main.downstream_health_monitor = monitor
+
+    record = monitor.publish_loop_12_controller_truth()
+    assert record["loop_id"] == "bff_health_monitoring"
+    assert record["controller_name"] == "bff_downstream_health_monitor"
+    assert record["truth_level"] == "reconciled_live_proof"
+    assert record["status"] in {"ready", "degraded"}
+    assert "downstream_actual_state" in record
+
+    with _v5_store(seed_incidents=False) as client:
+        response = client.get("/bff/v5/loop-health/bff_health_monitoring", headers=HEADERS)
+    assert response.status_code == 200, response.text
+    data = response.json().get("data", {})
+    assert data.get("loop_id") == "bff_health_monitoring"
+    assert data.get("read_model") == "loop_health"
+
+

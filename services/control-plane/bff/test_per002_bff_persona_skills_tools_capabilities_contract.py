@@ -15,6 +15,7 @@ Acceptance criteria:
 """
 from __future__ import annotations
 
+import json
 import os
 import sys
 import tempfile
@@ -26,7 +27,7 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, os.path.dirname(__file__))
 
 import main as bff_main
-from read_store import ReadSurfaceStore
+from ports import ReadSurfacePorts, create_in_memory_read_surface_ports, create_read_surface_ports
 
 OPERATOR_AUTH = "Bearer per002-op:operator"
 HEADERS = {"Authorization": OPERATOR_AUTH}
@@ -35,31 +36,63 @@ HEADERS = {"Authorization": OPERATOR_AUTH}
 PERSONA_ID = "persona-alpha"
 UNKNOWN_PERSONA_ID = "persona-does-not-exist-per002"
 
+CAPABILITY_SNAPSHOT = {
+    "snapshot_id": "cap-001",
+    "persona_id": PERSONA_ID,
+    "effective_skills": ["risk_review", "incident_triage"],
+    "effective_tools": ["signal_read", "artifact_load", "telemetry_query"],
+    "effective_workflows": ["promotion_review", "incident_response"],
+    "restrictions": ["no_live_trade_without_approval"],
+    "created_at": "2026-04-11T07:55:00Z",
+    "generated_at": "2026-04-11T07:55:00Z",
+}
+
+
+def _capability_read_surface_double() -> ReadSurfacePorts:
+    store = create_in_memory_read_surface_ports(
+        persona_capital_runtime_kwargs={
+            "personas": [
+                {
+                    "id": PERSONA_ID,
+                    "persona_id": PERSONA_ID,
+                    "name": "Alpha Trader",
+                    "lifecycle_state": "paper",
+                    "status": "active",
+                }
+            ]
+        },
+    )
+    store.get_capability_snapshot_for_persona = lambda persona_id: (
+        json.loads(json.dumps(CAPABILITY_SNAPSHOT))
+        if persona_id == PERSONA_ID
+        else None
+    )
+    return store
+
 
 @contextmanager
 def _bff_client(*, fallback: bool = True) -> Iterator[TestClient]:
-    with tempfile.TemporaryDirectory() as td:
-        original_store = bff_main.read_store
-        original_skill_registry = dict(bff_main._SKILL_REGISTRY)
-        original_tool_registry = dict(bff_main._TOOL_REGISTRY)
-        original_persona_overlay = dict(bff_main._PERSONA_BFF_OVERLAY)
-        try:
-            bff_main.read_store = ReadSurfaceStore(
-                os.path.join(td, "read_surfaces.json"),
-                allow_local_snapshot_fallback=fallback,
-            )
-            bff_main._SKILL_REGISTRY.clear()
-            bff_main._TOOL_REGISTRY.clear()
-            bff_main._PERSONA_BFF_OVERLAY.clear()
-            yield TestClient(bff_main.app)
-        finally:
-            bff_main.read_store = original_store
-            bff_main._SKILL_REGISTRY.clear()
-            bff_main._SKILL_REGISTRY.update(original_skill_registry)
-            bff_main._TOOL_REGISTRY.clear()
-            bff_main._TOOL_REGISTRY.update(original_tool_registry)
-            bff_main._PERSONA_BFF_OVERLAY.clear()
-            bff_main._PERSONA_BFF_OVERLAY.update(original_persona_overlay)
+    original_store = bff_main.read_store
+    original_skill_registry = dict(bff_main._SKILL_REGISTRY)
+    original_tool_registry = dict(bff_main._TOOL_REGISTRY)
+    original_persona_overlay = dict(bff_main._PERSONA_BFF_OVERLAY)
+    try:
+        if fallback:
+            bff_main.read_store = _capability_read_surface_double()
+        else:
+            bff_main.read_store = create_read_surface_ports()
+        bff_main._SKILL_REGISTRY.clear()
+        bff_main._TOOL_REGISTRY.clear()
+        bff_main._PERSONA_BFF_OVERLAY.clear()
+        yield TestClient(bff_main.app)
+    finally:
+        bff_main.read_store = original_store
+        bff_main._SKILL_REGISTRY.clear()
+        bff_main._SKILL_REGISTRY.update(original_skill_registry)
+        bff_main._TOOL_REGISTRY.clear()
+        bff_main._TOOL_REGISTRY.update(original_tool_registry)
+        bff_main._PERSONA_BFF_OVERLAY.clear()
+        bff_main._PERSONA_BFF_OVERLAY.update(original_persona_overlay)
 
 
 # ---------------------------------------------------------------------------

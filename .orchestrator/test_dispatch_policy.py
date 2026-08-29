@@ -7,17 +7,48 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from dispatch_policy import (
+    ALLOWLISTED_EXECUTION_RESOURCES,
     DEFAULT_ACTIVE_WORKER_STATUSES,
-    DEFAULT_ORPHANED_QUEUE_EVENT_GRACE_SECONDS,
     REASON_OWNED_FINALIZE,
     REASON_OWNED_IN_PROGRESS,
     REASON_OWNED_READY,
     REASON_REVIEW_READY,
     dispatch_reason_priority,
     is_execution_dispatch_reason,
+    is_operator_exact_head_acceptance,
+    normalize_execution_resources,
     normalized_status_set,
     ready_dispatch_settings,
+    task_execution_resources,
 )
+
+
+def operator_accepted_task(**overrides):
+    head_sha = "b" * 40
+    task = {
+        "id": "ABC-001",
+        "status": "review_approved",
+        "review_binding": {
+            "pr": 100,
+            "head_sha": head_sha,
+            "head_branch": "task/ABC-001",
+            "base": "dev",
+        },
+        "operator_acceptance": {
+            "pr": 100,
+            "head_sha": head_sha,
+            "head_branch": "task/ABC-001",
+            "base": "dev",
+            "decision": "operator-accept",
+            "actor": "Human/Ops",
+            "mode": "operator_exact_head",
+            "operator_acceptance_proof_ref": (
+                "refs/tags/pantheon-review/operator-accept/" + head_sha
+            ),
+        },
+    }
+    task.update(overrides)
+    return task
 
 
 @pytest.mark.parametrize(
@@ -50,6 +81,33 @@ def test_is_execution_dispatch_reason_cases(reason: str | None, expected: bool) 
     assert is_execution_dispatch_reason(reason) is expected
 
 
+def test_operator_exact_head_acceptance_is_a_non_worker_lane() -> None:
+    assert is_operator_exact_head_acceptance(operator_accepted_task()) is True
+
+
+@pytest.mark.parametrize(
+    "task",
+    [
+        operator_accepted_task(status="in_progress"),
+        operator_accepted_task(operator_acceptance={}),
+        operator_accepted_task(
+            operator_acceptance={
+                **operator_accepted_task()["operator_acceptance"],
+                "actor": "Codex",
+            }
+        ),
+        operator_accepted_task(
+            operator_acceptance={
+                **operator_accepted_task()["operator_acceptance"],
+                "head_sha": "c" * 40,
+            }
+        ),
+    ],
+)
+def test_malformed_operator_acceptance_does_not_suppress_dispatch(task) -> None:
+    assert is_operator_exact_head_acceptance(task) is False
+
+
 def test_ready_dispatch_settings_current_defaults() -> None:
     settings = ready_dispatch_settings({})
     assert settings["enabled"] is True
@@ -60,8 +118,8 @@ def test_ready_dispatch_settings_current_defaults() -> None:
     assert settings["worker_terminal_statuses"] == ["review", "done", "review_approved"]
     assert settings["active_worker_statuses"] == DEFAULT_ACTIVE_WORKER_STATUSES
     assert settings["max_dispatches_per_tick"] == 4
-    assert settings["orphaned_queue_event_grace_seconds"] == DEFAULT_ORPHANED_QUEUE_EVENT_GRACE_SECONDS
     assert settings["max_concurrent_per_account"] == {}
+    assert settings["execution_resource_limits"] == {"pantheon-dev": 1}
     for retired in (
         "disabled_agents",
         "max_tasks_per_agent",
@@ -95,3 +153,96 @@ def test_ready_dispatch_settings_preserves_only_supplied_current_values() -> Non
 
 def test_normalized_status_set_is_case_normalized() -> None:
     assert normalized_status_set(["Review", "DONE"], ["todo"]) == {"review", "done"}
+
+
+def test_ready_dispatch_settings_execution_resource_limits() -> None:
+    # Default is {'pantheon-dev': 1}
+    assert ready_dispatch_settings({})["execution_resource_limits"] == {"pantheon-dev": 1}
+    assert ready_dispatch_settings({"ready_dispatcher": {}})["execution_resource_limits"] == {"pantheon-dev": 1}
+    assert ready_dispatch_settings({
+        "ready_dispatcher": {"execution_resource_limits": {"pantheon-dev": 1}}
+    })["execution_resource_limits"] == {"pantheon-dev": 1}
+
+    # Rejection cases
+    with pytest.raises(ValueError, match="boolean True is not allowed"):
+        ready_dispatch_settings({"ready_dispatcher": {"execution_resource_limits": {"pantheon-dev": True}}})
+
+    with pytest.raises(ValueError, match="expected int, got str"):
+        ready_dispatch_settings({"ready_dispatcher": {"execution_resource_limits": {"pantheon-dev": "1"}}})
+
+    with pytest.raises(ValueError, match="value must be 1, got 0"):
+        ready_dispatch_settings({"ready_dispatcher": {"execution_resource_limits": {"pantheon-dev": 0}}})
+
+    with pytest.raises(ValueError, match="value must be 1, got 2"):
+        ready_dispatch_settings({"ready_dispatcher": {"execution_resource_limits": {"pantheon-dev": 2}}})
+
+    with pytest.raises(ValueError, match="Unknown execution resource limit key"):
+        ready_dispatch_settings({"ready_dispatcher": {"execution_resource_limits": {"custom-res": 1}}})
+
+
+def test_normalize_execution_resources_valid_and_normalization() -> None:
+    assert ALLOWLISTED_EXECUTION_RESOURCES == frozenset({"pantheon-dev"})
+    assert normalize_execution_resources([]) == []
+    assert normalize_execution_resources(["pantheon-dev"]) == ["pantheon-dev"]
+    assert normalize_execution_resources(["  PANTHEON-DEV  "]) == ["pantheon-dev"]
+
+
+def test_normalize_execution_resources_rejections() -> None:
+    # Explicit null
+    with pytest.raises(ValueError, match="must be a list, got null"):
+        normalize_execution_resources(None)
+
+    # Non-list
+    with pytest.raises(ValueError, match="must be a list"):
+        normalize_execution_resources("pantheon-dev")
+    with pytest.raises(ValueError, match="must be a list"):
+        normalize_execution_resources(123)
+    with pytest.raises(ValueError, match="must be a list"):
+        normalize_execution_resources({"pantheon-dev": 1})
+
+    # Non-string element
+    with pytest.raises(ValueError, match="elements must be strings"):
+        normalize_execution_resources([123])
+    with pytest.raises(ValueError, match="elements must be strings"):
+        normalize_execution_resources([None])
+
+    # Empty / whitespace string element
+    with pytest.raises(ValueError, match="cannot be empty"):
+        normalize_execution_resources([""])
+    with pytest.raises(ValueError, match="cannot be empty"):
+        normalize_execution_resources(["   "])
+
+    # Unallowlisted resource
+    with pytest.raises(ValueError, match="unallowlisted resource"):
+        normalize_execution_resources(["unknown-res"])
+    with pytest.raises(ValueError, match="allowlisted execution resources"):
+        normalize_execution_resources(["vm-staging"])
+
+    # Duplicate resource
+    with pytest.raises(ValueError, match="duplicate resource"):
+        normalize_execution_resources(["pantheon-dev", "pantheon-dev"])
+    with pytest.raises(ValueError, match="duplicate resource"):
+        normalize_execution_resources(["pantheon-dev", "  PANTHEON-DEV "])
+
+
+def test_task_execution_resources_cases() -> None:
+    # Omitted => []
+    assert task_execution_resources(None) == []
+    assert task_execution_resources({}) == []
+    assert task_execution_resources({"id": "TASK-1"}) == []
+    assert task_execution_resources({"id": "TASK-1", "execution_resources": []}) == []
+
+    # Valid
+    assert task_execution_resources({"id": "TASK-1", "execution_resources": ["pantheon-dev"]}) == ["pantheon-dev"]
+
+    # Fails closed on explicit null / malformed / unallowlisted
+    with pytest.raises(ValueError, match="must be a list, got null"):
+        task_execution_resources({"id": "TASK-1", "execution_resources": None})
+    with pytest.raises(ValueError, match="elements must be strings"):
+        task_execution_resources({"id": "TASK-1", "execution_resources": [123]})
+    with pytest.raises(ValueError, match="cannot be empty"):
+        task_execution_resources({"id": "TASK-1", "execution_resources": [""]})
+    with pytest.raises(ValueError, match="unallowlisted resource"):
+        task_execution_resources({"id": "TASK-1", "execution_resources": ["bad"]})
+    with pytest.raises(ValueError, match="duplicate resource"):
+        task_execution_resources({"id": "TASK-1", "execution_resources": ["pantheon-dev", "pantheon-dev"]})

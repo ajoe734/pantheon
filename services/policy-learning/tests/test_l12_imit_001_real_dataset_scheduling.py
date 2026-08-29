@@ -218,7 +218,7 @@ def test_dataset_authority_resolves_independently_of_policy_store_backend() -> N
 
 
 def test_default_product_path_trains_on_real_tenant_dataset() -> None:
-    """End-to-end: discover -> propose -> claim -> train -> evaluate."""
+    """End-to-end: propose -> claim -> train -> evaluate."""
 
     with tempfile.TemporaryDirectory() as data_dir:
         svc = _load_service_module(data_dir)
@@ -230,11 +230,18 @@ def test_default_product_path_trains_on_real_tenant_dataset() -> None:
 
         tick = client.post(
             "/api/policy-learning/shadow-eval-tick",
-            json={"tick_id": "tick-real", "eval_type": "imitation"},
+            json={
+                "tick_id": "tick-real",
+                "eval_type": "imitation",
+                "dataset_refs": [
+                    {"id": "dsv-real-1", "dataset_version_id": "dsv-real-1"},
+                    {"id": "dsv-real-2", "dataset_version_id": "dsv-real-2"},
+                ],
+            },
         )
         assert tick.status_code == 201
         body = tick.json()
-        assert body["dataset_source"] == "agora_dataset_version"
+        assert body["dataset_source"] == "explicit_refs"
         assert body["dataset_mode"] == "product"
         assert body["seed_fallback_used"] is False
         assert body["candidate_count"] == 2
@@ -267,24 +274,18 @@ def test_default_product_path_trains_on_real_tenant_dataset() -> None:
 
 
 def test_discovery_skips_observe_and_ineligible_records() -> None:
-    """Only learning-eligible learn-kind versions become candidates."""
+    """Only learning-eligible learn-kind versions are listed for training."""
 
-    with tempfile.TemporaryDirectory() as data_dir:
-        svc = _load_service_module(data_dir)
-        _install_authority(
-            svc,
-            [
-                _agora_record("dsv-learn", order=1),
-                _agora_record("dsv-observe", dataset_kind="observe", order=2),
-                _agora_record("dsv-opted-out", learning_eligible=False, order=3),
-            ],
-        )
-        client = _client(svc)
-
-        tick = client.post("/api/policy-learning/shadow-eval-tick", json={"tick_id": "tick-filter"})
-        assert tick.json()["candidate_count"] == 1
-        candidate = client.get("/api/policy-learning/candidates").json()[0]
-        assert candidate["dataset_ref"]["dataset_version_id"] == "dsv-learn"
+    authority_module = _load_authority_module()
+    authority = authority_module.AgoraDatasetAuthority(
+        records=[
+            _agora_record("dsv-learn", order=1),
+            _agora_record("dsv-observe", dataset_kind="observe", order=2),
+            _agora_record("dsv-opted-out", learning_eligible=False, order=3),
+        ]
+    )
+    versions = authority.list_dataset_versions(tenant_id="tenant-a")
+    assert [v.dataset_version_id for v in versions] == ["dsv-learn"]
 
 
 # ---------------------------------------------------------------------------
@@ -308,14 +309,25 @@ def test_discovery_is_scoped_to_one_tenant() -> None:
 
         tick_a = client_a.post(
             "/api/policy-learning/shadow-eval-tick",
-            json={"tick_id": "tick-a", "tenant_id": "tenant-a"},
+            json={
+                "tick_id": "tick-a",
+                "tenant_id": "tenant-a",
+                "dataset_refs": [{"id": "dsv-a1", "dataset_version_id": "dsv-a1", "tenant_id": "tenant-a"}],
+            },
         ).json()
         assert tick_a["candidate_count"] == 1
         assert tick_a["tenant_id"] == "tenant-a"
 
         tick_b = client_b.post(
             "/api/policy-learning/shadow-eval-tick",
-            json={"tick_id": "tick-b", "tenant_id": "tenant-b"},
+            json={
+                "tick_id": "tick-b",
+                "tenant_id": "tenant-b",
+                "dataset_refs": [
+                    {"id": "dsv-b1", "dataset_version_id": "dsv-b1", "tenant_id": "tenant-b"},
+                    {"id": "dsv-b2", "dataset_version_id": "dsv-b2", "tenant_id": "tenant-b"},
+                ],
+            },
         ).json()
         assert tick_b["candidate_count"] == 2
 
@@ -381,7 +393,13 @@ def test_unreachable_authority_degrades_every_candidate_without_seed() -> None:
         _install_authority(svc, [_agora_record("dsv-1", order=1)])
         authority_module = _service_authority_module()
         client = _client(svc)
-        client.post("/api/policy-learning/shadow-eval-tick", json={"tick_id": "tick-drop"})
+        client.post(
+            "/api/policy-learning/shadow-eval-tick",
+            json={
+                "tick_id": "tick-drop",
+                "dataset_refs": [{"id": "dsv-1", "dataset_version_id": "dsv-1"}],
+            },
+        )
 
         # The authority goes away between proposal and processing.
         svc.DATASET_AUTHORITY = authority_module.AgoraDatasetAuthority(backend="", dsn="")
@@ -450,8 +468,26 @@ def test_duplicate_tick_creates_no_duplicate_candidates() -> None:
         _install_authority(svc, [_agora_record("dsv-1", order=1), _agora_record("dsv-2", order=2)])
         client = _client(svc)
 
-        first = client.post("/api/policy-learning/shadow-eval-tick", json={"tick_id": "tick-dup"}).json()
-        second = client.post("/api/policy-learning/shadow-eval-tick", json={"tick_id": "tick-dup"}).json()
+        first = client.post(
+            "/api/policy-learning/shadow-eval-tick",
+            json={
+                "tick_id": "tick-dup",
+                "dataset_refs": [
+                    {"id": "dsv-1", "dataset_version_id": "dsv-1"},
+                    {"id": "dsv-2", "dataset_version_id": "dsv-2"},
+                ],
+            },
+        ).json()
+        second = client.post(
+            "/api/policy-learning/shadow-eval-tick",
+            json={
+                "tick_id": "tick-dup",
+                "dataset_refs": [
+                    {"id": "dsv-1", "dataset_version_id": "dsv-1"},
+                    {"id": "dsv-2", "dataset_version_id": "dsv-2"},
+                ],
+            },
+        ).json()
         assert first["candidate_count"] == 2
         assert second["candidate_count"] == 0
         assert second["skipped_count"] == 2
@@ -475,11 +511,23 @@ def test_same_dataset_version_in_two_tenants_is_not_deduped_together() -> None:
 
         created_a = client_a.post(
             "/api/policy-learning/shadow-eval-tick",
-            json={"tick_id": "tick-shared", "tenant_id": "tenant-a"},
+            json={
+                "tick_id": "tick-shared",
+                "tenant_id": "tenant-a",
+                "dataset_refs": [
+                    {"id": "dsv-shared", "dataset_version_id": "dsv-shared", "evidence_id": "ev-a", "tenant_id": "tenant-a"}
+                ],
+            },
         ).json()
         created_b = client_b.post(
             "/api/policy-learning/shadow-eval-tick",
-            json={"tick_id": "tick-shared", "tenant_id": "tenant-b"},
+            json={
+                "tick_id": "tick-shared",
+                "tenant_id": "tenant-b",
+                "dataset_refs": [
+                    {"id": "dsv-shared", "dataset_version_id": "dsv-shared", "evidence_id": "ev-b", "tenant_id": "tenant-b"}
+                ],
+            },
         ).json()
         assert created_a["candidate_count"] == 1
         assert created_b["candidate_count"] == 1
@@ -583,7 +631,16 @@ def test_restart_recovers_orphaned_claims_and_replays_them() -> None:
         svc = _load_service_module(data_dir)
         _install_authority(svc, [_agora_record("dsv-1", order=1), _agora_record("dsv-2", order=2)])
         client = _client(svc)
-        client.post("/api/policy-learning/shadow-eval-tick", json={"tick_id": "tick-restart"})
+        client.post(
+            "/api/policy-learning/shadow-eval-tick",
+            json={
+                "tick_id": "tick-restart",
+                "dataset_refs": [
+                    {"id": "dsv-1", "dataset_version_id": "dsv-1"},
+                    {"id": "dsv-2", "dataset_version_id": "dsv-2"},
+                ],
+            },
+        )
 
         # Worker A claims everything, then dies before settling.
         claimed = client.post(
@@ -623,7 +680,13 @@ def test_dlq_replay_reruns_a_failed_candidate() -> None:
         svc = _load_service_module(data_dir)
         _install_authority(svc, [_agora_record("dsv-1", order=1)])
         client = _client(svc)
-        tick = client.post("/api/policy-learning/shadow-eval-tick", json={"tick_id": "tick-dlq"})
+        tick = client.post(
+            "/api/policy-learning/shadow-eval-tick",
+            json={
+                "tick_id": "tick-dlq",
+                "dataset_refs": [{"id": "dsv-1", "dataset_version_id": "dsv-1"}],
+            },
+        )
         candidate_id = tick.json()["candidate_ids"][0]
 
         failed = svc.store.get_candidate(candidate_id)
@@ -688,7 +751,13 @@ def test_candidate_cannot_be_promoted_or_reach_runtime() -> None:
         svc = _load_service_module(data_dir)
         _install_authority(svc, [_agora_record("dsv-1", order=1)])
         client = _client(svc)
-        tick = client.post("/api/policy-learning/shadow-eval-tick", json={"tick_id": "tick-gate"})
+        tick = client.post(
+            "/api/policy-learning/shadow-eval-tick",
+            json={
+                "tick_id": "tick-gate",
+                "dataset_refs": [{"id": "dsv-1", "dataset_version_id": "dsv-1"}],
+            },
+        )
         candidate_id = tick.json()["candidate_ids"][0]
         client.post("/api/policy-learning/worker/process", json={"worker_id": "worker-1"})
 
@@ -713,7 +782,13 @@ def test_processed_candidate_carries_no_runtime_authority() -> None:
         svc = _load_service_module(data_dir)
         _install_authority(svc, [_agora_record("dsv-1", order=1)])
         client = _client(svc)
-        client.post("/api/policy-learning/shadow-eval-tick", json={"tick_id": "tick-authority"})
+        client.post(
+            "/api/policy-learning/shadow-eval-tick",
+            json={
+                "tick_id": "tick-authority",
+                "dataset_refs": [{"id": "dsv-1", "dataset_version_id": "dsv-1"}],
+            },
+        )
         client.post("/api/policy-learning/worker/process", json={"worker_id": "worker-1"})
 
         candidate = client.get("/api/policy-learning/candidates").json()[0]

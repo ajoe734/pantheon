@@ -1,0 +1,83 @@
+{
+  "schema_version": "pantheon.product_functional_closure.task_review.v1",
+  "task": {
+    "id": "PFG-MGMT-AI-RESPONSES-DEV-20260823",
+    "title": "Enable and prove OpenClaw Responses for dev Management AI",
+    "owner": "Codex2",
+    "reviewer": "Antigravity2",
+    "status": "review_pending",
+    "repository": "ajoe734/pantheon",
+    "base_branch": "dev",
+    "task_branch": "task/PFG-MGMT-AI-RESPONSES-DEV-20260823",
+    "review_file": "docs/deployment/evidence/product-functional-closure/PFG-MGMT-AI-RESPONSES-DEV-20260823/evidence.json",
+    "evidence_cut_at": "2026-08-23"
+  },
+  "scope": {
+    "owned_layer": "OpenClaw OpenResponses activation, non-empty Management AI stream handling, bounded answer-readiness verification, and dev proof.",
+    "not_changing": [
+      "Source ingestion remains manual-only; no scheduler or connector setting is changed.",
+      "Management frontend E2E scope and BFF route ownership are unchanged.",
+      "Broker, paper, canary, live, and capital-binding gates remain false and fail closed."
+    ],
+    "changed_files": [
+      "docker-compose.yml",
+      "scripts/openclaw-configure-shared-model-pool.sh",
+      "scripts/openclaw-assistant-openclaw-live-smoke.sh",
+      "services/openclaw-gateway-adapter/assistant_openclaw_provider.py",
+      "services/openclaw-gateway-adapter/test_assistant_openclaw_provider_live.py",
+      "services/openclaw-gateway-adapter/test_compose_activation.py",
+      "docs/deployment/evidence/product-functional-closure/PFG-MGMT-AI-RESPONSES-DEV-20260823/README.md",
+      "docs/deployment/evidence/product-functional-closure/PFG-MGMT-AI-RESPONSES-DEV-20260823/evidence.json"
+    ],
+    "composes_with": [
+      "PFG-MGMT-AI-PROVIDER-20260820 bounded provider-answer contract",
+      "PFG-DEV-INTEGRATION-20260820 root Compose deployment admission"
+    ]
+  },
+  "activation_contract": {
+    "upstream_setting": "gateway.http.endpoints.responses.enabled=true",
+    "compose_behavior": "The openclaw-gateway startup command persists the upstream opt-in before starting the token-authenticated gateway, avoiding healthy-but-404 recreated volumes.",
+    "root_deploy_behavior": "openclaw-configure-shared-model-pool.sh reconciles and reads back the same true value before its required gateway restart.",
+    "adapter_readiness": "auth_probe=true is a bounded actual CLI agent answer; URL-only inventory reports not_checked rather than ready.",
+    "adapter_stream": "The adapter normalizes OpenResponses SSE and returns done only for non-empty assistant text. HTTP 404 maps to OPENCLAW_RESPONSES_DISABLED; empty completion maps to OPENCLAW_RESPONSES_EMPTY."
+  },
+  "validation": {
+    "environment": "checkout-scoped .venv-pantheon; no provider credential, source-ingestion write, broker, or capital authority used",
+    "commands": [
+      {
+        "command": "git diff --check",
+        "result": "pass"
+      },
+      {
+        "command": "bash -n scripts/openclaw-configure-shared-model-pool.sh scripts/openclaw-assistant-openclaw-live-smoke.sh",
+        "result": "pass"
+      },
+      {
+        "command": "docker compose --profile openclaw config --quiet",
+        "result": "pass"
+      },
+      {
+        "command": "python3 scripts/dev/provision_python_distribution.py --print-python && <returned-python> -m pytest -q services/openclaw-gateway-adapter/test_compose_activation.py services/openclaw-gateway-adapter/test_assistant_openclaw_provider_live.py services/openclaw-gateway-adapter/test_main.py",
+        "result": "145 passed, 4 skipped, 18 subtests passed"
+      }
+    ]
+  },
+  "hosted_proof": {
+    "status": "awaiting_reviewed_dev_merge_and_deployment",
+    "deployment_gate": "The protected dev deployment workflow intentionally rejects a task branch and deploys only the exact current dev SHA. Independent review therefore binds this manifest before merge; hosted proof is then run under the normal shared dev-environment lease before owner closeout.",
+    "required_command": "OPENCLAW_GATEWAY_ADAPTER_URL=http://localhost:18104 bash scripts/openclaw-assistant-openclaw-live-smoke.sh",
+    "required_result": "readiness has a bounded completed answer probe; an adapter OpenResponses SSE turn returns OPENCLAW_LIVE, a non-empty done text, and transport=responses_http without exposing credentials."
+  },
+  "review": {
+    "status": "pending_independent_review",
+    "reviewer_instruction": "Independently check the exact PR head and bind this already-committed manifest with AI_NAME=Antigravity2 REVIEW_FILE=<this path> through the governed approve command. The owner must complete the normal current-dev hosted proof before closeout.",
+    "owner_claim": "Owner evidence is ready for independent review; hosted proof remains a post-merge closeout precondition."
+  },
+  "delivery": {
+    "anchor_commit": {
+      "sha": "de13c2ff4",
+      "subject": "PFG-MGMT-AI-RESPONSES-DEV-20260823: anchor Responses activation"
+    },
+    "pull_request": "pending"
+  }
+}

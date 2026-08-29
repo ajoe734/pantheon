@@ -34,7 +34,7 @@ from typing import Any, Callable, Mapping, Sequence
 import pytest
 
 
-TASK_ID = "L12-CURRENT-E2E-RESEARCH-20260814"
+TASK_ID = "L12-GAP-F07-E2E-RESEARCH-20260818"
 REPO_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_REPORT_PATH = (
     REPO_ROOT
@@ -52,7 +52,7 @@ CASE_NAMES = (
     "persona_teaching",
 )
 OWNER_SERVICES = {
-    "source_ingestion": "source-ingest-scheduler",
+    "source_ingestion": "source-ingest",
     "strategy_distillation": "strategy-distillation-worker",
     "alpha_replication": "alpha-replication-worker",
     "persona_teaching": "training-session-preview-worker",
@@ -472,41 +472,31 @@ class DeployedResearchHarness:
             ),
         )
         self._require(isinstance(configured, Mapping), "connector command did not return an object")
-        scheduled = self._at(
-            "source.scheduled_trigger",
-            lambda: self._http_json(
-                self.source_url,
-                f"/api/source-ingest/connectors/{urllib.parse.quote(connector_id, safe='')}/schedule",
-                method="PUT",
-                payload={"interval_seconds": 1, "enabled": True},
-            ),
-        )
-        schedule = scheduled.get("schedule") if isinstance(scheduled, Mapping) else None
-        self._require(
-            isinstance(schedule, Mapping) and schedule.get("connector_id") == connector_id,
-            "schedule command did not preserve connector identity",
-        )
-        case["trigger"] = {
-            "type": "connector_schedule",
-            "id": connector_id,
-            "trace_id": trace_id,
-        }
-
-        self._at(
-            "source.job_trigger",
+        headers = self._source_ingest_headers()
+        job_result = self._at(
+            "source.manual_pull_job",
             lambda: self._http_json(
                 self.source_url,
                 "/api/source-ingest/jobs",
                 method="POST",
-                headers=self._source_ingest_headers(),
                 payload={
                     "connector_id": connector_id,
+                    "trigger_type": "manual",
                     "trace_id": trace_id,
-                    "trigger_type": "scheduled",
                 },
+                headers=headers,
                 expected=(201,),
             ),
         )
+        job_run = job_result.get("run") if isinstance(job_result, Mapping) else None
+        ingest_run_id = job_run.get("ingest_run_id") if isinstance(job_run, Mapping) else None
+        self._require(bool(ingest_run_id), "manual pull job did not return ingest_run_id")
+        case["trigger"] = {
+            "type": "manual_pull_job",
+            "id": connector_id,
+            "ingest_run_id": ingest_run_id,
+            "trace_id": trace_id,
+        }
 
         source = self._source_record(
             self._at(
@@ -540,6 +530,12 @@ class DeployedResearchHarness:
             None,
         )
         latest = connector_row.get("latest_source_record") if isinstance(connector_row, Mapping) else None
+        schedule_info = connector_row.get("schedule") if isinstance(connector_row, Mapping) else None
+        self._require(
+            schedule_info is None or not schedule_info.get("enabled", False),
+            "connector schedule must be null or disabled after manual bounded pull",
+        )
+        schedule_enabled = schedule_info.get("enabled", False) if isinstance(schedule_info, Mapping) else False
         self._require(
             isinstance(latest, Mapping) and latest.get("source_id") == source_id,
             "source controller actual-state readback lacks the exact SourceRecord identity",
@@ -549,6 +545,7 @@ class DeployedResearchHarness:
             "schema_version": controller_readback.get("schema_version"),
             "source_id": latest.get("source_id"),
             "connector_id": connector_id,
+            "schedule_enabled": schedule_enabled,
         }
         registry_id = f"reg-strategy-spec-{source_id}-{digest.removeprefix('sha256:')[:12]}"
         distill_owner = self._at(

@@ -1,0 +1,24 @@
+{
+  "capacity": {
+    "backlog_age_p95_seconds": 0.0,
+    "batch_latency_p95_seconds": 3.2823761228937656,
+    "batch_size": 500,
+    "gate_failures": [],
+    "peak_rss_bytes": 50958336,
+    "sample_count": 2000,
+    "steady_rss_bytes": 50958336,
+    "total_events": 1000000,
+    "total_loop_runs": 150000
+  },
+  "gate_failures": []
+}
+fault[restart] passed=True checkpoint=32 accepted_after_restart=16 receipts=32 rpo=0 schema=lifecycle_capacity_fault_scenario_restart_d2f91b133b5c teardown=True
+fault[sigkill_mid_publish] passed=True killed=True converged=True checkpoint=32 duplicates=32 receipts=32 stages=32 rpo=0 schema=lifecycle_capacity_fault_scenario_sigkill_mid_publish_7e736ca5c738 teardown=True
+fault[db_disconnect_then_retry] passed=True disconnect=True receipts_before_retry=0 checkpoint=32 accepted=32 rpo=0 schema=lifecycle_capacity_fault_scenario_db_disconnect_then_retry_e9fb5ae60ca6 teardown=True
+fault[deadlock_then_retry] passed=True outcomes=['DeadlockDetected', 'committed'] checkpoint=32 accepted=32 rpo=0 schema=lifecycle_capacity_fault_scenario_deadlock_then_retry_8af48575ee42 teardown=True
+fault[transaction_rollback] passed=True threw=True receipts_before_retry=0 controller_before_retry=0 converged=True rpo=0 schema=lifecycle_capacity_fault_scenario_transaction_rollback_876bf9e36523 teardown=True
+fault[second_writer_conflict] passed=True rejected=True receipts=32 checkpoint=32 rpo=0 schema=lifecycle_capacity_fault_scenario_second_writer_conflict_2d8f21e086b8 teardown=True
+fault[duplicate_delivery] passed=True first_accepted=32 second_duplicates=32 schema=lifecycle_capacity_fault_scenario_duplicate_delivery_5c72e87c7ed1 teardown=True
+fault[out_of_order_delivery] passed=True checkpoint=32 schema=lifecycle_capacity_fault_scenario_out_of_order_delivery_9db608e83555 teardown=True
+fault[conflicting_duplicate] passed=True rejected=True receipts=32 rpo=0 schema=lifecycle_capacity_fault_scenario_conflicting_duplicate_5547b850ecc7 teardown=True
+fault[quarantine] passed=True quarantined=1 durable_quarantine_rows=1 checkpoint=1 schema=lifecycle_capacity_fault_scenario_quarantine_d2093e81438b teardown=True

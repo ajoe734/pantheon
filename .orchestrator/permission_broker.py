@@ -7,6 +7,7 @@ import os
 import re
 import shlex
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -121,6 +122,52 @@ SAFE_BASH_PATTERNS = [
     re.compile(r"^ss\s+"),
     re.compile(r"^netstat\s+"),
 ]
+
+
+def load_broker_runtime_config() -> dict[str, Any]:
+    """Load immutable broker policy with mutable state bound to status root.
+
+    The broker executable/config belongs to ``PANTHEON_COMMAND_ROOT`` while
+    runtime state belongs to the supervisor coordination root.  Keeping that
+    distinction here prevents a promoted worker from either writing into an
+    immutable/shared source checkout or treating its delivery worktree as
+    governance authority.
+    """
+
+    config = load_config()
+    raw_status_root = str(os.environ.get("PANTHEON_STATUS_ROOT") or "").strip()
+    if not raw_status_root:
+        return config
+
+    status_root = Path(os.path.expanduser(raw_status_root))
+    if not status_root.is_absolute():
+        raise RuntimeError("PANTHEON_STATUS_ROOT must be absolute for permission broker state")
+    status_root = status_root.resolve()
+    if not status_root.is_dir():
+        raise RuntimeError(
+            f"PANTHEON_STATUS_ROOT does not exist for permission broker state: {status_root}"
+        )
+
+    rebound = dict(config)
+    paths = dict(config.get("paths") or {})
+    paths.update(
+        {
+            "status_file": str(status_root / "ai-status.json"),
+            "activity_log": str(status_root / "ai-activity-log.jsonl"),
+            "current_work": str(status_root / "current-work.md"),
+            "dashboard": str(status_root / "docs-site" / "index.html"),
+            "state_file": str(status_root / ".orchestrator" / "state.json"),
+            "approval_queue": str(status_root / ".orchestrator" / "approval-queue.json"),
+            "provider_capabilities": str(
+                status_root / ".orchestrator" / "provider_capabilities.json"
+            ),
+            "claude_mcp_config": str(
+                status_root / ".orchestrator" / "claude-approval-broker.mcp.json"
+            ),
+        }
+    )
+    rebound["paths"] = paths
+    return rebound
 DEFER_BASH_PATTERNS = [
     re.compile(r"^git (add|commit|remote set-url|submodule)(\s|$)"),
     re.compile(r"^(curl|wget)(\s|$)"),
@@ -850,6 +897,100 @@ def _collect_paths(tool_input: dict[str, Any]) -> list[Path]:
     return candidates
 
 
+def _active_lease_workspace_root(config: dict[str, Any] | None = None) -> Path | None:
+    """Return this worker's exact active isolated-worktree lease, if any.
+
+    Workspace environment variables are candidate-visible launch context, not
+    authority on their own.  Bind both variables to the central runtime worker
+    record and its current canonical task generation before extending the
+    broker's configured write roots.
+    """
+
+    run_id = str(os.environ.get("ORCH_RUN_ID") or "").strip()
+    task_id = str(os.environ.get("ORCH_TASK_ID") or "").strip()
+    agent_id = normalize_agent_id(os.environ.get("ORCH_AGENT_ID"))
+    raw_worktree_root = str(os.environ.get("PANTHEON_WORKTREE_ROOT") or "").strip()
+    raw_workspace_path = str(os.environ.get("ORCH_WORKSPACE_PATH") or "").strip()
+    if not all((run_id, task_id, agent_id, raw_worktree_root, raw_workspace_path)):
+        return None
+
+    env_roots: list[Path] = []
+    for raw_path in (raw_worktree_root, raw_workspace_path):
+        candidate = Path(os.path.expanduser(raw_path))
+        if not candidate.is_absolute():
+            return None
+        env_roots.append(candidate.resolve())
+    workspace_root = env_roots[0]
+    if env_roots[1] != workspace_root:
+        return None
+
+    try:
+        runtime_config = config if config is not None else load_broker_runtime_config()
+        runtime_state = load_runtime_state(runtime_config)
+        status_state = load_status(runtime_config)
+    except Exception:
+        return None
+    workers = runtime_state.get("workers")
+    if not isinstance(workers, dict):
+        return None
+    worker = workers.get(run_id)
+    if not isinstance(worker, dict):
+        return None
+    if str(worker.get("run_id") or "").strip() != run_id:
+        return None
+    if str(worker.get("status") or "").strip() != "running":
+        return None
+    if str(worker.get("task_id") or "").strip() != task_id:
+        return None
+    if normalize_agent_id(worker.get("agent_id")) != agent_id:
+        return None
+    if str(worker.get("workspace_mode") or "").strip() != "isolated_worktree":
+        return None
+
+    tasks = status_state.get("tasks")
+    if not isinstance(tasks, list):
+        return None
+    task = next(
+        (item for item in tasks if str(item.get("id") or "").strip() == task_id),
+        None,
+    )
+    if not isinstance(task, dict):
+        return None
+    if normalize_agent_id(task.get("owner")) != agent_id:
+        return None
+    raw_worker_generation = worker.get("task_generation")
+    raw_task_generation = task.get("generation")
+    if isinstance(raw_worker_generation, bool) or isinstance(raw_task_generation, bool):
+        return None
+    try:
+        worker_generation = int(raw_worker_generation)
+        canonical_generation = int(raw_task_generation)
+    except (TypeError, ValueError):
+        return None
+    if (
+        worker_generation < 1
+        or canonical_generation < 1
+        or worker_generation != canonical_generation
+    ):
+        return None
+
+    raw_expiry = str(worker.get("lease_expires_at") or "").strip()
+    try:
+        expires_at = datetime.fromisoformat(raw_expiry.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if expires_at.tzinfo is None or datetime.now(timezone.utc) >= expires_at:
+        return None
+
+    raw_worker_workspace = str(worker.get("workspace_path") or "").strip()
+    if not raw_worker_workspace:
+        return None
+    worker_workspace = Path(os.path.expanduser(raw_worker_workspace))
+    if not worker_workspace.is_absolute() or worker_workspace.resolve() != workspace_root:
+        return None
+    return workspace_root
+
+
 def _allowed_workspace_roots(config: dict[str, Any] | None = None) -> list[Path]:
     roots = [ROOT, ROOT.parent / "pantheon"]
     configured = ((config or {}).get("permission_broker", {}) or {}).get("allowed_workspace_roots", [])
@@ -861,6 +1002,9 @@ def _allowed_workspace_roots(config: dict[str, Any] | None = None) -> list[Path]
             if not candidate.is_absolute():
                 candidate = ROOT / candidate
             roots.append(candidate.resolve())
+    lease_root = _active_lease_workspace_root(config)
+    if lease_root is not None:
+        roots.append(lease_root)
     return list(dict.fromkeys(roots))
 
 
@@ -1818,7 +1962,7 @@ def hook_mode(config: dict[str, Any], event_name: str, payload: dict[str, Any]) 
 
 def main() -> int:
     args = parse_args()
-    config = load_config()
+    config = load_broker_runtime_config()
 
     if args.command == "classify":
         print(classify_command(args.shell_command))

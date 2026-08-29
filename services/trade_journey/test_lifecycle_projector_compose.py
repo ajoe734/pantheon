@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 import yaml
@@ -25,30 +26,22 @@ def test_canonical_lifecycle_projector_is_default_and_owns_both_read_models():
     assert environment["TELEMETRY_DB_DSN"].startswith(
         "${TELEMETRY_DB_DSN:-postgresql://"
     )
-    assert environment["LIFECYCLE_PROJECTION_ROOT"] == "/data/bff/lifecycle-projection"
-    assert (
-        environment["LIFECYCLE_PROJECTOR_STATE_PATH"]
-        == "/data/bff/lifecycle-projection/controller_state.json"
+    assert environment["LIFECYCLE_PROJECTOR_WRITER_BACKEND"] == (
+        "${LIFECYCLE_PROJECTOR_WRITER_BACKEND:-shadow}"
     )
-    assert environment["LIFECYCLE_PROJECTOR_HEALTH_STATE_PATH"] == (
-        "/data/bff/lifecycle-projection/health_state.json"
+    assert environment["LIFECYCLE_PROJECTOR_PROJECTION_DSN"] == (
+        "${LIFECYCLE_PROJECTOR_PROJECTION_DSN:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}"
+    )
+    assert environment["LIFECYCLE_PROJECTOR_PROJECTION_SCHEMA"] == (
+        "${LIFECYCLE_PROJECTOR_PROJECTION_SCHEMA:-trade_journey_projection}"
     )
     assert environment["LIFECYCLE_PROJECTOR_POLL_SECONDS"] == "${LIFECYCLE_PROJECTOR_POLL_SECONDS:-1}"
-    assert environment["LIFECYCLE_PROJECTOR_GENERATION_RETENTION"] == (
-        "${LIFECYCLE_PROJECTOR_GENERATION_RETENTION:-4}"
-    )
-    assert environment["LIFECYCLE_PROJECTOR_STAGING_MAX_AGE_SECONDS"] == (
-        "${LIFECYCLE_PROJECTOR_STAGING_MAX_AGE_SECONDS:-3600}"
-    )
+    assert environment["LIFECYCLE_PROJECTOR_BATCH_SIZE"] == "${LIFECYCLE_PROJECTOR_BATCH_SIZE:-500}"
     assert environment["LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS"] == (
         "${LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS:-120}"
     )
-    assert environment["LIFECYCLE_PROJECTOR_HEALTH_MIN_FREE_BYTES"] == (
-        "${LIFECYCLE_PROJECTOR_HEALTH_MIN_FREE_BYTES:-134217728}"
-    )
-    assert environment["LIFECYCLE_PROJECTOR_HEALTH_MIN_FREE_PERCENT"] == (
-        "${LIFECYCLE_PROJECTOR_HEALTH_MIN_FREE_PERCENT:-5}"
-    )
+    assert "LIFECYCLE_PROJECTION_ROOT" not in environment
+    assert "LIFECYCLE_PROJECTOR_GENERATION_RETENTION" not in environment
     assert environment["GIT_SHA"] == "${GIT_SHA:-unknown}"
     assert "bff-data:/data/bff" in projector["volumes"]
     assert projector["depends_on"]["postgres"]["condition"] == "service_healthy"
@@ -65,18 +58,21 @@ def test_canonical_lifecycle_projector_is_default_and_owns_both_read_models():
 
     bff = services["operator-bff"]
     bff_environment = bff["environment"]
-    assert bff_environment["PANTHEON_BFF_TRADE_JOURNEY_EVENTS_STORE"] == (
-        "/data/bff/lifecycle-projection/current/trade_journey_events.json"
+    assert bff_environment["PANTHEON_BFF_TRADE_JOURNEY_READER_BACKEND"] == (
+        "${PANTHEON_BFF_TRADE_JOURNEY_READER_BACKEND:-postgres}"
     )
-    assert bff_environment["PANTHEON_BFF_LOOP_RUN_STORE"] == (
-        "/data/bff/lifecycle-projection/current/loop_runs.json"
+    assert bff_environment["PANTHEON_BFF_TRADE_JOURNEY_PROJECTION_DSN"] == (
+        "${PANTHEON_BFF_TRADE_JOURNEY_PROJECTION_DSN:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}"
     )
-    assert bff_environment["LIFECYCLE_PROJECTOR_STATE_PATH"] == (
-        "/data/bff/lifecycle-projection/controller_state.json"
+    assert bff_environment["PANTHEON_BFF_TRADE_JOURNEY_PROJECTION_SCHEMA"] == (
+        "${PANTHEON_BFF_TRADE_JOURNEY_PROJECTION_SCHEMA:-trade_journey_projection}"
     )
-    assert bff_environment["LIFECYCLE_PROJECTOR_HEALTH_STATE_PATH"] == (
-        "/data/bff/lifecycle-projection/health_state.json"
+    assert bff_environment["PANTHEON_BFF_TRADE_JOURNEY_PAGE_TOKEN_SECRET"] == (
+        "${PANTHEON_BFF_TRADE_JOURNEY_PAGE_TOKEN_SECRET:-}"
     )
+    assert "PANTHEON_BFF_TRADE_JOURNEY_EVENTS_STORE" not in bff_environment
+    assert "PANTHEON_BFF_LOOP_RUN_STORE" not in bff_environment
+    assert "LIFECYCLE_PROJECTION_ROOT" not in bff_environment
     assert bff_environment["LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS"] == (
         "${LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS:-120}"
     )
@@ -116,6 +112,54 @@ def test_default_paper_signal_producer_uses_package_safe_module_entrypoint():
     assert environment["TELEMETRY_DB_DSN"].startswith(
         "${TELEMETRY_DB_DSN:-postgresql://"
     )
+
+
+def test_lifecycle_projector_capacity_benchmark_is_profile_gated_and_bounded():
+    compose = yaml.safe_load((ROOT / "docker-compose.yml").read_text(encoding="utf-8"))
+    services = compose["services"]
+    benchmark = services["lifecycle-projector-capacity-benchmark"]
+
+    # LIFECYCLE-PROJ-CAPACITY-001: the benchmark is a distinct, opt-in job. It
+    # must never start with the default stack and must never share a writer
+    # role with the canonical projector service.
+    assert benchmark["profiles"] == ["lifecycle-capacity-benchmark"]
+    assert benchmark["restart"] == "no"
+    assert benchmark["mem_limit"] == "${LIFECYCLE_PROJECTOR_CAPACITY_MEMORY_LIMIT:-4g}"
+    assert benchmark["build"]["dockerfile"] == "services/telemetry/Dockerfile"
+    assert benchmark["command"] == [
+        "python",
+        "-m",
+        "services.trade_journey.lifecycle_projector_capacity",
+        "--events",
+        "${LIFECYCLE_PROJECTOR_CAPACITY_EVENTS:-1000000}",
+        "--loop-runs",
+        "${LIFECYCLE_PROJECTOR_CAPACITY_LOOP_RUNS:-150000}",
+        "--batch-size",
+        "${LIFECYCLE_PROJECTOR_CAPACITY_BATCH_SIZE:-500}",
+        "--output",
+        "/data/bff/lifecycle-capacity/evidence.json",
+    ]
+    assert benchmark["environment"]["TELEMETRY_DB_DSN"].startswith(
+        "${TELEMETRY_DB_DSN:-postgresql://"
+    )
+    assert benchmark["environment"]["LIFECYCLE_PROJECTOR_PROJECTION_DSN"].startswith(
+        "${LIFECYCLE_PROJECTOR_PROJECTION_DSN:-postgresql://"
+    )
+    assert benchmark["environment"]["LIFECYCLE_PROJECTOR_CAPACITY_SCHEMA"] == (
+        "${LIFECYCLE_PROJECTOR_CAPACITY_SCHEMA:-}"
+    )
+    assert "LIFECYCLE_PROJECTOR_PROJECTION_SCHEMA" not in benchmark["environment"]
+    assert "trade_journey_projection" not in json.dumps(benchmark, sort_keys=True)
+    assert benchmark["environment"]["LIFECYCLE_CAPACITY_GIT_DIRTY"] == (
+        "${LIFECYCLE_CAPACITY_GIT_DIRTY:-unknown}"
+    )
+    assert benchmark["depends_on"]["postgres"]["condition"] == "service_healthy"
+    assert benchmark["depends_on"]["telemetry"]["condition"] == "service_healthy"
+
+    default_services = yaml.safe_load(
+        (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+    )["services"]
+    assert "profiles" not in default_services["loop-run-projector-scheduler"]
 
 
 def test_hosted_lifecycle_probe_uses_mfa_bound_governed_operator():
@@ -181,8 +225,81 @@ def test_bff_only_deploy_rebuilds_its_lifecycle_projector_only():
 
     compose_up = (
         "docker compose -p pantheon -f docker-compose.yml "
-        "up -d --build --no-deps operator-bff loop-run-projector-scheduler"
+        "up -d --force-recreate --no-deps operator-bff loop-run-projector-scheduler"
     )
     assert bff_block.count(compose_up) == 1
     assert "runtime-manager" not in compose_up
     assert "paper-fleet" not in compose_up
+
+
+def test_rendered_compose_operator_bff_readiness_with_postgres_reader(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    compose = yaml.safe_load((ROOT / "docker-compose.yml").read_text(encoding="utf-8"))
+    services = compose["services"]
+    projector_env = services["loop-run-projector-scheduler"]["environment"]
+    bff_env = services["operator-bff"]["environment"]
+
+    # loop-run-projector-scheduler defines LIFECYCLE_PROJECTOR_WRITER_BACKEND
+    assert "LIFECYCLE_PROJECTOR_WRITER_BACKEND" in projector_env
+    assert projector_env["LIFECYCLE_PROJECTOR_WRITER_BACKEND"] == (
+        "${LIFECYCLE_PROJECTOR_WRITER_BACKEND:-shadow}"
+    )
+
+    # operator-bff in docker-compose.yml post-cutover default is postgres
+    assert bff_env["PANTHEON_BFF_TRADE_JOURNEY_READER_BACKEND"] == (
+        "${PANTHEON_BFF_TRADE_JOURNEY_READER_BACKEND:-postgres}"
+    )
+
+    import sys
+    from datetime import datetime, timezone
+    from fastapi.testclient import TestClient
+
+    bff_dir = str(ROOT / "services" / "control-plane" / "bff")
+    if bff_dir not in sys.path:
+        sys.path.insert(0, bff_dir)
+    import main as bff_main  # noqa: E402
+
+    monkeypatch.setenv("PANTHEON_RUNTIME_MANAGER_URL", "http://runtime-manager:8081")
+    monkeypatch.setenv("PANTHEON_GOVERNANCE_APPROVAL_API_URL", "http://governance:8082")
+    monkeypatch.setenv("PANTHEON_DEPLOYMENT_API_URL", "http://deployment:8095")
+    monkeypatch.setenv("PANTHEON_BFF_TRADE_JOURNEY_READER_BACKEND", "postgres")
+    monkeypatch.delenv("LIFECYCLE_PROJECTOR_WRITER_BACKEND", raising=False)
+    monkeypatch.setenv("PANTHEON_BFF_TRADE_JOURNEY_HEALTH_ENVIRONMENT", "paper")
+    monkeypatch.setenv("GIT_SHA", "rendered-sha")
+    monkeypatch.setenv("LIFECYCLE_PROJECTION_ROOT", str(tmp_path))
+
+    controller = {
+        "controller_id": "canonical-lifecycle-projector",
+        "checkpoint": 100,
+        "source_high_watermark": 100,
+        "backlog": 0,
+        "generation": 1,
+        "deployment_sha": "rendered-sha",
+        "mode": "live",
+        "status": "ready",
+        "accepted_live": True,
+        "last_poll_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "last_error": None,
+        "quarantine_count": 0,
+    }
+
+    class Reader:
+        def controller_freshness(self, **kwargs):
+            return dict(controller)
+
+    monkeypatch.setattr(
+        bff_main.read_store,
+        "trade_journey_projection_reader",
+        lambda: Reader(),
+    )
+
+    client = TestClient(bff_main.app)
+    res = client.get("/readyz")
+    assert res.status_code == 200, res.text
+    dep = res.json()["dependencies"]["lifecycle_projector"]
+    assert dep["ready"] is True
+    assert dep["reader_backend"] == "postgres"
+    assert dep["writer_backend"] == "postgres"
+    assert dep["reasons"] == []

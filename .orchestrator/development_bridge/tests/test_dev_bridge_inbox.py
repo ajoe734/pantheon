@@ -213,6 +213,65 @@ def test_queue_and_drain_packet_inbox_materializes_tasks(tmp_path: Path, monkeyp
     ]
 
 
+def test_recovery_rearms_exact_signed_packet_after_pre_verifier_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo_root = _write_fake_repo(tmp_path)
+    packet = sign_packet(
+        _make_packet("pkt_pre_verifier_recovery"),
+        key_store={"assistant-bridge-dev": TEST_KEY},
+    )
+    queue_task_packet(
+        packet,
+        repo_root=str(repo_root),
+        key_store={"assistant-bridge-dev": TEST_KEY},
+    )
+    public_verifier = os.environ["BRIDGE_SIGNING_PUBLIC_KEYS_JSON"]
+    monkeypatch.delenv("BRIDGE_SIGNING_PUBLIC_KEYS_JSON")
+
+    drained = drain_task_packet_inbox(repo_root=str(repo_root))
+
+    assert drained["errorCount"] == 1
+    assert drained["errors"][0]["error"] == "BRIDGE_SIGNING_PUBLIC_KEYS_JSON is required"
+    receipt_path = (
+        repo_root
+        / ".orchestrator"
+        / "assistant-dev-packets"
+        / "receipts"
+        / f"{packet.packet_id}.json"
+    )
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    assert "result" not in receipt
+
+    monkeypatch.setenv("BRIDGE_SIGNING_PUBLIC_KEYS_JSON", public_verifier)
+    recovered = recover_failed_task_packet(
+        packet.packet_id,
+        repo_root=str(repo_root),
+        key_store={"assistant-bridge-dev": TEST_KEY},
+    )
+
+    assert recovered["status"] == "recovered"
+    assert (
+        repo_root
+        / ".orchestrator"
+        / "assistant-dev-packets"
+        / "pending"
+        / f"{packet.packet_id}.json"
+    ).is_file()
+    with pytest.raises(ValueError, match="does not bind the exact signed packet"):
+        dev_bridge_inbox._validate_recovery_receipt_payload(
+            {
+                "packetId": packet.packet_id,
+                "status": "error",
+                "error": "unrelated failure",
+            },
+            packet_id=packet.packet_id,
+            packet_digest_value=packet_digest(packet),
+            expected_status="failed",
+        )
+
+
 def test_queue_accepts_dev_docs_response_envelope_and_rejects_duplicates(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

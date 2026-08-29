@@ -1,0 +1,157 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://pantheon/alpha-signal-record/v1",
+  "title": "Pantheon AlphaSignalRecord v1",
+  "description": "Schema for structured vendor alpha signal and factor records.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "alpha_vendor_id",
+    "signal_id",
+    "signal_version",
+    "field_schema_version",
+    "universe",
+    "entity_id",
+    "event_time",
+    "as_of_time",
+    "available_time",
+    "ingest_time",
+    "values",
+    "units",
+    "corporate_action_policy",
+    "survivorship_policy",
+    "license_scope",
+    "allowed_use",
+    "entitlement_tags",
+    "provider_record_ref",
+    "body_hash"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "enum": [
+        "alpha_signal_record.v1"
+      ]
+    },
+    "alpha_vendor_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "signal_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "signal_version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "field_schema_version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "universe": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "entity_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "event_time": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?(?:Z|[+-]\\d{2}:\\d{2})$"
+    },
+    "as_of_time": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?(?:Z|[+-]\\d{2}:\\d{2})$"
+    },
+    "available_time": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?(?:Z|[+-]\\d{2}:\\d{2})$"
+    },
+    "ingest_time": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?(?:Z|[+-]\\d{2}:\\d{2})$"
+    },
+    "values": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {
+        "type": [
+          "number",
+          "string",
+          "boolean",
+          "null"
+        ]
+      }
+    },
+    "units": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "currency": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "corporate_action_policy": {
+      "type": "string",
+      "enum": [
+        "provider_adjusted",
+        "pantheon_adjusted",
+        "raw"
+      ]
+    },
+    "survivorship_policy": {
+      "type": "string",
+      "enum": [
+        "point_in_time",
+        "survivor_only"
+      ]
+    },
+    "license_scope": {
+      "type": "string",
+      "enum": [
+        "restricted",
+        "vendor",
+        "enterprise_research",
+        "official_reference"
+      ]
+    },
+    "allowed_use": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "entitlement_tags": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "provider_record_ref": {
+      "type": "string",
+      "minLength": 1
+    },
+    "body_hash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    }
+  },
+  "additionalProperties": false
+}

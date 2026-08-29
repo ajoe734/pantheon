@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, os.path.dirname(__file__))
 
 import main as bff_main
-from read_store import ReadSurfaceStore
+from ports import create_in_memory_read_surface_ports
 
 
 OPERATOR_TOKEN = "Bearer op-2:operator"
@@ -18,9 +18,19 @@ OPERATOR_TOKEN = "Bearer op-2:operator"
 def test_pkt004_binding_list_route_honors_persona_id_filter() -> None:
     with tempfile.TemporaryDirectory() as td:
         original_store = bff_main.read_store
-        bff_main.read_store = ReadSurfaceStore(
-            os.path.join(td, "read_surfaces.json"),
-            allow_local_snapshot_fallback=True,
+        bff_main.read_store = create_in_memory_read_surface_ports(
+            persona_capital_runtime_kwargs={
+                "bindings": [
+                    {
+                        "id": "binding-042",
+                        "binding_id": "binding-042",
+                        "persona_id": "persona-alpha",
+                        "capital_pool_id": "pool-main",
+                        "role": "primary",
+                        "validity": "active",
+                    }
+                ]
+            }
         )
         client = TestClient(bff_main.app)
 
@@ -50,15 +60,12 @@ def test_pkt004_binding_list_route_honors_persona_id_filter() -> None:
 
 def test_pkt004_binding_list_store_honors_persona_id_filter_before_returning_rows() -> None:
     with tempfile.TemporaryDirectory() as td:
-        store = ReadSurfaceStore(
-            os.path.join(td, "read_surfaces.json"),
-            allow_local_snapshot_fallback=True,
-        )
-        store._canonical.list_records = lambda dataset: (
-            True,
-            [
-                {
-                    "binding_id": "binding-001",
+        store = create_in_memory_read_surface_ports(
+            persona_capital_runtime_kwargs={
+                "bindings": [
+                    {
+                        "id": "binding-001",
+                        "binding_id": "binding-001",
                     "persona_id": "persona-alpha",
                     "capital_pool_id": "pool-main",
                     "role": "primary",
@@ -66,8 +73,9 @@ def test_pkt004_binding_list_store_honors_persona_id_filter_before_returning_row
                     "status": "active",
                     "allowed_deployment_scope": "paper",
                 },
-                {
-                    "binding_id": "binding-002",
+                    {
+                        "id": "binding-002",
+                        "binding_id": "binding-002",
                     "persona_id": "persona-beta",
                     "capital_pool_id": "pool-main",
                     "role": "backup",
@@ -75,8 +83,9 @@ def test_pkt004_binding_list_store_honors_persona_id_filter_before_returning_row
                     "status": "inactive",
                     "allowed_deployment_scope": "paper",
                 },
-            ],
-        ) if dataset == "persona_bindings" else (False, [])
+                ]
+            }
+        )
 
         bindings = store.list_bindings(persona_id="persona-alpha", validity="active")
         assert [binding["id"] for binding in bindings] == ["binding-001"]

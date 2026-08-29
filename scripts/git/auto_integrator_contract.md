@@ -6,18 +6,47 @@ Status: conservative first implementation for `OPS-AUTO-INTEGRATOR-001`.
 integration step:
 
 ```text
-review_approved task -> clean task PR into dev -> local rebase smoke -> merge
-or unblock task
+review_approved task OR active canonical merge_then_review task
+-> clean task PR into dev -> local rebase smoke -> merge or unblock task
 ```
 
 ## Safety Model
 
-- Default mode is dry-run. `--execute` is required for git/GitHub/task-state
-  mutations.
-- A lock at `.orchestrator/auto-integrator.lock` permits one integration pass at
-  a time.
-- Only active `ai-status.json` tasks with `status=review_approved` are eligible.
-- The PR head must be `task/<TASK-ID>` and the base must be `dev`.
+- Default mode is dry-run. `--execute` is reserved for the scheduled canonical
+  supervisor integration runner; workers, reviewers, and PR helpers never use
+  it.
+- A kernel `flock` at `.orchestrator/auto-integrator.lock` permits one
+  integration pass at a time. The file retains PID/owner metadata for
+  diagnostics, recovers a dead legacy owner, and never displaces a live owner.
+  A concurrent scheduled pass is a bounded successful skip with
+  `reason=integration_lock_held`; malformed or unusable lock state remains a
+  nonzero `integration_lock_error`.
+- Review-before-merge rows are eligible only at `status=review_approved`.
+  Active `in_progress`/`review` rows are also eligible when canonical policy
+  resolution explicitly honors `merge_then_review` (owner and reviewer are not
+  independent). Approved rows are evaluated first so an unfinished
+  merge-then-review row cannot starve them. `ReviewGate` performs the final
+  policy decision against the live PR before merge.
+- Repository scope is resolved per task via `.orchestrator/multi_repo_registry.py`:
+  derives repository ID (`pantheon`, `execute_plans`), GitHub slug (`ajoe734/pantheon`,
+  `ajoe734/execute-plans`), local checkout root, and target branch (`dev`).
+  Path authority is anchored in `PANTHEON_STATUS_ROOT` / status file, ensuring
+  sibling repository paths (e.g. `../code/execute-plans`) resolve against the
+  canonical coordination root.
+- While holding the integration lock, preflight verifies that the target root
+  exists, is an absolute clean Git repository root, both the checkout and Git
+  common dir are writable, and its origin matches the configured repository
+  slug. Missing, dirty, read-only, invalid, or mismatched checkouts fail closed
+  before PR review or merge operations.
+- The PR head must be `task/<TASK-ID>` and the base must match the target repository's
+  configured default branch (e.g. `dev`).
+- The PR URL's GitHub slug must match the candidate's resolved repository slug.
+  A mismatched slug, unrecognized `target_repo`, or conflicting multi-repository
+  artifacts fails closed with a blocking unblock task (`invalid-repository-scope` or
+  `repository_mismatch`).
+- All git fetch/rebase/smoke operations and GitHub CLI merge calls execute in the
+  resolved local repository root for that candidate, while canonical status tracking
+  and unblock task creation remain anchored in `PANTHEON_STATUS_ROOT`.
 - Draft PRs, truly missing PRs, required failing checks, missing checks, dirty merge
   states, and rebase conflicts are not merged.
 - Status check classification uses a data-driven required-versus-diagnostic
@@ -40,31 +69,37 @@ or unblock task
   optional diagnostic checks fail) is recognized as an eligible merge state when
   all required status checks pass.
 - Merge authority is delegated to `scripts/git/task_review_merge_gate.py`.
-  For a task whose canonical contract requires independent review the
-  integrator merges only the exact reviewer-approved head, never enables
-  GitHub auto-merge, never force-pushes a rebase over the reviewed head, and
-  revokes an auto-merge request it finds on a gated PR — including on the
-  approved path, since a standing request would outlive the merge and arm the
-  next push (the PR #4227 shape).
+  Every policy is pinned to the exact PR head used for its gate, checks, and
+  smoke. The integrator never enables GitHub auto-merge, never rewrites that
+  head, and revokes any standing auto-merge request before proceeding. A
+  review-before-merge task additionally requires that exact head's canonical
+  reviewer approval.
 - Two open PRs claiming the same task branch fail closed instead of resolving
   to the first row.
-- If the open PR is already gone because GitHub merged it before the status
-  row moved to `done`, the integrator may verify the merged PR's merge commit
-  is already in `origin/dev` and run the normal owner `done` reconciliation.
+- If the open PR is already gone because GitHub merged it, the integrator
+  verifies the merged PR's merge commit is already in `origin/<target-branch>`
+  and reports `already_merged`, preserving canonical task status without
+  opening spurious unblock tasks or mutating task status to `done`.
 - The integrator never resolves conflicts and never bypasses branch protection.
-- Blockers create an `INTEGRATION-UNBLOCK-*` task instead of leaving the parent
-  stranded.
+- Blockers create an `INTEGRATION-UNBLOCK-*` task in the canonical status store
+  instead of leaving the parent stranded.
 
 ## Merge Flow
 
-For each eligible task, capped by `max_tasks_per_run`:
+For each eligible task, capped by `max_tasks_per_run` after observational
+`waiting`, `not_ready`, and `already_merged` results are skipped:
 
-1. Read the task row from `ai-status.json`.
-2. Find the open PR for `task/<TASK-ID>` into `dev`.
+1. Read the task row from canonical `ai-status.json` (`PANTHEON_STATUS_ROOT` or `--status-file`)
+   and resolve repository scope (`repository_id`, `repository_slug`,
+   dedicated `integration_path`, `target_branch`). Live execution refuses a
+   repository without an explicit integration path.
+2. Find the open PR for `task/<TASK-ID>` into the candidate's `target_branch` within `repository_root`.
 3. If no open PR exists, check for a merged PR from the same head/base whose
-   merge commit is already in `origin/dev`; if found, reconcile the task to
-   `done` and stop.
-4. If no open or already-merged PR exists, create a missing-PR unblock task.
+   merge commit is already in `origin/<target-branch>`; if found, report `already_merged`
+   and leave the task in `review_approved` for owner finalization.
+4. If an active merge-then-review row has not opened a PR yet, report
+   `not_ready` and continue scanning. Other missing-PR cases create an unblock
+   task in `PANTHEON_STATUS_ROOT`.
 5. Evaluate the review-before-merge gate against this exact PR head. Any
    pending auto-merge request on a gated PR is revoked here, before the CI and
    merge-state probes, whatever the gate decided - a PR that ends up `waiting`
@@ -77,20 +112,19 @@ For each eligible task, capped by `max_tasks_per_run`:
    emitted - approval of this head does not make it safe to merge alongside a
    standing grant.
 7. Require green GitHub status rollup.
-8. Fetch `origin/dev` and the task branch.
-9. Create a temporary detached worktree for the task branch.
-10. Rebase that worktree onto `origin/dev`.
-11. Run configured smoke commands.
-12. Merge-then-review tasks only: if the rebase changed the task branch and
-    `--execute` is active, push with `--force-with-lease` and enable
-    auto-merge so CI can re-run. A gated task branch is never pushed; if it
-    needs a refreshed head the result is `waiting` and the owner must rebase
-    and obtain a new approval for the new head.
-13. If no push was needed and the PR is still mergeable, run `gh pr merge`,
-    with `--match-head-commit <approved-oid>` for a gated task so a concurrent
-    finalize cannot slip a different head into the merge.
-14. After merge, run `scripts/ai_status.py done` as the task owner so the normal
-    delivery gate archives the task.
+8. Fetch `origin/<target-branch>` and the task branch in the dedicated
+   integration checkout.
+9. Create a temporary detached worktree at the gate decision's exact head and
+   run configured smoke commands. The integrator never pushes or rewrites it.
+10. Reload canonical state into a fresh `ReviewGate`, refetch the PR, and
+    require unchanged policy, owner, reviewer, head, and green checks.
+11. Call the synchronous GitHub REST merge endpoint with `sha=<exact-head>`
+    and `merge_method=merge`. Only `merged: true` is success; every refusal is
+    waiting/blocked and never becomes an auto-merge or queue request.
+12. After merge, preserve canonical task status. A review-before-merge row
+    remains `review_approved` for supervisor `owned_finalize_dispatch`; an
+    active merge-then-review row proceeds through its post-merge review/finalize
+    lifecycle. The integrator never mutates canonical task state to `done`.
 
 ## Configuration
 
@@ -114,10 +148,11 @@ Optional settings live under `.orchestrator/config.json`:
 ```
 
 If no smoke commands are configured, the integrator still performs the rebase
-probe and PR status checks. Operators can pass `--smoke-command` on the CLI to
-override the config for one run.
+probe and PR status checks. `--smoke-command` and `--skip-smoke` are dry-run
+diagnostics only; live execution accepts smoke policy only from the promoted
+watchdog config.
 
-## CLI
+## Read-only CLI
 
 Dry-run one task:
 
@@ -125,28 +160,16 @@ Dry-run one task:
 python3 scripts/git/auto_integrator.py --task-id TASK-123 --json
 ```
 
-Execute one serialized integration pass:
-
-```bash
-python3 scripts/git/auto_integrator.py --execute --max-tasks 1
-```
-
-Run without opening unblock tasks:
-
-```bash
-python3 scripts/git/auto_integrator.py --execute --no-open-unblock
-```
+An isolated test may add `--no-lock`; production execution rejects
+`--execute --no-lock`.
 
 ## Scheduled Runner
 
-`scripts/run-auto-integrator.sh` is the cron-friendly wrapper. It defaults to
-`--execute --max-tasks 1` and passes the canonical status/config paths into the
-Python integrator:
-
-```bash
-PANTHEON_STATUS_ROOT=/home/lupin/pantheon \
-  bash scripts/run-auto-integrator.sh
-```
+`scripts/run-auto-integrator.sh` is the supervisor-owned cron wrapper. It
+defaults to `--execute --max-tasks 1`. The Python integrator derives canonical
+status/config/lock authority from that live config's watchdog command and the
+versioned command-runtime root; execute-mode CLI path overrides are rejected.
+Workers and PR helpers do not invoke this executing entry point.
 
 Use `AUTO_INTEGRATOR_DRY_RUN=1` for a non-mutating scheduled smoke and
 `AUTO_INTEGRATOR_MAX_TASKS=<n>` to override the default one-task limit.
@@ -168,4 +191,7 @@ minutes by default, and writes logs to
 - No automatic conflict resolution.
 - No admin merge or branch-protection bypass.
 - No broad batching; first version is intentionally serialized.
-- No publish/master promotion. That remains owned by `publish_promote.py`.
+- No publish/master promotion. “Sole task merge owner” is deliberately scoped
+  to canonical `task/* -> dev` integration. `publish_promote.py` remains the
+  separate release authority for `promote/* -> master` and may request its
+  protected release auto-merge; it cannot be used as a task-PR merge path.

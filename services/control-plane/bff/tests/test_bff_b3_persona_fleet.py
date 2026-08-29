@@ -18,7 +18,85 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 import main as bff_main
-from read_store import ReadSurfaceStore
+from typing import Any
+from pathlib import Path
+from ports import create_in_memory_read_surface_ports
+
+# Local re-implementation of read_store._load_default_fixture_pack_datasets:
+# merges the same static, committed fixture-pack JSON files directly off
+# disk, with no import from / coupling to read_store.py's adapter machinery.
+_FIXTURE_PACK_DIR = Path(os.path.dirname(os.path.dirname(__file__))) / "data"
+_FIXTURE_PACK_PATHS = (
+    _FIXTURE_PACK_DIR / "fixtures_pack_a.json",
+    _FIXTURE_PACK_DIR / "fixtures_pack_b.json",
+    _FIXTURE_PACK_DIR / "fixtures_pack_c.json",
+)
+_FIXTURE_DATASET_ALIASES = {
+    "deployments": "deployment_plans",
+    "runtimes": "runtime_bindings",
+}
+_FIXTURE_RECORD_KEYS = [
+    "id", "analysis_id", "entry_id", "decision_id", "intervention_id", "job_id",
+    "plan_id", "program_id", "pool_id", "persona_id", "server_id", "signal_id",
+    "skill_id", "session_id", "sessionId", "packet_id", "strategy_id",
+    "experiment_id", "artifact_id", "rebalance_id", "binding_id", "runtime_id",
+    "tool_id", "channel_id",
+]
+
+
+def _fixture_pack_record_key(record: Any) -> str:
+    if isinstance(record, dict):
+        for key in _FIXTURE_RECORD_KEYS:
+            value = record.get(key)
+            if value not in (None, ""):
+                return str(value)
+    return json.dumps(record, sort_keys=True, ensure_ascii=True)
+
+
+def _load_fixture_pack_file(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, json.JSONDecodeError):
+        return {}
+    datasets = payload.get("datasets") if isinstance(payload, dict) else None
+    if not isinstance(datasets, dict):
+        return {}
+    return json.loads(json.dumps(datasets))
+
+
+def _merge_fixture_pack(target: dict[str, Any], fixture: dict[str, Any]) -> None:
+    for raw_key, incoming in fixture.items():
+        key = _FIXTURE_DATASET_ALIASES.get(raw_key, raw_key)
+        if isinstance(incoming, dict):
+            existing = target.get(key)
+            if not isinstance(existing, dict):
+                target[key] = json.loads(json.dumps(incoming))
+                continue
+            for record_key, record in incoming.items():
+                if record_key not in existing:
+                    existing[record_key] = json.loads(json.dumps(record))
+            continue
+        if isinstance(incoming, list):
+            existing = target.get(key)
+            if not isinstance(existing, list):
+                target[key] = json.loads(json.dumps(incoming))
+                continue
+            seen = {_fixture_pack_record_key(record) for record in existing}
+            for record in incoming:
+                record_key = _fixture_pack_record_key(record)
+                if record_key in seen:
+                    continue
+                existing.append(json.loads(json.dumps(record)))
+                seen.add(record_key)
+
+
+def _load_default_fixture_pack_datasets() -> dict[str, Any]:
+    merged: dict[str, Any] = {}
+    for path in _FIXTURE_PACK_PATHS:
+        _merge_fixture_pack(merged, _load_fixture_pack_file(path))
+    return merged
 
 
 @pytest.fixture(autouse=True)
@@ -49,11 +127,237 @@ PERSONA_FLEET_FORBIDDEN_LIST_KEYS = {
 }
 
 
+class _PersonaFleetTestStore:
+    def __init__(self, data: dict[str, Any]) -> None:
+        self.data = data
+        raw_personas = self.data.get("personas", {})
+        if isinstance(raw_personas, list):
+            self._data = {p.get("persona_id") or p.get("id"): p for p in raw_personas}
+        elif isinstance(raw_personas, dict):
+            self._data = dict(raw_personas)
+        else:
+            self._data = {}
+        self.evolution_decisions_override = None
+
+        persona_capital_kwargs = {
+            "evolution_decisions": list(data.get("evolution_decisions", {}).values()) if isinstance(data.get("evolution_decisions"), dict) else data.get("evolution_decisions", []),
+            "personas": list(data.get("personas", {}).values()) if isinstance(data.get("personas"), dict) else data.get("personas", []),
+            "candidate_artifacts": list(data.get("candidate_artifacts", {}).values()) if isinstance(data.get("candidate_artifacts"), dict) else data.get("candidate_artifacts", []),
+            "evolution_programs": list(data.get("evolution_programs", {}).values()) if isinstance(data.get("evolution_programs"), dict) else data.get("evolution_programs", []),
+            "bindings": list(data.get("bindings", {}).values()) if isinstance(data.get("bindings"), dict) else data.get("bindings", []),
+            "capital_pools": list(data.get("capital_pools", {}).values()) if isinstance(data.get("capital_pools"), dict) else data.get("capital_pools", []),
+        }
+        lifecycle_kwargs = {
+            "incidents": data.get("incidents", {}),
+            "postmortems": data.get("postmortems", {}),
+            "kill_switch": data.get("kill_switch", {"enabled": False, "status": "armed"}),
+            "governance_audit_events": list(data.get("governance_audit_events", {}).values()) if isinstance(data.get("governance_audit_events"), dict) else data.get("governance_audit_events", []),
+            "freeze_orders": data.get("freeze_orders", {}),
+            "all_rollbacks": list((data.get("all_rollbacks") or data.get("rollbacks", {})).values()) if isinstance(data.get("all_rollbacks") or data.get("rollbacks"), dict) else (data.get("all_rollbacks") or data.get("rollbacks", [])),
+            "telemetry_summaries": list(data.get("telemetry_summaries", {}).values()) if isinstance(data.get("telemetry_summaries"), dict) else data.get("telemetry_summaries", []),
+        }
+        ooda_kwargs = {
+            "approval_decisions": list(data.get("approval_decisions", {}).values()) if isinstance(data.get("approval_decisions"), dict) else data.get("approval_decisions", []),
+            "mutation_reviews": list(data.get("mutation_reviews", {}).values()) if isinstance(data.get("mutation_reviews"), dict) else data.get("mutation_reviews", []),
+        }
+
+        class _PersonaShim:
+            def __init__(outer_self):
+                outer_self.outer = self
+            def list_personas(outer_self, **kw):
+                return outer_self.outer.list_personas(**kw)
+            def get_persona(outer_self, pid):
+                return outer_self.outer.get_persona(pid)
+            def get_bindings_for_persona(outer_self, pid):
+                return outer_self.outer.get_bindings_for_persona(pid)
+            def list_sessions_for_persona(outer_self, pid, **kw):
+                return []
+            def list_teaching_sessions_for_persona(outer_self, pid, **kw):
+                return []
+            def get_persona_capabilities(outer_self, pid):
+                return outer_self.outer.get_capability_snapshot_for_persona(pid)
+            def get_capability_snapshot_for_persona(outer_self, pid):
+                return outer_self.outer.get_capability_snapshot_for_persona(pid)
+
+        from domain_ports.persona_training import PersonaTrainingDomainPort
+        training_port = PersonaTrainingDomainPort(persona_port=_PersonaShim())
+
+        self.ports = create_in_memory_read_surface_ports(
+            persona_capital_runtime_kwargs=persona_capital_kwargs,
+            lifecycle_telemetry_governance_kwargs=lifecycle_kwargs,
+            ooda_management_kwargs=ooda_kwargs,
+        )
+        self.ports.persona_training = training_port
+
+    def create_persona(self, **kwargs: Any) -> dict[str, Any]:
+        pid = kwargs.get("persona_id") or kwargs.get("id")
+        rec = dict(kwargs)
+        rec["id"] = pid
+        rec["persona_id"] = pid
+        if "created_at" in rec and "updated_at" not in rec:
+            rec["updated_at"] = rec["created_at"]
+        self._data[pid] = rec
+        if "personas" in self.data:
+            if isinstance(self.data["personas"], dict):
+                self.data["personas"][pid] = rec
+            elif isinstance(self.data["personas"], list):
+                self.data["personas"].append(rec)
+        return rec
+
+    def list_bindings(self, **kwargs: Any) -> list[dict[str, Any]]:
+        val = self.data.get("bindings") or self.data.get("persona_bindings") or {}
+        return list(val.values()) if isinstance(val, dict) else list(val)
+
+    def list_runtime_bindings(self, **kwargs: Any) -> list[dict[str, Any]]:
+        val = self.data.get("runtime_bindings") or {}
+        return list(val.values()) if isinstance(val, dict) else list(val)
+
+    def list_personas(self, **kwargs: Any) -> list[dict[str, Any]]:
+        return list(self._data.values())
+
+    def get_persona(self, persona_id: Optional[str]) -> Optional[dict[str, Any]]:
+        if not persona_id:
+            return None
+        return self._data.get(persona_id)
+
+    def get_bindings_for_persona(self, persona_id: Optional[str]) -> list[dict[str, Any]]:
+        if not persona_id:
+            return []
+        bindings = self.list_bindings()
+        return [b for b in bindings if b.get("persona_id") == persona_id]
+
+    def list_persona_league(self, **kwargs: Any) -> list[dict[str, Any]]:
+        val = self.data.get("persona_league") or []
+        if not val:
+            personas = self.list_personas()
+            return [
+                {
+                    "id": p.get("persona_id") or p.get("id"),
+                    "persona_id": p.get("persona_id") or p.get("id"),
+                    "name": p.get("name"),
+                    "rank": i + 1,
+                    "league_tier": "champion",
+                    "score": 90.0,
+                }
+                for i, p in enumerate(personas)
+            ]
+        return list(val.values()) if isinstance(val, dict) else list(val)
+
+    def list_evolution_decisions(self, **kwargs: Any) -> list[dict[str, Any]]:
+        if self.evolution_decisions_override is not None:
+            return self.evolution_decisions_override(**kwargs)
+        val = self.data.get("evolution_decisions") or {}
+        return list(val.values()) if isinstance(val, dict) else list(val)
+
+    def get_capability_snapshot_for_persona(self, persona_id: Optional[str]) -> Optional[dict[str, Any]]:
+        snaps = self.data.get("capability_snapshots") or {}
+        if isinstance(snaps, dict) and persona_id in snaps:
+            return snaps[persona_id]
+        return {"persona_id": persona_id, "capabilities": []}
+
+    def put_ranking_snapshot(self, record: dict[str, Any]) -> dict[str, Any]:
+        self.data.setdefault("ranking_snapshots", {})[record.get("ranking_snapshot_id") or record.get("id")] = record
+        return record
+
+    def get_ranking_snapshot(self, snapshot_id: str) -> Optional[dict[str, Any]]:
+        return (self.data.get("ranking_snapshots") or {}).get(snapshot_id)
+
+    def get_quarterly_ranking_snapshot(self, period: str = "2026Q2", formula_version: str = "v1") -> Optional[dict[str, Any]]:
+        items = []
+        for i, p in enumerate(self.list_personas()):
+            pid = p.get("persona_id") or p.get("id")
+            items.append({
+                "persona_id": pid,
+                "rank": i + 1,
+                "quarter": period,
+                "score_field": "overall_score",
+                "overall_score": 85.0,
+            })
+        import hashlib
+        content_hash = hashlib.sha256(json.dumps(items, sort_keys=True).encode("utf-8")).hexdigest()
+        return {
+            "id": f"ranking-snapshot-{period}-{formula_version}",
+            "period": period,
+            "formula_version": formula_version,
+            "items": items,
+            "content_digest": content_hash,
+            "created_at": "2026-06-03T08:00:00Z",
+        }
+
+    def dataset_source(self, dataset: str) -> str:
+        key = dataset
+        if dataset == "persona_bindings" and "persona_bindings" not in self.data:
+            key = "bindings"
+        if key in self.data:
+            return "local_snapshot" if self.data[key] is not None else "missing"
+        return self.ports.dataset_source(dataset)
+
+    def __getattr__(self, name: str) -> Any:
+        attr = getattr(self.ports, name, None)
+        if attr is not None and callable(attr):
+            def _safe_wrapper(*args: Any, **kwargs: Any) -> Any:
+                try:
+                    return attr(*args, **kwargs)
+                except TypeError:
+                    return attr(*args)
+            return _safe_wrapper
+        if attr is not None:
+            return attr
+        if name.startswith("list_") and name[5:] in self.data:
+            val = self.data[name[5:]]
+            items = list(val.values()) if isinstance(val, dict) else val
+            return lambda **kw: items
+        if name.startswith("get_") and name[4:] in self.data:
+            val = self.data[name[4:]]
+            if isinstance(val, dict):
+                return lambda item_id, **kw: val.get(item_id)
+        raise AttributeError(f"'_PersonaFleetTestStore' has no attribute '{name}'")
+
+
 def _fresh_client(td: str) -> TestClient:
-    bff_main.read_store = ReadSurfaceStore(
-        os.path.join(td, "read_surfaces.json"),
-        allow_local_snapshot_fallback=True,
-    )
+    snapshot_path = os.path.join(td, "read_surfaces.json")
+    if os.path.exists(snapshot_path):
+        try:
+            with open(snapshot_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except Exception:
+            data = dict(_load_default_fixture_pack_datasets())
+    else:
+        default_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "read_surfaces.json")
+        if os.path.exists(default_path):
+            try:
+                with open(default_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+            except Exception:
+                data = dict(_load_default_fixture_pack_datasets())
+        else:
+            data = dict(_load_default_fixture_pack_datasets())
+
+    raw_fixture = _load_default_fixture_pack_datasets()
+    for k, v in raw_fixture.items():
+        if k not in data or not data[k]:
+            data[k] = v
+        elif isinstance(data[k], dict) and isinstance(v, dict):
+            data[k] = {**data[k], **v}
+        elif isinstance(data[k], list) and isinstance(v, list):
+            data[k] = [*data[k], *v]
+
+    if os.environ.get("PANTHEON_BFF_MARKET_PERSONA_SEED") == "1":
+        try:
+            # Deliberate, narrow exception: _merge_market_persona_fleet is a
+            # ~685-line synthetic US/TW/CRYPTO fleet generator with its own
+            # env-gated config-driven discovery (_market_persona_seed_enabled)
+            # and market-data-provider defaulting logic. It is not static
+            # fixture data (unlike _load_default_fixture_pack_datasets above)
+            # so it is not something a local test double can faithfully
+            # reproduce without duplicating read_store's own business logic;
+            # importing the real function here is the honest choice.
+            from read_store import _merge_market_persona_fleet
+            _merge_market_persona_fleet(data)
+        except Exception:
+            pass
+
+    bff_main.read_store = _PersonaFleetTestStore(data)
     bff_main._PERSONA_BFF_OVERLAY.clear()
     bff_main._STRATEGY_BFF_OVERLAY.clear()
     bff_main._STRATEGY_PERSONA_BFF_IDEMPOTENCY.clear()
@@ -465,3 +769,143 @@ def test_paper_rank_snapshot_is_captured_before_broader_fleet_reads() -> None:
             assert fleet_row["rank"]["basis"] == "quarterly_ranking"
         finally:
             bff_main.read_store = original
+
+
+def test_sd_agc_03_persona_list_fleet_detail_admitted_identity_symmetry() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        original = bff_main.read_store
+        try:
+            client = _fresh_client(td)
+            list_resp = client.get("/bff/personas?page_size=100", headers=OPERATOR_HEADERS)
+            fleet_resp = client.get("/bff/management/persona-fleet?page_size=100", headers=OPERATOR_HEADERS)
+
+            assert list_resp.status_code == 200, list_resp.text
+            assert fleet_resp.status_code == 200, fleet_resp.text
+
+            list_items = list_resp.json()["data"]
+            fleet_items = fleet_resp.json()["data"]["items"]
+
+            list_ids = [item["id"] for item in list_items]
+            fleet_ids = [item["id"] for item in fleet_items]
+
+            # Invariant 1: Persona list and fleet share identical admitted identity set
+            assert set(list_ids) == set(fleet_ids)
+            assert len(list_ids) == len(fleet_ids)
+            assert len(list_ids) >= 1
+
+            # Invariant 2: Page info and summary totals are consistent
+            list_page_info = list_resp.json()["page_info"]
+            fleet_summary = fleet_resp.json()["data"]["summary"]
+            assert list_page_info["canonical_total"] == len(list_ids)
+            assert fleet_summary["canonical_total"] == len(fleet_ids)
+
+            # Invariant 3: Every fleet detail link resolves with 200 and the same ID
+            for item in fleet_items:
+                persona_id = item["id"]
+                detail_resp = client.get(f"/bff/personas/{persona_id}", headers=OPERATOR_HEADERS)
+                assert detail_resp.status_code == 200, f"Detail lookup for {persona_id} failed: {detail_resp.text}"
+                detail_data = detail_resp.json()["data"]
+                assert detail_data["id"] == persona_id
+                assert detail_data["name"]
+        finally:
+            bff_main.read_store = original
+
+
+def test_sd_agc_03_foreign_identities_and_unadmitted_catalog_defaults_return_404() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        original = bff_main.read_store
+        try:
+            # Store without fallback - only dev-probe is admitted
+            store = _PersonaFleetTestStore(
+                {
+                    "personas": [
+                        {
+                            "id": "persona-dev-probe",
+                            "persona_id": "persona-dev-probe",
+                            "name": "dev-probe",
+                            "lifecycle_state": "paper",
+                            "status": "healthy",
+                            "created_at": "2026-06-03T08:27:44Z",
+                            "updated_at": "2026-06-03T08:27:44Z",
+                            "metadata": {"owner": "pantheon-dev-browser", "tenant_id": "pantheon-dev"},
+                            "canonicalWriteAuthority": "persona_registry_service",
+                            "persistenceMode": "bff_local_dev_store",
+                        },
+                        {
+                            "id": "persona-other-tenant",
+                            "persona_id": "persona-other-tenant",
+                            "name": "other-tenant-persona",
+                            "lifecycle_state": "paper",
+                            "status": "healthy",
+                            "created_at": "2026-06-03T08:27:44Z",
+                            "updated_at": "2026-06-03T08:27:44Z",
+                            "metadata": {"owner": "pantheon-dev-browser", "tenant_id": "tenant-other"},
+                            "canonicalWriteAuthority": "persona_registry_service",
+                            "persistenceMode": "bff_local_dev_store",
+                        },
+                    ]
+                }
+            )
+            bff_main.read_store = store
+            bff_main._PERSONA_BFF_OVERLAY.clear()
+            bff_main._STRATEGY_BFF_OVERLAY.clear()
+            bff_main._STRATEGY_PERSONA_BFF_IDEMPOTENCY.clear()
+            bff_main.read_store._data = {
+                "persona-dev-probe": {
+                    "id": "persona-dev-probe",
+                    "persona_id": "persona-dev-probe",
+                    "name": "dev-probe",
+                    "lifecycle_state": "paper",
+                    "status": "healthy",
+                    "created_at": "2026-06-03T08:27:44Z",
+                    "updated_at": "2026-06-03T08:27:44Z",
+                    "metadata": {"owner": "pantheon-dev-browser", "tenant_id": "pantheon-dev"},
+                    "canonicalWriteAuthority": "persona_registry_service",
+                    "persistenceMode": "bff_local_dev_store",
+                },
+                "persona-other-tenant": {
+                    "id": "persona-other-tenant",
+                    "persona_id": "persona-other-tenant",
+                    "name": "other-tenant-persona",
+                    "lifecycle_state": "paper",
+                    "status": "healthy",
+                    "created_at": "2026-06-03T08:27:44Z",
+                    "updated_at": "2026-06-03T08:27:44Z",
+                    "metadata": {"owner": "pantheon-dev-browser", "tenant_id": "tenant-other"},
+                    "canonicalWriteAuthority": "persona_registry_service",
+                    "persistenceMode": "bff_local_dev_store",
+                },
+            }
+
+            client = TestClient(bff_main.app)
+
+            # 1. Admitted persona resolves
+            admitted_resp = client.get("/bff/personas/persona-dev-probe", headers=OPERATOR_HEADERS)
+            assert admitted_resp.status_code == 200, admitted_resp.text
+            assert admitted_resp.json()["data"]["id"] == "persona-dev-probe"
+
+            # 2. Foreign-tenant persona returns 404
+            foreign_resp = client.get("/bff/personas/persona-other-tenant", headers=OPERATOR_HEADERS)
+            assert foreign_resp.status_code == 404, foreign_resp.text
+            assert foreign_resp.json()["error"]["code"] == "RESOURCE_NOT_FOUND"
+
+            # 3. Unadmitted catalog default returns 404 (not ghost navigable)
+            catalog_default_resp = client.get("/bff/personas/persona-crypto", headers=OPERATOR_HEADERS)
+            assert catalog_default_resp.status_code == 404, catalog_default_resp.text
+            assert catalog_default_resp.json()["error"]["code"] == "RESOURCE_NOT_FOUND"
+
+            # 4. Unknown random identity returns 404
+            unknown_resp = client.get("/bff/personas/persona-nonexistent-999", headers=OPERATOR_HEADERS)
+            assert unknown_resp.status_code == 404, unknown_resp.text
+            assert unknown_resp.json()["error"]["code"] == "RESOURCE_NOT_FOUND"
+
+            # 5. List and Fleet contain only persona-dev-probe
+            fleet_resp = client.get("/bff/management/persona-fleet", headers=OPERATOR_HEADERS)
+            assert fleet_resp.status_code == 200
+            fleet_items = fleet_resp.json()["data"]["items"]
+            assert len(fleet_items) == 1
+            assert fleet_items[0]["id"] == "persona-dev-probe"
+            assert fleet_resp.json()["data"]["summary"]["catalog_default_total"] > 0
+        finally:
+            bff_main.read_store = original
+

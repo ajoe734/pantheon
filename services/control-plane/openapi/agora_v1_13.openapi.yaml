@@ -411,6 +411,287 @@ components:
           additionalProperties:
             type: string
       additionalProperties: false
+    TradingRoomPerformanceAttributionMetrics:
+      type: object
+      properties:
+        runtime_count:
+          type: integer
+        telemetry_runtime_count:
+          type: integer
+        holding_count:
+          type: integer
+        total_pnl:
+          type:
+          - number
+          - 'null'
+        unrealized_pnl:
+          type:
+          - number
+          - 'null'
+        realized_pnl:
+          type:
+          - number
+          - 'null'
+        total_notional:
+          type:
+          - number
+          - 'null'
+        total_market_value:
+          type:
+          - number
+          - 'null'
+        total_exposure:
+          type:
+          - number
+          - 'null'
+        worst_drawdown:
+          type:
+          - number
+          - 'null'
+        average_fill_rate:
+          type:
+          - number
+          - 'null'
+        average_slippage_bps:
+          type:
+          - number
+          - 'null'
+        total_trades:
+          type: integer
+        latest_telemetry_at:
+          type:
+          - string
+          - 'null'
+        pnl_contribution_pct:
+          type:
+          - number
+          - 'null'
+        notional_weight:
+          type:
+          - number
+          - 'null'
+        data_confidence:
+          type:
+          - string
+          - 'null'
+      additionalProperties: true
+    TradingRoomPerformanceAttributionRow:
+      type: object
+      required:
+      - id
+      - dimension
+      - dimension_key
+      - label
+      - period
+      - rank
+      - metrics
+      properties:
+        id:
+          type: string
+        dimension:
+          type: string
+        dimension_key:
+          type: string
+        label:
+          type: string
+        period:
+          type: string
+        rank:
+          type: integer
+        metrics:
+          $ref: '#/components/schemas/TradingRoomPerformanceAttributionMetrics'
+        total_pnl:
+          type:
+          - number
+          - 'null'
+        pnl_contribution_pct:
+          type:
+          - number
+          - 'null'
+        notional_weight:
+          type:
+          - number
+          - 'null'
+        runtime_count:
+          type: integer
+        holding_count:
+          type: integer
+        data_confidence:
+          type:
+          - string
+          - 'null'
+        source_status:
+          type:
+          - string
+          - 'null'
+        source_refs:
+          type: object
+          additionalProperties:
+            type: array
+            items:
+              type: string
+        links:
+          type: object
+          additionalProperties:
+            type:
+            - string
+            - 'null'
+      additionalProperties: true
+    TradingRoomPerformanceAttributionSummary:
+      type: object
+      required:
+      - period
+      - dimensions
+      - supported_dimensions
+      - row_count
+      - returned_row_count
+      - runtime_count
+      - telemetry_runtime_count
+      - holding_count
+      - total_trades
+      - basis
+      properties:
+        period:
+          type: string
+        dimensions:
+          type: array
+          items:
+            type: string
+        supported_dimensions:
+          type: array
+          items:
+            type: string
+        row_count:
+          type: integer
+        returned_row_count:
+          type: integer
+        runtime_count:
+          type: integer
+        telemetry_runtime_count:
+          type: integer
+        holding_count:
+          type: integer
+        total_pnl:
+          type:
+          - number
+          - 'null'
+        total_notional:
+          type:
+          - number
+          - 'null'
+        total_exposure:
+          type:
+          - number
+          - 'null'
+        worst_drawdown:
+          type:
+          - number
+          - 'null'
+        average_fill_rate:
+          type:
+          - number
+          - 'null'
+        average_slippage_bps:
+          type:
+          - number
+          - 'null'
+        total_trades:
+          type: integer
+        latest_telemetry_at:
+          type:
+          - string
+          - 'null'
+        basis:
+          type: string
+      additionalProperties: true
+    PerformanceAttributionPageInfo:
+      type: object
+      required:
+      - total
+      - page_size
+      properties:
+        next_page_token:
+          type:
+          - string
+          - 'null'
+        total:
+          type: integer
+        page_size:
+          type: integer
+      additionalProperties: true
+    TradingRoomPerformanceAttributionData:
+      type: object
+      required:
+      - id
+      - period
+      - dimensions
+      - items
+      - summary
+      properties:
+        id:
+          type: string
+        period:
+          type: string
+        dimensions:
+          type: array
+          items:
+            type: string
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/TradingRoomPerformanceAttributionRow'
+        summary:
+          $ref: '#/components/schemas/TradingRoomPerformanceAttributionSummary'
+        page_info:
+          $ref: '#/components/schemas/PerformanceAttributionPageInfo'
+      additionalProperties: true
+    TradingRoomPerformanceAttributionMeta:
+      type: object
+      required:
+      - scope
+      - period
+      - snapshot_at
+      - composition_sources
+      - surfaces
+      - policy
+      - no_order_route_proof
+      properties:
+        scope:
+          type: object
+          additionalProperties:
+            type: string
+        period:
+          type: string
+        snapshot_at:
+          type: string
+        composition_sources:
+          type: array
+          items:
+            type: string
+        surfaces:
+          type: object
+          additionalProperties: true
+        policy:
+          type: string
+        no_order_route_proof:
+          type: string
+          enum:
+          - agora_performance_read_only
+      additionalProperties: true
+    TradingRoomPerformanceAttributionEnvelope:
+      type: object
+      required:
+      - data
+      - page_info
+      - meta
+      properties:
+        data:
+          $ref: '#/components/schemas/TradingRoomPerformanceAttributionData'
+        page_info:
+          $ref: '#/components/schemas/PerformanceAttributionPageInfo'
+        meta:
+          $ref: '#/components/schemas/TradingRoomPerformanceAttributionMeta'
+      additionalProperties: true
   responses:
     BadRequest:
       description: Required command headers or request payload are invalid
@@ -878,3 +1159,62 @@ paths:
           description: Tenant denied or pool not owned by the caller.
         '404':
           description: Candidate pool or member not found.
+  /bff/agora/trading-room/performance-attribution/by-strategy:
+    get:
+      summary: Get owner-scoped Strategy Performance attribution grouped by strategy
+      description: Returns owner-scoped performance attribution for strategies owned or visible to the
+        authenticated user. Missing telemetry or trade journeys are typed unavailable. Non-execution boundary
+        is guaranteed.
+      operationId: getAgoraPerformanceAttributionByStrategy
+      security:
+      - BearerAuth: []
+      parameters:
+      - name: period
+        in: query
+        required: false
+        schema:
+          type: string
+          enum:
+          - latest
+          - 7d
+          - 30d
+          - all
+          default: latest
+      - name: page_size
+        in: query
+        required: false
+        schema:
+          type: integer
+          default: 50
+          minimum: 1
+          maximum: 200
+      - name: page_token
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: strategy_id
+        in: query
+        required: false
+        schema:
+          type: string
+      - $ref: '#/components/parameters/XTenantId'
+      responses:
+        '200':
+          description: Owner-scoped performance attribution projection envelope
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TradingRoomPerformanceAttributionEnvelope'
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '403':
+          description: Permission denied
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'

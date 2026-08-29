@@ -98,7 +98,7 @@ Chain summary:
 |---|---|---|
 | `ApprovalDecision` | `approval-20260413-001` | `services/control-plane/governance/approval_decision.schema.json` |
 | `DeploymentPlan` | `deploy-20260413-001` | `services/control-plane/governance/deployment_plan.schema.json` |
-| `RuntimeBinding` | `binding-20260413-001` | `services/execution/runtime-manager/runtime_binding.schema.json` |
+| `RuntimeBinding` | `binding-20260413-001` | `services/runtime_manager/runtime_binding.schema.json` |
 
 DeploymentPlan ref:
 ```
@@ -322,7 +322,7 @@ Before running the replay, verify:
    - `services/data-plane/schemas/dataset_version.schema.json` exists
    - `services/data-plane/schemas/contract_master.schema.json` exists
    - `services/control-plane/governance/deployment_plan.schema.json` exists
-   - `services/execution/runtime-manager/runtime_binding.schema.json` exists
+   - `services/runtime_manager/runtime_binding.schema.json` exists
 
 2. **Dataset versions frozen**
    - `dv-20260413-us-equity-universe-v1`: state = frozen, checksum verified
@@ -560,7 +560,7 @@ All 13 criteria must be green before GAP-05 is closed.
 | `services/data-plane/schemas/` | BG-001 schema artifacts |
 | `services/registry-core/decision-domain/` | BG-003 schema artifacts and five-stage chain examples |
 | `services/control-plane/governance/` | Back-half governance schemas (ApprovalDecision, DeploymentPlan) |
-| `services/execution/runtime-manager/runtime_binding.schema.json` | RuntimeBinding schema |
+| `services/runtime_manager/runtime_binding.schema.json` | RuntimeBinding schema |
 | `Pantheon_Blueprint_Gap_Review_v1.md §GAP-05` | Original gap statement and acceptance evidence list |
 | `docs/02-architecture/consensus/phase2/consensus-packet.md` | Planning consensus and delivery wave for BG-005 |
 | `docs/02-architecture/consensus/phase2/execution-materialization.md` | Delivery contract for BG-005 |

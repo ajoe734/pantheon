@@ -1,0 +1,16 @@
+{
+  "task_id": "ACG-WRITE-OWNER-RANKINGS-20260829",
+  "status": "review",
+  "owner": "Claude",
+  "reviewer": "Codex2",
+  "generation": 2,
+  "summary": "Narrow services/rankings/store.py to a single concrete write-owner backend: PostgresJsonOwnerStore (rankings.rankings). Generation 1 shipped a JSON-file backend and a Postgres backend side by side (RANKING_STORE_BACKEND env switch, PostgresRankingWriteStore subclassing the JSON store), which duplicated the domain's persistence implementation; that class hierarchy and the fcntl/tempfile JSON-file path are removed. RankingWriteStore now always talks to PostgresJsonOwnerStore, using compare_and_set for atomic create-conflict detection and delete_if_matches for delete. build_rankings_store() resolves a DSN/table/bootstrap from arguments or RANKING_STORE_DSN/DATABASE_URL/RANKING_STORE_TABLE/RANKING_STORE_BOOTSTRAP and always returns the Postgres-backed store; there is no backend selection left. No import of services/control-plane/bff/read_store.py and no local dict/overlay/cache/response fallback: every read re-runs a fresh SELECT through PostgresJsonOwnerStore so a write is visible to a separate store instance immediately (write-then-fresh-read), now proven against a fake psycopg connection (the same fake-connection pattern used by services/foundation/tests/test_control_plane_postgres_owner_stores.py) instead of a tmp_path JSON file. services/control-plane/bff/main.py and read_store.py are unmodified; Source Ingestion gets no new write entrypoint and remains reconcile-only against this domain.",
+  "scope": [
+    "services/rankings/store.py",
+    "tests/ranking_write_owner/test_rankings_write_owner.py"
+  ],
+  "verification": [
+    "python3 scripts/dev/provision_python_distribution.py",
+    "$PANTHEON_PY -m pytest -q tests/ranking_write_owner (9 passed)"
+  ]
+}

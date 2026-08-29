@@ -1,0 +1,99 @@
+{
+  "schema_version": "pantheon.product_functional_closure.task_review.v1",
+  "task": {
+    "id": "OPS-SOURCE-SEARCH-SMOKE-TIMEOUT-20260823",
+    "title": "Make persistent source-search bounded smoke finish within measured timeout",
+    "owner": "Codex",
+    "reviewer": "Antigravity2",
+    "status": "review_pending",
+    "repository": "ajoe734/pantheon",
+    "base_branch": "dev",
+    "task_branch": "task/OPS-SOURCE-SEARCH-SMOKE-TIMEOUT-20260823",
+    "review_file": "docs/deployment/evidence/product-functional-closure/OPS-SOURCE-SEARCH-SMOKE-TIMEOUT-20260823/evidence.json"
+  },
+  "scope": {
+    "owned_layer": "Persistent source registry projection cost and bounded source/search smoke timeout diagnostics",
+    "not_changing": [
+      "Manual-only Source Ingestion activation and reconcile_only controller default",
+      "Provider connector schedules or autonomous provider pull policy",
+      "PANTHEON_EXTERNAL_EGRESS deny-by-default posture",
+      "Search/source contract semantics, access filters, or durable evidence ownership"
+    ],
+    "changed_files": [
+      ".orchestrator/task-briefs/ops_source_search_smoke_timeout_20260823.md",
+      "docker-compose.yml",
+      "scripts/smoke_source_search_bounded.py",
+      "scripts/test_smoke_source_search_bounded.py",
+      "services/source_ingestion/main.py",
+      "services/source_ingestion/test_compose_activation.py",
+      "services/source_ingestion/test_service.py",
+      "docs/deployment/evidence/product-functional-closure/OPS-SOURCE-SEARCH-SMOKE-TIMEOUT-20260823/README.md",
+      "docs/deployment/evidence/product-functional-closure/OPS-SOURCE-SEARCH-SMOKE-TIMEOUT-20260823/evidence.json"
+    ],
+    "composes_with": [
+      "OPS-DEV-ROOT-SMOKE-IDEMPOTENCY-001 run-scoped connector identities",
+      "PFG-SOURCE-MANUAL-ONCE-20260820 manual-only Source Ingestion policy",
+      "Pantheon root dev deployment source-search-bounded Compose profile"
+    ]
+  },
+  "incident_evidence": {
+    "dev_deploy_run": "https://github.com/ajoe734/pantheon/actions/runs/32648522828",
+    "container_observation": "pantheon-source-search-bounded-smoke-1 started 2026-08-23T15:47:43.587623850Z and exited 1 at 2026-08-23T15:47:54.593109948Z",
+    "last_output": [
+      "ok  source-ingest ready",
+      "ok  search-svc ready",
+      "source/search bounded smoke failed: timed out"
+    ],
+    "failed_phase": "GET /api/source-ingest/registry immediately after search-svc readiness",
+    "persistent_state": {
+      "connector_config_jsonl": "1853 lines, 1160076 bytes",
+      "ingest_schedule_jsonl": "7979 lines, 9181688 bytes"
+    },
+    "live_read_only_reproduction": "curl --max-time 60 http://127.0.0.1:18097/api/source-ingest/registry returned HTTP 000 after 60.017457 seconds with zero response bytes"
+  },
+  "behavioral_proof": {
+    "persistent_registry_bound": "Registry construction now reads connector config/fetch state, schedules, and ingest freshness exactly once per response and reuses the resulting entries for the embedded policy registry instead of replaying journals per connector and rebuilding the fleet twice.",
+    "measured_smoke_budget": "Compose supplies SOURCE_SEARCH_SMOKE_TIMEOUT_SECONDS=180 and SOURCE_SEARCH_SMOKE_REQUEST_TIMEOUT_SECONDS=15; every request is capped by the smaller request or remaining overall budget.",
+    "diagnostic_contract": "Unbuffered output records the active phase, connector/source identifier, elapsed and remaining time, and last successful checkpoint; timeout errors retain all fields.",
+    "repeated_state": "Two Compose runs against the same task-scoped persistent volumes completed with disjoint connector IDs; smoke elapsed times were 1.274s and 1.303s inside the 180s budget.",
+    "manual_only_and_egress": "No source-ingest-scheduler profile, provider pull loop, new host allowlist, or external egress capability was enabled; the bounded smoke still uses only its in-stack allowlisted feed server."
+  },
+  "validation": {
+    "commands": [
+      {
+        "command": ".venv-pantheon/bin/python -m pytest -q scripts/test_smoke_source_search_bounded.py services/source_ingestion/test_compose_activation.py services/source_ingestion/test_service.py services/source_ingestion/tests/test_scheduled_connector.py",
+        "result": "65 passed in 37.73s"
+      },
+      {
+        "command": ".venv-pantheon/bin/python scripts/ci/run_adapter_checks.py",
+        "result": "passed; bounded adapter compilation, wiring, and fail-closed research activation checks"
+      },
+      {
+        "command": "python3 -m py_compile scripts/smoke_source_search_bounded.py services/source_ingestion/main.py scripts/test_smoke_source_search_bounded.py",
+        "result": "passed"
+      },
+      {
+        "command": "docker compose --profile source-search-bounded config --quiet",
+        "result": "passed"
+      },
+      {
+        "command": "docker compose -p ops-source-smoke-20260823-codex --profile source-search-bounded build source-ingest search-svc source-search-bounded-smoke",
+        "result": "passed"
+      },
+      {
+        "command": "docker compose -p ops-source-smoke-20260823-codex --profile source-search-bounded run --rm --use-aliases source-search-bounded-smoke",
+        "result": "fresh state passed; smoke 1.274s, including dependency startup 21.31s"
+      },
+      {
+        "command": "docker compose -p ops-source-smoke-20260823-codex --profile source-search-bounded run --rm --use-aliases source-search-bounded-smoke",
+        "result": "same persistent volumes repeated state passed; smoke 1.303s, total 4.52s"
+      }
+    ],
+    "cleanup": "Removed only the task-scoped ops-source-smoke-20260823-codex containers, network, and three synthetic volumes after validation."
+  },
+  "review": {
+    "status": "pending_independent_review",
+    "reviewer_instruction": "Bind this already-committed manifest with AI_NAME=Antigravity2 REVIEW_FILE=docs/deployment/evidence/product-functional-closure/OPS-SOURCE-SEARCH-SMOKE-TIMEOUT-20260823/evidence.json through the governed approve command only after independently checking the exact PR head and the manual-only/egress invariants.",
+    "owner_claim": "Owner evidence ready for independent review; this file makes no approval claim."
+  }
+}

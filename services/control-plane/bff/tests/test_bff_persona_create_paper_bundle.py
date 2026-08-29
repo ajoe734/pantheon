@@ -12,7 +12,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 import main as bff_main
 from persona_provisioning import MemoryPersonaProvisioningStore
-from read_store import ReadSurfaceStore
+from ports import create_in_memory_read_surface_ports
 from test_persona_provisioning_coordinator import FakeOwnerTransport, _schedule_receipt
 
 OPERATOR_TOKEN = "Bearer op-2:operator"
@@ -47,18 +47,67 @@ def _isolate_persona_create_service_clients(monkeypatch):
             return []
 
     monkeypatch.setattr(bff_main, "_runtime_manager_client", _RuntimeManagerClient)
+    try:
+        from services.persona.runtime_profile import build_persona_runtime_profile
+        monkeypatch.setattr(bff_main, "build_persona_runtime_profile", build_persona_runtime_profile, raising=False)
+    except ImportError:
+        monkeypatch.setattr(bff_main, "build_persona_runtime_profile", lambda *a, **kw: type("Profile", (), {"to_dict": lambda s: {}})(), raising=False)
+
+
+_SHARED_PERSONAS: dict[str, dict[str, Any]] = {}
+
+
+def _make_persona_test_store():
+    store = create_in_memory_read_surface_ports()
+    def _create_p(**kwargs):
+        pid = kwargs.get("persona_id") or kwargs.get("id")
+        name = kwargs.get("name") or pid
+        archetype = kwargs.get("archetype") or "generalist"
+        meta = dict(kwargs.get("metadata") or {})
+        meta.setdefault("archetype", archetype)
+        rec = {
+            "id": pid,
+            "persona_id": pid,
+            "name": name,
+            "archetype": archetype,
+            "state": kwargs.get("state") or kwargs.get("lifecycle_state") or "active",
+            "lifecycle_state": kwargs.get("lifecycle_state") or kwargs.get("state") or "active",
+            **kwargs,
+            "metadata": meta,
+        }
+        _SHARED_PERSONAS[pid] = rec
+        return rec
+    def _get_p(pid):
+        return _SHARED_PERSONAS.get(pid)
+    def _list_p(**kwargs):
+        return list(_SHARED_PERSONAS.values())
+    def _update_p(pid, **kwargs):
+        if pid in _SHARED_PERSONAS:
+            if "metadata" in kwargs:
+                meta = dict(_SHARED_PERSONAS[pid].get("metadata") or {})
+                meta.update(kwargs["metadata"])
+                kwargs["metadata"] = meta
+            _SHARED_PERSONAS[pid].update(kwargs)
+            return _SHARED_PERSONAS[pid]
+        return None
+    store.create_persona = _create_p
+    store.get_persona = _get_p
+    store.list_personas = _list_p
+    store.update_persona = _update_p
+    return store
 
 
 def _fresh_client(td: str) -> TestClient:
-    bff_main.read_store = ReadSurfaceStore(
-        os.path.join(td, "read_surfaces.json"),
-        allow_local_snapshot_fallback=True,
-    )
+    _SHARED_PERSONAS.clear()
+    bff_main.read_store = _make_persona_test_store()
     bff_main.command_store = bff_main.CommandStore(os.path.join(td, "commands.jsonl"))
     bff_main._STRATEGY_PERSONA_BFF_IDEMPOTENCY.clear()
     bff_main._STRATEGY_BFF_OVERLAY.clear()
     bff_main._PERSONA_BFF_OVERLAY.clear()
     bff_main._COMMAND_AUTH_CONTEXT.clear()
+    if hasattr(bff_main, "_PERSONA_PROVISIONING_STORE"):
+        getattr(bff_main._PERSONA_PROVISIONING_STORE, "_records", {}).clear()
+        getattr(bff_main._PERSONA_PROVISIONING_STORE, "_leases", {}).clear()
     return TestClient(bff_main.app)
 
 
@@ -142,10 +191,7 @@ def test_bff_management_create_paper_bundle_success() -> None:
 
             # Query the created persona detail to verify data sources and bindings
             bff_main._PERSONA_BFF_OVERLAY.clear()
-            bff_main.read_store = ReadSurfaceStore(
-                os.path.join(td, "read_surfaces.json"),
-                allow_local_snapshot_fallback=False,
-            )
+            bff_main.read_store = _make_persona_test_store()
 
             detail_resp = client.get(f"/bff/personas/{persona_id}", headers=HEADERS)
             assert detail_resp.status_code == 200, detail_resp.text

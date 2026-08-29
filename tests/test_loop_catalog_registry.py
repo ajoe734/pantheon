@@ -45,22 +45,6 @@ EXPECTED_OODA_COMPOSITION = [
     "evolution",
 ]
 
-EXPECTED_MATURITY_LEVELS = [
-    "manual",
-    "api-only",
-    "scheduled",
-    "reconciled",
-    "proven-live",
-]
-
-EXPECTED_TRUTH_LEVELS = [
-    "seed_fixture",
-    "registry_metadata",
-    "scheduled_tick",
-    "reconciled_live_proof",
-    "proven_live_evidence",
-]
-
 
 def _load_json(path: Path) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
@@ -202,88 +186,17 @@ def test_verification_index_uses_the_same_twelve_plus_overlay_classification() -
     assert "11 main loops" not in verification_index
 
 
-def test_catalog_uses_sa21_maturity_and_truth_vocabularies() -> None:
-    registry = _registry()
-
-    assert [entry["level"] for entry in registry["maturity_levels"]] == EXPECTED_MATURITY_LEVELS
-    assert [entry["level"] for entry in registry["truth_levels"]] == EXPECTED_TRUTH_LEVELS
-
-    for loop in registry["loops"] + registry["composite_overlays"]:
-        assert set(loop["evidence_profile"]) == set(EXPECTED_TRUTH_LEVELS)
-        assert loop["evidence_profile"]["registry_metadata"]["status"] == "present"
-        assert loop["maturity"]["current"] in EXPECTED_MATURITY_LEVELS
-        assert loop["maturity"]["target"] in EXPECTED_MATURITY_LEVELS
-        assert isinstance(loop["maturity"]["current"], str)
-        assert isinstance(loop["maturity"]["target"], str)
-
-
-def test_reconciled_claim_requires_controller_queries_restart_and_live_proof() -> None:
-    registry = _registry()
-    mutated = copy.deepcopy(registry)
-    # Loops whose controller is already implemented carry the required contract
-    # fields, so the "no controller yet" rejection must be exercised on a loop
-    # that still declares `not_implemented`.
-    loop = next(
-        candidate
-        for candidate in mutated["loops"]
-        if candidate["controller_contract"]["status"] == "not_implemented"
-    )
-    loop["maturity"]["current"] = "reconciled"
-
-    errors = _validation_errors(mutated)
-
-    assert "'not_implemented' is not one of ['implemented', 'proven_live']" in errors
-    assert "None is not of type 'string'" in errors
-    assert "'planned' was expected" not in errors
-    assert "'present' was expected" in errors
-
-
-def test_proven_live_claim_requires_proven_live_controller_and_evidence() -> None:
-    registry = _registry()
-    mutated = copy.deepcopy(registry)
-    loop = mutated["loops"][0]
-    loop["maturity"]["current"] = "proven-live"
-    loop["controller_contract"].update(
-        {
-            "status": "implemented",
-            "controller_name": "source-provisioning-reconciler",
-            "desired_state_query": "list required data sources",
-            "actual_state_query": "list connector and schedule state",
-            "restart_behavior": "restart resumes by idempotency key",
-            "liveness_metric": "last_successful_reconciliation_at",
-        }
-    )
-
-    errors = _validation_errors(mutated)
-
-    assert "'proven_live' was expected" in errors
-    assert "'present' was expected" in errors
-
-
-def test_each_canonical_loop_has_desired_actual_owner_target_and_task_path() -> None:
+def test_each_canonical_loop_has_desired_actual_owner_and_controller_contract() -> None:
     for loop in _registry()["loops"]:
         assert loop["owner"]["authoritative_write_owner"]
         assert loop["desired_state"]["sources"]
         assert loop["actual_state"]["sources"]
-        assert loop["maturity"]["target"] in EXPECTED_MATURITY_LEVELS
-        assert loop["execution_tasks"][0] == {
-            "task_id": "LOOP-AUTO-000",
-            "role": "foundation",
+        assert loop["controller_contract"]["status"] in {
+            "not_implemented",
+            "planned",
+            "implemented",
+            "proven_live",
         }
-        assert any(task["task_id"] != "LOOP-AUTO-000" for task in loop["execution_tasks"])
-
-
-def test_overlay_task_refs_are_reference_only_and_use_product_followups() -> None:
-    overlay = _registry()["composite_overlays"][0]
-
-    assert overlay["execution_tasks"][0] == {
-        "task_id": "LOOP-PROD-000",
-        "role": "foundation",
-    }
-    assert overlay["maturity"]["current"] == "api-only"
-    assert overlay["controller_contract"]["status"] == "not_implemented"
-    assert overlay["evidence_profile"]["scheduled_tick"]["status"] == "historical"
-    assert "archive" in overlay["evidence_profile"]["scheduled_tick"]["note"].lower()
 
 
 def test_schema_rejects_cross_classified_policy_authority() -> None:

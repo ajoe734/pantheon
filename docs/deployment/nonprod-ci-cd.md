@@ -1,9 +1,16 @@
 # Nonprod CI/CD
 
-Status date: 2026-07-27
+Status date: 2026-08-25
 
 This is the repo-local CI/CD operating record for Pantheon dev and
 staging-live.
+
+The approved low-resource target plan for replacing unavailable staging,
+adding production, and retaining VM/Compose as the primary runtime is
+[`vm-dev-staging-prod-management-plan.md`](vm-dev-staging-prod-management-plan.md).
+This file remains the current-state operating truth until each target-plan
+phase has been implemented and accepted; the target plan must not be read as
+proof that staging or production resources already exist.
 
 The current implementation keeps the VM/Compose non-prod topology in the
 Pantheon Lupin GCP projects and uses GitHub Actions for pinned VM deployment:
@@ -33,8 +40,10 @@ The workflow uses:
 scripts/deploy_nonprod_vm.sh
 ```
 
-The script SSHes to the target VM through `gcloud compute ssh`, snapshots the
-current human-facing remote checkout, prepares a managed clean deploy
+For dev, the script SSHes directly to the fixed VM address through
+`scripts/dev_vm_ssh.sh`, using the CI-only key and pinned host record from the
+protected `dev` GitHub Environment. Staging-live retains `gcloud compute ssh`.
+The script snapshots the current human-facing remote checkout, prepares a managed clean deploy
 worktree, starts the expected Compose stack from the pinned commit, and runs
 health checks. Dev worktrees live under
 `~/pantheon-ci-deploy/managed-deploy-worktrees`; the independently configured
@@ -108,9 +117,10 @@ dev_auth_profile=strict
 
 The workflow rejects branch names, `main`, older ancestors, task-branch
 commits, and any pair that is no longer the two repositories' exact `dev`
-tips. The deploy script still executes on the dev VM through CI-managed
-`gcloud compute ssh`; that VM execution is an implementation detail of the CI
-deploy lane.
+tips. The deploy script executes on the dev VM through the same direct-SSH
+transport used by its VM-backed acceptance probes. It never falls back to
+`gcloud compute ssh`, so a missing key or mismatched host record fails before
+the remote Compose transaction starts.
 
 Target:
 
@@ -168,7 +178,11 @@ switch path.
 
 The accepted release transaction is ordered:
 
-1. Resolve both exact protected `dev` tips.
+1. Resolve the exact protected Pantheon `dev` tip and the exact FE candidate
+   SHA. For a pre-merge FE candidate, `frontend_ref` identifies the candidate
+   branch and is checked against its remote tip; workflow definitions are still
+   dispatched from trusted `execute-plans/dev` code, so an unmerged branch
+   cannot replace the controller itself.
 2. Generate and seal the immutable compatibility ledger and hosted rollback
    baseline.
 3. Deploy the exact BFF candidate under the shared environment lease and pass
@@ -282,10 +296,19 @@ Dev uses `DEV_GCP_DEPLOY_PROJECT_ID` and defaults to
 `pantheon-lupin-dev-20260719`; this prevents a suspended or stale staging
 project variable from silently redirecting dev deployment.
 
-Dev authenticates through `DEV_GCP_WIF_PROVIDER` and
-`DEV_GCP_DEPLOY_SERVICE_ACCOUNT`, with resource-name defaults for the
-replacement project. Staging-live continues to use `GCP_WIF_PROVIDER` and
-falls back from `GCP_DEPLOY_SERVICE_ACCOUNT` to `GCP_SERVICE_ACCOUNT`.
+Dev VM transport is configured by the protected `dev` GitHub Environment:
+
+- secret `DEV_DEPLOY_SSH_PRIVATE_KEY`: dedicated unencrypted CI private key;
+- variable `DEV_DEPLOY_SSH_KNOWN_HOSTS`: pinned OpenSSH host entry for the
+  fixed dev address; and
+- variable `DEV_DEPLOY_SSH_HOST`: `35.201.204.12`.
+
+The matching public key is installed once in the `lupin` account's
+`authorized_keys`. The workflow materializes both files under `RUNNER_TEMP`
+with mode `0600`; neither file is written into a checkout. GCP WIF remains for
+workflows that actually call Cloud Build, Artifact Registry, or another GCP
+API. Staging-live continues to use `GCP_WIF_PROVIDER` and falls back from
+`GCP_DEPLOY_SERVICE_ACCOUNT` to `GCP_SERVICE_ACCOUNT`.
 
 `COORDINATION_REPO_TOKEN` is required by the dev environment lease and by the
 Pantheon controller's exact workflow dispatches into
@@ -299,18 +322,19 @@ Recommended GitHub Environments:
   lease remain mandatory before any switch.
 - `staging-live`: required reviewers enabled.
 
-## GCP IAM
+## Remote deployment identity
 
-The deploy identity must be allowed to SSH to the three non-prod VMs:
+Dev uses its dedicated public key on `pantheon-lupin-dev`; GitHub's deploy
+identity does not need Compute Instance Admin or permission to add temporary
+SSH metadata. Staging-live still requires its deploy identity to reach:
 
-- `pantheon-lupin-dev`
 - `pantheon-lupin-staging-control`
 - `pantheon-lupin-staging-exec`
 
 Use a separate deploy service account if possible, then set
 `GCP_DEPLOY_SERVICE_ACCOUNT` to that account.
 
-Required permissions depend on the VM SSH posture:
+Required staging permissions depend on its VM SSH posture:
 
 - OS Login posture: grant Compute OS Login permissions for the deploy identity.
 - Metadata SSH key posture: grant the deploy identity the Compute permissions

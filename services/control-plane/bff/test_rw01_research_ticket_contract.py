@@ -12,19 +12,115 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, os.path.dirname(__file__))
 
 import main as bff_main
-from read_store import ReadSurfaceStore
+from ports import DefaultResearchKnowledgeSourcePort
 
 
 OPERATOR_AUTH = "Bearer test-operator:operator"
+
+
+_SEEDED_TICKETS = {
+    "rt-20260419-007": {
+        "ticket_id": "rt-20260419-007",
+        "title": "Evaluate momentum factor decay in high-volatility regime",
+        "description": "Assess momentum decay during sustained volatility spikes.",
+        "status": "in_progress",
+        "priority": "high",
+        "owner": "persona-risk-chief",
+        "created_at": "2026-04-19T17:10:00Z",
+        "updated_at": "2026-04-19T18:30:00Z",
+    },
+    "rt-20260415-001": {
+        "ticket_id": "rt-20260415-001",
+        "title": "Validate signal quality on macro event windows",
+        "description": "Validate macro-event exclusion windows.",
+        "status": "closed",
+        "priority": "normal",
+        "owner": "persona-risk-chief",
+        "created_at": "2026-04-15T09:00:00Z",
+        "updated_at": "2026-04-18T12:00:00Z",
+        "closed_at": "2026-04-18T12:00:00Z",
+    },
+    "tkt-7a8b9c0d-1234-5678-abcd-ef0123456789": {
+        "ticket_id": "tkt-7a8b9c0d-1234-5678-abcd-ef0123456789",
+        "title": "RW-Ticket: MOM-v3 slippage investigation (Apr 14)",
+        "description": "Ticket aligned with the RW-01 example payload.",
+        "status": "closed",
+        "priority": "high",
+        "owner": "op-001",
+        "created_at": "2026-04-14T10:30:00Z",
+        "updated_at": "2026-04-16T14:22:00Z",
+        "closed_at": "2026-04-16T13:55:00Z",
+    },
+    "rt-20260418-003": {
+        "ticket_id": "rt-20260418-003",
+        "title": "Active ticket cannot be archived",
+        "description": "Exercises the lifecycle transition guard.",
+        "status": "open",
+        "priority": "normal",
+        "owner": "persona-alpha",
+        "created_at": "2026-04-18T08:00:00Z",
+        "updated_at": "2026-04-18T08:00:00Z",
+    },
+}
+
+
+class _TicketPortDouble(DefaultResearchKnowledgeSourcePort):
+    """Typed RW-01 double with explicit source and optional JSON persistence."""
+
+    def __init__(
+        self,
+        records: dict[str, dict],
+        *,
+        source: str,
+        persistence_path: Path | None = None,
+    ) -> None:
+        super().__init__(research_tickets_store=records)
+        self._source = source
+        self._persistence_path = persistence_path
+
+    def dataset_source(self, dataset: str, **_: object) -> str:
+        if dataset == "research_tickets":
+            return self._source
+        return super().dataset_source(dataset)
+
+    def get_research_ticket(
+        self,
+        ticket_id: str,
+        *,
+        include_snapshot_fallback: bool = True,
+        include_local_fallback: bool = True,
+    ) -> dict | None:
+        if self._source == "local_snapshot" and not (
+            include_snapshot_fallback and include_local_fallback
+        ):
+            return None
+        return super().get_research_ticket(ticket_id)
+
+    def _persist(self) -> None:
+        if self._persistence_path is not None:
+            self._persistence_path.write_text(
+                json.dumps(self._tickets, indent=2),
+                encoding="utf-8",
+            )
+
+    def create_research_ticket(self, **kwargs: object) -> dict:
+        ticket = super().create_research_ticket(**kwargs)
+        self._persist()
+        return ticket
+
+    def patch_research_ticket(self, ticket_id: str, **kwargs: object) -> dict | None:
+        ticket = super().patch_research_ticket(ticket_id, **kwargs)
+        self._persist()
+        return ticket
 
 
 @contextmanager
 def _seeded_client():
     with tempfile.TemporaryDirectory() as td:
         original_store = bff_main.read_store
-        bff_main.read_store = ReadSurfaceStore(
-            os.path.join(td, "read_surfaces.json"),
-            allow_local_snapshot_fallback=True,
+        bff_main.read_store = _TicketPortDouble(
+            _SEEDED_TICKETS,
+            source="local_snapshot",
         )
         client = TestClient(bff_main.app)
         try:
@@ -81,9 +177,10 @@ def _service_backed_client():
         os.environ["PANTHEON_BFF_RESEARCH_TICKET_STORE"] = str(ticket_store)
 
         original_store = bff_main.read_store
-        bff_main.read_store = ReadSurfaceStore(
-            os.path.join(td, "read_surfaces.json"),
-            allow_local_snapshot_fallback=True,
+        bff_main.read_store = _TicketPortDouble(
+            json.loads(ticket_store.read_text(encoding="utf-8")),
+            source="service_client",
+            persistence_path=ticket_store,
         )
         client = TestClient(bff_main.app)
         try:
@@ -101,10 +198,7 @@ def _service_backed_client():
 def _unavailable_client():
     with tempfile.TemporaryDirectory() as td:
         original_store = bff_main.read_store
-        bff_main.read_store = ReadSurfaceStore(
-            os.path.join(td, "read_surfaces.json"),
-            allow_local_snapshot_fallback=False,
-        )
+        bff_main.read_store = _TicketPortDouble({}, source="missing")
         client = TestClient(bff_main.app)
         try:
             yield client

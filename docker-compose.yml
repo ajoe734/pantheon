@@ -10,6 +10,7 @@ services:
   postgres:
     image: postgres:16-alpine
     restart: unless-stopped
+    shm_size: 256m
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
@@ -166,6 +167,10 @@ services:
       SOURCE_INGEST_CONTROLLER_STATE_PATH: /data/source-ingest/controller_state.json
       SOURCE_INGEST_REQUIREMENT_STATE_PATH: /data/source-ingest/requirement_snapshots.jsonl
       SOURCE_INGEST_CONTROLLER_TOKEN_FILE: /data/source-ingest/controller_token
+      # The canonical Source-owned stored-snapshot projection shares this
+      # durable volume with completed ingest. Paper reads it only through the
+      # Source API; no paper service receives a provider credential or feed.
+      SOURCE_INGEST_LATEST_MARKET_SNAPSHOT_PATH: /data/source-ingest/latest_market_snapshots.jsonl
       # Shared with strategy-distillation-worker: a normalized SourceRecord
       # commit here admits its job to the same durable queue that controller
       # tick's catch_up polls, so the two never diverge into separate queues.
@@ -189,6 +194,9 @@ services:
       # Product-level default is transactional Postgres; JSONL remains an explicit local rollback mode.
       SOURCE_INGEST_EVIDENCE_BACKEND: ${SOURCE_INGEST_EVIDENCE_BACKEND:-postgres}
       SOURCE_INGEST_EVIDENCE_DSN: ${SOURCE_INGEST_EVIDENCE_DSN:-}
+      SOURCE_MANAGEMENT_STORE_BACKEND: ${SOURCE_MANAGEMENT_STORE_BACKEND:-postgres}
+      SOURCE_MANAGEMENT_STORE_DSN: ${SOURCE_MANAGEMENT_STORE_DSN:-}
+      SOURCE_MANAGEMENT_COMMANDS_ENABLED: ${SOURCE_MANAGEMENT_COMMANDS_ENABLED:-0}
       # Notify search service after completed ingest runs (event-driven refresh/materialization truth).
       SEARCH_INGEST_NOTIFY_URL: ${SEARCH_INGEST_NOTIFY_URL:-http://search-svc:8098}
     volumes:
@@ -728,6 +736,12 @@ services:
       # Persist Claude CLI login on the openclaw-data volume so the one-time
       # `claude auth login` survives container recreate (subscription OAuth, no key).
       CLAUDE_CONFIG_DIR: ${OPENCLAW_CLAUDE_CONFIG_DIR:-/home/node/.openclaw/claude-cli}
+      # Optional long-lived credential (`claude setup-token`, ~1 year) for the
+      # Claude CLI. Takes precedence over the CLAUDE_CONFIG_DIR session above
+      # when set, so it does not depend on anything periodically exercising
+      # the CLI to keep a short-lived OAuth session's access token refreshed.
+      # Empty is a no-op: the CLI falls back to the CLAUDE_CONFIG_DIR session.
+      CLAUDE_CODE_OAUTH_TOKEN: ${PANTHEON_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN:-}
       PANTHEON_ASSISTANT_CODEX_HOST_HOME: ${PANTHEON_ASSISTANT_CODEX_HOST_HOME:-/srv/pantheon-assistant/.codex}
       PANTHEON_ASSISTANT_CODEX_CONTAINER_HOME: ${PANTHEON_ASSISTANT_CODEX_CONTAINER_HOME:-/home/pantheon-assistant/.codex}
       PANTHEON_ASSISTANT_CLAUDE_HOST_CONFIG_DIR: ${PANTHEON_ASSISTANT_CLAUDE_HOST_CONFIG_DIR:-/srv/pantheon-assistant/.claude}
@@ -738,16 +752,14 @@ services:
         condition: service_completed_successfully
     command:
       [
-        "node",
-        "dist/index.js",
-        "gateway",
-        "--allow-unconfigured",
-        "--port",
-        "18789",
-        "--auth",
-        "token",
-        "--token",
-        "${OPENCLAW_GATEWAY_TOKEN:-pantheon-local-token}",
+        "sh",
+        "-ec",
+        # OpenResponses is deliberately opt-in upstream.  Persist the narrow
+        # Management-AI streaming surface before every gateway start so a
+        # recreated dev volume cannot regress to a healthy-but-404 gateway.
+        # Keep the token in the container environment rather than interpolating
+        # it into the shell command.
+        "node dist/index.js config set gateway.http.endpoints.responses.enabled true --json >/dev/null && exec node dist/index.js gateway --allow-unconfigured --port 18789 --auth token --token \"$$OPENCLAW_GATEWAY_TOKEN\"",
       ]
     volumes:
       - openclaw-data:/home/node/.openclaw
@@ -905,6 +917,8 @@ services:
       # for audit cross-references; the runtime-manager itself does not write
       # to the governance service from this path.
       PANTHEON_DEPLOYMENT_API_URL: http://deployment:8095
+      PANTHEON_DEPLOYMENT_SERVICE_TOKEN: ${PANTHEON_DEPLOYMENT_SERVICE_TOKEN:-runtime-manager:service}
+      PANTHEON_DEPLOYMENT_TENANT_ID: ${PANTHEON_DEPLOYMENT_TENANT_ID:-default}
       PANTHEON_GOVERNANCE_APPROVAL_API_URL: http://governance:8082
       PANTHEON_REGISTRY_API_URL: http://registry:8087
       PANTHEON_CAPITAL_API_URL: http://capital:8092
@@ -929,7 +943,7 @@ services:
     # require them at boot. ApproveDeployment requests fail cleanly with
     # DEPLOYMENT_API_UNAVAILABLE if the deployment service is unreachable.
     ports:
-      - "18081:8081"
+      - "${RUNTIME_MANAGER_PORT:-${RUNTIME_PORT:-18081}}:8081"
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8081/readyz', timeout=5).read()"]
       interval: 10s
@@ -977,7 +991,7 @@ services:
       nats:
         condition: service_healthy
     ports:
-      - "18082:8082"
+      - "${GOVERNANCE_PORT:-18082}:8082"
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8082/readyz', timeout=5).read()"]
       interval: 10s
@@ -1016,7 +1030,7 @@ services:
       nats:
         condition: service_healthy
     ports:
-      - "18083:8083"
+      - "${TELEMETRY_PORT:-18083}:8083"
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8083/readyz', timeout=20).read()"]
       interval: 15s
@@ -1061,7 +1075,7 @@ services:
       nats:
         condition: service_healthy
     ports:
-      - "18090:8090"
+      - "${INCIDENTS_PORT:-18090}:8090"
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8090/readyz', timeout=5).read()"]
       interval: 10s
@@ -1105,7 +1119,7 @@ services:
       minio:
         condition: service_healthy
     ports:
-      - "18091:8091"
+      - "${POSTMORTEMS_PORT:-18091}:8091"
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8091/readyz', timeout=5).read()"]
       interval: 10s
@@ -1181,21 +1195,13 @@ services:
       PANTHEON_BFF_AGORA_EVALUATION_SUITE_STORE: ${PANTHEON_BFF_AGORA_EVALUATION_SUITE_STORE:-/data/bff/agora_evaluation_suites.json}
       PANTHEON_BFF_AGORA_EVALUATION_RUN_STORE: ${PANTHEON_BFF_AGORA_EVALUATION_RUN_STORE:-/data/bff/agora_evaluation_runs.json}
       PANTHEON_BFF_POSTMORTEM_STORE: ${PANTHEON_BFF_POSTMORTEM_STORE:-/data/bff/postmortems.json}
-      # Both lifecycle read models are switched through one projector-owned
-      # generation symlink, so the BFF can never observe a mixed generation.
-      # These projector-owned read surfaces are deliberately not host-overridable.
-      # A stale .env override would let readiness observe the canonical controller
-      # while BFF reads remained pinned to legacy snapshots.
-      PANTHEON_BFF_TRADE_JOURNEY_EVENTS_STORE: /data/bff/lifecycle-projection/current/trade_journey_events.json
-      LIFECYCLE_PROJECTION_ROOT: /data/bff/lifecycle-projection
-      LIFECYCLE_PROJECTOR_STATE_PATH: /data/bff/lifecycle-projection/controller_state.json
-      LIFECYCLE_PROJECTOR_HEALTH_STATE_PATH: /data/bff/lifecycle-projection/health_state.json
-      LIFECYCLE_PROJECTOR_GENERATION_RETENTION: ${LIFECYCLE_PROJECTOR_GENERATION_RETENTION:-32}
-      LIFECYCLE_PROJECTOR_STAGING_MAX_AGE_SECONDS: ${LIFECYCLE_PROJECTOR_STAGING_MAX_AGE_SECONDS:-3600}
+      # Post-cutover canonical Postgres reader for lifecycle projections.
+      # Legacy JSON projection files and generation symlinks are retired.
+      PANTHEON_BFF_TRADE_JOURNEY_READER_BACKEND: ${PANTHEON_BFF_TRADE_JOURNEY_READER_BACKEND:-postgres}
+      PANTHEON_BFF_TRADE_JOURNEY_PROJECTION_DSN: ${PANTHEON_BFF_TRADE_JOURNEY_PROJECTION_DSN:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
+      PANTHEON_BFF_TRADE_JOURNEY_PROJECTION_SCHEMA: ${PANTHEON_BFF_TRADE_JOURNEY_PROJECTION_SCHEMA:-trade_journey_projection}
+      PANTHEON_BFF_TRADE_JOURNEY_PAGE_TOKEN_SECRET: ${PANTHEON_BFF_TRADE_JOURNEY_PAGE_TOKEN_SECRET:-}
       LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS: ${LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS:-120}
-      LIFECYCLE_PROJECTOR_HEALTH_MAX_BACKLOG: ${LIFECYCLE_PROJECTOR_HEALTH_MAX_BACKLOG:-5000}
-      LIFECYCLE_PROJECTOR_HEALTH_MIN_FREE_BYTES: ${LIFECYCLE_PROJECTOR_HEALTH_MIN_FREE_BYTES:-134217728}
-      LIFECYCLE_PROJECTOR_HEALTH_MIN_FREE_PERCENT: ${LIFECYCLE_PROJECTOR_HEALTH_MIN_FREE_PERCENT:-5}
       PANTHEON_TRADE_JOURNEY_ACTION_LEDGER_BACKEND: ${PANTHEON_TRADE_JOURNEY_ACTION_LEDGER_BACKEND:-postgres}
       PANTHEON_TRADE_JOURNEY_ACTION_LEDGER_DSN: ${PANTHEON_TRADE_JOURNEY_ACTION_LEDGER_DSN:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
       PANTHEON_TRADE_JOURNEY_CLOCK_DRIFT_SECONDS: ${PANTHEON_TRADE_JOURNEY_CLOCK_DRIFT_SECONDS:-5}
@@ -1206,9 +1212,9 @@ services:
       PANTHEON_BFF_PERSONA_SESSION_STORE: /data/bff/persona_sessions.json
       PANTHEON_BFF_PAPER_LIVE_DRIFT_STORE: /data/bff/paper_live_drift_reports.json
       PANTHEON_BFF_V5_INTERVENTION_STORE: /data/bff/v5_interventions.json
-      PANTHEON_BFF_LOOP_RUN_STORE: /data/bff/lifecycle-projection/current/loop_runs.json
       PANTHEON_BFF_CORS_ORIGINS: ${PANTHEON_BFF_CORS_ORIGINS:-https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io,https://pantheon-dev.lovable.app,https://pantheon-ai-system-front-dev.lovable.app,https://preview--pantheon-dev.lovable.app,https://b75d3452-f667-4cf4-893a-1061de45b347.lovableproject.com,https://id-preview--b75d3452-f667-4cf4-893a-1061de45b347.lovable.app,https://140c41d5-9cd8-4d6b-ba02-66d5941d0dbe.lovableproject.com}
       PANTHEON_BFF_SERVICE_TIMEOUT_SECONDS: "2.0"
+      PANTHEON_BFF_HEALTH_PROBE_INTERVAL_SECONDS: ${PANTHEON_BFF_HEALTH_PROBE_INTERVAL_SECONDS:-30}
       # Every configured owner URL has an exact existing health route. This
       # disables the generic /__health__ guess that returned deterministic
       # 404s for FastAPI owners and preserves component identity in emitted
@@ -1226,6 +1232,10 @@ services:
       PANTHEON_PERSONA_PROVISIONING_STORE_BACKEND: ${PANTHEON_PERSONA_PROVISIONING_STORE_BACKEND:-postgres}
       PANTHEON_PERSONA_PROVISIONING_STORE_DSN: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
       PANTHEON_PERSONA_PROVISIONING_STORE_SCHEMA: ${PANTHEON_PERSONA_PROVISIONING_STORE_SCHEMA:-bff}
+      SOURCE_MANAGEMENT_API_URL: ${SOURCE_MANAGEMENT_API_URL:-http://source-ingest:8097}
+      PANTHEON_BFF_SOURCE_MANAGEMENT_COMMANDS_ENABLED: ${PANTHEON_BFF_SOURCE_MANAGEMENT_COMMANDS_ENABLED:-0}
+      SOURCE_MANAGEMENT_STORE_BACKEND: ${SOURCE_MANAGEMENT_STORE_BACKEND:-postgres}
+      SOURCE_MANAGEMENT_COMMANDS_ENABLED: ${SOURCE_MANAGEMENT_COMMANDS_ENABLED:-0}
       PANTHEON_LIVE_BROKER_ENABLED: ${PANTHEON_LIVE_BROKER_ENABLED:-false}
       PANTHEON_ASSISTANT_ENABLED: ${PANTHEON_ASSISTANT_ENABLED:-true}
       PANTHEON_MANAGEMENT_NL_ASSISTANT_PROVIDER_ENABLED: ${PANTHEON_MANAGEMENT_NL_ASSISTANT_PROVIDER_ENABLED:-true}
@@ -1279,14 +1289,17 @@ services:
       PANTHEON_BFF_OIDC_CLIENT_SECRET: ${PANTHEON_BFF_OIDC_CLIENT_SECRET:-}
       PANTHEON_BFF_DEV_LOGIN_VIEWER_CLIENT_ID: ${PANTHEON_BFF_DEV_LOGIN_VIEWER_CLIENT_ID:-}
       PANTHEON_BFF_DEV_LOGIN_VIEWER_CLIENT_SECRET: ${PANTHEON_BFF_DEV_LOGIN_VIEWER_CLIENT_SECRET:-}
+      PANTHEON_BFF_DEV_LOGIN_VIEWER_ALLOWED_TENANTS: ${PANTHEON_BFF_DEV_LOGIN_VIEWER_ALLOWED_TENANTS:-tenant-dev,pantheon-dev,pantheon-local}
       PANTHEON_BFF_DEV_LOGIN_APPROVER_CLIENT_ID: ${PANTHEON_BFF_DEV_LOGIN_APPROVER_CLIENT_ID:-}
       PANTHEON_BFF_DEV_LOGIN_APPROVER_CLIENT_SECRET: ${PANTHEON_BFF_DEV_LOGIN_APPROVER_CLIENT_SECRET:-}
       PANTHEON_BFF_DEV_LOGIN_RISK_OWNER_CLIENT_ID: ${PANTHEON_BFF_DEV_LOGIN_RISK_OWNER_CLIENT_ID:-}
       PANTHEON_BFF_DEV_LOGIN_RISK_OWNER_CLIENT_SECRET: ${PANTHEON_BFF_DEV_LOGIN_RISK_OWNER_CLIENT_SECRET:-}
       PANTHEON_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_ID: ${PANTHEON_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_ID:-}
       PANTHEON_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_SECRET: ${PANTHEON_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_SECRET:-}
+      PANTHEON_BFF_DEV_LOGIN_OPERATOR_A_ALLOWED_TENANTS: ${PANTHEON_BFF_DEV_LOGIN_OPERATOR_A_ALLOWED_TENANTS:-tenant-dev,pantheon-dev,pantheon-local}
       PANTHEON_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_ID: ${PANTHEON_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_ID:-}
       PANTHEON_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_SECRET: ${PANTHEON_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_SECRET:-}
+      PANTHEON_BFF_DEV_LOGIN_OPERATOR_B_ALLOWED_TENANTS: ${PANTHEON_BFF_DEV_LOGIN_OPERATOR_B_ALLOWED_TENANTS:-tenant-dev,pantheon-dev,pantheon-local}
       # The legacy/generic operator credential is intentionally the negative
       # no-MFA verifier identity. Dedicated governed actors may opt in to MFA.
       PANTHEON_BFF_DEV_LOGIN_OPERATOR_MFA_VERIFIED: ${PANTHEON_BFF_DEV_LOGIN_OPERATOR_MFA_VERIFIED:-false}
@@ -1295,7 +1308,7 @@ services:
       PANTHEON_BFF_DEV_LOGIN_RISK_OWNER_MFA_VERIFIED: ${PANTHEON_BFF_DEV_LOGIN_RISK_OWNER_MFA_VERIFIED:-false}
       PANTHEON_BFF_DEV_LOGIN_OPERATOR_A_MFA_VERIFIED: ${PANTHEON_BFF_DEV_LOGIN_OPERATOR_A_MFA_VERIFIED:-false}
       PANTHEON_BFF_DEV_LOGIN_OPERATOR_B_MFA_VERIFIED: ${PANTHEON_BFF_DEV_LOGIN_OPERATOR_B_MFA_VERIFIED:-false}
-      PANTHEON_BFF_DEV_LOGIN_TTL_SECONDS: ${PANTHEON_BFF_DEV_LOGIN_TTL_SECONDS:-900}
+      PANTHEON_BFF_DEV_LOGIN_TTL_SECONDS: ${PANTHEON_BFF_DEV_LOGIN_TTL_SECONDS:-1800}
       PANTHEON_BFF_ROLE_CLAIMS: ${PANTHEON_BFF_ROLE_CLAIMS:-roles,role}
       PANTHEON_BFF_ROLE_MAP: ${PANTHEON_BFF_ROLE_MAP:-}
       PANTHEON_BFF_ROLE_MAP_MODE: ${PANTHEON_BFF_ROLE_MAP_MODE:-passthrough}
@@ -1366,6 +1379,8 @@ services:
         condition: service_healthy
       openclaw-gateway-adapter:
         condition: service_healthy
+      paper-fleet-reconciler:
+        condition: service_healthy
       governance:
         condition: service_healthy
       runtime-manager:
@@ -1393,7 +1408,7 @@ services:
       nats:
         condition: service_healthy
     ports:
-      - "18001:8001"
+      - "${OPERATOR_BFF_PORT:-${BFF_PORT:-18001}}:8001"
     healthcheck:
       # Compose only owns process liveness. Exact deployment/projector
       # readiness is revision-bound and bounded by deploy_nonprod_vm.sh after
@@ -1403,6 +1418,42 @@ services:
       interval: 10s
       timeout: 5s
       retries: 10
+      start_period: 5s
+
+  agora-interaction-worker:
+    stop_grace_period: 30s
+    build:
+      context: .
+      dockerfile: services/control-plane/bff/Dockerfile
+      args:
+        GIT_SHA: ${GIT_SHA:-unknown}
+        BUILD_TIME: ${BUILD_TIME:-unknown}
+    command: ["python", "scripts/run_agora_interaction_worker.py"]
+    restart: unless-stopped
+    environment:
+      BFF_DATA_DIR: /data/bff
+      DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
+      AGORA_WORKSHOP_STORE_BACKEND: ${AGORA_WORKSHOP_STORE_BACKEND:-postgres}
+      AGORA_WORKSHOP_STORE_DSN: ${AGORA_WORKSHOP_STORE_DSN:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
+      AGORA_WORKSHOP_STORE_SCHEMA: ${AGORA_WORKSHOP_STORE_SCHEMA:-agora}
+      AGORA_GOVERNANCE_STORE_BACKEND: ${AGORA_GOVERNANCE_STORE_BACKEND:-postgres}
+      AGORA_GOVERNANCE_STORE_DSN: ${AGORA_GOVERNANCE_STORE_DSN:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
+      AGORA_GOVERNANCE_STORE_SCHEMA: ${AGORA_GOVERNANCE_STORE_SCHEMA:-agora}
+      PANTHEON_ENV: ${PANTHEON_ENV:-dev}
+      PANTHEON_TENANT_ID: ${PANTHEON_TENANT_ID:-default}
+      PANTHEON_AGORA_WORKER_ID: agora-interaction-worker
+    volumes:
+      - bff-data:/data/bff
+    depends_on:
+      postgres:
+        condition: service_healthy
+      operator-bff:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "scripts/run_agora_interaction_worker.py", "--healthcheck"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
       start_period: 5s
 
   loop-run-projector-scheduler:
@@ -1424,18 +1475,15 @@ services:
     stop_grace_period: 30s
     environment:
       TELEMETRY_DB_DSN: ${TELEMETRY_DB_DSN:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
-      LIFECYCLE_PROJECTION_ROOT: /data/bff/lifecycle-projection
-      LIFECYCLE_PROJECTOR_STATE_PATH: /data/bff/lifecycle-projection/controller_state.json
-      LIFECYCLE_PROJECTOR_HEALTH_STATE_PATH: /data/bff/lifecycle-projection/health_state.json
+      # Post-cutover canonical relational shadow writer. Legacy JSON generation
+      # and retention parameters are retired.
+      LIFECYCLE_PROJECTOR_WRITER_BACKEND: ${LIFECYCLE_PROJECTOR_WRITER_BACKEND:-shadow}
+      LIFECYCLE_PROJECTOR_PROJECTION_DSN: ${LIFECYCLE_PROJECTOR_PROJECTION_DSN:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
+      LIFECYCLE_PROJECTOR_PROJECTION_SCHEMA: ${LIFECYCLE_PROJECTOR_PROJECTION_SCHEMA:-trade_journey_projection}
       LIFECYCLE_PROJECTOR_POLL_SECONDS: ${LIFECYCLE_PROJECTOR_POLL_SECONDS:-1}
       LIFECYCLE_PROJECTOR_BATCH_SIZE: ${LIFECYCLE_PROJECTOR_BATCH_SIZE:-500}
       LIFECYCLE_PROJECTOR_MAX_TICKS: ${LIFECYCLE_PROJECTOR_MAX_TICKS:-0}
-      LIFECYCLE_PROJECTOR_GENERATION_RETENTION: ${LIFECYCLE_PROJECTOR_GENERATION_RETENTION:-4}
-      LIFECYCLE_PROJECTOR_STAGING_MAX_AGE_SECONDS: ${LIFECYCLE_PROJECTOR_STAGING_MAX_AGE_SECONDS:-3600}
       LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS: ${LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS:-120}
-      LIFECYCLE_PROJECTOR_HEALTH_MAX_BACKLOG: ${LIFECYCLE_PROJECTOR_HEALTH_MAX_BACKLOG:-5000}
-      LIFECYCLE_PROJECTOR_HEALTH_MIN_FREE_BYTES: ${LIFECYCLE_PROJECTOR_HEALTH_MIN_FREE_BYTES:-134217728}
-      LIFECYCLE_PROJECTOR_HEALTH_MIN_FREE_PERCENT: ${LIFECYCLE_PROJECTOR_HEALTH_MIN_FREE_PERCENT:-5}
       PANTHEON_TJ_E2E_FIXTURE_INGEST_ENABLED: ${PANTHEON_TJ_E2E_FIXTURE_INGEST_ENABLED:-false}
       GIT_SHA: ${GIT_SHA:-unknown}
     volumes:
@@ -1451,6 +1499,55 @@ services:
       timeout: 10s
       retries: 20
       start_period: 600s
+
+  lifecycle-projector-capacity-benchmark:
+    # LIFECYCLE-PROJ-CAPACITY-001: opt-in, run-once harness that proves the
+    # section 14 resource/latency/fault gates. Never started with the default
+    # stack; it is a distinct benchmark job, not a second projector writer.
+    # Run it only when the host is otherwise quiet (see the task's admission
+    # guard note) with:
+    #   docker compose -p pantheon -f docker-compose.yml \
+    #     --profile lifecycle-capacity-benchmark run --rm \
+    #     lifecycle-projector-capacity-benchmark
+    profiles: ["lifecycle-capacity-benchmark"]
+    build:
+      context: .
+      dockerfile: services/telemetry/Dockerfile
+      args:
+        GIT_SHA: ${GIT_SHA:-unknown}
+    command:
+      - python
+      - -m
+      - services.trade_journey.lifecycle_projector_capacity
+      - --events
+      - ${LIFECYCLE_PROJECTOR_CAPACITY_EVENTS:-1000000}
+      - --loop-runs
+      - ${LIFECYCLE_PROJECTOR_CAPACITY_LOOP_RUNS:-150000}
+      - --batch-size
+      - ${LIFECYCLE_PROJECTOR_CAPACITY_BATCH_SIZE:-500}
+      - --output
+      - /data/bff/lifecycle-capacity/evidence.json
+    restart: "no"
+    mem_limit: ${LIFECYCLE_PROJECTOR_CAPACITY_MEMORY_LIMIT:-4g}
+    environment:
+      TELEMETRY_DB_DSN: ${TELEMETRY_DB_DSN:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
+      # The benchmark measures the bounded relational writer.  It never
+      # silently falls back to the legacy JSON projector when this DML target
+      # is unavailable.
+      LIFECYCLE_PROJECTOR_PROJECTION_DSN: ${LIFECYCLE_PROJECTOR_PROJECTION_DSN:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
+      # The harness refuses any shared projection schema. It generates a
+      # lifecycle_capacity_* schema when this is blank, and tears that schema
+      # down after the run. Supplying an existing schema is a hard error.
+      LIFECYCLE_PROJECTOR_CAPACITY_SCHEMA: ${LIFECYCLE_PROJECTOR_CAPACITY_SCHEMA:-}
+      GIT_SHA: ${GIT_SHA:-unknown}
+      LIFECYCLE_CAPACITY_GIT_DIRTY: ${LIFECYCLE_CAPACITY_GIT_DIRTY:-unknown}
+    volumes:
+      - bff-data:/data/bff
+    depends_on:
+      postgres:
+        condition: service_healthy
+      telemetry:
+        condition: service_healthy
 
   persona:
     build:
@@ -1473,7 +1570,7 @@ services:
       minio:
         condition: service_healthy
     ports:
-      - "18002:8002"
+      - "${PERSONA_PORT:-18002}:8002"
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8002/readyz', timeout=5).read()"]
       interval: 10s
@@ -1497,7 +1594,7 @@ services:
       governance:
         condition: service_healthy
     ports:
-      - "18003:8001"
+      - "${ROUTER_PORT:-18003}:8001"
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/readyz', timeout=5).read()"]
       interval: 10s
@@ -1545,7 +1642,7 @@ services:
       nats:
         condition: service_healthy
     ports:
-      - "18084:8084"
+      - "${EVALUATION_PORT:-18084}:8084"
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8084/readyz', timeout=5).read()"]
       interval: 10s
@@ -1564,7 +1661,7 @@ services:
     volumes:
       - feedback-data:/data/feedback
     ports:
-      - "18085:8085"
+      - "${FEEDBACK_PORT:-18085}:8085"
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8085/readyz', timeout=5).read()"]
       interval: 10s
@@ -1600,7 +1697,7 @@ services:
       nats:
         condition: service_healthy
     ports:
-      - "18086:8086"
+      - "${MEMORY_PORT:-18086}:8086"
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8086/readyz', timeout=5).read()"]
       interval: 10s
@@ -1629,7 +1726,7 @@ services:
       nats:
         condition: service_healthy
     ports:
-      - "18087:8087"
+      - "${REGISTRY_PORT:-18087}:8087"
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8087/readyz', timeout=5).read()"]
       interval: 10s
@@ -1656,7 +1753,7 @@ services:
       nats:
         condition: service_healthy
     ports:
-      - "18088:8088"
+      - "${OPTIMIZER_PORT:-18088}:8088"
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8088/readyz', timeout=5).read()"]
       interval: 10s
@@ -1687,7 +1784,7 @@ services:
       postgres:
         condition: service_healthy
     ports:
-      - "18089:8089"
+      - "${PROMOTION_PORT:-18089}:8089"
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8089/readyz', timeout=5).read()"]
       interval: 10s
@@ -1726,7 +1823,7 @@ services:
       postgres:
         condition: service_healthy
     ports:
-      - "18092:8092"
+      - "${CAPITAL_PORT:-18092}:8092"
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8092/readyz', timeout=5).read()"]
       interval: 10s
@@ -1749,6 +1846,7 @@ services:
       PANTHEON_CAPITAL_POOL_STORE_PATH: /data/capital/capital_pools.json
       PANTHEON_PERSONA_BINDING_STORE_PATH: /data/capital/persona_capital_bindings.json
       PANTHEON_RUNTIME_BINDING_STORE_PATH: /data/runtime/runtime_bindings.json
+      PANTHEON_DEPLOYMENT_AUTH_MODE: ${PANTHEON_DEPLOYMENT_AUTH_MODE:-permissive}
     volumes:
       - governance-data:/data/governance
       - capital-data:/data/capital:ro
@@ -1757,7 +1855,7 @@ services:
       governance:
         condition: service_healthy
     ports:
-      - "18095:8095"
+      - "${DEPLOYMENT_PORT:-18095}:8095"
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8095/readyz', timeout=5).read()"]
       interval: 10s
@@ -1847,7 +1945,7 @@ services:
       governance:
         condition: service_healthy
     ports:
-      - "18093:8093"
+      - "${EVOLUTION_PORT:-18093}:8093"
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8093/readyz', timeout=5).read()"]
       interval: 10s
@@ -1959,7 +2057,7 @@ services:
     volumes:
       - lineage-data:/data/lineage
     ports:
-      - "18094:8094"
+      - "${LINEAGE_READ_PORT:-18094}:8094"
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8094/readyz', timeout=5).read()"]
       interval: 10s
@@ -1971,11 +2069,11 @@ services:
     stop_grace_period: 30s
     build:
       context: .
-      dockerfile: services/execution/runtime-manager/Dockerfile
+      dockerfile: services/paper_fleet_reconciler/Dockerfile
       args:
         GIT_SHA: ${GIT_SHA:-unknown}
     restart: unless-stopped
-    command: ["python", "services/execution/runtime-manager/paper_fleet_reconciler.py"]
+    command: ["python", "services/paper_fleet_reconciler/paper_fleet_reconciler.py"]
     environment:
       PORT: "8011"
       PANTHEON_RUNTIME_MANAGER_URL: http://runtime-manager:8081
@@ -1992,6 +2090,7 @@ services:
       PANTHEON_PERFORMANCE_MARK_MAX_AGE_SECONDS: ${PANTHEON_PERFORMANCE_MARK_MAX_AGE_SECONDS:-172800}
       PANTHEON_PERFORMANCE_STATE_ROOT: /data/runtime/paper-performance
       SIGNAL_STORE_URL: redis://signal-store:6379
+      WORKER_SCRIPT_PATH: services/execution/lean_runtime/paper_runtime.py
     volumes:
       - runtime-data:/data/runtime
     depends_on:
@@ -2024,6 +2123,10 @@ services:
       TELEMETRY_DB_DSN: ${TELEMETRY_DB_DSN:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
       PANTHEON_RUNTIME_MANAGER_URL: http://runtime-manager:8081
       PANTHEON_RUNTIME_MANAGER_TOKEN: ${PANTHEON_RUNTIME_MANAGER_TOKEN:-runtime-control-internal}
+      # CurrentArtifactStrategy only accepts the Source-owned persisted
+      # snapshot contract.  The default remains paper-only and fails closed
+      # when a binding lacks an executable artifact or a valid snapshot.
+      PANTHEON_SOURCE_INGEST_URL: http://source-ingest:8097
       PANTHEON_TENANT_ID: ${PANTHEON_TENANT_ID:-${PANTHEON_BFF_TENANT_ID:-default}}
       PAPER_PRODUCER_INTERVAL_SECONDS: ${PAPER_PRODUCER_INTERVAL_SECONDS:-60}
       PAPER_SIGNAL_STRATEGY: ${PAPER_SIGNAL_STRATEGY:-artifact}
@@ -2034,6 +2137,8 @@ services:
       runtime-manager:
         condition: service_healthy
       signal-store:
+        condition: service_healthy
+      source-ingest:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "python", "-m", "services.execution.lean_runtime.paper_signal_producer", "healthcheck"]
@@ -2436,9 +2541,12 @@ services:
       context: .
       dockerfile: Dockerfile.smoke
     environment:
+      PYTHONUNBUFFERED: "1"
       SOURCE_INGEST_URL: http://source-ingest:8097
       SEARCH_URL: http://search-svc:8098
       SOURCE_INGEST_EXTERNAL_FEED_HOST: source-search-bounded-smoke
+      SOURCE_SEARCH_SMOKE_TIMEOUT_SECONDS: ${SOURCE_SEARCH_SMOKE_TIMEOUT_SECONDS:-180}
+      SOURCE_SEARCH_SMOKE_REQUEST_TIMEOUT_SECONDS: ${SOURCE_SEARCH_SMOKE_REQUEST_TIMEOUT_SECONDS:-15}
     depends_on:
       source-ingest:
         condition: service_healthy

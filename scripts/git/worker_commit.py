@@ -59,11 +59,38 @@ def _detect_repo_root() -> Path:
 ROOT = _detect_repo_root()
 STATUS_ROOT = Path(os.environ.get("PANTHEON_STATUS_ROOT") or ROOT).resolve()
 ACTIVITY_LOG = STATUS_ROOT / "ai-activity-log.jsonl"
-ORCHESTRATOR_DIR = ROOT / ".orchestrator"
+# The commit wrapper is executed from the worker's *target* repository.  For
+# cross-repository work (for example a Pantheon worker committing in
+# execute-plans), that repository does not contain Pantheon's orchestrator
+# module.  Resolve the shared runtime explicitly instead of accidentally
+# importing a foreign/missing ``common`` module from the target checkout.
+_command_root = os.environ.get("PANTHEON_COMMAND_ROOT")
+_runtime_orchestrator = (
+    Path(_command_root).expanduser().resolve() / ".orchestrator"
+    if _command_root
+    else None
+)
+if _command_root:
+    if not _runtime_orchestrator or not (_runtime_orchestrator / "common.py").is_file():
+        raise ModuleNotFoundError(
+            "PANTHEON_COMMAND_ROOT does not contain .orchestrator/common.py"
+        )
+    ORCHESTRATOR_DIR = _runtime_orchestrator
+else:
+    ORCHESTRATOR_DIR = ROOT / ".orchestrator"
 if str(ORCHESTRATOR_DIR) not in sys.path:
     sys.path.insert(0, str(ORCHESTRATOR_DIR))
 
-from common import write_activity_log
+try:
+    from common import write_activity_log
+except ModuleNotFoundError as exc:
+    if exc.name == "common":
+        raise ModuleNotFoundError(
+            "worker_commit.py requires Pantheon .orchestrator/common.py; "
+            "set PANTHEON_COMMAND_ROOT to the command runtime when committing "
+            "from a different repository"
+        ) from exc
+    raise
 
 
 def _git(*args: str, env: dict[str, str] | None = None, check: bool = True) -> subprocess.CompletedProcess:

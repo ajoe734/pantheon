@@ -682,6 +682,8 @@ def _task_spec(task: BridgeTask) -> Dict[str, object]:
         "reviewer": task.reviewer,
         "phase": task.phase,
         "depends_on": list(task.depends_on),
+        "dependency_tracks": dict(task.dependency_tracks),
+        "execution_resources": list(task.execution_resources),
         "artifacts": list(task.artifacts),
         "acceptance": list(task.acceptance),
         "summary": task.summary,
@@ -698,8 +700,13 @@ def _task_spec_hash(task: BridgeTask) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
+def _work_class(packet: DevTaskPacket) -> str:
+    return str(packet.work_class or "security").strip().lower()
+
+
 def _task_metadata(packet: DevTaskPacket, task: BridgeTask) -> Dict[str, object]:
     operator = packet.operator_authorization
+    work_class = _work_class(packet)
     return {
         "dev_bridge": {
             "packet_id": packet.packet_id,
@@ -715,6 +722,9 @@ def _task_metadata(packet: DevTaskPacket, task: BridgeTask) -> Dict[str, object]
             "audit_conversation_href": packet.audit_conversation_href,
             "emitted_at": packet.emitted_at,
             "intent": packet.intent,
+            "work_class": work_class,
+            "operator_authorization_required": work_class
+            not in {"functional", "paper", "read_only", "ci", "reconcile_only"},
             "mode": packet.mode,
             "actor": packet.actor.model_dump(mode="json", by_alias=True),
             "operator_id": operator.operator_id if operator else None,
@@ -803,10 +813,14 @@ def _admission_tasks(packet: DevTaskPacket) -> List[Dict[str, object]]:
 
 
 def _admission_provenance(packet: DevTaskPacket) -> Dict[str, object]:
+    work_class = _work_class(packet)
     return {
         "packet_version": packet.version,
         "actor": packet.actor.model_dump(mode="json", by_alias=True),
         "mode": packet.mode,
+        "work_class": work_class,
+        "operator_authorization_required": work_class
+        not in {"functional", "paper", "read_only", "ci", "reconcile_only"},
         "intent": packet.intent,
         "conversation_id": packet.source_conversation_id,
         "source_turn_ids": list(packet.source_turn_ids),

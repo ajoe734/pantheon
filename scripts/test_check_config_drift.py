@@ -7,11 +7,62 @@ from pathlib import Path
 from check_config_drift import (
     DEFAULT_INTENTIONAL_OVERRIDES,
     find_drift,
+    find_repository_integration_drift,
+    find_repository_source_drift,
     get_dotted,
     set_dotted,
     git_commits_behind,
     main,
 )
+
+
+def test_repository_source_root_drift_requires_promotion() -> None:
+    report = find_repository_source_drift(
+        {"coordination": {"repositories": {"pantheon": {"local_path": "/old/dev-root"}}}},
+        {"pantheon": "/new/dev-root", "execute_plans": "/code/execute-plans"},
+    )
+
+    assert report == [
+        {
+            "repository_id": "pantheon",
+            "expected_local_path": "/new/dev-root",
+            "live_local_path": "/old/dev-root",
+        },
+        {
+            "repository_id": "execute_plans",
+            "expected_local_path": "/code/execute-plans",
+            "live_local_path": None,
+        },
+    ]
+
+
+def test_repository_integration_root_drift_requires_promotion() -> None:
+    report = find_repository_integration_drift(
+        {
+            "coordination": {
+                "repositories": {
+                    "pantheon": {"integration_path": "/integration/pantheon/old"}
+                }
+            }
+        },
+        {
+            "pantheon": "/integration/pantheon/new",
+            "execute_plans": "/integration/execute_plans/head",
+        },
+    )
+
+    assert report == [
+        {
+            "repository_id": "pantheon",
+            "expected_integration_path": "/integration/pantheon/new",
+            "live_integration_path": "/integration/pantheon/old",
+        },
+        {
+            "repository_id": "execute_plans",
+            "expected_integration_path": "/integration/execute_plans/head",
+            "live_integration_path": None,
+        },
+    ]
 
 
 def test_find_drift_flags_nonallowlisted_toggle() -> None:
@@ -121,6 +172,68 @@ def test_task_state_store_mode_drift_is_actionable_by_default() -> None:
     assert report["intentional"] == []
     assert report["drift"] == [
         {"path": "task_state_store.mode", "repo": "authoritative", "live": "invalid"}
+    ]
+
+
+def test_worker_reassignment_drift_is_actionable_by_default() -> None:
+    repo = {
+        "worker_reassignment": {
+            "enabled": True,
+            "max_reassignments_per_cycle": 4,
+            "owner_fallbacks": {"Codex": ["Codex2"]},
+            "reviewer_fallbacks": {"Codex": ["Claude"]},
+        }
+    }
+    live = {
+        "worker_reassignment": {
+            "enabled": False,
+            "max_reassignments_per_cycle": 0,
+            "owner_fallbacks": {"Codex": ["Claude", "Antigravity"]},
+            "reviewer_fallbacks": {"Codex": ["Claude"]},
+        }
+    }
+
+    report = find_drift(repo, live)
+
+    assert report["intentional"] == []
+    assert {item["path"] for item in report["drift"]} == {
+        "worker_reassignment.enabled",
+        "worker_reassignment.max_reassignments_per_cycle",
+        "worker_reassignment.owner_fallbacks",
+    }
+
+
+def test_failure_loop_drift_is_actionable_by_default() -> None:
+    repo = {
+        "worker_reassignment": {
+            "failure_loop": {
+                "enabled": True,
+                "max_failures_in_window": 3,
+                "window_seconds": 3600,
+                "max_auto_reassignments": 1,
+            }
+        }
+    }
+    live = {
+        "worker_reassignment": {
+            "failure_loop": {
+                "enabled": False,
+                "max_failures_in_window": 3,
+                "window_seconds": 3600,
+                "max_auto_reassignments": 1,
+            }
+        }
+    }
+
+    report = find_drift(repo, live)
+
+    assert report["intentional"] == []
+    assert report["drift"] == [
+        {
+            "path": "worker_reassignment.failure_loop",
+            "repo": repo["worker_reassignment"]["failure_loop"],
+            "live": live["worker_reassignment"]["failure_loop"],
+        }
     ]
 
 

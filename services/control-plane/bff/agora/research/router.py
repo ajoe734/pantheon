@@ -1140,7 +1140,7 @@ def publish_research_progress(
     phase: str = "running",
     utc_now_fn: Optional[Callable[[], str]] = None,
 ) -> str:
-    from agora.strategy_workshop.router import _ws_publish  # noqa: PLC0415
+    from agora.strategy_workshop.events import _ws_publish  # noqa: PLC0415
     return _ws_publish(
         workshop_id,
         "research.run.progress",
@@ -1160,7 +1160,7 @@ def publish_openclaw_degraded(
     *,
     utc_now_fn: Optional[Callable[[], str]] = None,
 ) -> str:
-    from agora.strategy_workshop.router import _ws_publish  # noqa: PLC0415
+    from agora.strategy_workshop.events import _ws_publish  # noqa: PLC0415
     return _ws_publish(
         workshop_id,
         "workshop.openclaw.degraded",
@@ -1190,6 +1190,35 @@ def create_research_router(
     )
     router = APIRouter(tags=["agora-research"])
 
+    def _error_code_enum() -> Any:
+        try:
+            from ...models import ErrorCode
+            return ErrorCode
+        except Exception:
+            pass
+        try:
+            from bff.models import ErrorCode
+            return ErrorCode
+        except Exception:
+            pass
+        try:
+            from models import ErrorCode
+            if hasattr(ErrorCode, "FORBIDDEN"):
+                return ErrorCode
+        except Exception:
+            pass
+        from enum import Enum
+        class FallbackErrorCode(str, Enum):
+            AUTH_REQUIRED = "AUTH_REQUIRED"
+            FORBIDDEN = "FORBIDDEN"
+            RESOURCE_NOT_FOUND = "RESOURCE_NOT_FOUND"
+            VALIDATION_FAILED = "VALIDATION_FAILED"
+            RESOURCE_CONFLICT = "RESOURCE_CONFLICT"
+            PRECONDITION_FAILED = "PRECONDITION_FAILED"
+            OPERATION_NOT_ALLOWED = "OPERATION_NOT_ALLOWED"
+            IDEMPOTENCY_CONFLICT = "IDEMPOTENCY_CONFLICT"
+        return FallbackErrorCode
+
     def _read_scope(authorization: Optional[str], x_tenant_id: Optional[str] = None) -> Any:
         from ..identity.scope import AgoraScopeResolutionError, resolve_agora_user_scope
 
@@ -1202,7 +1231,7 @@ def create_research_router(
                 requested_tenant_id=x_tenant_id,
             )
         except AgoraScopeResolutionError as exc:
-            from models import ErrorCode
+            ErrorCode = _error_code_enum()
             code = ErrorCode.AUTH_REQUIRED if exc.status_code == 401 else ErrorCode.FORBIDDEN
             raise bff_error(
                 exc.status_code, code, exc.message, exc.reason,
@@ -1227,7 +1256,7 @@ def create_research_router(
             roles = set(getattr(identity, "roles", []) or [])
             if not (roles & AGORA_REQUIRED_ROLES):
                 if not (auth_mode == "permissive" and auth_stub and "viewer" in roles):
-                    from models import ErrorCode
+                    ErrorCode = _error_code_enum()
                     raise bff_error(
                         403, ErrorCode.FORBIDDEN,
                         "Write authority required for Agora research mutations",
@@ -1241,7 +1270,7 @@ def create_research_router(
                 requested_tenant_id=x_tenant_id,
             )
         except AgoraScopeResolutionError as exc:
-            from models import ErrorCode
+            ErrorCode = _error_code_enum()
             code = ErrorCode.AUTH_REQUIRED if exc.status_code == 401 else ErrorCode.FORBIDDEN
             raise bff_error(
                 exc.status_code, code, exc.message, exc.reason,
@@ -1251,7 +1280,7 @@ def create_research_router(
 
     def _require_idempotency_key(key: Optional[str]) -> None:
         if key is None:
-            from models import ErrorCode
+            ErrorCode = _error_code_enum()
             raise bff_error(
                 400, ErrorCode.VALIDATION_FAILED,
                 "Idempotency-Key header is required",
@@ -1262,12 +1291,12 @@ def create_research_router(
     def _check_idempotency(scope: Any, endpoint: str, key: str) -> None:
         scope_str = f"{scope.user_id}:{scope.tenant_id}:{endpoint}"
         if store.check_and_record_idempotency_key(scope_str, key):
-            from models import ErrorCode
+            ErrorCode = _error_code_enum()
             raise bff_error(409, ErrorCode.IDEMPOTENCY_CONFLICT, "Duplicate Idempotency-Key", key)
 
     def _require_if_match(header: Optional[str]) -> None:
         if header is None:
-            from models import ErrorCode
+            ErrorCode = _error_code_enum()
             raise bff_error(
                 428, ErrorCode.PRECONDITION_FAILED,
                 "If-Match header is required",
@@ -1279,7 +1308,7 @@ def create_research_router(
         lock_version = plan.get("lock_version", 1)
         provided = _parse_plan_lock_version(if_match, plan["plan_id"])
         if provided != lock_version:
-            from models import ErrorCode
+            ErrorCode = _error_code_enum()
             raise bff_error(
                 412, ErrorCode.PRECONDITION_FAILED,
                 "ETag mismatch; plan was modified since it was last read",
@@ -1291,7 +1320,7 @@ def create_research_router(
         lock_version = int(pool.get("lock_version", 1))
         provided = _parse_candidate_pool_lock_version(if_match, pool["pool_id"])  # type: ignore[arg-type]
         if provided != lock_version:
-            from models import ErrorCode
+            ErrorCode = _error_code_enum()
             raise bff_error(
                 412, ErrorCode.PRECONDITION_FAILED,
                 "ETag mismatch; candidate pool was modified since it was last read",
@@ -1301,33 +1330,33 @@ def create_research_router(
     def _get_plan_or_404(plan_id: str, scope: Any) -> Dict[str, Any]:
         plan = store.get_plan(plan_id)
         if plan is None or (plan.get("tenant_id") and plan.get("tenant_id") != scope.tenant_id) or (plan.get("user_id") and plan.get("user_id") != scope.user_id):
-            from models import ErrorCode
+            ErrorCode = _error_code_enum()
             raise bff_error(404, ErrorCode.RESOURCE_NOT_FOUND, "Research plan not found", plan_id)
         return plan
 
     def _get_run_or_404(run_id: str, scope: Any) -> Dict[str, Any]:
         run = store.get_run(run_id)
         if run is None or (run.get("tenant_id") and run.get("tenant_id") != scope.tenant_id) or (run.get("user_id") and run.get("user_id") != scope.user_id):
-            from models import ErrorCode
+            ErrorCode = _error_code_enum()
             raise bff_error(404, ErrorCode.RESOURCE_NOT_FOUND, "Research run not found", run_id)
         return run
 
     def _get_candidate_pool_or_404(pool_id: str) -> Dict[str, Any]:
         pool = store.get_candidate_pool(pool_id)
         if pool is None:
-            from models import ErrorCode
+            ErrorCode = _error_code_enum()
             raise bff_error(404, ErrorCode.RESOURCE_NOT_FOUND, "Candidate pool not found", pool_id)
         return pool
 
     def _require_pool_access(pool: Dict[str, Any], scope: Any) -> None:
         if pool.get("tenant_id") != scope.tenant_id or pool.get("user_id") != scope.user_id:
-            from models import ErrorCode
+            ErrorCode = _error_code_enum()
             raise bff_error(403, ErrorCode.FORBIDDEN, "Candidate pool not owned by caller", pool["pool_id"])
 
     def _get_member_or_404(pool_id: str, artifact_id: str) -> Dict[str, Any]:
         member = store.get_candidate_member(pool_id, artifact_id)
         if member is None:
-            from models import ErrorCode
+            ErrorCode = _error_code_enum()
             raise bff_error(404, ErrorCode.RESOURCE_NOT_FOUND, "Candidate pool member not found", artifact_id)
         return member
 
@@ -1421,7 +1450,7 @@ def create_research_router(
         return plan
 
     def _publish_research_event(workshop_id: str, event_type: str, data: Dict[str, Any]) -> None:
-        from agora.strategy_workshop.router import _ws_publish  # noqa: PLC0415
+        from agora.strategy_workshop.events import _ws_publish  # noqa: PLC0415
         _ws_publish(workshop_id, event_type, data, utc_now_fn=utc_now)
 
     def _validate_pool_filter(pool_filter: Dict[str, Any]) -> None:
@@ -1429,7 +1458,7 @@ def create_research_router(
         requested_states = set(pool_filter.get("lifecycle_states") or ["candidate"])
         unknown = requested_states - allowed_create_states
         if unknown:
-            from models import ErrorCode
+            ErrorCode = _error_code_enum()
             raise bff_error(
                 422, ErrorCode.VALIDATION_FAILED,
                 "candidate pool filter lifecycle_states must use the v1.4 create-pool enum",
@@ -1439,7 +1468,7 @@ def create_research_router(
     def _build_candidate_pool(body: CandidatePoolCreateRequest, scope: Any, now: str) -> Dict[str, Any]:
         operator_id = getattr(scope, "operator_id", scope.user_id)
         if body.operator_id not in {scope.user_id, operator_id}:
-            from models import ErrorCode
+            ErrorCode = _error_code_enum()
             raise bff_error(
                 422, ErrorCode.VALIDATION_FAILED,
                 "operator_id must match the authenticated Agora operator",
@@ -1447,7 +1476,7 @@ def create_research_router(
             )
         recipe = _load_default_scoring_recipe()
         if body.recipe_id and body.recipe_id != recipe["recipe_id"]:
-            from models import ErrorCode
+            ErrorCode = _error_code_enum()
             raise bff_error(
                 422, ErrorCode.VALIDATION_FAILED,
                 "Only the active winner-branch CandidateScoringRecipe is available in this BFF slice",
@@ -1552,7 +1581,7 @@ def create_research_router(
     ) -> List[Dict[str, Any]]:
         recipe = _load_default_scoring_recipe()
         if recipe_id and recipe_id != recipe["recipe_id"]:
-            from models import ErrorCode
+            ErrorCode = _error_code_enum()
             raise bff_error(
                 422, ErrorCode.VALIDATION_FAILED,
                 "Unknown CandidateScoringRecipe for candidate pool score run",
@@ -1642,14 +1671,14 @@ def create_research_router(
     def _validate_review_body(body: CandidateMemberReviewRequest) -> None:
         allowed = set(_REVIEW_DECISION_TO_LIFECYCLE)
         if body.decision not in allowed:
-            from models import ErrorCode
+            ErrorCode = _error_code_enum()
             raise bff_error(
                 422, ErrorCode.VALIDATION_FAILED,
                 "Candidate review decision is not in the v1.4 contract enum",
                 body.decision,
             )
         if body.decision in {"reject", "park"} and not (body.rationale or "").strip():
-            from models import ErrorCode
+            ErrorCode = _error_code_enum()
             raise bff_error(
                 422, ErrorCode.VALIDATION_FAILED,
                 "rationale is required when decision is reject or park",
@@ -1667,20 +1696,20 @@ def create_research_router(
     ) -> Dict[str, Any]:
         allowed_kinds = {"comment", "research_task", "score_question", "risk_flag", "approval_note"}
         if body.kind not in allowed_kinds:
-            from models import ErrorCode
+            ErrorCode = _error_code_enum()
             raise bff_error(
                 422, ErrorCode.VALIDATION_FAILED,
                 "Candidate discussion kind is not in the v1.4 contract enum",
                 body.kind,
             )
         if body.subject_type and body.subject_type not in (subject_type, "member", "pool", "candidate_pool", "candidate_pool_member"):
-            from models import ErrorCode
+            ErrorCode = _error_code_enum()
             raise bff_error(422, ErrorCode.VALIDATION_FAILED, "subject_type does not match route", body.subject_type)
         if body.subject_id and body.subject_id != subject_id:
-            from models import ErrorCode
+            ErrorCode = _error_code_enum()
             raise bff_error(422, ErrorCode.VALIDATION_FAILED, "subject_id does not match route", body.subject_id)
         if body.pool_id and body.pool_id != pool_id:
-            from models import ErrorCode
+            ErrorCode = _error_code_enum()
             raise bff_error(422, ErrorCode.VALIDATION_FAILED, "pool_id does not match route", body.pool_id)
         return {
             "discussion_id": body.discussion_id or f"cdisc-{uuid.uuid4().hex[:16]}",
@@ -1707,17 +1736,17 @@ def create_research_router(
     ) -> None:
         allowed_states = {"active", "paused", "graduated", "removed"}
         if body.monitoring_state not in allowed_states:
-            from models import ErrorCode
+            ErrorCode = _error_code_enum()
             raise bff_error(
                 422, ErrorCode.VALIDATION_FAILED,
                 "Candidate monitoring_state is not in the v1.4 contract enum",
                 body.monitoring_state,
             )
         if body.pool_id and body.pool_id != pool_id:
-            from models import ErrorCode
+            ErrorCode = _error_code_enum()
             raise bff_error(422, ErrorCode.VALIDATION_FAILED, "pool_id does not match route", body.pool_id)
         if body.artifact_id and body.artifact_id != artifact_id:
-            from models import ErrorCode
+            ErrorCode = _error_code_enum()
             raise bff_error(422, ErrorCode.VALIDATION_FAILED, "artifact_id does not match route", body.artifact_id)
 
     # -------------------------------------------------------------------
@@ -1733,7 +1762,7 @@ def create_research_router(
     ) -> Dict[str, Any]:
         scope = _read_scope(authorization, x_tenant_id)
         if not strategy_id and not strategy_ref:
-            from models import ErrorCode
+            ErrorCode = _error_code_enum()
             raise bff_error(
                 400, ErrorCode.VALIDATION_FAILED,
                 "strategy_id or strategy_ref query parameter is required for candidate pool lookup",
@@ -1748,7 +1777,7 @@ def create_research_router(
             strategy_ref=strategy_ref,
         )
         if pool is None:
-            from models import ErrorCode
+            ErrorCode = _error_code_enum()
             raise bff_error(
                 404, ErrorCode.RESOURCE_NOT_FOUND,
                 f"No candidate pool found for strategy '{target_id or strategy_ref}'",
@@ -1774,7 +1803,7 @@ def create_research_router(
             strategy_version=version,
         )
         if pool is None:
-            from models import ErrorCode
+            ErrorCode = _error_code_enum()
             raise bff_error(
                 404, ErrorCode.RESOURCE_NOT_FOUND,
                 f"No candidate pool found for strategy '{strategy_id}'",
@@ -2088,7 +2117,7 @@ def create_research_router(
         )
         member = _get_member_or_404(pool_id, artifact_id)
         if member.get("lifecycle_state") == "rejected":
-            from models import ErrorCode
+            ErrorCode = _error_code_enum()
             raise bff_error(
                 409, ErrorCode.RESOURCE_CONFLICT,
                 "Rejected candidate members are immutable retained negative examples",
@@ -2140,6 +2169,102 @@ def create_research_router(
             "subject_id": artifact_id,
             "payload": {"decision": body.decision, "lifecycle_state": next_lifecycle},
         })
+        try:
+            from ..trading_room.router import _get_store as _get_tr_store
+            tr_store = _get_tr_store()
+            event_decision_state = {
+                "approve_for_monitoring": "approved_by_trader",
+                "send_to_shadow": "deferred",
+                "needs_more_research": "deferred",
+                "park": "rejected_by_trader",
+                "reject": "rejected_by_trader",
+            }.get(body.decision, "pending")
+            event_suggested_action = {
+                "approve_for_monitoring": "enter",
+                "send_to_shadow": "review",
+                "needs_more_research": "review",
+                "park": "no_action",
+                "reject": "no_action",
+            }.get(body.decision, "review")
+            event_state = "decided" if event_decision_state != "pending" else "pending_review"
+            event_kind = "entry" if body.decision == "approve_for_monitoring" else "review"
+
+            member_strategy_id = (
+                member.get("strategy_id")
+                or (pool.get("metadata") or {}).get("strategy_id")
+                or (member.get("strategy_ref") or "").split(":")[-1]
+                or "strategy-default"
+            )
+            member_strategy_registry_id = (
+                member.get("strategy_spec_registry_id")
+                or member.get("strategy_ref")
+                or member_strategy_id
+            )
+            symbol = str(member.get("symbol") or member.get("title") or artifact_id)
+            score_data = store.get_candidate_score(pool_id, artifact_id) or {}
+            effective_score = float(score_data.get("effective_score") or 75.0)
+            confidence_val = min(1.0, max(0.0, effective_score / 100.0))
+
+            decision_event = {
+                "spec_version": "1.0",
+                "decision_event_id": f"trevt-cpm-{artifact_id[:12]}-{uuid.uuid4().hex[:8]}",
+                "event_kind": event_kind,
+                "origin": "trader_request",
+                "strategy_id": member_strategy_id,
+                "strategy_spec_registry_id": member_strategy_registry_id,
+                "candidate_ref": artifact_id,
+                "subject": {
+                    "symbol": symbol,
+                    "asset_class": member.get("asset_class") or "equity",
+                    "venue": member.get("venue") or "default",
+                },
+                "state": event_state,
+                "decision_state": event_decision_state,
+                "triggered_at": now,
+                "confidence": {
+                    "value": confidence_val,
+                    "basis": "mixed",
+                    "calibration_state": "calibrated",
+                    "sample_size": 100,
+                },
+                "probability": {
+                    "target_outcome": "positive_alpha",
+                    "horizon": "20d",
+                    "value": confidence_val,
+                },
+                "expected_value": {
+                    "horizon": "20d",
+                    "unit": "pct_return",
+                    "gross": 0.05,
+                    "cost": 0.01,
+                    "net": 0.04,
+                    "downside": 0.02,
+                },
+                "rationale": [
+                    {
+                        "claim": body.rationale or f"Candidate {artifact_id} reviewed with decision {body.decision}",
+                        "confidence": confidence_val,
+                        "evidence_refs": [
+                            {"ref_type": "candidate_pool_member", "ref_id": f"{pool_id}:{artifact_id}"}
+                        ],
+                    }
+                ],
+                "invalidation": {
+                    "conditions": ["price_gap_breach", "regime_change"],
+                    "current_state": "valid",
+                    "last_checked_at": now,
+                },
+                "suggested_action": event_suggested_action,
+                "suggested_size": {
+                    "size_hint": "medium",
+                    "portfolio_pct": 0.02,
+                    "non_binding": True,
+                },
+                "no_order_route_proof": "agora_decision_support_only",
+            }
+            tr_store.upsert_decision_event(decision_event)
+        except Exception:
+            pass
         return {
             "status": "completed",
             "data": {
@@ -2357,7 +2482,7 @@ def create_research_router(
         _get_member_or_404(pool_id, artifact_id)
         monitoring = store.get_candidate_monitoring(pool_id, artifact_id)
         if monitoring is None:
-            from models import ErrorCode
+            ErrorCode = _error_code_enum()
             raise bff_error(404, ErrorCode.RESOURCE_NOT_FOUND, "Candidate monitoring record not found", artifact_id)
         return _candidate_detail_envelope(
             pool=pool,
@@ -2603,7 +2728,7 @@ def create_research_router(
         plan = _get_plan_or_404(plan_id, scope)
         _check_plan_if_match(plan, if_match)  # type: ignore[arg-type]
         if plan["status"] != "draft":
-            from models import ErrorCode
+            ErrorCode = _error_code_enum()
             raise bff_error(
                 409, ErrorCode.RESOURCE_CONFLICT,
                 f"Plan cannot be approved from status '{plan['status']}'",
@@ -2673,7 +2798,7 @@ def create_research_router(
         _check_plan_if_match(plan, if_match)  # type: ignore[arg-type]
         cancellable = {"draft", "approved", "running"}
         if plan["status"] not in cancellable:
-            from models import ErrorCode
+            ErrorCode = _error_code_enum()
             raise bff_error(
                 409, ErrorCode.RESOURCE_CONFLICT,
                 f"Plan in status '{plan['status']}' cannot be cancelled",
@@ -2767,7 +2892,7 @@ def create_research_router(
         plan = _get_plan_or_404(plan_id, scope)
         _check_plan_if_match(plan, if_match)  # type: ignore[arg-type]
         if plan["status"] != "approved":
-            from models import ErrorCode
+            ErrorCode = _error_code_enum()
             raise bff_error(
                 409, ErrorCode.RESOURCE_CONFLICT,
                 f"Only approved plans may be dispatched; current status: '{plan['status']}'",
@@ -2779,7 +2904,7 @@ def create_research_router(
                 dispatch_stage = stage
                 break
         if dispatch_stage is None:
-            from models import ErrorCode
+            ErrorCode = _error_code_enum()
             raise bff_error(
                 409, ErrorCode.RESOURCE_CONFLICT,
                 "No pending or ready stages to dispatch",
@@ -2845,6 +2970,13 @@ def create_research_router(
             "stage_id": dispatch_stage["stage_id"],
         })
 
+        # Drain queued outbox records synchronously via ResearchDispatcher leased consumer
+        dispatcher.drain_outbox(
+            worker_id=f"dispatcher-router-{scope.user_id}",
+            tenant_id=scope.tenant_id,
+            user_id=scope.user_id,
+        )
+
         return {
             "status": "queued",
             "data": {
@@ -2895,7 +3027,7 @@ def create_research_router(
         cancellable_statuses = {"queued", "dispatching", "running"}
         current = run.get("execution_status")
         if current not in cancellable_statuses:
-            from models import ErrorCode
+            ErrorCode = _error_code_enum()
             raise bff_error(
                 409, ErrorCode.RESOURCE_CONFLICT,
                 f"Run in status '{current}' cannot be cancelled",

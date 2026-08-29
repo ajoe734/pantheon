@@ -3,7 +3,7 @@
 This is the authoritative HTTP surface for RuntimeBinding write operations
 within the Execution Plane.  All routes enforce the pre-conditions from:
 
-    services/execution/runtime-manager/contract.md
+    services/runtime_manager/contract.md
     BINDING_AND_DEPLOYMENT_SEMANTICS.md §19 (RUN-001)
     ROLLBACK_AND_POSITION_SEMANTICS.md
 
@@ -18,12 +18,6 @@ POST  /api/runtimes/deploy
 POST  /api/runtimes/<runtime_id>/replace
     Forward same-stage replacement of one RuntimeBinding from an approved plan.
     Body: ReplaceRuntimeRequest fields (see service.py for field documentation).
-    Returns: operation, old_binding, new_binding, cutover_at, position_lineage.
-
-POST  /api/runtime-bindings/<binding_id>/promote
-    Governed paper→canary or canary→live atomic cutover. Requires a verified
-    JWT MFA claim, four distinct actors across canonical approvals, and an
-    explicitly enabled target-stage execution switch.
 
 GET   /api/runtime-bindings
     List all RuntimeBindings, optionally filtered by pool_id or plan_id.
@@ -119,9 +113,11 @@ _REPO_ROOT_FOR_AUTH = str(Path(__file__).resolve().parent.parent.parent)
 if _REPO_ROOT_FOR_AUTH not in sys.path:
     sys.path.insert(0, _REPO_ROOT_FOR_AUTH)
 
-from service import (
+from services.runtime_manager import (
     RuntimeManagerService,
     RuntimeManagerError,
+    RuntimeBindingError,
+    KillSwitchError,
 )
 from deploy_authority import (
     DeployAuthorityError,
@@ -133,19 +129,6 @@ from promotion_authority import (
     PromotionAuthorityUnavailableError,
     verify_promotion_authorities,
 )
-
-# Import kill-switch error type for HTTP error mapping
-from kill_switch_controller import KillSwitchError  # noqa: E402
-
-# Import the store error type so we can map it to HTTP 404/409
-_EXEC_RM_DIR = os.getenv(
-    "PANTHEON_EXEC_RUNTIME_MANAGER_DIR",
-    str(Path(__file__).resolve().parent.parent.parent
-        / "services" / "execution" / "runtime-manager"),
-)
-if _EXEC_RM_DIR not in sys.path:
-    sys.path.insert(0, _EXEC_RM_DIR)
-from runtime_binding import RuntimeBindingError  # noqa: E402
 
 # Make sibling repo modules importable when this file runs as main.
 from services.runtime_auth_inbound import (  # noqa: E402
@@ -641,12 +624,13 @@ def transition_binding(binding_id):
     """
     body = request.get_json(force=True) or {}
     new_status = body.get("new_status", "")
+    metadata_patch = body.get("metadata_patch")
     if not new_status:
         return jsonify({"error": {"code": "MISSING_FIELDS", "message": "new_status is required"}}), 400
 
     svc = _get_service()
     try:
-        binding = svc.transition(binding_id, new_status)
+        binding = svc.transition(binding_id, new_status, metadata_patch=metadata_patch)
         return jsonify(binding.to_dict()), 200
     except RuntimeManagerError as exc:
         return jsonify({"error": {"code": "PRECONDITION_FAILED", "message": str(exc)}}), 409

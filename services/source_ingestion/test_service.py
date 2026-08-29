@@ -115,7 +115,7 @@ def test_health_exposes_storage_contract(client) -> None:
     assert body["audit_path"] == str(data_dir / "source_ingest_audit.jsonl")
 
 
-def test_fleet_freshness_reads_each_store_once_at_production_scale(
+def test_fleet_freshness_readiness_does_not_replay_journals_at_production_scale(
     client,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -164,17 +164,16 @@ def test_fleet_freshness_reads_each_store_once_at_production_scale(
     monkeypatch.setattr(module, "connector_store", ConnectorStore())
     monkeypatch.setattr(module, "schedule_config_store", ScheduleStore())
     monkeypatch.setattr(module, "store", IngestStore())
-    module._source_freshness_cache = {"computed_at": 0.0, "payload": None}
-
     result = module._source_freshness_readiness()
 
-    assert calls == {"configs": 1, "schedules": 1, "snapshot": 1}
+    assert calls == {"configs": 0, "schedules": 0, "snapshot": 0}
     assert result == {
-        "status": "ok",
-        "data_ready": True,
+        "status": "not_observed",
+        "data_ready": False,
         "scheduled_connector_count": 0,
         "stale_connector_count": 0,
         "degraded_connector_count": 0,
+        "reason": "controller_state_missing",
     }
 
 
@@ -252,6 +251,90 @@ def test_controller_readback_reads_each_store_once_at_production_scale(
 
     assert calls == {"configs": 1, "schedules": 1, "snapshot": 1, "records": 1}
     assert len(result) == connector_count
+
+
+def test_registry_reads_each_persistent_store_once_at_production_scale(
+    client,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _, _, module = client
+    connector_count = 1_591
+    calls = {"configs": 0, "schedules": 0, "freshness": 0}
+    configs = []
+    fetch_states = {}
+    for index in range(connector_count):
+        connector_id = f"connector-{index}"
+        configs.append(
+            SimpleNamespace(
+                connector=module.SourceConnector.from_dict(
+                    _connector(connector_id=connector_id)
+                ),
+                fetch={"mode": "static_records", "records": []},
+            )
+        )
+        fetch_states[connector_id] = {
+            "connector_id": connector_id,
+            "attempts": 0,
+            "successful_attempts": 0,
+            "failed_attempts": 0,
+            "last_error": None,
+            "updated_at": None,
+        }
+
+    class ConnectorStore:
+        def read_snapshot(self):
+            calls["configs"] += 1
+            return configs, fetch_states
+
+        def list_configs(self):
+            raise AssertionError("registry must not replay configs")
+
+        def get_config(self, _connector_id):
+            raise AssertionError("registry must not perform point config reads")
+
+        def get_fetch_state(self, _connector_id):
+            raise AssertionError("registry must not replay fetch state per connector")
+
+    class ScheduleStore:
+        def list_schedules(self):
+            calls["schedules"] += 1
+            return []
+
+        def get_schedule(self, _connector_id):
+            raise AssertionError("registry must not replay schedules per connector")
+
+    class IngestStore:
+        def read_freshness_snapshot(self):
+            calls["freshness"] += 1
+            return {"runs": (), "receipts": (), "watermarks": {}}
+
+        def list_runs(self):
+            raise AssertionError("registry must not replay runs per connector")
+
+        def list_receipts(self, **_kwargs):
+            raise AssertionError("registry must not replay receipts per connector")
+
+        def get_watermark(self, _connector_id):
+            raise AssertionError("registry must not replay watermarks per connector")
+
+    class Manager:
+        def list_connectors(self):
+            return []
+
+        def get_connector(self, _connector_id):
+            raise AssertionError("all scale-test connectors are configured")
+
+    monkeypatch.setattr(module, "connector_store", ConnectorStore())
+    monkeypatch.setattr(module, "schedule_config_store", ScheduleStore())
+    monkeypatch.setattr(module, "store", IngestStore())
+    monkeypatch.setattr(module, "manager", Manager())
+
+    entries = module._source_connector_entries()
+    policy = module._source_policy_registry_payload(entries)
+
+    assert len(entries) == connector_count
+    assert len(policy["connector_policies"]) == connector_count
+    assert calls == {"configs": 1, "schedules": 1, "freshness": 1}
 
 
 def test_trigger_success_persists_run_and_watermark_for_replay(client) -> None:
@@ -1170,3 +1253,41 @@ def test_trigger_enforces_bounded_batch_size(client) -> None:
 
     assert response.status_code == 413
     assert "SOURCE_INGEST_MAX_RECORDS=3" in response.json()["detail"]
+
+
+def test_trigger_jobs_payload_forbids_extra_fields(client) -> None:
+    test_client, _, _ = client
+    response = test_client.post(
+        "/api/source-ingest/jobs",
+        json={
+            "connector_id": "conn-openalex",
+            "mode": "bounded_pull",
+            "trace_id": "trace-extra-field",
+        },
+    )
+
+    assert response.status_code == 422
+    body = response.json()
+    assert "extra_forbidden" in json.dumps(body) or "extra fields not permitted" in json.dumps(body).lower()
+
+
+def test_controller_readback_thread_safety(client, monkeypatch: pytest.MonkeyPatch) -> None:
+    test_client, _, module = client
+    lock_acquired = False
+
+    original_payload_func = module._controller_readback_payload
+
+    def mock_payload():
+        nonlocal lock_acquired
+        # Since RLock is reentrant, acquiring non-blocking from within the lock holder returns True:
+        acquired_again = module.authoritative_reconcile_lock.acquire(blocking=False)
+        if acquired_again:
+            lock_acquired = True
+            module.authoritative_reconcile_lock.release()
+        return original_payload_func()
+
+    monkeypatch.setattr(module, "_controller_readback_payload", mock_payload)
+
+    response = test_client.get("/api/source-ingest/controller/readback")
+    assert response.status_code == 200
+    assert lock_acquired is True

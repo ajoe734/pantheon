@@ -448,6 +448,16 @@ def test_success_materializes_strict_evaluator_compatible_dataset(tmp_path: Path
     assert len(snapshot.vectorbt_dataset["records"]) == 60
 
 
+def test_v2_controller_state_readback_remains_authoritative(tmp_path: Path) -> None:
+    case = _make_case(tmp_path)
+    readback = case.responses[f"{BASE_URL}/api/source-ingest/controller/readback"]
+    readback["controller_state"]["schema_version"] = "source_ingest_controller_state.v2"
+
+    result = _materialize(case)
+
+    assert result.ingest_run_id == RUN_ID
+
+
 def test_stale_controller_readback_fails_closed(tmp_path: Path) -> None:
     case = _make_case(tmp_path)
     case.responses[f"{BASE_URL}/api/source-ingest/controller/readback"]["captured_at"] = (

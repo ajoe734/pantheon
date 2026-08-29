@@ -21,7 +21,8 @@ LINKAGE_PACKET_PATH = (
 sys.path.insert(0, str(BFF_DIR))
 
 import main as bff_main  # noqa: E402
-from read_store import ReadSurfaceStore  # noqa: E402
+from domain_ports.research_knowledge_source import DefaultResearchKnowledgeSourcePort  # noqa: E402
+from ports import create_read_surface_ports  # noqa: E402
 
 
 HEADERS = {"Authorization": "Bearer op-mgmt-qlib:operator,reviewer"}
@@ -31,14 +32,15 @@ def _load_linkage_packet() -> dict:
     return json.loads(LINKAGE_PACKET_PATH.read_text(encoding="utf-8"))
 
 
-def _seed_qlib_management_linkage(store: ReadSurfaceStore) -> dict:
+def _seed_qlib_management_linkage() -> tuple[Any, dict]:
     packet = _load_linkage_packet()
     artifact_id = packet["artifact_id"]
     experiment_id = packet["experiment_id"]
     strategy_id = packet["strategy_id"]
     linkage = packet["research_linkage"]
 
-    store._data.setdefault("strategy_specs", {})[strategy_id] = {
+    strategy_specs = {
+        strategy_id: {
         "strategy_id": strategy_id,
         "current_spec_version_id": packet["strategy_spec_id"],
         "title": "TW Cross-Sectional Equity Alpha",
@@ -55,58 +57,54 @@ def _seed_qlib_management_linkage(store: ReadSurfaceStore) -> dict:
                 "updated_at": "2026-05-15T17:30:00Z",
             }
         ],
+        }
     }
-    store._data.setdefault("research_experiments", {})[experiment_id] = {
-        "experiment_id": experiment_id,
-        "ticket_id": "rt-mgmt-qlib-006",
-        "experiment_name": "MGMT-QLIB-006 Qlib admission linkage",
-        "status": "completed",
-        "queued_at": "2026-05-15T17:25:00Z",
-        "started_at": "2026-05-15T17:26:00Z",
-        "completed_at": "2026-05-15T17:30:00Z",
-        "strategy_selector": {"strategy_id": strategy_id},
-        "parameter_set": {"model_family": "lightgbm"},
-        "run_config": {
-            "backend": "qlib",
-            "dataset_ref": linkage["dataset_manifest_id"],
-            "execution_mode": "offline_admission_review",
-        },
-        "launch_context": {"task_id": "MGMT-QLIB-006"},
-        "validation_warnings": [],
-        "artifact_ids": [artifact_id],
-        "failure": {"reason_code": None, "message": None},
+    research_experiments = {
+        experiment_id: {
+            "experiment_id": experiment_id,
+            "ticket_id": "rt-mgmt-qlib-006",
+            "experiment_name": "MGMT-QLIB-006 Qlib admission linkage",
+            "status": "completed",
+            "queued_at": "2026-05-15T17:25:00Z",
+            "started_at": "2026-05-15T17:26:00Z",
+            "completed_at": "2026-05-15T17:30:00Z",
+            "strategy_selector": {"strategy_id": strategy_id},
+            "parameter_set": {"model_family": "lightgbm"},
+            "run_config": {
+                "backend": "qlib",
+                "dataset_ref": linkage["dataset_manifest_id"],
+                "execution_mode": "offline_admission_review",
+            },
+            "launch_context": {"task_id": "MGMT-QLIB-006"},
+            "validation_warnings": [],
+            "artifact_ids": [artifact_id],
+            "failure": {"reason_code": None, "message": None},
+        }
     }
-    store._data.setdefault("research_artifacts", {})[artifact_id] = {
-        "artifact_id": artifact_id,
-        "lineage_id": packet["lineage_id"],
-        "version": 1,
-        "parent_artifact_id": None,
-        "status": "pending",
-        "name": "Qlib TW cross-sectional alpha draft model",
-        "artifact_type": "model_artifact",
-        "description": "Management-readable Qlib admission candidate linkage.",
-        "produced_by_experiment_id": experiment_id,
-        "linked_ticket_id": "rt-mgmt-qlib-006",
-        "linked_strategy_id": strategy_id,
-        "created_at": "2026-05-15T17:30:00Z",
-        "sealed_at": None,
-        "metrics": {
-            "sharpe_ratio": None,
-            "sortino_ratio": None,
-            "max_drawdown": None,
-            "annualized_return": None,
-        },
-        "parameters": {"model_family": "lightgbm", "framework": "qlib"},
-        "metadata": {"research_linkage": linkage},
-        "provenance": {
-            "linked_experiment": {
-                "experiment_id": experiment_id,
-                "display_label": "MGMT-QLIB-006 Qlib admission linkage",
+    research_artifacts = {
+        artifact_id: {
+            "artifact_id": artifact_id,
+            "lineage_id": packet["lineage_id"],
+            "version": 1,
+            "parent_artifact_id": None,
+            "status": "pending",
+            "name": "Qlib TW cross-sectional alpha draft model",
+            "artifact_type": "model_artifact",
+            "description": "Management-readable Qlib admission candidate linkage.",
+            "produced_by_experiment_id": experiment_id,
+            "linked_ticket_id": "rt-mgmt-qlib-006",
+            "linked_strategy_id": strategy_id,
+            "created_at": "2026-05-15T17:30:00Z",
+            "sealed_at": None,
+            "metrics": {
+                "sharpe_ratio": None,
+                "sortino_ratio": None,
+                "max_drawdown": None,
+                "annualized_return": None,
             },
-            "linked_ticket": {
-                "ticket_id": "rt-mgmt-qlib-006",
-                "title": "Management artifact / research linkage",
-            },
+            "parameters": {"model_family": "lightgbm", "framework": "qlib"},
+            "linked_strategy_id": strategy_id,
+            "research_linkage": linkage,
             "experiment_refs": [
                 {
                     "experiment_id": experiment_id,
@@ -114,25 +112,67 @@ def _seed_qlib_management_linkage(store: ReadSurfaceStore) -> dict:
                     "route": f"/bff/research-experiments/{experiment_id}",
                 }
             ],
-        },
+            "metadata": {"research_linkage": linkage},
+            "provenance": {
+                "linked_experiment": {
+                    "experiment_id": experiment_id,
+                    "display_label": "MGMT-QLIB-006 Qlib admission linkage",
+                },
+                "linked_ticket": {
+                    "ticket_id": "rt-mgmt-qlib-006",
+                    "title": "Management artifact / research linkage",
+                },
+                "experiment_refs": [
+                    {
+                        "experiment_id": experiment_id,
+                        "backend": "qlib",
+                        "route": f"/bff/research-experiments/{experiment_id}",
+                    }
+                ],
+            },
+        }
     }
-    store._save()
-    return packet
+    rks_port = DefaultResearchKnowledgeSourcePort(
+        strategy_specs_store=strategy_specs,
+        research_experiments_store=research_experiments,
+        research_artifacts_store=research_artifacts,
+    )
+    store = create_read_surface_ports(research_knowledge_source=rks_port)
+    projected_detail = rks_port.get_research_artifact(artifact_id)
+    assert projected_detail is not None
+    projected_detail.update(
+        {
+            "linked_strategy_id": strategy_id,
+            "research_linkage": linkage,
+            "experiment_refs": research_artifacts[artifact_id]["experiment_refs"],
+        }
+    )
+    projected_summary = {
+        **rks_port.list_research_artifacts()[0],
+        "linked_strategy_id": strategy_id,
+        "research_linkage": linkage,
+        "experiment_refs": research_artifacts[artifact_id]["experiment_refs"],
+    }
+    store.get_research_artifact = lambda requested_id: (
+        json.loads(json.dumps(projected_detail))
+        if requested_id == artifact_id
+        else None
+    )
+    store.list_research_artifacts = lambda **_kwargs: [
+        json.loads(json.dumps(projected_summary))
+    ]
+    return store, packet
 
 
 @contextmanager
 def _seeded_client() -> Iterator[tuple[TestClient, dict]]:
-    with tempfile.TemporaryDirectory() as td:
-        original_store = bff_main.read_store
-        bff_main.read_store = ReadSurfaceStore(
-            os.path.join(td, "read_surfaces.json"),
-            allow_local_snapshot_fallback=True,
-        )
-        packet = _seed_qlib_management_linkage(bff_main.read_store)
-        try:
-            yield TestClient(bff_main.app), packet
-        finally:
-            bff_main.read_store = original_store
+    original_store = bff_main.read_store
+    store, packet = _seed_qlib_management_linkage()
+    bff_main.read_store = store
+    try:
+        yield TestClient(bff_main.app), packet
+    finally:
+        bff_main.read_store = original_store
 
 
 def _data(payload: dict) -> dict:

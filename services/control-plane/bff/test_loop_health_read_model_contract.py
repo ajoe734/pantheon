@@ -21,7 +21,7 @@ sys.path.insert(0, str(BFF_DIR))
 
 import main as bff_main  # noqa: E402
 import loop_inventory as loop_inventory_model  # noqa: E402
-from read_store import ReadSurfaceStore  # noqa: E402
+from ports import create_in_memory_read_surface_ports  # noqa: E402
 from services.runtime_auth_inbound import encode_jwt_hs256  # noqa: E402
 
 
@@ -82,15 +82,30 @@ def _loop_health_client(
             env_overrides["PANTHEON_BFF_LOOP_HEALTH_STORE"] = str(health_path)
 
         original_store = bff_main.read_store
-        bff_main.read_store = ReadSurfaceStore(
-            str(snapshot_path),
-            allow_local_snapshot_fallback=allow_snapshot_fallback,
+        original_monitor = getattr(bff_main, "downstream_health_monitor", None)
+        active_records = None
+        if loop_health_store is not None:
+            active_records = _scope_loop_health_records(loop_health_store)
+        elif snapshot_payload is not None and allow_snapshot_fallback:
+            active_records = _scope_loop_health_payload(snapshot_payload).get("loop_health", {})
+
+        store = create_in_memory_read_surface_ports(
+            lifecycle_telemetry_governance_kwargs={
+                "loop_health_records": active_records or {},
+            }
         )
+        if active_records is None:
+            store.dataset_source = lambda ds: "missing" if ds == "loop_health" else "typed_store"
+        else:
+            store.dataset_source = lambda ds: "service_store" if ds == "loop_health" else "typed_store"
+        bff_main.read_store = store
+        bff_main.downstream_health_monitor = None
         with patch.dict(os.environ, env_overrides, clear=False):
             try:
                 yield TestClient(bff_main.app, raise_server_exceptions=False)
             finally:
                 bff_main.read_store = original_store
+                bff_main.downstream_health_monitor = original_monitor
 
 
 def _truth_source(packet: Dict[str, Any], truth_level: str) -> Dict[str, Any]:
@@ -216,7 +231,25 @@ def test_loop_health_registry_only_lists_all_loops_without_live_claim(monkeypatc
 
     assert response.status_code == 200, response.text
     payload = response.json()
-    assert len(payload["items"]) == 13
+    # The canonical loop-health array is exactly the twelve stable loop
+    # ids; the composite overlay is noncanonical inventory and never
+    # appears inside `items`.
+    assert len(payload["items"]) == 12
+    assert {item["loop_id"] for item in payload["items"]} == {
+        "source_ingestion",
+        "strategy_distillation",
+        "alpha_replication",
+        "persona_teaching",
+        "agora_interaction_evidence",
+        "human_imitation_shadow_evaluation",
+        "consultation",
+        "promotion_deployment",
+        "capital_pool_execution",
+        "telemetry_reconciliation",
+        "evolution",
+        "bff_health_monitoring",
+    }
+    assert all(item["classification"] != "composite_overlay" for item in payload["items"])
     assert payload["meta"]["surfaces"]["loop_health"]["status"] == "degraded"
     assert payload["meta"]["surfaces"]["loop_health"]["truth_level"] == "registry_metadata"
     assert payload["meta"]["surfaces"]["loop_health_snapshots"]["source"] == "missing"
@@ -232,7 +265,7 @@ def test_loop_health_registry_only_lists_all_loops_without_live_claim(monkeypatc
         "scheduled",
     ]
     assert payload["meta"]["coverage"] == {
-        "loop_count": 13,
+        "loop_count": 12,
         "canonical_loop_count": 12,
         "composite_overlay_count": 1,
         "inventory_entry_count": 13,
@@ -241,15 +274,26 @@ def test_loop_health_registry_only_lists_all_loops_without_live_claim(monkeypatc
         "controller_health_records_available": False,
         "accepted_controller_health_records_available": False,
     }
+    # The composite overlay is surfaced separately from the canonical array.
+    overlay_items = payload["meta"]["composite_overlay_inventory"]
+    assert [item["loop_id"] for item in overlay_items] == ["per_persona_ooda"]
+    assert overlay_items[0]["classification"] == "composite_overlay"
 
     source_loop = next(item for item in payload["items"] if item["loop_id"] == "source_ingestion")
-    assert source_loop["current_maturity"] == "api-only"
-    assert source_loop["target_maturity"] == "reconciled"
+    assert "current_maturity" not in source_loop
+    assert "target_maturity" not in source_loop
     # The catalog declares an implemented controller, so the absence of a
     # record is "unobserved", not "not_implemented" -- and still not live.
     assert source_loop["controller"]["status"] == "implemented"
     assert source_loop["controller_health"]["status"] == "unobserved"
     assert source_loop["controller_health"]["current_record_accepted"] is False
+    assert source_loop["runtime_maturity"] == {
+        "state": "unobserved",
+        "source": "missing",
+        "truth_level": "registry_metadata",
+        "current_record_accepted": False,
+        "reason": "record lacks accepted current controller-runtime provenance",
+    }
     assert source_loop["last_success"] is None
     assert source_loop["last_failure"] is None
 
@@ -258,11 +302,6 @@ def test_loop_health_registry_only_lists_all_loops_without_live_claim(monkeypatc
     )
     assert consultation_loop["controller"]["status"] == "not_implemented"
     assert consultation_loop["controller_health"]["status"] == "not_implemented"
-
-    ooda_overlay = next(item for item in payload["items"] if item["loop_id"] == "per_persona_ooda")
-    assert ooda_overlay["classification"] == "composite_overlay"
-    assert ooda_overlay["controller_health"]["current_record_accepted"] is False
-    assert ooda_overlay["live_status"]["is_live"] is False
 
     packet = source_loop["evidence_packet"]
     assert packet["highest_truth_level"] == "registry_metadata"
@@ -315,12 +354,16 @@ def test_loop_health_service_store_overlays_controller_health_and_events(monkeyp
             },
         }
     }
-    with _loop_health_client(loop_health_store=loop_health_store) as client:
-        response = client.get("/bff/v5/loop-health/source_ingestion", headers=HEADERS)
-
-    assert response.status_code == 200, response.text
-    payload = response.json()
-    data = payload["data"]
+    # Loop-inventory's admission/projection is exercised directly, as a pure
+    # function of a health-records list, rather than through the BFF request
+    # path: current loop-health truth no longer has any local-snapshot
+    # ingestion route to inject this fixture through.
+    data = loop_inventory_model.get_loop_health_entry(
+        "source_ingestion",
+        list(loop_health_store.values()),
+        health_source="service_store",
+    )
+    assert data is not None
     # The reported controller identity does not match the catalog contract, so
     # the record stays unaccepted and the surface stays unobserved.
     assert data["controller_health"]["status"] == "unobserved"
@@ -344,26 +387,23 @@ def test_loop_health_service_store_overlays_controller_health_and_events(monkeyp
     assert _truth_source(data["evidence_packet"], "scheduled_tick")["status"] == "present"
 
 
-def test_loop_health_local_snapshot_is_labeled_snapshot_not_live(monkeypatch) -> None:
-    monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "true")
-    snapshot_payload = {
-        "loop_health": {
-            "bff_health_monitoring": {
-                "loop_id": "bff_health_monitoring",
-                "truth_level": "reconciled_live_proof",
-                "controller_status": "observed",
-                "last_success_at": "2026-06-27T06:10:00Z",
-            }
-        }
+def test_loop_health_local_snapshot_is_labeled_snapshot_not_live() -> None:
+    # A BFF local snapshot is historical evidence only; it is no longer a
+    # current-truth ingestion route in the BFF request path, so this
+    # exercises loop_inventory's generic ``local_snapshot`` labeling
+    # directly instead of injecting the record through main.py.
+    snapshot_record = {
+        "loop_id": "bff_health_monitoring",
+        "truth_level": "reconciled_live_proof",
+        "controller_status": "observed",
+        "last_success_at": "2026-06-27T06:10:00Z",
     }
-    with _loop_health_client(
-        snapshot_payload=snapshot_payload,
-        allow_snapshot_fallback=True,
-    ) as client:
-        response = client.get("/bff/v5/loop-health/bff_health_monitoring", headers=HEADERS)
-
-    assert response.status_code == 200, response.text
-    data = response.json()["data"]
+    data = loop_inventory_model.get_loop_health_entry(
+        "bff_health_monitoring",
+        [snapshot_record],
+        health_source="local_snapshot",
+    )
+    assert data is not None
     packet = data["evidence_packet"]
     assert data["controller_health"]["source"] == "registry_metadata"
     assert data["controller_health"]["reported_source"] == "local_snapshot"
@@ -387,7 +427,6 @@ def test_loop_health_archive_completion_cannot_create_controller_liveness(monkey
     source_loop = next(
         loop for loop in registry["loops"] if loop["loop_id"] == "source_ingestion"
     )
-    source_loop["maturity"]["current"] = "proven-live"
     source_loop["controller_contract"].update(
         {
             "status": "proven_live",
@@ -398,8 +437,6 @@ def test_loop_health_archive_completion_cannot_create_controller_liveness(monkey
             "liveness_metric": "last_heartbeat_at",
         }
     )
-    source_loop["evidence_profile"]["reconciled_live_proof"]["status"] = "present"
-    source_loop["evidence_profile"]["proven_live_evidence"]["status"] = "present"
     monkeypatch.setattr(loop_inventory_model, "_load_registry", lambda: registry)
     current_heartbeat = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     loop_health_store = {
@@ -419,12 +456,15 @@ def test_loop_health_archive_completion_cannot_create_controller_liveness(monkey
             },
         }
     }
-    with _loop_health_client(loop_health_store=loop_health_store) as client:
-        response = client.get("/bff/v5/loop-health/source_ingestion", headers=HEADERS)
-
-    assert response.status_code == 200, response.text
-    payload = response.json()
-    data = payload["data"]
+    # Loop-inventory's admission/projection is exercised directly; there is
+    # no local-snapshot ingestion route left in the BFF request path to
+    # inject this fixture through.
+    data = loop_inventory_model.get_loop_health_entry(
+        "source_ingestion",
+        list(loop_health_store.values()),
+        health_source="service_store",
+    )
+    assert data is not None
     packet = data["evidence_packet"]
     assert packet["highest_truth_level"] == "proven_live_evidence"
     assert packet["runtime_record_evidence_basis"] == "task_archive_completion"
@@ -438,9 +478,6 @@ def test_loop_health_archive_completion_cannot_create_controller_liveness(monkey
     assert data["controller_health"]["current_record_accepted"] is False
     assert data["live_status"]["is_reconciled"] is False
     assert data["live_status"]["is_live"] is False
-    assert payload["meta"]["surfaces"]["loop_health"]["status"] == "degraded"
-    assert payload["meta"]["coverage"]["controller_health_record_count"] == 0
-    assert payload["meta"]["coverage"]["raw_health_record_count"] == 1
 
 
 def test_loop_health_rejects_conflicting_or_archive_only_runtime_provenance(
@@ -451,7 +488,6 @@ def test_loop_health_rejects_conflicting_or_archive_only_runtime_provenance(
     source_loop = next(
         loop for loop in registry["loops"] if loop["loop_id"] == "source_ingestion"
     )
-    source_loop["maturity"]["current"] = "proven-live"
     source_loop["controller_contract"].update(
         {
             "status": "proven_live",
@@ -462,8 +498,6 @@ def test_loop_health_rejects_conflicting_or_archive_only_runtime_provenance(
             "liveness_metric": "last_heartbeat_at",
         }
     )
-    source_loop["evidence_profile"]["reconciled_live_proof"]["status"] = "present"
-    source_loop["evidence_profile"]["proven_live_evidence"]["status"] = "present"
     monkeypatch.setattr(loop_inventory_model, "_load_registry", lambda: registry)
     current_heartbeat = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     archive_ref = "ai-task-archive/tasks/LOOP-AUTO-BFF-004.json"
@@ -515,6 +549,16 @@ def test_loop_health_rejects_conflicting_or_archive_only_runtime_provenance(
                     "controller_name": "source-ingestion-controller",
                     "last_heartbeat_at": current_heartbeat,
                 },
+                "desired_state_presence": {
+                    "present": True,
+                    "authoritative": True,
+                    "checked_at": current_heartbeat,
+                },
+                "downstream_actual_state": {
+                    "status": "ready",
+                    "authoritative": True,
+                    "checked_at": current_heartbeat,
+                },
                 "evidence_packet": {
                     "packet_id": case_id,
                     "provenance_type": packet_basis,
@@ -522,14 +566,12 @@ def test_loop_health_rejects_conflicting_or_archive_only_runtime_provenance(
                 },
             }
         }
-        with _loop_health_client(loop_health_store=loop_health_store) as client:
-            response = client.get(
-                "/bff/v5/loop-health/source_ingestion",
-                headers=HEADERS,
-            )
-
-        assert response.status_code == 200, response.text
-        data = response.json()["data"]
+        data = loop_inventory_model.get_loop_health_entry(
+            "source_ingestion",
+            list(loop_health_store.values()),
+            health_source="service_store",
+        )
+        assert data is not None, case_id
         packet = data["evidence_packet"]
         assert packet["runtime_controller_record_qualified"] is accepted, case_id
         assert packet["accepted_live_liveness"] is accepted, case_id
@@ -549,7 +591,6 @@ def test_loop_health_cannot_combine_lower_live_truth_with_higher_registry_claim(
     source_loop = next(
         loop for loop in registry["loops"] if loop["loop_id"] == "source_ingestion"
     )
-    source_loop["maturity"]["current"] = "proven-live"
     source_loop["controller_contract"].update(
         {
             "status": "proven_live",
@@ -560,8 +601,6 @@ def test_loop_health_cannot_combine_lower_live_truth_with_higher_registry_claim(
             "liveness_metric": "last_heartbeat_at",
         }
     )
-    source_loop["evidence_profile"]["reconciled_live_proof"]["status"] = "present"
-    source_loop["evidence_profile"]["proven_live_evidence"]["status"] = "present"
     monkeypatch.setattr(loop_inventory_model, "_load_registry", lambda: registry)
     current_heartbeat = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     loop_health_store = {
@@ -575,25 +614,37 @@ def test_loop_health_cannot_combine_lower_live_truth_with_higher_registry_claim(
                 "controller_name": "source-ingestion-controller",
                 "last_heartbeat_at": current_heartbeat,
             },
+            "desired_state_presence": {
+                "present": True,
+                "authoritative": True,
+                "checked_at": current_heartbeat,
+            },
+            "downstream_actual_state": {
+                "status": "ready",
+                "authoritative": True,
+                "checked_at": current_heartbeat,
+            },
             "evidence_packet": {
                 "packet_id": "source-ingestion-reconciled-only",
                 "refs": ["docs/deployment/evidence/source-ingestion/reconciled.json"],
             },
         }
     }
-    with _loop_health_client(loop_health_store=loop_health_store) as client:
-        response = client.get("/bff/v5/loop-health/source_ingestion", headers=HEADERS)
-
-    assert response.status_code == 200, response.text
-    data = response.json()["data"]
+    data = loop_inventory_model.get_loop_health_entry(
+        "source_ingestion",
+        list(loop_health_store.values()),
+        health_source="service_store",
+    )
+    assert data is not None
     packet = data["evidence_packet"]
-    assert packet["highest_truth_level"] == "proven_live_evidence"
+    assert packet["highest_truth_level"] == "reconciled_live_proof"
     assert packet["operator_truth"]["truth_level"] == "reconciled_live_proof"
     assert packet["operator_truth"]["accepted_as_live"] is True
     assert packet["accepted_live_liveness"] is True
     assert packet["can_claim_reconciled"] is True
     assert packet["can_claim_proven_live"] is False
     assert data["controller_health"]["current_record_accepted"] is True
+    assert data["runtime_maturity"]["state"] == "reconciled"
     assert data["live_status"]["is_reconciled"] is True
     assert data["live_status"]["is_live"] is False
 
@@ -606,7 +657,6 @@ def test_loop_health_accepts_current_controller_runtime_only_when_catalog_admits
     bff_loop = next(
         loop for loop in registry["loops"] if loop["loop_id"] == "bff_health_monitoring"
     )
-    bff_loop["maturity"]["current"] = "reconciled"
     bff_loop["controller_contract"].update(
         {
             "status": "implemented",
@@ -617,7 +667,6 @@ def test_loop_health_accepts_current_controller_runtime_only_when_catalog_admits
             "liveness_metric": "last_heartbeat_at",
         }
     )
-    bff_loop["evidence_profile"]["reconciled_live_proof"]["status"] = "present"
     monkeypatch.setattr(loop_inventory_model, "_load_registry", lambda: registry)
     current_heartbeat = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     loop_health_store = {
@@ -632,18 +681,28 @@ def test_loop_health_accepts_current_controller_runtime_only_when_catalog_admits
                 "controller_name": "bff-health-reconciler",
                 "last_heartbeat_at": current_heartbeat,
             },
+            "desired_state_presence": {
+                "present": True,
+                "authoritative": True,
+                "checked_at": current_heartbeat,
+            },
+            "downstream_actual_state": {
+                "status": "ready",
+                "authoritative": True,
+                "checked_at": current_heartbeat,
+            },
             "evidence_packet": {
                 "packet_id": "packet-bff-health-live-001",
                 "refs": ["docs/deployment/evidence/bff-health/current-controller.json"],
             },
         }
     }
-    with _loop_health_client(loop_health_store=loop_health_store) as client:
-        response = client.get("/bff/v5/loop-health/bff_health_monitoring", headers=HEADERS)
-
-    assert response.status_code == 200, response.text
-    payload = response.json()
-    data = payload["data"]
+    data = loop_inventory_model.get_loop_health_entry(
+        "bff_health_monitoring",
+        list(loop_health_store.values()),
+        health_source="service_store",
+    )
+    assert data is not None
     packet = data["evidence_packet"]
     assert packet["highest_truth_level"] == "reconciled_live_proof"
     assert packet["runtime_record_evidence_basis"] == "controller_runtime"
@@ -658,8 +717,6 @@ def test_loop_health_accepts_current_controller_runtime_only_when_catalog_admits
     assert data["controller_health"]["current_record_accepted"] is True
     assert data["live_status"]["is_reconciled"] is True
     assert data["live_status"]["is_live"] is False
-    assert payload["meta"]["surfaces"]["loop_health"]["status"] == "ok"
-    assert payload["meta"]["coverage"]["controller_health_record_count"] == 1
     assert _truth_source(packet, "registry_metadata")["source_type"] == "registry"
     assert _truth_source(packet, "reconciled_live_proof")["source_type"] == "live_truth"
 
@@ -667,14 +724,12 @@ def test_loop_health_accepts_current_controller_runtime_only_when_catalog_admits
     stale_store["bff_health_monitoring"]["controller_health"]["last_heartbeat_at"] = (
         "2000-01-01T00:00:00Z"
     )
-    with _loop_health_client(loop_health_store=stale_store) as client:
-        stale_response = client.get(
-            "/bff/v5/loop-health/bff_health_monitoring",
-            headers=HEADERS,
-        )
-
-    assert stale_response.status_code == 200, stale_response.text
-    stale_data = stale_response.json()["data"]
+    stale_data = loop_inventory_model.get_loop_health_entry(
+        "bff_health_monitoring",
+        list(stale_store.values()),
+        health_source="service_store",
+    )
+    assert stale_data is not None
     assert stale_data["controller_health"]["freshness"]["current"] is False
     assert stale_data["controller_health"]["current_record_accepted"] is False
     assert stale_data["evidence_packet"]["accepted_live_liveness"] is False
@@ -689,7 +744,6 @@ def test_loop_health_rejects_runtime_record_from_wrong_controller_identity(
     bff_loop = next(
         loop for loop in registry["loops"] if loop["loop_id"] == "bff_health_monitoring"
     )
-    bff_loop["maturity"]["current"] = "reconciled"
     bff_loop["controller_contract"].update(
         {
             "status": "implemented",
@@ -700,7 +754,6 @@ def test_loop_health_rejects_runtime_record_from_wrong_controller_identity(
             "liveness_metric": "last_heartbeat_at",
         }
     )
-    bff_loop["evidence_profile"]["reconciled_live_proof"]["status"] = "present"
     monkeypatch.setattr(loop_inventory_model, "_load_registry", lambda: registry)
     current_heartbeat = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     loop_health_store = {
@@ -720,11 +773,12 @@ def test_loop_health_rejects_runtime_record_from_wrong_controller_identity(
             },
         }
     }
-    with _loop_health_client(loop_health_store=loop_health_store) as client:
-        response = client.get("/bff/v5/loop-health/bff_health_monitoring", headers=HEADERS)
-
-    assert response.status_code == 200, response.text
-    data = response.json()["data"]
+    data = loop_inventory_model.get_loop_health_entry(
+        "bff_health_monitoring",
+        list(loop_health_store.values()),
+        health_source="service_store",
+    )
+    assert data is not None
     packet = data["evidence_packet"]
     assert packet["runtime_controller_record_qualified"] is False
     assert packet["accepted_live_liveness"] is False
@@ -784,12 +838,24 @@ def test_every_canonical_loop_record_conforms_and_reads_back_tenant_scoped(
     items = {item["loop_id"]: item for item in payload["items"]}
     assert set(conformance.CANONICAL_LOOP_IDS) <= set(items)
 
+    # Only the loops whose catalog controller contract already declares a
+    # concrete controller identity can ever be admitted as live -- a blank
+    # catalog identity can never be satisfied by any reported name, however
+    # well-formed the runtime record otherwise is.
+    catalog_admitted_loop_ids = {
+        loop_id
+        for loop_id in conformance.CANONICAL_LOOP_IDS
+        if _catalog_controller_name(loop_id)
+    }
+    assert catalog_admitted_loop_ids, "expected at least one implemented catalog controller"
+
     for loop_id in conformance.CANONICAL_LOOP_IDS:
         item = items[loop_id]
         health = item["controller_health"]
         packet = item["evidence_packet"]
 
-        # Desired presence, health, last success/failure, actual state.
+        # Desired presence, health, last success/failure, actual state are
+        # visible for every loop regardless of catalog admission.
         assert item["desired_state_presence"]["authoritative"] is True, loop_id
         assert item["desired_state_presence"]["present"] is True, loop_id
         assert item["desired_state_presence"]["query"] == (
@@ -809,34 +875,37 @@ def test_every_canonical_loop_record_conforms_and_reads_back_tenant_scoped(
         assert packet["highest_truth_level"] == "reconciled_live_proof", loop_id
         assert packet["archived_task_completion_accepted"] is False, loop_id
 
-        # Nothing is promoted: the catalog does not admit any live claim yet.
-        assert packet["eligible_live_truth_levels"] == [], loop_id
-        assert packet["accepted_live_liveness"] is False, loop_id
-        assert packet["can_claim_reconciled"] is False, loop_id
-        assert packet["can_claim_proven_live"] is False, loop_id
-        assert packet["operator_truth"]["degraded"] is True, loop_id
-        assert item["live_status"]["is_live"] is False, loop_id
-        assert item["live_status"]["is_reconciled"] is False, loop_id
+        if loop_id in catalog_admitted_loop_ids:
+            # Current records, not catalog maturity/task claims, decide truth.
+            assert packet["accepted_live_liveness"] is True, loop_id
+            assert packet["can_claim_reconciled"] is True, loop_id
+            assert packet["can_claim_proven_live"] is False, loop_id
+            assert packet["operator_truth"]["degraded"] is False, loop_id
+            assert item["live_status"]["is_live"] is False, loop_id
+            assert item["live_status"]["is_reconciled"] is True, loop_id
 
-        contract_status = item["controller"]["status"]
-        if contract_status == "implemented":
-            # The record matches the catalog contract, so it is accepted as a
-            # current controller observation -- but still not as live truth.
+            # The record matches the stable controller contract and is
+            # current runtime truth; no catalog maturity/task field
+            # participates.
             assert packet["runtime_controller_record_qualified"] is True, loop_id
             assert health["current_record_accepted"] is True, loop_id
             assert health["status"] == "healthy", loop_id
             assert health["source"] == "controller_store", loop_id
             assert _truth_source(packet, "reconciled_live_proof")["operator_note"] == (
-                "The catalog maturity and controller contract do not admit this "
-                "live claim."
+                "Accepted as live liveness proof."
             ), loop_id
+            assert item["runtime_maturity"]["state"] == "reconciled", loop_id
         else:
-            assert contract_status == "not_implemented", loop_id
+            # The catalog has not declared a controller identity for this
+            # loop yet, so a well-formed runtime record still cannot become
+            # live truth -- admitting any nonblank reported name here would
+            # be exactly the permissive second validator this projection
+            # must not have.
+            assert packet["runtime_controller_record_qualified"] is False, loop_id
+            assert packet["accepted_live_liveness"] is False, loop_id
             assert health["current_record_accepted"] is False, loop_id
-            assert health["status"] == "not_implemented", loop_id
-            assert health["rejection_reason"] == (
-                "catalog controller contract is not implemented"
-            ), loop_id
+            assert item["live_status"]["is_reconciled"] is False, loop_id
+            assert item["live_status"]["is_live"] is False, loop_id
 
     # The foreign-tenant record contributed nothing to this tenant's view.
     for item in payload["items"]:
@@ -904,15 +973,14 @@ def test_stale_and_contradicted_records_stay_unaccepted_for_every_loop(
             loop_id
         )
         assert item["controller_health"]["current_record_accepted"] is False, loop_id
-        if item["controller"]["status"] == "implemented":
-            assert item["controller_health"]["rejection_reason"] == (
-                "task archive completion is reference-only, not runtime evidence"
-            ), loop_id
+        assert item["controller_health"]["rejection_reason"] == (
+            "task archive completion is reference-only, not runtime evidence"
+        ), loop_id
 
     # Contradicted provenance: a record that declares two different evidence
-    # bases is refused outright.  This case is served from the file store, so
-    # the durable-store path from the phases above must be turned off first.
-    monkeypatch.delenv("DATABASE_URL", raising=False)
+    # bases is refused outright.  Loop-inventory's admission is exercised
+    # directly here since there is no local-snapshot ingestion route left in
+    # the BFF request path to inject this fixture through.
     contradicted = {
         loop_id: {
             "loop_id": loop_id,
@@ -935,24 +1003,21 @@ def test_stale_and_contradicted_records_stay_unaccepted_for_every_loop(
         }
         for loop_id in conformance.CANONICAL_LOOP_IDS
     }
-    with _loop_health_client(loop_health_store=contradicted) as client:
-        contradicted_response = client.get("/bff/v5/loop-health", headers=HEADERS)
-
-    assert contradicted_response.status_code == 200, contradicted_response.text
-    contradicted_items = {
-        item["loop_id"]: item for item in contradicted_response.json()["items"]
-    }
     for loop_id in conformance.CANONICAL_LOOP_IDS:
-        item = contradicted_items[loop_id]
+        item = loop_inventory_model.get_loop_health_entry(
+            loop_id,
+            [contradicted[loop_id]],
+            health_source="service_store",
+        )
+        assert item is not None, loop_id
         packet = item["evidence_packet"]
         assert packet["runtime_record_evidence_basis"] == "conflicting", loop_id
         assert packet["runtime_controller_record_qualified"] is False, loop_id
         assert packet["accepted_live_liveness"] is False, loop_id
         assert item["controller_health"]["current_record_accepted"] is False, loop_id
-        if item["controller"]["status"] == "implemented":
-            assert item["controller_health"]["rejection_reason"] == (
-                "record declares conflicting evidence provenance"
-            ), loop_id
+        assert item["controller_health"]["rejection_reason"] == (
+            "record declares conflicting evidence provenance"
+        ), loop_id
 
 
 def test_loop_health_detail_unknown_id_is_404(monkeypatch) -> None:
@@ -1073,7 +1138,11 @@ def test_loop_health_db_store_merge_with_file_store(monkeypatch) -> None:
 
     monkeypatch.setattr(LoopControllerStore, "list_records", mock_list_records)
 
-    loop_health_store = {
+    # A BFF local snapshot/file store is no longer joined as current
+    # loop-health truth at all: only LoopControllerStore contributes.  A
+    # per-loop file fixture that used to leak into the response through the
+    # now-removed merge stays invisible here.
+    loop_health_store_file_contents = {
         "bff_health_monitoring": {
             "loop_id": "bff_health_monitoring",
             "truth_level": "scheduled_tick",
@@ -1089,7 +1158,7 @@ def test_loop_health_db_store_merge_with_file_store(monkeypatch) -> None:
         }
     }
 
-    with _loop_health_client(loop_health_store=loop_health_store) as client:
+    with _loop_health_client(loop_health_store=loop_health_store_file_contents) as client:
         response = client.get("/bff/v5/loop-health", headers=HEADERS)
 
     assert response.status_code == 200, response.text
@@ -1104,8 +1173,11 @@ def test_loop_health_db_store_merge_with_file_store(monkeypatch) -> None:
     assert source_ingestion["desired_state_presence"]["present"] is True
     assert source_ingestion["downstream_actual_state"]["authoritative"] is True
     assert source_ingestion["downstream_actual_state"]["status"] == "ready"
-    assert bff_health["truth_source"]["source"] == "service_store"
-    assert bff_health["evidence_packet"]["packet_id"] == "packet-bff-health-001"
+    # The file-store fixture for bff_health_monitoring never reaches current
+    # truth: no controller-store row exists for it, so it stays registry-only.
+    assert bff_health["truth_source"]["source"] == "bff_local_registry"
+    assert bff_health["evidence_packet"]["packet_id"] != "packet-bff-health-001"
+    assert bff_health["controller_health"]["current_record_accepted"] is False
 
 
 def test_loop_health_database_lookup_uses_authenticated_tenant_and_environment(

@@ -7,22 +7,95 @@ typed persistence interfaces, advisory locking, and atomic batch projection tran
 
 from __future__ import annotations
 
+import concurrent.futures
 import hashlib
+import inspect
 import json
 import logging
+import math
+import threading
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Mapping, Optional
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_PROJECTION_SCHEMA = "trade_journey_projection"
+DEFAULT_PROJECTION_TIMEOUT_SECONDS = 10.0
+DEFAULT_PROJECTION_CONNECT_TIMEOUT_SECONDS = 10.0
+DEFAULT_PROJECTION_STATEMENT_TIMEOUT_SECONDS = 10.0
+DEFAULT_PROJECTION_LOCK_TIMEOUT_SECONDS = 10.0
 INITIAL_MIGRATION_PATH = (
     Path(__file__).resolve().parent
     / "migrations"
     / "001_create_trade_journey_projection_schema.sql"
 )
+
+
+def _validate_timeout(
+    value: Any,
+    *,
+    name: str = "timeout_seconds",
+    default: float = DEFAULT_PROJECTION_TIMEOUT_SECONDS,
+) -> float:
+    if value is None:
+        return float(default)
+    if isinstance(value, str):
+        stripped = value.strip()
+        if not stripped:
+            return float(default)
+        value = stripped
+    if isinstance(value, bool):
+        raise ValueError(f"{name} must be a finite positive number (got {value!r})")
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{name} must be a finite positive number (got {value!r})") from exc
+    if not math.isfinite(parsed) or parsed <= 0.0:
+        raise ValueError(f"{name} must be a finite positive number (got {value!r})")
+    return parsed
+
+
+def _safe_close_conn(conn: Any) -> None:
+    try:
+        conn.close()
+    except Exception:
+        pass
+
+
+def _can_accept_kwargs(func: Any) -> bool:
+    try:
+        sig = inspect.signature(func)
+        for param in sig.parameters.values():
+            if param.kind == inspect.Parameter.VAR_KEYWORD:
+                return True
+        return "connect_timeout" in sig.parameters and "options" in sig.parameters
+    except (ValueError, TypeError):
+        return True
+
+
+def _is_signature_mismatch_error(exc: TypeError, func: Any) -> bool:
+    tb = exc.__traceback__
+    if tb is not None and tb.tb_next is not None:
+        # The exception was raised inside the Python function body, not by argument binding
+        return False
+    msg = str(exc)
+    name = getattr(func, "__name__", "")
+    patterns = (
+        "unexpected keyword argument",
+        "invalid keyword argument",
+        "takes no keyword arguments",
+        "takes at most",
+        "takes no arguments",
+    )
+    if any(p in msg for p in patterns):
+        return True
+    if name and f"{name}() takes" in msg:
+        return True
+    if "positional argument" in msg and "takes" in msg:
+        return True
+    return False
 
 
 def controller_advisory_lock_id(
@@ -220,6 +293,10 @@ class ProjectionStore:
         schema: str = DEFAULT_PROJECTION_SCHEMA,
         connect: Optional[Callable[..., Any]] = None,
         bootstrap: bool = False,
+        timeout_seconds: float | None = None,
+        connect_timeout_seconds: float | None = None,
+        statement_timeout_seconds: float | None = None,
+        lock_timeout_seconds: float | None = None,
     ) -> None:
         if not dsn:
             raise ValueError("Postgres DSN is required for ProjectionStore")
@@ -227,19 +304,134 @@ class ProjectionStore:
             raise ValueError("Invalid schema name for ProjectionStore")
         self.dsn = dsn
         self.schema = schema
+        base_timeout = (
+            _validate_timeout(
+                timeout_seconds,
+                name="timeout_seconds",
+                default=DEFAULT_PROJECTION_TIMEOUT_SECONDS,
+            )
+            if timeout_seconds is not None
+            else DEFAULT_PROJECTION_TIMEOUT_SECONDS
+        )
+        self.connect_timeout_seconds = _validate_timeout(
+            connect_timeout_seconds,
+            name="connect_timeout_seconds",
+            default=base_timeout,
+        )
+        self.statement_timeout_seconds = _validate_timeout(
+            statement_timeout_seconds,
+            name="statement_timeout_seconds",
+            default=base_timeout,
+        )
+        self.lock_timeout_seconds = _validate_timeout(
+            lock_timeout_seconds,
+            name="lock_timeout_seconds",
+            default=base_timeout,
+        )
         if connect is None:
-            import psycopg  # type: ignore[import]
+            try:
+                import psycopg  # type: ignore[import]
+            except ImportError as exc:
+                raise RuntimeError("psycopg is required for ProjectionStore") from exc
             connect = psycopg.connect
         self._connect = connect
         if bootstrap:
             self.bootstrap_schema()
+
+    def _connect_db(self) -> Any:
+        statement_timeout_ms = int(math.ceil(self.statement_timeout_seconds * 1000.0))
+        lock_timeout_ms = int(math.ceil(self.lock_timeout_seconds * 1000.0))
+        connect_timeout_s = max(1, int(math.ceil(self.connect_timeout_seconds)))
+        options = f"-c statement_timeout={statement_timeout_ms} -c lock_timeout={lock_timeout_ms}"
+
+        lock = threading.Lock()
+        outcome: dict[str, Any] = {
+            "status": "pending",
+            "conn": None,
+            "error": None,
+        }
+        done = threading.Event()
+
+        def _worker() -> None:
+            conn = None
+            try:
+                can_kwargs = _can_accept_kwargs(self._connect)
+                if can_kwargs:
+                    try:
+                        conn = self._connect(
+                            self.dsn,
+                            connect_timeout=connect_timeout_s,
+                            options=options,
+                        )
+                    except TypeError as exc:
+                        if not _is_signature_mismatch_error(exc, self._connect):
+                            raise
+                        conn = None
+
+                if conn is None:
+                    conn = self._connect(self.dsn)
+                    with conn.cursor() as cur:
+                        cur.execute(
+                            f"SET statement_timeout = {statement_timeout_ms}; SET lock_timeout = {lock_timeout_ms};"
+                        )
+
+                with lock:
+                    if outcome["status"] == "pending":
+                        outcome["status"] = "success"
+                        outcome["conn"] = conn
+                        done.set()
+                        return
+
+                if conn is not None:
+                    _safe_close_conn(conn)
+            except BaseException as exc:
+                if conn is not None:
+                    _safe_close_conn(conn)
+                with lock:
+                    if outcome["status"] == "pending":
+                        outcome["status"] = "error"
+                        outcome["error"] = exc
+            finally:
+                done.set()
+
+        t = threading.Thread(target=_worker, daemon=True, name="projection-store-connect")
+        t.start()
+
+        if not done.wait(timeout=self.connect_timeout_seconds):
+            conn_to_close = None
+            with lock:
+                if outcome["status"] == "pending":
+                    outcome["status"] = "timed_out"
+                elif outcome["status"] == "success":
+                    outcome["status"] = "timed_out"
+                    conn_to_close = outcome["conn"]
+                    outcome["conn"] = None
+            if conn_to_close is not None:
+                threading.Thread(
+                    target=_safe_close_conn,
+                    args=(conn_to_close,),
+                    daemon=True,
+                    name="projection-store-conn-cleanup",
+                ).start()
+            raise TimeoutError(
+                f"ProjectionStore connection to database timed out after {self.connect_timeout_seconds}s"
+            )
+
+        with lock:
+            if outcome["status"] == "error":
+                raise outcome["error"]
+            if outcome["status"] == "success":
+                return outcome["conn"]
+            raise TimeoutError(
+                f"ProjectionStore connection to database timed out after {self.connect_timeout_seconds}s"
+            )
 
     def bootstrap_schema(self) -> None:
         """Apply the versioned migration explicitly with migration credentials."""
 
         sql = INITIAL_MIGRATION_PATH.read_text(encoding="utf-8")
         sql = sql.replace(DEFAULT_PROJECTION_SCHEMA, self.schema)
-        with self._connect(self.dsn) as conn, conn.cursor() as cur:
+        with self._connect_db() as conn, conn.cursor() as cur:
             cur.execute(sql)
 
     def get_controller_state(
@@ -255,12 +447,243 @@ class ProjectionStore:
         FROM {self.schema}.controller
         WHERE controller_id=%s AND tenant_scope=%s AND environment_scope=%s
         """
-        with self._connect(self.dsn) as conn, conn.cursor() as cur:
+        with self._connect_db() as conn, conn.cursor() as cur:
             cur.execute(sql, (controller_id, tenant_scope, environment_scope))
             row = cur.fetchone()
             if not row:
                 return None
             return ControllerStateRow(*row)
+
+    def adopt_legacy_baseline(
+        self,
+        *,
+        controller_id: str,
+        migration_controller_id: str,
+        tenant_scope: str,
+        environment_scope: str,
+        checkpoint_seq: int,
+        deployment_sha: str,
+        expected_receipts: int,
+        expected_journeys: int,
+        expected_loop_runs: int,
+    ) -> ControllerStateRow:
+        """Seed a non-live controller from an accepted legacy projection.
+
+        This recovery-only operation is deliberately narrower than a normal
+        checkpoint update. It fails closed unless the migration controller
+        and exact baseline row counts are already durable, no live controller
+        exists, no unresolved quarantine remains, and every retained stage
+        offset is at or below the accepted legacy checkpoint. A byte-for-byte
+        retry of an already adopted baseline is idempotent.
+
+        Adoption never grants read authority: the new controller remains in
+        ``recovery``/``repair_only`` with ``accepted_live=false`` until the
+        shadow worker polls the retained PostgreSQL source to zero backlog.
+        """
+
+        if not controller_id or not migration_controller_id:
+            raise ProjectionStoreException("Legacy baseline controller IDs are required")
+        if controller_id == migration_controller_id:
+            raise ProjectionStoreException(
+                "Legacy baseline migration and live controller IDs must be distinct"
+            )
+        if checkpoint_seq <= 0:
+            raise ProjectionStoreException("Legacy baseline checkpoint must be positive")
+        expected = {
+            "event_receipts": expected_receipts,
+            "journeys": expected_journeys,
+            "loop_runs": expected_loop_runs,
+        }
+        if any(value < 0 for value in expected.values()):
+            raise ProjectionStoreException("Legacy baseline expected counts must be non-negative")
+
+        def scoped_count(cur: Any, table: str) -> int:
+            cur.execute(
+                f"""
+                SELECT COUNT(*) FROM {self.schema}.{table}
+                WHERE (%s IN ('', '*') OR tenant_id=%s)
+                  AND (%s IN ('', '*') OR environment=%s)
+                """,
+                (tenant_scope, tenant_scope, environment_scope, environment_scope),
+            )
+            return int(cur.fetchone()[0])
+
+        controller_columns = """
+            controller_id, tenant_scope, environment_scope, checkpoint_seq,
+            source_high_watermark, backlog_count, projection_revision,
+            deployment_sha, mode, status, accepted_live, last_poll_at,
+            last_success_at, last_live_success_at, last_recovery_at,
+            last_backfill_at, last_replay_at, last_failure_at,
+            last_error_message, unresolved_quarantine_count, updated_at
+        """
+        controller_args = (controller_id, tenant_scope, environment_scope)
+        migration_args = (
+            migration_controller_id,
+            tenant_scope,
+            environment_scope,
+        )
+
+        with self._connect_db() as conn, conn.cursor() as cur:
+            # Stable lock order prevents an accidental concurrent shadow start
+            # from racing the baseline adoption.
+            lock_ids = sorted(
+                {
+                    controller_advisory_lock_id(
+                        controller_id, tenant_scope, environment_scope
+                    ),
+                    controller_advisory_lock_id(
+                        migration_controller_id, tenant_scope, environment_scope
+                    ),
+                }
+            )
+            for lock_id in lock_ids:
+                cur.execute("SELECT pg_try_advisory_xact_lock(%s)", (lock_id,))
+                if not cur.fetchone()[0]:
+                    raise ProjectionStoreException(
+                        "Could not acquire both legacy baseline controller locks"
+                    )
+
+            cur.execute(
+                f"""
+                SELECT {controller_columns}
+                FROM {self.schema}.controller
+                WHERE controller_id=%s AND tenant_scope=%s AND environment_scope=%s
+                FOR UPDATE
+                """,
+                controller_args,
+            )
+            existing_live = cur.fetchone()
+            if existing_live is not None:
+                existing = ControllerStateRow(*existing_live)
+                if (
+                    existing.checkpoint_seq == checkpoint_seq
+                    and existing.source_high_watermark == checkpoint_seq
+                    and existing.backlog_count == 0
+                    and existing.deployment_sha == deployment_sha
+                    and existing.mode == "recovery"
+                    and existing.status == "repair_only"
+                    and not existing.accepted_live
+                    and existing.unresolved_quarantine_count == 0
+                ):
+                    return existing
+                raise ProjectionStoreException(
+                    "Live controller already exists and does not match the accepted legacy baseline"
+                )
+
+            cur.execute(
+                f"""
+                SELECT {controller_columns}
+                FROM {self.schema}.controller
+                WHERE controller_id=%s AND tenant_scope=%s AND environment_scope=%s
+                FOR UPDATE
+                """,
+                migration_args,
+            )
+            migration_row = cur.fetchone()
+            if migration_row is None:
+                raise ProjectionStoreException(
+                    "Legacy baseline migration controller is not durable"
+                )
+            migration = ControllerStateRow(*migration_row)
+            if migration.accepted_live or migration.mode != "backfill":
+                raise ProjectionStoreException(
+                    "Legacy baseline migration controller has an unsafe mode or live admission"
+                )
+
+            observed = {
+                table: scoped_count(cur, table)
+                for table in ("event_receipts", "journeys", "loop_runs")
+            }
+            if observed != expected:
+                raise ProjectionStoreException(
+                    f"Legacy baseline count mismatch: expected {expected}, observed {observed}"
+                )
+
+            cur.execute(
+                f"""
+                SELECT COALESCE(MAX(source_ingested_seq), 0)
+                FROM {self.schema}.journey_stages
+                WHERE (%s IN ('', '*') OR tenant_id=%s)
+                  AND (%s IN ('', '*') OR environment=%s)
+                """,
+                (tenant_scope, tenant_scope, environment_scope, environment_scope),
+            )
+            maximum_stage_offset = int(cur.fetchone()[0])
+            if maximum_stage_offset > checkpoint_seq:
+                raise ProjectionStoreException(
+                    "Legacy baseline stage offset exceeds the accepted checkpoint"
+                )
+
+            cur.execute(
+                f"""
+                SELECT COUNT(*) FROM {self.schema}.quarantine
+                WHERE resolution_status='unresolved'
+                  AND (%s IN ('', '*') OR tenant_id=%s)
+                  AND (%s IN ('', '*') OR environment=%s)
+                """,
+                (tenant_scope, tenant_scope, environment_scope, environment_scope),
+            )
+            if int(cur.fetchone()[0]) != 0:
+                raise ProjectionStoreException(
+                    "Legacy baseline has unresolved quarantine; refusing live cursor seed"
+                )
+
+            now = datetime.now(timezone.utc)
+            cur.execute(
+                f"""
+                UPDATE {self.schema}.controller
+                SET checkpoint_seq=%s,
+                    source_high_watermark=%s,
+                    backlog_count=0,
+                    deployment_sha=%s,
+                    mode='backfill',
+                    status='ready',
+                    accepted_live=FALSE,
+                    last_backfill_at=%s,
+                    last_error_message='',
+                    unresolved_quarantine_count=0,
+                    updated_at=%s
+                WHERE controller_id=%s AND tenant_scope=%s AND environment_scope=%s
+                """,
+                (
+                    checkpoint_seq,
+                    checkpoint_seq,
+                    deployment_sha,
+                    now,
+                    now,
+                    *migration_args,
+                ),
+            )
+            cur.execute(
+                f"""
+                INSERT INTO {self.schema}.controller (
+                    controller_id, tenant_scope, environment_scope,
+                    checkpoint_seq, source_high_watermark, backlog_count,
+                    projection_revision, deployment_sha, mode, status,
+                    accepted_live, last_poll_at, last_success_at,
+                    last_recovery_at, last_error_message,
+                    unresolved_quarantine_count, updated_at
+                ) VALUES (
+                    %s, %s, %s, %s, %s, 0, %s, %s,
+                    'recovery', 'repair_only', FALSE, %s, %s, %s, '', 0, %s
+                )
+                RETURNING {controller_columns}
+                """,
+                (
+                    controller_id,
+                    tenant_scope,
+                    environment_scope,
+                    checkpoint_seq,
+                    checkpoint_seq,
+                    migration.projection_revision,
+                    deployment_sha,
+                    now,
+                    now,
+                    now,
+                    now,
+                ),
+            )
+            return ControllerStateRow(*cur.fetchone())
 
     def resolve_identity(
         self, tenant_id: str, environment: str, identifier_type: str, identifier_value: str
@@ -270,25 +693,116 @@ class ProjectionStore:
         SELECT journey_id FROM {self.schema}.identity_links
         WHERE tenant_id=%s AND environment=%s AND identifier_type=%s AND identifier_value=%s
         """
-        with self._connect(self.dsn) as conn, conn.cursor() as cur:
+        with self._connect_db() as conn, conn.cursor() as cur:
             cur.execute(sql, (tenant_id, environment, identifier_type, identifier_value))
             row = cur.fetchone()
             return row[0] if row else None
 
     def get_receipt(self, event_id: str) -> Optional[EventReceiptRow]:
         """Gets an event receipt by event_id."""
+        return self.get_receipts((event_id,)).get(event_id)
+
+    def get_receipts(self, event_ids: list[str] | tuple[str, ...]) -> dict[str, EventReceiptRow]:
+        """Load a batch's existing receipts with one indexed query.
+
+        The relational projector performs this preflight before it starts
+        reduction.  Keeping it set-based is important: a 500-row source poll
+        must not turn into 500 short-lived database connections just to learn
+        that all of its event IDs are new.
+        """
+
+        requested = tuple(sorted({str(event_id) for event_id in event_ids if event_id}))
+        if not requested:
+            return {}
         sql = f"""
         SELECT event_id, ingested_seq, fingerprint, tenant_id, environment, journey_id, loop_run_id,
                source_event_type, created_at, disposition, projection_revision, projected_at
         FROM {self.schema}.event_receipts
-        WHERE event_id=%s
+        WHERE event_id = ANY(%s)
+        ORDER BY event_id
         """
-        with self._connect(self.dsn) as conn, conn.cursor() as cur:
-            cur.execute(sql, (event_id,))
-            row = cur.fetchone()
-            if not row:
-                return None
-            return EventReceiptRow(*row)
+        with self._connect_db() as conn, conn.cursor() as cur:
+            cur.execute(sql, (list(requested),))
+            return {str(row[0]): EventReceiptRow(*row) for row in cur.fetchall()}
+
+    def load_journey_stage_events(
+        self, tenant_id: str, environment: str, journey_id: str
+    ) -> list[dict[str, Any]]:
+        """Load one aggregate's bounded stage contract slice for reduction.
+
+        This is intentionally a per-journey lookup, never a whole-projection
+        snapshot.  The relational worker uses it only to hydrate an aggregate
+        touched by its current source batch before it derives that aggregate's
+        next summary.
+        """
+
+        key = (tenant_id, environment, journey_id)
+        return self.load_journey_stage_events_bulk((key,))[key]
+
+    @staticmethod
+    def _decode_stage_contract_fields(value: Any) -> dict[str, Any]:
+        if isinstance(value, str):
+            try:
+                value = json.loads(value)
+            except ValueError as exc:
+                raise ProjectionStoreException(
+                    "stored journey stage contract_fields is not valid JSON"
+                ) from exc
+        if not isinstance(value, Mapping):
+            raise ProjectionStoreException(
+                "stored journey stage contract_fields is not an object"
+            )
+        return dict(value)
+
+    def load_journey_stage_events_bulk(
+        self, keys: list[tuple[str, str, str]] | tuple[tuple[str, str, str], ...],
+    ) -> dict[tuple[str, str, str], list[dict[str, Any]]]:
+        """Hydrate every aggregate touched by one batch with one bounded read.
+
+        The request CTE keeps the lookup bounded to the current batch's
+        aggregate keys while avoiding one connection/query per journey.  A
+        ``LEFT JOIN`` intentionally retains keys with no durable stages so
+        callers can distinguish an empty new aggregate from a missing result.
+        """
+
+        requested = tuple(sorted(set(keys)))
+        result: dict[tuple[str, str, str], list[dict[str, Any]]] = {
+            key: [] for key in requested
+        }
+        if not requested:
+            return result
+        tenant_ids, environments, journey_ids = zip(*requested)
+        sql = f"""
+        WITH requested(tenant_id, environment, journey_id) AS (
+            SELECT * FROM unnest(%s::text[], %s::text[], %s::text[])
+        )
+        SELECT requested.tenant_id, requested.environment, requested.journey_id,
+               stage.contract_fields
+        FROM requested
+        LEFT JOIN {self.schema}.journey_stages AS stage
+          ON stage.tenant_id = requested.tenant_id
+         AND stage.environment = requested.environment
+         AND stage.journey_id = requested.journey_id
+        ORDER BY requested.tenant_id, requested.environment, requested.journey_id,
+                 stage.event_sequence, stage.stage_ordinal, stage.occurred_at,
+                 stage.source_ingested_seq, stage.source_event_id
+        """
+        with self._connect_db() as conn, conn.cursor() as cur:
+            cur.execute(sql, (list(tenant_ids), list(environments), list(journey_ids)))
+            rows = cur.fetchall()
+        for row in rows:
+            if isinstance(row, tuple):
+                tenant_id, environment, journey_id, value = row
+            else:
+                tenant_id = row["tenant_id"]
+                environment = row["environment"]
+                journey_id = row["journey_id"]
+                value = row["contract_fields"]
+            if value is None:
+                continue
+            key = (str(tenant_id), str(environment), str(journey_id))
+            result[key].append(self._decode_stage_contract_fields(value))
+        return result
 
     def execute_batch_transaction(
         self,
@@ -414,7 +928,7 @@ class ProjectionStore:
             controller_id, tenant_scope, environment_scope
         )
 
-        with self._connect(self.dsn) as conn:
+        with self._connect_db() as conn:
             with conn.cursor() as cur:
                 # 1. Non-blocking advisory lock
                 cur.execute("SELECT pg_try_advisory_xact_lock(%s)", (lock_id,))
@@ -460,9 +974,11 @@ class ProjectionStore:
                     )
                     curr_checkpoint_seq = 0
                     curr_revision = 0
+                    curr_source_high_watermark = 0
                 else:
                     curr_checkpoint_seq = ctrl_row[3]
                     curr_revision = ctrl_row[6]
+                    curr_source_high_watermark = ctrl_row[4]
 
                 now = datetime.now(timezone.utc)
 
@@ -485,75 +1001,104 @@ class ProjectionStore:
                     unique_receipts[receipt.event_id] = receipt
 
                 claimed_revision = curr_revision + 1
-                for receipt in sorted(
-                    unique_receipts.values(), key=lambda item: item.event_id
-                ):
-                    cur.execute(
-                        f"SELECT fingerprint FROM {self.schema}.event_receipts WHERE event_id=%s",
-                        (receipt.event_id,),
-                    )
-                    existing_r = cur.fetchone()
-                    if existing_r is not None:
-                        existing_fp = existing_r[0]
-                        if existing_fp != receipt.fingerprint:
-                            raise ConflictingDuplicateException(
-                                f"Event {receipt.event_id} reused with conflicting fingerprint {receipt.fingerprint} vs {existing_fp}"
-                            )
-                        # Exact duplicate
-                        exact_duplicate_receipts.append(receipt)
+                ordered_receipts = tuple(
+                    sorted(unique_receipts.values(), key=lambda item: item.event_id)
+                )
+                event_ids = [receipt.event_id for receipt in ordered_receipts]
+                # Set-based preflight preserves the old distinction between a
+                # durable exact retry and an input fingerprint conflict, while
+                # avoiding one round trip for every event in a 500-row poll.
+                cur.execute(
+                    f"SELECT event_id, fingerprint FROM {self.schema}.event_receipts "
+                    "WHERE event_id = ANY(%s)",
+                    (event_ids,),
+                )
+                existing_fingerprints = {
+                    str(event_id): str(fingerprint)
+                    for event_id, fingerprint in cur.fetchall()
+                }
+                receipts_to_claim: list[EventReceiptRow] = []
+                for receipt in ordered_receipts:
+                    existing_fp = existing_fingerprints.get(receipt.event_id)
+                    if existing_fp is None:
+                        receipts_to_claim.append(receipt)
                         continue
+                    if existing_fp != receipt.fingerprint:
+                        raise ConflictingDuplicateException(
+                            f"Event {receipt.event_id} reused with conflicting fingerprint "
+                            f"{receipt.fingerprint} vs {existing_fp}"
+                        )
+                    exact_duplicate_receipts.append(receipt)
 
+                if receipts_to_claim:
+                    values_sql = ", ".join(
+                        "(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
+                        for _ in receipts_to_claim
+                    )
+                    insert_params: list[Any] = []
+                    for receipt in receipts_to_claim:
+                        insert_params.extend(
+                            (
+                                receipt.event_id,
+                                receipt.ingested_seq,
+                                receipt.fingerprint,
+                                receipt.tenant_id,
+                                receipt.environment,
+                                receipt.journey_id,
+                                receipt.loop_run_id,
+                                receipt.source_event_type,
+                                receipt.created_at,
+                                receipt.disposition,
+                                claimed_revision,
+                                now,
+                            )
+                        )
                     cur.execute(
                         f"""
                         INSERT INTO {self.schema}.event_receipts (
                             event_id, ingested_seq, fingerprint, tenant_id, environment,
                             journey_id, loop_run_id, source_event_type, created_at, disposition,
                             projection_revision, projected_at
-                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        ) VALUES {values_sql}
                         ON CONFLICT DO NOTHING
-                        RETURNING fingerprint
+                        RETURNING event_id, fingerprint
                         """,
-                        (
-                            receipt.event_id,
-                            receipt.ingested_seq,
-                            receipt.fingerprint,
-                            receipt.tenant_id,
-                            receipt.environment,
-                            receipt.journey_id,
-                            receipt.loop_run_id,
-                            receipt.source_event_type,
-                            receipt.created_at,
-                            receipt.disposition,
-                            claimed_revision,
-                            now,
-                        ),
+                        tuple(insert_params),
                     )
-                    claimed = cur.fetchone()
-                    if claimed is not None:
-                        new_receipts.append(receipt)
-                        continue
-
-                    cur.execute(
-                        f"SELECT fingerprint FROM {self.schema}.event_receipts WHERE event_id=%s",
-                        (receipt.event_id,),
+                    claimed_fingerprints = {
+                        str(event_id): str(fingerprint)
+                        for event_id, fingerprint in cur.fetchall()
+                    }
+                    lost_claims = [
+                        receipt
+                        for receipt in receipts_to_claim
+                        if receipt.event_id not in claimed_fingerprints
+                    ]
+                    new_receipts.extend(
+                        receipt
+                        for receipt in receipts_to_claim
+                        if claimed_fingerprints.get(receipt.event_id) == receipt.fingerprint
                     )
-                    concurrent_receipt = cur.fetchone()
-                    if (
-                        concurrent_receipt is None
-                        or concurrent_receipt[0] != receipt.fingerprint
-                    ):
-                        existing_fingerprint = (
-                            concurrent_receipt[0]
-                            if concurrent_receipt is not None
-                            else "<missing>"
+                    if lost_claims:
+                        cur.execute(
+                            f"SELECT event_id, fingerprint FROM {self.schema}.event_receipts "
+                            "WHERE event_id = ANY(%s)",
+                            ([receipt.event_id for receipt in lost_claims],),
                         )
-                        raise ConflictingDuplicateException(
-                            f"Event {receipt.event_id} lost its receipt claim with fingerprint "
-                            f"{receipt.fingerprint} vs {existing_fingerprint}"
+                        concurrent_fingerprints = {
+                            str(event_id): str(fingerprint)
+                            for event_id, fingerprint in cur.fetchall()
+                        }
+                        receipt = lost_claims[0]
+                        existing_fp = concurrent_fingerprints.get(receipt.event_id)
+                        if existing_fp != receipt.fingerprint:
+                            raise ConflictingDuplicateException(
+                                f"Event {receipt.event_id} lost its receipt claim with fingerprint "
+                                f"{receipt.fingerprint} vs {existing_fp or '<missing>'}"
+                            )
+                        raise ConcurrentReceiptClaimException(
+                            f"Event {receipt.event_id} was claimed concurrently by another projection transaction"
                         )
-                    raise ConcurrentReceiptClaimException(
-                        f"Event {receipt.event_id} was claimed concurrently by another projection transaction"
-                    )
 
                 if mutation.receipts and not new_receipts:
                     # Every event is already durable with the same fingerprint. Ignore
@@ -876,6 +1421,15 @@ class ProjectionStore:
                 # Derive the checkpoint from durable database truth. The recursive
                 # index lookups also cross a previously persisted gap tail when the
                 # missing receipt arrives in a later transaction.
+                start_seq = (
+                    curr_checkpoint_seq
+                    if curr_checkpoint_seq > 0
+                    else (
+                        min(receipt.ingested_seq for receipt in mutation.receipts) - 1
+                        if mutation.receipts
+                        else 0
+                    )
+                )
                 cur.execute(
                     f"""
                     WITH RECURSIVE contiguous(seq) AS (
@@ -894,7 +1448,7 @@ class ProjectionStore:
                     SELECT MAX(seq) FROM contiguous
                     """,
                     (
-                        curr_checkpoint_seq,
+                        start_seq,
                         tenant_scope,
                         tenant_scope,
                         environment_scope,
@@ -902,6 +1456,14 @@ class ProjectionStore:
                     ),
                 )
                 target_checkpoint_seq = cur.fetchone()[0]
+                next_source_high_watermark = max(
+                    int(curr_source_high_watermark),
+                    int(mutation.source_high_watermark),
+                    int(target_checkpoint_seq or 0),
+                )
+                effective_backlog_count = max(
+                    0, next_source_high_watermark - int(target_checkpoint_seq or 0)
+                )
 
                 # Compute controller-scoped unresolved quarantine truth.
                 cur.execute(
@@ -963,9 +1525,9 @@ class ProjectionStore:
                     """,
                     (
                         target_checkpoint_seq,
-                        mutation.source_high_watermark,
+                        next_source_high_watermark,
                         target_checkpoint_seq,
-                        mutation.backlog_count,
+                        effective_backlog_count,
                         next_revision,
                         mutation.deployment_sha,
                         mutation.mode,
