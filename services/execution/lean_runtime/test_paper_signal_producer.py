@@ -427,39 +427,31 @@ class TestPaperSignalProducer(unittest.TestCase):
         self.assertEqual(producer.degraded_bindings, {})
 
     def test_source_projection_holiday_snapshot_produces_healthy_tick(self) -> None:
-        """A Source-owned stored snapshot, rather than a hand-attached fixture,
-        admits through the real paper producer on an evidenced holiday span."""
+        """Real adapter records survive Source storage and produce a healthy tick."""
         from services.execution.lean_runtime.paper_signal_producer import CurrentArtifactStrategy
         from services.execution.lean_runtime.test_current_artifact_signal import _artifact, _binding
-        from services.source_ingestion.requirement_state import (
-            LatestMarketSnapshot,
-            MarketSnapshotPoint,
+        from services.source_ingestion.connectors.taiwan_official import (
+            TaiwanOfficialMarketDatasetAdapter,
         )
+        from services.source_ingestion.requirement_state import LatestMarketSnapshotStore
 
-        evidence = TestSharedSnapshotAdmissionDecisions._tw_calendar_evidence()
-        source_snapshot = LatestMarketSnapshot(
-            symbol="2330.TWSE",
-            points=(
-                MarketSnapshotPoint(
-                    event_time="2026-02-10T05:30:00Z",
-                    close=950.0,
-                    source_id="tw-official:tw_price_daily:TWSE:2330:2026-02-10",
-                    connector_id="tw-twse-tpex-official-market",
-                    content_ref="tw-official://tw_price_daily/TWSE/2330/2026-02-10",
-                    ingest_run_id="ingest-twse-lny-calendar",
-                ),
-                MarketSnapshotPoint(
-                    event_time="2026-02-11T05:30:00Z",
-                    close=955.0,
-                    source_id="tw-official:tw_price_daily:TWSE:2330:2026-02-11",
-                    connector_id="tw-twse-tpex-official-market",
-                    content_ref="tw-official://tw_price_daily/TWSE/2330/2026-02-11",
-                    ingest_run_id="ingest-twse-lny-calendar",
-                ),
-            ),
-            observed_at="2026-02-23T02:00:00Z",
-            calendar_evidence=evidence,
-        ).to_public_dict()
+        records = TaiwanOfficialMarketDatasetAdapter(max_records=10).records_from_payload(
+            "tw_price_daily",
+            "TWSE",
+            [
+                {"Date": "1150210", "Code": "2330", "ClosingPrice": "950.00"},
+                {"Date": "1150211", "Code": "2330", "ClosingPrice": "955.00"},
+            ],
+            trace_id="trace-producer-governed-calendar",
+        )
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            snapshot_store = LatestMarketSnapshotStore(Path(tmp_dir) / "snapshots.jsonl")
+            snapshot_store.append_normalized_records(
+                records,
+                ingest_run_id="ingest-twse-lny-calendar",
+                observed_at="2026-02-23T02:00:00Z",
+            )
+            source_snapshot = snapshot_store.get("2330.TWSE").to_public_dict()
 
         artifact = _artifact()
         artifact["parameters"]["symbols"] = ["2330.TWSE"]
@@ -487,6 +479,41 @@ class TestPaperSignalProducer(unittest.TestCase):
         })
         self.assertEqual(store.queue_depth(), 1)
         self.assertEqual(producer.degraded_bindings, {})
+
+    def test_same_day_tw_close_is_rejected_before_own_session_completes(self) -> None:
+        from services.execution.lean_runtime.paper_signal_producer import CurrentArtifactStrategy
+        from services.execution.lean_runtime.test_current_artifact_signal import _artifact, _binding
+
+        artifact = _artifact()
+        artifact["parameters"]["symbols"] = ["2330.TWSE"]
+        binding = _binding(
+            artifact,
+            binding_id="rb-tw-pre-close",
+            include_market_input=False,
+        )
+        binding["symbol"] = "2330.TWSE"
+        binding["market_data_policy"] = {
+            "owner": "source-ingest",
+            "contract": "latest_stored_normalized",
+            "max_age_seconds": 86400,
+            "minimum_closes": 2,
+        }
+        binding["market_input"] = TestSharedSnapshotAdmissionDecisions._tw_snapshot(
+            "2026-08-31T00:00:00Z",
+            "2026-08-31T01:00:00Z",
+        )
+        store = InMemoryPendingSignalStore()
+        producer = PaperSignalProducer(
+            store_for=lambda _: store,
+            strategy=CurrentArtifactStrategy(),
+        )
+
+        self.assertEqual(producer.tick([binding], "2026-08-31T01:00:00Z"), {
+            "rb-tw-pre-close": 0,
+        })
+        self.assertEqual(store.queue_depth(), 0)
+        self.assertIn("market_input_invalid", producer.degraded_bindings["rb-tw-pre-close"])
+        self.assertIn("has not completed", producer.degraded_bindings["rb-tw-pre-close"])
 
     @patch("urllib.request.urlopen")
     def test_stale_source_snapshot_emits_no_signal_with_typed_reason(self, mock_urlopen) -> None:
@@ -737,6 +764,19 @@ class TestSharedSnapshotAdmissionDecisions(unittest.TestCase):
         dec = admit_market_snapshot(snapshot, max_age_seconds=86400, now_iso="2026-08-29T12:00:00Z")
         self.assertTrue(dec.admitted)
         self.assertIsNone(dec.reason_code)
+
+    def test_tw_same_day_close_rejected_before_session_completion(self) -> None:
+        from services.execution.market_snapshot_admission import admit_market_snapshot
+
+        snapshot = self._tw_snapshot("2026-08-31T00:00:00Z", "2026-08-31T01:00:00Z")
+        dec = admit_market_snapshot(
+            snapshot,
+            max_age_seconds=86400,
+            now_iso="2026-08-31T01:00:00Z",
+        )
+        self.assertFalse(dec.admitted)
+        self.assertEqual(dec.reason_code, "market_input_invalid")
+        self.assertIn("has not completed its 13:30 Asia/Taipei cash session", dec.detail)
 
     def test_tw_weekend_event_trade_date_rejected(self) -> None:
         from services.execution.market_snapshot_admission import admit_market_snapshot

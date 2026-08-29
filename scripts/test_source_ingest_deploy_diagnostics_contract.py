@@ -204,6 +204,11 @@ def test_bounded_source_refresh_deploy_waits_and_gates_readback() -> None:
     assert "evaluate_taiwan_market_freshness" in gate
     assert "is_taiwan_symbol(canonical_symbol)" in gate
     assert "failed Taiwan market-session freshness" in gate
+    # Passing the exact event/decision clocks into the shared evaluator keeps
+    # the deploy gate covered by the same pre-session-close rejection as the
+    # producer, fleet reconciler, and readiness surfaces.
+    assert "event_time_dt=event_time" in gate
+    assert "now_dt=now_dt" in gate
     # The deploy gate consumes governed proof from the Source public snapshot;
     # it must not rely on a deploy-only calendar fixture or local heuristic.
     assert 'ev = snapshot.get("calendar_evidence")' in gate

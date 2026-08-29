@@ -9,7 +9,9 @@ Verifies:
 """
 from __future__ import annotations
 
+import tempfile
 from datetime import datetime, timezone, timedelta
+from pathlib import Path
 from typing import Any, Dict
 
 import pytest
@@ -54,35 +56,29 @@ def _twse_lny_calendar_evidence() -> dict[str, Any]:
 
 
 def _twse_source_public_holiday_snapshot() -> dict[str, Any]:
-    """Return the same Source public contract passed to operational readiness."""
-    from services.source_ingestion.requirement_state import (
-        LatestMarketSnapshot,
-        MarketSnapshotPoint,
+    """Return the real-adapter Source contract passed to readiness."""
+    from services.source_ingestion.connectors.taiwan_official import (
+        TaiwanOfficialMarketDatasetAdapter,
     )
+    from services.source_ingestion.requirement_state import LatestMarketSnapshotStore
 
-    return LatestMarketSnapshot(
-        symbol="2330.TWSE",
-        points=(
-            MarketSnapshotPoint(
-                event_time="2026-02-10T05:30:00Z",
-                close=950.0,
-                source_id="tw-official:tw_price_daily:TWSE:2330:2026-02-10",
-                connector_id="tw-twse-tpex-official-market",
-                content_ref="tw-official://tw_price_daily/TWSE/2330/2026-02-10",
-                ingest_run_id="ingest-twse-lny-calendar",
-            ),
-            MarketSnapshotPoint(
-                event_time="2026-02-11T05:30:00Z",
-                close=955.0,
-                source_id="tw-official:tw_price_daily:TWSE:2330:2026-02-11",
-                connector_id="tw-twse-tpex-official-market",
-                content_ref="tw-official://tw_price_daily/TWSE/2330/2026-02-11",
-                ingest_run_id="ingest-twse-lny-calendar",
-            ),
-        ),
-        observed_at="2026-02-23T02:00:00Z",
-        calendar_evidence=_twse_lny_calendar_evidence(),
-    ).to_public_dict()
+    records = TaiwanOfficialMarketDatasetAdapter(max_records=10).records_from_payload(
+        "tw_price_daily",
+        "TWSE",
+        [
+            {"Date": "1150210", "Code": "2330", "ClosingPrice": "950.00"},
+            {"Date": "1150211", "Code": "2330", "ClosingPrice": "955.00"},
+        ],
+        trace_id="trace-readiness-governed-calendar",
+    )
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        snapshot_store = LatestMarketSnapshotStore(Path(tmp_dir) / "snapshots.jsonl")
+        snapshot_store.append_normalized_records(
+            records,
+            ingest_run_id="ingest-twse-lny-calendar",
+            observed_at="2026-02-23T02:00:00Z",
+        )
+        return snapshot_store.get("2330.TWSE").to_public_dict()
 
 
 @pytest.fixture
@@ -407,6 +403,33 @@ def test_operational_readiness_tw_friday_close_stale_after_monday_session(
 
     assert data.source.freshness == "stale"
     assert data.status == "degraded"
+
+
+def test_operational_readiness_tw_same_day_close_stale_before_session_completion(
+    readiness_service: AgoraOperationalReadinessService,
+) -> None:
+    readiness_service.set_source_snapshot({
+        "snapshot_id": "mss-tw-readiness-pre-close",
+        "source_instance_id": "src-tw-twse-2330",
+        "symbol": "2330.TWSE",
+        "event_time": "2026-08-31T00:00:00Z",
+        "observed_at": "2026-08-31T01:00:00Z",
+        "sla_seconds": 86400,
+        "lineage": {
+            "source_ids": ["tw-official:tw_price_daily:TWSE:2330:checksummed"],
+            "connector_ids": ["tw-twse-tpex-official-market"],
+        },
+    })
+    readiness_service.set_signal_producer({
+        "status": "ok",
+        "consumed_snapshot_id": "mss-tw-readiness-pre-close",
+        "enqueued": 0,
+    })
+
+    envelope = readiness_service.compose_readiness(now_iso="2026-08-31T01:00:00Z")
+
+    assert envelope.data.source.freshness == "stale"
+    assert envelope.data.status == "degraded"
 
 
 def test_operational_readiness_tw_holiday_with_calendar_evidence(

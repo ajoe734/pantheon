@@ -9,6 +9,9 @@ from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
+from services.source_ingestion.connectors.taiwan_official import (
+    TaiwanOfficialMarketDatasetAdapter,
+)
 from services.source_ingestion.requirement_state import LatestMarketSnapshotStore
 
 
@@ -179,22 +182,18 @@ def test_source_snapshot_persists_and_publishes_governed_calendar_evidence(
 ) -> None:
     """The Source-owned API, not a consumer fixture, carries holiday proof."""
     module = _load_source_main(monkeypatch, tmp_path)
-    evidence = _twse_lny_calendar_evidence()
-    updated = module.latest_market_snapshot_store.append_normalized_records(
+    records = TaiwanOfficialMarketDatasetAdapter(max_records=10).records_from_payload(
+        "tw_price_daily",
+        "TWSE",
         [
-            _tw_official_record(
-                source_id="tw-official:tw_price_daily:TWSE:2330:2026-02-10",
-                event_time="2026-02-10T05:30:00Z",
-                close=950.0,
-                calendar_evidence=evidence,
-            ),
-            _tw_official_record(
-                source_id="tw-official:tw_price_daily:TWSE:2330:2026-02-11",
-                event_time="2026-02-11T05:30:00Z",
-                close=955.0,
-                calendar_evidence=evidence,
-            ),
+            {"Date": "1150210", "Code": "2330", "ClosingPrice": "950.00"},
+            {"Date": "1150211", "Code": "2330", "ClosingPrice": "955.00"},
         ],
+        trace_id="trace-source-api-governed-calendar",
+    )
+    evidence = records[-1].metadata["calendar_evidence"]
+    updated = module.latest_market_snapshot_store.append_normalized_records(
+        records,
         ingest_run_id="ingest-twse-lny-calendar",
         observed_at="2026-02-23T02:00:00Z",
     )

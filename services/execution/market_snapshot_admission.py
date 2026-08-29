@@ -457,6 +457,16 @@ def evaluate_taiwan_market_freshness(
             f"event_time trade date {event_date_iso} is a Taiwan market weekend",
         )
 
+    event_session_close = _tw_session_close_utc(taipei_event_date)
+    if now_dt < event_session_close:
+        return (
+            False,
+            "market_input_invalid",
+            "event_time trade date "
+            f"{event_date_iso} has not completed its 13:30 Asia/Taipei cash session "
+            f"(closes at {event_session_close.isoformat()})",
+        )
+
     # The gap check below only proves that no *newer* session is missing.  It
     # must not make the snapshot's own trade date self-authenticating: a
     # fabricated Saturday (or a known exchange closure) cannot be an official

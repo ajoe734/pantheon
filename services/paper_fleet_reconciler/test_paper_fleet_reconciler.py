@@ -2235,38 +2235,29 @@ class TestPaperFleetTaiwanSessionFreshness(unittest.TestCase):
 
     @classmethod
     def _tw_source_projection_holiday_snapshot(cls) -> Dict[str, Any]:
-        """Build the exact public Source snapshot shape consumed by the fleet."""
-        from services.source_ingestion.requirement_state import (
-            LatestMarketSnapshot,
-            MarketSnapshotPoint,
+        """Build the public Source snapshot from the real official adapter."""
+        from services.source_ingestion.connectors.taiwan_official import (
+            TaiwanOfficialMarketDatasetAdapter,
         )
+        from services.source_ingestion.requirement_state import LatestMarketSnapshotStore
 
-        evidence = cls._twse_lny_calendar_evidence()
-        evidence["fetched_at"] = "2026-02-23T01:00:00Z"
-
-        return LatestMarketSnapshot(
-            symbol="2330.TWSE",
-            points=(
-                MarketSnapshotPoint(
-                    event_time="2026-02-10T05:30:00Z",
-                    close=950.0,
-                    source_id="tw-official:tw_price_daily:TWSE:2330:2026-02-10",
-                    connector_id="tw-twse-tpex-official-market",
-                    content_ref="tw-official://tw_price_daily/TWSE/2330/2026-02-10",
-                    ingest_run_id="ingest-twse-lny-calendar",
-                ),
-                MarketSnapshotPoint(
-                    event_time="2026-02-11T05:30:00Z",
-                    close=955.0,
-                    source_id="tw-official:tw_price_daily:TWSE:2330:2026-02-11",
-                    connector_id="tw-twse-tpex-official-market",
-                    content_ref="tw-official://tw_price_daily/TWSE/2330/2026-02-11",
-                    ingest_run_id="ingest-twse-lny-calendar",
-                ),
-            ),
-            observed_at="2026-02-23T02:00:00Z",
-            calendar_evidence=evidence,
-        ).to_public_dict()
+        records = TaiwanOfficialMarketDatasetAdapter(max_records=10).records_from_payload(
+            "tw_price_daily",
+            "TWSE",
+            [
+                {"Date": "1150210", "Code": "2330", "ClosingPrice": "950.00"},
+                {"Date": "1150211", "Code": "2330", "ClosingPrice": "955.00"},
+            ],
+            trace_id="trace-fleet-governed-calendar",
+        )
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            snapshot_store = LatestMarketSnapshotStore(Path(tmp_dir) / "snapshots.jsonl")
+            snapshot_store.append_normalized_records(
+                records,
+                ingest_run_id="ingest-twse-lny-calendar",
+                observed_at="2026-02-23T02:00:00Z",
+            )
+            return snapshot_store.get("2330.TWSE").to_public_dict()
 
     @patch(
         "services.paper_fleet_reconciler.paper_fleet_reconciler._iso_now",
@@ -2310,6 +2301,31 @@ class TestPaperFleetTaiwanSessionFreshness(unittest.TestCase):
         self.assertEqual(result["worker_count"], 1)
         self.assertEqual(result["running_count"], 1)
         self.assertEqual(len(self.transitions), 0)
+
+    @patch(
+        "services.paper_fleet_reconciler.paper_fleet_reconciler._iso_now",
+        return_value="2026-08-31T01:00:00Z",
+    )
+    def test_tw_same_day_close_paused_before_own_session_completes(self, _mock_now) -> None:
+        snap = self._tw_snapshot("2026-08-31T00:00:00Z", "2026-08-31T01:00:00Z")
+        binding = _make_binding(
+            "b-tw-pre-close",
+            symbol="2330.TWSE",
+            market_data_policy={
+                "owner": "source-ingest",
+                "contract": "latest_stored_normalized",
+                "max_age_seconds": 86400,
+                "minimum_closes": 2,
+            },
+            market_input=snap,
+        )
+        store, reconciler = self._make_store_and_recon([binding], source_snapshot=snap)
+
+        result = reconciler.reconcile_once()
+        self.assertEqual(result["worker_count"], 0)
+        self.assertEqual(self.transitions[-1]["new_status"], "paused")
+        admission = store.get("b-tw-pre-close").metadata["session_admission"]
+        self.assertEqual(admission["reason_code"], "market_input_invalid")
 
     @patch(
         "services.paper_fleet_reconciler.paper_fleet_reconciler._iso_now",
