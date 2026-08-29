@@ -9,9 +9,9 @@
     "reviewer": "Codex2",
     "repository": "ajoe734/pantheon",
     "base_branch": "dev",
-    "base_sha": "52eccd0047f583f40d4829fd27af400e4878431a",
+    "base_sha": "e4cfe496c62b6bd81ba4739ec8451e313d46262c",
     "task_branch": "task/ACG-WRITE-OWNER-PERSONA-CAPITAL-20260829",
-    "evidence_cut_at": "2026-08-29T04:49:55Z",
+    "evidence_cut_at": "2026-08-29T05:10:54Z",
     "overall_admission": "pending_independent_review"
   },
   "scope": {
@@ -124,7 +124,7 @@
         "conclusion": "No main.py, BFF read_store.py, or Source Ingestion changes"
       }
     ],
-    "validated_at": "2026-08-29T04:49:55Z"
+    "validated_at": "2026-08-29T05:10:54Z"
   },
   "deployment": {
     "applicable": false,
@@ -133,6 +133,6 @@
   "review": {
     "status": "pending",
     "decision_owner": "Codex2",
-    "note": "The prior independent review correctly rejected the Capital main.py expansion. The replacement exact diff removes that route, service method, wire model, authority declaration, route contract, and HTTP test; Capital proof now exercises the persistent owner store directly. The branch contains dev at 52eccd0047f583f40d4829fd27af400e4878431a, 70 focused and 288 broader tests pass, and the reviewer must independently inspect the refreshed exact PR head."
+    "note": "The prior independent review correctly rejected the Capital main.py expansion. The replacement exact diff removes that route, service method, wire model, authority declaration, route contract, and HTTP test; Capital proof now exercises the persistent owner store directly. The branch contains dev at e4cfe496c62b6bd81ba4739ec8451e313d46262c, 70 focused and 288 broader tests pass after the refresh, and the reviewer must independently inspect the new exact PR head."
   }
 }
