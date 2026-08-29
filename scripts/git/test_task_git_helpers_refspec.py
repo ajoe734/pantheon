@@ -13,7 +13,12 @@ def _read(relative_path: str) -> str:
 def test_task_helpers_fetch_dev_into_remote_tracking_ref() -> None:
     expected_dynamic = "+refs/heads/${DEV_BRANCH}:refs/remotes/origin/${DEV_BRANCH}"
     assert expected_dynamic in _read("scripts/git/task_start.sh")
-    assert expected_dynamic in _read("scripts/git/task_finalize.sh")
+    finalize = _read("scripts/git/task_finalize.sh")
+    assert expected_dynamic in finalize
+    assert (
+        'git fetch --no-tags origin "+refs/heads/${DEV_BRANCH}:refs/remotes/origin/${DEV_BRANCH}" --quiet'
+        in finalize
+    )
 
 
 def test_safe_pr_fetches_dev_into_remote_tracking_ref() -> None:

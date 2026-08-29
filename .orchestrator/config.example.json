@@ -6,7 +6,6 @@
     "dashboard": "docs-site/index.html",
     "state_file": ".orchestrator/state.json",
     "approval_queue": ".orchestrator/approval-queue.json",
-    "sidecar_catalog": ".orchestrator/sidecar_catalog.json",
     "provider_capabilities": ".orchestrator/provider_capabilities.json",
     "claude_mcp_config": ".orchestrator/claude-approval-broker.mcp.json"
   },
@@ -108,7 +107,8 @@
     "archive_root": "/tmp/pantheon-worker-worktree-archive",
     "archive_max_file_bytes": 20971520,
     "max_removals_per_tick": 25,
-    "orphan_prune_interval_seconds": 600
+    "orphan_prune_interval_seconds": 600,
+    "orphan_unmerged_max_age_days": 14
   },
   "worker_retry": {
     "enabled": true,

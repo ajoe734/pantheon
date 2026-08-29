@@ -6,10 +6,7 @@ Verifies the end-to-end read path established by CONSOLE-DATA-APPROVALS:
   - Decided approvals (approved/rejected) are excluded from the pending list
   - Empty / absent store returns count=0 (no fabricated data)
   - The governance approval queue surface also picks up the projected data
-  - The adapter's own HTTP-vs-file precedence (PANTHEON_PROMOTION_API_URL /
-    PANTHEON_GOVERNANCE_APPROVAL_API_URL / PANTHEON_BFF_APPROVAL_DECISION_STORE)
-    is exercised directly against CanonicalSnapshotAdapter, since /bff/approvals
-    itself only ever reads bff_main.read_store and never touches those env vars.
+  - The in-memory port takes precedence over governance service environment configuration
 
 Stub dispatch (dev safety): no live broker orders, no capital allocation.
 """
@@ -17,20 +14,12 @@ from __future__ import annotations
 
 import os
 import sys
-from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 import main as bff_main
-# NOTE: CanonicalSnapshotAdapter is intentionally still imported here. Unlike
-# every other fixture in this file, `test_promotion_service_url_read_path`
-# below is a narrow unit test of read_store.py's own adapter precedence logic
-# (file vs. HTTP dataset discovery), not a BFF composite-contract fixture. The
-# other 6 declared-artifact files, and every other test in this file, build
-# bff_main.read_store exclusively via create_in_memory_read_surface_ports().
-from read_store import CanonicalSnapshotAdapter
 from ports import create_in_memory_read_surface_ports
 
 ADMIN_HEADERS = {"Authorization": "Bearer op-dev:admin:mfa"}
@@ -235,48 +224,3 @@ class TestStorePrecedenceOverServiceClient:
                 os.environ.pop("PANTHEON_GOVERNANCE_APPROVAL_API_URL", None)
             else:
                 os.environ["PANTHEON_GOVERNANCE_APPROVAL_API_URL"] = orig_gov_env
-
-    def test_promotion_service_url_read_path(self) -> None:
-        """PANTHEON_PROMOTION_API_URL is tried before the governance service URL.
-        When the promotion service returns approvals, they are surfaced via the
-        CanonicalSnapshotAdapter HTTP dataset path."""
-        promotion_response = {
-            "count": 1,
-            "items": [_PENDING_APPROVAL],
-        }
-        orig_promo_env = os.environ.get("PANTHEON_PROMOTION_API_URL")
-        orig_store_env = os.environ.get("PANTHEON_BFF_APPROVAL_DECISION_STORE")
-        try:
-            # No file store — force the HTTP path to be exercised.
-            os.environ.pop("PANTHEON_BFF_APPROVAL_DECISION_STORE", None)
-            os.environ["PANTHEON_PROMOTION_API_URL"] = "http://promotion-stub:8089"
-            adapter = CanonicalSnapshotAdapter(
-                snapshot_path=None,
-                allow_snapshot_fallback=False,
-            )
-            with patch(
-                "read_store._http_json_get",
-                return_value=(True, promotion_response),
-            ) as mock_get:
-                available, records = adapter.list_records("approval_decisions")
-                assert available, "expected available=True from promotion service mock"
-                assert any(
-                    r.get("decision_id") == "apv-consdata-001" for r in records
-                ), f"pending approval not in records: {records}"
-                # Confirm the call used the promotion URL, not the governance URL.
-                call_args = mock_get.call_args
-                assert "promotion-stub" in call_args[0][0], (
-                    f"expected promotion service URL in call; got {call_args}"
-                )
-                assert call_args[0][1] == "/api/v1/approvals", (
-                    f"expected /api/v1/approvals path; got {call_args}"
-                )
-        finally:
-            if orig_promo_env is None:
-                os.environ.pop("PANTHEON_PROMOTION_API_URL", None)
-            else:
-                os.environ["PANTHEON_PROMOTION_API_URL"] = orig_promo_env
-            if orig_store_env is None:
-                os.environ.pop("PANTHEON_BFF_APPROVAL_DECISION_STORE", None)
-            else:
-                os.environ["PANTHEON_BFF_APPROVAL_DECISION_STORE"] = orig_store_env

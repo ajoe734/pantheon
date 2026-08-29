@@ -92,10 +92,11 @@ every path except manual resolution.
    `expires_at`.
 
 `prune_stale_approvals()` runs near the start of each supervisor loop
-(`_run_once_locked()` in `.orchestrator/supervisor.py`). The normal
-`scripts/run-supervisor.sh` watch cadence is 300s; do not change that
-cadence as part of approval-broker work because it is an intentional
-fleet guardrail. Under the normal loop, stale approvals are therefore
+(`_run_once_locked()` in `.orchestrator/supervisor.py`). The promoted
+immutable supervisor config owns the normal 300s watch cadence;
+`scripts/run-supervisor.sh` is restricted to isolated repository-local runs.
+Do not change the promoted cadence as part of approval-broker work because it
+is an intentional fleet guardrail. Under the normal loop, stale approvals are therefore
 bounded by `stale_pending_seconds` plus at most one poll interval.
 
 A denied approval feeds back into `poll_workers()`: a

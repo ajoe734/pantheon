@@ -113,7 +113,8 @@
     "archive_root": "/tmp/pantheon-worker-worktree-archive",
     "archive_max_file_bytes": 20971520,
     "max_removals_per_tick": 25,
-    "orphan_prune_interval_seconds": 600
+    "orphan_prune_interval_seconds": 600,
+    "orphan_unmerged_max_age_days": 14
   },
   "worker_retry": {
     "enabled": true,
@@ -734,7 +735,6 @@
       "in_progress",
       "todo"
     ],
-    "sidecar_only_agents": [],
     "dependency_done_statuses": [
       "done"
     ],
