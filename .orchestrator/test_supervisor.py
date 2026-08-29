@@ -6493,9 +6493,10 @@ class WorkerLeaseApprovalWaitProgressTests(unittest.TestCase):
     before the worker could resume" on the next reconciliation tick."""
 
     def setUp(self) -> None:
-        self.config = {"worker_runtime": {"work_progress_stale_seconds": 360}}
+        self.config = {"worker_runtime": {"work_progress_stale_seconds": 7200}}
         self.now = datetime(2026, 1, 1, tzinfo=timezone.utc)
-        self.stale_event_at = (self.now - timedelta(seconds=3600)).isoformat().replace("+00:00", "Z")
+        self.stale_event_at = (self.now - timedelta(seconds=7201)).isoformat().replace("+00:00", "Z")
+        self.long_analysis_event_at = (self.now - timedelta(seconds=3600)).isoformat().replace("+00:00", "Z")
         self.fresh_event_at = (self.now - timedelta(seconds=30)).isoformat().replace("+00:00", "Z")
 
     def test_waiting_approval_with_stale_progress_is_exempted(self) -> None:
@@ -6513,6 +6514,12 @@ class WorkerLeaseApprovalWaitProgressTests(unittest.TestCase):
     def test_running_with_stale_progress_is_still_stale(self) -> None:
         worker = {"status": "running", "last_event_at": self.stale_event_at}
         self.assertFalse(
+            supervisor.worker_lease_progress_is_fresh(self.config, worker, self.now)
+        )
+
+    def test_running_with_one_hour_analysis_progress_is_fresh(self) -> None:
+        worker = {"status": "running", "last_work_progress_at": self.long_analysis_event_at}
+        self.assertTrue(
             supervisor.worker_lease_progress_is_fresh(self.config, worker, self.now)
         )
 
