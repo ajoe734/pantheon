@@ -402,6 +402,26 @@ def _market_snapshot_symbol(value: Any) -> str:
     return _market_snapshot_text(value, field_name="symbol").upper()
 
 
+def _market_snapshot_lookup_symbol(value: Any) -> str:
+    """Resolve execution aliases to one explicit stored exchange identity.
+
+    This normalization is deliberately read-only.  Historical snapshot rows
+    retain their checksummed symbol and snapshot id, while ``2330.TW`` cannot
+    accidentally select an older, separately persisted ``.TW`` series when
+    the official Source projection is stored as ``2330.TWSE``.
+    """
+
+    symbol = _market_snapshot_symbol(value)
+    if "." not in symbol:
+        return symbol
+    ticker, suffix = symbol.rsplit(".", 1)
+    if suffix in {"TW", "TWSE"}:
+        return f"{ticker}.TWSE"
+    if suffix in {"TWO", "TPEX"}:
+        return f"{ticker}.TPEX"
+    return symbol
+
+
 def _market_snapshot_close(value: Any) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise MarketSnapshotStateError("close must be a positive finite number")
@@ -495,6 +515,10 @@ class LatestMarketSnapshot:
             raise MarketSnapshotStateError("market snapshot points must be canonically ordered")
         if len({point.key for point in points}) != len(points):
             raise MarketSnapshotStateError("market snapshot points must be unique")
+        if len({point.event_time for point in points}) != len(points):
+            raise MarketSnapshotStateError(
+                "market snapshot points must represent distinct event times"
+            )
         object.__setattr__(self, "points", points)
         object.__setattr__(
             self,
@@ -545,11 +569,19 @@ class LatestMarketSnapshot:
             "points": [point.to_dict() for point in self.points],
         }
 
-    def to_public_dict(self) -> dict[str, Any]:
+    def to_public_dict(self, *, requested_symbol: Any | None = None) -> dict[str, Any]:
+        public_symbol = self.symbol
+        if requested_symbol is not None:
+            public_symbol = _market_snapshot_symbol(requested_symbol)
+            if _market_snapshot_lookup_symbol(public_symbol) != self.symbol:
+                raise MarketSnapshotStateError(
+                    f"requested symbol {public_symbol!r} does not resolve to "
+                    f"stored snapshot symbol {self.symbol!r}"
+                )
         return {
             "schema_version": self.schema_version,
             "snapshot_id": self.snapshot_id,
-            "symbol": self.symbol,
+            "symbol": public_symbol,
             "event_time": self.event_time,
             "observed_at": self.observed_at,
             "closes": list(self.closes),
@@ -660,7 +692,7 @@ class LatestMarketSnapshotStore:
 
     def get(self, symbol: str) -> LatestMarketSnapshot | None:
         with self._lock:
-            return self._latest_by_symbol.get(_market_snapshot_symbol(symbol))
+            return self._latest_by_symbol.get(_market_snapshot_lookup_symbol(symbol))
 
     @staticmethod
     def _point_from_record(record: Any, *, ingest_run_id: str) -> tuple[str, MarketSnapshotPoint] | None:
@@ -742,13 +774,23 @@ class LatestMarketSnapshotStore:
                         current = _market_snapshots_from_lines(handle, path=self.path)
                         for symbol in sorted(grouped):
                             prior = current.get(symbol)
-                            points_by_key = {
-                                point.key: point
+                            points_by_event_time = {
+                                point.event_time: point
                                 for point in (prior.points if prior is not None else ())
                             }
                             for point in grouped[symbol]:
-                                points_by_key[point.key] = point
-                            points = tuple(sorted(points_by_key.values(), key=lambda point: point.key)[-self.max_closes :])
+                                # A newer normalized record for an already-seen
+                                # trading day replaces that day's lineage. This
+                                # keeps closes chronologically distinct while
+                                # retaining the exact official record selected
+                                # by the latest successful ingest run.
+                                points_by_event_time[point.event_time] = point
+                            points = tuple(
+                                sorted(
+                                    points_by_event_time.values(),
+                                    key=lambda point: point.key,
+                                )[-self.max_closes :]
+                            )
                             candidate = LatestMarketSnapshot(
                                 symbol=symbol,
                                 points=points,

@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-import json
 import os
-import urllib.request
 
 import pytest
 
@@ -13,7 +11,9 @@ from services.source_ingestion.connectors import (
     TW_OFFICIAL_CONNECTOR_ID,
     TaiwanOfficialMarketDatasetAdapter,
 )
+from services.source_ingestion.connectors.base import SourceEvidenceError
 from services.source_ingestion.provider_adapters import execute_provider_owned_adapter, provider_adapter_tokens
+from services.source_ingestion.requirement_state import LatestMarketSnapshotStore
 from services.source_ingestion.scheduler import IngestBatch, IngestionScheduler, JsonlIngestScheduleStore
 
 
@@ -48,6 +48,47 @@ TPEX_PRICE_PAYLOAD = [
         "TransactionNumber": "4200",
     }
 ]
+
+TWSE_PRICE_HISTORY_PAYLOAD = {
+    "stat": "OK",
+    "date": "20260610",
+    "title": "115年06月 2330 台積電 各日成交資訊",
+    "fields": [
+        "日期",
+        "成交股數",
+        "成交金額",
+        "開盤價",
+        "最高價",
+        "最低價",
+        "收盤價",
+        "漲跌價差",
+        "成交筆數",
+        "註記",
+    ],
+    "data": [
+        ["115/06/09", "20,000,000", "18,900,000,000", "940.00", "955.00", "938.00", "950.00", "+10.00", "12,000", ""],
+        ["115/06/10", "30,000,000", "28,500,000,000", "950.00", "960.00", "945.00", "955.00", "+5.00", "18,000", ""],
+    ],
+}
+
+TPEX_PRICE_HISTORY_PAYLOAD = {
+    "stat": "ok",
+    "date": "20260601",
+    "code": "3105",
+    "name": "穩懋",
+    "tables": [
+        {
+            "title": "個股日成交資訊",
+            "subtitle": "3105 穩懋 115年06月",
+            "date": "20260601",
+            "fields": ["日 期", "成交張數", "成交仟元", "開盤", "最高", "最低", "收盤", "漲跌", "筆數"],
+            "data": [
+                ["115/06/09", "2,900", "340,000", "116.00", "119.00", "115.50", "117.00", "-1.50", "3,900"],
+                ["115/06/10", "3,200", "380,000", "120.00", "121.00", "117.50", "118.50", "+1.50", "4,200"],
+            ],
+        }
+    ],
+}
 
 TWSE_INSTITUTIONAL_PAYLOAD = {
     "stat": "OK",
@@ -157,6 +198,14 @@ def test_taiwan_official_connector_catalog_tier_policy_and_auth() -> None:
         connector.metadata["normalized_datasets"]
     )
     assert connector.metadata["tier_policy"]["archive_universe"] == ["tw_price_daily"]
+    assert connector.metadata["active_symbol_history_policy"] == {
+        "minimum_distinct_closes": 2,
+        "max_months_per_symbol": 2,
+    }
+    assert {
+        item["source_dataset"]
+        for item in connector.metadata["price_history_endpoint_inventory"]
+    } == {"STOCK_DAY", "tpex_individual_stock_monthly_history"}
     assert any(endpoint["dataset"] == "tdcc_shareholding_distribution" and endpoint["status"] == "implemented" for endpoint in TAIWAN_OFFICIAL_ENDPOINTS)
     assert any(endpoint["dataset"] == "taifex_futures_chip" and endpoint["status"] == "implemented" for endpoint in TAIWAN_OFFICIAL_ENDPOINTS)
 
@@ -174,6 +223,88 @@ def test_taiwan_official_adapter_emits_twse_and_tpex_daily_price_records() -> No
     assert twse[0].metadata["normalized_row"]["volume"] == 30000000
     assert tpex[0].metadata["normalized_row"]["symbol_canonical"] == "3105.TPEX"
     assert tpex[0].metadata["normalized_row"]["close"] == 118.5
+
+
+def test_taiwan_official_adapter_emits_authentic_monthly_history_records() -> None:
+    adapter = TaiwanOfficialMarketDatasetAdapter(max_records=10)
+
+    twse = adapter.records_from_price_history_payload(
+        "2330.TWSE",
+        "TWSE",
+        TWSE_PRICE_HISTORY_PAYLOAD,
+        api_endpoint="https://www.twse.com.tw/rwd/zh/afterTrading/STOCK_DAY?date=20260601&stockNo=2330&response=json",
+        trace_id="trace-twse-history",
+    )
+    tpex = adapter.records_from_price_history_payload(
+        "3105.TPEX",
+        "TPEx",
+        TPEX_PRICE_HISTORY_PAYLOAD,
+        api_endpoint="https://www.tpex.org.tw/www/zh-tw/afterTrading/tradingStock?code=3105&date=2026%2F06%2F01&id=&response=json",
+        trace_id="trace-tpex-history",
+    )
+
+    assert [record.metadata["event_time"] for record in twse] == ["2026-06-09", "2026-06-10"]
+    assert [record.metadata["normalized_row"]["close"] for record in twse] == [950.0, 955.0]
+    assert twse[0].metadata["source_dataset"] == "STOCK_DAY"
+    assert twse[0].metadata["history_window"] == "official_monthly"
+    assert twse[0].metadata["raw_row"]["日期"] == "115/06/09"
+    assert twse[0].source_id.startswith("tw-official:tw_price_daily:TWSE:2330:")
+    assert [record.metadata["normalized_row"]["close"] for record in tpex] == [117.0, 118.5]
+    assert tpex[0].metadata["normalized_row"]["volume_lots"] == 2900
+    assert tpex[0].metadata["raw_row"]["日 期"] == "115/06/09"
+
+
+def test_taiwan_official_history_fetch_is_bounded_and_uses_prior_month(
+    monkeypatch,
+) -> None:
+    calls: list[str] = []
+
+    def fake_fetch(
+        self,
+        symbol,
+        venue,
+        *,
+        anchor_date,
+        timeout_seconds=20.0,
+    ):
+        del timeout_seconds
+        calls.append(anchor_date)
+        if anchor_date == "2026-06-01":
+            payload = {
+                **TWSE_PRICE_HISTORY_PAYLOAD,
+                "data": [TWSE_PRICE_HISTORY_PAYLOAD["data"][-1]],
+            }
+        else:
+            payload = {
+                **TWSE_PRICE_HISTORY_PAYLOAD,
+                "date": "20260501",
+                "data": [
+                    ["115/05/29", "18,000,000", "16,900,000,000", "930.00", "945.00", "928.00", "940.00", "+5.00", "11,000", ""]
+                ],
+            }
+        return payload, self.price_history_endpoint(
+            symbol,
+            venue,
+            anchor_date=anchor_date,
+        )
+
+    monkeypatch.setattr(
+        TaiwanOfficialMarketDatasetAdapter,
+        "fetch_price_history_payload",
+        fake_fetch,
+    )
+    records = TaiwanOfficialMarketDatasetAdapter(max_records=10).fetch_price_history_records(
+        "2330.TWSE",
+        "TWSE",
+        anchor_date="2026-06-10",
+        trace_id="trace-bounded-two-month-history",
+    )
+
+    assert calls == ["2026-06-01", "2026-05-01"]
+    assert {record.metadata["event_time"] for record in records} == {
+        "2026-05-29",
+        "2026-06-10",
+    }
 
 
 def test_taiwan_official_provider_owned_adapter_is_allowlisted_and_emits_both_venues() -> None:
@@ -206,6 +337,127 @@ def test_taiwan_official_provider_owned_adapter_is_allowlisted_and_emits_both_ve
     assert records[0].metadata["provider_owned_adapter"] == "TaiwanOfficialMarketDatasetAdapter.records_from_payload"
     assert records[0].metadata["normalized_row"]["symbol_canonical"] == "2330.TWSE"
     assert records[1].metadata["normalized_row"]["symbol_canonical"] == "3105.TPEX"
+
+
+def test_bounded_official_refresh_prioritizes_active_symbols_before_global_cap(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    monkeypatch.setenv("SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS", "2330.TW,3105.TWO")
+    adapter = TaiwanOfficialMarketDatasetAdapter(max_records=4)
+    connector = adapter.connector()
+    twse_payload = [
+        {
+            **TWSE_PRICE_PAYLOAD[0],
+            "Code": f"{index:04d}",
+            "Name": f"TWSE {index}",
+        }
+        for index in range(1, 105)
+    ] + TWSE_PRICE_PAYLOAD
+    tpex_payload = [
+        {
+            **TPEX_PRICE_PAYLOAD[0],
+            "SecuritiesCompanyCode": f"{index:04d}",
+            "CompanyName": f"TPEx {index}",
+        }
+        for index in range(4001, 4105)
+    ] + TPEX_PRICE_PAYLOAD
+
+    records = execute_provider_owned_adapter(
+        connector=connector,
+        fetch={
+            "mode": "provider_owned_adapter",
+            "adapter": "TaiwanOfficialMarketDatasetAdapter",
+            "adapter_config": {"max_records": 4},
+            "request": {
+                "dataset": "tw_price_daily",
+                "venues": ["TWSE", "TPEx"],
+                "payloads": {"TWSE": twse_payload, "TPEx": tpex_payload},
+                "history_payloads": {
+                    "2330.TWSE": TWSE_PRICE_HISTORY_PAYLOAD,
+                    "3105.TPEX": TPEX_PRICE_HISTORY_PAYLOAD,
+                },
+            },
+            "max_records": 4,
+        },
+        trace_id="trace-active-symbol-priority",
+    )
+
+    assert [record.metadata["symbol_canonical"] for record in records] == [
+        "2330.TWSE",
+        "2330.TWSE",
+        "3105.TPEX",
+        "3105.TPEX",
+    ]
+    assert [record.metadata["event_time"] for record in records] == [
+        "2026-06-09",
+        "2026-06-10",
+        "2026-06-09",
+        "2026-06-10",
+    ]
+    snapshot_path = tmp_path / "latest-market-snapshots.jsonl"
+    store = LatestMarketSnapshotStore(snapshot_path)
+    result = store.append_normalized_records(
+        records,
+        ingest_run_id="ingest-active-symbol-history",
+        observed_at="2026-06-10T08:00:00Z",
+    )
+    assert result["updated_snapshot_count"] == 2
+    reloaded = LatestMarketSnapshotStore(snapshot_path)
+    assert reloaded.get("2330.TW").closes == (950.0, 955.0)
+    assert reloaded.get("3105.TWO").closes == (117.0, 118.5)
+    assert {
+        point.event_time for point in reloaded.get("2330.TW").points
+    } == {"2026-06-09T00:00:00Z", "2026-06-10T00:00:00Z"}
+
+
+def test_bounded_official_refresh_fails_when_active_symbols_exceed_cap(monkeypatch) -> None:
+    monkeypatch.setenv("SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS", "2330.TW,3105.TWO")
+
+    with pytest.raises(SourceEvidenceError, match="symbol history exceeds"):
+        execute_provider_owned_adapter(
+            connector=TaiwanOfficialMarketDatasetAdapter(max_records=1).connector(),
+            fetch={
+                "mode": "provider_owned_adapter",
+                "adapter": "TaiwanOfficialMarketDatasetAdapter",
+                "adapter_config": {"max_records": 1},
+                "request": {
+                    "dataset": "tw_price_daily",
+                    "venues": ["TWSE", "TPEx"],
+                    "payloads": {
+                        "TWSE": TWSE_PRICE_PAYLOAD,
+                        "TPEx": TPEX_PRICE_PAYLOAD,
+                    },
+                },
+                "max_records": 1,
+            },
+            trace_id="trace-active-symbol-cap",
+        )
+
+
+def test_bounded_official_refresh_fails_closed_without_two_distinct_closes(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS", "2330.TW")
+    one_day_history = {**TWSE_PRICE_HISTORY_PAYLOAD, "data": [TWSE_PRICE_HISTORY_PAYLOAD["data"][-1]]}
+
+    with pytest.raises(SourceEvidenceError, match="distinct finite close history"):
+        execute_provider_owned_adapter(
+            connector=TaiwanOfficialMarketDatasetAdapter(max_records=2).connector(),
+            fetch={
+                "mode": "provider_owned_adapter",
+                "adapter": "TaiwanOfficialMarketDatasetAdapter",
+                "adapter_config": {"max_records": 2},
+                "request": {
+                    "dataset": "tw_price_daily",
+                    "venues": ["TWSE"],
+                    "payloads": {"TWSE": TWSE_PRICE_PAYLOAD},
+                    "history_payloads": {"2330.TWSE": one_day_history},
+                },
+                "max_records": 2,
+            },
+            trace_id="trace-active-symbol-one-close",
+        )
 
 
 def test_taiwan_official_adapter_emits_chip_records_and_skips_archive_detail() -> None:
@@ -303,21 +555,48 @@ def test_taiwan_official_scheduled_run_writes_watermark_and_health(tmp_path) -> 
     os.getenv("PANTHEON_TW_OFFICIAL_LIVE_SMOKE") != "1",
     reason="Set PANTHEON_TW_OFFICIAL_LIVE_SMOKE=1 to run read-only official TWSE/TPEx network smoke.",
 )
-def test_taiwan_official_live_read_only_smoke_for_one_twse_and_tpex_symbol() -> None:
-    adapter = TaiwanOfficialMarketDatasetAdapter(max_records=2000)
-    with urllib.request.urlopen("https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL", timeout=20) as response:
-        twse_payload = json.loads(response.read().decode("utf-8"))
-    with urllib.request.urlopen(
-        "https://www.tpex.org.tw/openapi/v1/tpex_mainboard_daily_close_quotes",
-        timeout=20,
-    ) as response:
-        tpex_payload = json.loads(response.read().decode("utf-8"))
+def test_taiwan_official_live_read_only_smoke_for_one_twse_and_tpex_symbol(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("PANTHEON_EXTERNAL_EGRESS", "allowlist")
+    monkeypatch.setenv(
+        "PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS",
+        "openapi.twse.com.tw,www.twse.com.tw,www.tpex.org.tw",
+    )
+    monkeypatch.setenv("SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS", "2330.TW,3105.TWO")
+    fetch_adapter = TaiwanOfficialMarketDatasetAdapter(max_records=4)
+    twse_payload = fetch_adapter.fetch_payload("tw_price_daily", "TWSE")
+    tpex_payload = fetch_adapter.fetch_payload("tw_price_daily", "TPEx")
 
-    twse_records = adapter.records_from_payload("tw_price_daily", "TWSE", twse_payload)
-    tpex_records = adapter.records_from_payload("tw_price_daily", "TPEx", tpex_payload)
+    records = execute_provider_owned_adapter(
+        connector=TaiwanOfficialMarketDatasetAdapter(max_records=4).connector(),
+        fetch={
+            "mode": "provider_owned_adapter",
+            "adapter": "TaiwanOfficialMarketDatasetAdapter",
+            "adapter_config": {"max_records": 4},
+            "request": {
+                "dataset": "tw_price_daily",
+                "venues": ["TWSE", "TPEx"],
+                "payloads": {"TWSE": twse_payload, "TPEx": tpex_payload},
+            },
+            "max_records": 4,
+        },
+        trace_id="live-active-symbol-history",
+    )
 
-    assert any(record.metadata["normalized_row"]["symbol"] == "2330" for record in twse_records)
-    assert any(record.metadata["normalized_row"]["symbol"] == "3105" for record in tpex_records)
+    assert len(records) == 4
+    for symbol in ("2330.TWSE", "3105.TPEX"):
+        symbol_records = [
+            record
+            for record in records
+            if record.metadata["symbol_canonical"] == symbol
+        ]
+        assert len(symbol_records) == 2
+        assert len({record.metadata["event_time"] for record in symbol_records}) == 2
+        assert all(
+            str(record.source_id).startswith("tw-official:tw_price_daily:")
+            for record in symbol_records
+        )
 
 
 def test_tdcc_shareholding_distribution_adapter_and_pit() -> None:

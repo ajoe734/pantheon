@@ -66,6 +66,7 @@ def _config(
     mode: str = controller_worker.RECONCILE_AND_PULL_MODE,
     force_connector_ids: tuple[str, ...] = (),
     exclusive_connector_ids: tuple[str, ...] = (),
+    frontier_recovery_connector_ids: tuple[str, ...] = (),
 ) -> ControllerConfig:
     return ControllerConfig(
         api_url="http://source-ingest.test:8097",
@@ -82,6 +83,7 @@ def _config(
         mode=mode,
         force_connector_ids=force_connector_ids,
         exclusive_connector_ids=exclusive_connector_ids,
+        frontier_recovery_connector_ids=frontier_recovery_connector_ids,
     )
 
 
@@ -459,6 +461,7 @@ def test_config_allows_unbounded_reconcile_only_without_provider_selection(
     monkeypatch.setenv("SOURCE_INGEST_CONTROLLER_MAX_TICKS", "0")
     monkeypatch.delenv("SOURCE_INGEST_CONTROLLER_FORCE_CONNECTOR_IDS", raising=False)
     monkeypatch.delenv("SOURCE_INGEST_CONTROLLER_EXCLUSIVE_CONNECTOR_IDS", raising=False)
+    monkeypatch.delenv("SOURCE_INGEST_CONTROLLER_FRONTIER_RECOVERY_CONNECTOR_IDS", raising=False)
     monkeypatch.setattr(
         controller_worker,
         "load_controller_token",
@@ -471,6 +474,7 @@ def test_config_allows_unbounded_reconcile_only_without_provider_selection(
     assert config.max_ticks == 0
     assert config.force_connector_ids == ()
     assert config.exclusive_connector_ids == ()
+    assert config.frontier_recovery_connector_ids == ()
 
 
 def test_config_rejects_unbounded_provider_pull_mode(
@@ -491,6 +495,23 @@ def test_config_rejects_provider_selection_in_reconcile_only_mode(
     monkeypatch.setenv("SOURCE_INGEST_CONTROLLER_TRUTH_LEVEL", "scheduled_tick")
     monkeypatch.setenv("SOURCE_INGEST_CONTROLLER_MAX_TICKS", "0")
     monkeypatch.setenv("SOURCE_INGEST_CONTROLLER_FORCE_CONNECTOR_IDS", CONNECTOR_ID)
+
+    with pytest.raises(ValueError, match="must not select provider"):
+        controller_worker.config_from_env()
+
+
+def test_config_rejects_frontier_recovery_in_reconcile_only_mode(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("SOURCE_INGEST_CONTROLLER_MODE", "reconcile_only")
+    monkeypatch.setenv("SOURCE_INGEST_CONTROLLER_TRUTH_LEVEL", "scheduled_tick")
+    monkeypatch.setenv("SOURCE_INGEST_CONTROLLER_MAX_TICKS", "0")
+    monkeypatch.delenv("SOURCE_INGEST_CONTROLLER_FORCE_CONNECTOR_IDS", raising=False)
+    monkeypatch.delenv("SOURCE_INGEST_CONTROLLER_EXCLUSIVE_CONNECTOR_IDS", raising=False)
+    monkeypatch.setenv(
+        "SOURCE_INGEST_CONTROLLER_FRONTIER_RECOVERY_CONNECTOR_IDS",
+        "historical-static-connector",
+    )
 
     with pytest.raises(ValueError, match="must not select provider"):
         controller_worker.config_from_env()
@@ -830,6 +851,144 @@ def test_terminal_readback_rejects_unresolved_frontier_backlog() -> None:
     assert raised.value.stage == "actual_readback"
 
 
+def _frontier_item(
+    frontier_id: str,
+    connector_id: str,
+    *,
+    status: str,
+    attempts: int,
+) -> dict[str, Any]:
+    return {
+        "frontier_id": frontier_id,
+        "connector_id": connector_id,
+        "status": status,
+        "attempts": attempts,
+        "max_attempts": 2,
+        "available_at": "2026-08-21T04:44:11Z",
+        "updated_at": "2026-08-21T04:44:11Z",
+        "last_error": (
+            "stale running frontier recovered after worker restart"
+            if status == "retry"
+            else None
+        ),
+    }
+
+
+def test_explicit_frontier_recovery_runs_one_exact_connector_at_a_time(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    frontier = [
+        _frontier_item("frontier-a", "historical-a", status="retry", attempts=1),
+        _frontier_item("frontier-b", "historical-b", status="queued", attempts=0),
+        _frontier_item("frontier-primary", CONNECTOR_ID, status="queued", attempts=0),
+    ]
+    calls: list[dict[str, Any]] = []
+
+    def read_frontier_state(**kwargs: Any) -> tuple[dict[str, Any], ...]:
+        return tuple(deepcopy(frontier))
+
+    def run_schedule_tick(**kwargs: Any) -> dict[str, Any]:
+        calls.append(kwargs)
+        connector_id = kwargs["exclusive_connector_ids"][0]
+        item = next(
+            row
+            for row in frontier
+            if row["connector_id"] == connector_id and row["status"] in {"queued", "retry"}
+        )
+        item["status"] = "done"
+        ingest_run_id = f"ingest-{item['frontier_id']}"
+        item["ingest_run_id"] = ingest_run_id
+        return {
+            "summary": {"total_ran": 1, "total_failed": 0},
+            "failed": [],
+            "ran": [
+                {
+                    "connector_id": connector_id,
+                    "frontier": deepcopy(item),
+                    "run": {"ingest_run_id": ingest_run_id, "status": "completed"},
+                }
+            ],
+        }
+
+    monkeypatch.setattr(controller_worker, "read_frontier_state", read_frontier_state)
+    monkeypatch.setattr(controller_worker, "run_schedule_tick", run_schedule_tick)
+
+    result = controller_worker.recover_explicit_frontier(
+        api_url="http://source-ingest.test:8097",
+        recovery_connector_ids=("historical-a", "historical-b"),
+        allowed_pending_connector_ids=(CONNECTOR_ID,),
+        controller_token="controller-test-token-that-is-at-least-32-characters",
+        timeout_seconds=5.0,
+    )
+
+    assert result["status"] == "converged"
+    assert result["requested_connector_count"] == 2
+    assert result["recovered_item_count"] == 2
+    assert [call["max_concurrency"] for call in calls] == [1, 1]
+    assert [call["force_connector_ids"] for call in calls] == [
+        ["historical-a"],
+        ["historical-b"],
+    ]
+    assert [call["exclusive_connector_ids"] for call in calls] == [
+        ["historical-a"],
+        ["historical-b"],
+    ]
+    assert next(row for row in frontier if row["connector_id"] == CONNECTOR_ID)["status"] == "queued"
+
+
+def test_explicit_frontier_recovery_rejects_unclassified_connector(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        controller_worker,
+        "read_frontier_state",
+        lambda **kwargs: (
+            _frontier_item("frontier-approved", "historical-a", status="retry", attempts=1),
+            _frontier_item("frontier-unexpected", "unexpected", status="queued", attempts=0),
+        ),
+    )
+
+    with pytest.raises(ControllerTickError, match="outside the explicit recovery boundary") as raised:
+        controller_worker.recover_explicit_frontier(
+            api_url="http://source-ingest.test:8097",
+            recovery_connector_ids=("historical-a",),
+            controller_token="controller-test-token-that-is-at-least-32-characters",
+            timeout_seconds=5.0,
+        )
+
+    assert raised.value.stage == "frontier_recovery"
+
+
+def test_explicit_frontier_recovery_rejects_nonterminal_scheduler_result(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    item = _frontier_item("frontier-approved", "historical-a", status="retry", attempts=1)
+    monkeypatch.setattr(
+        controller_worker,
+        "read_frontier_state",
+        lambda **kwargs: (deepcopy(item),),
+    )
+    monkeypatch.setattr(
+        controller_worker,
+        "run_schedule_tick",
+        lambda **kwargs: {
+            "summary": {"total_ran": 0, "total_failed": 1},
+            "failed": [{"connector_id": "historical-a", "error": "provider failed"}],
+            "ran": [],
+        },
+    )
+
+    with pytest.raises(ControllerTickError, match="did not terminalize") as raised:
+        controller_worker.recover_explicit_frontier(
+            api_url="http://source-ingest.test:8097",
+            recovery_connector_ids=("historical-a",),
+            controller_token="controller-test-token-that-is-at-least-32-characters",
+            timeout_seconds=5.0,
+        )
+
+    assert raised.value.stage == "frontier_recovery"
+
+
 def test_failure_truth_uses_only_internally_consistent_unresolved_dlq_count() -> None:
     actual = _actual_readback()
     assert controller_worker._trusted_unresolved_dlq_count(actual) == 0
@@ -1055,6 +1214,69 @@ def test_run_controller_tick_exclusively_selects_governed_bounded_connector(
 
     assert result["status"] == "ok"
     assert events.count("run_schedule_tick") == 1
+
+
+def test_run_controller_tick_recovers_explicit_frontier_before_primary_schedule(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events: list[str] = []
+    config = _config(
+        tmp_path,
+        exclusive_connector_ids=(CONNECTOR_ID,),
+        frontier_recovery_connector_ids=("historical-static",),
+    )
+    state = _state()
+    store = RecordingStateStore(config.state_path, events)
+    writer = RecordingWriter(events)
+    _patch_successful_tick(
+        monkeypatch,
+        events,
+        expected_force_connector_ids=[CONNECTOR_ID],
+        expected_exclusive_connector_ids=[CONNECTOR_ID],
+    )
+
+    def recover_explicit_frontier(**kwargs: Any) -> dict[str, Any]:
+        assert kwargs["recovery_connector_ids"] == ("historical-static",)
+        assert kwargs["allowed_pending_connector_ids"] == [CONNECTOR_ID]
+        assert kwargs["controller_token"] == "controller-test-token-that-is-at-least-32-characters"
+        events.append("recover_explicit_frontier")
+        return {
+            "status": "converged",
+            "requested_connector_count": 1,
+            "recovered_item_count": 1,
+        }
+
+    monkeypatch.setattr(
+        controller_worker,
+        "recover_explicit_frontier",
+        recover_explicit_frontier,
+    )
+
+    result = run_controller_tick(config=config, state=state, store=store, writer=writer)
+
+    assert events.index("recover_explicit_frontier") < events.index("run_schedule_tick")
+    assert result["frontier_recovery"] == {
+        "status": "converged",
+        "requested_connector_count": 1,
+        "recovered_item_count": 1,
+    }
+    success = _call(writer, "success")
+    assert success["kwargs"]["payload"]["frontier_recovery"] == result["frontier_recovery"]
+
+
+def test_operation_fingerprint_binds_frontier_recovery_allowlist() -> None:
+    without_recovery = controller_worker.compute_request_fingerprint(
+        mode=controller_worker.RECONCILE_AND_PULL_MODE,
+        exclusive_connector_ids=(CONNECTOR_ID,),
+    )
+    with_recovery = controller_worker.compute_request_fingerprint(
+        mode=controller_worker.RECONCILE_AND_PULL_MODE,
+        exclusive_connector_ids=(CONNECTOR_ID,),
+        frontier_recovery_connector_ids=("historical-static",),
+    )
+
+    assert without_recovery != with_recovery
 
 
 def test_run_controller_tick_persists_explicit_failure_with_nonterminal_truth(
