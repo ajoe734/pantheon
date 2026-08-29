@@ -307,4 +307,3 @@ def test_source_ingestion_reconcile_only_for_agora() -> None:
                     content = sf.read()
                 assert "CandidateDecisionStore" not in content, f"{file_path} imports CandidateDecisionStore"
                 assert "PostgresTradingRoomStore" not in content, f"{file_path} imports PostgresTradingRoomStore"
-
