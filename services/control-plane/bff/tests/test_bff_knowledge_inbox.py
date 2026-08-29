@@ -9,17 +9,14 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 import main as bff_main
-from read_store import ReadSurfaceStore
+from ports import create_in_memory_read_surface_ports
 
 
 OPERATOR_HEADERS = {"Authorization": "Bearer op-knowledge:operator,reviewer"}
 
 
-def _knowledge_store(td: str, *, empty: bool = False) -> ReadSurfaceStore:
-    store = ReadSurfaceStore(
-        os.path.join(td, "read_surfaces.json"),
-        allow_local_snapshot_fallback=False,
-    )
+def _knowledge_store(td: str, *, empty: bool = False):
+    store = create_in_memory_read_surface_ports()
     if empty:
         store.list_research_notes = lambda: []
         store.list_evidence_refs = lambda: []

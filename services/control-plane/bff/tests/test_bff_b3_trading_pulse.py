@@ -16,16 +16,13 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 import main as bff_main
-from read_store import ReadSurfaceStore
+from ports import create_in_memory_read_surface_ports
 
 OPERATOR_HEADERS = {"Authorization": "Bearer op-b3-trading:operator,reviewer"}
 
 
 def _fresh_client(td: str, *, include_gap: bool = False) -> TestClient:
-    store = ReadSurfaceStore(
-        os.path.join(td, "read_surfaces.json"),
-        allow_local_snapshot_fallback=False,
-    )
+    store = create_in_memory_read_surface_ports()
     runtime_bindings = [
         {
             "id": "binding-alpha",

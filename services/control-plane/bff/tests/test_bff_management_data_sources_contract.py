@@ -1,9 +1,6 @@
-"""Contract tests for GET /bff/management/data-sources (BFFGAP-DATASOURCES).
-
-Pattern mirrors test_bff_management_cockpit.py:
-- injects a seeded ReadSurfaceStore via bff_main.read_store replacement
-- verifies the canonical list envelope (data / items / page_info / meta)
-- verifies the degraded envelope when source-ingest is unconfigured or down
+"""Contract tests for GET /bff/management/data-sources.
+- injects seeded read surface ports via bff_main.read_store replacement
+- verifies envelope data shape, meta summary, meta surfaces, degradation
 - verifies auth is required
 """
 from __future__ import annotations
@@ -17,7 +14,7 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 import main as bff_main
-from read_store import ReadSurfaceStore
+from ports import create_in_memory_read_surface_ports
 
 
 OPERATOR_HEADERS = {"Authorization": "Bearer op-ds-001:operator,reviewer"}
@@ -45,10 +42,7 @@ _SAMPLE_CONNECTORS = [
 
 
 def _client_with_connectors(td: str) -> TestClient:
-    store = ReadSurfaceStore(
-        os.path.join(td, "read_surfaces.json"),
-        allow_local_snapshot_fallback=False,
-    )
+    store = create_in_memory_read_surface_ports()
     store.get_source_connector_registry = lambda: {
         "source": "service_client",
         "connectors": _SAMPLE_CONNECTORS,
@@ -62,10 +56,7 @@ def _client_with_connectors(td: str) -> TestClient:
 
 
 def _client_source_missing(td: str) -> TestClient:
-    store = ReadSurfaceStore(
-        os.path.join(td, "read_surfaces.json"),
-        allow_local_snapshot_fallback=False,
-    )
+    store = create_in_memory_read_surface_ports()
     store.get_source_connector_registry = lambda: {
         "source": "missing",
         "connectors": [],
@@ -79,10 +70,7 @@ def _client_source_missing(td: str) -> TestClient:
 
 
 def _client_source_unavailable(td: str) -> TestClient:
-    store = ReadSurfaceStore(
-        os.path.join(td, "read_surfaces.json"),
-        allow_local_snapshot_fallback=False,
-    )
+    store = create_in_memory_read_surface_ports()
     store.get_source_connector_registry = lambda: {
         "source": "unavailable",
         "connectors": [],

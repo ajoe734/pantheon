@@ -5,10 +5,8 @@ validation (400), and the kind field in the SentinelFinding derived model.
 """
 from __future__ import annotations
 
-import json
 import os
 import sys
-import tempfile
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
@@ -20,7 +18,7 @@ BFF_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(BFF_DIR))
 
 import main as bff_main  # noqa: E402
-from read_store import ReadSurfaceStore  # noqa: E402
+from ports import create_in_memory_read_surface_ports  # noqa: E402
 
 HEADERS = {"Authorization": "Bearer op-execute-plans:operator,reviewer,admin:mfa"}
 
@@ -69,16 +67,28 @@ _INCIDENT_SEED = {
 
 @contextmanager
 def _store(*, seed: dict = _INCIDENT_SEED) -> Iterator[TestClient]:
-    with tempfile.TemporaryDirectory() as td:
-        snap = os.path.join(td, "read_surfaces.json")
-        with open(snap, "w") as f:
-            json.dump({"incidents": seed}, f)
-        original = bff_main.read_store
-        bff_main.read_store = ReadSurfaceStore(snap, allow_local_snapshot_fallback=True)
-        try:
-            yield TestClient(bff_main.app, raise_server_exceptions=False)
-        finally:
-            bff_main.read_store = original
+    findings = {}
+    for finding_id, incident in seed.items():
+        title = str(incident.get("title") or "").lower()
+        inferred_kind = "risk_breach" if "risk breach" in title else "loop_anomaly"
+        findings[finding_id] = {
+            "finding_id": finding_id,
+            "id": finding_id,
+            "kind": incident.get("kind") or inferred_kind,
+            "status": incident.get("status") or "open",
+            "severity": incident.get("severity") or "medium",
+            "created_at": incident.get("created_at") or "",
+            "incident_id": incident.get("incident_id") or finding_id,
+            "details": incident.get("description") or incident.get("title") or "",
+        }
+    original = bff_main.read_store
+    bff_main.read_store = create_in_memory_read_surface_ports(
+        lifecycle_telemetry_governance_kwargs={"sentinel_findings": findings}
+    )
+    try:
+        yield TestClient(bff_main.app, raise_server_exceptions=False)
+    finally:
+        bff_main.read_store = original
 
 
 # ---------------------------------------------------------------------------

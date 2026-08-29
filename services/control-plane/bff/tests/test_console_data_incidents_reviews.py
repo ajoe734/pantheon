@@ -2,15 +2,13 @@ from __future__ import annotations
 
 import os
 import sys
-import tempfile
-from unittest import mock
 
 from fastapi.testclient import TestClient
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 import main as bff_main  # noqa: E402
-from read_store import ReadSurfaceStore  # noqa: E402
+from ports import create_in_memory_read_surface_ports  # noqa: E402
 
 
 HEADERS = {"Authorization": "Bearer op-dev:admin:mfa"}
@@ -62,41 +60,26 @@ def test_incidents_and_reviews_read_live_service_data_without_snapshot_fallback(
         ],
     }
 
-    def fake_get(base_url: str, path: str, *, headers=None):
-        del headers
-        return True, responses[(base_url, path)]
-
     original_store = bff_main.read_store
-    with tempfile.TemporaryDirectory() as td:
-        with mock.patch.dict(
-            os.environ,
-            {
-                "BFF_DATA_DIR": td,
-                "PANTHEON_INCIDENTS_API_URL": "http://incidents:8090",
-                "PANTHEON_INCIDENTS_URL": "",
-                "PANTHEON_GOVERNANCE_APPROVAL_API_URL": "http://governance:8082",
-                "PANTHEON_GOVERNANCE_SERVICE_URL": "",
-                "PANTHEON_DEPLOYMENT_API_URL": "",
-                "PANTHEON_DEPLOYMENT_SERVICE_URL": "",
-                "PANTHEON_EVOLUTION_API_URL": "",
-                "PANTHEON_GOVERNANCE_API_URL": "",
-                "PANTHEON_BFF_INCIDENT_STORE": "",
-                "PANTHEON_BFF_APPROVAL_DECISION_STORE": "",
-                "PANTHEON_GOVERNANCE_DATA_DIR": "",
+    ports = create_in_memory_read_surface_ports(
+        lifecycle_telemetry_governance_kwargs={
+            "incidents": {
+                record["incident_id"]: record
+                for record in responses[("http://incidents:8090", "/api/incidents")]
             },
-            clear=False,
-        ):
-            with mock.patch("read_store._http_json_get", side_effect=fake_get):
-                bff_main.read_store = ReadSurfaceStore(
-                    os.path.join(td, "read_surfaces.json"),
-                    allow_local_snapshot_fallback=False,
-                )
-                client = TestClient(bff_main.app)
-
-                incidents = client.get("/bff/incidents", headers=HEADERS)
-                reviews = client.get("/bff/reviews", headers=HEADERS)
-
-    bff_main.read_store = original_store
+        },
+        ooda_management_kwargs={
+            "approval_decisions": responses[("http://governance:8082", "/api/governance/approvals")],
+        },
+    )
+    ports.dataset_source = lambda _dataset: "service_client"
+    bff_main.read_store = ports
+    try:
+        client = TestClient(bff_main.app)
+        incidents = client.get("/bff/incidents", headers=HEADERS)
+        reviews = client.get("/bff/reviews", headers=HEADERS)
+    finally:
+        bff_main.read_store = original_store
 
     assert incidents.status_code == 200, incidents.text
     incident_payload = incidents.json()

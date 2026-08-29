@@ -13,7 +13,8 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 import main as bff_main
-from read_store import ReadSurfaceStore
+from domain_ports.operations_consultation import create_operations_consultation_port
+from ports import create_read_surface_ports
 
 
 OPERATOR_HEADERS = {"Authorization": "Bearer op-bffgap:operator"}
@@ -21,6 +22,50 @@ NO_AUTH_HEADERS: dict = {}
 
 _WORKFLOW_ENV = "PANTHEON_BFF_WORKFLOW_TEMPLATE_STORE"
 _HOOK_ENV = "PANTHEON_BFF_HOOK_REGISTRY_STORE"
+
+
+class _WorkflowsHooksTestStore:
+    def __init__(self, td: str) -> None:
+        self.ports = create_read_surface_ports(
+            operations_consultation=create_operations_consultation_port()
+        )
+        self.td = td
+
+    def dataset_source(self, dataset: str) -> str:
+        if dataset == "workflow_templates":
+            env_path = os.environ.get(_WORKFLOW_ENV)
+            if env_path and Path(env_path).exists():
+                return "service_store"
+            return "missing"
+        if dataset == "hook_registry":
+            env_path = os.environ.get(_HOOK_ENV)
+            if env_path and Path(env_path).exists():
+                return "service_store"
+            return "missing"
+        return "missing"
+
+    def list_workflow_templates(self) -> list[dict[str, Any]]:
+        env_path = os.environ.get(_WORKFLOW_ENV)
+        if env_path and Path(env_path).exists():
+            try:
+                data = json.loads(Path(env_path).read_text(encoding="utf-8"))
+                return data if isinstance(data, list) else list(data.values())
+            except Exception:
+                return []
+        return []
+
+    def list_hook_registry(self) -> list[dict[str, Any]]:
+        env_path = os.environ.get(_HOOK_ENV)
+        if env_path and Path(env_path).exists():
+            try:
+                data = json.loads(Path(env_path).read_text(encoding="utf-8"))
+                return data if isinstance(data, list) else list(data.values())
+            except Exception:
+                return []
+        return []
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self.ports, name)
 
 
 @contextmanager
@@ -46,10 +91,7 @@ def _fresh_client(
             hook_path = Path(td) / "hook_registry.json"
             hook_path.write_text(json.dumps(hooks), encoding="utf-8")
             os.environ[_HOOK_ENV] = str(hook_path)
-        bff_main.read_store = ReadSurfaceStore(
-            os.path.join(td, "read_surfaces.json"),
-            allow_local_snapshot_fallback=False,
-        )
+        bff_main.read_store = _WorkflowsHooksTestStore(td)
         yield TestClient(bff_main.app)
     finally:
         bff_main.read_store = original_store

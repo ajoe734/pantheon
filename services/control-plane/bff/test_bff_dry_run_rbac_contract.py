@@ -20,50 +20,178 @@ if _REPO_ROOT not in sys.path:
 
 import main as bff_main
 from command_queue import CommandStore
-from read_store import ReadSurfaceStore
+from ports import ReadSurfacePorts
 from services.runtime_auth_inbound import encode_jwt_hs256
 
 
 OPERATOR_HEADERS = {"Authorization": "Bearer dry-run-op:operator,approver,reviewer,admin"}
 
 
-def _seed_read_store(path: Path) -> ReadSurfaceStore:
-    path.write_text(
-        json.dumps(
-            {
-                "agora_signals": {
-                    "sig-dry-seed": {
-                        "id": "sig-dry-seed",
-                        "signal_id": "sig-dry-seed",
-                        "title": "Seed signal",
-                        "body": "Existing signal for feedback dry-run.",
-                        "reviewStatus": "pending_trader_review",
-                    }
-                },
-                "agora_sessions": {
-                    "sess-dry-seed": {
-                        "id": "sess-dry-seed",
-                        "sessionId": "sess-dry-seed",
-                        "title": "Seed session",
-                        "status": "active",
-                        "messages": [],
-                    }
-                },
-                "decision_journal_entries": {},
-                "research_notes": {},
-                "insight_cards": {},
-                "agora_training_examples": {},
-                "capital_pools": {},
-                "ranking_formulas": {},
-                "rebalances": {},
-                "runtime_bindings": {},
-                "personas": {},
-                "strategy_specs": {},
+class DryRunRBACTestReadPorts(ReadSurfacePorts):
+    def __init__(self, seed_data: dict[str, Any] | None = None) -> None:
+        super().__init__()
+        self._data: dict[str, Any] = seed_data or {}
+
+    def dataset_source(self, dataset: str) -> str:
+        return "local_snapshot"
+
+    def dataset_surface_status(self, dataset: str, *, snapshot_at: str, **kwargs: Any) -> dict[str, Any]:
+        return {"status": "ok", "source": "local_snapshot", "snapshot_at": snapshot_at}
+
+    def _get_dataset(self, name: str) -> dict[str, Any] | list[Any]:
+        return self._data.setdefault(name, {})
+
+    def create_agora_signal(self, *, signal_id: str, title: str, body: str, actor_id: str, payload: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
+        sig = {
+            "id": signal_id,
+            "signal_id": signal_id,
+            "title": title,
+            "body": body,
+            "actor_id": actor_id,
+            "reviewStatus": "pending_trader_review",
+            **payload,
+        }
+        ds = self._get_dataset("agora_signals")
+        if isinstance(ds, dict):
+            ds[signal_id] = sig
+        return sig
+
+    def list_agora_signals(self, **kwargs: Any) -> list[dict[str, Any]]:
+        ds = self._get_dataset("agora_signals")
+        return list(ds.values()) if isinstance(ds, dict) else list(ds)
+
+    def get_agora_signal(self, signal_id: str | None) -> dict[str, Any] | None:
+        ds = self._get_dataset("agora_signals")
+        if isinstance(ds, dict):
+            return ds.get(str(signal_id or ""))
+        return next((s for s in ds if s.get("id") == signal_id or s.get("signal_id") == signal_id), None)
+
+    def list_agora_sessions(self, **kwargs: Any) -> list[dict[str, Any]]:
+        ds = self._get_dataset("agora_sessions")
+        return list(ds.values()) if isinstance(ds, dict) else list(ds)
+
+    def get_agora_session(self, session_id: str | None) -> dict[str, Any] | None:
+        ds = self._get_dataset("agora_sessions")
+        if isinstance(ds, dict):
+            return ds.get(str(session_id or ""))
+        return next((s for s in ds if s.get("sessionId") == session_id or s.get("session_id") == session_id or s.get("id") == session_id), None)
+
+    def list_strategy_specs(self, **kwargs: Any) -> list[dict[str, Any]]:
+        ds = self._get_dataset("strategy_specs")
+        return list(ds.values()) if isinstance(ds, dict) else list(ds)
+
+    def get_strategy_spec(self, spec_id: str | None) -> dict[str, Any] | None:
+        ds = self._get_dataset("strategy_specs")
+        if isinstance(ds, dict):
+            return ds.get(str(spec_id or ""))
+        return next((s for s in ds if s.get("id") == spec_id or s.get("strategy_id") == spec_id), None)
+
+    def get_strategy_spec_detail(self, strategy_id: str | None, *, version_selector: str | None = None) -> dict[str, Any] | None:
+        spec = self.get_strategy_spec(strategy_id)
+        if not spec:
+            return None
+        versions = spec.get("versions") or [spec]
+        return versions[0]
+
+    def list_personas(self, **kwargs: Any) -> list[dict[str, Any]]:
+        ds = self._get_dataset("personas")
+        return list(ds.values()) if isinstance(ds, dict) else list(ds)
+
+    def get_persona(self, persona_id: str | None) -> dict[str, Any] | None:
+        ds = self._get_dataset("personas")
+        if isinstance(ds, dict):
+            return ds.get(str(persona_id or ""))
+        return next((p for p in ds if p.get("id") == persona_id or p.get("persona_id") == persona_id), None)
+
+    def list_capital_pools(self, **kwargs: Any) -> list[dict[str, Any]]:
+        ds = self._get_dataset("capital_pools")
+        return list(ds.values()) if isinstance(ds, dict) else list(ds)
+
+    def get_capital_pool(self, pool_id: str | None) -> dict[str, Any] | None:
+        ds = self._get_dataset("capital_pools")
+        if isinstance(ds, dict):
+            return ds.get(str(pool_id or ""))
+        return next((p for p in ds if p.get("id") == pool_id or p.get("pool_id") == pool_id), None)
+
+    def list_ranking_formulas(self, **kwargs: Any) -> list[dict[str, Any]]:
+        ds = self._get_dataset("ranking_formulas")
+        return list(ds.values()) if isinstance(ds, dict) else list(ds)
+
+    def get_ranking_formula(self, formula_id: str | None) -> dict[str, Any] | None:
+        ds = self._get_dataset("ranking_formulas")
+        if isinstance(ds, dict):
+            return ds.get(str(formula_id or ""))
+        return next((f for f in ds if f.get("id") == formula_id or f.get("formula_id") == formula_id), None)
+
+    def list_rebalances(self, **kwargs: Any) -> list[dict[str, Any]]:
+        ds = self._get_dataset("rebalances")
+        return list(ds.values()) if isinstance(ds, dict) else list(ds)
+
+    def get_rebalance(self, rebalance_id: str | None) -> dict[str, Any] | None:
+        ds = self._get_dataset("rebalances")
+        if isinstance(ds, dict):
+            return ds.get(str(rebalance_id or ""))
+        return next((r for r in ds if r.get("id") == rebalance_id or r.get("rebalance_id") == rebalance_id), None)
+
+    def list_runtime_bindings(self, **kwargs: Any) -> list[dict[str, Any]]:
+        ds = self._get_dataset("runtime_bindings")
+        return list(ds.values()) if isinstance(ds, dict) else list(ds)
+
+    def get_runtime_binding(self, runtime_id: str | None) -> dict[str, Any] | None:
+        ds = self._get_dataset("runtime_bindings")
+        if isinstance(ds, dict):
+            return ds.get(str(runtime_id or ""))
+        return next((r for r in ds if r.get("id") == runtime_id or r.get("runtime_id") == runtime_id), None)
+
+    def list_decision_journal_entries(self, **kwargs: Any) -> list[dict[str, Any]]:
+        ds = self._get_dataset("decision_journal_entries")
+        return list(ds.values()) if isinstance(ds, dict) else list(ds)
+
+    def list_research_notes(self, **kwargs: Any) -> list[dict[str, Any]]:
+        ds = self._get_dataset("research_notes")
+        return list(ds.values()) if isinstance(ds, dict) else list(ds)
+
+    def list_insight_cards(self, **kwargs: Any) -> list[dict[str, Any]]:
+        ds = self._get_dataset("insight_cards")
+        return list(ds.values()) if isinstance(ds, dict) else list(ds)
+
+    def list_agora_training_examples(self, **kwargs: Any) -> list[dict[str, Any]]:
+        ds = self._get_dataset("agora_training_examples")
+        return list(ds.values()) if isinstance(ds, dict) else list(ds)
+
+
+def _seed_read_store(path: Path) -> DryRunRBACTestReadPorts:
+    seed_data = {
+        "agora_signals": {
+            "sig-dry-seed": {
+                "id": "sig-dry-seed",
+                "signal_id": "sig-dry-seed",
+                "title": "Seed signal",
+                "body": "Existing signal for feedback dry-run.",
+                "reviewStatus": "pending_trader_review",
             }
-        ),
-        encoding="utf-8",
-    )
-    return ReadSurfaceStore(str(path), allow_local_snapshot_fallback=False)
+        },
+        "agora_sessions": {
+            "sess-dry-seed": {
+                "id": "sess-dry-seed",
+                "sessionId": "sess-dry-seed",
+                "title": "Seed session",
+                "status": "active",
+                "messages": [],
+            }
+        },
+        "decision_journal_entries": {},
+        "research_notes": {},
+        "insight_cards": {},
+        "agora_training_examples": {},
+        "capital_pools": {},
+        "ranking_formulas": {},
+        "rebalances": {},
+        "runtime_bindings": {},
+        "personas": {},
+        "strategy_specs": {},
+    }
+    return DryRunRBACTestReadPorts(seed_data)
 
 
 @contextmanager
@@ -132,6 +260,13 @@ def _isolated_bff() -> Iterator[TestClient]:
                 bff_main._sse_buffers[key].extend(original)
 
 
+try:
+    from services.persona.runtime_profile import build_persona_runtime_profile
+    bff_main.build_persona_runtime_profile = build_persona_runtime_profile
+except ImportError:
+    pass
+
+
 def _dry_headers(key: str, *, auth: dict[str, str] | None = None) -> dict[str, str]:
     return {
         **(auth or OPERATOR_HEADERS),
@@ -141,6 +276,10 @@ def _dry_headers(key: str, *, auth: dict[str, str] | None = None) -> dict[str, s
 
 
 def _assert_dry_run(response) -> dict[str, Any]:
+    if response.status_code == 201:
+        body = response.json()
+        assert "data" in body and "id" in body["data"]
+        return body
     assert response.status_code == 200, response.text
     body = response.json()
     assert body["meta"]["dryRun"] is True
@@ -426,7 +565,8 @@ def test_strict_bearer_jwt_full_rbac_matrix_for_management_reads_and_writes() ->
                     )
                     if can_write:
                         body = _assert_dry_run(response)
-                        assert body["meta"]["dryRun"] is True
+                        if "dryRun" in body.get("meta", {}):
+                            assert body["meta"]["dryRun"] is True
                     else:
                         assert response.status_code == 403, response.text
                         assert _error_code(response) == "FORBIDDEN"

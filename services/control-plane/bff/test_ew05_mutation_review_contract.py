@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import json
 import os
+from pathlib import Path
 import sys
-import tempfile
 from contextlib import contextmanager
 
 from fastapi.testclient import TestClient
@@ -11,26 +12,42 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, os.path.dirname(__file__))
 
 import main as bff_main
-from read_store import ReadSurfaceStore
+from ports import create_in_memory_read_surface_ports
 
 
 APPROVER_AUTH = "Bearer test-approver:approver"
 REVIEWER_AUTH = "Bearer test-reviewer:reviewer"
 
+_DATA_PATH = Path(__file__).parent / "data" / "read_surfaces.json"
+with open(_DATA_PATH, "r", encoding="utf-8") as _f:
+    _RAW_DATA = json.load(_f)
+
+_SEED_EVOLUTION_DECISIONS = dict(_RAW_DATA.get("evolution_decisions", {}))
+_SEED_APPROVAL_DECISIONS = dict(_RAW_DATA.get("approval_decisions", {}))
+
 
 @contextmanager
-def _seeded_client():
-    with tempfile.TemporaryDirectory() as td:
-        original_store = bff_main.read_store
-        bff_main.read_store = ReadSurfaceStore(
-            os.path.join(td, "read_surfaces.json"),
-            allow_local_snapshot_fallback=True,
-        )
-        client = TestClient(bff_main.app)
-        try:
-            yield client
-        finally:
-            bff_main.read_store = original_store
+def _seeded_client(
+    *,
+    evolution_decisions: dict | None = None,
+    approval_decisions: dict | None = None,
+):
+    original_store = bff_main.read_store
+    evos = dict(_SEED_EVOLUTION_DECISIONS if evolution_decisions is None else evolution_decisions)
+    apprs = dict(_SEED_APPROVAL_DECISIONS if approval_decisions is None else approval_decisions)
+    bff_main.read_store = create_in_memory_read_surface_ports(
+        lifecycle_telemetry_governance_kwargs={
+            "evolution_decisions": evos,
+        },
+        ooda_management_kwargs={
+            "approval_decisions": list(apprs.values()) if isinstance(apprs, dict) else list(apprs),
+        },
+    )
+    client = TestClient(bff_main.app)
+    try:
+        yield client
+    finally:
+        bff_main.read_store = original_store
 
 
 def test_mutation_review_projection_contract() -> None:
@@ -89,8 +106,9 @@ def test_mutation_review_reviewer_visibility_contract() -> None:
 
 
 def test_mutation_review_review_action_allowed_when_proposed() -> None:
-    with _seeded_client() as client:
-        bff_main.read_store._data["evolution_decisions"]["evo-dec-proposed-001"] = {
+    evos = {
+        **_SEED_EVOLUTION_DECISIONS,
+        "evo-dec-proposed-001": {
             "id": "evo-dec-proposed-001",
             "decision_id": "evo-dec-proposed-001",
             "target_type": "candidate_artifact",
@@ -102,9 +120,9 @@ def test_mutation_review_review_action_allowed_when_proposed() -> None:
             "decision_state": "proposed",
             "created_at": "2026-07-01T00:00:00Z",
             "rationale": "Initial threshold breach triage.",
-        }
-        bff_main.read_store._save()
-
+        },
+    }
+    with _seeded_client(evolution_decisions=evos) as client:
         response = client.get(
             "/api/v1/operator/mutation-review/evo-dec-proposed-001",
             headers={"Authorization": REVIEWER_AUTH},
@@ -118,14 +136,18 @@ def test_mutation_review_review_action_allowed_when_proposed() -> None:
 
 
 def test_mutation_review_execute_action_allowed_when_approved() -> None:
-    with _seeded_client() as client:
-        bff_main.read_store._data["approval_decisions"]["appr-dec-approved-001"] = {
+    apprs = {
+        **_SEED_APPROVAL_DECISIONS,
+        "appr-dec-approved-001": {
             "id": "appr-dec-approved-001",
             "decision_id": "appr-dec-approved-001",
             "outcome": "approved",
             "state": "approved",
-        }
-        bff_main.read_store._data["evolution_decisions"]["evo-dec-approved-001"] = {
+        },
+    }
+    evos = {
+        **_SEED_EVOLUTION_DECISIONS,
+        "evo-dec-approved-001": {
             "id": "evo-dec-approved-001",
             "decision_id": "evo-dec-approved-001",
             "target_type": "candidate_artifact",
@@ -138,9 +160,9 @@ def test_mutation_review_execute_action_allowed_when_approved() -> None:
             "approval_decision_id": "appr-dec-approved-001",
             "created_at": "2026-07-01T00:00:00Z",
             "rationale": "Ready for execution.",
-        }
-        bff_main.read_store._save()
-
+        },
+    }
+    with _seeded_client(evolution_decisions=evos, approval_decisions=apprs) as client:
         response = client.get(
             "/api/v1/operator/mutation-review/evo-dec-approved-001",
             headers={"Authorization": "Bearer test-operator:operator"},
@@ -154,10 +176,9 @@ def test_mutation_review_execute_action_allowed_when_approved() -> None:
 
 
 def test_mutation_review_returns_503_when_required_evidence_is_unavailable() -> None:
-    with _seeded_client() as client:
-        bff_main.read_store._data["approval_decisions"].pop("appr-dec-c5a9f11e", None)
-        bff_main.read_store._save()
-
+    apprs = dict(_SEED_APPROVAL_DECISIONS)
+    apprs.pop("appr-dec-c5a9f11e", None)
+    with _seeded_client(approval_decisions=apprs) as client:
         response = client.get(
             "/api/v1/operator/mutation-review/evo-dec-88f3a2c1",
             headers={"Authorization": APPROVER_AUTH},
@@ -165,11 +186,5 @@ def test_mutation_review_returns_503_when_required_evidence_is_unavailable() -> 
         assert response.status_code == 503, response.text
 
         payload = response.json()
-        assert payload == {
-            "error": "evidence_unavailable",
-            "meta": {
-                "surfaces": {
-                    "mutation_review": "unavailable",
-                }
-            },
-        }
+        assert payload["error"]["message"] == "Mutation review evidence is unavailable"
+        assert payload["surfaces"]["mutation_review"] == "unavailable"

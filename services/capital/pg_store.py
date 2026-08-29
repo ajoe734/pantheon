@@ -12,7 +12,13 @@ _CP_GOV = Path(__file__).resolve().parent.parent / "control-plane" / "governance
 if str(_CP_GOV) not in sys.path:
     sys.path.insert(0, str(_CP_GOV))
 
-from capital_pool import CapitalPool, CapitalPoolStore  # type: ignore
+from capital_pool import (  # type: ignore
+    CapitalPool,
+    CapitalPoolError,
+    CapitalPoolStore,
+    _validate_status_transition,
+    validate_pool,
+)
 from persona_capital_binding import (  # type: ignore
     PersonaCapitalBinding,
     PersonaCapitalBindingError,
@@ -29,7 +35,46 @@ except ImportError:
 _UTC = datetime.timezone.utc
 
 
-class PostgresCapitalPoolStore(CapitalPoolStore):
+class PersistentCapitalPoolStore(CapitalPoolStore):
+    """Capital-owned store with an atomic canonical pool patch operation."""
+
+    _PATCH_FIELDS = frozenset({"name", "status", "risk_policy_ref", "metadata"})
+
+    def patch(
+        self,
+        pool_id: str,
+        *,
+        patch: dict[str, Any],
+        updated_at: str,
+    ) -> CapitalPool:
+        unknown = set(patch) - self._PATCH_FIELDS
+        if unknown:
+            raise CapitalPoolError(
+                f"Unsupported CapitalPool patch fields: {sorted(unknown)}"
+            )
+        if not patch:
+            raise CapitalPoolError("At least one CapitalPool patch field is required")
+        with self._lock:
+            pool = self.require(pool_id)
+            target_status = str(patch.get("status") or pool.status)
+            if target_status != pool.status:
+                _validate_status_transition(pool.status, target_status)
+            payload = {**pool.to_dict(), **patch, "updated_at": updated_at}
+            updated = CapitalPool.from_dict(payload)
+            errors = validate_pool(updated)
+            if errors:
+                raise CapitalPoolError(f"Invalid pool patch: {errors}")
+            snapshot = dict(self._pools)
+            self._pools[pool_id] = updated
+            try:
+                self._save()
+            except Exception:
+                self._pools = snapshot
+                raise
+            return updated
+
+
+class PostgresCapitalPoolStore(PersistentCapitalPoolStore):
     """Postgres owner store for CapitalPool records."""
 
     def __init__(
@@ -66,6 +111,17 @@ class PostgresCapitalPoolStore(CapitalPoolStore):
         with self._lock:
             self._refresh_from_postgres()
             return super().update_status(pool_id, new_status)
+
+    def patch(
+        self,
+        pool_id: str,
+        *,
+        patch: dict[str, Any],
+        updated_at: str,
+    ) -> CapitalPool:
+        with self._lock:
+            self._refresh_from_postgres()
+            return super().patch(pool_id, patch=patch, updated_at=updated_at)
 
     def _save(self) -> None:
         for pool in self._pools.values():
@@ -288,10 +344,10 @@ def _capital_dsn() -> str:
     return dsn
 
 
-def build_capital_pool_store(path: Path) -> CapitalPoolStore | PostgresCapitalPoolStore:
+def build_capital_pool_store(path: Path) -> PersistentCapitalPoolStore | PostgresCapitalPoolStore:
     backend = _capital_backend()
     if backend in ("", "json"):
-        return CapitalPoolStore(path=path)
+        return PersistentCapitalPoolStore(path=path)
     if backend != "postgres":
         raise ValueError("CAPITAL_STORE_BACKEND must be json or postgres")
     return PostgresCapitalPoolStore(

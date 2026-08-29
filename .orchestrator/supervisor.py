@@ -8135,14 +8135,23 @@ def status_event_matches_worker_process(
     event: Mapping[str, Any] | None,
     worker: Mapping[str, Any],
 ) -> bool:
-    """Return whether a canonical status event was emitted by this exact run."""
+    """Return whether a canonical status event was emitted by this exact run.
+
+    ``ai-status`` binds a status mutation to the immutable process identity and
+    also records task generation, actor, and workspace provenance.  The latter
+    is deliberately richer than the small identity returned here, so compare
+    every identity field rather than requiring the two mappings to have the
+    same shape.  A mismatched identity field still fails closed.
+    """
 
     identity = worker_process_identity(worker)
     if identity is None or not isinstance(event, Mapping):
         return False
     command = event.get("status_command")
     lease = command.get("worker_lease") if isinstance(command, Mapping) else None
-    return isinstance(lease, Mapping) and dict(lease) == identity
+    return isinstance(lease, Mapping) and all(
+        lease.get(field) == value for field, value in identity.items()
+    )
 
 
 def canonical_worker_terminal_status(
@@ -8948,6 +8957,128 @@ def persist_worker_recovery_receipt(
             expected_owner=expected_owner,
             expected_reviewer=expected_reviewer,
             expected_status=expected_status,
+            expected_generation=expected_generation,
+        )
+    if not applied:
+        return False
+    return sync_status_pipeline(config)
+
+
+def _persist_approved_worker_recovery_binding_locked(
+    config: dict[str, Any],
+    *,
+    task_id: str,
+    receipt: Mapping[str, Any],
+    expected_owner: str,
+    expected_reviewer: str,
+    expected_generation: int,
+) -> bool:
+    """Retry an approved closeout without changing its frozen review pair.
+
+    The lost-worker fence already advances ``generation`` before this helper
+    runs.  A closeout retry therefore needs a new dispatch identity, but it
+    must not create a new owner/reviewer assignment: doing that would make an
+    otherwise valid exact-head approval appear to belong to the wrong reviewer.
+    """
+
+    status = load_status(config)
+    if status.get("status_activity_outbox") not in (None, {}, []):
+        return False
+    task = task_index_from_status(config, status).get(task_id)
+    if task is None:
+        return False
+    finalize_statuses = normalized_status_set(
+        ready_dispatch_settings(config).get("finalize_statuses"),
+        ["review_approved"],
+    )
+    if (
+        str(task.get("status") or "").strip().lower() not in finalize_statuses
+        or str(task.get("owner") or "") != expected_owner
+        or str(task.get("reviewer") or "") != expected_reviewer
+        or task_generation(task) != expected_generation
+    ):
+        return False
+    canonical = _canonical_worker_recovery_receipt(status, task)
+    receipt_id = str(receipt.get("receipt_id") or "").strip()
+    if (
+        not receipt_id
+        or canonical is None
+        or str(canonical.get("receipt_id") or "") != receipt_id
+        or str(canonical.get("status") or "") != "pending"
+        or int(canonical.get("fence_generation") or 0) != expected_generation
+    ):
+        return False
+
+    timestamp = utc_now()
+    role = str(canonical.get("recovery_role") or "owner")
+    canonical.update(
+        {
+            "status": "reassigned",
+            "last_attempt_at": timestamp,
+            "attempt_count": int(canonical.get("attempt_count", 0) or 0) + 1,
+            "reassigned_at": timestamp,
+            "replacement": {
+                "role": role,
+                "agent": expected_owner,
+                "owner": expected_owner,
+                "reviewer": expected_reviewer,
+                "task_generation": expected_generation,
+                "queue_event_id": None,
+                "worker_run_id": None,
+                "preserved_review_binding": True,
+            },
+        }
+    )
+    receipts = status.get(WORKER_RECOVERY_RECEIPTS_KEY)
+    if not isinstance(receipts, dict):
+        return False
+    receipts[receipt_id] = deepcopy(canonical)
+    task[WORKER_RECOVERY_TASK_KEY] = _worker_recovery_pointer(canonical)
+    task["last_update"] = timestamp
+    task["next"] = (
+        f"Supervisor recovered approved closeout lease {receipt_id} without "
+        "changing the exact owner/reviewer approval binding."
+    )
+    event = _worker_recovery_activity_event(
+        canonical,
+        event_type="worker_lost_lease_recovery_binding_preserved",
+        timestamp=timestamp,
+        message=str(task["next"]),
+    )
+    composed = _compose_status_activity_outbox(
+        status.get("status_activity_outbox"), event
+    )
+    if composed is None:
+        return False
+    status["status_activity_outbox"] = composed
+    _prune_worker_recovery_receipts(status, current_receipt_id=receipt_id)
+    write_status(config, status, source="supervisor-approved-closeout-recovery")
+    return True
+
+
+def persist_approved_worker_recovery_binding(
+    config: dict[str, Any],
+    *,
+    task_id: str,
+    receipt: Mapping[str, Any],
+    expected_owner: str,
+    expected_reviewer: str,
+    expected_generation: int,
+) -> bool:
+    """Publish a binding-preserving retry for a lost approved closeout worker."""
+
+    status_path = config_path(config, "status_file")
+    with canonical_task_state_lock_file(
+        status_path,
+        shared=False,
+        nonblocking=False,
+    ):
+        applied = _persist_approved_worker_recovery_binding_locked(
+            config,
+            task_id=task_id,
+            receipt=receipt,
+            expected_owner=expected_owner,
+            expected_reviewer=expected_reviewer,
             expected_generation=expected_generation,
         )
     if not applied:
@@ -12240,6 +12371,28 @@ def worker_recovery_assignment_pair(
     settings = worker_reassignment_settings(config)
     owner = canonical_agent_name(config, str(task.get("owner") or ""))
     reviewer = canonical_agent_name(config, str(task.get("reviewer") or ""))
+    finalize_statuses = normalized_status_set(
+        ready_dispatch_settings(config).get("finalize_statuses"),
+        ["review_approved"],
+    )
+    if str(task.get("status") or "").strip().lower() in finalize_statuses:
+        # A reviewed delivery has a frozen exact-head reviewer binding.  The
+        # replacement is a closeout retry, not a new delivery assignment, so
+        # it may only reuse the current owner/reviewer pair.  If the owner is
+        # unavailable we hold the receipt until that lane recovers instead of
+        # silently turning the former reviewer into the owner and invalidating
+        # its own approval.
+        if owner and reviewer and _worker_recovery_candidate_has_capacity(
+            config,
+            state,
+            status,
+            task,
+            owner=owner,
+            reviewer=reviewer,
+            target_agent=owner,
+        ):
+            return owner, reviewer
+        return None
     previous = receipt.get("previous")
     previous = previous if isinstance(previous, Mapping) else {}
     previous_owner = canonical_agent_name(
@@ -12510,22 +12663,44 @@ def attempt_worker_recovery_reassignment(
         return _adopt_worker_recovery_receipt(state, receipt)
     role = str(receipt.get("recovery_role") or "owner")
     target = pair[1] if role == "reviewer" else pair[0]
-    message = (
-        f"Supervisor recovered lost lease {receipt.get('receipt_id')} by assigning "
-        f"the {role} lane to {target}; the next planner cycle owns dispatch."
+    finalize_statuses = normalized_status_set(
+        ready_dispatch_settings(config).get("finalize_statuses"),
+        ["review_approved"],
     )
-    persist_task_reassignment(
-        config,
-        task_id=str(task.get("id") or ""),
-        new_owner=pair[0],
-        new_reviewer=pair[1],
-        message=message,
-        expected_owner=str(task.get("owner") or ""),
-        expected_reviewer=str(task.get("reviewer") or ""),
-        expected_status=str(task.get("status") or ""),
-        expected_generation=task_generation(task),
-        worker_recovery_receipt=receipt,
+    preserves_approved_binding = (
+        str(task.get("status") or "").strip().lower() in finalize_statuses
+        and pair
+        == (
+            canonical_agent_name(config, str(task.get("owner") or "")),
+            canonical_agent_name(config, str(task.get("reviewer") or "")),
+        )
     )
+    if preserves_approved_binding:
+        persist_approved_worker_recovery_binding(
+            config,
+            task_id=str(task.get("id") or ""),
+            receipt=receipt,
+            expected_owner=str(task.get("owner") or ""),
+            expected_reviewer=str(task.get("reviewer") or ""),
+            expected_generation=task_generation(task),
+        )
+    else:
+        message = (
+            f"Supervisor recovered lost lease {receipt.get('receipt_id')} by assigning "
+            f"the {role} lane to {target}; the next planner cycle owns dispatch."
+        )
+        persist_task_reassignment(
+            config,
+            task_id=str(task.get("id") or ""),
+            new_owner=pair[0],
+            new_reviewer=pair[1],
+            message=message,
+            expected_owner=str(task.get("owner") or ""),
+            expected_reviewer=str(task.get("reviewer") or ""),
+            expected_status=str(task.get("status") or ""),
+            expected_generation=task_generation(task),
+            worker_recovery_receipt=receipt,
+        )
     # The canonical CAS may have committed even if activity publication was
     # interrupted.  Re-read authority and adopt it instead of issuing a second
     # reassignment after restart.

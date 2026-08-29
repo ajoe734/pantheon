@@ -12,14 +12,15 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, os.path.dirname(__file__))
 
 import main as bff_main
-from read_store import ReadSurfaceStore
+from ports import ReadSurfacePorts
 
 OPERATOR_TOKEN = "Bearer op-2:operator"
 HEADERS = {"Authorization": OPERATOR_TOKEN}
 
 
-class MockReadSurfaceStore:
+class MgmtCommonFiltersTestReadPorts(ReadSurfacePorts):
     def __init__(self):
+        super().__init__()
         # Seed test data for Portfolio Book
         self._pools = [
             {
@@ -80,7 +81,7 @@ class MockReadSurfaceStore:
 
 
 def test_portfolio_book_common_filters(monkeypatch) -> None:
-    mock_store = MockReadSurfaceStore()
+    mock_store = MgmtCommonFiltersTestReadPorts()
     monkeypatch.setattr(bff_main, "read_store", mock_store)
     client = TestClient(bff_main.app)
 
@@ -120,7 +121,7 @@ def test_portfolio_book_common_filters(monkeypatch) -> None:
 
 
 def test_portfolio_book_pools_common_filters(monkeypatch) -> None:
-    mock_store = MockReadSurfaceStore()
+    mock_store = MgmtCommonFiltersTestReadPorts()
     monkeypatch.setattr(bff_main, "read_store", mock_store)
     client = TestClient(bff_main.app)
 
@@ -133,7 +134,7 @@ def test_portfolio_book_pools_common_filters(monkeypatch) -> None:
 
 
 def test_portfolio_book_exposure_common_filters(monkeypatch) -> None:
-    mock_store = MockReadSurfaceStore()
+    mock_store = MgmtCommonFiltersTestReadPorts()
     monkeypatch.setattr(bff_main, "read_store", mock_store)
     client = TestClient(bff_main.app)
 
@@ -210,7 +211,7 @@ def test_performance_attribution_common_filters(monkeypatch) -> None:
     ]
     monkeypatch.setattr(bff_main, "_pm12_performance_attribution_facts", lambda sources, period: dummy_facts)
 
-    mock_store = MockReadSurfaceStore()
+    mock_store = MgmtCommonFiltersTestReadPorts()
     monkeypatch.setattr(bff_main, "read_store", mock_store)
 
     client = TestClient(bff_main.app)

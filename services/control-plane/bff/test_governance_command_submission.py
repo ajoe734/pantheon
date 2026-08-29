@@ -10,9 +10,51 @@ from fastapi.testclient import TestClient
 
 sys.path.insert(0, os.path.dirname(__file__))
 
+import json
+from pathlib import Path
+
 import main as bff_main
 from command_queue import CommandStore
-from read_store import ReadSurfaceStore
+from ports import create_in_memory_read_surface_ports
+
+_DATA_PATH = Path(__file__).resolve().parent / "data" / "read_surfaces.json"
+with open(_DATA_PATH, "r", encoding="utf-8") as _f:
+    _RAW_DATA = json.load(_f)
+
+
+def _create_test_read_store(extra_evolution_decisions=None, extra_approval_decisions=None):
+    evo_decisions = dict(_RAW_DATA.get("evolution_decisions", {}))
+    if extra_evolution_decisions:
+        evo_decisions.update(extra_evolution_decisions)
+
+    appr_decisions = dict(_RAW_DATA.get("approval_decisions", {}))
+    if extra_approval_decisions:
+        appr_decisions.update(extra_approval_decisions)
+
+    store = create_in_memory_read_surface_ports(
+        lifecycle_telemetry_governance_kwargs={
+            "evolution_decisions": evo_decisions,
+            "freeze_orders": _RAW_DATA.get("freeze_orders", {}),
+            "all_rollbacks": _RAW_DATA.get("all_rollbacks", []),
+        },
+        ooda_management_kwargs={
+            "approval_decisions": list(appr_decisions.values()),
+            "evolution_decisions": list(evo_decisions.values()),
+        },
+    )
+    committee_data = {
+        "committee_id": "committee-regime-risk-20260419-081",
+        "committee_ref": "committee-regime-risk-20260419-081",
+        "consensus_state": "sponsor_required",
+        "sponsor_decision": None,
+        "sponsor_assignment": {"participant_id": "session-sponsor-001"},
+        "participant_roster": [{"participant_id": "session-sponsor-001", "role": "sponsor"}],
+    }
+    store.get_evolution_decision = store.lifecycle_telemetry_governance.get_evolution_decision_by_id
+    store.get_approval_decision = lambda aid: appr_decisions.get(aid)
+    store.get_committee = lambda cid: committee_data if cid == "committee-regime-risk-20260419-081" else None
+    store.dataset_source = lambda d: "typed_store"
+    return store
 
 
 APPROVER_TOKEN = "Bearer op-6:approver"
@@ -424,6 +466,7 @@ def test_submit_command_rejects_live_runtime_scope_when_disabled(monkeypatch) ->
 
 
 def test_cors_origin_env_parser_trims_and_normalizes(monkeypatch) -> None:
+    monkeypatch.setattr(bff_main, "_is_production_strict_mode", lambda: True)
     monkeypatch.setenv(
         "PANTHEON_BFF_CORS_ORIGINS",
         " https://dev.lovable.app/, https://staging.lovable.app ",
@@ -440,10 +483,7 @@ def test_submit_command_accepts_approve_mutation_published_payload() -> None:
         original_read_store = bff_main.read_store
         original_worker = bff_main._process_command_stub
         bff_main.command_store = CommandStore(os.path.join(td, "commands.jsonl"))
-        bff_main.read_store = ReadSurfaceStore(
-            os.path.join(td, "read_surfaces.json"),
-            allow_local_snapshot_fallback=True,
-        )
+        bff_main.read_store = _create_test_read_store()
         bff_main._process_command_stub = _noop_process_command
         client = TestClient(bff_main.app)
 
@@ -473,10 +513,7 @@ def test_submit_command_accepts_reject_mutation_published_payload() -> None:
         original_read_store = bff_main.read_store
         original_worker = bff_main._process_command_stub
         bff_main.command_store = CommandStore(os.path.join(td, "commands.jsonl"))
-        bff_main.read_store = ReadSurfaceStore(
-            os.path.join(td, "read_surfaces.json"),
-            allow_local_snapshot_fallback=True,
-        )
+        bff_main.read_store = _create_test_read_store()
         bff_main._process_command_stub = _noop_process_command
         client = TestClient(bff_main.app)
 
@@ -506,24 +543,23 @@ def test_submit_command_accepts_review_mutation_published_payload() -> None:
         original_read_store = bff_main.read_store
         original_worker = bff_main._process_command_stub
         bff_main.command_store = CommandStore(os.path.join(td, "commands.jsonl"))
-        bff_main.read_store = ReadSurfaceStore(
-            os.path.join(td, "read_surfaces.json"),
-            allow_local_snapshot_fallback=True,
+        bff_main.read_store = _create_test_read_store(
+            extra_evolution_decisions={
+                "evo-dec-review-001": {
+                    "id": "evo-dec-review-001",
+                    "decision_id": "evo-dec-review-001",
+                    "target_type": "candidate_artifact",
+                    "target_id": "artifact-review-001",
+                    "target_version": "v1.0.0",
+                    "action_type": "freeze_canary",
+                    "risk_level": "medium",
+                    "status": "proposed",
+                    "decision_state": "proposed",
+                    "created_at": "2026-07-01T00:00:00Z",
+                    "rationale": "Initial threshold breach triage.",
+                }
+            }
         )
-        bff_main.read_store._data["evolution_decisions"]["evo-dec-review-001"] = {
-            "id": "evo-dec-review-001",
-            "decision_id": "evo-dec-review-001",
-            "target_type": "candidate_artifact",
-            "target_id": "artifact-review-001",
-            "target_version": "v1.0.0",
-            "action_type": "freeze_canary",
-            "risk_level": "medium",
-            "status": "proposed",
-            "decision_state": "proposed",
-            "created_at": "2026-07-01T00:00:00Z",
-            "rationale": "Initial threshold breach triage.",
-        }
-        bff_main.read_store._save()
         bff_main._process_command_stub = _noop_process_command
         client = TestClient(bff_main.app)
 
@@ -554,31 +590,32 @@ def test_submit_command_accepts_execute_mutation_published_payload() -> None:
         original_read_store = bff_main.read_store
         original_worker = bff_main._process_command_stub
         bff_main.command_store = CommandStore(os.path.join(td, "commands.jsonl"))
-        bff_main.read_store = ReadSurfaceStore(
-            os.path.join(td, "read_surfaces.json"),
-            allow_local_snapshot_fallback=True,
+        bff_main.read_store = _create_test_read_store(
+            extra_approval_decisions={
+                "appr-dec-exec-001": {
+                    "id": "appr-dec-exec-001",
+                    "decision_id": "appr-dec-exec-001",
+                    "outcome": "approved",
+                    "state": "approved",
+                }
+            },
+            extra_evolution_decisions={
+                "evo-dec-exec-001": {
+                    "id": "evo-dec-exec-001",
+                    "decision_id": "evo-dec-exec-001",
+                    "target_type": "candidate_artifact",
+                    "target_id": "artifact-exec-001",
+                    "target_version": "v1.0.0",
+                    "action_type": "freeze_canary",
+                    "risk_level": "medium",
+                    "status": "approved",
+                    "decision_state": "approved",
+                    "approval_decision_id": "appr-dec-exec-001",
+                    "created_at": "2026-07-01T00:00:00Z",
+                    "rationale": "Ready for execution.",
+                }
+            },
         )
-        bff_main.read_store._data["approval_decisions"]["appr-dec-exec-001"] = {
-            "id": "appr-dec-exec-001",
-            "decision_id": "appr-dec-exec-001",
-            "outcome": "approved",
-            "state": "approved",
-        }
-        bff_main.read_store._data["evolution_decisions"]["evo-dec-exec-001"] = {
-            "id": "evo-dec-exec-001",
-            "decision_id": "evo-dec-exec-001",
-            "target_type": "candidate_artifact",
-            "target_id": "artifact-exec-001",
-            "target_version": "v1.0.0",
-            "action_type": "freeze_canary",
-            "risk_level": "medium",
-            "status": "approved",
-            "decision_state": "approved",
-            "approval_decision_id": "appr-dec-exec-001",
-            "created_at": "2026-07-01T00:00:00Z",
-            "rationale": "Ready for execution.",
-        }
-        bff_main.read_store._save()
         bff_main._process_command_stub = _noop_process_command
         client = TestClient(bff_main.app)
 
@@ -608,10 +645,7 @@ def test_submit_command_accepts_record_sponsor_decision_published_payload() -> N
         original_read_store = bff_main.read_store
         original_worker = bff_main._process_command_stub
         bff_main.command_store = CommandStore(os.path.join(td, "commands.jsonl"))
-        bff_main.read_store = ReadSurfaceStore(
-            os.path.join(td, "read_surfaces.json"),
-            allow_local_snapshot_fallback=True,
-        )
+        bff_main.read_store = _create_test_read_store()
         bff_main._process_command_stub = _noop_process_command
         client = TestClient(bff_main.app)
 

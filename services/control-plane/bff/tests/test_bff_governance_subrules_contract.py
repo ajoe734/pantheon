@@ -23,7 +23,7 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 import main as bff_main
-from read_store import ReadSurfaceStore
+from ports import create_in_memory_read_surface_ports
 
 
 OPERATOR_HEADERS = {"Authorization": "Bearer op-gov:operator,reviewer"}
@@ -36,22 +36,40 @@ _CONSULT_RULE_RECORD = {"rule_id": "cr-001", "trigger": "high_risk_allocation", 
 _ROUTE_POLICY_RECORD = {"policy_id": "rp-001", "route": "/execution/*", "mode": "paper_only"}
 
 
-def _empty_store() -> ReadSurfaceStore:
+class _SubrulesTestStore:
+    def __init__(self, seeded: dict[str, list] | None = None) -> None:
+        self.seeded = seeded or {}
+        self.ports = create_in_memory_read_surface_ports()
+
+    def list_governance_permissions(self, **kwargs: Any) -> list[dict[str, Any]]:
+        return list(self.seeded.get("governance_permissions", []))
+
+    def list_memory_governance_rules(self, **kwargs: Any) -> list[dict[str, Any]]:
+        return list(self.seeded.get("memory_governance_rules", []))
+
+    def list_consult_rules(self, **kwargs: Any) -> list[dict[str, Any]]:
+        return list(self.seeded.get("consult_rules", []))
+
+    def list_route_policies(self, **kwargs: Any) -> list[dict[str, Any]]:
+        return list(self.seeded.get("route_policies", []))
+
+    def dataset_source(self, dataset: str) -> str:
+        if dataset in self.seeded:
+            return "local_snapshot"
+        return "missing"
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self.ports, name)
+
+
+def _empty_store() -> _SubrulesTestStore:
     """Store with no governance datasets configured — all sources return 'missing'."""
-    import tempfile, os as _os
-    path = _os.path.join(tempfile.mkdtemp(), "read_surfaces.json")
-    return ReadSurfaceStore(path, allow_local_snapshot_fallback=False)
+    return _SubrulesTestStore()
 
 
-def _seeded_store(dataset: str, records: list) -> ReadSurfaceStore:
+def _seeded_store(dataset: str, records: list) -> _SubrulesTestStore:
     """Store with a specific dataset seeded so dataset_source returns 'local_snapshot'."""
-    import tempfile, os as _os, json
-    td = tempfile.mkdtemp()
-    path = _os.path.join(td, "read_surfaces.json")
-    store = ReadSurfaceStore(path, allow_local_snapshot_fallback=True)
-    # Inject data directly into the internal dict used by _local_dataset
-    store._data[dataset] = {str(i): r for i, r in enumerate(records)}
-    return store
+    return _SubrulesTestStore({dataset: records})
 
 
 # ── GET /bff/management/permissions ─────────────────────────────────────────

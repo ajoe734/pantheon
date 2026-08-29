@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import sys
 import tempfile
@@ -10,7 +11,7 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, os.path.dirname(__file__))
 
 import main as bff_main  # noqa: E402
-from read_store import ReadSurfaceStore  # noqa: E402
+from ports import ReadSurfacePorts  # noqa: E402
 
 
 HEADERS = {
@@ -20,19 +21,169 @@ HEADERS = {
 LOVABLE_ORIGIN = "https://pantheon-dev.lovable.app"
 
 
+def _load_fallback_data() -> dict[str, Any]:
+    fallback_path = os.path.join(os.path.dirname(__file__), "data", "read_surfaces.json")
+    if os.path.exists(fallback_path):
+        try:
+            with open(fallback_path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {}
+
+
+class ManagementDeltaTestReadPorts(ReadSurfacePorts):
+    def __init__(self, seed_data: dict[str, Any] | None = None, *, allow_fallback: bool = True) -> None:
+        super().__init__()
+        if seed_data is not None:
+            self._data: dict[str, Any] = seed_data
+        elif allow_fallback:
+            self._data = _load_fallback_data()
+        else:
+            self._data = {}
+        self.allow_fallback = allow_fallback
+
+    def dataset_source(self, dataset: str, **kwargs: Any) -> str:
+        return "local_snapshot"
+
+    def dataset_surface_status(self, dataset: str, *, snapshot_at: str, **kwargs: Any) -> dict[str, Any]:
+        return {"status": "ok", "source": "local_snapshot", "snapshot_at": snapshot_at}
+
+    def _get_dataset(self, name: str) -> dict[str, Any] | list[Any]:
+        return self._data.setdefault(name, [])
+
+    def list_sentinel_findings(self, **kwargs: Any) -> Any:
+        ds = self._get_dataset("sentinel_findings")
+        return list(ds.values()) if isinstance(ds, dict) else list(ds)
+
+    def list_findings(self, **kwargs: Any) -> Any:
+        return self.list_sentinel_findings(**kwargs)
+
+    def list_v5_interventions(self, **kwargs: Any) -> list[dict[str, Any]]:
+        ds = self._get_dataset("v5_interventions")
+        return list(ds.values()) if isinstance(ds, dict) else list(ds)
+
+    def list_runtime_bindings(self, **kwargs: Any) -> list[dict[str, Any]]:
+        ds = self._data.get("runtime_instances") or self._data.get("runtime_bindings") or self._data.get("runtimes") or []
+        return list(ds.values()) if isinstance(ds, dict) else list(ds)
+
+    def list_runtime_instances(self, **kwargs: Any) -> list[dict[str, Any]]:
+        return self.list_runtime_bindings(**kwargs)
+
+    def list_runtimes(self, **kwargs: Any) -> list[dict[str, Any]]:
+        return self.list_runtime_bindings(**kwargs)
+
+    def list_incidents(self, **kwargs: Any) -> list[dict[str, Any]]:
+        ds = self._get_dataset("incidents")
+        return list(ds.values()) if isinstance(ds, dict) else list(ds)
+
+    def list_loop_executions(self, **kwargs: Any) -> list[dict[str, Any]]:
+        ds = self._data.get("loop_executions") or self._data.get("loop_runs") or []
+        return list(ds.values()) if isinstance(ds, dict) else list(ds)
+
+    def list_loop_runs(self, **kwargs: Any) -> list[dict[str, Any]]:
+        return self.list_loop_executions(**kwargs)
+
+    def list_governance_audit_events(self, **kwargs: Any) -> list[dict[str, Any]]:
+        ds = self._data.get("governance_audit_events") or self._data.get("audit_log") or []
+        return list(ds.values()) if isinstance(ds, dict) else list(ds)
+
+    def list_audit_events(self, **kwargs: Any) -> list[dict[str, Any]]:
+        return self.list_governance_audit_events(**kwargs)
+
+    def list_personas(self, **kwargs: Any) -> list[dict[str, Any]]:
+        ds = self._get_dataset("personas")
+        return list(ds.values()) if isinstance(ds, dict) else list(ds)
+
+    def get_persona(self, persona_id: str | None) -> dict[str, Any] | None:
+        ds = self._get_dataset("personas")
+        if isinstance(ds, dict):
+            return ds.get(str(persona_id or ""))
+        return next((p for p in ds if p.get("id") == persona_id or p.get("persona_id") == persona_id), None)
+
+    def get_capability_snapshot_for_persona(self, persona_id: str | None) -> dict[str, Any] | None:
+        ds = self._get_dataset("capability_snapshots")
+        if isinstance(ds, dict):
+            for cap in ds.values():
+                if cap.get("persona_id") == persona_id:
+                    return cap
+            return ds.get(str(persona_id or ""))
+        elif isinstance(ds, list):
+            return next((c for c in ds if c.get("persona_id") == persona_id or c.get("id") == persona_id), None)
+        return None
+
+    def get_persona_capabilities(self, persona_id: str | None) -> dict[str, Any] | None:
+        return self.get_capability_snapshot_for_persona(persona_id)
+
+    def get_governance_profile_for_persona(self, persona_id: str | None) -> dict[str, Any] | None:
+        ds = self._get_dataset("governance_profiles")
+        if isinstance(ds, dict):
+            return ds.get(str(persona_id or ""))
+        return None
+
+    def get_training_history_for_persona(self, persona_id: str | None) -> list[dict[str, Any]]:
+        ds = self._get_dataset("training_history")
+        if isinstance(ds, dict):
+            return list(ds.values())
+        return list(ds) if isinstance(ds, list) else []
+
+    def get_promotion_record_for_persona(self, persona_id: str | None) -> dict[str, Any] | None:
+        ds = self._get_dataset("promotion_records")
+        if isinstance(ds, dict):
+            return ds.get(str(persona_id or ""))
+        return None
+
+    def get_review_history_for_persona(self, persona_id: str | None) -> list[dict[str, Any]]:
+        ds = self._get_dataset("review_history")
+        if isinstance(ds, dict):
+            return list(ds.values())
+        return list(ds) if isinstance(ds, list) else []
+
+    def list_bindings(self, **kwargs: Any) -> list[dict[str, Any]]:
+        ds = self._get_dataset("bindings")
+        if isinstance(ds, dict):
+            return list(ds.values())
+        return list(ds) if isinstance(ds, list) else []
+
+    def get_binding(self, binding_id: str | None) -> dict[str, Any] | None:
+        ds = self._get_dataset("bindings")
+        if isinstance(ds, dict):
+            return ds.get(str(binding_id or ""))
+        return next((b for b in ds if b.get("id") == binding_id or b.get("binding_id") == binding_id), None)
+
+    def list_capital_pools(self, **kwargs: Any) -> list[dict[str, Any]]:
+        ds = self._get_dataset("capital_pools")
+        return list(ds.values()) if isinstance(ds, dict) else list(ds)
+
+    def list_strategy_specs(self, **kwargs: Any) -> list[dict[str, Any]]:
+        ds = self._get_dataset("strategy_specs")
+        return list(ds.values()) if isinstance(ds, dict) else list(ds)
+
+    def list_ranking_formulas(self, **kwargs: Any) -> list[dict[str, Any]]:
+        ds = self._get_dataset("ranking_formulas")
+        return list(ds.values()) if isinstance(ds, dict) else list(ds)
+
+    def get_ranking_formula(self, formula_id: str | None) -> dict[str, Any] | None:
+        ds = self._get_dataset("ranking_formulas")
+        if isinstance(ds, dict):
+            return ds.get(str(formula_id or ""))
+        return next((f for f in ds if f.get("id") == formula_id or f.get("formula_id") == formula_id), None)
+
+    def put_ranking_snapshot(self, snapshot: dict[str, Any], **kwargs: Any) -> None:
+        ds = self._get_dataset("ranking_snapshots")
+        if isinstance(ds, dict):
+            ds[snapshot.get("id") or snapshot.get("snapshot_id") or "snap"] = snapshot
+        elif isinstance(ds, list):
+            ds.append(snapshot)
+
+
 def _fresh_client(td: str, *, fallback: bool = True) -> TestClient:
-    bff_main.read_store = ReadSurfaceStore(
-        os.path.join(td, "read_surfaces.json"),
-        allow_local_snapshot_fallback=fallback,
-    )
+    bff_main.read_store = ManagementDeltaTestReadPorts(allow_fallback=fallback)
     return TestClient(bff_main.app, raise_server_exceptions=False)
 
 
 def _sentinel_pulse_client(monkeypatch) -> TestClient:
-    store = ReadSurfaceStore(
-        os.path.join(tempfile.mkdtemp(prefix="bff_sentinel_pulse_"), "read_surfaces.json"),
-        allow_local_snapshot_fallback=False,
-    )
+    store = ManagementDeltaTestReadPorts(allow_fallback=False)
     findings = [
         {
             "id": "finding-critical",
@@ -246,10 +397,7 @@ def test_persona_league_heatmap_cors_preflight() -> None:
 def _incident_timeline_client(monkeypatch) -> TestClient:
     td = tempfile.TemporaryDirectory(prefix="bff_mgmt_incident_timeline_")
     monkeypatch.setattr(bff_main, "_BFF_MGMT_INCIDENT_TIMELINE_TMPDIR", td, raising=False)
-    store = ReadSurfaceStore(
-        os.path.join(td.name, "read_surfaces.json"),
-        allow_local_snapshot_fallback=False,
-    )
+    store = ManagementDeltaTestReadPorts(allow_fallback=False)
     incidents = [
         {
             "incident_id": "inc-delta-high",
@@ -390,10 +538,7 @@ def test_incident_timeline_cors_preflight(monkeypatch) -> None:
 def _loop_throughput_client(monkeypatch) -> TestClient:
     td = tempfile.TemporaryDirectory(prefix="bff_mgmt_loop_throughput_")
     monkeypatch.setattr(bff_main, "_BFF_MGMT_LOOP_THROUGHPUT_TMPDIR", td, raising=False)
-    store = ReadSurfaceStore(
-        os.path.join(td.name, "read_surfaces.json"),
-        allow_local_snapshot_fallback=False,
-    )
+    store = ManagementDeltaTestReadPorts(allow_fallback=False)
     loop_runs = [
         {
             "id": "loop-queued",
@@ -508,10 +653,7 @@ def test_loop_throughput_cors_preflight_and_openapi(monkeypatch) -> None:
 def _hiq_backlog_client(monkeypatch) -> TestClient:
     td = tempfile.TemporaryDirectory(prefix="bff_mgmt_hiq_backlog_")
     monkeypatch.setattr(bff_main, "_BFF_MGMT_HIQ_BACKLOG_TMPDIR", td, raising=False)
-    store = ReadSurfaceStore(
-        os.path.join(td.name, "read_surfaces.json"),
-        allow_local_snapshot_fallback=False,
-    )
+    store = ManagementDeltaTestReadPorts(allow_fallback=False)
     sentinel_findings = [
         {
             "finding_id": "sf-hiq-open-high",
@@ -700,10 +842,7 @@ def _intervention_stream_client(monkeypatch) -> TestClient:
     monkeypatch.setattr(bff_main, "_BFF_MGMT_INTERVENTION_STREAM_TMPDIR", td, raising=False)
     monkeypatch.setattr(bff_main, "utc_now", lambda: "2026-05-24T12:00:00Z")
     monkeypatch.setattr(bff_main.command_store, "_get_all_commands", lambda: [])
-    store = ReadSurfaceStore(
-        os.path.join(td.name, "read_surfaces.json"),
-        allow_local_snapshot_fallback=False,
-    )
+    store = ManagementDeltaTestReadPorts(allow_fallback=False)
     audit_events = [
         {
             "entry_id": "audit-intv-alpha-decision",
