@@ -823,7 +823,10 @@ class TaiwanOfficialMarketDatasetAdapter(SourceConnectorProvider):
         return self._records_from_normalized_rows(
             dataset="tw_price_daily",
             venue=canonical_venue,
-            normalized_rows=normalized_rows,
+            normalized_rows=sorted(
+                normalized_rows,
+                key=lambda row: str(row.get("date") or ""),
+            )[-self.max_records :],
             source_dataset=source_dataset,
             api_endpoint=api_endpoint or str(descriptor["endpoint"]),
             available_time=available_time,
