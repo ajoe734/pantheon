@@ -25,6 +25,8 @@ if str(BFF_DIR) not in sys.path:
 
 from ports import ReadSurfacePorts  # noqa: E402
 
+from tests.e2e.ooda_e2e_fixtures import load_ooda_e2e_dataset
+
 
 class OodaE2ETestStore(ReadSurfacePorts):
     def __init__(self, data_path: Optional[str] = None) -> None:
@@ -32,16 +34,7 @@ class OodaE2ETestStore(ReadSurfacePorts):
         if str(BFF_DIR) not in sys.path:
             sys.path.insert(0, str(BFF_DIR))
         os.environ["PANTHEON_BFF_MARKET_PERSONA_SEED"] = "true"
-        from read_store import _default_read_data, _load_default_fixture_pack_datasets, _merge_market_persona_fleet
-        data = _default_read_data()
-        fixtures = _load_default_fixture_pack_datasets()
-        for k, v in fixtures.items():
-            if k not in data:
-                data[k] = v
-            elif isinstance(data[k], dict) and isinstance(v, dict):
-                data[k].update(v)
-        _merge_market_persona_fleet(data)
-        self._data = data
+        self._data = load_ooda_e2e_dataset()
 
     def dataset_source(self, dataset: str) -> str:
         return "service_store"
