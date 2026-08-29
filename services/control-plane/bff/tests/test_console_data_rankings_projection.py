@@ -19,7 +19,7 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 import main as bff_main  # noqa: E402
-from read_store import ReadSurfaceStore  # noqa: E402
+from ports import create_read_surface_ports  # noqa: E402
 
 
 HEADERS = {"Authorization": "Bearer op-dev:admin:mfa"}
@@ -108,10 +108,7 @@ def _projected_store_client() -> Iterator[TestClient]:
                 path = root / filename
                 path.write_text(json.dumps(payloads[filename]), encoding="utf-8")
                 os.environ[env_name] = str(path)
-            bff_main.read_store = ReadSurfaceStore(
-                str(root / "read_surfaces.json"),
-                allow_local_snapshot_fallback=False,
-            )
+            bff_main.read_store = create_read_surface_ports()
             yield TestClient(bff_main.app)
         finally:
             bff_main.read_store = original_store
@@ -179,10 +176,7 @@ def test_console_data_rankings_without_store_returns_empty_ok() -> None:
         try:
             for env_name in _ENV_TO_FILE:
                 os.environ[env_name] = ""
-            bff_main.read_store = ReadSurfaceStore(
-                os.path.join(td, "read_surfaces.json"),
-                allow_local_snapshot_fallback=False,
-            )
+            bff_main.read_store = create_read_surface_ports()
             client = TestClient(bff_main.app)
 
             resp_r = client.get("/bff/rankings", headers=HEADERS)
