@@ -725,6 +725,7 @@
   "ready_dispatcher": {
     "enabled": true,
     "seen_event_history_limit": 2000,
+    "terminal_queue_history_limit": 200,
     "review_statuses": [
       "review"
     ],

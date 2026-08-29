@@ -61,6 +61,7 @@ class StatusCommandRuntimePinTests(unittest.TestCase):
             ".orchestrator/multi_repo_registry.py",
             ".orchestrator/rewrite/__init__.py",
             ".orchestrator/rewrite/task_machine.py",
+            ".orchestrator/rewrite/task_contract.py",
             ".orchestrator/rewrite/task_state_store.py",
             ".orchestrator/config.json",
         ):

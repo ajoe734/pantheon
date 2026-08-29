@@ -53,6 +53,10 @@ class TaskStateStoreError(RuntimeError):
     """The task-state authority is unsafe, corrupt, or fails validation."""
 
 
+class HistoricalArchiveUnavailableError(TaskStateStoreError):
+    """The immutable V1 archive named by its anchor is not locally available."""
+
+
 def canonical_json_bytes(value: Any) -> bytes:
     return json.dumps(
         value,
@@ -1268,18 +1272,28 @@ def write_archive_anchor(event_path: str | Path, anchor: Mapping[str, Any]) -> d
     return copy.deepcopy(validated)
 
 
-def verify_archive_anchor(event_path: str | Path) -> dict[str, Any]:
+def verify_archive_anchor(
+    event_path: str | Path,
+    *,
+    archive_path: str | Path | None = None,
+) -> dict[str, Any]:
     path = Path(event_path).expanduser().absolute()
     payload = _read_regular_file(archive_anchor_path(path))
     try:
         anchor = validate_archive_anchor(json.loads(payload.decode("utf-8")))
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise TaskStateStoreError(f"invalid legacy archive anchor: {exc}") from exc
-    archived = Path(anchor["archived_path"])
+    archived = Path(archive_path or anchor["archived_path"]).expanduser().absolute()
     digest = hashlib.sha256()
     byte_size = 0
     flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
-    descriptor = os.open(archived, flags)
+    try:
+        descriptor = os.open(archived, flags)
+    except FileNotFoundError as exc:
+        raise HistoricalArchiveUnavailableError(
+            "immutable legacy archive is unavailable; restore the exact anchored "
+            f"bytes or pass --archive-path to their relocated file: {archived}"
+        ) from exc
     try:
         if not stat.S_ISREG(os.fstat(descriptor).st_mode):
             raise TaskStateStoreError("legacy archive is not a regular file")
@@ -1303,6 +1317,7 @@ def verify_archive_anchor(event_path: str | Path) -> dict[str, Any]:
         "anchor_sha256": anchor["anchor_sha256"],
         "bound_anchor_sha256": bound_anchor,
         "archived_path": anchor["archived_path"],
+        "audited_path": str(archived),
         "byte_size": byte_size,
         "expected_byte_size": anchor["byte_size"],
         "journal_sha256": digest.hexdigest(),

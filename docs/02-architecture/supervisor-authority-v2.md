@@ -23,7 +23,10 @@ The target system has seven responsibilities:
 3. **Delivery Queue** is the `queue.events` subdocument of the V2 runtime
    state. It durably records an approved launch intent and its delivery attempt
    in the same compare-and-swap transaction as the matching lease. It does not
-   decide eligibility, assignment, or policy.
+   decide eligibility, assignment, or policy. All non-terminal intents are
+   retained; completed/failed cache rows are bounded by
+   `ready_dispatcher.terminal_queue_history_limit`. Durable audit history
+   remains in the activity/task-state authorities rather than this hot cache.
 4. **Worker Manager** owns process identity, task worktree, execution lease,
    heartbeat, progress, and exact-generation termination.
 5. **Account Health** owns normalized auth, quota, retry-at, and capacity for a
@@ -368,6 +371,12 @@ python3 scripts/verify_task_state_store.py \
   --verify-archive --json
 ```
 
+If the exact anchored bytes were moved, an operator may supply their new
+location with `--archive-path`. The verifier still checks the immutable
+anchor's exact byte size and SHA-256; the override never changes the anchor.
+A missing archive is reported as `historical_archive_unavailable`, distinct
+from V2 journal integrity failure.
+
 No environment variable can silently switch production hot reads back to full
 replay.
 
@@ -395,6 +404,7 @@ prior runtime. A V2 process configured with a non-V2 journal fails closed.
 | Historical archive missing | Hot state remains readable; an explicit historical audit fails |
 | Archive content changed | Explicit archive audit reports digest/size mismatch |
 | Owner/reviewer auth terminal or quota terminal | Account Health pauses that account; bounded Recovery may CAS reassign current role; task failure count is unchanged |
+| Acceptance text pins a configured agent identity | New materialization fails; legacy tasks cannot auto-reassign that named role and must be superseded with role-based acceptance |
 | Auth state unknown or probe stale | Fail closed for new delivery; do not reassign until durable terminal evidence or Human/Ops action |
 | Retry becomes due | Existing intent returns to `queued`; the sole Delivery Queue performs full revalidation |
 | Process missing with active lease | Recovery closes the exact lease, preserves evidence, and requeues or blocks according to bounded retry policy |
