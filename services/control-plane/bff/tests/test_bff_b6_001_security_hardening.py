@@ -13,7 +13,7 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 import main as bff_main
-from read_store import ReadSurfaceStore
+from ports import create_in_memory_read_surface_ports
 
 
 OPERATOR_HEADERS = {"Authorization": "Bearer op-b6-sec:operator"}
@@ -95,10 +95,7 @@ def _seeded_client(
     monkeypatch.setenv("PANTHEON_BFF_TENANT_ID", "tenant-alpha")
     monkeypatch.setenv("PANTHEON_BFF_ALLOWED_TENANTS", "tenant-alpha,tenant-beta")
     original_store = bff_main.read_store
-    store = ReadSurfaceStore(
-        str(read_surface_path),
-        allow_local_snapshot_fallback=False,
-    )
+    store = create_in_memory_read_surface_ports()
     capital_pools = list(seeded_data["capital_pools"].values())
     runtime_bindings = list(seeded_data["runtime_bindings"].values())
     telemetry_summaries = seeded_data["telemetry_summaries"]
@@ -108,17 +105,48 @@ def _seeded_client(
     store.get_telemetry_summary = lambda runtime_id: json.loads(
         json.dumps(telemetry_summaries.get(str(runtime_id)))
     ) if telemetry_summaries.get(str(runtime_id)) is not None else None
+    store.record_agora_audit_event = lambda event: event
+    store.get_agora_session = lambda session_id: None
+
+    def _rec_matches_tenant(rec, tid, include_tenant_agnostic=True):
+        if not tid:
+            return True
+        rt = rec.get("tenant_id") or rec.get("tenantId")
+        if rt is None:
+            return include_tenant_agnostic
+        return str(rt) == str(tid)
+
+    def _ev_matches_scope(rec, linked_entities=None, source_types=None):
+        pairs = set()
+        lo = rec.get("linked_object_summary")
+        if isinstance(lo, dict):
+            t = str(lo.get("entity_type") or "").strip().lower()
+            r = str(lo.get("entity_ref") or "").strip()
+            if t and r:
+                pairs.add((t, r))
+        if linked_entities:
+            normalized_entities = {
+                (str(e.get("type") or e.get("entity_type") or "").strip().lower(), str(e.get("ref") or e.get("entity_ref") or "").strip())
+                if isinstance(e, dict) else (str(e[0]).strip().lower(), str(e[1]).strip())
+                for e in linked_entities
+            }
+            if pairs:
+                return bool(normalized_entities and pairs.intersection(normalized_entities))
+        if source_types:
+            st = str(rec.get("evidence_type") or (rec.get("source_document") or {}).get("source_type") or "").strip().lower()
+            return st in {str(s).strip().lower() for s in source_types}
+        return True
 
     def list_evidence_refs(*, tenant_id=None, include_tenant_agnostic=True, linked_entities=None, source_types=None, **kwargs):
         return [
             json.loads(json.dumps(record))
             for record in evidence_records
-            if store._record_matches_tenant(
+            if _rec_matches_tenant(
                 record,
                 tenant_id,
                 include_tenant_agnostic=include_tenant_agnostic,
             )
-            and store._evidence_matches_scope(
+            and _ev_matches_scope(
                 record,
                 linked_entities=linked_entities,
                 source_types=source_types,

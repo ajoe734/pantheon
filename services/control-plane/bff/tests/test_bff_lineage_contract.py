@@ -1,8 +1,8 @@
-"""Contract tests for GET /bff/lineage (BFFGAP-LINEAGE).
+"""
+Contract tests for GET /bff/management/lineage (BFF-B3-005).
 
-Pattern follows test_bff_management_cockpit.py: inject a seeded ReadSurfaceStore,
-restore the original after the test, verify canonical list envelope and degraded
-envelope shapes.
+Pattern follows test_bff_management_cockpit.py: inject seeded read surface ports,
+exercise envelope, verify degradation when store is missing or broken.
 """
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 import main as bff_main
-from read_store import ReadSurfaceStore
+from ports import create_in_memory_read_surface_ports
 
 
 OPERATOR_HEADERS = {"Authorization": "Bearer op-lineage:operator,reviewer"}
@@ -39,10 +39,7 @@ _EDGES = [
 
 
 def _seeded_client(td: str, edges=None) -> TestClient:
-    store = ReadSurfaceStore(
-        os.path.join(td, "read_surfaces.json"),
-        allow_local_snapshot_fallback=False,
-    )
+    store = create_in_memory_read_surface_ports()
     resolved_edges = edges if edges is not None else list(_EDGES)
     store.get_lineage_graph = lambda root_type=None, root_id=None, depth=3: (
         [e for e in resolved_edges if e.get("from_artifact_id") == root_id or e.get("to_artifact_id") == root_id]
@@ -142,10 +139,7 @@ def test_bff_lineage_degraded_when_store_missing() -> None:
     with tempfile.TemporaryDirectory() as td:
         original_store = bff_main.read_store
         try:
-            store = ReadSurfaceStore(
-                os.path.join(td, "read_surfaces.json"),
-                allow_local_snapshot_fallback=False,
-            )
+            store = create_in_memory_read_surface_ports()
             store.get_lineage_graph = lambda root_type=None, root_id=None, depth=3: []
             store.get_lineage_graph_nodes = lambda edges: []
             store.dataset_source = lambda dataset: "missing"

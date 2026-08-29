@@ -16,7 +16,7 @@ import main as bff_main
 import pytest
 from command_queue import CommandStore
 from models import CommandStatus
-from read_store import ReadSurfaceStore
+from ports import create_in_memory_read_surface_ports
 
 
 PRIMARY_HEADERS = {
@@ -42,14 +42,12 @@ def _isolated_security_client() -> Iterator[TestClient]:
         original_read_store = bff_main.read_store
         original_worker = bff_main._process_command_stub
         bff_main.command_store = CommandStore(os.path.join(td, "commands.jsonl"))
-        bff_main.read_store = ReadSurfaceStore(
-            os.path.join(td, "read_surfaces.json"),
-            allow_local_snapshot_fallback=True,
+        store = create_in_memory_read_surface_ports()
+        store._data = {"approval_decisions": {}}
+        store.get_approval_decision = (  # type: ignore[method-assign]
+            lambda decision_id: store._data["approval_decisions"].get(decision_id)
         )
-        bff_main.read_store._data = {"approval_decisions": {}}
-        bff_main.read_store.get_approval_decision = (  # type: ignore[method-assign]
-            lambda decision_id: bff_main.read_store._data["approval_decisions"].get(decision_id)
-        )
+        bff_main.read_store = store
         bff_main._process_command_stub = _noop_process_command
         bff_main._FINAL_CONTRACT_IDEMPOTENCY.clear()
         bff_main._COMMAND_AUTH_CONTEXT.clear()
@@ -70,6 +68,8 @@ def _seed_approval_decision(
     target_id: str = "int-sec-001",
     state: str = "approved",
 ) -> None:
+    if not hasattr(bff_main.read_store, "_data"):
+        bff_main.read_store._data = {}
     bff_main.read_store._data.setdefault("approval_decisions", {})[decision_id] = {
         "id": decision_id,
         "decision_id": decision_id,

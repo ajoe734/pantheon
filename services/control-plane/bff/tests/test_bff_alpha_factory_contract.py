@@ -17,7 +17,7 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 import main as bff_main
-from read_store import ReadSurfaceStore
+from ports import create_in_memory_read_surface_ports
 
 OPERATOR_HEADERS = {"Authorization": "Bearer op-af:operator,reviewer"}
 
@@ -40,10 +40,7 @@ _SAMPLE_CARDS = [
 
 
 def _seeded_client(td: str) -> TestClient:
-    store = ReadSurfaceStore(
-        os.path.join(td, "read_surfaces.json"),
-        allow_local_snapshot_fallback=False,
-    )
+    store = create_in_memory_read_surface_ports()
     store.dataset_source = lambda dataset, **kwargs: (
         "service_store" if dataset == "alpha_factory_cards" else "missing"
     )
@@ -55,10 +52,7 @@ def _seeded_client(td: str) -> TestClient:
 
 
 def _missing_client(td: str) -> TestClient:
-    store = ReadSurfaceStore(
-        os.path.join(td, "read_surfaces.json"),
-        allow_local_snapshot_fallback=False,
-    )
+    store = create_in_memory_read_surface_ports()
     # dataset_source returns "missing" for everything (default behaviour)
     bff_main.read_store = store
     return TestClient(bff_main.app)

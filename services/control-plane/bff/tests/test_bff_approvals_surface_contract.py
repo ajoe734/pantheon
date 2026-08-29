@@ -25,7 +25,8 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 import main as bff_main
-from read_store import CanonicalSnapshotAdapter, ReadSurfaceStore
+from read_store import CanonicalSnapshotAdapter
+from ports import create_in_memory_read_surface_ports
 
 ADMIN_HEADERS = {"Authorization": "Bearer op-dev:admin:mfa"}
 OPERATOR_HEADERS = {"Authorization": "Bearer op-dev:operator"}
@@ -104,9 +105,8 @@ class TestBffApprovalsSurfacePopulated:
             orig_env = os.environ.get("PANTHEON_BFF_APPROVAL_DECISION_STORE")
             try:
                 os.environ["PANTHEON_BFF_APPROVAL_DECISION_STORE"] = store_path
-                bff_main.read_store = ReadSurfaceStore(
-                    os.path.join(td, "read_surfaces.json"),
-                    allow_local_snapshot_fallback=False,
+                bff_main.read_store = create_in_memory_read_surface_ports(
+                    ooda_management_kwargs={"approval_decisions": [_PENDING_APPROVAL]}
                 )
                 client = TestClient(bff_main.app, raise_server_exceptions=False)
                 resp = client.get("/bff/approvals", headers=ADMIN_HEADERS)
@@ -129,9 +129,8 @@ class TestBffApprovalsSurfacePopulated:
             orig_env = os.environ.get("PANTHEON_BFF_APPROVAL_DECISION_STORE")
             try:
                 os.environ["PANTHEON_BFF_APPROVAL_DECISION_STORE"] = store_path
-                bff_main.read_store = ReadSurfaceStore(
-                    os.path.join(td, "read_surfaces.json"),
-                    allow_local_snapshot_fallback=False,
+                bff_main.read_store = create_in_memory_read_surface_ports(
+                    ooda_management_kwargs={"approval_decisions": [_DECIDED_APPROVAL]}
                 )
                 client = TestClient(bff_main.app, raise_server_exceptions=False)
                 resp = client.get("/bff/approvals", headers=ADMIN_HEADERS)
@@ -154,9 +153,8 @@ class TestBffApprovalsSurfacePopulated:
             orig_env = os.environ.get("PANTHEON_BFF_APPROVAL_DECISION_STORE")
             try:
                 os.environ["PANTHEON_BFF_APPROVAL_DECISION_STORE"] = store_path
-                bff_main.read_store = ReadSurfaceStore(
-                    os.path.join(td, "read_surfaces.json"),
-                    allow_local_snapshot_fallback=False,
+                bff_main.read_store = create_in_memory_read_surface_ports(
+                    ooda_management_kwargs={"approval_decisions": [_PENDING_APPROVAL, _DECIDED_APPROVAL]}
                 )
                 client = TestClient(bff_main.app, raise_server_exceptions=False)
                 resp = client.get("/bff/approvals", headers=ADMIN_HEADERS)
@@ -186,10 +184,7 @@ class TestBffApprovalsNoFabrication:
             orig_env = os.environ.get("PANTHEON_BFF_APPROVAL_DECISION_STORE")
             try:
                 os.environ.pop("PANTHEON_BFF_APPROVAL_DECISION_STORE", None)
-                bff_main.read_store = ReadSurfaceStore(
-                    os.path.join(td, "read_surfaces.json"),
-                    allow_local_snapshot_fallback=False,
-                )
+                bff_main.read_store = create_in_memory_read_surface_ports()
                 client = TestClient(bff_main.app, raise_server_exceptions=False)
                 resp = client.get("/bff/approvals", headers=ADMIN_HEADERS)
                 assert resp.status_code == 200, resp.text
@@ -225,9 +220,8 @@ class TestGovernanceApprovalQueueSurfaceWithProjectedStore:
             orig_env = os.environ.get("PANTHEON_BFF_APPROVAL_DECISION_STORE")
             try:
                 os.environ["PANTHEON_BFF_APPROVAL_DECISION_STORE"] = store_path
-                bff_main.read_store = ReadSurfaceStore(
-                    os.path.join(td, "read_surfaces.json"),
-                    allow_local_snapshot_fallback=False,
+                bff_main.read_store = create_in_memory_read_surface_ports(
+                    ooda_management_kwargs={"approval_decisions": [_PENDING_APPROVAL]}
                 )
                 client = TestClient(bff_main.app, raise_server_exceptions=False)
                 resp = client.get(self.ROUTE, headers=ADMIN_HEADERS)
@@ -270,9 +264,8 @@ class TestStorePrecedenceOverServiceClient:
                 os.environ["PANTHEON_BFF_APPROVAL_DECISION_STORE"] = store_path
                 # Simulate docker-compose default which would otherwise shadow the file.
                 os.environ["PANTHEON_GOVERNANCE_APPROVAL_API_URL"] = "http://governance-stub:9999"
-                bff_main.read_store = ReadSurfaceStore(
-                    os.path.join(td, "read_surfaces.json"),
-                    allow_local_snapshot_fallback=False,
+                bff_main.read_store = create_in_memory_read_surface_ports(
+                    ooda_management_kwargs={"approval_decisions": [_PENDING_APPROVAL]}
                 )
                 client = TestClient(bff_main.app, raise_server_exceptions=False)
                 resp = client.get("/bff/approvals", headers=ADMIN_HEADERS)

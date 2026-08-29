@@ -23,7 +23,7 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import main as bff_main
-from read_store import ReadSurfaceStore
+from ports import create_in_memory_read_surface_ports, create_read_surface_ports
 
 OPERATOR_AUTH = "Bearer consol-skills-op:operator"
 HEADERS = {"Authorization": OPERATOR_AUTH}
@@ -84,6 +84,26 @@ _MCP_TOOLS_FIXTURE: Dict[str, Any] = {
 }
 
 
+class _ConsolSkillsTestStore:
+    def __init__(self, skills: Dict[str, Any], tools: Dict[str, Any], mcp_servers: Dict[str, Any], mcp_tools: Dict[str, Any]) -> None:
+        self.ports = create_in_memory_read_surface_ports(
+            operations_consultation_kwargs={
+                "skills": list(skills.values()) if isinstance(skills, dict) else list(skills),
+                "tools": list(tools.values()) if isinstance(tools, dict) else list(tools),
+                "mcp_servers": list(mcp_servers.values()) if isinstance(mcp_servers, dict) else list(mcp_servers),
+                "mcp_tools": list(mcp_tools.values()) if isinstance(mcp_tools, dict) else list(mcp_tools),
+            }
+        )
+
+    def dataset_source(self, dataset: str) -> str:
+        if dataset in ("skills", "tools", "mcp_servers", "mcp_tools"):
+            return "typed_store"
+        return self.ports.dataset_source(dataset)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self.ports, name)
+
+
 @contextmanager
 def _bff_with_stores(
     *,
@@ -123,10 +143,7 @@ def _bff_with_stores(
             env_backup[k] = os.environ.get(k)
             os.environ[k] = v
         try:
-            bff_main.read_store = ReadSurfaceStore(
-                os.path.join(td, "read_surfaces.json"),
-                allow_local_snapshot_fallback=False,
-            )
+            bff_main.read_store = _ConsolSkillsTestStore(skills, tools, mcp_servers, mcp_tools)
             bff_main._MCP_SERVER_REGISTRY.clear()
             bff_main._TOOL_REGISTRY.clear()
             bff_main._SKILL_REGISTRY.clear()
