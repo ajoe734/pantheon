@@ -102,6 +102,7 @@ class CapitalBffAuthorityHarness:
     _ENV_KEYS = (
         "BFF_COMMIT",
         "CAPITAL_AUDIT_BACKEND",
+        "CAPITAL_AUTH_DISABLED",
         "CAPITAL_DATA_DIR",
         "CAPITAL_STORE_BACKEND",
         "PANTHEON_BFF_CAPITAL_ALLOCATION_STORE",
@@ -146,6 +147,7 @@ class CapitalBffAuthorityHarness:
         os.environ.update(
             {
                 "CAPITAL_AUDIT_BACKEND": "jsonl",
+                "CAPITAL_AUTH_DISABLED": "true",
                 "CAPITAL_DATA_DIR": str(self.capital_data_dir),
                 "CAPITAL_STORE_BACKEND": "json",
                 "PANTHEON_CAPITAL_API_URL": AUTHORITY_URL,
