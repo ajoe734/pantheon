@@ -3,7 +3,7 @@
   "status": "review",
   "owner": "Claude",
   "reviewer": "Codex2",
-  "summary": "Independent persistent write owner for Decision Journal entries (services/governance/decision_journal.py): create/patch/get/list plus audit trail, backed by the existing governance JSON/Postgres owner-store posture (record_store.build_governance_record_store), with compare-and-set concurrency control and idempotent create/patch. No import of services/control-plane/bff/read_store.py, no local dict/overlay/cache fallback; BFF main.py and read_store.py are untouched, and services/source_ingestion remains reconcile-only (not touched).",
+  "summary": "Independent persistent write owner for Decision Journal entries (services/governance/decision_journal.py): create/patch/get/list plus audit trail, backed by the existing governance JSON/Postgres owner-store posture (record_store.build_governance_record_store), with compare-and-set concurrency control and idempotent create/patch. Fixes the review-rejected race: patch_entry now claims the idempotency_key with an atomic insert_if_absent reservation before any entry mutation, so a concurrent conflicting request_hash gets 'conflict' and a concurrent identical retry waits and replays -- neither ever performs a second compare-and-set/audit write. No import of services/control-plane/bff/read_store.py, no local dict/overlay/cache fallback; BFF main.py and read_store.py are untouched, and services/source_ingestion remains reconcile-only (not touched).",
   "scope": [
     "services/governance/decision_journal.py",
     "tests/governance_write_owner/test_decision_journal_write_owner.py"
@@ -16,7 +16,7 @@
   ],
   "verification": [
     "python3 scripts/dev/provision_python_distribution.py",
-    "$PANTHEON_PY -m pytest -q tests/governance_write_owner (11 passed)",
-    "$PANTHEON_PY -m pytest -q services/governance tests/governance_write_owner (56 passed)"
+    "$PANTHEON_PY -m pytest -q tests/governance_write_owner (13 passed, incl. 2 barrier-forced concurrent idempotency regression tests)",
+    "$PANTHEON_PY -m pytest -q services/governance tests/governance_write_owner (58 passed)"
   ]
 }

@@ -18,6 +18,7 @@ back from a real owner store.
 from __future__ import annotations
 
 import os
+import time
 import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
@@ -43,6 +44,13 @@ _LIST_FIELDS = {"tags", "linkedStrategyIds", "linkedPersonaIds"}
 _MAX_CAS_ATTEMPTS = 8
 _TITLE_MAX_LENGTH = 160
 _BODY_MAX_LENGTH = 20000
+
+_IDEM_STATUS_PENDING = "pending"
+_IDEM_STATUS_SUCCEEDED = "succeeded"
+_IDEM_STATUS_NOT_FOUND = "not_found"
+_IDEM_STATUS_FAILED = "failed"
+_IDEM_WAIT_ATTEMPTS = 2000
+_IDEM_WAIT_SECONDS = 0.005
 
 
 class DecisionJournalValidationError(ValueError):
@@ -202,6 +210,57 @@ def _diff(before: Dict[str, Any], after: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def _await_idempotency_resolution(
+    stores: DecisionJournalStores,
+    idempotency_key: str,
+    reservation: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Block until a concurrently-held idempotency reservation resolves.
+
+    The reservation was inserted atomically by the request that owns this
+    ``idempotency_key`` before it wrote anything else, so every other
+    request holding the same key waits here instead of racing its own
+    compare-and-set against the entry store.
+    """
+
+    record = reservation
+    for _attempt in range(_IDEM_WAIT_ATTEMPTS):
+        if not isinstance(record, dict) or record.get("status") != _IDEM_STATUS_PENDING:
+            break
+        time.sleep(_IDEM_WAIT_SECONDS)
+        record = stores.idempotency.get(idempotency_key)
+    else:
+        raise DecisionJournalConcurrencyError(
+            f"idempotency key {idempotency_key} did not resolve after "
+            f"{_IDEM_WAIT_ATTEMPTS} attempts"
+        )
+
+    if not isinstance(record, dict):
+        raise DecisionJournalConcurrencyError(
+            f"idempotency key {idempotency_key} reservation vanished before resolving"
+        )
+    return record
+
+
+def _resolved_idempotency_result(record: Dict[str, Any], request_hash: str) -> Optional[Dict[str, Any]]:
+    if record.get("request_hash") != request_hash:
+        return {
+            "status": "conflict",
+            "existing_patch_id": record.get("patch_id"),
+            "entry": record.get("entry"),
+            "audit": record.get("audit"),
+        }
+    status = record.get("status")
+    if status == _IDEM_STATUS_SUCCEEDED:
+        return {"status": "replayed", "entry": record.get("entry"), "audit": record.get("audit")}
+    if status == _IDEM_STATUS_NOT_FOUND:
+        return None
+    raise DecisionJournalConcurrencyError(
+        f"decision journal patch for idempotency key {record.get('idempotency_key')} "
+        f"left no replayable result (status={status!r})"
+    )
+
+
 def patch_entry(
     stores: DecisionJournalStores,
     entry_id: str,
@@ -221,90 +280,104 @@ def patch_entry(
     already applied, or an ``updated`` result on a fresh, durably persisted
     write. Concurrent patches are resolved with compare-and-set against the
     owner store, never a local lock.
+
+    ``idempotency_key`` is claimed with an atomic ``insert_if_absent``
+    reservation *before* any entry mutation. Only the request that wins the
+    reservation performs the compare-and-set write; every other concurrent
+    request for the same key -- including identical retries -- waits for
+    that reservation to resolve and replays its outcome instead of issuing
+    a second write.
     """
 
     clean_id = str(entry_id or "").strip()
     if not clean_id:
         return None
 
-    existing_idem = stores.idempotency.get(idempotency_key)
-    if isinstance(existing_idem, dict):
-        if existing_idem.get("request_hash") != request_hash:
-            return {
-                "status": "conflict",
-                "existing_patch_id": existing_idem.get("patch_id"),
-                "entry": existing_idem.get("entry"),
-                "audit": existing_idem.get("audit"),
-            }
-        return {
-            "status": "replayed",
-            "entry": existing_idem.get("entry"),
-            "audit": existing_idem.get("audit"),
-        }
-
-    before: Optional[Dict[str, Any]] = None
-    after: Optional[Dict[str, Any]] = None
-    for _attempt in range(_MAX_CAS_ATTEMPTS):
-        stored = stores.entries.get(clean_id)
-        if stored is None:
-            return None
-        before = dict(stored)
-        candidate = dict(before)
-        for field in _PATCHABLE_FIELDS:
-            if field not in patch:
-                continue
-            value = patch[field]
-            if value is None and field in _LIST_FIELDS:
-                candidate[field] = []
-            elif value is not None:
-                candidate[field] = value
-        if "title" in patch and patch["title"] is not None:
-            candidate["title"] = _validate_title(candidate["title"])
-        if "body" in patch and patch["body"] is not None:
-            candidate["body"] = _validate_body(candidate["body"])
-        candidate["updatedAt"] = patched_at
-        candidate["version"] = int(before.get("version") or 0) + 1
-        candidate["canonicalWriteAuthority"] = CANONICAL_WRITE_AUTHORITY
-        candidate["persistenceMode"] = _persistence_mode()
-
-        updated, canonical = stores.entries.compare_and_set(before, candidate)
-        if updated:
-            after = canonical if canonical is not None else candidate
-            break
-    else:
-        raise DecisionJournalConcurrencyError(
-            f"decision journal entry {clean_id} could not be updated after "
-            f"{_MAX_CAS_ATTEMPTS} compare-and-set attempts"
-        )
-
-    before_projected = _project(before)
-    after_projected = _project(after)
-    diff = _diff(before_projected, after_projected)
-    audit_id = f"aud-decision-journal-{uuid.uuid4().hex[:12]}"
-    audit = {
-        "auditId": audit_id,
-        "action": "governance.decision_journal.merge_patch",
-        "target": {"type": "DecisionJournalEntry", "id": clean_id},
-        "actorId": actor_id,
-        "correlationId": correlation_id,
-        "idempotencyKey": idempotency_key,
-        "recordedAt": patched_at,
-        "canonicalWriteAuthority": CANONICAL_WRITE_AUTHORITY,
-        "persistenceMode": _persistence_mode(),
-        "diff": diff,
+    reservation = {
+        "idempotency_key": idempotency_key,
+        "request_hash": request_hash,
+        "patch_id": None,
+        "status": _IDEM_STATUS_PENDING,
+        "entry": None,
+        "audit": None,
     }
-    stores.audit.put({"audit_id": audit_id, **audit})
-    stores.idempotency.insert_if_absent(
-        {
-            "idempotency_key": idempotency_key,
-            "request_hash": request_hash,
-            "patch_id": audit_id,
-            "status": "succeeded",
-            "entry": after_projected,
-            "audit": audit,
+    reserved, existing = stores.idempotency.insert_if_absent(reservation)
+    if not reserved:
+        resolved = _await_idempotency_resolution(stores, idempotency_key, existing)
+        return _resolved_idempotency_result(resolved, request_hash)
+
+    try:
+        before: Optional[Dict[str, Any]] = None
+        after: Optional[Dict[str, Any]] = None
+        for _attempt in range(_MAX_CAS_ATTEMPTS):
+            stored = stores.entries.get(clean_id)
+            if stored is None:
+                stores.idempotency.put({**reservation, "status": _IDEM_STATUS_NOT_FOUND})
+                return None
+            before = dict(stored)
+            candidate = dict(before)
+            for field in _PATCHABLE_FIELDS:
+                if field not in patch:
+                    continue
+                value = patch[field]
+                if value is None and field in _LIST_FIELDS:
+                    candidate[field] = []
+                elif value is not None:
+                    candidate[field] = value
+            if "title" in patch and patch["title"] is not None:
+                candidate["title"] = _validate_title(candidate["title"])
+            if "body" in patch and patch["body"] is not None:
+                candidate["body"] = _validate_body(candidate["body"])
+            candidate["updatedAt"] = patched_at
+            candidate["version"] = int(before.get("version") or 0) + 1
+            candidate["canonicalWriteAuthority"] = CANONICAL_WRITE_AUTHORITY
+            candidate["persistenceMode"] = _persistence_mode()
+
+            updated, canonical = stores.entries.compare_and_set(before, candidate)
+            if updated:
+                after = canonical if canonical is not None else candidate
+                break
+        else:
+            stores.idempotency.put({**reservation, "status": _IDEM_STATUS_FAILED})
+            raise DecisionJournalConcurrencyError(
+                f"decision journal entry {clean_id} could not be updated after "
+                f"{_MAX_CAS_ATTEMPTS} compare-and-set attempts"
+            )
+
+        before_projected = _project(before)
+        after_projected = _project(after)
+        diff = _diff(before_projected, after_projected)
+        audit_id = f"aud-decision-journal-{uuid.uuid4().hex[:12]}"
+        audit = {
+            "auditId": audit_id,
+            "action": "governance.decision_journal.merge_patch",
+            "target": {"type": "DecisionJournalEntry", "id": clean_id},
+            "actorId": actor_id,
+            "correlationId": correlation_id,
+            "idempotencyKey": idempotency_key,
+            "recordedAt": patched_at,
+            "canonicalWriteAuthority": CANONICAL_WRITE_AUTHORITY,
+            "persistenceMode": _persistence_mode(),
+            "diff": diff,
         }
-    )
-    return {"status": "updated", "entry": after_projected, "audit": audit}
+        stores.audit.put({"audit_id": audit_id, **audit})
+        stores.idempotency.put(
+            {
+                "idempotency_key": idempotency_key,
+                "request_hash": request_hash,
+                "patch_id": audit_id,
+                "status": _IDEM_STATUS_SUCCEEDED,
+                "entry": after_projected,
+                "audit": audit,
+            }
+        )
+        return {"status": "updated", "entry": after_projected, "audit": audit}
+    except Exception:
+        try:
+            stores.idempotency.put({**reservation, "status": _IDEM_STATUS_FAILED})
+        except Exception:
+            pass
+        raise
 
 
 def list_audit_events(stores: DecisionJournalStores, *, entry_id: Optional[str] = None) -> List[Dict[str, Any]]:

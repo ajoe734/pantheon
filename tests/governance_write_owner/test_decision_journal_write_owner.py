@@ -9,7 +9,9 @@ concurrent-safe compare-and-set is exercised end to end.
 from __future__ import annotations
 
 import ast
+import threading
 from pathlib import Path
+from typing import Any, Dict
 
 import pytest
 
@@ -378,3 +380,118 @@ def test_postgres_backend_is_used_when_configured(tmp_path, monkeypatch) -> None
         "governance.decision_journal_idempotency",
     ]
     assert not tmp_path.joinpath("decision_journal_entries.json").exists()
+
+
+def test_patch_entry_concurrent_conflicting_request_hash_is_race_safe(tmp_path) -> None:
+    """Barrier-forced two-thread repro for the rejected finding: two threads
+    race the same ``idempotency_key`` with different ``request_hash`` values.
+    The idempotency reservation must be claimed atomically before either
+    thread touches the entry, so exactly one write happens -- the loser gets
+    ``conflict``, never a second CAS write."""
+
+    stores = build_decision_journal_stores(tmp_path)
+    create_entry(
+        stores,
+        entry_id="entry-concurrent-conflict",
+        title="Title",
+        body="Body",
+        actor_id="actor-a",
+        created_at="2026-08-29T00:00:00Z",
+    )
+
+    barrier = threading.Barrier(2)
+    real_insert_if_absent = stores.idempotency.insert_if_absent
+
+    def barrier_insert_if_absent(record):
+        barrier.wait(timeout=5)
+        return real_insert_if_absent(record)
+
+    stores.idempotency.insert_if_absent = barrier_insert_if_absent
+
+    results: Dict[str, Any] = {}
+
+    def call(label: str, request_hash: str, body: str) -> None:
+        results[label] = patch_entry(
+            stores,
+            "entry-concurrent-conflict",
+            patch={"body": body},
+            actor_id=f"actor-{label}",
+            idempotency_key="idem-concurrent-conflict",
+            request_hash=request_hash,
+            patched_at="2026-08-29T02:00:00Z",
+        )
+
+    first = threading.Thread(target=call, args=("first", "hash-first", "Body from first"))
+    second = threading.Thread(target=call, args=("second", "hash-second", "Body from second"))
+    first.start()
+    second.start()
+    first.join(timeout=5)
+    second.join(timeout=5)
+
+    statuses = sorted(result["status"] for result in results.values())
+    assert statuses == ["conflict", "updated"]
+
+    fresh_stores = build_decision_journal_stores(tmp_path)
+    fresh_entry = get_entry(fresh_stores, "entry-concurrent-conflict")
+    assert fresh_entry["version"] == 2
+
+    audits = list_audit_events(fresh_stores, entry_id="entry-concurrent-conflict")
+    assert len(audits) == 1
+
+
+def test_patch_entry_concurrent_identical_retries_replay_without_second_write(tmp_path) -> None:
+    """Same barrier-forced repro, but both threads send the identical
+    ``idempotency_key``/``request_hash`` pair (a retried request racing its
+    own original). Exactly one write must land; the other thread must wait
+    for that reservation to resolve and replay its result."""
+
+    stores = build_decision_journal_stores(tmp_path)
+    create_entry(
+        stores,
+        entry_id="entry-concurrent-replay",
+        title="Title",
+        body="Body",
+        actor_id="actor-a",
+        created_at="2026-08-29T00:00:00Z",
+    )
+
+    barrier = threading.Barrier(2)
+    real_insert_if_absent = stores.idempotency.insert_if_absent
+
+    def barrier_insert_if_absent(record):
+        barrier.wait(timeout=5)
+        return real_insert_if_absent(record)
+
+    stores.idempotency.insert_if_absent = barrier_insert_if_absent
+
+    results: Dict[str, Any] = {}
+
+    def call(label: str) -> None:
+        results[label] = patch_entry(
+            stores,
+            "entry-concurrent-replay",
+            patch={"body": "Identical retry body"},
+            actor_id="actor-retry",
+            idempotency_key="idem-concurrent-replay",
+            request_hash="hash-identical",
+            patched_at="2026-08-29T02:00:00Z",
+        )
+
+    first = threading.Thread(target=call, args=("first",))
+    second = threading.Thread(target=call, args=("second",))
+    first.start()
+    second.start()
+    first.join(timeout=5)
+    second.join(timeout=5)
+
+    statuses = sorted(result["status"] for result in results.values())
+    assert statuses == ["replayed", "updated"]
+    assert results["first"]["entry"] == results["second"]["entry"]
+    assert results["first"]["audit"] == results["second"]["audit"]
+
+    fresh_stores = build_decision_journal_stores(tmp_path)
+    fresh_entry = get_entry(fresh_stores, "entry-concurrent-replay")
+    assert fresh_entry["version"] == 2
+
+    audits = list_audit_events(fresh_stores, entry_id="entry-concurrent-replay")
+    assert len(audits) == 1
