@@ -17,11 +17,14 @@ Covers:
 
 from __future__ import annotations
 
+import json
 import os
 import sys
 import tempfile
 import unittest
 import uuid
+from pathlib import Path
+from typing import Any, Optional
 from unittest.mock import patch
 
 sys.path.insert(0, os.path.dirname(__file__))
@@ -33,9 +36,63 @@ os.environ.setdefault("PANTHEON_BFF_AUTH_STUB", "true")
 os.environ.setdefault("PANTHEON_BFF_AUTH_MODE", "permissive")
 from fastapi.testclient import TestClient
 import main as bff_main
-from main import app, command_store
 from models import CommandReceiptStatus, CommandRoutingPath, CommandStatus, CommandType, ErrorCode
-from read_store import ReadSurfaceStore
+from ports import ReadSurfacePorts
+
+
+class SmokeTestStore(ReadSurfacePorts):
+    def __init__(self, data: Optional[dict[str, Any]] = None) -> None:
+        super().__init__()
+        self._data = data or {}
+
+    def get_deployment_plan(self, plan_id: str) -> Optional[dict[str, Any]]:
+        plans = self._data.get("deployment_plans", {})
+        return plans.get(plan_id)
+
+    def get_capital_pool(self, pool_id: str) -> Optional[dict[str, Any]]:
+        pools = self._data.get("capital_pools", {})
+        return pools.get(pool_id)
+
+    def get_bindings_for_pool(self, pool_id: str) -> list[dict[str, Any]]:
+        bindings = self._data.get("bindings", {})
+        return [b for b in bindings.values() if b.get("capital_pool_id") == pool_id]
+
+    def get_runtime_binding(self, binding_id: str) -> Optional[dict[str, Any]]:
+        rb = self._data.get("runtime_bindings", {})
+        return rb.get(binding_id)
+
+    def get_approval_decision(self, decision_id: str) -> Optional[dict[str, Any]]:
+        dec = self._data.get("approval_decisions", {})
+        return dec.get(decision_id)
+
+    def get_rollbacks(self, runtime_id: Optional[str] = None) -> list[dict[str, Any]]:
+        rbs = self._data.get("rollbacks", {})
+        return list(rbs.values())
+
+    def get_allowed_actions(self, plan_id: str) -> list[str]:
+        actions = self._data.get("allowed_actions", {})
+        return actions.get(plan_id, ["approve", "reject"])
+
+    def get_latest_run(self, plan_id: str) -> Optional[dict[str, Any]]:
+        runs = self._data.get("latest_runs", {})
+        return runs.get(plan_id)
+
+    def get_review_summary(self, plan_id: str) -> Optional[dict[str, Any]]:
+        reviews = self._data.get("review_summaries", {})
+        return reviews.get(plan_id)
+
+    def get_rollback_review(self, rollback_id: str) -> Optional[dict[str, Any]]:
+        reviews = self._data.get("rollback_reviews", {})
+        return reviews.get(rollback_id)
+
+    def list_governance_review_queue_items(self, **kwargs: Any) -> list[dict[str, Any]]:
+        raw = self._data.get("governance_review_queue_items", [])
+        if isinstance(raw, dict):
+            return list(raw.values())
+        return list(raw)
+
+
+command_store = bff_main.command_store
 
 # ------------------------------------------------------------------ helpers --
 
@@ -74,16 +131,19 @@ def _submit(client, token=APPROVER_TOKEN, **overrides):
 
 class TestOperatorBFF(unittest.TestCase):
     def setUp(self):
-        self.client = TestClient(app)
+        self.client = TestClient(bff_main.app)
         # Reset env to fresh each test
         os.environ["BFF_READ_SURFACE_STATE"] = "fresh"
-        os.makedirs(os.path.dirname(command_store.file_path), exist_ok=True)
-        with open(command_store.file_path, "w", encoding="utf-8") as handle:
+        os.makedirs(os.path.dirname(bff_main.command_store.file_path), exist_ok=True)
+        with open(bff_main.command_store.file_path, "w", encoding="utf-8") as handle:
             handle.write("")
-        self._seeded_read_store = ReadSurfaceStore(
-            os.path.join("/tmp/pantheon", "bff_test_seeded_read_surfaces.json"),
-            allow_local_snapshot_fallback=True,
-        )
+        data_path = Path(__file__).resolve().parent / "data" / "read_surfaces.json"
+        if data_path.exists():
+            with open(data_path, "r", encoding="utf-8") as f:
+                raw_data = json.load(f)
+        else:
+            raw_data = {}
+        self._seeded_read_store = SmokeTestStore(raw_data)
 
     def _assert_error_code(self, response, code: str) -> None:
         body = response.json()
@@ -131,28 +191,24 @@ class TestOperatorBFF(unittest.TestCase):
         self.assertIn("surfaces", meta)
 
     def test_deployment_review_requires_backend_owned_plan_in_honest_mode(self):
-        with tempfile.TemporaryDirectory() as td:
-            store = ReadSurfaceStore(
-                os.path.join(td, "read_surfaces.json"),
-                allow_local_snapshot_fallback=False,
-            )
-            original_read_store = bff_main.read_store
-            with patch.dict(
-                os.environ,
-                {
-                    "PANTHEON_GOVERNANCE_DATA_DIR": "",
-                    "PANTHEON_RUNTIME_DATA_DIR": "",
-                },
-                clear=False,
-            ):
-                bff_main.read_store = store
-                try:
-                    r = self.client.get(
-                        "/api/v1/operator/deployment-review/plan-F-042",
-                        headers={"Authorization": OPERATOR_TOKEN},
-                    )
-                finally:
-                    bff_main.read_store = original_read_store
+        store = SmokeTestStore({})
+        original_read_store = bff_main.read_store
+        with patch.dict(
+            os.environ,
+            {
+                "PANTHEON_GOVERNANCE_DATA_DIR": "",
+                "PANTHEON_RUNTIME_DATA_DIR": "",
+            },
+            clear=False,
+        ):
+            bff_main.read_store = store
+            try:
+                r = self.client.get(
+                    "/api/v1/operator/deployment-review/plan-F-042",
+                    headers={"Authorization": OPERATOR_TOKEN},
+                )
+            finally:
+                bff_main.read_store = original_read_store
 
             self.assertEqual(r.status_code, 404, r.text)
 

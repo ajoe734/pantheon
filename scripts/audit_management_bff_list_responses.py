@@ -254,7 +254,47 @@ def audit(
 
     from fastapi.testclient import TestClient  # type: ignore
     import main as bff_main  # type: ignore
-    from read_store import ReadSurfaceStore  # type: ignore
+    from ports import ReadSurfacePorts, create_in_memory_read_surface_ports  # type: ignore
+
+    class AuditTestStore(ReadSurfacePorts):
+        def list_capital_pools(self, **kwargs: Any) -> list[dict[str, Any]]:
+            return []
+
+        def list_runtime_bindings(self, **kwargs: Any) -> list[dict[str, Any]]:
+            return []
+
+        def list_personas(self, **kwargs: Any) -> list[dict[str, Any]]:
+            return []
+
+        def list_bindings(self, **kwargs: Any) -> list[dict[str, Any]]:
+            return []
+
+        def list_deployment_plans(self, **kwargs: Any) -> list[dict[str, Any]]:
+            return []
+
+        def list_persona_league(self, **kwargs: Any) -> list[dict[str, Any]]:
+            return []
+
+        def list_evolution_decisions(self, **kwargs: Any) -> list[dict[str, Any]]:
+            return []
+
+        def list_incidents(self, **kwargs: Any) -> list[dict[str, Any]]:
+            return []
+
+        def list_postmortems(self, **kwargs: Any) -> list[dict[str, Any]]:
+            return []
+
+        def list_ooda_packets(self, **kwargs: Any) -> list[dict[str, Any]]:
+            return []
+
+        def list_sessions(self, **kwargs: Any) -> list[dict[str, Any]]:
+            return []
+
+        def list_governance_review_queue_items(self, **kwargs: Any) -> list[dict[str, Any]]:
+            return []
+
+        def put_ranking_snapshot(self, snapshot: dict[str, Any]) -> None:
+            pass
 
     rows: list[dict[str, Any]] = []
     issues: list[Issue] = []
@@ -262,10 +302,7 @@ def audit(
     original_audit_events = list(getattr(bff_main, "_MGMT_AI_AUDIT_EVENTS", []))
     try:
         with tempfile.TemporaryDirectory() as td:
-            bff_main.read_store = ReadSurfaceStore(
-                os.path.join(td, "read_surfaces.json"),
-                allow_local_snapshot_fallback=True,
-            )
+            bff_main.read_store = AuditTestStore()
             if hasattr(bff_main, "_MGMT_AI_AUDIT_EVENTS"):
                 bff_main._MGMT_AI_AUDIT_EVENTS.clear()
                 bff_main._MGMT_AI_AUDIT_EVENTS.append(

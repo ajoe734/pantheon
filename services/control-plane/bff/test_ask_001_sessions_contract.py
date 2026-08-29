@@ -12,13 +12,14 @@ Canonical basis:
 """
 from __future__ import annotations
 
-import json
+import copy
 import os
 import sys
 import tempfile
 import uuid
 from contextlib import contextmanager
-from typing import Iterator
+from datetime import datetime, timezone
+from typing import Any, Dict, Iterator, Optional
 
 from fastapi.testclient import TestClient
 
@@ -26,9 +27,80 @@ sys.path.insert(0, os.path.dirname(__file__))
 
 import main as bff_main
 from command_queue import CommandStore
-from read_store import ReadSurfaceStore
 
 AUTH = {"Authorization": "Bearer ask-test-op:operator"}
+
+
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+class _AskSessionsReadStore:
+    """Local in-memory double for ASK-001 ask-session lifecycle.
+
+    ``ReadSurfacePorts`` (the migrated read-only container) deliberately
+    excludes session mutation methods such as ``create_agora_session`` -- see
+    ``RETAINED_WRITES_DEFERRED_FROM_READ_SURFACE`` in
+    tests/test_read_surface_caller_migration.py -- so this test double
+    hand-implements the small set of methods the ASK-001 routes in
+    agora/identity/router.py call directly on the ``read_store`` global,
+    backed by a plain dict instead of the retired legacy read-surface store class.
+    """
+
+    def __init__(self, seed_sessions: Optional[Dict[str, Dict[str, Any]]] = None) -> None:
+        # ``_data["agora_sessions"]`` is read by main.py's ``_sem_local_records``
+        # fallback (via ``getattr(read_store, "_data", {})``) for list routes.
+        self._data: Dict[str, Any] = {"agora_sessions": copy.deepcopy(seed_sessions or {})}
+
+    def get_agora_session(self, session_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        if not session_id:
+            return None
+        session = self._data["agora_sessions"].get(str(session_id))
+        return copy.deepcopy(session) if session is not None else None
+
+    def create_agora_session(
+        self,
+        *,
+        session_id: str,
+        title: str,
+        actor_id: str,
+        payload: Dict[str, Any],
+        created_at: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        timestamp = created_at or _utc_now()
+        session = {
+            "id": session_id,
+            "sessionId": session_id,
+            "title": title,
+            "mode": payload.get("mode") or payload.get("sessionType") or "quick_ask",
+            "status": payload.get("status") or "active",
+            "participants": copy.deepcopy(payload.get("participants") or []),
+            "messages": copy.deepcopy(payload.get("messages") or []),
+            "createdBy": actor_id,
+            "createdAt": timestamp,
+            "updatedAt": timestamp,
+        }
+        self._data["agora_sessions"][session_id] = session
+        return copy.deepcopy(session)
+
+    def close_agora_session(
+        self,
+        session_id: str,
+        *,
+        closed_at: Optional[str] = None,
+        outcome: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        session = self.get_agora_session(session_id)
+        if session is None:
+            return None
+        timestamp = closed_at or _utc_now()
+        session["status"] = "closed"
+        session["closedAt"] = timestamp
+        session["updatedAt"] = timestamp
+        if outcome is not None:
+            session["outcome"] = outcome
+        self._data["agora_sessions"][session_id] = session
+        return copy.deepcopy(session)
 
 _SEED_SESSIONS = {
     "ask-seeded-001": {
@@ -63,16 +135,9 @@ def _idem() -> str:
 @contextmanager
 def _client(*, seeded: bool = False) -> Iterator[TestClient]:
     with tempfile.TemporaryDirectory() as td:
-        store_path = os.path.join(td, "read_surfaces.json")
-        if seeded:
-            with open(store_path, "w") as f:
-                json.dump({"agora_sessions": _SEED_SESSIONS}, f)
         original_store = bff_main.read_store
         original_cmd = bff_main.command_store
-        bff_main.read_store = ReadSurfaceStore(
-            store_path,
-            allow_local_snapshot_fallback=seeded,
-        )
+        bff_main.read_store = _AskSessionsReadStore(_SEED_SESSIONS if seeded else None)
         bff_main.command_store = CommandStore(os.path.join(td, "commands.jsonl"))
         bff_main._ASK_SESSIONS_IDEMPOTENCY.clear()
         bff_main._AGORA_CORE_BFF_IDEMPOTENCY.clear()
