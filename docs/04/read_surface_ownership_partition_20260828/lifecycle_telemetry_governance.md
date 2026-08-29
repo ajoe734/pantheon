@@ -40,7 +40,7 @@ To prevent ambiguity between abstract AST member nodes, direct execution calls, 
   - **`1` dynamic typed API** (`loop_run_projection_metadata` at `L7736`) is called dynamically via `getattr`.
   - **`4` uncalled typed APIs** are provided on domain protocols for domain completeness with 0 calls in `main.py` (`get_evolution_decision`, `list_loop_health_records`, `get_loop_health_record`, `list_telemetry_events`).
   - **Reconciliation Parity:** $32 \text{ directly called typed APIs} + 1 \text{ dynamic typed API} + 4 \text{ uncalled typed APIs} = 37 \text{ typed port APIs}$.
-  - **Legacy Alias vs Typed API Distinction:** `get_rollbacks` (3 call sites: `L8680`, `L17023`, `L17256`) is a **legacy alias** on `ReadSurfaceStore` mapping to `GovernanceReaderPort.list_all_rollbacks(runtime_id=...)`, not a typed domain port API. The legacy surface accessed in `main.py` thus comprises $32 \text{ typed called} + 1 \text{ legacy alias} = 33 \text{ direct AST member names} + 1 \text{ dynamic member name} = 34 \text{ total accessed legacy member names}$.
+  - **Legacy Distinct Method vs Typed Domain Port Mapping:** In legacy `ReadSurfaceStore`, `get_rollbacks(runtime_id)` (3 call sites: `L8680`, `L17023`, `L17256`) is a legacy helper reading the local `'rollbacks'` mapping (`Dict[runtime_id, List[Record]]` at `read_store.py:13112`), whereas `list_all_rollbacks(...)` queries the separate flat `'all_rollbacks'` dataset (`read_store.py:16776`). They are distinct methods operating on different data structures and are not aliases. For downstream caller cutover, the existing domain-port destination is `GovernanceReaderPort.list_all_rollbacks(runtime_id=...)` (which queries the canonical `all_rollbacks` collection filtered by `runtime_id` and sorted by timestamp), representing an intentional migration target consolidation to the unified governance collection rather than an in-place alias. The legacy surface accessed in `main.py` thus comprises $32 \text{ typed called} + 1 \text{ legacy distinct method} = 33 \text{ direct AST member names} + 1 \text{ dynamic member name} = 34 \text{ total accessed legacy member names}$.
 - **Operation Classification:** 100% Read (`read`), 0% Write (`write`).
 - **Direct Destination Ports:** `IncidentReaderPort`, `LifecycleReaderPort`, `GovernanceReaderPort`, `LineageReaderPort`, `TelemetryReaderPort`.
 - **Cross-Task Overlap:** `0` (mathematically proven disjoint across all 6 ownership partition tasks).
@@ -55,7 +55,7 @@ The Lifecycle, Telemetry, and Governance domain is partitioned into 5 focused su
 |---|---|---|---:|---:|---|
 | **1. Incidents & Postmortems** | `IncidentReaderPort` | `DomainIncidentPort` | 28 | 7 | Incident lifecycles, postmortems, incident-linked evolution decisions & rollbacks |
 | **2. Lifecycle, Loops & Sentinels** | `LifecycleReaderPort` | `DomainLifecyclePort` | 27 | 7 | Loop runs, 12-loop health records, Sentinel findings, Kill Switch, Trade Journey projection reader (26 direct + 1 dynamic getattr) |
-| **3. Governance, Evolution & Audit** | `GovernanceReaderPort` | `DomainGovernancePort` | 20 | 7 | Evolution decisions, freeze orders, rollbacks, rollback reviews, governance audit event trails (includes `get_rollbacks` alias) |
+| **3. Governance, Evolution & Audit** | `GovernanceReaderPort` | `DomainGovernancePort` | 20 | 7 | Evolution decisions, freeze orders, rollbacks, rollback reviews, governance audit event trails (includes legacy `get_rollbacks` caller mapping) |
 | **4. Lineage & Inspiration Graph** | `LineageReaderPort` | `DomainLineagePort` | 9 | 7 | Lineage DAG edges, records, graph nodes, artifact existence, inspiration graph projections |
 | **5. Telemetry & Paper-Live Drift** | `TelemetryReaderPort` | `DomainTelemetryPort` | 27 | 6 | Telemetry events with source attribution, telemetry summaries, performance curves, paper-live drift reports |
 | **Total Domain Surface** | `LifecycleTelemetryGovernancePort` | `CompositeLifecycleTelemetryGovernancePort` | **111** | **34** | Full narrow domain read surface (mapped to **37** typed domain port APIs) |
@@ -77,7 +77,7 @@ The following table details every single `read_store` call site in `services/con
 | 7 | `L5394` | `get_postmortem` | `_mutation_review_inputs` | `read` | `IncidentReaderPort.get_postmortem` | Incidents & Postmortems |
 | 8 | `L7736` | `loop_run_projection_metadata` | `_loop_run_projection_metadata` | `read` | `LifecycleReaderPort.loop_run_projection_metadata` *(dynamic getattr)* | Lifecycle, Loops & Sentinels |
 | 9 | `L8664` | `get_telemetry_summary` | `_project_operator_runtime_state_row` | `read` | `TelemetryReaderPort.get_telemetry_summary` | Telemetry & Paper-Live Drift |
-| 10 | `L8680` | `get_rollbacks` | `_project_operator_runtime_state_row` | `read` | `GovernanceReaderPort.list_all_rollbacks(runtime_id=...)` | Governance, Evolution & Audit |
+| 10 | `L8680` | `get_rollbacks` | `_project_operator_runtime_state_row` | `read` | `GovernanceReaderPort.list_all_rollbacks(runtime_id=...)` *(consolidated target; legacy `get_rollbacks` reads local keyed `'rollbacks'` mapping at `read_store.py:13112`)* | Governance, Evolution & Audit |
 | 11 | `L8871` | `get_telemetry_summary` | `_build_telemetry_health_group` | `read` | `TelemetryReaderPort.get_telemetry_summary` | Telemetry & Paper-Live Drift |
 | 12 | `L8940` | `list_incidents` | `_build_incident_health_group` | `read` | `IncidentReaderPort.list_incidents` | Incidents & Postmortems |
 | 13 | `L9068` | `get_kill_switch_status` | `_build_kill_switch_health_group` | `read` | `LifecycleReaderPort.get_kill_switch_status` | Lifecycle, Loops & Sentinels |
@@ -95,8 +95,8 @@ The following table details every single `read_store` call site in `services/con
 | 25 | `L12575` | `list_incidents` | `_build_operator_paper_live_drift_payload` | `read` | `IncidentReaderPort.list_incidents` | Incidents & Postmortems |
 | 26 | `L12582` | `get_evolution_decisions_by_incident` | `_build_operator_paper_live_drift_payload` | `read` | `IncidentReaderPort.get_evolution_decisions_by_incident` | Incidents & Postmortems |
 | 27 | `L12904` | `list_lineage_edges` | `_ew04_inspiration_projection_from_lineage_edges` | `read` | `LineageReaderPort.list_lineage_edges` | Lineage & Inspiration Graph |
-| 28 | `L17023` | `get_rollbacks` | `get_runtime_rollbacks` | `read` | `GovernanceReaderPort.list_all_rollbacks(runtime_id=...)` | Governance, Evolution & Audit |
-| 29 | `L17256` | `get_rollbacks` | `get_deployment_review` | `read` | `GovernanceReaderPort.list_all_rollbacks(runtime_id=...)` | Governance, Evolution & Audit |
+| 28 | `L17023` | `get_rollbacks` | `get_runtime_rollbacks` | `read` | `GovernanceReaderPort.list_all_rollbacks(runtime_id=...)` *(consolidated target; legacy `get_rollbacks` reads local keyed `'rollbacks'` mapping at `read_store.py:13112`)* | Governance, Evolution & Audit |
+| 29 | `L17256` | `get_rollbacks` | `get_deployment_review` | `read` | `GovernanceReaderPort.list_all_rollbacks(runtime_id=...)` *(consolidated target; legacy `get_rollbacks` reads local keyed `'rollbacks'` mapping at `read_store.py:13112`)* | Governance, Evolution & Audit |
 | 30 | `L17654` | `list_incidents` | `_shell_summary_open_alerts_count` | `read` | `IncidentReaderPort.list_incidents` | Incidents & Postmortems |
 | 31 | `L17708` | `get_kill_switch_status` | `_shell_summary_open_alerts_count` | `read` | `LifecycleReaderPort.get_kill_switch_status` | Lifecycle, Loops & Sentinels |
 | 32 | `L17982` | `get_paper_live_drift_report` | `get_operator_paper_live_drift` | `read` | `TelemetryReaderPort.get_paper_live_drift_report` | Telemetry & Paper-Live Drift |
@@ -191,9 +191,9 @@ Every method accessed in this domain is mapped to its exact typed protocol signa
 | Method / Member Name | Main.py Calls | Classification | Target Protocol Signature | Description |
 |---|---:|:---:|---|---|
 | `get_evolution_decision_by_id` | 2 | `read` | `get_evolution_decision_by_id(decision_id: str) -> Optional[Dict[str, Any]]` | Retrieves evolution decision record by decision ID. |
-| `get_evolution_decision` | 0 | `read` | `get_evolution_decision(decision_id: str) -> Optional[Dict[str, Any]]` | Alias for `get_evolution_decision_by_id` on `GovernanceReaderPort` (uncalled in `main.py`). |
+| `get_evolution_decision` | 0 | `read` | `get_evolution_decision(decision_id: str) -> Optional[Dict[str, Any]]` | Convenience delegation to `get_evolution_decision_by_id` on `GovernanceReaderPort` (uncalled in `main.py`). |
 | `get_rollback_review` | 1 | `read` | `get_rollback_review(rollback_id: Optional[str]) -> Optional[Dict[str, Any]]` | Retrieves post-rollback review and verification report by rollback ID. |
-| `get_rollbacks` | 3 | `read` | `list_all_rollbacks(runtime_id: Optional[str] = None) -> List[Dict[str, Any]]` | Legacy alias on `ReadSurfaceStore` mapping to `GovernanceReaderPort.list_all_rollbacks(runtime_id=...)`. |
+| `get_rollbacks` | 3 | `read` | `list_all_rollbacks(runtime_id: Optional[str] = None) -> List[Dict[str, Any]]` | Legacy method on `ReadSurfaceStore` (`read_store.py:13112`, reads local keyed `'rollbacks'` mapping); target destination is `GovernanceReaderPort.list_all_rollbacks(runtime_id=...)` (consolidates onto flat canonical `'all_rollbacks'` collection with timestamp sorting; not an alias). |
 | `list_all_rollbacks` | 2 | `read` | `list_all_rollbacks(runtime_id: Optional[str] = None, action_type: Optional[str] = None, time_range: Optional[str] = None) -> List[Dict[str, Any]]` | Lists rollback actions across runtimes, action types, and time ranges. |
 | `list_evolution_decisions` | 9 | `read` | `list_evolution_decisions(action_type: Optional[str] = None, risk_level: Optional[str] = None, status: Optional[str] = None) -> List[Dict[str, Any]]` | Lists evolution governance decisions filtered by action_type, risk_level, or decision status. |
 | `list_freeze_orders` | 2 | `read` | `list_freeze_orders(status: Optional[str] = None, scope: Optional[str] = None) -> List[Dict[str, Any]]` | Lists emergency and governance freeze orders filtered by status and scope. |
@@ -255,10 +255,15 @@ Every method accessed in this domain is mapped to its exact typed protocol signa
 
 An exhaustive audit of `services/control-plane/bff/domain_ports/lifecycle_telemetry_governance.py` and `services/control-plane/bff/ports/lifecycle_telemetry_governance.py` confirms:
 
-1. **Zero Missing Domain APIs:** All 37 typed-port methods in the domain have full protocol definitions, concrete domain adapters, in-memory test doubles, and composite re-exports.
-2. **Zero Generic Delegation Leaks:** No method delegates back to `ReadSurfaceStore` or untyped dictionary fallbacks.
-3. **Zero Compatibility Storage Leaks:** Data structures conform strictly to domain entity types (incidents, postmortems, loop runs, sentinel findings, evolution decisions, freeze orders, rollbacks, lineage DAG edges, telemetry summaries, drift reports).
-4. **Zero Production Code Changes in this Task:** In accordance with task acceptance constraints, no production files in `services/control-plane/bff/` are modified in this mapping task.
+1. **Zero Missing Domain APIs on Governed Ports:** All 37 typed-port methods in the domain have full protocol definitions, concrete domain adapters, in-memory test doubles, and composite re-exports.
+2. **Analysis of Legacy `get_rollbacks` vs `list_all_rollbacks` Migration Destination:**
+   - In legacy `ReadSurfaceStore`, `get_rollbacks(runtime_id)` (`read_store.py:13112`) reads from the local dictionary mapping `self._local_fallback("rollbacks")` by `runtime_id`, while `list_all_rollbacks(...)` (`read_store.py:16776`) reads from the separate flat collection `all_rollbacks` (via `self._service.list_records("all_rollbacks")` with fallback to `self._local_fallback("all_rollbacks")`) and sorts by timestamp.
+   - These two methods are not aliases in `read_store.py` and can return different records if `rollbacks` and `all_rollbacks` diverge in legacy fixture data.
+   - For domain port design and downstream caller cutover (`main.py:8680`, `17023`, `17256`), the existing typed destination is `GovernanceReaderPort.list_all_rollbacks(runtime_id=...)`. This is an intentional architectural consolidation that unifies runtime-scoped rollback queries onto the canonical flat governance rollback dataset (`_all_rollbacks`).
+   - If downstream caller migration requires strict legacy backwards-compatibility with unmigrated local keyed `'rollbacks'` storage without consolidating onto `all_rollbacks`, a dedicated narrow method `get_rollbacks(runtime_id: Optional[str]) -> List[Dict[str, Any]]` would be added to `GovernanceReaderPort`. However, standardizing all runtime rollback queries onto `list_all_rollbacks(runtime_id=...)` eliminates dual storage models while satisfying caller query requirements.
+3. **Zero Generic Delegation Leaks:** No method delegates back to `ReadSurfaceStore` or untyped dictionary fallbacks.
+4. **Zero Compatibility Storage Leaks:** Data structures conform strictly to domain entity types (incidents, postmortems, loop runs, sentinel findings, evolution decisions, freeze orders, rollbacks, lineage DAG edges, telemetry summaries, drift reports).
+5. **Zero Production Code Changes in this Task:** In accordance with task acceptance constraints, no production files in `services/control-plane/bff/` are modified in this mapping task.
 
 ---
 
@@ -272,7 +277,7 @@ The table below reconciles all 6 sibling ownership tasks across the codebase, ci
 
 | Domain Partition | Task ID | Target Domain Port Module | Frozen PR / Delivery Head SHA | Direct AST Methods ($|D_k|$) | Direct AST Refs | Lexical (Methods / Calls) | Scope & Boundary Summary |
 |---|---|---|---|---:|---:|---:|---|
-| **Operations & Agora** | `ACG-RS-OPS-OWNERSHIP-MAP-20260828` | `operations_consultation.py` | `e2aa6ded1d08967521f09f8d61e33e3ad0c12cea` / `861c58e5b85ee428178a8ebba07a82ecdb8db21a` (PR #5358) | **48** | **76** | 48 / 76 | Agora trading room, sessions, signals, feedback, notes, committees, consult requests, MCP tools/skills (75 Call expressions + 1 callable ref `record_agora_audit_event` at L45051; 83 local audit calls across 54 methods) |
+| **Operations & Agora** | `ACG-RS-OPS-OWNERSHIP-MAP-20260828` | `operations_consultation.py` | `6223da3f87ff6161cabaa7a308844f55adcd5d7a` (PR #5358) | **48** | **76** | 48 / 76 | Agora trading room, sessions, signals, feedback, notes, committees, consult requests, MCP tools/skills (75 Call expressions + 1 callable ref `record_agora_audit_event` at L45051; 83 local audit calls across 54 methods) |
 | **OODA & Management** | `ACG-RS-OODA-OWNERSHIP-MAP-20260828` | `ooda_management.py` | `4b9f0b5a28af08bde017ce85cc17226b94fcbe98` / `f443da54e9c0ebb3a712430a379673b390f07409` (PR #5357, merged on dev `a880bf5b2`) | **15** | **49** | 16 / 50 | OODA loop packets, synthesis conflict logs, governance review queue, approval decisions (48 Call expressions + 1 callable ref `list_approval_queue_items` at L25370; 51 AST calls with 2 dynamic `getattr`; 16/50 in lexical space including L6953 docstring) |
 | **Research & Knowledge** | `ACG-RS-RESEARCH-OWNERSHIP-MAP-20260828` | `research_knowledge_source.py` | `3507b39c8ced923351c04cdfe87fa3584c5a5d38` / `a29218e2c9fb4850c8b0598d86db20d20de17965` (PR #5359, merged on dev `78eea2641`) | **44** | **119** | 42 / 116 | Research tickets, experiments, analyses, artifacts, strategy specs, search index, dataset sources (118 Call expressions including 13 `dataset_source` calls + 1 callable ref `list_evidence_refs` at L45027; 39 typed port APIs; 42/116 in lexical partition) |
 | **Persona Training** | `ACG-RS-TRAINING-OWNERSHIP-MAP-20260828` | `persona_training.py` | `7853a6e64a5b0bf7c5815452dda3b9f02d8720af` (PR #5355, merged on dev `70378ff90`) | **17** | **31** | 17 / 31 | Interactive trainer sessions, trainer controls, preview evaluation, trainer replay commit/discard, rapid evaluation (31 direct Call expressions) |
@@ -297,7 +302,7 @@ A critical boundary clarification exists regarding the **13 call sites** in `mai
 
 1. **Reconciliation of Operations & Agora (48 AST methods / 76 AST references vs 54 methods / 83 local audit calls)**:
    - In the global disjoint partition, Operations & Agora exclusively owns **48 direct methods** and **76 direct member references** (75 Call expressions + 1 callable reference `record_agora_audit_event` at L45051).
-   - The local audit matrix in PR #5358 catalogs **54 methods** and **83 call sites** because it includes 6 cross-domain seam methods (7 call sites) touching operational workflows (`get_job_bff` [1], `list_jobs_bff` [1], `list_events_bff` [1], `get_research_oss_preactivation_snapshot` [1], `get_openclaw_ops_snapshot` [1], `get_openclaw_broker_adapter_readiness` [2]).
+   - The local audit matrix in PR #5358 (`6223da3f87ff6161cabaa7a308844f55adcd5d7a`) catalogs **54 methods** and **83 call sites** because it includes 6 cross-domain seam methods (7 call sites) touching operational workflows (`get_job_bff` [1], `list_jobs_bff` [1], `list_events_bff` [1], `get_research_oss_preactivation_snapshot` [1], `get_openclaw_ops_snapshot` [1], `get_openclaw_broker_adapter_readiness` [2]).
    - Sum: $76 + 7 = 83 \text{ call sites}$; $48 + 6 = 54 \text{ methods}$.
 
 2. **Reconciliation of OODA & Management (15 AST methods / 49 AST references vs 16 methods / 50 calls in Lexical space)**:
