@@ -20,7 +20,7 @@ This partition establishes the exact migration boundaries for downstream cutover
 To prevent ambiguity between abstract AST member nodes, direct execution calls, lexical source patterns, and dynamic reflection, all metrics are classified under four rigorous counting dimensions:
 
 1. **AST Direct Member References in `main.py`:** Exactly **`598` direct member attribute references** (`read_store.<attr>`) across **`202` distinct legacy member names**.
-   - **`595` direct call expressions** (`read_store.<attr>(...)`) across `202` distinct method names.
+   - **`595` direct Call expressions** (`read_store.<attr>(...)`) across `202` distinct method names.
    - **`3` non-call direct attribute references** across `3` distinct member names (`read_store.list_approval_queue_items` at `L25370`, `read_store.list_evidence_refs` at `L45027`, and `read_store.record_agora_audit_event` at `L45051`).
 2. **Dynamic `getattr` Invocations in `main.py`:** Exactly **`15` dynamic invocations** (`getattr(read_store, ...)`) across **`12` distinct dynamic attribute names** (including `L7736` `getattr(read_store, 'loop_run_projection_metadata')`).
 3. **Total Code References in `main.py`:** Exactly **`613` code references** (`598` AST direct member references + `15` dynamic `getattr` invocations).
@@ -36,11 +36,11 @@ To prevent ambiguity between abstract AST member nodes, direct execution calls, 
 - **Legacy Member Names Accessed in `main.py`:** Exactly **`34` distinct legacy member names** (`33` direct method names + `1` dynamic attribute `loop_run_projection_metadata`).
 - **Typed Domain Port APIs on `LifecycleTelemetryGovernancePort`:** Exactly **`37` typed-port APIs** across 5 domain protocols in `domain_ports/lifecycle_telemetry_governance.py`.
 - **API Mapping & Gap Reconciliation:**
-  - **`32` typed-port APIs** are directly called by name across the direct call sites in `main.py`.
-  - **`1` legacy alias** `get_rollbacks` (3 call sites: `L8680`, `L17023`, `L17256`) is called directly in `main.py` and maps to `GovernanceReaderPort.list_all_rollbacks(runtime_id=...)`.
-  - **`1` dynamic `getattr` call site** (`L7736`) maps to `LifecycleReaderPort.loop_run_projection_metadata`.
-  - **`4` typed-port APIs** are provided on domain protocols for domain completeness with 0 calls in `main.py` (`get_evolution_decision`, `list_loop_health_records`, `get_loop_health_record`, `list_telemetry_events`).
-  - **Reconciliation Parity:** $32 \text{ directly called typed APIs} + 1 \text{ legacy alias} + 4 \text{ uncalled typed APIs} = 37 \text{ typed port APIs}$ (covering $32 \text{ typed called} + 1 \text{ alias called} = 33 \text{ direct accessed names} + 1 \text{ dynamic accessed name} = 34 \text{ total accessed legacy names}$).
+  - **`32` directly called typed APIs** are called by name across the direct call sites in `main.py`.
+  - **`1` dynamic typed API** (`loop_run_projection_metadata` at `L7736`) is called dynamically via `getattr`.
+  - **`4` uncalled typed APIs** are provided on domain protocols for domain completeness with 0 calls in `main.py` (`get_evolution_decision`, `list_loop_health_records`, `get_loop_health_record`, `list_telemetry_events`).
+  - **Reconciliation Parity:** $32 \text{ directly called typed APIs} + 1 \text{ dynamic typed API} + 4 \text{ uncalled typed APIs} = 37 \text{ typed port APIs}$.
+  - **Legacy Alias vs Typed API Distinction:** `get_rollbacks` (3 call sites: `L8680`, `L17023`, `L17256`) is a **legacy alias** on `ReadSurfaceStore` mapping to `GovernanceReaderPort.list_all_rollbacks(runtime_id=...)`, not a typed domain port API. The legacy surface accessed in `main.py` thus comprises $32 \text{ typed called} + 1 \text{ legacy alias} = 33 \text{ direct AST member names} + 1 \text{ dynamic member name} = 34 \text{ total accessed legacy member names}$.
 - **Operation Classification:** 100% Read (`read`), 0% Write (`write`).
 - **Direct Destination Ports:** `IncidentReaderPort`, `LifecycleReaderPort`, `GovernanceReaderPort`, `LineageReaderPort`, `TelemetryReaderPort`.
 - **Cross-Task Overlap:** `0` (mathematically proven disjoint across all 6 ownership partition tasks).
@@ -270,15 +270,15 @@ To guarantee that downstream caller migration proceeds with zero duplicate effor
 
 The table below reconciles all 6 sibling ownership tasks across the codebase, citing exact frozen PR numbers, commit SHAs, domain ports, and verified method/call partitions:
 
-| Domain Partition | Task ID | Target Domain Port Module | Frozen PR / Delivery Head SHA | Direct AST Methods ($|D_k|$) | Direct AST Calls | Scope & Boundary Summary |
-|---|---|---|---|---:|---:|---|
-| **Operations & Agora** | `ACG-RS-OPS-OWNERSHIP-MAP-20260828` | `operations_consultation.py` | `b7d34c6807305ec6fed899e155373592afc47174` (PR #5358) | **48** | **76** | Agora trading room, sessions, signals, feedback, notes, committees, consult requests, MCP tools/skills (83 audit calls across 54 total methods) |
-| **OODA & Management** | `ACG-RS-OODA-OWNERSHIP-MAP-20260828` | `ooda_management.py` | `f443da54e9c0ebb3a712430a379673b390f07409` (PR #5357) | **15** | **49** | OODA loop packets, synthesis conflict logs, governance review queue, approval decisions (50 lexical calls including `_parse_rfc3339`; 52 total calls with 2 dynamic `getattr`) |
-| **Research & Knowledge** | `ACG-RS-RESEARCH-OWNERSHIP-MAP-20260828` | `research_knowledge_source.py` | `8728ea1b0927d9e4a918712ac1a9b444bdb26d3c` / `9791d336fcc311f940c23e77024bf3486cd64579` (PR #5359) | **38** | **112** | Research tickets, experiments, analyses, artifacts, strategy specs, search index, dataset sources (42 methods / 116 calls in global taxonomy with domain status wrappers) |
-| **Persona Training** | `ACG-RS-TRAINING-OWNERSHIP-MAP-20260828` | `persona_training.py` | `7853a6e64a5b0bf7c5815452dda3b9f02d8720af` (PR #5355) | **17** | **31** | Interactive trainer sessions, trainer controls, preview evaluation, trainer replay commit/discard, rapid evaluation |
-| **Persona Capital & Runtime** | `ACG-RS-CAPITAL-OWNERSHIP-MAP-20260828` | `persona_capital_runtime.py` | `ae50d97c1908aa56f34d14d4a09922a6bde294d8` (PR #5356) | **45** | **213** | Persona fleet registry, capital pools, bindings, deployment plans, rankings, rebalances (reconciled post-evolution cutover to LTG) |
-| **Lifecycle, Telemetry & Governance** | `ACG-RS-LIFECYCLE-OWNERSHIP-MAP-20260828` | `lifecycle_telemetry_governance.py` | `task/ACG-RS-LIFECYCLE-OWNERSHIP-MAP-20260828` (PR #5360) | **33** | **110** | Incidents, postmortems, kill switch, sentinel findings, loop runs, lineage, telemetry drift, evolution decisions (111 call sites including L7736 dynamic getattr) |
-| **Total Global Surface** | **All 6 Domains Combined** | **All 6 Domain Ports** | **Exact Disjoint Union** | **202** | **598** | **100% Disjoint Partition (203 methods / 600 occurrences in Lexical Space; 613 Code References / 615 Lexical References)** |
+| Domain Partition | Task ID | Target Domain Port Module | Frozen PR / Delivery Head SHA | Direct AST Methods ($|D_k|$) | Direct AST Refs | Lexical (Methods / Calls) | Scope & Boundary Summary |
+|---|---|---|---|---:|---:|---:|---|
+| **Operations & Agora** | `ACG-RS-OPS-OWNERSHIP-MAP-20260828` | `operations_consultation.py` | `e2aa6ded1d08967521f09f8d61e33e3ad0c12cea` / `861c58e5b85ee428178a8ebba07a82ecdb8db21a` (PR #5358) | **48** | **76** | 48 / 76 | Agora trading room, sessions, signals, feedback, notes, committees, consult requests, MCP tools/skills (75 Call expressions + 1 callable ref `record_agora_audit_event` at L45051; 83 local audit calls across 54 methods) |
+| **OODA & Management** | `ACG-RS-OODA-OWNERSHIP-MAP-20260828` | `ooda_management.py` | `4b9f0b5a28af08bde017ce85cc17226b94fcbe98` / `f443da54e9c0ebb3a712430a379673b390f07409` (PR #5357, merged on dev `a880bf5b2`) | **15** | **49** | 16 / 50 | OODA loop packets, synthesis conflict logs, governance review queue, approval decisions (48 Call expressions + 1 callable ref `list_approval_queue_items` at L25370; 51 AST calls with 2 dynamic `getattr`; 16/50 in lexical space including L6953 docstring) |
+| **Research & Knowledge** | `ACG-RS-RESEARCH-OWNERSHIP-MAP-20260828` | `research_knowledge_source.py` | `3507b39c8ced923351c04cdfe87fa3584c5a5d38` / `a29218e2c9fb4850c8b0598d86db20d20de17965` (PR #5359, merged on dev `78eea2641`) | **44** | **119** | 42 / 116 | Research tickets, experiments, analyses, artifacts, strategy specs, search index, dataset sources (118 Call expressions including 13 `dataset_source` calls + 1 callable ref `list_evidence_refs` at L45027; 39 typed port APIs; 42/116 in lexical partition) |
+| **Persona Training** | `ACG-RS-TRAINING-OWNERSHIP-MAP-20260828` | `persona_training.py` | `7853a6e64a5b0bf7c5815452dda3b9f02d8720af` (PR #5355, merged on dev `70378ff90`) | **17** | **31** | 17 / 31 | Interactive trainer sessions, trainer controls, preview evaluation, trainer replay commit/discard, rapid evaluation (31 direct Call expressions) |
+| **Persona Capital & Runtime** | `ACG-RS-CAPITAL-OWNERSHIP-MAP-20260828` | `persona_capital_runtime.py` | `580076652d9321bec845b36a5a99efbac885e149` (PR #5356, merged on dev `a944725d3`) | **45** | **213** | 47 / 217 | Persona fleet registry, capital pools, bindings, deployment plans, rankings, rebalances (reconciled post-evolution transfer to LTG and removing L40568 comment; 47/217 in PR #5356 draft before evolution transfer) |
+| **Lifecycle, Telemetry & Governance** | `ACG-RS-LIFECYCLE-OWNERSHIP-MAP-20260828` | `lifecycle_telemetry_governance.py` | `task/ACG-RS-LIFECYCLE-OWNERSHIP-MAP-20260828` (PR #5360) | **33** | **110** | 33 / 110 | Incidents, postmortems, kill switch, sentinel findings, loop runs, lineage, telemetry drift, evolution decisions (110 direct Call expressions; 111 total call sites with L7736 dynamic `getattr`; includes 13 evolution calls across 3 methods) |
+| **Total Global Surface** | **All 6 Domains Combined** | **All 6 Domain Ports** | **Exact Disjoint Union** | **202** | **598** | **203 / 600** | **100% Disjoint Union & Full Coverage of `main.py` Surface (595 Direct Call Expressions + 3 Non-Call Refs; 613 Code References / 615 Lexical References)** |
 
 ### 6.2 Reconciliation of Evolution Call Site Ownership Across Sibling Maps
 
@@ -291,9 +291,30 @@ A critical boundary clarification exists regarding the **13 call sites** in `mai
 1. **Governance & Incident Domain Truth:** In `services/control-plane/bff/domain_ports/lifecycle_telemetry_governance.py`, `GovernanceReaderPort` implements `list_evolution_decisions`, `get_evolution_decision_by_id`, and `get_evolution_decision`, while `IncidentReaderPort` implements `get_evolution_decisions_by_incident`. These domain ports hold the authoritative query parameters (`action_type`, `risk_level`, `status`, `incident_ref`) and canonical DTO projections for evolution governance.
 2. **Capital Evolution Projection Boundary:** `EvolutionProjectionPort` in `services/control-plane/bff/domain_ports/persona_capital_runtime.py` is a pure derived projection layer that composes candidate and run lists for evolution programs (`list_evolution_programs`, `get_evolution_program`, `list_evolution_program_runs`, `list_evolution_program_candidates`). It does not implement `get_evolution_decision_by_id` or `get_evolution_decisions_by_incident`.
 3. **Partition Resolution:** Canonical ownership of all 13 evolution call sites and their 3 methods belongs exclusively to **`ACG-RS-LIFECYCLE-OWNERSHIP-MAP-20260828`** (under Governance and Incident sub-domains).
-4. **Sibling Head Reconciliation:** In `persona_capital_runtime`'s frozen delivery head (`origin/task/ACG-RS-CAPITAL-OWNERSHIP-MAP-20260828`, PR #5356 / commit `ae50d97c1908aa56f34d14d4a09922a6bde294d8`), Section 4.6 and Section 6.1 explicitly resolved evolution ownership by declaring all 13 call sites owned by LTG and adjusting its own domain method count to **45 methods** (`213` direct calls). Earlier intermediate summary baselines in sibling drafts tracked 47 methods (217 calls) or 48 methods (226 calls) before the evolution boundary was frozen. Both before and after the evolution transfer, the global partition remains mathematically exact and disjoint with zero double-counting.
+4. **Sibling Head Reconciliation:** In `persona_capital_runtime`'s approved delivery head (`580076652d9321bec845b36a5a99efbac885e149`, PR #5356, merged into `dev` in `a944725d398cfda630c7db2bc50eeb5ff85eb662`), Section 6.1 and Section 6.2 explicitly resolved evolution ownership by declaring all 13 call sites owned by LTG and adjusting Capital's own domain method count to **45 methods** (`213` direct calls). Earlier intermediate drafts (e.g. commit `ae50d97c1908aa56f34d14d4a09922a6bde294d8`) tracked 47 methods (217 calls) or 48 methods (227 calls) before the evolution transfer was frozen. In the merged canonical state on `dev`, Capital owns 45 methods / 213 calls, and LTG owns 33 methods / 110 direct calls, establishing zero overlap and exact disjoint union across both sibling heads.
 
-### 6.3 Formal Mathematical Proof of Disjoint Union
+### 6.3 Sibling Reporting Variance & Cross-Domain Seam Reconciliation
+
+1. **Reconciliation of Operations & Agora (48 AST methods / 76 AST references vs 54 methods / 83 local audit calls)**:
+   - In the global disjoint partition, Operations & Agora exclusively owns **48 direct methods** and **76 direct member references** (75 Call expressions + 1 callable reference `record_agora_audit_event` at L45051).
+   - The local audit matrix in PR #5358 catalogs **54 methods** and **83 call sites** because it includes 6 cross-domain seam methods (7 call sites) touching operational workflows (`get_job_bff` [1], `list_jobs_bff` [1], `list_events_bff` [1], `get_research_oss_preactivation_snapshot` [1], `get_openclaw_ops_snapshot` [1], `get_openclaw_broker_adapter_readiness` [2]).
+   - Sum: $76 + 7 = 83 \text{ call sites}$; $48 + 6 = 54 \text{ methods}$.
+
+2. **Reconciliation of OODA & Management (15 AST methods / 49 AST references vs 16 methods / 50 calls in Lexical space)**:
+   - In executable AST space, OODA owns **15 member methods** and **49 direct member references** (48 Call expressions + 1 callable reference `list_approval_queue_items` at L25370), plus **2 dynamic getattr calls** (`get_v5_intervention` at L4077, `list_v5_interventions` at L56264), totaling **51 AST call sites**.
+   - In raw regex space, `_parse_rfc3339` is matched in the docstring of module function `_parse_rfc3339` at `main.py:6953` (`Mirrors read_store._parse_rfc3339...`), yielding the lexical count of 16 methods and 50 calls (52 with dynamic getattr).
+
+3. **Reconciliation of Research & Knowledge (44 AST methods / 119 AST references vs 42 methods / 116 calls in Lexical space)**:
+   - In full AST accounting across `main.py`, Research & Knowledge covers **44 distinct member names** across **119 direct member references** (118 Call expressions including 13 `dataset_source` calls + 1 callable reference `list_evidence_refs` at L45027).
+   - In lexical reporting, PR #5359 draft cataloged 42 direct methods across 116 calls (mapping to 39 typed port APIs in `ResearchKnowledgeSourcePort`).
+
+4. **Reconciliation of Persona Capital & Runtime (45 AST methods / 213 AST references vs 47 methods / 217 calls in PR #5356 draft)**:
+   - In the approved and merged PR #5356 head (`580076652`), Capital covers **45 methods** and **213 direct member references** after releasing the 3 evolution methods (13 calls) to LTG and removing the non-executable comment `# Read canonical persona-capital bindings (read_store.list_bindings)` at `main.py:40568`.
+
+5. **Reconciliation of Lifecycle, Telemetry & Governance (33 AST methods / 110 AST references / 111 with getattr)**:
+   - PR #5360 covers **33 distinct direct method names** in `main.py` across **110 direct references** (110 Call expressions, including the 3 evolution methods: `get_evolution_decision_by_id`, `get_evolution_decisions_by_incident`, `list_evolution_decisions`) plus 1 dynamic getattr (`loop_run_projection_metadata` at L7736), totaling 111 call sites.
+
+### 6.4 Formal Mathematical Proof of Disjoint Union
 
 Let $\mathcal{M}_{\text{AST}}$ be the set of 202 distinct legacy member names referenced on `read_store` in the abstract syntax tree (AST) of `services/control-plane/bff/main.py` ($|\mathcal{M}_{\text{AST}}| = 202$).
 
@@ -320,9 +341,13 @@ Let $D_{\text{ops}}, D_{\text{ooda}}, D_{\text{res}}, D_{\text{train}}, D_{\text
    $$\sum_{k \in \{\text{ops}, \text{ooda}, \text{res}, \text{train}, \text{cap}, \text{ltg}\}} |D_k| = 48 + 15 + 44 + 17 + 45 + 33 = 202 \quad (\text{AST Direct})$$
    $$\sum_{k \in \{\text{ops}, \text{ooda}, \text{res}, \text{train}, \text{cap}, \text{ltg}\}} |D_k| = 48 + 16 + 42 + 17 + 47 + 33 = 203 \quad (\text{Lexical Partition})$$
 
-4. **Call Site Cardinality Summation:**
-   $$\sum_{k \in \{\text{ops}, \text{ooda}, \text{res}, \text{train}, \text{cap}, \text{ltg}\}} \text{Calls}(D_k) = 76 + 49 + 118 + 31 + 213 + 110 = 598 \quad (\text{AST Direct Member References})$$
-   $$\sum_{k \in \{\text{ops}, \text{ooda}, \text{res}, \text{train}, \text{cap}, \text{ltg}\}} \text{Calls}(D_k) = 76 + 50 + 116 + 31 + 217 + 110 = 600 \quad (\text{Lexical String Matches})$$
+4. **Call Site / Member Reference Cardinality Summation:**
+   - **AST Direct Member References (595 Call expressions + 3 Non-Call callable refs):**
+     $$\sum_{k \in \{\text{ops}, \text{ooda}, \text{res}, \text{train}, \text{cap}, \text{ltg}\}} \text{Refs}(D_k) = 76 + 49 + 119 + 31 + 213 + 110 = 598$$
+   - **AST Direct Call Expressions:**
+     $$\sum_{k \in \{\text{ops}, \text{ooda}, \text{res}, \text{train}, \text{cap}, \text{ltg}\}} \text{Calls}(D_k) = 75 + 48 + 118 + 31 + 213 + 110 = 595$$
+   - **Lexical String Matches (including docstring & comment occurrences):**
+     $$\sum_{k \in \{\text{ops}, \text{ooda}, \text{res}, \text{train}, \text{cap}, \text{ltg}\}} \text{Occurrences}(D_k) = 76 + 50 + 116 + 31 + 217 + 110 = 600$$
 
 This confirms complete mathematical closure with zero unmapped legacy member names, zero duplicate ownership, and zero residual ambiguity.
 
