@@ -1,0 +1,108 @@
+{
+  "schema_version": "pantheon.agora-taiwan-market-session-freshness-review.v1",
+  "task_id": "AGORA-TAIWAN-MARKET-SESSION-FRESHNESS-V1-20260829",
+  "generated_at": "2026-08-29T21:30:00Z",
+  "owner": "Claude",
+  "reviewer": "Antigravity",
+  "status": "implementation_ready_for_review",
+  "acceptance_state": "exact_head_review_and_post_merge_release_required",
+  "immutable_failure_reproduction": {
+    "workflow_run_id": 33272385942,
+    "workflow_url": "https://github.com/ajoe734/pantheon/actions/runs/33272385942",
+    "conclusion": "failure",
+    "failed_component": "deploy_nonprod_vm.sh verify_bounded_source_refresh_readback",
+    "observed_failure": "active paper snapshot is outside 24h for 2330.TW: event_time=2026-08-28T05:30:00Z age_seconds>86400",
+    "root_cause": "A fixed 24h max-age check compared now (Saturday) against the latest official Friday TWSE/TPEx close, which cannot have a newer official close until the next trading session, so the deploy readback gate and Agora operational readiness both fail-closed on a market condition (weekend) rather than a real staleness or lineage defect."
+  },
+  "diagnosis": {
+    "cause": "market_snapshot_admission.admit_market_snapshot, the deploy script's inline readback check, and services/control-plane/bff/agora/operational_readiness.py each compared age_seconds against a flat max_age_seconds/sla_seconds with no notion of Asia/Taipei trading sessions, weekends, or official market holidays.",
+    "constraints_preserved": [
+      "Non-Taiwan symbols keep the unchanged flat max_age_seconds behavior in admit_market_snapshot and operational_readiness.",
+      "Weekday staleness (a later official session already closed), a stale refresh receipt, non-official lineage, and future event/observation times remain fail-closed with typed reason codes.",
+      "No new provider egress, fixture data, or bypass of the minimum-closes / lineage checks."
+    ]
+  },
+  "implementation": {
+    "anchor_commit": "pending_task_commit",
+    "base_commit": "44895a282cba99640861ad344775d904c051e565",
+    "shared_rule": {
+      "module": "services/execution/market_snapshot_admission.py",
+      "functions": [
+        "is_taiwan_symbol",
+        "evaluate_taiwan_market_freshness",
+        "lookup_official_tw_holiday"
+      ],
+      "venue_timezone": "Asia/Taipei (UTC+8)",
+      "session_close_local": "13:30",
+      "rule": "A Taiwan official close is admitted when the gap between its event_time and now is fully explained by weekends and/or governed OFFICIAL_TW_MARKET_HOLIDAYS entries (each citing an announcing authority), and the refresh receipt (observed_at) is within max_refresh_age_seconds of now, and the lineage carries an official tw-official:/tw-twse-tpex-official-market marker. Any weekday in the gap with no evidence is treated as an ordinary trading day (fail-closed stale); a lookup that raises or returns the CALENDAR_EVIDENCE_UNVERIFIABLE sentinel fails closed as unverifiable instead of silently guessing.",
+      "typed_reason_codes": [
+        "market_input_stale",
+        "market_input_stale_refresh",
+        "market_input_calendar_unverifiable",
+        "market_input_non_official_lineage",
+        "market_input_invalid"
+      ]
+    },
+    "call_sites": [
+      {
+        "site": "services/execution/lean_runtime/paper_signal_producer.py",
+        "change": "none required; it already calls the shared admit_market_snapshot, which now internally routes Taiwan symbols through evaluate_taiwan_market_freshness."
+      },
+      {
+        "site": "services/paper_fleet_reconciler/paper_fleet_reconciler.py",
+        "change": "none required; _check_market_admission already delegates to the shared admit_market_snapshot."
+      },
+      {
+        "site": "services/control-plane/bff/agora/operational_readiness.py",
+        "change": "_evaluate_source now imports evaluate_taiwan_market_freshness/is_taiwan_symbol/parse_rfc3339 from market_snapshot_admission and routes Taiwan-symbol snapshots through the same rule instead of the flat age_seconds > sla_seconds comparison; non-Taiwan snapshots are unchanged."
+      },
+      {
+        "site": "scripts/deploy_nonprod_vm.sh",
+        "change": "verify_bounded_source_refresh_readback's inline Python readback check imports evaluate_taiwan_market_freshness/is_taiwan_symbol and replaces the flat 'outside 24h' SystemExit for Taiwan symbols with the shared rule; the future-time (-300s) guard and the official-lineage check are unchanged."
+      }
+    ]
+  },
+  "validation": {
+    "syntax": {
+      "commands": [
+        "git diff --check",
+        "bash -n scripts/deploy_nonprod_vm.sh",
+        ".venv-pantheon/bin/python3 -m py_compile services/execution/market_snapshot_admission.py services/execution/lean_runtime/test_paper_signal_producer.py services/paper_fleet_reconciler/test_paper_fleet_reconciler.py services/control-plane/bff/agora/operational_readiness.py services/control-plane/bff/agora/test_operational_readiness.py scripts/test_source_ingest_deploy_diagnostics_contract.py"
+      ],
+      "result": "passed"
+    },
+    "focused_admission_producer_fleet_readiness_source_deploy": {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/execution/lean_runtime/test_paper_signal_producer.py services/paper_fleet_reconciler/test_paper_fleet_reconciler.py services/source_ingestion/tests/test_latest_market_snapshot.py services/control-plane/bff/agora/test_operational_readiness.py scripts/test_source_ingest_deploy_diagnostics_contract.py",
+      "result": "107 passed, 1 warning",
+      "warning": "existing Starlette TestClient deprecation warning only"
+    },
+    "new_deterministic_taiwan_scenarios": [
+      "Friday close admitted on Saturday (weekend gap, no calendar evidence needed).",
+      "Multi-day official Lunar New Year holiday span admitted with governed calendar evidence.",
+      "Friday close rejected as market_input_stale once Monday's own session has closed.",
+      "Stale refresh receipt (observed_at older than max_refresh_age_seconds) rejected as market_input_stale_refresh.",
+      "Future event_time rejected as market_input_invalid.",
+      "Non-official lineage rejected as market_input_non_official_lineage.",
+      "Unverifiable calendar evidence (lookup sentinel) rejected as market_input_calendar_unverifiable.",
+      "Non-Taiwan symbol (AAPL.US) with an identical multi-day gap keeps the unchanged flat max_age_seconds stale rejection."
+    ],
+    "environment_note": "services/execution/lean_runtime/test_paper_runtime_smoke.py and test_devloop_wire.py fail in this sandbox on an unrelated pre-existing '/data' read-only filesystem OSError; reproduced identically on the unmodified base commit via a temporary git stash before/after this task's changes, confirming no regression from this change."
+  },
+  "release_closeout_gate": {
+    "status": "pending_exact_head_review_merge_and_release",
+    "success_claimed": false,
+    "required_backend": "the Pantheon dev merge commit containing this manifest and the reviewed task head",
+    "required_frontend": "5ffee3db8c2b37b4070d43d091ed4207ef5d70e5",
+    "required_proofs": [
+      "The exact merged backend is deployed under the bounded source-refresh profile.",
+      "A fresh canonical source state with at least two distinct real TWSE/TPEx closes produces a healthy paper-signal-producer tick with no fixture or synthetic prices.",
+      "The Taiwan market-session freshness rule admits the latest official close on a weekend/holiday deploy while weekday staleness, stale refresh, missing calendar evidence, non-official lineage, and future timestamps remain fail-closed.",
+      "All 28 hosted backend components and the exact frontend identity pass AGC-14 acceptance."
+    ]
+  },
+  "agc_14": {
+    "blocked_task_id": "AGORA-AGC-14-HOSTED-DEMO-AUTHENTIC-V5-20260829",
+    "status": "implementation_ready_release_evidence_pending",
+    "resume_contract": "Resume only with the exact backend dev merge and frontend 5ffee3db8c2b37b4070d43d091ed4207ef5d70e5 after immutable hosted acceptance."
+  }
+}

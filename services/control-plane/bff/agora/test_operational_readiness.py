@@ -289,3 +289,64 @@ def test_operational_readiness_with_auth_header(client: TestClient, readiness_se
     body = resp.json()
     assert body["data"]["status"] == "ok"
     assert body["meta"]["requiredForAuthentication"] is False
+
+
+def test_operational_readiness_tw_friday_close_fresh_on_saturday(
+    readiness_service: AgoraOperationalReadinessService,
+) -> None:
+    """A valid Friday official TWSE close still reads 'fresh' on Saturday,
+    via the same governed Taiwan market-session freshness rule used by
+    execution admission, instead of the flat 86400s SLA comparison."""
+    readiness_service.set_source_snapshot({
+        "snapshot_id": "mss-tw-readiness-001",
+        "source_instance_id": "src-tw-twse-2330",
+        "symbol": "2330.TWSE",
+        "event_time": "2026-08-28T05:30:00Z",
+        "observed_at": "2026-08-29T11:00:00Z",
+        "sla_seconds": 86400,
+        "lineage": {
+            "source_ids": ["tw-official:tw_price_daily:TWSE:2330:checksummed"],
+            "connector_ids": ["tw-twse-tpex-official-market"],
+        },
+    })
+    readiness_service.set_signal_producer({
+        "status": "ok",
+        "consumed_snapshot_id": "mss-tw-readiness-001",
+        "enqueued": 3,
+    })
+
+    envelope = readiness_service.compose_readiness(now_iso="2026-08-29T12:00:00Z")
+    data = envelope.data
+
+    assert data.source.freshness == "fresh"
+    assert data.status == "ok"
+
+
+def test_operational_readiness_tw_friday_close_stale_after_monday_session(
+    readiness_service: AgoraOperationalReadinessService,
+) -> None:
+    """The same Friday close is stale once Monday's own official session
+    has closed, matching the fail-closed weekday behavior of admission."""
+    readiness_service.set_source_snapshot({
+        "snapshot_id": "mss-tw-readiness-002",
+        "source_instance_id": "src-tw-twse-2330",
+        "symbol": "2330.TWSE",
+        "event_time": "2026-08-28T05:30:00Z",
+        "observed_at": "2026-08-31T05:45:00Z",
+        "sla_seconds": 86400,
+        "lineage": {
+            "source_ids": ["tw-official:tw_price_daily:TWSE:2330:checksummed"],
+            "connector_ids": ["tw-twse-tpex-official-market"],
+        },
+    })
+    readiness_service.set_signal_producer({
+        "status": "ok",
+        "consumed_snapshot_id": "mss-tw-readiness-002",
+        "enqueued": 0,
+    })
+
+    envelope = readiness_service.compose_readiness(now_iso="2026-08-31T06:00:00Z")
+    data = envelope.data
+
+    assert data.source.freshness == "stale"
+    assert data.status == "degraded"
