@@ -1819,6 +1819,87 @@ class SharedPlannerContractTests(unittest.TestCase):
         self.assertTrue(decision["eligible"])
         self.assertEqual(decision["reason"], supervisor.REASON_REVIEW_READY)
 
+    def test_same_cycle_review_planning_uses_distinct_available_worker_slots(self) -> None:
+        """A pure plan must reserve its first selected endpoint in memory.
+
+        Otherwise two review intents created in one scheduler tick both bind to
+        ``codex2_1``; the second is rejected as ``endpoint_busy`` during
+        reservation even though ``codex2_2`` is idle.
+        """
+
+        self.config["agents"]["codex2"]["worker_slots"] = [
+            "codex2_1",
+            "codex2_2",
+        ]
+        for slot in ("codex2_1", "codex2_2"):
+            self.config["agents"][slot] = {
+                "id": slot,
+                "display_name": "Codex2",
+                "provider": "codex2",
+                "adapter": "codex",
+                "dispatch_slot_for": "codex2",
+                "slot_id": slot.replace("_", "-"),
+            }
+        first = task_fixture("REVIEW-1", status="review")
+        first["delivery_binding"] = review_admission_binding("REVIEW-1")
+        second = task_fixture("REVIEW-2", status="review")
+        second["delivery_binding"] = review_admission_binding("REVIEW-2")
+        state = with_healthy_delivery_health(
+            self.config,
+            {"workers": {}, "queue": {"events": {}}, "seen_event_keys": {}},
+        )
+        planned: list[dict[str, object]] = []
+
+        changed = supervisor.dispatch_ready_tasks(
+            self.config,
+            state,
+            agent_ids_override=["codex2"],
+            status_snapshot={"tasks": [first, second]},
+            queue_events_snapshot=[],
+            live_total_snapshot=0,
+            event_sink=lambda _config, event: planned.append(event) or True,
+        )
+
+        self.assertTrue(changed)
+        self.assertEqual([event["task_id"] for event in planned], ["REVIEW-1", "REVIEW-2"])
+        self.assertEqual(
+            [event["delivery_endpoint_id"] for event in planned],
+            ["codex2_1", "codex2_2"],
+        )
+
+    def test_same_cycle_review_planning_does_not_overcommit_one_worker_slot(self) -> None:
+        self.config["agents"]["codex2"]["worker_slots"] = ["codex2_1"]
+        self.config["agents"]["codex2_1"] = {
+            "id": "codex2_1",
+            "display_name": "Codex2",
+            "provider": "codex2",
+            "adapter": "codex",
+            "dispatch_slot_for": "codex2",
+            "slot_id": "codex2-1",
+        }
+        first = task_fixture("REVIEW-1", status="review")
+        first["delivery_binding"] = review_admission_binding("REVIEW-1")
+        second = task_fixture("REVIEW-2", status="review")
+        second["delivery_binding"] = review_admission_binding("REVIEW-2")
+        state = with_healthy_delivery_health(
+            self.config,
+            {"workers": {}, "queue": {"events": {}}, "seen_event_keys": {}},
+        )
+        planned: list[dict[str, object]] = []
+
+        supervisor.dispatch_ready_tasks(
+            self.config,
+            state,
+            agent_ids_override=["codex2"],
+            status_snapshot={"tasks": [first, second]},
+            queue_events_snapshot=[],
+            live_total_snapshot=0,
+            event_sink=lambda _config, event: planned.append(event) or True,
+        )
+
+        self.assertEqual([event["task_id"] for event in planned], ["REVIEW-1"])
+        self.assertEqual(planned[0]["delivery_endpoint_id"], "codex2_1")
+
     def test_dependency_must_be_done(self) -> None:
         task = task_fixture(depends_on=["DEP"])
         status = {"tasks": [task, task_fixture("DEP", status="in_progress")]}
@@ -2301,6 +2382,77 @@ class SharedPlannerContractTests(unittest.TestCase):
             supervisor.task_review_reopen_revision(task_2, activity_events=activity_events),
             1,
         )
+
+    def test_integration_resume_redispatches_owner_finalize_once(self) -> None:
+        task = task_fixture(
+            task_id="TASK-1",
+            status="review_approved",
+            owner="Codex",
+            reviewer="Codex2",
+        )
+        task["delivery_binding"] = review_admission_binding()
+        task_map = {"TASK-1": task}
+        state = with_healthy_delivery_health(
+            self.config, {"workers": {}, "queue": {"events": {}}}
+        )
+        resolver = supervisor.task_resolver_for_config(self.config, task_map)
+        settings = supervisor.ready_dispatch_settings(self.config)
+
+        initial_event = supervisor.build_dispatch_event(
+            task,
+            "Codex",
+            supervisor.REASON_OWNED_FINALIZE,
+            resolver,
+            activity_events=[],
+        )
+        seen_event_keys = {initial_event["key"]: "2026-08-24T12:00:00Z"}
+
+        def decide(activity_events: list[dict[str, object]]) -> dict[str, object]:
+            return supervisor.evaluate_dispatch_candidate(
+                self.config,
+                state,
+                {"tasks": [task]},
+                task,
+                "Codex",
+                resolver,
+                settings=settings,
+                active_task_ids=set(),
+                pending_task_ids=set(),
+                pending_event_keys=set(),
+                agent_loads={},
+                active_account_loads={},
+                pending_account_loads={},
+                seen_event_keys=seen_event_keys,
+                checked_at="2026-08-24T12:00:05Z",
+                cooldown_seconds=900,
+                activity_events=activity_events,
+            )
+
+        self.assertEqual(
+            decide([])["first_blocking_gate"], "unchanged_cooldown"
+        )
+
+        resumed_events = [
+            {
+                "ts": "2026-08-24T12:00:04Z",
+                "agent": "Human/Ops",
+                "type": "integration_resumed",
+                "task_id": "TASK-1",
+            }
+        ]
+        resumed = decide(resumed_events)
+        self.assertTrue(resumed["eligible"])
+        self.assertEqual(resumed["reason"], supervisor.REASON_OWNED_FINALIZE)
+        self.assertEqual(resumed["event"]["integration_resume_revision"], 1)
+        self.assertEqual(
+            resumed["event"]["task"]["integration_resume_revision"], 1
+        )
+        self.assertNotEqual(resumed["event"]["key"], initial_event["key"])
+
+        seen_event_keys[resumed["event"]["key"]] = "2026-08-24T12:00:05Z"
+        repeated = decide(resumed_events)
+        self.assertFalse(repeated["eligible"])
+        self.assertEqual(repeated["first_blocking_gate"], "unchanged_cooldown")
 
     def test_review_reopen_advances_reopen_revision_and_redispatches_owner_once(self) -> None:
         task = task_fixture(task_id="TASK-1", status="in_progress", owner="Codex", reviewer="Codex2")

@@ -1490,6 +1490,7 @@ def build_delivery_admission_snapshot(
     pending_resource_loads: Mapping[str, int] | None = None,
     resource_limits: Mapping[str, int] | None = None,
     live_total: int | None = None,
+    provisional_reserved_endpoint_ids: set[str] | None = None,
 ) -> rewrite_dispatch_admission.AdmissionSnapshot:
     """Build the shared immutable input used by plan and queue delivery."""
 
@@ -1508,6 +1509,13 @@ def build_delivery_admission_snapshot(
         # Queue rows predate V2 endpoint binding.  Their logical target still
         # reserves capacity, but only new V2 events reserve an exact slot.
         endpoint = normalize_agent_id(str(record.get("delivery_endpoint_id") or ""))
+        if endpoint:
+            reserved_endpoints.add(endpoint)
+    # Planning uses an in-memory event sink and deliberately does not write
+    # queue rows. Preserve physical-slot choices already made in this plan so
+    # the next candidate cannot select the same exclusive endpoint again.
+    for endpoint_id in provisional_reserved_endpoint_ids or set():
+        endpoint = normalize_agent_id(str(endpoint_id or ""))
         if endpoint:
             reserved_endpoints.add(endpoint)
 
@@ -1574,6 +1582,7 @@ def evaluate_task_delivery_admission(
     resource_limits: Mapping[str, int] | None = None,
     live_total: int | None = None,
     requested_endpoint_id: str | None = None,
+    provisional_reserved_endpoint_ids: set[str] | None = None,
 ) -> rewrite_dispatch_admission.DispatchDecision:
     """Run the exact same task/health/capacity predicate in plan and delivery."""
 
@@ -1610,6 +1619,7 @@ def evaluate_task_delivery_admission(
             pending_resource_loads=pending_resource_loads,
             resource_limits=resource_limits,
             live_total=live_total,
+            provisional_reserved_endpoint_ids=provisional_reserved_endpoint_ids,
         ),
         requested_endpoint_id=requested_endpoint_id,
     )
@@ -8052,6 +8062,7 @@ GOVERNANCE_LIFECYCLE_EVENT_TYPES = frozenset(
         "reopen",
         "handoff",
         "review_approved",
+        "integration_resumed",
         "blocker",
         "done",
         "supersede",
@@ -14278,6 +14289,43 @@ def task_review_reopen_revision(
     return counted
 
 
+def task_integration_resume_revision(
+    task: Mapping[str, Any] | None,
+    activity_events: list[dict[str, Any]] | None = None,
+    *,
+    config: dict[str, Any] | None = None,
+) -> int:
+    """Return the number of exact reviewed integrations restored for ``task``.
+
+    A Human/Ops ``resume_integration`` preserves the existing delivery and
+    approval bindings; it deliberately does not change the assignment
+    generation.  Its owner-finalize dispatch must nevertheless be a fresh
+    delivery request.  Otherwise the cooldown key from the failed integration
+    attempt suppresses the restored closeout for the whole cooldown window.
+
+    The canonical ``integration_resumed`` activity event is already append-only
+    and task-scoped, so it is the single source of this revision.  Once that
+    fresh dispatch has been attempted, its new key is again protected by the
+    ordinary cooldown gate.
+    """
+
+    if activity_events is None and config is not None:
+        activity_events = recent_governance_activity_events(config)
+    if not isinstance(activity_events, (list, tuple)) or not isinstance(task, Mapping):
+        return 0
+    task_id = str(task.get("id") or "").strip()
+    if not task_id:
+        return 0
+    return sum(
+        1
+        for event in activity_events
+        if isinstance(event, Mapping)
+        and str(event.get("task_id") or "").strip() == task_id
+        and str(event.get("type") or "").strip().lower()
+        == "integration_resumed"
+    )
+
+
 def ready_dispatch_signature(
     task: dict[str, Any],
     reason: str,
@@ -14293,8 +14341,7 @@ def ready_dispatch_signature(
     # Otherwise the checker recomputes a different key and discards the one
     # durable event before it can launch a worker.
     requeue_intent = task_review_requeue_record(task)
-    return json.dumps(
-        {
+    signature = {
             "delivery_binding_digest": rewrite_task_machine.delivery_binding_digest(task),
             "dependency_signature": task_dependency_signature(task, task_lookup),
             "depends_on": list(task.get("depends_on", []) or []),
@@ -14311,10 +14358,14 @@ def ready_dispatch_signature(
             "status": task.get("status"),
             "task_generation": task_generation(task),
             "task_id": task.get("id"),
-        },
-        sort_keys=True,
-        ensure_ascii=True,
-    )
+    }
+    if reason == REASON_OWNED_FINALIZE:
+        resume_revision = task_integration_resume_revision(
+            task, activity_events=activity_events, config=config
+        )
+        if resume_revision > 0:
+            signature["integration_resume_revision"] = resume_revision
+    return json.dumps(signature, sort_keys=True, ensure_ascii=True)
 
 
 def build_dispatch_event(
@@ -14334,6 +14385,13 @@ def build_dispatch_event(
     ]
     reopen_revision = task_review_reopen_revision(
         task, activity_events=activity_events, config=config
+    )
+    resume_revision = (
+        task_integration_resume_revision(
+            task, activity_events=activity_events, config=config
+        )
+        if reason == REASON_OWNED_FINALIZE
+        else 0
     )
     requeue_intent = task_review_requeue_intent(task)
     task_payload = {
@@ -14388,6 +14446,8 @@ def build_dispatch_event(
             task_payload[key] = task.get(key)
     if reopen_revision > 0:
         task_payload["review_reopen_revision"] = reopen_revision
+    if resume_revision > 0:
+        task_payload["integration_resume_revision"] = resume_revision
     if requeue_intent is not None:
         task_payload[REVIEW_REQUEUE_INTENT_KEY] = deepcopy(requeue_intent)
     recovery_pointer = task.get(WORKER_RECOVERY_TASK_KEY)
@@ -14413,6 +14473,8 @@ def build_dispatch_event(
     }
     if reopen_revision > 0:
         event["review_reopen_revision"] = reopen_revision
+    if resume_revision > 0:
+        event["integration_resume_revision"] = resume_revision
     if requeue_intent is not None:
         event["review_requeue_intent_id"] = requeue_intent["intent_id"]
     if recovery_receipt_id:
@@ -14443,6 +14505,7 @@ def evaluate_dispatch_candidate(
     cooldown_seconds: float,
     live_total: int | None = None,
     activity_events: list[dict[str, Any]] | None = None,
+    provisional_reserved_endpoint_ids: set[str] | None = None,
 ) -> dict[str, Any]:
     """Pure candidate decision shared by planning and late delivery.
 
@@ -14487,6 +14550,7 @@ def evaluate_dispatch_candidate(
         pending_resource_loads=pending_resource_loads,
         resource_limits=resource_limits,
         live_total=live_total,
+        provisional_reserved_endpoint_ids=provisional_reserved_endpoint_ids,
     )
     if not admission.eligible:
         reason_code = admission.reason.value if admission.reason is not None else "task_not_dispatchable"
@@ -14806,6 +14870,7 @@ def dispatch_ready_tasks(
         agent_ids = []
     considered = 0
     dispatches = 0
+    provisional_reserved_endpoint_ids: set[str] = set()
     refresh_demands = state.setdefault("delivery_health_refresh_demands", [])
     if not isinstance(refresh_demands, list):
         refresh_demands = []
@@ -14889,7 +14954,48 @@ def dispatch_ready_tasks(
 
         candidates.sort(key=lambda item: item[:2])
         occurrence_limit = min(available_slots, max_dispatches - dispatches)
-        for _, _, task, decision in candidates[:occurrence_limit]:
+        selected = 0
+        for _, _, task, _initial_decision in candidates:
+            if selected >= occurrence_limit or dispatches >= max_dispatches:
+                break
+            # Candidate discovery is intentionally side-effect free. Re-run
+            # the same admission predicate immediately before reservation so
+            # each accepted event contributes its exact endpoint to the
+            # remainder of this plan.
+            decision = evaluate_dispatch_candidate(
+                config,
+                state,
+                status,
+                task,
+                target_agent,
+                task_resolver,
+                settings=settings,
+                active_task_ids=active_task_ids,
+                pending_task_ids=pending_task_ids,
+                pending_event_keys=pending_event_keys,
+                agent_loads=agent_loads,
+                active_account_loads=active_quota_counts,
+                pending_account_loads=pending_quota_counts,
+                active_resource_loads=active_resource_counts,
+                pending_resource_loads=pending_resource_counts,
+                resource_limits=resource_limits,
+                seen_event_keys=seen,
+                checked_at=dispatch_started_at,
+                cooldown_seconds=unchanged_cooldown_seconds,
+                live_total=live_total,
+                activity_events=activity_events,
+                provisional_reserved_endpoint_ids=provisional_reserved_endpoint_ids,
+            )
+            if not decision["eligible"]:
+                for target in decision.get("health_refresh_targets", []) or []:
+                    if not isinstance(target, Mapping):
+                        continue
+                    scope = str(target.get("scope") or "")
+                    identity = str(target.get("id") or "")
+                    demand = {"scope": scope, "id": identity}
+                    if scope in {"endpoint", "account"} and identity and demand not in refresh_demands:
+                        refresh_demands.append(demand)
+                continue
             req_resources = task_execution_resources(task)
             if any(
                 active_resource_counts.get(res, 0) + pending_resource_counts.get(res, 0)
@@ -14915,8 +15021,12 @@ def dispatch_ready_tasks(
                 pending_quota_counts[quota_group] = pending_quota_counts.get(quota_group, 0) + 1
             for res in req_resources:
                 pending_resource_counts[res] = pending_resource_counts.get(res, 0) + 1
+            endpoint_id = normalize_agent_id(str(decision.get("delivery_endpoint_id") or ""))
+            if endpoint_id:
+                provisional_reserved_endpoint_ids.add(endpoint_id)
             changed = True
             dispatches += 1
+            selected += 1
 
     if sequence and considered and not agent_ids_override:
         dispatch_state["dispatch_cursor"] = (cursor + considered) % len(sequence)

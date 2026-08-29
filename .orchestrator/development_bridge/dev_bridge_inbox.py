@@ -46,6 +46,9 @@ FAILED_RECOVERY_SCHEMA = "pantheon.assistant-dev-packet-failed-recovery.v1"
 FAILED_RECOVERY_REARM_SCHEMA = (
     "pantheon.assistant-dev-packet-failed-recovery-rearm.v1"
 )
+PRE_VERIFIER_RECOVERABLE_ERRORS = frozenset(
+    {"BRIDGE_SIGNING_PUBLIC_KEYS_JSON is required"}
+)
 
 
 def _now() -> str:
@@ -262,6 +265,18 @@ def _validate_recovery_receipt_payload(
     result_packet_id = (
         str(result.get("packetId") or "") if isinstance(result, Mapping) else ""
     )
+    # A process can fail before dispatch starts when its public verifier map
+    # was omitted from the launch environment. The recovery path verifies the
+    # failed leaf's signature and digest before reaching this receipt check, so
+    # this narrowly identified pre-verifier receipt is safe to rearm. Every
+    # other failed receipt remains bound to dispatcher audit references.
+    if (
+        expected_status == "failed"
+        and status == "error"
+        and not isinstance(result, Mapping)
+        and str(receipt.get("error") or "") in PRE_VERIFIER_RECOVERABLE_ERRORS
+    ):
+        return dict(receipt)
     if result_packet_id != packet_id or observed_digest != packet_digest_value:
         raise ValueError(
             "Bridge failed recovery receipt does not bind the exact signed packet"
