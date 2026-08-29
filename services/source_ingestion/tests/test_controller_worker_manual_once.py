@@ -141,6 +141,7 @@ def _actual(state_seq: int = 1) -> dict[str, Any]:
         "active_connector_count": 1,
         "total_source_records": 10,
         "frontier_backlog": 0,
+        "frontier_backlog_by_connector": {},
         "max_lag_seconds": 0,
         "unresolved_dlq_count": 0,
         "controller_state": {
