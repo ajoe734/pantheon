@@ -1,7 +1,7 @@
 {
   "schema_version": "pantheon.agora-taiwan-market-session-freshness-review.v2",
   "task_id": "AGORA-TAIWAN-MARKET-SESSION-FRESHNESS-V1-20260829",
-  "generated_at": "2026-08-29T22:48:09Z",
+  "generated_at": "2026-08-29T23:26:00Z",
   "owner": "Codex2",
   "reviewer": "Codex",
   "status": "corrective_implementation_ready_for_exact_head_review",
@@ -10,8 +10,14 @@
     "original_pr": 5416,
     "original_merge_commit": "394eb050124d763db14ff89d2da01da70a75fb94",
     "corrective_pr": 5417,
-    "rejected_head": "723e57ce41e68196b330387be021e1a8cdd925dd",
-    "corrective_anchor_commit": "8c6c42d28",
+    "rejected_heads": [
+      "723e57ce41e68196b330387be021e1a8cdd925dd",
+      "5d3493c9feff4d2b818412d3269c62d1ddc94aea"
+    ],
+    "corrective_anchor_commits": [
+      "8c6c42d28",
+      "e15733d45"
+    ],
     "exact_review_head": "bound_by_governed_handoff_after_this_manifest_is_committed"
   },
   "immutable_failure_reproduction": {
@@ -38,7 +44,7 @@
     "governed_version": "twse-2026-lny-v1",
     "venue": "TWSE",
     "timezone": "Asia/Taipei",
-    "canonical_payload_sha256": "7690e51b3231f1fbde5df4ca7bb8d090b6252b70419672bce5a7969c11df41a3",
+    "canonical_payload_sha256": "55b2e23b9bd30af666a99c98da2dbbfad568dcd655631b1c6347d12ee8381596",
     "canonical_payload": {
       "authority": "Taiwan Stock Exchange 115 年市場開休市日期",
       "coverage_start": "2026-02-11",
@@ -72,6 +78,7 @@
         }
       },
       "trading_days": [
+        "2026-02-11",
         "2026-02-23"
       ]
     }
@@ -96,6 +103,14 @@
     {
       "finding": "event_time, observed_at and fetched_at allowed up to 300 seconds in the future.",
       "resolution": "all three reject any positive future offset; the deployment inline source gate also changed from age_seconds < -300 to age_seconds < 0."
+    },
+    {
+      "finding": "The evaluator could admit a fabricated Saturday event trade date because it checked only sessions after the event date.",
+      "resolution": "Taiwan event dates now reject deterministic weekends; when valid governed evidence covers the event date it must contain an explicit trading record and an explicit closure is rejected as market_input_invalid. Exact Saturday, governed-holiday, and missing-event-record tests cover the gate."
+    },
+    {
+      "finding": "calendar_evidence existed only in consumer fixtures; LatestMarketSnapshot persisted and published no production transport for it.",
+      "resolution": "Source now canonically JSON-normalizes optional evidence from the exact normalized row, includes it in the checksummed snapshot state and snapshot identity, persists it, and returns it from to_public_dict()/the Source endpoint. A repeated identical-close ingest records a new observed_at refresh receipt instead of retaining stale receipt time."
     }
   ],
   "shared_decision": {
@@ -123,15 +138,15 @@
   },
   "validation": {
     "focused_command": ".venv-pantheon/bin/python3 -m pytest -q services/execution/lean_runtime/test_paper_signal_producer.py services/paper_fleet_reconciler/test_paper_fleet_reconciler.py services/source_ingestion/tests/test_latest_market_snapshot.py services/control-plane/bff/agora/test_operational_readiness.py scripts/test_source_ingest_deploy_diagnostics_contract.py",
-    "focused_result": "129 passed, 6 subtests passed, 1 existing Starlette deprecation warning",
+    "focused_result": "136 passed, 6 subtests passed, 2 existing Starlette deprecation warnings (executed as five focused suites)",
     "syntax_commands": [
-      "python3 -m py_compile services/execution/market_snapshot_admission.py",
+      ".venv-pantheon/bin/python3 -m py_compile services/execution/market_snapshot_admission.py services/source_ingestion/requirement_state.py",
       "bash -n scripts/deploy_nonprod_vm.sh",
       "git diff --check"
     ],
     "syntax_result": "passed",
     "broader_command": ".venv-pantheon/bin/python3 -m pytest -q services/execution/lean_runtime services/paper_fleet_reconciler services/source_ingestion/tests services/control-plane/bff/agora",
-    "broader_result": "1403 passed, 20 skipped, 40 subtests passed, 10 failed, 9 warnings",
+    "broader_result": "historical pre-reopen run only; not used as evidence for this new Source transport head",
     "broader_failure_classification": {
       "task_regressions": 0,
       "unchanged_modules": [
@@ -148,6 +163,10 @@
       "scope_proof": "No broader-failure module is changed by this corrective PR relative to origin/dev."
     },
     "reviewer_required_negative_cases": [
+      "fabricated Saturday event trade date is rejected",
+      "governed holiday event trade date is rejected and a covered event date lacking an explicit trading record is unverifiable",
+      "checksummed Source persisted state and /api/source-ingest/snapshots/latest return calendar_evidence; a new receipt for unchanged closes replaces observed_at",
+      "the Source public snapshot shape admits through paper-signal-producer, paper-fleet-reconciler and Agora readiness on the LNY span; the deploy contract consumes snapshot calendar_evidence",
       "tampered holiday payload retaining the old claimed checksum is rejected",
       "empty-payload trusted pin is rejected",
       "actual empty calendar content with holidays={}, trading_days=[], and sessions absent is rejected as market_input_calendar_unverifiable",
@@ -162,7 +181,7 @@
     "required_backend": "the Pantheon dev merge containing this manifest and the independently approved corrective head",
     "required_frontend": "5ffee3db8c2b37b4070d43d091ed4207ef5d70e5",
     "required_proofs": [
-      "A fresh canonical source state with at least two distinct real TWSE/TPEx closes produces a healthy paper-signal-producer tick without fixture, synthetic, copied or manually written runtime prices.",
+      "A fresh hosted canonical source state with at least two distinct real TWSE/TPEx closes produces a healthy paper-signal-producer tick without fixture, synthetic, copied or manually written runtime prices. Local Source persistence/API and consumer transport tests are not presented as hosted proof.",
       "The bounded source-refresh deployment gate admits the latest official close on a weekend or evidenced holiday while weekday staleness, stale refresh, missing evidence, non-official lineage and future times remain fail-closed.",
       "AGORA-AGC-14-HOSTED-DEMO-AUTHENTIC-V5-20260829 resumes with the exact backend merge and frontend identity for 28-component hosted acceptance."
     ]
