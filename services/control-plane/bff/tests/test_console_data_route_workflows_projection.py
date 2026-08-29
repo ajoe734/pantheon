@@ -112,7 +112,7 @@ def test_console_data_route_workflows_projected_stores_are_ok() -> None:
             ("/bff/route-policies", "route_policies", "policy_id", "control-plane.default"),
             ("/bff/workflows", "workflow_templates", "workflow_id", "pantheon.review"),
             ("/bff/hooks", "hook_registry", "hook_id", "cron.pantheon.review"),
-            ("/bff/jobs", "jobs", "job_id", "research_orchestrator:rrun-console-001"),
+            ("/bff/jobs", "job_list", "job_id", "research_orchestrator:rrun-console-001"),
         )
         for path, surface_key, id_key, expected_id in expectations:
             response = client.get(path, headers=HEADERS)

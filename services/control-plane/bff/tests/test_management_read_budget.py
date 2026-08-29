@@ -20,7 +20,10 @@ os.environ.setdefault("PANTHEON_BFF_AUTH_STUB", "true")
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 import main as bff_main  # noqa: E402
-from ports import ReadSurfacePorts, create_in_memory_read_surface_ports  # noqa: E402
+from ports import ReadSurfacePorts  # noqa: E402
+from rebalance_authority_test_support import (  # noqa: E402
+    create_market_persona_projection_test_double,
+)
 
 
 HEADERS = {"Authorization": "Bearer pfg-mgmt-read-budget:operator"}
@@ -31,7 +34,7 @@ def _isolated_store(**factory_kwargs: Any) -> Iterator[ReadSurfacePorts]:
     with tempfile.TemporaryDirectory(prefix="pfg_mgmt_read_budget_") as td:
         original = bff_main.read_store
         del td
-        store = create_in_memory_read_surface_ports(**factory_kwargs)
+        store = create_market_persona_projection_test_double(**factory_kwargs)
         bff_main.read_store = store
         try:
             yield store

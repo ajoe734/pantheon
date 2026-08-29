@@ -26,7 +26,55 @@ APPROVER_HEADERS = {"Authorization": "Bearer op-approval:approver"}
 SECOND_OPERATOR_HEADERS = {"Authorization": "Bearer op-3:operator"}
 
 
-class PplProjectionTestDouble(ReadSurfacePorts):
+class MarketPersonaProjectionTestDouble(ReadSurfacePorts):
+    """Explicit BFF projection double for seeded, in-memory port records.
+
+    Production BFF reads can request market-persona catalog defaults.  This
+    fixture carries only records deliberately seeded by a test, so the flag is
+    accepted at the BFF boundary but must not synthesize unseeded catalog data.
+    """
+
+    @staticmethod
+    def _without_market_persona_defaults(kwargs: Dict[str, Any]) -> Dict[str, Any]:
+        compatible_kwargs = dict(kwargs)
+        compatible_kwargs.pop("include_market_persona_defaults", None)
+        return compatible_kwargs
+
+    def list_personas(self, **kwargs: Any) -> list[Dict[str, Any]]:
+        return super().list_personas(**self._without_market_persona_defaults(kwargs))
+
+    def list_capital_pools(self, **kwargs: Any) -> list[Dict[str, Any]]:
+        return super().list_capital_pools(**self._without_market_persona_defaults(kwargs))
+
+    def list_bindings(self, **kwargs: Any) -> list[Dict[str, Any]]:
+        return super().list_bindings(**self._without_market_persona_defaults(kwargs))
+
+    def list_deployment_plans(self, **kwargs: Any) -> list[Dict[str, Any]]:
+        return super().list_deployment_plans(**self._without_market_persona_defaults(kwargs))
+
+    def list_runtime_bindings(self, **kwargs: Any) -> list[Dict[str, Any]]:
+        return super().list_runtime_bindings(**self._without_market_persona_defaults(kwargs))
+
+    def list_persona_league(self, **kwargs: Any) -> list[Dict[str, Any]]:
+        return super().list_persona_league(**self._without_market_persona_defaults(kwargs))
+
+
+def create_market_persona_projection_test_double(
+    **kwargs: Any,
+) -> MarketPersonaProjectionTestDouble:
+    """Create the explicit BFF-compatible projection fixture used by this task."""
+    ports = create_in_memory_read_surface_ports(**kwargs)
+    return MarketPersonaProjectionTestDouble(
+        operations_consultation=ports.operations_consultation,
+        persona_capital_runtime=ports.persona_capital_runtime,
+        ooda_management=ports.ooda_management,
+        research_knowledge_source=ports.research_knowledge_source,
+        lifecycle_telemetry_governance=ports.lifecycle_telemetry_governance,
+        persona_training=ports.persona_training,
+    )
+
+
+class PplProjectionTestDouble(MarketPersonaProjectionTestDouble):
     """Explicit mutable PPL fixture over narrow read ports.
 
     The double exposes only the named Persona/Capital/Runtime fixture writes

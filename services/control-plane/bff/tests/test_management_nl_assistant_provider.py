@@ -28,7 +28,7 @@ from management_nl_command_idempotency import (
 )
 from models import OperatorIdentity
 from openclaw_ops_client import OpenClawOpsClient, OpenClawOpsClientError
-from ports import create_in_memory_read_surface_ports
+from rebalance_authority_test_support import create_market_persona_projection_test_double
 
 
 OPERATOR_HEADERS = {"Authorization": "Bearer asst-bff-002:operator"}
@@ -284,7 +284,7 @@ def _seeded_client(tmp_path: Path, monkeypatch) -> TestClient:
     monkeypatch.setenv("PANTHEON_BFF_TENANT_ID", "tenant-alpha")
     monkeypatch.setenv("PANTHEON_BFF_ALLOWED_TENANTS", "tenant-alpha,tenant-beta")
     monkeypatch.setenv("PANTHEON_MANAGEMENT_AI_AUDIT_PATH", str(tmp_path / "management-ai-audit.jsonl"))
-    store = create_in_memory_read_surface_ports(
+    store = create_market_persona_projection_test_double(
         persona_capital_runtime_kwargs={
             "capital_pools": list(seeded_surfaces["capital_pools"].values()),
             "runtime_bindings": list(seeded_surfaces["runtime_bindings"].values()),
