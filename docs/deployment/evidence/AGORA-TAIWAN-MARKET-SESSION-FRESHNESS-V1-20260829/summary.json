@@ -1,122 +1,169 @@
 {
-  "schema_version": "pantheon.agora-taiwan-market-session-freshness-review.v1",
+  "schema_version": "pantheon.agora-taiwan-market-session-freshness-review.v2",
   "task_id": "AGORA-TAIWAN-MARKET-SESSION-FRESHNESS-V1-20260829",
-  "generated_at": "2026-08-29T22:06:00Z",
-  "owner": "Antigravity2",
-  "reviewer": "Antigravity",
-  "status": "implementation_ready_for_review",
-  "acceptance_state": "exact_head_review_and_post_merge_release_required",
+  "generated_at": "2026-08-29T22:38:35Z",
+  "owner": "Codex",
+  "reviewer": "Codex2",
+  "status": "corrective_implementation_ready_for_exact_head_review",
+  "acceptance_state": "exact_head_review_merge_and_post_merge_release_proof_required",
+  "delivery": {
+    "original_pr": 5416,
+    "original_merge_commit": "394eb050124d763db14ff89d2da01da70a75fb94",
+    "corrective_pr": 5417,
+    "rejected_head": "723e57ce41e68196b330387be021e1a8cdd925dd",
+    "corrective_anchor_commit": "8c6c42d28",
+    "exact_review_head": "bound_by_governed_handoff_after_this_manifest_is_committed"
+  },
   "immutable_failure_reproduction": {
     "workflow_run_id": 33272385942,
     "workflow_url": "https://github.com/ajoe734/pantheon/actions/runs/33272385942",
+    "backend_sha": "9e9ab338ce0ede9c7c4c3686ff31bf63dc7ec35a",
+    "frontend_sha": "5ffee3db8c2b37b4070d43d091ed4207ef5d70e5",
     "conclusion": "failure",
+    "failed_job": "Deploy dev under shared environment lease",
+    "failed_step": "Deploy dev VM stack under lease",
     "failed_component": "deploy_nonprod_vm.sh verify_bounded_source_refresh_readback",
-    "observed_failure": "active paper snapshot is outside 24h for 2330.TW: event_time=2026-08-28T05:30:00Z age_seconds>86400",
-    "root_cause": "A fixed 24h max-age check compared now (Saturday) against the latest official Friday TWSE/TPEx close, which cannot have a newer official close until the next trading session, so the deploy readback gate and Agora operational readiness both fail-closed on a market condition (weekend) rather than a real staleness or lineage defect."
+    "log_observed_at": "2026-08-29T20:25:46.3775479Z",
+    "observed_failure": "active paper snapshot is outside 24h for 2330.TW: event_time=2026-08-28T00:00:00Z age_seconds=159946",
+    "source_snapshot_readback": "GET /api/source-ingest/snapshots/latest?symbol=2330.TW returned 200 immediately after the failure",
+    "root_cause": "The deployment gate compared the latest official Friday trade-date snapshot with a fixed 86400-second limit on Saturday even though no newer Taiwan cash-market close could exist."
   },
-  "diagnosis": {
-    "cause": "market_snapshot_admission.admit_market_snapshot, the deploy script's inline readback check, and services/control-plane/bff/agora/operational_readiness.py each compared age_seconds against a flat max_age_seconds/sla_seconds with no notion of Asia/Taipei trading sessions, weekends, or official market holidays.",
-    "constraints_preserved": [
-      "Non-Taiwan symbols keep the unchanged flat max_age_seconds behavior in admit_market_snapshot and operational_readiness.",
-      "Weekday staleness (an explicit newer validated session closed), a stale refresh receipt, missing/unverifiable calendar evidence, non-official lineage, and future event/observation/fetched times remain fail-closed with typed reason codes.",
-      "No new provider egress, fixture data, or bypass of the minimum-closes / lineage checks."
-    ]
-  },
-  "implementation": {
-    "anchor_commit": "pending_task_commit",
-    "base_commit": "44895a282cba99640861ad344775d904c051e565",
-    "shared_rule": {
-      "module": "services/execution/market_snapshot_admission.py",
-      "functions": [
-        "is_taiwan_symbol",
-        "evaluate_taiwan_market_freshness",
-        "validate_taiwan_calendar_evidence"
-      ],
-      "venue_timezone": "Asia/Taipei",
-      "valid_cash_venues": ["TWSE", "TPEX", "TWSE/TPEX"],
-      "session_close_local": "13:30",
-      "rule": "A Taiwan official close is admitted when the gap between its event_time and now is fully explained by weekends (deterministic, requiring no feed) and/or validated official exchange calendar evidence (citing TWSE/TPEx HTTPS source URL, authority, 64-hex SHA-256 matching external trusted pin, exact Asia/Taipei timezone, strict ISO dates, and non-future fetched time), and the refresh receipt (observed_at) is within max_refresh_age_seconds of now, and the lineage carries an official tw-official:/tw-twse-tpex-official-market marker. Any completed weekday in the gap requires an explicit validated session record; missing or unverifiable evidence returns market_input_calendar_unverifiable, and market_input_stale is returned only for an explicit validated trading session.",
-      "typed_reason_codes": [
-        "market_input_stale",
-        "market_input_stale_refresh",
-        "market_input_calendar_unverifiable",
-        "market_input_non_official_lineage",
-        "market_input_invalid"
+  "governed_calendar_evidence": {
+    "source_url": "https://www.twse.com.tw/holidaySchedule/holidaySchedule?response=json&queryYear=115",
+    "source_observed_at": "2026-08-29T22:38:35Z",
+    "source_response_sha256": "7fefe785ea7155a5004a2eb74486ad865ea5c4b5f02ee0cffbbdacb1ca2ea390",
+    "source_title": "115 年市場開休市日期",
+    "source_query_year": 2026,
+    "source_row_count": 27,
+    "governed_version": "twse-2026-lny-v1",
+    "venue": "TWSE",
+    "timezone": "Asia/Taipei",
+    "canonical_payload_sha256": "7690e51b3231f1fbde5df4ca7bb8d090b6252b70419672bce5a7969c11df41a3",
+    "canonical_payload": {
+      "authority": "Taiwan Stock Exchange 115 年市場開休市日期",
+      "coverage_start": "2026-02-11",
+      "coverage_end": "2026-02-23",
+      "market": "TW",
+      "venue": "TWSE",
+      "timezone": "Asia/Taipei",
+      "source_url": "https://www.twse.com.tw/holidaySchedule/holidaySchedule?response=json&queryYear=115",
+      "version": "twse-2026-lny-v1",
+      "holidays": {
+        "2026-02-12": {
+          "name": "市場無交易，僅辦理結算交割作業"
+        },
+        "2026-02-13": {
+          "name": "市場無交易，僅辦理結算交割作業"
+        },
+        "2026-02-16": {
+          "name": "農曆除夕及春節"
+        },
+        "2026-02-17": {
+          "name": "農曆除夕及春節"
+        },
+        "2026-02-18": {
+          "name": "農曆除夕及春節"
+        },
+        "2026-02-19": {
+          "name": "農曆除夕及春節"
+        },
+        "2026-02-20": {
+          "name": "農曆除夕及春節"
+        }
+      },
+      "trading_days": [
+        "2026-02-23"
       ]
+    }
+  },
+  "audit_findings_resolved": [
+    {
+      "finding": "Combined or inferred cash venue was accepted.",
+      "resolution": "venue is mandatory and must be exactly TWSE or TPEX; TWSE/TPEX, TAIFEX, TW, empty and missing values fail closed."
     },
-    "call_sites": [
-      {
-        "site": "services/execution/lean_runtime/paper_signal_producer.py",
-        "change": "none required; it already calls the shared admit_market_snapshot, which now internally routes Taiwan symbols through evaluate_taiwan_market_freshness."
-      },
-      {
-        "site": "services/paper_fleet_reconciler/paper_fleet_reconciler.py",
-        "change": "none required; _check_market_admission already delegates to the shared admit_market_snapshot."
-      },
-      {
-        "site": "services/control-plane/bff/agora/operational_readiness.py",
-        "change": "_evaluate_source now imports evaluate_taiwan_market_freshness/is_taiwan_symbol/parse_rfc3339 from market_snapshot_admission and routes Taiwan-symbol snapshots through the same rule (extracting calendar_evidence when present) instead of the flat age_seconds > sla_seconds comparison; non-Taiwan snapshots are unchanged."
-      },
-      {
-        "site": "scripts/deploy_nonprod_vm.sh",
-        "change": "verify_bounded_source_refresh_readback's inline Python readback check imports evaluate_taiwan_market_freshness/is_taiwan_symbol and replaces the flat 'outside 24h' SystemExit for Taiwan symbols with the shared rule (extracting calendar_evidence when present); the future-time (-300s) guard and the official-lineage check are unchanged."
-      }
-    ]
+    {
+      "finding": "The governed pin was SHA-256 of empty content.",
+      "resolution": "the default pin is the non-empty canonical TWSE 2026 Lunar New Year session payload digest; the empty-content digest is explicitly forbidden even when caller-supplied as a test trust pin."
+    },
+    {
+      "finding": "The claimed checksum was compared with a pin without hashing calendar content.",
+      "resolution": "validation normalizes actual holiday/trading records, serializes stable UTF-8 JSON, recomputes SHA-256, compares claim to computed digest, then compares computed digest to the external version pin."
+    },
+    {
+      "finding": "Missing or unknown versions could reuse any known digest.",
+      "resolution": "version is mandatory and trusted pins must be an exact version-to-SHA256 mapping; digest-membership fallback and unversioned expected_sha256 bypass were removed."
+    },
+    {
+      "finding": "event_time, observed_at and fetched_at allowed up to 300 seconds in the future.",
+      "resolution": "all three reject any positive future offset; the deployment inline source gate also changed from age_seconds < -300 to age_seconds < 0."
+    }
+  ],
+  "shared_decision": {
+    "module": "services/execution/market_snapshot_admission.py",
+    "functions": [
+      "admit_market_snapshot",
+      "evaluate_taiwan_market_freshness",
+      "validate_taiwan_calendar_evidence"
+    ],
+    "session_close_local": "13:30 Asia/Taipei",
+    "typed_reason_codes": [
+      "market_input_stale",
+      "market_input_stale_refresh",
+      "market_input_calendar_unverifiable",
+      "market_input_non_official_lineage",
+      "market_input_invalid"
+    ],
+    "consumers": [
+      "services/execution/lean_runtime/paper_signal_producer.py",
+      "services/paper_fleet_reconciler/paper_fleet_reconciler.py",
+      "services/control-plane/bff/agora/operational_readiness.py",
+      "scripts/deploy_nonprod_vm.sh"
+    ],
+    "non_taiwan_behavior": "unchanged fixed max_age_seconds admission"
   },
   "validation": {
-    "syntax": {
-      "commands": [
-        "git diff --check",
-        "bash -n scripts/deploy_nonprod_vm.sh",
-        "python3 -m py_compile services/execution/market_snapshot_admission.py services/execution/lean_runtime/test_paper_signal_producer.py services/paper_fleet_reconciler/test_paper_fleet_reconciler.py services/control-plane/bff/agora/operational_readiness.py services/control-plane/bff/agora/test_operational_readiness.py scripts/test_source_ingest_deploy_diagnostics_contract.py"
-      ],
-      "result": "passed"
-    },
-    "focused_admission_producer_fleet_readiness_source_deploy": {
-      "command": "PYTHONPATH=. /home/lupin/.local/bin/pytest -q services/execution/lean_runtime/test_paper_signal_producer.py services/paper_fleet_reconciler/test_paper_fleet_reconciler.py services/source_ingestion/tests/test_latest_market_snapshot.py services/control-plane/bff/agora/test_operational_readiness.py scripts/test_source_ingest_deploy_diagnostics_contract.py",
-      "result": "122 passed, 1 warning",
-      "warning": "existing Starlette TestClient deprecation warning only"
-    },
-    "new_deterministic_taiwan_scenarios": [
-      "Friday close admitted on Saturday (weekend gap, no calendar evidence needed).",
-      "Multi-day official Lunar New Year holiday span admitted with valid official calendar evidence.",
-      "Calendar evidence missing a required weekday in the gap rejected as market_input_calendar_unverifiable.",
-      "Calendar evidence with no coverage-range inference: absent weekday in coverage interval rejected as market_input_calendar_unverifiable (Defect 1).",
-      "Calendar evidence with incomplete range rejected as market_input_calendar_unverifiable.",
-      "Completed weekday without calendar evidence rejected as market_input_calendar_unverifiable (Defect 2).",
-      "Completed weekday with explicit validated trading session rejected as market_input_stale (Defect 2).",
-      "holiday_lookup returning authority-only record without full contract validation rejected as market_input_calendar_unverifiable (Defect 3).",
-      "Calendar evidence with TAIFEX, TW, or non-cash venue rejected as market_input_calendar_unverifiable (Defect 4).",
-      "Calendar evidence with UTC, UTC+8, or timezone alias rejected; exact Asia/Taipei required (Defect 4).",
-      "Calendar evidence with HTTP scheme rejected; HTTPS required (Defect 5).",
-      "Calendar evidence with invalid or non-64-hex checksum rejected (Defect 5).",
-      "Calendar evidence with self-asserted checksum not in trusted external pin rejected (Defect 5).",
-      "Calendar evidence with future fetched_at timestamp (>300s) rejected (Defect 6).",
-      "Calendar evidence with non-ISO coverage_start, coverage_end, holiday, session, or trading date rejected (Defect 6).",
-      "Calendar evidence with unofficial URL domain rejected as market_input_calendar_unverifiable.",
-      "Stale refresh receipt (observed_at older than max_refresh_age_seconds) rejected as market_input_stale_refresh.",
-      "Future event_time rejected as market_input_invalid.",
-      "Non-official lineage rejected as market_input_non_official_lineage.",
-      "Unverifiable calendar evidence (lookup sentinel) rejected as market_input_calendar_unverifiable.",
-      "Non-Taiwan symbol (AAPL.US) with an identical multi-day gap keeps the unchanged flat max_age_seconds stale rejection."
+    "focused_command": ".venv-pantheon/bin/python3 -m pytest -q services/execution/lean_runtime/test_paper_signal_producer.py services/paper_fleet_reconciler/test_paper_fleet_reconciler.py services/source_ingestion/tests/test_latest_market_snapshot.py services/control-plane/bff/agora/test_operational_readiness.py scripts/test_source_ingest_deploy_diagnostics_contract.py",
+    "focused_result": "128 passed, 6 subtests passed, 1 existing Starlette deprecation warning",
+    "syntax_commands": [
+      "python3 -m py_compile services/execution/market_snapshot_admission.py",
+      "bash -n scripts/deploy_nonprod_vm.sh",
+      "git diff --check"
     ],
-    "environment_note": "services/execution/lean_runtime/test_paper_runtime_smoke.py and test_devloop_wire.py fail in this sandbox on an unrelated pre-existing '/data' read-only filesystem OSError; reproduced identically on the unmodified base commit via a temporary git stash before/after this task's changes, confirming no regression from this change."
-  },
-  "release_closeout_gate": {
-    "status": "pending_exact_head_review_merge_and_release",
-    "success_claimed": false,
-    "required_backend": "the Pantheon dev merge commit containing this manifest and the reviewed task head",
-    "required_frontend": "5ffee3db8c2b37b4070d43d091ed4207ef5d70e5",
-    "required_proofs": [
-      "The exact merged backend is deployed under the bounded source-refresh profile.",
-      "A fresh canonical source state with at least two distinct real TWSE/TPEx closes produces a healthy paper-signal-producer tick with no fixture or synthetic prices.",
-      "The Taiwan market-session freshness rule admits the latest official close on a weekend/holiday deploy while weekday staleness, stale refresh, missing calendar evidence, non-official lineage, and future timestamps remain fail-closed.",
-      "All 28 hosted backend components and the exact frontend identity pass AGC-14 acceptance."
+    "syntax_result": "passed",
+    "broader_command": ".venv-pantheon/bin/python3 -m pytest -q services/execution/lean_runtime services/paper_fleet_reconciler services/source_ingestion/tests services/control-plane/bff/agora",
+    "broader_result": "1403 passed, 20 skipped, 40 subtests passed, 10 failed, 9 warnings",
+    "broader_failure_classification": {
+      "task_regressions": 0,
+      "unchanged_modules": [
+        "services/execution/lean_runtime/test_devloop_wire.py",
+        "services/execution/lean_runtime/test_paper_runtime_smoke.py",
+        "services/execution/lean_runtime/paper_runtime.py",
+        "services/execution/lean_runtime/signal_consumer.py"
+      ],
+      "observed_causes": [
+        "Default lifecycle outbox path /data/runtime/lifecycle-outbox is read-only in this worker host.",
+        "A single writable forced outbox file cannot represent the 15 distinct devloop binding aggregates and fails aggregate_type validation.",
+        "Seven legacy paper_runtime_smoke signal fixtures omit runtime_id and are rejected by the existing fail-closed signal consumer; the heartbeat-only node passes with a writable outbox."
+      ],
+      "scope_proof": "No broader-failure module is changed by this corrective PR relative to origin/dev."
+    },
+    "reviewer_required_negative_cases": [
+      "tampered holiday payload retaining the old claimed checksum is rejected",
+      "empty-payload trusted pin is rejected",
+      "combined and missing venues are rejected",
+      "unknown and missing versions are rejected",
+      "event_time, observed_at and fetched_at one second in the future are rejected"
     ]
   },
-  "agc_14": {
-    "blocked_task_id": "AGORA-AGC-14-HOSTED-DEMO-AUTHENTIC-V5-20260829",
-    "status": "implementation_ready_release_evidence_pending",
-    "resume_contract": "Resume only with the exact backend dev merge and frontend 5ffee3db8c2b37b4070d43d091ed4207ef5d70e5 after immutable hosted acceptance."
+  "release_closeout_gate": {
+    "status": "pending_exact_head_review_merge_and_hosted_release",
+    "success_claimed": false,
+    "required_backend": "the Pantheon dev merge containing this manifest and the independently approved corrective head",
+    "required_frontend": "5ffee3db8c2b37b4070d43d091ed4207ef5d70e5",
+    "required_proofs": [
+      "A fresh canonical source state with at least two distinct real TWSE/TPEx closes produces a healthy paper-signal-producer tick without fixture, synthetic, copied or manually written runtime prices.",
+      "The bounded source-refresh deployment gate admits the latest official close on a weekend or evidenced holiday while weekday staleness, stale refresh, missing evidence, non-official lineage and future times remain fail-closed.",
+      "AGORA-AGC-14-HOSTED-DEMO-AUTHENTIC-V5-20260829 resumes with the exact backend merge and frontend identity for 28-component hosted acceptance."
+    ]
   }
 }
