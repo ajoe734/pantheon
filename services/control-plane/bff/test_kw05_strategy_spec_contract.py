@@ -11,6 +11,11 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 _MODULE_DIR = Path(__file__).resolve().parent
+sys.path.insert(0, str(_MODULE_DIR / "tests"))
+from knowledge_read_port_fixtures import (  # noqa: E402
+    create_environment_knowledge_read_ports,
+    create_seeded_knowledge_read_ports,
+)
 
 
 def _load_module(name: str, path: Path):
@@ -18,17 +23,22 @@ def _load_module(name: str, path: Path):
     if spec is None or spec.loader is None:
         raise RuntimeError(f"Unable to load module {name} from {path}")
     module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    previous_main = sys.modules.get("main")
+    sys.modules["main"] = module
     sys.path.insert(0, str(path.parent))
     try:
         spec.loader.exec_module(module)
     finally:
         sys.path.pop(0)
+        if previous_main is None:
+            sys.modules.pop("main", None)
+        else:
+            sys.modules["main"] = previous_main
     return module
 
 
 bff_main = _load_module("bff_main_kw05_test_module", _MODULE_DIR / "main.py")
-read_store_module = _load_module("bff_read_store_kw05_test_module", _MODULE_DIR / "read_store.py")
-ReadSurfaceStore = read_store_module.ReadSurfaceStore
 
 
 OPERATOR_TOKEN = "Bearer op-2:operator"
@@ -40,17 +50,13 @@ DRAFT_STRATEGY_ID = "strat-99999999-8888-7777-6666-555555555555"
 
 @contextmanager
 def _seeded_client():
-    with tempfile.TemporaryDirectory() as td:
-        original_store = bff_main.read_store
-        bff_main.read_store = ReadSurfaceStore(
-            os.path.join(td, "read_surfaces.json"),
-            allow_local_snapshot_fallback=True,
-        )
-        client = TestClient(bff_main.app)
-        try:
-            yield client
-        finally:
-            bff_main.read_store = original_store
+    original_store = bff_main.read_store
+    bff_main.read_store = create_seeded_knowledge_read_ports()
+    client = TestClient(bff_main.app)
+    try:
+        yield client
+    finally:
+        bff_main.read_store = original_store
 
 
 @contextmanager
@@ -301,10 +307,7 @@ def _service_backed_client():
         os.environ["PANTHEON_BFF_STRATEGY_SPEC_STORE"] = str(strategy_store)
 
         original_store = bff_main.read_store
-        bff_main.read_store = ReadSurfaceStore(
-            os.path.join(td, "read_surfaces.json"),
-            allow_local_snapshot_fallback=True,
-        )
+        bff_main.read_store = create_environment_knowledge_read_ports()
         client = TestClient(bff_main.app)
         try:
             yield client
