@@ -9017,6 +9017,32 @@ class DeliveryMetadataValidationTests(unittest.TestCase):
 
         self.assertEqual(metadata_ref, approved_head)
 
+    def test_approved_closeout_metadata_accepts_descriptive_frozen_base_merge_tip(self) -> None:
+        approved_head = "a" * 40
+        authored_parent = "b" * 40
+        frozen_base = "c" * 40
+        task = {
+            "id": "REG-002",
+            ai_status.DELIVERY_BINDING_KEY: {
+                "base": "dev",
+                "base_sha": frozen_base,
+            },
+        }
+
+        def fake_run_git_command(args: list[str], **kwargs: object) -> str:
+            if args == ["show", "-s", "--format=%P", approved_head]:
+                return f"{authored_parent} {frozen_base}"
+            raise AssertionError(f"unexpected git command: {args}")
+
+        with mock.patch.object(ai_status, "run_git_command", side_effect=fake_run_git_command):
+            metadata_ref = ai_status.approved_closeout_metadata_ref(
+                task,
+                repository_root=Path("/repo"),
+                approved_ref=approved_head,
+            )
+
+        self.assertEqual(metadata_ref, authored_parent)
+
     def test_collect_done_does_not_trust_unverified_approved_head_binding(self) -> None:
         approved_head = "a" * 40
         task = {
