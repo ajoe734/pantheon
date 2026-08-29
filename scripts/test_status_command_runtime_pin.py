@@ -55,6 +55,7 @@ class StatusCommandRuntimePinTests(unittest.TestCase):
             "scripts/human-ops-status.sh",
             "scripts/loop_done_guardrail.py",
             ".orchestrator/common.py",
+            ".orchestrator/dispatch_policy.py",
             ".orchestrator/runtime_state.py",
             ".orchestrator/task_archive.py",
             ".orchestrator/multi_repo_registry.py",
@@ -819,6 +820,23 @@ class StatusCommandRuntimePinTests(unittest.TestCase):
                     "ORCH_HEARTBEAT_PATH": str(central / ".orchestrator" / "worker-runtime" / "heartbeats" / "b.json"),
                 }
             )
+            # Handoff performs a read-only PR discovery even for an artifact
+            # contract task. Keep this concurrency fixture hermetic instead of
+            # making its outcome depend on api.github.com availability.
+            fake_bin = root / "fake-bin"
+            fake_bin.mkdir()
+            fake_gh = fake_bin / "gh"
+            fake_gh.write_text(
+                "#!/usr/bin/env bash\n"
+                "if [[ \"${1:-}\" == pr && \"${2:-}\" == list ]]; then printf '[]\\n'; exit 0; fi\n"
+                "if [[ \"${1:-}\" == api && \"${2:-}\" == */pulls ]]; then printf '[]\\n'; exit 0; fi\n"
+                "echo \"unexpected fake gh command: $*\" >&2\n"
+                "exit 2\n",
+                encoding="utf-8",
+            )
+            fake_gh.chmod(0o755)
+            env_a["PATH"] = str(fake_bin) + os.pathsep + env_a.get("PATH", "")
+            env_b["PATH"] = str(fake_bin) + os.pathsep + env_b.get("PATH", "")
             commands = [
                 (
                     ["bash", str(central / "scripts" / "ai-status.sh"), "handoff", task_id, "Claude", "ready for review"],
@@ -839,17 +857,25 @@ class StatusCommandRuntimePinTests(unittest.TestCase):
 
             handoff_stdout, handoff_stderr, handoff_code = results[0]
             progress_stdout, progress_stderr, progress_code = results[1]
-            self.assertEqual(handoff_code, 0, handoff_stderr + handoff_stdout)
-            # V2 applies lifecycle mutations linearly.  If handoff wins the
-            # race, a concurrently submitted progress update is correctly
-            # rejected from the new review state rather than being applied
-            # after the handoff.
+            # V2 applies lifecycle mutations linearly. Handoff performs its
+            # GitHub/contract preflight outside the write lock and then uses a
+            # task digest CAS. If progress wins between those phases, handoff
+            # must reject its stale preflight; if handoff wins, the later
+            # progress may be rejected from review. Both outcomes preserve one
+            # linear task history.
+            self.assertIn(handoff_code, {0, 1}, handoff_stderr + handoff_stdout)
             self.assertIn(progress_code, {0, 1}, progress_stderr + progress_stdout)
+            self.assertTrue(handoff_code == 0 or progress_code == 0)
+            if handoff_code:
+                self.assertIn(
+                    "changed after external review evidence was prepared",
+                    handoff_stderr,
+                )
             if progress_code:
                 self.assertIn("review --progress-->", progress_stderr)
             state = json.loads((central / "ai-status.json").read_text(encoding="utf-8"))
             [task] = [item for item in state["tasks"] if item["id"] == task_id]
-            self.assertEqual(task["status"], "review")
+            self.assertEqual(task["status"], "review" if handoff_code == 0 else "in_progress")
             self.assertIn(task["next"], {"ready for review", "concurrent progress"})
             events = [
                 json.loads(line)
@@ -858,7 +884,10 @@ class StatusCommandRuntimePinTests(unittest.TestCase):
             ]
             task_events = [event for event in events if event.get("task_id") == task_id]
             event_types = {event.get("type") for event in task_events}
-            self.assertIn("handoff", event_types)
+            if handoff_code == 0:
+                self.assertIn("handoff", event_types)
+            else:
+                self.assertNotIn("handoff", event_types)
             if progress_code == 0:
                 self.assertIn("progress", event_types)
             else:

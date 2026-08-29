@@ -35,7 +35,6 @@ DISPATCH_STATUS_ACTIONS = {
 DEFAULT_REVIEW_STATUSES = ["review"]
 DEFAULT_FINALIZE_STATUSES = ["review_approved"]
 DEFAULT_OWNED_STATUSES = ["in_progress", "todo"]
-DEFAULT_SIDECAR_ONLY_AGENTS: list[str] = []
 DEFAULT_DEPENDENCY_DONE_STATUSES = ["done"]
 DEFAULT_WORKER_TERMINAL_STATUSES = ["review", "done", "review_approved"]
 DEFAULT_ACTIVE_WORKER_STATUSES = [
@@ -220,7 +219,6 @@ def ready_dispatch_settings(config: dict[str, Any]) -> dict[str, Any]:
     settings.setdefault("review_statuses", list(DEFAULT_REVIEW_STATUSES))
     settings.setdefault("finalize_statuses", list(DEFAULT_FINALIZE_STATUSES))
     settings.setdefault("owned_statuses", list(DEFAULT_OWNED_STATUSES))
-    settings.setdefault("sidecar_only_agents", list(DEFAULT_SIDECAR_ONLY_AGENTS))
     settings.setdefault("dependency_done_statuses", list(DEFAULT_DEPENDENCY_DONE_STATUSES))
     settings.setdefault("worker_terminal_statuses", list(DEFAULT_WORKER_TERMINAL_STATUSES))
     settings.setdefault("active_worker_statuses", list(DEFAULT_ACTIVE_WORKER_STATUSES))

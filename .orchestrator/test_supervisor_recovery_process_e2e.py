@@ -66,6 +66,9 @@ class ProcessE2EAdapter(BaseAdapter):
             command,
             cwd=str(request.metadata["workspace_path"]),
             start_new_session=True,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
         )
         self.processes.append(process)
         run_id = f"replacement-{process.pid}"
@@ -182,6 +185,13 @@ class SupervisorRecoveryProcessE2ETests(unittest.TestCase):
         self.processes.append(process)
         return process
 
+    @staticmethod
+    def _kill_process_group(pid: int) -> None:
+        try:
+            os.killpg(pid, signal.SIGKILL)
+        except ProcessLookupError:
+            return
+
     def _store_started_worker(self, process: subprocess.Popen[bytes]) -> dict[str, object]:
         run_id = f"lost-{process.pid}"
         event_id = f"event-{process.pid}"
@@ -273,6 +283,40 @@ class SupervisorRecoveryProcessE2ETests(unittest.TestCase):
             expected_returncode,
             msg=f"stdout={result.stdout}\nstderr={result.stderr}",
         )
+
+    def _status_command_environment(self) -> dict[str, str]:
+        head = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=self.command_root,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        event_log = Path(self.config["task_state_store"]["event_log"])
+        identity = common.canonical_task_state_identity_for_paths(
+            status_root=self.status_root,
+            event_log=event_log,
+        )
+        environment = os.environ.copy()
+        environment.update(
+            {
+                "PANTHEON_LIVE_SUPERVISOR_CONFIG": str(
+                    self.temp_root / "no-live-config.json"
+                ),
+                "PANTHEON_COMMAND_ROOT": str(self.command_root),
+                "PANTHEON_COMMAND_RUNTIME_SHA": head,
+                "PANTHEON_COMMAND_REMOTE": "ajoe734/pantheon",
+                "PANTHEON_COMMAND_BASE_REF": "origin/dev",
+                "PANTHEON_STATUS_ROOT": str(self.status_root),
+                "PANTHEON_TASK_STATE_STORE_MODE": "authoritative",
+                "PANTHEON_TASK_STATE_EVENT_LOG": str(event_log),
+                "PANTHEON_CANONICAL_TASK_STATE_IDENTITY_JSON": json.dumps(
+                    identity, sort_keys=True, separators=(",", ":")
+                ),
+                "PYTHONDONTWRITEBYTECODE": "1",
+            }
+        )
+        return environment
 
     def test_sigkill_recovers_receipt_and_launches_one_replacement_generation(self) -> None:
         original = self._spawn_worker_process()
@@ -449,6 +493,207 @@ class SupervisorRecoveryProcessE2ETests(unittest.TestCase):
             1,
         )
 
+    def test_human_ops_cli_reopen_reaches_one_worker_through_fresh_scheduler(self) -> None:
+        """Exercise the real CLI producer and fresh-process queue consumer."""
+
+        review_task = task_fixture(status="review")
+        review_task.update(
+            {
+                "title": "Process-level reopen",
+                "phase": "Supervisor recovery E2E",
+                "summary_zh": "驗證 CLI reopen 與 supervisor consumer。",
+                "artifacts": [],
+                "acceptance": [],
+                "next": "Await Human/Ops reopen",
+            }
+        )
+        review_status = {
+            "sprint": "process-e2e",
+            "objective": "Prove the complete reopen queue path.",
+            "canonical_files": [],
+            "updated_at": supervisor.utc_now(),
+            "agents": [
+                {
+                    "name": name,
+                    "capability_lane": [],
+                    "status": "idle",
+                    "current_task_ids": [],
+                    "branch": "",
+                    "next": "",
+                    "last_update": None,
+                }
+                for name in ("Codex", "Codex2")
+            ],
+            "tasks": [review_task],
+            "blockers": [],
+            "handoffs": [],
+            "workload": {},
+            "workload_summary": {},
+        }
+        supervisor.rewrite_task_state_store.append_state_commit(
+            self.config["task_state_store"]["event_log"],
+            review_status,
+            source="process-e2e-review",
+        )
+        Path(self.config["paths"]["status_file"]).write_text(
+            json.dumps(review_status, sort_keys=True) + "\n", encoding="utf-8"
+        )
+        runtime_state.save_runtime_state(self.config, self.state)
+
+        command = subprocess.run(
+            [
+                str(self.command_root / "scripts" / "human-ops-status.sh"),
+                "reopen",
+                "TASK-1",
+                "process-level vertical reopen",
+            ],
+            cwd=self.command_root,
+            env=self._status_command_environment(),
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+        self.assertEqual(
+            command.returncode,
+            0,
+            msg=f"stdout={command.stdout}\nstderr={command.stderr}",
+        )
+        reopened = supervisor.load_status(self.config)["tasks"][0]
+        self.assertEqual(reopened["status"], "in_progress")
+        self.assertEqual(reopened[supervisor.REVIEW_REQUEUE_INTENT_KEY]["status"], "pending")
+
+        self._child(
+            "import json,sys; from pathlib import Path; import supervisor,runtime_state; "
+            "from adapters import ADAPTERS; from adapters.base import DeliveryRequest; "
+            "from test_supervisor_recovery_process_e2e import ProcessE2EAdapter; "
+            "c=json.loads(Path(sys.argv[1]).read_text()); ADAPTERS[ProcessE2EAdapter.name]=ProcessE2EAdapter; "
+            "s=runtime_state.load_runtime_state(c); st=supervisor.load_status(c); "
+            "p=supervisor.build_dispatch_plan(c,s,st,supervisor.queue_events(s),live_total=0); "
+            "assert len(p['events'])==1; assert supervisor.reserve_dispatch_plan(c,s,p); runtime_state.save_runtime_state(c,s); "
+            "assert supervisor.reconcile_review_requeue_materializations(c); "
+            "e=supervisor.queue_events(s)[0]; t=supervisor.load_status(c)['tasks'][0]; "
+            "r=DeliveryRequest(agent_id='codex',provider='codex',delivery_mode=ProcessE2EAdapter.name,message='vertical reopen',task_id='TASK-1',reason=e['reason'],metadata={'task_generation':t['generation'],'workspace_path':str(Path(sys.argv[1]).parent),'status_root':str(Path(sys.argv[1]).parents[1])}); "
+            "started,run_id,_=supervisor.start_worker_for_request(c,s,r,dispatch_event=e,queue_event_id=e['event_id'],attempt_count=1,event_id_for_log=e['event_id']); "
+            "assert started and run_id",
+            expected_returncode=0,
+        )
+        delivered = runtime_state.load_runtime_state(self.config)
+        self.assertEqual(len(delivered["workers"]), 1)
+        worker = next(iter(delivered["workers"].values()))
+        worker_pid = int(worker["pid"])
+        self.addCleanup(self._kill_process_group, worker_pid)
+        self.assertTrue(supervisor.pid_is_alive(worker_pid))
+        materialized = supervisor.load_status(self.config)["tasks"][0][
+            supervisor.REVIEW_REQUEUE_INTENT_KEY
+        ]
+        self.assertEqual(materialized["status"], "materialized")
+
+        self._child(
+            "import json,sys; from pathlib import Path; import supervisor,runtime_state; "
+            "c=json.loads(Path(sys.argv[1]).read_text()); s=runtime_state.load_runtime_state(c); st=supervisor.load_status(c); "
+            "p=supervisor.build_dispatch_plan(c,s,st,supervisor.queue_events(s),live_total=1); "
+            "assert p['events']==[]; assert not supervisor.reconcile_review_requeue_materializations(c)",
+            expected_returncode=0,
+        )
+        replayed = runtime_state.load_runtime_state(self.config)
+        self.assertEqual(len(replayed["workers"]), 1)
+
+    def test_spawn_before_receipt_crash_adopts_exact_process_once(self) -> None:
+        """Kill the supervisor inside deliver(), before a receipt can exist."""
+
+        adapter_name = "crash_after_spawn_process_e2e"
+        for agent in self.config["agents"].values():
+            agent["adapter"] = adapter_name
+        self.config_path.write_text(
+            json.dumps(self.config, sort_keys=True) + "\n", encoding="utf-8"
+        )
+        event = supervisor.build_dispatch_event(
+            self.task,
+            "Codex",
+            supervisor.REASON_OWNED_IN_PROGRESS,
+            {"TASK-1": self.task},
+            config=self.config,
+        )
+        event.update(
+            {
+                "event_id": "evt-spawn-crash",
+                "event_key": event["key"],
+                "target_agent": "codex",
+                "target_display_name": "Codex",
+                "delivery_endpoint_id": "codex",
+                "provider": "codex",
+                "message": "spawn boundary crash",
+                "created_at": supervisor.utc_now(),
+            }
+        )
+        runtime_state.store_queue_event(self.state, event)
+        runtime_state.save_runtime_state(self.config, self.state)
+
+        # The recovery scanner deliberately identifies the real wrapper by
+        # cmdline plus the immutable ORCH_* environment. This harmless test
+        # wrapper sleeps and never invokes a provider CLI.
+        wrapper = self.config_path.parent / "worker_runner.py"
+        wrapper.write_text("import time\ntime.sleep(300)\n", encoding="utf-8")
+        pid_path = self.config_path.parent / "spawn-crash-worker.pid"
+
+        self._child(
+            "import json,os,subprocess,sys; from pathlib import Path; "
+            "import supervisor,runtime_state; from adapters import ADAPTERS; "
+            "from adapters.base import BaseAdapter,DeliveryCapability,DeliveryResult,DeliveryRequest; "
+            "cfg=Path(sys.argv[1]); wrapper=cfg.parent/'worker_runner.py'; pidfile=cfg.parent/'spawn-crash-worker.pid'; "
+            "exec('class CrashAdapter(BaseAdapter):\\n"
+            " name=\\\"crash_after_spawn_process_e2e\\\"\\n"
+            " def capability(self,agent_id): return DeliveryCapability(adapter=self.name,supported=True,requires_manual_confirmation=False,can_auto_deliver=True,can_auto_approve_edits=True,delivery_mode=self.name,verified=\\\"test\\\")\\n"
+            " def deliver(self,request):\\n"
+            "  env=os.environ.copy(); env.update({\\\"ORCH_TASK_ID\\\":str(request.task_id),\\\"ORCH_AGENT_ID\\\":str(request.agent_id),\\\"ORCH_PROVIDER\\\":str(request.provider),\\\"ORCH_RUN_ID\\\":\\\"run-spawn-crash\\\"}); p=subprocess.Popen([sys.executable,str(wrapper)],env=env,start_new_session=True,stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL); pidfile.write_text(str(p.pid)); os._exit(73)'); "
+            "ADAPTERS[CrashAdapter.name]=CrashAdapter; c=json.loads(cfg.read_text()); s=runtime_state.load_runtime_state(c); e=supervisor.queue_events(s)[0]; "
+            "r=DeliveryRequest(agent_id='codex',provider='codex',delivery_mode=CrashAdapter.name,message='spawn crash',task_id='TASK-1',reason=e['reason'],metadata={'task_generation':1,'workspace_path':str(Path(sys.argv[1]).parent),'status_root':str(Path(sys.argv[1]).parents[1])}); "
+            "supervisor._run_reserved_runtime_phase(c,'process_queue',lambda scratch: supervisor.start_worker_for_request(c,scratch,r,dispatch_event=e,queue_event_id=e['event_id'],attempt_count=1,event_id_for_log=e['event_id'])[0])",
+            expected_returncode=73,
+        )
+        worker_pid = int(pid_path.read_text(encoding="utf-8"))
+        self.addCleanup(self._kill_process_group, worker_pid)
+        self.assertTrue(supervisor.pid_is_alive(worker_pid))
+        crashed_state = runtime_state.load_runtime_state(self.config)
+        reservation = crashed_state["supervisor"]["runtime_phase_reservations"][
+            "process_queue"
+        ]
+        self.assertIn("launch_intent", reservation)
+        self.assertNotIn("launch_receipt", reservation)
+        self.assertEqual(crashed_state["workers"], {})
+
+        self._child(
+            "import json,sys; from pathlib import Path; import supervisor; "
+            "c=json.loads(Path(sys.argv[1]).read_text()); "
+            "assert supervisor._recover_runtime_phase_reservation(c,'process_queue') is True",
+            expected_returncode=0,
+        )
+        recovered = runtime_state.load_runtime_state(self.config)
+        self.assertNotIn(
+            "process_queue",
+            recovered.get("supervisor", {}).get("runtime_phase_reservations", {}),
+        )
+        self.assertEqual(set(recovered["workers"]), {"run-spawn-crash"})
+        worker = recovered["workers"]["run-spawn-crash"]
+        self.assertEqual(worker["pid"], worker_pid)
+        self.assertEqual(worker["status"], "running")
+        self.assertEqual(
+            recovered["queue"]["events"]["evt-spawn-crash"]["run_id"],
+            "run-spawn-crash",
+        )
+
+        # A further restart has no reservation to replay and cannot create a
+        # second generation or queue lease.
+        self._child(
+            "import json,sys; from pathlib import Path; import supervisor; "
+            "c=json.loads(Path(sys.argv[1]).read_text()); "
+            "assert supervisor._recover_runtime_phase_reservation(c,'process_queue') is None",
+            expected_returncode=0,
+        )
+        replayed = runtime_state.load_runtime_state(self.config)
+        self.assertEqual(set(replayed["workers"]), {"run-spawn-crash"})
+
     def test_exact_command_runtime_entrypoint_reports_exact_live_identity(self) -> None:
         """Run the real entrypoint and verify its complete process identity."""
 
@@ -537,8 +782,8 @@ class SupervisorRecoveryProcessE2ETests(unittest.TestCase):
         self.assertTrue(report["supervisor"]["lock_held"])
 
         # Exercise the legacy mutable-checkout launcher while the exact owner
-        # holds the canonical lock.  It must exit without replacing the exact
-        # process or rewriting the authoritative PID identity.
+        # holds the canonical lock. It must fail at entry instead of relying
+        # on the incumbent lock to hide a second launch path.
         legacy = subprocess.run(
             [
                 str(REPOSITORY_ROOT / "scripts" / "run-supervisor.sh"),
@@ -553,10 +798,42 @@ class SupervisorRecoveryProcessE2ETests(unittest.TestCase):
             timeout=10,
             check=False,
         )
-        self.assertEqual(legacy.returncode, 0, legacy.stdout + legacy.stderr)
+        self.assertNotEqual(legacy.returncode, 0, legacy.stdout + legacy.stderr)
+        self.assertIn("promoted live config is owned", legacy.stderr)
         self.assertIsNone(process.poll())
         pid_path = Path(self.config["paths"]["state_file"]).parent / "supervisor.pid"
         self.assertEqual(int(pid_path.read_text(encoding="utf-8").strip()), process.pid)
+
+        # The same refusal must hold when no exact owner exists. It occurs
+        # before singleton/PID/runtime-state mutation, so absence of an
+        # incumbent can never promote the mutable checkout by accident.
+        os.killpg(process.pid, signal.SIGKILL)
+        process.wait(timeout=5)
+        pid_path.unlink(missing_ok=True)
+        state_path = Path(self.config["paths"]["state_file"])
+        state_before = state_path.read_bytes()
+        legacy_without_owner = subprocess.run(
+            [
+                str(REPOSITORY_ROOT / "scripts" / "run-supervisor.sh"),
+                "--config",
+                str(self.config_path),
+                "--quiet",
+            ],
+            cwd=REPOSITORY_ROOT,
+            env=environment,
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+        self.assertNotEqual(
+            legacy_without_owner.returncode,
+            0,
+            legacy_without_owner.stdout + legacy_without_owner.stderr,
+        )
+        self.assertIn("promoted live config is owned", legacy_without_owner.stderr)
+        self.assertFalse(pid_path.exists())
+        self.assertEqual(state_path.read_bytes(), state_before)
 
 
 if __name__ == "__main__":

@@ -1,10 +1,34 @@
 # Development-Tooling Architecture Gaps and System Design — 2026-08-24
 
 **Document ID:** `OPS-DEV-TOOLING-ARCH-GAP-20260824`
-**Document Tier:** L3 Supporting Design & Operational Architecture Record (under `AI_COLLABORATION_GUIDE.md` § 1 / `CANONICAL_DOCUMENT_MAP.md`)
+**Document Tier:** Historical L3 design record; not an active implementation plan
 **Target Domain:** Development Tooling Control Plane (`.orchestrator/`, `scripts/`, `ai-task-archive/`, V2 TaskStore, dev test/probe tooling)
 **Boundary Classification:** Development Tooling only. Product Runtime (`services/`, BFF, Ingestion) and Capital Pathways remain untouched.
-**Conflict Rule:** In case of conflict, canonical L0/L1 documents (`AI_COLLABORATION_GUIDE.md`, `TARGET_ARCHITECTURE.md`, `DOCUMENT_AUTHORITY_AND_RECORD_BOUNDARY.md`) take precedence. This document provides gap analysis and architectural designs for future development tooling implementation tasks.
+**Superseded By:** `docs/02-architecture/supervisor-authority-v2.md`
+**Conflict Rule:** The V2 supervisor authority specification and current code
+take precedence. The designs below preserve the 2026-08-24 investigation only;
+they must not be materialized as execution tasks without a new code-based gap
+audit.
+
+---
+
+## 0. Current Disposition — 2026-08-29
+
+This document is retained as incident history. It is not backlog truth. The
+current disposition of its six proposals is:
+
+| Former proposal | Disposition | Current canonical mechanism |
+|---|---|---|
+| Generic `TaskAmendedEvent` | **VERIFY / do not implement** | Accepted task contracts remain immutable. Human/Ops uses the existing narrow lifecycle/resource/dependency commands or an explicit successor/supersede operation. A generic mutation ledger would create a second task-definition authority. |
+| Dependency reopen propagation and root-evidence layer | **MERGE into existing mechanism; no new layer** | Planner eligibility is recomputed from canonical TaskStore status and `depends_on`; reopen has one durable `review_requeue_intent`. Exact delivery bindings and ordinary task artifacts carry evidence. |
+| Live path-glob ownership mutex | **REMOVE from plan** | Each task runs in an isolated worktree. Truly shared external capacity uses the existing allowlisted `execution_resources` admission gate. |
+| Parent/sidecar/subphase scheduler | **REMOVE from plan and runtime** | Work is represented by ordinary canonical tasks plus `depends_on`. Sidecar priority, sidecar-only agents, parent-worker coverage, prompt specialization, and the unused sidecar catalog were retired on 2026-08-29. |
+| Exact-head rejection and `waiting_for` cleanup | **COMPLETE** | Reopen uses a durable transactional outbox and clears stale delivery/review/waiting state; supervisor restart reconciliation is idempotent. |
+| Hosted probe aliasing/isolation | **OUT OF SUPERVISOR SCOPE** | Hosted verification belongs to product/delivery test suites and must not become supervisor task authority. |
+
+The only active supervisor-tooling follow-up from the 2026-08-29 code audit is
+the immutable launch boundary and its process-level recovery/integration tests.
+Do not implement Sections 3, 5, or 6 below as additive compatibility paths.
 
 ---
 
@@ -396,8 +420,9 @@ git diff --check origin/dev...HEAD
 PYTHONPATH=.orchestrator:. python3 -m unittest discover -s .orchestrator -p test_explain_dispatch.py
 ```
 
-### 9.2 Planned Tooling Acceptance Test Matrix (To be implemented in downstream tooling implementation tasks)
-The test matrix below defines the planned acceptance suites to be constructed when implementing the corresponding tooling features in future engineering tasks:
+### 9.2 Historical Proposed Test Matrix (Superseded; Do Not Materialize)
+The matrix below records what the 2026-08-24 proposal expected. It is not an
+active test backlog; Section 0 records the current disposition.
 
 ```
 +---------------------------------------------------------------------------------------+
@@ -428,7 +453,7 @@ The test matrix below defines the planned acceptance suites to be constructed wh
 
 ---
 
-## 10. Migration & Rollout Strategy
+## 10. Historical Migration Proposal (Superseded; Do Not Execute)
 
 1. **Phase 1: TaskStore & Lifecycle Invariants (Non-Breaking)**
    - Add `TaskAmendedEvent` type definition and replay parsing in `task_state_store.py`.

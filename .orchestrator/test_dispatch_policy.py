@@ -139,7 +139,6 @@ def test_ready_dispatch_settings_preserves_only_supplied_current_values() -> Non
                 "owned_statuses": ["queued"],
                 "max_dispatches_per_tick": 8,
                 "max_concurrent_per_account": {"codex": 2},
-                "sidecar_only_agents": ["Copilot"],
             }
         }
     )
@@ -148,7 +147,6 @@ def test_ready_dispatch_settings_preserves_only_supplied_current_values() -> Non
     assert settings["owned_statuses"] == ["queued"]
     assert settings["max_dispatches_per_tick"] == 8
     assert settings["max_concurrent_per_account"] == {"codex": 2}
-    assert settings["sidecar_only_agents"] == ["Copilot"]
 
 
 def test_normalized_status_set_is_case_normalized() -> None:

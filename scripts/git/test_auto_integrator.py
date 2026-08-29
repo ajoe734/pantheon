@@ -2837,6 +2837,101 @@ class CrossRepoIntegrationTests(unittest.TestCase):
         )
 
 
+class AutoIntegratorProcessE2ETests(unittest.TestCase):
+    def _run_child(self, body: str, *arguments: str) -> dict[str, Any]:
+        environment = os.environ.copy()
+        environment["PYTHONPATH"] = os.pathsep.join(
+            [str(REPO_ROOT), environment.get("PYTHONPATH", "")]
+        )
+        result = subprocess.run(
+            [sys.executable, "-c", body, *arguments],
+            cwd=REPO_ROOT,
+            env=environment,
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+        self.assertEqual(
+            result.returncode,
+            0,
+            msg=f"stdout={result.stdout}\nstderr={result.stderr}",
+        )
+        return json.loads(result.stdout)
+
+    def test_fresh_process_exact_merge_and_unknown_outcome_reconciliation(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            canonical_state = root / "ai-status.json"
+            canonical_state.write_text(
+                json.dumps(approved_gate().state) + "\n", encoding="utf-8"
+            )
+            outcome = root / "github-outcome.json"
+
+            merged = self._run_child(
+                "import json,sys; from pathlib import Path; "
+                "from scripts.git import auto_integrator as a; "
+                "from scripts.git.test_auto_integrator import FakeRunner,approved_gate,green_pr; "
+                "c=a.TaskCandidate(task_id='ABC-001',title='Ready',owner='Codex',reviewer='Claude',branch='task/ABC-001'); "
+                "r=FakeRunner(pr=green_pr(number=44)); "
+                "x=a.integrate_candidate(c,a.Settings(smoke_commands=('true',)),r,canonical_state_file=Path(sys.argv[1]),execute=True,open_unblock=False,gate=approved_gate()); "
+                "print(json.dumps({'action':x.action,'commands':r.commands}))",
+                str(canonical_state),
+            )
+            self.assertEqual(merged["action"], "merged")
+            merge_commands = [
+                command
+                for command in merged["commands"]
+                if command[:4] == ["gh", "api", "--method", "PUT"]
+                and command[4].endswith("/pulls/44/merge")
+            ]
+            self.assertEqual(len(merge_commands), 1)
+            self.assertIn("sha=" + "a" * 40, merge_commands[0])
+            self.assertIn("merge_method=merge", merge_commands[0])
+
+            timed_out = self._run_child(
+                "import json,subprocess,sys; from pathlib import Path; "
+                "from scripts.git import auto_integrator as a; "
+                "from scripts.git.test_auto_integrator import FakeRunner,approved_gate,green_pr; "
+                "out=Path(sys.argv[2]); "
+                "exec('class TimeoutAfterServerMerge(FakeRunner):\\n"
+                " def run(self,args,**kwargs):\\n"
+                "  command=[str(v) for v in args]\\n"
+                "  if command[:4]==[\\\"gh\\\",\\\"api\\\",\\\"--method\\\",\\\"PUT\\\"] and command[4].endswith(\\\"/pulls/44/merge\\\"):\\n"
+                "   self.commands.append(command); out.write_text(json.dumps({\\\"merged\\\":True})); raise subprocess.TimeoutExpired(command,kwargs.get(\\\"timeout\\\") or 30)\\n"
+                "  return super().run(args,**kwargs)'); "
+                "c=a.TaskCandidate(task_id='ABC-001',title='Ready',owner='Codex',reviewer='Claude',branch='task/ABC-001'); "
+                "r=TimeoutAfterServerMerge(pr=green_pr(number=44)); "
+                "x=a.integrate_candidate(c,a.Settings(smoke_commands=('true',)),r,canonical_state_file=Path(sys.argv[1]),execute=True,open_unblock=False,gate=approved_gate()); "
+                "print(json.dumps({'action':x.action,'detail':x.detail,'commands':r.commands}))",
+                str(canonical_state),
+                str(outcome),
+            )
+            self.assertEqual(timed_out["action"], "blocked")
+            self.assertIn("outcome is unknown", timed_out["detail"])
+            self.assertEqual(json.loads(outcome.read_text(encoding="utf-8")), {"merged": True})
+
+            reconciled = self._run_child(
+                "import json,sys; from pathlib import Path; "
+                "from scripts.git import auto_integrator as a; "
+                "from scripts.git.test_auto_integrator import FakeRunner,approved_gate,green_pr; "
+                "p=green_pr(number=44); p.update({'state':'MERGED','mergedAt':'2026-08-29T00:00:00Z','mergeCommit':{'oid':'merge123'}}); "
+                "c=a.TaskCandidate(task_id='ABC-001',title='Ready',owner='Codex',reviewer='Claude',branch='task/ABC-001'); "
+                "r=FakeRunner(pr=None,merged_pr=p); "
+                "x=a.integrate_candidate(c,a.Settings(smoke_commands=('true',)),r,canonical_state_file=Path(sys.argv[1]),execute=True,open_unblock=False,gate=approved_gate()); "
+                "print(json.dumps({'action':x.action,'commands':r.commands}))",
+                str(canonical_state),
+            )
+            self.assertEqual(reconciled["action"], "already_merged")
+            self.assertFalse(
+                any(
+                    command[:4] == ["gh", "api", "--method", "PUT"]
+                    and command[4].endswith("/pulls/44/merge")
+                    for command in reconciled["commands"]
+                )
+            )
+
+
 class IntegrationLockTests(unittest.TestCase):
     def test_existing_empty_lock_fails_closed(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:

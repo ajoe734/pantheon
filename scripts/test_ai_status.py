@@ -10167,7 +10167,7 @@ class DependencyTrackCommandTests(unittest.TestCase):
             )
 
 
-class SidecarTaskTests(unittest.TestCase):
+class TaskMetadataTests(unittest.TestCase):
     def setUp(self) -> None:
         _setup_test_isolation(self)
         self.state = {
@@ -10198,34 +10198,6 @@ class SidecarTaskTests(unittest.TestCase):
             "artifact_scope": [{"repo": "pantheon", "path": path}],
             "allowed_overlap_task_ids": allowed,
         }
-
-    def test_assign_supports_sidecar_metadata_from_env(self) -> None:
-        env = {
-            "AI_NAME": "Codex",
-            "TASK_PHASE": "Phase 5: Persona and Application Surfaces",
-            "TASK_TITLE": "Prepare APP-001 BFF handoff packet",
-            "TASK_SUMMARY_ZH": "平行支援 APP-001，整理 BFF handoff materials。",
-            "TASK_DEPENDS_ON": "PER-001",
-            "TASK_ARTIFACTS": "support/sidecars/APP-001/APP-001-SIDECAR-BFF-HANDOFF.md",
-            "TASK_CLASS": "sidecar",
-            "TASK_HELPER_PARENT": "APP-001",
-            "TASK_HELPER_KIND": "bff_handoff_packet",
-            "TASK_AUTO_GENERATED": "true",
-            "TASK_MUTATES_CANONICAL": "false",
-            "TASK_AUTO_CREATED_BY": "supervisor-underutilization",
-        }
-        with mock.patch.dict(os.environ, env, clear=False):
-            ai_status.command_assign(self.state, ["APP-001-SIDECAR-BFF-HANDOFF", "Claude2", "Copilot"])
-
-        task = ai_status.get_task(self.state, "APP-001-SIDECAR-BFF-HANDOFF")
-        self.assertIsNotNone(task)
-        self.assertEqual(task["task_class"], "sidecar")
-        self.assertTrue(task["auto_generated"])
-        self.assertEqual(task["helper_parent"], "APP-001")
-        self.assertEqual(task["helper_kind"], "bff_handoff_packet")
-        self.assertFalse(task["mutates_canonical"])
-        self.assertEqual(task["auto_created_by"], "supervisor-underutilization")
-        self.assertEqual(task["depends_on"], ["PER-001"])
 
     def test_assign_supports_allowlisted_execution_resources_from_env(self) -> None:
         env = {
@@ -11099,7 +11071,7 @@ class SidecarTaskTests(unittest.TestCase):
                     ["CATALOG-BFF-005", "Claude", "Codex", "Protected task"],
                 )
 
-    def test_display_task_title_marks_sidecar_parent(self) -> None:
+    def test_display_task_title_ignores_retired_sidecar_metadata(self) -> None:
         title = ai_status.display_task_title(
             {
                 "title": "Prepare APP-001 BFF handoff packet",
@@ -11109,7 +11081,7 @@ class SidecarTaskTests(unittest.TestCase):
             }
         )
 
-        self.assertEqual(title, "[Sidecar] [Auto] [Parent APP-001] Prepare APP-001 BFF handoff packet")
+        self.assertEqual(title, "Prepare APP-001 BFF handoff packet")
 
 
 class HumanOpsAgentTests(unittest.TestCase):
@@ -12025,7 +11997,7 @@ class PortableStateRenderingTests(unittest.TestCase):
         self.assertEqual(mismatch["delivery_evidence"]["source"], "delivery")
         self.assertEqual(mismatch["delivery_evidence"]["merge_commit"], "1" * 40)
 
-    def test_related_live_sidecar_worker_does_not_flag_parent_as_without_worker(self) -> None:
+    def test_related_legacy_sidecar_worker_does_not_cover_parent_lease(self) -> None:
         state = {
             "updated_at": "2026-04-15T15:32:45Z",
             "agents": [
@@ -12107,7 +12079,7 @@ class PortableStateRenderingTests(unittest.TestCase):
             bundle = ai_status.build_dashboard_bundle(state, orchestrator_state, approval_state)
 
         mismatch_ids = {item["id"] for item in bundle["truth_mismatches"]}
-        self.assertNotIn("active-task-without-worker:BP5-SVC-001", mismatch_ids)
+        self.assertIn("active-task-without-worker:BP5-SVC-001", mismatch_ids)
 
     def test_paused_reviewer_does_not_flag_review_task_without_worker(self) -> None:
         state = {

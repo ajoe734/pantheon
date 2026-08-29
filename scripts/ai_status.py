@@ -1706,7 +1706,6 @@ def build_dispatch_policy_summary(config: dict[str, Any]) -> dict[str, Any]:
         "max_dispatches_per_tick": int_config_setting(ready_dispatcher, "max_dispatches_per_tick", 4),
         "max_parallel_by_agent": agent_caps,
         "max_concurrent_per_account": account_caps,
-        "sidecar_only_agents": ready_dispatcher.get("sidecar_only_agents") or [],
     }
 
 
@@ -3601,8 +3600,6 @@ def task_metadata_from_env() -> dict[str, Any]:
     metadata = parse_json_env("TASK_METADATA_JSON")
     explicit_fields = {
         "task_class": os.environ.get("TASK_CLASS", "").strip() or None,
-        "helper_parent": os.environ.get("TASK_HELPER_PARENT", "").strip() or None,
-        "helper_kind": os.environ.get("TASK_HELPER_KIND", "").strip() or None,
         "auto_created_by": os.environ.get("TASK_AUTO_CREATED_BY", "").strip() or None,
     }
     for key, value in explicit_fields.items():
@@ -3877,19 +3874,7 @@ def display_task_status(task: dict[str, Any]) -> str:
 
 
 def display_task_title(task: dict[str, Any]) -> str:
-    title = str(task.get("title") or "")
-    if task.get("task_class") != "sidecar":
-        return title
-
-    markers = ["[Sidecar]"]
-    if task.get("auto_generated"):
-        markers.append("[Auto]")
-    if task.get("helper_parent"):
-        markers.append(f"[Parent {task['helper_parent']}]")
-    marker_text = " ".join(markers)
-    if title:
-        return f"{marker_text} {title}"
-    return marker_text
+    return str(task.get("title") or "")
 
 
 def activity_log_message(entry: dict[str, Any]) -> str:
@@ -4472,29 +4457,6 @@ def detect_truth_mismatches(
         for approval in (approval_state.get("pending") or [])
         if str(approval.get("task_id") or "").strip()
     }
-    def related_live_worker_covers_task(task: dict[str, Any]) -> bool:
-        expected_actor = expected_task_actor(task)
-        if not expected_actor:
-            return False
-        task_id = str(task.get("id") or "").strip()
-        if not task_id:
-            return False
-
-        parent_id = str(task.get("helper_parent") or "").strip()
-        if parent_id:
-            for worker in live_workers_by_task.get(parent_id, []):
-                if canonical_agent_name(worker.get("actor") or worker.get("agent_id")) == expected_actor:
-                    return True
-
-        for related_id, related_task in task_map.items():
-            if str(related_task.get("helper_parent") or "").strip() != task_id:
-                continue
-            for worker in live_workers_by_task.get(related_id, []):
-                if canonical_agent_name(worker.get("actor") or worker.get("agent_id")) == expected_actor:
-                    return True
-
-        return False
-
     def push(payload: dict[str, Any]) -> None:
         key = str(payload.get("id") or f"{payload.get('type')}:{payload.get('task_id')}:{payload.get('worker_run_id')}:{payload.get('queue_event_id')}")
         if key in seen:
@@ -4657,8 +4619,6 @@ def detect_truth_mismatches(
         if str(task.get("id") or "").strip() in pending_approval_task_ids:
             continue
         if live_workers_by_task.get(task["id"]):
-            continue
-        if related_live_worker_covers_task(task):
             continue
         push(
             {
