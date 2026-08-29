@@ -17,7 +17,7 @@ sys.path.insert(0, str(BFF_ROOT))
 from scripts import project_consultation_to_bff_agora_surfaces as projector  # noqa: E402
 
 import main as bff_main  # noqa: E402
-from read_store import ReadSurfaceStore  # noqa: E402
+from ports import create_in_memory_read_surface_ports  # noqa: E402
 
 
 HEADERS = {"Authorization": "Bearer op-dev:admin:mfa"}
@@ -151,10 +151,30 @@ def _projected_agora_bff(monkeypatch) -> Iterator[TestClient]:
             monkeypatch.setenv(key, str(value))
 
         original_store = bff_main.read_store
-        bff_main.read_store = ReadSurfaceStore(
-            os.path.join(td, "read_surfaces.json"),
-            allow_local_snapshot_fallback=False,
+        ports = create_in_memory_read_surface_ports(
+            research_knowledge_source_kwargs={
+                "research_tickets_store": stores["research_tickets"],
+                "research_notes_store": stores["research_notes"],
+                "insight_cards_store": stores["insight_cards"],
+            },
+            lifecycle_telemetry_governance_kwargs={
+                "postmortems": stores["postmortems"],
+            },
         )
+        # Agora's projected records have their own typed contracts which are
+        # intentionally narrower than the generic consultation/read models.
+        # Bind only those test-owned read projections to the actual ports
+        # container; no product store compatibility layer is involved.
+        ports.list_agora_signals = lambda **_kwargs: list(stores["agora_signals"].values())
+        ports.list_agora_sessions = lambda **_kwargs: list(stores["agora_sessions"].values())
+        ports.list_agora_insights = lambda **_kwargs: list(stores["insight_cards"].values())
+        ports.list_agora_notes = lambda **_kwargs: list(stores["research_notes"].values())
+        ports.list_agora_handoffs = lambda **_kwargs: list(stores["agora_handoffs"].values())
+        ports.list_agora_training_examples = lambda **_kwargs: list(stores["agora_training_examples"].values())
+        ports.list_decision_journal_entries = lambda **_kwargs: list(stores["decision_journal_entries"].values())
+        ports._read_dataset_records = lambda dataset: list(stores.get(dataset, {}).values())
+        ports.dataset_source = lambda _dataset: "test_projection"
+        bff_main.read_store = ports
         try:
             yield TestClient(bff_main.app)
         finally:

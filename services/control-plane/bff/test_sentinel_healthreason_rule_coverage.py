@@ -19,10 +19,8 @@ Coverage:
 """
 from __future__ import annotations
 
-import json
 import os
 import sys
-import tempfile
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Dict, Iterator, List
@@ -34,7 +32,7 @@ BFF_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(BFF_DIR))
 
 import main as bff_main  # noqa: E402
-from read_store import ReadSurfaceStore  # noqa: E402
+from ports import create_in_memory_read_surface_ports  # noqa: E402
 
 HEADERS = {"Authorization": "Bearer op-execute-plans:operator,reviewer,admin:mfa"}
 
@@ -52,17 +50,14 @@ _HEALTH_REASON_CODES = {
 @contextmanager
 def _persona_store(personas: Dict[str, Dict[str, Any]]) -> Iterator[TestClient]:
     """Yield a TestClient backed by a snapshot seeded with the given personas."""
-    with tempfile.TemporaryDirectory() as td:
-        snap = os.path.join(td, "read_surfaces.json")
-        with open(snap, "w") as f:
-            json.dump({"personas": personas}, f)
-        original = bff_main.read_store
-        # Persona snapshots load through the local-snapshot path.
-        bff_main.read_store = ReadSurfaceStore(snap, allow_local_snapshot_fallback=True)
-        try:
-            yield TestClient(bff_main.app, raise_server_exceptions=False)
-        finally:
-            bff_main.read_store = original
+    original = bff_main.read_store
+    bff_main.read_store = create_in_memory_read_surface_ports(
+        persona_capital_runtime_kwargs={"personas": list(personas.values())}
+    )
+    try:
+        yield TestClient(bff_main.app, raise_server_exceptions=False)
+    finally:
+        bff_main.read_store = original
 
 
 @contextmanager

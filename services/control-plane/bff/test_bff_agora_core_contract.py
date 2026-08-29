@@ -15,7 +15,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 import main as bff_main
 from command_queue import CommandStore
 from models import CommandType
-from read_store import ReadSurfaceStore
+from ports import ReadSurfacePorts, create_in_memory_read_surface_ports
 
 
 OPERATOR_TOKEN = "Bearer op-agora:operator"
@@ -32,101 +32,258 @@ def _error(resp):
     raise AssertionError(f"response did not contain BFF error envelope: {body}")
 
 
-def _seed_read_store(path: Path) -> ReadSurfaceStore:
-    path.write_text(
-        json.dumps(
-            {
-                "agora_signals": {
-                    "sig-001": {
-                        "id": "sig-001",
-                        "signal_id": "sig-001",
-                        "title": "Opening auction momentum",
-                        "reviewStatus": "pending_trader_review",
-                        "conviction": 0.71,
-                        "alpha": "auction-momentum",
-                        "updatedAt": "2026-05-08T09:00:00Z",
-                    }
-                },
-                "agora_watchlist": {
-                    "AAPL": {
-                        "id": "watch-AAPL",
-                        "symbol": "AAPL",
-                        "return1dPct": 2.6,
-                    }
-                },
-                "agora_sessions": {
-                    "sess-001": {
-                        "id": "sess-001",
-                        "sessionId": "sess-001",
-                        "title": "Signal review",
-                        "status": "active",
-                        "messages": [
-                            {
-                                "id": "msg-001",
-                                "sessionId": "sess-001",
-                                "sender": {"type": "operator", "id": "op-agora"},
-                                "role": "user",
-                                "content": "Explain signal sig-001",
-                                "language": "en-US",
-                                "attachments": [],
-                                "citations": [],
-                                "annotations": [],
-                                "createdAt": "2026-05-08T09:01:00Z",
-                            }
-                        ],
-                        "createdAt": "2026-05-08T09:00:00Z",
-                        "updatedAt": "2026-05-08T09:01:00Z",
-                    }
-                },
-                "research_notes": {},
-                "decision_journal_entries": {},
-                "insight_cards": {
-                    "ins-001": {
-                        "id": "ins-001",
-                        "insight_id": "ins-001",
-                        "summary": "Auction momentum needs risk review",
-                        "scope": "strategy",
-                        "status": "classified",
-                        "confidence": {"score": 0.82},
-                        "tags": ["signal"],
-                        "source_ref": "agora:sig-001",
-                        "supporting_evidence_refs": [],
-                        "linked_sources": [],
-                        "aggregation_provenance": {"aggregated_at": "2026-05-08T09:02:00Z"},
-                        "created_at": "2026-05-08T09:02:00Z",
-                        "updated_at": "2026-05-08T09:02:00Z",
-                    }
-                },
-                "institutional_memory_entries": {
-                    "mem-001": {
-                        "id": "mem-001",
-                        "entry_id": "mem-001",
-                        "headline": "Auction slippage memory",
-                        "body": "Opening auction slippage should constrain momentum rollout.",
-                        "scope": {"type": "strategy", "id": "strategy-alpha"},
-                        "tags": ["risk"],
-                        "created_at": "2026-05-08T08:00:00Z",
-                        "updated_at": "2026-05-08T08:00:00Z",
-                    }
-                },
-                "agora_training_examples": {},
-                "research_tickets": {
-                    "rt-001": {
-                        "ticket_id": "rt-001",
-                        "title": "Review signal feedback",
-                        "description": "Decide whether sig-001 should become a research ticket.",
-                        "status": "new",
-                        "priority": "normal",
-                        "owner": "research",
-                        "created_at": "2026-05-08T08:30:00Z",
-                        "updated_at": "2026-05-08T08:30:00Z",
-                    }
-                },
+class AgoraCoreTestReadPorts(ReadSurfacePorts):
+    def __init__(self, data: dict | None = None) -> None:
+        super().__init__()
+        self._data = data or {}
+
+    def list_agora_signals(self, *, review_status: str | None = None, **kwargs: Any) -> list[dict[str, Any]]:
+        items = list(self._data.get("agora_signals", {}).values())
+        if review_status:
+            items = [item for item in items if str(item.get("reviewStatus") or item.get("review_status") or "").strip() == review_status]
+        return items
+
+    def get_agora_signal(self, signal_id: str | None) -> dict[str, Any] | None:
+        return self._data.get("agora_signals", {}).get(str(signal_id or ""))
+
+    def patch_agora_signal(self, signal_id: str, *, review_status: str | None = None, **kwargs: Any) -> dict[str, Any] | None:
+        sig = self._data.get("agora_signals", {}).get(signal_id)
+        if sig:
+            if review_status is not None:
+                sig["reviewStatus"] = review_status
+                sig["review_status"] = review_status
+            sig.update(kwargs)
+            return sig
+        return None
+
+    def list_agora_watchlist(self, **kwargs: Any) -> list[dict[str, Any]]:
+        return list(self._data.get("agora_watchlist", {}).values())
+
+    def list_agora_sessions(self, **kwargs: Any) -> list[dict[str, Any]]:
+        return list(self._data.get("agora_sessions", {}).values())
+
+    def list_agora_messages(self, session_id: str | None, **kwargs: Any) -> list[dict[str, Any]]:
+        sess = self._data.get("agora_sessions", {}).get(str(session_id or ""))
+        if sess and "messages" in sess:
+            return list(sess["messages"])
+        return []
+
+    def list_agora_session_messages(self, session_id: str | None, **kwargs: Any) -> list[dict[str, Any]]:
+        return self.list_agora_messages(session_id, **kwargs)
+
+    def get_agora_session(self, session_id: str | None) -> dict[str, Any] | None:
+        return self._data.get("agora_sessions", {}).get(str(session_id or ""))
+
+    def get_agora_message(self, message_id: str | None) -> dict[str, Any] | None:
+        clean_id = str(message_id or "")
+        for sess in self._data.get("agora_sessions", {}).values():
+            for msg in sess.get("messages", []):
+                if msg.get("id") == clean_id or msg.get("message_id") == clean_id:
+                    return msg
+        return {"id": clean_id, "session_id": "sess-001"} if clean_id == "msg-001" else None
+
+    def list_research_tickets(self, *, statuses: list[str] | None = None, owner: str | None = None, include_fixture_pack: bool = False, **kwargs: Any) -> list[dict[str, Any]]:
+        tickets = list(self._data.get("research_tickets", {}).values())
+        if statuses:
+            tickets = [t for t in tickets if str(t.get("status") or "") in statuses]
+        if owner:
+            tickets = [t for t in tickets if str(t.get("owner") or "") == owner]
+        return tickets
+
+    def get_research_ticket(self, ticket_id: str | None) -> dict[str, Any] | None:
+        return self._data.get("research_tickets", {}).get(str(ticket_id or ""))
+
+    def list_decision_journal_entries(self, **kwargs: Any) -> list[dict[str, Any]]:
+        return list(self._data.get("decision_journal_entries", {}).values())
+
+    def create_decision_journal_entry(self, *, title: str, body: str, actor_id: str | None = None, **kwargs: Any) -> dict[str, Any]:
+        entry = {"id": "dje-001", "title": title, "body": body, "author": actor_id or "op-agora", "canonicalWriteAuthority": "agora_journal_service"}
+        self._data.setdefault("decision_journal_entries", {})[entry["id"]] = entry
+        return entry
+
+    def list_insight_cards(self, **kwargs: Any) -> list[dict[str, Any]]:
+        return list(self._data.get("insight_cards", {}).values())
+
+    def get_insight_card(self, card_id: str | None) -> dict[str, Any] | None:
+        return self._data.get("insight_cards", {}).get(str(card_id or ""))
+
+    def list_agora_insights(self, **kwargs: Any) -> list[dict[str, Any]]:
+        return self.list_insight_cards(**kwargs)
+
+    def get_agora_insight(self, card_id: str | None) -> dict[str, Any] | None:
+        return self.get_insight_card(card_id)
+
+    def create_agora_insight(self, *, summary: str, tags: list[str] | None = None, **kwargs: Any) -> dict[str, Any]:
+        ins_id = "ins-002"
+        ins = {"id": ins_id, "insight_id": ins_id, "summary": summary, "tags": tags or []}
+        self._data.setdefault("insight_cards", {})[ins_id] = ins
+        return ins
+
+    def list_institutional_memory_entries(self, **kwargs: Any) -> list[dict[str, Any]]:
+        return list(self._data.get("institutional_memory_entries", {}).values())
+
+    def get_institutional_memory_entry(self, entry_id: str | None) -> dict[str, Any] | None:
+        return self._data.get("institutional_memory_entries", {}).get(str(entry_id or ""))
+
+    def list_agora_memory_entries(self, **kwargs: Any) -> list[dict[str, Any]]:
+        return self.list_institutional_memory_entries(**kwargs)
+
+    def get_agora_memory_entry(self, entry_id: str | None) -> dict[str, Any] | None:
+        return self.get_institutional_memory_entry(entry_id)
+
+    def list_agora_training_examples(self, **kwargs: Any) -> list[dict[str, Any]]:
+        return list(self._data.get("agora_training_examples", {}).values())
+
+    def create_agora_training_example(self, *, input: Any = None, expected: Any = None, labels: list[str] | None = None, **kwargs: Any) -> dict[str, Any]:
+        ex_id = "trn-agora-001"
+        ex = {"trainingExampleId": ex_id, "id": ex_id, "input": input or kwargs.get("input_data"), "expected": expected, "labels": labels or []}
+        self._data.setdefault("agora_training_examples", {})[ex_id] = ex
+        return ex
+
+    def list_agora_notes(self, **kwargs: Any) -> list[dict[str, Any]]:
+        return list(self._data.get("research_notes", {}).values())
+
+    def create_agora_note(self, *, title: str, body: str, actor_id: str | None = None, **kwargs: Any) -> dict[str, Any]:
+        note = {"id": "note-001", "title": title, "body": body, "created_by": actor_id or "op-agora"}
+        self._data.setdefault("research_notes", {})[note["id"]] = note
+        return note
+
+    def record_agora_audit_event(self, event: dict[str, Any] | None = None, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        return event or kwargs
+
+    def record_agora_signal_feedback(self, signal_id: str | None = None, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        sid = signal_id or kwargs.get("signal_id") or kwargs.get("signalId") or ""
+        fb_id = f"fb-{sid}"
+        res = {
+            "signal_id": sid,
+            "signalId": sid,
+            "feedback_id": fb_id,
+            "feedbackId": fb_id,
+            "id": fb_id,
+            "decision": kwargs.get("decision", ""),
+            "confidence": kwargs.get("confidence", 0),
+            "reason": kwargs.get("reason", ""),
+            "actor_id": kwargs.get("actor_id", "op-agora"),
+            "created_at": kwargs.get("created_at", "2026-05-08T09:00:00Z"),
+        }
+        if args and isinstance(args[0], dict):
+            res.update(args[0])
+            if "signal_id" in args[0]:
+                res["signalId"] = args[0]["signal_id"]
+        sig = self._data.get("agora_signals", {}).get(sid)
+        if sig and res.get("decision"):
+            sig["reviewStatus"] = res["decision"]
+            sig["review_status"] = res["decision"]
+        return res
+
+    def create_agora_feedback(self, *, signal_id: str, actor_id: str | None = None, decision: str = "", confidence: int = 0, reason: str = "", created_at: str | None = None, **kwargs: Any) -> dict[str, Any]:
+        return {
+            "feedback_id": f"fb-{signal_id}",
+            "signal_id": signal_id,
+            "actor_id": actor_id or "op-agora",
+            "decision": decision,
+            "confidence": confidence,
+            "reason": reason,
+            "created_at": created_at or "2026-05-08T09:00:00Z",
+        }
+
+    def dataset_source(self, dataset: str) -> str:
+        return "in_memory"
+
+    def dataset_surface_status(self, dataset: str, *, snapshot_at: str, **kwargs: Any) -> dict[str, Any]:
+        return {"status": "ok", "source": "in_memory", "snapshot_at": snapshot_at}
+
+
+def _seed_read_store() -> AgoraCoreTestReadPorts:
+    data = {
+        "agora_signals": {
+            "sig-001": {
+                "id": "sig-001",
+                "signal_id": "sig-001",
+                "title": "Opening auction momentum",
+                "reviewStatus": "pending_trader_review",
+                "conviction": 0.71,
+                "alpha": "auction-momentum",
+                "updatedAt": "2026-05-08T09:00:00Z",
             }
-        ),
-        encoding="utf-8",
-    )
-    return ReadSurfaceStore(str(path), allow_local_snapshot_fallback=True)
+        },
+        "agora_watchlist": {
+            "AAPL": {
+                "id": "watch-AAPL",
+                "symbol": "AAPL",
+                "return1dPct": 2.6,
+            }
+        },
+        "agora_sessions": {
+            "sess-001": {
+                "id": "sess-001",
+                "sessionId": "sess-001",
+                "title": "Signal review",
+                "status": "active",
+                "messages": [
+                    {
+                        "id": "msg-001",
+                        "sessionId": "sess-001",
+                        "sender": {"type": "operator", "id": "op-agora"},
+                        "role": "user",
+                        "content": "Explain signal sig-001",
+                        "language": "en-US",
+                        "attachments": [],
+                        "citations": [],
+                        "annotations": [],
+                        "createdAt": "2026-05-08T09:01:00Z",
+                    }
+                ],
+                "createdAt": "2026-05-08T09:00:00Z",
+                "updatedAt": "2026-05-08T09:01:00Z",
+            }
+        },
+        "research_notes": {},
+        "decision_journal_entries": {},
+        "insight_cards": {
+            "ins-001": {
+                "id": "ins-001",
+                "insight_id": "ins-001",
+                "summary": "Auction momentum needs risk review",
+                "scope": "strategy",
+                "status": "classified",
+                "confidence": {"score": 0.82},
+                "tags": ["signal"],
+                "source_ref": "agora:sig-001",
+                "supporting_evidence_refs": [],
+                "linked_sources": [],
+                "aggregation_provenance": {"aggregated_at": "2026-05-08T09:02:00Z"},
+                "created_at": "2026-05-08T09:02:00Z",
+                "updated_at": "2026-05-08T09:02:00Z",
+            }
+        },
+        "institutional_memory_entries": {
+            "mem-001": {
+                "id": "mem-001",
+                "entry_id": "mem-001",
+                "headline": "Auction slippage memory",
+                "body": "Opening auction slippage should constrain momentum rollout.",
+                "scope": {"type": "strategy", "id": "strategy-alpha"},
+                "tags": ["risk"],
+                "created_at": "2026-05-08T08:00:00Z",
+                "updated_at": "2026-05-08T08:00:00Z",
+            }
+        },
+        "agora_training_examples": {},
+        "research_tickets": {
+            "rt-001": {
+                "ticket_id": "rt-001",
+                "title": "Review signal feedback",
+                "description": "Decide whether sig-001 should become a research ticket.",
+                "status": "new",
+                "priority": "normal",
+                "owner": "research",
+                "created_at": "2026-05-08T08:30:00Z",
+                "updated_at": "2026-05-08T08:30:00Z",
+            }
+        },
+    }
+    return AgoraCoreTestReadPorts(data)
 
 
 @contextmanager
@@ -134,8 +291,7 @@ def _isolated_agora_bff() -> Iterator[TestClient]:
     with tempfile.TemporaryDirectory() as td:
         original_store = bff_main.read_store
         original_command_store = bff_main.command_store
-        store_path = Path(td) / "read_surfaces.json"
-        bff_main.read_store = _seed_read_store(store_path)
+        bff_main.read_store = _seed_read_store()
         bff_main.command_store = CommandStore(os.path.join(td, "commands.jsonl"))
         bff_main._AGORA_CORE_BFF_IDEMPOTENCY.clear()
         try:

@@ -24,17 +24,14 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 import main as bff_main
-from read_store import ReadSurfaceStore
+from ports import create_in_memory_read_surface_ports
 
 OPERATOR_HEADERS = {"Authorization": "Bearer op-b2-003:operator"}
 NO_AUTH_HEADERS: dict = {}
 
 
 def _fresh_client(td: str) -> TestClient:
-    bff_main.read_store = ReadSurfaceStore(
-        os.path.join(td, "read_surfaces.json"),
-        allow_local_snapshot_fallback=True,
-    )
+    bff_main.read_store = create_in_memory_read_surface_ports()
     bff_main._MCP_SERVER_REGISTRY.clear()
     bff_main._MCP_TOOL_REGISTRY.clear()
     bff_main._MCP_SERVER_BFF_IDEMPOTENCY.clear()
@@ -298,17 +295,19 @@ def test_bff_channels_detail_401_unauthenticated() -> None:
 # ---------------------------------------------------------------------------
 
 def _seed_ranking_formula(td: str) -> str:
-    store = ReadSurfaceStore(
-        os.path.join(td, "read_surfaces.json"),
-        allow_local_snapshot_fallback=True,
-    )
-    record = store.create_ranking_formula(
-        name="Test Formula",
-        description="b2-003 test formula",
-        actor_id="op-b2-003",
+    formula_id = f"rf-{uuid.uuid4().hex[:8]}"
+    record = {
+        "formula_id": formula_id,
+        "id": formula_id,
+        "name": "Test Formula",
+        "description": "b2-003 test formula",
+        "actor_id": "op-b2-003",
+    }
+    store = create_in_memory_read_surface_ports(
+        persona_capital_runtime_kwargs={"ranking_formulas": [record]}
     )
     bff_main.read_store = store
-    return str(record.get("formula_id") or record.get("id") or "")
+    return formula_id
 
 
 def test_bff_ranking_formulas_list_envelope() -> None:

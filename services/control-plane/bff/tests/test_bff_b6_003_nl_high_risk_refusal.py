@@ -24,16 +24,22 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 import main as bff_main
-from read_store import ReadSurfaceStore
+from ports import create_in_memory_read_surface_ports
 
 OPERATOR_HEADERS = {"Authorization": "Bearer op-b6-003:operator"}
 
 
 def _fresh_client(td: str) -> TestClient:
-    store = ReadSurfaceStore(
-        os.path.join(td, "read_surfaces.json"),
-        allow_local_snapshot_fallback=True,
-    )
+    store = create_in_memory_read_surface_ports()
+    store.audit_events = []
+
+    def _record_audit(event: dict) -> dict:
+        evt = {"auditId": f"audit-{len(store.audit_events) + 1}", **event}
+        store.audit_events.append(evt)
+        return evt
+
+    store.record_agora_audit_event = _record_audit
+    store.get_agora_session = lambda session_id: None
     bff_main.read_store = store
     bff_main._MGMT_NL_IDEMPOTENCY.clear()
     bff_main._sse_buffers["ask"].clear()
@@ -165,10 +171,9 @@ def test_refusal_does_not_create_session_idempotency_record_or_sse(monkeypatch) 
             assert bff_main._MGMT_NL_IDEMPOTENCY == {}
             assert list(bff_main._sse_buffers["ask"]) == []
 
-            data = json.loads(Path(td, "read_surfaces.json").read_text(encoding="utf-8"))
-            audits = data.get("agora_audit_events") or {}
+            audits = store.audit_events
             assert len(audits) == 1
-            audit = next(iter(audits.values()))
+            audit = audits[0]
             assert audit["action"] == "management.nl.high_risk_refused"
             assert audit["reason"] == "high_risk_nl_policy"
             assert audit["matchedCategory"] == "runtime_control"

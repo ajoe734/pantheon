@@ -10,20 +10,175 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, os.path.dirname(__file__))
 
 import main as bff_main
-from read_store import ReadSurfaceStore
+from ports import DefaultResearchKnowledgeSourcePort
 
 
 OPERATOR_AUTH = "Bearer test-operator:operator"
+
+
+def _artifact(
+    artifact_id: str,
+    *,
+    version: int,
+    parent_artifact_id: str | None,
+    status: str,
+    sharpe_ratio: float,
+    experiment_id: str,
+    created_at: str,
+) -> dict:
+    return {
+        "artifact_id": artifact_id,
+        "lineage_id": "lin_xyz987",
+        "version": version,
+        "parent_artifact_id": parent_artifact_id,
+        "status": status,
+        "name": f"MACD-momentum-v{version}",
+        "artifact_type": "strategy_model",
+        "produced_by_experiment_id": experiment_id,
+        "linked_ticket_id": "tkt_5432",
+        "created_at": created_at,
+        "metrics": {
+            "sharpe_ratio": sharpe_ratio,
+            "sortino_ratio": sharpe_ratio + 0.3,
+            "max_drawdown": -0.14 + (version * 0.01),
+            "annualized_return": 0.10 + (version * 0.02),
+            "win_rate": 0.48 + (version * 0.02),
+            "avg_trade_duration_days": 5.0 - (version * 0.4),
+            "total_trades": 350 + (version * 20),
+        },
+        "parameters": {
+            "fast_period": 9 + version,
+            "slow_period": 26,
+            "signal_period": 9,
+            "position_sizing": "fixed_fractional",
+            "risk_per_trade": 0.01,
+        },
+        "provenance": {
+            "linked_experiment": {
+                "experiment_id": experiment_id,
+                "display_label": f"MACD run v{version}",
+            },
+            "linked_ticket": {
+                "ticket_id": "tkt_5432",
+                "title": "Momentum strategy parameter optimization",
+            },
+            "lineage_refs": [],
+        },
+    }
+
+
+_ARTIFACTS = {
+    "art_2024_abc121": _artifact(
+        "art_2024_abc121",
+        version=1,
+        parent_artifact_id=None,
+        status="superseded",
+        sharpe_ratio=0.98,
+        experiment_id="exp_9800",
+        created_at="2026-04-10T09:00:00Z",
+    ),
+    "art_2024_abc122": _artifact(
+        "art_2024_abc122",
+        version=2,
+        parent_artifact_id="art_2024_abc121",
+        status="superseded",
+        sharpe_ratio=1.18,
+        experiment_id="exp_9801",
+        created_at="2026-04-12T09:00:00Z",
+    ),
+    "art_2024_abc123": _artifact(
+        "art_2024_abc123",
+        version=3,
+        parent_artifact_id="art_2024_abc122",
+        status="sealed",
+        sharpe_ratio=1.42,
+        experiment_id="exp_9876",
+        created_at="2026-04-14T09:00:00Z",
+    ),
+    "art_2024_pending01": {
+        **_artifact(
+            "art_2024_pending01",
+            version=1,
+            parent_artifact_id=None,
+            status="pending",
+            sharpe_ratio=0.5,
+            experiment_id="exp_pending",
+            created_at="2026-04-15T09:00:00Z",
+        ),
+        "lineage_id": "lin_pending",
+        "linked_ticket_id": "tkt_pending",
+    },
+}
+
+
+class _ArtifactPortDouble(DefaultResearchKnowledgeSourcePort):
+    """Typed RW-05 double preserving the route's legacy projection contract."""
+
+    def __init__(self) -> None:
+        super().__init__(research_artifacts_store=_ARTIFACTS)
+
+    def list_research_artifacts(
+        self,
+        *,
+        experiment_id: str | None = None,
+        ticket_id: str | None = None,
+        lineage_id: str | None = None,
+        status: str | None = None,
+        **_: object,
+    ) -> list[dict]:
+        records = list(self._artifacts.values())
+        if experiment_id:
+            records = [record for record in records if record.get("produced_by_experiment_id") == experiment_id]
+        if ticket_id:
+            records = [record for record in records if record.get("linked_ticket_id") == ticket_id]
+        if lineage_id:
+            records = [record for record in records if record.get("lineage_id") == lineage_id]
+        if status:
+            records = [record for record in records if record.get("status") == status]
+        records.sort(key=lambda record: str(record.get("created_at") or ""), reverse=True)
+        return [self._project_research_artifact_summary(record) for record in records]
+
+    def get_research_artifact(self, artifact_id: str | None) -> dict | None:
+        detail = super().get_research_artifact(artifact_id)
+        raw = self._artifacts.get(str(artifact_id or ""))
+        if detail is None or raw is None:
+            return None
+        detail["parent_artifact_id"] = raw.get("parent_artifact_id")
+        detail["version_chain"] = detail["lineage"]["versions"]
+        detail["provenance"] = raw.get("provenance") or {}
+        detail["experiment_refs"] = (raw.get("metadata") or {}).get("experiment_refs") or []
+        detail["allowedActions"]["canViewDetail"] = True
+        return detail
+
+    def set_experiment_refs(self, artifact_id: str, refs: list[dict]) -> None:
+        self._artifacts[artifact_id]["metadata"] = {"experiment_refs": refs}
+
+    def compare_research_artifacts(self, artifact_ids: list[str]) -> dict:
+        base = super().compare_research_artifacts(artifact_ids)
+        field_pairs = []
+        for comparison in base["comparisons"]:
+            delta = comparison.get("delta")
+            field_pairs.append(
+                {
+                    **comparison,
+                    "group": comparison.get("category"),
+                    "change_label": "improved" if comparison.get("polarity") == "better" else comparison.get("polarity"),
+                    "delta_direction": "up" if isinstance(delta, (int, float)) and delta > 0 else ("down" if isinstance(delta, (int, float)) and delta < 0 else "flat"),
+                }
+            )
+        return {
+            "artifacts": base["artifacts"],
+            "field_pairs": field_pairs,
+            "change_summary": {"total_fields_compared": len(field_pairs)},
+            "provenance_pairs": [artifact.get("provenance") or {} for artifact in base["artifacts"]],
+        }
 
 
 @contextmanager
 def _seeded_client():
     with tempfile.TemporaryDirectory() as td:
         original_store = bff_main.read_store
-        bff_main.read_store = ReadSurfaceStore(
-            os.path.join(td, "read_surfaces.json"),
-            allow_local_snapshot_fallback=True,
-        )
+        bff_main.read_store = _ArtifactPortDouble()
         client = TestClient(bff_main.app)
         try:
             yield client
@@ -89,8 +244,9 @@ def test_rw05_detail_contract_returns_version_chain_and_allowed_actions() -> Non
 
 def test_rw05_detail_exposes_wandb_experiment_refs_from_registry_metadata() -> None:
     with _seeded_client() as client:
-        bff_main.read_store._data["research_artifacts"]["art_2024_abc123"]["metadata"] = {
-            "experiment_refs": [
+        bff_main.read_store.set_experiment_refs(
+            "art_2024_abc123",
+            [
                 {
                     "backend": "wandb",
                     "run_id": "fake-run-001",
@@ -103,9 +259,8 @@ def test_rw05_detail_exposes_wandb_experiment_refs_from_registry_metadata() -> N
                         "artifact_path": "pantheon-ci/pantheon-test/pantheon-artifact:approved",
                     },
                 }
-            ]
-        }
-        bff_main.read_store._save()
+            ],
+        )
 
         response = client.get(
             "/api/v1/artifacts/art_2024_abc123",

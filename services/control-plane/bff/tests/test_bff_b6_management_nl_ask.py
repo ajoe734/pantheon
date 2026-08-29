@@ -35,17 +35,54 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 import main as bff_main
-from read_store import ReadSurfaceStore
+from ports import create_read_surface_ports
 
 OPERATOR_HEADERS = {"Authorization": "Bearer op-b6:operator"}
 IK = "test-idem-b6-001"
 
 
+class _B6NlAskTestStore:
+    def __init__(self) -> None:
+        self.ports = create_read_surface_ports()
+        self.audit_events: list[dict[str, Any]] = []
+
+    def _load_evidence(self) -> dict[str, Any]:
+        store_path = os.environ.get("PANTHEON_BFF_EVIDENCE_REF_STORE")
+        if store_path and os.path.exists(store_path):
+            try:
+                with open(store_path, "r", encoding="utf-8") as f:
+                    return json.load(f)
+            except Exception:
+                pass
+        return {}
+
+    def list_evidence_refs(self, **kwargs: Any) -> list[dict[str, Any]]:
+        return list(self._load_evidence().values())
+
+    def get_evidence_ref(self, ref_id: Optional[str]) -> Optional[dict[str, Any]]:
+        if not ref_id:
+            return None
+        return self._load_evidence().get(ref_id)
+
+    def record_agora_audit_event(self, event: dict[str, Any]) -> dict[str, Any]:
+        self.audit_events.append(event)
+        return event
+
+    def list_agora_audit_events(self, **kwargs: Any) -> list[dict[str, Any]]:
+        return list(self.audit_events)
+
+    def dataset_source(self, dataset: str) -> str:
+        if dataset == "evidence_refs":
+            store_path = os.environ.get("PANTHEON_BFF_EVIDENCE_REF_STORE")
+            return "service_backend" if store_path else "missing"
+        return self.ports.dataset_source(dataset)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self.ports, name)
+
+
 def _fresh_client(td: str) -> TestClient:
-    store = ReadSurfaceStore(
-        os.path.join(td, "read_surfaces.json"),
-        allow_local_snapshot_fallback=True,
-    )
+    store = _B6NlAskTestStore()
     bff_main.read_store = store
     bff_main._MGMT_NL_IDEMPOTENCY.clear()
     bff_main._MGMT_AI_AUDIT_EVENTS.clear()
@@ -318,10 +355,7 @@ def test_nl_ask_assistant_transcript_survives_conversation_store_reload() -> Non
         original_conversation_store = bff_main._MGMT_AI_CONVERSATION_STORE
         store_path = os.path.join(td, "management-ai.json")
         try:
-            bff_main.read_store = ReadSurfaceStore(
-                os.path.join(td, "read_surfaces.json"),
-                allow_local_snapshot_fallback=True,
-            )
+            bff_main.read_store = _B6NlAskTestStore()
             bff_main._MGMT_NL_IDEMPOTENCY.clear()
             bff_main._MGMT_AI_AUDIT_EVENTS.clear()
             bff_main._MGMT_AI_CONVERSATION_STORE = bff_main.ManagementAiConversationStore(
@@ -493,10 +527,7 @@ def _nl_evidence_client() -> Iterator[TestClient]:
         original_store = bff_main.read_store
         bff_main._MGMT_NL_IDEMPOTENCY.clear()
         try:
-            bff_main.read_store = ReadSurfaceStore(
-                str(root / "read_surfaces.json"),
-                allow_local_snapshot_fallback=True,
-            )
+            bff_main.read_store = _B6NlAskTestStore()
             yield TestClient(bff_main.app)
         finally:
             bff_main.read_store = original_store

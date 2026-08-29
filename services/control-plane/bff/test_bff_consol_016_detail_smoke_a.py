@@ -12,11 +12,21 @@ from fastapi.testclient import TestClient
 
 sys.path.insert(0, os.path.dirname(__file__))
 
+import json
+from pathlib import Path
+from typing import Any, Iterator
+from unittest import mock
+
+from fastapi.testclient import TestClient
+
+sys.path.insert(0, os.path.dirname(__file__))
+
 import main as bff_main
-from read_store import ReadSurfaceStore
+from ports import ReadSurfacePorts
 
 
 HEADERS = {"Authorization": "Bearer op-2:operator"}
+FIXTURE_PATH = Path(__file__).resolve().parent / "data" / "fixtures_pack_a.json"
 
 PACK_A = {
     "strategy_id": "strategy-pack-a-momentum",
@@ -49,6 +59,212 @@ SERVICE_ENV_BLANKS = {
 }
 
 
+class DetailSmokeATestReadPorts(ReadSurfacePorts):
+    def __init__(self, *, allow_local_snapshot_fallback: bool = True) -> None:
+        super().__init__()
+        self._allow_fallback = allow_local_snapshot_fallback
+        self._data: dict[str, Any] = {}
+        if allow_local_snapshot_fallback and FIXTURE_PATH.exists():
+            payload = json.loads(FIXTURE_PATH.read_text(encoding="utf-8"))
+            self._data = payload.get("datasets", {})
+
+    def dataset_source(self, dataset: str) -> str:
+        return "local_snapshot" if self._allow_fallback else "missing"
+
+    def dataset_surface_status(self, dataset: str, *, snapshot_at: str, **kwargs: Any) -> dict[str, Any]:
+        src = self.dataset_source(dataset)
+        status = "unavailable" if src == "missing" else "ok"
+        return {"status": status, "source": src, "snapshot_at": snapshot_at}
+
+    def _get_dataset(self, name: str) -> dict[str, Any] | list[Any]:
+        return self._data.get(name, {})
+
+    def list_strategies(self, **kwargs: Any) -> list[dict[str, Any]]:
+        ds = self._get_dataset("strategies")
+        if ds:
+            return list(ds.values()) if isinstance(ds, dict) else list(ds)
+        specs = self._get_dataset("strategy_specs")
+        if specs:
+            res = []
+            for k, v in (specs.items() if isinstance(specs, dict) else enumerate(specs)):
+                strat = dict(v)
+                strat.setdefault("id", strat.get("strategy_id", k))
+                strat.setdefault("strategy_id", strat["id"])
+                strat.setdefault("personaIds", strat.get("persona_ids", []))
+                res.append(strat)
+            return res
+        return []
+
+    def get_strategy(self, strategy_id: str | None) -> dict[str, Any] | None:
+        strats = self.list_strategies()
+        for s in strats:
+            if s.get("id") == strategy_id or s.get("strategy_id") == strategy_id:
+                s = dict(s)
+                s.setdefault("personaIds", s.get("persona_ids", ["persona-pack-a-momentum"]))
+                return s
+        return None
+
+    def list_strategy_specs(self, strategy_id: str | None = None, **kwargs: Any) -> list[dict[str, Any]]:
+        ds = self._get_dataset("strategy_specs")
+        if not ds:
+            return []
+        items = list(ds.values()) if isinstance(ds, dict) else list(ds)
+        if strategy_id:
+            for s in items:
+                if s.get("strategy_id") == strategy_id or s.get("id") == strategy_id:
+                    return list(s.get("versions") or [])
+            return []
+        return items
+
+    def list_strategy_spec_versions(self, strategy_id: str | None = None) -> list[dict[str, Any]]:
+        return self.list_strategy_specs(strategy_id)
+
+    def get_strategy_spec_detail(self, strategy_id: str | None, *, version_selector: str | None = None) -> dict[str, Any] | None:
+        ds = self._get_dataset("strategy_specs")
+        if not ds or not strategy_id:
+            return None
+        spec = ds.get(strategy_id) if isinstance(ds, dict) else next((s for s in ds if s.get("strategy_id") == strategy_id), None)
+        if not spec:
+            return None
+        versions = spec.get("versions") or []
+        if not versions:
+            return None
+        if not version_selector or version_selector == "current":
+            return versions[0]
+        for v in versions:
+            if v.get("spec_version_id") == version_selector or v.get("spec_version") == version_selector:
+                return v
+        return versions[0]
+
+    def get_strategy_spec(self, spec_or_strat_id: str | None) -> dict[str, Any] | None:
+        ds = self._get_dataset("strategy_specs")
+        if isinstance(ds, dict):
+            if str(spec_or_strat_id or "") in ds:
+                return ds[str(spec_or_strat_id or "")]
+            return next((s for s in ds.values() if s.get("strategy_id") == spec_or_strat_id), None)
+        return None
+
+    def list_research_experiments(self, **kwargs: Any) -> list[dict[str, Any]]:
+        ds = self._get_dataset("research_experiments")
+        return list(ds.values()) if isinstance(ds, dict) else list(ds)
+
+    def list_strategy_experiments(self, strategy_id: str | None = None, **kwargs: Any) -> list[dict[str, Any]]:
+        raw = self.list_research_experiments()
+        if strategy_id:
+            return [e for e in raw if (e.get("linked_strategy_id") or e.get("strategy_id")) == strategy_id]
+        return raw
+
+    def list_research_artifacts(self, **kwargs: Any) -> list[dict[str, Any]]:
+        ds = self._get_dataset("research_artifacts")
+        return list(ds.values()) if isinstance(ds, dict) else list(ds)
+
+    def get_strategy_artifacts(self, strategy_id: str | None) -> list[dict[str, Any]]:
+        raw = self.list_research_artifacts()
+        if strategy_id:
+            return [a for a in raw if (a.get("linked_strategy_id") or a.get("strategy_id")) == strategy_id]
+        return raw
+
+    def list_lineage_edges(self, **kwargs: Any) -> list[dict[str, Any]]:
+        ds = self._get_dataset("lineage_edges")
+        return list(ds.values()) if isinstance(ds, dict) else list(ds)
+
+    def get_strategy_lineage(self, strategy_id: str | None) -> dict[str, Any] | None:
+        ds = self._get_dataset("strategy_lineages")
+        if isinstance(ds, dict):
+            return ds.get(str(strategy_id or ""))
+        return None
+
+    def list_governance_audit_events(self, **kwargs: Any) -> list[dict[str, Any]]:
+        ds = self._get_dataset("governance_audit_events")
+        return list(ds.values()) if isinstance(ds, dict) else list(ds)
+
+    def list_personas(self, **kwargs: Any) -> list[dict[str, Any]]:
+        ds = self._get_dataset("personas")
+        personas = list(ds.values()) if isinstance(ds, dict) else list(ds)
+        res = []
+        for p in personas:
+            p = dict(p)
+            p.setdefault("routedStrategies", 1)
+            res.append(p)
+        return res
+
+    def get_persona(self, persona_id: str | None) -> dict[str, Any] | None:
+        for p in self.list_personas():
+            if p.get("id") == persona_id or p.get("persona_id") == persona_id:
+                return p
+        return None
+
+    def get_route_policy_for_persona(self, persona_id: str | None) -> dict[str, Any] | None:
+        ds = self._get_dataset("persona_route_policies")
+        if isinstance(ds, dict):
+            return ds.get(str(persona_id or ""))
+        return next((p for p in ds if p.get("personaId") == persona_id or p.get("persona_id") == persona_id), None)
+
+    def get_persona_route_policy(self, persona_id: str | None) -> dict[str, Any] | None:
+        return self.get_route_policy_for_persona(persona_id)
+
+    def get_sessions_for_persona(self, persona_id: str | None) -> list[dict[str, Any]]:
+        ds = self._get_dataset("sessions")
+        sessions = list(ds.values()) if isinstance(ds, dict) else list(ds)
+        if persona_id:
+            return [s for s in sessions if s.get("persona_id") == persona_id]
+        return sessions
+
+    def get_consultations_for_persona(self, persona_id: str | None) -> list[dict[str, Any]]:
+        return []
+
+    def get_teaching_sessions_for_persona(self, persona_id: str | None) -> list[dict[str, Any]]:
+        ds = self._get_dataset("teaching_sessions")
+        sessions = list(ds.values()) if isinstance(ds, dict) else list(ds)
+        if persona_id:
+            return [s for s in sessions if s.get("persona_id") == persona_id]
+        return sessions
+
+    def list_persona_evaluations(self, persona_id: str | None = None, **kwargs: Any) -> list[dict[str, Any]]:
+        return self.get_teaching_sessions_for_persona(persona_id)
+
+    def list_deployment_plans(self, **kwargs: Any) -> list[dict[str, Any]]:
+        ds = self._get_dataset("deployment_plans") or self._get_dataset("deployments")
+        return list(ds.values()) if isinstance(ds, dict) else list(ds)
+
+    def get_deployment_plan(self, plan_id: str | None) -> dict[str, Any] | None:
+        ds = self._get_dataset("deployment_plans") or self._get_dataset("deployments")
+        if isinstance(ds, dict):
+            raw = ds.get(str(plan_id or ""))
+        else:
+            raw = next((p for p in ds if p.get("id") == plan_id or p.get("plan_id") == plan_id), None)
+        if raw:
+            p = dict(raw)
+            p.setdefault("approval_decision", {"id": p.get("approval_decision_id", "approval-pack-a-deploy")})
+            p.setdefault("capital_pool_id", "pool-pack-a-ops")
+            p.setdefault("runtime_binding_id", "runtime-pack-a-paper-001")
+            p.setdefault("stages", [{"stage": "paper"}])
+            return p
+        return None
+
+    def list_runtime_bindings(self, **kwargs: Any) -> list[dict[str, Any]]:
+        ds = self._get_dataset("runtime_bindings") or self._get_dataset("runtimes")
+        return list(ds.values()) if isinstance(ds, dict) else list(ds)
+
+    def list_runtimes(self, **kwargs: Any) -> list[dict[str, Any]]:
+        return self.list_runtime_bindings(**kwargs)
+
+    def get_runtime_binding(self, runtime_id: str | None) -> dict[str, Any] | None:
+        ds = self._get_dataset("runtime_bindings") or self._get_dataset("runtimes")
+        if isinstance(ds, dict):
+            return ds.get(str(runtime_id or ""))
+        return next((r for r in ds if r.get("id") == runtime_id or r.get("runtime_id") == runtime_id), None)
+
+    def get_runtime(self, runtime_id: str | None) -> dict[str, Any] | None:
+        return self.get_runtime_binding(runtime_id)
+
+    def get_approval_decision(self, approval_id: str | None) -> dict[str, Any] | None:
+        ds = self._get_dataset("approval_decisions")
+        if isinstance(ds, dict):
+            return ds.get(str(approval_id or ""))
+        return next((a for a in ds if a.get("id") == approval_id or a.get("approval_id") == approval_id), None)
+
+
 @contextmanager
 def _pack_a_client() -> Iterator[TestClient]:
     with tempfile.TemporaryDirectory() as td:
@@ -63,8 +279,7 @@ def _pack_a_client() -> Iterator[TestClient]:
         }
         try:
             with mock.patch.dict(os.environ, env, clear=False):
-                bff_main.read_store = ReadSurfaceStore(
-                    os.path.join(td, "read_surfaces.json"),
+                bff_main.read_store = DetailSmokeATestReadPorts(
                     allow_local_snapshot_fallback=True,
                 )
                 bff_main._STRATEGY_BFF_OVERLAY.clear()

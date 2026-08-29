@@ -24,38 +24,120 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, os.path.dirname(__file__))
 
 import main as bff_main
-from read_store import ReadSurfaceStore
+from ports import create_in_memory_read_surface_ports
 
 OPERATOR_AUTH = "Bearer exp002-op:operator"
 HEADERS = {"Authorization": OPERATOR_AUTH}
 
-# IDs from the read_store fallback snapshot (read_store.py lines ~4296-4372)
+# IDs from the read_store fallback snapshot
 COMPLETED_EXP_ID = "exp-20260419-012"
 RUNNING_EXP_ID = "exp-20260418-009"
 FAILED_EXP_ID = "exp-20260417-004"
 UNKNOWN_EXP_ID = "exp-does-not-exist-exp002"
 
+_SEED_EXPERIMENTS = {
+    "exp-20260419-012": {
+        "experiment_id": "exp-20260419-012",
+        "ticket_id": "rt-20260419-007",
+        "experiment_name": "Momentum decay replay on March volatility cluster",
+        "status": "completed",
+        "queued_at": "2026-04-19T19:00:00Z",
+        "started_at": "2026-04-19T19:03:00Z",
+        "completed_at": "2026-04-19T20:15:00Z",
+        "progress": {"percent": 100, "phase": "aggregation", "message": "Aggregation complete."},
+        "strategy_selector": {"strategy_id": "strat-momentum-v4", "variant_id": "var-short-halflife"},
+        "parameter_set": {"half_life_days": 5, "rebalance_window": "2d", "signal_threshold": 0.62},
+        "run_config": {
+            "dataset_ref": "equities-us-2026Q1",
+            "time_range": {"start_at": "2026-03-01T00:00:00Z", "end_at": "2026-03-31T23:59:59Z"},
+            "execution_mode": "backtest",
+            "priority": "high",
+            "requested_by": "persona-risk-chief",
+        },
+        "launch_context": {"analysis_refs": ["analysis-20260418-004-b"]},
+        "validation_warnings": [],
+        "artifact_ids": ["artifact-20260418-005", "artifact-20260419-014"],
+        "failure": {"reason_code": None, "message": None},
+        "allowedActions": {"canCancel": False},
+    },
+    "exp-20260418-009": {
+        "experiment_id": "exp-20260418-009",
+        "ticket_id": "rt-20260419-007",
+        "experiment_name": "Momentum decay baseline — short lookback variant",
+        "status": "running",
+        "queued_at": "2026-04-18T14:00:00Z",
+        "started_at": "2026-04-18T14:05:00Z",
+        "completed_at": None,
+        "progress": {"percent": 62, "phase": "signal_aggregation", "message": "Aggregating signal windows…"},
+        "strategy_selector": {"strategy_id": "strat-momentum-v4", "variant_id": "var-baseline"},
+        "parameter_set": {"half_life_days": 10, "rebalance_window": "3d", "signal_threshold": 0.58},
+        "run_config": {
+            "dataset_ref": "equities-us-2026Q1",
+            "time_range": {"start_at": "2026-02-01T00:00:00Z", "end_at": "2026-04-17T23:59:59Z"},
+            "execution_mode": "backtest",
+            "priority": "normal",
+            "requested_by": "persona-risk-chief",
+        },
+        "launch_context": {"analysis_refs": None},
+        "validation_warnings": [
+            {"code": "WIDE_DATE_RANGE", "message": "Date range exceeds 60 days; runtime may be elevated."}
+        ],
+        "artifact_ids": [],
+        "failure": {"reason_code": None, "message": None},
+        "allowedActions": {"canCancel": True},
+    },
+    "exp-20260417-004": {
+        "experiment_id": "exp-20260417-004",
+        "ticket_id": "rt-20260415-001",
+        "experiment_name": "Macro event signal quality — exclusion window test",
+        "status": "failed",
+        "queued_at": "2026-04-17T12:00:00Z",
+        "started_at": "2026-04-17T12:02:00Z",
+        "completed_at": "2026-04-17T12:07:00Z",
+        "progress": {"percent": None, "phase": None, "message": None},
+        "strategy_selector": {"strategy_id": "strat-macro-event-v2", "variant_id": None},
+        "parameter_set": {"exclusion_window_hrs": 4, "signal_min_quality": 0.70},
+        "run_config": {
+            "dataset_ref": "equities-us-2026Q1",
+            "time_range": {"start_at": "2026-01-01T00:00:00Z", "end_at": "2026-04-16T23:59:59Z"},
+            "execution_mode": "simulation",
+            "priority": "normal",
+            "requested_by": "persona-risk-chief",
+        },
+        "launch_context": {"analysis_refs": None},
+        "validation_warnings": [],
+        "artifact_ids": [],
+        "failure": {
+            "reason_code": "MISSING_DATA_PARTITION",
+            "message": "Macro calendar partition for Q1 was missing from source snapshot.",
+        },
+        "allowedActions": {"canCancel": False},
+    },
+}
+
 
 @contextmanager
 def _bff_client(*, fallback: bool = True) -> Iterator[TestClient]:
-    with tempfile.TemporaryDirectory() as td:
-        original_store = bff_main.read_store
-        original_experiment_overlay = dict(bff_main._GOV_BFF_EXPERIMENT_OVERLAY)
-        original_idempotency = dict(bff_main._GOV_BFF_IDEMPOTENCY)
-        try:
-            bff_main.read_store = ReadSurfaceStore(
-                os.path.join(td, "read_surfaces.json"),
-                allow_local_snapshot_fallback=fallback,
-            )
-            bff_main._GOV_BFF_EXPERIMENT_OVERLAY.clear()
-            bff_main._GOV_BFF_IDEMPOTENCY.clear()
-            yield TestClient(bff_main.app)
-        finally:
-            bff_main.read_store = original_store
-            bff_main._GOV_BFF_EXPERIMENT_OVERLAY.clear()
-            bff_main._GOV_BFF_EXPERIMENT_OVERLAY.update(original_experiment_overlay)
-            bff_main._GOV_BFF_IDEMPOTENCY.clear()
-            bff_main._GOV_BFF_IDEMPOTENCY.update(original_idempotency)
+    original_store = bff_main.read_store
+    original_experiment_overlay = dict(bff_main._GOV_BFF_EXPERIMENT_OVERLAY)
+    original_idempotency = dict(bff_main._GOV_BFF_IDEMPOTENCY)
+    store = create_in_memory_read_surface_ports(
+        research_knowledge_source_kwargs={
+            "research_experiments_store": _SEED_EXPERIMENTS if fallback else {},
+        }
+    )
+    store.create_research_experiment = store.research_knowledge_source.create_research_experiment
+    bff_main.read_store = store
+    bff_main._GOV_BFF_EXPERIMENT_OVERLAY.clear()
+    bff_main._GOV_BFF_IDEMPOTENCY.clear()
+    try:
+        yield TestClient(bff_main.app)
+    finally:
+        bff_main.read_store = original_store
+        bff_main._GOV_BFF_EXPERIMENT_OVERLAY.clear()
+        bff_main._GOV_BFF_EXPERIMENT_OVERLAY.update(original_experiment_overlay)
+        bff_main._GOV_BFF_IDEMPOTENCY.clear()
+        bff_main._GOV_BFF_IDEMPOTENCY.update(original_idempotency)
 
 
 # ---------------------------------------------------------------------------
