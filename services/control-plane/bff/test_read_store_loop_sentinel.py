@@ -13,6 +13,10 @@ import pytest
 BFF_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(BFF_DIR))
 
+# Deliberate exception: this module is a genuine unit test of
+# ServiceBackedReadAdapter's own loop-run/sentinel-finding derivation logic
+# (parallel to the CanonicalSnapshotAdapter internals carve-out), not a
+# composite-contract test that merely uses read_store as fixture backing.
 from read_store import ServiceBackedReadAdapter  # noqa: E402
 
 # Mock data for underlying 'incidents' dataset
