@@ -29,11 +29,11 @@
     "max_worker_history": 200
   },
   "worker_runtime": {
-    "worker_lease_seconds": 600,
+    "worker_lease_seconds": 7200,
     "queue_lease_seconds": 1800,
     "heartbeat_stale_seconds": 300,
     "heartbeat_grace_seconds": 60,
-    "work_progress_stale_seconds": 360,
+    "work_progress_stale_seconds": 7200,
     "runner_heartbeat_interval_seconds": 15
   },
   "watchdog": {
