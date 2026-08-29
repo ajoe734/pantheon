@@ -4,14 +4,14 @@
   "status": "ready_for_review",
   "owner": "Antigravity2",
   "reviewer": "Codex2",
-  "timestamp": "2026-08-29T03:50:00Z",
+  "timestamp": "2026-08-29T03:57:00Z",
   "scope": {
     "repository": "pantheon",
     "deliverables": [
       "services/research/__init__.py",
       "services/research/write_owner.py",
-      "services/research/write_service.py",
       "tests/research_write_owner/__init__.py",
+      "tests/research_write_owner/evidence.json",
       "tests/research_write_owner/test_research_write_owner.py"
     ]
   },
@@ -22,7 +22,7 @@
     },
     "criterion_2_no_read_store_import": {
       "verified": true,
-      "details": "AST-verified zero imports or references to read_store or generic persistence across services/research/write_owner.py and services/research/write_service.py."
+      "details": "AST-verified zero imports or references to read_store or generic persistence in services/research/write_owner.py."
     },
     "criterion_3_write_then_fresh_read_proof": {
       "verified": true,

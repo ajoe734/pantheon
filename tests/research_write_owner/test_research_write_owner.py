@@ -26,10 +26,6 @@ from services.research.write_owner import (
     ResearchWriteOwner,
     build_research_write_owner,
 )
-from services.research.write_service import (
-    ResearchWriteService,
-    build_research_write_service,
-)
 
 
 class _FakeCursor:
@@ -377,23 +373,22 @@ def test_builder_configuration_validation():
 
         # Succeeds with DATABASE_URL
         with mock.patch.dict(os.environ, {"DATABASE_URL": "postgresql://user@host/db"}, clear=True):
-            owner2 = build_research_write_service()
-            assert isinstance(owner2, ResearchWriteService)
+            owner2 = build_research_write_owner()
+            assert isinstance(owner2, ResearchWriteOwner)
 
 
 def test_no_prohibited_generic_persistence_or_read_store_imports():
     """Verify that generic persistence and read_store are not imported or referenced."""
     import services.research.write_owner as wo
-    import services.research.write_service as ws
 
-    for module_file in (wo.__file__, ws.__file__):
-        tree = ast.parse(open(module_file, encoding="utf-8").read())
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Import):
-                for alias in node.names:
-                    assert "read_store" not in alias.name
-                    assert "persistence" not in alias.name
-            elif isinstance(node, ast.ImportFrom):
-                module = node.module or ""
-                assert "read_store" not in module
-                assert "persistence" not in module
+    module_file = wo.__file__
+    tree = ast.parse(open(module_file, encoding="utf-8").read())
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                assert "read_store" not in alias.name
+                assert "persistence" not in alias.name
+        elif isinstance(node, ast.ImportFrom):
+            module = node.module or ""
+            assert "read_store" not in module
+            assert "persistence" not in module
