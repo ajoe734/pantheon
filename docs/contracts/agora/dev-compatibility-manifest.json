@@ -6,22 +6,22 @@
   "backend": {
     "repo": "ajoe734/pantheon",
     "branch": "dev",
-    "runtime_commit": "be956c07aca889043ef301389412b6744452f20b",
-    "contract_commit": "9e909de182f9f2379d23e8e6b81eefec29ffbce7",
-    "handoff_commit": "d8d7c7690068d8a5223b747cd2284eb9f4da2b5e",
-    "bundle_index_sha256": "b1d488c3b35aa1c691e5b464362ac5a2fdd1efc442249e15be9bb143f379f870",
-    "openapi_sha256": "36d1be5bc033ea1a55610f3f523fc478704fdfad1f06fec620e741bed9bf6f86",
-    "capability_manifest_sha256": "7dfddaf220c00eddb7cbd0862eaa6f2aba7423dbd02e54d15db1d67a0cb4ded1"
+    "runtime_commit": "6ad99d2e5abe4f31c9f48892ae7f44bf3bbab980",
+    "contract_commit": "6ad99d2e5abe4f31c9f48892ae7f44bf3bbab980",
+    "handoff_commit": "b2f63cfdc2cccccaddf9f53057e4ca39cda75a1d",
+    "bundle_index_sha256": "bd11b4f152e7808e71d146fd6ade26c5394b2a74031abb9eb1b04c7f70ff1948",
+    "openapi_sha256": "56f12e43bb6041a0f83bf4ff69bf13ae86a335a38246f68a10f0a4ef3a856087",
+    "capability_manifest_sha256": "8b44dd85412b6ba7a0b9686b25d657fa9e3f95efdd4b0f280ff97d2be1186ff5"
   },
   "frontend": {
     "repo": "ajoe734/execute-plans",
     "branch": "dev",
-    "runtime_commit": "6a8d2d9b4f725056735eefd7165ef47b52cda53d",
-    "handoff_commit": "580a668570f0e85eb0aee4a953a411f25c43340e",
-    "generated_from_contract_commit": "9e909de182f9f2379d23e8e6b81eefec29ffbce7",
-    "bundle_index_sha256": "b1d488c3b35aa1c691e5b464362ac5a2fdd1efc442249e15be9bb143f379f870",
-    "openapi_sha256": "36d1be5bc033ea1a55610f3f523fc478704fdfad1f06fec620e741bed9bf6f86",
-    "generated_types_sha256": "5ef7b5752304b65f041f2e5a724f0e16f28d4a1db36484eefc2cf0c8b77c092e"
+    "runtime_commit": "95d03944c8c4d595ed50ca6d499c4d2af3752f06",
+    "handoff_commit": "24a0cfb6b53b1e0e1441a82101871eaf5c3dc554",
+    "generated_from_contract_commit": "6ad99d2e5abe4f31c9f48892ae7f44bf3bbab980",
+    "bundle_index_sha256": "bd11b4f152e7808e71d146fd6ade26c5394b2a74031abb9eb1b04c7f70ff1948",
+    "openapi_sha256": "56f12e43bb6041a0f83bf4ff69bf13ae86a335a38246f68a10f0a4ef3a856087",
+    "generated_types_sha256": "9a56c57827e5e9be8c7c878dafd52d9bfa41e4a49adde98bc18bd9d4afda2f7f"
   },
   "contract_bundle": {
     "bundle_index_path": "services/control-plane/specs/agora/bundle_index.v1_13.json",
@@ -35,13 +35,13 @@
   "source_handoffs": {
     "backend": {
       "path": "docs/contracts/agora/backend-generation-input.v1_13.json",
-      "commit": "d8d7c7690068d8a5223b747cd2284eb9f4da2b5e",
-      "sha256": "8510946b40ec2adc11788dc40be7cd8db9fc824184c8b1faabe3e0f62f29312b"
+      "commit": "b2f63cfdc2cccccaddf9f53057e4ca39cda75a1d",
+      "sha256": "2406c594634d735fd8cf5b5da5510c3704740b5e860ba1ad454ac7f06eb39001"
     },
     "frontend": {
       "path": "docs/contracts/agora/frontend-generation-output.v1_13.json",
-      "commit": "580a668570f0e85eb0aee4a953a411f25c43340e",
-      "sha256": "5fa6c75ae6e8c044c038570a7765522fa145c1b603cc66e4db72bdf6898b3f2b"
+      "commit": "24a0cfb6b53b1e0e1441a82101871eaf5c3dc554",
+      "sha256": "8a65558f91c488791e93ae7cfa94d92a7e96ec4de3f0a5f2202873dc2614e8fa"
     }
   },
   "required_capabilities": [
@@ -187,5 +187,5 @@
   },
   "compatibility_status": "accepted",
   "blocking_reasons": [],
-  "generated_at": "2026-07-26T07:02:33Z"
+  "generated_at": "2026-07-23T08:42:22Z"
 }
