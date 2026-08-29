@@ -5170,6 +5170,10 @@ class DurableWorkerRecoveryTests(unittest.TestCase):
 
     def _store_started(self, state: dict[str, object], worker: dict[str, object]) -> None:
         event_id = str(worker["queue_event_id"])
+        reason = str(
+            (worker.get("request_snapshot") or {}).get("reason")
+            or supervisor.REASON_OWNED_IN_PROGRESS
+        )
         runtime_state.store_queue_event(
             state,
             {
@@ -5179,7 +5183,7 @@ class DurableWorkerRecoveryTests(unittest.TestCase):
                 "task_generation": worker["task_generation"],
                 "target_agent": worker["agent_id"],
                 "delivery_endpoint_id": worker["agent_id"],
-                "reason": supervisor.REASON_OWNED_IN_PROGRESS,
+                "reason": reason,
                 "metadata": {"task": {"id": "TASK-1"}},
             },
         )
@@ -5289,6 +5293,100 @@ class DurableWorkerRecoveryTests(unittest.TestCase):
                 materialized["replacement"]["worker_run_id"],
                 "run-replacement-1",
             )
+
+    def test_approved_closeout_recovery_preserves_exact_reviewer_binding(self) -> None:
+        self.task.update(
+            {
+                "status": "review_approved",
+                "owner": "Codex",
+                "reviewer": "Codex2",
+                "delivery_binding": {
+                    "kind": "pull_request",
+                    "pr": 9001,
+                    "head_sha": "a" * 40,
+                    "head_branch": "task/TASK-1",
+                    "base": "dev",
+                },
+                "review_binding": {
+                    "pr": 9001,
+                    "head_sha": "a" * 40,
+                    "head_branch": "task/TASK-1",
+                    "base": "dev",
+                },
+                "github_review_bridge": {"actor": "Codex2", "pr": 9001},
+            }
+        )
+        supervisor.write_status(self.config, self.status, source="test-approved-seed")
+        state = self._state()
+        worker = self._worker()
+        worker["request_snapshot"]["reason"] = supervisor.REASON_OWNED_FINALIZE
+        self._store_started(state, worker)
+
+        with mock.patch.object(
+            supervisor, "sync_status_pipeline", side_effect=self._drain_status_outbox
+        ):
+            self.assertTrue(
+                supervisor.recover_lost_worker_lease(
+                    self.config,
+                    state,
+                    worker,
+                    reason_kind="worker_process_missing",
+                    reason="approved closeout worker disappeared",
+                )
+            )
+
+        recovered = supervisor.load_status(self.config)
+        task = recovered["tasks"][0]
+        receipt_id = task[supervisor.WORKER_RECOVERY_TASK_KEY]["receipt_id"]
+        receipt = recovered[supervisor.WORKER_RECOVERY_RECEIPTS_KEY][receipt_id]
+        self.assertEqual(task["status"], "review_approved")
+        self.assertEqual((task["owner"], task["reviewer"]), ("Codex", "Codex2"))
+        self.assertEqual(task["generation"], 2)
+        self.assertEqual(task["github_review_bridge"]["actor"], "Codex2")
+        self.assertEqual(receipt["status"], "reassigned")
+        self.assertTrue(receipt["replacement"]["preserved_review_binding"])
+        self.assertEqual(
+            (receipt["replacement"]["owner"], receipt["replacement"]["reviewer"]),
+            ("Codex", "Codex2"),
+        )
+
+        plan = supervisor.build_dispatch_plan(
+            self.config, state, recovered, supervisor.queue_events(state), live_total=0
+        )
+        self.assertEqual(len(plan["events"]), 1)
+        self.assertEqual(plan["events"][0]["target_agent"], "Codex")
+        self.assertEqual(plan["events"][0]["reason"], supervisor.REASON_OWNED_FINALIZE)
+
+    def test_approved_closeout_recovery_holds_instead_of_fallback_reassignment(self) -> None:
+        self.task.update({"status": "review_approved", "owner": "Codex", "reviewer": "Codex2"})
+        supervisor.write_status(self.config, self.status, source="test-approved-hold-seed")
+        state = self._state()
+        state["delivery_health"]["endpoints"]["codex"]["state"] = "unavailable"
+        worker = self._worker()
+        worker["request_snapshot"]["reason"] = supervisor.REASON_OWNED_FINALIZE
+        self._store_started(state, worker)
+
+        with mock.patch.object(
+            supervisor, "sync_status_pipeline", side_effect=self._drain_status_outbox
+        ):
+            self.assertTrue(
+                supervisor.recover_lost_worker_lease(
+                    self.config,
+                    state,
+                    worker,
+                    reason_kind="worker_process_missing",
+                    reason="approved closeout worker disappeared",
+                )
+            )
+
+        recovered = supervisor.load_status(self.config)
+        task = recovered["tasks"][0]
+        receipt_id = task[supervisor.WORKER_RECOVERY_TASK_KEY]["receipt_id"]
+        receipt = recovered[supervisor.WORKER_RECOVERY_RECEIPTS_KEY][receipt_id]
+        self.assertEqual((task["owner"], task["reviewer"]), ("Codex", "Codex2"))
+        self.assertEqual(task["generation"], 2)
+        self.assertEqual(receipt["status"], "pending")
+        self.assertIsNone(receipt["replacement"])
 
     def test_crash_restart_replays_receipt_once_and_dedupes_reassignment(self) -> None:
         worker = self._worker()
