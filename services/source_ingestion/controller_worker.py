@@ -597,7 +597,8 @@ def _validate_terminal_readback(
     expected_controller_id: str,
     expected_sequence_no: int,
     expected_deployment: Mapping[str, Any],
-) -> None:
+    expected_exclusive_connector_ids: Sequence[str] = (),
+) -> int:
     if actual.get("schema_version") != "source_ingest_controller_readback.v1":
         raise ControllerTickError(
             "actual_readback",
@@ -719,10 +720,50 @@ def _validate_terminal_readback(
             schedule=schedule,
             actual_readback=actual,
         )
-    if frontier_backlog:
+    frontier_backlog_by_connector = actual.get("frontier_backlog_by_connector")
+    if (
+        not isinstance(frontier_backlog_by_connector, Mapping)
+        or any(
+            not isinstance(connector_id, str)
+            or not connector_id.strip()
+            or type(count) is not int
+            or count < 1
+            for connector_id, count in frontier_backlog_by_connector.items()
+        )
+        or sum(frontier_backlog_by_connector.values()) != frontier_backlog
+    ):
         raise ControllerTickError(
             "actual_readback",
-            f"authoritative source readback has {frontier_backlog} unresolved frontier item(s)",
+            "authoritative source readback has contradictory frontier counts",
+            reconcile=reconcile,
+            schedule=schedule,
+            actual_readback=actual,
+        )
+    exclusive_connector_ids = {
+        str(connector_id).strip()
+        for connector_id in expected_exclusive_connector_ids
+        if str(connector_id).strip()
+    }
+    validated_frontier_backlog = (
+        sum(frontier_backlog_by_connector.get(connector_id, 0) for connector_id in exclusive_connector_ids)
+        if exclusive_connector_ids
+        else frontier_backlog
+    )
+    if exclusive_connector_ids:
+        exclusive_count = schedule_summary.get("exclusive_connector_count")
+        if type(exclusive_count) is not int or exclusive_count != len(exclusive_connector_ids):
+            raise ControllerTickError(
+                "schedule_contract",
+                "scheduled tick response contradicts the exclusive connector scope",
+                reconcile=reconcile,
+                schedule=schedule,
+                actual_readback=actual,
+            )
+    if validated_frontier_backlog:
+        scope = "selected connector scope" if exclusive_connector_ids else "global scope"
+        raise ControllerTickError(
+            "actual_readback",
+            f"authoritative source readback has {validated_frontier_backlog} unresolved frontier item(s) in {scope}",
             reconcile=reconcile,
             schedule=schedule,
             actual_readback=actual,
@@ -858,6 +899,7 @@ def _validate_terminal_readback(
             schedule=schedule,
             actual_readback=actual,
         )
+    return validated_frontier_backlog
 
 
 def _validate_due_state_readback(
@@ -1370,6 +1412,7 @@ def run_controller_tick(
     frontier_recovery: dict[str, Any] = {}
     pre_actual: dict[str, Any] = {}
     actual: dict[str, Any] = {}
+    validated_frontier_backlog = 0
     had_failures = state.consecutive_failures > 0
     state.record_tick_started()
     store.save(state)
@@ -1436,13 +1479,14 @@ def run_controller_tick(
                 controller_token=config.controller_token,
             )
             actual = read_actual_state(api_url=config.api_url, timeout_seconds=config.timeout_seconds)
-            _validate_terminal_readback(
+            validated_frontier_backlog = _validate_terminal_readback(
                 reconcile=reconcile,
                 schedule=schedule,
                 actual=actual,
                 expected_controller_id=state.controller_id,
                 expected_sequence_no=state.sequence_no,
                 expected_deployment=state.deployment,
+                expected_exclusive_connector_ids=exclusive_connector_ids,
             )
         wanted_connector_ids = set(_connector_ids(reconcile))
         evidence_refs = [
@@ -1456,6 +1500,8 @@ def run_controller_tick(
         ]
         accepted_actual = summarize_actual_readback(actual)
         accepted_actual["pre_captured_at"] = pre_actual.get("captured_at")
+        accepted_actual["validated_frontier_backlog"] = validated_frontier_backlog
+        accepted_actual["validated_frontier_connector_ids"] = sorted(set(config.exclusive_connector_ids))
         _async(
             writer.record_success(
                 LOOP_ID,
@@ -1465,7 +1511,7 @@ def run_controller_tick(
                     if config.mode == RECONCILE_ONLY_MODE
                     else "desired state reconciled; scheduled ingestion terminal readback accepted"
                 ),
-                backlog=int(actual.get("frontier_backlog") or 0),
+                backlog=validated_frontier_backlog,
                 lag=int(actual.get("max_lag_seconds") or 0),
                 dlq_count=int(actual.get("unresolved_dlq_count") or 0),
                 evidence_refs=[ref for ref in evidence_refs if ref and ref != "None"],
