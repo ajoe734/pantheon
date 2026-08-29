@@ -67,9 +67,23 @@ _INCIDENT_SEED = {
 
 @contextmanager
 def _store(*, seed: dict = _INCIDENT_SEED) -> Iterator[TestClient]:
+    findings = {}
+    for finding_id, incident in seed.items():
+        title = str(incident.get("title") or "").lower()
+        inferred_kind = "risk_breach" if "risk breach" in title else "loop_anomaly"
+        findings[finding_id] = {
+            "finding_id": finding_id,
+            "id": finding_id,
+            "kind": incident.get("kind") or inferred_kind,
+            "status": incident.get("status") or "open",
+            "severity": incident.get("severity") or "medium",
+            "created_at": incident.get("created_at") or "",
+            "incident_id": incident.get("incident_id") or finding_id,
+            "details": incident.get("description") or incident.get("title") or "",
+        }
     original = bff_main.read_store
     bff_main.read_store = create_in_memory_read_surface_ports(
-        lifecycle_telemetry_governance_kwargs={"sentinel_findings": seed}
+        lifecycle_telemetry_governance_kwargs={"sentinel_findings": findings}
     )
     try:
         yield TestClient(bff_main.app, raise_server_exceptions=False)
