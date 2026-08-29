@@ -8,6 +8,7 @@ connector config cannot import arbitrary code.
 from __future__ import annotations
 
 import json
+import math
 import os
 from dataclasses import dataclass
 from pathlib import Path
@@ -29,6 +30,7 @@ from .connectors.taiwan_official import (
     TaifexDerivativesChipAdapter,
     TaiwanOfficialMarketDatasetAdapter,
     TdccShareholdingDistributionAdapter,
+    TW_OFFICIAL_MIN_CLOSES_PER_ACTIVE_SYMBOL,
     canonical_taiwan_equity_symbol,
 )
 from .connectors.us_public import (
@@ -313,9 +315,14 @@ def _taiwan_official(
         )
     )
     max_records = int(request.get("max_records") or getattr(adapter, "max_records", 100))
-    if len(priority_symbols) > max_records:
+    required_priority_records = (
+        len(priority_symbols) * TW_OFFICIAL_MIN_CLOSES_PER_ACTIVE_SYMBOL
+        if dataset == "tw_price_daily"
+        else len(priority_symbols)
+    )
+    if required_priority_records > max_records:
         raise SourceEvidenceError(
-            "active Taiwan paper symbols exceed the bounded official refresh max_records"
+            "active Taiwan paper symbol history exceeds the bounded official refresh max_records"
         )
     records: list[SourceRecord] = []
     for venue in venues:
@@ -337,23 +344,108 @@ def _taiwan_official(
             )
         )
     if dataset == "tw_price_daily" and priority_symbols:
-        available = {
-            str(record.metadata.get("symbol_canonical") or "").upper()
-            for record in records
-        }
-        missing = [symbol for symbol in priority_symbols if symbol not in available]
+        current_by_symbol: dict[str, SourceRecord] = {}
+        for record in records:
+            symbol = str(record.metadata.get("symbol_canonical") or "").upper()
+            normalized = record.metadata.get("normalized_row")
+            row = normalized if isinstance(normalized, Mapping) else record.metadata
+            close = row.get("close")
+            event_time = str(row.get("date") or row.get("event_time") or "").strip()
+            if (
+                symbol in priority_symbols
+                and symbol not in current_by_symbol
+                and isinstance(close, (int, float))
+                and not isinstance(close, bool)
+                and math.isfinite(float(close))
+                and float(close) > 0
+                and event_time
+            ):
+                current_by_symbol[symbol] = record
+        missing = [symbol for symbol in priority_symbols if symbol not in current_by_symbol]
         if missing:
             raise SourceEvidenceError(
                 "bounded official refresh did not resolve active Taiwan paper symbols: "
                 + ", ".join(missing)
             )
-        priority_index = {symbol: index for index, symbol in enumerate(priority_symbols)}
-        records.sort(
-            key=lambda record: priority_index.get(
-                str(record.metadata.get("symbol_canonical") or "").upper(),
-                len(priority_index),
-            )
-        )
+        configured_history = _mapping(request.get("history_payloads"))
+        priority_history: list[SourceRecord] = []
+        for symbol in priority_symbols:
+            current = current_by_symbol[symbol]
+            current_row = current.metadata.get("normalized_row")
+            if not isinstance(current_row, Mapping):
+                raise SourceEvidenceError(
+                    f"active Taiwan paper symbol has no normalized official row: {symbol}"
+                )
+            anchor_date = str(current_row.get("date") or current_row.get("event_time") or "")
+            venue = "TWSE" if symbol.endswith(".TWSE") else "TPEx"
+            supplied_payloads = configured_history.get(symbol)
+            if supplied_payloads is None:
+                history_records = adapter.fetch_price_history_records(
+                    symbol,
+                    venue,
+                    anchor_date=anchor_date,
+                    timeout_seconds=timeout_seconds,
+                    trace_id=trace_id,
+                )
+            else:
+                if isinstance(supplied_payloads, Mapping):
+                    payload_sequence: Sequence[Any] = (supplied_payloads,)
+                elif isinstance(supplied_payloads, Sequence) and not isinstance(
+                    supplied_payloads,
+                    (str, bytes, bytearray),
+                ):
+                    payload_sequence = supplied_payloads
+                else:
+                    raise SourceEvidenceError(
+                        f"official history payloads for {symbol} must be an object or list"
+                    )
+                loaded: list[SourceRecord] = []
+                for payload in payload_sequence:
+                    if not isinstance(payload, Mapping):
+                        raise SourceEvidenceError(
+                            f"official history payload for {symbol} must be an object"
+                        )
+                    loaded.extend(
+                        adapter.records_from_price_history_payload(
+                            symbol,
+                            venue,
+                            payload,
+                            available_time=anchor_date,
+                            trace_id=trace_id,
+                        )
+                    )
+                history_records = tuple(loaded)
+
+            by_event_time: dict[str, SourceRecord] = {}
+            for candidate in (*history_records, current):
+                normalized = candidate.metadata.get("normalized_row")
+                row = normalized if isinstance(normalized, Mapping) else candidate.metadata
+                event_time = str(row.get("date") or row.get("event_time") or "").strip()
+                close = row.get("close")
+                if (
+                    event_time
+                    and isinstance(close, (int, float))
+                    and not isinstance(close, bool)
+                    and math.isfinite(float(close))
+                    and float(close) > 0
+                ):
+                    by_event_time[event_time] = candidate
+            selected_dates = sorted(by_event_time)[-TW_OFFICIAL_MIN_CLOSES_PER_ACTIVE_SYMBOL :]
+            if len(selected_dates) < TW_OFFICIAL_MIN_CLOSES_PER_ACTIVE_SYMBOL:
+                raise SourceEvidenceError(
+                    "bounded official refresh did not resolve distinct finite close history for "
+                    f"{symbol}: required={TW_OFFICIAL_MIN_CLOSES_PER_ACTIVE_SYMBOL} "
+                    f"resolved={len(selected_dates)}"
+                )
+            priority_history.extend(by_event_time[event_time] for event_time in selected_dates)
+
+        priority_set = set(priority_symbols)
+        non_priority = [
+            record
+            for record in records
+            if str(record.metadata.get("symbol_canonical") or "").upper() not in priority_set
+        ]
+        records = [*priority_history, *non_priority]
     return tuple(records)
 
 

@@ -139,6 +139,16 @@ SOURCE_REFRESH_MAX_CONCURRENCY="${SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY:-1}"
 SOURCE_REFRESH_MAX_RECORDS="${SOURCE_INGEST_MAX_RECORDS:-100}"
 SOURCE_REFRESH_CONNECTOR_ID="${SOURCE_INGEST_BOUNDED_CONNECTOR_ID:-tw-twse-tpex-official-market}"
 SOURCE_REFRESH_TIMEOUT_SECONDS="${SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS:-1800}"
+if [[ "${SOURCE_REFRESH_SELECTED}" == "true" \
+  && "${SOURCE_REFRESH_CONNECTOR_ID}" == "tw-twse-tpex-official-market" ]]; then
+  # The reviewed official connector uses TWSE OpenAPI for today's full-market
+  # close and the TWSE market site for bounded per-symbol monthly history.
+  # Keep the second host connector-specific instead of widening default egress.
+  case ",${SOURCE_REFRESH_ALLOWED_HOSTS}," in
+    *,www.twse.com.tw,*) ;;
+    *) SOURCE_REFRESH_ALLOWED_HOSTS="${SOURCE_REFRESH_ALLOWED_HOSTS:+${SOURCE_REFRESH_ALLOWED_HOSTS},}www.twse.com.tw" ;;
+  esac
+fi
 DEV_APP_DB_USER="${DEV_APP_DB_USER:-${PANTHEON_APP_DB_USER:-pantheon_app}}"
 
 STAGING_CONTROL_VM="${STAGING_CONTROL_VM:-pantheon-lupin-staging-control}"
@@ -843,7 +853,7 @@ hosts = allowed_hosts(
 if not hosts:
     raise SystemExit("source refresh exact host allowlist is empty")
 if sys.argv[2] == "tw-twse-tpex-official-market":
-    required = {"openapi.twse.com.tw", "www.tpex.org.tw"}
+    required = {"openapi.twse.com.tw", "www.twse.com.tw", "www.tpex.org.tw"}
     missing = sorted(required - hosts)
     if missing:
         raise SystemExit(
@@ -1125,6 +1135,7 @@ verify_bounded_source_refresh_readback() {
     "${evidence_dir}/agora_watchlist.json" \
     "${SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS:-}" <<'PY'
 import json
+import math
 import sys
 import urllib.parse
 import urllib.request
@@ -1239,6 +1250,22 @@ for requested_symbol in [item for item in priority_csv.split(",") if item]:
             f"active paper snapshot identity mismatch for {requested_symbol}: "
             f"{snapshot.get('symbol')!r} != {execution_symbol!r}"
         )
+    closes = snapshot.get("closes")
+    if (
+        not isinstance(closes, list)
+        or len(closes) < 2
+        or any(
+            isinstance(close, bool)
+            or not isinstance(close, (int, float))
+            or not math.isfinite(float(close))
+            or float(close) <= 0
+            for close in closes
+        )
+    ):
+        raise SystemExit(
+            f"active paper snapshot requires at least two finite official closes "
+            f"for {requested_symbol}: closes={closes!r}"
+        )
     event_time = timestamp(snapshot.get("event_time"))
     age_seconds = (datetime.now(timezone.utc) - event_time).total_seconds()
     if age_seconds < -300 or age_seconds > 86400:
@@ -1256,7 +1283,8 @@ for requested_symbol in [item for item in priority_csv.split(",") if item]:
     print(
         "active paper snapshot accepted "
         f"execution={execution_symbol} official={canonical_symbol} "
-        f"event_time={snapshot.get('event_time')} snapshot={snapshot.get('snapshot_id')}"
+        f"event_time={snapshot.get('event_time')} closes={len(closes)} "
+        f"snapshot={snapshot.get('snapshot_id')}"
     )
 print(
     "bounded source refresh accepted "

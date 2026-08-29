@@ -515,6 +515,10 @@ class LatestMarketSnapshot:
             raise MarketSnapshotStateError("market snapshot points must be canonically ordered")
         if len({point.key for point in points}) != len(points):
             raise MarketSnapshotStateError("market snapshot points must be unique")
+        if len({point.event_time for point in points}) != len(points):
+            raise MarketSnapshotStateError(
+                "market snapshot points must represent distinct event times"
+            )
         object.__setattr__(self, "points", points)
         object.__setattr__(
             self,
@@ -770,13 +774,23 @@ class LatestMarketSnapshotStore:
                         current = _market_snapshots_from_lines(handle, path=self.path)
                         for symbol in sorted(grouped):
                             prior = current.get(symbol)
-                            points_by_key = {
-                                point.key: point
+                            points_by_event_time = {
+                                point.event_time: point
                                 for point in (prior.points if prior is not None else ())
                             }
                             for point in grouped[symbol]:
-                                points_by_key[point.key] = point
-                            points = tuple(sorted(points_by_key.values(), key=lambda point: point.key)[-self.max_closes :])
+                                # A newer normalized record for an already-seen
+                                # trading day replaces that day's lineage. This
+                                # keeps closes chronologically distinct while
+                                # retaining the exact official record selected
+                                # by the latest successful ingest run.
+                                points_by_event_time[point.event_time] = point
+                            points = tuple(
+                                sorted(
+                                    points_by_event_time.values(),
+                                    key=lambda point: point.key,
+                                )[-self.max_closes :]
+                            )
                             candidate = LatestMarketSnapshot(
                                 symbol=symbol,
                                 points=points,
