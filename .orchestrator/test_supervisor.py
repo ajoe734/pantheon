@@ -18,6 +18,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
@@ -1617,6 +1618,113 @@ class CrossRepositoryWorkerWorkspaceTests(unittest.TestCase):
             )
             self.assertFalse(ok)
             self.assertIn("unrecognized target_repo", str(error))
+
+
+class OrphanUnmergedWorktreeStalenessTests(unittest.TestCase):
+    """prune_orphan_worktrees must eventually reclaim an abandoned, never-merged
+    task branch's worktree -- it never deletes the branch or its commits, only
+    the checkout, which git can recreate on demand."""
+
+    @staticmethod
+    def _git(cwd: Path, *args: str, env: dict[str, str] | None = None) -> str:
+        proc = subprocess.run(
+            ["git", *args],
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            check=True,
+            env=env,
+        )
+        return proc.stdout.strip()
+
+    def _make_repo_with_unmerged_worktree(
+        self, root: Path, *, commit_age_days: float
+    ) -> tuple[dict[str, object], Path, Path]:
+        repo_root = root / "pantheon"
+        base_root = root / "worker-worktrees"
+        repo_root.mkdir()
+        self._git(repo_root, "init", "-b", "dev")
+        self._git(repo_root, "config", "user.name", "Test")
+        self._git(repo_root, "config", "user.email", "test@example.com")
+        (repo_root / "README.md").write_text("dev\n", encoding="utf-8")
+        self._git(repo_root, "add", "README.md")
+        self._git(repo_root, "commit", "-m", "initial")
+
+        self._git(repo_root, "branch", "task/OLD-ORPHAN-TASK")
+        worktree_path = base_root / "pantheon" / "old-orphan-task"
+        worktree_path.parent.mkdir(parents=True)
+        self._git(
+            repo_root, "worktree", "add", str(worktree_path), "task/OLD-ORPHAN-TASK"
+        )
+        (worktree_path / "orphan.txt").write_text("abandoned work\n", encoding="utf-8")
+        self._git(worktree_path, "add", "orphan.txt")
+        commit_epoch = time.time() - commit_age_days * 86400.0
+        commit_date = datetime.fromtimestamp(commit_epoch, tz=timezone.utc).strftime(
+            "%Y-%m-%dT%H:%M:%S"
+        )
+        env = dict(os.environ)
+        env["GIT_AUTHOR_DATE"] = commit_date
+        env["GIT_COMMITTER_DATE"] = commit_date
+        self._git(worktree_path, "commit", "-m", "abandoned task work", env=env)
+
+        config = config_fixture(repo_root)
+        config["worker_worktrees"] = {
+            "enabled": True,
+            "root": str(base_root),
+            "source_root": "",
+            "base_ref": "dev",
+            "reuse_existing": True,
+        }
+        config["worker_worktree_cleanup"] = {
+            "enabled": True,
+            "cleanup_inactive_leases": True,
+            "archive_dirty_worktrees": True,
+            "force_remove_archived_dirty": True,
+            "archive_root": str(root / "archive"),
+            "archive_max_file_bytes": 20 * 1024 * 1024,
+            "max_removals_per_tick": 25,
+            "base_branches": ["dev"],
+            "orphan_unmerged_max_age_days": 14,
+        }
+        return config, repo_root, worktree_path
+
+    def test_stale_unmerged_worktree_is_removed_after_age_threshold(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            config, _repo_root, worktree_path = self._make_repo_with_unmerged_worktree(
+                Path(directory), commit_age_days=30
+            )
+            state: dict[str, object] = {"worker_worktrees": {"leases": {}}, "workers": {}}
+
+            with mock.patch.object(supervisor, "write_activity_log"):
+                changed = supervisor.prune_orphan_worktrees(config, state)
+
+            self.assertTrue(changed)
+            self.assertFalse(worktree_path.exists())
+
+    def test_recent_unmerged_worktree_is_kept(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            config, _repo_root, worktree_path = self._make_repo_with_unmerged_worktree(
+                Path(directory), commit_age_days=1
+            )
+            state: dict[str, object] = {"worker_worktrees": {"leases": {}}, "workers": {}}
+
+            with mock.patch.object(supervisor, "write_activity_log"):
+                supervisor.prune_orphan_worktrees(config, state)
+
+            self.assertTrue(worktree_path.exists())
+
+    def test_zero_max_age_disables_the_staleness_fallback(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            config, _repo_root, worktree_path = self._make_repo_with_unmerged_worktree(
+                Path(directory), commit_age_days=30
+            )
+            config["worker_worktree_cleanup"]["orphan_unmerged_max_age_days"] = 0
+            state: dict[str, object] = {"worker_worktrees": {"leases": {}}, "workers": {}}
+
+            with mock.patch.object(supervisor, "write_activity_log"):
+                supervisor.prune_orphan_worktrees(config, state)
+
+            self.assertTrue(worktree_path.exists())
 
 
 class RuntimeConfigurationContractTests(unittest.TestCase):
