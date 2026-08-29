@@ -11,9 +11,45 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, os.path.dirname(__file__))
 
 import main as bff_main
-from read_store import ReadSurfaceStore
+from ports import PersonaRegistryReadsPort, create_in_memory_read_surface_ports
 from services.source_ingestion.strategy_seed_builder import StrategySpecSeed
 from services.source_ingestion.strategy_seed_store import StrategySpecSeedStore
+
+
+def _persona_record(
+    *,
+    persona_id: str,
+    name: str,
+    actor_id: str,
+    archetype: str,
+    lifecycle_state: str,
+    risk_level: str,
+    metadata: dict,
+) -> dict:
+    """Build a persona record shaped like the legacy read-store persona-creation output.
+
+    Only fields consumed by `extract_persona_strategy_profile` (see
+    services/control-plane/persona/persona_strategy_discovery.py) and the BFF's
+    persona lookups matter for this test.
+    """
+    clean_metadata = dict(metadata or {})
+    clean_metadata.update({
+        "owner": actor_id,
+        "archetype": archetype,
+        "risk_level": risk_level,
+    })
+    return {
+        "id": persona_id,
+        "persona_id": persona_id,
+        "name": name,
+        "mandate": archetype,
+        "strategy_family": archetype,
+        "lifecycle_state": lifecycle_state,
+        "status": lifecycle_state,
+        "created_by": actor_id,
+        "required_data_sources": [],
+        "metadata": clean_metadata,
+    }
 
 
 OPERATOR_TOKEN = "Bearer op-2:operator"
@@ -53,6 +89,99 @@ def _seed() -> StrategySpecSeed:
     )
 
 
+class _StubPersonaRegistryStore:
+    """Backs `PersonaRegistryReadsPort` with the single seeded persona.
+
+    `get_capability_snapshot_for_persona` and the other Persona Registry
+    reads have no data in this test, so they simply return empty results.
+    """
+
+    def __init__(self, personas: list) -> None:
+        self._personas = {p["persona_id"]: p for p in personas}
+
+    def list_personas(self, **kwargs) -> list:
+        return list(self._personas.values())
+
+    def get_persona(self, persona_id):
+        return self._personas.get(persona_id)
+
+    def get_bindings_for_persona(self, persona_id) -> list:
+        return []
+
+    def list_sessions_for_persona(self, persona_id, **kwargs) -> list:
+        return []
+
+    def list_teaching_sessions_for_persona(self, persona_id, **kwargs) -> list:
+        return []
+
+    def get_capability_snapshot_for_persona(self, persona_id):
+        return None
+
+
+class _InMemoryResearchTicketsReadPorts:
+    """Minimal `create_research_ticket` re-implementation for the retired write.
+
+    `create_research_ticket` is intentionally excluded from `ReadSurfacePorts`
+    (see RETAINED_WRITES_DEFERRED_FROM_READ_SURFACE in
+    services/control-plane/bff/tests/test_read_surface_caller_migration.py), so
+    it is hand-written here for behavior parity, referencing
+    the legacy read-store's research-ticket-creation method (read_store.py)
+    only as a behavioral reference -- it is never imported or called.
+    """
+
+    def __init__(self) -> None:
+        self._tickets: dict = {}
+
+    def create_research_ticket(
+        self,
+        *,
+        title: str,
+        description: str,
+        priority: str,
+        owner: str,
+        actor_id: str,
+        created_at: str | None = None,
+    ) -> dict:
+        timestamp = created_at or "1970-01-01T00:00:00Z"
+        ticket_id = f"rt-{timestamp[:10].replace('-', '')}-{len(self._tickets) + 1:03d}"
+        while ticket_id in self._tickets:
+            ticket_id = f"rt-{timestamp[:10].replace('-', '')}-{len(self._tickets) + 2:03d}"
+        ticket = {
+            "ticket_id": ticket_id,
+            "title": title,
+            "description": description,
+            "status": "open",
+            "priority": priority,
+            "owner": owner,
+            "created_at": timestamp,
+            "updated_at": timestamp,
+            "closed_at": None,
+            "archived_at": None,
+            "created_by": actor_id,
+        }
+        self._tickets[ticket_id] = ticket
+        return ticket
+
+
+class _TestReadSurfacePorts:
+    """Test double forwarding reads to a real `ReadSurfacePorts` instance.
+
+    Adds the retained-write `create_research_ticket` method (not part of
+    `ReadSurfacePorts`) that main.py's persona-strategy-match action handler
+    exercises for the `create_research_ticket` action.
+    """
+
+    def __init__(self, ports) -> None:
+        self._ports = ports
+        self._tickets_double = _InMemoryResearchTicketsReadPorts()
+
+    def create_research_ticket(self, **kwargs):
+        return self._tickets_double.create_research_ticket(**kwargs)
+
+    def __getattr__(self, name: str):
+        return getattr(self._ports, name)
+
+
 @contextmanager
 def _discovery_client():
     tracked_env = {
@@ -65,14 +194,7 @@ def _discovery_client():
         os.environ["STRATEGY_SEED_STORE_PATH"] = str(seed_store_path)
         StrategySpecSeedStore(path=seed_store_path).save(_seed())
 
-        bff_main.read_store = ReadSurfaceStore(
-            os.path.join(td, "read_surfaces.json"),
-            allow_local_snapshot_fallback=True,
-        )
-        bff_main._STRATEGY_PERSONA_BFF_IDEMPOTENCY.clear()
-        bff_main._STRATEGY_BFF_OVERLAY.clear()
-        bff_main._PERSONA_BFF_OVERLAY.clear()
-        bff_main.read_store.create_persona(
+        persona = _persona_record(
             persona_id=PERSONA_ID,
             name="TWSE Momentum Persona",
             actor_id="op-2",
@@ -89,6 +211,18 @@ def _discovery_client():
                 "risk_level": "medium",
             },
         )
+        ports = create_in_memory_read_surface_ports(
+            persona_capital_runtime_kwargs={"personas": [persona]},
+            persona_training_kwargs={
+                "persona_port": PersonaRegistryReadsPort(
+                    store=_StubPersonaRegistryStore([persona]),
+                ),
+            },
+        )
+        bff_main.read_store = _TestReadSurfacePorts(ports)
+        bff_main._STRATEGY_PERSONA_BFF_IDEMPOTENCY.clear()
+        bff_main._STRATEGY_BFF_OVERLAY.clear()
+        bff_main._PERSONA_BFF_OVERLAY.clear()
         client = TestClient(bff_main.app)
         try:
             yield client

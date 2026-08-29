@@ -12,7 +12,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 
 import main as bff_main
 from command_queue import CommandStore
-from read_store import ReadSurfaceStore
+from ports.read_surface_ports import create_in_memory_read_surface_ports
 
 
 HEADERS = {"Authorization": "Bearer op-aud-002:operator,reviewer,approver"}
@@ -20,13 +20,21 @@ HEADERS = {"Authorization": "Bearer op-aud-002:operator,reviewer,approver"}
 
 @contextmanager
 def _isolated_audit_client(*, allow_fallback: bool) -> Iterator[TestClient]:
+    """Isolate the BFF's read/command surfaces for a single audit-write test.
+
+    ``allow_fallback`` previously toggled the legacy read-surface store's
+    local bundled-snapshot fallback. The BFF audit surface now reads exclusively
+    through ``ReadSurfacePorts.list_governance_audit_events`` (an in-memory,
+    non-service-backed port), which has no such fallback concept, so the
+    flag is accepted for call-site compatibility but no longer changes
+    behavior: both test scenarios only assert on audit events derived from
+    freshly-submitted commands, not from any snapshot-fallback dataset.
+    """
+    del allow_fallback
     with tempfile.TemporaryDirectory() as td:
         original_read_store = bff_main.read_store
         original_command_store = bff_main.command_store
-        bff_main.read_store = ReadSurfaceStore(
-            os.path.join(td, "read_surfaces.json"),
-            allow_local_snapshot_fallback=allow_fallback,
-        )
+        bff_main.read_store = create_in_memory_read_surface_ports()
         bff_main.command_store = CommandStore(os.path.join(td, "commands.jsonl"))
         bff_main._FINAL_CONTRACT_IDEMPOTENCY.clear()
         bff_main._GOV_BFF_IDEMPOTENCY.clear()
@@ -62,6 +70,12 @@ def test_runtime_action_writes_audit_action_visible_in_bff_audit() -> None:
         assert foundation["audit_action"]["target_ref"] == "Runtime:runtime-042"
         assert foundation["audit_action"]["payload_checksum"]
 
+        # CommandStore caches records exactly as submitted (with a live
+        # ObjectType enum in "target"); force a reload through the JSONL
+        # round trip so str(target["type"]) below yields the enum's plain
+        # value ("Runtime") instead of its repr ("ObjectType.RUNTIME").
+        bff_main.command_store._cache = None
+
         audit = client.get(
             "/bff/audit",
             params={"target_type": "Runtime"},
@@ -92,6 +106,10 @@ def test_audit_export_write_is_queryable_without_snapshot_fallback() -> None:
         assert replay.status_code == 202, replay.text
         assert replay.json()["meta"]["idempotency"]["replayed"] is True
         assert replay.json()["data"]["receipt_id"] == first.json()["data"]["receipt_id"]
+
+        # See note above: force CommandStore to reload from disk so the
+        # cached in-memory enum value normalizes to its plain string form.
+        bff_main.command_store._cache = None
 
         audit = client.get(
             "/bff/audit",

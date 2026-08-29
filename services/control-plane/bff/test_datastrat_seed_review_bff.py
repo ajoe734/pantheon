@@ -11,12 +11,78 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, os.path.dirname(__file__))
 
 import main as bff_main
-from read_store import ReadSurfaceStore
+from ports import PersonaRegistryReadsPort, create_in_memory_read_surface_ports
 from services.source_ingestion.strategy_seed_builder import (
     StrategySpecSeed,
     StrategySpecSeedStatus,
 )
 from services.source_ingestion.strategy_seed_store import StrategySpecSeedStore
+
+
+class _StubPersonaRegistryStore:
+    """Backs `PersonaRegistryReadsPort` with the single seeded persona.
+
+    Only `list_personas`/`get_persona` are exercised (by the seed-inbox's
+    persona-strategy-match suggestion path); the rest return empty results.
+    """
+
+    def __init__(self, personas: list) -> None:
+        self._personas = {p["persona_id"]: p for p in personas}
+
+    def list_personas(self, **kwargs) -> list:
+        return list(self._personas.values())
+
+    def get_persona(self, persona_id):
+        return self._personas.get(persona_id)
+
+    def get_bindings_for_persona(self, persona_id) -> list:
+        return []
+
+    def list_sessions_for_persona(self, persona_id, **kwargs) -> list:
+        return []
+
+    def list_teaching_sessions_for_persona(self, persona_id, **kwargs) -> list:
+        return []
+
+    def get_capability_snapshot_for_persona(self, persona_id):
+        return None
+
+
+def _persona_record(
+    *,
+    persona_id: str,
+    name: str,
+    actor_id: str,
+    archetype: str,
+    lifecycle_state: str,
+    risk_level: str,
+    metadata: dict,
+) -> dict:
+    """Build a persona record shaped like the legacy read-store persona-creation output.
+
+    None of the `/bff/management/strategy-seeds*` handlers under test read
+    from `read_store` (they operate entirely on `StrategySpecSeedStore`), so
+    this persona is not exercised by any assertion here; it is retained only
+    to keep the fixture's shape unchanged for readers/future extension.
+    """
+    clean_metadata = dict(metadata or {})
+    clean_metadata.update({
+        "owner": actor_id,
+        "archetype": archetype,
+        "risk_level": risk_level,
+    })
+    return {
+        "id": persona_id,
+        "persona_id": persona_id,
+        "name": name,
+        "mandate": archetype,
+        "strategy_family": archetype,
+        "lifecycle_state": lifecycle_state,
+        "status": lifecycle_state,
+        "created_by": actor_id,
+        "required_data_sources": [],
+        "metadata": clean_metadata,
+    }
 
 
 OPERATOR_HEADERS = {"Authorization": "Bearer seed-review-op:operator"}
@@ -89,11 +155,7 @@ def _review_client():
         for seed_id in (SEED_ID, ARCHIVE_SEED_ID, MERGE_SOURCE_ID, MERGE_TARGET_ID):
             store.save(_seed(seed_id))
 
-        bff_main.read_store = ReadSurfaceStore(
-            os.path.join(td, "read_surfaces.json"),
-            allow_local_snapshot_fallback=True,
-        )
-        bff_main.read_store.create_persona(
+        persona = _persona_record(
             persona_id="persona-seed-review-momentum",
             name="Seed Review Momentum Persona",
             actor_id="seed-review-op",
@@ -108,6 +170,14 @@ def _review_client():
                 "allowed_source_scopes": ["open"],
                 "data_availability_scope": ["ohlcv", "return labels"],
                 "risk_level": "medium",
+            },
+        )
+        bff_main.read_store = create_in_memory_read_surface_ports(
+            persona_capital_runtime_kwargs={"personas": [persona]},
+            persona_training_kwargs={
+                "persona_port": PersonaRegistryReadsPort(
+                    store=_StubPersonaRegistryStore([persona]),
+                ),
             },
         )
         bff_main._STRATEGY_SEED_REVIEW_BFF_IDEMPOTENCY.clear()
@@ -377,10 +447,7 @@ def _ids006_client():
         store.save(_risk_seed(RISK_SEED_ID))
         store.save(_negative_seed(NEGATIVE_SEED_ID))
 
-        bff_main.read_store = ReadSurfaceStore(
-            os.path.join(td, "read_surfaces.json"),
-            allow_local_snapshot_fallback=True,
-        )
+        bff_main.read_store = create_in_memory_read_surface_ports()
         bff_main._STRATEGY_SEED_REVIEW_BFF_IDEMPOTENCY.clear()
         bff_main._STRATEGY_PERSONA_BFF_IDEMPOTENCY.clear()
         client = TestClient(bff_main.app)

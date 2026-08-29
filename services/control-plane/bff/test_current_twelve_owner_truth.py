@@ -21,7 +21,7 @@ sys.path.insert(0, str(BFF_DIR))
 import main as bff_main  # noqa: E402
 import loop_inventory as loop_inventory_model  # noqa: E402
 from downstream_health_monitor import _probe_http  # noqa: E402
-from read_store import ReadSurfaceStore  # noqa: E402
+from ports import create_in_memory_read_surface_ports  # noqa: E402
 
 
 REPO_ROOT = BFF_DIR.parents[2]
@@ -57,7 +57,6 @@ def _scoped_health_client(
 ) -> Iterator[TestClient]:
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
-        snapshot_path = root / "read_surfaces.json"
         env_overrides: Dict[str, str] = {
             "PANTHEON_BFF_AUTH_STUB": "true",
             "PANTHEON_ENV": ENVIRONMENT,
@@ -78,10 +77,13 @@ def _scoped_health_client(
 
         original_store = bff_main.read_store
         original_monitor = getattr(bff_main, "downstream_health_monitor", None)
-        bff_main.read_store = ReadSurfaceStore(
-            str(snapshot_path),
-            allow_local_snapshot_fallback=False,
-        )
+        # Empty in-memory read ports: none of the loop-inventory/loop-health
+        # endpoints under test here read through `read_store` (they source
+        # from the static loop catalog registry and PANTHEON_BFF_LOOP_HEALTH_STORE
+        # above), so this is a bare placeholder swap -- matching the legacy
+        # the legacy read store(..., allow_local_snapshot_fallback=False) which
+        # also carried no seed data.
+        bff_main.read_store = create_in_memory_read_surface_ports()
         bff_main.downstream_health_monitor = None
         with patch.dict(os.environ, env_overrides, clear=False):
             try:
@@ -664,14 +666,13 @@ class TestBffDownstreamWorkerFailureAttribution:
             }
         }
 
-        with tempfile.TemporaryDirectory() as td:
-            snapshot_path = Path(td) / "read_surfaces.json"
+        with tempfile.TemporaryDirectory():
             original_store = bff_main.read_store
             original_monitor = getattr(bff_main, "downstream_health_monitor", None)
-            bff_main.read_store = ReadSurfaceStore(
-                str(snapshot_path),
-                allow_local_snapshot_fallback=False,
-            )
+            # See _scoped_health_client: this endpoint does not read through
+            # `read_store`, so an empty in-memory ports instance is a faithful
+            # placeholder swap for the legacy no-seed-data the legacy read store.
+            bff_main.read_store = create_in_memory_read_surface_ports()
             bff_main.downstream_health_monitor = mock_monitor
             try:
                 client = TestClient(bff_main.app, raise_server_exceptions=False)

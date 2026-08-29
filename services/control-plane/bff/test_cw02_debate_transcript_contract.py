@@ -1,16 +1,18 @@
 from __future__ import annotations
 
+import json
 import os
 import sys
 import tempfile
 from contextlib import contextmanager
+from pathlib import Path
+from typing import Any, Dict, List, Optional
 
 from fastapi.testclient import TestClient
 
 sys.path.insert(0, os.path.dirname(__file__))
 
 import main as bff_main
-from read_store import ReadSurfaceStore
 
 
 OPERATOR_AUTH = "Bearer test-operator:operator"
@@ -20,11 +22,213 @@ _SESSION_ID = "cs-20260419-081"
 _TRANSCRIPT_URL = f"/api/v1/consultations/{_SESSION_ID}/transcript"
 
 
+def _default_transcript_record() -> Dict[str, Any]:
+    return {
+        "transcript_id": "tr-cs-20260419-081",
+        "session_id": _SESSION_ID,
+        "linked_request_id": "cr-20260419-014",
+        "events": [
+            {
+                "transcript_id": "tr-cs-20260419-081",
+                "session_id": _SESSION_ID,
+                "event_id": "evt-tr-cs-20260419-081-001",
+                "sequence_no": 1,
+                "parent_event_id": None,
+                "event_type": "message",
+                "event_time": "2026-04-19T17:06:30Z",
+                "ingest_time": "2026-04-19T17:06:31Z",
+                "actor": {
+                    "actor_type": "persona",
+                    "actor_id": "persona-alpha",
+                    "display_name": "Alpha Trader",
+                    "role": "requester",
+                },
+                "content": {
+                    "format": "markdown",
+                    "text": "Requesting risk review for macro regime shift scenario before approving live deployment.",
+                },
+                "evidence_refs": [],
+                "visibility": "committee",
+                "redaction": {"is_redacted": False, "reason": None},
+                "meta": {"source": "consultation-service", "hash": None},
+            },
+            {
+                "transcript_id": "tr-cs-20260419-081",
+                "session_id": _SESSION_ID,
+                "event_id": "evt-tr-cs-20260419-081-002",
+                "sequence_no": 2,
+                "parent_event_id": "evt-tr-cs-20260419-081-001",
+                "event_type": "evidence_attachment",
+                "event_time": "2026-04-19T17:07:00Z",
+                "ingest_time": "2026-04-19T17:07:01Z",
+                "actor": {
+                    "actor_type": "persona",
+                    "actor_id": "p-macro-observer",
+                    "display_name": "Macro Observer",
+                    "role": "committee_participant",
+                },
+                "content": {"format": "plaintext", "text": None},
+                "evidence_refs": ["telemetry-vol-spike-20260419"],
+                "visibility": "committee",
+                "redaction": {"is_redacted": False, "reason": None},
+                "meta": {"source": "consultation-service", "hash": None},
+            },
+            {
+                "transcript_id": "tr-cs-20260419-081",
+                "session_id": _SESSION_ID,
+                "event_id": "evt-tr-cs-20260419-081-003",
+                "sequence_no": 3,
+                "parent_event_id": "evt-tr-cs-20260419-081-001",
+                "event_type": "outcome_signal",
+                "event_time": "2026-04-19T17:08:30Z",
+                "ingest_time": "2026-04-19T17:08:31Z",
+                "actor": {
+                    "actor_type": "persona",
+                    "actor_id": "p-execution-lead",
+                    "display_name": "Execution Lead",
+                    "role": "committee_participant",
+                },
+                "content": {
+                    "format": "markdown",
+                    "text": "Conditional approval — deployment must reduce capital allocation by 20% pending regime confirmation.",
+                },
+                "evidence_refs": ["dp-20260419-014"],
+                "visibility": "committee",
+                "redaction": {"is_redacted": False, "reason": None},
+                "meta": {"source": "consultation-service", "hash": None},
+            },
+        ],
+    }
+
+
+class _TranscriptReadStore:
+    """CW-02 in-memory consult-transcript read double.
+
+    Holds an in-memory `consult_transcripts` dataset (mirroring the retired
+    legacy BFF read surface's default fixture) that tests may mutate directly via
+    `._data` + `._save()`, and additionally consults
+    PANTHEON_BFF_CONSULT_TRANSCRIPT_STORE for a service-store override, again
+    mirroring the original local-snapshot vs service-store provenance split.
+    """
+
+    def __init__(self, path: str, allow_local_snapshot_fallback: bool = True) -> None:
+        self._path = path
+        self._data: Dict[str, Any] = {
+            "consult_transcripts": {_SESSION_ID: _default_transcript_record()},
+        }
+
+    def _save(self) -> None:
+        # No real file-backed persistence is required for the double; tests
+        # mutate self._data directly and call _save() to signal "commit".
+        try:
+            with open(self._path, "w", encoding="utf-8") as handle:
+                json.dump(self._data, handle)
+        except OSError:
+            pass
+
+    def _transcript_store_env_path(self) -> Optional[str]:
+        raw = os.environ.get("PANTHEON_BFF_CONSULT_TRANSCRIPT_STORE", "").strip()
+        return raw or None
+
+    def _service_transcript_records(self) -> Optional[Dict[str, Dict[str, Any]]]:
+        path = self._transcript_store_env_path()
+        if not path or not Path(path).exists():
+            return None
+        try:
+            payload = json.loads(Path(path).read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return None
+        if not isinstance(payload, dict):
+            return None
+        return payload
+
+    def dataset_source(self, dataset: str) -> str:
+        if dataset != "consult_transcripts":
+            return "missing"
+        if self._service_transcript_records() is not None:
+            return "service_store"
+        return "local_snapshot"
+
+    def get_consult_transcript(
+        self,
+        session_id: Optional[str],
+        *,
+        from_sequence_no: Optional[int] = None,
+        page_size: int = 50,
+        page_token: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        if not session_id:
+            return None
+
+        service_records = self._service_transcript_records()
+        transcripts = service_records if service_records is not None else self._data.get("consult_transcripts", {})
+        record = transcripts.get(session_id)
+        if record is None and session_id != _SESSION_ID:
+            return None
+
+        if record is None:
+            surface_state = "unavailable"
+            events: List[Dict[str, Any]] = []
+            transcript_id = f"tr-{session_id}"
+            linked_request_id = None
+        else:
+            transcript_id = str(record.get("transcript_id") or f"tr-{session_id}")
+            linked_request_id = record.get("linked_request_id")
+            raw_events = list(record.get("events") or [])
+            raw_events.sort(key=lambda e: int(e.get("sequence_no") or 0))
+
+            full_seqs = [int(e.get("sequence_no") or 0) for e in raw_events]
+            has_gap = any(
+                full_seqs[i + 1] != full_seqs[i] + 1
+                for i in range(len(full_seqs) - 1)
+            )
+            surface_state = "degraded" if has_gap else "ok"
+
+            if from_sequence_no is not None:
+                raw_events = [e for e in raw_events if int(e.get("sequence_no") or 0) >= from_sequence_no]
+            events = raw_events
+
+        offset = 0
+        if page_token:
+            try:
+                offset = int(page_token)
+            except (ValueError, TypeError):
+                offset = 0
+
+        page_events = events[offset: offset + page_size]
+        next_offset = offset + page_size
+        next_page_token = str(next_offset) if next_offset < len(events) else None
+
+        now = "2026-04-19T17:30:00Z"
+        return {
+            "object_ref": {"type": "ConsultTranscript", "id": transcript_id},
+            "transcript_id": transcript_id,
+            "session_id": session_id,
+            "linked_request_id": linked_request_id,
+            "events": page_events,
+            "page_info": {
+                "next_page_token": next_page_token,
+                "page_size": page_size,
+                "total": len(events),
+            },
+            "meta": {
+                "snapshot_at": now,
+                "staleness": {
+                    "served_from": self.dataset_source("consult_transcripts") if record is not None else "unavailable",
+                    "last_known_at": now,
+                },
+                "surfaces": {
+                    "transcript": {"state": surface_state},
+                },
+            },
+        }
+
+
 @contextmanager
 def _seeded_client():
     with tempfile.TemporaryDirectory() as td:
         original_store = bff_main.read_store
-        bff_main.read_store = ReadSurfaceStore(
+        bff_main.read_store = _TranscriptReadStore(
             os.path.join(td, "read_surfaces.json"),
             allow_local_snapshot_fallback=True,
         )
@@ -238,8 +442,6 @@ def test_cw02_transcript_served_from_local_snapshot() -> None:
 
 
 def test_cw02_transcript_served_from_service_store() -> None:
-    import json
-
     seed_record = {
         "transcript_id": "tr-cs-20260419-081",
         "session_id": _SESSION_ID,
@@ -273,7 +475,7 @@ def test_cw02_transcript_served_from_service_store() -> None:
         os.environ["PANTHEON_BFF_CONSULT_TRANSCRIPT_STORE"] = transcript_path
 
         original_store = bff_main.read_store
-        bff_main.read_store = ReadSurfaceStore(
+        bff_main.read_store = _TranscriptReadStore(
             os.path.join(td, "read_surfaces.json"),
             allow_local_snapshot_fallback=True,
         )
