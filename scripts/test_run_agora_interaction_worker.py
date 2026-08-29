@@ -115,29 +115,38 @@ class AgoraInteractionWorkerLauncherTests(unittest.TestCase):
 
         from agora.interaction import persona_client
 
-        original_read_surface_store = persona_client.ReadSurfaceStore
+        original_factory = persona_client.create_read_surface_ports
 
         def _boom(*args, **kwargs):
             raise RuntimeError("simulated required Persona dependency construction failure")
 
-        persona_client.ReadSurfaceStore = _boom
+        persona_client.create_read_surface_ports = _boom
         try:
             with self.assertRaises(RuntimeError):
                 persona_client.build_canonical_persona_client()
         finally:
-            persona_client.ReadSurfaceStore = original_read_surface_store
+            persona_client.create_read_surface_ports = original_factory
 
     def test_healthcheck_subprocess_fails_when_persona_client_cannot_construct(self) -> None:
         """A container healthcheck must fail, not report false health, when
         the required Persona discovery client cannot be constructed."""
-        clean_env = os.environ.copy()
-        clean_env.pop("PYTHONPATH", None)
-
-        with tempfile.NamedTemporaryFile() as blocker_file:
-            # BFF_DATA_DIR points at an existing regular file, so the
-            # required os.makedirs(data_dir) construction step raises
-            # instead of silently succeeding.
-            clean_env["BFF_DATA_DIR"] = blocker_file.name
+        with tempfile.TemporaryDirectory() as tmpdir:
+            sitecustomize_path = Path(tmpdir) / "sitecustomize.py"
+            sitecustomize_path.write_text(
+                "import builtins\n"
+                "orig_import = builtins.__import__\n"
+                "def custom_import(name, globals=None, locals=None, fromlist=(), level=0):\n"
+                "    mod = orig_import(name, globals, locals, fromlist, level)\n"
+                "    if 'agora.interaction.persona_client' in (name, getattr(mod, '__name__', '')):\n"
+                "        if hasattr(mod, 'build_canonical_persona_client'):\n"
+                "            def _boom():\n"
+                "                raise RuntimeError('simulated Persona client construction failure in healthcheck subprocess')\n"
+                "            mod.build_canonical_persona_client = _boom\n"
+                "    return mod\n"
+                "builtins.__import__ = custom_import\n"
+            )
+            clean_env = os.environ.copy()
+            clean_env["PYTHONPATH"] = tmpdir
 
             proc = subprocess.run(
                 [sys.executable, str(LAUNCHER_PATH), "--healthcheck"],

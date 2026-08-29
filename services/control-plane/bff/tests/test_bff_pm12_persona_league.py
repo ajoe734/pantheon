@@ -11,13 +11,122 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 import main as bff_main
 from persona_provisioning import MemoryPersonaProvisioningStore
-from ports import create_in_memory_read_surface_ports
-from read_store import _load_default_fixture_pack_datasets
 from test_persona_provisioning_coordinator import FakeOwnerTransport, _schedule_receipt
 
 
 from pathlib import Path
 import json
+
+# --- Local port of read_store's static default-fixture-pack loader --------
+# This mirrors read_store._load_default_fixture_pack_datasets (and its small
+# helpers) so this contract test no longer imports from the legacy composite
+# read_store module. The source data and merge semantics are identical: the
+# three static fixtures_pack_*.json files under bff/data/ are loaded and
+# deep-merged (dict datasets merge per-record, list datasets append records
+# not already present, keyed by the first matching id-like field).
+_LOCAL_FIXTURE_PACK_PATHS = (
+    Path(__file__).resolve().parent.parent / "data" / "fixtures_pack_a.json",
+    Path(__file__).resolve().parent.parent / "data" / "fixtures_pack_b.json",
+    Path(__file__).resolve().parent.parent / "data" / "fixtures_pack_c.json",
+)
+_LOCAL_FIXTURE_DATASET_ALIASES = {
+    "deployments": "deployment_plans",
+    "runtimes": "runtime_bindings",
+}
+_LOCAL_FIXTURE_RECORD_KEYS = [
+    "id",
+    "analysis_id",
+    "entry_id",
+    "decision_id",
+    "intervention_id",
+    "job_id",
+    "plan_id",
+    "program_id",
+    "pool_id",
+    "persona_id",
+    "server_id",
+    "signal_id",
+    "skill_id",
+    "session_id",
+    "sessionId",
+    "packet_id",
+    "strategy_id",
+    "experiment_id",
+    "artifact_id",
+    "rebalance_id",
+    "binding_id",
+    "runtime_id",
+    "tool_id",
+    "channel_id",
+]
+
+
+def _local_record_key(record, candidates):
+    for key in candidates:
+        value = record.get(key)
+        if value not in (None, ""):
+            return str(value)
+    return None
+
+
+def _local_fixture_list_record_key(record):
+    if isinstance(record, dict):
+        key = _local_record_key(record, _LOCAL_FIXTURE_RECORD_KEYS)
+        if key:
+            return key
+    return json.dumps(record, sort_keys=True, ensure_ascii=True)
+
+
+def _local_load_fixture_pack_datasets(path: Path):
+    if not path.exists():
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, json.JSONDecodeError):
+        return {}
+    datasets = payload.get("datasets") if isinstance(payload, dict) else None
+    if not isinstance(datasets, dict):
+        return {}
+    return json.loads(json.dumps(datasets))
+
+
+def _local_merge_default_fixture_pack(target, fixture):
+    changed = False
+    for raw_key, incoming in fixture.items():
+        key = _LOCAL_FIXTURE_DATASET_ALIASES.get(raw_key, raw_key)
+        if isinstance(incoming, dict):
+            existing = target.get(key)
+            if not isinstance(existing, dict):
+                target[key] = json.loads(json.dumps(incoming))
+                changed = True
+                continue
+            for record_key, record in incoming.items():
+                if record_key not in existing:
+                    existing[record_key] = json.loads(json.dumps(record))
+                    changed = True
+            continue
+        if isinstance(incoming, list):
+            existing = target.get(key)
+            if not isinstance(existing, list):
+                target[key] = json.loads(json.dumps(incoming))
+                changed = True
+                continue
+            seen = {_local_fixture_list_record_key(record) for record in existing}
+            for record in incoming:
+                record_key = _local_fixture_list_record_key(record)
+                if record_key in seen:
+                    continue
+                existing.append(json.loads(json.dumps(record)))
+                seen.add(record_key)
+                changed = True
+    return changed
+
+
+def _load_default_fixture_pack_datasets():
+    merged = {}
+    for path in _LOCAL_FIXTURE_PACK_PATHS:
+        _local_merge_default_fixture_pack(merged, _local_load_fixture_pack_datasets(path))
+    return merged
 
 HEADERS = {"Authorization": "Bearer op-pm12:operator,reviewer"}
 
