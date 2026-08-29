@@ -3,10 +3,13 @@ from __future__ import annotations
 import importlib
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import patch
 
 from fastapi.testclient import TestClient
+
+from services.source_ingestion.requirement_state import LatestMarketSnapshotStore
 
 
 def _load_source_main(monkeypatch: Any, tmp_path: Path) -> Any:
@@ -141,3 +144,42 @@ def test_missing_snapshot_has_a_typed_not_found_response(
         "code": "market_snapshot_not_found",
         "symbol": "MISSING.US",
     }
+
+
+def test_taiwan_alias_lookup_prefers_newer_source_canonical_snapshot(tmp_path: Path) -> None:
+    """A legacy execution alias must not mask a newer official snapshot."""
+
+    store = LatestMarketSnapshotStore(tmp_path / "latest-market-snapshots.jsonl")
+
+    def record(symbol: str, event_time: str, close: float, source_id: str) -> SimpleNamespace:
+        return SimpleNamespace(
+            source_id=source_id,
+            connector_id="tw-twse-tpex-official-market",
+            content_ref=f"source-test://{symbol}/{event_time}",
+            created_at=event_time,
+            is_rejected=False,
+            metadata={
+                "normalized_row": {
+                    "symbol_canonical": symbol,
+                    "event_time": event_time,
+                    "close": close,
+                }
+            },
+        )
+
+    store.append_normalized_records(
+        [record("2330.TW", "2026-08-21T00:00:00Z", 950.0, "legacy-2330")],
+        ingest_run_id="run-legacy",
+        observed_at="2026-08-21T01:00:00Z",
+    )
+    store.append_normalized_records(
+        [record("2330.TWSE", "2026-08-27T00:00:00Z", 960.0, "official-2330")],
+        ingest_run_id="run-official",
+        observed_at="2026-08-28T06:21:23Z",
+    )
+
+    snapshot = store.get("2330.TW")
+
+    assert snapshot is not None
+    assert snapshot.symbol == "2330.TWSE"
+    assert snapshot.event_time == "2026-08-27T00:00:00Z"

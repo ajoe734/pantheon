@@ -354,6 +354,47 @@ class TestPaperSignalProducer(unittest.TestCase):
         self.assertEqual(producer.degraded_bindings, {})
 
     @patch("urllib.request.urlopen")
+    def test_source_taiwan_canonical_symbol_preserves_execution_binding_alias(self, mock_urlopen) -> None:
+        from services.execution.lean_runtime.paper_signal_producer import CurrentArtifactStrategy
+        from services.execution.lean_runtime.test_current_artifact_signal import _artifact, _binding
+
+        artifact = _artifact()
+        artifact["parameters"]["symbols"] = ["2330.TW"]
+        binding = _binding(artifact, binding_id="rb-source-twse-alias", include_market_input=False)
+        binding["symbol"] = "2330.TW"
+        binding["market_data_policy"] = {
+            "owner": "source-ingest",
+            "contract": "latest_stored_normalized",
+            "max_age_seconds": 300,
+            "minimum_closes": 2,
+        }
+        response = MagicMock()
+        response.read.return_value = json.dumps({
+            "symbol": "2330.TWSE",
+            "closes": [950.0, 960.0],
+            "snapshot_id": "mss-source-twse-alias",
+            "event_time": _NOW,
+            "source_ref": "source-ingest://snapshots/mss-source-twse-alias",
+            "observed_at": _NOW,
+            "lineage": {"connector_ids": ["tw-twse-tpex-official-market"]},
+        }).encode("utf-8")
+        context = MagicMock()
+        context.__enter__.return_value = response
+        mock_urlopen.return_value = context
+
+        store = InMemoryPendingSignalStore()
+        producer = PaperSignalProducer(store_for=lambda _: store, strategy=CurrentArtifactStrategy())
+
+        with patch.dict("os.environ", {"PANTHEON_SOURCE_INGEST_URL": "http://source-ingest:8080"}):
+            count = producer.produce(binding, _NOW)
+
+        self.assertEqual(count, 1)
+        [signal] = store.get_pending()
+        self.assertEqual(signal["symbol"], "2330.TW")
+        self.assertEqual(signal["metadata"]["market_input_snapshot_id"], "mss-source-twse-alias")
+        self.assertEqual(producer.degraded_bindings, {})
+
+    @patch("urllib.request.urlopen")
     def test_stale_source_snapshot_emits_no_signal_with_typed_reason(self, mock_urlopen) -> None:
         from services.execution.lean_runtime.paper_signal_producer import CurrentArtifactStrategy
         from services.execution.lean_runtime.test_current_artifact_signal import _artifact, _binding
@@ -437,6 +478,36 @@ class TestSharedSnapshotAdmissionDecisions(unittest.TestCase):
         self.assertAlmostEqual(dec.age_seconds, 60.0, places=1)
         self.assertIsNone(dec.reason_code)
 
+    def test_shared_admission_accepts_taiwan_execution_alias_for_source_canonical_symbol(self) -> None:
+        from services.execution.market_snapshot_admission import admit_market_snapshot
+
+        snapshot = {
+            "snapshot_id": "snap-twse-alias-001",
+            "symbol": "2330.TWSE",
+            "event_time": "2026-08-22T11:59:00Z",
+            "observed_at": "2026-08-22T12:00:00Z",
+            "source_ref": "source-ingest://snapshots/snap-twse-alias-001",
+            "lineage": {"connector_ids": ["tw-twse-tpex-official-market"]},
+            "closes": [950.0, 960.0],
+        }
+
+        admitted = admit_market_snapshot(
+            snapshot,
+            expected_symbol="2330.TW",
+            max_age_seconds=86400,
+            now_iso="2026-08-22T12:00:00Z",
+        )
+        wrong_symbol = admit_market_snapshot(
+            snapshot,
+            expected_symbol="2317.TW",
+            max_age_seconds=86400,
+            now_iso="2026-08-22T12:00:00Z",
+        )
+
+        self.assertTrue(admitted.admitted)
+        self.assertFalse(wrong_symbol.admitted)
+        self.assertEqual(wrong_symbol.reason_code, "market_input_invalid")
+
     def test_shared_admission_stale_snapshot(self) -> None:
         from services.execution.market_snapshot_admission import admit_market_snapshot
 
@@ -512,4 +583,3 @@ class TestSharedSnapshotAdmissionDecisions(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

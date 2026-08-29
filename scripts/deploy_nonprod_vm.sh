@@ -116,29 +116,17 @@ PANTHEON_DEV_DOCKER_PRUNE="${PANTHEON_DEV_DOCKER_PRUNE:-false}"
 # Enable it explicitly for a scheduled/one-off maintenance run.
 PANTHEON_DEV_POSTGRES_TELEMETRY_PRUNE="${PANTHEON_DEV_POSTGRES_TELEMETRY_PRUNE:-false}"
 DEV_COMPOSE_PROFILES="${PANTHEON_DEV_COMPOSE_PROFILES:-}"
-SOURCE_REFRESH_EGRESS_MODE="${PANTHEON_EXTERNAL_EGRESS:-deny}"
-SOURCE_REFRESH_ALLOWED_HOSTS="${PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS:-}"
-SOURCE_REFRESH_SELECTED="false"
-case ",${DEV_COMPOSE_PROFILES}," in
-  *,source-ingest-scheduler,*) SOURCE_REFRESH_SELECTED="true" ;;
-esac
-if [[ "${SOURCE_REFRESH_SELECTED}" == "true" ]]; then
-  SOURCE_REFRESH_CONTROLLER_MODE="reconcile_and_pull"
-  SOURCE_REFRESH_TRUTH_LEVEL="reconciled_live_proof"
-  SOURCE_REFRESH_MAX_TICKS="${SOURCE_INGEST_CONTROLLER_MAX_TICKS:-1}"
-  SOURCE_REFRESH_RESTART_POLICY="no"
-else
-  # The default owner is a durable internal reconciler. Provider egress stays
-  # available only through the explicit bounded profile above.
-  SOURCE_REFRESH_CONTROLLER_MODE="reconcile_only"
-  SOURCE_REFRESH_TRUTH_LEVEL="scheduled_tick"
-  SOURCE_REFRESH_MAX_TICKS="0"
-  SOURCE_REFRESH_RESTART_POLICY="unless-stopped"
-fi
+# Root deployment never changes the durable Source controller into a finite
+# provider-pulling process. A one-off pull is an in-place request through the
+# existing owner; see scripts/run_bounded_source_ingest_refresh.sh.
+SOURCE_REFRESH_EGRESS_MODE="deny"
+SOURCE_REFRESH_ALLOWED_HOSTS=""
+SOURCE_REFRESH_CONTROLLER_MODE="reconcile_only"
+SOURCE_REFRESH_TRUTH_LEVEL="scheduled_tick"
+SOURCE_REFRESH_MAX_TICKS="0"
+SOURCE_REFRESH_RESTART_POLICY="unless-stopped"
 SOURCE_REFRESH_MAX_CONCURRENCY="${SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY:-1}"
 SOURCE_REFRESH_MAX_RECORDS="${SOURCE_INGEST_MAX_RECORDS:-100}"
-SOURCE_REFRESH_CONNECTOR_ID="${SOURCE_INGEST_BOUNDED_CONNECTOR_ID:-tw-twse-tpex-official-market}"
-SOURCE_REFRESH_TIMEOUT_SECONDS="${SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS:-1800}"
 DEV_APP_DB_USER="${DEV_APP_DB_USER:-${PANTHEON_APP_DB_USER:-pantheon_app}}"
 
 STAGING_CONTROL_VM="${STAGING_CONTROL_VM:-pantheon-lupin-staging-control}"
@@ -675,8 +663,6 @@ ssh_bash() {
   command_prefix+=" SOURCE_INGEST_CONTROLLER_RESTART_POLICY=$(shell_quote "${SOURCE_REFRESH_RESTART_POLICY}")"
   command_prefix+=" SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY=$(shell_quote "${SOURCE_REFRESH_MAX_CONCURRENCY}")"
   command_prefix+=" SOURCE_INGEST_MAX_RECORDS=$(shell_quote "${SOURCE_REFRESH_MAX_RECORDS}")"
-  command_prefix+=" SOURCE_INGEST_BOUNDED_CONNECTOR_ID=$(shell_quote "${SOURCE_REFRESH_CONNECTOR_ID}")"
-  command_prefix+=" SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS=$(shell_quote "${SOURCE_REFRESH_TIMEOUT_SECONDS}")"
   command_prefix+=" MANAGEMENT_AI_STORE_BACKEND=$(shell_quote "${MANAGEMENT_AI_STORE_BACKEND:-}")"
   command_prefix+=" MANAGEMENT_AI_STORE_SCHEMA=$(shell_quote "${MANAGEMENT_AI_STORE_SCHEMA:-}")"
   command_prefix+=" MANAGEMENT_AI_STORE_DSN=$(shell_quote "${MANAGEMENT_AI_STORE_DSN:-}")"
@@ -783,84 +769,31 @@ error() {
 }
 
 validate_source_refresh_profile() {
-  local selected="false"
   case ",${PANTHEON_DEV_COMPOSE_PROFILES:-}," in
-    *,source-ingest-scheduler,*) selected="true" ;;
+    *,source-ingest-scheduler,*)
+      error "source-ingest-scheduler is already the durable controller; run scripts/run_bounded_source_ingest_refresh.sh under the shared dev lease instead"
+      ;;
   esac
 
-  if [[ "$selected" != "true" ]]; then
-    [[ "${PANTHEON_EXTERNAL_EGRESS:-deny}" == "deny" ]] \
-      || error "external egress must remain deny when source-ingest-scheduler is not selected"
-    [[ -z "${PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS:-}" ]] \
-      || error "external host allowlist requires the bounded source-ingest-scheduler profile"
-    [[ "${SOURCE_INGEST_CONTROLLER_MODE:-}" == "reconcile_only" ]] \
-      || error "default source-ingest owner must use reconcile_only mode"
-    [[ "${SOURCE_INGEST_CONTROLLER_TRUTH_LEVEL:-}" == "scheduled_tick" ]] \
-      || error "default source-ingest owner must use scheduled_tick truth"
-    [[ "${SOURCE_INGEST_CONTROLLER_MAX_TICKS:-}" == "0" ]] \
-      || error "default source-ingest owner must remain unbounded"
-    [[ "${SOURCE_INGEST_CONTROLLER_RESTART_POLICY:-}" == "unless-stopped" ]] \
-      || error "default source-ingest owner must use unless-stopped restart policy"
-    return 0
-  fi
-
-  [[ "${SOURCE_INGEST_CONTROLLER_MODE:-}" == "reconcile_and_pull" ]] \
-    || error "bounded source refresh requires reconcile_and_pull mode"
-  [[ "${SOURCE_INGEST_CONTROLLER_TRUTH_LEVEL:-}" == "reconciled_live_proof" ]] \
-    || error "bounded source refresh requires reconciled_live_proof truth"
-  [[ "${SOURCE_INGEST_CONTROLLER_RESTART_POLICY:-}" == "no" ]] \
-    || error "bounded source refresh must not restart after its finite tick budget"
-  [[ "${PANTHEON_EXTERNAL_EGRESS:-deny}" == "allowlist" ]] \
-    || error "source-ingest-scheduler requires PANTHEON_EXTERNAL_EGRESS=allowlist"
-  [[ -n "${PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS:-}" ]] \
-    || error "source-ingest-scheduler requires a reviewed exact host allowlist"
-  [[ "${SOURCE_INGEST_CONTROLLER_MAX_TICKS:-}" =~ ^[0-9]+$ ]] \
-    && (( SOURCE_INGEST_CONTROLLER_MAX_TICKS >= 1 && SOURCE_INGEST_CONTROLLER_MAX_TICKS <= 24 )) \
-    || error "SOURCE_INGEST_CONTROLLER_MAX_TICKS must be between 1 and 24"
-  [[ "${SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY:-}" =~ ^[0-9]+$ ]] \
-    && (( SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY >= 1 && SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY <= 4 )) \
-    || error "SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY must be between 1 and 4"
-  [[ "${SOURCE_INGEST_MAX_RECORDS:-}" =~ ^[0-9]+$ ]] \
-    && (( SOURCE_INGEST_MAX_RECORDS >= 1 && SOURCE_INGEST_MAX_RECORDS <= 500 )) \
-    || error "SOURCE_INGEST_MAX_RECORDS must be between 1 and 500"
-  [[ "${SOURCE_INGEST_BOUNDED_CONNECTOR_ID:-}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] \
-    || error "SOURCE_INGEST_BOUNDED_CONNECTOR_ID must contain one exact connector id"
-  [[ "${SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS:-}" =~ ^[0-9]+$ ]] \
-    && (( SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS >= 30 && SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS <= 3600 )) \
-    || error "SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS must be between 30 and 3600"
-
-  python3 - "${PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS}" "${SOURCE_INGEST_BOUNDED_CONNECTOR_ID}" <<'PY'
-import sys
-
-from services.external_egress import allowed_hosts
-
-hosts = allowed_hosts(
-    {
-        "PANTHEON_EXTERNAL_EGRESS": "allowlist",
-        "PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS": sys.argv[1],
-    }
-)
-if not hosts:
-    raise SystemExit("source refresh exact host allowlist is empty")
-if sys.argv[2] == "tw-twse-tpex-official-market":
-    required = {"openapi.twse.com.tw", "www.tpex.org.tw"}
-    missing = sorted(required - hosts)
-    if missing:
-        raise SystemExit(
-            "official TWSE/TPEx refresh requires exact hosts: " + ",".join(sorted(required))
-        )
-print(f"validated {len(hosts)} exact source refresh hosts")
-PY
-  export SOURCE_INGEST_CONTROLLER_FORCE_CONNECTOR_IDS="${SOURCE_INGEST_BOUNDED_CONNECTOR_ID}"
-  export SOURCE_INGEST_CONTROLLER_EXCLUSIVE_CONNECTOR_IDS="${SOURCE_INGEST_BOUNDED_CONNECTOR_ID}"
+  [[ "${PANTHEON_EXTERNAL_EGRESS:-deny}" == "deny" ]] \
+    || error "root dev deployment must keep Source external egress deny"
+  [[ -z "${PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS:-}" ]] \
+    || error "root dev deployment must not set a Source external-host allowlist"
+  [[ "${SOURCE_INGEST_CONTROLLER_MODE:-}" == "reconcile_only" ]] \
+    || error "default source-ingest owner must use reconcile_only mode"
+  [[ "${SOURCE_INGEST_CONTROLLER_TRUTH_LEVEL:-}" == "scheduled_tick" ]] \
+    || error "default source-ingest owner must use scheduled_tick truth"
+  [[ "${SOURCE_INGEST_CONTROLLER_MAX_TICKS:-}" == "0" ]] \
+    || error "default source-ingest owner must have zero provider ticks"
+  [[ "${SOURCE_INGEST_CONTROLLER_RESTART_POLICY:-}" == "unless-stopped" ]] \
+    || error "default source-ingest owner must use unless-stopped restart policy"
 }
 
 # One required scheduled/async worker per twelve-loop lane. The deploy fails
 # closed if the selected profile set does not resolve every one of these, so a
 # narrowed PANTHEON_DEV_COMPOSE_PROFILES can no longer silently deactivate a
-# loop. source-ingest-scheduler and source-ingest-agora-projector are
-# deliberately absent: they stay opt-in behind the bounded egress profile that
-# validate_source_refresh_profile guards.
+# loop. source-ingest-scheduler is default-on and owns every one-off pull;
+# source-ingest-agora-projector remains an explicit one-off profile.
 REQUIRED_LOOP_WORKERS=(
   # source_ingestion
   source-ingest
@@ -984,176 +917,6 @@ wait_for_exact_bff_lifecycle_readiness() {
     --exact-evidence-max-age-seconds 30
 }
 
-wait_for_bounded_source_refresh_service() {
-  local service="$1"
-  local timeout_seconds="${SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS}"
-  local started_epoch
-  local container_id=""
-  local state=""
-  local exit_code=""
-  started_epoch="$(date +%s)"
-
-  while (( $(date +%s) - started_epoch < timeout_seconds )); do
-    container_id="$(docker compose -p pantheon -f docker-compose.yml ps -a -q "$service" 2>/dev/null || true)"
-    if [[ -z "$container_id" ]]; then
-      sleep 5
-      continue
-    fi
-    state="$(docker inspect --format '{{.State.Status}}' "$container_id")"
-    case "$state" in
-      exited)
-        exit_code="$(docker inspect --format '{{.State.ExitCode}}' "$container_id")"
-        [[ "$exit_code" == "0" ]] \
-          || error "bounded source refresh service ${service} exited with code ${exit_code}"
-        printf '%s\n' "$container_id"
-        return 0
-        ;;
-      dead)
-        error "bounded source refresh service ${service} entered dead state"
-        ;;
-      created|running|restarting)
-        sleep 5
-        ;;
-      *)
-        error "bounded source refresh service ${service} has unexpected state ${state}"
-        ;;
-    esac
-  done
-
-  error "bounded source refresh service ${service} did not reach terminal state within ${timeout_seconds}s"
-}
-
-verify_bounded_source_refresh_readback() {
-  local deploy_started_at="$1"
-  local scheduler_container_id=""
-  local projector_container_id=""
-  local evidence_dir=""
-
-  case ",${PANTHEON_DEV_COMPOSE_PROFILES:-}," in
-    *,source-ingest-scheduler,*) ;;
-    *) return 0 ;;
-  esac
-
-  scheduler_container_id="$(wait_for_bounded_source_refresh_service source-ingest-scheduler)" \
-    || return 1
-  projector_container_id="$(wait_for_bounded_source_refresh_service source-ingest-agora-projector)" \
-    || return 1
-  evidence_dir="$(mktemp -d)"
-  curl -fsS --get \
-    --data-urlencode "connector_id=${SOURCE_INGEST_BOUNDED_CONNECTOR_ID}" \
-    http://127.0.0.1:18097/api/source-ingest/receipts \
-    -o "${evidence_dir}/receipts.json" \
-    || { rm -rf "${evidence_dir}"; return 1; }
-  curl -fsS http://127.0.0.1:18097/api/source-ingest/controller/readback \
-    -o "${evidence_dir}/readback.json" \
-    || { rm -rf "${evidence_dir}"; return 1; }
-  docker cp \
-    "${projector_container_id}:/data/bff/agora_watchlist.json" \
-    "${evidence_dir}/agora_watchlist.json" \
-    || { rm -rf "${evidence_dir}"; return 1; }
-
-  if ! python3 - \
-    "${SOURCE_INGEST_BOUNDED_CONNECTOR_ID}" \
-    "${deploy_started_at}" \
-    "${evidence_dir}/receipts.json" \
-    "${evidence_dir}/readback.json" \
-    "${evidence_dir}/agora_watchlist.json" <<'PY'
-import json
-import sys
-from datetime import datetime, timezone
-from pathlib import Path
-
-
-def load(path):
-    return json.loads(Path(path).read_text(encoding="utf-8"))
-
-
-def timestamp(value):
-    parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
-    return parsed.astimezone(timezone.utc)
-
-
-connector_id, deploy_started_at, receipts_path, readback_path, projection_path = sys.argv[1:]
-started = timestamp(deploy_started_at)
-receipts = load(receipts_path).get("receipts") or []
-candidates = [
-    receipt
-    for receipt in receipts
-    if (
-        isinstance(receipt, dict)
-        and receipt.get("connector_id") == connector_id
-        and receipt.get("status") == "completed"
-        and receipt.get("typed_failure") is None
-        and receipt.get("source_timestamp")
-        and receipt.get("source_timestamp_status") == "valid"
-        and timestamp(receipt.get("finished_at") or receipt.get("created_at")) >= started
-    )
-]
-if not candidates:
-    raise SystemExit("bounded source refresh produced no new successful source-time-valid receipt")
-receipt = max(candidates, key=lambda item: timestamp(item.get("finished_at") or item.get("created_at")))
-run_id = str(receipt["ingest_run_id"])
-
-connectors = load(readback_path).get("connectors") or []
-connector = next(
-    (item for item in connectors if isinstance(item, dict) and item.get("connector_id") == connector_id),
-    None,
-)
-if connector is None:
-    raise SystemExit("bounded source refresh connector is absent from controller readback")
-freshness = connector.get("freshness") if isinstance(connector.get("freshness"), dict) else {}
-latest_receipt = freshness.get("latest_receipt") if isinstance(freshness.get("latest_receipt"), dict) else {}
-latest_record = connector.get("latest_source_record") if isinstance(connector.get("latest_source_record"), dict) else {}
-provenance = latest_record.get("provenance") if isinstance(latest_record.get("provenance"), dict) else {}
-source_id = str(latest_record.get("source_id") or "")
-if latest_receipt.get("ingest_run_id") != run_id:
-    raise SystemExit("controller freshness does not bind the new ingest receipt")
-if freshness.get("source_timestamp_status") != "valid":
-    raise SystemExit("controller freshness does not report valid provider source time")
-if provenance.get("source_ingest_run_id") != run_id or not source_id:
-    raise SystemExit("controller source record does not bind the new ingest run")
-
-projection = load(projection_path)
-rows = projection.values() if isinstance(projection, dict) else []
-projected = next(
-    (
-        row
-        for row in rows
-        if (
-            isinstance(row, dict)
-            and row.get("connectorId") == connector_id
-            and row.get("ingestRunId") == run_id
-            and row.get("sourceId") == source_id
-        )
-    ),
-    None,
-)
-if projected is None:
-    raise SystemExit("Agora projection does not bind the new receipt/run/source")
-projected_freshness = projected.get("freshness") if isinstance(projected.get("freshness"), dict) else {}
-if (
-    not projected.get("asOf")
-    or projected_freshness.get("sourceTimestamp") != projected.get("asOf")
-    or projected_freshness.get("sourceTimeStatus") != "valid"
-    or projected_freshness.get("status") not in {"fresh", "stale"}
-    or not isinstance(projected_freshness.get("stale"), bool)
-):
-    raise SystemExit("Agora projection is missing explicit source-time/freshness truth")
-print(
-    "bounded source refresh accepted "
-    f"connector={connector_id} run={run_id} source={source_id} "
-    f"freshness={projected_freshness['status']}"
-)
-PY
-  then
-    rm -rf "${evidence_dir}"
-    return 1
-  fi
-  rm -rf "${evidence_dir}"
-  info "bounded source refresh services exited zero and receipt/projection readback advanced"
-}
 
 ensure_dev_caddy_ingress() (
   if [[ "${PANTHEON_DEPLOY_ENV}" != "dev" ]]; then
@@ -2823,7 +2586,6 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     PANTHEON_DEV_COMPOSE_PROFILES="${PANTHEON_DEV_COMPOSE_PROFILES:-openclaw}"
     validate_source_refresh_profile
     validate_required_loop_workers
-    source_refresh_deploy_started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     ensure_dev_management_ai_bucket
     ensure_dev_management_ai_postgres_role
     prune_dev_management_ai_telemetry_for_disk
@@ -2934,9 +2696,6 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     # silently survive across deploys.
     docker compose -p pantheon -f docker-compose.yml up -d --force-recreate --no-deps loop-run-projector-scheduler \
       || rollback_dev_bff_on_failure "projector_recreate"
-    # Phase 4: Post-Deploy Bounded Verification
-    verify_bounded_source_refresh_readback "${source_refresh_deploy_started_at}" \
-      || rollback_dev_bff_on_failure "source_refresh_readback"
     PANTHEON_DEV_REPO="$(pwd)" \
       bash scripts/openclaw-configure-shared-model-pool.sh \
       || rollback_dev_bff_on_failure "shared_model_pool"

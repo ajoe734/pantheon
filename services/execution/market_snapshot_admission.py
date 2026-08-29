@@ -14,6 +14,8 @@ from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from typing import Any, Dict, Mapping, Optional, Sequence
 
+from services.market_symbols import market_symbols_equivalent
+
 
 @dataclass(frozen=True)
 class SnapshotAdmissionDecision:
@@ -162,7 +164,7 @@ def admit_market_snapshot(
     # 2. Symbol validation
     snapshot_symbol = str(snapshot.get("symbol") or "").strip()
     exp_sym = str(expected_symbol or "").strip()
-    if exp_sym and snapshot_symbol and snapshot_symbol != exp_sym:
+    if exp_sym and snapshot_symbol and not market_symbols_equivalent(snapshot_symbol, exp_sym):
         return rejected(
             "market_input_invalid",
             f"snapshot symbol {snapshot_symbol!r} does not match expected symbol {exp_sym!r}{b_ctx}",

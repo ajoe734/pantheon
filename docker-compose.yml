@@ -238,10 +238,11 @@ services:
     command: ["python", "-m", "services.source_ingestion.controller_worker"]
     restart: "${SOURCE_INGEST_CONTROLLER_RESTART_POLICY:-unless-stopped}"
     stop_grace_period: 30s
-    # This same controller is the sole durable owner. Operators retain an
-    # explicit bounded smoke with `docker compose run --rm -e
-    # SOURCE_INGEST_CONTROLLER_MAX_TICKS=1 source-ingest-scheduler`; there is
-    # no second scheduler service or profile-only production owner.
+    # This same controller is the sole durable owner. Do not use `docker
+    # compose run` to perform a bounded pull: that creates a second controller
+    # and conflicts with this owner's durable loop lease. The guarded dev-host
+    # command is `scripts/run_bounded_source_ingest_refresh.sh`, which asks this
+    # running owner to perform one selected connector pull.
     environment:
       SOURCE_INGEST_API_URL: http://source-ingest:8097
       SOURCE_INGEST_DESIRED_STATE_PATH: /workspace/services/source_ingestion/default_desired_state.json
