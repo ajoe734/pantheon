@@ -65,6 +65,8 @@ def render_wakeup_message(
             "\n這次 dispatch 的角色是已通過審查後的 task owner。\n"
             "- 不得重新指派 owner/reviewer。\n"
             "- 核對 exact-head approval 與必要交付後才執行 `done`。\n"
+            "- 若 frozen approved head 未變，不得重跑 reviewer 已完成並綁定的測試；"
+            "只核對 approval、merged ancestry 與乾淨工作樹後收尾。\n"
         )
 
     sidecar_guardrails = ""

@@ -76,6 +76,8 @@ class WakeupMessageRoleGuardrailTests(unittest.TestCase):
         )
         self.assertIn("角色是已通過審查後的 task owner", message)
         self.assertIn("不得重新指派 owner/reviewer", message)
+        self.assertIn("不得重跑 reviewer 已完成並綁定的測試", message)
+        self.assertIn("只核對 approval、merged ancestry 與乾淨工作樹後收尾", message)
         self.assertIn("exact-head approval", message)
 
     def test_wakeup_exposes_dependency_truth_and_blocker_contract(self) -> None:
