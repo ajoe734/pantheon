@@ -274,6 +274,7 @@ class ProviderPermissionsTest(unittest.TestCase):
                     "run-123": {
                         "run_id": "run-123",
                         "task_id": "TASK-123",
+                        "task_generation": 2,
                         "agent_id": "claude_1",
                         "status": "running",
                         "lease_expires_at": (
@@ -287,6 +288,7 @@ class ProviderPermissionsTest(unittest.TestCase):
             env = {
                 "ORCH_RUN_ID": "run-123",
                 "ORCH_TASK_ID": "TASK-123",
+                "ORCH_TASK_GENERATION": "999",
                 "ORCH_AGENT_ID": "claude-1",
                 "PANTHEON_WORKTREE_ROOT": str(workspace_root),
                 "ORCH_WORKSPACE_PATH": str(workspace_root),
@@ -299,6 +301,19 @@ class ProviderPermissionsTest(unittest.TestCase):
                     permission_broker,
                     "load_runtime_state",
                     return_value=runtime_state,
+                ),
+                mock.patch.object(
+                    permission_broker,
+                    "load_status",
+                    return_value={
+                        "tasks": [
+                            {
+                                "id": "TASK-123",
+                                "generation": 2,
+                                "owner": "Claude-1",
+                            }
+                        ]
+                    },
                 ),
             ):
                 evaluation = permission_broker.evaluate_tool_request(
@@ -313,6 +328,70 @@ class ProviderPermissionsTest(unittest.TestCase):
             self.assertIn(workspace_root, allowed_roots)
             self.assertNotIn(workspace_root.parent, allowed_roots)
 
+    def test_edit_denies_stale_worker_generation_after_reassignment(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="permission-broker-generation-") as temp_dir:
+            temp_root = Path(temp_dir).resolve()
+            repo_root = temp_root / "source" / "pantheon"
+            workspace_root = temp_root / "worktrees" / "task-123"
+            workspace_root.mkdir(parents=True)
+            runtime_state = {
+                "workers": {
+                    "run-123": {
+                        "run_id": "run-123",
+                        "task_id": "TASK-123",
+                        "task_generation": 1,
+                        "agent_id": "claude",
+                        "status": "running",
+                        "lease_expires_at": (
+                            datetime.now(timezone.utc) + timedelta(days=1)
+                        ).isoformat(),
+                        "workspace_mode": "isolated_worktree",
+                        "workspace_path": str(workspace_root),
+                    }
+                }
+            }
+            env = {
+                "ORCH_RUN_ID": "run-123",
+                "ORCH_TASK_ID": "TASK-123",
+                # Worker-provided launch context cannot replace canonical
+                # worker/task generation binding after reassignment.
+                "ORCH_TASK_GENERATION": "2",
+                "ORCH_AGENT_ID": "claude",
+                "PANTHEON_WORKTREE_ROOT": str(workspace_root),
+                "ORCH_WORKSPACE_PATH": str(workspace_root),
+            }
+
+            with (
+                mock.patch("permission_broker.ROOT", repo_root),
+                mock.patch.dict(permission_broker.os.environ, env, clear=True),
+                mock.patch.object(
+                    permission_broker,
+                    "load_runtime_state",
+                    return_value=runtime_state,
+                ),
+                mock.patch.object(
+                    permission_broker,
+                    "load_status",
+                    return_value={
+                        "tasks": [
+                            {
+                                "id": "TASK-123",
+                                "generation": 2,
+                                "owner": "Claude",
+                            }
+                        ]
+                    },
+                ),
+            ):
+                evaluation = permission_broker.evaluate_tool_request(
+                    "Edit",
+                    {"file_path": str(workspace_root / "src" / "module.py")},
+                    {},
+                )
+
+            self.assertEqual(evaluation["decision"], "deny")
+            self.assertEqual(evaluation["risk_class"], "out_of_workspace")
+
     def test_leased_root_loads_runtime_state_from_rebound_status_root(self) -> None:
         with tempfile.TemporaryDirectory(prefix="permission-broker-status-") as temp_dir:
             status_root = Path(temp_dir).resolve()
@@ -323,6 +402,7 @@ class ProviderPermissionsTest(unittest.TestCase):
                     "run-123": {
                         "run_id": "run-123",
                         "task_id": "TASK-123",
+                        "task_generation": 4,
                         "agent_id": "claude",
                         "status": "running",
                         "lease_expires_at": (
@@ -336,6 +416,15 @@ class ProviderPermissionsTest(unittest.TestCase):
             immutable_config = {
                 "paths": {"state_file": ".orchestrator/state.json"},
             }
+            status_state = {
+                "tasks": [
+                    {
+                        "id": "TASK-123",
+                        "generation": 4,
+                        "owner": "Claude",
+                    }
+                ]
+            }
             env = {
                 "ORCH_RUN_ID": "run-123",
                 "ORCH_TASK_ID": "TASK-123",
@@ -344,11 +433,16 @@ class ProviderPermissionsTest(unittest.TestCase):
                 "PANTHEON_WORKTREE_ROOT": str(workspace_root),
                 "ORCH_WORKSPACE_PATH": str(workspace_root),
             }
-            loaded_configs: list[dict] = []
+            runtime_configs: list[dict] = []
+            status_configs: list[dict] = []
 
             def load_runtime(config: dict) -> dict:
-                loaded_configs.append(config)
+                runtime_configs.append(config)
                 return runtime_state
+
+            def load_canonical_status(config: dict) -> dict:
+                status_configs.append(config)
+                return status_state
 
             with (
                 mock.patch.object(
@@ -362,13 +456,23 @@ class ProviderPermissionsTest(unittest.TestCase):
                     "load_runtime_state",
                     side_effect=load_runtime,
                 ),
+                mock.patch.object(
+                    permission_broker,
+                    "load_status",
+                    side_effect=load_canonical_status,
+                ),
             ):
                 allowed_roots = permission_broker._allowed_workspace_roots()
 
-            self.assertEqual(len(loaded_configs), 1)
+            self.assertEqual(len(runtime_configs), 1)
+            self.assertEqual(len(status_configs), 1)
             self.assertEqual(
-                loaded_configs[0]["paths"]["state_file"],
+                runtime_configs[0]["paths"]["state_file"],
                 str(status_root / ".orchestrator" / "state.json"),
+            )
+            self.assertEqual(
+                status_configs[0]["paths"]["status_file"],
+                str(status_root / "ai-status.json"),
             )
             self.assertIn(workspace_root, allowed_roots)
 
@@ -381,6 +485,7 @@ class ProviderPermissionsTest(unittest.TestCase):
             worker = {
                 "run_id": "run-123",
                 "task_id": "TASK-123",
+                "task_generation": 1,
                 "agent_id": "claude",
                 "status": "running",
                 "lease_expires_at": (
@@ -404,6 +509,19 @@ class ProviderPermissionsTest(unittest.TestCase):
                     permission_broker,
                     "load_runtime_state",
                     return_value={"workers": {"run-123": worker}},
+                ),
+                mock.patch.object(
+                    permission_broker,
+                    "load_status",
+                    return_value={
+                        "tasks": [
+                            {
+                                "id": "TASK-123",
+                                "generation": 1,
+                                "owner": "Claude",
+                            }
+                        ]
+                    },
                 ),
             ):
                 evaluation = permission_broker.evaluate_tool_request(
@@ -434,25 +552,33 @@ class ProviderPermissionsTest(unittest.TestCase):
             base_worker = {
                 "run_id": "run-123",
                 "task_id": "TASK-123",
+                "task_generation": 3,
                 "agent_id": "claude",
                 "status": "running",
                 "lease_expires_at": future_expiry,
                 "workspace_mode": "isolated_worktree",
                 "workspace_path": str(workspace_root),
             }
+            base_task = {
+                "id": "TASK-123",
+                "generation": 3,
+                "owner": "Claude",
+            }
             cases = (
-                ("missing workspace env", {"ORCH_WORKSPACE_PATH": ""}, {}, True),
+                ("missing workspace env", {"ORCH_WORKSPACE_PATH": ""}, {}, {}, True),
                 (
                     "workspace env disagreement",
                     {"ORCH_WORKSPACE_PATH": str(other_workspace)},
                     {},
+                    {},
                     True,
                 ),
-                ("unleased run", {}, {}, False),
-                ("mismatched run record", {}, {"run_id": "run-other"}, True),
-                ("mismatched task", {}, {"task_id": "TASK-OTHER"}, True),
-                ("mismatched agent", {}, {"agent_id": "claude2"}, True),
-                ("non-running worker", {}, {"status": "completed"}, True),
+                ("unleased run", {}, {}, {}, False),
+                ("mismatched run record", {}, {"run_id": "run-other"}, {}, True),
+                ("mismatched task", {}, {"task_id": "TASK-OTHER"}, {}, True),
+                ("mismatched agent", {}, {"agent_id": "claude2"}, {}, True),
+                ("canonical owner mismatch", {}, {}, {"owner": "Human/Ops"}, True),
+                ("non-running worker", {}, {"status": "completed"}, {}, True),
                 (
                     "stale lease",
                     {},
@@ -461,21 +587,24 @@ class ProviderPermissionsTest(unittest.TestCase):
                             datetime.now(timezone.utc) - timedelta(seconds=1)
                         ).isoformat()
                     },
+                    {},
                     True,
                 ),
-                ("shared workspace", {}, {"workspace_mode": "shared"}, True),
+                ("shared workspace", {}, {"workspace_mode": "shared"}, {}, True),
                 (
                     "worker workspace mismatch",
                     {},
                     {"workspace_path": str(other_workspace)},
+                    {},
                     True,
                 ),
             )
 
-            for label, env_updates, worker_updates, include_worker in cases:
+            for label, env_updates, worker_updates, task_updates, include_worker in cases:
                 with self.subTest(label=label):
                     env = {**base_env, **env_updates}
                     worker = {**base_worker, **worker_updates}
+                    task = {**base_task, **task_updates}
                     workers = {"run-123": worker} if include_worker else {}
                     with (
                         mock.patch("permission_broker.ROOT", repo_root),
@@ -484,6 +613,11 @@ class ProviderPermissionsTest(unittest.TestCase):
                             permission_broker,
                             "load_runtime_state",
                             return_value={"workers": workers},
+                        ),
+                        mock.patch.object(
+                            permission_broker,
+                            "load_status",
+                            return_value={"tasks": [task]},
                         ),
                     ):
                         evaluation = permission_broker.evaluate_tool_request(

@@ -902,7 +902,8 @@ def _active_lease_workspace_root(config: dict[str, Any] | None = None) -> Path |
 
     Workspace environment variables are candidate-visible launch context, not
     authority on their own.  Bind both variables to the central runtime worker
-    record before extending the broker's configured write roots.
+    record and its current canonical task generation before extending the
+    broker's configured write roots.
     """
 
     run_id = str(os.environ.get("ORCH_RUN_ID") or "").strip()
@@ -926,6 +927,7 @@ def _active_lease_workspace_root(config: dict[str, Any] | None = None) -> Path |
     try:
         runtime_config = config if config is not None else load_broker_runtime_config()
         runtime_state = load_runtime_state(runtime_config)
+        status_state = load_status(runtime_config)
     except Exception:
         return None
     workers = runtime_state.get("workers")
@@ -943,6 +945,33 @@ def _active_lease_workspace_root(config: dict[str, Any] | None = None) -> Path |
     if normalize_agent_id(worker.get("agent_id")) != agent_id:
         return None
     if str(worker.get("workspace_mode") or "").strip() != "isolated_worktree":
+        return None
+
+    tasks = status_state.get("tasks")
+    if not isinstance(tasks, list):
+        return None
+    task = next(
+        (item for item in tasks if str(item.get("id") or "").strip() == task_id),
+        None,
+    )
+    if not isinstance(task, dict):
+        return None
+    if normalize_agent_id(task.get("owner")) != agent_id:
+        return None
+    raw_worker_generation = worker.get("task_generation")
+    raw_task_generation = task.get("generation")
+    if isinstance(raw_worker_generation, bool) or isinstance(raw_task_generation, bool):
+        return None
+    try:
+        worker_generation = int(raw_worker_generation)
+        canonical_generation = int(raw_task_generation)
+    except (TypeError, ValueError):
+        return None
+    if (
+        worker_generation < 1
+        or canonical_generation < 1
+        or worker_generation != canonical_generation
+    ):
         return None
 
     raw_expiry = str(worker.get("lease_expires_at") or "").strip()
