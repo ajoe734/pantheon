@@ -9,14 +9,15 @@
     "reviewer": "Codex2",
     "repository": "ajoe734/pantheon",
     "base_branch": "dev",
-    "base_sha": "9c9cd1b2029124bde987aeba1aabf4845256c19d",
+    "base_sha": "9b8f0d10042c647f3dbe6fe322f9589d21477dfd",
     "task_branch": "task/ACG-WRITE-OWNER-PERSONA-CAPITAL-20260829",
-    "evidence_cut_at": "2026-08-29T03:54:34Z",
+    "evidence_cut_at": "2026-08-29T04:20:06Z",
     "overall_admission": "pending_independent_review"
   },
   "scope": {
     "owned_layer": [
       "Persistent Persona registry owner store and HTTP API",
+      "Authenticated Persona mutation identity and lifecycle-owner policy enforcement",
       "Canonical CapitalPool patch operation inside services/capital",
       "Fresh-instance readback proof for Persona, CapitalPool, DeploymentPlan, and RuntimeBinding"
     ],
@@ -36,7 +37,8 @@
   "implementation": {
     "anchor_commits": [
       "71b90a9912419211673a5618f1ff3432651767f2",
-      "6b8bf0254416942e39126b7e3f7a2a2fc0961717"
+      "6b8bf0254416942e39126b7e3f7a2a2fc0961717",
+      "1f9366caf85718541afbab54a8481723ff715fec"
     ],
     "changed_files": [
       "services/persona/write_owner.py",
@@ -61,6 +63,14 @@
       "process_local_overlay": false,
       "submitted_response_as_authority": false,
       "fixture_or_seed_fallback": false
+    },
+    "persona_mutation_authority": {
+      "authentication_default": "strict bearer verification; missing or unverifiable credentials fail closed",
+      "actor_binding": "request actor_id must equal the authenticated actor",
+      "create_owner": "persona.admin; newly created personas must start in draft",
+      "lifecycle_owners": "draft -> research_only belongs to persona.admin; Governance Plane roles own promotion, freeze, revalidation, and retirement transitions",
+      "decision_execution": "non-owner execution requires a server-provided GovernanceDecisionVerifier bound to decision id, persona id, source state, and target state",
+      "patch_bypass": false
     }
   },
   "acceptance": [
@@ -77,7 +87,12 @@
     {
       "criterion": "write then fresh read proof",
       "status": "pass",
-      "evidence": "Four task tests create a fresh Persona owner/app, Capital owner store, DeploymentPlanStore, and RuntimeManagerService after each write and verify persisted identity/readback; a fifth AST test enforces the read_store import boundary."
+      "evidence": "Four task tests create a fresh Persona owner/app, Capital owner store, DeploymentPlanStore, and RuntimeManagerService after each write and verify persisted identity/readback; the AST test enforces the read_store import boundary."
+    },
+    {
+      "criterion": "Persona lifecycle authority is fail closed",
+      "status": "pass",
+      "evidence": "HTTP negative tests reject unauthenticated callers, untrusted roles, spoofed actor_id, caller-invented decision ids, direct live_owner creation, Persona Plane promotion beyond research_only, and generic PATCH lifecycle bypass without changing persisted state. Positive tests cover exact Persona/Governance role ownership and exact server-side Governance decision verification."
     },
     {
       "criterion": "no BFF main.py or read_store.py change",
@@ -95,12 +110,12 @@
       {
         "command": ".venv-pantheon/bin/python -m pytest -q tests/persona_capital_write_owner services/capital/test_service.py",
         "result": "pass",
-        "conclusion": "65 passed, 1 pre-existing Starlette deprecation warning"
+        "conclusion": "71 passed, 1 pre-existing Starlette deprecation warning"
       },
       {
         "command": ".venv-pantheon/bin/python -m pytest -q services/persona/test_*.py services/capital/test_*.py services/deployment/test_service.py services/runtime-manager/test_runtime_manager.py services/runtime_manager/test_runtime_binding.py tests/persona_capital_write_owner",
         "result": "pass",
-        "conclusion": "283 passed, 1 skipped, 1 warning, 3 subtests passed"
+        "conclusion": "289 passed, 1 skipped, 1 warning, 3 subtests passed"
       },
       {
         "command": "git diff --check origin/dev...HEAD",
@@ -113,7 +128,7 @@
         "conclusion": "No BFF hot-file or Source Ingestion changes"
       }
     ],
-    "validated_at": "2026-08-29T03:54:34Z"
+    "validated_at": "2026-08-29T04:20:06Z"
   },
   "deployment": {
     "applicable": false,
@@ -122,6 +137,6 @@
   "review": {
     "status": "pending",
     "decision_owner": "Codex2",
-    "note": "Owner-authored evidence committed before handoff; reviewer must independently inspect the exact PR head."
+    "note": "Reviewer rejection of a6a57b252 is addressed with authenticated actor binding, canonical lifecycle-owner enforcement, and HTTP negative self-promotion tests; reviewer must independently inspect the replacement exact PR head."
   }
 }
