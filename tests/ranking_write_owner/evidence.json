@@ -1,0 +1,16 @@
+{
+  "task_id": "ACG-WRITE-OWNER-RANKINGS-20260829",
+  "status": "review",
+  "owner": "Claude",
+  "reviewer": "Codex2",
+  "summary": "Add services/rankings/store.py as the independent, persistent write owner for Rankings records: a durable JSON-file backend (mtime-gated reload + flock + atomic temp-file/fsync/rename writes) for dev, and a PostgresJsonOwnerStore-backed owner table for staging/prod, selected by build_rankings_store(). No import of services/control-plane/bff/read_store.py and no local dict/overlay/cache/response fallback: every read re-reads the durable backing store so a write is visible to a separate store instance immediately (write-then-fresh-read). services/control-plane/bff/main.py and read_store.py are unmodified; Source Ingestion gets no new write entrypoint and remains reconcile-only against this domain.",
+  "scope": [
+    "services/rankings/__init__.py",
+    "services/rankings/store.py",
+    "tests/ranking_write_owner/test_rankings_write_owner.py"
+  ],
+  "verification": [
+    "python3 scripts/dev/provision_python_distribution.py",
+    "$PANTHEON_PY -m pytest -q tests/ranking_write_owner (10 passed)"
+  ]
+}
