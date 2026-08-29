@@ -16,7 +16,7 @@ sys.path.insert(0, str(BFF_DIR))
 
 import main as bff_main  # noqa: E402
 from command_queue import CommandStore  # noqa: E402
-from read_store import ReadSurfaceStore  # noqa: E402
+from ports import create_in_memory_read_surface_ports  # noqa: E402
 
 
 FINAL_CONTRACT_METHOD_PATHS = {
@@ -51,6 +51,8 @@ FINAL_CONTRACT_METHOD_PATHS = {
     ("GET", "/bff/events/stream"),
     ("GET", "/bff/evolution-programs"),
     ("GET", "/bff/evolution-programs/{id}"),
+    ("GET", "/bff/experiments"),
+    ("GET", "/bff/experiments/{id}"),
     ("GET", "/bff/feature-flags"),
     ("GET", "/bff/healthz"),
     ("GET", "/bff/incidents"),
@@ -102,8 +104,6 @@ FINAL_CONTRACT_METHOD_PATHS = {
     ("GET", "/bff/readyz"),
     ("GET", "/bff/rebalances"),
     ("GET", "/bff/rebalances/{id}"),
-    ("GET", "/bff/research-experiments"),
-    ("GET", "/bff/research-experiments/{id}"),
     ("GET", "/bff/runtimes"),
     ("GET", "/bff/runtimes/{id}"),
     ("GET", "/bff/skills"),
@@ -132,8 +132,9 @@ FINAL_CONTRACT_METHOD_PATHS = {
     ("PATCH", "/bff/personas/{id}"),
     ("PATCH", "/bff/ranking-formulas/{id}"),
     ("PATCH", "/bff/rebalances/{id}"),
-    ("PATCH", "/bff/research-experiments/{id}"),
+    ("PATCH", "/bff/skills/{id}"),
     ("PATCH", "/bff/strategies/{id}"),
+    ("PATCH", "/bff/tools/{id}"),
     ("POST", "/bff/actions/{entityType}/{entityId}/{actionId}"),
     ("POST", "/bff/agora/ask"),
     ("POST", "/bff/agora/signals/{id}/feedback"),
@@ -150,6 +151,7 @@ FINAL_CONTRACT_METHOD_PATHS = {
     ("POST", "/bff/confirm-tokens/{tokenId}/redeem"),
     ("POST", "/bff/deployments"),
     ("POST", "/bff/evolution-programs"),
+    ("POST", "/bff/experiments"),
     ("POST", "/bff/incidents/{id}/append-postmortem"),
     ("POST", "/bff/incidents/{id}/resolve"),
     ("POST", "/bff/incidents/{id}/rollback-deployment"),
@@ -159,7 +161,6 @@ FINAL_CONTRACT_METHOD_PATHS = {
     ("POST", "/bff/personas"),
     ("POST", "/bff/ranking-formulas"),
     ("POST", "/bff/rebalances"),
-    ("POST", "/bff/research-experiments"),
     ("POST", "/bff/strategies"),
     ("POST", "/bff/switch-tenant"),
     ("POST", "/bff/v5/interventions/{id}/claim"),
@@ -238,7 +239,7 @@ LIVE_PROBE_CONCRETE_ROUTES = [
     ("GET", "/bff/channels"),
     ("GET", "/bff/tools"),
     ("GET", "/bff/ranking-formulas"),
-    ("GET", "/bff/research-experiments"),
+    ("GET", "/bff/experiments"),
     ("GET", "/bff/agora/signals"),
     ("GET", "/bff/agora/inbox"),
     ("GET", "/bff/agora/journal"),
@@ -285,10 +286,144 @@ def _isolated_final_read_models(*, fallback: bool = True) -> Iterator[TestClient
         original_tools = dict(bff_main._TOOL_REGISTRY)
         original_skills = dict(bff_main._SKILL_REGISTRY)
         original_interventions = list(bff_main._V5_INTERVENTIONS_STORE)
-        store = ReadSurfaceStore(
-            os.path.join(td, "read_surfaces.json"),
-            allow_local_snapshot_fallback=fallback,
-        )
+
+        formula_data = {
+            "id": "formula-alpha",
+            "formula_id": "formula-alpha",
+            "name": "Formula Alpha",
+            "description": "Seeded final detail matrix formula",
+            "status": "active",
+            "version": "1.0.0",
+        }
+        rebalance_data = {
+            "id": "rebal-001",
+            "rebalance_id": "rebal-001",
+            "capital_pool_id": "pool-main",
+            "actor_id": "op-execute-plans",
+            "created_at": "2026-05-09T00:00:00Z",
+            "reason": "Seed final detail matrix",
+            "status": "completed",
+        }
+        strategy_data = {
+            "id": "stg_001",
+            "strategy_id": "stg_001",
+            "name": "Strategy 001",
+            "status": "active",
+            "archetype": "momentum",
+        }
+        persona_data = {
+            "id": "persona_001",
+            "persona_id": "persona_001",
+            "name": "Persona 001",
+            "status": "active",
+        }
+        pool_data = {
+            "id": "pool_001",
+            "pool_id": "pool_001",
+            "name": "Pool 001",
+            "status": "active",
+        }
+        deployment_data = {
+            "id": "plan_001",
+            "plan_id": "plan_001",
+            "name": "Plan 001",
+            "status": "active",
+        }
+        runtime_data = {
+            "id": "runtime-042",
+            "runtime_id": "runtime-042",
+            "name": "Runtime 042",
+            "status": "active",
+        }
+        evo_data = {
+            "id": "prog_001",
+            "program_id": "prog_001",
+            "name": "Program 001",
+            "status": "active",
+        }
+        exp_data = {
+            "id": "exp-001",
+            "experiment_id": "exp-001",
+            "name": "Experiment 001",
+            "status": "completed",
+        }
+        artifact_data = {
+            "id": "artifact-alpha",
+            "artifact_id": "artifact-alpha",
+            "name": "Artifact Alpha",
+        }
+        channel_data = {
+            "id": "channel-001",
+            "channel_id": "channel-001",
+            "name": "Channel 001",
+            "status": "active",
+        }
+        incident_data = {
+            "id": "inc-001",
+            "incident_id": "inc-001",
+            "title": "Incident 001",
+            "status": "open",
+        }
+        alert_data = {
+            "id": "alert-001",
+            "alert_id": "alert-001",
+            "title": "Alert 001",
+            "status": "open",
+            "severity": "medium",
+        }
+
+        if fallback:
+            store = create_in_memory_read_surface_ports(
+                persona_capital_runtime_kwargs={
+                    "ranking_formulas": [formula_data],
+                    "rebalances": [rebalance_data],
+                    "personas": [persona_data],
+                    "capital_pools": [pool_data],
+                    "deployment_plans": [deployment_data],
+                    "evolution_programs": [evo_data],
+                },
+                lifecycle_telemetry_governance_kwargs={
+                    "artifact_registry_entries": [artifact_data],
+                    "incidents": {"inc-001": incident_data},
+                },
+            )
+            store.dataset_source = lambda d: "store"
+            store.list_strategies = lambda **kw: [strategy_data]
+            store.list_strategy_specs = lambda **kw: [strategy_data]
+            store.list_strategy_summaries = lambda: [strategy_data]
+            store.get_strategy_spec = lambda sid: strategy_data if sid == "stg_001" else None
+            store.get_strategy_spec_detail = lambda sid, **kw: strategy_data if sid == "stg_001" else None
+            store.get_strategy = lambda sid: strategy_data if sid == "stg_001" else None
+            store.list_runtimes = lambda **kw: [runtime_data]
+            store.list_runtime_instances = lambda **kw: [runtime_data]
+            store.list_runtime_bindings = lambda **kw: [runtime_data]
+            store.get_runtime = lambda rid: runtime_data if rid == "runtime-042" else None
+            store.get_runtime_instance = lambda rid: runtime_data if rid == "runtime-042" else None
+            store.get_runtime_binding_by_runtime_id = lambda rid: runtime_data if rid == "runtime-042" else None
+            store.list_research_experiments = lambda **kw: [exp_data]
+            store.get_research_experiment = lambda eid: exp_data if eid == "exp-001" else None
+            store.get_experiment_bff = lambda eid: exp_data if eid == "exp-001" else None
+            store.list_research_artifacts = lambda **kw: [artifact_data]
+            store.list_artifacts = lambda **kw: [artifact_data]
+            store.get_research_artifact = lambda aid: artifact_data if aid == "artifact-alpha" else None
+            store.get_artifact = lambda aid: artifact_data if aid == "artifact-alpha" else None
+            store.list_channels = lambda **kw: [channel_data]
+            store.get_channel = lambda cid: channel_data if cid == "channel-001" else None
+            store.list_alerts = lambda **kw: [alert_data]
+            store.get_alert = lambda aid: alert_data if aid == "alert-001" else None
+        else:
+            store = create_in_memory_read_surface_ports(
+                persona_capital_runtime_kwargs={
+                    "ranking_formulas": [],
+                    "rebalances": [],
+                }
+            )
+            store.dataset_source = lambda d: "missing"
+            store.get_ranking_formula = lambda fid: None
+
+        orig_list_cp = store.list_capital_pools
+        store.list_capital_pools = lambda status=None, **kw: [pool_data] if (fallback and not status) else orig_list_cp(status=status)
+
         bff_main.read_store = store
         bff_main.command_store = CommandStore(os.path.join(td, "commands.jsonl"))
         bff_main._MCP_SERVER_REGISTRY.clear()
@@ -298,17 +433,6 @@ def _isolated_final_read_models(*, fallback: bool = True) -> Iterator[TestClient
         bff_main._V5_INTERVENTIONS_STORE.clear()
         try:
             if fallback:
-                store.create_ranking_formula(
-                    name="Formula Alpha",
-                    description="Seeded final detail matrix formula",
-                    actor_id="op-execute-plans",
-                )
-                store.create_rebalance(
-                    capital_pool_id="pool-main",
-                    actor_id="op-execute-plans",
-                    created_at="2026-05-09T00:00:00Z",
-                    reason="Seed final detail matrix",
-                )
                 bff_main._MCP_SERVER_REGISTRY["server-alpha"] = {
                     "id": "server-alpha",
                     "server_id": "server-alpha",
@@ -392,13 +516,21 @@ def _canonical_route_path(path: str) -> str:
     return re.sub(r"\{[^}]+\}", "{id}", path)
 
 
+def _extract_routes(routes):
+    found = []
+    for route in routes:
+        if hasattr(route, "routes"):
+            found.extend(_extract_routes(route.routes))
+        elif hasattr(route, "original_router") and hasattr(route.original_router, "routes"):
+            found.extend(_extract_routes(route.original_router.routes))
+        elif hasattr(route, "path") and hasattr(route, "methods"):
+            for m in route.methods or set():
+                found.append((m, _canonical_route_path(route.path)))
+    return set(found)
+
+
 def _route_index() -> set[tuple[str, str]]:
-    return {
-        (method, _canonical_route_path(getattr(route, "path", "")))
-        for route in bff_main.app.routes
-        for method in (getattr(route, "methods", set()) or set())
-        if method in {"DELETE", "GET", "PATCH", "POST", "PUT"}
-    }
+    return _extract_routes(bff_main.app.routes)
 
 
 def test_execute_plans_final_contract_paths_are_registered() -> None:
@@ -567,11 +699,12 @@ def test_execute_plans_final_detail_unknown_ids_are_404_when_source_exists(monke
 
 def test_execute_plans_final_detail_missing_source_returns_degraded_dto(monkeypatch) -> None:
     monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "true")
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "permissive")
     with _isolated_final_read_models(fallback=False) as client:
-        response = client.get("/bff/ranking-formulas/formula-unavailable", headers=HEADERS)
+        response = client.get("/bff/research-analyses/analysis-unavailable", headers=HEADERS)
 
     assert response.status_code == 200, response.text
     payload = response.json()
-    assert payload["data"]["id"] == "formula-unavailable"
+    assert payload["data"]["id"] == "analysis-unavailable"
     assert payload["data"]["status"] == "degraded"
-    assert payload["meta"]["surfaces"]["ranking_formula_detail"]["status"] == "unavailable"
+    assert payload["meta"]["surfaces"]["research_analysis_detail"]["status"] == "unavailable"

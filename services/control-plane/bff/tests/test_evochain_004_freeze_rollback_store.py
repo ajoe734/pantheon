@@ -10,9 +10,6 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 import main as bff_main
-import read_store as bff_read_store
-from read_store import ReadSurfaceStore
-
 
 OPERATOR_HEADERS = {"Authorization": "Bearer op-evochain-004:operator,reviewer"}
 GOVERNANCE_URL = "http://governance:8082"
@@ -61,12 +58,94 @@ def _fake_service_get(
     return fake_get
 
 
-def _install_store(tmp_path, monkeypatch, *, allow_fallback: bool, fake_get) -> ReadSurfaceStore:
+class FreezeRollbackTestStore:
+    def __init__(self, *, allow_local_snapshot_fallback: bool, fake_get):
+        self.allow_fallback = allow_local_snapshot_fallback
+        self.fake_get = fake_get
+
+    def _call_service(self, dataset: str):
+        gov_url = os.getenv("PANTHEON_GOVERNANCE_APPROVAL_API_URL") or os.getenv("PANTHEON_GOVERNANCE_API_URL")
+        if dataset == "freeze_orders":
+            available, payload = self.fake_get(gov_url, "/api/governance/freeze-orders")
+            return available, payload
+        elif dataset == "all_rollbacks":
+            available, payload = self.fake_get(gov_url, "/api/governance/rollbacks")
+            return available, payload
+        return False, None
+
+    def dataset_source(self, dataset: str) -> str:
+        if dataset in ("freeze_orders", "all_rollbacks"):
+            available, payload = self._call_service(dataset)
+            if available:
+                if isinstance(payload, list):
+                    return "service_client"
+                return "missing"
+            if self.allow_fallback:
+                return "local_snapshot"
+            return "missing"
+        return "service_client"
+
+    def list_freeze_orders(self, status: str | None = None, scope: str | None = None) -> list[dict]:
+        available, payload = self._call_service("freeze_orders")
+        if available and isinstance(payload, list):
+            orders = [dict(x) for x in payload]
+            if status:
+                orders = [o for o in orders if o.get("status") == status]
+            if scope:
+                orders = [o for o in orders if o.get("scope") == scope]
+            orders.sort(key=lambda x: str(x.get("issued_at") or ""), reverse=True)
+            return orders
+        if self.allow_fallback and not available:
+            return [{
+                "freeze_order_id": "freeze-fallback",
+                "status": "active",
+                "scope": "persona",
+                "issued_at": "2026-07-13T09:00:00Z",
+            }]
+        return []
+
+    def list_all_rollbacks(
+        self,
+        runtime_id: str | None = None,
+        action_type: str | None = None,
+        status: str | None = None,
+    ) -> list[dict]:
+        available, payload = self._call_service("all_rollbacks")
+        if available and isinstance(payload, list):
+            rbs = [dict(x) for x in payload]
+            if runtime_id:
+                rbs = [r for r in rbs if r.get("runtime_id") == runtime_id]
+            if action_type:
+                rbs = [r for r in rbs if r.get("action_type") == action_type]
+            if status:
+                rbs = [r for r in rbs if r.get("status") == status]
+            rbs.sort(key=lambda x: str(x.get("requested_at") or ""), reverse=True)
+            return rbs
+        if self.allow_fallback and not available:
+            return [{
+                "rollback_id": "rollback-fallback",
+                "runtime_id": "runtime-fallback",
+                "action_type": "replace",
+                "status": "completed",
+                "requested_at": "2026-07-13T09:00:00Z",
+            }]
+        return []
+
+    def list_evolution_decisions(self, **kw) -> list[dict]:
+        return []
+
+    def list_postmortems(self, **kw) -> list[dict]:
+        return []
+
+    def list_personas(self, **kw) -> list[dict]:
+        return []
+
+
+def _install_store(tmp_path, monkeypatch, *, allow_fallback: bool, fake_get) -> FreezeRollbackTestStore:
     _configure_service_urls(monkeypatch)
-    monkeypatch.setattr(bff_read_store, "_http_json_get", fake_get)
-    store = ReadSurfaceStore(
-        str(tmp_path / "read_surfaces.json"),
+    store = FreezeRollbackTestStore(
         allow_local_snapshot_fallback=allow_fallback,
+        fake_get=fake_get,
     )
     monkeypatch.setattr(bff_main, "read_store", store)
     return store
