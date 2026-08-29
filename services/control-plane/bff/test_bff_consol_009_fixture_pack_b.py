@@ -22,7 +22,9 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, os.path.dirname(__file__))
 
 import main as bff_main
-from read_store import ReadSurfaceStore
+from typing import Any
+
+from ports import ReadSurfacePorts
 
 HEADERS = {"Authorization": "Bearer op-2:operator"}
 FIXTURE_PATH = Path(__file__).resolve().parent / "data" / "fixtures_pack_b.json"
@@ -43,9 +45,87 @@ SERVICE_ENV_BLANKS = {
 }
 
 
+class FixturePackBTestReadPorts(ReadSurfacePorts):
+    def __init__(self, *, allow_local_snapshot_fallback: bool = True) -> None:
+        super().__init__()
+        self._allow_fallback = allow_local_snapshot_fallback
+        self._data: dict[str, Any] = {}
+        if allow_local_snapshot_fallback and FIXTURE_PATH.exists():
+            payload = json.loads(FIXTURE_PATH.read_text(encoding="utf-8"))
+            self._data = payload.get("datasets", {})
+
+    def dataset_source(self, dataset: str) -> str:
+        return "local_snapshot" if self._allow_fallback else "missing"
+
+    def dataset_surface_status(self, dataset: str, *, snapshot_at: str, **kwargs: Any) -> dict[str, Any]:
+        src = self.dataset_source(dataset)
+        status = "unavailable" if src == "missing" else "ok"
+        return {"status": status, "source": src, "snapshot_at": snapshot_at}
+
+    def _get_dataset(self, name: str) -> dict[str, Any] | list[Any]:
+        return self._data.get(name, {})
+
+    def list_evolution_decisions(self, **kwargs: Any) -> list[dict[str, Any]]:
+        ds = self._get_dataset("evolution_decisions")
+        return list(ds.values()) if isinstance(ds, dict) else list(ds)
+
+    def get_evolution_decision(self, decision_id: str | None) -> dict[str, Any] | None:
+        ds = self._get_dataset("evolution_decisions")
+        if isinstance(ds, dict):
+            return ds.get(str(decision_id or ""))
+        return next((d for d in ds if d.get("id") == decision_id or d.get("decision_id") == decision_id), None)
+
+    def list_v5_interventions(self, **kwargs: Any) -> list[dict[str, Any]]:
+        ds = self._get_dataset("v5_interventions")
+        return list(ds.values()) if isinstance(ds, dict) else list(ds)
+
+    def get_v5_intervention(self, intv_id: str | None) -> dict[str, Any] | None:
+        ds = self._get_dataset("v5_interventions")
+        if isinstance(ds, dict):
+            return ds.get(str(intv_id or ""))
+        return next((i for i in ds if i.get("id") == intv_id or i.get("intervention_id") == intv_id), None)
+
+    def list_agora_signals(self, **kwargs: Any) -> list[dict[str, Any]]:
+        ds = self._get_dataset("agora_signals")
+        return list(ds.values()) if isinstance(ds, dict) else list(ds)
+
+    def list_agora_sessions(self, **kwargs: Any) -> list[dict[str, Any]]:
+        ds = self._get_dataset("agora_sessions")
+        return list(ds.values()) if isinstance(ds, dict) else list(ds)
+
+    def get_agora_session(self, session_id: str | None) -> dict[str, Any] | None:
+        ds = self._get_dataset("agora_sessions")
+        if isinstance(ds, dict):
+            return ds.get(str(session_id or ""))
+        return next((s for s in ds if s.get("sessionId") == session_id or s.get("session_id") == session_id or s.get("id") == session_id), None)
+
+    def list_research_tickets(self, **kwargs: Any) -> list[dict[str, Any]]:
+        ds = self._get_dataset("research_tickets")
+        return list(ds.values()) if isinstance(ds, dict) else list(ds)
+
+    def get_research_ticket(self, ticket_id: str | None) -> dict[str, Any] | None:
+        ds = self._get_dataset("research_tickets")
+        if isinstance(ds, dict):
+            return ds.get(str(ticket_id or ""))
+        return next((t for t in ds if t.get("id") == ticket_id or t.get("ticket_id") == ticket_id), None)
+
+    def list_deployment_plans(self, **kwargs: Any) -> list[dict[str, Any]]:
+        ds = self._get_dataset("deployment_plans") or self._get_dataset("runtime_bindings")
+        return list(ds.values()) if isinstance(ds, dict) else list(ds)
+
+    def get_deployment_plan(self, plan_id: str | None) -> dict[str, Any] | None:
+        ds = self._get_dataset("deployment_plans") or self._get_dataset("runtime_bindings")
+        if isinstance(ds, dict):
+            return ds.get(str(plan_id or ""))
+        return next((p for p in ds if p.get("id") == plan_id or p.get("plan_id") == plan_id), None)
+
+    def list_runtime_bindings(self, **kwargs: Any) -> list[dict[str, Any]]:
+        ds = self._get_dataset("runtime_bindings")
+        return list(ds.values()) if isinstance(ds, dict) else list(ds)
+
+
 def _fresh_pack_b_client(td: str) -> TestClient:
-    bff_main.read_store = ReadSurfaceStore(
-        os.path.join(td, "read_surfaces.json"),
+    bff_main.read_store = FixturePackBTestReadPorts(
         allow_local_snapshot_fallback=True,
     )
     bff_main._CAPITAL_BFF_IDEMPOTENCY.clear()

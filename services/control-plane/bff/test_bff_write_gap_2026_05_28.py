@@ -22,6 +22,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Generator, Iterator
 
+import pytest
 from fastapi.testclient import TestClient
 
 sys.path.insert(0, os.path.dirname(__file__))
@@ -30,7 +31,8 @@ os.environ.setdefault("PANTHEON_BFF_AUTH_STUB", "true")
 
 import main as bff_main  # noqa: E402
 from command_queue import CommandStore  # noqa: E402
-from read_store import ReadSurfaceStore  # noqa: E402
+from ports import ReadSurfacePorts  # noqa: E402
+from read_store import _default_read_data  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -38,7 +40,7 @@ from read_store import ReadSurfaceStore  # noqa: E402
 # ---------------------------------------------------------------------------
 
 AGORA_BASE_HEADERS = {
-    "Authorization": "Bearer analyst-agora:analyst",
+    "Authorization": "Bearer analyst-agora:analyst,viewer",
     "X-BFF-Api-Version": "2026-05-07",
     "X-Request-Id": "req-write-gap-agora-signal",
 }
@@ -63,23 +65,414 @@ _APPROVER_TOKEN = "Bearer test-approver:approver"
 _VIEWER_TOKEN = "Bearer test-viewer:reviewer"
 
 
+@pytest.fixture(autouse=True)
+def _ensure_auth_stub(monkeypatch):
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "true")
+
+
+class WriteGapTestReadPorts(ReadSurfacePorts):
+    def __init__(
+        self,
+        seed_data: dict[str, Any] | None = None,
+        *,
+        allow_local_snapshot_fallback: bool = True,
+    ) -> None:
+        super().__init__()
+        self._data = seed_data if seed_data is not None else _default_read_data()
+        self.allow_local_snapshot_fallback = allow_local_snapshot_fallback
+        self._ranking_snapshots: dict[str, Any] = {}
+
+    def dataset_source(self, dataset: str, **kwargs: Any) -> str:
+        return "bff_local_dev_store"
+
+    def dataset_surface_status(self, dataset: str, *, snapshot_at: str, **kwargs: Any) -> dict[str, Any]:
+        return {
+            "status": "ok",
+            "source": "bff_local_dev_store",
+            "snapshot_at": snapshot_at,
+            "freshness": "fresh",
+            "observed_time": snapshot_at,
+            "coverage": 1.0,
+            "missing_bindings": False,
+        }
+
+    def _ensure_local_overlay_records(self, dataset: str) -> dict[str, Any]:
+        return self._data.setdefault(dataset, {})
+
+    def record(self, dataset: str, record_id: str) -> tuple[bool, dict[str, Any] | None]:
+        ds = self._data.get(dataset, {})
+        if isinstance(ds, dict):
+            return (True, ds.get(record_id))
+        return (False, None)
+
+    def list_records(self, dataset: str) -> tuple[bool, list[dict[str, Any]]]:
+        ds = self._data.get(dataset, {})
+        if isinstance(ds, dict):
+            return (True, list(ds.values()))
+        return (True, list(ds))
+
+    # Agora ports
+    def get_agora_signal(self, signal_id: str) -> dict[str, Any] | None:
+        signals = self._data.get("agora_signals", {})
+        return signals.get(signal_id) if isinstance(signals, dict) else None
+
+    def list_agora_signals(self, **kwargs: Any) -> list[dict[str, Any]]:
+        signals = self._data.get("agora_signals", {})
+        return list(signals.values()) if isinstance(signals, dict) else list(signals)
+
+    def put_agora_signal(self, signal_id: str, record: dict[str, Any]) -> dict[str, Any]:
+        self._data.setdefault("agora_signals", {})[signal_id] = record
+        return record
+
+    def create_agora_signal(
+        self,
+        *,
+        signal_id: str,
+        title: str,
+        body: str,
+        actor_id: str,
+        payload: dict[str, Any],
+        created_at: str | None = None,
+    ) -> dict[str, Any]:
+        timestamp = created_at or "2026-05-28T00:00:00Z"
+        signal = {
+            "id": signal_id,
+            "signal_id": signal_id,
+            "title": title,
+            "body": body,
+            "market": str(payload.get("market") or "").strip() or None,
+            "tags": payload.get("tags") or [],
+            "linkedPersonaIds": payload.get("linkedPersonaIds") or payload.get("linked_persona_ids") or [],
+            "linkedStrategyIds": payload.get("linkedStrategyIds") or payload.get("linked_strategy_ids") or [],
+            "severity": str(payload.get("severity") or "info").strip().lower(),
+            "status": "open",
+            "reviewStatus": "pending_trader_review",
+            "createdAt": timestamp,
+            "updatedAt": timestamp,
+            "createdBy": actor_id,
+            "authorId": actor_id,
+        }
+        self._data.setdefault("agora_signals", {})[signal_id] = signal
+        return signal
+
+    def list_agora_audit_events(self, **kwargs: Any) -> list[dict[str, Any]]:
+        events = self._data.get("agora_audit_events", {})
+        return list(events.values()) if isinstance(events, dict) else list(events)
+
+    def append_agora_audit_event(self, record: dict[str, Any]) -> dict[str, Any]:
+        eid = record.get("event_id") or record.get("id") or f"audit-{len(self._data.get('agora_audit_events', {})) + 1}"
+        self._data.setdefault("agora_audit_events", {})[eid] = record
+        return record
+
+    def record_agora_audit_event(self, event: dict[str, Any]) -> dict[str, Any]:
+        timestamp = str(event.get("recordedAt") or event.get("timestamp") or "2026-05-28T00:00:00Z")
+        event_id = str(event.get("auditId") or event.get("eventId") or f"aud-agora-{uuid.uuid4().hex[:12]}")
+        record = {
+            "auditId": event_id,
+            "recordedAt": timestamp,
+            **event,
+        }
+        self._data.setdefault("agora_audit_events", {})[event_id] = record
+        return record
+
+    def list_agora_feedback(self, **kwargs: Any) -> list[dict[str, Any]]:
+        fb = self._data.get("agora_signal_feedback", {})
+        return list(fb.values()) if isinstance(fb, dict) else list(fb)
+
+    def put_agora_feedback(self, feedback_id: str, record: dict[str, Any]) -> dict[str, Any]:
+        self._data.setdefault("agora_signal_feedback", {})[feedback_id] = record
+        return record
+
+    def record_agora_signal_feedback(
+        self,
+        signal_id: str,
+        *,
+        decision: str,
+        confidence: int,
+        reason: str | None,
+        actor_id: str,
+        edit_window_seconds: int,
+        recorded_at: str | None = None,
+    ) -> dict[str, Any] | None:
+        signal = self.get_agora_signal(signal_id)
+        if signal is None:
+            return None
+        timestamp = recorded_at or "2026-05-28T00:00:00Z"
+        feedback_id = f"sigfb-{uuid.uuid4().hex[:12]}"
+        feedback = {
+            "id": feedback_id,
+            "feedbackId": feedback_id,
+            "signalId": signal_id,
+            "decision": decision,
+            "confidence": confidence,
+            "reason": reason,
+            "actorId": actor_id,
+            "createdAt": timestamp,
+            "updatedAt": timestamp,
+            "editWindowSeconds": edit_window_seconds,
+        }
+        self._data.setdefault("agora_signal_feedback", {})[feedback_id] = feedback
+        return feedback
+
+    # Persona & Strategy
+    def get_persona(self, persona_id: str | None) -> dict[str, Any] | None:
+        ds = self._data.get("personas", {})
+        if isinstance(ds, dict):
+            return ds.get(str(persona_id or ""))
+        return next((p for p in ds if p.get("id") == persona_id or p.get("persona_id") == persona_id), None)
+
+    def list_personas(self, **kwargs: Any) -> list[dict[str, Any]]:
+        ds = self._data.get("personas", {})
+        return list(ds.values()) if isinstance(ds, dict) else list(ds)
+
+    def upsert_persona(self, persona: dict[str, Any]) -> dict[str, Any]:
+        pid = persona.get("id") or persona.get("persona_id")
+        self._data.setdefault("personas", {})[pid] = persona
+        return persona
+
+    def get_strategy(self, strategy_id: str | None) -> dict[str, Any] | None:
+        ds = self._data.get("strategies", {})
+        if isinstance(ds, dict):
+            return ds.get(str(strategy_id or ""))
+        return next((s for s in ds if s.get("id") == strategy_id or s.get("strategy_id") == strategy_id), None)
+
+    def list_strategies(self, **kwargs: Any) -> list[dict[str, Any]]:
+        ds = self._data.get("strategies", {})
+        return list(ds.values()) if isinstance(ds, dict) else list(ds)
+
+    def list_persona_league(self, **kwargs: Any) -> list[dict[str, Any]]:
+        ds = self._data.get("persona_league", [])
+        return list(ds.values()) if isinstance(ds, dict) else list(ds)
+
+    def get_capability_snapshot_for_persona(self, persona_id: str | None) -> dict[str, Any] | None:
+        return None
+
+    def get_persona_capabilities(self, persona_id: str | None) -> dict[str, Any] | None:
+        return None
+
+    def list_registry_entries(self, **kwargs: Any) -> list[dict[str, Any]]:
+        entries = self._data.get("registry_entries", {})
+        if isinstance(entries, dict):
+            return list(entries.values())
+        return list(entries)
+
+    # Runtime bindings
+    def _get_fs_runtime_bindings(self) -> dict[str, Any]:
+        rdir = os.environ.get("PANTHEON_RUNTIME_DATA_DIR")
+        if rdir:
+            fpath = Path(rdir) / "runtime_bindings.json"
+            if fpath.exists():
+                try:
+                    raw = json.loads(fpath.read_text(encoding="utf-8"))
+                    if isinstance(raw, list):
+                        return {rb.get("binding_id") or rb.get("id") or rb.get("runtime_id"): rb for rb in raw if isinstance(rb, dict)}
+                    if isinstance(raw, dict):
+                        return raw
+                except Exception:
+                    pass
+        return {}
+
+    def list_runtime_bindings(self, **kwargs: Any) -> list[dict[str, Any]]:
+        fs_rbs = self._get_fs_runtime_bindings()
+        if fs_rbs:
+            return list(fs_rbs.values())
+        ds = self._data.get("runtime_bindings") or {}
+        return list(ds.values()) if isinstance(ds, dict) else list(ds)
+
+    def get_runtime_binding(self, binding_id: str | None) -> dict[str, Any] | None:
+        fs_rbs = self._get_fs_runtime_bindings()
+        if fs_rbs:
+            res = fs_rbs.get(str(binding_id or ""))
+            if res:
+                return res
+            return next((r for r in fs_rbs.values() if r.get("id") == binding_id or r.get("binding_id") == binding_id or r.get("runtime_id") == binding_id), None)
+        ds = self._data.get("runtime_bindings") or {}
+        if isinstance(ds, dict):
+            res = ds.get(str(binding_id or ""))
+            if res:
+                return res
+        return next((r for r in (ds.values() if isinstance(ds, dict) else ds) if r.get("id") == binding_id or r.get("binding_id") == binding_id or r.get("runtime_id") == binding_id), None)
+
+    def get_runtime_binding_by_runtime_id(self, runtime_id: str | None) -> dict[str, Any] | None:
+        return self.get_runtime_binding(runtime_id)
+
+    def create_runtime_binding(
+        self,
+        *,
+        runtime_id: str | None = None,
+        name: str = "",
+        persona_id: str = "",
+        binding_id: str = "",
+        deployment_plan_id: str = "",
+        runtime_kind: str = "paper",
+        actor_id: str = "",
+        created_at: str | None = None,
+        params: dict[str, Any] | None = None,
+        state: str = "stopped",
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        rid = runtime_id or kwargs.get("id") or "runtime-1"
+        bid = binding_id or kwargs.get("binding_id") or "binding-1"
+        timestamp = created_at or "2026-05-28T00:00:00Z"
+        record = {
+            "id": rid,
+            "runtime_id": rid,
+            "name": name,
+            "state": state,
+            "status": state,
+            "persona_id": persona_id,
+            "binding_id": bid,
+            "runtime_binding_id": bid,
+            "persona_capital_binding_id": bid,
+            "deployment_plan_id": deployment_plan_id,
+            "plan_id": deployment_plan_id,
+            "runtime_kind": runtime_kind,
+            "deployment_stage": runtime_kind,
+            "deployment_mode": runtime_kind,
+            "created_at": timestamp,
+            "updated_at": timestamp,
+            "created_by": actor_id,
+        }
+        self._data.setdefault("runtime_bindings", {})[rid] = record
+        self._data.setdefault("runtime_bindings", {})[bid] = record
+        rdir = os.environ.get("PANTHEON_RUNTIME_DATA_DIR")
+        if rdir:
+            fpath = Path(rdir) / "runtime_bindings.json"
+            try:
+                raw = []
+                if fpath.exists():
+                    raw = json.loads(fpath.read_text(encoding="utf-8"))
+                if isinstance(raw, list):
+                    raw.append(record)
+                    fpath.write_text(json.dumps(raw, indent=2), encoding="utf-8")
+            except Exception:
+                pass
+        return record
+
+    # Deployment plans & Governance
+    def list_deployment_plans(self, **kwargs: Any) -> list[dict[str, Any]]:
+        ds = self._data.get("deployment_plans", {})
+        return list(ds.values()) if isinstance(ds, dict) else list(ds)
+
+    def get_deployment_plan(self, plan_id: str | None) -> dict[str, Any] | None:
+        ds = self._data.get("deployment_plans", {})
+        if isinstance(ds, dict):
+            return ds.get(str(plan_id or ""))
+        return next((p for p in ds if p.get("id") == plan_id or p.get("plan_id") == plan_id), None)
+
+    def put_deployment_plan(self, plan_id: str, record: dict[str, Any]) -> dict[str, Any]:
+        self._data.setdefault("deployment_plans", {})[plan_id] = record
+        return record
+
+    def create_deployment_plan(
+        self,
+        *,
+        plan_id: str,
+        binding_id: str,
+        artifact_id: str,
+        deployment_mode: str,
+        capital_pool_id: str,
+        actor_id: str,
+        created_at: str | None = None,
+        params: dict[str, Any] | None = None,
+        locked: bool = False,
+        status: str = "pending_approval",
+    ) -> dict[str, Any]:
+        timestamp = created_at or "2026-05-28T00:00:00Z"
+        record = {
+            "id": plan_id,
+            "plan_id": plan_id,
+            "binding_id": binding_id,
+            "persona_capital_binding_id": binding_id,
+            "artifact_id": artifact_id,
+            "deployment_mode": deployment_mode,
+            "deployment_stage": deployment_mode,
+            "target_stage": deployment_mode,
+            "capital_pool_id": capital_pool_id,
+            "target_pool_id": capital_pool_id,
+            "status": status,
+            "locked": bool(locked),
+            "params": params or {},
+            "created_at": timestamp,
+            "updated_at": timestamp,
+            "created_by": actor_id,
+            "metadata": {
+                "created_via": "POST /api/v1/deployment-plans",
+                "persistenceMode": "bff_local_dev_store",
+            },
+            "canonicalWriteAuthority": "deployment_service",
+            "persistenceMode": "bff_local_dev_store",
+        }
+        self._data.setdefault("deployment_plans", {})[plan_id] = record
+        return record
+
+    def list_governance_review_queue_items(self, **kwargs: Any) -> list[dict[str, Any]]:
+        ds = self._data.get("governance_review_queue", {})
+        return list(ds.values()) if isinstance(ds, dict) else list(ds)
+
+    def list_approval_queue_items(self, **kwargs: Any) -> list[dict[str, Any]]:
+        ds = self._data.get("approvals", {})
+        return list(ds.values()) if isinstance(ds, dict) else list(ds)
+
+    def list_capital_pools(self, **kwargs: Any) -> list[dict[str, Any]]:
+        ds = self._data.get("capital_pools", {})
+        return list(ds.values()) if isinstance(ds, dict) else list(ds)
+
+    def get_capital_pool(self, pool_id: str | None) -> dict[str, Any] | None:
+        ds = self._data.get("capital_pools", {})
+        if isinstance(ds, dict):
+            return ds.get(str(pool_id or ""))
+        return next((p for p in ds if p.get("id") == pool_id or p.get("capital_pool_id") == pool_id), None)
+
+    def list_bindings(self, **kwargs: Any) -> list[dict[str, Any]]:
+        ds = self._data.get("bindings", {})
+        return list(ds.values()) if isinstance(ds, dict) else list(ds)
+
+    def get_binding(self, binding_id: str | None) -> dict[str, Any] | None:
+        ds = self._data.get("bindings", {})
+        if isinstance(ds, dict):
+            return ds.get(str(binding_id or ""))
+        return next((b for b in ds if b.get("id") == binding_id or b.get("binding_id") == binding_id), None)
+
+    def get_bindings_for_persona(self, persona_id: str | None) -> list[dict[str, Any]]:
+        ds = self._data.get("bindings", {})
+        bindings = list(ds.values()) if isinstance(ds, dict) else list(ds)
+        return [b for b in bindings if b.get("persona_id") == persona_id or b.get("personaId") == persona_id]
+
+    def get_sessions_for_persona(self, persona_id: str | None) -> list[dict[str, Any]]:
+        ds = self._data.get("sessions", {})
+        sessions = list(ds.values()) if isinstance(ds, dict) else list(ds)
+        return [s for s in sessions if s.get("persona_id") == persona_id or s.get("personaId") == persona_id]
+
+    def get_teaching_sessions_for_persona(self, persona_id: str | None) -> list[dict[str, Any]]:
+        ds = self._data.get("teaching_sessions", {})
+        sessions = list(ds.values()) if isinstance(ds, dict) else list(ds)
+        return [s for s in sessions if s.get("persona_id") == persona_id or s.get("personaId") == persona_id]
+
+    def get_persona_allowed_actions(self, persona_id: str | None) -> dict[str, Any]:
+        ds = self._data.get("allowed_actions", {})
+        if isinstance(ds, dict):
+            return ds.get(str(persona_id or ""), {})
+        return {}
+
+    def list_incidents(self, **kwargs: Any) -> list[dict[str, Any]]:
+        ds = self._data.get("incidents", {})
+        return list(ds.values()) if isinstance(ds, dict) else list(ds)
+
+    def list_evolution_decisions(self, **kwargs: Any) -> list[dict[str, Any]]:
+        ds = self._data.get("evolution_decisions", {})
+        return list(ds.values()) if isinstance(ds, dict) else list(ds)
+
+    def get_telemetry_summary(self, runtime_id: str | None) -> dict[str, Any] | None:
+        ds = self._data.get("telemetry_summaries", {})
+        if isinstance(ds, dict):
+            return ds.get(str(runtime_id or ""))
+        return next((t for t in ds if t.get("runtime_id") == runtime_id), None)
+
+
 # ---------------------------------------------------------------------------
 # Isolation helpers (Agora)
 # ---------------------------------------------------------------------------
-
-
-def _seed_agora_read_store(path: Path) -> ReadSurfaceStore:
-    path.write_text(
-        json.dumps(
-            {
-                "agora_signals": {},
-                "agora_audit_events": {},
-                "agora_signal_feedback": {},
-            }
-        ),
-        encoding="utf-8",
-    )
-    return ReadSurfaceStore(str(path), allow_local_snapshot_fallback=True)
 
 
 @contextmanager
@@ -88,22 +481,26 @@ def _isolated_agora_bff() -> Iterator[TestClient]:
     original_idempotency = dict(bff_main._AGORA_CORE_BFF_IDEMPOTENCY)
     original_signal_events = list(bff_main._sse_buffers["signal"])
     original_inbox_events = list(bff_main._sse_buffers["inbox"])
-    with tempfile.TemporaryDirectory(prefix="bff_write_gap_agora_") as td:
-        store_path = Path(td) / "read_surfaces.json"
-        bff_main.read_store = _seed_agora_read_store(store_path)
+    bff_main.read_store = WriteGapTestReadPorts(
+        seed_data={
+            "agora_signals": {},
+            "agora_audit_events": {},
+            "agora_signal_feedback": {},
+        }
+    )
+    bff_main._AGORA_CORE_BFF_IDEMPOTENCY.clear()
+    bff_main._sse_buffers["signal"].clear()
+    bff_main._sse_buffers["inbox"].clear()
+    try:
+        yield TestClient(bff_main.app)
+    finally:
+        bff_main.read_store = original_store
         bff_main._AGORA_CORE_BFF_IDEMPOTENCY.clear()
+        bff_main._AGORA_CORE_BFF_IDEMPOTENCY.update(original_idempotency)
         bff_main._sse_buffers["signal"].clear()
+        bff_main._sse_buffers["signal"].extend(original_signal_events)
         bff_main._sse_buffers["inbox"].clear()
-        try:
-            yield TestClient(bff_main.app)
-        finally:
-            bff_main.read_store = original_store
-            bff_main._AGORA_CORE_BFF_IDEMPOTENCY.clear()
-            bff_main._AGORA_CORE_BFF_IDEMPOTENCY.update(original_idempotency)
-            bff_main._sse_buffers["signal"].clear()
-            bff_main._sse_buffers["signal"].extend(original_signal_events)
-            bff_main._sse_buffers["inbox"].clear()
-            bff_main._sse_buffers["inbox"].extend(original_inbox_events)
+        bff_main._sse_buffers["inbox"].extend(original_inbox_events)
 
 
 # ---------------------------------------------------------------------------
@@ -130,8 +527,9 @@ def _isolated_runtime_bff(runtime_bindings: list[dict[str, Any]]) -> Iterator[Te
         os.environ["PANTHEON_RUNTIME_DATA_DIR"] = str(runtime_dir)
         bff_main._GOV_BFF_IDEMPOTENCY.clear()
         bff_main._sse_buffers["runtime"].clear()
-        bff_main.read_store = ReadSurfaceStore(
-            str(root / "read_surfaces.json"),
+        rb_map = {rb.get("binding_id") or rb.get("id"): rb for rb in runtime_bindings if isinstance(rb, dict)}
+        bff_main.read_store = WriteGapTestReadPorts(
+            seed_data={"runtime_bindings": rb_map},
             allow_local_snapshot_fallback=False,
         )
         try:
@@ -143,6 +541,10 @@ def _isolated_runtime_bff(runtime_bindings: list[dict[str, Any]]) -> Iterator[Te
             bff_main._sse_buffers["runtime"].clear()
             bff_main._sse_buffers["runtime"].extend(original_runtime_events)
             for key, value in original_env.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
                 if value is None:
                     os.environ.pop(key, None)
                 else:
@@ -382,24 +784,21 @@ def _isolated_deployment_plan_bff(
     original_store = bff_main.read_store
     original_idempotency = dict(bff_main._GOV_BFF_IDEMPOTENCY)
     original_audit_events = list(bff_main._sse_buffers["audit"])
-    with tempfile.TemporaryDirectory(prefix="bff_write_gap_deployment_plan_") as td:
-        store_path = Path(td) / "read_surfaces.json"
-        store_path.write_text(
-            json.dumps(_deployment_plan_seed(registry_entries)), encoding="utf-8"
-        )
-        bff_main.read_store = ReadSurfaceStore(
-            str(store_path), allow_local_snapshot_fallback=True
-        )
+    seed = _deployment_plan_seed(registry_entries)
+    bff_main.read_store = WriteGapTestReadPorts(
+        seed_data=seed,
+        allow_local_snapshot_fallback=True,
+    )
+    bff_main._GOV_BFF_IDEMPOTENCY.clear()
+    bff_main._sse_buffers["audit"].clear()
+    try:
+        yield TestClient(bff_main.app)
+    finally:
+        bff_main.read_store = original_store
         bff_main._GOV_BFF_IDEMPOTENCY.clear()
+        bff_main._GOV_BFF_IDEMPOTENCY.update(original_idempotency)
         bff_main._sse_buffers["audit"].clear()
-        try:
-            yield TestClient(bff_main.app)
-        finally:
-            bff_main.read_store = original_store
-            bff_main._GOV_BFF_IDEMPOTENCY.clear()
-            bff_main._GOV_BFF_IDEMPOTENCY.update(original_idempotency)
-            bff_main._sse_buffers["audit"].clear()
-            bff_main._sse_buffers["audit"].extend(original_audit_events)
+        bff_main._sse_buffers["audit"].extend(original_audit_events)
 
 
 def _deployment_plan_create_payload(plan_id: str | None = None) -> dict[str, Any]:
@@ -914,14 +1313,11 @@ _P08_REQUIRED_DATA_KEYS = {"persona", "bindings", "deploymentPlans", "approvals"
 def _isolated_persona_mgmt_bff() -> Iterator[TestClient]:
     """Swap in a local-fallback store so default seed personas are available."""
     original_store = bff_main.read_store
-    with tempfile.TemporaryDirectory(prefix="bff_write_gap_p08_") as td:
-        from read_store import ReadSurfaceStore  # noqa: F811
-        store_path = Path(td) / "read_surfaces.json"
-        bff_main.read_store = ReadSurfaceStore(str(store_path), allow_local_snapshot_fallback=True)
-        try:
-            yield TestClient(bff_main.app, raise_server_exceptions=False)
-        finally:
-            bff_main.read_store = original_store
+    bff_main.read_store = WriteGapTestReadPorts(allow_local_snapshot_fallback=True)
+    try:
+        yield TestClient(bff_main.app, raise_server_exceptions=False)
+    finally:
+        bff_main.read_store = original_store
 
 
 def test_get_persona_management_returns_200_with_six_top_level_data_keys() -> None:
