@@ -13,7 +13,7 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, os.path.dirname(__file__))
 
 import main as bff_main
-from read_store import ReadSurfaceStore
+from ports import create_read_surface_ports
 
 
 HEADERS = {"Authorization": "Bearer dep004-operator:operator"}
@@ -68,6 +68,17 @@ def _isolated_dep004_bff(
                 "runtime_action": "deploy_new_binding",
                 "status": "approved",
                 "created_at": "2026-06-27T01:00:00Z",
+                "deployment_saga_id": "deployment-saga-dep004-001",
+                "deployment_saga_status": "awaiting_binding",
+                "saga_progress": {
+                    "saga_id": "deployment-saga-dep004-001",
+                    "saga_status": "awaiting_binding",
+                    "progress_status": "blocked",
+                    "current_step": "binding_requested",
+                    "blocked_reason": "runtime-manager unavailable",
+                    "dlq_count": 1,
+                    "pending_event_count": 0,
+                },
             }
         }
         if include_second_plan:
@@ -84,12 +95,24 @@ def _isolated_dep004_bff(
                 "runtime_action": "deploy_new_binding",
                 "status": "approved",
                 "created_at": "2026-06-27T01:02:00Z",
+                "deployment_saga_id": "deployment-saga-dep004-002",
+                "deployment_saga_status": "awaiting_binding",
+                "saga_progress": {
+                    "saga_id": "deployment-saga-dep004-002",
+                    "saga_status": "awaiting_binding",
+                    "progress_status": "blocked",
+                    "current_step": "binding_requested",
+                    "blocked_reason": "runtime-manager unavailable",
+                    "dlq_count": 1,
+                    "pending_event_count": 0,
+                },
             }
         _write_json(governance_dir / "deployment_plans.json", deployment_plans)
 
         approval_decisions = {
             "approval-dep004-001": {
                 "decision_id": "approval-dep004-001",
+                "outcome": "approved",
                 "decision": "approved",
                 "decision_state": "decided",
                 "actor_id": "risk-committee",
@@ -100,6 +123,7 @@ def _isolated_dep004_bff(
         if include_second_plan:
             approval_decisions["approval-dep004-002"] = {
                 "decision_id": "approval-dep004-002",
+                "outcome": "approved",
                 "decision": "approved",
                 "decision_state": "decided",
                 "actor_id": "risk-committee",
@@ -200,42 +224,43 @@ def _isolated_dep004_bff(
                 "inbox": [],
             },
         )
+        runtime_bindings = [
+            {
+                "binding_id": "rb-dep004-001",
+                "runtime_binding_id": "rb-dep004-001",
+                "runtime_id": "runtime-dep004-001",
+                "capital_pool_id": "pool-dep004",
+                "artifact_id": "artifact-dep004-001",
+                "artifact_version": "v1.0.0",
+                "deployment_mode": "paper",
+                "effective_at": "2026-06-27T01:10:00Z",
+                "status": "active",
+                "plan_id": "plan-dep004-001",
+                "persona_capital_binding_id": "pcb-dep004-001",
+            },
+            *(
+                [
+                    {
+                        "binding_id": "rb-dep004-002",
+                        "runtime_binding_id": "rb-dep004-002",
+                        "runtime_id": "runtime-dep004-002",
+                        "capital_pool_id": "pool-dep004",
+                        "artifact_id": "artifact-dep004-002",
+                        "artifact_version": "v1.0.0",
+                        "deployment_mode": "paper",
+                        "effective_at": "2026-06-27T01:12:00Z",
+                        "status": "active",
+                        "plan_id": "plan-dep004-002",
+                        "persona_capital_binding_id": "pcb-dep004-002",
+                    }
+                ]
+                if include_second_plan
+                else []
+            ),
+        ]
         _write_json(
             runtime_dir / "runtime_bindings.json",
-            [
-                {
-                    "binding_id": "rb-dep004-001",
-                    "runtime_binding_id": "rb-dep004-001",
-                    "runtime_id": "runtime-dep004-001",
-                    "capital_pool_id": "pool-dep004",
-                    "artifact_id": "artifact-dep004-001",
-                    "artifact_version": "v1.0.0",
-                    "deployment_mode": "paper",
-                    "effective_at": "2026-06-27T01:10:00Z",
-                    "status": "active",
-                    "plan_id": "plan-dep004-001",
-                    "persona_capital_binding_id": "pcb-dep004-001",
-                },
-                *(
-                    [
-                        {
-                            "binding_id": "rb-dep004-002",
-                            "runtime_binding_id": "rb-dep004-002",
-                            "runtime_id": "runtime-dep004-002",
-                            "capital_pool_id": "pool-dep004",
-                            "artifact_id": "artifact-dep004-002",
-                            "artifact_version": "v1.0.0",
-                            "deployment_mode": "paper",
-                            "effective_at": "2026-06-27T01:12:00Z",
-                            "status": "active",
-                            "plan_id": "plan-dep004-002",
-                            "persona_capital_binding_id": "pcb-dep004-002",
-                        }
-                    ]
-                    if include_second_plan
-                    else []
-                ),
-            ],
+            runtime_bindings,
         )
         if include_monitoring:
             _write_json(
@@ -256,10 +281,67 @@ def _isolated_dep004_bff(
                 ],
             )
 
-        bff_main.read_store = ReadSurfaceStore(
-            str(root / "read_surfaces.json"),
-            allow_local_snapshot_fallback=False,
+        from ports import create_in_memory_read_surface_ports
+
+        plan_list = list(deployment_plans.values())
+        monitoring_session = (
+            {
+                "session_id": "prmon-dep004-001",
+                "binding_id": "rb-dep004-001",
+                "runtime_binding_id": "rb-dep004-001",
+                "runtime_id": "runtime-dep004-001",
+                "deployment_stage": "paper",
+                "status": "running",
+                "active": True,
+                "started_at": "2026-06-27T01:10:00Z",
+                "last_heartbeat_at": "2026-06-27T01:16:00Z",
+                "stale_after_seconds": 90,
+            }
+            if include_monitoring
+            else None
         )
+
+        store = create_in_memory_read_surface_ports(
+            persona_capital_runtime_kwargs={
+                "deployment_plans": plan_list,
+                "runtime_bindings": runtime_bindings,
+            },
+            ooda_management_kwargs={
+                "approval_decisions": list(approval_decisions.values()),
+            },
+        )
+        store.get_deployment_plan = lambda plan_id: deployment_plans.get(plan_id)
+        store.list_deployment_plans = lambda status=None, capital_pool_id=None: plan_list
+        store.get_approval_decision = lambda decision_id: approval_decisions.get(decision_id)
+        store.get_deployment_saga = lambda saga_id: deployment_sagas.get(saga_id)
+        store.get_deployment_saga_by_plan_id = lambda plan_id: next(
+            (s for s in deployment_sagas.values() if s.get("plan_id") == plan_id), None
+        )
+        store.get_paper_runtime_monitoring_session = (
+            lambda *, runtime_id=None, binding_id=None: monitoring_session
+            if (runtime_id == "runtime-dep004-001" or binding_id == "rb-dep004-001")
+            else None
+        )
+        store.list_paper_runtime_monitoring_sessions = (
+            lambda: [monitoring_session] if monitoring_session else []
+        )
+        store.get_telemetry_summary = lambda runtime_id: None
+        store.get_rollbacks = lambda runtime_id: []
+        store.get_review_summary = lambda plan_id: {"risk_assessment": "Low risk"}
+        store.get_allowed_actions = lambda plan_id: {
+            "canProceedToApproval": False,
+            "canEscalateDiff": True,
+        }
+        store.dataset_source = lambda dataset: {
+            "deployment_plans": "canonical",
+            "runtime_bindings": "canonical",
+            "approval_decisions": "canonical",
+            "deployment_sagas": "canonical",
+            "paper_runtime_monitoring_sessions": "canonical" if include_monitoring else "missing",
+            "telemetry_summaries": "missing",
+        }.get(dataset, "missing")
+
+        bff_main.read_store = store
         try:
             yield TestClient(bff_main.app)
         finally:

@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 
 import main as bff_main
 from persona_provisioning import MemoryPersonaProvisioningStore
-from read_store import ReadSurfaceStore
+from ports import ReadSurfacePorts, create_in_memory_read_surface_ports
 from test_persona_provisioning_coordinator import FakeOwnerTransport, _schedule_receipt
 
 
@@ -22,10 +22,7 @@ class _RouteHarness:
 
 @pytest.fixture()
 def route_harness(tmp_path, monkeypatch: pytest.MonkeyPatch) -> _RouteHarness:
-    read_store = ReadSurfaceStore(
-        str(tmp_path / "read-surfaces.json"),
-        allow_local_snapshot_fallback=True,
-    )
+    read_store = create_in_memory_read_surface_ports()
     transport = FakeOwnerTransport()
     store = MemoryPersonaProvisioningStore()
     monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "true")

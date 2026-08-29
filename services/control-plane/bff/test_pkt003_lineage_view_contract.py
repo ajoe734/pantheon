@@ -14,25 +14,56 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, os.path.dirname(__file__))
 
 import main as bff_main
-from read_store import ReadSurfaceStore
-
+from ports import ReadSurfacePorts, create_in_memory_read_surface_ports, create_read_surface_ports
 
 AUTH = "Bearer test-operator:operator,admin"
 
 
 @contextmanager
 def _seeded_client():
-    with tempfile.TemporaryDirectory() as td:
-        original_store = bff_main.read_store
-        bff_main.read_store = ReadSurfaceStore(
-            os.path.join(td, "read_surfaces.json"),
-            allow_local_snapshot_fallback=True,
-        )
-        client = TestClient(bff_main.app)
-        try:
-            yield client
-        finally:
-            bff_main.read_store = original_store
+    original_store = bff_main.read_store
+    bff_main.read_store = create_in_memory_read_surface_ports(
+        lifecycle_telemetry_governance_kwargs={
+            "lineage_edges": [
+                {
+                    "id": "ln-edge-001",
+                    "from_artifact_id": "artifact-041",
+                    "to_artifact_id": "artifact-042",
+                    "relationship": "derived_from",
+                    "created_at": "2026-04-09T00:00:00Z",
+                },
+                {
+                    "id": "ln-edge-002",
+                    "from_artifact_id": "artifact-042",
+                    "to_artifact_id": "artifact-043",
+                    "relationship": "promoted_to",
+                    "created_at": "2026-04-10T00:00:00Z",
+                },
+            ],
+            "lineage_records": [
+                {
+                    "artifact_id": "artifact-041",
+                    "artifact_version": "v2.0.0",
+                    "artifact_type": "strategy",
+                },
+                {
+                    "artifact_id": "artifact-042",
+                    "artifact_version": "v2.1.0",
+                    "artifact_type": "strategy",
+                },
+                {
+                    "artifact_id": "artifact-043",
+                    "artifact_version": "v2.2.0",
+                    "artifact_type": "strategy",
+                },
+            ],
+        }
+    )
+    client = TestClient(bff_main.app)
+    try:
+        yield client
+    finally:
+        bff_main.read_store = original_store
 
 
 @contextmanager
@@ -100,10 +131,7 @@ def _registry_backed_client():
         os.environ["PANTHEON_REGISTRY_DATA_DIR"] = str(registry_dir)
 
         original_store = bff_main.read_store
-        bff_main.read_store = ReadSurfaceStore(
-            os.path.join(td, "read_surfaces.json"),
-            allow_local_snapshot_fallback=False,
-        )
+        bff_main.read_store = create_read_surface_ports()
         client = TestClient(bff_main.app)
         try:
             yield client

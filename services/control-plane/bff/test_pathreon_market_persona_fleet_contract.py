@@ -14,7 +14,8 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, os.path.dirname(__file__))
 
 import main as bff_main
-from read_store import ReadSurfaceStore, _merge_market_persona_fleet
+from ports import ReadSurfacePorts, create_in_memory_read_surface_ports, create_read_surface_ports
+from read_store import _merge_market_persona_fleet
 
 
 @pytest.fixture(autouse=True)
@@ -62,28 +63,74 @@ MARKET_PERSONAS = {
 }
 
 
+def _make_store(*, allow_local_snapshot_fallback: bool = True) -> ReadSurfacePorts:
+    if not allow_local_snapshot_fallback:
+        return create_read_surface_ports()
+    data: dict[str, Any] = {}
+    _merge_market_persona_fleet(data)
+    store = create_in_memory_read_surface_ports(
+        operations_consultation_kwargs={
+            "agora_signals": data.get("agora_signals") or {},
+            "agora_sessions": data.get("agora_sessions") or {},
+            "agora_watchlist": data.get("agora_watchlist") or {},
+        },
+        persona_capital_runtime_kwargs={
+            "personas": data.get("personas") or {},
+            "capital_pools": data.get("capital_pools") or {},
+            "bindings": data.get("bindings") or data.get("persona_bindings") or {},
+            "runtime_bindings": data.get("runtime_bindings") or {},
+            "deployment_plans": data.get("deployment_plans") or {},
+            "rankings": data.get("persona_rankings") or data.get("rankings") or {},
+            "persona_league": list((data.get("persona_league") or {}).values()) if isinstance(data.get("persona_league"), dict) else (data.get("persona_league") or []),
+            "rebalances": data.get("rebalances") or {},
+            "capital_allocations": data.get("capital_allocations") or {},
+            "containments": data.get("containments") or {},
+        },
+        persona_training_kwargs={
+            "personas": data.get("personas") or {},
+            "sessions": data.get("sessions") or {},
+            "teaching_sessions": data.get("teaching_sessions") or {},
+            "capability_snapshots": data.get("capability_snapshots") or {},
+        },
+        ooda_management_kwargs={
+            "ooda_packets": list((data.get("ooda_packets") or {}).values()) if isinstance(data.get("ooda_packets"), dict) else (data.get("ooda_packets") or []),
+            "deployment_plans": list((data.get("deployment_plans") or {}).values()) if isinstance(data.get("deployment_plans"), dict) else (data.get("deployment_plans") or []),
+            "approval_decisions": list((data.get("governance_approvals") or {}).values()) if isinstance(data.get("governance_approvals"), dict) else (data.get("governance_approvals") or []),
+        },
+        research_knowledge_source_kwargs={
+            "strategy_specs_store": data.get("strategy_specs") or {},
+            "research_experiments_store": data.get("research_experiments") or {},
+            "research_artifacts_store": data.get("research_artifacts") or {},
+            "research_tickets_store": data.get("research_tickets") or {},
+            "research_notes_store": data.get("research_notes") or {},
+        },
+        lifecycle_telemetry_governance_kwargs={
+            "telemetry_summaries": list((data.get("telemetry_summaries") or {}).values()) if isinstance(data.get("telemetry_summaries"), dict) else (data.get("telemetry_summaries") or []),
+            "incidents": list((data.get("incidents") or {}).values()) if isinstance(data.get("incidents"), dict) else (data.get("incidents") or []),
+        },
+        capability_snapshots=data.get("capability_snapshots") or {},
+    )
+    return store
+
+
 @contextmanager
 def _fleet_client() -> Iterator[TestClient]:
-    with tempfile.TemporaryDirectory() as td:
-        original_store = bff_main.read_store
-        original_env = os.environ.get("PANTHEON_OODA_PACKET_ENABLED")
-        os.environ.pop("PANTHEON_OODA_PACKET_ENABLED", None)
-        bff_main.read_store = ReadSurfaceStore(
-            str(Path(td) / "read_surfaces.json"),
-            allow_local_snapshot_fallback=True,
-        )
-        try:
-            yield TestClient(bff_main.app, raise_server_exceptions=False)
-        finally:
-            bff_main.read_store = original_store
-            if original_env is None:
-                os.environ.pop("PANTHEON_OODA_PACKET_ENABLED", None)
-            else:
-                os.environ["PANTHEON_OODA_PACKET_ENABLED"] = original_env
+    original_store = bff_main.read_store
+    original_env = os.environ.get("PANTHEON_OODA_PACKET_ENABLED")
+    os.environ.pop("PANTHEON_OODA_PACKET_ENABLED", None)
+    bff_main.read_store = _make_store(allow_local_snapshot_fallback=True)
+    try:
+        yield TestClient(bff_main.app, raise_server_exceptions=False)
+    finally:
+        bff_main.read_store = original_store
+        if original_env is None:
+            os.environ.pop("PANTHEON_OODA_PACKET_ENABLED", None)
+        else:
+            os.environ["PANTHEON_OODA_PACKET_ENABLED"] = original_env
 
 
 @contextmanager
-def _client_with_store(store: ReadSurfaceStore) -> Iterator[TestClient]:
+def _client_with_store(store: ReadSurfacePorts) -> Iterator[TestClient]:
     original_store = bff_main.read_store
     original_env = os.environ.get("PANTHEON_OODA_PACKET_ENABLED")
     os.environ.pop("PANTHEON_OODA_PACKET_ENABLED", None)
@@ -99,50 +146,46 @@ def _client_with_store(store: ReadSurfaceStore) -> Iterator[TestClient]:
 
 
 def test_default_read_store_has_us_tw_crypto_persona_execution_chain() -> None:
-    with tempfile.TemporaryDirectory() as td:
-        store = ReadSurfaceStore(
-            str(Path(td) / "read_surfaces.json"),
-            allow_local_snapshot_fallback=True,
-        )
+    store = _make_store(allow_local_snapshot_fallback=True)
 
-        for market, persona_id in MARKET_PERSONAS.items():
-            persona = store.get_persona(persona_id)
-            assert persona is not None
-            assert persona["metadata"]["market_scope"] == [market]
+    for market, persona_id in MARKET_PERSONAS.items():
+        persona = store.get_persona(persona_id)
+        assert persona is not None
+        assert persona["metadata"]["market_scope"] == [market]
 
-            bindings = store.get_bindings_for_persona(persona_id)
-            assert bindings
-            pool_id = bindings[0]["capital_pool_id"]
-            pool = store.get_capital_pool(pool_id)
-            assert pool is not None
-            assert pool["pool_id"] == pool_id
-            assert pool["live_capital_enabled"] is False
-            assert pool["capital_mode"] == "paper"
+        bindings = store.get_bindings_for_persona(persona_id)
+        assert bindings
+        pool_id = bindings[0]["capital_pool_id"]
+        pool = store.get_capital_pool(pool_id)
+        assert pool is not None
+        assert pool["pool_id"] == pool_id
+        assert pool["live_capital_enabled"] is False
+        assert pool["capital_mode"] == "paper"
 
-            runtime = store.get_runtime_binding_by_runtime_id(f"runtime-{market.lower()}-equity-paper")
-            if market == "CRYPTO":
-                runtime = store.get_runtime_binding_by_runtime_id("runtime-crypto-paper")
-            assert runtime is not None
-            assert runtime["deployment_stage"] == "paper"
-            assert runtime["runtime_binding_id"].endswith("-paper")
-            assert runtime["metadata"]["live_write_enabled"] is False
+        runtime = store.get_runtime_binding_by_runtime_id(f"runtime-{market.lower()}-equity-paper")
+        if market == "CRYPTO":
+            runtime = store.get_runtime_binding_by_runtime_id("runtime-crypto-paper")
+        assert runtime is not None
+        assert runtime["deployment_stage"] == "paper"
+        assert runtime["runtime_binding_id"].endswith("-paper")
+        assert runtime["metadata"]["live_write_enabled"] is False
 
-            capabilities = store.get_capability_snapshot_for_persona(persona_id)
-            assert capabilities is not None
-            assert "governance_handoff" in capabilities["effective_tools"]
-            assert "no_live_trade_without_approval" in capabilities["restrictions"]
+        capabilities = store.get_capability_snapshot_for_persona(persona_id)
+        assert capabilities is not None
+        assert "governance_handoff" in capabilities["effective_tools"]
+        assert "no_live_trade_without_approval" in capabilities["restrictions"]
 
-        tw_persona = store.get_persona("persona-tw-equity")
-        assert tw_persona is not None
-        required_sources = {source["dataset"]: source for source in tw_persona["required_data_sources"]}
-        assert required_sources["tw_price_daily"]["source_class"] == "live_pull"
-        assert required_sources["tw_broker_top"]["source_class"] == "live_push"
-        assert "tw-finmind-broker-daily-report" in required_sources["tw_broker_top"]["connector_candidates"]
-        tw_metadata = tw_persona["metadata"]
-        assert tw_metadata["data_source_status"]["state"] == "partial_readback"
-        assert tw_metadata["data_source_status"]["live_ingestion_enabled"] is False
-        assert tw_metadata["research_status"]["stage"] == "management_review_linked"
-        assert tw_metadata["current_research_projects"][0]["project_id"] == "MGMT-QLIB-006"
+    tw_persona = store.get_persona("persona-tw-equity")
+    assert tw_persona is not None
+    required_sources = {source["dataset"]: source for source in tw_persona["required_data_sources"]}
+    assert required_sources["tw_price_daily"]["source_class"] == "live_pull"
+    assert required_sources["tw_broker_top"]["source_class"] == "live_push"
+    assert "tw-finmind-broker-daily-report" in required_sources["tw_broker_top"]["connector_candidates"]
+    tw_metadata = tw_persona["metadata"]
+    assert tw_metadata["data_source_status"]["state"] == "partial_readback"
+    assert tw_metadata["data_source_status"]["live_ingestion_enabled"] is False
+    assert tw_metadata["research_status"]["stage"] == "management_review_linked"
+    assert tw_metadata["current_research_projects"][0]["project_id"] == "MGMT-QLIB-006"
 
 
 def test_persona_catalog_and_health_expose_market_fields() -> None:
@@ -183,26 +226,22 @@ def test_persona_catalog_and_health_expose_market_fields() -> None:
 
 
 def test_management_persona_fleet_hydrates_live_persona_market_context() -> None:
-    with tempfile.TemporaryDirectory() as td:
-        store = ReadSurfaceStore(
-            str(Path(td) / "read_surfaces.json"),
-            allow_local_snapshot_fallback=True,
+    store = _make_store(allow_local_snapshot_fallback=True)
+    for persona_id, name in (
+        ("persona-20260528-04688755", "Crypto-Alt-Hunter"),
+        ("persona-20260528-5937dea1", "TW-Index-Arbitrage"),
+        ("persona-20260528-597cbad2", "US-Macro-Hedger"),
+    ):
+        store.create_persona(
+            persona_id=persona_id,
+            name=name,
+            actor_id="pantheon-dev-browser",
+            created_at="2026-05-28T00:00:00Z",
+            lifecycle_state="deployed",
+            metadata={},
         )
-        for persona_id, name in (
-            ("persona-20260528-04688755", "Crypto-Alt-Hunter"),
-            ("persona-20260528-5937dea1", "TW-Index-Arbitrage"),
-            ("persona-20260528-597cbad2", "US-Macro-Hedger"),
-        ):
-            store.create_persona(
-                persona_id=persona_id,
-                name=name,
-                actor_id="pantheon-dev-browser",
-                created_at="2026-05-28T00:00:00Z",
-                lifecycle_state="deployed",
-                metadata={},
-            )
-        with _client_with_store(store) as client:
-            response = client.get("/bff/management/persona-fleet?page_size=50", headers=HEADERS)
+    with _client_with_store(store) as client:
+        response = client.get("/bff/management/persona-fleet?page_size=50", headers=HEADERS)
 
     assert response.status_code == 200, response.text
     rows = {item["persona_id"]: item for item in response.json()["data"]["items"]}
@@ -249,45 +288,41 @@ def test_management_persona_fleet_prefers_declared_runtime_identity_over_market_
     runtime_id = f"runtime-{persona_id}-paper"
     persona_binding_id = f"binding-{persona_id}-paper"
     pool_id = f"pool-{persona_id}-paper"
-    with tempfile.TemporaryDirectory() as td:
-        store = ReadSurfaceStore(
-            str(Path(td) / "read_surfaces.json"),
-            allow_local_snapshot_fallback=True,
-        )
-        store.create_persona(
-            persona_id=persona_id,
-            name="Crypto-Alt-Hunter",
-            actor_id="pantheon-dev-browser",
-            created_at="2026-05-28T00:00:00Z",
-            lifecycle_state="deployed",
-            metadata={
-                "capital_mode": "paper",
-                "deployment_stage": "paper",
-                "legacy_paper_capital_pool_id": pool_id,
-                "runtime_id": runtime_id,
-                "runtime_binding_id": persona_binding_id,
-            },
-        )
-        runtime_record = store.create_runtime_binding(
-            runtime_id=runtime_id,
-            name="Crypto-Alt-Hunter paper runtime",
-            persona_id=persona_id,
-            binding_id=persona_binding_id,
-            deployment_plan_id=f"paper-plan-{persona_id}",
-            runtime_kind="paper",
-            actor_id="pantheon-dev-browser",
-            params={"capital_pool_id": pool_id},
-            state="active",
-        )
-        runtime_record["persona_id"] = None
-        store._save()
+    store = _make_store(allow_local_snapshot_fallback=True)
+    store.create_persona(
+        persona_id=persona_id,
+        name="Crypto-Alt-Hunter",
+        actor_id="pantheon-dev-browser",
+        created_at="2026-05-28T00:00:00Z",
+        lifecycle_state="deployed",
+        metadata={
+            "capital_mode": "paper",
+            "deployment_stage": "paper",
+            "legacy_paper_capital_pool_id": pool_id,
+            "runtime_id": runtime_id,
+            "runtime_binding_id": persona_binding_id,
+        },
+    )
+    runtime_record = store.create_runtime_binding(
+        runtime_id=runtime_id,
+        name="Crypto-Alt-Hunter paper runtime",
+        persona_id=persona_id,
+        binding_id=persona_binding_id,
+        deployment_plan_id=f"paper-plan-{persona_id}",
+        runtime_kind="paper",
+        actor_id="pantheon-dev-browser",
+        params={"capital_pool_id": pool_id},
+        state="active",
+    )
+    runtime_record["persona_id"] = None
+    store._save()
 
-        with _client_with_store(store) as client:
-            fleet_response = client.get(
-                "/bff/management/persona-fleet?page_size=100",
-                headers=HEADERS,
-            )
-            runtime_response = client.get("/bff/runtimes?page_size=200", headers=HEADERS)
+    with _client_with_store(store) as client:
+        fleet_response = client.get(
+            "/bff/management/persona-fleet?page_size=100",
+            headers=HEADERS,
+        )
+        runtime_response = client.get("/bff/runtimes?page_size=200", headers=HEADERS)
 
     assert fleet_response.status_code == 200, fleet_response.text
     fleet_row = next(
@@ -492,10 +527,7 @@ def test_real_paper_runtime_identity_drives_formal_persona_attribution_and_fleet
     for env_name, path in stores.items():
         monkeypatch.setenv(env_name, str(path))
 
-    store = ReadSurfaceStore(
-        str(tmp_path / "read_surfaces.json"),
-        allow_local_snapshot_fallback=False,
-    )
+    store = _make_store(allow_local_snapshot_fallback=False)
     runtimes = {runtime["runtime_id"]: runtime for runtime in store.list_runtime_bindings()}
     assert runtimes[runtime_a]["persona_id"] == persona_a
     assert runtimes[runtime_b]["persona_id"] == persona_b
@@ -635,10 +667,7 @@ def test_runtime_registry_identity_reconciliation_is_unique_and_fail_closed(
     monkeypatch.setenv("PANTHEON_BFF_RUNTIME_BINDING_STORE", str(runtime_store))
     monkeypatch.setenv("PANTHEON_BFF_PERSONA_BINDING_STORE", str(binding_store))
 
-    store = ReadSurfaceStore(
-        str(tmp_path / "read_surfaces.json"),
-        allow_local_snapshot_fallback=False,
-    )
+    store = _make_store(allow_local_snapshot_fallback=False)
     runtimes = {runtime["runtime_id"]: runtime for runtime in store.list_runtime_bindings()}
 
     assert runtimes["runtime-unique"]["persona_id"] == "persona-unique"
@@ -826,28 +855,17 @@ def test_management_persona_fleet_returns_slim_ui_safe_rows() -> None:
 
 
 def test_management_persona_fleet_keeps_market_personas_with_live_dev_overlay_only() -> None:
-    with tempfile.TemporaryDirectory() as td:
-        store = ReadSurfaceStore(
-            str(Path(td) / "read_surfaces.json"),
-            allow_local_snapshot_fallback=False,
-        )
-        store._data["personas"] = {
-            "persona-dev-probe": {
-                "id": "persona-dev-probe",
-                "persona_id": "persona-dev-probe",
-                "name": "dev-probe",
-                "lifecycle_state": "paper",
-                "status": "healthy",
-                "created_at": "2026-06-03T08:27:44Z",
-                "updated_at": "2026-06-03T08:27:44Z",
-                "metadata": {"owner": "pantheon-dev-browser"},
-                "canonicalWriteAuthority": "persona_registry_service",
-                "persistenceMode": "bff_local_dev_store",
-            }
-        }
-
-        with _client_with_store(store) as client:
-            response = client.get("/bff/management/persona-fleet", headers=HEADERS)
+    store = _make_store(allow_local_snapshot_fallback=False)
+    store.create_persona(
+        persona_id="persona-dev-probe",
+        name="dev-probe",
+        actor_id="pantheon-dev-browser",
+        lifecycle_state="paper",
+        created_at="2026-06-03T08:27:44Z",
+        metadata={"owner": "pantheon-dev-browser"},
+    )
+    with _client_with_store(store) as client:
+        response = client.get("/bff/management/persona-fleet", headers=HEADERS)
 
     assert response.status_code == 200, response.text
     data = response.json()["data"]
@@ -862,16 +880,11 @@ def test_management_persona_fleet_keeps_market_personas_with_live_dev_overlay_on
 
 
 def test_unadmitted_catalog_defaults_do_not_fabricate_ghost_fleet_rows_or_detail() -> None:
-    with tempfile.TemporaryDirectory() as td:
-        store = ReadSurfaceStore(
-            str(Path(td) / "read_surfaces.json"),
-            allow_local_snapshot_fallback=False,
-        )
-
-        with _client_with_store(store) as client:
-            fleet = client.get("/bff/management/persona-fleet", headers=HEADERS)
-            detail = client.get("/bff/personas/persona-crypto", headers=HEADERS)
-            unknown = client.get("/bff/personas/persona-not-in-catalog", headers=HEADERS)
+    store = _make_store(allow_local_snapshot_fallback=False)
+    with _client_with_store(store) as client:
+        fleet = client.get("/bff/management/persona-fleet", headers=HEADERS)
+        detail = client.get("/bff/personas/persona-crypto", headers=HEADERS)
+        unknown = client.get("/bff/personas/persona-not-in-catalog", headers=HEADERS)
 
     assert fleet.status_code == 200, fleet.text
     fleet_ids = {item["persona_id"] for item in fleet.json()["data"]["items"]}
@@ -888,18 +901,13 @@ def test_unadmitted_catalog_defaults_do_not_fabricate_ghost_fleet_rows_or_detail
 
 
 def test_tw_qlib_research_experiment_drilldown_is_governed_default_not_seed() -> None:
-    with tempfile.TemporaryDirectory() as td:
-        store = ReadSurfaceStore(
-            str(Path(td) / "read_surfaces.json"),
-            allow_local_snapshot_fallback=False,
+    store = _make_store(allow_local_snapshot_fallback=False)
+    with _client_with_store(store) as client:
+        detail = client.get(
+            "/bff/research-experiments/exp-mgmt-qlib-006",
+            headers=HEADERS,
         )
-
-        with _client_with_store(store) as client:
-            detail = client.get(
-                "/bff/research-experiments/exp-mgmt-qlib-006",
-                headers=HEADERS,
-            )
-            listing = client.get("/bff/research-experiments", headers=HEADERS)
+        listing = client.get("/bff/research-experiments", headers=HEADERS)
 
     assert detail.status_code == 200, detail.text
     payload = detail.json()
@@ -1398,10 +1406,7 @@ def test_unassigned_runtime_telemetry_isolation_and_no_seed_leaks(
     for env_name, path in stores.items():
         monkeypatch.setenv(env_name, str(path))
 
-    store = ReadSurfaceStore(
-        str(tmp_path / "read_surfaces.json"),
-        allow_local_snapshot_fallback=False,
-    )
+    store = _make_store(allow_local_snapshot_fallback=False)
     runtimes = {runtime["runtime_id"]: runtime for runtime in store.list_runtime_bindings()}
     # The unassigned devloop runtime has no canonical binding or unique declaration, so it must reconcile to None.
     assert runtimes[runtime_unassigned]["persona_id"] is None
@@ -1605,10 +1610,7 @@ def test_canonical_binding_precedence_and_mixed_topology(
     import read_store
     monkeypatch.setattr(read_store, "_http_json_get", mock_http_json_get)
 
-    store = ReadSurfaceStore(
-        str(tmp_path / "read_surfaces.json"),
-        allow_local_snapshot_fallback=False,
-    )
+    store = _make_store(allow_local_snapshot_fallback=False)
 
     # 1. Verify Canonical-binding precedence without registry fallback
     runtimes = {runtime["runtime_id"]: runtime for runtime in store.list_runtime_bindings()}

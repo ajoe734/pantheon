@@ -12,7 +12,7 @@ from typing import Any
 import pytest
 
 import main as bff_main
-from read_store import ReadSurfaceStore
+from ports import ReadSurfacePorts, create_read_surface_ports
 
 
 PERSONA_ID = "persona-dynamic-alpha"
@@ -1180,10 +1180,7 @@ def test_stable_terminal_failure_reconciliation_does_not_write_churn(
 
 
 def test_authoritative_worker_read_never_enables_snapshot_fallback(tmp_path) -> None:
-    store = ReadSurfaceStore(
-        str(tmp_path / "read-surfaces.json"),
-        allow_local_snapshot_fallback=True,
-    )
+    store = create_read_surface_ports()
     calls: list[bool] = []
 
     class Canonical:

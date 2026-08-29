@@ -10,7 +10,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 
 import main as bff_main
 import read_store as bff_read_store
-from read_store import ReadSurfaceStore
+from ports import ReadSurfacePorts, create_in_memory_read_surface_ports, create_read_surface_ports
 
 
 OPERATOR_TOKEN = "Bearer op-2:operator"
@@ -19,10 +19,7 @@ OPERATOR_TOKEN = "Bearer op-2:operator"
 def test_pkt010_runtime_state_board_returns_contract_payload() -> None:
     with tempfile.TemporaryDirectory() as td:
         original_store = bff_main.read_store
-        store = ReadSurfaceStore(
-            os.path.join(td, "read_surfaces.json"),
-            allow_local_snapshot_fallback=False,
-        )
+        store = create_in_memory_read_surface_ports()
         store.list_runtime_bindings = lambda: [
             {
                 "id": "runtime-042",
@@ -217,10 +214,7 @@ def test_pkt010_runtime_state_board_returns_contract_payload() -> None:
 def test_pkt010_runtime_state_board_surfaces_terminal_monitoring_session() -> None:
     with tempfile.TemporaryDirectory() as td:
         original_store = bff_main.read_store
-        store = ReadSurfaceStore(
-            os.path.join(td, "read_surfaces.json"),
-            allow_local_snapshot_fallback=False,
-        )
+        store = create_in_memory_read_surface_ports()
         store.list_runtime_bindings = lambda: [
             {
                 "id": "rtb-stale-001",
@@ -299,10 +293,7 @@ def test_pkt010_runtime_state_board_surfaces_terminal_monitoring_session() -> No
 def test_pkt010_runtime_state_board_keeps_healthy_rows_when_rollback_surface_unavailable() -> None:
     with tempfile.TemporaryDirectory() as td:
         original_store = bff_main.read_store
-        store = ReadSurfaceStore(
-            os.path.join(td, "read_surfaces.json"),
-            allow_local_snapshot_fallback=False,
-        )
+        store = create_in_memory_read_surface_ports()
         runtime_bindings = [
             {
                 "id": f"rtb-paper-{idx:03d}",
@@ -405,10 +396,7 @@ def test_pkt010_runtime_state_board_keeps_healthy_rows_when_rollback_surface_una
 def test_pkt010_runtime_state_board_honest_mode_returns_unavailable_surface() -> None:
     with tempfile.TemporaryDirectory() as td:
         original_store = bff_main.read_store
-        store = ReadSurfaceStore(
-            os.path.join(td, "read_surfaces.json"),
-            allow_local_snapshot_fallback=False,
-        )
+        store = create_in_memory_read_surface_ports()
         store.list_runtime_bindings = lambda: []
         store.get_telemetry_summary = lambda runtime_id: None
         store.get_rollbacks = lambda runtime_id: []
@@ -439,10 +427,7 @@ def test_pkt010_runtime_state_board_honest_mode_returns_unavailable_surface() ->
 def test_pkt010_runtime_state_board_supports_backend_owned_sorting_filtering_and_pagination() -> None:
     with tempfile.TemporaryDirectory() as td:
         original_store = bff_main.read_store
-        store = ReadSurfaceStore(
-            os.path.join(td, "read_surfaces.json"),
-            allow_local_snapshot_fallback=False,
-        )
+        store = create_in_memory_read_surface_ports()
         runtime_bindings = [
             {
                 "id": "runtime-100",
@@ -599,10 +584,7 @@ def test_pkt010_runtime_state_board_reads_runtime_summary_from_telemetry_service
             return False, None
 
         monkeypatch.setattr(bff_read_store, "_http_json_get", fake_http_json_get)
-        store = ReadSurfaceStore(
-            os.path.join(td, "read_surfaces.json"),
-            allow_local_snapshot_fallback=False,
-        )
+        store = create_in_memory_read_surface_ports()
         store.list_runtime_bindings = lambda: [
             {
                 "id": "rtb-paper-001",

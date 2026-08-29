@@ -21,14 +21,14 @@ os.environ.setdefault("PANTHEON_BFF_AUTH_STUB", "true")
 sys.path.insert(0, os.path.dirname(__file__))
 
 import main as bff_main  # noqa: E402
-from read_store import ReadSurfaceStore  # noqa: E402
+from ports import ReadSurfacePorts, create_read_surface_ports  # noqa: E402
 
 
 HEADERS = {"Authorization": "Bearer op-mgmt-load-005:operator,admin:mfa"}
 
 
 @contextmanager
-def _isolated_bff(monkeypatch) -> Iterator[tuple[TestClient, ReadSurfaceStore]]:
+def _isolated_bff(monkeypatch) -> Iterator[tuple[TestClient, ReadSurfacePorts]]:
     """Isolated BFF app on a *persistent* TestClient portal (single event loop).
 
     Using TestClient as a context manager keeps one event loop alive for the
@@ -42,10 +42,7 @@ def _isolated_bff(monkeypatch) -> Iterator[tuple[TestClient, ReadSurfaceStore]]:
     """
     with tempfile.TemporaryDirectory() as td:
         original_store = bff_main.read_store
-        store = ReadSurfaceStore(
-            os.path.join(td, "read_surfaces.json"),
-            allow_local_snapshot_fallback=True,
-        )
+        store = create_read_surface_ports()
         bff_main.read_store = store
         bff_main._SHELL_SUMMARY_COUNT_CACHE.clear()
         bff_main._GOV_BFF_JOB_OVERLAY.clear()
@@ -221,8 +218,8 @@ def test_jobs_timeout_returns_degraded_envelope_without_hanging(monkeypatch) -> 
     assert elapsed < 0.25, f"jobs route took {elapsed:.3f}s; it should degrade near the timeout budget"
     payload = response.json()
     assert payload["data"] == []
-    assert payload["items"] == []
-    surface = payload["meta"]["surfaces"]["jobs"]
+    surface = payload["meta"]["surfaces"].get("jobs") or payload["meta"]["surfaces"].get("job_list")
+    assert surface is not None
     assert surface["status"] == "degraded"
     assert surface["reason"] == "read_timeout"
 

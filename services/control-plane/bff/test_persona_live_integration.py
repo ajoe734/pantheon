@@ -25,7 +25,7 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, os.path.dirname(__file__))
 
 import main as bff_main
-from read_store import ReadSurfaceStore
+from ports import ReadSurfacePorts, create_read_surface_ports
 
 OPERATOR_TOKEN = "Bearer op-2:operator"
 HEADERS = {"Authorization": OPERATOR_TOKEN}
@@ -55,10 +55,7 @@ def _write_registry(path: Path, personas: list) -> None:
 # ---------------------------------------------------------------------------
 
 def _fresh_client(td: str, registry_path: str) -> TestClient:
-    bff_main.read_store = ReadSurfaceStore(
-        os.path.join(td, "read_surfaces.json"),
-        allow_local_snapshot_fallback=False,
-    )
+    bff_main.read_store = create_read_surface_ports()
     bff_main._STRATEGY_PERSONA_BFF_IDEMPOTENCY.clear()
     bff_main._STRATEGY_BFF_OVERLAY.clear()
     bff_main._PERSONA_BFF_OVERLAY.clear()
@@ -204,10 +201,7 @@ def test_strict_mode_does_not_fallback_to_fixture() -> None:
         original_env = os.environ.get("PANTHEON_BFF_PERSONA_REGISTRY_STORE")
         try:
             os.environ.pop("PANTHEON_BFF_PERSONA_REGISTRY_STORE", None)
-            bff_main.read_store = ReadSurfaceStore(
-                os.path.join(td, "read_surfaces.json"),
-                allow_local_snapshot_fallback=False,
-            )
+            bff_main.read_store = create_read_surface_ports()
             bff_main._STRATEGY_PERSONA_BFF_IDEMPOTENCY.clear()
             bff_main._STRATEGY_BFF_OVERLAY.clear()
             bff_main._PERSONA_BFF_OVERLAY.clear()

@@ -21,7 +21,7 @@ sys.path.insert(0, str(BFF_DIR))
 
 import main as bff_main  # noqa: E402
 import loop_inventory as loop_inventory_model  # noqa: E402
-from read_store import ReadSurfaceStore  # noqa: E402
+from ports import create_in_memory_read_surface_ports  # noqa: E402
 from services.runtime_auth_inbound import encode_jwt_hs256  # noqa: E402
 
 
@@ -83,10 +83,22 @@ def _loop_health_client(
 
         original_store = bff_main.read_store
         original_monitor = getattr(bff_main, "downstream_health_monitor", None)
-        bff_main.read_store = ReadSurfaceStore(
-            str(snapshot_path),
-            allow_local_snapshot_fallback=allow_snapshot_fallback,
+        active_records = None
+        if loop_health_store is not None:
+            active_records = _scope_loop_health_records(loop_health_store)
+        elif snapshot_payload is not None and allow_snapshot_fallback:
+            active_records = _scope_loop_health_payload(snapshot_payload).get("loop_health", {})
+
+        store = create_in_memory_read_surface_ports(
+            lifecycle_telemetry_governance_kwargs={
+                "loop_health_records": active_records or {},
+            }
         )
+        if active_records is None:
+            store.dataset_source = lambda ds: "missing" if ds == "loop_health" else "typed_store"
+        else:
+            store.dataset_source = lambda ds: "service_store" if ds == "loop_health" else "typed_store"
+        bff_main.read_store = store
         bff_main.downstream_health_monitor = None
         with patch.dict(os.environ, env_overrides, clear=False):
             try:

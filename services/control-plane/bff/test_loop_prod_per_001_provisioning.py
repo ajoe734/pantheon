@@ -15,7 +15,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 
 import main as bff_main
 from persona_provisioning import MemoryPersonaProvisioningStore
-from read_store import ReadSurfaceStore
+from ports import create_read_surface_ports
 from test_persona_provisioning_coordinator import FakeOwnerTransport, _schedule_receipt
 
 OPERATOR_TOKEN = "Bearer op-2:operator"
@@ -42,6 +42,8 @@ def mock_external_services(monkeypatch):
     )
     # Mock create_capital_binding
     monkeypatch.setattr(bff_main, "create_capital_binding", lambda payload: {"status": "created"})
+    from services.persona.runtime_profile import build_persona_runtime_profile
+    monkeypatch.setattr(bff_main, "build_persona_runtime_profile", build_persona_runtime_profile, raising=False)
     
     # Mock _post_json to do nothing and return empty dict
     monkeypatch.setattr(bff_main, "_post_json", lambda *args, **kwargs: {})
@@ -94,10 +96,7 @@ def mock_external_services(monkeypatch):
 
 
 def _fresh_client(td: str) -> TestClient:
-    bff_main.read_store = ReadSurfaceStore(
-        os.path.join(td, "read_surfaces.json"),
-        allow_local_snapshot_fallback=True,
-    )
+    bff_main.read_store = create_read_surface_ports()
     bff_main.command_store = bff_main.CommandStore(os.path.join(td, "commands.jsonl"))
     bff_main._STRATEGY_PERSONA_BFF_IDEMPOTENCY.clear()
     bff_main._STRATEGY_BFF_OVERLAY.clear()
