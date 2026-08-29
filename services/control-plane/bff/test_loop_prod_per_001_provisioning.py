@@ -32,7 +32,7 @@ def _provisioning_read_surface_double():
     Persona provisioning still coordinates writes through ``main.read_store``.
     The production write-owner migration is outside this test-retirement task,
     so the fixture keeps those few write seams local instead of constructing the
-    retired ReadSurfaceStore.
+    retired aggregate read-store fixture.
     """
     store = create_read_surface_ports()
     personas: dict[str, dict[str, Any]] = {}
