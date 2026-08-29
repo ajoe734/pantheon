@@ -27,6 +27,11 @@ from pydantic import BaseModel, Field
 
 from .identity.scope import AgoraScopeResolutionError, resolve_agora_user_scope
 from .models import AgoraCapabilityScope
+from services.execution.market_snapshot_admission import (
+    evaluate_taiwan_market_freshness,
+    is_taiwan_symbol,
+    parse_rfc3339,
+)
 
 
 # --------------------------------------------------------------------------- #
@@ -340,10 +345,37 @@ class AgoraOperationalReadinessService:
 
         # Determine freshness
         freshness: FreshnessState = "fresh"
+        symbol = snapshot.get("symbol") if snapshot else None
         if observed_state in ("degraded", "error"):
             freshness = "degraded"
         elif observed_state in ("unavailable", "unreachable"):
             freshness = "unavailable"
+        elif snapshot and is_taiwan_symbol(symbol):
+            # Reuse the single governed Taiwan market-session freshness rule
+            # (services.execution.market_snapshot_admission) instead of the
+            # flat SLA comparison, so a valid Friday official close does not
+            # read "stale" here while the execution/reconciler paths admit it.
+            refresh_dt = None
+            observed_at_raw = snapshot.get("observed_at")
+            if observed_at_raw:
+                refresh_dt, _err = parse_rfc3339(observed_at_raw, field_name="observed_at")
+            ev = snapshot.get("calendar_evidence")
+            if ev is None and isinstance(snapshot.get("lineage"), Mapping):
+                ev = snapshot["lineage"].get("calendar_evidence")
+            tw_ok, _tw_reason, _tw_detail = evaluate_taiwan_market_freshness(
+                event_time_dt=ts_dt,
+                now_dt=now_dt,
+                refresh_receipt_dt=refresh_dt,
+                lineage=snapshot.get("lineage"),
+                max_refresh_age_seconds=sla_seconds,
+                calendar_evidence=ev,
+            )
+            if not tw_ok:
+                freshness = "stale"
+            elif snapshot.get("is_empty_fresh") is True:
+                freshness = "empty_fresh"
+            else:
+                freshness = "fresh"
         elif age_seconds > sla_seconds:
             freshness = "stale"
         elif snapshot and snapshot.get("is_empty_fresh") is True:

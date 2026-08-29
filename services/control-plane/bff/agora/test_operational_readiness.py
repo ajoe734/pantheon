@@ -289,3 +289,113 @@ def test_operational_readiness_with_auth_header(client: TestClient, readiness_se
     body = resp.json()
     assert body["data"]["status"] == "ok"
     assert body["meta"]["requiredForAuthentication"] is False
+
+
+def test_operational_readiness_tw_friday_close_fresh_on_saturday(
+    readiness_service: AgoraOperationalReadinessService,
+) -> None:
+    """A valid Friday official TWSE close still reads 'fresh' on Saturday,
+    via the same governed Taiwan market-session freshness rule used by
+    execution admission, instead of the flat 86400s SLA comparison."""
+    readiness_service.set_source_snapshot({
+        "snapshot_id": "mss-tw-readiness-001",
+        "source_instance_id": "src-tw-twse-2330",
+        "symbol": "2330.TWSE",
+        "event_time": "2026-08-28T05:30:00Z",
+        "observed_at": "2026-08-29T11:00:00Z",
+        "sla_seconds": 86400,
+        "lineage": {
+            "source_ids": ["tw-official:tw_price_daily:TWSE:2330:checksummed"],
+            "connector_ids": ["tw-twse-tpex-official-market"],
+        },
+    })
+    readiness_service.set_signal_producer({
+        "status": "ok",
+        "consumed_snapshot_id": "mss-tw-readiness-001",
+        "enqueued": 3,
+    })
+
+    envelope = readiness_service.compose_readiness(now_iso="2026-08-29T12:00:00Z")
+    data = envelope.data
+
+    assert data.source.freshness == "fresh"
+    assert data.status == "ok"
+
+
+def test_operational_readiness_tw_friday_close_stale_after_monday_session(
+    readiness_service: AgoraOperationalReadinessService,
+) -> None:
+    """The same Friday close is stale once Monday's own official session
+    has closed, matching the fail-closed weekday behavior of admission."""
+    readiness_service.set_source_snapshot({
+        "snapshot_id": "mss-tw-readiness-002",
+        "source_instance_id": "src-tw-twse-2330",
+        "symbol": "2330.TWSE",
+        "event_time": "2026-08-28T05:30:00Z",
+        "observed_at": "2026-08-31T05:45:00Z",
+        "sla_seconds": 86400,
+        "lineage": {
+            "source_ids": ["tw-official:tw_price_daily:TWSE:2330:checksummed"],
+            "connector_ids": ["tw-twse-tpex-official-market"],
+        },
+    })
+    readiness_service.set_signal_producer({
+        "status": "ok",
+        "consumed_snapshot_id": "mss-tw-readiness-002",
+        "enqueued": 0,
+    })
+
+    envelope = readiness_service.compose_readiness(now_iso="2026-08-31T06:00:00Z")
+    data = envelope.data
+
+    assert data.source.freshness == "stale"
+    assert data.status == "degraded"
+
+
+def test_operational_readiness_tw_holiday_with_calendar_evidence(
+    readiness_service: AgoraOperationalReadinessService,
+) -> None:
+    """A valid Friday official close evaluated after a holiday span (e.g. Lunar New Year)
+    reads 'fresh' when valid official calendar evidence is attached."""
+    readiness_service.set_source_snapshot({
+        "snapshot_id": "mss-tw-readiness-003",
+        "source_instance_id": "src-tw-twse-2330",
+        "symbol": "2330.TWSE",
+        "event_time": "2026-02-13T05:30:00Z",
+        "observed_at": "2026-02-23T02:00:00Z",
+        "sla_seconds": 86400,
+        "lineage": {
+            "source_ids": ["tw-official:tw_price_daily:TWSE:2330:checksummed"],
+            "connector_ids": ["tw-twse-tpex-official-market"],
+        },
+        "calendar_evidence": {
+            "market": "TW",
+            "venue": "TWSE",
+            "timezone": "Asia/Taipei",
+            "authority": "TWSE/TPEx announced holiday schedule",
+            "source_url": "https://www.twse.com.tw/en/trading/calendar.html",
+            "fetched_at": "2026-02-23T01:00:00Z",
+            "version": "2026.1",
+            "checksum": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "coverage_start": "2026-01-01",
+            "coverage_end": "2026-12-31",
+            "holidays": {
+                "2026-02-16": {"name": "Lunar New Year (eve)"},
+                "2026-02-17": {"name": "Lunar New Year"},
+                "2026-02-18": {"name": "Lunar New Year"},
+                "2026-02-19": {"name": "Lunar New Year"},
+                "2026-02-20": {"name": "Lunar New Year (makeup)"},
+            },
+        },
+    })
+    readiness_service.set_signal_producer({
+        "status": "ok",
+        "consumed_snapshot_id": "mss-tw-readiness-003",
+        "enqueued": 3,
+    })
+
+    envelope = readiness_service.compose_readiness(now_iso="2026-02-23T03:00:00Z")
+    data = envelope.data
+
+    assert data.source.freshness == "fresh"
+    assert data.status == "ok"

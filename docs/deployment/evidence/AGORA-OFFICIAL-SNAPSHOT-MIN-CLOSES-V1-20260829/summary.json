@@ -1,0 +1,144 @@
+{
+  "schema_version": "pantheon.agora-official-snapshot-min-closes-review.v1",
+  "task_id": "AGORA-OFFICIAL-SNAPSHOT-MIN-CLOSES-V1-20260829",
+  "generated_at": "2026-08-29T20:48:29Z",
+  "owner": "Codex",
+  "reviewer": "Antigravity2",
+  "status": "implementation_ready_for_review",
+  "acceptance_state": "exact_head_review_and_post_merge_release_required",
+  "immutable_failure_reproduction": {
+    "workflow_run_id": 33272385942,
+    "workflow_url": "https://github.com/ajoe734/pantheon/actions/runs/33272385942",
+    "backend_sha": "9e9ab338ce0ede9c7c4c3686ff31bf63dc7ec35a",
+    "frontend_sha": "5ffee3db8c2b37b4070d43d091ed4207ef5d70e5",
+    "conclusion": "failure",
+    "failed_component": "paper-signal-producer",
+    "observed_failure": "market_input_insufficient: binding rb-b62e3af4f5a541059588e1388512a041 requires 2 closes, got 1",
+    "source_snapshot": {
+      "execution_symbol": "2330.TW",
+      "stored_official_symbol": "2330.TWSE",
+      "official_source_date": "2026-08-28",
+      "close_count": 1,
+      "source_api_status": 200,
+      "official_lineage_present": true
+    }
+  },
+  "diagnosis": {
+    "cause": "A fresh checksummed market snapshot received only the current STOCK_DAY_ALL or TPEx daily-close row. Persistence could accumulate later runs, but the first canonical state had no second distinct official trade date for the unchanged producer minimum.",
+    "constraints_preserved": [
+      "No close is copied, duplicated, interpolated, or supplied from a fixture in runtime behavior.",
+      "The source snapshot endpoint remains stored-read-only and performs no provider egress.",
+      "The paper producer minimum-close, freshness, exact-symbol, and lineage admission gates remain unchanged.",
+      "External egress remains deny by default and exact-host allowlisted only for the bounded source refresh profile."
+    ]
+  },
+  "implementation": {
+    "anchor_commit": "db124458e4233e28e73b396389de3bc71d1cf758",
+    "base_commit": "9e9ab338ce0ede9c7c4c3686ff31bf63dc7ec35a",
+    "official_history_sources": [
+      {
+        "venue": "TWSE",
+        "source_dataset": "STOCK_DAY",
+        "endpoint": "https://www.twse.com.tw/rwd/zh/afterTrading/STOCK_DAY",
+        "content": "official monthly individual-stock daily trading rows"
+      },
+      {
+        "venue": "TPEx",
+        "source_dataset": "tpex_individual_stock_monthly_history",
+        "endpoint": "https://www.tpex.org.tw/www/zh-tw/afterTrading/tradingStock",
+        "content": "official monthly individual-mainboard-stock daily trading rows"
+      }
+    ],
+    "bounded_policy": {
+      "scope": "active Taiwan paper symbols only",
+      "minimum_distinct_closes_per_symbol": 2,
+      "maximum_month_windows_per_symbol": 2,
+      "global_record_cap_unchanged": true,
+      "cap_admission": "required active-symbol history slots must fit before provider I/O",
+      "history_failure": "typed SourceEvidenceError and zero successful bounded refresh"
+    },
+    "persistence": {
+      "ordering": "chronological",
+      "deduplication_key": "canonical symbol plus normalized UTC event_time",
+      "same_day_reingest": "the latest normalized SourceRecord replaces the prior point for that day",
+      "maximum_closes_unchanged": 60,
+      "checksum_verification": "every append-only snapshot envelope remains SHA-256 checked on reload",
+      "restart_proof": "fresh store append and independent reload retain two distinct closes for both TWSE and TPEx aliases"
+    },
+    "lineage": {
+      "source_id_prefix": "tw-official:tw_price_daily:<venue>:<symbol>:<official-row-hash>",
+      "content_ref_prefix": "tw-official://tw_price_daily/<venue>/<symbol>/<trade-date>/<official-row-hash>",
+      "retained_fields": [
+        "source_id",
+        "connector_id",
+        "content_ref",
+        "ingest_run_id",
+        "official raw_row",
+        "source_dataset",
+        "api_endpoint"
+      ]
+    },
+    "deployment_gate": {
+      "exact_hosts": [
+        "openapi.twse.com.tw",
+        "www.twse.com.tw",
+        "www.tpex.org.tw"
+      ],
+      "new_assertion": "every active paper snapshot contains at least two positive finite closes",
+      "unchanged_assertions": [
+        "requested execution alias matches",
+        "event_time is within the existing 24-hour threshold",
+        "official connector id and venue-specific source-id prefix are present"
+      ]
+    }
+  },
+  "validation": {
+    "syntax": {
+      "commands": [
+        "git diff --check",
+        "bash -n scripts/deploy_nonprod_vm.sh",
+        ".venv-pantheon/bin/python3 -m py_compile services/source_ingestion/requirement_state.py services/source_ingestion/provider_adapters.py services/source_ingestion/connectors/taiwan_official.py services/source_ingestion/tests/test_latest_market_snapshot.py services/source_ingestion/tests/test_taiwan_official_connectors.py scripts/test_source_ingest_deploy_diagnostics_contract.py"
+      ],
+      "result": "passed"
+    },
+    "focused_source_and_producer": {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_taiwan_official_connectors.py services/source_ingestion/tests/test_latest_market_snapshot.py services/execution/lean_runtime/test_paper_signal_producer.py scripts/test_source_ingest_deploy_diagnostics_contract.py",
+      "result": "47 passed, 1 skipped, 1 warning in 11.44s",
+      "warning": "existing Starlette TestClient deprecation warning only"
+    },
+    "full_relevant_regression": {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests services/source_ingestion/test_compose_activation.py services/source_ingestion/test_service.py scripts/test_source_ingest_deploy_diagnostics_contract.py services/execution/lean_runtime/test_paper_signal_producer.py",
+      "result": "875 passed, 1 skipped, 5 warnings in 311.12s",
+      "warnings": "existing Starlette and jsonschema RefResolver deprecation warnings only"
+    },
+    "official_live_read_only_smoke": {
+      "command": "PANTHEON_TW_OFFICIAL_LIVE_SMOKE=1 .venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_taiwan_official_connectors.py::test_taiwan_official_live_read_only_smoke_for_one_twse_and_tpex_symbol",
+      "result": "1 passed in 2.13s",
+      "assertions": [
+        "The real provider-owned adapter path selected exactly two chronologically distinct official rows for 2330.TWSE.",
+        "The real provider-owned adapter path selected exactly two chronologically distinct official rows for 3105.TPEX.",
+        "Every selected row retained the official tw_price_daily source-id prefix."
+      ],
+      "note": "An earlier direct urllib prototype encountered one incomplete TPEx response read. The final smoke uses the production bounded connector reader and passed; no retry or fallback data is present in product code."
+    }
+  },
+  "release_closeout_gate": {
+    "status": "pending_exact_head_review_merge_and_release",
+    "success_claimed": false,
+    "required_backend": "the Pantheon dev merge commit containing this manifest and the reviewed task head",
+    "required_frontend": "5ffee3db8c2b37b4070d43d091ed4207ef5d70e5",
+    "required_proofs": [
+      "The exact merged backend is deployed under the bounded source-refresh profile.",
+      "Every active Taiwan paper snapshot exposes at least two finite closes with official venue lineage.",
+      "The unchanged 24-hour freshness gate passes.",
+      "paper-signal-producer reports a successful governed tick rather than market_input_insufficient.",
+      "All 28 hosted backend components and the exact frontend identity pass AGC-14 acceptance."
+    ],
+    "weekend_freshness_note": "The immutable Saturday failure also observed the latest Friday close outside the unchanged 24-hour threshold. This task does not weaken that gate or claim a hosted release before exact-head merge and a qualifying official source time."
+  },
+  "agc_14": {
+    "blocked_task_id": "AGORA-AGC-14-HOSTED-DEMO-AUTHENTIC-V5-20260829",
+    "status": "implementation_ready_release_evidence_pending",
+    "resume_contract": "Resume only with the exact backend dev merge and frontend 5ffee3db8c2b37b4070d43d091ed4207ef5d70e5 after immutable hosted acceptance."
+  }
+}

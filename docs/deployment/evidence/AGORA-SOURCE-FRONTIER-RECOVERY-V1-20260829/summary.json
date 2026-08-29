@@ -1,0 +1,191 @@
+{
+  "schema_version": "pantheon.agora-source-frontier-recovery-review.v1",
+  "task_id": "AGORA-SOURCE-FRONTIER-RECOVERY-V1-20260829",
+  "generated_at": "2026-08-29T18:19:00Z",
+  "owner": "Codex",
+  "reviewer": "Antigravity2",
+  "status": "implementation_ready_for_review",
+  "acceptance_state": "post_merge_exact_release_required",
+  "failure_reproduction": {
+    "workflow_run_id": 33264137876,
+    "workflow_url": "https://github.com/ajoe734/pantheon/actions/runs/33264137876",
+    "requested_backend_sha": "b3b26a72fda63e12d1f53fb3e141e8f2a6d5a757",
+    "requested_frontend_sha": "5ffee3db8c2b37b4070d43d091ed4207ef5d70e5",
+    "conclusion": "failure",
+    "error": "ControllerTickError: authoritative source readback has 79 unresolved frontier item(s)",
+    "rollback": {
+      "backend_sha": "dcb14231d29f08f1646a4ee962b83fd2d4b67560",
+      "frontend_sha": "c230fc76bef78fc297135152f2acba690314bb9d"
+    }
+  },
+  "authoritative_classification": {
+    "initial_frontier_backlog": 79,
+    "initial_frontier_status_counts": {
+      "queued": 18,
+      "retry": 61
+    },
+    "initial_attempt_counts": {
+      "0": 18,
+      "1": 61
+    },
+    "connector_family_counts": {
+      "conn-bounded-scheduled": 58,
+      "conn-l12-e2e": 20,
+      "conn-diag-1": 1
+    },
+    "source_record_count": 943,
+    "dlq_count": 66,
+    "unresolved_dlq_count": 0,
+    "connector_policy": {
+      "classified_count": 79,
+      "source_type": "internal_note",
+      "auth_type": "none",
+      "secret_ref": null,
+      "fetch_mode": "static_records",
+      "non_empty_static_records": true,
+      "fail_until_attempt": 0,
+      "enabled": true,
+      "schedule_interval_seconds": 1
+    },
+    "retry_error": "stale running frontier recovered after worker restart",
+    "interpretation": "The backlog was durable scheduled test/static work left queued or recovered to retry after worker restarts; it was not an unresolved provider-auth or DLQ failure."
+  },
+  "governed_recovery": {
+    "method": "Each already-persisted item was replayed through POST /api/source-ingest/run-scheduled with max_concurrency=1 and identical one-item force/exclusive connector allowlists.",
+    "manual_deletion": false,
+    "frontier_rows_deleted": 0,
+    "fail_closed_gate_changed": false,
+    "external_provider_egress": false,
+    "lease_history": [
+      {
+        "lease_id": "12480233-f7ff-4030-82bf-68ef4b63297c",
+        "outcome": "no_mutation",
+        "reason": "The guarded background command received no stdin; the lease was released normally."
+      },
+      {
+        "lease_id": "647fc7c6-bc91-4eed-930d-0856e851df6d",
+        "outcome": "no_mutation",
+        "reason": "Pre-mutation scheduler request rejected max_concurrency=2 against the authoritative bound of 1; the lease remained quarantined through TTL."
+      },
+      {
+        "lease_id": "73c1b137-5945-424f-9e25-33a588dcb66b",
+        "outcome": "partial_terminalization",
+        "reason": "The exact allowlist replay terminalized 74 items before its orphaned docker-exec process was identity-checked and stopped; the lease remained authoritative through the operation and then expired."
+      },
+      {
+        "lease_id": "aa87ab28-7edd-495e-a59f-66f55ef6d5a4",
+        "outcome": "success_released",
+        "before_captured_at": "2026-08-29T18:17:36Z",
+        "before_backlog": 5,
+        "before_status_counts": {
+          "queued": 2,
+          "retry": 3
+        },
+        "connector_ids": [
+          "conn-l12-e2e-f15af7d4ffd9",
+          "conn-l12-e2e-f95826d6a72d",
+          "conn-l12-e2e-fa8692188490",
+          "conn-l12-e2e-fe534d51db2f",
+          "conn-l12-e2e-fe99f8023820"
+        ],
+        "frontier_sha256": "c44956950814eb7e61e8c38154d89e48afac2e303197018ae1771a0910b9fdad",
+        "receipt_sha256": "9844a2db78f6c0586d074e2a78c36ec9ee5e1e918ba08496e9b251cdd1d33516",
+        "completed_count": 5,
+        "after_captured_at": "2026-08-29T18:18:26Z",
+        "after_backlog": 0,
+        "after_source_record_count": 948,
+        "after_unresolved_dlq_count": 0
+      }
+    ],
+    "independent_final_readback": {
+      "captured_at": "2026-08-29T18:18:46Z",
+      "frontier_count": 1137,
+      "frontier_status_counts": {
+        "done": 1062,
+        "failed": 75
+      },
+      "frontier_backlog": 0,
+      "frontier_projection_sha256": "f0e4a5e029fdbe1311b4fd705756cbb1195b1dd90b365e222cc7d422a27a4cd9",
+      "source_record_count": 948,
+      "dlq_count": 66,
+      "unresolved_dlq_count": 0,
+      "controller_health": "healthy",
+      "environment_lease": "released"
+    }
+  },
+  "implementation": {
+    "implementation_commit": "2dc7eaf1ca4c19af60cb229a3194949937e734a3",
+    "owned_layer": "Source ingestion controller recovery and its focused regression tests.",
+    "not_changed": [
+      "The terminal readback rule that rejects any non-zero frontier backlog.",
+      "Frontier persistence or deletion semantics.",
+      "Provider connector configuration, credentials, and external-egress policy.",
+      "Frontend runtime source."
+    ],
+    "behavior": [
+      "Adds a maximum-100 explicit recovery connector allowlist bound into controller configuration and request fingerprinting.",
+      "Rejects running work, connectors outside the explicit recovery plus primary boundary, malformed frontier identities, scheduler failures, and nonterminal receipts.",
+      "Invokes the normal scheduler for exactly one connector at a time with max_concurrency=1 and matching force/exclusive allowlists.",
+      "Reads the authoritative frontier again and fails closed unless the recovery slice converges while only the explicit primary connector set may remain pending."
+    ]
+  },
+  "validation": {
+    "python_compile": "passed",
+    "focused_and_manual_once": {
+      "command": ".venv-pantheon/bin/python -m pytest -q services/source_ingestion/tests/test_controller_worker.py scripts/tests/test_source_ingest_scheduler_once.py services/source_ingestion/tests/test_controller_worker_manual_once.py",
+      "result": "90 passed in 13.88s"
+    },
+    "full_source_ingestion": {
+      "command": ".venv-pantheon/bin/python -m pytest -q services/source_ingestion/tests",
+      "result": "815 passed, 1 skipped, 5 warnings in 220.87s",
+      "warnings": "Existing Starlette/jsonschema deprecation warnings only."
+    },
+    "diff_check": "passed",
+    "ruff": "not_run: ruff is not installed in the provisioned task venv",
+    "branch_ci": {
+      "run_id": 33266724628,
+      "url": "https://github.com/ajoe734/pantheon/actions/runs/33266724628",
+      "head_sha": "2dc7eaf1ca4c19af60cb229a3194949937e734a3",
+      "conclusion": "success",
+      "checks": [
+        "Commit trailers",
+        "Runtime mirror guard",
+        "Python packaging provision",
+        "Smoke acceptance"
+      ]
+    }
+  },
+  "release_closeout_gate": {
+    "status": "pending_post_merge",
+    "success_claimed": false,
+    "required_backend": "The exact Pantheon dev merge commit containing implementation commit 2dc7eaf1ca4c19af60cb229a3194949937e734a3.",
+    "required_frontend_sha": "5ffee3db8c2b37b4070d43d091ed4207ef5d70e5",
+    "required_dispatch": {
+      "environment": "dev",
+      "component": "root",
+      "dev_auth_profile": "strict",
+      "run_bounded_source_refresh": true,
+      "allow_dirty": false
+    },
+    "required_proofs": [
+      "Root compose succeeds with the authoritative frontier still at zero.",
+      "The bounded TWSE/TPEx refresh produces a fresh admitted market snapshot.",
+      "paper-signal-producer consumes the fresh snapshot and becomes healthy.",
+      "Public BFF /bff/version and frontend /deployment.json expose the exact admitted backend/frontend pair.",
+      "Hosted health and workflow probes succeed and their GitHub run artifacts provide immutable evidence."
+    ],
+    "frontend_ref_note": "At manifest generation no remote execute-plans branch had 5ffee3db8c2b37b4070d43d091ed4207ef5d70e5 as its current tip. The closeout owner must materialize a task-scoped exact ref for the workflow's frontend_ref gate without altering the commit.",
+    "preceding_non_acceptance_run": {
+      "run_id": 33266252692,
+      "url": "https://github.com/ajoe734/pantheon/actions/runs/33266252692",
+      "frontend_sha": "bd03c863e3c2c1c64b9b7797f27cefaf84df17c1",
+      "conclusion": "failure",
+      "reason": "This independent run did not enable bounded source refresh; paper-signal-producer rejected snapshot mss-a6914e1ea1c57b8df08d653b at about 727,439 seconds old versus the 86,400-second SLA and the workflow rolled back. It is not release evidence for this task."
+    }
+  },
+  "agc_14": {
+    "blocked_task_id": "AGORA-AGC-14-HOSTED-DEMO-AUTHENTIC-V5-20260829",
+    "status": "frontier_blocker_cleared_release_evidence_pending",
+    "claim": "AGC-14 must remain blocked until the post-merge exact-pair workflow and fresh market snapshot / paper producer proofs succeed."
+  }
+}
