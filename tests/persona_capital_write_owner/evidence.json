@@ -9,16 +9,16 @@
     "reviewer": "Codex2",
     "repository": "ajoe734/pantheon",
     "base_branch": "dev",
-    "base_sha": "294d1b27e945720f716b50ad93fc0510803322f9",
+    "base_sha": "52eccd0047f583f40d4829fd27af400e4878431a",
     "task_branch": "task/ACG-WRITE-OWNER-PERSONA-CAPITAL-20260829",
-    "evidence_cut_at": "2026-08-29T04:36:31Z",
+    "evidence_cut_at": "2026-08-29T04:49:55Z",
     "overall_admission": "pending_independent_review"
   },
   "scope": {
     "owned_layer": [
       "Persistent Persona registry owner store and HTTP API",
       "Authenticated Persona mutation identity and lifecycle-owner policy enforcement",
-      "Canonical CapitalPool patch operation inside services/capital",
+      "Canonical CapitalPool patch operation in services/capital/pg_store.py",
       "Fresh-instance readback proof for Persona, CapitalPool, DeploymentPlan, and RuntimeBinding"
     ],
     "reused_existing_owners": {
@@ -26,7 +26,7 @@
       "runtime_binding": "services/runtime-manager/ HTTP boundary backed by services.runtime_manager.RuntimeManagerService"
     },
     "not_changing": [
-      "services/control-plane/bff/main.py",
+      "Every main.py entrypoint, including services/capital/main.py and services/control-plane/bff/main.py",
       "services/control-plane/bff/read_store.py",
       "DeploymentPlan or RuntimeBinding state-machine semantics",
       "Source Ingestion mode or scheduling",
@@ -38,16 +38,12 @@
     "anchor_commits": [
       "71b90a9912419211673a5618f1ff3432651767f2",
       "6b8bf0254416942e39126b7e3f7a2a2fc0961717",
-      "1f9366caf85718541afbab54a8481723ff715fec"
+      "1f9366caf85718541afbab54a8481723ff715fec",
+      "83c3b453eae5f46a653aee4dba46ca31f3e4b358"
     ],
     "changed_files": [
       "services/persona/write_owner.py",
-      "services/capital/contract.md",
-      "services/capital/main.py",
-      "services/capital/models.py",
       "services/capital/pg_store.py",
-      "services/capital/test_service.py",
-      "services/capital/write_authority.py",
       "tests/persona_capital_write_owner/__init__.py",
       "tests/persona_capital_write_owner/test_persistent_owners.py",
       "tests/persona_capital_write_owner/evidence.json"
@@ -95,9 +91,9 @@
       "evidence": "HTTP negative tests reject unauthenticated callers, untrusted roles, spoofed actor_id, caller-invented decision ids, direct live_owner creation, Persona Plane promotion beyond research_only, and generic PATCH lifecycle bypass without changing persisted state. Positive tests cover exact Persona/Governance role ownership and exact server-side Governance decision verification."
     },
     {
-      "criterion": "no BFF main.py or read_store.py change",
+      "criterion": "no main.py change",
       "status": "pass",
-      "evidence": "git diff origin/dev...HEAD -- services/control-plane/bff/main.py services/control-plane/bff/read_store.py returned no paths."
+      "evidence": "git diff --name-only origin/dev...HEAD -- ':(glob)**/main.py' returned no paths; services/control-plane/bff/read_store.py is also unchanged."
     },
     {
       "criterion": "Source Ingestion remains reconcile-only",
@@ -110,12 +106,12 @@
       {
         "command": ".venv-pantheon/bin/python -m pytest -q tests/persona_capital_write_owner services/capital/test_service.py",
         "result": "pass",
-        "conclusion": "71 passed, 1 pre-existing Starlette deprecation warning"
+        "conclusion": "70 passed, 1 pre-existing Starlette deprecation warning"
       },
       {
         "command": ".venv-pantheon/bin/python -m pytest -q services/persona/test_*.py services/capital/test_*.py services/deployment/test_service.py services/runtime-manager/test_runtime_manager.py services/runtime_manager/test_runtime_binding.py tests/persona_capital_write_owner",
         "result": "pass",
-        "conclusion": "289 passed, 1 skipped, 1 warning, 3 subtests passed"
+        "conclusion": "288 passed, 1 skipped, 1 warning, 3 subtests passed"
       },
       {
         "command": "git diff --check origin/dev...HEAD",
@@ -123,12 +119,12 @@
         "conclusion": "No whitespace errors"
       },
       {
-        "command": "git diff --name-only origin/dev...HEAD -- services/control-plane/bff/main.py services/control-plane/bff/read_store.py services/source_ingestion",
+        "command": "git diff --name-only origin/dev...HEAD -- ':(glob)**/main.py' services/control-plane/bff/read_store.py services/source_ingestion",
         "result": "pass",
-        "conclusion": "No BFF hot-file or Source Ingestion changes"
+        "conclusion": "No main.py, BFF read_store.py, or Source Ingestion changes"
       }
     ],
-    "validated_at": "2026-08-29T04:36:31Z"
+    "validated_at": "2026-08-29T04:49:55Z"
   },
   "deployment": {
     "applicable": false,
@@ -137,6 +133,6 @@
   "review": {
     "status": "pending",
     "decision_owner": "Codex2",
-    "note": "Prior independent code review passed the persistent owner boundary, draft-only create, actor binding, lifecycle authority, exact decision verifier, and 71 focused tests. The branch now contains dev at 294d1b27e945720f716b50ad93fc0510803322f9 and the same focused and broader suites pass; reviewer must independently inspect and bind the refreshed exact PR head."
+    "note": "The prior independent review correctly rejected the Capital main.py expansion. The replacement exact diff removes that route, service method, wire model, authority declaration, route contract, and HTTP test; Capital proof now exercises the persistent owner store directly. The branch contains dev at 52eccd0047f583f40d4829fd27af400e4878431a, 70 focused and 288 broader tests pass, and the reviewer must independently inspect the refreshed exact PR head."
   }
 }
