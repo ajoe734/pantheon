@@ -1180,21 +1180,16 @@ def test_stable_terminal_failure_reconciliation_does_not_write_churn(
 
 
 def test_authoritative_worker_read_never_enables_snapshot_fallback(tmp_path) -> None:
-    store = create_read_surface_ports()
-    calls: list[bool] = []
+    calls: list[str] = []
 
-    class Canonical:
-        def list_records(
-            self,
-            dataset: str,
-            *,
-            include_snapshot_fallback: bool = True,
-        ) -> tuple[bool, list[dict[str, Any]]]:
-            assert dataset == "paper_runtime_monitoring_sessions"
-            calls.append(include_snapshot_fallback)
-            return False, [{"session_id": "snapshot-must-not-pass"}]
+    class AuthoritativePaperSessionPort:
+        def list_paper_live_drift_reports(self) -> list[dict[str, Any]]:
+            calls.append("authoritative_sessions")
+            return []
 
-    store._canonical = Canonical()  # type: ignore[attr-defined]
+    store = create_read_surface_ports(
+        lifecycle_telemetry_governance=AuthoritativePaperSessionPort(),
+    )
 
     assert store.list_authoritative_paper_runtime_monitoring_sessions() == []
-    assert calls == [False]
+    assert calls == ["authoritative_sessions"]

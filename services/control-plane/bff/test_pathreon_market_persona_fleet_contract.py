@@ -4,9 +4,10 @@ import os
 import sys
 import tempfile
 import json
+from copy import deepcopy
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Iterator
+from typing import Any, Iterator, Mapping
 
 import pytest
 from fastapi.testclient import TestClient
@@ -15,7 +16,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 
 import main as bff_main
 from ports import ReadSurfacePorts, create_in_memory_read_surface_ports, create_read_surface_ports
-from read_store import _merge_market_persona_fleet
+from read_store import _merge_market_persona_fleet, _tw_qlib_research_experiment_default
 
 
 @pytest.fixture(autouse=True)
@@ -63,53 +64,302 @@ MARKET_PERSONAS = {
 }
 
 
-def _make_store(*, allow_local_snapshot_fallback: bool = True) -> ReadSurfacePorts:
-    if not allow_local_snapshot_fallback:
-        return create_read_surface_ports()
+def _make_store(
+    *,
+    allow_local_snapshot_fallback: bool = True,
+    telemetry_service_summaries: list[dict[str, Any]] | None = None,
+) -> ReadSurfacePorts:
+    market_defaults: dict[str, Any] = {}
+    _merge_market_persona_fleet(market_defaults)
     data: dict[str, Any] = {}
-    _merge_market_persona_fleet(data)
+    if allow_local_snapshot_fallback:
+        data.update(deepcopy(market_defaults))
+
+    def records(value: object) -> list[dict[str, Any]]:
+        if isinstance(value, Mapping):
+            source = value.values()
+        elif isinstance(value, list):
+            source = value
+        else:
+            source = []
+        return [deepcopy(item) for item in source if isinstance(item, Mapping)]
+
+    def load_records(env_name: str) -> list[dict[str, Any]]:
+        path = os.getenv(env_name)
+        if not path:
+            return []
+        try:
+            return records(json.loads(Path(path).read_text(encoding="utf-8")))
+        except (OSError, TypeError, ValueError):
+            return []
+
+    if not allow_local_snapshot_fallback:
+        data.update(
+            {
+                "personas": load_records("PANTHEON_BFF_PERSONA_REGISTRY_STORE"),
+                "sessions": load_records("PANTHEON_BFF_PERSONA_SESSION_STORE"),
+                "bindings": load_records("PANTHEON_BFF_PERSONA_BINDING_STORE"),
+                "runtime_bindings": load_records("PANTHEON_BFF_RUNTIME_BINDING_STORE"),
+                "deployment_plans": load_records("PANTHEON_BFF_DEPLOYMENT_PLAN_STORE"),
+                "telemetry_summaries": load_records("PANTHEON_BFF_TELEMETRY_SUMMARY_STORE"),
+            }
+        )
+
+    personas = records(data.get("personas"))
+    capital_pools = records(data.get("capital_pools"))
+    bindings = records(data.get("bindings") or data.get("persona_bindings"))
+    runtime_bindings = records(data.get("runtime_bindings"))
+    deployment_plans = records(data.get("deployment_plans"))
+    persona_league = records(data.get("persona_league"))
+    sessions = records(data.get("sessions"))
+    teaching_sessions = records(data.get("teaching_sessions"))
+    capability_snapshots = records(data.get("capability_snapshots"))
+    telemetry_summaries = records(data.get("telemetry_summaries"))
+    if telemetry_service_summaries is not None:
+        telemetry_summaries = records(telemetry_service_summaries)
+    catalog_default_personas = records(market_defaults.get("personas"))
+    research_experiments = dict(data.get("research_experiments") or {})
+    research_experiments.setdefault(
+        "exp-mgmt-qlib-006",
+        _tw_qlib_research_experiment_default(),
+    )
+
     store = create_in_memory_read_surface_ports(
-        operations_consultation_kwargs={
-            "agora_signals": data.get("agora_signals") or {},
-            "agora_sessions": data.get("agora_sessions") or {},
-            "agora_watchlist": data.get("agora_watchlist") or {},
-        },
         persona_capital_runtime_kwargs={
-            "personas": data.get("personas") or {},
-            "capital_pools": data.get("capital_pools") or {},
-            "bindings": data.get("bindings") or data.get("persona_bindings") or {},
-            "runtime_bindings": data.get("runtime_bindings") or {},
-            "deployment_plans": data.get("deployment_plans") or {},
-            "rankings": data.get("persona_rankings") or data.get("rankings") or {},
-            "persona_league": list((data.get("persona_league") or {}).values()) if isinstance(data.get("persona_league"), dict) else (data.get("persona_league") or []),
-            "rebalances": data.get("rebalances") or {},
-            "capital_allocations": data.get("capital_allocations") or {},
-            "containments": data.get("containments") or {},
-        },
-        persona_training_kwargs={
-            "personas": data.get("personas") or {},
-            "sessions": data.get("sessions") or {},
-            "teaching_sessions": data.get("teaching_sessions") or {},
-            "capability_snapshots": data.get("capability_snapshots") or {},
+            "personas": personas,
+            "capital_pools": capital_pools,
+            "bindings": bindings,
+            "runtime_bindings": runtime_bindings,
+            "deployment_plans": deployment_plans,
+            "rankings": records(data.get("persona_rankings") or data.get("rankings")),
+            "persona_league": persona_league,
+            "rebalances": records(data.get("rebalances")),
+            "capital_allocations": records(data.get("capital_allocations")),
+            "containments": records(data.get("containments")),
         },
         ooda_management_kwargs={
-            "ooda_packets": list((data.get("ooda_packets") or {}).values()) if isinstance(data.get("ooda_packets"), dict) else (data.get("ooda_packets") or []),
-            "deployment_plans": list((data.get("deployment_plans") or {}).values()) if isinstance(data.get("deployment_plans"), dict) else (data.get("deployment_plans") or []),
-            "approval_decisions": list((data.get("governance_approvals") or {}).values()) if isinstance(data.get("governance_approvals"), dict) else (data.get("governance_approvals") or []),
+            "ooda_packets": records(data.get("ooda_packets")),
+            "deployment_plans": deployment_plans,
+            "approval_decisions": records(data.get("governance_approvals")),
         },
         research_knowledge_source_kwargs={
             "strategy_specs_store": data.get("strategy_specs") or {},
-            "research_experiments_store": data.get("research_experiments") or {},
+            "research_experiments_store": research_experiments,
             "research_artifacts_store": data.get("research_artifacts") or {},
             "research_tickets_store": data.get("research_tickets") or {},
             "research_notes_store": data.get("research_notes") or {},
         },
         lifecycle_telemetry_governance_kwargs={
-            "telemetry_summaries": list((data.get("telemetry_summaries") or {}).values()) if isinstance(data.get("telemetry_summaries"), dict) else (data.get("telemetry_summaries") or []),
-            "incidents": list((data.get("incidents") or {}).values()) if isinstance(data.get("incidents"), dict) else (data.get("incidents") or []),
+            "telemetry_summaries": telemetry_summaries,
+            "incidents": data.get("incidents") or {},
         },
-        capability_snapshots=data.get("capability_snapshots") or {},
     )
+
+    def list_persona_league(**kwargs: Any) -> list[dict[str, Any]]:
+        market_scope = str(kwargs.get("market_scope") or "").upper()
+        status = str(kwargs.get("status") or "").lower()
+        rows = deepcopy(persona_league)
+        if market_scope:
+            rows = [
+                row
+                for row in rows
+                if market_scope in {str(scope).upper() for scope in row.get("market_scope") or []}
+            ]
+        if status:
+            rows = [row for row in rows if str(row.get("status") or "").lower() == status]
+        return sorted(rows, key=lambda row: (int(row.get("rank") or 9999), str(row.get("persona_id") or "")))
+
+    def list_personas(**kwargs: Any) -> list[dict[str, Any]]:
+        rows = deepcopy(personas)
+        if kwargs.get("include_market_persona_defaults"):
+            known_ids = {
+                str(row.get("persona_id") or row.get("id") or "") for row in rows
+            }
+            rows.extend(
+                deepcopy(row)
+                for row in catalog_default_personas
+                if str(row.get("persona_id") or row.get("id") or "") not in known_ids
+            )
+        lifecycle_state = kwargs.get("lifecycle_state") or kwargs.get("status")
+        if lifecycle_state:
+            requested = str(lifecycle_state).lower()
+            rows = [
+                row
+                for row in rows
+                if str(row.get("lifecycle_state") or row.get("status") or "").lower()
+                == requested
+            ]
+        return rows
+
+    def list_bindings(**kwargs: Any) -> list[dict[str, Any]]:
+        rows = deepcopy(bindings)
+        persona_id = kwargs.get("persona_id")
+        pool_id = kwargs.get("pool_id") or kwargs.get("capital_pool_id")
+        if persona_id:
+            rows = [row for row in rows if row.get("persona_id") == persona_id]
+        if pool_id:
+            rows = [row for row in rows if row.get("capital_pool_id") == pool_id]
+        return rows
+
+    def get_persona_league_entry(persona_id: str | None) -> dict[str, Any] | None:
+        return next(
+            (row for row in list_persona_league() if row.get("persona_id") == persona_id),
+            None,
+        )
+
+    def create_persona(**kwargs: Any) -> dict[str, Any]:
+        persona_id = str(kwargs["persona_id"])
+        metadata = deepcopy(kwargs.get("metadata") or {})
+        metadata.setdefault("owner", kwargs["actor_id"])
+        record = {
+            "id": persona_id,
+            "persona_id": persona_id,
+            "name": kwargs["name"],
+            "owner": kwargs["actor_id"],
+            "created_by": kwargs["actor_id"],
+            "created_at": kwargs.get("created_at"),
+            "lifecycle_state": kwargs.get("lifecycle_state") or "draft",
+            "status": kwargs.get("lifecycle_state") or "draft",
+            "metadata": metadata,
+        }
+        personas.append(record)
+        return record
+
+    def create_runtime_binding(**kwargs: Any) -> dict[str, Any]:
+        params = deepcopy(kwargs.get("params") or {})
+        runtime_id = str(kwargs["runtime_id"])
+        record = {
+            "id": runtime_id,
+            "runtime_id": runtime_id,
+            "name": kwargs["name"],
+            "state": kwargs.get("state") or "stopped",
+            "status": kwargs.get("state") or "stopped",
+            "persona_id": kwargs["persona_id"],
+            "binding_id": kwargs["binding_id"],
+            "runtime_binding_id": kwargs["binding_id"],
+            "persona_capital_binding_id": kwargs["binding_id"],
+            "deployment_plan_id": kwargs["deployment_plan_id"],
+            "plan_id": kwargs["deployment_plan_id"],
+            "runtime_kind": kwargs["runtime_kind"],
+            "deployment_stage": kwargs["runtime_kind"],
+            "deployment_mode": kwargs["runtime_kind"],
+            "capital_pool_id": params.get("capital_pool_id"),
+            "params": params,
+            "created_by": kwargs["actor_id"],
+            "created_at": kwargs.get("created_at"),
+            "metadata": {"persistenceMode": "local_typed_double"},
+        }
+        runtime_bindings.append(record)
+        return record
+
+    def list_runtime_bindings(**kwargs: Any) -> list[dict[str, Any]]:
+        active_bindings = {
+            str(binding.get("binding_id") or binding.get("persona_capital_binding_id") or ""): binding
+            for binding in bindings
+            if str(binding.get("status") or binding.get("validity") or "active").lower() == "active"
+        }
+        declared_by_runtime: dict[str, list[str]] = {}
+        for persona in personas:
+            metadata = persona.get("metadata") or {}
+            runtime_id = metadata.get("runtimeId") or metadata.get("runtime_id")
+            if runtime_id:
+                declared_by_runtime.setdefault(str(runtime_id), []).append(str(persona.get("persona_id")))
+        for session in sessions:
+            if session.get("runtime_id") and session.get("persona_id") and session.get("active", True):
+                declared_by_runtime.setdefault(str(session["runtime_id"]), []).append(str(session["persona_id"]))
+
+        rows: list[dict[str, Any]] = []
+        for source in runtime_bindings:
+            row = deepcopy(source)
+            runtime_id = str(row.get("runtime_id") or row.get("id") or "")
+            runtime_binding_id = str(row.get("runtime_binding_id") or row.get("binding_id") or row.get("id") or "")
+            capital_binding_id = str(row.get("persona_capital_binding_id") or "")
+            canonical = active_bindings.get(capital_binding_id)
+            candidates = sorted(set(declared_by_runtime.get(runtime_id) or []))
+            row["runtime_binding_id"] = runtime_binding_id
+            row["persona_capital_binding_id"] = capital_binding_id or row.get("binding_id")
+            row["persona_id"] = (
+                canonical.get("persona_id")
+                if canonical is not None
+                else candidates[0]
+                if len(candidates) == 1
+                else None
+            )
+            rows.append(row)
+        deployment_mode = kwargs.get("deployment_mode")
+        if deployment_mode:
+            rows = [row for row in rows if row.get("deployment_mode") == deployment_mode]
+        return rows
+
+    def runtime_by_id(runtime_id: str | None) -> dict[str, Any] | None:
+        return next(
+            (row for row in list_runtime_bindings() if row.get("runtime_id") == runtime_id),
+            None,
+        )
+
+    def runtime_by_binding(binding_id: str | None) -> dict[str, Any] | None:
+        return next(
+            (row for row in list_runtime_bindings() if row.get("runtime_binding_id") == binding_id),
+            None,
+        )
+
+    ranking_snapshots: dict[str, dict[str, Any]] = {}
+    store.list_personas = list_personas
+    store.list_capital_pools = lambda **_kwargs: deepcopy(capital_pools)
+    store.list_bindings = list_bindings
+    store.list_persona_league = list_persona_league
+    store.get_persona_league_entry = get_persona_league_entry
+    store.create_persona = create_persona
+    store.create_runtime_binding = create_runtime_binding
+    store.list_runtime_bindings = list_runtime_bindings
+    store.get_runtime_binding_by_runtime_id = runtime_by_id
+    store.get_runtime_binding = runtime_by_binding
+    store.put_ranking_snapshot = lambda snapshot: ranking_snapshots.setdefault(
+        str(snapshot["ranking_snapshot_id"]), deepcopy(snapshot)
+    )
+    store.get_ranking_snapshot = lambda snapshot_id: deepcopy(
+        ranking_snapshots.get(str(snapshot_id))
+    )
+    store._save = lambda: None
+    store.list_persona_sessions = lambda persona_id, **_kwargs: [
+        deepcopy(session) for session in sessions if session.get("persona_id") == persona_id
+    ]
+    store.get_sessions_for_persona = lambda persona_id: [
+        deepcopy(session) for session in sessions if session.get("persona_id") == persona_id
+    ]
+    store.get_teaching_sessions_for_persona = lambda persona_id: [
+        deepcopy(session)
+        for session in teaching_sessions
+        if session.get("persona_id") == persona_id
+    ]
+    store.get_capability_snapshot_for_persona = lambda persona_id: next(
+        (
+            deepcopy(snapshot)
+            for snapshot in capability_snapshots
+            if snapshot.get("persona_id") == persona_id
+        ),
+        None,
+    )
+    store.get_telemetry_summary = lambda runtime_id: next(
+        (
+            deepcopy(summary)
+            for summary in telemetry_summaries
+            if summary.get("runtime_id") == runtime_id
+        ),
+        None,
+    )
+    original_dataset_source = store.dataset_source
+    store.dataset_source = lambda dataset: (
+        "composed_market_persona_defaults"
+        if dataset == "research_experiments"
+        else original_dataset_source(dataset)
+    )
+    for method_name, key in (
+        ("list_agora_signals", "agora_signals"),
+        ("list_agora_sessions", "agora_sessions"),
+        ("list_agora_watchlist", "agora_watchlist"),
+    ):
+        setattr(store, method_name, lambda _key=key, **_kwargs: records(data.get(_key)))
     return store
 
 
@@ -1580,37 +1830,29 @@ def test_canonical_binding_precedence_and_mixed_topology(
     # Set service URL env to simulate HTTP service-backed client
     monkeypatch.setenv("PANTHEON_TELEMETRY_API_URL", "http://telemetry-service.pantheon")
 
-    # Mock HTTP GET for telemetry summaries
-    def mock_http_json_get(base_url, path, **kwargs):
-        if "runtime-summaries" in path:
-            return True, {
-                "summaries": [
-                    {
-                        "runtime_id": rt_assigned,
-                        "collected_at": "2026-07-13T01:00:00Z",
-                        "pnl": 0.0,
-                        "drawdown": 0.0,
-                        "fill_rate": 0.0,
-                        "avg_slippage_bps": 0.0,
-                        "total_trades": 0,
-                    },
-                    {
-                        "runtime_id": rt_devloop,
-                        "collected_at": "2026-07-13T02:00:00Z",
-                        "pnl": 120.5,
-                        "drawdown": 0.01,
-                        "fill_rate": 0.99,
-                        "avg_slippage_bps": 0.5,
-                        "total_trades": 45,
-                    }
-                ]
-            }
-        return False, None
-
-    import read_store
-    monkeypatch.setattr(read_store, "_http_json_get", mock_http_json_get)
-
-    store = _make_store(allow_local_snapshot_fallback=False)
+    store = _make_store(
+        allow_local_snapshot_fallback=False,
+        telemetry_service_summaries=[
+            {
+                "runtime_id": rt_assigned,
+                "collected_at": "2026-07-13T01:00:00Z",
+                "pnl": 0.0,
+                "drawdown": 0.0,
+                "fill_rate": 0.0,
+                "avg_slippage_bps": 0.0,
+                "total_trades": 0,
+            },
+            {
+                "runtime_id": rt_devloop,
+                "collected_at": "2026-07-13T02:00:00Z",
+                "pnl": 120.5,
+                "drawdown": 0.01,
+                "fill_rate": 0.99,
+                "avg_slippage_bps": 0.5,
+                "total_trades": 45,
+            },
+        ],
+    )
 
     # 1. Verify Canonical-binding precedence without registry fallback
     runtimes = {runtime["runtime_id"]: runtime for runtime in store.list_runtime_bindings()}

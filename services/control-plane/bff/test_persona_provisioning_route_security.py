@@ -9,7 +9,8 @@ from fastapi.testclient import TestClient
 
 import main as bff_main
 from persona_provisioning import MemoryPersonaProvisioningStore
-from ports import ReadSurfacePorts, create_in_memory_read_surface_ports
+from ports import ReadSurfacePorts
+from test_loop_prod_per_001_provisioning import _provisioning_read_surface_double
 from test_persona_provisioning_coordinator import FakeOwnerTransport, _schedule_receipt
 
 
@@ -22,15 +23,23 @@ class _RouteHarness:
 
 @pytest.fixture()
 def route_harness(tmp_path, monkeypatch: pytest.MonkeyPatch) -> _RouteHarness:
-    read_store = create_in_memory_read_surface_ports()
+    read_store = _provisioning_read_surface_double()
     transport = FakeOwnerTransport()
     store = MemoryPersonaProvisioningStore()
+    from services.persona.runtime_profile import build_persona_runtime_profile
+
     monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "true")
     monkeypatch.setenv("PANTHEON_PERSONA_PROVISIONING_RECONCILER_ENABLED", "false")
     monkeypatch.setattr(bff_main, "read_store", read_store)
     monkeypatch.setattr(bff_main, "_PERSONA_PROVISIONING_STORE", store)
     monkeypatch.setattr(bff_main, "_PersonaOwnerHttpTransport", lambda: transport)
     monkeypatch.setattr(bff_main, "_register_persona_cron_required", _schedule_receipt)
+    monkeypatch.setattr(
+        bff_main,
+        "build_persona_runtime_profile",
+        build_persona_runtime_profile,
+        raising=False,
+    )
     monkeypatch.setattr(bff_main, "_PERSONA_BFF_OVERLAY", {})
     monkeypatch.setattr(bff_main, "_STRATEGY_PERSONA_BFF_IDEMPOTENCY", {})
     return _RouteHarness(TestClient(bff_main.app), transport, store)

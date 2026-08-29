@@ -55,7 +55,29 @@ def _write_registry(path: Path, personas: list) -> None:
 # ---------------------------------------------------------------------------
 
 def _fresh_client(td: str, registry_path: str) -> TestClient:
-    bff_main.read_store = create_read_surface_ports()
+    records = json.loads(Path(registry_path).read_text(encoding="utf-8"))
+    store = create_read_surface_ports()
+
+    def clone(value):
+        return json.loads(json.dumps(value))
+
+    def list_personas(**_kwargs):
+        return [
+            {"id": persona_id, **clone(record)}
+            for persona_id, record in records.items()
+        ]
+
+    def get_persona(persona_id):
+        record = records.get(str(persona_id))
+        return {"id": str(persona_id), **clone(record)} if record else None
+
+    original_dataset_source = store.dataset_source
+    store.list_personas = list_personas
+    store.get_persona = get_persona
+    store.dataset_source = lambda dataset: (
+        "service_store" if dataset == "personas" else original_dataset_source(dataset)
+    )
+    bff_main.read_store = store
     bff_main._STRATEGY_PERSONA_BFF_IDEMPOTENCY.clear()
     bff_main._STRATEGY_BFF_OVERLAY.clear()
     bff_main._PERSONA_BFF_OVERLAY.clear()

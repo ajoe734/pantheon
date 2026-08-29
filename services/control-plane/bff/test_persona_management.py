@@ -20,7 +20,7 @@ from ports import ReadSurfacePorts, create_in_memory_read_surface_ports
 
 
 def _make_store() -> ReadSurfacePorts:
-    return create_in_memory_read_surface_ports(
+    store = create_in_memory_read_surface_ports(
         persona_capital_runtime_kwargs={
             "personas": [
                 {
@@ -50,28 +50,41 @@ def _make_store() -> ReadSurfacePorts:
                 }
             ],
         },
-        persona_training_kwargs={
-            "persona_sessions": [
-                {
-                    "id": "sess-001",
-                    "session_id": "sess-001",
-                    "persona_id": "persona-alpha",
-                    "status": "completed",
-                    "started_at": "2026-05-16T00:00:00Z",
-                }
-            ],
-            "persona_teaching_sessions": [
-                {
-                    "id": "teach-001",
-                    "session_id": "teach-001",
-                    "persona_id": "persona-alpha",
-                    "status": "completed",
-                    "topic": "topic_a",
-                    "outcomes": ["pass"],
-                }
-            ],
-        },
     )
+    sessions = [
+        {
+            "id": "sess-001",
+            "session_id": "sess-001",
+            "persona_id": "persona-alpha",
+            "status": "completed",
+            "started_at": "2026-05-16T00:00:00Z",
+        }
+    ]
+    teaching_sessions = [
+        {
+            "id": "teach-001",
+            "session_id": "teach-001",
+            "persona_id": "persona-alpha",
+            "status": "completed",
+            "topic": "topic_a",
+            "outcomes": ["pass"],
+        }
+    ]
+    store.get_sessions_for_persona = lambda persona_id: (
+        [dict(record) for record in sessions if record["persona_id"] == persona_id]
+        if persona_id
+        else None
+    )
+    store.get_teaching_sessions_for_persona = lambda persona_id: (
+        [
+            dict(record)
+            for record in teaching_sessions
+            if record["persona_id"] == persona_id
+        ]
+        if persona_id
+        else None
+    )
+    return store
 
 
 def test_store():
@@ -97,10 +110,10 @@ def test_store():
     assert all(b["persona_id"] == "persona-alpha" for b in bindings)
     print(f"✅ CP-03: get_bindings_for_persona returns {len(bindings)} binding(s)")
 
-    # CP-03: None for missing persona
-    assert store.get_bindings_for_persona(None) is None
-    assert store.get_bindings_for_persona("") is None
-    print("✅ CP-03: get_bindings_for_persona returns None for invalid persona_id")
+    # CP-03: narrow list ports use an empty collection for an invalid key.
+    assert store.get_bindings_for_persona(None) == []
+    assert store.get_bindings_for_persona("") == []
+    print("✅ CP-03: get_bindings_for_persona returns [] for invalid persona_id")
 
     # CP-04: capital pool enrichment via get_capital_pool
     for binding in bindings:

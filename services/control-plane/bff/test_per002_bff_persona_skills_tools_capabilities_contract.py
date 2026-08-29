@@ -15,6 +15,7 @@ Acceptance criteria:
 """
 from __future__ import annotations
 
+import json
 import os
 import sys
 import tempfile
@@ -35,6 +36,39 @@ HEADERS = {"Authorization": OPERATOR_AUTH}
 PERSONA_ID = "persona-alpha"
 UNKNOWN_PERSONA_ID = "persona-does-not-exist-per002"
 
+CAPABILITY_SNAPSHOT = {
+    "snapshot_id": "cap-001",
+    "persona_id": PERSONA_ID,
+    "effective_skills": ["risk_review", "incident_triage"],
+    "effective_tools": ["signal_read", "artifact_load", "telemetry_query"],
+    "effective_workflows": ["promotion_review", "incident_response"],
+    "restrictions": ["no_live_trade_without_approval"],
+    "created_at": "2026-04-11T07:55:00Z",
+    "generated_at": "2026-04-11T07:55:00Z",
+}
+
+
+def _capability_read_surface_double() -> ReadSurfacePorts:
+    store = create_in_memory_read_surface_ports(
+        persona_capital_runtime_kwargs={
+            "personas": [
+                {
+                    "id": PERSONA_ID,
+                    "persona_id": PERSONA_ID,
+                    "name": "Alpha Trader",
+                    "lifecycle_state": "paper",
+                    "status": "active",
+                }
+            ]
+        },
+    )
+    store.get_capability_snapshot_for_persona = lambda persona_id: (
+        json.loads(json.dumps(CAPABILITY_SNAPSHOT))
+        if persona_id == PERSONA_ID
+        else None
+    )
+    return store
+
 
 @contextmanager
 def _bff_client(*, fallback: bool = True) -> Iterator[TestClient]:
@@ -44,41 +78,7 @@ def _bff_client(*, fallback: bool = True) -> Iterator[TestClient]:
     original_persona_overlay = dict(bff_main._PERSONA_BFF_OVERLAY)
     try:
         if fallback:
-            bff_main.read_store = create_in_memory_read_surface_ports(
-                persona_capital_runtime_kwargs={
-                    "personas": [
-                        {
-                            "id": "persona-alpha",
-                            "persona_id": "persona-alpha",
-                            "name": "Alpha Trader",
-                            "lifecycle_state": "paper",
-                            "status": "active",
-                        }
-                    ]
-                },
-                capability_snapshots={
-                    "cap-001": {
-                        "snapshot_id": "cap-001",
-                        "persona_id": "persona-alpha",
-                        "effective_skills": ["risk_review", "incident_triage"],
-                        "effective_tools": ["signal_read", "artifact_load", "telemetry_query"],
-                        "effective_workflows": ["promotion_review", "incident_response"],
-                        "restrictions": ["no_live_trade_without_approval"],
-                        "created_at": "2026-04-11T07:55:00Z",
-                        "generated_at": "2026-04-11T07:55:00Z",
-                    },
-                    "persona-alpha": {
-                        "snapshot_id": "cap-001",
-                        "persona_id": "persona-alpha",
-                        "effective_skills": ["risk_review", "incident_triage"],
-                        "effective_tools": ["signal_read", "artifact_load", "telemetry_query"],
-                        "effective_workflows": ["promotion_review", "incident_response"],
-                        "restrictions": ["no_live_trade_without_approval"],
-                        "created_at": "2026-04-11T07:55:00Z",
-                        "generated_at": "2026-04-11T07:55:00Z",
-                    },
-                },
-            )
+            bff_main.read_store = _capability_read_surface_double()
         else:
             bff_main.read_store = create_read_surface_ports()
         bff_main._SKILL_REGISTRY.clear()
