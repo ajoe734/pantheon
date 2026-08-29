@@ -9,13 +9,28 @@ import tempfile
 from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(__file__))
-from read_store import ReadSurfaceStore
+from ports import create_in_memory_lifecycle_telemetry_governance_port
 
 
 def test_w3_surfaces():
     with tempfile.TemporaryDirectory() as td:
-        store_path = os.path.join(td, "read_surfaces.json")
-        store = ReadSurfaceStore(store_path, allow_local_snapshot_fallback=True)
+        data = json.loads(
+            (Path(__file__).resolve().parent / "data" / "read_surfaces.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        store = create_in_memory_lifecycle_telemetry_governance_port(
+            incidents=data["incidents"],
+            postmortems=data["postmortems"],
+            evolution_decisions=data["evolution_decisions"],
+            rollbacks_by_incident=data["rollbacks_by_incident"],
+            kill_switch=data["kill_switch"],
+            freeze_orders=data["freeze_orders"],
+            all_rollbacks=data["all_rollbacks"],
+            lineage_edges=data["lineage_edges"],
+            telemetry_summaries=data["telemetry_summaries"],
+            telemetry_performance=data["telemetry_performance"],
+        )
 
         # ------------------------------------------------------------------ #
         # Post-incident review composed view data

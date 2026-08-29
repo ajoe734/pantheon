@@ -10,10 +10,75 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, os.path.dirname(__file__))
 
 import main as bff_main
-from read_store import ReadSurfaceStore
+from ports import DefaultResearchKnowledgeSourcePort
 
 
 OPERATOR_AUTH = "Bearer test-operator:operator"
+
+_SEEDED_EXPERIMENTS = {
+    "exp-20260419-012": {
+        "experiment_id": "exp-20260419-012",
+        "ticket_id": "rt-20260419-007",
+        "experiment_name": "Momentum decay replay on March volatility cluster",
+        "status": "completed",
+        "queued_at": "2026-04-19T19:00:00Z",
+        "started_at": "2026-04-19T19:03:00Z",
+        "completed_at": "2026-04-19T20:15:00Z",
+        "progress": {"percent": 100, "phase": "aggregation", "message": "Aggregation complete."},
+        "strategy_selector": {"strategy_id": "strat-momentum-v4", "variant_id": "var-short-halflife"},
+        "parameter_set": {"half_life_days": 5},
+        "run_config": {
+            "dataset_ref": "equities-us-2026Q1",
+            "time_range": {"start_at": "2026-03-01T00:00:00Z", "end_at": "2026-03-31T23:59:59Z"},
+            "execution_mode": "backtest",
+            "priority": "high",
+            "requested_by": "persona-risk-chief",
+        },
+        "launch_context": {"analysis_refs": ["analysis-20260418-004-b"]},
+        "failure": {"reason_code": None, "message": None},
+    },
+    "exp-20260418-009": {
+        "experiment_id": "exp-20260418-009",
+        "ticket_id": "rt-20260419-007",
+        "experiment_name": "Momentum decay baseline",
+        "status": "running",
+        "queued_at": "2026-04-18T14:00:00Z",
+        "started_at": "2026-04-18T14:05:00Z",
+        "completed_at": None,
+        "progress": {"percent": 62, "phase": "signal_aggregation", "message": "Aggregating."},
+        "strategy_selector": {"strategy_id": "strat-momentum-v4", "variant_id": "var-baseline"},
+        "run_config": {
+            "dataset_ref": "equities-us-2026Q1",
+            "time_range": {"start_at": "2026-02-01T00:00:00Z", "end_at": "2026-04-17T23:59:59Z"},
+            "execution_mode": "backtest",
+            "priority": "normal",
+            "requested_by": "persona-risk-chief",
+        },
+        "failure": {"reason_code": None, "message": None},
+    },
+    "exp-20260417-004": {
+        "experiment_id": "exp-20260417-004",
+        "ticket_id": "rt-20260415-001",
+        "experiment_name": "Macro event signal quality",
+        "status": "failed",
+        "queued_at": "2026-04-17T12:00:00Z",
+        "started_at": "2026-04-17T12:02:00Z",
+        "completed_at": "2026-04-17T12:07:00Z",
+        "progress": {"percent": None, "phase": None, "message": None},
+        "strategy_selector": {"strategy_id": "strat-macro-event-v2", "variant_id": None},
+        "run_config": {
+            "dataset_ref": "equities-us-2026Q1",
+            "time_range": {"start_at": "2026-01-01T00:00:00Z", "end_at": "2026-04-16T23:59:59Z"},
+            "execution_mode": "simulation",
+            "priority": "normal",
+            "requested_by": "persona-risk-chief",
+        },
+        "failure": {
+            "reason_code": "MISSING_DATA_PARTITION",
+            "message": "Macro calendar partition for Q1 was missing.",
+        },
+    },
+}
 
 LAUNCH_PAYLOAD = {
     "ticket_id": "rt-20260419-007",
@@ -35,9 +100,8 @@ LAUNCH_PAYLOAD = {
 def _seeded_client():
     with tempfile.TemporaryDirectory() as td:
         original_store = bff_main.read_store
-        bff_main.read_store = ReadSurfaceStore(
-            os.path.join(td, "read_surfaces.json"),
-            allow_local_snapshot_fallback=True,
+        bff_main.read_store = DefaultResearchKnowledgeSourcePort(
+            research_experiments_store=_SEEDED_EXPERIMENTS,
         )
         client = TestClient(bff_main.app)
         try:
@@ -51,10 +115,7 @@ def _no_fallback_client():
     """Client with allow_local_snapshot_fallback=False — the production path."""
     with tempfile.TemporaryDirectory() as td:
         original_store = bff_main.read_store
-        bff_main.read_store = ReadSurfaceStore(
-            os.path.join(td, "read_surfaces.json"),
-            allow_local_snapshot_fallback=False,
-        )
+        bff_main.read_store = DefaultResearchKnowledgeSourcePort()
         client = TestClient(bff_main.app)
         try:
             yield client
