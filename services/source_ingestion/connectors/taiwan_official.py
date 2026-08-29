@@ -357,6 +357,69 @@ def _symbol_canonical(symbol: str, venue: str) -> str:
     return f"{symbol}.{v}"
 
 
+def canonical_taiwan_equity_symbol(value: Any) -> str:
+    """Return the explicit official-exchange identity for a TW equity symbol.
+
+    ``.TW`` and ``.TWO`` are execution-facing aliases for TWSE and TPEx,
+    respectively.  Keeping this mapping explicit prevents a read or bounded
+    refresh from guessing a venue from a bare ticker.
+    """
+
+    text = _text(value).upper()
+    if "." not in text:
+        raise SourceEvidenceError(
+            f"Taiwan priority symbol must include an explicit market suffix: {value!r}"
+        )
+    symbol, suffix = text.rsplit(".", 1)
+    if not symbol:
+        raise SourceEvidenceError(f"Taiwan priority symbol is invalid: {value!r}")
+    if suffix in {"TW", "TWSE"}:
+        return f"{symbol}.TWSE"
+    if suffix in {"TWO", "TPEX"}:
+        return f"{symbol}.TPEX"
+    raise SourceEvidenceError(
+        f"Taiwan priority symbol has an unsupported market suffix: {value!r}"
+    )
+
+
+def _priority_symbols_for_venue(
+    priority_symbols: Sequence[str] | str | None,
+    venue: str,
+) -> tuple[str, ...]:
+    if priority_symbols in (None, ""):
+        return tuple()
+    if isinstance(priority_symbols, str):
+        values = [item.strip() for item in priority_symbols.split(",") if item.strip()]
+    else:
+        values = [str(item).strip() for item in priority_symbols if str(item).strip()]
+    venue_suffix = ".TWSE" if _canonical_venue(venue) == "TWSE" else ".TPEX"
+    canonical: list[str] = []
+    for value in values:
+        symbol = canonical_taiwan_equity_symbol(value)
+        if symbol.endswith(venue_suffix) and symbol not in canonical:
+            canonical.append(symbol)
+    return tuple(canonical)
+
+
+def _prioritize_normalized_rows(
+    rows: Sequence[Mapping[str, Any]],
+    priority_symbols: Sequence[str],
+) -> tuple[Mapping[str, Any], ...]:
+    if not priority_symbols:
+        return tuple(rows)
+    priority_index = {symbol: index for index, symbol in enumerate(priority_symbols)}
+    return tuple(
+        row
+        for _, row in sorted(
+            enumerate(rows),
+            key=lambda item: (
+                priority_index.get(str(item[1].get("symbol_canonical") or ""), len(priority_index)),
+                item[0],
+            ),
+        )
+    )
+
+
 def _rows_from_payload(payload: Mapping[str, Any] | Sequence[Mapping[str, Any]] | str) -> tuple[dict[str, Any], ...]:
     if isinstance(payload, str):
         if not payload.strip():
@@ -524,6 +587,7 @@ class TaiwanOfficialMarketDatasetAdapter(SourceConnectorProvider):
         trade_date: str | None = None,
         available_time: str | None = None,
         universe_tier: str = "core_universe",
+        priority_symbols: Sequence[str] | str | None = None,
         trace_id: str = "",
     ) -> tuple[SourceRecord, ...]:
         tier = _tier_name(universe_tier)
@@ -543,6 +607,10 @@ class TaiwanOfficialMarketDatasetAdapter(SourceConnectorProvider):
             api_endpoint=api_endpoint,
             trade_date=trade_date,
             available_time=available_time,
+        )
+        normalized_rows = _prioritize_normalized_rows(
+            normalized_rows,
+            _priority_symbols_for_venue(priority_symbols, venue),
         )
         records: list[SourceRecord] = []
         for row in normalized_rows[: self.max_records]:

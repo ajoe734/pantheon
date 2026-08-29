@@ -8,6 +8,7 @@ connector config cannot import arbitrary code.
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
@@ -28,6 +29,7 @@ from .connectors.taiwan_official import (
     TaifexDerivativesChipAdapter,
     TaiwanOfficialMarketDatasetAdapter,
     TdccShareholdingDistributionAdapter,
+    canonical_taiwan_equity_symbol,
 )
 from .connectors.us_public import (
     FRED_API_URL,
@@ -300,6 +302,21 @@ def _taiwan_official(
     payloads = _mapping(request.get("payloads")) if request.get("payloads") not in (None, "") else {}
     single_payload = request.get("payload")
     timeout_seconds = float(request.get("timeout_seconds") or 20.0)
+    requested_priority_symbols = _string_list(request.get("priority_symbols"))
+    active_priority_symbols = _string_list(
+        os.getenv("SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS", "").split(",")
+    )
+    priority_symbols = tuple(
+        dict.fromkeys(
+            canonical_taiwan_equity_symbol(symbol)
+            for symbol in (*active_priority_symbols, *requested_priority_symbols)
+        )
+    )
+    max_records = int(request.get("max_records") or getattr(adapter, "max_records", 100))
+    if len(priority_symbols) > max_records:
+        raise SourceEvidenceError(
+            "active Taiwan paper symbols exceed the bounded official refresh max_records"
+        )
     records: list[SourceRecord] = []
     for venue in venues:
         payload = payloads.get(venue) or payloads.get(str(venue).upper()) or single_payload
@@ -315,7 +332,26 @@ def _taiwan_official(
                 trade_date=request.get("trade_date") or request.get("date") or request.get("run_date"),
                 available_time=request.get("available_time"),
                 universe_tier=str(request.get("universe_tier") or "core_universe"),
+                priority_symbols=priority_symbols,
                 trace_id=trace_id,
+            )
+        )
+    if dataset == "tw_price_daily" and priority_symbols:
+        available = {
+            str(record.metadata.get("symbol_canonical") or "").upper()
+            for record in records
+        }
+        missing = [symbol for symbol in priority_symbols if symbol not in available]
+        if missing:
+            raise SourceEvidenceError(
+                "bounded official refresh did not resolve active Taiwan paper symbols: "
+                + ", ".join(missing)
+            )
+        priority_index = {symbol: index for index, symbol in enumerate(priority_symbols)}
+        records.sort(
+            key=lambda record: priority_index.get(
+                str(record.metadata.get("symbol_canonical") or "").upper(),
+                len(priority_index),
             )
         )
     return tuple(records)

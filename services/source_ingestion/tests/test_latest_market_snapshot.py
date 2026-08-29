@@ -127,6 +127,83 @@ def test_snapshot_read_performs_no_provider_egress_or_scheduler_work(
     assert response.json()["closes"][-1] == 223.0
 
 
+def test_tw_execution_alias_reads_only_the_official_twse_snapshot(
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    module = _load_source_main(monkeypatch, tmp_path)
+    client = TestClient(module.app)
+    configured = client.post(
+        "/api/source-ingest/connectors",
+        json={
+            "connector": {
+                "connector_id": "tw-twse-tpex-official-market",
+                "source_type": "market",
+                "provider": "TWSE/TPEx",
+                "license_scope": "official_reference",
+                "metadata": {"dataset": "tw_price_daily"},
+            },
+            "fetch": {
+                "mode": "static_records",
+                "records": [
+                    {
+                        "source_id": "legacy-2330-tw",
+                        "title": "legacy 2330.TW snapshot",
+                        "content_ref": "legacy://2330.TW/2026-08-20",
+                        "metadata": {
+                            "normalized_row": {
+                                "symbol_canonical": "2330.TW",
+                                "trade_date": "2026-08-20T05:30:00Z",
+                                "close": 900.0,
+                            }
+                        },
+                    },
+                    {
+                        "source_id": "tw-official:tw_price_daily:TWSE:2330:official",
+                        "title": "official 2330.TWSE snapshot",
+                        "content_ref": "tw-official://tw_price_daily/TWSE/2330/2026-08-29/official",
+                        "metadata": {
+                            "normalized_row": {
+                                "symbol_canonical": "2330.TWSE",
+                                "trade_date": "2026-08-29T05:30:00Z",
+                                "close": 955.0,
+                            }
+                        },
+                    },
+                ],
+            },
+        },
+    )
+    assert configured.status_code == 201, configured.text
+    ingested = client.post(
+        "/api/source-ingest/jobs",
+        json={
+            "connector_id": "tw-twse-tpex-official-market",
+            "trace_id": "tw-read-alias-contract",
+        },
+    )
+    assert ingested.status_code == 201, ingested.text
+
+    alias = client.get("/api/source-ingest/snapshots/latest?symbol=2330.TW")
+    official = client.get("/api/source-ingest/snapshots/latest?symbol=2330.TWSE")
+
+    assert alias.status_code == 200, alias.text
+    assert official.status_code == 200, official.text
+    alias_body = alias.json()
+    official_body = official.json()
+    assert alias_body["symbol"] == "2330.TW"
+    assert official_body["symbol"] == "2330.TWSE"
+    assert {key: value for key, value in alias_body.items() if key != "symbol"} == {
+        key: value for key, value in official_body.items() if key != "symbol"
+    }
+    assert alias_body["snapshot_id"] == official_body["snapshot_id"]
+    assert module.latest_market_snapshot_store.get("2330.TW").symbol == "2330.TWSE"
+    assert alias_body["closes"] == [955.0]
+    assert alias_body["lineage"]["source_ids"] == [
+        "tw-official:tw_price_daily:TWSE:2330:official"
+    ]
+
+
 def test_missing_snapshot_has_a_typed_not_found_response(
     tmp_path: Path,
     monkeypatch: Any,
