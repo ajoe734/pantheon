@@ -1,10 +1,20 @@
 # ACG-INTEGRATION-E2E-20260828 Local Integration GAP
 
 - Task: `ACG-INTEGRATION-E2E-20260828`
-- Owner / reviewer: `Codex` / `Claude`
+- Owner / reviewer: `Claude` / `Codex`
 - Pantheon head: `56b9ded77ddbd89011578b60f417ef8f31643f2d`
 - execute-plans head: `7409bb4192768737535ec480bdf351a15630dc89`
 - Outcome: **local cleanup integration rejected; two owning paths require correction**
+
+Ownership reassigned after a supervisor lost-lease recovery (Claude now owns,
+Codex now reviews). The findings below were independently re-verified by the
+new owner against the same clean `origin/dev` head (`56b9ded77`, unchanged)
+without adding any verifier script: `read_store.py` (124 lines) still defines
+neither `_merge_market_persona_fleet`, `ServiceBackedReadAdapter`, nor
+`CanonicalSnapshotAdapter`, all three callers still import them, the
+cross-loop drill fixture still ends in `:mfa` with no tenant segment, and both
+repositories' `dev-compatibility-manifest.json` files still disagree exactly
+as recorded in GAP-02.
 
 This requeue is intentionally docs-only. It records reproducible local
 caller/test migration failures and canonical FE/BFF handoff-record drift. It
