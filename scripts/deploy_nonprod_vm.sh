@@ -139,6 +139,16 @@ SOURCE_REFRESH_MAX_CONCURRENCY="${SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY:-1}"
 SOURCE_REFRESH_MAX_RECORDS="${SOURCE_INGEST_MAX_RECORDS:-100}"
 SOURCE_REFRESH_CONNECTOR_ID="${SOURCE_INGEST_BOUNDED_CONNECTOR_ID:-tw-twse-tpex-official-market}"
 SOURCE_REFRESH_TIMEOUT_SECONDS="${SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS:-1800}"
+if [[ "${SOURCE_REFRESH_SELECTED}" == "true" \
+  && "${SOURCE_REFRESH_CONNECTOR_ID}" == "tw-twse-tpex-official-market" ]]; then
+  # The reviewed official connector uses TWSE OpenAPI for today's full-market
+  # close and the TWSE market site for bounded per-symbol monthly history.
+  # Keep the second host connector-specific instead of widening default egress.
+  case ",${SOURCE_REFRESH_ALLOWED_HOSTS}," in
+    *,www.twse.com.tw,*) ;;
+    *) SOURCE_REFRESH_ALLOWED_HOSTS="${SOURCE_REFRESH_ALLOWED_HOSTS:+${SOURCE_REFRESH_ALLOWED_HOSTS},}www.twse.com.tw" ;;
+  esac
+fi
 DEV_APP_DB_USER="${DEV_APP_DB_USER:-${PANTHEON_APP_DB_USER:-pantheon_app}}"
 
 STAGING_CONTROL_VM="${STAGING_CONTROL_VM:-pantheon-lupin-staging-control}"
@@ -843,7 +853,7 @@ hosts = allowed_hosts(
 if not hosts:
     raise SystemExit("source refresh exact host allowlist is empty")
 if sys.argv[2] == "tw-twse-tpex-official-market":
-    required = {"openapi.twse.com.tw", "www.tpex.org.tw"}
+    required = {"openapi.twse.com.tw", "www.twse.com.tw", "www.tpex.org.tw"}
     missing = sorted(required - hosts)
     if missing:
         raise SystemExit(
@@ -1023,6 +1033,71 @@ wait_for_bounded_source_refresh_service() {
   error "bounded source refresh service ${service} did not reach terminal state within ${timeout_seconds}s"
 }
 
+resolve_bounded_source_refresh_active_symbols() {
+  local priority_symbols=""
+
+  case ",${PANTHEON_DEV_COMPOSE_PROFILES:-}," in
+    *,source-ingest-scheduler,*) ;;
+    *)
+      export SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS=""
+      return 0
+      ;;
+  esac
+
+  if ! priority_symbols="$(
+    docker compose -p pantheon -f docker-compose.yml run --rm --no-deps -T \
+      --entrypoint python runtime-manager - <<'PY'
+import json
+import os
+import re
+from pathlib import Path
+
+
+path = Path(os.environ.get("PANTHEON_RUNTIME_BINDING_STORE_PATH", "/data/runtime/runtime_bindings.json"))
+if not path.exists():
+    print("")
+    raise SystemExit(0)
+try:
+    bindings = json.loads(path.read_text(encoding="utf-8"))
+except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+    raise SystemExit(f"active RuntimeBinding store is unreadable: {exc}") from exc
+if not isinstance(bindings, list) or any(not isinstance(binding, dict) for binding in bindings):
+    raise SystemExit("active RuntimeBinding store must contain a JSON list of objects")
+
+symbols = []
+for binding in bindings:
+    mode = str(binding.get("deployment_mode") or binding.get("execution_mode") or "").strip().lower()
+    status = str(binding.get("status") or "").strip().lower()
+    if mode != "paper" or status != "active":
+        continue
+    metadata = binding.get("metadata") if isinstance(binding.get("metadata"), dict) else {}
+    symbol = str(binding.get("symbol") or metadata.get("symbol") or "").strip().upper()
+    policy = binding.get("market_data_policy") or metadata.get("market_data_policy")
+    if not symbol:
+        if policy:
+            binding_id = str(binding.get("binding_id") or "<unknown>")
+            raise SystemExit(f"active paper RuntimeBinding {binding_id} requires market data but has no symbol")
+        continue
+    if re.fullmatch(r"[A-Z0-9_-]+\.(?:TW|TWSE|TWO|TPEX)", symbol) is None:
+        continue
+    if symbol not in symbols:
+        symbols.append(symbol)
+
+print(",".join(symbols))
+PY
+  )"; then
+    error "could not resolve active paper RuntimeBinding symbols for bounded source refresh"
+  fi
+  [[ -z "$priority_symbols" || "$priority_symbols" =~ ^[A-Z0-9_.-]+(,[A-Z0-9_.-]+)*$ ]] \
+    || error "resolved active paper RuntimeBinding symbols are malformed"
+  export SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS="$priority_symbols"
+  if [[ -n "$priority_symbols" ]]; then
+    info "bounded source refresh prioritizing active paper symbols: ${priority_symbols}"
+  else
+    info "bounded source refresh found no active paper Taiwan market symbols"
+  fi
+}
+
 verify_bounded_source_refresh_readback() {
   local deploy_started_at="$1"
   local scheduler_container_id=""
@@ -1057,9 +1132,13 @@ verify_bounded_source_refresh_readback() {
     "${deploy_started_at}" \
     "${evidence_dir}/receipts.json" \
     "${evidence_dir}/readback.json" \
-    "${evidence_dir}/agora_watchlist.json" <<'PY'
+    "${evidence_dir}/agora_watchlist.json" \
+    "${SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS:-}" <<'PY'
 import json
+import math
 import sys
+import urllib.parse
+import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -1075,7 +1154,7 @@ def timestamp(value):
     return parsed.astimezone(timezone.utc)
 
 
-connector_id, deploy_started_at, receipts_path, readback_path, projection_path = sys.argv[1:]
+connector_id, deploy_started_at, receipts_path, readback_path, projection_path, priority_csv = sys.argv[1:]
 started = timestamp(deploy_started_at)
 receipts = load(receipts_path).get("receipts") or []
 candidates = [
@@ -1141,6 +1220,72 @@ if (
     or not isinstance(projected_freshness.get("stale"), bool)
 ):
     raise SystemExit("Agora projection is missing explicit source-time/freshness truth")
+
+
+def canonical_taiwan_symbol(value):
+    symbol, suffix = value.upper().rsplit(".", 1)
+    if suffix in {"TW", "TWSE"}:
+        return f"{symbol}.TWSE"
+    if suffix in {"TWO", "TPEX"}:
+        return f"{symbol}.TPEX"
+    raise SystemExit(f"unsupported active Taiwan paper symbol: {value}")
+
+
+for requested_symbol in [item for item in priority_csv.split(",") if item]:
+    url = (
+        "http://127.0.0.1:18097/api/source-ingest/snapshots/latest?symbol="
+        + urllib.parse.quote(requested_symbol, safe="")
+    )
+    try:
+        with urllib.request.urlopen(url, timeout=5) as response:
+            snapshot = json.loads(response.read().decode("utf-8"))
+    except Exception as exc:
+        raise SystemExit(
+            f"active paper snapshot is unavailable for {requested_symbol}: {exc}"
+        ) from exc
+    execution_symbol = requested_symbol.upper()
+    canonical_symbol = canonical_taiwan_symbol(execution_symbol)
+    if snapshot.get("symbol") != execution_symbol:
+        raise SystemExit(
+            f"active paper snapshot identity mismatch for {requested_symbol}: "
+            f"{snapshot.get('symbol')!r} != {execution_symbol!r}"
+        )
+    closes = snapshot.get("closes")
+    if (
+        not isinstance(closes, list)
+        or len(closes) < 2
+        or any(
+            isinstance(close, bool)
+            or not isinstance(close, (int, float))
+            or not math.isfinite(float(close))
+            or float(close) <= 0
+            for close in closes
+        )
+    ):
+        raise SystemExit(
+            f"active paper snapshot requires at least two finite official closes "
+            f"for {requested_symbol}: closes={closes!r}"
+        )
+    event_time = timestamp(snapshot.get("event_time"))
+    age_seconds = (datetime.now(timezone.utc) - event_time).total_seconds()
+    if age_seconds < -300 or age_seconds > 86400:
+        raise SystemExit(
+            f"active paper snapshot is outside 24h for {requested_symbol}: "
+            f"event_time={snapshot.get('event_time')} age_seconds={int(age_seconds)}"
+        )
+    lineage = snapshot.get("lineage") if isinstance(snapshot.get("lineage"), dict) else {}
+    connector_ids = lineage.get("connector_ids") if isinstance(lineage.get("connector_ids"), list) else []
+    source_ids = lineage.get("source_ids") if isinstance(lineage.get("source_ids"), list) else []
+    source_venue = "TWSE" if canonical_symbol.endswith(".TWSE") else "TPEx"
+    expected_prefix = f"tw-official:tw_price_daily:{source_venue}:"
+    if connector_id not in connector_ids or not any(str(source_id).startswith(expected_prefix) for source_id in source_ids):
+        raise SystemExit(f"active paper snapshot lacks official exchange lineage for {requested_symbol}")
+    print(
+        "active paper snapshot accepted "
+        f"execution={execution_symbol} official={canonical_symbol} "
+        f"event_time={snapshot.get('event_time')} closes={len(closes)} "
+        f"snapshot={snapshot.get('snapshot_id')}"
+    )
 print(
     "bounded source refresh accepted "
     f"connector={connector_id} run={run_id} source={source_id} "
@@ -2114,6 +2259,7 @@ REMOTE_DB
 dump_dev_root_failure_diagnostics() {
   local source_ingest_container_id=""
   local search_container_id=""
+  local paper_signal_producer_container_id=""
 
   info "dev root compose ps after failure"
   docker compose -p pantheon -f docker-compose.yml ps || true
@@ -2138,6 +2284,17 @@ dump_dev_root_failure_diagnostics() {
     docker inspect --format \
       'status={{.State.Status}} restart_count={{.RestartCount}} health={{if .State.Health}}{{.State.Health.Status}}{{else}}not_configured{{end}} exit_code={{.State.ExitCode}} oom_killed={{.State.OOMKilled}} error={{json .State.Error}}' \
       "$search_container_id" || true
+  fi
+  info "paper-signal-producer service logs after failure"
+  docker compose -p pantheon -f docker-compose.yml logs --no-color --tail=240 paper-signal-producer || true
+  paper_signal_producer_container_id="$(
+    docker compose -p pantheon -f docker-compose.yml ps -a -q paper-signal-producer 2>/dev/null || true
+  )"
+  if [[ -n "$paper_signal_producer_container_id" ]]; then
+    info "paper-signal-producer container restart and health state after failure"
+    docker inspect --format \
+      'status={{.State.Status}} restart_count={{.RestartCount}} health={{if .State.Health}}{{.State.Health.Status}}{{else}}not_configured{{end}} exit_code={{.State.ExitCode}} oom_killed={{.State.OOMKilled}} error={{json .State.Error}}' \
+      "$paper_signal_producer_container_id" || true
   fi
   info "agora-interaction-worker service logs after failure"
   docker compose -p pantheon -f docker-compose.yml logs --no-color --tail=240 agora-interaction-worker || true
@@ -2849,6 +3006,8 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
       docker compose -p pantheon -f docker-compose.yml build \
       || { dump_dev_root_failure_diagnostics; exit 1; }
+    resolve_bounded_source_refresh_active_symbols \
+      || rollback_dev_bff_on_failure "source_refresh_active_symbols"
     DEV_PRE_DEPLOY_BFF_SHA="$(curl -fsS http://127.0.0.1:18001/bff/version 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin).get("source_commit_sha") or "")' 2>/dev/null || true)"
     PANTHEON_DEV_ROLLBACK_BACKEND_SHA="${PANTHEON_DEV_ROLLBACK_BACKEND_SHA:-${DEV_PRE_DEPLOY_BFF_SHA:-}}"
     # Phase 3: Rollout persistent root runtime.

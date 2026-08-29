@@ -176,6 +176,11 @@ services:
       # tick's catch_up polls, so the two never diverge into separate queues.
       DISTILLATION_JOB_QUEUE_PATH: /data/source-ingest/distill_job_queue.jsonl
       SOURCE_INGEST_MAX_RECORDS: ${SOURCE_INGEST_MAX_RECORDS:-100}
+      # A bounded deployment refresh resolves this list from the durable,
+      # read-only RuntimeBinding store before source-ingest starts. The
+      # provider adapter uses it only to order official records before the
+      # unchanged global record cap.
+      SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS: ${SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS:-}
       SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY: ${SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY:-2}
       SOURCE_INGEST_FRONTIER_MAX_ATTEMPTS: ${SOURCE_INGEST_FRONTIER_MAX_ATTEMPTS:-2}
       SOURCE_INGEST_FRONTIER_BACKOFF_SECONDS: ${SOURCE_INGEST_FRONTIER_BACKOFF_SECONDS:-60}
