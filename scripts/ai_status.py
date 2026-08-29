@@ -2997,10 +2997,16 @@ def approved_closeout_metadata_ref(
     a valid reviewed PR impossible to close, while accepting arbitrary
     ancestors would weaken the trailer contract.
 
-    This exception is deliberately narrow: it applies only to the exact
-    ``<task-id>: merge <base>`` tip with exactly two parents and with the
-    frozen base as its second parent. All other reviewed heads remain their
-    own metadata source and retain the existing fail-closed validation.
+    This exception is deliberately narrow: it applies only to an exact
+    reviewed merge tip with exactly two parents and with the frozen base as
+    its second parent. The merge subject is intentionally not part of the
+    proof: workers may describe the same no-content base refresh as
+    ``merge dev``, ``merge origin/dev``, or ``merge dev to refresh stale
+    base``. In every case the frozen-base parent relation is the immutable
+    structural evidence, while the selected first parent still undergoes the
+    ordinary task-id and trailer validation below. All other reviewed heads
+    remain their own metadata source and retain the existing fail-closed
+    validation.
     """
 
     if not approved_ref:
@@ -3008,17 +3014,8 @@ def approved_closeout_metadata_ref(
     binding = task.get(DELIVERY_BINDING_KEY)
     if not isinstance(binding, Mapping):
         return approved_ref
-    task_id = str(task.get("id") or "").strip()
-    base = str(binding.get("base") or "").strip()
     frozen_base = str(binding.get("base_sha") or "").strip().lower()
-    if not task_id or not base or not APPROVAL_HEAD_SHA_RE.fullmatch(frozen_base):
-        return approved_ref
-    subject = run_git_command(
-        ["show", "-s", "--format=%s", approved_ref],
-        cwd=repository_root,
-        failure_message="Cannot finalize task: canonical approved head subject is unavailable.",
-    )
-    if subject != f"{task_id}: merge {base}":
+    if not APPROVAL_HEAD_SHA_RE.fullmatch(frozen_base):
         return approved_ref
     parents = run_git_command(
         ["show", "-s", "--format=%P", approved_ref],
