@@ -1,9 +1,9 @@
 {
   "schema_version": "pantheon.agora-taiwan-market-session-freshness-review.v2",
   "task_id": "AGORA-TAIWAN-MARKET-SESSION-FRESHNESS-V1-20260829",
-  "generated_at": "2026-08-29T22:38:35Z",
-  "owner": "Codex",
-  "reviewer": "Codex2",
+  "generated_at": "2026-08-29T22:48:09Z",
+  "owner": "Codex2",
+  "reviewer": "Codex",
   "status": "corrective_implementation_ready_for_exact_head_review",
   "acceptance_state": "exact_head_review_merge_and_post_merge_release_proof_required",
   "delivery": {
@@ -123,7 +123,7 @@
   },
   "validation": {
     "focused_command": ".venv-pantheon/bin/python3 -m pytest -q services/execution/lean_runtime/test_paper_signal_producer.py services/paper_fleet_reconciler/test_paper_fleet_reconciler.py services/source_ingestion/tests/test_latest_market_snapshot.py services/control-plane/bff/agora/test_operational_readiness.py scripts/test_source_ingest_deploy_diagnostics_contract.py",
-    "focused_result": "128 passed, 6 subtests passed, 1 existing Starlette deprecation warning",
+    "focused_result": "129 passed, 6 subtests passed, 1 existing Starlette deprecation warning",
     "syntax_commands": [
       "python3 -m py_compile services/execution/market_snapshot_admission.py",
       "bash -n scripts/deploy_nonprod_vm.sh",
@@ -150,6 +150,7 @@
     "reviewer_required_negative_cases": [
       "tampered holiday payload retaining the old claimed checksum is rejected",
       "empty-payload trusted pin is rejected",
+      "actual empty calendar content with holidays={}, trading_days=[], and sessions absent is rejected as market_input_calendar_unverifiable",
       "combined and missing venues are rejected",
       "unknown and missing versions are rejected",
       "event_time, observed_at and fetched_at one second in the future are rejected"

@@ -930,6 +930,35 @@ class TestSharedSnapshotAdmissionDecisions(unittest.TestCase):
         self.assertEqual(dec.reason_code, "market_input_calendar_unverifiable")
         self.assertIn("forbidden empty-payload SHA-256", dec.detail)
 
+    def test_tw_calendar_evidence_actual_empty_content_rejected(self) -> None:
+        from services.execution.market_snapshot_admission import admit_market_snapshot
+
+        # A non-empty SHA-256 pin is not sufficient: a calendar whose actual
+        # session content is empty must still fail closed.  Keep `sessions`
+        # absent so this covers exactly the empty holidays/trading-days shape
+        # that must not be treated as calendar evidence.
+        snapshot = self._tw_snapshot("2026-02-11T05:30:00Z", "2026-02-23T02:00:00Z")
+        evidence = self._tw_calendar_evidence(
+            holidays={},
+            trading_days=[],
+            sessions=None,
+            version="test-empty-calendar-content-v1",
+        )
+        self.assertNotIn("sessions", evidence)
+        pins = self._pin_calendar_evidence(evidence)
+        snapshot["calendar_evidence"] = evidence
+
+        dec = admit_market_snapshot(
+            snapshot,
+            max_age_seconds=86400,
+            now_iso="2026-02-23T03:00:00Z",
+            trusted_calendar_pins=pins,
+        )
+
+        self.assertFalse(dec.admitted)
+        self.assertEqual(dec.reason_code, "market_input_calendar_unverifiable")
+        self.assertIn("no explicit session, holiday, or trading-day records", dec.detail)
+
     def test_tw_calendar_evidence_requires_exact_governed_version(self) -> None:
         from services.execution.market_snapshot_admission import admit_market_snapshot
 
