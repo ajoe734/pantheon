@@ -2399,6 +2399,715 @@ class DomainConsultationPort:
         }
 
 
+    # =========================================================================
+    # Agora Operations & Decision Journal & Sponsor Decision (DomainConsultationPort)
+    # =========================================================================
+
+    def _ensure_agora_containers(self) -> None:
+        if not hasattr(self, "_agora_sessions"):
+            self._agora_sessions: Dict[str, Dict[str, Any]] = {}
+        if not hasattr(self, "_agora_memos"):
+            self._agora_memos: Dict[str, Dict[str, Any]] = {}
+        if not hasattr(self, "_agora_evidence_packs"):
+            self._agora_evidence_packs: Dict[str, Dict[str, Any]] = {}
+        if not hasattr(self, "_agora_signals"):
+            self._agora_signals: Dict[str, Dict[str, Any]] = {}
+        if not hasattr(self, "_agora_feedback"):
+            self._agora_feedback: Dict[str, Dict[str, Any]] = {}
+        if not hasattr(self, "_agora_notes"):
+            self._agora_notes: Dict[str, Dict[str, Any]] = {}
+        if not hasattr(self, "_agora_insights"):
+            self._agora_insights: Dict[str, Dict[str, Any]] = {}
+        if not hasattr(self, "_agora_training_examples"):
+            self._agora_training_examples: Dict[str, Dict[str, Any]] = {}
+        if not hasattr(self, "_agora_audit_events"):
+            self._agora_audit_events: Dict[str, Dict[str, Any]] = {}
+        if not hasattr(self, "_agora_handoffs"):
+            self._agora_handoffs: Dict[str, Dict[str, Any]] = {}
+        if not hasattr(self, "_decision_journal_entries"):
+            self._decision_journal_entries: Dict[str, Dict[str, Any]] = {}
+        if not hasattr(self, "_sponsor_decisions"):
+            self._sponsor_decisions: Dict[str, Dict[str, Any]] = {}
+        if not hasattr(self, "_committees"):
+            self._committees: Dict[str, Dict[str, Any]] = {}
+        if not hasattr(self, "_consult_policies"):
+            self._consult_policies: Dict[str, Dict[str, Any]] = {}
+
+    def get_agora_session(self, session_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        if not session_id:
+            return None
+        self._ensure_agora_containers()
+        session = self._agora_sessions.get(str(session_id))
+        return json.loads(json.dumps(session)) if session is not None else None
+
+    def list_agora_sessions(self) -> List[Dict[str, Any]]:
+        self._ensure_agora_containers()
+        sessions = list(self._agora_sessions.values())
+        sessions.sort(key=lambda s: str(s.get("updatedAt") or s.get("createdAt") or ""), reverse=True)
+        return json.loads(json.dumps(sessions))
+
+    def create_agora_session(
+        self,
+        *,
+        session_id: str,
+        title: str,
+        actor_id: str,
+        payload: Dict[str, Any],
+        created_at: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        self._ensure_agora_containers()
+        timestamp = created_at or _utc_now_rfc3339()
+        session = {
+            "id": session_id,
+            "sessionId": session_id,
+            "title": title,
+            "mode": payload.get("mode") or payload.get("sessionType") or "quick_ask",
+            "status": payload.get("status") or "active",
+            "participants": json.loads(json.dumps(payload.get("participants") or [])),
+            "contextRefs": json.loads(json.dumps(payload.get("contextRefs") or payload.get("context_refs") or [])),
+            "messages": json.loads(json.dumps(payload.get("messages") or [])),
+            "createdBy": actor_id,
+            "createdAt": timestamp,
+            "updatedAt": timestamp,
+        }
+        for _committee_field in ("quorumState", "consensusState", "participantRoster", "linkedRequestId"):
+            if payload.get(_committee_field) is not None:
+                session[_committee_field] = json.loads(json.dumps(payload[_committee_field]))
+        self._agora_sessions[session_id] = json.loads(json.dumps(session))
+        return json.loads(json.dumps(session))
+
+    def open_committee_session(
+        self,
+        session_id: str,
+        *,
+        opened_at: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        session = self.get_agora_session(session_id)
+        if session is None:
+            return None
+        if str(session.get("mode") or "").strip() != "committee":
+            return None
+        timestamp = opened_at or _utc_now_rfc3339()
+        session["status"] = "open"
+        session["openedAt"] = timestamp
+        session["updatedAt"] = timestamp
+        self._agora_sessions[session_id] = json.loads(json.dumps(session))
+        return json.loads(json.dumps(session))
+
+    def close_committee_session(
+        self,
+        session_id: str,
+        *,
+        closed_at: Optional[str] = None,
+        outcome: Optional[str] = None,
+        memo_ids: Optional[List[str]] = None,
+    ) -> Optional[Dict[str, Any]]:
+        session = self.get_agora_session(session_id)
+        if session is None:
+            return None
+        if str(session.get("mode") or "").strip() != "committee":
+            return None
+        timestamp = closed_at or _utc_now_rfc3339()
+        session["status"] = "closed"
+        session["closedAt"] = timestamp
+        session["updatedAt"] = timestamp
+        if outcome is not None:
+            session["outcome"] = outcome
+        if memo_ids is not None:
+            session["memoIds"] = memo_ids
+        self._agora_sessions[session_id] = json.loads(json.dumps(session))
+        return json.loads(json.dumps(session))
+
+    def submit_committee_session_memo(
+        self,
+        session_id: str,
+        *,
+        memo_id: str,
+        actor_id: str,
+        payload: Dict[str, Any],
+        created_at: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        session = self.get_agora_session(session_id)
+        if session is None or str(session.get("mode") or "").strip() != "committee":
+            return None
+        self._ensure_agora_containers()
+        payload = _redact_consult_memo_review_payload(payload)
+        timestamp = created_at or _utc_now_rfc3339()
+        memo_type = str(payload.get("memoType") or payload.get("memo_type") or "committee_summary").strip() or "committee_summary"
+        author_ref = json.loads(
+            json.dumps(
+                payload.get("authorRef")
+                or payload.get("author_ref")
+                or {"type": "operator", "id": actor_id}
+            )
+        )
+        evidence_refs = json.loads(
+            json.dumps(list(payload.get("evidenceRefs") or payload.get("evidence_refs") or []))
+        )
+        memo: Dict[str, Any] = {
+            "id": memo_id,
+            "memo_id": memo_id,
+            "memo_type": memo_type,
+            "status": "draft",
+            "lifecycle_state": "draft",
+            "linked_session_id": session_id,
+            "linked_request_id": (
+                payload.get("linkedRequestId")
+                or payload.get("linked_request_id")
+                or session.get("linkedRequestId")
+            ),
+            "author_ref": author_ref,
+            "session_to_memo_mapping": {
+                "mapping_id": f"map-{memo_id}",
+                "source_session_id": session_id,
+                "transcript_id": payload.get("transcriptId") or payload.get("transcript_id") or f"tr-{session_id}",
+                "transcript_version": payload.get("transcriptVersion") or payload.get("transcript_version"),
+                "memo_id": memo_id,
+                "memo_type": memo_type,
+                "created_by": author_ref if isinstance(author_ref, dict) else {"actor_type": "operator", "actor_id": str(author_ref)},
+                "evidence_refs": evidence_refs,
+                "mapping_status": "draft",
+                "created_at": timestamp,
+            },
+            "summary": str(payload.get("summary") or "").strip() or None,
+            "recommendations": json.loads(json.dumps(list(payload.get("recommendations") or []))),
+            "evidence_refs": evidence_refs,
+            "created_at": timestamp,
+            "published_at": None,
+            "governance_target": {
+                "target_type": "artifact",
+                "target_id": session_id,
+            },
+        }
+        self._agora_memos[memo_id] = memo
+        return self._project_consult_memo_detail(json.loads(json.dumps(memo)))
+
+    def list_committee_session_memos(self, session_id: str) -> List[Dict[str, Any]]:
+        self._ensure_agora_containers()
+        memos = [
+            memo
+            for memo in self._agora_memos.values()
+            if isinstance(memo, dict) and str(memo.get("linked_session_id") or "") == str(session_id)
+        ]
+        memos.sort(key=lambda m: str(m.get("created_at") or ""), reverse=True)
+        return [self._project_consult_memo_summary(memo) for memo in memos]
+
+    def get_committee_session_memo(self, session_id: str, memo_id: str) -> Optional[Dict[str, Any]]:
+        self._ensure_agora_containers()
+        record = self._agora_memos.get(str(memo_id))
+        if record is None or str(record.get("linked_session_id") or "") != str(session_id):
+            return None
+        return self._project_consult_memo_detail(record)
+
+    def publish_committee_session_memo(
+        self,
+        session_id: str,
+        memo_id: str,
+        *,
+        actor_id: str,
+        published_at: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        self._ensure_agora_containers()
+        record = self._agora_memos.get(str(memo_id))
+        if record is None or str(record.get("linked_session_id") or "") != str(session_id):
+            return None
+        timestamp = published_at or _utc_now_rfc3339()
+        memo = json.loads(json.dumps(record))
+        memo["status"] = "published"
+        memo["lifecycle_state"] = "published"
+        memo["published_at"] = timestamp
+        memo["published_by"] = actor_id
+        mapping = memo.get("session_to_memo_mapping")
+        if isinstance(mapping, dict):
+            mapping["mapping_status"] = "active"
+        self._agora_memos[memo_id] = memo
+        return self._project_consult_memo_detail(memo)
+
+    def get_agora_committee_evidence_pack(self, session_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        if not session_id:
+            return None
+        self._ensure_agora_containers()
+        for record in self._agora_evidence_packs.values():
+            if str(record.get("sessionId") or record.get("session_id") or "") == str(session_id):
+                return json.loads(json.dumps(record))
+        return None
+
+    def create_agora_committee_evidence_pack(
+        self,
+        session_id: str,
+        *,
+        payload: Dict[str, Any],
+        actor_id: str,
+        created_at: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        self._ensure_agora_containers()
+        timestamp = created_at or _utc_now_rfc3339()
+        existing = self.get_agora_committee_evidence_pack(session_id)
+        pack_id = str(payload.get("id") or payload.get("packId") or (existing or {}).get("id") or f"evpack-{uuid.uuid4().hex[:12]}")
+        pack = {
+            "id": pack_id,
+            "packId": pack_id,
+            "sessionId": session_id,
+            "targetEntityType": str(payload.get("targetEntityType") or payload.get("target_entity_type") or "artifact"),
+            "targetEntityId": str(payload.get("targetEntityId") or payload.get("target_entity_id") or session_id),
+            "uploadedFiles": json.loads(json.dumps((existing or {}).get("uploadedFiles") or [])),
+            "linkedEntities": json.loads(json.dumps(payload.get("linkedEntities") or payload.get("linked_entities") or [])),
+            "notes": str(payload.get("notes") or ""),
+            "createdBy": (existing or {}).get("createdBy") or actor_id,
+            "createdAt": (existing or {}).get("createdAt") or timestamp,
+            "updatedAt": timestamp,
+            "canonicalWriteAuthority": "agora_committee_evidence_service",
+            "persistenceMode": "bff_local_dev_store",
+        }
+        self._agora_evidence_packs[pack_id] = json.loads(json.dumps(pack))
+        return json.loads(json.dumps(pack))
+
+    def append_agora_committee_evidence_files(
+        self,
+        session_id: str,
+        *,
+        files: List[Dict[str, Any]],
+        actor_id: str,
+        uploaded_at: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        self._ensure_agora_containers()
+        timestamp = uploaded_at or _utc_now_rfc3339()
+        pack = self.get_agora_committee_evidence_pack(session_id)
+        if pack is None:
+            pack = self.create_agora_committee_evidence_pack(
+                session_id,
+                payload={"targetEntityType": "artifact", "targetEntityId": session_id, "linkedEntities": [], "notes": ""},
+                actor_id=actor_id,
+                created_at=timestamp,
+            )
+        uploaded_files = list(pack.get("uploadedFiles") or [])
+        new_files: List[Dict[str, Any]] = []
+        for item in files:
+            file_id = str(item.get("id") or item.get("fileId") or f"evfile-{uuid.uuid4().hex[:12]}")
+            metadata = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
+            record = {
+                "id": file_id,
+                "fileName": str(item.get("fileName") or item.get("filename") or item.get("name") or ""),
+                "mimeType": str(item.get("mimeType") or item.get("mime_type") or ""),
+                "sizeBytes": int(item.get("sizeBytes") or item.get("size_bytes") or 0),
+                "storageUrl": str(item.get("storageUrl") or item.get("storage_url") or f"bff://agora/committee/{session_id}/evidence/{file_id}"),
+                "extractedTextStatus": str(item.get("extractedTextStatus") or item.get("extracted_text_status") or "not_started"),
+                "metadata": json.loads(json.dumps(metadata)),
+                "uploadedBy": metadata.get("uploadedBy") or actor_id,
+                "createdAt": metadata.get("createdAt") or timestamp,
+            }
+            uploaded_files.append(record)
+            new_files.append(record)
+        pack = json.loads(json.dumps(pack))
+        pack["uploadedFiles"] = uploaded_files
+        pack["updatedAt"] = timestamp
+        self._agora_evidence_packs[str(pack["id"])] = pack
+        result = json.loads(json.dumps(pack))
+        result["newFiles"] = json.loads(json.dumps(new_files))
+        return result
+
+    def list_agora_signals(self) -> List[Dict[str, Any]]:
+        self._ensure_agora_containers()
+        signals = list(self._agora_signals.values())
+        signals.sort(key=lambda s: str(s.get("createdAt") or ""), reverse=True)
+        return json.loads(json.dumps(signals))
+
+    def get_agora_signal(self, signal_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        if not signal_id:
+            return None
+        self._ensure_agora_containers()
+        sig = self._agora_signals.get(str(signal_id))
+        return json.loads(json.dumps(sig)) if sig is not None else None
+
+    def create_agora_signal(
+        self,
+        *,
+        signal_id: str,
+        title: str,
+        body: str,
+        actor_id: str,
+        payload: Dict[str, Any],
+        created_at: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        self._ensure_agora_containers()
+        timestamp = created_at or _utc_now_rfc3339()
+        signal = {
+            "id": signal_id,
+            "signalId": signal_id,
+            "title": title,
+            "body": body,
+            "source": payload.get("source") or "manual",
+            "status": payload.get("status") or "new",
+            "confidence": payload.get("confidence") or 0.8,
+            "payload": json.loads(json.dumps(payload)),
+            "createdBy": actor_id,
+            "createdAt": timestamp,
+            "updatedAt": timestamp,
+        }
+        self._agora_signals[signal_id] = json.loads(json.dumps(signal))
+        return json.loads(json.dumps(signal))
+
+    def create_agora_feedback(
+        self,
+        signal_id: str,
+        *,
+        verdict: str,
+        memo: Optional[str],
+        actor_id: str,
+        created_at: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        self._ensure_agora_containers()
+        timestamp = created_at or _utc_now_rfc3339()
+        fb_id = f"fb-{uuid.uuid4().hex[:10]}"
+        feedback = {
+            "id": fb_id,
+            "feedbackId": fb_id,
+            "signalId": signal_id,
+            "verdict": verdict,
+            "memo": memo,
+            "createdBy": actor_id,
+            "createdAt": timestamp,
+        }
+        self._agora_feedback[fb_id] = json.loads(json.dumps(feedback))
+        return json.loads(json.dumps(feedback))
+
+    def record_agora_signal_feedback(
+        self,
+        signal_id: str,
+        *,
+        decision: str,
+        confidence: int,
+        reason: Optional[str],
+        actor_id: str,
+        edit_window_seconds: int,
+        recorded_at: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        self._ensure_agora_containers()
+        timestamp = recorded_at or _utc_now_rfc3339()
+        fb = {
+            "signalId": signal_id,
+            "decision": decision,
+            "confidence": confidence,
+            "reason": reason,
+            "actorId": actor_id,
+            "editWindowSeconds": edit_window_seconds,
+            "recordedAt": timestamp,
+        }
+        self._agora_feedback[signal_id] = fb
+        return dict(fb)
+
+    def list_agora_notes(self) -> List[Dict[str, Any]]:
+        self._ensure_agora_containers()
+        notes = list(self._agora_notes.values())
+        notes.sort(key=lambda n: str(n.get("created_at") or ""), reverse=True)
+        return json.loads(json.dumps(notes))
+
+    def create_agora_note(
+        self,
+        *,
+        note_id: str,
+        title: Optional[str],
+        body: str,
+        actor_id: str,
+        payload: Dict[str, Any],
+        created_at: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        self._ensure_agora_containers()
+        timestamp = created_at or _utc_now_rfc3339()
+        note = {
+            "id": note_id,
+            "note_id": note_id,
+            "title": title,
+            "body": body,
+            "attachment_type": payload.get("attachment_type") or "free_standing",
+            "attachment_ref": json.loads(json.dumps(payload.get("attachment_ref"))),
+            "owner_ref": payload.get("owner_ref") or {"owner_type": "operator", "owner_id": actor_id},
+            "tags": list(payload.get("tags") or []),
+            "linked_evidence_refs": list(payload.get("linked_evidence_refs") or payload.get("linkedEvidenceRefs") or []),
+            "linked_memory_anchors": list(payload.get("linked_memory_anchors") or payload.get("linkedMemoryAnchors") or []),
+            "created_at": timestamp,
+            "updated_at": timestamp,
+            "created_by": actor_id,
+        }
+        self._agora_notes[note_id] = json.loads(json.dumps(note))
+        return json.loads(json.dumps(note))
+
+    def list_agora_insights(self) -> List[Dict[str, Any]]:
+        self._ensure_agora_containers()
+        insights = list(self._agora_insights.values())
+        insights.sort(key=lambda i: str(i.get("created_at") or ""), reverse=True)
+        return json.loads(json.dumps(insights))
+
+    def create_agora_insight(
+        self,
+        *,
+        insight_id: str,
+        summary: str,
+        actor_id: str,
+        payload: Dict[str, Any],
+        created_at: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        self._ensure_agora_containers()
+        timestamp = created_at or _utc_now_rfc3339()
+        insight = {
+            "id": insight_id,
+            "insight_id": insight_id,
+            "summary": summary,
+            "scope": payload.get("scope") or "global",
+            "scope_ref": payload.get("scope_ref") or payload.get("scopeRef"),
+            "status": payload.get("status") or "classified",
+            "confidence": json.loads(json.dumps(payload.get("confidence") or {})),
+            "tags": list(payload.get("tags") or []),
+            "source_ref": payload.get("source_ref") or payload.get("sourceRef") or f"agora:{insight_id}",
+            "supporting_evidence_refs": json.loads(
+                json.dumps(payload.get("supporting_evidence_refs") or payload.get("supportingEvidenceRefs") or [])
+            ),
+            "linked_sources": json.loads(json.dumps(payload.get("linked_sources") or payload.get("linkedSources") or [])),
+            "aggregation_provenance": {
+                "created_by": actor_id,
+                "aggregated_at": timestamp,
+                **(payload.get("aggregation_provenance") or {}),
+            },
+            "created_at": timestamp,
+            "updated_at": timestamp,
+        }
+        self._agora_insights[insight_id] = json.loads(json.dumps(insight))
+        return json.loads(json.dumps(insight))
+
+    def list_agora_training_examples(self) -> List[Dict[str, Any]]:
+        self._ensure_agora_containers()
+        examples = list(self._agora_training_examples.values())
+        examples.sort(key=lambda e: str(e.get("createdAt") or ""), reverse=True)
+        return json.loads(json.dumps(examples))
+
+    def create_agora_training_example(
+        self,
+        *,
+        example_id: str,
+        payload: Dict[str, Any],
+        actor_id: str,
+        created_at: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        self._ensure_agora_containers()
+        timestamp = created_at or _utc_now_rfc3339()
+        example = {
+            "id": example_id,
+            "trainingExampleId": example_id,
+            "source": payload.get("source") or "agora",
+            "personaId": payload.get("personaId") or payload.get("persona_id"),
+            "input": json.loads(json.dumps(payload.get("input") or {})),
+            "expected": json.loads(json.dumps(payload.get("expected") or {})),
+            "labels": list(payload.get("labels") or []),
+            "status": payload.get("status") or "draft",
+            "createdBy": actor_id,
+            "createdAt": timestamp,
+            "updatedAt": timestamp,
+        }
+        self._agora_training_examples[example_id] = json.loads(json.dumps(example))
+        return json.loads(json.dumps(example))
+
+    def record_agora_audit_event(self, event: Dict[str, Any]) -> Dict[str, Any]:
+        self._ensure_agora_containers()
+        timestamp = str(event.get("recordedAt") or event.get("timestamp") or _utc_now_rfc3339())
+        event_id = str(event.get("auditId") or event.get("eventId") or f"aud-agora-{uuid.uuid4().hex[:12]}")
+        record = {
+            "auditId": event_id,
+            "recordedAt": timestamp,
+            **json.loads(json.dumps(event)),
+        }
+        self._agora_audit_events[event_id] = json.loads(json.dumps(record))
+        return json.loads(json.dumps(record))
+
+    def list_agora_handoffs(
+        self,
+        *,
+        status: Optional[str] = None,
+        handoff_type: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        self._ensure_agora_containers()
+        items = list(self._agora_handoffs.values())
+        if status:
+            requested = str(status).strip().lower()
+            items = [item for item in items if str(item.get("status") or "").strip().lower() == requested]
+        if handoff_type:
+            requested_type = str(handoff_type).strip()
+            items = [item for item in items if str(item.get("handoffType") or "") == requested_type]
+        items.sort(key=lambda x: str(x.get("createdAt") or ""), reverse=True)
+        return json.loads(json.dumps(items))
+
+    def create_agora_handoff(
+        self,
+        *,
+        handoff_id: str,
+        handoff_type: str,
+        source_route: str,
+        source_entity: Dict[str, Any],
+        destination_route: str,
+        destination_queue: str,
+        priority: str,
+        payload: Dict[str, Any],
+        actor_id: str,
+        created_at: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        self._ensure_agora_containers()
+        timestamp = created_at or _utc_now_rfc3339()
+        record = {
+            "id": handoff_id,
+            "handoffId": handoff_id,
+            "handoffType": handoff_type,
+            "status": "submitted",
+            "source": {
+                "app": "agora",
+                "route": source_route,
+                "entity": json.loads(json.dumps(source_entity)),
+            },
+            "destination": {
+                "app": "management",
+                "route": destination_route,
+                "queue": destination_queue,
+            },
+            "priority": priority,
+            "payload": json.loads(json.dumps(payload)),
+            "createdBy": {"type": "operator", "id": actor_id},
+            "createdAt": timestamp,
+            "updatedAt": timestamp,
+            "canonicalWriteAuthority": "agora_handoff_service",
+            "persistenceMode": "bff_local_dev_store",
+        }
+        self._agora_handoffs[handoff_id] = json.loads(json.dumps(record))
+        return json.loads(json.dumps(record))
+
+    def list_decision_journal_entries(
+        self,
+        *,
+        tags: Optional[List[str]] = None,
+        persona_id: Optional[str] = None,
+        strategy_id: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        self._ensure_agora_containers()
+        entries = list(self._decision_journal_entries.values())
+        if persona_id:
+            entries = [e for e in entries if persona_id in (e.get("linked_persona_ids") or [])]
+        if strategy_id:
+            entries = [e for e in entries if strategy_id in (e.get("linked_strategy_ids") or [])]
+        entries.sort(key=lambda e: str(e.get("created_at") or ""), reverse=True)
+        return json.loads(json.dumps(entries))
+
+    def create_decision_journal_entry(
+        self,
+        *,
+        entry_id: str,
+        title: str,
+        body: str,
+        tags: List[str],
+        linked_strategy_ids: List[str],
+        linked_persona_ids: List[str],
+        visibility: str,
+        actor_id: str,
+        created_at: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        self._ensure_agora_containers()
+        timestamp = created_at or _utc_now_rfc3339()
+        entry = {
+            "id": entry_id,
+            "entry_id": entry_id,
+            "title": title,
+            "body": body,
+            "tags": list(tags or []),
+            "linked_strategy_ids": list(linked_strategy_ids or []),
+            "linked_persona_ids": list(linked_persona_ids or []),
+            "visibility": visibility,
+            "actor_id": actor_id,
+            "created_by": actor_id,
+            "created_at": timestamp,
+            "updated_at": timestamp,
+        }
+        self._decision_journal_entries[entry_id] = json.loads(json.dumps(entry))
+        return json.loads(json.dumps(entry))
+
+    def patch_decision_journal_entry(
+        self,
+        entry_id: str,
+        *,
+        patch: Dict[str, Any],
+        actor_id: str,
+        correlation_id: Optional[str],
+        idempotency_key: str,
+        request_hash: str,
+        patched_at: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        self._ensure_agora_containers()
+        entry = self._decision_journal_entries.get(str(entry_id))
+        if entry is None:
+            return None
+        timestamp = patched_at or _utc_now_rfc3339()
+        for k, v in (patch or {}).items():
+            if v is not None:
+                entry[k] = _model_to_data(v) if not isinstance(v, (str, int, float, bool, type(None))) else v
+        entry["updated_at"] = timestamp
+        self._decision_journal_entries[entry_id] = json.loads(json.dumps(entry))
+        audit = {
+            "auditId": f"aud-{uuid.uuid4().hex[:10]}",
+            "action": "agora.journal.patch",
+            "targetType": "DecisionJournalEntry",
+            "targetId": entry_id,
+            "actorId": actor_id,
+            "recordedAt": timestamp,
+            "diff": {"changedFields": list((patch or {}).keys())},
+        }
+        return {"status": "updated", "entry": json.loads(json.dumps(entry)), "audit": audit}
+
+    def record_sponsor_decision(
+        self,
+        committee_id: str,
+        *,
+        sponsor_decision: str,
+        rationale_ref: str,
+        actor_id: str,
+        recorded_at: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        self._ensure_agora_containers()
+        timestamp = recorded_at or _utc_now_rfc3339()
+        record = {
+            "committee_id": committee_id,
+            "sponsor_decision": sponsor_decision,
+            "rationale_ref": rationale_ref,
+            "actor_id": actor_id,
+            "recorded_at": timestamp,
+        }
+        self._sponsor_decisions[committee_id] = record
+        return dict(record)
+
+    def get_committee(self, committee_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        if not committee_id:
+            return None
+        self._ensure_agora_containers()
+        comm = self._committees.get(str(committee_id))
+        return json.loads(json.dumps(comm)) if comm is not None else None
+
+    def list_committees(self) -> List[Dict[str, Any]]:
+        self._ensure_agora_containers()
+        return json.loads(json.dumps(list(self._committees.values())))
+
+    def get_consult_policy(self, persona_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        if not persona_id:
+            return None
+        self._ensure_agora_containers()
+        rule = self._consult_policies.get(str(persona_id))
+        if rule is not None:
+            return json.loads(json.dumps(rule))
+        for r in self.list_consult_rules():
+            if str(r.get("persona_id") or "") == str(persona_id):
+                return json.loads(json.dumps(r))
+        return None
+
+    def get_persona_consult_policy(self, persona_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        return self.get_consult_policy(persona_id)
+
+    def list_agora_watchlist(self) -> List[Dict[str, Any]]:
+        return []
+
+
 # =====================================================================
 # Composite & In-Memory Ports
 # =====================================================================
@@ -2590,6 +3299,372 @@ class CompositeOperationsConsultationPort:
 
     def get_consult_memo(self, memo_id: Optional[str]) -> Optional[Dict[str, Any]]:
         return self._consultation.get_consult_memo(memo_id)
+
+    # Agora Operations & Decision Journal & Sponsor Decision delegation
+    def get_agora_session(self, session_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        return self._consultation.get_agora_session(session_id)
+
+    def list_agora_sessions(self) -> List[Dict[str, Any]]:
+        return self._consultation.list_agora_sessions()
+
+    def create_agora_session(
+        self,
+        *,
+        session_id: str,
+        title: str,
+        actor_id: str,
+        payload: Dict[str, Any],
+        created_at: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        return self._consultation.create_agora_session(
+            session_id=session_id,
+            title=title,
+            actor_id=actor_id,
+            payload=payload,
+            created_at=created_at,
+        )
+
+    def open_committee_session(
+        self,
+        session_id: str,
+        *,
+        opened_at: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        return self._consultation.open_committee_session(session_id, opened_at=opened_at)
+
+    def close_committee_session(
+        self,
+        session_id: str,
+        *,
+        closed_at: Optional[str] = None,
+        outcome: Optional[str] = None,
+        memo_ids: Optional[List[str]] = None,
+    ) -> Optional[Dict[str, Any]]:
+        return self._consultation.close_committee_session(
+            session_id,
+            closed_at=closed_at,
+            outcome=outcome,
+            memo_ids=memo_ids,
+        )
+
+    def submit_committee_session_memo(
+        self,
+        session_id: str,
+        *,
+        memo_id: str,
+        actor_id: str,
+        payload: Dict[str, Any],
+        created_at: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        return self._consultation.submit_committee_session_memo(
+            session_id,
+            memo_id=memo_id,
+            actor_id=actor_id,
+            payload=payload,
+            created_at=created_at,
+        )
+
+    def list_committee_session_memos(self, session_id: str) -> List[Dict[str, Any]]:
+        return self._consultation.list_committee_session_memos(session_id)
+
+    def get_committee_session_memo(self, session_id: str, memo_id: str) -> Optional[Dict[str, Any]]:
+        return self._consultation.get_committee_session_memo(session_id, memo_id)
+
+    def publish_committee_session_memo(
+        self,
+        session_id: str,
+        memo_id: str,
+        *,
+        actor_id: str,
+        published_at: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        return self._consultation.publish_committee_session_memo(
+            session_id,
+            memo_id,
+            actor_id=actor_id,
+            published_at=published_at,
+        )
+
+    def get_agora_committee_evidence_pack(self, session_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        return self._consultation.get_agora_committee_evidence_pack(session_id)
+
+    def create_agora_committee_evidence_pack(
+        self,
+        session_id: str,
+        *,
+        payload: Dict[str, Any],
+        actor_id: str,
+        created_at: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        return self._consultation.create_agora_committee_evidence_pack(
+            session_id,
+            payload=payload,
+            actor_id=actor_id,
+            created_at=created_at,
+        )
+
+    def append_agora_committee_evidence_files(
+        self,
+        session_id: str,
+        *,
+        files: List[Dict[str, Any]],
+        actor_id: str,
+        uploaded_at: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        return self._consultation.append_agora_committee_evidence_files(
+            session_id,
+            files=files,
+            actor_id=actor_id,
+            uploaded_at=uploaded_at,
+        )
+
+    def list_agora_signals(self) -> List[Dict[str, Any]]:
+        return self._consultation.list_agora_signals()
+
+    def get_agora_signal(self, signal_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        return self._consultation.get_agora_signal(signal_id)
+
+    def create_agora_signal(
+        self,
+        *,
+        signal_id: str,
+        title: str,
+        body: str,
+        actor_id: str,
+        payload: Dict[str, Any],
+        created_at: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        return self._consultation.create_agora_signal(
+            signal_id=signal_id,
+            title=title,
+            body=body,
+            actor_id=actor_id,
+            payload=payload,
+            created_at=created_at,
+        )
+
+    def create_agora_feedback(
+        self,
+        signal_id: str,
+        *,
+        verdict: str,
+        memo: Optional[str],
+        actor_id: str,
+        created_at: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        return self._consultation.create_agora_feedback(
+            signal_id,
+            verdict=verdict,
+            memo=memo,
+            actor_id=actor_id,
+            created_at=created_at,
+        )
+
+    def record_agora_signal_feedback(
+        self,
+        signal_id: str,
+        *,
+        decision: str,
+        confidence: int,
+        reason: Optional[str],
+        actor_id: str,
+        edit_window_seconds: int,
+        recorded_at: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        return self._consultation.record_agora_signal_feedback(
+            signal_id,
+            decision=decision,
+            confidence=confidence,
+            reason=reason,
+            actor_id=actor_id,
+            edit_window_seconds=edit_window_seconds,
+            recorded_at=recorded_at,
+        )
+
+    def list_agora_notes(self) -> List[Dict[str, Any]]:
+        return self._consultation.list_agora_notes()
+
+    def create_agora_note(
+        self,
+        *,
+        note_id: str,
+        title: Optional[str],
+        body: str,
+        actor_id: str,
+        payload: Dict[str, Any],
+        created_at: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        return self._consultation.create_agora_note(
+            note_id=note_id,
+            title=title,
+            body=body,
+            actor_id=actor_id,
+            payload=payload,
+            created_at=created_at,
+        )
+
+    def list_agora_insights(self) -> List[Dict[str, Any]]:
+        return self._consultation.list_agora_insights()
+
+    def create_agora_insight(
+        self,
+        *,
+        insight_id: str,
+        summary: str,
+        actor_id: str,
+        payload: Dict[str, Any],
+        created_at: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        return self._consultation.create_agora_insight(
+            insight_id=insight_id,
+            summary=summary,
+            actor_id=actor_id,
+            payload=payload,
+            created_at=created_at,
+        )
+
+    def list_agora_training_examples(self) -> List[Dict[str, Any]]:
+        return self._consultation.list_agora_training_examples()
+
+    def create_agora_training_example(
+        self,
+        *,
+        example_id: str,
+        payload: Dict[str, Any],
+        actor_id: str,
+        created_at: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        return self._consultation.create_agora_training_example(
+            example_id=example_id,
+            payload=payload,
+            actor_id=actor_id,
+            created_at=created_at,
+        )
+
+    def record_agora_audit_event(self, event: Dict[str, Any]) -> Dict[str, Any]:
+        return self._consultation.record_agora_audit_event(event)
+
+    def list_agora_handoffs(
+        self,
+        *,
+        status: Optional[str] = None,
+        handoff_type: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        return self._consultation.list_agora_handoffs(status=status, handoff_type=handoff_type)
+
+    def create_agora_handoff(
+        self,
+        *,
+        handoff_id: str,
+        handoff_type: str,
+        source_route: str,
+        source_entity: Dict[str, Any],
+        destination_route: str,
+        destination_queue: str,
+        priority: str,
+        payload: Dict[str, Any],
+        actor_id: str,
+        created_at: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        return self._consultation.create_agora_handoff(
+            handoff_id=handoff_id,
+            handoff_type=handoff_type,
+            source_route=source_route,
+            source_entity=source_entity,
+            destination_route=destination_route,
+            destination_queue=destination_queue,
+            priority=priority,
+            payload=payload,
+            actor_id=actor_id,
+            created_at=created_at,
+        )
+
+    def list_decision_journal_entries(
+        self,
+        *,
+        tags: Optional[List[str]] = None,
+        persona_id: Optional[str] = None,
+        strategy_id: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        return self._consultation.list_decision_journal_entries(tags=tags, persona_id=persona_id, strategy_id=strategy_id)
+
+    def create_decision_journal_entry(
+        self,
+        *,
+        entry_id: str,
+        title: str,
+        body: str,
+        tags: List[str],
+        linked_strategy_ids: List[str],
+        linked_persona_ids: List[str],
+        visibility: str,
+        actor_id: str,
+        created_at: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        return self._consultation.create_decision_journal_entry(
+            entry_id=entry_id,
+            title=title,
+            body=body,
+            tags=tags,
+            linked_strategy_ids=linked_strategy_ids,
+            linked_persona_ids=linked_persona_ids,
+            visibility=visibility,
+            actor_id=actor_id,
+            created_at=created_at,
+        )
+
+    def patch_decision_journal_entry(
+        self,
+        entry_id: str,
+        *,
+        patch: Dict[str, Any],
+        actor_id: str,
+        correlation_id: Optional[str],
+        idempotency_key: str,
+        request_hash: str,
+        patched_at: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        return self._consultation.patch_decision_journal_entry(
+            entry_id,
+            patch=patch,
+            actor_id=actor_id,
+            correlation_id=correlation_id,
+            idempotency_key=idempotency_key,
+            request_hash=request_hash,
+            patched_at=patched_at,
+        )
+
+    def record_sponsor_decision(
+        self,
+        committee_id: str,
+        *,
+        sponsor_decision: str,
+        rationale_ref: str,
+        actor_id: str,
+        recorded_at: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        return self._consultation.record_sponsor_decision(
+            committee_id,
+            sponsor_decision=sponsor_decision,
+            rationale_ref=rationale_ref,
+            actor_id=actor_id,
+            recorded_at=recorded_at,
+        )
+
+    def get_committee(self, committee_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        return self._consultation.get_committee(committee_id)
+
+    def list_committees(self) -> List[Dict[str, Any]]:
+        return self._consultation.list_committees()
+
+    def get_consult_policy(self, persona_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        return self._consultation.get_consult_policy(persona_id)
+
+    def get_persona_consult_policy(self, persona_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        return self._consultation.get_persona_consult_policy(persona_id)
+
+    def list_agora_watchlist(self) -> List[Dict[str, Any]]:
+        return self._consultation.list_agora_watchlist()
 
     def dataset_source(self, dataset: str) -> str:
         if dataset in ("workflow_templates", "hook_registry", "governance_permissions", "memory_governance_rules", "consult_rules", "route_policies", "alpha_factory_cards", "skills", "tools", "mcp_servers", "mcp_tools"):
@@ -2917,6 +3992,770 @@ class InMemoryOperationsConsultationPort:
         if not memo_id:
             return None
         return self.consult_memos.get(memo_id)
+
+    # Agora Operations & Decision Journal & Sponsor Decision in InMemory port
+    def _ensure_agora_containers(self) -> None:
+        if not hasattr(self, "_agora_sessions"):
+            self._agora_sessions: Dict[str, Dict[str, Any]] = {}
+        if not hasattr(self, "_agora_memos"):
+            self._agora_memos: Dict[str, Dict[str, Any]] = {}
+        if not hasattr(self, "_agora_evidence_packs"):
+            self._agora_evidence_packs: Dict[str, Dict[str, Any]] = {}
+        if not hasattr(self, "_agora_signals"):
+            self._agora_signals: Dict[str, Dict[str, Any]] = {}
+        if not hasattr(self, "_agora_feedback"):
+            self._agora_feedback: Dict[str, Dict[str, Any]] = {}
+        if not hasattr(self, "_agora_notes"):
+            self._agora_notes: Dict[str, Dict[str, Any]] = {}
+        if not hasattr(self, "_agora_insights"):
+            self._agora_insights: Dict[str, Dict[str, Any]] = {}
+        if not hasattr(self, "_agora_training_examples"):
+            self._agora_training_examples: Dict[str, Dict[str, Any]] = {}
+        if not hasattr(self, "_agora_audit_events"):
+            self._agora_audit_events: Dict[str, Dict[str, Any]] = {}
+        if not hasattr(self, "_agora_handoffs"):
+            self._agora_handoffs: Dict[str, Dict[str, Any]] = {}
+        if not hasattr(self, "_decision_journal_entries"):
+            self._decision_journal_entries: Dict[str, Dict[str, Any]] = {}
+        if not hasattr(self, "_sponsor_decisions"):
+            self._sponsor_decisions: Dict[str, Dict[str, Any]] = {}
+        if not hasattr(self, "_committees"):
+            self._committees: Dict[str, Dict[str, Any]] = {}
+        if not hasattr(self, "_consult_policies"):
+            self._consult_policies: Dict[str, Dict[str, Any]] = {}
+
+    def get_agora_session(self, session_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        if not session_id:
+            return None
+        self._ensure_agora_containers()
+        session = self._agora_sessions.get(str(session_id))
+        return json.loads(json.dumps(session)) if session is not None else None
+
+    def list_agora_sessions(self) -> List[Dict[str, Any]]:
+        self._ensure_agora_containers()
+        sessions = list(self._agora_sessions.values())
+        sessions.sort(key=lambda s: str(s.get("updatedAt") or s.get("createdAt") or ""), reverse=True)
+        return json.loads(json.dumps(sessions))
+
+    def create_agora_session(
+        self,
+        *,
+        session_id: str,
+        title: str,
+        actor_id: str,
+        payload: Dict[str, Any],
+        created_at: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        self._ensure_agora_containers()
+        timestamp = created_at or _utc_now_rfc3339()
+        session = {
+            "id": session_id,
+            "sessionId": session_id,
+            "title": title,
+            "mode": payload.get("mode") or payload.get("sessionType") or "quick_ask",
+            "status": payload.get("status") or "active",
+            "participants": json.loads(json.dumps(payload.get("participants") or [])),
+            "contextRefs": json.loads(json.dumps(payload.get("contextRefs") or payload.get("context_refs") or [])),
+            "messages": json.loads(json.dumps(payload.get("messages") or [])),
+            "createdBy": actor_id,
+            "createdAt": timestamp,
+            "updatedAt": timestamp,
+        }
+        for _committee_field in ("quorumState", "consensusState", "participantRoster", "linkedRequestId"):
+            if payload.get(_committee_field) is not None:
+                session[_committee_field] = json.loads(json.dumps(payload[_committee_field]))
+        self._agora_sessions[session_id] = json.loads(json.dumps(session))
+        return json.loads(json.dumps(session))
+
+    def open_committee_session(
+        self,
+        session_id: str,
+        *,
+        opened_at: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        session = self.get_agora_session(session_id)
+        if session is None:
+            return None
+        if str(session.get("mode") or "").strip() != "committee":
+            return None
+        timestamp = opened_at or _utc_now_rfc3339()
+        session["status"] = "open"
+        session["openedAt"] = timestamp
+        session["updatedAt"] = timestamp
+        self._agora_sessions[session_id] = json.loads(json.dumps(session))
+        return json.loads(json.dumps(session))
+
+    def close_committee_session(
+        self,
+        session_id: str,
+        *,
+        closed_at: Optional[str] = None,
+        outcome: Optional[str] = None,
+        memo_ids: Optional[List[str]] = None,
+    ) -> Optional[Dict[str, Any]]:
+        session = self.get_agora_session(session_id)
+        if session is None:
+            return None
+        if str(session.get("mode") or "").strip() != "committee":
+            return None
+        timestamp = closed_at or _utc_now_rfc3339()
+        session["status"] = "closed"
+        session["closedAt"] = timestamp
+        session["updatedAt"] = timestamp
+        if outcome is not None:
+            session["outcome"] = outcome
+        if memo_ids is not None:
+            session["memoIds"] = memo_ids
+        self._agora_sessions[session_id] = json.loads(json.dumps(session))
+        return json.loads(json.dumps(session))
+
+    def submit_committee_session_memo(
+        self,
+        session_id: str,
+        *,
+        memo_id: str,
+        actor_id: str,
+        payload: Dict[str, Any],
+        created_at: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        session = self.get_agora_session(session_id)
+        if session is None or str(session.get("mode") or "").strip() != "committee":
+            return None
+        self._ensure_agora_containers()
+        payload = _redact_consult_memo_review_payload(payload)
+        timestamp = created_at or _utc_now_rfc3339()
+        memo_type = str(payload.get("memoType") or payload.get("memo_type") or "committee_summary").strip() or "committee_summary"
+        author_ref = json.loads(
+            json.dumps(
+                payload.get("authorRef")
+                or payload.get("author_ref")
+                or {"type": "operator", "id": actor_id}
+            )
+        )
+        evidence_refs = json.loads(
+            json.dumps(list(payload.get("evidenceRefs") or payload.get("evidence_refs") or []))
+        )
+        memo: Dict[str, Any] = {
+            "id": memo_id,
+            "memo_id": memo_id,
+            "memo_type": memo_type,
+            "status": "draft",
+            "lifecycle_state": "draft",
+            "linked_session_id": session_id,
+            "linked_request_id": (
+                payload.get("linkedRequestId")
+                or payload.get("linked_request_id")
+                or session.get("linkedRequestId")
+            ),
+            "author_ref": author_ref,
+            "session_to_memo_mapping": {
+                "mapping_id": f"map-{memo_id}",
+                "source_session_id": session_id,
+                "transcript_id": payload.get("transcriptId") or payload.get("transcript_id") or f"tr-{session_id}",
+                "transcript_version": payload.get("transcriptVersion") or payload.get("transcript_version"),
+                "memo_id": memo_id,
+                "memo_type": memo_type,
+                "created_by": author_ref if isinstance(author_ref, dict) else {"actor_type": "operator", "actor_id": str(author_ref)},
+                "evidence_refs": evidence_refs,
+                "mapping_status": "draft",
+                "created_at": timestamp,
+            },
+            "summary": str(payload.get("summary") or "").strip() or None,
+            "recommendations": json.loads(json.dumps(list(payload.get("recommendations") or []))),
+            "evidence_refs": evidence_refs,
+            "created_at": timestamp,
+            "published_at": None,
+            "governance_target": {
+                "target_type": "artifact",
+                "target_id": session_id,
+            },
+        }
+        self._agora_memos[memo_id] = memo
+        return self._project_consult_memo_detail(json.loads(json.dumps(memo)))
+
+    def _project_consult_memo_summary(self, memo: Dict[str, Any]) -> Dict[str, Any]:
+        memo_id = str(memo.get("memo_id") or memo.get("id") or "").strip()
+        recommendations = list(memo.get("recommendations") or [])
+        return {
+            "memo_id": memo_id,
+            "id": memo_id,
+            "linked_session_id": memo.get("linked_session_id"),
+            "memo_type": memo.get("memo_type") or "red_team",
+            "status": memo.get("status") or memo.get("lifecycle_state") or "draft",
+            "linked_request_id": memo.get("linked_request_id"),
+            "recommendation_count": len(recommendations),
+            "published_at": memo.get("published_at"),
+            "created_at": memo.get("created_at"),
+            "route_href": f"/consultation/memos/{memo_id}" if memo_id else None,
+        }
+
+    def _project_consult_memo_detail(self, memo: Dict[str, Any]) -> Dict[str, Any]:
+        memo = _redact_consult_memo_review_payload(memo)
+        memo_id = str(memo.get("memo_id") or memo.get("id") or "").strip()
+        mapping = memo.get("session_to_memo_mapping") if isinstance(memo.get("session_to_memo_mapping"), dict) else {}
+        governance_target = memo.get("governance_target") if isinstance(memo.get("governance_target"), dict) else {}
+        return {
+            "object_ref": {
+                "type": "ConsultMemo",
+                "id": memo_id,
+            },
+            "memo_id": memo_id,
+            "memo_type": memo.get("memo_type") or "red_team",
+            "status": memo.get("status") or memo.get("lifecycle_state") or "draft",
+            "lifecycle_state": memo.get("lifecycle_state") or memo.get("status") or "draft",
+            "author_ref": memo.get("author_ref"),
+            "linked_request_id": memo.get("linked_request_id"),
+            "linked_session_id": memo.get("linked_session_id"),
+            "session_to_memo_mapping": {
+                "mapping_id": mapping.get("mapping_id"),
+                "source_session_id": mapping.get("source_session_id"),
+                "transcript_id": mapping.get("transcript_id"),
+                "transcript_version": mapping.get("transcript_version"),
+                "memo_id": mapping.get("memo_id") or memo_id,
+                "memo_type": mapping.get("memo_type") or memo.get("memo_type") or "red_team",
+                "created_by": dict(mapping.get("created_by") or {}),
+                "evidence_refs": list(mapping.get("evidence_refs") or []),
+                "mapping_status": mapping.get("mapping_status"),
+                "created_at": mapping.get("created_at"),
+            },
+            "summary": memo.get("summary"),
+            "recommendations": list(memo.get("recommendations") or []),
+            "evidence_refs": list(memo.get("evidence_refs") or []),
+            "published_at": memo.get("published_at"),
+            "created_at": memo.get("created_at"),
+            "supersedes_memo_id": memo.get("supersedes_memo_id"),
+            "superseded_by_memo_id": memo.get("superseded_by_memo_id"),
+            "surface_state": memo.get("surface_state") or "ok",
+            "governance_target": dict(governance_target),
+            "suppressed": bool(memo.get("suppressed")),
+            "withdrawn": bool(memo.get("withdrawn")),
+            "active_governance_review_id": memo.get("active_governance_review_id"),
+        }
+
+    def list_committee_session_memos(self, session_id: str) -> List[Dict[str, Any]]:
+        self._ensure_agora_containers()
+        memos = [
+            memo
+            for memo in self._agora_memos.values()
+            if isinstance(memo, dict) and str(memo.get("linked_session_id") or "") == str(session_id)
+        ]
+        memos.sort(key=lambda m: str(m.get("created_at") or ""), reverse=True)
+        return [self._project_consult_memo_summary(memo) for memo in memos]
+
+    def get_committee_session_memo(self, session_id: str, memo_id: str) -> Optional[Dict[str, Any]]:
+        self._ensure_agora_containers()
+        record = self._agora_memos.get(str(memo_id))
+        if record is None or str(record.get("linked_session_id") or "") != str(session_id):
+            return None
+        return self._project_consult_memo_detail(record)
+
+    def publish_committee_session_memo(
+        self,
+        session_id: str,
+        memo_id: str,
+        *,
+        actor_id: str,
+        published_at: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        self._ensure_agora_containers()
+        record = self._agora_memos.get(str(memo_id))
+        if record is None or str(record.get("linked_session_id") or "") != str(session_id):
+            return None
+        timestamp = published_at or _utc_now_rfc3339()
+        memo = json.loads(json.dumps(record))
+        memo["status"] = "published"
+        memo["lifecycle_state"] = "published"
+        memo["published_at"] = timestamp
+        memo["published_by"] = actor_id
+        mapping = memo.get("session_to_memo_mapping")
+        if isinstance(mapping, dict):
+            mapping["mapping_status"] = "active"
+        self._agora_memos[memo_id] = memo
+        return self._project_consult_memo_detail(memo)
+
+    def get_agora_committee_evidence_pack(self, session_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        if not session_id:
+            return None
+        self._ensure_agora_containers()
+        for record in self._agora_evidence_packs.values():
+            if str(record.get("sessionId") or record.get("session_id") or "") == str(session_id):
+                return json.loads(json.dumps(record))
+        return None
+
+    def create_agora_committee_evidence_pack(
+        self,
+        session_id: str,
+        *,
+        payload: Dict[str, Any],
+        actor_id: str,
+        created_at: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        self._ensure_agora_containers()
+        timestamp = created_at or _utc_now_rfc3339()
+        existing = self.get_agora_committee_evidence_pack(session_id)
+        pack_id = str(payload.get("id") or payload.get("packId") or (existing or {}).get("id") or f"evpack-{uuid.uuid4().hex[:12]}")
+        pack = {
+            "id": pack_id,
+            "packId": pack_id,
+            "sessionId": session_id,
+            "targetEntityType": str(payload.get("targetEntityType") or payload.get("target_entity_type") or "artifact"),
+            "targetEntityId": str(payload.get("targetEntityId") or payload.get("target_entity_id") or session_id),
+            "uploadedFiles": json.loads(json.dumps((existing or {}).get("uploadedFiles") or [])),
+            "linkedEntities": json.loads(json.dumps(payload.get("linkedEntities") or payload.get("linked_entities") or [])),
+            "notes": str(payload.get("notes") or ""),
+            "createdBy": (existing or {}).get("createdBy") or actor_id,
+            "createdAt": (existing or {}).get("createdAt") or timestamp,
+            "updatedAt": timestamp,
+            "canonicalWriteAuthority": "agora_committee_evidence_service",
+            "persistenceMode": "bff_local_dev_store",
+        }
+        self._agora_evidence_packs[pack_id] = json.loads(json.dumps(pack))
+        return json.loads(json.dumps(pack))
+
+    def append_agora_committee_evidence_files(
+        self,
+        session_id: str,
+        *,
+        files: List[Dict[str, Any]],
+        actor_id: str,
+        uploaded_at: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        self._ensure_agora_containers()
+        timestamp = uploaded_at or _utc_now_rfc3339()
+        pack = self.get_agora_committee_evidence_pack(session_id)
+        if pack is None:
+            pack = self.create_agora_committee_evidence_pack(
+                session_id,
+                payload={"targetEntityType": "artifact", "targetEntityId": session_id, "linkedEntities": [], "notes": ""},
+                actor_id=actor_id,
+                created_at=timestamp,
+            )
+        uploaded_files = list(pack.get("uploadedFiles") or [])
+        new_files: List[Dict[str, Any]] = []
+        for item in files:
+            file_id = str(item.get("id") or item.get("fileId") or f"evfile-{uuid.uuid4().hex[:12]}")
+            metadata = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
+            record = {
+                "id": file_id,
+                "fileName": str(item.get("fileName") or item.get("filename") or item.get("name") or ""),
+                "mimeType": str(item.get("mimeType") or item.get("mime_type") or ""),
+                "sizeBytes": int(item.get("sizeBytes") or item.get("size_bytes") or 0),
+                "storageUrl": str(item.get("storageUrl") or item.get("storage_url") or f"bff://agora/committee/{session_id}/evidence/{file_id}"),
+                "extractedTextStatus": str(item.get("extractedTextStatus") or item.get("extracted_text_status") or "not_started"),
+                "metadata": json.loads(json.dumps(metadata)),
+                "uploadedBy": metadata.get("uploadedBy") or actor_id,
+                "createdAt": metadata.get("createdAt") or timestamp,
+            }
+            uploaded_files.append(record)
+            new_files.append(record)
+        pack = json.loads(json.dumps(pack))
+        pack["uploadedFiles"] = uploaded_files
+        pack["updatedAt"] = timestamp
+        self._agora_evidence_packs[str(pack["id"])] = pack
+        result = json.loads(json.dumps(pack))
+        result["newFiles"] = json.loads(json.dumps(new_files))
+        return result
+
+    def list_agora_signals(self) -> List[Dict[str, Any]]:
+        self._ensure_agora_containers()
+        signals = list(self._agora_signals.values())
+        signals.sort(key=lambda s: str(s.get("createdAt") or ""), reverse=True)
+        return json.loads(json.dumps(signals))
+
+    def get_agora_signal(self, signal_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        if not signal_id:
+            return None
+        self._ensure_agora_containers()
+        sig = self._agora_signals.get(str(signal_id))
+        return json.loads(json.dumps(sig)) if sig is not None else None
+
+    def create_agora_signal(
+        self,
+        *,
+        signal_id: str,
+        title: str,
+        body: str,
+        actor_id: str,
+        payload: Dict[str, Any],
+        created_at: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        self._ensure_agora_containers()
+        timestamp = created_at or _utc_now_rfc3339()
+        signal = {
+            "id": signal_id,
+            "signalId": signal_id,
+            "title": title,
+            "body": body,
+            "source": payload.get("source") or "manual",
+            "status": payload.get("status") or "new",
+            "confidence": payload.get("confidence") or 0.8,
+            "payload": json.loads(json.dumps(payload)),
+            "createdBy": actor_id,
+            "createdAt": timestamp,
+            "updatedAt": timestamp,
+        }
+        self._agora_signals[signal_id] = json.loads(json.dumps(signal))
+        return json.loads(json.dumps(signal))
+
+    def create_agora_feedback(
+        self,
+        signal_id: str,
+        *,
+        verdict: str,
+        memo: Optional[str],
+        actor_id: str,
+        created_at: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        self._ensure_agora_containers()
+        timestamp = created_at or _utc_now_rfc3339()
+        fb_id = f"fb-{uuid.uuid4().hex[:10]}"
+        feedback = {
+            "id": fb_id,
+            "feedbackId": fb_id,
+            "signalId": signal_id,
+            "verdict": verdict,
+            "memo": memo,
+            "createdBy": actor_id,
+            "createdAt": timestamp,
+        }
+        self._agora_feedback[fb_id] = json.loads(json.dumps(feedback))
+        return json.loads(json.dumps(feedback))
+
+    def record_agora_signal_feedback(
+        self,
+        signal_id: str,
+        *,
+        decision: str,
+        confidence: int,
+        reason: Optional[str],
+        actor_id: str,
+        edit_window_seconds: int,
+        recorded_at: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        self._ensure_agora_containers()
+        timestamp = recorded_at or _utc_now_rfc3339()
+        fb = {
+            "signalId": signal_id,
+            "decision": decision,
+            "confidence": confidence,
+            "reason": reason,
+            "actorId": actor_id,
+            "editWindowSeconds": edit_window_seconds,
+            "recordedAt": timestamp,
+        }
+        self._agora_feedback[signal_id] = fb
+        return dict(fb)
+
+    def list_agora_notes(self) -> List[Dict[str, Any]]:
+        self._ensure_agora_containers()
+        notes = list(self._agora_notes.values())
+        notes.sort(key=lambda n: str(n.get("created_at") or ""), reverse=True)
+        return json.loads(json.dumps(notes))
+
+    def create_agora_note(
+        self,
+        *,
+        note_id: str,
+        title: Optional[str],
+        body: str,
+        actor_id: str,
+        payload: Dict[str, Any],
+        created_at: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        self._ensure_agora_containers()
+        timestamp = created_at or _utc_now_rfc3339()
+        note = {
+            "id": note_id,
+            "note_id": note_id,
+            "title": title,
+            "body": body,
+            "attachment_type": payload.get("attachment_type") or "free_standing",
+            "attachment_ref": json.loads(json.dumps(payload.get("attachment_ref"))),
+            "owner_ref": payload.get("owner_ref") or {"owner_type": "operator", "owner_id": actor_id},
+            "tags": list(payload.get("tags") or []),
+            "linked_evidence_refs": list(payload.get("linked_evidence_refs") or payload.get("linkedEvidenceRefs") or []),
+            "linked_memory_anchors": list(payload.get("linked_memory_anchors") or payload.get("linkedMemoryAnchors") or []),
+            "created_at": timestamp,
+            "updated_at": timestamp,
+            "created_by": actor_id,
+        }
+        self._agora_notes[note_id] = json.loads(json.dumps(note))
+        return json.loads(json.dumps(note))
+
+    def list_agora_insights(self) -> List[Dict[str, Any]]:
+        self._ensure_agora_containers()
+        insights = list(self._agora_insights.values())
+        insights.sort(key=lambda i: str(i.get("created_at") or ""), reverse=True)
+        return json.loads(json.dumps(insights))
+
+    def create_agora_insight(
+        self,
+        *,
+        insight_id: str,
+        summary: str,
+        actor_id: str,
+        payload: Dict[str, Any],
+        created_at: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        self._ensure_agora_containers()
+        timestamp = created_at or _utc_now_rfc3339()
+        insight = {
+            "id": insight_id,
+            "insight_id": insight_id,
+            "summary": summary,
+            "scope": payload.get("scope") or "global",
+            "scope_ref": payload.get("scope_ref") or payload.get("scopeRef"),
+            "status": payload.get("status") or "classified",
+            "confidence": json.loads(json.dumps(payload.get("confidence") or {})),
+            "tags": list(payload.get("tags") or []),
+            "source_ref": payload.get("source_ref") or payload.get("sourceRef") or f"agora:{insight_id}",
+            "supporting_evidence_refs": json.loads(
+                json.dumps(payload.get("supporting_evidence_refs") or payload.get("supportingEvidenceRefs") or [])
+            ),
+            "linked_sources": json.loads(json.dumps(payload.get("linked_sources") or payload.get("linkedSources") or [])),
+            "aggregation_provenance": {
+                "created_by": actor_id,
+                "aggregated_at": timestamp,
+                **(payload.get("aggregation_provenance") or {}),
+            },
+            "created_at": timestamp,
+            "updated_at": timestamp,
+        }
+        self._agora_insights[insight_id] = json.loads(json.dumps(insight))
+        return json.loads(json.dumps(insight))
+
+    def list_agora_training_examples(self) -> List[Dict[str, Any]]:
+        self._ensure_agora_containers()
+        examples = list(self._agora_training_examples.values())
+        examples.sort(key=lambda e: str(e.get("createdAt") or ""), reverse=True)
+        return json.loads(json.dumps(examples))
+
+    def create_agora_training_example(
+        self,
+        *,
+        example_id: str,
+        payload: Dict[str, Any],
+        actor_id: str,
+        created_at: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        self._ensure_agora_containers()
+        timestamp = created_at or _utc_now_rfc3339()
+        example = {
+            "id": example_id,
+            "trainingExampleId": example_id,
+            "source": payload.get("source") or "agora",
+            "personaId": payload.get("personaId") or payload.get("persona_id"),
+            "input": json.loads(json.dumps(payload.get("input") or {})),
+            "expected": json.loads(json.dumps(payload.get("expected") or {})),
+            "labels": list(payload.get("labels") or []),
+            "status": payload.get("status") or "draft",
+            "createdBy": actor_id,
+            "createdAt": timestamp,
+            "updatedAt": timestamp,
+        }
+        self._agora_training_examples[example_id] = json.loads(json.dumps(example))
+        return json.loads(json.dumps(example))
+
+    def record_agora_audit_event(self, event: Dict[str, Any]) -> Dict[str, Any]:
+        self._ensure_agora_containers()
+        timestamp = str(event.get("recordedAt") or event.get("timestamp") or _utc_now_rfc3339())
+        event_id = str(event.get("auditId") or event.get("eventId") or f"aud-agora-{uuid.uuid4().hex[:12]}")
+        record = {
+            "auditId": event_id,
+            "recordedAt": timestamp,
+            **json.loads(json.dumps(event)),
+        }
+        self._agora_audit_events[event_id] = json.loads(json.dumps(record))
+        return json.loads(json.dumps(record))
+
+    def list_agora_handoffs(
+        self,
+        *,
+        status: Optional[str] = None,
+        handoff_type: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        self._ensure_agora_containers()
+        items = list(self._agora_handoffs.values())
+        if status:
+            requested = str(status).strip().lower()
+            items = [item for item in items if str(item.get("status") or "").strip().lower() == requested]
+        if handoff_type:
+            requested_type = str(handoff_type).strip()
+            items = [item for item in items if str(item.get("handoffType") or "") == requested_type]
+        items.sort(key=lambda x: str(x.get("createdAt") or ""), reverse=True)
+        return json.loads(json.dumps(items))
+
+    def create_agora_handoff(
+        self,
+        *,
+        handoff_id: str,
+        handoff_type: str,
+        source_route: str,
+        source_entity: Dict[str, Any],
+        destination_route: str,
+        destination_queue: str,
+        priority: str,
+        payload: Dict[str, Any],
+        actor_id: str,
+        created_at: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        self._ensure_agora_containers()
+        timestamp = created_at or _utc_now_rfc3339()
+        record = {
+            "id": handoff_id,
+            "handoffId": handoff_id,
+            "handoffType": handoff_type,
+            "status": "submitted",
+            "source": {
+                "app": "agora",
+                "route": source_route,
+                "entity": json.loads(json.dumps(source_entity)),
+            },
+            "destination": {
+                "app": "management",
+                "route": destination_route,
+                "queue": destination_queue,
+            },
+            "priority": priority,
+            "payload": json.loads(json.dumps(payload)),
+            "createdBy": {"type": "operator", "id": actor_id},
+            "createdAt": timestamp,
+            "updatedAt": timestamp,
+            "canonicalWriteAuthority": "agora_handoff_service",
+            "persistenceMode": "bff_local_dev_store",
+        }
+        self._agora_handoffs[handoff_id] = json.loads(json.dumps(record))
+        return json.loads(json.dumps(record))
+
+    def list_decision_journal_entries(
+        self,
+        *,
+        tags: Optional[List[str]] = None,
+        persona_id: Optional[str] = None,
+        strategy_id: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        self._ensure_agora_containers()
+        entries = list(self._decision_journal_entries.values())
+        if persona_id:
+            entries = [e for e in entries if persona_id in (e.get("linked_persona_ids") or [])]
+        if strategy_id:
+            entries = [e for e in entries if strategy_id in (e.get("linked_strategy_ids") or [])]
+        entries.sort(key=lambda e: str(e.get("created_at") or ""), reverse=True)
+        return json.loads(json.dumps(entries))
+
+    def create_decision_journal_entry(
+        self,
+        *,
+        entry_id: str,
+        title: str,
+        body: str,
+        tags: List[str],
+        linked_strategy_ids: List[str],
+        linked_persona_ids: List[str],
+        visibility: str,
+        actor_id: str,
+        created_at: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        self._ensure_agora_containers()
+        timestamp = created_at or _utc_now_rfc3339()
+        entry = {
+            "id": entry_id,
+            "entry_id": entry_id,
+            "title": title,
+            "body": body,
+            "tags": list(tags or []),
+            "linked_strategy_ids": list(linked_strategy_ids or []),
+            "linked_persona_ids": list(linked_persona_ids or []),
+            "visibility": visibility,
+            "actor_id": actor_id,
+            "created_by": actor_id,
+            "created_at": timestamp,
+            "updated_at": timestamp,
+        }
+        self._decision_journal_entries[entry_id] = json.loads(json.dumps(entry))
+        return json.loads(json.dumps(entry))
+
+    def patch_decision_journal_entry(
+        self,
+        entry_id: str,
+        *,
+        patch: Dict[str, Any],
+        actor_id: str,
+        correlation_id: Optional[str],
+        idempotency_key: str,
+        request_hash: str,
+        patched_at: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        self._ensure_agora_containers()
+        entry = self._decision_journal_entries.get(str(entry_id))
+        if entry is None:
+            return None
+        timestamp = patched_at or _utc_now_rfc3339()
+        for k, v in (patch or {}).items():
+            if v is not None:
+                entry[k] = _model_to_data(v) if not isinstance(v, (str, int, float, bool, type(None))) else v
+        entry["updated_at"] = timestamp
+        self._decision_journal_entries[entry_id] = json.loads(json.dumps(entry))
+        audit = {
+            "auditId": f"aud-{uuid.uuid4().hex[:10]}",
+            "action": "agora.journal.patch",
+            "targetType": "DecisionJournalEntry",
+            "targetId": entry_id,
+            "actorId": actor_id,
+            "recordedAt": timestamp,
+            "diff": {"changedFields": list((patch or {}).keys())},
+        }
+        return {"status": "updated", "entry": json.loads(json.dumps(entry)), "audit": audit}
+
+    def record_sponsor_decision(
+        self,
+        committee_id: str,
+        *,
+        sponsor_decision: str,
+        rationale_ref: str,
+        actor_id: str,
+        recorded_at: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        self._ensure_agora_containers()
+        timestamp = recorded_at or _utc_now_rfc3339()
+        record = {
+            "committee_id": committee_id,
+            "sponsor_decision": sponsor_decision,
+            "rationale_ref": rationale_ref,
+            "actor_id": actor_id,
+            "recorded_at": timestamp,
+        }
+        self._sponsor_decisions[committee_id] = record
+        return dict(record)
+
+    def get_committee(self, committee_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        if not committee_id:
+            return None
+        self._ensure_agora_containers()
+        comm = self._committees.get(str(committee_id))
+        return json.loads(json.dumps(comm)) if comm is not None else None
+
+    def list_committees(self) -> List[Dict[str, Any]]:
+        self._ensure_agora_containers()
+        return json.loads(json.dumps(list(self._committees.values())))
+
+    def get_consult_policy(self, persona_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        if not persona_id:
+            return None
+        self._ensure_agora_containers()
+        rule = self._consult_policies.get(str(persona_id))
+        if rule is not None:
+            return json.loads(json.dumps(rule))
+        for r in self.list_consult_rules():
+            if str(r.get("persona_id") or "") == str(persona_id):
+                return json.loads(json.dumps(r))
+        return None
+
+    def get_persona_consult_policy(self, persona_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        return self.get_consult_policy(persona_id)
+
+    def list_agora_watchlist(self) -> List[Dict[str, Any]]:
+        return []
 
 
 def create_operations_consultation_port(

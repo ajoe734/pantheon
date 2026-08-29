@@ -154,20 +154,13 @@ class TestStaticRegressionReadSurfacePorts(unittest.TestCase):
         self.assertGreater(len(read_store_attrs), 100, "Expected >100 read_store attributes in main.py")
 
         ports_instance = create_read_surface_ports()
-        mutation_prefixes = (
-            "append_", "create_", "update_", "patch_", "put_", "record_",
-            "open_", "close_", "submit_", "publish_", "discard_", "commit_",
-        )
 
         unmapped: list[str] = []
-        mapped_reads: list[str] = []
-        isolated_mutations: list[str] = []
+        mapped_all: list[str] = []
 
         for attr in sorted(read_store_attrs):
-            if any(attr.startswith(pre) for pre in mutation_prefixes):
-                isolated_mutations.append(attr)
-            elif hasattr(ports_instance, attr):
-                mapped_reads.append(attr)
+            if hasattr(ports_instance, attr):
+                mapped_all.append(attr)
             else:
                 unmapped.append(attr)
 
@@ -176,8 +169,8 @@ class TestStaticRegressionReadSurfacePorts(unittest.TestCase):
             [],
             f"Found unmapped read_store attributes in main.py without domain port mapping: {unmapped}",
         )
-        self.assertGreaterEqual(len(mapped_reads), 160)
-        self.assertGreaterEqual(len(isolated_mutations), 35)
+        self.assertEqual(len(mapped_all), len(read_store_attrs))
+        self.assertGreaterEqual(len(mapped_all), 200)
 
 
 class TestAgoraPersonaClientMigration(unittest.TestCase):
@@ -682,3 +675,214 @@ class TestEndpointLevelRetainedCallers(unittest.TestCase):
         data = response.json()
         self.assertIn("data", data)
         self.assertEqual(data["data"].get("rule_id"), "cr-100")
+
+    def test_endpoint_create_agora_signal(self) -> None:
+        import os
+        old_mode = os.environ.get("PANTHEON_BFF_AUTH_MODE")
+        old_stub = os.environ.get("PANTHEON_BFF_AUTH_STUB")
+        os.environ["PANTHEON_BFF_AUTH_MODE"] = "permissive"
+        os.environ["PANTHEON_BFF_AUTH_STUB"] = "true"
+        try:
+            response = self.client.post(
+                "/bff/agora/signals",
+                json={
+                    "title": "Regime Change Signal",
+                    "body": "Volatility spike detected across core asset classes",
+                    "source": "manual",
+                    "confidence": 0.95,
+                    "severity": "info",
+                },
+                headers={"Authorization": "Bearer admin:admin,trader", "Idempotency-Key": "sig-test-idem-1"},
+            )
+            self.assertEqual(response.status_code, 201, response.text)
+            data = response.json().get("data", {})
+            self.assertTrue(data.get("signalId") or data.get("id"))
+            self.assertEqual(data.get("title"), "Regime Change Signal")
+        finally:
+            if old_mode is None:
+                os.environ.pop("PANTHEON_BFF_AUTH_MODE", None)
+            else:
+                os.environ["PANTHEON_BFF_AUTH_MODE"] = old_mode
+            if old_stub is None:
+                os.environ.pop("PANTHEON_BFF_AUTH_STUB", None)
+            else:
+                os.environ["PANTHEON_BFF_AUTH_STUB"] = old_stub
+
+    def test_endpoint_create_agora_note(self) -> None:
+        import os
+        old_mode = os.environ.get("PANTHEON_BFF_AUTH_MODE")
+        old_stub = os.environ.get("PANTHEON_BFF_AUTH_STUB")
+        os.environ["PANTHEON_BFF_AUTH_MODE"] = "permissive"
+        os.environ["PANTHEON_BFF_AUTH_STUB"] = "true"
+        try:
+            response = self.client.post(
+                "/bff/agora/notes",
+                json={
+                    "title": "Analysis Note",
+                    "body": "Observed market conditions for Q3",
+                    "attachment_type": "free_standing",
+                },
+                headers={"Authorization": "Bearer admin:admin,trader", "Idempotency-Key": "note-test-idem-1"},
+            )
+            self.assertEqual(response.status_code, 201, response.text)
+            data = response.json().get("data", {})
+            self.assertTrue(data.get("note_id") or data.get("id"))
+            self.assertEqual(data.get("title"), "Analysis Note")
+        finally:
+            if old_mode is None:
+                os.environ.pop("PANTHEON_BFF_AUTH_MODE", None)
+            else:
+                os.environ["PANTHEON_BFF_AUTH_MODE"] = old_mode
+            if old_stub is None:
+                os.environ.pop("PANTHEON_BFF_AUTH_STUB", None)
+            else:
+                os.environ["PANTHEON_BFF_AUTH_STUB"] = old_stub
+
+    def test_endpoint_create_and_patch_agora_journal(self) -> None:
+        import json
+        import os
+        old_mode = os.environ.get("PANTHEON_BFF_AUTH_MODE")
+        old_stub = os.environ.get("PANTHEON_BFF_AUTH_STUB")
+        os.environ["PANTHEON_BFF_AUTH_MODE"] = "permissive"
+        os.environ["PANTHEON_BFF_AUTH_STUB"] = "true"
+        try:
+            # Create
+            response = self.client.post(
+                "/bff/agora/journal",
+                json={
+                    "title": "Strategy Journal Initial",
+                    "body": "Initial trade rationale",
+                    "tags": ["strategy"],
+                    "linked_strategy_ids": [],
+                    "linked_persona_ids": [],
+                    "visibility": "public",
+                },
+                headers={"Authorization": "Bearer admin:admin,trader", "Idempotency-Key": "jrn-test-idem-1"},
+            )
+            self.assertEqual(response.status_code, 201, response.text)
+            entry = response.json().get("data", {})
+            entry_id = entry.get("entry_id") or entry.get("id")
+            self.assertIsNotNone(entry_id)
+
+            # Patch
+            patch_resp = self.client.patch(
+                f"/bff/agora/journal/{entry_id}",
+                content=json.dumps({"title": "Strategy Journal Updated"}),
+                headers={
+                    "Authorization": "Bearer admin:admin,trader",
+                    "Idempotency-Key": "jrn-test-idem-2",
+                    "Content-Type": "application/merge-patch+json",
+                },
+            )
+            self.assertEqual(patch_resp.status_code, 200, patch_resp.text)
+            patched_entry = patch_resp.json().get("data", {})
+            self.assertEqual(patched_entry.get("title"), "Strategy Journal Updated")
+        finally:
+            if old_mode is None:
+                os.environ.pop("PANTHEON_BFF_AUTH_MODE", None)
+            else:
+                os.environ["PANTHEON_BFF_AUTH_MODE"] = old_mode
+            if old_stub is None:
+                os.environ.pop("PANTHEON_BFF_AUTH_STUB", None)
+            else:
+                os.environ["PANTHEON_BFF_AUTH_STUB"] = old_stub
+
+    def test_endpoint_agora_committee_session_flow(self) -> None:
+        import os
+        old_mode = os.environ.get("PANTHEON_BFF_AUTH_MODE")
+        old_stub = os.environ.get("PANTHEON_BFF_AUTH_STUB")
+        os.environ["PANTHEON_BFF_AUTH_MODE"] = "permissive"
+        os.environ["PANTHEON_BFF_AUTH_STUB"] = "true"
+        try:
+            # 1. Create committee session
+            create_resp = self.client.post(
+                "/bff/agora/committee/sessions",
+                json={"title": "Deployment Evaluation", "participants": ["p-100"]},
+                headers={"Authorization": "Bearer admin:admin,trader", "Idempotency-Key": "comm-test-idem-1"},
+            )
+            self.assertEqual(create_resp.status_code, 201, create_resp.text)
+            sess = create_resp.json().get("data", {})
+            sess_id = sess.get("sessionId") or sess.get("id")
+            self.assertIsNotNone(sess_id)
+
+            # 2. Open session
+            open_resp = self.client.post(
+                f"/bff/agora/committee/sessions/{sess_id}/open",
+                headers={"Authorization": "Bearer admin:admin,trader", "Idempotency-Key": "comm-test-idem-2"},
+            )
+            self.assertEqual(open_resp.status_code, 200, open_resp.text)
+
+            # 3. Submit memo
+            memo_resp = self.client.post(
+                f"/bff/agora/committee/sessions/{sess_id}/memos",
+                json={"summary": "Approved deployment plan", "recommendations": ["deploy"]},
+                headers={"Authorization": "Bearer admin:admin,trader", "Idempotency-Key": "comm-test-idem-3"},
+            )
+            self.assertEqual(memo_resp.status_code, 201, memo_resp.text)
+            memo_id = memo_resp.json().get("data", {}).get("memo_id")
+            self.assertIsNotNone(memo_id)
+
+            # 4. Publish memo
+            pub_resp = self.client.post(
+                f"/bff/agora/committee/sessions/{sess_id}/memos/{memo_id}/publish",
+                headers={"Authorization": "Bearer admin:admin,trader", "Idempotency-Key": "comm-test-idem-4"},
+            )
+            self.assertEqual(pub_resp.status_code, 200, pub_resp.text)
+            self.assertEqual(pub_resp.json().get("data", {}).get("status"), "published")
+
+            # 5. Close session
+            close_resp = self.client.post(
+                f"/bff/agora/committee/sessions/{sess_id}/close",
+                json={"outcome": "approved", "memoIds": [memo_id]},
+                headers={"Authorization": "Bearer admin:admin,trader", "Idempotency-Key": "comm-test-idem-5"},
+            )
+            self.assertEqual(close_resp.status_code, 200, close_resp.text)
+        finally:
+            if old_mode is None:
+                os.environ.pop("PANTHEON_BFF_AUTH_MODE", None)
+            else:
+                os.environ["PANTHEON_BFF_AUTH_MODE"] = old_mode
+            if old_stub is None:
+                os.environ.pop("PANTHEON_BFF_AUTH_STUB", None)
+            else:
+                os.environ["PANTHEON_BFF_AUTH_STUB"] = old_stub
+
+    def test_endpoint_research_ticket_lifecycle(self) -> None:
+        import os
+        old_mode = os.environ.get("PANTHEON_BFF_AUTH_MODE")
+        old_stub = os.environ.get("PANTHEON_BFF_AUTH_STUB")
+        os.environ["PANTHEON_BFF_AUTH_MODE"] = "permissive"
+        os.environ["PANTHEON_BFF_AUTH_STUB"] = "true"
+        try:
+            # Create ticket
+            resp = self.client.post(
+                "/api/v1/research/tickets",
+                json={"title": "Test Drift Ticket", "description": "Investigation into drift", "owner": "admin", "priority": "high"},
+                headers={"Authorization": "Bearer admin:admin,trader"},
+            )
+            self.assertEqual(resp.status_code, 200, resp.text)
+            ticket_id = resp.json().get("ticket_id")
+            self.assertIsNotNone(ticket_id)
+
+            # Get ticket
+            resp_get = self.client.get(f"/api/v1/research/tickets/{ticket_id}", headers={"Authorization": "Bearer admin:admin,trader"})
+            self.assertEqual(resp_get.status_code, 200, resp_get.text)
+            self.assertEqual(resp_get.json().get("title"), "Test Drift Ticket")
+
+            # Patch ticket
+            resp_patch = self.client.patch(
+                f"/api/v1/research/tickets/{ticket_id}",
+                json={"title": "Updated Drift Ticket Title", "status": "in_progress"},
+                headers={"Authorization": "Bearer admin:admin,trader"},
+            )
+            self.assertEqual(resp_patch.status_code, 200, resp_patch.text)
+            self.assertEqual(resp_patch.json().get("status"), "in_progress")
+        finally:
+            if old_mode is None:
+                os.environ.pop("PANTHEON_BFF_AUTH_MODE", None)
+            else:
+                os.environ["PANTHEON_BFF_AUTH_MODE"] = old_mode
+            if old_stub is None:
+                os.environ.pop("PANTHEON_BFF_AUTH_STUB", None)
+            else:
+                os.environ["PANTHEON_BFF_AUTH_STUB"] = old_stub

@@ -500,8 +500,8 @@ class ReadSurfacePorts:
     def list_research_tickets(self, **kwargs: Any) -> List[Dict[str, Any]]:
         return self.research_knowledge_source.list_research_tickets(**kwargs)
 
-    def get_research_ticket(self, ticket_id: str) -> Optional[Dict[str, Any]]:
-        return self.research_knowledge_source.get_research_ticket(ticket_id)
+    def get_research_ticket(self, ticket_id: str, **kwargs: Any) -> Optional[Dict[str, Any]]:
+        return self.research_knowledge_source.get_research_ticket(ticket_id, **kwargs)
 
     def list_research_analyses(self, **kwargs: Any) -> List[Dict[str, Any]]:
         return self.research_knowledge_source.list_research_analyses(**kwargs)
@@ -931,9 +931,17 @@ class ReadSurfacePorts:
         return self.research_knowledge_source.list_data_sources(**kwargs)
 
     def list_committees(self, **kwargs: Any) -> List[Dict[str, Any]]:
+        if hasattr(self.operations_consultation, "list_committees"):
+            res = self.operations_consultation.list_committees(**kwargs)
+            if res:
+                return res
         return self.operations_consultation.list_workflow_templates(**kwargs)
 
     def get_committee(self, committee_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        if hasattr(self.operations_consultation, "get_committee"):
+            res = self.operations_consultation.get_committee(committee_id or "")
+            if res is not None:
+                return res
         return self.operations_consultation.get_consult_request(committee_id or "")
 
     def list_committee_session_memos(
@@ -942,6 +950,10 @@ class ReadSurfacePorts:
         **kwargs: Any,
     ) -> List[Dict[str, Any]]:
         """ASK-004: list memos linked to a committee session."""
+        if hasattr(self.operations_consultation, "list_committee_session_memos") and session_id:
+            res = self.operations_consultation.list_committee_session_memos(str(session_id))
+            if res:
+                return res
         memos = self.operations_consultation.list_consult_memos(**kwargs)
         if session_id:
             sid_str = str(session_id).strip()
@@ -972,6 +984,10 @@ class ReadSurfacePorts:
                 memo_id = args[0]
         if not memo_id:
             return None
+        if hasattr(self.operations_consultation, "get_committee_session_memo") and session_id:
+            res = self.operations_consultation.get_committee_session_memo(str(session_id), str(memo_id))
+            if res is not None:
+                return res
         memo = self.operations_consultation.get_consult_memo(str(memo_id))
         if memo is None:
             return None
@@ -986,30 +1002,66 @@ class ReadSurfacePorts:
         return memo
 
     def list_agora_insights(self, **kwargs: Any) -> List[Dict[str, Any]]:
+        if hasattr(self.operations_consultation, "list_agora_insights"):
+            res = self.operations_consultation.list_agora_insights(**kwargs)
+            if res:
+                return res
         return self.research_knowledge_source.list_insight_cards(**kwargs)
 
     def list_agora_notes(self, **kwargs: Any) -> List[Dict[str, Any]]:
+        if hasattr(self.operations_consultation, "list_agora_notes"):
+            res = self.operations_consultation.list_agora_notes(**kwargs)
+            if res:
+                return res
         return self.research_knowledge_source.list_research_notes(**kwargs)
 
     def list_agora_sessions(self, **kwargs: Any) -> List[Dict[str, Any]]:
+        if hasattr(self.operations_consultation, "list_agora_sessions"):
+            res = self.operations_consultation.list_agora_sessions(**kwargs)
+            if res:
+                return res
         return self.operations_consultation.list_consult_requests(**kwargs)
 
     def list_agora_signals(self, **kwargs: Any) -> List[Dict[str, Any]]:
+        if hasattr(self.operations_consultation, "list_agora_signals"):
+            res = self.operations_consultation.list_agora_signals(**kwargs)
+            if res:
+                return res
         return self.research_knowledge_source.list_evidence_refs(**kwargs)
 
     def list_agora_training_examples(self, **kwargs: Any) -> List[Dict[str, Any]]:
+        if hasattr(self.operations_consultation, "list_agora_training_examples"):
+            res = self.operations_consultation.list_agora_training_examples(**kwargs)
+            if res:
+                return res
         return self.persona_training.list_trainer_replays(**kwargs)
 
     def list_agora_watchlist(self, **kwargs: Any) -> List[Dict[str, Any]]:
+        if hasattr(self.operations_consultation, "list_agora_watchlist"):
+            res = self.operations_consultation.list_agora_watchlist(**kwargs)
+            if res:
+                return res
         return self.persona_capital_runtime.list_personas(**kwargs)
 
     def get_agora_session(self, session_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        if hasattr(self.operations_consultation, "get_agora_session"):
+            res = self.operations_consultation.get_agora_session(session_id or "")
+            if res is not None:
+                return res
         return self.operations_consultation.get_consult_request(session_id or "")
 
     def get_agora_signal(self, signal_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        if hasattr(self.operations_consultation, "get_agora_signal"):
+            res = self.operations_consultation.get_agora_signal(signal_id or "")
+            if res is not None:
+                return res
         return self.research_knowledge_source.get_evidence_ref(signal_id or "")
 
-    def get_agora_committee_evidence_pack(self, session_id: Optional[str]) -> List[Dict[str, Any]]:
+    def get_agora_committee_evidence_pack(self, session_id: Optional[str]) -> Any:
+        if hasattr(self.operations_consultation, "get_agora_committee_evidence_pack"):
+            res = self.operations_consultation.get_agora_committee_evidence_pack(session_id or "")
+            if res is not None:
+                return res
         return self.operations_consultation.get_consultation_evidence(session_id or "")
 
 

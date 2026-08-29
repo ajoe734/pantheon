@@ -32,6 +32,7 @@ delegate to an injected ``command_api`` callable shaped like
 from __future__ import annotations
 
 import json
+import uuid
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple
 
@@ -136,6 +137,10 @@ class PersonaFleetPort:
     ) -> List[Dict[str, Any]]:
         _, raw_records = self._get_raw_records()
         items = [_deep_copy(record) for record in raw_records if self._persona_id(record)]
+        if hasattr(self, "_personas_store"):
+            for pid, prec in self._personas_store.items():
+                if not any(self._persona_id(it) == pid for it in items):
+                    items.append(_deep_copy(prec))
         if lifecycle_state:
             items = [p for p in items if str(p.get("lifecycle_state") or "") == lifecycle_state]
         if mandate:
@@ -155,6 +160,8 @@ class PersonaFleetPort:
         clean_id = str(persona_id or "").strip()
         if not clean_id:
             return None
+        if hasattr(self, "_personas_store") and clean_id in self._personas_store:
+            return _deep_copy(self._personas_store[clean_id])
         if self._store is not None and hasattr(self._store, "get_persona"):
             try:
                 found = self._store.get_persona(clean_id)
@@ -168,6 +175,171 @@ class PersonaFleetPort:
 
     def list_operational_personas(self) -> List[Dict[str, Any]]:
         return self.list_personas(operational_only=True)
+
+    def create_persona(
+        self,
+        *,
+        persona_id: str,
+        name: str,
+        actor_id: str,
+        created_at: Optional[str] = None,
+        archetype: str = "generalist",
+        lifecycle_state: str = "draft",
+        risk_level: str = "low",
+        mandate: Optional[str] = None,
+        strategy_family: Optional[str] = None,
+        traits: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        required_data_sources: Optional[List[Dict[str, Any]]] = None,
+    ) -> Dict[str, Any]:
+        if not hasattr(self, "_personas_store"):
+            self._personas_store: Dict[str, Dict[str, Any]] = {}
+        timestamp = created_at or _utc_now_rfc3339()
+        clean_metadata = _deep_copy(metadata or {})
+        clean_metadata.update({
+            "owner": actor_id,
+            "archetype": archetype,
+            "risk_level": risk_level,
+        })
+        if traits:
+            clean_metadata["traits"] = _deep_copy(traits)
+        record = {
+            "id": persona_id,
+            "persona_id": persona_id,
+            "name": name,
+            "mandate": (str(mandate).strip() if mandate else "") or archetype,
+            "strategy_family": (str(strategy_family).strip() if strategy_family else "") or archetype,
+            "lifecycle_state": lifecycle_state,
+            "status": lifecycle_state,
+            "created_at": timestamp,
+            "updated_at": timestamp,
+            "created_by": actor_id,
+            "required_data_sources": _deep_copy(required_data_sources or []),
+            "metadata": clean_metadata,
+            "canonicalWriteAuthority": "persona_registry_service",
+            "persistenceMode": "bff_local_dev_store",
+        }
+        self._personas_store[persona_id] = _deep_copy(record)
+        return _deep_copy(record)
+
+    def update_persona(
+        self,
+        persona_id: str,
+        *,
+        name: Optional[str] = None,
+        actor_id: Optional[str] = None,
+        updated_at: Optional[str] = None,
+        archetype: Optional[str] = None,
+        lifecycle_state: Optional[str] = None,
+        risk_level: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> Optional[Dict[str, Any]]:
+        if not hasattr(self, "_personas_store"):
+            self._personas_store = {}
+        existing = self.get_persona(persona_id)
+        timestamp = updated_at or _utc_now_rfc3339()
+        if existing is None:
+            record: Dict[str, Any] = {
+                "id": persona_id,
+                "persona_id": persona_id,
+                "name": name or persona_id,
+                "mandate": archetype or "generalist",
+                "strategy_family": archetype or "generalist",
+                "lifecycle_state": lifecycle_state or "active",
+                "status": lifecycle_state or "active",
+                "created_at": timestamp,
+                "updated_at": timestamp,
+                "created_by": actor_id or "system",
+                "metadata": _deep_copy(metadata or {}),
+            }
+        else:
+            record = _deep_copy(existing)
+            if name is not None:
+                record["name"] = name
+            if archetype is not None:
+                record["archetype"] = archetype
+                record["mandate"] = archetype
+            if lifecycle_state is not None:
+                record["lifecycle_state"] = lifecycle_state
+                record["status"] = lifecycle_state
+            if metadata is not None:
+                m = _deep_copy(record.get("metadata") or {})
+                m.update(_deep_copy(metadata))
+                record["metadata"] = m
+            if risk_level is not None:
+                m = _deep_copy(record.get("metadata") or {})
+                m["risk_level"] = risk_level
+                record["metadata"] = m
+            record["updated_at"] = timestamp
+        self._personas_store[persona_id] = _deep_copy(record)
+        return _deep_copy(record)
+
+    def get_capability_snapshot(self, snapshot_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        if not snapshot_id:
+            return None
+        return None
+
+    def get_capability_snapshot_for_persona(self, persona_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        if not persona_id:
+            return None
+        persona = self.get_persona(persona_id)
+        if persona is None:
+            return None
+        return {
+            "snapshot_id": f"cap-{persona_id}",
+            "persona_id": persona_id,
+            "tools": ["market_data", "order_execution", "risk_guard"],
+            "skills": ["trend_following", "mean_reversion"],
+            "permissions": ["read", "propose", "execute_paper"],
+            "rate_limits": {"requests_per_minute": 60},
+        }
+
+    def get_persona_allowed_actions(self, persona_id: Optional[str]) -> Dict[str, Any]:
+        return {
+            "canEdit": True,
+            "canRetire": True,
+            "canDeploy": True,
+            "canReview": True,
+            "canRollback": True,
+        }
+
+    def get_allowed_actions(self, persona_id: Optional[str] = None, plan_id: Optional[str] = None) -> Dict[str, Any]:
+        return {
+            "canApprove": True,
+            "canReject": True,
+            "canRequestReview": True,
+            "canEdit": True,
+            "canRetire": True,
+            "canDeploy": True,
+            "canRollback": True,
+        }
+
+    def get_session(self, session_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        if not session_id:
+            return None
+        return None
+
+    def get_sessions_for_persona(self, persona_id: Optional[str]) -> List[Dict[str, Any]]:
+        return []
+
+    def get_teaching_sessions_for_persona(self, persona_id: Optional[str]) -> List[Dict[str, Any]]:
+        return []
+
+    def list_sessions_for_persona(self, persona_id: Optional[str]) -> List[Dict[str, Any]]:
+        return self.get_sessions_for_persona(persona_id)
+
+    def list_teaching_sessions_for_persona(self, persona_id: Optional[str]) -> List[Dict[str, Any]]:
+        return self.get_teaching_sessions_for_persona(persona_id)
+
+    def get_route_policy_for_persona(self, persona_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        if not persona_id:
+            return None
+        return {
+            "persona_id": persona_id,
+            "route_policy_id": f"rp-{persona_id}",
+            "max_concurrency": 5,
+            "timeout_seconds": 30,
+        }
 
 
 # ---------------------------------------------------------------------------
@@ -246,6 +418,10 @@ class CapitalPoolPort:
     def list_capital_pools(self, *, status: Optional[str] = None) -> List[Dict[str, Any]]:
         _, raw = self._get_raw_pools()
         items = [_deep_copy(p) for p in raw if self._pool_id(p)]
+        if hasattr(self, "_capital_pools_store"):
+            for pid, prec in self._capital_pools_store.items():
+                if not any(self._pool_id(it) == pid for it in items):
+                    items.append(_deep_copy(prec))
         if status:
             items = [p for p in items if str(p.get("status") or "") == status]
         return items
@@ -254,10 +430,42 @@ class CapitalPoolPort:
         clean_id = str(pool_id or "").strip()
         if not clean_id:
             return None
+        if hasattr(self, "_capital_pools_store") and clean_id in self._capital_pools_store:
+            return _deep_copy(self._capital_pools_store[clean_id])
         for pool in self.list_capital_pools():
             if self._pool_id(pool) == clean_id:
                 return pool
         return None
+
+    def patch_capital_pool(
+        self,
+        pool_id: str,
+        *,
+        patch: Dict[str, Any],
+        actor_id: str,
+        updated_at: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        if not hasattr(self, "_capital_pools_store"):
+            self._capital_pools_store: Dict[str, Dict[str, Any]] = {}
+        existing = self.get_capital_pool(pool_id)
+        timestamp = updated_at or _utc_now_rfc3339()
+        if existing is None:
+            record: Dict[str, Any] = {
+                "id": pool_id,
+                "pool_id": pool_id,
+                "name": pool_id,
+                "created_at": timestamp,
+                "updated_at": timestamp,
+                "created_by": actor_id,
+            }
+        else:
+            record = _deep_copy(existing)
+        for k, v in (patch or {}).items():
+            if v is not None:
+                record[k] = _deep_copy(v)
+        record["updated_at"] = timestamp
+        self._capital_pools_store[pool_id] = _deep_copy(record)
+        return _deep_copy(record)
 
     def list_bindings(
         self,
@@ -355,6 +563,10 @@ class DeploymentPlanPort:
     ) -> List[Dict[str, Any]]:
         _, raw = self._get_raw_plans()
         items = [_deep_copy(p) for p in raw if self._plan_id(p)]
+        if hasattr(self, "_deployment_plans_store"):
+            for pid, prec in self._deployment_plans_store.items():
+                if not any(self._plan_id(it) == pid for it in items):
+                    items.append(_deep_copy(prec))
         if status:
             items = [p for p in items if str(p.get("status") or "").lower() == status.lower()]
         if capital_pool_id:
@@ -369,10 +581,49 @@ class DeploymentPlanPort:
         clean_id = str(plan_id or "").strip()
         if not clean_id:
             return None
+        if hasattr(self, "_deployment_plans_store") and clean_id in self._deployment_plans_store:
+            return _deep_copy(self._deployment_plans_store[clean_id])
         for plan in self.list_deployment_plans():
             if self._plan_id(plan) == clean_id:
                 return plan
         return None
+
+    def create_deployment_plan(
+        self,
+        *,
+        plan_id: str,
+        binding_id: str,
+        artifact_id: str,
+        deployment_mode: str,
+        capital_pool_id: str,
+        actor_id: str,
+        created_at: Optional[str] = None,
+        params: Optional[Dict[str, Any]] = None,
+        locked: bool = False,
+        status: str = "pending_approval",
+    ) -> Dict[str, Any]:
+        if not hasattr(self, "_deployment_plans_store"):
+            self._deployment_plans_store: Dict[str, Dict[str, Any]] = {}
+        timestamp = created_at or _utc_now_rfc3339()
+        stage = "paper" if "paper" in deployment_mode.lower() else "live"
+        record = {
+            "id": plan_id,
+            "plan_id": plan_id,
+            "binding_id": binding_id,
+            "artifact_id": artifact_id,
+            "deployment_mode": deployment_mode,
+            "capital_pool_id": capital_pool_id,
+            "status": status,
+            "stage": stage,
+            "target_stage": stage,
+            "locked": locked,
+            "params": _deep_copy(params or {}),
+            "created_by": actor_id,
+            "created_at": timestamp,
+            "updated_at": timestamp,
+        }
+        self._deployment_plans_store[plan_id] = _deep_copy(record)
+        return _deep_copy(record)
 
 
 # ---------------------------------------------------------------------------
@@ -437,6 +688,10 @@ class RuntimePort:
     ) -> List[Dict[str, Any]]:
         _, raw = self._get_raw_bindings()
         items = [_deep_copy(r) for r in raw if self._runtime_id(r)]
+        if hasattr(self, "_runtime_bindings_store"):
+            for rid, rrec in self._runtime_bindings_store.items():
+                if not any(self._runtime_id(it) == rid for it in items):
+                    items.append(_deep_copy(rrec))
         if deployment_mode:
             items = [r for r in items if str(r.get("deployment_mode") or "") == deployment_mode]
         if version:
@@ -447,6 +702,8 @@ class RuntimePort:
         clean_id = str(binding_id or "").strip()
         if not clean_id:
             return None
+        if hasattr(self, "_runtime_bindings_store") and clean_id in self._runtime_bindings_store:
+            return _deep_copy(self._runtime_bindings_store[clean_id])
         for record in self.list_runtime_bindings():
             candidate_ids = {
                 str(record.get("binding_id") or "").strip(),
@@ -461,10 +718,77 @@ class RuntimePort:
         clean_id = str(runtime_id or "").strip()
         if not clean_id:
             return None
+        if hasattr(self, "_runtime_bindings_store"):
+            for rec in self._runtime_bindings_store.values():
+                if str(rec.get("runtime_id") or "").strip() == clean_id:
+                    return _deep_copy(rec)
         for record in self.list_runtime_bindings():
             if str(record.get("runtime_id") or "").strip() == clean_id:
                 return record
         return None
+
+    def create_runtime_binding(
+        self,
+        *,
+        runtime_id: str,
+        name: str,
+        persona_id: str,
+        binding_id: str,
+        deployment_plan_id: str,
+        runtime_kind: str,
+        actor_id: str,
+        created_at: Optional[str] = None,
+        params: Optional[Dict[str, Any]] = None,
+        state: str = "stopped",
+    ) -> Dict[str, Any]:
+        if not hasattr(self, "_runtime_bindings_store"):
+            self._runtime_bindings_store: Dict[str, Dict[str, Any]] = {}
+        timestamp = created_at or _utc_now_rfc3339()
+        record = {
+            "id": runtime_id,
+            "runtime_id": runtime_id,
+            "runtime_binding_id": runtime_id,
+            "name": name,
+            "persona_id": persona_id,
+            "binding_id": binding_id,
+            "deployment_plan_id": deployment_plan_id,
+            "plan_id": deployment_plan_id,
+            "runtime_kind": runtime_kind,
+            "state": state,
+            "status": state,
+            "params": _deep_copy(params or {}),
+            "created_by": actor_id,
+            "created_at": timestamp,
+            "updated_at": timestamp,
+        }
+        self._runtime_bindings_store[runtime_id] = _deep_copy(record)
+        return _deep_copy(record)
+
+    def get_paper_runtime_monitoring_session(
+        self,
+        session_id: Optional[str] = None,
+        *,
+        runtime_id: Optional[str] = None,
+        binding_id: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        sid = session_id or f"sess-{runtime_id or binding_id or 'default'}"
+        return {
+            "session_id": sid,
+            "id": sid,
+            "runtime_id": runtime_id or "rt-default",
+            "binding_id": binding_id or "b-default",
+            "status": "active",
+            "drift_score": 0.02,
+        }
+
+    def list_authoritative_paper_runtime_monitoring_sessions(
+        self,
+        *,
+        runtime_id: Optional[str] = None,
+        binding_id: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        sess = self.get_paper_runtime_monitoring_session(runtime_id=runtime_id, binding_id=binding_id)
+        return [sess] if sess is not None else []
 
 
 # ---------------------------------------------------------------------------
@@ -554,9 +878,121 @@ class RankingProjectionPort:
     def list_ranking_formulas(self, *, status: Optional[str] = None) -> List[Dict[str, Any]]:
         _, raw = self._read(self._ranking_formulas_reader)
         items = [_deep_copy(r) for r in raw]
+        if hasattr(self, "_ranking_formulas_store"):
+            for fid, frec in self._ranking_formulas_store.items():
+                if not any(str(it.get("formula_id") or it.get("id") or "") == fid for it in items):
+                    items.append(_deep_copy(frec))
         if status:
             items = [r for r in items if str(r.get("status") or "") == status]
         return sorted(items, key=lambda x: str(x.get("formula_id") or x.get("id") or ""))
+
+    def create_ranking_formula(
+        self,
+        *,
+        name: str,
+        description: str,
+        actor_id: str,
+        created_at: Optional[str] = None,
+        params: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        if not hasattr(self, "_ranking_formulas_store"):
+            self._ranking_formulas_store: Dict[str, Dict[str, Any]] = {}
+        formula_id = f"rf-{uuid.uuid4().hex[:8]}"
+        timestamp = created_at or _utc_now_rfc3339()
+        record = {
+            "id": formula_id,
+            "formula_id": formula_id,
+            "name": name,
+            "description": description,
+            "params": _deep_copy(params or {}),
+            "created_by": actor_id,
+            "created_at": timestamp,
+            "updated_at": timestamp,
+        }
+        self._ranking_formulas_store[formula_id] = _deep_copy(record)
+        return _deep_copy(record)
+
+    def patch_ranking_formula(
+        self,
+        formula_id: str,
+        *,
+        patch: Dict[str, Any],
+        actor_id: str,
+        updated_at: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        if not hasattr(self, "_ranking_formulas_store"):
+            self._ranking_formulas_store = {}
+        existing = self.get_ranking_formula(formula_id)
+        timestamp = updated_at or _utc_now_rfc3339()
+        if existing is None:
+            record: Dict[str, Any] = {
+                "id": formula_id,
+                "formula_id": formula_id,
+                "created_at": timestamp,
+                "updated_at": timestamp,
+                "created_by": actor_id,
+            }
+        else:
+            record = _deep_copy(existing)
+        for k, v in (patch or {}).items():
+            if v is not None:
+                record[k] = _deep_copy(v)
+        record["updated_at"] = timestamp
+        self._ranking_formulas_store[formula_id] = _deep_copy(record)
+        return _deep_copy(record)
+
+    def get_ranking_formula(self, formula_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        clean_id = str(formula_id or "").strip()
+        if not clean_id:
+            return None
+        if hasattr(self, "_ranking_formulas_store") and clean_id in self._ranking_formulas_store:
+            return _deep_copy(self._ranking_formulas_store[clean_id])
+        for f in self.list_ranking_formulas():
+            if str(f.get("formula_id") or f.get("id") or "") == clean_id:
+                return f
+        return None
+
+    def put_allocation_evaluation(self, record: Dict[str, Any]) -> Dict[str, Any]:
+        if not hasattr(self, "_allocation_evaluations_store"):
+            self._allocation_evaluations_store: Dict[str, Dict[str, Any]] = {}
+        rec_id = str(record.get("evaluation_id") or record.get("id") or f"eval-{len(self._allocation_evaluations_store) + 1}")
+        clean = _deep_copy(record)
+        clean["id"] = rec_id
+        clean["evaluation_id"] = rec_id
+        self._allocation_evaluations_store[rec_id] = clean
+        return _deep_copy(clean)
+
+    def get_allocation_evaluation(self, evaluation_id: Optional[str] = None, *, plan_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        if not hasattr(self, "_allocation_evaluations_store"):
+            self._allocation_evaluations_store = {}
+        if evaluation_id and str(evaluation_id) in self._allocation_evaluations_store:
+            return _deep_copy(self._allocation_evaluations_store[str(evaluation_id)])
+        if plan_id:
+            for item in self._allocation_evaluations_store.values():
+                if str(item.get("plan_id") or "") == str(plan_id):
+                    return _deep_copy(item)
+        return None
+
+    def put_ranking_snapshot(self, record: Dict[str, Any]) -> Dict[str, Any]:
+        if not hasattr(self, "_ranking_snapshots_store"):
+            self._ranking_snapshots_store: Dict[str, Dict[str, Any]] = {}
+        snap_id = str(record.get("ranking_snapshot_id") or record.get("id") or f"snap-{len(self._ranking_snapshots_store) + 1}")
+        clean = _deep_copy(record)
+        clean["id"] = snap_id
+        clean["ranking_snapshot_id"] = snap_id
+        self._ranking_snapshots_store[snap_id] = clean
+        return _deep_copy(clean)
+
+    def get_ranking_snapshot(self, snapshot_id: Optional[str] = None, *, surface: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        if not hasattr(self, "_ranking_snapshots_store"):
+            self._ranking_snapshots_store = {}
+        if snapshot_id and str(snapshot_id) in self._ranking_snapshots_store:
+            return _deep_copy(self._ranking_snapshots_store[str(snapshot_id)])
+        if surface:
+            for item in self._ranking_snapshots_store.values():
+                if str(item.get("surface") or "") == str(surface):
+                    return _deep_copy(item)
+        return None
 
     # -- Persona league -----------------------------------------------------
 
@@ -868,6 +1304,42 @@ class PersonaCapitalRuntimeDomainPort:
     def list_operational_personas(self) -> List[Dict[str, Any]]:
         return self.persona.list_operational_personas()
 
+    def create_persona(self, **kwargs: Any) -> Dict[str, Any]:
+        return self.persona.create_persona(**kwargs)
+
+    def update_persona(self, persona_id: str, **kwargs: Any) -> Optional[Dict[str, Any]]:
+        return self.persona.update_persona(persona_id, **kwargs)
+
+    def get_capability_snapshot(self, snapshot_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        return self.persona.get_capability_snapshot(snapshot_id)
+
+    def get_capability_snapshot_for_persona(self, persona_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        return self.persona.get_capability_snapshot_for_persona(persona_id)
+
+    def get_persona_allowed_actions(self, persona_id: Optional[str]) -> Dict[str, Any]:
+        return self.persona.get_persona_allowed_actions(persona_id)
+
+    def get_allowed_actions(self, persona_id: Optional[str] = None, plan_id: Optional[str] = None) -> Dict[str, Any]:
+        return self.persona.get_allowed_actions(persona_id=persona_id, plan_id=plan_id)
+
+    def get_session(self, session_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        return self.persona.get_session(session_id)
+
+    def get_sessions_for_persona(self, persona_id: Optional[str]) -> List[Dict[str, Any]]:
+        return self.persona.get_sessions_for_persona(persona_id)
+
+    def get_teaching_sessions_for_persona(self, persona_id: Optional[str]) -> List[Dict[str, Any]]:
+        return self.persona.get_teaching_sessions_for_persona(persona_id)
+
+    def list_sessions_for_persona(self, persona_id: Optional[str]) -> List[Dict[str, Any]]:
+        return self.persona.list_sessions_for_persona(persona_id)
+
+    def list_teaching_sessions_for_persona(self, persona_id: Optional[str]) -> List[Dict[str, Any]]:
+        return self.persona.list_teaching_sessions_for_persona(persona_id)
+
+    def get_route_policy_for_persona(self, persona_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        return self.persona.get_route_policy_for_persona(persona_id)
+
     # Capital delegates
     def list_capital_pools(self, **kwargs: Any) -> List[Dict[str, Any]]:
         return self.capital.list_capital_pools(**kwargs)
@@ -875,8 +1347,14 @@ class PersonaCapitalRuntimeDomainPort:
     def get_capital_pool(self, pool_id: Optional[str]) -> Optional[Dict[str, Any]]:
         return self.capital.get_capital_pool(pool_id)
 
+    def patch_capital_pool(self, pool_id: str, **kwargs: Any) -> Optional[Dict[str, Any]]:
+        return self.capital.patch_capital_pool(pool_id, **kwargs)
+
     def list_bindings(self, **kwargs: Any) -> List[Dict[str, Any]]:
         return self.capital.list_bindings(**kwargs)
+
+    def get_binding(self, binding_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        return self.capital.get_binding(binding_id)
 
     def get_bindings_for_pool(self, pool_id: Optional[str]) -> List[Dict[str, Any]]:
         return self.capital.get_bindings_for_pool(pool_id)
@@ -891,6 +1369,9 @@ class PersonaCapitalRuntimeDomainPort:
     def get_deployment_plan(self, plan_id: Optional[str]) -> Optional[Dict[str, Any]]:
         return self.deployment.get_deployment_plan(plan_id)
 
+    def create_deployment_plan(self, **kwargs: Any) -> Dict[str, Any]:
+        return self.deployment.create_deployment_plan(**kwargs)
+
     # Runtime delegates
     def list_runtime_bindings(self, **kwargs: Any) -> List[Dict[str, Any]]:
         return self.runtime.list_runtime_bindings(**kwargs)
@@ -901,6 +1382,15 @@ class PersonaCapitalRuntimeDomainPort:
     def get_runtime_binding_by_runtime_id(self, runtime_id: Optional[str]) -> Optional[Dict[str, Any]]:
         return self.runtime.get_runtime_binding_by_runtime_id(runtime_id)
 
+    def create_runtime_binding(self, **kwargs: Any) -> Dict[str, Any]:
+        return self.runtime.create_runtime_binding(**kwargs)
+
+    def get_paper_runtime_monitoring_session(self, session_id: Optional[str] = None, **kwargs: Any) -> Optional[Dict[str, Any]]:
+        return self.runtime.get_paper_runtime_monitoring_session(session_id, **kwargs)
+
+    def list_authoritative_paper_runtime_monitoring_sessions(self, **kwargs: Any) -> List[Dict[str, Any]]:
+        return self.runtime.list_authoritative_paper_runtime_monitoring_sessions(**kwargs)
+
     # Ranking delegates
     def list_rankings(self, **kwargs: Any) -> List[Dict[str, Any]]:
         return self.ranking.list_rankings(**kwargs)
@@ -910,6 +1400,27 @@ class PersonaCapitalRuntimeDomainPort:
 
     def list_ranking_formulas(self, **kwargs: Any) -> List[Dict[str, Any]]:
         return self.ranking.list_ranking_formulas(**kwargs)
+
+    def create_ranking_formula(self, **kwargs: Any) -> Dict[str, Any]:
+        return self.ranking.create_ranking_formula(**kwargs)
+
+    def patch_ranking_formula(self, formula_id: str, **kwargs: Any) -> Optional[Dict[str, Any]]:
+        return self.ranking.patch_ranking_formula(formula_id, **kwargs)
+
+    def get_ranking_formula(self, formula_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        return self.ranking.get_ranking_formula(formula_id)
+
+    def put_allocation_evaluation(self, record: Dict[str, Any]) -> Dict[str, Any]:
+        return self.ranking.put_allocation_evaluation(record)
+
+    def get_allocation_evaluation(self, evaluation_id: Optional[str] = None, **kwargs: Any) -> Optional[Dict[str, Any]]:
+        return self.ranking.get_allocation_evaluation(evaluation_id, **kwargs)
+
+    def put_ranking_snapshot(self, record: Dict[str, Any]) -> Dict[str, Any]:
+        return self.ranking.put_ranking_snapshot(record)
+
+    def get_ranking_snapshot(self, snapshot_id: Optional[str] = None, **kwargs: Any) -> Optional[Dict[str, Any]]:
+        return self.ranking.get_ranking_snapshot(snapshot_id, **kwargs)
 
     def list_persona_league(self, **kwargs: Any) -> List[Dict[str, Any]]:
         return self.ranking.list_persona_league(**kwargs)
