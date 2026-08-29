@@ -7,6 +7,7 @@ import os
 import re
 import shlex
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -896,6 +897,71 @@ def _collect_paths(tool_input: dict[str, Any]) -> list[Path]:
     return candidates
 
 
+def _active_lease_workspace_root(config: dict[str, Any] | None = None) -> Path | None:
+    """Return this worker's exact active isolated-worktree lease, if any.
+
+    Workspace environment variables are candidate-visible launch context, not
+    authority on their own.  Bind both variables to the central runtime worker
+    record before extending the broker's configured write roots.
+    """
+
+    run_id = str(os.environ.get("ORCH_RUN_ID") or "").strip()
+    task_id = str(os.environ.get("ORCH_TASK_ID") or "").strip()
+    agent_id = normalize_agent_id(os.environ.get("ORCH_AGENT_ID"))
+    raw_worktree_root = str(os.environ.get("PANTHEON_WORKTREE_ROOT") or "").strip()
+    raw_workspace_path = str(os.environ.get("ORCH_WORKSPACE_PATH") or "").strip()
+    if not all((run_id, task_id, agent_id, raw_worktree_root, raw_workspace_path)):
+        return None
+
+    env_roots: list[Path] = []
+    for raw_path in (raw_worktree_root, raw_workspace_path):
+        candidate = Path(os.path.expanduser(raw_path))
+        if not candidate.is_absolute():
+            return None
+        env_roots.append(candidate.resolve())
+    workspace_root = env_roots[0]
+    if env_roots[1] != workspace_root:
+        return None
+
+    try:
+        runtime_config = config if config is not None else load_broker_runtime_config()
+        runtime_state = load_runtime_state(runtime_config)
+    except Exception:
+        return None
+    workers = runtime_state.get("workers")
+    if not isinstance(workers, dict):
+        return None
+    worker = workers.get(run_id)
+    if not isinstance(worker, dict):
+        return None
+    if str(worker.get("run_id") or "").strip() != run_id:
+        return None
+    if str(worker.get("status") or "").strip() != "running":
+        return None
+    if str(worker.get("task_id") or "").strip() != task_id:
+        return None
+    if normalize_agent_id(worker.get("agent_id")) != agent_id:
+        return None
+    if str(worker.get("workspace_mode") or "").strip() != "isolated_worktree":
+        return None
+
+    raw_expiry = str(worker.get("lease_expires_at") or "").strip()
+    try:
+        expires_at = datetime.fromisoformat(raw_expiry.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if expires_at.tzinfo is None or datetime.now(timezone.utc) >= expires_at:
+        return None
+
+    raw_worker_workspace = str(worker.get("workspace_path") or "").strip()
+    if not raw_worker_workspace:
+        return None
+    worker_workspace = Path(os.path.expanduser(raw_worker_workspace))
+    if not worker_workspace.is_absolute() or worker_workspace.resolve() != workspace_root:
+        return None
+    return workspace_root
+
+
 def _allowed_workspace_roots(config: dict[str, Any] | None = None) -> list[Path]:
     roots = [ROOT, ROOT.parent / "pantheon"]
     configured = ((config or {}).get("permission_broker", {}) or {}).get("allowed_workspace_roots", [])
@@ -907,6 +973,9 @@ def _allowed_workspace_roots(config: dict[str, Any] | None = None) -> list[Path]
             if not candidate.is_absolute():
                 candidate = ROOT / candidate
             roots.append(candidate.resolve())
+    lease_root = _active_lease_workspace_root(config)
+    if lease_root is not None:
+        roots.append(lease_root)
     return list(dict.fromkeys(roots))
 
 
