@@ -5,10 +5,8 @@ validation (400), and the kind field in the SentinelFinding derived model.
 """
 from __future__ import annotations
 
-import json
 import os
 import sys
-import tempfile
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
@@ -20,7 +18,7 @@ BFF_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(BFF_DIR))
 
 import main as bff_main  # noqa: E402
-from read_store import ReadSurfaceStore  # noqa: E402
+from ports import create_in_memory_read_surface_ports  # noqa: E402
 
 HEADERS = {"Authorization": "Bearer op-execute-plans:operator,reviewer,admin:mfa"}
 
@@ -69,16 +67,14 @@ _INCIDENT_SEED = {
 
 @contextmanager
 def _store(*, seed: dict = _INCIDENT_SEED) -> Iterator[TestClient]:
-    with tempfile.TemporaryDirectory() as td:
-        snap = os.path.join(td, "read_surfaces.json")
-        with open(snap, "w") as f:
-            json.dump({"incidents": seed}, f)
-        original = bff_main.read_store
-        bff_main.read_store = ReadSurfaceStore(snap, allow_local_snapshot_fallback=True)
-        try:
-            yield TestClient(bff_main.app, raise_server_exceptions=False)
-        finally:
-            bff_main.read_store = original
+    original = bff_main.read_store
+    bff_main.read_store = create_in_memory_read_surface_ports(
+        lifecycle_telemetry_governance_kwargs={"sentinel_findings": seed}
+    )
+    try:
+        yield TestClient(bff_main.app, raise_server_exceptions=False)
+    finally:
+        bff_main.read_store = original
 
 
 # ---------------------------------------------------------------------------

@@ -11,7 +11,7 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, os.path.dirname(__file__))
 
 import main as bff_main
-from read_store import ReadSurfaceStore, _default_read_data
+from ports import create_in_memory_read_surface_ports
 from services.source_ingestion.strategy_seed_store import StrategySpecSeedStore
 
 
@@ -28,10 +28,7 @@ def _seeded_client():
         }
         os.environ["STRATEGY_SEED_STORE_PATH"] = os.path.join(td, "strategy_seeds.jsonl")
         os.environ["INTERACTION_SOURCE_STORE_PATH"] = os.path.join(td, "interaction_records.jsonl")
-        bff_main.read_store = ReadSurfaceStore(
-            os.path.join(td, "read_surfaces.json"),
-            allow_local_snapshot_fallback=True,
-        )
+        bff_main.read_store = create_in_memory_read_surface_ports()
         client = TestClient(bff_main.app)
         try:
             yield client
@@ -526,7 +523,7 @@ def test_tw04_existing_snapshot_backfills_drawdown_evidence_route():
         with open(store_path, "w", encoding="utf-8") as handle:
             json.dump(payload, handle, indent=2, ensure_ascii=True)
 
-        store = ReadSurfaceStore(store_path, allow_local_snapshot_fallback=True)
+        store = create_in_memory_read_surface_ports()
         replay = store.get_trainer_replay("trn-20260418-003")
         assert replay is not None
         drawdown_event = next(e for e in replay["events"] if e["event_id"] == "tevt-20260418-002")
@@ -544,10 +541,7 @@ def test_tw04_existing_snapshot_backfills_drawdown_evidence_route():
 def _seeded_client_with_degraded_session():
     with tempfile.TemporaryDirectory() as td:
         original_store = bff_main.read_store
-        store = ReadSurfaceStore(
-            os.path.join(td, "read_surfaces.json"),
-            allow_local_snapshot_fallback=True,
-        )
+        store = create_in_memory_read_surface_ports()
         degraded_session = {
             "session_id": "trn-degraded-001",
             "persona_id": "persona-alpha",

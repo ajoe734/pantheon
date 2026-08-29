@@ -27,7 +27,7 @@ from models import (
     InterventionStatus,
     ObjectType,
 )
-from read_store import ReadSurfaceStore
+from ports import create_in_memory_read_surface_ports
 
 
 OPERATOR_TOKEN = "Bearer op-v5:operator"
@@ -47,11 +47,7 @@ def _isolated_client() -> Iterator[TestClient]:
         original_interventions = list(bff_main._V5_INTERVENTIONS_STORE)
         original_read_store = bff_main.read_store
         bff_main.command_store = CommandStore(os.path.join(td, "commands.jsonl"))
-        bff_main.read_store = ReadSurfaceStore(
-            os.path.join(td, "read_surfaces.json"),
-            allow_local_snapshot_fallback=False,
-        )
-        bff_main.read_store._allow_local_snapshot_fallback = True
+        bff_main.read_store = create_in_memory_read_surface_ports()
         bff_main._process_command_stub = _noop_process_command
         bff_main._V5_INTERVENTIONS_STORE.clear()
         try:
@@ -65,8 +61,7 @@ def _isolated_client() -> Iterator[TestClient]:
 
 
 def _seed_approval_decision(approval_id: str, target_id: str) -> None:
-    approvals = bff_main.read_store._ensure_local_overlay_records("approval_decisions")
-    approvals[approval_id] = {
+    bff_main.read_store.ooda_management.review_queue._approval_decisions[approval_id] = {
         "id": approval_id,
         "decision_id": approval_id,
         "state": "approved",
@@ -79,7 +74,6 @@ def _seed_approval_decision(approval_id: str, target_id: str) -> None:
         "submitted_at": "2026-06-01T00:00:00Z",
         "decided_at": "2026-06-01T00:01:00Z",
     }
-    bff_main.read_store._save()
 
 
 def _seed_two_man_signature(
@@ -238,10 +232,7 @@ def test_get_v5_interventions_reads_service_backed_store() -> None:
         original_env = os.environ.get("PANTHEON_BFF_V5_INTERVENTION_STORE")
         original_read_store = bff_main.read_store
         os.environ["PANTHEON_BFF_V5_INTERVENTION_STORE"] = intervention_path
-        bff_main.read_store = ReadSurfaceStore(
-            os.path.join(td, "read_surfaces.json"),
-            allow_local_snapshot_fallback=False,
-        )
+        bff_main.read_store = create_in_memory_read_surface_ports()
         try:
             with _isolated_client() as client:
                 response = client.get(

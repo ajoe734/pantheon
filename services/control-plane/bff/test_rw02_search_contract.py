@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, os.path.dirname(__file__))
 
 import main as bff_main
-from read_store import ReadSurfaceStore
+from ports import DefaultResearchKnowledgeSourcePort, create_in_memory_read_surface_ports
 
 
 OPERATOR_AUTH = "Bearer test-operator:operator"
@@ -20,10 +20,7 @@ OPERATOR_AUTH = "Bearer test-operator:operator"
 def _seeded_client(*, allow_local_snapshot_fallback: bool):
     with tempfile.TemporaryDirectory() as td:
         original_store = bff_main.read_store
-        bff_main.read_store = ReadSurfaceStore(
-            os.path.join(td, "read_surfaces.json"),
-            allow_local_snapshot_fallback=allow_local_snapshot_fallback,
-        )
+        bff_main.read_store = create_in_memory_read_surface_ports()
         client = TestClient(bff_main.app)
         try:
             yield client
@@ -83,14 +80,14 @@ def test_rw02_search_contract_returns_ranked_projection_and_index_adapter_meta()
 def test_rw02_governed_evidence_refs_remain_stable_after_durable_replay() -> None:
     with tempfile.TemporaryDirectory() as td:
         storage_path = os.path.join(td, "read_surfaces.json")
-        first_store = ReadSurfaceStore(storage_path, allow_local_snapshot_fallback=True)
+        first_store = DefaultResearchKnowledgeSourcePort()
         first_results = first_store.list_research_search_results(
             query="momentum decay volatility",
             match_type="all",
         )
         first_refs = first_store.get_last_governed_search_refs()
 
-        replayed_store = ReadSurfaceStore(storage_path, allow_local_snapshot_fallback=True)
+        replayed_store = DefaultResearchKnowledgeSourcePort()
         replayed_results = replayed_store.list_research_search_results(
             query="momentum decay volatility",
             match_type="all",
@@ -104,10 +101,7 @@ def test_rw02_governed_evidence_refs_remain_stable_after_durable_replay() -> Non
 
 def test_rw02_durable_replay_does_not_pollute_narrow_match_type_search() -> None:
     with tempfile.TemporaryDirectory() as td:
-        store = ReadSurfaceStore(
-            os.path.join(td, "read_surfaces.json"),
-            allow_local_snapshot_fallback=True,
-        )
+        store = DefaultResearchKnowledgeSourcePort()
 
         store.list_research_search_results(query="momentum", match_type="all")
         artifact_results = store.list_research_search_results(query="momentum", match_type="artifact")
