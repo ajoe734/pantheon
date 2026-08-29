@@ -382,7 +382,7 @@ class TestPaperSignalProducer(unittest.TestCase):
                 "symbol": "2330.TW",
                 "closes": [950.0, 955.0],
                 "snapshot_id": "mss-official-twse-2330",
-                "event_time": _NOW,
+                "event_time": "2026-06-12T05:30:00Z",
                 "source_ref": "source-ingest://snapshots/mss-official-twse-2330",
                 "observed_at": _NOW,
                 "lineage": {
@@ -601,14 +601,14 @@ class TestSharedSnapshotAdmissionDecisions(unittest.TestCase):
     def _tw_calendar_evidence(
         *,
         holidays=None,
-        trading_days=("2026-02-23",),
+        trading_days=("2026-02-11", "2026-02-23"),
         sessions=None,
         coverage_start="2026-02-11",
         coverage_end="2026-02-23",
         source_url="https://www.twse.com.tw/holidaySchedule/holidaySchedule?response=json&queryYear=115",
         authority="Taiwan Stock Exchange 115 年市場開休市日期",
         version="twse-2026-lny-v1",
-        checksum="7690e51b3231f1fbde5df4ca7bb8d090b6252b70419672bce5a7969c11df41a3",
+        checksum="55b2e23b9bd30af666a99c98da2dbbfad568dcd655631b1c6347d12ee8381596",
         timezone="Asia/Taipei",
         market="TW",
         venue="TWSE",
@@ -675,6 +675,47 @@ class TestSharedSnapshotAdmissionDecisions(unittest.TestCase):
         dec = admit_market_snapshot(snapshot, max_age_seconds=86400, now_iso="2026-08-29T12:00:00Z")
         self.assertTrue(dec.admitted)
         self.assertIsNone(dec.reason_code)
+
+    def test_tw_weekend_event_trade_date_rejected(self) -> None:
+        from services.execution.market_snapshot_admission import admit_market_snapshot
+
+        # A fresh receipt and official-looking lineage cannot turn a Saturday
+        # into an official Taiwan cash-market close.
+        snapshot = self._tw_snapshot("2026-08-29T05:30:00Z", "2026-08-29T05:45:00Z")
+        dec = admit_market_snapshot(snapshot, max_age_seconds=86400, now_iso="2026-08-29T06:00:00Z")
+        self.assertFalse(dec.admitted)
+        self.assertEqual(dec.reason_code, "market_input_invalid")
+        self.assertIn("market weekend", dec.detail)
+
+    def test_tw_governed_holiday_event_trade_date_rejected(self) -> None:
+        from services.execution.market_snapshot_admission import admit_market_snapshot
+
+        # A date explicitly marked closed by governed evidence is never an
+        # official close, even if it otherwise has a fresh receipt and lineage.
+        snapshot = self._tw_snapshot("2026-02-16T05:30:00Z", "2026-02-23T02:00:00Z")
+        snapshot["calendar_evidence"] = self._tw_calendar_evidence()
+        dec = admit_market_snapshot(snapshot, max_age_seconds=86400, now_iso="2026-02-23T03:00:00Z")
+        self.assertFalse(dec.admitted)
+        self.assertEqual(dec.reason_code, "market_input_invalid")
+        self.assertIn("explicit Taiwan market closure", dec.detail)
+
+    def test_tw_covered_event_date_requires_explicit_trading_record(self) -> None:
+        from services.execution.market_snapshot_admission import admit_market_snapshot
+
+        snapshot = self._tw_snapshot("2026-02-11T05:30:00Z", "2026-02-23T02:00:00Z")
+        evidence = self._tw_calendar_evidence(trading_days=("2026-02-23",))
+        evidence["version"] = "test-event-date-record-v1"
+        pins = self._pin_calendar_evidence(evidence)
+        snapshot["calendar_evidence"] = evidence
+        dec = admit_market_snapshot(
+            snapshot,
+            max_age_seconds=86400,
+            now_iso="2026-02-23T03:00:00Z",
+            trusted_calendar_pins=pins,
+        )
+        self.assertFalse(dec.admitted)
+        self.assertEqual(dec.reason_code, "market_input_calendar_unverifiable")
+        self.assertIn("event date 2026-02-11", dec.detail)
 
     def test_tw_holiday_span_admitted_with_calendar_evidence(self) -> None:
         from services.execution.market_snapshot_admission import admit_market_snapshot

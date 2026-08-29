@@ -2218,7 +2218,7 @@ class TestPaperFleetTaiwanSessionFreshness(unittest.TestCase):
             "source_url": "https://www.twse.com.tw/holidaySchedule/holidaySchedule?response=json&queryYear=115",
             "fetched_at": "2026-02-23T05:00:00Z",
             "version": "twse-2026-lny-v1",
-            "checksum": "7690e51b3231f1fbde5df4ca7bb8d090b6252b70419672bce5a7969c11df41a3",
+            "checksum": "55b2e23b9bd30af666a99c98da2dbbfad568dcd655631b1c6347d12ee8381596",
             "coverage_start": "2026-02-11",
             "coverage_end": "2026-02-23",
             "holidays": {
@@ -2230,7 +2230,7 @@ class TestPaperFleetTaiwanSessionFreshness(unittest.TestCase):
                 "2026-02-19": {"name": "農曆除夕及春節"},
                 "2026-02-20": {"name": "農曆除夕及春節"},
             },
-            "trading_days": ["2026-02-23"],
+            "trading_days": ["2026-02-11", "2026-02-23"],
         }
 
     @patch(

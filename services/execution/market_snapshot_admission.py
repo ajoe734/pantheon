@@ -60,7 +60,7 @@ TW_VALID_TIMEZONES = {"Asia/Taipei"}
 # reopening date.  The source is the official TWSE response at:
 # https://www.twse.com.tw/holidaySchedule/holidaySchedule?response=json&queryYear=115
 TW_GOVERNED_CALENDAR_PINS: Mapping[str, str] = {
-    "twse-2026-lny-v1": "7690e51b3231f1fbde5df4ca7bb8d090b6252b70419672bce5a7969c11df41a3",
+    "twse-2026-lny-v1": "55b2e23b9bd30af666a99c98da2dbbfad568dcd655631b1c6347d12ee8381596",
 }
 EMPTY_SHA256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 
@@ -448,6 +448,45 @@ def evaluate_taiwan_market_freshness(
                 f"official Taiwan calendar evidence validation failed: {val_err}",
             )
         validated_evidence = val_norm
+
+    event_date_iso = taipei_event_date.isoformat()
+    if taipei_event_date.weekday() >= 5:
+        return (
+            False,
+            "market_input_invalid",
+            f"event_time trade date {event_date_iso} is a Taiwan market weekend",
+        )
+
+    # The gap check below only proves that no *newer* session is missing.  It
+    # must not make the snapshot's own trade date self-authenticating: a
+    # fabricated Saturday (or a known exchange closure) cannot be an official
+    # cash-market close merely because there is no later completed weekday.
+    # When governed evidence covers the event date, require its explicit
+    # trading-session record and reject an explicit closure.  A weekday beyond
+    # a bounded evidence window is deliberately left to the normal gap rule;
+    # this preserves the deterministic Friday-to-weekend case that needs no
+    # calendar evidence at all.
+    if validated_evidence is not None:
+        coverage_start = validated_evidence.get("coverage_start")
+        coverage_end = validated_evidence.get("coverage_end")
+        covered_event_date = (
+            (coverage_start is None or event_date_iso >= coverage_start)
+            and (coverage_end is None or event_date_iso <= coverage_end)
+        )
+        if covered_event_date:
+            if event_date_iso in validated_evidence["holidays"]:
+                return (
+                    False,
+                    "market_input_invalid",
+                    f"event_time trade date {event_date_iso} is an explicit Taiwan market closure",
+                )
+            if event_date_iso not in validated_evidence["trading_days"]:
+                return (
+                    False,
+                    "market_input_calendar_unverifiable",
+                    "official Taiwan market-session evidence missing explicit "
+                    f"trading record for event date {event_date_iso}",
+                )
 
     cursor = taipei_event_date + timedelta(days=1)
     while cursor <= taipei_now_date:
