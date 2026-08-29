@@ -12,7 +12,7 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, os.path.dirname(__file__))
 
 import main as bff_main
-from read_store import ReadSurfaceStore
+from ports import create_in_memory_read_surface_ports
 
 
 OPERATOR_AUTH = "Bearer test-operator:operator"
@@ -22,10 +22,7 @@ OPERATOR_AUTH = "Bearer test-operator:operator"
 def _seeded_client():
     with tempfile.TemporaryDirectory() as td:
         original_store = bff_main.read_store
-        bff_main.read_store = ReadSurfaceStore(
-            os.path.join(td, "read_surfaces.json"),
-            allow_local_snapshot_fallback=True,
-        )
+        bff_main.read_store = create_in_memory_read_surface_ports()
         client = TestClient(bff_main.app)
         try:
             yield client
@@ -81,10 +78,7 @@ def _service_backed_client():
         os.environ["PANTHEON_BFF_RESEARCH_TICKET_STORE"] = str(ticket_store)
 
         original_store = bff_main.read_store
-        bff_main.read_store = ReadSurfaceStore(
-            os.path.join(td, "read_surfaces.json"),
-            allow_local_snapshot_fallback=True,
-        )
+        bff_main.read_store = create_in_memory_read_surface_ports()
         client = TestClient(bff_main.app)
         try:
             yield client, ticket_store
@@ -101,10 +95,7 @@ def _service_backed_client():
 def _unavailable_client():
     with tempfile.TemporaryDirectory() as td:
         original_store = bff_main.read_store
-        bff_main.read_store = ReadSurfaceStore(
-            os.path.join(td, "read_surfaces.json"),
-            allow_local_snapshot_fallback=False,
-        )
+        bff_main.read_store = create_in_memory_read_surface_ports()
         client = TestClient(bff_main.app)
         try:
             yield client

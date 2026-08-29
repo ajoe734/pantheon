@@ -18,7 +18,7 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, os.path.dirname(__file__))
 
 import main as bff_main
-from read_store import ReadSurfaceStore
+from ports import create_in_memory_read_surface_ports
 
 
 OPERATOR_AUTH = "Bearer test-operator:operator"
@@ -38,10 +38,7 @@ def _client(*, service_backed: bool = False) -> Iterator[TestClient]:
             os.environ["PANTHEON_BFF_RAPID_EVAL_STORE"] = os.path.join(td, "rapid_evals.json")
         else:
             os.environ.pop("PANTHEON_BFF_RAPID_EVAL_STORE", None)
-        bff_main.read_store = ReadSurfaceStore(
-            os.path.join(td, "read_surfaces.json"),
-            allow_local_snapshot_fallback=True,
-        )
+        bff_main.read_store = create_in_memory_read_surface_ports()
         try:
             yield TestClient(bff_main.app)
         finally:

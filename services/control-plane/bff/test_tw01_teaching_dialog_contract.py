@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, os.path.dirname(__file__))
 
 import main as bff_main
-from read_store import ReadSurfaceStore
+from ports import create_in_memory_read_surface_ports
 
 
 OPERATOR_AUTH = "Bearer test-operator:operator"
@@ -32,10 +32,7 @@ def _seeded_client(
             )
         else:
             os.environ.pop("PANTHEON_BFF_TEACHING_SESSION_STORE", None)
-        bff_main.read_store = ReadSurfaceStore(
-            os.path.join(td, "read_surfaces.json"),
-            allow_local_snapshot_fallback=allow_local_snapshot_fallback,
-        )
+        bff_main.read_store = create_in_memory_read_surface_ports()
         client = TestClient(bff_main.app)
         try:
             yield client
