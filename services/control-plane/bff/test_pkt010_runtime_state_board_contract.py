@@ -9,8 +9,7 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, os.path.dirname(__file__))
 
 import main as bff_main
-import read_store as bff_read_store
-from read_store import ReadSurfaceStore
+from ports import ReadSurfacePorts, create_in_memory_read_surface_ports, create_read_surface_ports
 
 
 OPERATOR_TOKEN = "Bearer op-2:operator"
@@ -19,10 +18,7 @@ OPERATOR_TOKEN = "Bearer op-2:operator"
 def test_pkt010_runtime_state_board_returns_contract_payload() -> None:
     with tempfile.TemporaryDirectory() as td:
         original_store = bff_main.read_store
-        store = ReadSurfaceStore(
-            os.path.join(td, "read_surfaces.json"),
-            allow_local_snapshot_fallback=False,
-        )
+        store = create_in_memory_read_surface_ports()
         store.list_runtime_bindings = lambda: [
             {
                 "id": "runtime-042",
@@ -217,10 +213,7 @@ def test_pkt010_runtime_state_board_returns_contract_payload() -> None:
 def test_pkt010_runtime_state_board_surfaces_terminal_monitoring_session() -> None:
     with tempfile.TemporaryDirectory() as td:
         original_store = bff_main.read_store
-        store = ReadSurfaceStore(
-            os.path.join(td, "read_surfaces.json"),
-            allow_local_snapshot_fallback=False,
-        )
+        store = create_in_memory_read_surface_ports()
         store.list_runtime_bindings = lambda: [
             {
                 "id": "rtb-stale-001",
@@ -299,10 +292,7 @@ def test_pkt010_runtime_state_board_surfaces_terminal_monitoring_session() -> No
 def test_pkt010_runtime_state_board_keeps_healthy_rows_when_rollback_surface_unavailable() -> None:
     with tempfile.TemporaryDirectory() as td:
         original_store = bff_main.read_store
-        store = ReadSurfaceStore(
-            os.path.join(td, "read_surfaces.json"),
-            allow_local_snapshot_fallback=False,
-        )
+        store = create_in_memory_read_surface_ports()
         runtime_bindings = [
             {
                 "id": f"rtb-paper-{idx:03d}",
@@ -405,10 +395,7 @@ def test_pkt010_runtime_state_board_keeps_healthy_rows_when_rollback_surface_una
 def test_pkt010_runtime_state_board_honest_mode_returns_unavailable_surface() -> None:
     with tempfile.TemporaryDirectory() as td:
         original_store = bff_main.read_store
-        store = ReadSurfaceStore(
-            os.path.join(td, "read_surfaces.json"),
-            allow_local_snapshot_fallback=False,
-        )
+        store = create_in_memory_read_surface_ports()
         store.list_runtime_bindings = lambda: []
         store.get_telemetry_summary = lambda runtime_id: None
         store.get_rollbacks = lambda runtime_id: []
@@ -439,10 +426,7 @@ def test_pkt010_runtime_state_board_honest_mode_returns_unavailable_surface() ->
 def test_pkt010_runtime_state_board_supports_backend_owned_sorting_filtering_and_pagination() -> None:
     with tempfile.TemporaryDirectory() as td:
         original_store = bff_main.read_store
-        store = ReadSurfaceStore(
-            os.path.join(td, "read_surfaces.json"),
-            allow_local_snapshot_fallback=False,
-        )
+        store = create_in_memory_read_surface_ports()
         runtime_bindings = [
             {
                 "id": "runtime-100",
@@ -544,65 +528,10 @@ def test_pkt010_runtime_state_board_supports_backend_owned_sorting_filtering_and
             bff_main.read_store = original_store
 
 
-def test_pkt010_runtime_state_board_reads_runtime_summary_from_telemetry_service(monkeypatch) -> None:
+def test_pkt010_runtime_state_board_reads_runtime_summary_from_telemetry_service() -> None:
     with tempfile.TemporaryDirectory() as td:
         original_store = bff_main.read_store
-        monkeypatch.setenv("PANTHEON_TELEMETRY_API_URL", "http://telemetry.test")
-        monkeypatch.setenv("PANTHEON_PAPER_FLEET_RECONCILER_URL", "http://paper-fleet.test")
-
-        def fake_http_json_get(base_url, path, *, headers=None):
-            if base_url == "http://telemetry.test" and path == "/api/telemetry/runtime-summaries":
-                return True, {
-                    "summaries": [
-                        {
-                            "runtime_id": "runtime-paper-001",
-                            "runtime_binding_id": "rtb-paper-001",
-                            "deployment_stage": "paper",
-                            "state": "active",
-                            "window": "latest",
-                            "collected_at": "2026-05-01T00:00:30Z",
-                            "last_heartbeat_at": "2026-05-01T00:00:30Z",
-                            "last_event_at": "2026-05-01T00:00:30Z",
-                            "engine_bridge_repo": "ajoe734/pantheon-lean.git",
-                            "engine_bridge_commit": "abc1234",
-                            "health_summary": {
-                                "paper_runtime": "ok",
-                                "bridge": "ok",
-                                "telemetry": "ok",
-                                "broker": "not_applicable",
-                            },
-                        }
-                    ]
-                }
-            if base_url == "http://paper-fleet.test" and path == "/api/fleet/state":
-                return True, {
-                    "monitoring_sessions": [
-                        {
-                            "session_id": "prmon-rtb-paper-001",
-                            "session_type": "paper_runtime_monitoring",
-                            "binding_id": "rtb-paper-001",
-                            "runtime_binding_id": "rtb-paper-001",
-                            "runtime_id": "runtime-paper-001",
-                            "deployment_stage": "paper",
-                            "status": "running",
-                            "active": True,
-                            "started_at": "2026-05-01T00:00:00Z",
-                            "ended_at": None,
-                            "last_heartbeat_at": "2026-05-01T00:00:30Z",
-                            "heartbeat_status": "active",
-                            "stale_after_seconds": 90,
-                            "restart_count": 0,
-                        }
-                    ],
-                    "monitoring_session_count": 1,
-                }
-            return False, None
-
-        monkeypatch.setattr(bff_read_store, "_http_json_get", fake_http_json_get)
-        store = ReadSurfaceStore(
-            os.path.join(td, "read_surfaces.json"),
-            allow_local_snapshot_fallback=False,
-        )
+        store = create_in_memory_read_surface_ports()
         store.list_runtime_bindings = lambda: [
             {
                 "id": "rtb-paper-001",
@@ -614,6 +543,40 @@ def test_pkt010_runtime_state_board_reads_runtime_summary_from_telemetry_service
                 "artifact_version": "1.0.0",
             }
         ]
+        store.get_telemetry_summary = lambda runtime_id: {
+            "runtime_id": "runtime-paper-001",
+            "runtime_binding_id": "rtb-paper-001",
+            "deployment_stage": "paper",
+            "state": "active",
+            "window": "latest",
+            "collected_at": "2026-05-01T00:00:30Z",
+            "last_heartbeat_at": "2026-05-01T00:00:30Z",
+            "last_event_at": "2026-05-01T00:00:30Z",
+            "engine_bridge_repo": "ajoe734/pantheon-lean.git",
+            "engine_bridge_commit": "abc1234",
+            "health_summary": {
+                "paper_runtime": "ok",
+                "bridge": "ok",
+                "telemetry": "ok",
+                "broker": "not_applicable",
+            },
+        } if runtime_id == "runtime-paper-001" else None
+        store.get_paper_runtime_monitoring_session = lambda *, runtime_id=None, binding_id=None: {
+            "session_id": "prmon-rtb-paper-001",
+            "session_type": "paper_runtime_monitoring",
+            "binding_id": "rtb-paper-001",
+            "runtime_binding_id": "rtb-paper-001",
+            "runtime_id": "runtime-paper-001",
+            "deployment_stage": "paper",
+            "status": "running",
+            "active": True,
+            "started_at": "2026-05-01T00:00:00Z",
+            "ended_at": None,
+            "last_heartbeat_at": "2026-05-01T00:00:30Z",
+            "heartbeat_status": "active",
+            "stale_after_seconds": 90,
+            "restart_count": 0,
+        } if runtime_id == "runtime-paper-001" else None
         store.get_rollbacks = lambda runtime_id: []
         store.dataset_source = lambda dataset: {
             "runtime_bindings": "canonical",

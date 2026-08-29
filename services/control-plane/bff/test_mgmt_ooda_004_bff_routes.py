@@ -16,7 +16,7 @@ BFF_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(BFF_DIR))
 
 import main as bff_main  # noqa: E402
-from read_store import ReadSurfaceStore  # noqa: E402
+from ports import create_in_memory_read_surface_ports  # noqa: E402
 
 
 HEADERS = {"Authorization": "Bearer op-mgmt-ooda:operator,reviewer,admin:mfa"}
@@ -47,6 +47,32 @@ OODA_PACKETS = [
 ]
 
 
+def _normalize_ooda_packets(raw_packets: Optional[list[dict]]) -> Optional[list[dict]]:
+    if raw_packets is None:
+        return None
+    materialized: dict[str, dict] = {}
+    passthrough: list[dict] = []
+    for item in raw_packets:
+        if isinstance(item, dict) and item.get("schema_version") == "ooda_loop_packet_record.v1":
+            rec_type = item.get("record_type")
+            payload = item.get("payload", {})
+            if rec_type == "packet_snapshot":
+                pkt = dict(payload)
+                pkt.setdefault("packet_id", item.get("packet_id"))
+                materialized[str(pkt["packet_id"])] = pkt
+            elif rec_type == "stage_transition":
+                pkt = dict(payload.get("packet", {}))
+                pkt.setdefault("packet_id", item.get("packet_id"))
+                materialized[str(pkt["packet_id"])] = pkt
+        elif isinstance(item, dict):
+            pid = item.get("packet_id") or item.get("id")
+            if pid:
+                materialized[str(pid)] = item
+            else:
+                passthrough.append(item)
+    return list(materialized.values()) + passthrough
+
+
 @contextmanager
 def _ooda_client(
     monkeypatch,
@@ -67,12 +93,16 @@ def _ooda_client(
                 encoding="utf-8",
             )
             monkeypatch.setenv("PANTHEON_BFF_OODA_PACKET_STORE", str(store_path))
+            normalized = _normalize_ooda_packets(packets)
+            store = create_in_memory_read_surface_ports(
+                ooda_management_kwargs={"ooda_packets": normalized}
+            )
+            store.dataset_source = lambda ds: "service_store" if ds == "ooda_packets" else "typed_store"
         else:
             monkeypatch.delenv("PANTHEON_BFF_OODA_PACKET_STORE", raising=False)
-        bff_main.read_store = ReadSurfaceStore(
-            os.path.join(td, "read_surfaces.json"),
-            allow_local_snapshot_fallback=False,
-        )
+            store = create_in_memory_read_surface_ports()
+            store.dataset_source = lambda ds: "missing" if ds == "ooda_packets" else "typed_store"
+        bff_main.read_store = store
         try:
             yield TestClient(bff_main.app, raise_server_exceptions=False)
         finally:

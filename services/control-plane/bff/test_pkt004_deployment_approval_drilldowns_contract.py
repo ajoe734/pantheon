@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, os.path.dirname(__file__))
 
 import main as bff_main
-from read_store import ReadSurfaceStore
+from ports import create_in_memory_read_surface_ports
 
 
 OPERATOR_TOKEN = "Bearer op-2:operator"
@@ -18,10 +18,46 @@ OPERATOR_TOKEN = "Bearer op-2:operator"
 def test_pkt004_deployment_approval_drilldowns_filters_follow_canonical_contract() -> None:
     with tempfile.TemporaryDirectory() as td:
         original_store = bff_main.read_store
-        bff_main.read_store = ReadSurfaceStore(
-            os.path.join(td, "read_surfaces.json"),
-            allow_local_snapshot_fallback=True,
+        store = create_in_memory_read_surface_ports()
+        plan_records = [
+            {
+                "id": "plan-F-042",
+                "plan_id": "plan-F-042",
+                "status": "approved",
+                "capital_pool_id": "pool-main",
+                "approval_decision_id": "approval-042",
+            }
+        ]
+        decision_records = [
+            {
+                "id": "approval-042",
+                "decision_id": "approval-042",
+                "outcome": "approved",
+                "state": "decided",
+            }
+        ]
+        store.list_deployment_plans = lambda **kwargs: [
+            plan
+            for plan in plan_records
+            if (not kwargs.get("status") or plan["status"] == kwargs["status"])
+            and (
+                not kwargs.get("capital_pool_id")
+                or plan["capital_pool_id"] == kwargs["capital_pool_id"]
+            )
+        ]
+        store.get_deployment_plan = lambda plan_id: next(
+            (plan for plan in plan_records if plan["plan_id"] == plan_id), None
         )
+        store.list_approval_decisions = lambda **kwargs: [
+            decision
+            for decision in decision_records
+            if (not kwargs.get("outcome") or decision["outcome"] == kwargs["outcome"])
+            and (not kwargs.get("state") or decision["state"] == kwargs["state"])
+        ]
+        store.get_approval_decision = lambda decision_id: next(
+            (decision for decision in decision_records if decision["id"] == decision_id), None
+        )
+        bff_main.read_store = store
         client = TestClient(bff_main.app)
 
         try:

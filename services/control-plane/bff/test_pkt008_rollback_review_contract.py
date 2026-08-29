@@ -6,14 +6,29 @@ import sys
 import tempfile
 
 sys.path.insert(0, os.path.dirname(__file__))
-from read_store import ReadSurfaceStore
+from ports import create_in_memory_read_surface_ports
 
 
 def test_pkt008_rollback_review_seed_contract() -> None:
     with tempfile.TemporaryDirectory() as td:
-        store = ReadSurfaceStore(
-            os.path.join(td, "read_surfaces.json"),
-            allow_local_snapshot_fallback=True,
+        store = create_in_memory_read_surface_ports(
+            lifecycle_telemetry_governance_kwargs={
+                "rollback_reviews": {
+                    "rollback-rb-001": {
+                        "rollback_id": "rollback-rb-001",
+                        "allowedActions": {
+                            "canApproveRollback": False,
+                            "canRejectRollback": True,
+                        },
+                        "position_impact": [
+                            {"position_data_stale": False, "position_impact_summary": "closed"},
+                            {"position_data_stale": False, "position_impact_summary": "neutral"},
+                            {"position_data_stale": True, "position_impact_summary": None},
+                        ],
+                        "meta": {"surfaces": {"position_data": {"status": "degraded"}}},
+                    }
+                }
+            }
         )
         review = store.get_rollback_review("rollback-rb-001")
         assert review is not None

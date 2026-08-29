@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, os.path.dirname(__file__))
 
 import main as bff_main
-from read_store import ReadSurfaceStore
+from ports import create_in_memory_read_surface_ports
 
 
 OPERATOR_TOKEN = "Bearer op-2:operator"
@@ -18,10 +18,7 @@ OPERATOR_TOKEN = "Bearer op-2:operator"
 def test_pkt013_operator_home_returns_backend_owned_summary_cards() -> None:
     with tempfile.TemporaryDirectory() as td:
         original_store = bff_main.read_store
-        store = ReadSurfaceStore(
-            os.path.join(td, "read_surfaces.json"),
-            allow_local_snapshot_fallback=False,
-        )
+        store = create_in_memory_read_surface_ports()
         store.list_incidents = lambda **kwargs: [
             {
                 "incident_id": "inc-001",
@@ -171,10 +168,7 @@ def test_pkt013_operator_home_returns_backend_owned_summary_cards() -> None:
 def test_pkt013_operator_home_returns_unavailable_state_without_false_empty_dashboard() -> None:
     with tempfile.TemporaryDirectory() as td:
         original_store = bff_main.read_store
-        store = ReadSurfaceStore(
-            os.path.join(td, "read_surfaces.json"),
-            allow_local_snapshot_fallback=False,
-        )
+        store = create_in_memory_read_surface_ports()
         store.list_incidents = lambda **kwargs: []
         store.list_governance_review_queue_items = lambda **kwargs: []
         store.list_approval_queue_items = lambda **kwargs: []
