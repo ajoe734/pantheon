@@ -8135,14 +8135,23 @@ def status_event_matches_worker_process(
     event: Mapping[str, Any] | None,
     worker: Mapping[str, Any],
 ) -> bool:
-    """Return whether a canonical status event was emitted by this exact run."""
+    """Return whether a canonical status event was emitted by this exact run.
+
+    ``ai-status`` binds a status mutation to the immutable process identity and
+    also records task generation, actor, and workspace provenance.  The latter
+    is deliberately richer than the small identity returned here, so compare
+    every identity field rather than requiring the two mappings to have the
+    same shape.  A mismatched identity field still fails closed.
+    """
 
     identity = worker_process_identity(worker)
     if identity is None or not isinstance(event, Mapping):
         return False
     command = event.get("status_command")
     lease = command.get("worker_lease") if isinstance(command, Mapping) else None
-    return isinstance(lease, Mapping) and dict(lease) == identity
+    return isinstance(lease, Mapping) and all(
+        lease.get(field) == value for field, value in identity.items()
+    )
 
 
 def canonical_worker_terminal_status(
