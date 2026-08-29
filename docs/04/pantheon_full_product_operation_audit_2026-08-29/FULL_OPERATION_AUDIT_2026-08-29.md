@@ -4,7 +4,7 @@
 |---|---|
 | 文件狀態 | 完整稽核結論；舊FE/BFF pair已由補償恢復，但current source promotion失敗，第三遍current UI明確保留為未驗證 |
 | 稽核範圍 | Pantheon 系統、十二循環、Management、Management AI、Agora、Source Ingestion、操作 UI、dev hosted runtime |
-| Pantheon repository 基線 | `origin/dev@1d614f393868efaf4861ebf66d08e48d22070a01`；相較下列 product runtime commit 只新增 development-tooling 變更 |
+| Pantheon repository 基線 | `origin/dev@b3b26a72fda63e12d1f53fb3e141e8f2a6d5a757`；相較下列 product runtime commit只新增development/deployment tooling變更 |
 | Pantheon product runtime 基線 | `7583bb646423bbece1e957af28abd587a4cb3fba` |
 | execute-plans source 基線 | `origin/dev@5ffee3db8c2b37b4070d43d091ed4207ef5d70e5` |
 | current hosted BFF | `dcb14231d29f08f1646a4ee962b83fd2d4b67560`；`16:45Z`直接確認已由失敗promotion補償回舊accepted pair |
@@ -109,7 +109,7 @@ release workflow顯示success但必要steps被skip、current FE source通過type
 
 | 項目 | 觀察 | 判定 |
 |---|---|---|
-| Pantheon current source | `origin/dev@1d614f3`；product-runtime tree與`7583bb6`相同 | source與product runtime基線已分開記錄 |
+| Pantheon current source | `origin/dev@b3b26a7`；product-runtime tree與`7583bb6`相同，新增deploy recovery與bounded Source refresh tooling | source、delivery tooling與product runtime基線已分開記錄 |
 | execute-plans current source | `origin/dev@5ffee3d` | source基線已更新；相較`e205643`新增Workshop tenant submission修正 |
 | Hosted release pair | FE `c230fc7` / BFF `dcb1423`，pair id `0429052b...` | exact hosted pair 可識別 |
 | Source vs hosted | 當時兩個 repo 的 hosted SHA 都落後 current source | `PARTIAL`；這是 promotion 前快照，不是現行 truth |
@@ -181,7 +181,7 @@ run `33262293025`於`2026-08-29T16:42:12Z`以failure終止。`Deploy dev VM stac
 OpenClaw與Agora restart persistence steps全部skipped：
 
 1. `paper-signal-producer`在stabilization deadline仍為`unhealthy`；
-2. 所有required services的Compose image ID都被判`invalid`。current script只接受
+2. 所有required services的Compose image ID都被判`invalid`。該次deploy script只接受
    `sha256:<64 hex>`，但該VM的`docker compose images -q`實際回傳`<64 hex>`，因此即使
    container image identity存在也全部被拒絕。
 
@@ -189,9 +189,23 @@ OpenClaw與Agora restart persistence steps全部skipped：
 標籤：`2026-08-29T16:45:59Z`直接重讀確認FE仍為`c230fc7`、manifest宣告BFF `dcb1423`，
 實際BFF也已回`dcb1423`；`/readyz` ready，Lifecycle checkpoint/high-watermark同為`7,619,101`，
 backlog/quarantine均為0。因此**目前served pair已恢復一致，但只是舊版**。這關閉當下split-pair
-狀態，不關閉current `1d614f3/5ffee3d`尚未部署、功能probes全skip及current UI無法簽收的落差。
+狀態，不關閉current `b3b26a7/5ffee3d`尚未部署、功能probes全skip及current UI無法簽收的落差。
 
-### 3.5 舊 closeout 文件與原始 workflow 不一致
+### 3.5 稽核後current source前進：image ID修正已合併但未重跑
+
+Pantheon `dev`隨後前進至`b3b26a7`。新增的`deploy_nonprod_vm.sh`會把Compose v2回傳的
+well-formed bare 64-hex image ID正規化成`sha256:<digest>`後，再與Docker inspect identity比較；
+end-to-end deploy test也改以bare digest作正向fixture。這正面修掉上一節的全服務false-negative，
+本次exact source的deploy suite為21 passed、2 skipped（Docker/PostgreSQL live opt-in），Source deploy
+diagnostics為9 passed；但尚無一個以`b3b26a7`為controller的successful promotion，所以只標
+**source fixed / runtime unverified**。
+
+同一commit另為Source加入預設關閉的`run_bounded_source_refresh`：只允許clean dev auto/root、strict
+profile，固定TWSE/TPEx hosts與connector，timeout 1800秒、controller 1 tick、concurrency 1、最多
+100 records；預設仍是external egress deny及reconcile-only。這符合「平常不持續pull、測試時手動
+拉一次」原則，但current hosted one-shot→readback→恢復reconcile-only仍未執行。
+
+### 3.6 舊 closeout 文件與原始 workflow 不一致
 
 倉庫內 `PFG-HOSTED-CURRENT-DEV-CLOSEOUT-20260828` 文件宣稱 L12、Agora、Management、
 Management AI、paper與rollback全數passed。但它的producer run `33146133499`原始job記錄中，
@@ -225,6 +239,8 @@ HAR/DOM與skip來源。因此它們不是獨立可重現的功能證據，且被
 | Formula/Activity/Paper/Postmortem完全用前端合成資料 | Formula不再建假backtest；Activity改讀SSE；Paper/Live讀Management telemetry；Postmortem不再固定3筆 | 前三個synthetic路徑已移除；Postmortem仍是Incident timeline派生，不是canonical owner |
 | Management AI UI action只是宣告 | `openDrawer`、`focusPanel`已接allowlist handler；`runBffAction`已接`HighRiskConfirm`與receipt readback tests | source-level已修；hosted provider answer與domain terminal readback仍未驗 |
 | Workshop提交依賴browser tenant hint | `5ffee3d`新增`resolveSubmissionTenant()`：browser hint缺失時採BFF resolver tenant，矛盾hint仍拒絕；current typecheck與52個Workshop tests通過 | source-level已修；附帶evidence仍自列hosted acceptance pending，故不提升hosted判定 |
+| Compose bare image ID被deploy gate全數拒絕 | `b3b26a7`只正規化well-formed bare 64-hex，保留invalid/multiple/mismatch拒絕；end-to-end fixture覆蓋bare digest | source-level已修；尚待新promotion證明VM實際receipt不再false-negative |
+| Source bounded refresh沒有正式手動入口 | `b3b26a7`新增單一boolean workflow入口，固定allowlisted connector/hosts、1 tick、concurrency 1、100-record bound及1800秒timeout；預設關閉 | 設計與source contract已補；current hosted effect/readback/reconcile-only restoration未驗 |
 
 ### 4.2 Current direct GAP
 
@@ -248,8 +264,7 @@ HAR/DOM與skip來源。因此它們不是獨立可重現的功能證據，且被
 | OP-G16 | P0 | deployment lease與rollback共用同一個脆弱遠端依賴 | 一次GitHub API timeout同時使長部署失敗、rollback lease失敗；補償exit 78卻在step summary顯示success | lease heartbeat採有界retry/grace而非單次遠端timeout即殺部署；rollback已有本地sealed authority可獨立執行；補償失敗必須是顯式red且自動驗證served pair |
 | OP-G17 | P0 | Registry→Deployment→RuntimeBinding的executable projection仍非自然產生 | `verify_deploy_authorities()`驗證canonical artifact identity/checksum，但不回傳`object_store`/loader projection/`market_data_policy`；deployment adapter只原樣轉送`deploy_context.metadata`，fleet再於下游拒絕缺欄位binding。舊closeout tests沒有檢查這段投影 | Registry authority以同一artifact/version/checksum產生immutable loader projection與market policy，DeploymentPlan持有引用，Runtime Manager驗證後才建active binding；不接受caller任意metadata |
 | OP-G18 | P1 | Management Postmortem仍無canonical read owner | `PostmortemLibrary.tsx`不再固定3筆，但由Incident timeline中`[postmortem]`字串臨時產生`pm_<incident>`，沒有讀Postmortem authority的ID/revision/status | 由postmortem owner提供list/detail契約；Incident只保存`postmortem_id`引用，UI reload後讀同一durable object |
-| OP-G19 | P0 | deploy image identity validator與VM的Compose輸出格式不相容 | run `33262293025`中所有required services的`docker compose images -q`回傳64-hex ID；`deploy_nonprod_vm.sh`與functional-closure verifier只接受含`sha256:`前綴，造成全服務identity false-negative | 將raw/prefixed image ID正規化成同一canonical digest再比較；加raw/prefixed正向及真 mismatch負向測試，仍保留source revision與container-vs-compose一致性檢查 |
-| OP-G20 | P0 | current candidate的paper-signal-producer無法進healthy | run `33262293025`在15次stabilization後直接觀察`paper-signal-producer: health=unhealthy`，使部署失敗；失敗artifact沒有保存該service的health file／service logs，所以不能把原因只推定為OP-G17 | deploy diagnostic保存producer health payload與logs；先重現並修正直接reason，再以canonical artifact+snapshot使producer healthy並完成signal→order/fill/heartbeat readback |
+| OP-G19 | P0 | current candidate的paper-signal-producer無法進healthy | run `33262293025`在15次stabilization後直接觀察`paper-signal-producer: health=unhealthy`，使部署失敗；失敗artifact沒有保存該service的health file／service logs，所以不能把原因只推定為OP-G17 | deploy diagnostic保存producer health payload與logs；先重現並修正直接reason，再以canonical artifact+snapshot使producer healthy並完成signal→order/fill/heartbeat readback |
 
 ### 4.3 架構簡化 SA/SD 逐項驗收
 
@@ -410,6 +425,8 @@ served FE、authenticated network、canonical data與reload readback補齊前，
 - Source command/schema/concurrency 18個非HTTP tests通過；
 - governed search、structured alpha、reviewed memory 25個非HTTP tests通過；
 - current BFF以async ASGI transport呼叫`/livez`與authenticated data-sources list均回200。
+- `b3b26a7` deploy recovery tests為21 passed、2個明示Docker/PostgreSQL live opt-in skips；
+  Source deploy diagnostics contracts為9 passed。
 
 同一批的sync `TestClient` 在Source HTTP第一個case即死鎖；因此沒有把後續未終止
 tests算failed或passed。這個分類很重要：產品ASGI route直接可執行，但現有測試客戶端
@@ -417,7 +434,7 @@ tests算failed或passed。這個分類很重要：產品ASGI route直接可執�
 
 ## 8. 修正優先序（功能可運作優先）
 
-1. 修正Compose image ID canonicalization（OP-G19），並讓paper-signal-producer失敗時保存直接health/log reason；修正其current unhealthy根因。
+1. 以`b3b26a7`重跑deployment，確認image ID normalization在VM成立；讓paper-signal-producer失敗時保存直接health/log reason，並修正其current unhealthy根因（OP-G19）。
 2. 修正lease/rollback/compensation單點與false-green，再atomic promotion一組current FE/BFF/manifest；目前舊pair雖已恢復，仍不是current驗收目標。
 3. 將Agora BFF假`real` adapter改為simulation/unavailable，再接一條admitted bounded、non-stub research lane與real candidate。
 4. 完成Registry→DeploymentPlan→RuntimeBinding的canonical executable projection，再跑paper lifecycle。
@@ -430,8 +447,8 @@ tests算failed或passed。這個分類很重要：產品ASGI route直接可執�
 11. 重跑三遍對照；未取得direct evidence者保留`UNVERIFIED`，不以task/PR/test數量補空白。
 
 目前可下的產品級結論是：**舊版BFF process、Lifecycle PostgreSQL projection與列出的核心依賴
-在補償後可達，舊FE/BFF pair也已恢復一致；但current source部署直接因image identity false-negative
-與paper-signal-producer unhealthy失敗，Agora research與RuntimeBinding又有current source P0，所以
+在補償後可達，舊FE/BFF pair也已恢復一致；image identity false-negative已有current source修正但
+尚未重跑，paper-signal-producer仍是直接未解阻斷，Agora research與RuntimeBinding又有current source P0，所以
 不是所有功能正常，也不具備全產品簽收條件。**
 
 ## 9. 三遍前後對照方法
@@ -464,8 +481,8 @@ tests算failed或passed。這個分類很重要：產品ASGI route直接可執�
 
 | 對照遍次 | 正向查核 | 反向查核 | 結果 |
 |---|---|---|---|
-| 第一遍：SA/SD→code | 找到Source commands/search/memory、Agora worker、loop projection、Management UI actions與`5ffee3d` Workshop tenant修正等新實作 | 搜尋production caller、stub、seed、overlay、private imports、dead compatibility；找到假`real` research、無caller performance producer、generic CRUD overlay、BFF main未拆完 | 舊GAP一部分關閉，20個current GAP保留 |
-| 第二遍：code→runtime | 四次對照Compose、entrypoint、public version/readyz、Lifecycle checkpoint與workflow target SHAs | 發現RuntimeBinding投影不完整、production research disabled、Compose image ID格式false-negative及paper producer unhealthy；新promotionhalf-switch後成功補償回舊pair | current runtime gate `FAIL`；rollback restoration `PASS` |
+| 第一遍：SA/SD→code | 找到Source commands/search/memory、Agora worker、loop projection、Management UI actions、`5ffee3d` Workshop tenant修正及`b3b26a7` deploy/source-recovery修正 | 搜尋production caller、stub、seed、overlay、private imports、dead compatibility；找到假`real` research、無caller performance producer、generic CRUD overlay、BFF main未拆完 | 舊GAP一部分關閉，19個current GAP保留 |
+| 第二遍：code→runtime | 四次對照Compose、entrypoint、public version/readyz、Lifecycle checkpoint與workflow target SHAs | 發現RuntimeBinding投影不完整、production research disabled及paper producer unhealthy；image ID false-negative已在source修正但未重跑；新promotionhalf-switch後成功補償回舊pair | current runtime gate `FAIL`；rollback restoration `PASS` |
 | 第三遍：UI→durable truth→UI | 檢查current route mount、`e205643`的175 focused tests、`5ffee3d`的52-test增量、舊artifact與public auth-boundary | 逐項查原始workflow與artifact logs；發現authenticated/write/exact-pair steps skipped、hosted logs失敗卻summary passed；current FE gate又在live identity resolution失敗 | current pair未部署，不以舊pair補驗；全產品sign-off `FAIL` |
 
 第三遍current journey「不跑」不是漏驗，而exact-current定義的必然結果：half-switch時任何UI
@@ -477,7 +494,7 @@ tests算failed或passed。這個分類很重要：產品ASGI route直接可執�
 最終結論是：**不是所有功能都正常運作，也不是所有架構簡化都完成。** 已確認
 Source Management、Lifecycle PostgreSQL、Agora interaction worker、Workshop tenant submit、Management UI action與多項去synthetic
 修正存在；但Agora fake-real research/performance wiring、canonical executable RuntimeBinding、
-current hosted delivery、paper producer health、image identity gate、Source/Management/Agora/十二循環durable journeys、Postmortem owner及大型/dead-code
+current hosted delivery、paper producer health、image identity fix的runtime proof、Source/Management/Agora/十二循環durable journeys、Postmortem owner及大型/dead-code
 cleanup仍有直接落差。在atomic promotion、第三遍exact desktop journey與durable readback補齊前，
 本報告明確拒絕全產品簽收。
 
@@ -524,7 +541,8 @@ cleanup仍有直接落差。在atomic promotion、第三遍exact desktop journey
   `33144815565`及execute-plans `33263289212`的raw jobs/logs；
   判定以原始step狀態為準，不採只列count的closeout摘要。
 - Pantheon focused validation：route no-shadowing 3、architecture boundary 5、Source reconcile-only 1、
-  Source domain/search/memory非HTTP 43，以及async ASGI `/livez`／data-sources直接呼叫。
+  Source domain/search/memory非HTTP 43、deploy recovery 21 passed / 2 live opt-in skips、Source deploy
+  diagnostics 9 passed，以及async ASGI `/livez`／data-sources直接呼叫。
 - execute-plans validation：`e205643`基線typecheck/175 focused tests；`5ffee3d` exact source
   typecheck、Strategy Workshop 52 tests、變更檔ESLint 0 errors。
 
