@@ -1,9 +1,7 @@
 """Agora BFF router factory.
 
 create_agora_router() assembles all Agora sub-routers and is included by main.py
-via app.include_router(create_agora_router(...)).  Some handlers are complete;
-remaining downstream AG-BE-ID-* / AG-BE-SW-* surfaces stay in their sub-router
-stubs until implemented.
+via app.include_router(create_agora_router(...)).
 
 Route ownership per capability_manifest.json (frozen AG-XR-001):
   /bff/agora/me              → identity   (agora.identity.v1)
@@ -54,6 +52,7 @@ from .operational_readiness import (
     AgoraOperationalReadinessService,
     create_operational_readiness_router,
 )
+from .service import AgoraService
 
 
 _CAPABILITY_MANIFEST_PATH = os.path.join(
@@ -96,6 +95,16 @@ def create_agora_router(
     canonical_context_ref_resolver: Optional[Callable[..., Any]] = None,
     get_trade_journey_store: Callable[[], Any] = lambda: None,
     get_persona_write_owner: Optional[Callable[[], Any]] = None,
+    get_command_store: Optional[Callable[[], Any]] = None,
+    idempotency_store: Optional[Dict[str, Any]] = None,
+    sse_buffers: Optional[Dict[str, Any]] = None,
+    sse_subscribers: Optional[Dict[str, Any]] = None,
+    assistant_ask_enabled: Optional[Callable[[], bool]] = None,
+    assistant_build_context_pack: Optional[Callable[..., Any]] = None,
+    get_assistant_session_store: Optional[Callable[[], Any]] = None,
+    get_assistant_transcript_store: Optional[Callable[[], Any]] = None,
+    openclaw_ops_client_factory: Optional[Callable[[], Any]] = None,
+    service: Optional[AgoraService] = None,
 ) -> APIRouter:
     """Return the Agora top-level APIRouter.
 
@@ -116,6 +125,21 @@ def create_agora_router(
         interaction_store=interaction_lifecycle,
         validation_adapter=CandidateBindingValidationAdapter(),
         approval_store=ReadStoreApprovalAdapter(get_read_store),
+    )
+
+    agora_service = service or AgoraService(
+        get_read_store=get_read_store,
+        get_command_store=get_command_store,
+        idempotency_store=idempotency_store,
+        sse_buffers=sse_buffers,
+        sse_subscribers=sse_subscribers,
+        assistant_ask_enabled=assistant_ask_enabled,
+        assistant_build_context_pack=assistant_build_context_pack,
+        get_assistant_session_store=get_assistant_session_store,
+        get_assistant_transcript_store=get_assistant_transcript_store,
+        openclaw_ops_client_factory=openclaw_ops_client_factory,
+        utc_now=utc_now,
+        bff_error=bff_error,
     )
 
     # ------------------------------------------------------------------ #
@@ -203,7 +227,7 @@ def create_agora_router(
         bff_error=bff_error,
         utc_now=utc_now,
     )
-    router.include_router(create_identity_router(**_kw))
+    router.include_router(create_identity_router(service=agora_service, require_write_role=require_write_role, **_kw))
     router.include_router(create_servant_router(
         **_kw,
         require_write_role=require_write_role,
@@ -231,7 +255,7 @@ def create_agora_router(
     ))
     router.include_router(create_dashboard_router(**_kw))
     router.include_router(create_shadow_router(**_kw))
-    router.include_router(create_personalization_router(**_kw))
+    router.include_router(create_personalization_router(service=agora_service, require_write_role=require_write_role, **_kw))
     router.include_router(create_management_projection_router(**_kw))
     router.include_router(
         create_dataset_extraction_router(
@@ -267,5 +291,6 @@ def create_agora_router(
     router.interaction_lifecycle = interaction_lifecycle
     router.workshop_store = workshop_store
     router.proposal_store = proposal_store
+    router.agora_service = agora_service
 
     return router

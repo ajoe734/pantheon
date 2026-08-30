@@ -77,6 +77,7 @@ def _freshness_metadata(
     accepted_run_id: str | None = None,
     record_run_id: str | None = None,
     accepted_source_id: str | None = None,
+    source_proof_receipt_id: str | None = None,
 ) -> dict[str, Any]:
     parsed_source_timestamp = _parse_timestamp(source_timestamp)
     if not str(source_timestamp or "").strip():
@@ -211,6 +212,8 @@ def _freshness_metadata(
         "staleThresholdSeconds": threshold,
         "nextRunAt": connector_freshness.get("next_run_at") or connector_freshness.get("next_due_at"),
         "lastTypedFailure": typed_failure,
+        "source_proof_receipt_id": source_proof_receipt_id,
+        "sourceProofReceiptId": source_proof_receipt_id,
     }
 
 
@@ -332,6 +335,18 @@ def project(
             )
             else None
         )
+        proof_receipt_id = (
+            str(
+                record.get("source_proof_receipt_id")
+                or metadata.get("source_proof_receipt_id")
+                or latest_receipt.get("source_proof_receipt_id")
+                or latest_receipt.get("receipt_id")
+                or freshness_readback.get("source_proof_receipt_id")
+                or (f"spr-{CONNECTOR_ID}:{record_run_id}:{source_id}" if record_run_id and source_id else "")
+            )
+            or None
+        )
+        snapshot_id = str(metadata.get("snapshot_id") or metadata.get("snapshotId") or record.get("snapshot_id") or "") or None
         freshness = _freshness_metadata(
             source_timestamp=source_timestamp,
             connector_freshness=freshness_readback,
@@ -343,6 +358,7 @@ def project(
             accepted_run_id=accepted_run_id or None,
             record_run_id=record_run_id,
             accepted_source_id=target_accepted_source,
+            source_proof_receipt_id=proof_receipt_id,
         )
         common = {
             "symbol": symbol,
@@ -357,6 +373,10 @@ def project(
             "freshness": freshness,
             "freshnessStatus": freshness["status"],
             "stale": freshness["stale"],
+            "source_proof_receipt_id": proof_receipt_id,
+            "sourceProofReceiptId": proof_receipt_id,
+            "snapshot_id": snapshot_id,
+            "snapshotId": snapshot_id,
         }
         watchlist_id = f"market-{symbol}"
         watchlist[watchlist_id] = {

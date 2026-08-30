@@ -1,9 +1,15 @@
 """Agora identity router — agora.identity.v1 + agora.session.v1."""
 from __future__ import annotations
 
+import json
+import uuid
 from typing import Any, Callable, Dict, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Body, Header, HTTPException, Query
+from fastapi.responses import JSONResponse
+
+from models import CommandType, ErrorCode, ObjectType, TargetObject
+from ..service import AgoraService
 
 
 def create_identity_router(
@@ -12,39 +18,50 @@ def create_identity_router(
     require_read_role: Callable[..., None],
     bff_error: Callable[..., HTTPException],
     utc_now: Callable[[], str],
+    service: Optional[AgoraService] = None,
+    require_write_role: Optional[Callable[..., None]] = None,
+    get_read_store: Optional[Callable[[], Any]] = None,
+    get_command_store: Optional[Callable[[], Any]] = None,
+    idempotency_store: Optional[Dict[str, Any]] = None,
+    sse_buffers: Optional[Dict[str, Any]] = None,
+    sse_subscribers: Optional[Dict[str, Any]] = None,
+    assistant_ask_enabled: Optional[Callable[[], bool]] = None,
+    assistant_build_context_pack: Optional[Callable[..., Any]] = None,
+    get_assistant_session_store: Optional[Callable[[], Any]] = None,
+    get_assistant_transcript_store: Optional[Callable[[], Any]] = None,
+    openclaw_ops_client_factory: Optional[Callable[[], Any]] = None,
 ) -> APIRouter:
-    """Identity router — placeholder until AG-BE-ID-* migrate routes from main.py."""
+    """Identity router — agora sessions, quick ask, messages, and handoffs."""
     router = APIRouter(tags=["agora-identity"])
 
-    # Local import to avoid circular dependency
-    import main
-    from main import (
-        _agora_list_response,
-        _require_operator_role,
-        _reject_body_idempotency_key,
-        _resolve_final_idempotency_key,
-        _stable_json_hash,
-        _agora_core_idempotency_check,
-        _request_dry_run_requested,
-        _dry_run_success_response,
-        _read_surface_meta,
-        _agora_required_text,
-        _publish_event,
-        ErrorCode,
-        ObjectType,
-        CommandType,
-        TargetObject,
-        _sem_list_payload,
-        _sem_agora_inbox_payload,
-        _assistant_ask_enabled,
-        _assistant_build_context_pack,
-        _agora_ask_deterministic_fallback,
-        _agora_action_command,
+    svc = service or AgoraService(
+        get_read_store=get_read_store,
+        get_command_store=get_command_store,
+        idempotency_store=idempotency_store,
+        sse_buffers=sse_buffers,
+        sse_subscribers=sse_subscribers,
+        assistant_ask_enabled=assistant_ask_enabled,
+        assistant_build_context_pack=assistant_build_context_pack,
+        get_assistant_session_store=get_assistant_session_store,
+        get_assistant_transcript_store=get_assistant_transcript_store,
+        openclaw_ops_client_factory=openclaw_ops_client_factory,
+        utc_now=utc_now,
+        bff_error=bff_error,
     )
-    import uuid
-    import json
-    from fastapi import Body, Header, Query
-    from fastapi.responses import JSONResponse
+
+    def _require_operator(identity: Any) -> None:
+        if require_write_role is not None:
+            require_write_role(identity)
+            return
+        roles = set(getattr(identity, "roles", []) or [])
+        if not roles.intersection({"operator", "approver", "admin", "reviewer"}):
+            raise bff_error(
+                403,
+                ErrorCode.FORBIDDEN,
+                "Operator role required",
+                "Action requires operator-level access",
+                precondition_failed="role_check",
+            )
 
     @router.get("/bff/agora/committee-sessions")
     @router.get("/bff/agora/sessions")
@@ -58,10 +75,10 @@ def create_identity_router(
         identity = extract_identity(authorization)
         require_read_role(identity)
         snapshot_at = utc_now()
-        return _agora_list_response(
+        return svc.agora_list_response(
             dataset="agora_sessions",
             surface_key="agora_session_list",
-            items=main.read_store.list_agora_sessions(status=status),
+            items=svc.list_sessions(status=status),
             page_token=page_token,
             page_size=page_size,
             snapshot_at=snapshot_at,
@@ -76,47 +93,28 @@ def create_identity_router(
     ):
         """BFF: create an Agora ask/session record."""
         identity = extract_identity(authorization)
-        _require_operator_role(identity)
-        _reject_body_idempotency_key(payload)
-        resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
-        request_hash = _stable_json_hash({"route": "POST /bff/agora/sessions", "payload": payload})
-        dry_run = _request_dry_run_requested()
-        if not dry_run:
-            cached = _agora_core_idempotency_check(resolved_key, request_hash)
-            if cached is not None:
-                return cached
+        _require_operator(identity)
+        svc.reject_body_idempotency_key(payload)
+        resolved_key = svc.resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+        request_hash = svc.stable_json_hash({"route": "POST /bff/agora/sessions", "payload": payload})
         snapshot_at = utc_now()
         session_id = str(payload.get("sessionId") or payload.get("session_id") or f"agora-sess-{uuid.uuid4().hex[:10]}")
         title = str(payload.get("title") or "Untitled Agora session").strip()
-        if dry_run:
-            return _dry_run_success_response(
-                {
-                    "id": session_id,
-                    "sessionId": session_id,
-                    "title": title,
-                    "mode": payload.get("mode") or payload.get("sessionType") or "quick_ask",
-                    "status": payload.get("status") or "active",
-                    "participants": json.loads(json.dumps(payload.get("participants") or [])),
-                    "messages": json.loads(json.dumps(payload.get("messages") or [])),
-                    "createdBy": identity.operator_id,
-                    "createdAt": snapshot_at,
-                    "updatedAt": snapshot_at,
-                },
-                snapshot_at=snapshot_at,
-                idempotency_key=resolved_key,
-                evidence_kind="agora.session.create",
-            )
+        cached = svc.check_idempotency(resolved_key, request_hash)
+        if cached is not None:
+            return cached
+        created = svc.create_session(
+            session_id=session_id,
+            title=title,
+            actor_id=identity.operator_id,
+            payload=payload,
+            created_at=snapshot_at,
+        )
         result = {
-            "data": main.read_store.create_agora_session(
-                session_id=session_id,
-                title=title,
-                actor_id=identity.operator_id,
-                payload=payload,
-                created_at=snapshot_at,
-            ),
+            "data": created,
             "meta": {"snapshot_at": snapshot_at},
         }
-        main._AGORA_CORE_BFF_IDEMPOTENCY[resolved_key] = {"request_hash": request_hash, "result": result}
+        svc.record_idempotency(resolved_key, request_hash, result)
         return result
 
     @router.get("/bff/agora/sessions/{sessionId}")
@@ -128,7 +126,7 @@ def create_identity_router(
         identity = extract_identity(authorization)
         require_read_role(identity)
         snapshot_at = utc_now()
-        session = main.read_store.get_agora_session(sessionId)
+        session = svc.get_session(sessionId)
         if not session:
             raise bff_error(
                 404,
@@ -139,7 +137,10 @@ def create_identity_router(
             )
         return {
             "data": session,
-            "meta": _read_surface_meta("agora_sessions", "agora_session_detail", snapshot_at=snapshot_at),
+            "meta": {
+                "snapshot_at": snapshot_at,
+                "surfaces": {"agora_session_detail": {"status": "ok", "source": "bff_local"}},
+            },
         }
 
     @router.get("/bff/agora/sessions/{sessionId}/messages")
@@ -151,7 +152,7 @@ def create_identity_router(
         identity = extract_identity(authorization)
         require_read_role(identity)
         snapshot_at = utc_now()
-        messages = main.read_store.list_agora_session_messages(sessionId)
+        messages = svc.list_session_messages(sessionId)
         if messages is None:
             raise bff_error(
                 404,
@@ -164,7 +165,10 @@ def create_identity_router(
             "data": messages,
             "items": messages,
             "page_info": {"next_page_token": None, "total": len(messages)},
-            "meta": _read_surface_meta("agora_sessions", "agora_session_messages", snapshot_at=snapshot_at),
+            "meta": {
+                "snapshot_at": snapshot_at,
+                "surfaces": {"agora_session_messages": {"status": "ok", "source": "bff_local"}},
+            },
         }
 
     @router.post("/bff/agora/sessions/{sessionId}/messages", status_code=201)
@@ -177,46 +181,21 @@ def create_identity_router(
     ):
         """BFF: append a message to an Agora session."""
         identity = extract_identity(authorization)
-        _require_operator_role(identity)
-        _reject_body_idempotency_key(payload)
-        content = _agora_required_text(payload, "content", "body", "message")
-        resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
-        request_hash = _stable_json_hash({
+        _require_operator(identity)
+        svc.reject_body_idempotency_key(payload)
+        content = svc.agora_required_text(payload, "content", "body", "message")
+        resolved_key = svc.resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+        request_hash = svc.stable_json_hash({
             "route": "POST /bff/agora/sessions/{sessionId}/messages",
             "sessionId": sessionId,
             "payload": payload,
         })
-        dry_run = _request_dry_run_requested()
-        if not dry_run:
-            cached = _agora_core_idempotency_check(resolved_key, request_hash)
-            if cached is not None:
-                return cached
+        cached = svc.check_idempotency(resolved_key, request_hash)
+        if cached is not None:
+            return cached
         snapshot_at = utc_now()
         message_id = str(payload.get("id") or payload.get("messageId") or f"agora-msg-{uuid.uuid4().hex[:10]}")
-        if dry_run:
-            if not main.read_store.get_agora_session(sessionId):
-                raise bff_error(
-                    404,
-                    ErrorCode.RESOURCE_NOT_FOUND,
-                    "Agora session not found",
-                    f"Agora session {sessionId} does not exist",
-                    precondition_failed="session_id",
-                )
-            return _dry_run_success_response(
-                {
-                    "id": message_id,
-                    "sessionId": sessionId,
-                    "sender": payload.get("sender") or {"type": "operator", "id": identity.operator_id},
-                    "role": payload.get("role") or "user",
-                    "content": content,
-                    "language": payload.get("language") or "zh-TW",
-                    "createdAt": snapshot_at,
-                },
-                snapshot_at=snapshot_at,
-                idempotency_key=resolved_key,
-                evidence_kind="agora.session_message.create",
-            )
-        message = main.read_store.append_agora_session_message(
+        message = svc.append_session_message(
             sessionId,
             message_id=message_id,
             content=content,
@@ -232,14 +211,13 @@ def create_identity_router(
                 f"Agora session {sessionId} does not exist",
                 precondition_failed="session_id",
             )
-        _publish_event(
-            main._sse_buffers["ask"],
-            main._sse_subscribers["ask"],
+        svc.publish_sse_event(
+            "ask",
             "agora.session.message_created",
             {"sessionId": sessionId, "messageId": message.get("id")},
         )
         result = {"data": message, "meta": {"snapshot_at": snapshot_at}}
-        main._AGORA_CORE_BFF_IDEMPOTENCY[resolved_key] = {"request_hash": request_hash, "result": result}
+        svc.record_idempotency(resolved_key, request_hash, result)
         return result
 
     @router.post("/bff/agora/messages/{messageId}/actions/{actionId}", status_code=202)
@@ -254,9 +232,11 @@ def create_identity_router(
         """BFF: route an Agora message action through command admission."""
         identity = extract_identity(authorization)
         require_read_role(identity)
-        _reject_body_idempotency_key(payload)
-        resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
-        if not main.read_store.get_agora_message(messageId):
+        svc.reject_body_idempotency_key(payload)
+        resolved_key = svc.resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+        store = svc.read_store
+        msg_getter = getattr(store, "get_agora_message", None) if store is not None else None
+        if callable(msg_getter) and not msg_getter(messageId):
             raise bff_error(
                 404,
                 ErrorCode.RESOURCE_NOT_FOUND,
@@ -264,7 +244,7 @@ def create_identity_router(
                 f"Agora message {messageId} does not exist",
                 precondition_failed="message_id",
             )
-        return _agora_action_command(
+        return svc.submit_action_command(
             route="POST /bff/agora/messages/{messageId}/actions/{actionId}",
             entity_type=ObjectType.AGORA_MESSAGE,
             entity_id=messageId,
@@ -277,13 +257,69 @@ def create_identity_router(
 
     @router.get("/bff/agora/inbox")
     async def sem_agora_inbox(authorization: Optional[str] = Header(default=None)):
-        require_read_role(extract_identity(authorization))
-        return _sem_agora_inbox_payload()
+        identity = extract_identity(authorization)
+        require_read_role(identity)
+        snapshot_at = utc_now()
+        insights = svc.list_insights()
+        signals = []
+        research_tasks = []
+        store = svc.read_store
+        if store is not None:
+            if hasattr(store, "list_agora_signals") and callable(store.list_agora_signals):
+                signals = store.list_agora_signals() or []
+            if hasattr(store, "list_agora_research_tasks") and callable(store.list_agora_research_tasks):
+                research_tasks = store.list_agora_research_tasks() or []
+
+        records = [
+            *(dict(item, inboxType="insight", sourceDataset="insight_cards") for item in insights),
+            *(dict(item, inboxType="signal", sourceDataset="agora_signals") for item in signals),
+            *(dict(item, inboxType="research_task", sourceDataset="research_tickets") for item in research_tasks),
+        ]
+        records.sort(
+            key=lambda rec: str(rec.get("updatedAt") or rec.get("updated_at") or rec.get("createdAt") or rec.get("created_at") or ""),
+            reverse=True,
+        )
+        return {
+            "data": records,
+            "items": records,
+            "page_info": {"next_page_token": None},
+            "meta": {
+                "snapshot_at": snapshot_at,
+                "surfaces": {
+                    "agora_inbox": {"status": "ok", "source": "bff_local"},
+                    "agora_inbox_insights": {"status": "ok", "source": "bff_local"},
+                    "agora_inbox_signals": {"status": "ok", "source": "bff_local"},
+                    "agora_inbox_research_tasks": {"status": "ok", "source": "bff_local"},
+                },
+                "composition": {
+                    "datasets": ["insight_cards", "agora_signals", "research_tickets"],
+                    "itemCounts": {
+                        "insight": len(insights),
+                        "signal": len(signals),
+                        "research_task": len(research_tasks),
+                    },
+                },
+            },
+        }
 
     @router.get("/bff/agora/ask/sessions")
     async def sem_agora_ask_sessions(authorization: Optional[str] = Header(default=None)):
-        require_read_role(extract_identity(authorization))
-        return _sem_list_payload("agora_sessions", "agora_ask_sessions", filter_mode="quick_ask")
+        identity = extract_identity(authorization)
+        require_read_role(identity)
+        sessions = [
+            item for item in svc.list_sessions()
+            if str(item.get("mode") or "") == "quick_ask"
+        ]
+        snapshot_at = utc_now()
+        return {
+            "data": sessions,
+            "items": sessions,
+            "page_info": {"next_page_token": None},
+            "meta": {
+                "snapshot_at": snapshot_at,
+                "surfaces": {"agora_ask_sessions": {"status": "ok", "source": "bff_local"}},
+            },
+        }
 
     @router.post("/bff/agora/ask/sessions", status_code=201)
     async def sem_agora_ask_create_session(
@@ -295,16 +331,16 @@ def create_identity_router(
         """ASK-001: create an agora ask session explicitly."""
         identity = extract_identity(authorization)
         require_read_role(identity)
-        _reject_body_idempotency_key(payload)
-        resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
-        request_hash = _stable_json_hash({"route": "POST /bff/agora/ask/sessions", "payload": payload})
-        cached = _agora_core_idempotency_check(resolved_key, request_hash)
+        svc.reject_body_idempotency_key(payload)
+        resolved_key = svc.resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+        request_hash = svc.stable_json_hash({"route": "POST /bff/agora/ask/sessions", "payload": payload})
+        cached = svc.check_idempotency(resolved_key, request_hash)
         if cached is not None:
             return cached
         now = utc_now()
         session_id = str(payload.get("sessionId") or payload.get("session_id") or f"ask-{uuid.uuid4().hex[:10]}")
         title = str(payload.get("title") or "Agora ask session").strip()
-        session = main.read_store.create_agora_session(
+        session = svc.create_session(
             session_id=session_id,
             title=title,
             actor_id=identity.operator_id,
@@ -315,9 +351,8 @@ def create_identity_router(
             },
             created_at=now,
         )
-        _publish_event(
-            main._sse_buffers["ask"],
-            main._sse_subscribers["ask"],
+        svc.publish_sse_event(
+            "ask",
             "ask.session.started",
             {"session_id": session_id, "mode": "quick_ask"},
         )
@@ -328,7 +363,7 @@ def create_identity_router(
                 "surfaces": {"agora_ask_session_detail": {"status": "ok", "source": "bff_local"}},
             },
         }
-        main._AGORA_CORE_BFF_IDEMPOTENCY[resolved_key] = {"request_hash": request_hash, "result": result}
+        svc.record_idempotency(resolved_key, request_hash, result)
         return result
 
     @router.get("/bff/agora/ask/sessions/{sessionId}")
@@ -340,7 +375,7 @@ def create_identity_router(
         identity = extract_identity(authorization)
         require_read_role(identity)
         snapshot_at = utc_now()
-        session = main.read_store.get_agora_session(sessionId)
+        session = svc.get_session(sessionId)
         if session is None or str(session.get("mode") or "").strip() != "quick_ask":
             raise bff_error(
                 404,
@@ -368,19 +403,19 @@ def create_identity_router(
         """ASK-001: close an agora ask session."""
         identity = extract_identity(authorization)
         require_read_role(identity)
-        _reject_body_idempotency_key(payload)
-        resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
-        request_hash = _stable_json_hash({
+        svc.reject_body_idempotency_key(payload)
+        resolved_key = svc.resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+        request_hash = svc.stable_json_hash({
             "route": f"POST /bff/agora/ask/sessions/{sessionId}/close",
             "sessionId": sessionId,
             "payload": payload,
         })
-        cached = _agora_core_idempotency_check(resolved_key, request_hash)
+        cached = svc.check_idempotency(resolved_key, request_hash)
         if cached is not None:
             return cached
         now = utc_now()
         outcome = str(payload.get("outcome") or "").strip() or None
-        existing = main.read_store.get_agora_session(sessionId)
+        existing = svc.get_session(sessionId)
         if existing is None or str(existing.get("mode") or "").strip() != "quick_ask":
             raise bff_error(
                 404,
@@ -389,7 +424,7 @@ def create_identity_router(
                 f"Ask session {sessionId} does not exist",
                 precondition_failed="session_id",
             )
-        session = main.read_store.close_agora_session(sessionId, closed_at=now, outcome=outcome)
+        session = svc.close_session(sessionId, closed_at=now, outcome=outcome)
         if session is None:
             raise bff_error(
                 404,
@@ -398,9 +433,8 @@ def create_identity_router(
                 f"Ask session {sessionId} does not exist",
                 precondition_failed="session_id",
             )
-        _publish_event(
-            main._sse_buffers["ask"],
-            main._sse_subscribers["ask"],
+        svc.publish_sse_event(
+            "ask",
             "ask.session.completed",
             {"sessionId": sessionId, "outcome": outcome},
         )
@@ -411,7 +445,7 @@ def create_identity_router(
                 "surfaces": {"agora_ask_session_detail": {"status": "ok", "source": "bff_local"}},
             },
         }
-        main._AGORA_CORE_BFF_IDEMPOTENCY[resolved_key] = {"request_hash": request_hash, "result": result}
+        svc.record_idempotency(resolved_key, request_hash, result)
         return result
 
     @router.get("/bff/agora/incoming")
@@ -427,8 +461,8 @@ def create_identity_router(
         identity = extract_identity(authorization)
         require_read_role(identity)
         snapshot_at = utc_now()
-        items = main.read_store.list_agora_handoffs(status=status, handoff_type=handoff_type)
-        return _agora_list_response(
+        items = svc.list_handoffs(status=status, handoff_type=handoff_type)
+        return svc.agora_list_response(
             dataset="agora_handoffs",
             surface_key="agora_handoff_list",
             items=items,
@@ -446,19 +480,20 @@ def create_identity_router(
     ):
         identity = extract_identity(authorization)
         require_read_role(identity)
-        _reject_body_idempotency_key(payload)
-        resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
-        request_hash = _stable_json_hash({"route": "POST /bff/agora/ask", "payload": payload})
-        cached = _agora_core_idempotency_check(resolved_key, request_hash)
+        svc.reject_body_idempotency_key(payload)
+        resolved_key = svc.resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+        request_hash = svc.stable_json_hash({"route": "POST /bff/agora/ask", "payload": payload})
+        cached = svc.check_idempotency(resolved_key, request_hash)
         if cached is not None:
             return JSONResponse(status_code=202, content=cached)
         now = utc_now()
         session_id = str(payload.get("sessionId") or payload.get("session_id") or f"ask-{uuid.uuid4().hex[:10]}")
         message_id = str(payload.get("messageId") or payload.get("message_id") or f"msg-{uuid.uuid4().hex[:10]}")
         prompt = str(payload.get("prompt") or payload.get("message") or payload.get("content") or "").strip()
-        session = main.read_store.get_agora_session(session_id)
+
+        session = svc.get_session(session_id)
         if session is None:
-            session = main.read_store.create_agora_session(
+            session = svc.create_session(
                 session_id=session_id,
                 title=prompt[:80] or "Agora ask",
                 actor_id=identity.operator_id,
@@ -470,13 +505,13 @@ def create_identity_router(
                 },
                 created_at=now,
             )
-        messages = main.read_store.list_agora_session_messages(session_id) or []
+        messages = svc.list_session_messages(session_id) or []
         message = next(
             (item for item in messages if isinstance(item, dict) and str(item.get("id") or "") == message_id),
             None,
         )
         if message is None:
-            message = main.read_store.append_agora_session_message(
+            message = svc.append_session_message(
                 session_id,
                 message_id=message_id,
                 content=prompt,
@@ -488,42 +523,44 @@ def create_identity_router(
                 },
                 created_at=now,
             )
-        session = main.read_store.get_agora_session(session_id) or session
+        session = svc.get_session(session_id) or session
         command_id = f"cmd-{uuid.uuid4().hex[:16]}"
-        main.command_store.submit_command(
-            command_id,
-            CommandType.AGORA_MESSAGE_ACTION,
-            TargetObject(type=ObjectType.AGORA_MESSAGE, id=message_id),
-            now,
-            dict(payload),
-            {"actor": identity.operator_id, "live_capital_side_effects": False},
-            {"idempotency_record": {"idempotency_key": resolved_key, "request_hash": request_hash, "status": "succeeded"}},
-        )
+        cmd_store = svc.command_store
+        if cmd_store is not None and hasattr(cmd_store, "submit_command"):
+            cmd_store.submit_command(
+                command_id,
+                CommandType.AGORA_MESSAGE_ACTION,
+                TargetObject(type=ObjectType.AGORA_MESSAGE, id=message_id),
+                now,
+                dict(payload),
+                {"actor": identity.operator_id, "live_capital_side_effects": False},
+                {"idempotency_record": {"idempotency_key": resolved_key, "request_hash": request_hash, "status": "succeeded"}},
+            )
 
-        # --- Assistant provider integration (ASST-BFF-001) ---
         provider_status = "disabled"
         provider_answer: Optional[str] = None
         provider_run_id: Optional[str] = None
         context_pack_id: Optional[str] = None
 
-        if main._assistant_ask_enabled():
-            # Build context pack for provider invocation and transcript source refs.
+        if svc._assistant_ask_enabled():
             _context_pack_dict: Dict[str, Any] = {}
-            try:
-                from assistant.models import AssistantContextPackRequest as _CPRequest, AssistantMode as _AMode
-                _cp_req = _CPRequest(
-                    mode=_AMode.USER,
-                    question=prompt or None,
-                    route=str(payload.get("route") or "/"),
-                )
-                _context_pack = main._assistant_build_context_pack(session_id, _cp_req, identity)
-                context_pack_id = _context_pack.context_pack_id
-                _context_pack_dict = _context_pack.model_dump(mode="json", by_alias=False)
-            except Exception:  # noqa: BLE001
-                pass
+            if svc._assistant_build_context_pack is not None:
+                try:
+                    from assistant.models import AssistantContextPackRequest as _CPRequest, AssistantMode as _AMode
+                    _cp_req = _CPRequest(
+                        mode=_AMode.USER,
+                        question=prompt or None,
+                        route=str(payload.get("route") or "/"),
+                    )
+                    _context_pack = svc._assistant_build_context_pack(session_id, _cp_req, identity)
+                    context_pack_id = getattr(_context_pack, "context_pack_id", None)
+                    if hasattr(_context_pack, "model_dump"):
+                        _context_pack_dict = _context_pack.model_dump(mode="json", by_alias=False)
+                except Exception:  # noqa: BLE001
+                    pass
 
-            # Ensure an assistant session lifecycle entry exists for this agora session.
-            if main._ASSISTANT_SESSION_STORE is not None:
+            asst_store = svc._get_assistant_session_store()
+            if asst_store is not None:
                 from assistant.transcript_store import (
                     AssistantSession as _ASession,
                     SessionNotFoundError as _SNFError,
@@ -531,7 +568,7 @@ def create_identity_router(
                 )
                 from assistant.models import AssistantMode as _AMode2
                 try:
-                    main._ASSISTANT_SESSION_STORE.get(session_id)
+                    asst_store.get(session_id)
                 except _SNFError:
                     _proto = _build_session(
                         mode=_AMode2.USER,
@@ -539,7 +576,6 @@ def create_identity_router(
                         roles=getattr(identity, "roles", []) or [],
                         capabilities=[],
                     )
-                    # Co-key assistant session with agora session_id for transcript correlation.
                     _asst_session = _ASession(
                         session_id=session_id,
                         mode=_proto.mode,
@@ -552,34 +588,33 @@ def create_identity_router(
                         reason=_proto.reason,
                         ttl_seconds=_proto.ttl_seconds,
                     )
-                    main._ASSISTANT_SESSION_STORE.create(_asst_session)
+                    asst_store.create(_asst_session)
 
-            try:
-                _ops_client = main.OpenClawOpsClient()
-                if _ops_client.configured:
-                    raw = _ops_client.invoke_assistant(
-                        mode=str(payload.get("mode") or "user"),
-                        prompt=prompt or "?",
-                        operator_id=identity.operator_id,
-                        context_pack=_context_pack_dict or None,
-                    )
-                    _data = raw.get("data") or {}
-                    _out = _data.get("output")
-                    if isinstance(_out, str) and _out.strip():
-                        provider_answer = _out.strip()
-                        provider_status = "completed"
-                        provider_run_id = f"provider-run-{message_id}"
+            if svc._openclaw_ops_client_factory is not None:
+                try:
+                    _ops_client = svc._openclaw_ops_client_factory()
+                    if getattr(_ops_client, "configured", False):
+                        raw = _ops_client.invoke_assistant(
+                            mode=str(payload.get("mode") or "user"),
+                            prompt=prompt or "?",
+                            operator_id=identity.operator_id,
+                            context_pack=_context_pack_dict or None,
+                        )
+                        _data = raw.get("data") or {}
+                        _out = _data.get("output")
+                        if isinstance(_out, str) and _out.strip():
+                            provider_answer = _out.strip()
+                            provider_status = "completed"
+                            provider_run_id = f"provider-run-{message_id}"
+                        else:
+                            provider_status = "degraded"
                     else:
                         provider_status = "degraded"
-                else:
+                except Exception:  # noqa: BLE001
                     provider_status = "degraded"
-            except (main.OpenClawOpsClientError, Exception):  # noqa: BLE001
-                provider_status = "degraded"
 
-            # Emit ask.message.delta — includes provider answer or empty string when degraded
-            _publish_event(
-                main._sse_buffers["ask"],
-                main._sse_subscribers["ask"],
+            svc.publish_sse_event(
+                "ask",
                 "ask.message.delta",
                 {
                     "session_id": session_id,
@@ -589,10 +624,10 @@ def create_identity_router(
                 },
             )
 
-            # Record turns in assistant transcript store with context_pack_id for source readback.
-            if main._ASSISTANT_TRANSCRIPT_STORE is not None:
+            asst_tx_store = svc._get_assistant_transcript_store()
+            if asst_tx_store is not None:
                 from assistant.transcript_store import TurnRole, build_turn
-                main._ASSISTANT_TRANSCRIPT_STORE.append(
+                asst_tx_store.append(
                     build_turn(
                         session_id=session_id,
                         role=TurnRole.USER,
@@ -601,7 +636,7 @@ def create_identity_router(
                     )
                 )
                 if provider_answer:
-                    main._ASSISTANT_TRANSCRIPT_STORE.append(
+                    asst_tx_store.append(
                         build_turn(
                             session_id=session_id,
                             role=TurnRole.ASSISTANT,
@@ -611,10 +646,9 @@ def create_identity_router(
                         )
                     )
 
-            # Update session context with context_pack_id and provider_run_id.
-            if main._ASSISTANT_SESSION_STORE is not None and (context_pack_id or provider_run_id):
+            if asst_store is not None and (context_pack_id or provider_run_id):
                 try:
-                    main._ASSISTANT_SESSION_STORE.update_context(
+                    asst_store.update_context(
                         session_id,
                         context_pack_id=context_pack_id,
                         provider_run_id=provider_run_id,
@@ -622,10 +656,8 @@ def create_identity_router(
                 except Exception:  # noqa: BLE001
                     pass
 
-            # Emit ask.message.completed
-            _publish_event(
-                main._sse_buffers["ask"],
-                main._sse_subscribers["ask"],
+            svc.publish_sse_event(
+                "ask",
                 "ask.message.completed",
                 {
                     "session_id": session_id,
@@ -634,9 +666,8 @@ def create_identity_router(
                 },
             )
 
-            # Deterministic fallback when provider is degraded
             if provider_answer is None:
-                provider_answer = _agora_ask_deterministic_fallback(prompt)
+                provider_answer = svc.deterministic_ask_fallback(prompt)
 
         result = {
             "status": "accepted",
@@ -653,10 +684,10 @@ def create_identity_router(
                 "snapshot_at": now,
                 "command": {"command": CommandType.AGORA_MESSAGE_ACTION.value, "commandId": command_id},
                 "idempotency": {"idempotencyKey": resolved_key, "replayed": False},
-                "assistant": {"enabled": main._assistant_ask_enabled(), "provider_status": provider_status},
+                "assistant": {"enabled": svc._assistant_ask_enabled(), "provider_status": provider_status},
             },
         }
-        main._AGORA_CORE_BFF_IDEMPOTENCY[resolved_key] = {"request_hash": request_hash, "result": result}
+        svc.record_idempotency(resolved_key, request_hash, result)
         return JSONResponse(status_code=202, content=result)
 
     return router
