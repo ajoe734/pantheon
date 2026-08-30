@@ -415,9 +415,10 @@ def create_research_router(
                 str(exc),
             ) from exc
         if isinstance(exc, ResearchValidationError):
+            error_code = getattr(ErrorCode, exc.error_code, ErrorCode.VALIDATION_FAILED)
             raise bff_error(
                 exc.status_code,
-                ErrorCode.VALIDATION_FAILED,
+                error_code,
                 str(exc),
                 str(exc),
                 precondition_failed=exc.field,
@@ -432,6 +433,7 @@ def create_research_router(
         page_token: Optional[str],
         page_size: int,
         authorization: Optional[str],
+        detail_path: str = "/api/v1/research/analyses",
     ) -> Dict[str, Any]:
         require_read_role(extract_identity(authorization))
         try:
@@ -442,15 +444,21 @@ def create_research_router(
                 date_range=date_range,
                 page_token=page_token,
                 page_size=page_size,
+                detail_path=detail_path,
             )
         except (ResearchNotFoundError, ResearchValidationError) as exc:
             _raise_service_error(exc)
             raise AssertionError("unreachable")
 
-    async def _get_analysis(analysis_id: str, authorization: Optional[str]) -> Dict[str, Any]:
+    async def _get_analysis(
+        analysis_id: str,
+        authorization: Optional[str],
+        *,
+        detail_path: str = "/api/v1/research/analyses",
+    ) -> Dict[str, Any]:
         require_read_role(extract_identity(authorization))
         try:
-            return service.get_analysis(analysis_id)
+            return service.get_analysis(analysis_id, detail_path=detail_path)
         except (ResearchNotFoundError, ResearchValidationError) as exc:
             _raise_service_error(exc)
             raise AssertionError("unreachable")
@@ -484,14 +492,27 @@ def create_research_router(
         page_size: int = Query(default=20, ge=1, le=100),
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
-        return await _list_analyses(ticket_id, experiment_id, status, date_range, page_token, page_size, authorization)
+        return await _list_analyses(
+            ticket_id,
+            experiment_id,
+            status,
+            date_range,
+            page_token,
+            page_size,
+            authorization,
+            detail_path="/api/v1/research/analysis",
+        )
 
     @router.get("/api/v1/research/analysis/{analysis_id}")
     async def get_research_analysis_compat(
         analysis_id: str,
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
-        return await _get_analysis(analysis_id, authorization)
+        return await _get_analysis(
+            analysis_id,
+            authorization,
+            detail_path="/api/v1/research/analysis",
+        )
 
     async def _list_artifacts(
         artifact_type: Optional[str],

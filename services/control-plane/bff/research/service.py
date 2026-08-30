@@ -24,10 +24,18 @@ _ARTIFACT_STATUSES = frozenset({"pending", "sealed", "superseded", "failed"})
 class ResearchValidationError(ValueError):
     """A client input error that the HTTP adapter turns into a BFF error."""
 
-    def __init__(self, message: str, *, field: str, status_code: int = 422) -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        field: str,
+        status_code: int = 422,
+        error_code: str = "VALIDATION_FAILED",
+    ) -> None:
         super().__init__(message)
         self.field = field
         self.status_code = status_code
+        self.error_code = error_code
 
 
 class ResearchNotFoundError(LookupError):
@@ -101,6 +109,7 @@ class ResearchRouterService:
         date_range: Optional[str] = None,
         page_token: Optional[str] = None,
         page_size: int = 20,
+        detail_path: str = "/api/v1/research/analyses",
     ) -> Dict[str, Any]:
         statuses = self._validate_statuses(status)
         normalized_date_range = self._validate_optional(
@@ -127,7 +136,7 @@ class ResearchRouterService:
         else:
             total = len(records)
             page_items, next_page_token = self.page_slice(records, page_token, page_size)
-        items = [self._analysis_summary_with_links(item) for item in page_items]
+        items = [self._analysis_summary_with_links(item, detail_path=detail_path) for item in page_items]
         meta = self.snapshot_meta(snapshot_at)
         meta["surfaces"] = {"analysis_results": surface}
         return {
@@ -136,7 +145,12 @@ class ResearchRouterService:
             "meta": meta,
         }
 
-    def get_analysis(self, analysis_id: str) -> Dict[str, Any]:
+    def get_analysis(
+        self,
+        analysis_id: str,
+        *,
+        detail_path: str = "/api/v1/research/analyses",
+    ) -> Dict[str, Any]:
         clean_id = str(analysis_id or "").strip()
         record = self._port().get_research_analysis(clean_id)
         if not record:
@@ -146,7 +160,7 @@ class ResearchRouterService:
         ticket_ref = str(payload.get("ticket_id") or "")
         experiment_ref = payload.get("experiment_id")
         payload["links"] = {
-            "self": f"/api/v1/research/analyses/{clean_id}",
+            "self": f"{detail_path}/{clean_id}",
             "workbench_detail": f"/research/analyze/{clean_id}",
             "linked_ticket_detail": f"/research/tickets/{ticket_ref}",
             "linked_experiment_detail": (
@@ -163,12 +177,14 @@ class ResearchRouterService:
         return payload
 
     @staticmethod
-    def _analysis_summary_with_links(item: Dict[str, Any]) -> Dict[str, Any]:
+    def _analysis_summary_with_links(
+        item: Dict[str, Any], *, detail_path: str
+    ) -> Dict[str, Any]:
         payload = dict(item)
         analysis_id = str(payload.get("analysis_id") or "")
         ticket_ref = str(payload.get("ticket_id") or "")
         payload["links"] = {
-            "self": f"/api/v1/research/analyses/{analysis_id}",
+            "self": f"{detail_path}/{analysis_id}",
             "workbench_detail": f"/research/analyze/{analysis_id}",
             "linked_ticket_detail": f"/research/tickets/{ticket_ref}",
         }
@@ -266,6 +282,7 @@ class ResearchRouterService:
             raise ResearchValidationError(
                 "One or more artifacts cannot be compared",
                 field="artifact_status",
+                error_code="OPERATION_NOT_ALLOWED",
             )
         snapshot_at = self.utc_now()
         payload = dict(port.compare_research_artifacts(requested_ids) or {})
