@@ -2132,6 +2132,7 @@ class StatusRootRoutingTests(unittest.TestCase):
             ".orchestrator/multi_repo_registry.py",
             ".orchestrator/rewrite/__init__.py",
             ".orchestrator/rewrite/task_machine.py",
+            ".orchestrator/rewrite/task_contract.py",
             ".orchestrator/rewrite/task_state_store.py",
             ".orchestrator/config.json",
         ):
@@ -10666,6 +10667,43 @@ class TaskMetadataTests(unittest.TestCase):
         self.assertIsNotNone(task)
         self.assertEqual(task["owner"], "Antigravity2")
         self.assertEqual(task["reviewer"], "Claude")
+
+    def test_assign_rejects_identity_pinned_acceptance(self) -> None:
+        with mock.patch.dict(
+            os.environ,
+            {"TASK_ACCEPTANCE": "Codex2 independently approves the exact head"},
+            clear=False,
+        ):
+            with self.assertRaisesRegex(SystemExit, "role names"):
+                ai_status.command_assign(
+                    self.state,
+                    ["IDENTITY-PIN-001", "Codex", "Codex2"],
+                )
+
+    def test_reassignment_rejects_legacy_identity_pinned_acceptance(self) -> None:
+        self.state["tasks"].append(
+            {
+                "id": "IDENTITY-PIN-LEGACY-001",
+                "status": "review",
+                "owner": "Codex",
+                "reviewer": "Codex2",
+                "generation": 1,
+                "acceptance": ["Codex2 independently approves the exact head"],
+            }
+        )
+        with mock.patch.dict(
+            os.environ,
+            {
+                "AI_NAME": "Human/Ops",
+                "TASK_ASSIGN_REASON": "Reviewer quota unavailable",
+            },
+            clear=False,
+        ):
+            with self.assertRaisesRegex(SystemExit, "supersede"):
+                ai_status.command_assign(
+                    self.state,
+                    ["IDENTITY-PIN-LEGACY-001", "Codex", "Antigravity"],
+                )
 
     def test_first_assign_logs_structured_old_and_new_roles(self) -> None:
         ai_status.command_assign(self.state, ["APP-003-SIDECAR-REVIEW", "Claude", "Antigravity2"])

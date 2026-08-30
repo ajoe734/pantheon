@@ -184,6 +184,7 @@ def _actual_readback() -> dict[str, Any]:
             "schema_rejected": 0,
         },
         "frontier_backlog": 0,
+        "frontier_backlog_by_connector": {},
         "max_lag_seconds": 5,
         "connectors": [
             {
@@ -277,6 +278,7 @@ def _validate_terminal_readback(
     reconcile: dict[str, Any],
     schedule: dict[str, Any],
     actual: dict[str, Any],
+    expected_exclusive_connector_ids: tuple[str, ...] = (),
 ) -> None:
     controller_state = actual["controller_state"]
     _validate_terminal_readback_impl(
@@ -286,6 +288,7 @@ def _validate_terminal_readback(
         expected_controller_id=controller_state["controller_id"],
         expected_sequence_no=controller_state["sequence_no"],
         expected_deployment=controller_state["deployment"],
+        expected_exclusive_connector_ids=expected_exclusive_connector_ids,
     )
 
 
@@ -400,7 +403,9 @@ def _patch_successful_tick(
         assert kwargs["exclusive_connector_ids"] == (expected_exclusive_connector_ids or [])
         assert kwargs["controller_token"] == "controller-test-token-that-is-at-least-32-characters"
         events.append("run_schedule_tick")
-        return _schedule()
+        schedule = _schedule()
+        schedule["summary"]["exclusive_connector_count"] = len(expected_exclusive_connector_ids or [])
+        return schedule
 
     def read_actual_state(**kwargs: Any) -> dict[str, Any]:
         events.append("read_actual_state")
@@ -408,9 +413,9 @@ def _patch_successful_tick(
 
     original_validate = controller_worker._validate_terminal_readback
 
-    def validate_terminal_readback(**kwargs: Any) -> None:
+    def validate_terminal_readback(**kwargs: Any) -> int:
         events.append("validate_terminal_readback")
-        original_validate(**kwargs)
+        return original_validate(**kwargs)
 
     monkeypatch.setattr(controller_worker, "load_desired_state", load_desired_state)
     monkeypatch.setattr(controller_worker, "reconcile_desired_state", reconcile_desired_state)
@@ -844,6 +849,7 @@ def test_terminal_readback_rejects_invalid_frontier_backlog(value: object) -> No
 def test_terminal_readback_rejects_unresolved_frontier_backlog() -> None:
     actual = _actual_readback()
     actual["frontier_backlog"] = 1
+    actual["frontier_backlog_by_connector"] = {CONNECTOR_ID: 1}
 
     with pytest.raises(ControllerTickError, match="unresolved frontier") as raised:
         _validate_terminal_readback(reconcile=_reconcile(), schedule=_schedule(), actual=actual)
@@ -987,6 +993,55 @@ def test_explicit_frontier_recovery_rejects_nonterminal_scheduler_result(
         )
 
     assert raised.value.stage == "frontier_recovery"
+def test_terminal_readback_accepts_unrelated_backlog_for_explicit_exclusive_scope() -> None:
+    actual = _actual_readback()
+    actual["frontier_backlog"] = 2
+    actual["frontier_backlog_by_connector"] = {"unrelated-connector": 2}
+    schedule = _schedule()
+    schedule["summary"]["exclusive_connector_count"] = 1
+
+    validated_backlog = _validate_terminal_readback_impl(
+        reconcile=_reconcile(),
+        schedule=schedule,
+        actual=actual,
+        expected_controller_id=actual["controller_state"]["controller_id"],
+        expected_sequence_no=actual["controller_state"]["sequence_no"],
+        expected_deployment=actual["controller_state"]["deployment"],
+        expected_exclusive_connector_ids=(CONNECTOR_ID,),
+    )
+
+    assert validated_backlog == 0
+
+
+def test_terminal_readback_rejects_target_backlog_for_explicit_exclusive_scope() -> None:
+    actual = _actual_readback()
+    actual["frontier_backlog"] = 3
+    actual["frontier_backlog_by_connector"] = {CONNECTOR_ID: 1, "unrelated-connector": 2}
+    schedule = _schedule()
+    schedule["summary"]["exclusive_connector_count"] = 1
+
+    with pytest.raises(ControllerTickError, match="selected connector scope"):
+        _validate_terminal_readback(
+            reconcile=_reconcile(),
+            schedule=schedule,
+            actual=actual,
+            expected_exclusive_connector_ids=(CONNECTOR_ID,),
+        )
+
+
+@pytest.mark.parametrize(
+    "backlog_by_connector",
+    [None, {CONNECTOR_ID: 0}, {CONNECTOR_ID: True}, {CONNECTOR_ID: 2}],
+)
+def test_terminal_readback_rejects_contradictory_frontier_counts(
+    backlog_by_connector: object,
+) -> None:
+    actual = _actual_readback()
+    actual["frontier_backlog"] = 1
+    actual["frontier_backlog_by_connector"] = backlog_by_connector
+
+    with pytest.raises(ControllerTickError, match="contradictory frontier counts"):
+        _validate_terminal_readback(reconcile=_reconcile(), schedule=_schedule(), actual=actual)
 
 
 def test_failure_truth_uses_only_internally_consistent_unresolved_dlq_count() -> None:
@@ -1214,6 +1269,10 @@ def test_run_controller_tick_exclusively_selects_governed_bounded_connector(
 
     assert result["status"] == "ok"
     assert events.count("run_schedule_tick") == 1
+    success = _call(writer, "success")
+    assert success["kwargs"]["backlog"] == 0
+    assert success["kwargs"]["payload"]["actual_readback"]["validated_frontier_backlog"] == 0
+    assert success["kwargs"]["payload"]["actual_readback"]["validated_frontier_connector_ids"] == [CONNECTOR_ID]
 
 
 def test_run_controller_tick_recovers_explicit_frontier_before_primary_schedule(

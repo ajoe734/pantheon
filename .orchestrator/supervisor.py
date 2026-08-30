@@ -100,6 +100,7 @@ from runtime_state import (
     runtime_state_lock,
     runtime_state_update,
     save_runtime_state,
+    trim_terminal_queue_records,
 )
 from task_archive import (
     TaskResolver,
@@ -122,6 +123,7 @@ from rewrite import task_state_store as rewrite_task_state_store
 from rewrite import worker_lifecycle as rewrite_worker_lifecycle
 from rewrite.runtime_authority import validate_supervisor_launch_authority
 from rewrite.task_identity import task_generation
+from rewrite.task_contract import validate_reassignment_against_acceptance
 from rewrite.worker_recovery import (
     LOST_LEASE_RECEIPT_SCHEMA_VERSION,
     WORKER_RECOVERY_RECEIPTS_KEY,
@@ -1003,6 +1005,13 @@ def validate_provider_accounts(config: dict[str, Any]) -> None:
     for key, replacement in retired_ready_keys.items():
         if key in settings:
             errors.append(f"ready_dispatcher.{key} is retired; {replacement}")
+    terminal_queue_limit = settings.get("terminal_queue_history_limit")
+    if (
+        isinstance(terminal_queue_limit, bool)
+        or not isinstance(terminal_queue_limit, int)
+        or terminal_queue_limit < 0
+    ):
+        errors.append("ready_dispatcher.terminal_queue_history_limit must be an integer >= 0")
     providers = config.get("providers", {}) or {}
     agents = config.get("agents", {}) or {}
     account_limits = settings.get("max_concurrent_per_account")
@@ -9258,6 +9267,14 @@ def _persist_task_reassignment_locked(
         # The typed lost-lease receipt uniquely owns assignment mutation while
         # its fence is pending or its reassignment awaits materialization.
         return False
+    try:
+        validate_reassignment_against_acceptance(
+            task,
+            new_owner=new_owner,
+            new_reviewer=new_reviewer,
+        )
+    except ValueError:
+        return False
     recovery_receipt: dict[str, Any] | None = None
     if worker_recovery_receipt is not None:
         recovery_receipt = deepcopy(dict(worker_recovery_receipt))
@@ -11660,18 +11677,51 @@ def _cleanup_registered_worker_worktrees(
         return False
     worktree_settings = worker_worktree_settings(config)
     base_root = _worker_worktree_base_root(config, worktree_settings)
-    if not base_root.exists():
-        return False
     status_root = config_path(config, "status_file").parents[0]
+    leases = state.setdefault("worker_worktrees", {}).setdefault("leases", {})
+    if not isinstance(leases, dict):
+        return False
+    normalized_only = {path.resolve() for path in only_workspace_paths} if only_workspace_paths else None
+    missing_lease_paths: list[str] = []
+    for workspace_id, lease in list(leases.items()):
+        if not isinstance(lease, Mapping) or not lease.get("path"):
+            continue
+        try:
+            lease_path = Path(str(lease["path"])).expanduser().resolve()
+        except OSError:
+            continue
+        if normalized_only is not None and lease_path not in normalized_only:
+            continue
+        if not lease_path.exists():
+            leases.pop(workspace_id, None)
+            missing_lease_paths.append(str(lease_path))
+    if not base_root.exists():
+        if not missing_lease_paths:
+            return False
+        state.setdefault("worker_worktree_cleanup", {})["last_run"] = {
+            "at": utc_now(),
+            "source": source,
+            "status_root": str(status_root.resolve()),
+            "checked": len(missing_lease_paths),
+            "removed": 0,
+            "skipped": 0,
+            "active": 0,
+            "archived": 0,
+            "failed": 0,
+            "missing_leases": len(missing_lease_paths),
+            "stale_unmerged": 0,
+            "details": [
+                {"path": path, "disposition": "missing_lease_removed"}
+                for path in missing_lease_paths
+            ],
+        }
+        return True
     active_roots = active_worker_workspace_roots(config, state)
     live_paths = _scan_process_paths_in_root(base_root)
     max_removals = max(0, int(settings["max_removals_per_tick"]))
     archive_root = Path(os.path.expanduser(str(settings["archive_root"])))
     if not archive_root.is_absolute():
         archive_root = status_root / archive_root
-    leases = state.setdefault("worker_worktrees", {}).setdefault("leases", {})
-    if not isinstance(leases, dict):
-        return False
 
     repository_sources: dict[Path, tuple[str, str]] = {}
 
@@ -11740,7 +11790,6 @@ def _cleanup_registered_worker_worktrees(
         tuple[str | None, dict[str, Any], Path, str | None, Path]
     ] = []
     candidate_paths: set[Path] = set()
-    normalized_only = {path.resolve() for path in only_workspace_paths} if only_workspace_paths else None
     for workspace_id, lease in list(leases.items()):
         if not isinstance(lease, dict):
             continue
@@ -11795,11 +11844,14 @@ def _cleanup_registered_worker_worktrees(
         "active": 0,
         "archived": 0,
         "failed": 0,
-        "missing_leases": 0,
+        "missing_leases": len(missing_lease_paths),
         "stale_unmerged": 0,
-        "details": [],
+        "details": [
+            {"path": path, "disposition": "missing_lease_removed"}
+            for path in missing_lease_paths
+        ],
     }
-    changed = False
+    changed = bool(missing_lease_paths)
     removed_paths: list[str] = []
     for workspace_id, _lease, wt_path, branch, repository_root in candidates:
         if summary["removed"] >= max_removals and wt_path.exists():
@@ -16263,6 +16315,26 @@ def _finalize_runtime_cycle_locked(
         int(ready_dispatch_settings(config).get("seen_event_history_limit", 2000)),
         quiet=quiet,
     )
+    active_statuses = {
+        str(value).strip().lower()
+        for value in ready_dispatch_settings(config).get("active_worker_statuses", [])
+    }
+    protected_queue_event_ids = {
+        str(worker.get("queue_event_id") or "").strip()
+        for worker in (state.get("workers") or {}).values()
+        if isinstance(worker, Mapping)
+        and str(worker.get("status") or "").strip().lower() in active_statuses
+        and str(worker.get("queue_event_id") or "").strip()
+    }
+    removed_queue_records = _safe_phase(
+        "trim_terminal_queue_records",
+        trim_terminal_queue_records,
+        state,
+        int(ready_dispatch_settings(config).get("terminal_queue_history_limit", 200)),
+        protected_event_ids=protected_queue_event_ids,
+        quiet=quiet,
+    )
+    changed = bool(removed_queue_records) or changed
     loop_finished_at = utc_now()
     loop_error = (
         "critical phase failures: " + "; ".join(critical_phase_errors)
