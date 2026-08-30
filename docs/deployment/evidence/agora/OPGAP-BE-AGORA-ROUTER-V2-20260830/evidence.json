@@ -97,7 +97,7 @@
       {
         "command": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/tests/test_agora_router.py",
         "result": "pass",
-        "conclusion": "28 passed, 0 failed. Confirms 0 legacy Agora route decorators on main.py, zero reverse imports of main, and ports interface conformance."
+        "conclusion": "33 passed, 0 failed. Confirms 0 legacy Agora route decorators on main.py, zero reverse imports of main, X-Dry-Run non-mutating behavior, 404 for nonexistent sessions, 400 for missing idempotency keys, 201 for feedback, and ports interface conformance."
       },
       {
         "command": "python3 -c \"import json, jsonschema; jsonschema.validate(json.load(open(\"docs/deployment/evidence/agora/OPGAP-BE-AGORA-ROUTER-V2-20260830/evidence.json\")), json.load(open(\"schemas/product-evidence.schema.json\")))\"",

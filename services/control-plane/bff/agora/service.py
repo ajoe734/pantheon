@@ -214,6 +214,7 @@ class AgoraService:
         self._local_insights: Dict[str, Dict[str, Any]] = {}
         self._local_memory: Dict[str, Dict[str, Any]] = {}
         self._local_handoffs: Dict[str, Dict[str, Any]] = {}
+        self._local_signals: Dict[str, Dict[str, Any]] = {}
 
     @property
     def read_store(self) -> Any:
@@ -286,7 +287,7 @@ class AgoraService:
         key = str(idempotency_key or x_idempotency_key or "").strip()
         if not key:
             raise self.bff_error(
-                422,
+                400,
                 ErrorCode.VALIDATION_FAILED,
                 "Idempotency-Key header is required",
                 "Request must include a non-empty Idempotency-Key or X-Idempotency-Key header",
@@ -863,6 +864,10 @@ class AgoraService:
         snapshot_at = self.utc_now()
         store = self.read_store
         signals = store.list_agora_signals(review_status=review_status) if store and hasattr(store, "list_agora_signals") else []
+        if not signals and self._local_signals:
+            signals = list(self._local_signals.values())
+            if review_status:
+                signals = [s for s in signals if str(s.get("reviewStatus") or s.get("review_status") or "") == review_status]
         return self.agora_list_response(
             dataset="agora_signals",
             surface_key="agora_signal_list",
@@ -918,7 +923,7 @@ class AgoraService:
             )
 
         if dry_run:
-            return self.dry_run_success_response(
+            res = self.dry_run_success_response(
                 {
                     "id": signal_id,
                     "signalId": signal_id,
@@ -930,11 +935,18 @@ class AgoraService:
                 idempotency_key=resolved_key,
                 evidence_kind="agora.signal.create",
             )
+            if x_correlation_id:
+                res.headers["X-Correlation-Id"] = x_correlation_id
+            if x_request_id:
+                res.headers["X-Request-Id"] = x_request_id
+            return res
 
         created_signal = None
         if store is not None and hasattr(store, "create_agora_signal"):
             created_signal = store.create_agora_signal(
                 signal_id=signal_id,
+                title=title,
+                body=body,
                 payload=signal_payload,
                 actor_id=identity.operator_id,
                 created_at=snapshot_at,
@@ -947,18 +959,22 @@ class AgoraService:
                 "author": identity.operator_id,
                 "createdAt": snapshot_at,
             }
+        self._local_signals[signal_id] = created_signal
 
-        audit = None
+        audit = {
+            "evidenceKind": "agora.signal.create",
+            "action": "agora.signal.create",
+            "targetType": "signal",
+            "targetId": signal_id,
+            "actorId": identity.operator_id,
+            "correlationId": x_correlation_id,
+            "idempotencyKey": resolved_key,
+            "recordedAt": snapshot_at,
+        }
         if store is not None and hasattr(store, "record_agora_audit_event"):
-            audit = store.record_agora_audit_event({
-                "action": "agora.signal.create",
-                "targetType": "signal",
-                "targetId": signal_id,
-                "actorId": identity.operator_id,
-                "correlationId": x_correlation_id,
-                "idempotencyKey": resolved_key,
-                "recordedAt": snapshot_at,
-            })
+            recorded_audit = store.record_agora_audit_event(audit)
+            if recorded_audit:
+                audit = {**audit, **recorded_audit}
 
         self.publish_sse_event("signal", "agora.signal.created", {"signalId": signal_id, "signal": created_signal})
         self.publish_sse_event("inbox", "agora.inbox.updated", {"type": "signal", "id": signal_id})
@@ -967,12 +983,13 @@ class AgoraService:
             "data": created_signal,
             "meta": {
                 "snapshot_at": snapshot_at,
+                "dryRun": False,
+                "durable": True,
                 "idempotency": {"idempotencyKey": resolved_key, "replayed": False},
                 "surfaces": {"agora_signal_detail": {"status": "ok", "source": "bff_local"}},
+                "audit": audit,
             },
         }
-        if audit:
-            result["meta"]["audit"] = audit
 
         self.record_idempotency(resolved_key, request_hash, result)
         return result
@@ -981,6 +998,8 @@ class AgoraService:
         snapshot_at = self.utc_now()
         store = self.read_store
         signal = store.get_agora_signal(signal_id) if store and hasattr(store, "get_agora_signal") else None
+        if signal is None:
+            signal = self._local_signals.get(signal_id)
         if signal is None:
             raise self.bff_error(
                 404,
@@ -1039,6 +1058,8 @@ class AgoraService:
         snapshot_at = self.utc_now()
         store = self.read_store
         signal = store.get_agora_signal(signal_id) if store and hasattr(store, "get_agora_signal") else None
+        if signal is None:
+            signal = self._local_signals.get(signal_id)
         if signal is None and not dry_run:
             raise self.bff_error(
                 404,
@@ -2400,6 +2421,8 @@ class AgoraService:
         return record
 
     def list_session_messages(self, session_id: str) -> Optional[List[Dict[str, Any]]]:
+        if self.get_session(session_id) is None:
+            return None
         store = self.read_store
         if store is not None and hasattr(store, "list_agora_session_messages") and callable(store.list_agora_session_messages):
             msgs = store.list_agora_session_messages(session_id)
@@ -2417,6 +2440,8 @@ class AgoraService:
         payload: Dict[str, Any],
         created_at: str,
     ) -> Optional[Dict[str, Any]]:
+        if self.get_session(session_id) is None:
+            return None
         store = self.read_store
         record = {
             "id": message_id,
@@ -2448,6 +2473,8 @@ class AgoraService:
         closed_at: str,
         outcome: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
+        if self.get_session(session_id) is None:
+            return None
         store = self.read_store
         if session_id in self._local_sessions:
             self._local_sessions[session_id]["status"] = "closed"

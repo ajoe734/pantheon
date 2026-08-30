@@ -90,6 +90,7 @@ def create_identity_router(
         authorization: Optional[str] = Header(default=None),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
         x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+        x_dry_run: Optional[str] = Header(default=None, alias="X-Dry-Run"),
     ):
         """BFF: create an Agora ask/session record."""
         identity = extract_identity(authorization)
@@ -97,12 +98,29 @@ def create_identity_router(
         svc.reject_body_idempotency_key(payload)
         resolved_key = svc.resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
         request_hash = svc.stable_json_hash({"route": "POST /bff/agora/sessions", "payload": payload})
+        dry_run = bool(x_dry_run and x_dry_run.strip().lower() in ("true", "1", "yes"))
+        if not dry_run:
+            cached = svc.check_idempotency(resolved_key, request_hash)
+            if cached is not None:
+                return cached
         snapshot_at = utc_now()
         session_id = str(payload.get("sessionId") or payload.get("session_id") or f"agora-sess-{uuid.uuid4().hex[:10]}")
         title = str(payload.get("title") or "Untitled Agora session").strip()
-        cached = svc.check_idempotency(resolved_key, request_hash)
-        if cached is not None:
-            return cached
+        if dry_run:
+            return svc.dry_run_success_response(
+                {
+                    "id": session_id,
+                    "sessionId": session_id,
+                    "title": title,
+                    "actorId": identity.operator_id,
+                    "createdAt": snapshot_at,
+                    "updatedAt": snapshot_at,
+                    **payload,
+                },
+                snapshot_at=snapshot_at,
+                idempotency_key=resolved_key,
+                evidence_kind="agora.session.create",
+            )
         created = svc.create_session(
             session_id=session_id,
             title=title,
@@ -178,6 +196,7 @@ def create_identity_router(
         authorization: Optional[str] = Header(default=None),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
         x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+        x_dry_run: Optional[str] = Header(default=None, alias="X-Dry-Run"),
     ):
         """BFF: append a message to an Agora session."""
         identity = extract_identity(authorization)
@@ -190,11 +209,37 @@ def create_identity_router(
             "sessionId": sessionId,
             "payload": payload,
         })
-        cached = svc.check_idempotency(resolved_key, request_hash)
-        if cached is not None:
-            return cached
+        dry_run = bool(x_dry_run and x_dry_run.strip().lower() in ("true", "1", "yes"))
+        if not dry_run:
+            cached = svc.check_idempotency(resolved_key, request_hash)
+            if cached is not None:
+                return cached
+        session = svc.get_session(sessionId)
+        if session is None:
+            raise bff_error(
+                404,
+                ErrorCode.RESOURCE_NOT_FOUND,
+                "Agora session not found",
+                f"Agora session {sessionId} does not exist",
+                precondition_failed="session_id",
+            )
         snapshot_at = utc_now()
         message_id = str(payload.get("id") or payload.get("messageId") or f"agora-msg-{uuid.uuid4().hex[:10]}")
+        if dry_run:
+            return svc.dry_run_success_response(
+                {
+                    "id": message_id,
+                    "messageId": message_id,
+                    "sessionId": sessionId,
+                    "content": content,
+                    "actorId": identity.operator_id,
+                    "createdAt": snapshot_at,
+                    **payload,
+                },
+                snapshot_at=snapshot_at,
+                idempotency_key=resolved_key,
+                evidence_kind="agora.session.message_create",
+            )
         message = svc.append_session_message(
             sessionId,
             message_id=message_id,
@@ -273,6 +318,7 @@ def create_identity_router(
         authorization: Optional[str] = Header(default=None),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
         x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+        x_dry_run: Optional[str] = Header(default=None, alias="X-Dry-Run"),
     ):
         """ASK-001: create an agora ask session explicitly."""
         identity = extract_identity(authorization)
@@ -280,12 +326,31 @@ def create_identity_router(
         svc.reject_body_idempotency_key(payload)
         resolved_key = svc.resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
         request_hash = svc.stable_json_hash({"route": "POST /bff/agora/ask/sessions", "payload": payload})
-        cached = svc.check_idempotency(resolved_key, request_hash)
-        if cached is not None:
-            return cached
+        dry_run = bool(x_dry_run and x_dry_run.strip().lower() in ("true", "1", "yes"))
+        if not dry_run:
+            cached = svc.check_idempotency(resolved_key, request_hash)
+            if cached is not None:
+                return cached
         now = utc_now()
         session_id = str(payload.get("sessionId") or payload.get("session_id") or f"ask-{uuid.uuid4().hex[:10]}")
         title = str(payload.get("title") or "Agora ask session").strip()
+        if dry_run:
+            return svc.dry_run_success_response(
+                {
+                    "id": session_id,
+                    "sessionId": session_id,
+                    "title": title,
+                    "actorId": identity.operator_id,
+                    "createdAt": now,
+                    "updatedAt": now,
+                    "mode": "quick_ask",
+                    "participants": payload.get("participants") or [{"type": "operator", "id": identity.operator_id}],
+                    **dict(payload),
+                },
+                snapshot_at=now,
+                idempotency_key=resolved_key,
+                evidence_kind="agora.ask_session.create",
+            )
         session = svc.create_session(
             session_id=session_id,
             title=title,

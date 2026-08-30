@@ -846,4 +846,137 @@ def test_agora_service_imports_ports_package_interfaces():
     assert agora_service.ReadSurfacePorts is ReadSurfacePorts
 
 
+def test_agora_session_and_message_dry_run_non_mutating(monkeypatch):
+    """Regression: X-Dry-Run on session and message create returns 200 without mutating read surfaces."""
+    store = _create_test_agora_store()
+    _install_agora_store(monkeypatch, store)
+    client = _client(monkeypatch)
+
+    sess_resp = client.post(
+        "/bff/agora/sessions",
+        json={"title": "Dry-run session marker 999"},
+        headers={"Authorization": _OPERATOR_AUTH, "Idempotency-Key": str(uuid.uuid4()), "X-Dry-Run": "1"},
+    )
+    assert sess_resp.status_code == 200, sess_resp.text
+    sess_body = sess_resp.json()
+    assert sess_body["meta"]["dryRun"] is True
+    assert sess_body["meta"]["durable"] is False
+    sess_id = sess_body["data"]["id"]
+
+    # Verify session is not persisted
+    get_sess = client.get(f"/bff/agora/sessions/{sess_id}", headers={"Authorization": _OPERATOR_AUTH})
+    assert get_sess.status_code == 404
+
+    # Create real session for message dry run test
+    real_sess = client.post(
+        "/bff/agora/sessions",
+        json={"title": "Real session for message test"},
+        headers={"Authorization": _OPERATOR_AUTH, "Idempotency-Key": str(uuid.uuid4())},
+    )
+    assert real_sess.status_code == 201
+    real_sess_id = real_sess.json()["data"]["id"]
+
+    msg_resp = client.post(
+        f"/bff/agora/sessions/{real_sess_id}/messages",
+        json={"content": "Dry-run message marker 999"},
+        headers={"Authorization": _OPERATOR_AUTH, "Idempotency-Key": str(uuid.uuid4()), "X-Dry-Run": "1"},
+    )
+    assert msg_resp.status_code == 200, msg_resp.text
+    msg_body = msg_resp.json()
+    assert msg_body["meta"]["dryRun"] is True
+    msg_id = msg_body["data"]["id"]
+
+    # Verify message is not listed in session
+    list_msgs = client.get(f"/bff/agora/sessions/{real_sess_id}/messages", headers={"Authorization": _OPERATOR_AUTH})
+    assert list_msgs.status_code == 200
+    assert all(m.get("id") != msg_id for m in list_msgs.json().get("data", []))
+
+
+def test_agora_insight_dry_run_non_mutating(monkeypatch):
+    """Regression: X-Dry-Run on insight create returns 200 without mutating read surfaces."""
+    store = _create_test_agora_store()
+    _install_agora_store(monkeypatch, store)
+    client = _client(monkeypatch)
+
+    ins_resp = client.post(
+        "/bff/agora/insights",
+        json={"summary": "Dry-run insight marker 999"},
+        headers={"Authorization": _OPERATOR_AUTH, "Idempotency-Key": str(uuid.uuid4()), "X-Dry-Run": "1"},
+    )
+    assert ins_resp.status_code == 200, ins_resp.text
+    ins_body = ins_resp.json()
+    assert ins_body["meta"]["dryRun"] is True
+    assert ins_body["meta"]["durable"] is False
+    ins_id = ins_body["data"]["id"]
+
+    # Verify insight is not in list
+    list_ins = client.get("/bff/agora/insights", headers={"Authorization": _OPERATOR_AUTH})
+    assert list_ins.status_code == 200
+    assert all((it.get("id") or it.get("insight_id")) != ins_id for it in list_ins.json().get("items", []))
+
+
+def test_agora_message_create_on_nonexistent_session_returns_404(monkeypatch):
+    """Regression: POST /bff/agora/sessions/{sessionId}/messages returns 404 for nonexistent session."""
+    store = _create_test_agora_store()
+    _install_agora_store(monkeypatch, store)
+    client = _client(monkeypatch)
+
+    resp = client.post(
+        "/bff/agora/sessions/nonexistent-session-xyz/messages",
+        json={"content": "Hello on missing session"},
+        headers={"Authorization": _OPERATOR_AUTH, "Idempotency-Key": str(uuid.uuid4())},
+    )
+    assert resp.status_code == 404, resp.text
+
+
+def test_agora_feedback_returns_201(monkeypatch):
+    """Regression: POST /bff/agora/feedback returns 201 per API contract."""
+    store = _create_test_agora_store()
+    _install_agora_store(monkeypatch, store)
+    client = _client(monkeypatch)
+
+    resp = client.post(
+        "/bff/agora/feedback",
+        json={"signal_id": "sig-test-001", "verdict": "useful", "memo": "great signal"},
+        headers={"Authorization": _OPERATOR_AUTH, "Idempotency-Key": str(uuid.uuid4()), "X-Dry-Run": "1"},
+    )
+    # Dry run returns 200 with dryRun: true
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["meta"]["dryRun"] is True
+
+    # Real signal feedback against existing signal
+    sig_resp = client.post(
+        "/bff/agora/signals",
+        json={"title": "Feedback test signal", "body": "Testing feedback route"},
+        headers={"Authorization": _OPERATOR_AUTH, "Idempotency-Key": str(uuid.uuid4())},
+    )
+    assert sig_resp.status_code == 201
+    sig_id = sig_resp.json()["data"]["id"]
+
+    real_fb = client.post(
+        "/bff/agora/feedback",
+        json={"signal_id": sig_id, "verdict": "useful", "memo": "great signal"},
+        headers={"Authorization": _OPERATOR_AUTH, "Idempotency-Key": str(uuid.uuid4())},
+    )
+    assert real_fb.status_code == 201, real_fb.text
+
+
+def test_agora_missing_idempotency_key_returns_400(monkeypatch):
+    """Regression: Missing Idempotency-Key returns HTTP 400 on mutating Agora routes."""
+    store = _create_test_agora_store()
+    _install_agora_store(monkeypatch, store)
+    client = _client(monkeypatch)
+
+    routes = [
+        ("POST", "/bff/agora/ask/sessions", {"title": "Test"}),
+        ("POST", "/bff/agora/committee/sessions", {"title": "Test"}),
+        ("POST", "/bff/agora/committee/sessions/comm-1/open", {}),
+        ("POST", "/bff/agora/committee/sessions/comm-1/close", {}),
+    ]
+    for method, path, payload in routes:
+        resp = client.request(method, path, json=payload, headers={"Authorization": _OPERATOR_AUTH})
+        assert resp.status_code == 400, f"Expected 400 for {method} {path}, got {resp.status_code}: {resp.text}"
+
+
+
 

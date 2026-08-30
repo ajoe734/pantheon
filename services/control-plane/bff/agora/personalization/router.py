@@ -72,6 +72,7 @@ def create_personalization_router(
         authorization: Optional[str] = Header(default=None),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
         x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+        x_dry_run: Optional[str] = Header(default=None, alias="X-Dry-Run"),
     ):
         """BFF: create an Agora insight card."""
         identity = extract_identity(authorization)
@@ -80,11 +81,27 @@ def create_personalization_router(
         summary = svc.agora_required_text(payload, "summary", "title")
         resolved_key = svc.resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
         request_hash = svc.stable_json_hash({"route": "POST /bff/agora/insights", "payload": payload})
-        cached = svc.check_idempotency(resolved_key, request_hash)
-        if cached is not None:
-            return cached
+        dry_run = bool(x_dry_run and x_dry_run.strip().lower() in ("true", "1", "yes"))
+        if not dry_run:
+            cached = svc.check_idempotency(resolved_key, request_hash)
+            if cached is not None:
+                return cached
         snapshot_at = utc_now()
         insight_id = str(payload.get("id") or payload.get("insight_id") or f"ins-agora-{uuid.uuid4().hex[:10]}")
+        if dry_run:
+            return svc.dry_run_success_response(
+                {
+                    "id": insight_id,
+                    "insightId": insight_id,
+                    "summary": summary,
+                    "actorId": identity.operator_id,
+                    "createdAt": snapshot_at,
+                    **payload,
+                },
+                snapshot_at=snapshot_at,
+                idempotency_key=resolved_key,
+                evidence_kind="agora.insight.create",
+            )
         created = svc.create_insight(
             insight_id=insight_id,
             summary=summary,

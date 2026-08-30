@@ -14,7 +14,7 @@ import json
 import os
 from typing import Any, Callable, Dict, List, Optional
 
-from fastapi import APIRouter, Body, Header, HTTPException, Query
+from fastapi import APIRouter, Body, Header, HTTPException, Query, Response
 from models import CommandResponse, DecisionJournalEntryDTO
 
 try:
@@ -372,6 +372,7 @@ def create_agora_router(
 
     @router.post("/bff/agora/signals", status_code=201)
     def agora_create_signal(
+        response: Response,
         payload: Dict[str, Any] = Body(...),
         authorization: Optional[str] = Header(default=None),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
@@ -382,6 +383,10 @@ def create_agora_router(
     ) -> Any:
         identity = extract_identity(authorization)
         (require_agora_signal_write_role or require_write_role)(identity)
+        if x_correlation_id and response is not None:
+            response.headers["X-Correlation-Id"] = x_correlation_id
+        if x_request_id and response is not None:
+            response.headers["X-Request-Id"] = x_request_id
         return agora_service.create_signal(
             payload=payload,
             identity=identity,
@@ -390,6 +395,7 @@ def create_agora_router(
             x_correlation_id=x_correlation_id,
             x_request_id=x_request_id,
             x_dry_run=x_dry_run,
+            response=response,
         )
 
     @router.get("/bff/agora/signals/{signalId}")
@@ -401,7 +407,7 @@ def create_agora_router(
         require_read_role(identity)
         return agora_service.get_signal(signalId)
 
-    @router.post("/bff/agora/feedback")
+    @router.post("/bff/agora/feedback", status_code=201)
     def agora_create_bulk_feedback(
         payload: Dict[str, Any] = Body(...),
         authorization: Optional[str] = Header(default=None),
