@@ -25,7 +25,7 @@ if str(BFF_DIR) not in sys.path:
 if str(OODA_DIR) not in sys.path:
     sys.path.insert(0, str(OODA_DIR))
 
-from domain_ports.ooda_management import (
+from ports.ooda_management import (
     InterventionsPort,
     ManagementReviewQueuePort,
     OodaManagementDomainPort,

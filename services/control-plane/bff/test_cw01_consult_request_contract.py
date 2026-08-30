@@ -14,7 +14,7 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, os.path.dirname(__file__))
 
 import main as bff_main
-from domain_ports.operations_consultation import DomainConsultationPort
+from ports.operations_consultation import DomainConsultationPort
 from services.consultation.store import ConsultationStore
 
 OPERATOR_AUTH = "Bearer test-operator:operator"
