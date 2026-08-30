@@ -221,7 +221,7 @@
       "phase": "W3-hosted", "owner": "Antigravity2", "reviewer": "Codex2", "target_repo": "pantheon",
       "depends_on": ["OPGAP-SAFETY-PROOF-CONTRACT-20260830", "OPGAP-DELIVERY-POLICY-20260830", "OPGAP-BFF-MAIN-ASSEMBLY-20260830", "OPGAP-FE-INTEGRATION-ASSEMBLY-20260830"],
       "dependency_tracks": {"OPGAP-SAFETY-PROOF-CONTRACT-20260830": "safety", "OPGAP-DELIVERY-POLICY-20260830": "release", "OPGAP-BFF-MAIN-ASSEMBLY-20260830": "functional", "OPGAP-FE-INTEGRATION-ASSEMBLY-20260830": "functional"},
-      "artifacts": ["docs/deployment/evidence/full-operation-gap-20260830/promotion-evidence.json"],
+      "artifacts": ["docs/deployment/evidence/product-functional-closure/full-operation-gap-20260830-promotion.json"],
       "acceptance": ["manifest binds exact SHAs", "all gates precede atomic switch", "receipt chains use natural stimuli"],
       "gaps": ["OP-G03", "OP-G19", "OP-G20"], "priority": 0, "wave": 3, "design_unit": "SD-12", "execution_resources": ["pantheon-dev"]
     },
@@ -232,7 +232,7 @@
       "phase": "W4-hosted", "owner": "Codex2", "reviewer": "Antigravity", "target_repo": "pantheon",
       "depends_on": ["OPGAP-HOSTED-DEV-PROMOTION-20260830"],
       "dependency_tracks": {"OPGAP-HOSTED-DEV-PROMOTION-20260830": "hosted"},
-      "artifacts": ["scripts/full_operation_hosted_acceptance.py", "scripts/test_full_operation_hosted_acceptance.py", "docs/deployment/evidence/full-operation-gap-20260830/acceptance-evidence.json"],
+      "artifacts": ["scripts/full_operation_hosted_acceptance.py", "scripts/test_full_operation_hosted_acceptance.py", "docs/deployment/evidence/product-functional-closure/full-operation-gap-20260830-acceptance.json"],
       "acceptance": ["12 loops no skip", "authenticated DOM/network/console evidence", "wrong SHA or missing evidence fails"],
       "gaps": ["OP-G11", "OP-G14"], "priority": 0, "wave": 4, "design_unit": "SD-12", "execution_resources": ["pantheon-dev"]
     }
