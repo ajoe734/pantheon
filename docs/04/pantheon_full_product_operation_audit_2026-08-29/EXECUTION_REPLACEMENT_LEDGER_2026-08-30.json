@@ -1,0 +1,344 @@
+{
+  "version": 1,
+  "title": "Plan-Execution Errata: Batch B/C Canonical Replacement Lineage",
+  "generated_at": "2026-08-30T20:45:00Z",
+  "generated_by_task": "OPGAP-PLAN-EXECUTION-ERRATA-V2-20260830",
+  "purpose": "The frozen EXECUTION_TASK_CATALOG_2026-08-30.json (immutable planning evidence, 30 tasks) is never edited in place. This ledger records what the live supervisor actually did when it dispatched the 23 Batch B + Batch C child tasks from that catalog: canonical task rows cannot be amended in place, so any task that failed to materialize correctly under its catalog task_id was retired via `supersede` and re-created under a new one-to-one replacement id, never rewritten. This is a machine-checkable correction of the plan-vs-execution divergence; it does not change the frozen catalog's 30 task specs.",
+  "root_cause": {
+    "summary": "Batch A bootstrap (OPGAP-DEVTOOL-TARGET-REPO-BRIDGE-20260830) delivered a dev-bridge dispatcher that could route signed DevTaskPackets, but its allowlist of writable repositories was not derived from the live supervisor's coordination.repositories configuration. Batch B was materialized while only pantheon was configured; when Batch C's mixed pantheon/execute-plans packet drained, the dispatcher rejected it because execute-plans was not yet a configured repository.",
+    "canonical_task_definitions_cannot_be_amended_in_place": "ai_status.py has no update-in-place path for a task's id, artifacts, owner/reviewer pairing, or dependency binding once the row exists; the only lifecycle exits from a stuck todo/in_progress row are done, blocked, or supersede. Because the Batch B rows were created before the allowlist/command-runtime fixes existed, they could not be repaired by editing their depends_on or artifacts -- they had to be superseded by a new row that carries the corrected dependency binding.",
+    "supervisor_gap_still_open": "OPGAP-DEVTOOL-BRIDGE-REPO-ALLOWLIST-V3-20260830 (status: blocked as of this snapshot) tracks the still-unresolved defect: the live supervisor still cannot derive PANTHEON_ASSISTANT_DEV_BRIDGE_ALLOWED_REPOS from coordination.repositories on its own and depends on an operator-injected environment override. This is a tooling gap, not a product gap, and is out of scope for the frozen SA/SD product remediation."
+  },
+  "fail_closed_evidence": [
+    {
+      "sequence": 1,
+      "event": "batch_a_bootstrap_first_attempt_rejected",
+      "packet_id": "full-operation-gap-batch-a-bootstrap-development_tooling-f289d602-d1a7-4ba9-a2f2-41c48b60e1af",
+      "drained_at": "2026-08-30T20:02:07Z",
+      "admission_status": "invalid_materialization",
+      "error": "packet batch: Dev bridge work class is invalid: 'development_tooling'; authoritative post-batch readback invalid: canonical packet materialization readback failed: Dev bridge materialize readback task is missing: OPGAP-DEVTOOL-TARGET-REPO-BRIDGE-20260830",
+      "receipt_path": ".orchestrator/assistant-dev-packets/failed/full-operation-gap-batch-a-bootstrap-development_tooling-f289d602-d1a7-4ba9-a2f2-41c48b60e1af.json"
+    },
+    {
+      "sequence": 2,
+      "event": "batch_c_initial_unconfigured_repository_rejection",
+      "packet_id": "full-operation-gap-batch-c-support-and-frontend-functional-51d9f9ef-a429-47cf-927b-8a6e7f1c1119",
+      "drained_at": "2026-08-30T20:02:58Z",
+      "admission_status": "error",
+      "error": "Packet constraint violation: Packet constraint allowedRepos contains unconfigured repositories: execute-plans",
+      "receipt_path": ".orchestrator/assistant-dev-packets/failed/full-operation-gap-batch-c-support-and-frontend-functional-51d9f9ef-a429-47cf-927b-8a6e7f1c1119.json"
+    },
+    {
+      "sequence": 3,
+      "event": "batch_c_authoritative_command_runtime_identity_check_1",
+      "packet_id": "full-operation-gap-batch-c-support-and-frontend-functional-a7d3f578-f77c-41ac-82b4-6bf6f505b995",
+      "drained_at": "2026-08-30T20:04:53Z",
+      "admission_status": "invalid_materialization",
+      "error": "packet batch: PANTHEON_TASK_STATE_STORE_MODE=authoritative is required for dev bridge dispatch",
+      "receipt_path": ".orchestrator/assistant-dev-packets/failed/full-operation-gap-batch-c-support-and-frontend-functional-a7d3f578-f77c-41ac-82b4-6bf6f505b995.json"
+    },
+    {
+      "sequence": 4,
+      "event": "batch_c_authoritative_command_runtime_identity_check_2",
+      "packet_id": "full-operation-gap-batch-c-support-and-frontend-functional-82e9abb1-8a47-47d3-ad26-1db9c050aeca",
+      "drained_at": "2026-08-30T20:05:08Z",
+      "admission_status": "invalid_materialization",
+      "error": "packet batch: PANTHEON_COMMAND_RUNTIME_SHA is required with PANTHEON_COMMAND_ROOT",
+      "receipt_path": ".orchestrator/assistant-dev-packets/failed/full-operation-gap-batch-c-support-and-frontend-functional-82e9abb1-8a47-47d3-ad26-1db9c050aeca.json"
+    },
+    {
+      "sequence": 5,
+      "event": "batch_c_successful_cross_repository_packet_readback",
+      "packet_id": "full-operation-gap-batch-c-support-and-frontend-functional-ead79e62-f7a8-4b56-b870-ebb97fbefdcb",
+      "drained_at": "2026-08-30T20:05:27Z",
+      "admission_status": "admitted",
+      "allowed_repos": [
+        "execute-plans",
+        "pantheon"
+      ],
+      "note": "First successful admission for all 9 Batch C tasks. Because no prior canonical row for these ids ever reached admission, Batch C task ids were never superseded -- they materialized directly under their original catalog ids with no replacement lineage required.",
+      "receipt_path": ".orchestrator/assistant-dev-packets/processed/full-operation-gap-batch-c-support-and-frontend-functional-ead79e62-f7a8-4b56-b870-ebb97fbefdcb.json"
+    }
+  ],
+  "replacement_before_supersede_sequence": {
+    "description": "Every Batch B replacement row was admitted and durably readback before its predecessor row was superseded, so no dependency window ever pointed at a terminal id with no live successor.",
+    "batch_b_v1_admitted_at": "2026-08-30T20:02:27Z",
+    "batch_b_v1_packet_id": "full-operation-gap-batch-b-parallel-domain-prep-functional-75d1dc3d-f350-4d8e-8f69-251a3efdd748",
+    "batch_b_v2_admitted_at": "2026-08-30T20:14:00Z",
+    "batch_b_v2_packet_id": "full-operation-gap-batch-b-parallel-domain-prep-v2-functional-93e23537-9f39-4c08-9a68-a6d39b2a5614",
+    "batch_b_v1_rows_superseded_at": "2026-08-30T20:16:09Z",
+    "ordering_proof": "batch_b_v2_admitted_at (20:14:00Z) < batch_b_v1_rows_superseded_at (20:16:09Z)"
+  },
+  "devtool_bridge_lineage": [
+    {
+      "id": "OPGAP-DEVTOOL-TARGET-REPO-BRIDGE-20260830",
+      "batch": "A",
+      "terminal_outcome": "superseded",
+      "superseded_by": "OPGAP-DEVTOOL-TARGET-REPO-BRIDGE-V2-20260830",
+      "reason": "V1 retained only as catalog dependency anchor; V2 carries the actual delivered fix."
+    },
+    {
+      "id": "OPGAP-DEVTOOL-TARGET-REPO-BRIDGE-V2-20260830",
+      "batch": "A",
+      "terminal_outcome": "done",
+      "delivery": "PR #5452, head 33cd29dc684b4b948cbd77eec2956bbeaec43fdd, merged as cbf4e0a7303de1c0e9a51614c99ac2d8ddd96cfe",
+      "note": "This is the canonical Batch A completion that every Batch B/D task in this ledger binds as a dependency; the terminal-superseded V1 id intentionally does not satisfy any downstream dependency."
+    },
+    {
+      "id": "OPGAP-DEVTOOL-BRIDGE-REPO-ALLOWLIST-V3-20260830",
+      "batch": "A (post-hoc tooling follow-up, not part of the frozen 30-task catalog)",
+      "status_snapshot": "blocked",
+      "reason": "Tracks the still-open allowlist auto-derivation gap described in root_cause.supervisor_gap_still_open; not required by any Batch B/C/D acceptance criterion."
+    }
+  ],
+  "superseded_terminal_facts_do_not_satisfy_dependencies": "A task row whose terminal_outcome is 'superseded' is archived with terminal_status 'done' for bookkeeping, but the supervisor's dependency-satisfaction check binds to the specific task id named in depends_on. Every live Batch B/C/D row in ai-status.json now names the *-V2-20260830 (or original, for never-superseded Batch C) id explicitly; none depend on a superseded id. This ledger exists so that a reviewer diffing the frozen catalog's depends_on entries against live canonical state does not mistake the intentional supersede-then-rebind pattern for drift.",
+  "batch_b_replacements": [
+    {
+      "original_id": "OPGAP-BE-PORT-NAMESPACE-CONSOLIDATION-20260830",
+      "replacement_id": "OPGAP-BE-PORT-NAMESPACE-CONSOLIDATION-V2-20260830",
+      "supersede_reason": "bind_v2_bootstrap",
+      "functional_scope_change": "none"
+    },
+    {
+      "original_id": "OPGAP-BE-BFF-CORE-20260830",
+      "replacement_id": "OPGAP-BE-BFF-CORE-V2-20260830",
+      "supersede_reason": "bind_v2_bootstrap",
+      "functional_scope_change": "none"
+    },
+    {
+      "original_id": "OPGAP-BE-PERSONA-ROUTER-20260830",
+      "replacement_id": "OPGAP-BE-PERSONA-ROUTER-V2-20260830",
+      "supersede_reason": "bind_v2_bootstrap",
+      "functional_scope_change": "none"
+    },
+    {
+      "original_id": "OPGAP-BE-TRAINING-ROUTER-20260830",
+      "replacement_id": "OPGAP-BE-TRAINING-ROUTER-V2-20260830",
+      "supersede_reason": "bind_v2_bootstrap",
+      "functional_scope_change": "none"
+    },
+    {
+      "original_id": "OPGAP-BE-AGORA-ROUTER-20260830",
+      "replacement_id": "OPGAP-BE-AGORA-ROUTER-V2-20260830",
+      "supersede_reason": "bind_v2_bootstrap",
+      "functional_scope_change": "none"
+    },
+    {
+      "original_id": "OPGAP-BE-RESEARCH-ROUTER-20260830",
+      "replacement_id": "OPGAP-BE-RESEARCH-ROUTER-V2-20260830",
+      "supersede_reason": "bind_v2_bootstrap",
+      "functional_scope_change": "none"
+    },
+    {
+      "original_id": "OPGAP-BE-GOVERNANCE-ROUTER-20260830",
+      "replacement_id": "OPGAP-BE-GOVERNANCE-ROUTER-V2-20260830",
+      "supersede_reason": "bind_v2_bootstrap",
+      "functional_scope_change": "none"
+    },
+    {
+      "original_id": "OPGAP-BE-EVOLUTION-ROUTER-20260830",
+      "replacement_id": "OPGAP-BE-EVOLUTION-ROUTER-V2-20260830",
+      "supersede_reason": "bind_v2_bootstrap",
+      "functional_scope_change": "none"
+    },
+    {
+      "original_id": "OPGAP-BE-CAPITAL-ROUTER-20260830",
+      "replacement_id": "OPGAP-BE-CAPITAL-ROUTER-V2-20260830",
+      "supersede_reason": "bind_v2_bootstrap",
+      "functional_scope_change": "none"
+    },
+    {
+      "original_id": "OPGAP-BE-STRATEGY-RANKING-20260830",
+      "replacement_id": "OPGAP-BE-STRATEGY-RANKING-V2-20260830",
+      "supersede_reason": "bind_v2_bootstrap",
+      "functional_scope_change": "none"
+    },
+    {
+      "original_id": "OPGAP-BE-MANAGEMENT-ROUTER-20260830",
+      "replacement_id": "OPGAP-BE-MANAGEMENT-ROUTER-V2-20260830",
+      "supersede_reason": "bind_v2_bootstrap",
+      "functional_scope_change": "none"
+    },
+    {
+      "original_id": "OPGAP-BE-POSTMORTEM-ROUTER-20260830",
+      "replacement_id": "OPGAP-BE-POSTMORTEM-ROUTER-V2-20260830",
+      "supersede_reason": "bind_v2_bootstrap",
+      "functional_scope_change": "none"
+    },
+    {
+      "original_id": "OPGAP-BE-INCIDENT-ROUTER-20260830",
+      "replacement_id": "OPGAP-BE-INCIDENT-ROUTER-V2-20260830",
+      "supersede_reason": "bind_v2_bootstrap",
+      "functional_scope_change": "none"
+    },
+    {
+      "original_id": "OPGAP-BE-EVENTS-ROUTER-20260830",
+      "replacement_id": "OPGAP-BE-EVENTS-ROUTER-V2-20260830",
+      "supersede_reason": "bind_v2_bootstrap",
+      "functional_scope_change": "none"
+    }
+  ],
+  "batch_c_direct_materializations": [
+    {
+      "original_id": "OPGAP-BE-TOOLS-INTEGRATIONS-20260830",
+      "replacement_id": "OPGAP-BE-TOOLS-INTEGRATIONS-20260830",
+      "supersede_reason": "not_superseded_first_admission_succeeded",
+      "functional_scope_change": "none"
+    },
+    {
+      "original_id": "OPGAP-BE-CONTROL-LOOPS-20260830",
+      "replacement_id": "OPGAP-BE-CONTROL-LOOPS-20260830",
+      "supersede_reason": "not_superseded_first_admission_succeeded",
+      "functional_scope_change": "none"
+    },
+    {
+      "original_id": "OPGAP-BE-COMMAND-ADAPTERS-20260830",
+      "replacement_id": "OPGAP-BE-COMMAND-ADAPTERS-20260830",
+      "supersede_reason": "not_superseded_first_admission_succeeded",
+      "functional_scope_change": "none"
+    },
+    {
+      "original_id": "OPGAP-BE-RUNTIME-BINDING-20260830",
+      "replacement_id": "OPGAP-BE-RUNTIME-BINDING-20260830",
+      "supersede_reason": "not_superseded_first_admission_succeeded",
+      "functional_scope_change": "none"
+    },
+    {
+      "original_id": "OPGAP-DEPLOY-RELIABILITY-20260830",
+      "replacement_id": "OPGAP-DEPLOY-RELIABILITY-20260830",
+      "supersede_reason": "not_superseded_first_admission_succeeded",
+      "functional_scope_change": "none"
+    },
+    {
+      "original_id": "OPGAP-FE-BUNDLE-CLEANUP-20260830",
+      "replacement_id": "OPGAP-FE-BUNDLE-CLEANUP-20260830",
+      "supersede_reason": "not_superseded_first_admission_succeeded",
+      "functional_scope_change": "none"
+    },
+    {
+      "original_id": "OPGAP-FE-MGMT-CRUD-POSTMORTEM-20260830",
+      "replacement_id": "OPGAP-FE-MGMT-CRUD-POSTMORTEM-20260830",
+      "supersede_reason": "not_superseded_first_admission_succeeded",
+      "functional_scope_change": "none"
+    },
+    {
+      "original_id": "OPGAP-FE-AGORA-WORKSHOP-20260830",
+      "replacement_id": "OPGAP-FE-AGORA-WORKSHOP-20260830",
+      "supersede_reason": "not_superseded_first_admission_succeeded",
+      "functional_scope_change": "none"
+    },
+    {
+      "original_id": "OPGAP-FE-INTEGRATION-ASSEMBLY-20260830",
+      "replacement_id": "OPGAP-FE-INTEGRATION-ASSEMBLY-20260830",
+      "supersede_reason": "not_superseded_first_admission_succeeded",
+      "functional_scope_change": "none"
+    }
+  ],
+  "row_count_summary": {
+    "batch_b_rows": 14,
+    "batch_c_rows": 9,
+    "total_batch_b_and_c_rows": 23
+  },
+  "batch_d_dependency_transformation": {
+    "description": "OPGAP-BFF-MAIN-ASSEMBLY-20260830 (Batch D) is frozen in the catalog with depends_on naming the 14 Batch B ids plus the 5 Batch C support-router ids by their original catalog names. 14 of those names are now terminal-superseded and cannot satisfy a live dependency check; at materialization time Batch D's depends_on must be rebound to the 14 V2 replacement ids while the 5 unchanged Batch C support ids pass through unmodified. This is not yet materialized (Batch D is still gated on Batch B/C completion) -- this table documents the required rebinding so a future dispatch does not accidentally bind the frozen, terminal ids.",
+    "frozen_catalog_task": "OPGAP-BFF-MAIN-ASSEMBLY-20260830",
+    "frozen_depends_on_count": 19,
+    "transformed_dependencies": [
+      {
+        "frozen_catalog_id": "OPGAP-BE-PORT-NAMESPACE-CONSOLIDATION-20260830",
+        "live_dependency_id": "OPGAP-BE-PORT-NAMESPACE-CONSOLIDATION-V2-20260830",
+        "transformation": "rebound_to_v2_supersede"
+      },
+      {
+        "frozen_catalog_id": "OPGAP-BE-BFF-CORE-20260830",
+        "live_dependency_id": "OPGAP-BE-BFF-CORE-V2-20260830",
+        "transformation": "rebound_to_v2_supersede"
+      },
+      {
+        "frozen_catalog_id": "OPGAP-BE-PERSONA-ROUTER-20260830",
+        "live_dependency_id": "OPGAP-BE-PERSONA-ROUTER-V2-20260830",
+        "transformation": "rebound_to_v2_supersede"
+      },
+      {
+        "frozen_catalog_id": "OPGAP-BE-TRAINING-ROUTER-20260830",
+        "live_dependency_id": "OPGAP-BE-TRAINING-ROUTER-V2-20260830",
+        "transformation": "rebound_to_v2_supersede"
+      },
+      {
+        "frozen_catalog_id": "OPGAP-BE-AGORA-ROUTER-20260830",
+        "live_dependency_id": "OPGAP-BE-AGORA-ROUTER-V2-20260830",
+        "transformation": "rebound_to_v2_supersede"
+      },
+      {
+        "frozen_catalog_id": "OPGAP-BE-RESEARCH-ROUTER-20260830",
+        "live_dependency_id": "OPGAP-BE-RESEARCH-ROUTER-V2-20260830",
+        "transformation": "rebound_to_v2_supersede"
+      },
+      {
+        "frozen_catalog_id": "OPGAP-BE-GOVERNANCE-ROUTER-20260830",
+        "live_dependency_id": "OPGAP-BE-GOVERNANCE-ROUTER-V2-20260830",
+        "transformation": "rebound_to_v2_supersede"
+      },
+      {
+        "frozen_catalog_id": "OPGAP-BE-EVOLUTION-ROUTER-20260830",
+        "live_dependency_id": "OPGAP-BE-EVOLUTION-ROUTER-V2-20260830",
+        "transformation": "rebound_to_v2_supersede"
+      },
+      {
+        "frozen_catalog_id": "OPGAP-BE-CAPITAL-ROUTER-20260830",
+        "live_dependency_id": "OPGAP-BE-CAPITAL-ROUTER-V2-20260830",
+        "transformation": "rebound_to_v2_supersede"
+      },
+      {
+        "frozen_catalog_id": "OPGAP-BE-STRATEGY-RANKING-20260830",
+        "live_dependency_id": "OPGAP-BE-STRATEGY-RANKING-V2-20260830",
+        "transformation": "rebound_to_v2_supersede"
+      },
+      {
+        "frozen_catalog_id": "OPGAP-BE-MANAGEMENT-ROUTER-20260830",
+        "live_dependency_id": "OPGAP-BE-MANAGEMENT-ROUTER-V2-20260830",
+        "transformation": "rebound_to_v2_supersede"
+      },
+      {
+        "frozen_catalog_id": "OPGAP-BE-POSTMORTEM-ROUTER-20260830",
+        "live_dependency_id": "OPGAP-BE-POSTMORTEM-ROUTER-V2-20260830",
+        "transformation": "rebound_to_v2_supersede"
+      },
+      {
+        "frozen_catalog_id": "OPGAP-BE-INCIDENT-ROUTER-20260830",
+        "live_dependency_id": "OPGAP-BE-INCIDENT-ROUTER-V2-20260830",
+        "transformation": "rebound_to_v2_supersede"
+      },
+      {
+        "frozen_catalog_id": "OPGAP-BE-EVENTS-ROUTER-20260830",
+        "live_dependency_id": "OPGAP-BE-EVENTS-ROUTER-V2-20260830",
+        "transformation": "rebound_to_v2_supersede"
+      },
+      {
+        "frozen_catalog_id": "OPGAP-BE-TOOLS-INTEGRATIONS-20260830",
+        "live_dependency_id": "OPGAP-BE-TOOLS-INTEGRATIONS-20260830",
+        "transformation": "unchanged_never_superseded"
+      },
+      {
+        "frozen_catalog_id": "OPGAP-BE-CONTROL-LOOPS-20260830",
+        "live_dependency_id": "OPGAP-BE-CONTROL-LOOPS-20260830",
+        "transformation": "unchanged_never_superseded"
+      },
+      {
+        "frozen_catalog_id": "OPGAP-BE-COMMAND-ADAPTERS-20260830",
+        "live_dependency_id": "OPGAP-BE-COMMAND-ADAPTERS-20260830",
+        "transformation": "unchanged_never_superseded"
+      },
+      {
+        "frozen_catalog_id": "OPGAP-BE-RUNTIME-BINDING-20260830",
+        "live_dependency_id": "OPGAP-BE-RUNTIME-BINDING-20260830",
+        "transformation": "unchanged_never_superseded"
+      },
+      {
+        "frozen_catalog_id": "OPGAP-DEPLOY-RELIABILITY-20260830",
+        "live_dependency_id": "OPGAP-DEPLOY-RELIABILITY-20260830",
+        "transformation": "unchanged_never_superseded"
+      }
+    ]
+  }
+}
