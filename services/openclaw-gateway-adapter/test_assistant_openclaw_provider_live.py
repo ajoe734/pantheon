@@ -341,9 +341,11 @@ class TestAssistantOpenClawProviderUnit(unittest.TestCase):
 
     def test_readiness_auth_probe_converges_via_fallback_when_primary_claude_fails(self) -> None:
         calls: list[list[str]] = []
+        call_timeouts: list[float] = []
 
         def fake_run(cmd, **kwargs):
             calls.append(list(cmd))
+            call_timeouts.append(kwargs.get("timeout", 0.0))
             # First call is primary (anthropic/claude-opus-4-8) which fails with timeout
             if len(calls) == 1:
                 raise subprocess.TimeoutExpired(cmd="openclaw agent", timeout=kwargs["timeout"])
@@ -370,6 +372,8 @@ class TestAssistantOpenClawProviderUnit(unittest.TestCase):
         self.assertEqual(len(calls), 2)
         self.assertEqual(calls[0][calls[0].index("--model") + 1], "anthropic/claude-opus-4-8")
         self.assertEqual(calls[1][calls[1].index("--model") + 1], "openai/gpt-5.6-sol")
+        self.assertLessEqual(call_timeouts[0], 5.0)
+        self.assertGreaterEqual(call_timeouts[1], 10.0)
 
     def test_readiness_auth_probe_fails_closed_when_all_models_fail(self) -> None:
         calls: list[list[str]] = []

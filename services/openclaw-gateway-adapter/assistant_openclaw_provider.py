@@ -289,7 +289,10 @@ class AssistantOpenClawProvider:
                 break
             has_fallback = idx < len(candidates) - 1
             if has_fallback:
-                cand_timeout = min(answer_timeout * 0.35, max(2.0, remaining - 4.0))
+                if idx == 0:
+                    cand_timeout = min(5.0, max(2.0, remaining - 4.0 * (len(candidates) - 1)))
+                else:
+                    cand_timeout = min(10.0, max(3.0, remaining - 4.0))
             else:
                 cand_timeout = remaining
 
