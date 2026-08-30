@@ -195,6 +195,8 @@ def test_bounded_source_refresh_deploy_waits_and_gates_readback() -> None:
     assert "len(closes) < 2" in gate
     assert "math.isfinite(float(close))" in gate
     assert "active paper snapshot lacks official exchange lineage" in gate
+    assert "if age_seconds < 0:" in gate
+    assert "if age_seconds < -300:" not in gate
     # Taiwan market-session freshness gate reuses the shared governed rule
     # instead of a divergent local heuristic, so a valid Friday close is not
     # forced through the flat 24h comparison on a weekend deploy.
@@ -202,6 +204,19 @@ def test_bounded_source_refresh_deploy_waits_and_gates_readback() -> None:
     assert "evaluate_taiwan_market_freshness" in gate
     assert "is_taiwan_symbol(canonical_symbol)" in gate
     assert "failed Taiwan market-session freshness" in gate
+    # Passing the exact event/decision clocks into the shared evaluator keeps
+    # the deploy gate covered by the same pre-session-close rejection as the
+    # producer, fleet reconciler, and readiness surfaces.
+    assert "event_time_dt=event_time" in gate
+    assert "now_dt=now_dt" in gate
+    # The receipt clock is passed to the shared rule as well.  Therefore a
+    # same-day snapshot received before the 13:30 close remains fail-closed
+    # when this deploy gate evaluates it after the close.
+    assert "refresh_receipt_dt=refresh_dt" in gate
+    # The deploy gate consumes governed proof from the Source public snapshot;
+    # it must not rely on a deploy-only calendar fixture or local heuristic.
+    assert 'ev = snapshot.get("calendar_evidence")' in gate
+    assert "calendar_evidence=ev" in gate
 
     root_start = deploy.index("  root)\n")
     root_end = deploy.index("\n  bff)\n", root_start)

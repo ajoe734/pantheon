@@ -598,6 +598,7 @@ def _validate_terminal_readback(
     expected_sequence_no: int,
     expected_deployment: Mapping[str, Any],
     expected_exclusive_connector_ids: Sequence[str] = (),
+    now: datetime | None = None,
 ) -> int:
     if actual.get("schema_version") != "source_ingest_controller_readback.v1":
         raise ControllerTickError(
@@ -607,8 +608,9 @@ def _validate_terminal_readback(
             schedule=schedule,
             actual_readback=actual,
         )
+    now_dt = now or datetime.now(timezone.utc)
     captured_at = parse_utc(str(actual.get("captured_at") or ""))
-    if captured_at is None or (datetime.now(timezone.utc) - captured_at).total_seconds() > 300:
+    if captured_at is None or (now_dt - captured_at).total_seconds() > 300:
         raise ControllerTickError(
             "actual_readback",
             "authoritative source readback is stale",
@@ -862,13 +864,58 @@ def _validate_terminal_readback(
                     if "require_freshness_within_1d" in policy_gates
                     else CADENCE_SOURCE_AGE_LIMIT_SECONDS.get(cadence)
                 )
-                if (
-                    available_at is None
-                    or max_source_age is None
-                    or (datetime.now(timezone.utc) - available_at).total_seconds() > max_source_age
-                    or (available_at - datetime.now(timezone.utc)).total_seconds() > 300
-                ):
-                    invalid.append(f"{connector_id}:source_data_stale")
+                is_tw = connector_id == "tw-twse-tpex-official-market"
+                if is_tw:
+                    eval_now_dt = now or captured_at or now_dt
+                    source_id_str = str(record.get("source_id") or "")
+                    if not source_id_str.startswith("tw-official:"):
+                        invalid.append(f"{connector_id}:source_data_stale[market_input_non_official_lineage]")
+                    refresh_receipt_dt = None
+                    try:
+                        if freshness.get("last_success_at"):
+                            refresh_receipt_dt = parse_utc(str(freshness["last_success_at"]))
+                    except ControllerStateError:
+                        pass
+
+                    cal_ev = (
+                        record.get("metadata", {}).get("calendar_evidence")
+                        if isinstance(record.get("metadata"), Mapping)
+                        else None
+                    )
+                    if cal_ev is None and isinstance(provenance, Mapping):
+                        cal_ev = provenance.get("calendar_evidence")
+                    lineage = {
+                        "connector_ids": [connector_id],
+                        "source_ids": [str(record.get("source_id") or "")],
+                    }
+                    if available_at is None:
+                        invalid.append(f"{connector_id}:source_data_stale[market_input_invalid]")
+                    else:
+                        from services.execution.market_snapshot_admission import (
+                            evaluate_taiwan_market_freshness,
+                        )
+
+                        tw_ok, tw_reason, _tw_detail = evaluate_taiwan_market_freshness(
+                            event_time_dt=available_at,
+                            now_dt=eval_now_dt,
+                            refresh_receipt_dt=refresh_receipt_dt,
+                            lineage=lineage,
+                            max_refresh_age_seconds=max_source_age or 86400,
+                            calendar_evidence=cal_ev,
+                        )
+                        if not tw_ok:
+                            reason_tag = f"[{tw_reason}]" if tw_reason else ""
+                            tag_entry = f"{connector_id}:source_data_stale{reason_tag}"
+                            if tag_entry not in invalid:
+                                invalid.append(tag_entry)
+                else:
+                    if (
+                        available_at is None
+                        or max_source_age is None
+                        or (now_dt - available_at).total_seconds() > max_source_age
+                        or (available_at - now_dt).total_seconds() > 300
+                    ):
+                        invalid.append(f"{connector_id}:source_data_stale")
             connector_payload = item.get("connector") if isinstance(item.get("connector"), Mapping) else {}
             if "no_live_capital" in policy_gates and connector_payload.get("auth_type") == "broker_ref":
                 invalid.append(f"{connector_id}:no_live_capital_gate_failed")

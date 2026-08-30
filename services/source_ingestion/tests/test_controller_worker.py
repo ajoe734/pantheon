@@ -279,6 +279,7 @@ def _validate_terminal_readback(
     schedule: dict[str, Any],
     actual: dict[str, Any],
     expected_exclusive_connector_ids: tuple[str, ...] = (),
+    now: datetime | None = None,
 ) -> None:
     controller_state = actual["controller_state"]
     _validate_terminal_readback_impl(
@@ -289,6 +290,7 @@ def _validate_terminal_readback(
         expected_sequence_no=controller_state["sequence_no"],
         expected_deployment=controller_state["deployment"],
         expected_exclusive_connector_ids=expected_exclusive_connector_ids,
+        now=now,
     )
 
 
@@ -1431,3 +1433,253 @@ def test_refresh_runtime_identity_replaces_stale_persisted_deployment(
     assert refreshed.controller_id == "source-ingestion-current:generation-current"
     assert refreshed.sequence_no == 7
     assert refreshed.total_successes == 3
+
+
+def test_terminal_readback_accepts_weekend_taiwan_official_market_bounded_refresh() -> None:
+    # Reproducer for run 33283640789:
+    # Friday 2026-08-28 official session close evaluated on Sunday 2026-08-30 with fresh receipt.
+    now = datetime(2026, 8, 30, 1, 0, 0, tzinfo=timezone.utc)
+    actual = _actual_readback()
+    actual["captured_at"] = "2026-08-30T01:00:00Z"
+    actual["connectors"][0]["connector_id"] = "tw-twse-tpex-official-market"
+    actual["connectors"][0]["connector"]["connector_id"] = "tw-twse-tpex-official-market"
+    actual["connectors"][0]["schedule"]["connector_id"] = "tw-twse-tpex-official-market"
+    actual["connectors"][0]["freshness"].update(
+        {
+            "status": "fresh",
+            "is_due": False,
+            "staleness_seconds": 5,
+            "last_success_at": "2026-08-30T01:00:00Z",
+            "last_ingest_run_id": "run-tw-weekend",
+            "latest_run": {"ingest_run_id": "run-tw-weekend", "status": "completed"},
+        }
+    )
+    actual["connectors"][0]["latest_source_record"].update(
+        {
+            "source_id": "tw-official:tw_price_daily:TWSE:2330:weekend-proof",
+            "connector_id": "tw-twse-tpex-official-market",
+            "status": "normalized",
+            "provenance": {
+                "provider": "TWSE OpenAPI",
+                "dataset": DATASET,
+                "available_time": "2026-08-28T05:30:00Z",
+                "api_endpoint": "https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL",
+                "access_scope": "public",
+                "license_scope": "official_reference",
+                "schema_hash": "tw_price_daily.v1",
+                "source_ingest_run_id": "run-tw-weekend",
+            },
+        }
+    )
+    actual["connectors"][0]["source_health"]["source_id"] = "tw-twse-tpex-official-market"
+    actual["connectors"][0]["source_health"]["metadata"]["last_ingest_run_id"] = "run-tw-weekend"
+
+    reconcile = _reconcile()
+    reconcile["results"][0]["actions"][0]["connector_id"] = "tw-twse-tpex-official-market"
+
+    _validate_terminal_readback(
+        reconcile=reconcile,
+        schedule=_schedule(),
+        actual=actual,
+        now=now,
+    )
+
+
+def test_terminal_readback_rejects_stale_weekday_taiwan_official_data() -> None:
+    now = datetime(2026, 8, 28, 6, 0, 0, tzinfo=timezone.utc)
+    actual = _actual_readback()
+    actual["captured_at"] = "2026-08-28T06:00:00Z"
+    actual["connectors"][0]["connector_id"] = "tw-twse-tpex-official-market"
+    actual["connectors"][0]["connector"]["connector_id"] = "tw-twse-tpex-official-market"
+    actual["connectors"][0]["schedule"]["connector_id"] = "tw-twse-tpex-official-market"
+    actual["connectors"][0]["freshness"]["last_success_at"] = "2026-08-28T06:00:00Z"
+    # Tuesday 2026-08-25 data evaluated on Friday 2026-08-28 without holiday proof
+    actual["connectors"][0]["latest_source_record"]["provenance"]["available_time"] = "2026-08-25T05:30:00Z"
+    actual["connectors"][0]["latest_source_record"]["source_id"] = "tw-official:tw_price_daily:TWSE:2330:tuesday"
+    actual["connectors"][0]["latest_source_record"]["connector_id"] = "tw-twse-tpex-official-market"
+    actual["connectors"][0]["source_health"]["source_id"] = "tw-twse-tpex-official-market"
+
+    reconcile = _reconcile()
+    reconcile["results"][0]["actions"][0]["connector_id"] = "tw-twse-tpex-official-market"
+
+    with pytest.raises(ControllerTickError, match=r"source_data_stale\[market_input_calendar_unverifiable\]"):
+        _validate_terminal_readback(
+            reconcile=reconcile,
+            schedule=_schedule(),
+            actual=actual,
+            now=now,
+        )
+
+
+def test_terminal_readback_rejects_stale_weekday_with_newer_trading_day_evidence() -> None:
+    now = datetime(2026, 2, 23, 6, 0, 0, tzinfo=timezone.utc)
+    actual = _actual_readback()
+    actual["captured_at"] = "2026-02-23T06:00:00Z"
+    actual["connectors"][0]["connector_id"] = "tw-twse-tpex-official-market"
+    actual["connectors"][0]["connector"]["connector_id"] = "tw-twse-tpex-official-market"
+    actual["connectors"][0]["schedule"]["connector_id"] = "tw-twse-tpex-official-market"
+    actual["connectors"][0]["freshness"]["last_success_at"] = "2026-02-23T06:00:00Z"
+    actual["connectors"][0]["latest_source_record"]["provenance"]["available_time"] = "2026-02-11T05:30:00Z"
+    actual["connectors"][0]["latest_source_record"]["provenance"]["calendar_evidence"] = {
+        "market": "TW",
+        "venue": "TWSE",
+        "timezone": "Asia/Taipei",
+        "authority": "Taiwan Stock Exchange 115 年市場開休市日期",
+        "source_url": "https://www.twse.com.tw/holidaySchedule/holidaySchedule?response=json&queryYear=115",
+        "fetched_at": "2026-02-23T05:00:00Z",
+        "version": "twse-2026-lny-v1",
+        "checksum": "55b2e23b9bd30af666a99c98da2dbbfad568dcd655631b1c6347d12ee8381596",
+        "coverage_start": "2026-02-11",
+        "coverage_end": "2026-02-23",
+        "holidays": {
+            "2026-02-12": {"name": "市場無交易，僅辦理結算交割作業"},
+            "2026-02-13": {"name": "市場無交易，僅辦理結算交割作業"},
+            "2026-02-16": {"name": "農曆除夕及春節"},
+            "2026-02-17": {"name": "農曆除夕及春節"},
+            "2026-02-18": {"name": "農曆除夕及春節"},
+            "2026-02-19": {"name": "農曆除夕及春節"},
+            "2026-02-20": {"name": "農曆除夕及春節"},
+        },
+        "trading_days": ["2026-02-11", "2026-02-23"],
+    }
+    actual["connectors"][0]["latest_source_record"]["source_id"] = "tw-official:tw_price_daily:TWSE:2330:lny"
+    actual["connectors"][0]["latest_source_record"]["connector_id"] = "tw-twse-tpex-official-market"
+    actual["connectors"][0]["source_health"]["source_id"] = "tw-twse-tpex-official-market"
+
+    reconcile = _reconcile()
+    reconcile["results"][0]["actions"][0]["connector_id"] = "tw-twse-tpex-official-market"
+
+    with pytest.raises(ControllerTickError, match=r"source_data_stale\[market_input_stale\]"):
+        _validate_terminal_readback(
+            reconcile=reconcile,
+            schedule=_schedule(),
+            actual=actual,
+            now=now,
+        )
+
+
+
+
+def test_terminal_readback_rejects_future_timestamp_taiwan_official_data() -> None:
+    now = datetime(2026, 8, 30, 1, 0, 0, tzinfo=timezone.utc)
+    actual = _actual_readback()
+    actual["captured_at"] = "2026-08-30T01:00:00Z"
+    actual["connectors"][0]["connector_id"] = "tw-twse-tpex-official-market"
+    actual["connectors"][0]["connector"]["connector_id"] = "tw-twse-tpex-official-market"
+    actual["connectors"][0]["schedule"]["connector_id"] = "tw-twse-tpex-official-market"
+    actual["connectors"][0]["freshness"]["last_success_at"] = "2026-08-30T01:00:00Z"
+    actual["connectors"][0]["latest_source_record"]["provenance"]["available_time"] = "2099-01-01T00:00:00Z"
+    actual["connectors"][0]["latest_source_record"]["source_id"] = "tw-official:tw_price_daily:TWSE:2330:future"
+    actual["connectors"][0]["latest_source_record"]["connector_id"] = "tw-twse-tpex-official-market"
+    actual["connectors"][0]["source_health"]["source_id"] = "tw-twse-tpex-official-market"
+
+    reconcile = _reconcile()
+    reconcile["results"][0]["actions"][0]["connector_id"] = "tw-twse-tpex-official-market"
+
+    with pytest.raises(ControllerTickError, match=r"source_data_stale\[market_input_invalid\]"):
+        _validate_terminal_readback(
+            reconcile=reconcile,
+            schedule=_schedule(),
+            actual=actual,
+            now=now,
+        )
+
+
+def test_terminal_readback_rejects_non_official_lineage_taiwan_data() -> None:
+    now = datetime(2026, 8, 30, 1, 0, 0, tzinfo=timezone.utc)
+    actual = _actual_readback()
+    actual["captured_at"] = "2026-08-30T01:00:00Z"
+    actual["connectors"][0]["connector_id"] = "tw-twse-tpex-official-market"
+    actual["connectors"][0]["connector"]["connector_id"] = "tw-twse-tpex-official-market"
+    actual["connectors"][0]["schedule"]["connector_id"] = "tw-twse-tpex-official-market"
+    actual["connectors"][0]["freshness"]["last_success_at"] = "2026-08-30T01:00:00Z"
+    actual["connectors"][0]["latest_source_record"]["source_id"] = "mock-vendor:tw_price_daily:TWSE:2330:mock"
+    actual["connectors"][0]["latest_source_record"]["connector_id"] = "tw-twse-tpex-official-market"
+    actual["connectors"][0]["latest_source_record"]["provenance"]["available_time"] = "2026-08-28T05:30:00Z"
+    actual["connectors"][0]["source_health"]["source_id"] = "tw-twse-tpex-official-market"
+
+    reconcile = _reconcile()
+    reconcile["results"][0]["actions"][0]["connector_id"] = "tw-twse-tpex-official-market"
+
+    with pytest.raises(ControllerTickError, match=r"source_data_stale\[market_input_non_official_lineage\]"):
+        _validate_terminal_readback(
+            reconcile=reconcile,
+            schedule=_schedule(),
+            actual=actual,
+            now=now,
+        )
+
+
+def test_terminal_readback_rejects_stale_refresh_receipt() -> None:
+    now = datetime(2026, 8, 30, 1, 0, 0, tzinfo=timezone.utc)
+    actual = _actual_readback()
+    actual["captured_at"] = "2026-08-30T01:00:00Z"
+    actual["connectors"][0]["connector_id"] = "tw-twse-tpex-official-market"
+    actual["connectors"][0]["connector"]["connector_id"] = "tw-twse-tpex-official-market"
+    actual["connectors"][0]["schedule"]["connector_id"] = "tw-twse-tpex-official-market"
+    actual["connectors"][0]["freshness"]["last_success_at"] = "2026-08-20T00:00:00Z"  # >24h stale receipt
+    actual["connectors"][0]["latest_source_record"]["provenance"]["available_time"] = "2026-08-28T05:30:00Z"
+    actual["connectors"][0]["latest_source_record"]["source_id"] = "tw-official:tw_price_daily:TWSE:2330:stale-receipt"
+    actual["connectors"][0]["latest_source_record"]["connector_id"] = "tw-twse-tpex-official-market"
+    actual["connectors"][0]["source_health"]["source_id"] = "tw-twse-tpex-official-market"
+
+    reconcile = _reconcile()
+    reconcile["results"][0]["actions"][0]["connector_id"] = "tw-twse-tpex-official-market"
+
+    with pytest.raises(ControllerTickError, match=r"source_data_stale\[market_input_stale_refresh\]"):
+        _validate_terminal_readback(
+            reconcile=reconcile,
+            schedule=_schedule(),
+            actual=actual,
+            now=now,
+        )
+
+
+def test_terminal_readback_rejects_missing_refresh_receipt_for_taiwan_official_data() -> None:
+    now = datetime(2026, 8, 30, 1, 0, 0, tzinfo=timezone.utc)
+    actual = _actual_readback()
+    actual["captured_at"] = "2026-08-30T01:00:00Z"
+    actual["connectors"][0]["connector_id"] = "tw-twse-tpex-official-market"
+    actual["connectors"][0]["connector"]["connector_id"] = "tw-twse-tpex-official-market"
+    actual["connectors"][0]["schedule"]["connector_id"] = "tw-twse-tpex-official-market"
+    actual["connectors"][0]["freshness"]["last_success_at"] = None
+    actual["connectors"][0]["latest_source_record"]["provenance"]["available_time"] = "2026-08-28T05:30:00Z"
+    actual["connectors"][0]["latest_source_record"]["source_id"] = "tw-official:tw_price_daily:TWSE:2330:missing-receipt"
+    actual["connectors"][0]["latest_source_record"]["connector_id"] = "tw-twse-tpex-official-market"
+    actual["connectors"][0]["source_health"]["source_id"] = "tw-twse-tpex-official-market"
+
+    reconcile = _reconcile()
+    reconcile["results"][0]["actions"][0]["connector_id"] = "tw-twse-tpex-official-market"
+
+    with pytest.raises(ControllerTickError, match=r"source_data_stale\[market_input_stale_refresh\]"):
+        _validate_terminal_readback(
+            reconcile=reconcile,
+            schedule=_schedule(),
+            actual=actual,
+            now=now,
+        )
+
+
+def test_terminal_readback_rejects_unparsable_refresh_receipt_for_taiwan_official_data() -> None:
+    now = datetime(2026, 8, 30, 1, 0, 0, tzinfo=timezone.utc)
+    actual = _actual_readback()
+    actual["captured_at"] = "2026-08-30T01:00:00Z"
+    actual["connectors"][0]["connector_id"] = "tw-twse-tpex-official-market"
+    actual["connectors"][0]["connector"]["connector_id"] = "tw-twse-tpex-official-market"
+    actual["connectors"][0]["schedule"]["connector_id"] = "tw-twse-tpex-official-market"
+    actual["connectors"][0]["freshness"]["last_success_at"] = "not-a-valid-timestamp"
+    actual["connectors"][0]["latest_source_record"]["provenance"]["available_time"] = "2026-08-28T05:30:00Z"
+    actual["connectors"][0]["latest_source_record"]["source_id"] = "tw-official:tw_price_daily:TWSE:2330:invalid-receipt"
+    actual["connectors"][0]["latest_source_record"]["connector_id"] = "tw-twse-tpex-official-market"
+    actual["connectors"][0]["source_health"]["source_id"] = "tw-twse-tpex-official-market"
+
+    reconcile = _reconcile()
+    reconcile["results"][0]["actions"][0]["connector_id"] = "tw-twse-tpex-official-market"
+
+    with pytest.raises(ControllerTickError, match=r"source_data_stale\[market_input_stale_refresh\]"):
+        _validate_terminal_readback(
+            reconcile=reconcile,
+            schedule=_schedule(),
+            actual=actual,
+            now=now,
+        )

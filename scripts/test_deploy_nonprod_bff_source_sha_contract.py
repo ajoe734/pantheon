@@ -22,11 +22,11 @@ def _bff_prebuild_and_recreate_inherits_exact_sha(script: str) -> bool:
     bff_case = script.split("  bff)\n", 1)[1].split("  exec)\n", 1)[0]
     export = 'export GIT_SHA="${PANTHEON_DEPLOY_SHA}"'
     build = (
-        "docker compose -p pantheon -f docker-compose.yml build operator-bff loop-run-projector-scheduler"
+        "docker compose -p pantheon -f docker-compose.yml build operator-bff agora-interaction-worker loop-run-projector-scheduler"
     )
     up = (
         "docker compose -p pantheon -f docker-compose.yml up -d "
-        "--force-recreate --no-deps operator-bff loop-run-projector-scheduler"
+        "--force-recreate --no-deps operator-bff agora-interaction-worker loop-run-projector-scheduler"
     )
     return (
         bff_case.count(export) == 1
