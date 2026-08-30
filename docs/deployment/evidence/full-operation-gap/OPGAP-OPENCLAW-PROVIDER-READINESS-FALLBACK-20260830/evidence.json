@@ -1,0 +1,72 @@
+{
+  "schema_version": "pantheon.supervisor-evidence.v1",
+  "task_id": "OPGAP-OPENCLAW-PROVIDER-READINESS-FALLBACK-20260830",
+  "title": "Make OpenClaw auth readiness converge through an eligible live fallback",
+  "program_id": "PANTHEON-FULL-OPERATION-GAP-CLOSURE-20260830",
+  "design_unit": "SD-OPGAP-OPENCLAW-PROVIDER-READINESS-FALLBACK",
+  "recorded_at": "2026-08-30T21:15:00Z",
+  "ai_name": "Antigravity",
+  "owner": "Antigravity",
+  "reviewer": "Codex",
+  "target_repo": "pantheon",
+  "task_class": "product_runtime",
+  "summary_zh": "修復 OpenClaw readiness 在 Claude OAuth 過期時無法穩定採用健康 Codex fallback、持續 timeout 的問題；不在程式任務內變更憑證。",
+  "incident_binding": {
+    "deployment_run_id": "33332882810",
+    "deployment_job_id": "99314532003",
+    "observed_failure": "wait_for_openclaw_readiness timed out after 5 attempts (90s budget exhausted with CURL_REQUEST_TIMEOUT on auth_probe=true)",
+    "root_cause": "Primary model anthropic/claude-opus-4-8 hung on expired Claude CLI OAuth session for the full 20s probe budget per attempt, preventing live OpenAI/Codex fallbacks (openai/gpt-5.6-sol, openai/gpt-5.5) from being tried within the probe budget",
+    "reproduction_code": "OPENCLAW_GATEWAY_TIMEOUT"
+  },
+  "artifacts": [
+    "services/openclaw-gateway-adapter/assistant_openclaw_provider.py",
+    "services/openclaw-gateway-adapter/test_assistant_openclaw_provider_live.py",
+    "docs/deployment/evidence/full-operation-gap/OPGAP-OPENCLAW-PROVIDER-READINESS-FALLBACK-20260830/evidence.json",
+    "docs/deployment/evidence/full-operation-gap/OPGAP-OPENCLAW-PROVIDER-READINESS-FALLBACK-20260830/README.md"
+  ],
+  "scope": {
+    "owned": [
+      "services/openclaw-gateway-adapter/assistant_openclaw_provider.py",
+      "services/openclaw-gateway-adapter/test_assistant_openclaw_provider_live.py",
+      "docs/deployment/evidence/full-operation-gap/OPGAP-OPENCLAW-PROVIDER-READINESS-FALLBACK-20260830/evidence.json",
+      "docs/deployment/evidence/full-operation-gap/OPGAP-OPENCLAW-PROVIDER-READINESS-FALLBACK-20260830/README.md"
+    ],
+    "not_changing": [
+      "credentials, tokens, secrets, or GitHub Secrets",
+      "shared model pool priority or configuration scripts",
+      "execute-plans product runtime or Lovable hosting",
+      "BFF business routes or data schemas"
+    ]
+  },
+  "contracts": {
+    "bounded_readiness_probe_fallback": "Readiness probe partitions the 20s probe budget across candidate models. When primary model fails or times out, probe boundedly falls back to configured live Codex models and returns ready: True within 20s.",
+    "sanitized_primary_unavailable_evidence": "When primary model is unavailable, readiness probe captures sanitized primary_unavailable evidence (model, status: unavailable, sanitized reason, duration_ms) without leaking secrets or tokens.",
+    "deterministic_fail_closed": "If all candidate models fail, readiness probe deterministically fails closed with status: degraded and typed error code without retrying side-effecting invoke turns.",
+    "transport_and_stream_parity": "Single invoke and OpenResponses SSE stream both support candidate model fallback, ensuring all four stages of openclaw-assistant-openclaw-live-smoke pass without skip."
+  },
+  "verification": {
+    "test_suites": [
+      "services/openclaw-gateway-adapter/test_assistant_openclaw_provider_live.py",
+      "services/openclaw-gateway-adapter/test_main.py",
+      "scripts/test_openclaw_assistant_openclaw_live_smoke.py"
+    ],
+    "verification_commands": [
+      "PANTHEON_PY=\"$(python3 scripts/dev/provision_python_distribution.py --print-python)\" && \"$PANTHEON_PY\" -m pytest -q services/openclaw-gateway-adapter",
+      "bash -n scripts/openclaw-assistant-openclaw-live-smoke.sh",
+      "docker compose --profile openclaw config --quiet"
+    ],
+    "status": "PASS"
+  },
+  "review": {
+    "status": "ready_for_independent_review",
+    "reviewer": "Codex",
+    "required_checks": [
+      "verify OpenClaw auth readiness probe returns ready within 20s when live fallback completes sentinel turn",
+      "verify expired primary OAuth session is captured as sanitized primary_unavailable evidence without secret leak",
+      "verify readiness fails closed deterministically when all candidate models fail",
+      "verify four-part live smoke (readiness, invoke, CLI, stream) is supported across candidate models",
+      "verify no credentials, secrets, or provider priorities were changed in source or configuration",
+      "bind this manifest path (docs/deployment/evidence/full-operation-gap/OPGAP-OPENCLAW-PROVIDER-READINESS-FALLBACK-20260830/evidence.json) in the canonical approve command"
+    ]
+  }
+}
