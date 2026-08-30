@@ -319,10 +319,10 @@ def validate_catalog(catalog_path: str, main_py_path: str) -> None:
     assert pb.get("pantheon") == "2bcb4465399af83190c5027073f3b2296e377256", "Stale pantheon baseline"
     assert pb.get("command_runtime_sha") == "2bcb4465399af83190c5027073f3b2296e377256", "Stale command runtime SHA in planning_baseline"
     assert pb.get("execute_plans") == "7d30e78476be61222af63a089e7ab141aa43b809", "Stale execute-plans baseline"
-    assert pb.get("hosted_pair_id") == "3b4c1f0b5a21245c63623583755785c5b9d81288025e6dd2eb33ccc82ccde742", "Stale hosted pair ID"
-    assert pb.get("hosted_backend") == "92077907540d4554e9b8a1d12e2528505b2d1ebe", "Stale hosted backend"
+    assert pb.get("hosted_pair_id") == "9de4cd001a8b7aaf18a1094fb1699ece19f0efd86d3d24994cd9f3562fe33727", "Stale hosted pair ID"
+    assert pb.get("hosted_backend") == "2bcb4465399af83190c5027073f3b2296e377256", "Stale hosted backend"
     assert pb.get("hosted_frontend") == "7d30e78476be61222af63a089e7ab141aa43b809", "Stale hosted frontend"
-    assert pb.get("hosted_accepted_at") == "2026-08-30T15:18:26Z", "Stale hosted accepted at"
+    assert pb.get("hosted_accepted_at") == "2026-08-30T16:17:23Z", "Stale hosted accepted at"
 
     # 15. Verify Execution Resources Bidirectional Invariant
     print("15. Verifying execution resources bidirectional mapping (pantheon-dev)...")

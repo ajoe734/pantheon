@@ -7,7 +7,7 @@ This document package provides the complete, root-cause System Architecture (SA)
 #### Baseline Provenance
 - **Pantheon Baseline Commit**: `2bcb4465399af83190c5027073f3b2296e377256` (`origin/dev`)
 - **Execute-Plans Baseline Commit**: `7d30e78476be61222af63a089e7ab141aa43b809` (`origin/dev`)
-- **Hosted Environment**: Pair ID `3b4c1f0b5a21245c63623583755785c5b9d81288025e6dd2eb33ccc82ccde742`, Backend `92077907540d4554e9b8a1d12e2528505b2d1ebe`, Frontend `7d30e78476be61222af63a089e7ab141aa43b809`, Status `accepted` (accepted at `2026-08-30T15:18:26Z`).
+- **Hosted Environment**: Pair ID `9de4cd001a8b7aaf18a1094fb1699ece19f0efd86d3d24994cd9f3562fe33727`, Backend `2bcb4465399af83190c5027073f3b2296e377256`, Frontend `7d30e78476be61222af63a089e7ab141aa43b809`, Status `accepted` (accepted at `2026-08-30T16:17:23Z`).
 - **Governed Command Runtime SHA**: `2bcb4465399af83190c5027073f3b2296e377256`
 
 ---
