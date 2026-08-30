@@ -72,16 +72,17 @@ This document package provides the complete, root-cause System Architecture (SA)
 
 ---
 
-## Reproducible Dynamic Validation Command
+### Reproducible Dynamic Validation Commands
 
-Run this command from repository root to dynamically verify all 16 catalog and architectural invariants:
+Run these commands from repository root to dynamically verify all 16 catalog invariants and 17 fail-closed mutation checks:
 
 ```bash
 python3 docs/04/pantheon_full_product_operation_audit_2026-08-29/validate_catalog.py
+python3 docs/04/pantheon_full_product_operation_audit_2026-08-29/test_mutations.py
 ```
 
 The validation script executes 16 comprehensive verification phases:
-1. `main.py` live AST body count (2,272 nodes) and AST digest parity against catalog inventory
+1. `main.py` live AST body count (2,272 nodes), AST digest parity, and dynamic validation contract verification against catalog inventory
 2. Edge-level cutover mappings for 100% of consuming tasks across all AST nodes
 3. Legacy action cluster (9 nodes) assembly ownership and node 118 `os.makedirs` lifespan placement
 4. Route migration inventory parity (441 route decorators across 421 unique route handlers)
@@ -97,3 +98,5 @@ The validation script executes 16 comprehensive verification phases:
 14. Planning baseline provenance across Pantheon, execute-plans, and hosted runtime
 15. Bidirectional `pantheon-dev` execution resource invariant
 16. Signed DevTaskPacket materialization mapping and post-bootstrap spec hashes (binding `target_repo` + `task_class` + `delivery_repository`) and catalog SHA-256 digest
+
+The mutation suite executes 17 distinct fail-closed assertions proving that invalid AST digests, missing cutovers, illegal ownership, corrupted counts, cyclic DAGs, non-reconcile Source configs, stale baselines, resource mismatches, corrupted spec hashes, and mutated dynamic validation contract rules are caught immediately.
