@@ -111,6 +111,23 @@ def _truthy_header(value: Any) -> bool:
     return val in ("1", "true", "yes", "on")
 
 
+def _check_read_surface_state() -> Optional[StalenessWarning]:
+    """In production, query the BFF read surface health endpoint.
+    Returns a StalenessWarning when the surface is degraded or unavailable,
+    or None when fresh.
+    """
+    state = os.getenv("BFF_READ_SURFACE_STATE", "fresh")
+    if state == "fresh":
+        return None
+    return StalenessWarning(
+        read_surface_state=state,
+        message=(
+            "Command submitted against stale read surface data. "
+            "Verify target state via secondary control path before confirming action."
+        ),
+    )
+
+
 class CommandAdapterService:
     """Domain service managing operator commands, action adapters, and confirmation tokens."""
 
@@ -128,6 +145,7 @@ class CommandAdapterService:
         dispatch_command_fn: Optional[Callable[..., Any]] = None,
         publish_event: Optional[Callable[[str, Dict[str, Any]], Any]] = None,
         gov_bff_idempotency: Optional[Dict[str, Dict[str, Any]]] = None,
+        check_read_surface_state: Optional[Callable[[], Optional[StalenessWarning]]] = None,
     ) -> None:
         self._get_command_store = get_command_store
         self._get_read_store = get_read_store
@@ -139,6 +157,7 @@ class CommandAdapterService:
         self._submit_command_admission = submit_command_admission
         self._dispatch_command = dispatch_command_fn or dispatch_domain_command
         self._publish_event = publish_event
+        self._check_read_surface_state = check_read_surface_state
 
         self._final_contract_idempotency: Dict[str, Dict[str, Any]] = {}
         self._gov_bff_idempotency: Dict[str, Dict[str, Any]] = (
@@ -156,6 +175,11 @@ class CommandAdapterService:
         if self._get_read_store is not None:
             return self._get_read_store()
         return None
+
+    def check_read_surface_state(self) -> Optional[StalenessWarning]:
+        if self._check_read_surface_state is not None:
+            return self._check_read_surface_state()
+        return _check_read_surface_state()
 
     def _raise_error(
         self,
@@ -773,6 +797,7 @@ class CommandAdapterService:
             return existing["result"]
 
         self.raise_if_confirm_token_expired(confirm_token)
+        staleness_warning = self.check_read_surface_state()
         confirmation_id = str(uuid.uuid4())
         confirmed_at = self._utc_now()
         self.record_command_confirmation_redeem(
@@ -795,6 +820,11 @@ class CommandAdapterService:
             "confirmed_at": confirmed_at,
             "confirmed_by": identity.operator_id,
         }
+        if staleness_warning is not None:
+            result["staleness_warning"] = {
+                "read_surface_state": staleness_warning.read_surface_state,
+                "message": staleness_warning.message,
+            }
         self._gov_bff_idempotency[resolved_key] = {"request_hash": req_hash, "result": result}
         return result
 

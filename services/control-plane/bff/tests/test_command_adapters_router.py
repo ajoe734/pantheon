@@ -35,6 +35,7 @@ TASK_REVIEW_MANIFEST = {
         "durable_readback": "Operator commands dispatch through typed domain adapters with durable receipts",
         "write_boundary": "Typed domain command dispatch, confirm tokens, and command confirmations",
         "reverse_import_elimination": "Zero reverse imports of main.py in command_adapters and command_executor",
+        "degraded_read_surface_contract": "POST /bff/command-confirmations projects staleness_warning when read surface is degraded",
     },
     "verification": [
         "pytest -q services/control-plane/bff/tests/test_command_adapters_router.py",
@@ -589,3 +590,114 @@ def test_confirm_command_by_token_contract_and_regressions() -> None:
         )
         assert replay_resp.status_code == 202, replay_resp.text
         assert replay_resp.json()["data"] == valid_payload["data"]
+
+
+def test_command_confirmation_degraded_read_surface() -> None:
+    """Test POST /bff/command-confirmations projects staleness_warning when read surface is degraded."""
+    from models import StalenessWarning
+
+    # 1. Custom check_read_surface_state injected
+    custom_warning = StalenessWarning(
+        read_surface_state="degraded",
+        message="Command submitted against stale read surface data. Verify target state via secondary control path before confirming action.",
+    )
+    router = create_command_adapters_router(
+        check_read_surface_state=lambda: custom_warning,
+    )
+    app = FastAPI()
+    app.include_router(router)
+    client = TestClient(app)
+
+    # Create token
+    client.post(
+        "/bff/confirm-tokens",
+        headers={**HEADERS, "Idempotency-Key": "degraded-ct-1"},
+        json={"tokenId": "ct-deg-001", "reason": "test"},
+    )
+
+    # Submit confirmation - should include staleness_warning
+    resp = client.post(
+        "/bff/command-confirmations",
+        headers={**HEADERS, "Idempotency-Key": "degraded-conf-1"},
+        json={"command_id": "cmd-deg-100", "confirm_token": "ct-deg-001"},
+    )
+    assert resp.status_code == 202, resp.text
+    data = resp.json()
+    assert data["status"] == "accepted"
+    assert "staleness_warning" in data
+    assert data["staleness_warning"]["read_surface_state"] == "degraded"
+    assert "stale read surface data" in data["staleness_warning"]["message"]
+
+    # 2. Replay preserves staleness_warning in idempotent cache
+    replay = client.post(
+        "/bff/command-confirmations",
+        headers={**HEADERS, "Idempotency-Key": "degraded-conf-1"},
+        json={"command_id": "cmd-deg-100", "confirm_token": "ct-deg-001"},
+    )
+    assert replay.status_code == 202
+    assert replay.json() == data
+
+    # 3. Fresh read surface returns no staleness_warning
+    fresh_router = create_command_adapters_router(
+        check_read_surface_state=lambda: None,
+    )
+    fresh_app = FastAPI()
+    fresh_app.include_router(fresh_router)
+    fresh_client = TestClient(fresh_app)
+
+    fresh_client.post(
+        "/bff/confirm-tokens",
+        headers={**HEADERS, "Idempotency-Key": "fresh-ct-1"},
+        json={"tokenId": "ct-fresh-001", "reason": "test"},
+    )
+    fresh_resp = fresh_client.post(
+        "/bff/command-confirmations",
+        headers={**HEADERS, "Idempotency-Key": "fresh-conf-1"},
+        json={"command_id": "cmd-fresh-100", "confirm_token": "ct-fresh-001"},
+    )
+    assert fresh_resp.status_code == 202, fresh_resp.text
+    assert "staleness_warning" not in fresh_resp.json()
+
+
+def test_main_app_command_confirmation_degraded_read_surface_regression() -> None:
+    """Regression test: verify POST /bff/command-confirmations in full main app projects staleness_warning when BFF_READ_SURFACE_STATE is degraded."""
+    from main import app as main_app
+
+    orig_env = os.environ.get("BFF_READ_SURFACE_STATE")
+    try:
+        os.environ["BFF_READ_SURFACE_STATE"] = "degraded"
+        client = TestClient(main_app)
+
+        # Create confirm token
+        create_resp = client.post(
+            "/bff/confirm-tokens",
+            headers={
+                "Authorization": "Bearer op-1:operator,approver:mfa",
+                "Idempotency-Key": "main-reg-deg-ct-1",
+            },
+            json={"tokenId": "ct-main-deg-001", "reason": "degraded read test"},
+        )
+        assert create_resp.status_code == 201, create_resp.text
+
+        # Submit confirmation
+        conf_resp = client.post(
+            "/bff/command-confirmations",
+            headers={
+                "Authorization": "Bearer op-1:operator,approver:mfa",
+                "Idempotency-Key": "main-reg-deg-conf-1",
+            },
+            json={"command_id": "cmd-main-deg-001", "confirm_token": "ct-main-deg-001"},
+        )
+        assert conf_resp.status_code == 202, conf_resp.text
+        data = conf_resp.json()
+        assert data["status"] == "accepted"
+        assert data["lifecycleStatus"] == "redeemed"
+        assert "staleness_warning" in data
+        assert data["staleness_warning"]["read_surface_state"] == "degraded"
+        assert "stale read surface data" in data["staleness_warning"]["message"]
+    finally:
+        if orig_env is None:
+            os.environ.pop("BFF_READ_SURFACE_STATE", None)
+        else:
+            os.environ["BFF_READ_SURFACE_STATE"] = orig_env
+

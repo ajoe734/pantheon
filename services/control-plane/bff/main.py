@@ -54667,8 +54667,9 @@ def _gov_bff_action_command(
         status=CommandStatus.SUBMITTED,
         staleness_warning=staleness_warning,
     )
-    _GOV_BFF_IDEMPOTENCY[resolved_key] = {"request_hash": request_hash, "result": result}
-    return result
+    result_dict = result.model_dump(mode="json")
+    _GOV_BFF_IDEMPOTENCY[resolved_key] = {"request_hash": request_hash, "result": result_dict}
+    return result_dict
 
 
 # -- Governance reviews ------------------------------------------------------
@@ -62842,6 +62843,7 @@ app.include_router(
             data,
         ),
         gov_bff_idempotency=_GOV_BFF_IDEMPOTENCY,
+        check_read_surface_state=_check_read_surface_state,
     )
 )
 

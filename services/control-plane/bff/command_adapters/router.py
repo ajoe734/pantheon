@@ -503,6 +503,7 @@ def create_command_adapters_router(
     dispatch_command: Optional[Callable[..., Any]] = None,
     publish_event: Optional[Callable[[str, Dict[str, Any]], Any]] = None,
     gov_bff_idempotency: Optional[Dict[str, Dict[str, Any]]] = None,
+    check_read_surface_state: Optional[Callable[[], Optional[StalenessWarning]]] = None,
     service: Optional[CommandAdapterService] = None,
 ) -> APIRouter:
     """Create the full command adapters router with all 11 command endpoints."""
@@ -519,6 +520,7 @@ def create_command_adapters_router(
         dispatch_command_fn=dispatch_command,
         publish_event=publish_event,
         gov_bff_idempotency=gov_bff_idempotency,
+        check_read_surface_state=check_read_surface_state,
     )
 
     # 1. Action Catalog
