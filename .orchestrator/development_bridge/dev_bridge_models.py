@@ -54,6 +54,7 @@ class BridgeTask(BridgeBaseModel):
     title: str
     owner: str
     reviewer: str
+    target_repo: str = Field(alias="targetRepo")
     phase: Optional[str] = None
     depends_on: List[str] = Field(default_factory=list, alias="dependsOn")
     dependency_tracks: Dict[str, str] = Field(
@@ -72,6 +73,13 @@ class BridgeTask(BridgeBaseModel):
     @classmethod
     def validate_execution_resources(cls, v: Any) -> List[str]:
         return normalize_execution_resources(v)
+
+    @field_validator("target_repo", mode="before")
+    @classmethod
+    def validate_target_repo(cls, v: Any) -> str:
+        if not isinstance(v, str) or not v.strip():
+            raise ValueError("target_repo must be a non-empty string")
+        return v.strip()
 
 
 class BridgeConstraints(BridgeBaseModel):

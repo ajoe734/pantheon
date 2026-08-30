@@ -26,6 +26,7 @@ if command == "dev-bridge-materialize-batch":
             "title": spec["title"],
             "owner": spec["owner"],
             "reviewer": spec["reviewer"],
+            "target_repo": spec.get("target_repo") or "pantheon",
             "phase": spec["phase"],
             "depends_on": spec["depends_on"],
             "dependency_tracks": spec.get("dependency_tracks", {}),
@@ -130,6 +131,7 @@ def authoritative_test_runtime_env(repo_root: Path) -> dict[str, str]:
         "PANTHEON_COMMAND_BASE_REF": "origin/dev",
         "PANTHEON_TASK_STATE_STORE_MODE": "authoritative",
         "PANTHEON_TASK_STATE_EVENT_LOG": str(event_log),
+        "PANTHEON_ASSISTANT_DEV_BRIDGE_ALLOWED_REPOS": "pantheon,execute-plans",
     }
 
 
