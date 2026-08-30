@@ -44,6 +44,7 @@ def _make_packet(packet_id: str) -> DevTaskPacket:
                 title="Queue assistant generated task",
                 owner="Codex",
                 reviewer="Claude",
+                target_repo="pantheon",
                 phase="Sprint Inbox CLI / Dev bridge",
                 artifacts=["scripts/queue_assistant_dev_task_packet.py"],
                 acceptance=["Task is queued for supervisor pickup"],

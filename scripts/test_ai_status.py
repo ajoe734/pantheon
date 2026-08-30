@@ -1459,6 +1459,8 @@ class DevBridgeMaterializeBatchTests(unittest.TestCase):
         *,
         owner: str = "Codex",
         reviewer: str = "Antigravity",
+        target_repo: str = "pantheon",
+        artifacts: list[str] | None = None,
         depends_on: list[str] | None = None,
         execution_resources: list[str] | None = None,
     ) -> dict[str, Any]:
@@ -1467,9 +1469,10 @@ class DevBridgeMaterializeBatchTests(unittest.TestCase):
             "title": f"Title for {task_id}",
             "owner": owner,
             "reviewer": reviewer,
+            "target_repo": target_repo,
             "phase": "Canonical Task Materialization",
             "depends_on": list(depends_on or []),
-            "artifacts": ["docs/deployment/evidence/" + task_id + "/"],
+            "artifacts": list(artifacts) if artifacts is not None else ["docs/deployment/evidence/" + task_id + "/"],
             "acceptance": ["Do the thing"],
             "summary": f"Summary for {task_id}",
         }
@@ -1485,6 +1488,8 @@ class DevBridgeMaterializeBatchTests(unittest.TestCase):
         packet_digest: str | None = None,
         owner: str = "Codex",
         reviewer: str = "Antigravity",
+        target_repo: str = "pantheon",
+        artifacts: list[str] | None = None,
         depends_on: list[str] | None = None,
         execution_resources: list[str] | None = None,
     ) -> dict[str, Any]:
@@ -1492,6 +1497,8 @@ class DevBridgeMaterializeBatchTests(unittest.TestCase):
             task_id,
             owner=owner,
             reviewer=reviewer,
+            target_repo=target_repo,
+            artifacts=artifacts,
             depends_on=depends_on,
             execution_resources=execution_resources,
         )
@@ -1531,8 +1538,13 @@ class DevBridgeMaterializeBatchTests(unittest.TestCase):
         packet_digest: str,
         work_class: str = "security",
         include_authorization: bool = True,
+        allowed_repos: list[str] | None = None,
     ) -> Path:
         now = datetime.now(timezone.utc)
+        if allowed_repos is None:
+            allowed_repos = sorted(
+                {row["task_metadata"]["dev_bridge"]["task_spec"].get("target_repo") or "pantheon" for row in rows} | {"pantheon"}
+            )
         signed_packet = {
             "version": "pantheon.assistant.dev-task.v1",
             "packet_id": packet_id,
@@ -1545,7 +1557,7 @@ class DevBridgeMaterializeBatchTests(unittest.TestCase):
             "source_turn_ids": ["turn-1"],
             "documents": [],
             "tasks": [deepcopy(row["task_metadata"]["dev_bridge"]["task_spec"]) for row in rows],
-            "constraints": {"allowed_repos": ["pantheon"], "requires_branch_pr_merge": True, "no_direct_shell_from_web": True},
+            "constraints": {"allowed_repos": allowed_repos, "requires_branch_pr_merge": True, "no_direct_shell_from_web": True},
             "audit_conversation_href": None,
             "signature": None,
         }
@@ -1983,6 +1995,207 @@ class DevBridgeMaterializeBatchTests(unittest.TestCase):
         self.assertEqual(task["owner"], "Codex")
         self.assertEqual(task["reviewer"], "Antigravity")
 
+    def test_batch_materializes_multi_repo_pantheon_and_execute_plans_with_exact_readback(self) -> None:
+        packet_id = "pkt-batch-multi-repo-20260830T000000Z"
+        digest = hashlib.sha256(packet_id.encode("utf-8")).hexdigest()
+        row_be = self._task_row(
+            "BATCH-MULTI-BE",
+            packet_id=packet_id,
+            packet_digest=digest,
+            target_repo="pantheon",
+            artifacts=[".orchestrator/dev_bridge.py"],
+        )
+        row_fe = self._task_row(
+            "BATCH-MULTI-FE",
+            packet_id=packet_id,
+            packet_digest=digest,
+            target_repo="execute-plans",
+            artifacts=["execute-plans/src/app.tsx"],
+        )
+        payload = self._payload_path(
+            [row_be, row_fe],
+            packet_id=packet_id,
+            packet_digest=digest,
+            allowed_repos=["pantheon", "execute-plans"],
+        )
+
+        result = self._run_main(payload)
+        self.assertEqual(result, 0)
+
+        events = load_events(self.journal)
+        self.assertEqual(len(events), 2)
+        state = ai_status.load_state()
+
+        task_be = ai_status.get_task(state, "BATCH-MULTI-BE")
+        self.assertIsNotNone(task_be)
+        self.assertEqual(task_be["target_repo"], "pantheon")
+        self.assertEqual(task_be["artifacts"], [".orchestrator/dev_bridge.py"])
+
+        task_fe = ai_status.get_task(state, "BATCH-MULTI-FE")
+        self.assertIsNotNone(task_fe)
+        self.assertEqual(task_fe["target_repo"], "execute-plans")
+        self.assertEqual(task_fe["artifacts"], ["execute-plans/src/app.tsx"])
+
+        readback = self._run_readback(payload)
+        self.assertEqual(readback["status"], "verified")
+        self.assertEqual(readback["packetId"], packet_id)
+        self.assertEqual(readback["taskIds"], ["BATCH-MULTI-BE", "BATCH-MULTI-FE"])
+        tasks_by_id = {t["taskId"]: t for t in readback["tasks"]}
+        self.assertEqual(
+            tasks_by_id["BATCH-MULTI-BE"]["taskSpecHash"],
+            row_be["task_metadata"]["dev_bridge"]["task_spec_hash"],
+        )
+        self.assertEqual(
+            tasks_by_id["BATCH-MULTI-FE"]["taskSpecHash"],
+            row_fe["task_metadata"]["dev_bridge"]["task_spec_hash"],
+        )
+
+    def test_batch_materialize_readback_fails_on_immutable_target_repo_tampering(self) -> None:
+        packet_id = "pkt-batch-tamper-target-repo-20260830T000000Z"
+        digest = hashlib.sha256(packet_id.encode("utf-8")).hexdigest()
+        row = self._task_row(
+            "BATCH-TAMPER-TARGET-REPO",
+            packet_id=packet_id,
+            packet_digest=digest,
+            target_repo="pantheon",
+        )
+        payload = self._payload_path([row], packet_id=packet_id, packet_digest=digest)
+        self.assertEqual(self._run_main(payload), 0)
+
+        # Mutate target_repo directly in state to simulate tampering
+        state = ai_status.load_state()
+        task = ai_status.get_task(state, "BATCH-TAMPER-TARGET-REPO")
+        self.assertIsNotNone(task)
+        task["target_repo"] = "execute-plans"
+
+        batch = ai_status.load_dev_bridge_materialize_batch(str(payload))
+        with self.assertRaisesRegex(SystemExit, "immutable task-spec mismatch: BATCH-TAMPER-TARGET-REPO.target_repo"):
+            ai_status.read_dev_bridge_materialized_batch(state, batch)
+
+    def test_batch_rejects_unknown_target_repo_without_canonical_mutation(self) -> None:
+        packet_id = "pkt-batch-unknown-repo-20260830T000000Z"
+        row = self._task_row(
+            "BATCH-UNKNOWN-REPO",
+            packet_id=packet_id,
+            target_repo="bogus-repository-xyz",
+            artifacts=["src/main.py"],
+        )
+        payload = self._payload_path(
+            [row],
+            packet_id=packet_id,
+            packet_digest="unused",
+            allowed_repos=["pantheon", "bogus-repository-xyz"],
+        )
+
+        with self.assertRaisesRegex(SystemExit, "unrecognized target_repo"):
+            self._run_main(payload)
+
+        self.assertEqual(len(load_events(self.journal)), 1)
+        self.assertIsNone(ai_status.get_task(ai_status.load_state(), "BATCH-UNKNOWN-REPO"))
+
+    def test_batch_rejects_mixed_target_repo_without_canonical_mutation(self) -> None:
+        packet_id = "pkt-batch-mixed-repo-20260830T000000Z"
+        row = self._task_row(
+            "BATCH-MIXED-REPO",
+            packet_id=packet_id,
+            target_repo="pantheon+execute-plans",
+            artifacts=["services/foo.py"],
+        )
+        payload = self._payload_path(
+            [row],
+            packet_id=packet_id,
+            packet_digest="unused",
+            allowed_repos=["pantheon", "pantheon+execute-plans"],
+        )
+
+        with self.assertRaisesRegex(SystemExit, "ambiguous multi-repository target_repo"):
+            self._run_main(payload)
+
+        self.assertEqual(len(load_events(self.journal)), 1)
+        self.assertIsNone(ai_status.get_task(ai_status.load_state(), "BATCH-MIXED-REPO"))
+
+    def test_batch_rejects_artifact_conflicting_target_repo_without_canonical_mutation(self) -> None:
+        packet_id = "pkt-batch-conflicting-repo-20260830T000000Z"
+        row = self._task_row(
+            "BATCH-CONFLICT-REPO",
+            packet_id=packet_id,
+            target_repo="pantheon",
+            artifacts=["execute-plans/src/page.tsx"],
+        )
+        payload = self._payload_path(
+            [row],
+            packet_id=packet_id,
+            packet_digest="unused",
+            allowed_repos=["pantheon"],
+        )
+
+        with self.assertRaisesRegex(SystemExit, "conflicting repository scope"):
+            self._run_main(payload)
+
+        self.assertEqual(len(load_events(self.journal)), 1)
+        self.assertIsNone(ai_status.get_task(ai_status.load_state(), "BATCH-CONFLICT-REPO"))
+
+    def test_batch_multi_task_second_row_invalid_repo_commits_zero_rows(self) -> None:
+        packet_id = "pkt-batch-multi-atomic-fail-20260830T000000Z"
+        digest = hashlib.sha256(packet_id.encode("utf-8")).hexdigest()
+        valid_row = self._task_row(
+            "BATCH-VALID-ROW-1",
+            packet_id=packet_id,
+            packet_digest=digest,
+            target_repo="pantheon",
+            artifacts=[".orchestrator/foo.py"],
+        )
+        invalid_row = self._task_row(
+            "BATCH-INVALID-ROW-2",
+            packet_id=packet_id,
+            packet_digest=digest,
+            target_repo="pantheon",
+            artifacts=["execute-plans/src/bar.tsx"],
+        )
+        payload = self._payload_path(
+            [valid_row, invalid_row],
+            packet_id=packet_id,
+            packet_digest=digest,
+            allowed_repos=["pantheon"],
+        )
+
+        with self.assertRaisesRegex(SystemExit, "conflicting repository scope"):
+            self._run_main(payload)
+
+        self.assertEqual(len(load_events(self.journal)), 1)
+        state = ai_status.load_state()
+        self.assertIsNone(ai_status.get_task(state, "BATCH-VALID-ROW-1"))
+        self.assertIsNone(ai_status.get_task(state, "BATCH-INVALID-ROW-2"))
+
+    def test_batch_rejects_conflicting_target_repo_alias_keys_without_canonical_mutation(self) -> None:
+        packet_id = "pkt-batch-conflict-aliases-20260830T000000Z"
+        row = self._task_row(
+            "BATCH-CONFLICT-ALIASES",
+            packet_id=packet_id,
+            target_repo="pantheon",
+        )
+        payload = self._payload_path([row], packet_id=packet_id, packet_digest="0" * 64)
+        raw = json.loads(payload.read_text(encoding="utf-8"))
+        raw["signed_packet"]["tasks"][0]["target_repo"] = "pantheon"
+        raw["signed_packet"]["tasks"][0]["targetRepo"] = "execute-plans"
+        body = deepcopy(raw["signed_packet"])
+        body.pop("signature")
+        canonical = json.dumps(body, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode()
+        digest = hashlib.sha256(canonical).hexdigest()
+        raw["packet_digest"] = digest
+        raw["signed_packet"]["signature"]["value"] = base64.urlsafe_b64encode(
+            self.bridge_private_key.sign(canonical)
+        ).decode().rstrip("=")
+        raw["tasks"][0]["task_metadata"]["dev_bridge"]["packet_digest"] = digest
+        payload.write_text(json.dumps(raw), encoding="utf-8")
+
+        with self.assertRaisesRegex(SystemExit, "conflicting target_repo and targetRepo"):
+            self._run_main(payload)
+
+        self.assertEqual(len(load_events(self.journal)), 1)
+        state = ai_status.load_state()
+        self.assertIsNone(ai_status.get_task(state, "BATCH-CONFLICT-ALIASES"))
+
     def test_human_ops_reassignment_is_not_blocked_by_retired_wave_state(self) -> None:
         state = {
             "agents": [
@@ -2054,6 +2267,7 @@ class DevBridgeMaterializeBatchTests(unittest.TestCase):
             "title": "Invalid resource task",
             "owner": "Codex",
             "reviewer": "Claude",
+            "target_repo": "pantheon",
             "execution_resources": ["forbidden-resource"],
             "depends_on": [],
             "artifacts": [],
@@ -10403,6 +10617,7 @@ class TaskMetadataTests(unittest.TestCase):
             "owner": "Codex",
             "reviewer": "Claude",
             "title": "Bridge Task with duplicate resources",
+            "target_repo": "pantheon",
             "depends_on": [],
             "artifacts": [],
             "acceptance": [],

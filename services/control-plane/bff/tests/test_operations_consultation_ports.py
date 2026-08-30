@@ -23,7 +23,7 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from console_gap.workflows_hooks import create_workflows_hooks_router
-from domain_ports.operations_consultation import (
+from ports.operations_consultation import (
     CompositeOperationsConsultationPort,
     ConsultationReaderPort,
     DomainConsultationPort,

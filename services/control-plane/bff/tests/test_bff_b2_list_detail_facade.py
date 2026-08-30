@@ -284,11 +284,14 @@ def _mock_create_rebalance(payload: dict) -> dict:
 
 def _mock_coordinate_persona_create(record: Any, payload: dict, owner: str) -> tuple:
     persona_id = getattr(record, "persona_id", None) or f"persona-{uuid.uuid4().hex[:8]}"
+    tenant_id = str(getattr(record, "tenant_id", "") or "")
     archetype = payload.get("archetype") or "generalist"
     meta = {
         "archetype": archetype,
         "owner": owner,
-        "tenant_id": "",
+        # Tenant-scoped persona reads fail closed for tenantless fixtures, so
+        # preserve the canonical provisioning record's admitted tenant.
+        "tenant_id": tenant_id,
         "risk_level": "low",
         "paper_ledger_id": f"ledger-{persona_id}",
         "paper_ledger": {
@@ -307,6 +310,7 @@ def _mock_coordinate_persona_create(record: Any, payload: dict, owner: str) -> t
     persona = {
         "id": persona_id,
         "persona_id": persona_id,
+        "tenant_id": tenant_id,
         "name": payload.get("name", "Persona"),
         "state": "active",
         "lifecycle_state": "active",
@@ -326,7 +330,7 @@ def _mock_coordinate_persona_create(record: Any, payload: dict, owner: str) -> t
         "archetype": archetype,
         "owner": owner,
         "risk": "low",
-        "tenantId": "",
+        "tenantId": tenant_id,
     }
     return record, persona, meta, None
 

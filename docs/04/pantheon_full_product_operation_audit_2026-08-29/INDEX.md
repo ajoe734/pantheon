@@ -5,13 +5,13 @@
 This document package provides the complete, root-cause System Architecture (SA), System Design (SD), and parallel Execution Task Catalog for remediating all 20 identified product operation gaps (**OP-G01** through **OP-G20**) across the **Pantheon** control plane and **execute-plans** desktop frontend repositories.
 
 #### Baseline Provenance
-- **Pantheon Baseline Commit**: `4f0994be548f56da627740f5b7fb193844c1faed` (`origin/dev`)
-- **Governed Command Runtime SHA**: `f12e300f4eb2cf38b34c3432658dc8041570d130` (promoted command runtime post PR #5440)
-- **Accepted Hosted / Product BFF Backend Identity**: `2bcb4465399af83190c5027073f3b2296e377256` (served `/deployment.json` and live `/bff/version` backend source commit)
+- **Pantheon Baseline Commit**: `3322f802de76b91ee06fbbe08590ff2ed4bdaadf` (`origin/dev`)
+- **Governed Command Runtime SHA**: `b49ebd934f34b3c4a648c1da863adb51a917a397` (promoted command runtime post PR #5444)
+- **Accepted Hosted / Product BFF Backend Identity**: `4f0994be548f56da627740f5b7fb193844c1faed` (served `/deployment.json` and live `/bff/version` backend source commit)
 - **Execute-Plans Baseline Commit**: `7d30e78476be61222af63a089e7ab141aa43b809` (`origin/dev`)
 - **Hosted Environment**:
-  - Served `/deployment.json`: Pair ID `9de4cd001a8b7aaf18a1094fb1699ece19f0efd86d3d24994cd9f3562fe33727`, Release Candidate ID `9783e78bd8e28608f2c335d566fd798db5b995c50da129876401170b45852e9a`, Backend `2bcb4465399af83190c5027073f3b2296e377256`, Frontend `7d30e78476be61222af63a089e7ab141aa43b809`, Controller Run `33319323262`, Integration Gate Run `33320810888`, Execute-Plans Deploy Run `33321494484`, Status `accepted` (accepted at `2026-08-30T16:46:51.788Z`).
-  - Live `/bff/version`: Source Commit `2bcb4465399af83190c5027073f3b2296e377256`, Status `accepted`.
+  - Served `/deployment.json`: Pair ID `b9209d6382cf109fda2504d7622fe7d9f137a084b0214988cc5588fffdeabc93`, Release Candidate ID `1497419171e98b33b42a01ebfd76c60368ab20e75ea45ac5fda61636a289e1cd`, Backend `4f0994be548f56da627740f5b7fb193844c1faed`, Frontend `7d30e78476be61222af63a089e7ab141aa43b809`, Controller Run `33325479949`, Integration Gate Run `33327155009`, Execute-Plans Deploy Run `33327736542`, Status `accepted` (accepted at `2026-08-30T18:28:45Z`).
+  - Live `/bff/version`: Source Commit `4f0994be548f56da627740f5b7fb193844c1faed`, Status `accepted`.
 
 ---
 
@@ -42,9 +42,11 @@ This document package provides the complete, root-cause System Architecture (SA)
 3. **[SD_GAP_REMEDIATION_2026-08-30.md](./SD_GAP_REMEDIATION_2026-08-30.md)**
    Detailed System Design for all 18 domain routers (441 HTTP decorators across 421 unique route handlers), inventory of all 2,272 `main.py` top-level AST nodes with cryptographic AST digests, 100% rationales and edge-level cutover mappings, minimal composition root allowlist with zero inline handlers/side effects/reverse imports, legacy action adapter cluster call graph and zero-root proof, port namespace consolidation (191 imported-symbol rows across 22 files: 129 production rows across 7 files, 62 test rows across 15 files; 6 deleted `domain_ports/` files), context-aware external reverse-main import inventory (270 qualified instances across 215 files, 94 excluded instances, zero fake ports targets), reachability-based frontend residual cleanup (3 deleted zero-reachability files, 1 moved to test-only, 16 live files retained and cleaned, 17 already absent), command caller cutover, and command plane retirement.
 4. **[EXECUTION_DAG_2026-08-30.md](./EXECUTION_DAG_2026-08-30.md)**
-   Acyclic multi-wave dependency graph across 30 child tasks, materialization batches (A: 1, B: 14, C: 9, D: 6 with maximum 16 tasks per signed atomic packet), active eligible auto-worker capability assignments (`Antigravity`, `Antigravity2`, `Codex`, `Codex2`, `Claude`, `Claude2`), predecessor reconciliation (`AGORA-PERSONA-DURABLE-LIST-READBACK-V2-20260830` terminal `done`, `AGORA-AGC-14-HOSTED-DEMO-AUTHENTIC-V5-20260829` canonical `blocked` on servant ensure), dynamic capacity derivation, and capacity-1 `pantheon-dev` host constraint.
+   Acyclic multi-wave dependency graph across 30 child tasks, materialization batches (A: 1, B: 14, C: 9, D: 6 with maximum 16 tasks per signed atomic packet), active eligible auto-worker capability assignments (`Antigravity`, `Antigravity2`, `Codex`, `Codex2`, `Claude`, `Claude2`), predecessor reconciliation (`AGORA-PERSONA-DURABLE-LIST-READBACK-V2-20260830` terminal `done`, `AGORA-AGC-14-HOSTED-DEMO-AUTHENTIC-V5-20260829` canonical `in_progress` generation 9 / parent run `33328350776`), dynamic capacity derivation, and capacity-1 `pantheon-dev` host constraint.
 5. **[EXECUTION_TASK_CATALOG_2026-08-30.json](./EXECUTION_TASK_CATALOG_2026-08-30.json)**
-   Machine-checkable authoritative JSON catalog containing the 30 child tasks with zero duplicate owned surfaces, route migration matrix, top-level AST node inventory with AST digests and edge-level cutover mappings, reverse-main symbol inventory (29 callsite-proven symbols with 100% identity preservation and zero fake port targets), external reverse-main import inventory (270 qualified instances across 215 caller files), domain_ports caller inventory (191 imported-symbol rows across 22 files), reachability-based frontend residual inventory, prior delivery dispositions, signed DevTaskPacket materialization mapping (max 16 tasks/packet), live-derived capacity, and embedded dynamic validation rules.
+   Machine-checkable authoritative JSON catalog containing the 30 child tasks with zero duplicate owned surfaces, route migration matrix, top-level AST node inventory with AST digests and edge-level cutover mappings, reverse-main symbol inventory (29 callsite-proven symbols with 100% identity preservation and zero fake port targets), external reverse-main import inventory (270 qualified instances across 215 caller files), domain_ports caller inventory (191 imported-symbol rows across 22 files), reachability-based frontend residual inventory, prior delivery dispositions, signed DevTaskPacket materialization mapping (max 16 tasks/packet), live-derived capacity, and embedded dynamic validation rules. **This catalog is immutable planning evidence and is never edited in place**; actual dispatch/supersede lineage is tracked separately below.
+6. **[EXECUTION_REPLACEMENT_LEDGER_2026-08-30.json](./EXECUTION_REPLACEMENT_LEDGER_2026-08-30.json)**
+   Plan-execution errata ledger (materialized by `OPGAP-PLAN-EXECUTION-ERRATA-V2-20260830`) recording the exact 23-row Batch B (14) + Batch C (9) canonical replacement lineage: the one-to-one Batch B `-20260830` -> `-V2-20260830` supersede mapping forced by the live supervisor's dev-bridge allowlist failing to derive from `coordination.repositories`, the 9 Batch C tasks that were never superseded because their first materialization attempt only succeeded after the allowlist and command-runtime-identity fixes landed, the fail-closed evidence trail (initial Batch C unconfigured-repository rejection, two authoritative command-runtime identity check failures, and the successful cross-repository packet readback), the replacement-before-supersede ordering proof, and the Batch D dependency transformation required before `OPGAP-BFF-MAIN-ASSEMBLY-20260830` can materialize against the frozen catalog's now-superseded Batch B ids.
 
 ---
 
@@ -82,7 +84,7 @@ python3 docs/04/pantheon_full_product_operation_audit_2026-08-29/validate_catalo
 python3 docs/04/pantheon_full_product_operation_audit_2026-08-29/test_mutations.py
 ```
 
-The validation script executes 16 comprehensive verification phases:
+The validation script executes 17 comprehensive verification phases:
 1. `main.py` live AST body count (2,272 nodes), AST digest parity, and dynamic validation contract verification against catalog inventory
 2. Edge-level cutover mappings for 100% of consuming tasks across all AST nodes
 3. Legacy action cluster (9 nodes) assembly ownership and node 118 `os.makedirs` lifespan placement
@@ -99,5 +101,6 @@ The validation script executes 16 comprehensive verification phases:
 14. Planning baseline provenance across Pantheon, execute-plans, and hosted runtime
 15. Bidirectional `pantheon-dev` execution resource invariant
 16. Signed DevTaskPacket materialization mapping and post-bootstrap spec hashes (binding `target_repo` + `task_class` + `delivery_repository`) and catalog SHA-256 digest
+17. Execution replacement ledger: exact 23-row Batch B/C lineage, one-to-one V2 supersede mapping, unchanged functional scope, and Batch D dependency transformation to the terminal V2 bootstrap id
 
-The mutation suite executes 17 distinct fail-closed assertions proving that invalid AST digests, missing cutovers, illegal ownership, corrupted counts, cyclic DAGs, non-reconcile Source configs, stale baselines, resource mismatches, corrupted spec hashes, and mutated dynamic validation contract rules are caught immediately.
+The mutation suite executes 18 distinct fail-closed assertions proving that invalid AST digests, missing cutovers, illegal ownership, corrupted counts, cyclic DAGs, non-reconcile Source configs, stale baselines, resource mismatches, corrupted spec hashes, and mutated dynamic validation contract rules are caught immediately.
