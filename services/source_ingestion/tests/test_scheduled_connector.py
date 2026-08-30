@@ -1663,4 +1663,3 @@ def test_freshness_summary_taiwan_official_rejects_unparsable_receipt() -> None:
     )
 
     assert summary["stale"] is True
-

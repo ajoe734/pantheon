@@ -869,7 +869,7 @@ def _validate_terminal_readback(
                     eval_now_dt = now or captured_at or now_dt
                     source_id_str = str(record.get("source_id") or "")
                     if not source_id_str.startswith("tw-official:"):
-                        invalid.append(f"{connector_id}:source_data_stale")
+                        invalid.append(f"{connector_id}:source_data_stale[market_input_non_official_lineage]")
                     refresh_receipt_dt = None
                     try:
                         if freshness.get("last_success_at"):
@@ -889,13 +889,13 @@ def _validate_terminal_readback(
                         "source_ids": [str(record.get("source_id") or "")],
                     }
                     if available_at is None:
-                        invalid.append(f"{connector_id}:source_data_stale")
+                        invalid.append(f"{connector_id}:source_data_stale[market_input_invalid]")
                     else:
                         from services.execution.market_snapshot_admission import (
                             evaluate_taiwan_market_freshness,
                         )
 
-                        tw_ok, _tw_reason, _tw_detail = evaluate_taiwan_market_freshness(
+                        tw_ok, tw_reason, _tw_detail = evaluate_taiwan_market_freshness(
                             event_time_dt=available_at,
                             now_dt=eval_now_dt,
                             refresh_receipt_dt=refresh_receipt_dt,
@@ -904,7 +904,10 @@ def _validate_terminal_readback(
                             calendar_evidence=cal_ev,
                         )
                         if not tw_ok:
-                            invalid.append(f"{connector_id}:source_data_stale")
+                            reason_tag = f"[{tw_reason}]" if tw_reason else ""
+                            tag_entry = f"{connector_id}:source_data_stale{reason_tag}"
+                            if tag_entry not in invalid:
+                                invalid.append(tag_entry)
                 else:
                     if (
                         available_at is None

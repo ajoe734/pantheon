@@ -1,7 +1,7 @@
 {
   "schema_version": "pantheon.agora-bounded-source-refresh-readback-review.v1",
   "task_id": "AGORA-BOUNDED-SOURCE-REFRESH-READBACK-V1-20260830",
-  "generated_at": "2026-08-30T01:50:00Z",
+  "generated_at": "2026-08-30T02:01:00Z",
   "owner": "Antigravity2",
   "reviewer": "Codex2",
   "status": "implementation_complete_ready_for_exact_head_review",
@@ -48,9 +48,9 @@
   ],
   "validation": {
     "focused_suite": "pytest -q services/source_ingestion/tests/test_scheduled_connector.py services/source_ingestion/tests/test_controller_worker.py scripts/test_project_market_data_to_bff_agora_surfaces.py scripts/test_source_ingest_deploy_diagnostics_contract.py scripts/test_deploy_nonprod_bff_source_sha_contract.py services/source_ingestion/tests/test_requirement_state.py services/execution/lean_runtime/test_paper_signal_producer.py services/control-plane/bff/agora/test_operational_readiness.py",
-    "focused_result": "254 passed, 1 warning, 6 subtests passed in 53.18s",
+    "focused_result": "255 passed, 1 warning, 6 subtests passed in 53.80s",
     "broader_source_suite": "pytest -q services/source_ingestion/tests/",
-    "broader_source_result": "846 passed, 1 skipped, 5 warnings in 205.39s",
+    "broader_source_result": "847 passed, 1 skipped, 5 warnings in 229.21s",
     "syntax_check": "py_compile and git diff clean"
   },
   "release_closeout_gate": {

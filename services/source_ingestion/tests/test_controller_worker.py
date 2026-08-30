@@ -1502,13 +1502,62 @@ def test_terminal_readback_rejects_stale_weekday_taiwan_official_data() -> None:
     reconcile = _reconcile()
     reconcile["results"][0]["actions"][0]["connector_id"] = "tw-twse-tpex-official-market"
 
-    with pytest.raises(ControllerTickError, match="source_data_stale"):
+    with pytest.raises(ControllerTickError, match=r"source_data_stale\[market_input_calendar_unverifiable\]"):
         _validate_terminal_readback(
             reconcile=reconcile,
             schedule=_schedule(),
             actual=actual,
             now=now,
         )
+
+
+def test_terminal_readback_rejects_stale_weekday_with_newer_trading_day_evidence() -> None:
+    now = datetime(2026, 2, 23, 6, 0, 0, tzinfo=timezone.utc)
+    actual = _actual_readback()
+    actual["captured_at"] = "2026-02-23T06:00:00Z"
+    actual["connectors"][0]["connector_id"] = "tw-twse-tpex-official-market"
+    actual["connectors"][0]["connector"]["connector_id"] = "tw-twse-tpex-official-market"
+    actual["connectors"][0]["schedule"]["connector_id"] = "tw-twse-tpex-official-market"
+    actual["connectors"][0]["freshness"]["last_success_at"] = "2026-02-23T06:00:00Z"
+    actual["connectors"][0]["latest_source_record"]["provenance"]["available_time"] = "2026-02-11T05:30:00Z"
+    actual["connectors"][0]["latest_source_record"]["provenance"]["calendar_evidence"] = {
+        "market": "TW",
+        "venue": "TWSE",
+        "timezone": "Asia/Taipei",
+        "authority": "Taiwan Stock Exchange 115 年市場開休市日期",
+        "source_url": "https://www.twse.com.tw/holidaySchedule/holidaySchedule?response=json&queryYear=115",
+        "fetched_at": "2026-02-23T05:00:00Z",
+        "version": "twse-2026-lny-v1",
+        "checksum": "55b2e23b9bd30af666a99c98da2dbbfad568dcd655631b1c6347d12ee8381596",
+        "coverage_start": "2026-02-11",
+        "coverage_end": "2026-02-23",
+        "holidays": {
+            "2026-02-12": {"name": "市場無交易，僅辦理結算交割作業"},
+            "2026-02-13": {"name": "市場無交易，僅辦理結算交割作業"},
+            "2026-02-16": {"name": "農曆除夕及春節"},
+            "2026-02-17": {"name": "農曆除夕及春節"},
+            "2026-02-18": {"name": "農曆除夕及春節"},
+            "2026-02-19": {"name": "農曆除夕及春節"},
+            "2026-02-20": {"name": "農曆除夕及春節"},
+        },
+        "trading_days": ["2026-02-11", "2026-02-23"],
+    }
+    actual["connectors"][0]["latest_source_record"]["source_id"] = "tw-official:tw_price_daily:TWSE:2330:lny"
+    actual["connectors"][0]["latest_source_record"]["connector_id"] = "tw-twse-tpex-official-market"
+    actual["connectors"][0]["source_health"]["source_id"] = "tw-twse-tpex-official-market"
+
+    reconcile = _reconcile()
+    reconcile["results"][0]["actions"][0]["connector_id"] = "tw-twse-tpex-official-market"
+
+    with pytest.raises(ControllerTickError, match=r"source_data_stale\[market_input_stale\]"):
+        _validate_terminal_readback(
+            reconcile=reconcile,
+            schedule=_schedule(),
+            actual=actual,
+            now=now,
+        )
+
+
 
 
 def test_terminal_readback_rejects_future_timestamp_taiwan_official_data() -> None:
@@ -1527,7 +1576,7 @@ def test_terminal_readback_rejects_future_timestamp_taiwan_official_data() -> No
     reconcile = _reconcile()
     reconcile["results"][0]["actions"][0]["connector_id"] = "tw-twse-tpex-official-market"
 
-    with pytest.raises(ControllerTickError, match="source_data_stale"):
+    with pytest.raises(ControllerTickError, match=r"source_data_stale\[market_input_invalid\]"):
         _validate_terminal_readback(
             reconcile=reconcile,
             schedule=_schedule(),
@@ -1552,7 +1601,7 @@ def test_terminal_readback_rejects_non_official_lineage_taiwan_data() -> None:
     reconcile = _reconcile()
     reconcile["results"][0]["actions"][0]["connector_id"] = "tw-twse-tpex-official-market"
 
-    with pytest.raises(ControllerTickError, match="source_data_stale"):
+    with pytest.raises(ControllerTickError, match=r"source_data_stale\[market_input_non_official_lineage\]"):
         _validate_terminal_readback(
             reconcile=reconcile,
             schedule=_schedule(),
@@ -1577,7 +1626,7 @@ def test_terminal_readback_rejects_stale_refresh_receipt() -> None:
     reconcile = _reconcile()
     reconcile["results"][0]["actions"][0]["connector_id"] = "tw-twse-tpex-official-market"
 
-    with pytest.raises(ControllerTickError, match="source_data_stale"):
+    with pytest.raises(ControllerTickError, match=r"source_data_stale\[market_input_stale_refresh\]"):
         _validate_terminal_readback(
             reconcile=reconcile,
             schedule=_schedule(),
@@ -1602,7 +1651,7 @@ def test_terminal_readback_rejects_missing_refresh_receipt_for_taiwan_official_d
     reconcile = _reconcile()
     reconcile["results"][0]["actions"][0]["connector_id"] = "tw-twse-tpex-official-market"
 
-    with pytest.raises(ControllerTickError, match="source_data_stale"):
+    with pytest.raises(ControllerTickError, match=r"source_data_stale\[market_input_stale_refresh\]"):
         _validate_terminal_readback(
             reconcile=reconcile,
             schedule=_schedule(),
@@ -1627,11 +1676,10 @@ def test_terminal_readback_rejects_unparsable_refresh_receipt_for_taiwan_officia
     reconcile = _reconcile()
     reconcile["results"][0]["actions"][0]["connector_id"] = "tw-twse-tpex-official-market"
 
-    with pytest.raises(ControllerTickError, match="source_data_stale"):
+    with pytest.raises(ControllerTickError, match=r"source_data_stale\[market_input_stale_refresh\]"):
         _validate_terminal_readback(
             reconcile=reconcile,
             schedule=_schedule(),
             actual=actual,
             now=now,
         )
-
