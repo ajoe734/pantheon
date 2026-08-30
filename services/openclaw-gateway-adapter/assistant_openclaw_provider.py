@@ -60,7 +60,8 @@ _MAX_ARGV_PROMPT_BYTES = 96 * 1024
 # Canonical docker-compose service name — used when no URL is configured.
 _DEFAULT_GATEWAY_WS_URL = "ws://openclaw-gateway:18789"
 _AGENT_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
-_READINESS_PROMPT = "Reply with exactly: PANTHEON_PROVIDER_READY"
+_READINESS_SENTINEL = "PANTHEON_PROVIDER_READY"
+_READINESS_PROMPT = f"Reply with exactly: {_READINESS_SENTINEL}"
 
 
 def _openclaw_cli_state_env(environment: Dict[str, str]) -> Dict[str, str]:
@@ -199,14 +200,11 @@ class AssistantOpenClawProvider:
         return self._which(DEFAULT_OPENCLAW_BIN)
 
     def _resolve_model_candidates(
-        self, requested_model: Optional[str] = None, *, for_responses: bool = False
+        self, requested_model: Optional[str] = None
     ) -> List[str]:
         if requested_model:
             return [requested_model]
-        if for_responses:
-            primary = OPENRESPONSES_MODEL
-        else:
-            primary = os.getenv("OPENCLAW_PRIMARY_MODEL", "").strip() or DEFAULT_PRIMARY_MODEL
+        primary = os.getenv("OPENCLAW_PRIMARY_MODEL", "").strip() or DEFAULT_PRIMARY_MODEL
         fallback_raw = os.getenv("OPENCLAW_FALLBACK_MODELS", "").strip()
         if fallback_raw:
             fallbacks = [m.strip() for m in fallback_raw.split(",") if m.strip()]
@@ -307,14 +305,24 @@ class AssistantOpenClawProvider:
                 answer = self._result_text(result)
                 cand_dur = max(0, int((time.monotonic() - cand_started) * 1000))
                 total_dur = max(0, int((time.monotonic() - started_at) * 1000))
-                if not answer:
+                if not answer or _READINESS_SENTINEL not in answer:
+                    probe_fail_reason = (
+                        "openclaw_answer_probe_empty"
+                        if not answer
+                        else "openclaw_answer_probe_sentinel_mismatch"
+                    )
                     if candidate == primary:
                         primary_unavailable = {
                             "model": primary,
                             "status": "unavailable",
-                            "reason": "openclaw_answer_probe_empty",
+                            "reason": probe_fail_reason,
                             "duration_ms": cand_dur,
                         }
+                    last_exc = OpenClawProviderError(
+                        f"openclaw answer probe failed: {probe_fail_reason}",
+                        status_code=502,
+                        error_code=probe_fail_reason,
+                    )
                     continue
 
                 is_fallback = candidate != primary
@@ -564,7 +572,6 @@ class AssistantOpenClawProvider:
                 operator_id=operator_id,
                 session_id=session_id,
                 metadata=metadata,
-                model=model,
             )
 
         invocation_timeout = float(self._timeout)
@@ -612,7 +619,9 @@ class AssistantOpenClawProvider:
                 return result
             except OpenClawProviderError as exc:
                 last_exc = exc
-                if not has_fallback:
+                # Ambiguous failures like timeout must never retry on a fallback model
+                # because the turn might have already executed side-effects upstream.
+                if exc.error_code == "OPENCLAW_GATEWAY_TIMEOUT" or not has_fallback:
                     raise
                 continue
 
@@ -632,7 +641,6 @@ class AssistantOpenClawProvider:
         operator_id: Optional[str],
         session_id: Optional[str],
         metadata: Optional[Dict[str, Any]],
-        model: Optional[str] = None,
     ) -> OpenClawProviderResult:
         """Run a large normal invocation through the existing Responses transport.
 
@@ -647,7 +655,6 @@ class AssistantOpenClawProvider:
         events = list(
             self.stream(
                 prompt,
-                model=model,
                 mode=mode,
                 operator_id=operator_id,
                 session_user=session_user,
@@ -892,7 +899,6 @@ class AssistantOpenClawProvider:
         self,
         prompt: str,
         *,
-        model: Optional[str] = None,
         mode: str = "user",
         operator_id: Optional[str] = None,
         trace_id: Optional[str] = None,
@@ -907,6 +913,7 @@ class AssistantOpenClawProvider:
 
         The endpoint runs a normal Gateway agent run (workspace/memory/persona/tools
         preserved). Requires the gateway-side `gateway.http.endpoints.responses.enabled`.
+        Upstream OpenClaw v2026.7.1 contract accepts model 'openclaw' (or 'openclaw/<agentId>').
         """
         if delegates_kernel_mode_to_codex(mode):
             raise OpenClawProviderError(
@@ -929,73 +936,9 @@ class AssistantOpenClawProvider:
             }
             return
 
-        candidates = self._resolve_model_candidates(model, for_responses=True)
-        last_error: Optional[Dict[str, Any]] = None
-
-        for idx, candidate in enumerate(candidates):
-            has_fallback = idx < len(candidates) - 1
-            stream_iter = self._stream_single_model(
-                prompt,
-                model=candidate,
-                operator_id=operator_id,
-                trace_id=trace_id,
-                session_user=session_user,
-            )
-            first_event = None
-            try:
-                first_event = next(stream_iter, None)
-            except Exception as exc:  # noqa: BLE001
-                last_error = {
-                    "type": "error",
-                    "error_code": "OPENCLAW_RESPONSES_UNREACHABLE",
-                    "status_code": 503,
-                    "message": f"/v1/responses endpoint could not be reached: {exc}",
-                }
-                if has_fallback:
-                    continue
-                yield last_error
-                return
-
-            if first_event is None:
-                last_error = {
-                    "type": "error",
-                    "error_code": "OPENCLAW_RESPONSES_EMPTY",
-                    "message": "Gateway completed /v1/responses without events.",
-                }
-                if has_fallback:
-                    continue
-                yield last_error
-                return
-
-            if first_event.get("type") == "error":
-                last_error = first_event
-                if has_fallback:
-                    continue
-                yield first_event
-                return
-
-            yield first_event
-            for evt in stream_iter:
-                yield evt
-            return
-
-        if last_error is not None:
-            yield last_error
-
-    def _stream_single_model(
-        self,
-        prompt: str,
-        *,
-        model: str,
-        operator_id: Optional[str] = None,
-        trace_id: Optional[str] = None,
-        session_user: Optional[str] = None,
-    ) -> Iterator[Dict[str, Any]]:
         url = f"{self._http_base()}/v1/responses"
-        # If model is explicitly "openclaw", pass OPENRESPONSES_MODEL; otherwise pass candidate
-        model_name = OPENRESPONSES_MODEL if model == "openclaw" else model
         payload: Dict[str, Any] = {
-            "model": model_name,
+            "model": OPENRESPONSES_MODEL,
             "input": prompt,
             "stream": True,
         }
@@ -1183,6 +1126,7 @@ class AssistantOpenClawProvider:
                 ]
                 if texts:
                     return "\n".join(texts).strip()
+            return ""
         return raw
 
     @staticmethod
