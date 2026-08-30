@@ -52,6 +52,143 @@ class ComponentBoundaryTests(unittest.TestCase):
             exit_code = component_boundary.main(["--base", "aaa", "--head", "bbb", "--json"])
         self.assertEqual(exit_code, 0)
 
+    def test_git_integration_authority_path_is_not_unknown(self) -> None:
+        result = component_boundary.classify_paths(
+            self.manifest,
+            ["scripts/git/auto_integrator.py"],
+        )
+        self.assertEqual(result["unknown_paths"], [])
+        self.assertTrue(result["development_tooling_touched"])
+        self.assertTrue(result["tooling_only"])
+
+
+TOOLING_PATH = ".orchestrator/supervisor.py"
+PRODUCT_PATH = "services/trade_journey/lifecycle_projector.py"
+DELIVERY_PATH = ".github/workflows/branch-ci.yml"
+UNKNOWN_PATH = "docs/some-note.md"
+INTEGRATOR_PATH = "scripts/git/auto_integrator.py"
+
+# (case name, paths, expected independent booleans)
+DOMAIN_UNION_CASES: list[tuple[str, list[str], dict[str, bool]]] = [
+    (
+        "tooling_only",
+        [TOOLING_PATH],
+        {
+            "development_tooling_touched": True,
+            "product_touched": False,
+            "delivery_touched": False,
+            "tooling_only": True,
+        },
+    ),
+    (
+        "product_only",
+        [PRODUCT_PATH],
+        {
+            "development_tooling_touched": False,
+            "product_touched": True,
+            "delivery_touched": False,
+            "tooling_only": False,
+        },
+    ),
+    (
+        "delivery_only",
+        [DELIVERY_PATH],
+        {
+            "development_tooling_touched": False,
+            "product_touched": False,
+            "delivery_touched": True,
+            "tooling_only": True,
+        },
+    ),
+    (
+        "tooling_and_product",
+        [TOOLING_PATH, PRODUCT_PATH],
+        {
+            "development_tooling_touched": True,
+            "product_touched": True,
+            "delivery_touched": False,
+            "tooling_only": False,
+        },
+    ),
+    (
+        "tooling_and_delivery",
+        [TOOLING_PATH, DELIVERY_PATH],
+        {
+            "development_tooling_touched": True,
+            "product_touched": False,
+            "delivery_touched": True,
+            "tooling_only": True,
+        },
+    ),
+    (
+        "product_and_delivery",
+        [PRODUCT_PATH, DELIVERY_PATH],
+        {
+            "development_tooling_touched": False,
+            "product_touched": True,
+            "delivery_touched": True,
+            "tooling_only": False,
+        },
+    ),
+    (
+        "all_three_domains",
+        [TOOLING_PATH, PRODUCT_PATH, DELIVERY_PATH],
+        {
+            "development_tooling_touched": True,
+            "product_touched": True,
+            "delivery_touched": True,
+            "tooling_only": False,
+        },
+    ),
+    (
+        "docs_only",
+        [UNKNOWN_PATH],
+        {
+            "development_tooling_touched": False,
+            "product_touched": False,
+            "delivery_touched": False,
+            "tooling_only": True,
+        },
+    ),
+    (
+        "unknown_only",
+        ["totally/unrecognized/path.bin"],
+        {
+            "development_tooling_touched": False,
+            "product_touched": False,
+            "delivery_touched": False,
+            "tooling_only": True,
+        },
+    ),
+    (
+        "git_integrator_alone",
+        [INTEGRATOR_PATH],
+        {
+            "development_tooling_touched": True,
+            "product_touched": False,
+            "delivery_touched": False,
+            "tooling_only": True,
+        },
+    ),
+]
+
+
+class ComponentBoundaryDomainUnionTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.manifest = component_boundary.load_manifest()
+
+    def test_domain_union_matrix(self) -> None:
+        for name, paths, expected in DOMAIN_UNION_CASES:
+            with self.subTest(case=name):
+                result = component_boundary.classify_paths(self.manifest, paths)
+                for key, value in expected.items():
+                    self.assertEqual(
+                        result[key],
+                        value,
+                        msg=f"{name}: expected {key}={value}, got {result[key]} ({result})",
+                    )
+
 
 if __name__ == "__main__":
     unittest.main()

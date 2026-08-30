@@ -48,6 +48,7 @@ import task_review_merge_gate as review_gate  # noqa: E402  (local helper module
 import github_review_bridge  # noqa: E402  (local helper module)
 import multi_repo_registry  # noqa: E402  (orchestrator module)
 import common as orchestrator_common  # noqa: E402  (canonical lock helpers)
+from rewrite import integration_receipt  # noqa: E402  (DTG-INT-01 canonical receipt authority)
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -646,6 +647,11 @@ def integration_candidates(
             and contract.declaration_honored
         )
         if not (is_review_approved or is_active_merge_then_review):
+            continue
+        # DTG-INT-01: a row already carrying a matching integration_receipt
+        # for its current identity has already landed; skip it before any
+        # GitHub/ancestry work so the cron stops re-evaluating it forever.
+        if integration_receipt.integration_receipt_consumes_candidate(raw):
             continue
         owner = str(raw.get("owner") or "").strip()
         reviewer = str(raw.get("reviewer") or "").strip()
@@ -2024,6 +2030,107 @@ def preflight_repository(
     return None
 
 
+def _canonical_task_state_event_path(config: Mapping[str, Any] | None) -> Path | None:
+    """The live V2 journal path, only when this process runs in authoritative
+    store mode -- mirrors ``scripts/ai_status.py``'s own ``store_mode`` check
+    rather than assuming it (SD.md DTG-INT-01 §6.4 point 6).
+
+    The auto-integrator is cron-launched, not supervisor-launched, so it does
+    not inherit ``PANTHEON_TASK_STATE_STORE_MODE``/``PANTHEON_TASK_STATE_EVENT_LOG``
+    the way a supervisor-spawned worker does; the live config's own
+    ``task_state_store`` block is the authoritative source here, matching how
+    ``resolve_execute_authority`` already reads ``paths``/``watchdog`` directly
+    from the same config rather than assuming an inherited environment. The
+    environment variables are checked first only so an explicit override (as
+    used in tests) still wins.
+    """
+
+    mode = str(os.environ.get("PANTHEON_TASK_STATE_STORE_MODE") or "").strip().lower()
+    raw = str(os.environ.get("PANTHEON_TASK_STATE_EVENT_LOG") or "").strip()
+    if not mode and not raw and isinstance(config, Mapping):
+        store_config = config.get("task_state_store")
+        if isinstance(store_config, Mapping):
+            mode = str(store_config.get("mode") or "").strip().lower()
+            raw = str(store_config.get("event_log") or "").strip()
+    if mode != "authoritative" or not raw:
+        return None
+    path = Path(os.path.expanduser(raw))
+    return path if path.is_absolute() else None
+
+
+def _record_merge_integration_receipt(
+    candidate: TaskCandidate,
+    *,
+    observation: str,
+    pr: int | None,
+    head_sha: str,
+    merge_commit_sha: str,
+    status_root: Path,
+    status_file: Path | None,
+    config: Mapping[str, Any] | None,
+    lock_path: Path,
+) -> None:
+    """Best-effort DTG-INT-01 receipt write after a real merge/reconciliation.
+
+    Never raises: the merge itself already succeeded (or was already
+    reconciled) by the time this runs, so a receipt failure must leave the
+    task in ``review_approved`` for the next cron to reconcile again
+    (SD.md §6.5), not fail the run that just landed real work.
+    """
+
+    if config is None or status_file is None or pr is None:
+        return
+    head_sha = str(head_sha or "").strip().lower()
+    merge_commit_sha = str(merge_commit_sha or "").strip().lower()
+    if not review_gate.OID_RE.fullmatch(head_sha) or not review_gate.OID_RE.fullmatch(merge_commit_sha):
+        print(
+            f"auto-integrator: integration_receipt skipped for {candidate.task_id}: "
+            "missing exact head or merge commit oid",
+            file=sys.stderr,
+        )
+        return
+    raw_generation = candidate.raw_task.get("generation", 1)
+    expected_generation = (
+        raw_generation
+        if isinstance(raw_generation, int) and not isinstance(raw_generation, bool)
+        else 1
+    )
+    binding = integration_receipt.IntegrationBinding(
+        repository=candidate.repository_slug,
+        target_branch=candidate.target_branch,
+        pr=pr,
+        head_sha=head_sha,
+    )
+    authority = integration_receipt.IntegrationAuthority(
+        command_root=ROOT,
+        command_sha=ROOT.name,
+        command_remote=orchestrator_common.status_command_expected_remote(dict(config)),
+        command_base_ref=orchestrator_common.status_command_base_ref(dict(config)),
+        status_root=status_root,
+        lock_path=lock_path,
+        lock_schema=LOCK_SCHEMA,
+        lock_pid=os.getpid(),
+    )
+    try:
+        integration_receipt.record_integration_receipt(
+            config=config,
+            task_id=candidate.task_id,
+            expected_generation=expected_generation,
+            expected_delivery_binding=binding,
+            observation=observation,
+            merge_commit_sha=merge_commit_sha,
+            observed_at=orchestrator_common.utc_now(),
+            status_file=status_file,
+            event_path=_canonical_task_state_event_path(config),
+            authority=authority,
+        )
+    except integration_receipt.IntegrationReceiptError as exc:
+        print(
+            f"auto-integrator: integration_receipt write failed for {candidate.task_id}: {exc}",
+            file=sys.stderr,
+        )
+
+
 def integrate_candidate(
     candidate: TaskCandidate,
     settings: Settings,
@@ -2037,6 +2144,7 @@ def integrate_candidate(
     open_unblock: bool = True,
     extra_smoke_commands: Sequence[str] = (),
     gate: ReviewGate | None = None,
+    config: Mapping[str, Any] | None = None,
 ) -> IntegrationResult:
     gate = gate or ReviewGate()
     status_root_dir = status_root if status_root is not None else gate.status_root
@@ -2325,6 +2433,17 @@ def integrate_candidate(
                     dry_run=False,
                     commands=runner.commands[:],
                 )
+            _record_merge_integration_receipt(
+                candidate,
+                observation=integration_receipt.RECEIPT_OBSERVATION_RECONCILED,
+                pr=number,
+                head_sha=merged_decision.head_oid,
+                merge_commit_sha=oid,
+                status_root=status_root_dir,
+                status_file=canonical_state_file,
+                config=config,
+                lock_path=settings.lock_path,
+            )
             detail = (
                 f"PR #{number} is already merged into {candidate.target_branch}; "
                 f"{post_merge_task_handoff(candidate)}."
@@ -2994,6 +3113,17 @@ def integrate_candidate(
             dry_run=False,
             commands=runner.commands[:],
         )
+    _record_merge_integration_receipt(
+        candidate,
+        observation=integration_receipt.RECEIPT_OBSERVATION_PERFORMED_MERGE,
+        pr=number,
+        head_sha=decision.head_oid,
+        merge_commit_sha=str(merge_payload.get("sha") or "") if isinstance(merge_payload, Mapping) else "",
+        status_root=status_root_dir,
+        status_file=canonical_state_file,
+        config=config,
+        lock_path=settings.lock_path,
+    )
     operator_acceptance = candidate.raw_task.get("operator_acceptance")
     is_operator_exact_head = isinstance(operator_acceptance, Mapping) and str(
         operator_acceptance.get("mode") or ""
@@ -3135,6 +3265,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     open_unblock=not args.no_open_unblock,
                     extra_smoke_commands=smoke_commands,
                     gate=gate,
+                    config=config_dict,
                 )
                 results.append(result)
                 if result_consumes_run_capacity(candidate, result):

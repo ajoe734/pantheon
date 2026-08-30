@@ -16,6 +16,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT))
 
 from scripts.git import auto_integrator
+from rewrite import task_state_store
 
 
 class FakeRunner(auto_integrator.CommandRunner):
@@ -46,6 +47,7 @@ class FakeRunner(auto_integrator.CommandRunner):
         origin_remote_slug: str | None = None,
         git_head: str = "abc123",
         symbolic_ref_returncode: int = 1,
+        merge_sha: str = "merge123",
     ) -> None:
         super().__init__()
         self.pr = dict(pr) if pr is not None else None
@@ -66,6 +68,7 @@ class FakeRunner(auto_integrator.CommandRunner):
         self.origin_remote_slug = origin_remote_slug
         self.git_head = git_head
         self.symbolic_ref_returncode = symbolic_ref_returncode
+        self.merge_sha = merge_sha
         # SUP-GATED-PR-EXACT-HEAD-QUEUE-MERGE-20260805: outcome of the
         # disposable `git merge origin/dev` test-merge run against a behind
         # gated PR's exact reviewed head. 0 = clean (default); non-zero
@@ -164,9 +167,9 @@ class FakeRunner(auto_integrator.CommandRunner):
                     **self.pr,
                     "state": "MERGED",
                     "mergedAt": self.landed_merged_at,
-                    "mergeCommit": {"oid": "merge123"},
+                    "mergeCommit": {"oid": self.merge_sha},
                 }
-                payload = {"merged": True, "sha": "merge123", "message": "merged"}
+                payload = {"merged": True, "sha": self.merge_sha, "message": "merged"}
             else:
                 payload = {"merged": False, "message": "not directly mergeable"}
             return completed(command, stdout=auto_integrator.json.dumps(payload))
@@ -3195,6 +3198,389 @@ class IntegrationLockTests(unittest.TestCase):
                 ):
                     with auto_integrator.lock_file(lock_path):
                         self.fail("unwritable lock parent was accepted")
+
+
+class IntegrationReceiptWiringTests(unittest.TestCase):
+    """DTG-INT-01: the auto-integrator's own call sites into
+    ``rewrite.integration_receipt``. Schema/authority/mutation correctness is
+    covered exhaustively in ``.orchestrator/rewrite/test_integration_receipt.py``;
+    these tests only prove the wiring -- when the write is attempted, with
+    what identity, and that it never turns a real merge/reconciliation
+    outcome into a failure.
+    """
+
+    def _receipted_task(self, **overrides) -> dict[str, Any]:
+        task = {
+            "id": "ABC-001",
+            "status": "review_approved",
+            "generation": 1,
+            "owner": "Codex",
+            "reviewer": "Claude",
+            "review_binding": {
+                "pr": 44,
+                "head_sha": APPROVED_HEAD,
+                "head_branch": "task/ABC-001",
+                "base": "dev",
+            },
+        }
+        task.update(overrides)
+        return task
+
+    def test_candidates_skip_a_row_with_a_matching_integration_receipt(self) -> None:
+        receipt = {
+            "version": 1,
+            "result": "landed",
+            "observation": "performed_merge",
+            "task_generation": 1,
+            "repository": "ajoe734/pantheon",
+            "target_branch": "dev",
+            "pr": 44,
+            "head_sha": APPROVED_HEAD,
+            "merge_commit_sha": "b" * 40,
+            "observed_at": "2026-06-12T01:01:07Z",
+            "source": "canonical_auto_integrator",
+        }
+        state = {"tasks": [self._receipted_task(integration_receipt=receipt)]}
+        candidates = auto_integrator.integration_candidates(state)
+        self.assertEqual(candidates, [])
+
+    def test_candidates_still_include_a_row_whose_receipt_is_stale(self) -> None:
+        stale_receipt = {
+            "version": 1,
+            "result": "landed",
+            "observation": "performed_merge",
+            "task_generation": 1,
+            "repository": "ajoe734/pantheon",
+            "target_branch": "dev",
+            "pr": 44,
+            "head_sha": "c" * 40,  # a different, no-longer-current approved head
+            "merge_commit_sha": "b" * 40,
+            "observed_at": "2026-06-12T01:01:07Z",
+            "source": "canonical_auto_integrator",
+        }
+        state = {"tasks": [self._receipted_task(integration_receipt=stale_receipt)]}
+        candidates = auto_integrator.integration_candidates(state)
+        self.assertEqual([c.task_id for c in candidates], ["ABC-001"])
+
+    def test_event_path_resolves_from_config_when_env_unset(self) -> None:
+        """Regression test for a live-canary finding (2026-08-30): the
+        cron-launched auto-integrator does not inherit
+        PANTHEON_TASK_STATE_STORE_MODE/PANTHEON_TASK_STATE_EVENT_LOG the way a
+        supervisor-spawned worker does. Without a config fallback, every
+        receipt landed only in the flat ai-status.json projection; the very
+        next governed ai_status.py command (which reads from the V2 journal)
+        silently reverted it within seconds. The live config's own
+        task_state_store block must be consulted directly."""
+
+        config = {
+            "task_state_store": {
+                "mode": "authoritative",
+                "event_log": "/home/lupin/pantheon-ci-deploy/runtime/task-state-events-v2.jsonl",
+            }
+        }
+        with mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("PANTHEON_TASK_STATE_STORE_MODE", None)
+            os.environ.pop("PANTHEON_TASK_STATE_EVENT_LOG", None)
+            result = auto_integrator._canonical_task_state_event_path(config)
+        self.assertEqual(
+            result, Path("/home/lupin/pantheon-ci-deploy/runtime/task-state-events-v2.jsonl")
+        )
+
+    def test_event_path_env_var_still_wins_over_config(self) -> None:
+        config = {
+            "task_state_store": {
+                "mode": "authoritative",
+                "event_log": "/from-config.jsonl",
+            }
+        }
+        with mock.patch.dict(
+            os.environ,
+            {
+                "PANTHEON_TASK_STATE_STORE_MODE": "authoritative",
+                "PANTHEON_TASK_STATE_EVENT_LOG": "/from-env.jsonl",
+            },
+        ):
+            result = auto_integrator._canonical_task_state_event_path(config)
+        self.assertEqual(result, Path("/from-env.jsonl"))
+
+    def test_event_path_none_without_config_or_env(self) -> None:
+        with mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("PANTHEON_TASK_STATE_STORE_MODE", None)
+            os.environ.pop("PANTHEON_TASK_STATE_EVENT_LOG", None)
+            self.assertIsNone(auto_integrator._canonical_task_state_event_path(None))
+            self.assertIsNone(auto_integrator._canonical_task_state_event_path({}))
+
+    def test_event_path_none_when_config_mode_not_authoritative(self) -> None:
+        config = {"task_state_store": {"mode": "legacy", "event_log": "/x.jsonl"}}
+        with mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("PANTHEON_TASK_STATE_STORE_MODE", None)
+            os.environ.pop("PANTHEON_TASK_STATE_EVENT_LOG", None)
+            self.assertIsNone(auto_integrator._canonical_task_state_event_path(config))
+
+    def test_execute_merge_persists_receipt_through_config_resolved_v2_journal(self) -> None:
+        """End-to-end: with only the config (no env vars) carrying V2 store
+        identity, a real merge's receipt must reach the V2 journal, not just
+        the flat projection -- otherwise the very next governed command
+        reverts it (the exact live bug this regression test targets)."""
+
+        candidate = auto_integrator.TaskCandidate(
+            task_id="ABC-001",
+            title="Ready",
+            owner="Codex",
+            reviewer="Claude",
+            branch="task/ABC-001",
+        )
+        runner = FakeRunner(pr=green_pr(number=44), merge_sha="e" * 40)
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            status_file = self._fresh_state_file(tmp_dir)
+            event_path = Path(tmp_dir) / "task-state-events-v2.jsonl"
+            # Seed the V2 journal with the same initial state the flat status
+            # file carries, as production keeps both in sync before any
+            # receipt write is attempted.
+            task_state_store.append_state_commit(
+                event_path,
+                json.loads(status_file.read_text(encoding="utf-8")),
+                source="test-seed",
+            )
+            lock_path = Path(tmp_dir) / "auto-integrator.lock"
+            lock_path.write_text(
+                json.dumps(
+                    {
+                        "schema": auto_integrator.LOCK_SCHEMA,
+                        "state": "held",
+                        "pid": os.getpid(),
+                    }
+                ),
+                encoding="utf-8",
+            )
+            config = {
+                "paths": {"status_file": str(status_file)},
+                "task_state_store": {"mode": "authoritative", "event_log": str(event_path)},
+            }
+            with mock.patch.dict(os.environ, {}, clear=False), mock.patch.object(
+                auto_integrator.integration_receipt,
+                "validate_status_command_runtime",
+                return_value={},
+            ):
+                # This test's own worktree is not named after its HEAD sha (unlike a
+                # promoted command-runtimes/<sha> checkout), so the promoted-runtime
+                # identity check -- already exhaustively covered in
+                # test_integration_receipt.py -- is bypassed here; this test's own
+                # focus is V2 persistence, not that plumbing.
+                os.environ.pop("PANTHEON_TASK_STATE_STORE_MODE", None)
+                os.environ.pop("PANTHEON_TASK_STATE_EVENT_LOG", None)
+                result = auto_integrator.integrate_candidate(
+                    candidate,
+                    auto_integrator.Settings(smoke_commands=("true",), lock_path=lock_path),
+                    runner,
+                    execute=True,
+                    gate=approved_gate(),
+                    config=config,
+                    canonical_state_file=status_file,
+                    status_root=status_file.parent,
+                )
+
+            self.assertEqual(result.action, "merged")
+            self.assertTrue(event_path.exists())
+            events = [
+                json.loads(line) for line in event_path.read_text().splitlines() if line.strip()
+            ]
+            self.assertEqual(len(events), 2)  # the seed commit, then the receipt commit
+            self.assertEqual(events[-1]["source"], "canonical_auto_integrator")
+            snapshot = task_state_store.load_snapshot(event_path)
+            committed_task = next(
+                t for t in snapshot["state"]["tasks"] if t["id"] == "ABC-001"
+            )
+            self.assertIn("integration_receipt", committed_task)
+
+    @staticmethod
+    def _fresh_state_file(tmp_dir: str, task_id: str = "ABC-001") -> Path:
+        """A real status file matching ``approved_gate``'s fixture state, so
+        the final pre-merge revalidation (which re-reads this file from disk)
+        finds the same approved row the dry-run planning stage saw."""
+
+        path = Path(tmp_dir) / "ai-status.json"
+        path.write_text(
+            json.dumps(
+                {
+                    "tasks": [
+                        {
+                            "id": task_id,
+                            "title": "Ready",
+                            "status": "review_approved",
+                            "owner": "Codex",
+                            "reviewer": "Claude",
+                            "generation": 1,
+                            "review_binding": {
+                                "pr": 44,
+                                "head_sha": APPROVED_HEAD,
+                                "head_branch": f"task/{task_id}",
+                                "base": "dev",
+                            },
+                        }
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
+        return path
+
+    def test_execute_merge_writes_a_performed_merge_receipt(self) -> None:
+        candidate = auto_integrator.TaskCandidate(
+            task_id="ABC-001",
+            title="Ready",
+            owner="Codex",
+            reviewer="Claude",
+            branch="task/ABC-001",
+        )
+        runner = FakeRunner(pr=green_pr(number=44), merge_sha="e" * 40)
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            status_file = self._fresh_state_file(tmp_dir)
+            config = {"paths": {"status_file": str(status_file)}}
+            with mock.patch.object(
+                auto_integrator.integration_receipt, "record_integration_receipt"
+            ) as stub:
+                result = auto_integrator.integrate_candidate(
+                    candidate,
+                    auto_integrator.Settings(smoke_commands=("true",)),
+                    runner,
+                    execute=True,
+                    gate=approved_gate(),
+                    config=config,
+                    canonical_state_file=status_file,
+                )
+
+        self.assertEqual(result.action, "merged")
+        stub.assert_called_once()
+        kwargs = stub.call_args.kwargs
+        self.assertEqual(kwargs["task_id"], "ABC-001")
+        self.assertEqual(kwargs["merge_commit_sha"], "e" * 40)
+        self.assertEqual(
+            kwargs["observation"], auto_integrator.integration_receipt.RECEIPT_OBSERVATION_PERFORMED_MERGE
+        )
+        self.assertEqual(kwargs["expected_delivery_binding"].pr, 44)
+        self.assertEqual(kwargs["expected_delivery_binding"].head_sha, APPROVED_HEAD)
+        self.assertEqual(kwargs["config"], config)
+
+    def test_execute_already_merged_writes_a_reconciled_receipt(self) -> None:
+        candidate = auto_integrator.TaskCandidate(
+            task_id="ABC-001",
+            title="Ready",
+            owner="Codex",
+            reviewer="Claude",
+            branch="task/ABC-001",
+        )
+        reconciled_pr = merged_pr(number=55)
+        reconciled_pr["mergeCommit"] = {"oid": "d" * 40}
+        runner = FakeRunner(pr=None, merged_pr=reconciled_pr)
+        config = {"paths": {"status_file": "/tmp/does-not-matter/ai-status.json"}}
+
+        with mock.patch.object(
+            auto_integrator.integration_receipt, "record_integration_receipt"
+        ) as stub:
+            result = auto_integrator.integrate_candidate(
+                candidate,
+                auto_integrator.Settings(),
+                runner,
+                execute=True,
+                gate=approved_gate(pr_number=55),
+                config=config,
+                canonical_state_file=Path("/tmp/does-not-matter/ai-status.json"),
+            )
+
+        self.assertEqual(result.action, "already_merged")
+        stub.assert_called_once()
+        kwargs = stub.call_args.kwargs
+        self.assertEqual(
+            kwargs["observation"], auto_integrator.integration_receipt.RECEIPT_OBSERVATION_RECONCILED
+        )
+        self.assertEqual(kwargs["merge_commit_sha"], "d" * 40)
+
+    def test_dry_run_never_writes_a_receipt(self) -> None:
+        candidate = auto_integrator.TaskCandidate(
+            task_id="ABC-001",
+            title="Ready",
+            owner="Codex",
+            reviewer="Claude",
+            branch="task/ABC-001",
+        )
+        runner = FakeRunner(pr=green_pr(number=44))
+        config = {"paths": {"status_file": "/tmp/does-not-matter/ai-status.json"}}
+
+        with mock.patch.object(
+            auto_integrator.integration_receipt, "record_integration_receipt"
+        ) as stub:
+            result = auto_integrator.integrate_candidate(
+                candidate,
+                auto_integrator.Settings(smoke_commands=("true",)),
+                runner,
+                execute=False,
+                gate=approved_gate(),
+                config=config,
+            )
+
+        self.assertIn(result.action, {"would_merge", "merged"})
+        stub.assert_not_called()
+
+    def test_execute_without_config_never_writes_a_receipt(self) -> None:
+        """Every pre-existing caller in this file omits ``config`` -- that
+        must keep behaving exactly as before this feature existed."""
+
+        candidate = auto_integrator.TaskCandidate(
+            task_id="ABC-001",
+            title="Ready",
+            owner="Codex",
+            reviewer="Claude",
+            branch="task/ABC-001",
+        )
+        runner = FakeRunner(pr=green_pr(number=44))
+
+        with mock.patch.object(
+            auto_integrator.integration_receipt, "record_integration_receipt"
+        ) as stub:
+            result = auto_integrator.integrate_candidate(
+                candidate,
+                auto_integrator.Settings(smoke_commands=("true",)),
+                runner,
+                execute=True,
+                gate=approved_gate(),
+            )
+
+        self.assertEqual(result.action, "merged")
+        stub.assert_not_called()
+
+    def test_receipt_write_failure_does_not_fail_a_real_merge_result(self) -> None:
+        candidate = auto_integrator.TaskCandidate(
+            task_id="ABC-001",
+            title="Ready",
+            owner="Codex",
+            reviewer="Claude",
+            branch="task/ABC-001",
+        )
+        runner = FakeRunner(pr=green_pr(number=44), merge_sha="e" * 40)
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            status_file = self._fresh_state_file(tmp_dir)
+            config = {"paths": {"status_file": str(status_file)}}
+            with mock.patch.object(
+                auto_integrator.integration_receipt,
+                "record_integration_receipt",
+                side_effect=auto_integrator.integration_receipt.IntegrationReceiptAuthorityError("boom"),
+            ):
+                result = auto_integrator.integrate_candidate(
+                    candidate,
+                    auto_integrator.Settings(smoke_commands=("true",)),
+                    runner,
+                    execute=True,
+                    gate=approved_gate(),
+                    config=config,
+                    canonical_state_file=status_file,
+                )
+
+        self.assertEqual(result.action, "merged")
+        self.assertIn("left ABC-001 in review_approved for owner finalization", result.detail)
 
 
 if __name__ == "__main__":

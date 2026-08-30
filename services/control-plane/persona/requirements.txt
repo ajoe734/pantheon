@@ -2,6 +2,7 @@ fastapi>=0.111.0
 httpx>=0.28.0
 uvicorn[standard]>=0.29.0
 pydantic>=2.7.0
+psycopg[binary]>=3.1.0
 jsonschema>=4.0
 # langgraph>=0.1.0  # optional: add only if HITL checkpoint/pause/resume becomes a hard requirement
 # langchain-anthropic>=0.1.0  # add when LLM_BACKEND=anthropic is wired

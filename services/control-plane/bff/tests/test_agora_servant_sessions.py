@@ -256,6 +256,7 @@ def _install_client(monkeypatch: Any, tmp_path: Path) -> tuple[TestClient, FakeO
     monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "permissive")
     store = _create_test_agora_store()
     monkeypatch.setattr(bff_main, "read_store", store)
+    monkeypatch.setattr(bff_main, "persona_write_owner", store)
     monkeypatch.setattr(
         bff_main,
         "_ensure_agora_servant_openclaw_agent",
@@ -439,4 +440,3 @@ def test_servant_message_reports_openclaw_degraded(monkeypatch: Any, tmp_path: P
     provider = response.json()["data"]["provider"]
     assert provider["status"] == "degraded"
     assert provider["error"]["code"] == "OPENCLAW_UPSTREAM_DEGRADED"
-

@@ -37,6 +37,7 @@ from persona_registry import (
     SessionType,
     utc_now,
 )
+from services.persona.write_owner import create_app as create_persona_owner_app
 
 app = FastAPI(title="Pantheon Persona Agent", version="0.2.0")
 
@@ -395,3 +396,10 @@ async def invoke(req: InvokeRequest):
         session_status=session_status,
         runtime=runtime_status,
     )
+
+
+# The deployed control-plane Persona process owns the durable Registry and
+# capability APIs.  Including the owner router here keeps legacy classify and
+# invoke routes intact while ensuring BFF writes cross a real service boundary.
+PERSONA_OWNER_API = create_persona_owner_app()
+app.include_router(PERSONA_OWNER_API.router)

@@ -1339,6 +1339,9 @@ services:
       PANTHEON_TELEMETRY_API_URL: http://telemetry:8083
       PANTHEON_LINEAGE_READ_URL: http://lineage-read:8094
       PANTHEON_REGISTRY_API_URL: ${PANTHEON_REGISTRY_API_URL:-http://registry:8087}
+      PERSONA_URL: ${PERSONA_URL:-http://persona:8002}
+      PANTHEON_PERSONA_SERVICE_TOKEN: ${PANTHEON_PERSONA_SERVICE_TOKEN:-pantheon-local-persona-service-token}
+      PANTHEON_PERSONA_SERVICE_ACTOR_ID: operator-bff
       PANTHEON_CONSULTATION_API_URL: http://consultation-svc:8096
       PANTHEON_SOURCE_INGEST_API_URL: http://source-ingest:8097
       PANTHEON_SEARCH_API_URL: http://search-svc:8098
@@ -1407,6 +1410,8 @@ services:
         # its emergency memory guard. Readiness still reports stale truth.
         condition: service_started
       lineage-read:
+        condition: service_healthy
+      persona:
         condition: service_healthy
       postgres:
         condition: service_healthy
@@ -1561,12 +1566,21 @@ services:
     restart: unless-stopped
     environment:
       PORT: "8002"
-      PANTHEON_BFF_URL: http://operator-bff:8001
+      DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
+      PERSONA_STORE_BACKEND: ${PERSONA_STORE_BACKEND:-postgres}
+      PERSONA_STORE_DSN: ${PERSONA_STORE_DSN:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
+      PERSONA_STORE_TABLE: ${PERSONA_STORE_TABLE:-persona.personas}
+      PERSONA_CAPABILITY_STORE_BACKEND: ${PERSONA_CAPABILITY_STORE_BACKEND:-postgres}
+      PERSONA_CAPABILITY_STORE_DSN: ${PERSONA_CAPABILITY_STORE_DSN:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
+      PERSONA_CAPABILITY_STORE_TABLE: ${PERSONA_CAPABILITY_STORE_TABLE:-persona.capability_snapshots}
+      PERSONA_AUTH_MODE: ${PERSONA_AUTH_MODE:-strict}
+      PANTHEON_PERSONA_SERVICE_TOKEN: ${PANTHEON_PERSONA_SERVICE_TOKEN:-pantheon-local-persona-service-token}
+      PANTHEON_PERSONA_SERVICE_ACTOR_ID: operator-bff
       PANTHEON_REGISTRY_URL: http://registry:8087
       PANTHEON_NATS_URL: ${PANTHEON_NATS_URL:-nats://nats:4222}
       PANTHEON_S3_ENDPOINT: ${PANTHEON_S3_ENDPOINT:-http://minio:9000}
     depends_on:
-      operator-bff:
+      postgres:
         condition: service_healthy
       registry:
         condition: service_healthy
