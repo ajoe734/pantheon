@@ -57,6 +57,81 @@ def _test_app(command_store: Optional[CommandStore] = None) -> FastAPI:
     return app
 
 
+FORBIDDEN_MAIN_MODULE_NAMES = ("main", "bff_main")
+
+
+def scan_for_reverse_main_imports(content: str, filename: str) -> List[str]:
+    """Scan source code for static and dynamic reverse imports / access of main.py."""
+    violations: List[str] = []
+    parsed = ast.parse(content, filename=filename)
+
+    for node in ast.walk(parsed):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name in FORBIDDEN_MAIN_MODULE_NAMES:
+                    violations.append(
+                        f"Found forbidden 'import {alias.name}' at line {node.lineno}"
+                    )
+        elif isinstance(node, ast.ImportFrom):
+            if node.module in FORBIDDEN_MAIN_MODULE_NAMES:
+                violations.append(
+                    f"Found forbidden 'from {node.module} import ...' at line {node.lineno}"
+                )
+        elif isinstance(node, ast.Call):
+            # Check __import__("main")
+            if isinstance(node.func, ast.Name) and node.func.id == "__import__":
+                if node.args and isinstance(node.args[0], ast.Constant) and node.args[0].value in FORBIDDEN_MAIN_MODULE_NAMES:
+                    violations.append(
+                        f"Found forbidden '__import__({node.args[0].value!r})' at line {node.lineno}"
+                    )
+            # Check importlib.import_module("main")
+            elif isinstance(node.func, ast.Attribute) and node.func.attr == "import_module":
+                if node.args and isinstance(node.args[0], ast.Constant) and node.args[0].value in FORBIDDEN_MAIN_MODULE_NAMES:
+                    violations.append(
+                        f"Found forbidden 'import_module({node.args[0].value!r})' at line {node.lineno}"
+                    )
+            # Check sys.modules.get("main") / setdefault("main")
+            elif isinstance(node.func, ast.Attribute) and node.func.attr in ("get", "setdefault"):
+                if isinstance(node.func.value, ast.Attribute) and node.func.value.attr == "modules":
+                    if node.args and isinstance(node.args[0], ast.Constant) and node.args[0].value in FORBIDDEN_MAIN_MODULE_NAMES:
+                        violations.append(
+                            f"Found forbidden 'sys.modules.{node.func.attr}({node.args[0].value!r})' at line {node.lineno}"
+                        )
+                elif isinstance(node.func.value, ast.Name) and node.func.value.id == "modules":
+                    if node.args and isinstance(node.args[0], ast.Constant) and node.args[0].value in FORBIDDEN_MAIN_MODULE_NAMES:
+                        violations.append(
+                            f"Found forbidden 'modules.{node.func.attr}({node.args[0].value!r})' at line {node.lineno}"
+                        )
+        elif isinstance(node, ast.Subscript):
+            # Check sys.modules["main"]
+            if isinstance(node.value, ast.Attribute) and node.value.attr == "modules":
+                slice_node = node.slice
+                if isinstance(slice_node, ast.Constant) and slice_node.value in FORBIDDEN_MAIN_MODULE_NAMES:
+                    violations.append(
+                        f"Found forbidden 'sys.modules[{slice_node.value!r}]' at line {node.lineno}"
+                    )
+            elif isinstance(node.value, ast.Name) and node.value.id == "modules":
+                slice_node = node.slice
+                if isinstance(slice_node, ast.Constant) and slice_node.value in FORBIDDEN_MAIN_MODULE_NAMES:
+                    violations.append(
+                        f"Found forbidden 'modules[{slice_node.value!r}]' at line {node.lineno}"
+                    )
+
+    # Secondary regex scan for raw text patterns
+    raw_patterns = [
+        (r'sys\.modules(?:\.get|\.setdefault)?\s*[\[\(]\s*["\'](main|bff_main)["\']', "dynamic sys.modules access"),
+        (r'__import__\s*\(\s*["\'](main|bff_main)["\']', "dynamic __import__"),
+        (r'import_module\s*\(\s*["\'](main|bff_main)["\']', "dynamic importlib.import_module"),
+        (r'getattr\s*\(\s*sys\.modules\s*,\s*["\'](main|bff_main)["\']', "dynamic getattr(sys.modules)"),
+    ]
+    for pattern, desc in raw_patterns:
+        match = re.search(pattern, content)
+        if match:
+            violations.append(f"Found forbidden {desc} pattern '{match.group(0)}'")
+
+    return list(dict.fromkeys(violations))
+
+
 def test_zero_reverse_main_imports() -> None:
     """Verify zero static or dynamic reverse imports of main / bff_main in command_adapters and executor."""
     bff_dir = os.path.dirname(os.path.dirname(__file__))
@@ -69,22 +144,38 @@ def test_zero_reverse_main_imports() -> None:
             if f.endswith(".py"):
                 target_files.append(os.path.join(root, f))
 
+    all_violations: Dict[str, List[str]] = {}
     for file_path in target_files:
         rel_path = os.path.relpath(file_path, bff_dir)
         with open(file_path, "r", encoding="utf-8") as f:
             content = f.read()
 
-        parsed = ast.parse(content, filename=file_path)
-        for node in ast.walk(parsed):
-            if isinstance(node, ast.Import):
-                for alias in node.names:
-                    assert alias.name not in ("main", "bff_main"), (
-                        f"Found forbidden 'import {alias.name}' in {rel_path} at line {node.lineno}"
-                    )
-            elif isinstance(node, ast.ImportFrom):
-                assert node.module not in ("main", "bff_main"), (
-                    f"Found forbidden 'from {node.module} import ...' in {rel_path} at line {node.lineno}"
-                )
+        violations = scan_for_reverse_main_imports(content, filename=rel_path)
+        if violations:
+            all_violations[rel_path] = violations
+
+    assert not all_violations, f"Found forbidden reverse main.py imports/access: {all_violations}"
+
+
+def test_reverse_main_import_detector_catches_all_forms() -> None:
+    """Verify scan_for_reverse_main_imports catches static, dynamic, subscript, and function import forms."""
+    test_cases = [
+        ("import main", "static import main"),
+        ("import bff_main", "static import bff_main"),
+        ("from main import app", "from main import"),
+        ("from bff_main import app", "from bff_main import"),
+        ("import sys\nmod = sys.modules.get('main')", "sys.modules.get('main')"),
+        ("import sys\nmod = sys.modules['main']", "sys.modules['main']"),
+        ("import sys\nmod = sys.modules.get('bff_main')", "sys.modules.get('bff_main')"),
+        ("import sys\nmod = sys.modules['bff_main']", "sys.modules['bff_main']"),
+        ("import importlib\nmod = importlib.import_module('main')", "importlib.import_module('main')"),
+        ("mod = __import__('main')", "__import__('main')"),
+        ("import sys\nmod = getattr(sys.modules, 'main')", "getattr(sys.modules, 'main')"),
+    ]
+
+    for snippet, description in test_cases:
+        violations = scan_for_reverse_main_imports(snippet, filename="<test_snippet>")
+        assert len(violations) > 0, f"Detector failed to catch {description}:\n{snippet}"
 
 
 def test_command_adapters_router_route_inventory() -> None:

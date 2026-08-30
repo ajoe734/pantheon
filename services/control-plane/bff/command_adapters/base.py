@@ -102,11 +102,6 @@ def record_downstream_outcome(url: str, ok: bool, status_code: int, detail: Opti
         from downstream_health_monitor import get_downstream_health_monitor
         monitor = get_downstream_health_monitor()
         if monitor is None:
-            import sys
-            bff_main = sys.modules.get("main")
-            if bff_main is not None:
-                monitor = getattr(bff_main, "downstream_health_monitor", None)
-        if monitor is None:
             return
         registry = monitor._resolve_target_registry()
         for name, target in registry.items():

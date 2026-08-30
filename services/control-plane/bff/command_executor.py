@@ -218,11 +218,6 @@ def _record_outcome_for_target(url: str, ok: bool, status_code: int, detail: Opt
         from downstream_health_monitor import DownstreamTarget, get_downstream_health_monitor
         monitor = get_downstream_health_monitor()
         if monitor is None:
-            import sys
-            bff_main = sys.modules.get("main")
-            if bff_main is not None:
-                monitor = getattr(bff_main, "downstream_health_monitor", None)
-        if monitor is None:
             return
         registry = monitor._resolve_target_registry()
         matched_target_name = None
