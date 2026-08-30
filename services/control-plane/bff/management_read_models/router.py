@@ -25,6 +25,13 @@ Also preserves the 5 composed Management read models:
 - Paper execution telemetry read model (/bff/management/paper-telemetry)
 - Postmortem incident analysis read model (/bff/management/postmortems)
 - Postmortem detail read model (/bff/management/postmortems/{postmortem_id})
+
+Note on Assistant & OpenClaw NL query routes:
+POST /bff/management/nl/ask, POST /bff/management/nl/ask/stream, GET /bff/management/ai/audit,
+GET /bff/assistant/providers/usage-summary, and GET /bff/management/ai/conversations are
+governed under the core 30-route core assignment in services/control-plane/bff/core/app_factory.py
+(OPGAP-BE-BFF-CORE-20260830). This domain router owns the 17 Management read models and
+system operations routes defined below.
 """
 
 from __future__ import annotations

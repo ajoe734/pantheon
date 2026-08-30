@@ -385,7 +385,7 @@ class ManagementService:
             except Exception:
                 group_surfaces["runtime"] = {"status": "unavailable", "source": "error"}
         else:
-            group_surfaces["runtime"] = {"status": "ok" if store else "unavailable", "source": "store" if store else "missing"}
+            group_surfaces["runtime"] = {"status": "unavailable", "source": "missing" if store is None else "unsupported"}
 
         active_runtimes = sum(1 for b in runtime_bindings if isinstance(b, dict) and b.get("status") == "running")
         runtime_group = {
@@ -410,7 +410,7 @@ class ManagementService:
             except Exception:
                 group_surfaces["telemetry"] = {"status": "unavailable", "source": "error"}
         else:
-            group_surfaces["telemetry"] = {"status": "ok" if store else "unavailable", "source": "store" if store else "missing"}
+            group_surfaces["telemetry"] = {"status": "unavailable", "source": "missing" if store is None else "unsupported"}
 
         telemetry_group = {
             "group_id": "telemetry",
@@ -425,7 +425,7 @@ class ManagementService:
 
         # 3. Incident group
         incidents: List[Dict[str, Any]] = []
-        if store is not None:
+        if store is not None and (hasattr(store, "list_incidents") or hasattr(store, "list_incident_alerts")):
             try:
                 if hasattr(store, "list_incidents"):
                     incidents = store.list_incidents() or []
@@ -435,7 +435,7 @@ class ManagementService:
             except Exception:
                 group_surfaces["incident"] = {"status": "unavailable", "source": "error"}
         else:
-            group_surfaces["incident"] = {"status": "unavailable", "source": "missing"}
+            group_surfaces["incident"] = {"status": "unavailable", "source": "missing" if store is None else "unsupported"}
 
         open_incidents = [i for i in incidents if isinstance(i, dict) and i.get("status") in ("open", "active", "triggered")]
         incident_group = {
@@ -452,7 +452,11 @@ class ManagementService:
 
         # 4. Governance group
         approvals: List[Dict[str, Any]] = []
-        if store is not None:
+        if store is not None and (
+            hasattr(store, "list_approval_queue_items")
+            or hasattr(store, "list_governance_review_queue_items")
+            or hasattr(store, "list_approval_records")
+        ):
             try:
                 if hasattr(store, "list_approval_queue_items"):
                     approvals.extend(store.list_approval_queue_items() or [])
@@ -464,13 +468,13 @@ class ManagementService:
             except Exception:
                 group_surfaces["governance"] = {"status": "unavailable", "source": "error"}
         else:
-            group_surfaces["governance"] = {"status": "unavailable", "source": "missing"}
+            group_surfaces["governance"] = {"status": "unavailable", "source": "missing" if store is None else "unsupported"}
 
         pending_gov = [a for a in approvals if isinstance(a, dict) and (a.get("status") in ("pending", "open", "in_review") or a.get("decision_state") in ("pending", "open", "in_review"))]
         governance_group = {
             "group_id": "governance",
             "label": _HEALTH_GROUP_LABELS["governance"],
-            "status": group_surfaces["governance"]["status"],
+            "status": "degraded" if pending_gov else group_surfaces["governance"]["status"],
             "summary": f"{len(pending_gov)} pending governance decision(s)." if pending_gov else "Governance queues clear.",
             "details": {
                 "total_items": len(approvals),
@@ -488,7 +492,7 @@ class ManagementService:
             except Exception:
                 group_surfaces["kill_switch"] = {"status": "unavailable", "source": "error"}
         else:
-            group_surfaces["kill_switch"] = {"status": "ok" if store else "unavailable", "source": "store" if store else "missing"}
+            group_surfaces["kill_switch"] = {"status": "unavailable", "source": "missing" if store is None else "unsupported"}
 
         kill_switch_group = {
             "group_id": "kill_switch",

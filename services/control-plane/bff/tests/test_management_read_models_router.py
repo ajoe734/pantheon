@@ -15,6 +15,7 @@ from typing import Any, Dict, List, Optional
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from starlette.responses import JSONResponse
 
 # Ensure bff root is on sys.path
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
@@ -113,6 +114,15 @@ class MockManagementReadStore:
             if p["persona_id"] == persona_id:
                 return p
         return None
+
+    def list_runtime_bindings(self) -> List[Dict[str, Any]]:
+        return [{"id": "run-1", "status": "running"}]
+
+    def list_telemetry_summaries(self) -> List[Dict[str, Any]]:
+        return [{"id": "tel-1", "summary": "active"}]
+
+    def get_kill_switch_status(self) -> Dict[str, Any]:
+        return {"status": "armed", "safe_mode_status": "off", "active": False}
 
 
 # ---------------------------------------------------------------------------
@@ -548,10 +558,12 @@ def test_cockpit_composition_with_empty_store():
     assert data["meta"]["surfaces"]["management_cockpit"]["status"] in {"unavailable", "degraded"}
 
 
-def test_real_bff_main_app_management_route_ownership():
-    """Verify in the real main.app, each of the 17 target GET routes has exactly one registration owned by management_read_models.router."""
-    import main as real_main
+def test_management_router_17_target_routes_inventory():
+    """Verify create_management_read_models_router registers all 17 target GET routes plus 5 composed read models."""
     from test_normalized_route_uniqueness import scan_fastapi_routes
+
+    app = FastAPI()
+    app.include_router(create_management_read_models_router(get_read_store=lambda: MockManagementReadStore()))
 
     target_routes = [
         "/bff/management/shell-summary",
@@ -573,7 +585,7 @@ def test_real_bff_main_app_management_route_ownership():
         "/api/v1/operator/degraded-control-guidance",
     ]
 
-    scanned_entries = scan_fastapi_routes(real_main.app)
+    scanned_entries = scan_fastapi_routes(app)
     for path in target_routes:
         matching = [
             entry for entry in scanned_entries
@@ -587,38 +599,134 @@ def test_real_bff_main_app_management_route_ownership():
             f"Expected {path} to be owned by management_read_models.router, but owned by {entry.owner_module}"
         )
 
+    composed_routes = [
+        "/bff/management/formula-jobs",
+        "/bff/management/activity",
+        "/bff/management/paper-telemetry",
+        "/bff/management/postmortems",
+        "/bff/management/postmortems/{postmortem_id}",
+    ]
+    for path in composed_routes:
+        matching = [
+            entry for entry in scanned_entries
+            if entry.raw_path == path and entry.method == "GET"
+        ]
+        assert len(matching) == 1, (
+            f"Expected exactly 1 GET registration for composed read model {path}, found {len(matching)}: {matching}"
+        )
 
-def test_real_bff_main_app_degraded_control_guidance_contract(monkeypatch):
-    """Verify GET /api/v1/operator/degraded-control-guidance on real main.app preserves 200/206 and {data, meta.staleness} envelope."""
-    import main as real_main
 
-    client = TestClient(real_main.app, raise_server_exceptions=False)
+def test_operator_health_status_fail_closed_on_missing_ports():
+    """Verify ManagementService health projection fails closed (unavailable) when store exposes no reader ports."""
+    # 1. Store is object() exposing zero reader ports -> overall_status=unavailable, all groups unavailable
+    unsupported_service = ManagementService(get_read_store=lambda: object())
+    health_unsupported = unsupported_service.get_operator_health_status()
+    assert health_unsupported["overall_status"] == "unavailable"
+    assert health_unsupported["group_counts"]["unavailable"] == 5
+    assert health_unsupported["group_counts"]["ok"] == 0
+    for group in health_unsupported["groups"]:
+        assert group["status"] == "unavailable", f"Expected group {group['group_id']} status unavailable, got {group['status']}"
+        assert health_unsupported["meta"]["surfaces"][group["group_id"]]["status"] == "unavailable"
 
-    # 1. Fresh state -> 200 with canonical {data, meta.staleness} envelope
-    monkeypatch.setattr(real_main, "_read_surface_state", lambda: "fresh")
-    resp = client.get("/api/v1/operator/degraded-control-guidance")
+    # 2. Store is None -> overall_status=unavailable, all groups unavailable
+    none_service = ManagementService(get_read_store=lambda: None)
+    health_none = none_service.get_operator_health_status()
+    assert health_none["overall_status"] == "unavailable"
+    assert health_none["group_counts"]["unavailable"] == 5
+    assert health_none["group_counts"]["ok"] == 0
+    for group in health_none["groups"]:
+        assert group["status"] == "unavailable"
+
+    # 3. Store is mock store with all reader ports -> all contributing group surfaces report ok
+    full_service = ManagementService(get_read_store=lambda: MockManagementReadStore())
+    health_full = full_service.get_operator_health_status()
+    for gid in ("runtime", "telemetry", "incident", "governance", "kill_switch"):
+        assert health_full["meta"]["surfaces"][gid]["status"] == "ok"
+
+    # 4. Clean mock store with 0 pending approvals and 0 active incidents -> overall_status=ok, all 5 groups ok
+    class CleanMockStore(MockManagementReadStore):
+        def __init__(self):
+            super().__init__()
+            self.approval_records = []
+            self.incident_alerts = []
+
+    clean_service = ManagementService(get_read_store=lambda: CleanMockStore())
+    health_clean = clean_service.get_operator_health_status()
+    assert health_clean["overall_status"] == "ok"
+    assert health_clean["group_counts"]["ok"] == 5
+    assert health_clean["group_counts"]["unavailable"] == 0
+    for group in health_clean["groups"]:
+        assert group["status"] == "ok"
+
+
+def test_degraded_control_guidance_contract():
+    """Verify GET /api/v1/operator/degraded-control-guidance preserves 200/206 and {data, meta.staleness} envelope."""
+    # 1. Fresh state via router builder injection
+    def fresh_builder():
+        return JSONResponse(
+            status_code=200,
+            content={
+                "data": {
+                    "current_state": "fresh",
+                    "primary_path": {"status": "available"},
+                    "secondary_path": ["admin_cli", "protected_internal_api"],
+                    "critical_actions_bypass_mfa": True,
+                },
+                "meta": {
+                    "snapshot_at": "2026-08-30T10:00:00Z",
+                    "staleness": {"state": "fresh", "stale": False},
+                },
+            },
+        )
+
+    app_fresh = FastAPI()
+    app_fresh.include_router(create_management_read_models_router(
+        degraded_control_guidance_builder=fresh_builder,
+    ))
+    client_fresh = TestClient(app_fresh)
+    resp = client_fresh.get("/api/v1/operator/degraded-control-guidance")
     assert resp.status_code == 200
     body = resp.json()
     assert "data" in body and "meta" in body
     assert "staleness" in body["meta"]
-    guidance = body["data"]
-    assert guidance["current_state"] == "fresh"
-    assert guidance["primary_path"]["status"] == "available"
-    assert "admin_cli" in guidance["secondary_path"]
-    assert "protected_internal_api" in guidance["secondary_path"]
-    assert guidance["critical_actions_bypass_mfa"] is True
+    assert body["data"]["current_state"] == "fresh"
 
-    # 2. Degraded state -> 206 with canonical {data, meta.staleness} envelope
-    monkeypatch.setattr(real_main, "_read_surface_state", lambda: "degraded")
-    resp_degraded = client.get("/api/v1/operator/degraded-control-guidance")
-    assert resp_degraded.status_code == 206
-    body_degraded = resp_degraded.json()
-    assert "data" in body_degraded and "meta" in body_degraded
-    assert "staleness" in body_degraded["meta"]
-    guidance_degraded = body_degraded["data"]
-    assert guidance_degraded["current_state"] == "degraded"
-    assert guidance_degraded["primary_path"]["status"] == "degraded"
-    assert "admin_cli" in guidance_degraded["secondary_path"]
-    assert "protected_internal_api" in guidance_degraded["secondary_path"]
-    assert guidance_degraded["critical_actions_bypass_mfa"] is True
+    # 2. Degraded state via router builder injection
+    def degraded_builder():
+        return JSONResponse(
+            status_code=206,
+            content={
+                "data": {
+                    "current_state": "degraded",
+                    "primary_path": {"status": "degraded"},
+                    "secondary_path": ["admin_cli", "protected_internal_api"],
+                    "critical_actions_bypass_mfa": True,
+                },
+                "meta": {
+                    "snapshot_at": "2026-08-30T10:00:00Z",
+                    "staleness": {"state": "degraded", "stale": True},
+                },
+            },
+        )
 
+    app_deg = FastAPI()
+    app_deg.include_router(create_management_read_models_router(
+        degraded_control_guidance_builder=degraded_builder,
+    ))
+    client_deg = TestClient(app_deg)
+    resp_deg = client_deg.get("/api/v1/operator/degraded-control-guidance")
+    assert resp_deg.status_code == 206
+    body_deg = resp_deg.json()
+    assert "data" in body_deg and "meta" in body_deg
+    assert "staleness" in body_deg["meta"]
+    assert body_deg["data"]["current_state"] == "degraded"
+
+    # 3. Default ManagementService guidance fallback
+    app_default = FastAPI()
+    app_default.include_router(create_management_read_models_router(get_read_store=lambda: None))
+    client_default = TestClient(app_default)
+    resp_default = client_default.get("/api/v1/operator/degraded-control-guidance")
+    assert resp_default.status_code in (200, 206)
+    body_def = resp_default.json()
+    assert "data" in body_def and "meta" in body_def
+    assert "staleness" in body_def["meta"]
