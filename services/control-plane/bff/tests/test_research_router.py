@@ -114,6 +114,10 @@ def test_typed_analysis_validation_and_unavailable_surface_are_explicit() -> Non
     assert unavailable.json()["data"] == []
     assert unavailable.json()["meta"]["surfaces"]["analysis_results"]["status"] == "unavailable"
 
+    compat = _client(_Port()).get("/api/v1/research/analysis/analysis-1")
+    assert compat.status_code == 200
+    assert compat.json()["links"]["self"] == "/api/v1/research/analysis/analysis-1"
+
 
 def test_typed_artifact_and_bff_replacement_routes_are_backed_by_same_port() -> None:
     client = _client(_Port())
@@ -129,3 +133,12 @@ def test_typed_artifact_and_bff_replacement_routes_are_backed_by_same_port() -> 
     comparison = client.get("/api/v1/research/artifacts/compare", params={"artifact_ids": "artifact-1,artifact-2"})
     assert comparison.status_code == 200
     assert [item["artifact_id"] for item in comparison.json()["artifacts"]] == ["artifact-1", "artifact-2"]
+
+    non_comparable_port = _Port()
+    non_comparable_port.artifacts["artifact-1"]["allowedActions"] = {"canCompare": False}
+    rejected = _client(non_comparable_port).get(
+        "/api/v1/research/artifacts/compare",
+        params={"artifact_ids": "artifact-1,artifact-2"},
+    )
+    assert rejected.status_code == 422
+    assert rejected.json()["detail"]["code"] == "OPERATION_NOT_ALLOWED"
