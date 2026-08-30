@@ -6,7 +6,24 @@ Owner: `Claude`
 Reviewer: `Codex`
 Repository: `ajoe734/pantheon`
 Base: `dev`
-Verified at: `2026-08-30T20:10:00Z`
+Verified at: `2026-08-30T19:47:50Z`
+
+## Canonical V2 evidence binding (verbatim `RECONCILE_EVIDENCE_FILE` contract)
+
+The `reconcile_merged_done` recovery validates this file's raw text against
+the canonical V2 row (`validate_merged_done_evidence` in
+`scripts/ai_status.py`), which requires exact standalone lines binding the
+original task ID, its `review_approved` status, and its independent
+owner/reviewer pair. Those required lines, reproduced verbatim from the
+canonical V2 row (see the "Merged delivery and ancestry proof" section below
+for the citing event IDs):
+
+```text
+# Task Brief: AGORA-PERSONA-FLEET-DETAIL-SYMMETRY-REPAIR-V2-20260830
+- Status: review_approved
+- Owner: Codex2
+- Reviewer: Claude
+```
 
 ## Decision
 
