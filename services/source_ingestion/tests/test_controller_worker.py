@@ -1584,3 +1584,54 @@ def test_terminal_readback_rejects_stale_refresh_receipt() -> None:
             actual=actual,
             now=now,
         )
+
+
+def test_terminal_readback_rejects_missing_refresh_receipt_for_taiwan_official_data() -> None:
+    now = datetime(2026, 8, 30, 1, 0, 0, tzinfo=timezone.utc)
+    actual = _actual_readback()
+    actual["captured_at"] = "2026-08-30T01:00:00Z"
+    actual["connectors"][0]["connector_id"] = "tw-twse-tpex-official-market"
+    actual["connectors"][0]["connector"]["connector_id"] = "tw-twse-tpex-official-market"
+    actual["connectors"][0]["schedule"]["connector_id"] = "tw-twse-tpex-official-market"
+    actual["connectors"][0]["freshness"]["last_success_at"] = None
+    actual["connectors"][0]["latest_source_record"]["provenance"]["available_time"] = "2026-08-28T05:30:00Z"
+    actual["connectors"][0]["latest_source_record"]["source_id"] = "tw-official:tw_price_daily:TWSE:2330:missing-receipt"
+    actual["connectors"][0]["latest_source_record"]["connector_id"] = "tw-twse-tpex-official-market"
+    actual["connectors"][0]["source_health"]["source_id"] = "tw-twse-tpex-official-market"
+
+    reconcile = _reconcile()
+    reconcile["results"][0]["actions"][0]["connector_id"] = "tw-twse-tpex-official-market"
+
+    with pytest.raises(ControllerTickError, match="source_data_stale"):
+        _validate_terminal_readback(
+            reconcile=reconcile,
+            schedule=_schedule(),
+            actual=actual,
+            now=now,
+        )
+
+
+def test_terminal_readback_rejects_unparsable_refresh_receipt_for_taiwan_official_data() -> None:
+    now = datetime(2026, 8, 30, 1, 0, 0, tzinfo=timezone.utc)
+    actual = _actual_readback()
+    actual["captured_at"] = "2026-08-30T01:00:00Z"
+    actual["connectors"][0]["connector_id"] = "tw-twse-tpex-official-market"
+    actual["connectors"][0]["connector"]["connector_id"] = "tw-twse-tpex-official-market"
+    actual["connectors"][0]["schedule"]["connector_id"] = "tw-twse-tpex-official-market"
+    actual["connectors"][0]["freshness"]["last_success_at"] = "not-a-valid-timestamp"
+    actual["connectors"][0]["latest_source_record"]["provenance"]["available_time"] = "2026-08-28T05:30:00Z"
+    actual["connectors"][0]["latest_source_record"]["source_id"] = "tw-official:tw_price_daily:TWSE:2330:invalid-receipt"
+    actual["connectors"][0]["latest_source_record"]["connector_id"] = "tw-twse-tpex-official-market"
+    actual["connectors"][0]["source_health"]["source_id"] = "tw-twse-tpex-official-market"
+
+    reconcile = _reconcile()
+    reconcile["results"][0]["actions"][0]["connector_id"] = "tw-twse-tpex-official-market"
+
+    with pytest.raises(ControllerTickError, match="source_data_stale"):
+        _validate_terminal_readback(
+            reconcile=reconcile,
+            schedule=_schedule(),
+            actual=actual,
+            now=now,
+        )
+

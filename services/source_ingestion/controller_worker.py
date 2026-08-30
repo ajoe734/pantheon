@@ -876,8 +876,6 @@ def _validate_terminal_readback(
                             refresh_receipt_dt = parse_utc(str(freshness["last_success_at"]))
                     except ControllerStateError:
                         pass
-                    if refresh_receipt_dt is None:
-                        refresh_receipt_dt = eval_now_dt
 
                     cal_ev = (
                         record.get("metadata", {}).get("calendar_evidence")
