@@ -17868,7 +17868,6 @@ def _shell_summary_session(identity: OperatorIdentity, *, checked_at: str) -> Di
     }
 
 
-@app.get("/bff/management/shell-summary")
 def bff_management_shell_summary(
     authorization: Optional[str] = Header(default=None),
     pantheon_session: Optional[str] = Cookie(default=None),
@@ -17904,7 +17903,6 @@ def bff_management_shell_summary(
     return result
 
 
-@app.get("/api/v1/operator/home")
 async def get_operator_home(
     authorization: Optional[str] = Header(default=None),
 ):
@@ -17915,7 +17913,6 @@ async def get_operator_home(
     return _build_operator_home_payload(snapshot_at)
 
 
-@app.get(f"/bff{_MANAGEMENT_COCKPIT_ROUTE}")
 async def bff_management_cockpit(
     authorization: Optional[str] = Header(default=None),
 ):
@@ -17952,7 +17949,6 @@ async def bff_management_cockpit(
         )
 
 
-@app.get("/bff/management/trading-pulse")
 async def bff_management_trading_pulse(
     authorization: Optional[str] = Header(default=None),
 ):
@@ -17964,7 +17960,6 @@ async def bff_management_trading_pulse(
     return _build_management_trading_pulse_route_payload(snapshot_at)
 
 
-@app.get("/bff/management/trading-pulse/rankings")
 async def bff_management_trading_pulse_rankings(
     limit: int = Query(default=20, ge=1, le=200),
     authorization: Optional[str] = Header(default=None),
@@ -17977,7 +17972,6 @@ async def bff_management_trading_pulse_rankings(
     return _build_management_trading_pulse_rankings_payload(snapshot_at, limit=limit)
 
 
-@app.get("/bff/management/sentinel-pulse")
 async def bff_management_sentinel_pulse(
     kind: Optional[str] = Query(default=None),
     status: Optional[str] = Query(default=None),
@@ -18023,7 +18017,6 @@ async def get_operator_paper_live_drift(
     return _build_operator_paper_live_drift_payload(runtime_id, snapshot_at)
 
 
-@app.get("/api/v1/operator/health-status")
 async def get_operator_health_status(
     authorization: Optional[str] = Header(default=None),
 ):
@@ -35256,7 +35249,6 @@ def _management_loop_throughput_response(
     }
 
 
-@app.get("/bff/management/loop-throughput")
 async def bff_management_loop_throughput(
     status: Optional[str] = None,
     runtime_id: Optional[str] = None,
@@ -35327,7 +35319,6 @@ async def bff_management_capital_flow(
     )
 
 
-@app.get("/bff/management/risk-radar")
 async def bff_management_risk_radar(
     persona_id: Optional[str] = None,
     strategy_id: Optional[str] = None,
@@ -35352,7 +35343,6 @@ async def bff_management_risk_radar(
     )
 
 
-@app.get("/bff/management/incident-timeline")
 async def bff_management_incident_timeline(
     status: Optional[str] = None,
     severity: Optional[str] = None,
@@ -40421,7 +40411,6 @@ def _persona_intent_surfaces(
     }
 
 
-@app.get("/bff/management/human-inbox")
 async def bff_management_human_inbox(
     source_type: Optional[str] = None,
     status: Optional[str] = None,
@@ -40453,7 +40442,6 @@ async def bff_management_human_inbox(
     return payload
 
 
-@app.get("/bff/management/human-inbox/{item_id}")
 async def bff_management_human_inbox_detail(
     item_id: str,
     authorization: Optional[str] = Header(default=None),
@@ -40510,7 +40498,6 @@ async def bff_management_human_inbox_detail(
     )
 
 
-@app.get("/bff/management/hiq-backlog")
 async def bff_management_hiq_backlog(
     source_type: Optional[str] = Query(default=None),
     status: Optional[str] = Query(default=None),
@@ -40546,7 +40533,6 @@ async def bff_management_hiq_backlog(
     )
 
 
-@app.get("/bff/management/intervention-stream")
 async def bff_management_intervention_stream(
     persona_id: Optional[str] = Query(default=None),
     personaId: Optional[str] = Query(default=None),
@@ -45904,7 +45890,6 @@ async def bff_management_ai_attachment(
     )
 
 
-@app.get("/bff/management/evidence")
 async def bff_management_evidence(
     ref_id: Optional[str] = None,
     linked_entity_type: Optional[str] = None,
@@ -54941,10 +54926,6 @@ def _ops_read_model_entry_for_persona(
     )
 
 
-@app.get(
-    "/bff/management/operations-read-model/{persona_id}",
-    response_model=OperationsReadModelEnvelope,
-)
 async def bff_management_operations_read_model(
     persona_id: str,
     period: str = Query(default="latest"),
@@ -56813,7 +56794,6 @@ _process_command_stub = _process_command
 # Degraded Control Guidance (Wave 2 — Incident Response)
 # --------------------------------------------------------------------------- #
 
-@app.get("/api/v1/operator/degraded-control-guidance")
 async def degraded_control_guidance():
     """Return guidance for operators when the BFF is degraded or unavailable.
 
@@ -67939,6 +67919,210 @@ app.include_router(
 )
 
 from management_read_models import create_management_read_models_router  # noqa: E402
+
+
+async def _build_management_cockpit_for_router(snapshot_at: str, identity: Any = None):
+    human_inbox, _items, _sources, _failures = await _human_inbox_payload_bounded(
+        snapshot_at,
+        identity=identity,
+        page_size=None,
+    )
+    try:
+        return await _run_management_read(
+            _build_management_cockpit_payload,
+            snapshot_at,
+            human_inbox=human_inbox,
+            timeout_seconds=_management_cockpit_read_timeout_seconds(),
+            capacity=_MANAGEMENT_COCKPIT_READ_SLOTS,
+            executor=_MANAGEMENT_COCKPIT_READ_EXECUTOR,
+        )
+    except _ManagementReadSaturated:
+        return _management_cockpit_degraded_payload(
+            snapshot_at,
+            human_inbox=human_inbox,
+            saturated=True,
+        )
+    except _ManagementReadTimeout:
+        return _management_cockpit_degraded_payload(
+            snapshot_at,
+            human_inbox=human_inbox,
+            saturated=False,
+        )
+
+
+async def _build_management_human_inbox_for_router(
+    source_type=None, status=None, priority=None, page_token=None, page_size=20, identity=None
+):
+    snapshot_at = utc_now()
+    started = time.monotonic()
+    payload, _items, _sources, failures = await _human_inbox_payload_bounded(
+        snapshot_at,
+        identity=identity,
+        source_type=source_type,
+        status=status,
+        priority=priority,
+        page_token=page_token,
+        page_size=page_size,
+    )
+    _log_management_read_timing(
+        "human_inbox",
+        started,
+        timed_out=any(surface.get("reason") == "read_timeout" for surface in failures.values()),
+    )
+    return payload
+
+
+async def _build_management_human_inbox_detail_for_router(item_id: str, identity: Any = None):
+    snapshot_at = utc_now()
+    source_types = _human_inbox_detail_source_types(item_id)
+    items, sources, failures = await _human_inbox_all_items_bounded(
+        snapshot_at,
+        identity=identity,
+        source_types=source_types,
+    )
+    for item in items:
+        if _human_inbox_detail_match(item, item_id):
+            detail = json.loads(json.dumps(item))
+            meta = _snapshot_meta(snapshot_at)
+            meta["surfaces"] = _human_inbox_surfaces(
+                snapshot_at=snapshot_at,
+                governance_review_records=sources["governance_review_records"],
+                approval_records=sources["approval_records"],
+                intervention_records=sources["intervention_records"],
+                sentinel_available=bool(sources["sentinel_available"]),
+                sentinel_records=sources["sentinel_records"],
+                persona_rows=sources["persona_rows"],
+                promotion_review_records=sources["promotion_review_records"],
+                source_types=source_types,
+                surface_failures=failures,
+                loaded_surfaces=sources.get("surfaces"),
+            )
+            if failures:
+                meta["partial"] = True
+                meta["degradation"] = {
+                    "reason": "one_or_more_human_inbox_contributors_incomplete",
+                    "contributors": sorted(failures),
+                }
+            return {"data": detail, "meta": meta}
+    if failures:
+        raise _bff_error(
+            503,
+            ErrorCode.DEPENDENCY_UNAVAILABLE,
+            "Human inbox detail could not be resolved from a partial aggregate",
+            "One or more Human Inbox contributors timed out or failed; retry before treating the item as absent.",
+            precondition_failed="human_inbox_partial_read",
+            suggestion="Retry the Human Inbox detail after the degraded contributor recovers.",
+        )
+    raise _bff_error(
+        404,
+        ErrorCode.RESOURCE_NOT_FOUND,
+        "Human inbox item not found",
+        f"Human inbox item {item_id} does not exist",
+    )
+
+
+async def _build_management_hiq_backlog_for_router(
+    source_type=None, status=None, kind=None, priority=None, q="", page_token=None, page_size=50, identity=None
+):
+    snapshot_at = utc_now()
+    inbox_source_types = {"intervention", "sentinel_finding"}
+    inbox_items, inbox_sources, inbox_failures = await _human_inbox_all_items_bounded(
+        snapshot_at,
+        identity=identity,
+        source_types=inbox_source_types,
+    )
+    return _management_hiq_backlog_response(
+        source_type=source_type,
+        status=status,
+        kind=kind,
+        priority=priority,
+        q=q,
+        page_token=page_token,
+        page_size=page_size,
+        human_inbox_items=inbox_items,
+        human_inbox_sources=inbox_sources,
+        human_inbox_failures=inbox_failures,
+        human_inbox_source_types=inbox_source_types,
+    )
+
+
+async def _build_management_evidence_for_router(
+    ref_id=None, linked_entity_type=None, linked_entity_ref=None, link_type=None,
+    credibility_tier=None, verified=None, page_token=None, page_size=20, identity=None
+):
+    started = time.monotonic()
+    try:
+        payload = await _run_management_read(
+            _build_management_evidence_payload,
+            identity=identity,
+            ref_id=ref_id,
+            linked_entity_type=linked_entity_type,
+            linked_entity_ref=linked_entity_ref,
+            link_type=link_type,
+            credibility_tier=credibility_tier,
+            verified=verified,
+            page_token=page_token,
+            page_size=page_size,
+        )
+    except _ManagementReadTimeout:
+        _log_management_read_timing("evidence", started, timed_out=True)
+        return _management_evidence_degraded_payload(page_size=page_size)
+    _log_management_read_timing("evidence", started)
+    return payload
+
+
+def _build_degraded_control_guidance_for_router():
+    state = _read_surface_state()
+    guidance = {
+        "current_state": state,
+        "command_backend_configured": bool(os.getenv("PANTHEON_INTERNAL_API_URL", "").strip()),
+        "primary_path": {
+            "url": "/api/v1/operator/commands",
+            "status": "available" if state == "fresh" else "degraded",
+            "note": (
+                "Primary BFF command path. Submit operator commands for async execution."
+                if state == "fresh"
+                else "BFF read surface is degraded. Commands may execute but status queries could return stale data."
+            ),
+        },
+        "secondary_path": {
+            "admin_cli": {
+                "description": "Local/SSH CLI with RBAC and MFA for destructive actions",
+                "commands": {
+                    "pause_runtime": "pantheon-admin runtime pause --binding-id <ID> --reason <REASON>",
+                    "resume_runtime": "pantheon-admin runtime resume --binding-id <ID>",
+                    "rollback": "pantheon-admin rollback --target-type <TYPE> --target-id <ID> --to-version <VER>",
+                    "kill_switch": "pantheon-admin kill-switch activate --scope <SCOPE> --reason <REASON>",
+                },
+            },
+            "protected_internal_api": {
+                "configured": bool(os.getenv("PANTHEON_INTERNAL_API_URL", "").strip()),
+                "base_url": os.getenv("PANTHEON_INTERNAL_API_URL", "http://127.0.0.1:8100").strip(),
+                "endpoints": {
+                    "kill_switch": "POST /internal/v1/kill-switch",
+                    "safe_mode": "POST /internal/v1/safe-mode",
+                    "pause_program": "POST /internal/v1/evolution/programs/{program_id}/pause",
+                    "rollback_program": "POST /internal/v1/evolution/programs/{program_id}/rollback",
+                },
+                "auth": "Requires PANTHEON_INTERNAL_API_SECRET bearer token",
+            },
+        },
+        "critical_actions_bypass_mfa": True,
+        "critical_action_list": [
+            "KILL_SWITCH_ACTIVATE",
+            "SAFE_MODE_ENABLE",
+            "PROGRAM_PAUSE",
+            "JOB_CANCEL",
+            "EMERGENCY_CIRCUIT_BREAKER",
+        ],
+        "escalation_contact": {
+            "oncall_role": "Platform Lead / Risk Lead",
+            "runbook": "docs/06-runbooks/APP-002-SECONDARY-CONTROL-PATH.md",
+        },
+    }
+    return JSONResponse(content=guidance)
+
+
 app.include_router(
     create_management_read_models_router(
         get_read_store=lambda: read_store,
@@ -67946,6 +68130,28 @@ app.include_router(
         require_read_role=_require_read_role,
         snapshot_meta=_snapshot_meta,
         utc_now=utc_now,
+        bff_error=_bff_error,
+        raise_if_session_logged_out=_raise_if_session_logged_out,
+        shell_summary_builder=_build_shell_summary_counts,
+        shell_summary_session_builder=_shell_summary_session,
+        log_read_timing_fn=_log_management_read_timing,
+        operator_home_builder=_build_operator_home_payload,
+        cockpit_builder=_build_management_cockpit_for_router,
+        trading_pulse_builder=_build_management_trading_pulse_route_payload,
+        trading_pulse_rankings_builder=_build_management_trading_pulse_rankings_payload,
+        sentinel_pulse_builder=_build_management_sentinel_pulse_response,
+        operator_health_status_builder=_build_operator_health_status_payload,
+        loop_throughput_builder=_management_loop_throughput_response,
+        risk_radar_builder=_management_risk_radar_response,
+        tenant_payload_fn=lambda ident: _bff_me_tenant_payload(ident, requested_tenant=None),
+        incident_timeline_builder=_management_incident_timeline_response,
+        human_inbox_builder=_build_management_human_inbox_for_router,
+        human_inbox_detail_builder=_build_management_human_inbox_detail_for_router,
+        hiq_backlog_builder=_build_management_hiq_backlog_for_router,
+        intervention_stream_builder=_management_intervention_stream_response,
+        evidence_builder=_build_management_evidence_for_router,
+        operations_read_model_builder=_ops_read_model_entry_for_persona,
+        degraded_control_guidance_builder=_build_degraded_control_guidance_for_router,
     )
 )
 

@@ -546,3 +546,43 @@ def test_cockpit_composition_with_empty_store():
     assert "system_kpis" not in data["data"]
     assert "cards" not in data["data"]
     assert data["meta"]["surfaces"]["management_cockpit"]["status"] in {"unavailable", "degraded"}
+
+
+def test_real_bff_main_app_management_route_ownership():
+    """Verify in the real main.app, each of the 17 target GET routes has exactly one registration owned by management_read_models.router."""
+    import main as real_main
+    from test_normalized_route_uniqueness import scan_fastapi_routes
+
+    target_routes = [
+        "/bff/management/shell-summary",
+        "/api/v1/operator/home",
+        "/bff/management/cockpit",
+        "/bff/management/trading-pulse",
+        "/bff/management/trading-pulse/rankings",
+        "/bff/management/sentinel-pulse",
+        "/api/v1/operator/health-status",
+        "/bff/management/loop-throughput",
+        "/bff/management/risk-radar",
+        "/bff/management/incident-timeline",
+        "/bff/management/human-inbox",
+        "/bff/management/human-inbox/{item_id}",
+        "/bff/management/hiq-backlog",
+        "/bff/management/intervention-stream",
+        "/bff/management/evidence",
+        "/bff/management/operations-read-model/{persona_id}",
+        "/api/v1/operator/degraded-control-guidance",
+    ]
+
+    scanned_entries = scan_fastapi_routes(real_main.app)
+    for path in target_routes:
+        matching = [
+            entry for entry in scanned_entries
+            if entry.raw_path == path and entry.method == "GET"
+        ]
+        assert len(matching) == 1, (
+            f"Expected exactly 1 GET registration for {path}, found {len(matching)}: {matching}"
+        )
+        entry = matching[0]
+        assert "management_read_models.router" in entry.owner_module, (
+            f"Expected {path} to be owned by management_read_models.router, but owned by {entry.owner_module}"
+        )

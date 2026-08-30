@@ -796,6 +796,7 @@ def create_management_read_models_router(
     risk_radar_builder: Optional[Callable] = None,
     incident_timeline_builder: Optional[Callable] = None,
     human_inbox_builder: Optional[Callable] = None,
+    human_inbox_detail_builder: Optional[Callable] = None,
     human_inbox_all_items_builder: Optional[Callable] = None,
     hiq_backlog_builder: Optional[Callable] = None,
     intervention_stream_builder: Optional[Callable] = None,
@@ -1177,6 +1178,13 @@ def create_management_read_models_router(
         """BFF: detail for one composed human-action inbox row."""
         identity = _extract_id(authorization)
         _req_read(identity)
+        if human_inbox_detail_builder is not None:
+            call_res = (
+                human_inbox_detail_builder(item_id=item_id, identity=identity)
+                if "identity" in inspect.signature(human_inbox_detail_builder).parameters
+                else human_inbox_detail_builder(item_id)
+            )
+            return await _eval(call_res)
         if human_inbox_all_items_builder is not None:
             call_res = (
                 human_inbox_all_items_builder(item_id=item_id, identity=identity)
