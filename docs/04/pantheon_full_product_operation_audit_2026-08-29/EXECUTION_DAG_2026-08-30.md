@@ -172,7 +172,7 @@ python3 docs/04/pantheon_full_product_operation_audit_2026-08-29/validate_catalo
 ```
 
 The script executes 16 comprehensive assertions:
-1. AST digests and body parity (2,271 nodes) against live `main.py`
+1. AST digests and body parity (2,272 nodes) against live `main.py`
 2. Edge-level cutover mappings for 100% of consuming tasks across all AST nodes
 3. Legacy action cluster (9 nodes) assembly ownership and node 118 `os.makedirs` lifespan placement
 4. Route migration inventory parity (441 route decorators across 421 unique route handlers)
@@ -182,9 +182,9 @@ The script executes 16 comprehensive assertions:
 8. DAG acyclicity and topological sortability across all 30 child tasks
 9. Single-stimulus Source proof receipt contract (`source_proof_receipt_id`, 1 tick, 100 records max, `reconcile_only` default)
 10. Special AST node mappings (`_resolve_param`, `_REPO_ROOT`, `_CRON_SERVICE_DIR`, `log`)
-11. Reverse-main symbol inventory (29 callsite-proven symbols) and external caller files (214 files, 269 instances)
+11. Reverse-main symbol inventory (29 callsite-proven symbols) and external caller files (215 files, 270 instances)
 12. `domain_ports` caller inventory (191 rows across 22 files: 129 production across 7 files, 62 test across 15 files)
 13. Dynamic planning agent capacity and authoritative capability selector validation
 14. Planning baseline provenance across Pantheon, execute-plans, and hosted runtime
-15. Bidirectional `pantheon-dev` execution resource mappings
-16. Post-bootstrap canonical task spec hashes (binding `target_repo` + `task_class` + `delivery_repository`) and catalog SHA-256 digest
+15. Bidirectional `pantheon-dev` execution resource invariant
+16. Signed DevTaskPacket materialization mapping and post-bootstrap spec hashes (binding `target_repo` + `task_class` + `delivery_repository`) and catalog SHA-256 digest

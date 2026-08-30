@@ -41,7 +41,7 @@ All 20 identified operational gaps (**OP-G01** through **OP-G20**) from the full
    - Trading Room fixed lenses: Fixed; dynamic candidate pools driven by BFF `candidatePoolId`.
    - ReadSurfaceStore God class: Permanently deleted.
 2. **Current Code Gaps**:
-   - Monolithic `main.py`: 68,304 lines, 2,271 top-level AST body nodes, 453 `@app` decorators across 441 HTTP route decorators and 421 unique route handlers (`OP-G08`).
+   - Monolithic `main.py`: 68,304 lines, 2,272 top-level AST body nodes, 453 `@app` decorators across 441 HTTP route decorators and 421 unique route handlers (`OP-G08`).
    - Cross-router private imports in Agora (`OP-G09`).
    - Dead generic action adapter legacy code (`OP-G10`).
    - Auth readiness synchronous dependency on OpenClaw provider network latency (`OP-G05`).
@@ -73,7 +73,7 @@ All 20 identified operational gaps (**OP-G01** through **OP-G20**) from the full
 | 原始稽核觀察項目 | 判定 | 規劃真實與必要限縮 |
 |---|---|---|
 | 48 個後端 service 目錄；兩個 `NotImplementedError` 是抽象 Port | 正確（稽核基線） | 程式碼目錄存在不代表 production 運作；抽象方法本身不是未完成功能。 |
-| BFF 在 `services/control-plane/bff`，有大量 routes/tests | 正確 | 本基線 AST 包含 68,304 行、2,271 AST nodes、441 個 HTTP decorators、421 unique handlers，所有 inline 路由需解耦至 18 domain routers。 |
+| BFF 在 `services/control-plane/bff`，有大量 routes/tests | 正確 | 本基線 AST 包含 68,304 行、2,272 AST nodes、441 個 HTTP decorators、421 unique handlers，所有 inline 路由需解耦至 18 domain routers。 |
 | Agora write matrix、Postgres persistence、33/33 測試 | 正確（該批次） | 尚不能證明 suggestion 有自然 production caller、hosted receipt 與 same-ID durable readback。 |
 | Management 在 execute-plans，不是本 repo legacy app；0 mock import | 方向正確 | import grep 不能證明 production bundle 不可達 seed/overlay/fallback，需 bundle depgraph gate。 |
 | 核心系統是真的做出來 | 正確 | 證明非空殼，但唯一 write authority、failure semantics、hosted effect、安全治理與 clean retirement 仍需證明。 |

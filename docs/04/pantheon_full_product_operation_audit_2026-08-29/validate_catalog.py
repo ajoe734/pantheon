@@ -12,7 +12,7 @@ Validates all 16 architectural and catalog invariants across:
 8. DAG acyclicity across all 30 child tasks
 9. Single-stimulus Source proof receipt contract
 10. Special AST node mappings (_resolve_param, _REPO_ROOT, _CRON_SERVICE_DIR, log)
-11. Reverse-main symbol inventory (29 symbols) and external caller AST instances (214 files, 269 instances recomputed from source)
+11. Reverse-main symbol inventory (29 symbols) and external caller AST instances (215 files, 270 instances recomputed from source)
 12. Domain ports caller inventory (191 rows across 22 files recomputed from source AST: 129 prod, 62 tests)
 13. Dynamic planning agent capacity and authoritative capability selectors
 14. Planning baseline provenance across Pantheon, execute-plans, and hosted runtime
@@ -42,11 +42,11 @@ def validate_catalog(catalog_path: str, main_py_path: str) -> None:
     tree = ast.parse(source_code)
 
     print(f"Checking AST node count ({len(nodes)} catalog vs {len(tree.body)} live)...")
-    assert len(nodes) == len(tree.body) == 2271, f"AST count mismatch: catalog {len(nodes)} != live {len(tree.body)}"
+    assert len(nodes) == len(tree.body) == 2272, f"AST count mismatch: catalog {len(nodes)} != live {len(tree.body)}"
     assert len(tasks) == 30, f"Task count mismatch: {len(tasks)} != 30"
 
     # 1. Verify AST digests and content parity across all nodes
-    print("1. Verifying AST digests and content parity across all 2,271 nodes...")
+    print("1. Verifying AST digests and content parity across all 2,272 nodes...")
     for i, (cat_node, ast_node) in enumerate(zip(nodes, tree.body)):
         dump_str = ast.dump(ast_node, annotate_fields=True, include_attributes=False)
         exp_digest = hashlib.sha256(dump_str.encode("utf-8")).hexdigest()[:16]
@@ -165,7 +165,7 @@ def validate_catalog(catalog_path: str, main_py_path: str) -> None:
     assert n76["consumer_cutover_mapping"]["OPGAP-BE-BFF-CORE-20260830"] == "logging.getLogger(__name__)", "log logger replacement invalid"
 
     # 11. Verify Reverse-Main Symbol Inventory & External Reverse-Main Inventory (recomputed from source AST)
-    print("11. Verifying reverse-main symbol inventory (29 symbols) and external caller AST instances (214 files, 269 instances)...")
+    print("11. Verifying reverse-main symbol inventory (29 symbols) and external caller AST instances (215 files, 270 instances)...")
     rev = c.get("reverse_main_symbol_inventory", [])
     assert len(rev) == 29, f"Expected 29 callsite-proven reverse-main symbols, found {len(rev)}"
     for entry in rev:
@@ -214,8 +214,8 @@ def validate_catalog(catalog_path: str, main_py_path: str) -> None:
 
     scanned_rev_files = set(x["caller_file"] for x in scanned_rev_instances)
     scanned_rev_symbols = set(x["imported_symbol"] for x in scanned_rev_instances)
-    assert rev_inv.get("total_import_instances", 0) == len(scanned_rev_instances) == 269, f"Expected 269 reverse-main instances, found {rev_inv.get('total_import_instances')}"
-    assert rev_inv.get("unique_caller_files_count", 0) == len(scanned_rev_files) == 214, f"Expected 214 caller files, found {rev_inv.get('unique_caller_files_count')}"
+    assert rev_inv.get("total_import_instances", 0) == len(scanned_rev_instances) == 270, f"Expected 270 reverse-main instances, found {rev_inv.get('total_import_instances')}"
+    assert rev_inv.get("unique_caller_files_count", 0) == len(scanned_rev_files) == 215, f"Expected 215 caller files, found {rev_inv.get('unique_caller_files_count')}"
     assert rev_inv.get("unique_imported_symbols_count", 0) == len(scanned_rev_symbols) == 29, f"Expected 29 unique symbols, found {rev_inv.get('unique_imported_symbols_count')}"
 
     # Verify 1-to-1 exact row parity between source AST and catalog

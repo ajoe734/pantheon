@@ -30,7 +30,7 @@ The monolithic `services/control-plane/bff/main.py` contains exactly **441 HTTP 
 
 ## 2. Minimal Composition Root Allowlist & AST-Level Migration
 
-All **2,271 top-level AST body nodes** in `services/control-plane/bff/main.py` are mapped in `EXECUTION_TASK_CATALOG_2026-08-30.json` with cryptographic AST digests (`ast_digest`), source segment hashes (`source_segment_hash`), 100% non-empty rationales, and edge-level cutover mappings for all consuming tasks:
+All **2,272 top-level AST body nodes** in `services/control-plane/bff/main.py` are mapped in `EXECUTION_TASK_CATALOG_2026-08-30.json` with cryptographic AST digests (`ast_digest`), source segment hashes (`source_segment_hash`), 100% non-empty rationales, and edge-level cutover mappings for all consuming tasks:
 
 1. **Minimal Composition Root Allowlist (`composition_keep`)**:
    - Explicit minimal allowlist governing `main.py` assembly under `OPGAP-BFF-MAIN-ASSEMBLY-20260830`:
@@ -54,9 +54,9 @@ All **2,271 top-level AST body nodes** in `services/control-plane/bff/main.py` a
 
 ---
 
-## 3. Scoped External Reverse-Main Import Inventory (269 Qualified Instances, 94 Exclusions)
+## 3. Scoped External Reverse-Main Import Inventory (270 Qualified Instances, 94 Exclusions)
 
-Across the repository, exactly **269 qualified external import instances** spanning **214 unique caller files** import directly from BFF `main.py`. The catalog maps every instance to its target port module or domain router:
+Across the repository, exactly **270 qualified external import instances** spanning **215 unique caller files** import directly from BFF `main.py`. The catalog maps every instance to its target port module or domain router:
 
 - **Command Contracts & Constants (`ports/command_contracts.py`)**: `CommandType`, `ErrorCode`, `ObjectType`, `STATUS_CLAIMED`, `STATUS_DEGRADED`, `STATUS_FAILED`, `STATUS_PROCESSED`, `STATUS_PROPOSED`, `TargetObject`, `_dry_run_success_response`, `_reject_body_idempotency_key`, `_request_dry_run_requested`, `_resolve_final_idempotency_key`, `_sem_list_payload`.
 - **Storage & State Contracts (`ports/storage.py`)**: `_read_surface_meta`, `_stable_json_hash`, `get_store`, `inbox_store`, `outbox_store`, `store`.
