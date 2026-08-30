@@ -220,10 +220,15 @@ from operations_read_model import (
 )
 from read_store import redact_evidence_refs
 try:
-    from ports import ReadSurfacePorts, create_read_surface_ports
+    from ports import (
+        ReadSurfacePorts,
+        create_persona_registry_write_owner,
+        create_read_surface_ports,
+    )
 except ImportError:
     from services.control_plane.bff.ports import (  # type: ignore[no-redef]
         ReadSurfacePorts,
+        create_persona_registry_write_owner,
         create_read_surface_ports,
     )
 from settings_store import SettingsStore
@@ -1214,7 +1219,10 @@ async def _bff_unhandled_exception_handler(
 
 command_store = CommandStore(os.path.join(BFF_DATA_DIR, "commands.jsonl"))
 session_lifecycle_store = SessionLifecycleStore(os.path.join(BFF_DATA_DIR, "session_lifecycle.json"))
-read_store: ReadSurfacePorts = create_read_surface_ports()
+persona_write_owner = create_persona_registry_write_owner()
+read_store: ReadSurfacePorts = create_read_surface_ports(
+    persona_registry_store=persona_write_owner,
+)
 settings_store = SettingsStore(os.path.join(BFF_DATA_DIR, "settings.json"))
 _ppl_alloc_009_eligibility_observation_store = PaperEligibilityObservationStore(
     os.path.join(BFF_DATA_DIR, "ppl_alloc_009_proof_observations.sqlite3")
@@ -68290,6 +68298,7 @@ _agora_router = _create_agora_router(
     bff_error=_bff_error,
     utc_now=utc_now,
     get_read_store=lambda: read_store,
+    get_persona_write_owner=lambda: persona_write_owner,
     get_trade_journey_store=lambda: _trade_journeys.EVENT_STORE,
     sync_servant_agent=lambda persona: _ensure_agora_servant_openclaw_agent(dict(persona)),
     canonical_context_ref_resolver=_resolve_agora_interaction_context_ref,

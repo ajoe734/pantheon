@@ -1,0 +1,58 @@
+{
+  "task": "DTG-ARCH-01",
+  "observed_at": "2026-08-30T18:00:00Z",
+  "live_anchor": {
+    "anchor_path": "/home/lupin/pantheon-ci-deploy/runtime/task-state-events-v2.jsonl.legacy-anchor.json",
+    "anchor_sha256": "702bd8a7c1a67e4525a2c289432f185647518d716dd7c4056bc624ebbdd536e3",
+    "archived_path": "/home/lupin/pantheon-ci-deploy/runtime/task-state-events.jsonl",
+    "byte_size": 9135812318,
+    "journal_sha256": "185ba10f7d6d05a28d2b7bd53e8e13cb39a1297a25c249ddc7da5cfa063cc1bd",
+    "event_count": 17135,
+    "last_event_sha256": "b2aaa4cc71345ec63aad8ae507ccf450ce92efeff87d70ade3de181de2531f6b",
+    "state_sha256": "ba2db008d4813600919bdc46667c49db0f4aee2f1a7c1b7a226377c3fbaebcb6",
+    "confirmed_unchanged": true,
+    "confirmation_method": "re-read the live anchor file byte-for-byte and diffed every field against the SD.md 9 live anchor tuple; all five identity fields match exactly"
+  },
+  "locations_searched": [
+    {
+      "location": "/ (root filesystem, single ext4 mount, -xdev so no crossing into other filesystems)",
+      "method": "find / -xdev -type f -size 9135812318c",
+      "candidates_found": 0,
+      "notes": "exact byte-size match; completed after ~3 minutes; only Permission denied entries under root-owned service/private tmp dirs, no accessible or inaccessible file matched the target size"
+    },
+    {
+      "location": "/home, /var, /opt, /srv, /root",
+      "method": "find <dirs> -xdev -type f -size +8G -size -10G",
+      "candidates_found": 0,
+      "notes": "near-size sweep (8-10 GiB) to catch a renamed, truncated, or partially-recovered copy; zero matches"
+    },
+    {
+      "location": "filesystem/mount inventory",
+      "method": "df -h and mount, filtered to non-pseudo filesystems",
+      "result": "single /dev/sda1 root mount (242G, 65G free) plus /boot and /boot/efi; no separate data/backup volume, no external or network-attached storage mounted on this host",
+      "conclusion": "there is no distinct 'backup volume' on this machine beyond the root filesystem already covered by the two searches above"
+    },
+    {
+      "location": "repository configuration and code for a documented backup/custody location (e.g. an rclone/rsync target, a cloud storage bucket reference, a backup_path config key)",
+      "method": "grep across .orchestrator/config.json and the whole repo for backup/custody/archive-path markers",
+      "result": "no documented backup location found; the only archive-adjacent artifact is docs/deployment/evidence/product-functional-closure/PFG-DATA-TELEMETRY-BASELINE-20260822/backup_candidates.json, which is unrelated product-telemetry evidence, not a V1 task-state journal custody record"
+    }
+  ],
+  "not_searched": [
+    "any location requiring credentials or authorization this session does not hold (e.g. an unlisted GCS/S3 bucket) -- none was found documented anywhere in the repository, so none was guessed at or probed"
+  ],
+  "disposition": "historical_archive_unavailable",
+  "reason": "Exact-byte-size and near-size sweeps of every accessible location on the only storage this host has, plus a check for any documented off-host custody location, found no candidate. This matches GAP_AUDIT.md's 2026-08-30 finding (no matching filename found under /home during that audit) and extends it with an exhaustive size-based scan across the whole accessible filesystem rather than a filename guess.",
+  "actions_taken": "none: no bytes were copied, synthesized, or reconstructed; the live anchor and hot V2 config were not touched",
+  "actions_explicitly_not_taken": [
+    "no permission hardening",
+    "no encryption",
+    "no immutable flags",
+    "no daemon or startup check",
+    "no fallback reader",
+    "no live configuration dependency",
+    "no synthetic reconstruction of journal bytes from V2 or ai-status.json"
+  ],
+  "verifier_status": "scripts/verify_task_state_store.py --verify-archive --archive-path was not invoked because no candidate archive path exists to pass it; running it without a real candidate would only reproduce the already-known historical_archive_unavailable result",
+  "impact": "none on hot path; V2 head/read/write/replay and the full-audit-independent daily operation of the fleet are unaffected. Only the full offline V1-lineage historical audit remains unable to pass, as already true before this search."
+}

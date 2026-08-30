@@ -1153,6 +1153,7 @@ def create_read_surface_ports(
     *,
     operations_consultation: Optional[OperationsConsultationPort] = None,
     persona_capital_runtime: Optional[Union[CompositePersonaCapitalRuntimePort, PersonaCapitalRuntimeDomainPort]] = None,
+    persona_registry_store: Optional[Any] = None,
     ooda_management: Optional[OodaManagementDomainPort] = None,
     research_knowledge_source: Optional[ResearchKnowledgeSourcePort] = None,
     lifecycle_telemetry_governance: Optional[CompositeLifecycleTelemetryGovernancePort] = None,
@@ -1160,6 +1161,15 @@ def create_read_surface_ports(
     **kwargs: Any,
 ) -> ReadSurfacePorts:
     """Factory creating a production-grade composite ReadSurfacePorts instance."""
+    if persona_registry_store is not None:
+        if persona_capital_runtime is None:
+            persona_capital_runtime = PersonaCapitalRuntimeDomainPort(
+                persona_port=PersonaFleetPort(store=persona_registry_store),
+            )
+        if persona_training is None:
+            persona_training = PersonaTrainingDomainPort(
+                persona_port=PersonaRegistryReadsPort(store=persona_registry_store),
+            )
     return ReadSurfacePorts(
         operations_consultation=operations_consultation,
         persona_capital_runtime=persona_capital_runtime,

@@ -133,7 +133,13 @@ class PersonaFleetPort:
         mandate: Optional[str] = None,
         strategy_family: Optional[str] = None,
         operational_only: bool = False,
+        include_market_persona_defaults: bool = False,
     ) -> List[Dict[str, Any]]:
+        """List personas with optional filtering.
+
+        ``include_market_persona_defaults`` is accepted for compatibility with
+        composite caller interfaces that layer market defaults separately.
+        """
         _, raw_records = self._get_raw_records()
         items = [_deep_copy(record) for record in raw_records if self._persona_id(record)]
         if lifecycle_state:
@@ -243,7 +249,17 @@ class CapitalPoolPort:
     def _binding_id(record: Mapping[str, Any]) -> str:
         return str(record.get("binding_id") or record.get("id") or "").strip()
 
-    def list_capital_pools(self, *, status: Optional[str] = None) -> List[Dict[str, Any]]:
+    def list_capital_pools(
+        self,
+        *,
+        status: Optional[str] = None,
+        include_market_persona_defaults: bool = False,
+    ) -> List[Dict[str, Any]]:
+        """List capital pools with optional status filtering.
+
+        ``include_market_persona_defaults`` is accepted for compatibility with
+        composite caller interfaces that layer market defaults separately.
+        """
         _, raw = self._get_raw_pools()
         items = [_deep_copy(p) for p in raw if self._pool_id(p)]
         if status:
@@ -266,7 +282,13 @@ class CapitalPoolPort:
         capital_pool_id: Optional[str] = None,
         role: Optional[str] = None,
         validity: Optional[str] = None,
+        include_market_persona_defaults: bool = False,
     ) -> List[Dict[str, Any]]:
+        """List persona-capital bindings with optional filtering.
+
+        ``include_market_persona_defaults`` is accepted for compatibility with
+        composite caller interfaces that layer market defaults separately.
+        """
         _, raw = self._get_raw_bindings()
         items = [_deep_copy(b) for b in raw if self._binding_id(b)]
         if persona_id:
@@ -434,7 +456,13 @@ class RuntimePort:
         *,
         deployment_mode: Optional[str] = None,
         version: Optional[str] = None,
+        include_market_persona_defaults: bool = False,
     ) -> List[Dict[str, Any]]:
+        """List runtime bindings with optional filtering.
+
+        ``include_market_persona_defaults`` is accepted for compatibility with
+        composite caller interfaces that layer market defaults separately.
+        """
         _, raw = self._get_raw_bindings()
         items = [_deep_copy(r) for r in raw if self._runtime_id(r)]
         if deployment_mode:
@@ -569,7 +597,13 @@ class RankingProjectionPort:
         *,
         market_scope: Optional[str] = None,
         status: Optional[str] = None,
+        include_market_persona_defaults: bool = False,
     ) -> List[Dict[str, Any]]:
+        """List persona league standings with optional scope and status filtering.
+
+        ``include_market_persona_defaults`` is accepted for compatibility with
+        composite caller interfaces that layer market defaults separately.
+        """
         _, raw = self._read(self._persona_league_reader)
         items = [_deep_copy(r) for r in raw]
         if market_scope:

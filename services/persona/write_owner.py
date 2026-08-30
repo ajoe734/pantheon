@@ -8,6 +8,7 @@ fallback.  BFF callers are expected to use this HTTP boundary instead of
 """
 from __future__ import annotations
 
+import hmac
 import os
 import uuid
 from datetime import datetime, timezone
@@ -85,6 +86,14 @@ class PersonaNotFound(PersonaOwnerError):
 
 class PersonaConcurrentUpdate(PersonaOwnerError):
     """Raised when repeated compare-and-set attempts lose a write race."""
+
+
+class CapabilitySnapshotConflict(PersonaOwnerError):
+    """Raised when a stable snapshot id is replayed with other semantics."""
+
+
+class CapabilitySnapshotNotFound(PersonaOwnerError):
+    """Raised when a persisted capability snapshot cannot be found."""
 
 
 class PersonaAuthorityError(PersonaOwnerError):
@@ -185,6 +194,26 @@ def _persona_auth_env() -> dict[str, str]:
 def _authenticate_persona_mutation(
     authorization: str | None,
 ) -> PersonaInboundAuthority:
+    configured_service_token = str(
+        os.getenv("PANTHEON_PERSONA_SERVICE_TOKEN")
+        or os.getenv("PERSONA_SERVICE_TOKEN")
+        or ""
+    ).strip()
+    supplied_service_token = ""
+    if str(authorization or "").startswith("Bearer "):
+        supplied_service_token = str(authorization)[len("Bearer ") :].strip()
+    if (
+        configured_service_token
+        and supplied_service_token
+        and hmac.compare_digest(configured_service_token, supplied_service_token)
+    ):
+        return PersonaInboundAuthority(
+            actor_id=str(
+                os.getenv("PANTHEON_PERSONA_SERVICE_ACTOR_ID") or "operator-bff"
+            ).strip(),
+            roles=_PERSONA_PLANE_ROLES,
+            token_kind="service",
+        )
     try:
         context: AuthContext = validate_request_auth(
             authorization=authorization,
@@ -336,6 +365,51 @@ class PersonaBody(BaseModel):
             )
         if self.status not in _ADMIN_STATUSES:
             raise ValueError(f"status must be one of {sorted(_ADMIN_STATUSES)}")
+        return self
+
+
+class CapabilitySnapshotBody(BaseModel):
+    """Immutable effective capability receipt owned by the Persona service."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    snapshot_id: str = Field(min_length=1)
+    persona_id: str = Field(min_length=1)
+    capabilities: list[str] = Field(min_length=1)
+    allowed_capabilities: list[str] = Field(min_length=1)
+    effective_tools: list[str] = Field(default_factory=list)
+    effective_skills: list[str] = Field(default_factory=list)
+    effective_workflows: list[str] = Field(default_factory=list)
+    restrictions: list[str] = Field(default_factory=list)
+    generated_at: str = Field(min_length=1)
+    source_refs: list[str] = Field(default_factory=list)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class UpsertCapabilitySnapshotRequest(BaseModel):
+    """Idempotent capability receipt accepted by the Persona write owner."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    actor_id: str = Field(min_length=1)
+    snapshot_id: str = Field(min_length=1)
+    persona_id: str = Field(min_length=1)
+    capabilities: list[str] = Field(min_length=1)
+    effective_tools: list[str] = Field(default_factory=list)
+    effective_skills: list[str] = Field(default_factory=list)
+    effective_workflows: list[str] = Field(default_factory=list)
+    restrictions: list[str] = Field(default_factory=list)
+    generated_at: str = Field(min_length=1)
+    source_refs: list[str] = Field(default_factory=list)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def validate_capabilities(self) -> "UpsertCapabilitySnapshotRequest":
+        normalized = [str(item).strip() for item in self.capabilities]
+        if any(not item for item in normalized):
+            raise ValueError("capabilities must contain non-empty values")
+        if len(set(normalized)) != len(normalized):
+            raise ValueError("capabilities must not contain duplicates")
         return self
 
 
@@ -544,6 +618,89 @@ class PersistentPersonaOwner:
         return PersonaBody.model_validate(record).model_dump(mode="json")
 
 
+class PersistentCapabilitySnapshotOwner:
+    """Persona-service owner for immutable capability snapshot receipts."""
+
+    def __init__(self, records: _OwnerRecordStore) -> None:
+        self._records = records
+
+    @classmethod
+    def from_json_path(cls, path: str | Path) -> "PersistentCapabilitySnapshotOwner":
+        return cls(AtomicJsonRecordStore(path))
+
+    @staticmethod
+    def _semantic_payload(record: Mapping[str, Any]) -> dict[str, Any]:
+        return {
+            key: value
+            for key, value in dict(record).items()
+            if key != "generated_at"
+        }
+
+    def upsert(
+        self,
+        request: UpsertCapabilitySnapshotRequest,
+    ) -> CapabilitySnapshotBody:
+        record = CapabilitySnapshotBody(
+            snapshot_id=request.snapshot_id,
+            persona_id=request.persona_id,
+            capabilities=list(request.capabilities),
+            allowed_capabilities=list(request.capabilities),
+            effective_tools=list(request.effective_tools),
+            effective_skills=list(request.effective_skills),
+            effective_workflows=list(request.effective_workflows),
+            restrictions=list(request.restrictions),
+            generated_at=request.generated_at,
+            source_refs=list(request.source_refs),
+            metadata={
+                **request.metadata,
+                "written_by": request.actor_id,
+                "canonical_write_authority": "persona_service",
+            },
+        ).model_dump(mode="json")
+        for _attempt in range(4):
+            current = self._records.get(request.snapshot_id)
+            if current is not None:
+                if self._semantic_payload(current) == self._semantic_payload(record):
+                    return CapabilitySnapshotBody.model_validate(current)
+                raise CapabilitySnapshotConflict(
+                    f"Capability snapshot {request.snapshot_id!r} already has other semantics"
+                )
+            committed, canonical = self._records.compare_and_set(
+                request.snapshot_id,
+                None,
+                record,
+            )
+            if committed:
+                return CapabilitySnapshotBody.model_validate(canonical or record)
+        raise PersonaConcurrentUpdate(
+            f"Capability snapshot {request.snapshot_id!r} changed concurrently"
+        )
+
+    def get(self, snapshot_id: str) -> CapabilitySnapshotBody:
+        record = self._records.get(snapshot_id)
+        if record is None:
+            raise CapabilitySnapshotNotFound(
+                f"Capability snapshot {snapshot_id!r} not found"
+            )
+        return CapabilitySnapshotBody.model_validate(record)
+
+    def get_for_persona(self, persona_id: str) -> CapabilitySnapshotBody:
+        matches = [
+            CapabilitySnapshotBody.model_validate(record)
+            for record in self._records.list_all()
+            if str(record.get("persona_id") or "") == persona_id
+        ]
+        if not matches:
+            raise CapabilitySnapshotNotFound(
+                f"Capability snapshot for Persona {persona_id!r} not found"
+            )
+        return sorted(
+            matches,
+            key=lambda item: (item.generated_at, item.snapshot_id),
+            reverse=True,
+        )[0]
+
+
 def build_persona_owner() -> PersistentPersonaOwner:
     backend = os.getenv("PERSONA_STORE_BACKEND", "json")
     dsn = os.getenv("PERSONA_STORE_DSN") or os.getenv("DATABASE_URL")
@@ -561,12 +718,41 @@ def build_persona_owner() -> PersistentPersonaOwner:
     return PersistentPersonaOwner(records)
 
 
+def build_capability_snapshot_owner() -> PersistentCapabilitySnapshotOwner:
+    backend = os.getenv(
+        "PERSONA_CAPABILITY_STORE_BACKEND",
+        os.getenv("PERSONA_STORE_BACKEND", "json"),
+    )
+    dsn = (
+        os.getenv("PERSONA_CAPABILITY_STORE_DSN")
+        or os.getenv("PERSONA_STORE_DSN")
+        or os.getenv("DATABASE_URL")
+    )
+    path = os.getenv(
+        "PERSONA_CAPABILITY_STORE_PATH",
+        "/tmp/pantheon/persona/capability_snapshots.json",
+    )
+    records = build_record_store(
+        backend=backend,
+        dsn=dsn,
+        table_name=os.getenv(
+            "PERSONA_CAPABILITY_STORE_TABLE",
+            "persona.capability_snapshots",
+        ),
+        json_path=path,
+        owner_service="persona-svc",
+    )
+    return PersistentCapabilitySnapshotOwner(records)
+
+
 def create_app(
     owner: PersistentPersonaOwner | None = None,
     *,
+    capability_owner: PersistentCapabilitySnapshotOwner | None = None,
     governance_decision_verifier: GovernanceDecisionVerifier | None = None,
 ) -> FastAPI:
     persistent_owner = owner or build_persona_owner()
+    persistent_capability_owner = capability_owner or build_capability_snapshot_owner()
     app = FastAPI(
         title="Pantheon Persona Registry Owner",
         version="1.0.0",
@@ -662,6 +848,60 @@ def create_app(
         except PersonaOwnerError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
+    @app.put(
+        "/api/personas/{persona_id}/capability-snapshots/{snapshot_id}",
+        response_model=CapabilitySnapshotBody,
+    )
+    def upsert_capability_snapshot(
+        persona_id: str,
+        snapshot_id: str,
+        body: UpsertCapabilitySnapshotRequest,
+        authorization: str | None = Header(default=None),
+    ) -> CapabilitySnapshotBody:
+        try:
+            authority = _authenticate_persona_mutation(authorization)
+            _require_persona_plane_owner(authority)
+            body = _bind_authenticated_actor(body, authority)
+            if body.persona_id != persona_id or body.snapshot_id != snapshot_id:
+                raise PersonaOwnerError(
+                    "Capability snapshot path identity must match the request body"
+                )
+            persistent_owner.get(persona_id)
+            return persistent_capability_owner.upsert(body)
+        except PersonaAuthorityError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+        except PersonaNotFound as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except CapabilitySnapshotConflict as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except PersonaConcurrentUpdate as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except PersonaOwnerError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.get(
+        "/api/capability-snapshots/{snapshot_id}",
+        response_model=CapabilitySnapshotBody,
+    )
+    def get_capability_snapshot(snapshot_id: str) -> CapabilitySnapshotBody:
+        try:
+            return persistent_capability_owner.get(snapshot_id)
+        except CapabilitySnapshotNotFound as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @app.get(
+        "/api/personas/{persona_id}/capability-snapshot",
+        response_model=CapabilitySnapshotBody,
+    )
+    def get_capability_snapshot_for_persona(
+        persona_id: str,
+    ) -> CapabilitySnapshotBody:
+        try:
+            persistent_owner.get(persona_id)
+            return persistent_capability_owner.get_for_persona(persona_id)
+        except (PersonaNotFound, CapabilitySnapshotNotFound) as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
     @app.get("/health")
     def health() -> dict[str, Any]:
         return {
@@ -678,8 +918,12 @@ app = create_app()
 
 __all__ = [
     "AdvancePersonaLifecycleRequest",
+    "CapabilitySnapshotBody",
+    "CapabilitySnapshotConflict",
+    "CapabilitySnapshotNotFound",
     "CreatePersonaRequest",
     "PatchPersonaRequest",
+    "PersistentCapabilitySnapshotOwner",
     "PersistentPersonaOwner",
     "PersonaAlreadyExists",
     "PersonaAuthorityError",
@@ -690,7 +934,9 @@ __all__ = [
     "PersonaOwnerError",
     "GovernanceDecisionVerifier",
     "RequiredDataSourceBody",
+    "UpsertCapabilitySnapshotRequest",
     "app",
+    "build_capability_snapshot_owner",
     "build_persona_owner",
     "create_app",
 ]

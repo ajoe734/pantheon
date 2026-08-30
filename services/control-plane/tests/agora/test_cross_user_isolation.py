@@ -174,7 +174,9 @@ def client(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> tuple[TestClient,
     monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "true")
     monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "permissive")
     original_store = bff_main.read_store
+    original_write_owner = bff_main.persona_write_owner
     bff_main.read_store = CrossUserTestStore()
+    bff_main.persona_write_owner = bff_main.read_store
 
     fake_openclaw = FakeOpenClawClient()
     monkeypatch.setattr(servant_router, "OpenClawOpsClient", lambda: fake_openclaw)
@@ -218,6 +220,7 @@ def client(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> tuple[TestClient,
         yield TestClient(bff_main.app, raise_server_exceptions=False), fake_openclaw
     finally:
         bff_main.read_store = original_store
+        bff_main.persona_write_owner = original_write_owner
 
 
 def test_cross_user_servant_strategy_and_journal_are_isolated(

@@ -87,6 +87,25 @@ class TestRankingProjectionPortPersonaLeague:
         items = port.list_persona_league()
         assert items[0]["persona_id"] == "persona-x"
 
+    def test_include_market_persona_defaults_accepted_and_filters_applied(self):
+        league = [
+            {"persona_id": "persona-a", "rank": 1, "league_score": 0.9, "market_scope": ["us_equity"], "status": "active"},
+            {"persona_id": "persona-b", "rank": 2, "league_score": 0.7, "market_scope": ["crypto"], "status": "paused"},
+        ]
+        port = RankingProjectionPort(persona_league_reader=lambda: league)
+        res = port.list_persona_league(include_market_persona_defaults=True)
+        assert len(res) == 2
+
+        active = port.list_persona_league(status="active", include_market_persona_defaults=True)
+        assert len(active) == 1
+        assert active[0]["persona_id"] == "persona-a"
+
+    def test_rejects_broad_unsupported_kwargs(self):
+        import pytest
+        port = RankingProjectionPort(persona_league_reader=lambda: [])
+        with pytest.raises(TypeError):
+            port.list_persona_league(unsupported_broad_kwarg=123)  # type: ignore[call-arg]
+
 
 class TestRankingProjectionPortRebalances:
     def test_filtering_and_sorting(self):

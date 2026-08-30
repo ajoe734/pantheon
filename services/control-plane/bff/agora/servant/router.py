@@ -28,6 +28,16 @@ from ..models import (
     ServantProfile,
 )
 from openclaw_ops_client import OpenClawOpsClient, OpenClawOpsClientError
+try:
+    from ports.persona_write_owner import (
+        PersonaWriteConflict,
+        PersonaWriteOwnerUnavailable,
+    )
+except ImportError:
+    from services.control_plane.bff.ports.persona_write_owner import (  # type: ignore[no-redef]
+        PersonaWriteConflict,
+        PersonaWriteOwnerUnavailable,
+    )
 
 
 _SERVANT_CAPABILITY = "agora.servant.v1"
@@ -210,10 +220,12 @@ def _capability_summary(scope: Any, record: Optional[Mapping[str, Any]] = None) 
 
 
 def _servant_status(record: Mapping[str, Any]) -> str:
+    metadata = _metadata(record)
     raw = str(
-        record.get("status")
+        metadata.get("servant_status")
+        or record.get("status")
         or record.get("lifecycle_state")
-        or _metadata(record).get("status")
+        or metadata.get("status")
         or ""
     ).strip().lower()
     if raw in _PROFILE_STATUSES:
@@ -331,16 +343,19 @@ def _find_servant_persona(
 
 
 def _create_servant_persona(
-    read_store: Any,
+    write_owner: Any,
     *,
     persona_id: str,
     scope: Any,
     now: str,
     metadata: Dict[str, Any],
 ) -> Dict[str, Any]:
-    create_persona = getattr(read_store, "create_persona", None)
+    create_persona = getattr(write_owner, "create_persona", None)
     if not callable(create_persona):
-        raise RuntimeError("read store does not support persona creation")
+        raise PersonaWriteOwnerUnavailable(
+            "persona_registry_write_owner",
+            "Persona Registry writer does not support Persona creation",
+        )
     return create_persona(
         persona_id=persona_id,
         name="Agora Servant",
@@ -363,19 +378,31 @@ def _create_servant_persona(
 
 
 def _update_servant_persona(
-    read_store: Any,
+    write_owner: Any,
     *,
     persona_id: str,
     scope: Any,
     now: str,
     existing: Mapping[str, Any],
     metadata: Dict[str, Any],
+    activate: bool = False,
 ) -> Dict[str, Any]:
-    update_persona = getattr(read_store, "update_persona", None)
+    update_persona = getattr(write_owner, "update_persona", None)
     if not callable(update_persona):
-        raise RuntimeError("read store does not support persona update")
+        raise PersonaWriteOwnerUnavailable(
+            "persona_registry_write_owner",
+            "Persona Registry writer does not support Persona updates",
+        )
     current_status = _servant_status(existing)
-    lifecycle_state = current_status if current_status in {"suspended", "retired"} else "paper_only"
+    lifecycle_state: Optional[str] = None
+    if activate:
+        metadata = dict(metadata)
+        metadata["servant_status"] = (
+            current_status
+            if current_status in {"suspended", "retired"}
+            else "paper_only"
+        )
+        lifecycle_state = metadata["servant_status"]
     updated = update_persona(
         persona_id,
         name=str(existing.get("name") or "Agora Servant"),
@@ -387,6 +414,45 @@ def _update_servant_persona(
         metadata=metadata,
     )
     return _json_clone(updated or existing)
+
+
+def _persona_owner_call(
+    call: Callable[[], Any],
+    *,
+    dependency: str,
+    bff_error: Callable[..., HTTPException],
+) -> Any:
+    from models import ErrorCode
+
+    try:
+        return call()
+    except PersonaWriteConflict as exc:
+        raise bff_error(
+            409,
+            ErrorCode.RESOURCE_CONFLICT,
+            "Persona write owner rejected divergent semantics",
+            str(exc)[:300],
+            precondition_failed=dependency,
+        ) from exc
+    except PersonaWriteOwnerUnavailable as exc:
+        failed_dependency = str(exc.dependency or dependency)
+        raise bff_error(
+            503,
+            ErrorCode.DEPENDENCY_UNAVAILABLE,
+            "Persona write owner is unavailable",
+            str(exc.reason)[:300],
+            precondition_failed=failed_dependency,
+            details_extra={"dependency": failed_dependency},
+        ) from exc
+    except Exception as exc:  # noqa: BLE001
+        raise bff_error(
+            503,
+            ErrorCode.DEPENDENCY_UNAVAILABLE,
+            "Persona write owner is unavailable",
+            str(exc)[:300] or type(exc).__name__,
+            precondition_failed=dependency,
+            details_extra={"dependency": dependency},
+        ) from exc
 
 
 def _profile_from_persona(
@@ -669,6 +735,7 @@ def create_servant_router(
     utc_now: Callable[[], str],
     get_read_store: Callable[[], Any],
     sync_servant_agent: Callable[[Mapping[str, Any]], Mapping[str, Any]],
+    get_persona_write_owner: Optional[Callable[[], Any]] = None,
 ) -> APIRouter:
     router = APIRouter(tags=["agora-servant"])
 
@@ -696,16 +763,35 @@ def create_servant_router(
             _raise_scope_error(exc, bff_error)
 
         now = utc_now()
-        read_store = get_read_store()
+        write_owner = _persona_owner_call(
+            lambda: get_persona_write_owner() if get_persona_write_owner else None,
+            dependency="persona_registry_write_owner",
+            bff_error=bff_error,
+        )
+        if write_owner is None:
+            write_owner = _persona_owner_call(
+                lambda: (_ for _ in ()).throw(
+                    PersonaWriteOwnerUnavailable(
+                        "persona_registry_write_owner",
+                        "Persona Registry writer is not configured",
+                    )
+                ),
+                dependency="persona_registry_write_owner",
+                bff_error=bff_error,
+            )
         persona_id = _stable_servant_persona_id(
             tenant_id=scope.tenant_id,
             agora_user_id=scope.user_id,
         )
-        existing = _find_servant_persona(
-            read_store,
-            tenant_id=scope.tenant_id,
-            agora_user_id=scope.user_id,
-            expected_persona_id=persona_id,
+        existing = _persona_owner_call(
+            lambda: _find_servant_persona(
+                write_owner,
+                tenant_id=scope.tenant_id,
+                agora_user_id=scope.user_id,
+                expected_persona_id=persona_id,
+            ),
+            dependency="persona_registry_write_owner",
+            bff_error=bff_error,
         )
         policy = AgoraServantPolicy()
         capability_summary = _capability_summary(scope, existing)
@@ -721,22 +807,30 @@ def create_servant_router(
             existing=existing,
         )
         if existing is None:
-            persona = _create_servant_persona(
-                read_store,
-                persona_id=persona_id,
-                scope=scope,
-                now=now,
-                metadata=metadata,
+            persona = _persona_owner_call(
+                lambda: _create_servant_persona(
+                    write_owner,
+                    persona_id=persona_id,
+                    scope=scope,
+                    now=now,
+                    metadata=metadata,
+                ),
+                dependency="persona_registry_write_owner",
+                bff_error=bff_error,
             )
         else:
             persona_id = str(existing.get("persona_id") or existing.get("id") or persona_id)
-            persona = _update_servant_persona(
-                read_store,
-                persona_id=persona_id,
-                scope=scope,
-                now=now,
-                existing=existing,
-                metadata=metadata,
+            persona = _persona_owner_call(
+                lambda: _update_servant_persona(
+                    write_owner,
+                    persona_id=persona_id,
+                    scope=scope,
+                    now=now,
+                    existing=existing,
+                    metadata=metadata,
+                ),
+                dependency="persona_registry_write_owner",
+                bff_error=bff_error,
             )
 
         try:
@@ -755,27 +849,41 @@ def create_servant_router(
             ) from exc
 
         upsert_capability_snapshot = getattr(
-            read_store,
+            write_owner,
             "upsert_persona_capability_snapshot",
             None,
         )
         if not callable(upsert_capability_snapshot):
-            raise RuntimeError("read store does not support Persona capability snapshot writes")
-        upsert_capability_snapshot(
-            snapshot_id=capability_snapshot_id,
-            persona_id=str(persona.get("persona_id") or persona.get("id") or persona_id),
-            capabilities=[_PERSONA_OPINION_CAPABILITY],
-            generated_at=now,
-            source_refs=[
-                f"persona:{persona.get('persona_id') or persona.get('id') or persona_id}",
-                "policy:agora-servant-paper-opinion",
-            ],
-            metadata={
-                "tenant_id": scope.tenant_id,
-                "agora_user_id": scope.user_id,
-                "environment_ceiling": "paper",
-                "execution_authority": "none",
-            },
+            _persona_owner_call(
+                lambda: (_ for _ in ()).throw(
+                    PersonaWriteOwnerUnavailable(
+                        "persona_capability_write_owner",
+                        "Persona capability snapshot writer is not configured",
+                    )
+                ),
+                dependency="persona_capability_write_owner",
+                bff_error=bff_error,
+            )
+        _persona_owner_call(
+            lambda: upsert_capability_snapshot(
+                snapshot_id=capability_snapshot_id,
+                persona_id=str(persona.get("persona_id") or persona.get("id") or persona_id),
+                capabilities=[_PERSONA_OPINION_CAPABILITY],
+                generated_at=now,
+                source_refs=[
+                    f"persona:{persona.get('persona_id') or persona.get('id') or persona_id}",
+                    "policy:agora-servant-paper-opinion",
+                ],
+                metadata={
+                    "tenant_id": scope.tenant_id,
+                    "agora_user_id": scope.user_id,
+                    "environment_ceiling": "paper",
+                    "execution_authority": "none",
+                },
+                actor_id=scope.operator_id,
+            ),
+            dependency="persona_capability_write_owner",
+            bff_error=bff_error,
         )
 
         metadata = _base_servant_metadata(
@@ -787,13 +895,18 @@ def create_servant_router(
             existing=persona,
             sync_result=sync_result,
         )
-        persona = _update_servant_persona(
-            read_store,
-            persona_id=str(persona.get("persona_id") or persona.get("id") or persona_id),
-            scope=scope,
-            now=now,
-            existing=persona,
-            metadata=metadata,
+        persona = _persona_owner_call(
+            lambda: _update_servant_persona(
+                write_owner,
+                persona_id=str(persona.get("persona_id") or persona.get("id") or persona_id),
+                scope=scope,
+                now=now,
+                existing=persona,
+                metadata=metadata,
+                activate=True,
+            ),
+            dependency="persona_registry_write_owner",
+            bff_error=bff_error,
         )
         profile = _profile_from_persona(
             persona,

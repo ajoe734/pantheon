@@ -1,11 +1,36 @@
 {
-  "schema_version": "pantheon.agora-source-frontier-recovery-review.v1",
+  "schema_version": "pantheon.agora-source-frontier-recovery-review.v2",
   "task_id": "AGORA-SOURCE-FRONTIER-RECOVERY-V1-20260829",
-  "generated_at": "2026-08-29T18:19:00Z",
+  "task_generation": 2,
+  "generated_at": "2026-08-30T14:17:28Z",
   "owner": "Codex",
   "reviewer": "Antigravity2",
   "status": "implementation_ready_for_review",
-  "acceptance_state": "post_merge_exact_release_required",
+  "acceptance_state": "generation_2_review_then_post_merge_exact_release_required",
+  "generation_2_reopen": {
+    "reason": "The first reviewed delivery cleared the persisted frontier but its post-merge release never produced an accepted exact-pair deployment. Generation 2 composes the later fail-closed connector-scope and fresh active-symbol pipeline fixes before a new independent review and deployment.",
+    "retired_delivery": {
+      "pull_request": 5412,
+      "head_sha": "34283649ed119094f72dbcfc736fe9ba3501cf57",
+      "merge_sha": "f227360f7fc3ff7b9678a7f57c8b985b87601445",
+      "retry_allowed": false,
+      "reason": "The canonical reopen explicitly forbids retrying the old head or its stale exact pair."
+    },
+    "current_pantheon_base": {
+      "sha": "92077907540d4554e9b8a1d12e2528505b2d1ebe",
+      "branch": "dev",
+      "contains_corrective_merge": "8f8383b507b1fb631d44422031f01ebea5024d5e",
+      "corrective_distance_commits": 74
+    },
+    "current_frontend": {
+      "repository": "ajoe734/execute-plans",
+      "branch": "dev",
+      "sha": "7d30e78476be61222af63a089e7ab141aa43b809",
+      "contains_required_predecessor": "5ffee3db8c2b37b4070d43d091ed4207ef5d70e5",
+      "predecessor_distance_commits": 13
+    },
+    "review_head_binding": "The governed handoff freezes the exact new PR head and this committed manifest; the manifest does not self-declare a mutable head SHA."
+  },
   "failure_reproduction": {
     "workflow_run_id": 33264137876,
     "workflow_url": "https://github.com/ajoe734/pantheon/actions/runs/33264137876",
@@ -129,6 +154,59 @@
       "Reads the authoritative frontier again and fails closed unless the recovery slice converges while only the explicit primary connector set may remain pending."
     ]
   },
+  "generation_2_composition": {
+    "owned_layer": "Task-scoped recovery evidence and exact release acceptance for the already-merged source frontier and active-symbol pipeline corrections.",
+    "repository_changes_in_this_generation": "Evidence-only composition head; product changes are the independently reviewed merges listed below and are all ancestors of the current Pantheon dev base.",
+    "required_merges": [
+      {
+        "pull_request": 5411,
+        "merge_sha": "8f8383b507b1fb631d44422031f01ebea5024d5e",
+        "purpose": "Keep global controller runs fail-closed while validating bounded provider pulls against the explicit exclusive connector frontier only; retain unrelated backlog without deletion."
+      },
+      {
+        "pull_request": 5413,
+        "merge_sha": "9e9ab338ce0ede9c7c4c3686ff31bf63dc7ec35a",
+        "purpose": "Resolve active paper RuntimeBinding symbols and prioritize the official-market fetch so 2330.TW survives the bounded record cap."
+      },
+      {
+        "pull_request": 5415,
+        "merge_sha": "44895a282cba99640861ad344775d904c051e565",
+        "purpose": "Require enough official closes for an admitted active-symbol snapshot."
+      },
+      {
+        "pull_request": 5416,
+        "merge_sha": "394eb050124d763db14ff89d2da01da70a75fb94",
+        "purpose": "Apply Taiwan market-session freshness semantics to the snapshot and paper producer."
+      },
+      {
+        "pull_request": 5417,
+        "merge_sha": "ef66ef0d5b192028b08eb6267ce46e2cd68f689b",
+        "purpose": "Apply the independent audit fixes to the Taiwan session-freshness path."
+      },
+      {
+        "pull_request": 5424,
+        "merge_sha": "65341ab6ade3ee0d6aa5f42c72c6111c1fd3a6ab",
+        "purpose": "Make bounded refresh readback select the authentic TW official receipt and projection."
+      },
+      {
+        "pull_request": 5425,
+        "merge_sha": "c6f7cc2340011624a8b22814ad2dc1d549617d1b",
+        "purpose": "Bind the projected Agora row to the exact new receipt, run, and source record."
+      },
+      {
+        "pull_request": 5426,
+        "merge_sha": "e7f010dccee33185bc260d06048f09e6d2125f28",
+        "purpose": "Keep paper baseline provisioning within the hosted 500-event contract used by the exact release workflow."
+      }
+    ],
+    "fail_closed_invariants": [
+      "No frontier row is deleted or rewritten to manufacture convergence.",
+      "Unbounded/global controller truth still rejects any unresolved frontier backlog.",
+      "Bounded provider pulls accept unrelated retained backlog only when authoritative per-connector counts reconcile and the scheduler proves the exact exclusive connector scope.",
+      "The official refresh must resolve 2330.TW from the active paper RuntimeBinding; an empty, malformed, missing, stale, or unprojected symbol result fails the release.",
+      "External egress remains limited to the reviewed official TWSE/TPEx host allowlist."
+    ]
+  },
   "validation": {
     "python_compile": "passed",
     "focused_and_manual_once": {
@@ -153,13 +231,42 @@
         "Python packaging provision",
         "Smoke acceptance"
       ]
+    },
+    "generation_2_current_dev": {
+      "base_sha": "92077907540d4554e9b8a1d12e2528505b2d1ebe",
+      "command": ".venv-pantheon/bin/python -m pytest -q services/source_ingestion/tests/test_controller_worker.py services/source_ingestion/tests/test_taiwan_official_connectors.py services/source_ingestion/tests/test_runtime_latest_source_record.py scripts/test_source_ingest_deploy_diagnostics_contract.py scripts/test_project_market_data_to_bff_agora_surfaces.py services/execution/lean_runtime/test_paper_signal_producer.py",
+      "result": "183 passed, 1 skipped, 1 warning, 6 subtests passed in 39.97s",
+      "warning": "Existing FastAPI TestClient Starlette deprecation warning only.",
+      "verified_behavior": [
+        "Controller explicit-scope frontier validation",
+        "2330.TW official-market priority and history selection",
+        "Fresh snapshot readback and admission",
+        "Receipt/run/source projection binding",
+        "Deployment diagnostics contract",
+        "Paper signal producer snapshot consumption"
+      ]
     }
+  },
+  "diagnostic_exact_pair_run": {
+    "run_id": 33280168821,
+    "url": "https://github.com/ajoe734/pantheon/actions/runs/33280168821",
+    "backend_sha": "8f8383b507b1fb631d44422031f01ebea5024d5e",
+    "frontend_sha": "bd03c863e3c2c1c64b9b7797f27cefaf84df17c1",
+    "conclusion": "failure_rolled_back",
+    "accepted_observations": [
+      "The bounded source refresh resolved and logged active paper symbol 2330.TW.",
+      "The source-ingest service returned the 2330.TW latest snapshot route successfully.",
+      "paper-signal-producer was healthy, discovered one active paper binding, and enqueued one signal for it."
+    ],
+    "terminal_failure": "Agora projection does not bind the new receipt/run/source",
+    "release_evidence": false,
+    "reason": "This run proves the symbol alignment diagnosis only. It predates PRs 5424-5426, rolled back, and cannot unblock AGC-14."
   },
   "release_closeout_gate": {
     "status": "pending_post_merge",
     "success_claimed": false,
-    "required_backend": "The exact Pantheon dev merge commit containing implementation commit 2dc7eaf1ca4c19af60cb229a3194949937e734a3.",
-    "required_frontend_sha": "5ffee3db8c2b37b4070d43d091ed4207ef5d70e5",
+    "required_backend": "The exact Pantheon dev merge commit containing the new generation-2 reviewed evidence head based on 92077907540d4554e9b8a1d12e2528505b2d1ebe; neither 34283649ed119094f72dbcfc736fe9ba3501cf57 nor the stale prior exact pair may be retried.",
+    "required_frontend_sha": "7d30e78476be61222af63a089e7ab141aa43b809",
     "required_dispatch": {
       "environment": "dev",
       "component": "root",
@@ -168,13 +275,13 @@
       "allow_dirty": false
     },
     "required_proofs": [
-      "Root compose succeeds with the authoritative frontier still at zero.",
-      "The bounded TWSE/TPEx refresh produces a fresh admitted market snapshot.",
-      "paper-signal-producer consumes the fresh snapshot and becomes healthy.",
+      "Root compose succeeds while authoritative per-connector frontier counts remain internally consistent and the bounded official connector scope converges without deleting unrelated retained work.",
+      "The bounded TWSE/TPEx refresh resolves active RuntimeBinding symbol 2330.TW and produces a fresh admitted market snapshot for that exact symbol.",
+      "paper-signal-producer consumes the fresh 2330.TW snapshot, enqueues the binding-scoped signal, and remains healthy.",
       "Public BFF /bff/version and frontend /deployment.json expose the exact admitted backend/frontend pair.",
       "Hosted health and workflow probes succeed and their GitHub run artifacts provide immutable evidence."
     ],
-    "frontend_ref_note": "At manifest generation no remote execute-plans branch had 5ffee3db8c2b37b4070d43d091ed4207ef5d70e5 as its current tip. The closeout owner must materialize a task-scoped exact ref for the workflow's frontend_ref gate without altering the commit.",
+    "frontend_ref_note": "execute-plans dev resolves exactly to 7d30e78476be61222af63a089e7ab141aa43b809, which is 13 commits ahead of and contains required predecessor 5ffee3db8c2b37b4070d43d091ed4207ef5d70e5.",
     "preceding_non_acceptance_run": {
       "run_id": 33266252692,
       "url": "https://github.com/ajoe734/pantheon/actions/runs/33266252692",

@@ -15,6 +15,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from fastapi.testclient import TestClient
+import pytest
 
 
 def _load_module(name: str, path: Path):
@@ -206,6 +207,76 @@ class TestPersonaMainInvoke(unittest.TestCase):
         self.assertEqual(second.json()["session_status"], "active")
         stored = persona_main.SESSION_STORE.require("sess-001")
         self.assertEqual(stored.status, "active")
+
+
+def test_deployed_main_exposes_authenticated_owner_api_and_restart_readback(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    token = "persona-main-service-token"
+    actor_id = "operator-bff"
+    monkeypatch.setenv("PERSONA_STORE_BACKEND", "json")
+    monkeypatch.setenv("PERSONA_STORE_PATH", str(tmp_path / "personas.json"))
+    monkeypatch.setenv("PERSONA_CAPABILITY_STORE_BACKEND", "json")
+    monkeypatch.setenv(
+        "PERSONA_CAPABILITY_STORE_PATH",
+        str(tmp_path / "capability_snapshots.json"),
+    )
+    monkeypatch.setenv("PERSONA_AUTH_MODE", "strict")
+    monkeypatch.setenv("PANTHEON_PERSONA_SERVICE_TOKEN", token)
+    monkeypatch.setenv("PANTHEON_PERSONA_SERVICE_ACTOR_ID", actor_id)
+    headers = {"Authorization": f"Bearer {token}"}
+
+    first = _load_module("persona_main_owner_first", _MODULE_DIR / "main.py")
+    first_client = TestClient(first.app)
+    created = first_client.post(
+        "/api/personas",
+        headers=headers,
+        json={
+            "actor_id": actor_id,
+            "persona_id": "persona-main-owner-proof",
+            "name": "Mounted Owner Proof",
+            "mandate": "paper opinion only",
+            "metadata": {"execution_authority": "none"},
+        },
+    )
+    capability = first_client.put(
+        "/api/personas/persona-main-owner-proof/capability-snapshots/cap-main-owner-proof",
+        headers=headers,
+        json={
+            "actor_id": actor_id,
+            "snapshot_id": "cap-main-owner-proof",
+            "persona_id": "persona-main-owner-proof",
+            "capabilities": ["persona_opinion"],
+            "generated_at": "2026-08-30T00:00:00Z",
+            "metadata": {"execution_authority": "none"},
+        },
+    )
+
+    assert created.status_code == 201, created.text
+    assert capability.status_code == 200, capability.text
+    denied = first_client.post(
+        "/api/personas",
+        headers={"Authorization": "Bearer wrong-service-token"},
+        json={
+            "actor_id": actor_id,
+            "persona_id": "must-not-exist",
+            "name": "Denied",
+            "mandate": "denied",
+        },
+    )
+    assert denied.status_code == 401
+
+    # Importing a fresh deployed service app rebuilds both owner stores.
+    restarted = _load_module("persona_main_owner_restarted", _MODULE_DIR / "main.py")
+    restarted_client = TestClient(restarted.app)
+    persona = restarted_client.get("/api/personas/persona-main-owner-proof")
+    snapshot = restarted_client.get(
+        "/api/capability-snapshots/cap-main-owner-proof"
+    )
+    assert persona.status_code == 200, persona.text
+    assert snapshot.status_code == 200, snapshot.text
+    assert snapshot.json()["capabilities"] == ["persona_opinion"]
 
 
 if __name__ == "__main__":
