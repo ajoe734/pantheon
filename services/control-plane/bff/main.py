@@ -7052,7 +7052,16 @@ def _bff_me_tenant_payload(
     claim_default = _first_nonblank(
         *_identity_claim_strings(
             identity,
-            ["tenant_id", "tenantId", "tenant.id", "tid", "org_id", "organization.id"],
+            [
+                "tenant_id",
+                "tenantId",
+                "tenant.id",
+                "tid",
+                "org_id",
+                "organization.id",
+                "tenant_ids",
+                "tenantIds",
+            ],
         )
     )
     default_tenant = _first_nonblank(
@@ -26634,10 +26643,10 @@ def _ppl_alloc_009_paper_eligibility_context(
     identity: OperatorIdentity,
     observed_at: str,
 ) -> Dict[str, Any]:
-    raw = read_store.get_persona(persona_id)
     caller_tenant = str(
         _bff_me_tenant_payload(identity, requested_tenant=None)["id"]
     )
+    raw = _get_persona_directory_snapshot(caller_tenant).records_by_id.get(persona_id)
     metadata = (
         raw.get("metadata")
         if isinstance(raw, dict) and isinstance(raw.get("metadata"), dict)
@@ -26679,7 +26688,7 @@ def _ppl_alloc_009_paper_eligibility_context(
             precondition="paper_only_persona",
         )
 
-    league_rows = _pm12_persona_league_rows(q=persona_id)
+    league_rows = _pm12_persona_league_rows(q=persona_id, tenant_id=caller_tenant)
     matches = [
         row
         for row in league_rows
@@ -27072,7 +27081,7 @@ async def bff_ppl_alloc_009_paper_eligibility_proof(
             status_code=502,
         ) from exc
 
-    refreshed_rows = _pm12_persona_league_rows(q=persona_id)
+    refreshed_rows = _pm12_persona_league_rows(q=persona_id, tenant_id=caller_tenant)
     refreshed_matches = [
         _pm12_persona_league_ranking_item(row)
         for row in refreshed_rows
@@ -29126,10 +29135,15 @@ def _strategy_seed_metadata_suggestions(seed: Any) -> List[Dict[str, Any]]:
     return suggestions
 
 
-def _strategy_seed_persona_suggestions(seed: Any, *, snapshot_at: str) -> List[Dict[str, Any]]:
+def _strategy_seed_persona_suggestions(
+    seed: Any,
+    *,
+    snapshot_at: str,
+    tenant_id: Optional[str] = None,
+) -> List[Dict[str, Any]]:
     suggestions: List[Dict[str, Any]] = []
     try:
-        personas = _list_persona_records()
+        personas = _list_persona_records(tenant_id)
     except Exception as exc:  # pragma: no cover - defensive read surface fallback.
         log.warning("Persona read surface unavailable for seed inbox suggestions: %s", exc)
         return suggestions
@@ -29180,12 +29194,21 @@ def _strategy_seed_persona_suggestions(seed: Any, *, snapshot_at: str) -> List[D
     return suggestions
 
 
-def _strategy_seed_suggestions(seed: Any, *, snapshot_at: str) -> List[Dict[str, Any]]:
+def _strategy_seed_suggestions(
+    seed: Any,
+    *,
+    snapshot_at: str,
+    tenant_id: Optional[str] = None,
+) -> List[Dict[str, Any]]:
     seen: Set[Tuple[str, str, str]] = set()
     suggestions: List[Dict[str, Any]] = []
     for item in [
         *_strategy_seed_metadata_suggestions(seed),
-        *_strategy_seed_persona_suggestions(seed, snapshot_at=snapshot_at),
+        *_strategy_seed_persona_suggestions(
+            seed,
+            snapshot_at=snapshot_at,
+            tenant_id=tenant_id,
+        ),
     ]:
         key = (
             str(item.get("type") or ""),
@@ -29280,9 +29303,19 @@ def _strategy_seed_negative_memory_warning(seed: Any) -> Dict[str, Any]:
     }
 
 
-def _strategy_seed_card(seed: Any, *, snapshot_at: str, include_audit: bool = False) -> Dict[str, Any]:
+def _strategy_seed_card(
+    seed: Any,
+    *,
+    snapshot_at: str,
+    include_audit: bool = False,
+    tenant_id: Optional[str] = None,
+) -> Dict[str, Any]:
     status = _strategy_seed_status_value(seed)
-    suggestions = _strategy_seed_suggestions(seed, snapshot_at=snapshot_at)
+    suggestions = _strategy_seed_suggestions(
+        seed,
+        snapshot_at=snapshot_at,
+        tenant_id=tenant_id,
+    )
     lineage = dict(getattr(seed, "lineage", {}) or {})
     metadata = dict(getattr(seed, "metadata", {}) or {})
     evidence_refs = list(getattr(seed, "evidence_item_ids", []) or [])
@@ -29373,6 +29406,7 @@ def _strategy_seed_list_response(
     min_confidence: Optional[float],
     page_token: Optional[str],
     page_size: int,
+    tenant_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     snapshot_at = utc_now()
     store = StrategySpecSeedStore()
@@ -29389,7 +29423,7 @@ def _strategy_seed_list_response(
         )
     ]
     cards = [
-        _strategy_seed_card(seed, snapshot_at=snapshot_at)
+        _strategy_seed_card(seed, snapshot_at=snapshot_at, tenant_id=tenant_id)
         for seed in seeds
     ]
     page_items, next_page_token = _page_slice(cards, page_token, page_size)
@@ -29426,7 +29460,11 @@ def _strategy_seed_list_response(
     }
 
 
-def _strategy_seed_detail_response(seed_id: str) -> Dict[str, Any]:
+def _strategy_seed_detail_response(
+    seed_id: str,
+    *,
+    tenant_id: Optional[str] = None,
+) -> Dict[str, Any]:
     snapshot_at = utc_now()
     store = StrategySpecSeedStore()
     seed = store.get(seed_id)
@@ -29439,7 +29477,12 @@ def _strategy_seed_detail_response(seed_id: str) -> Dict[str, Any]:
             precondition_failed="seed_id",
         )
     return {
-        "data": _strategy_seed_card(seed, snapshot_at=snapshot_at, include_audit=True),
+        "data": _strategy_seed_card(
+            seed,
+            snapshot_at=snapshot_at,
+            include_audit=True,
+            tenant_id=tenant_id,
+        ),
         "meta": {
             "snapshot_at": snapshot_at,
             "store_path": str(store.path),
@@ -29513,6 +29556,7 @@ def _strategy_seed_review_result(
     snapshot_at: str,
     resolved_key: str,
     replayed: bool = False,
+    tenant_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     return {
         "data": {
@@ -29520,7 +29564,12 @@ def _strategy_seed_review_result(
             "status": _strategy_seed_status_value(updated_seed),
             "review_status": _strategy_seed_status_value(updated_seed),
             "decision": decision.to_dict(),
-            "seed": _strategy_seed_card(updated_seed, snapshot_at=snapshot_at, include_audit=True),
+            "seed": _strategy_seed_card(
+                updated_seed,
+                snapshot_at=snapshot_at,
+                include_audit=True,
+                tenant_id=tenant_id,
+            ),
             "registry_write_performed": False,
             "execution_route": "none",
         },
@@ -29575,6 +29624,7 @@ def _strategy_seed_review_response(
         snapshot_at=snapshot_at,
         resolved_key=resolved_key,
         replayed=bool(getattr(decision, "idempotent_replay", False)),
+        tenant_id=str(_bff_me_tenant_payload(identity, requested_tenant=None)["id"]),
     )
     _STRATEGY_SEED_REVIEW_BFF_IDEMPOTENCY[resolved_key] = {
         "request_hash": request_hash,
@@ -29635,6 +29685,7 @@ def _strategy_seed_merge_response(
         snapshot_at=snapshot_at,
         resolved_key=resolved_key,
         replayed=bool(getattr(decision, "idempotent_replay", False)),
+        tenant_id=str(_bff_me_tenant_payload(identity, requested_tenant=None)["id"]),
     )
     _STRATEGY_SEED_REVIEW_BFF_IDEMPOTENCY[resolved_key] = {
         "request_hash": request_hash,
@@ -30935,27 +30986,86 @@ def _list_strategy_summaries() -> List[Dict[str, Any]]:
     return items
 
 
-def _list_persona_records() -> List[Dict[str, Any]]:
-    """Combine canonical personas with overlay records created via /bff."""
+def _list_persona_records(tenant_id: Optional[str] = None) -> List[Dict[str, Any]]:
+    """Combine canonical personas with durable store and overlay records created via /bff."""
     items = list(read_store.list_personas() or [])
-    seen = {str(item.get("id") or item.get("persona_id") or "") for item in items}
-    for pid, overlay in _PERSONA_BFF_OVERLAY.items():
-        if pid in seen:
+    records_by_id: Dict[str, Dict[str, Any]] = {}
+    for item in items:
+        if not isinstance(item, dict):
             continue
-        items.append({
-            "id": pid,
-            "persona_id": pid,
-            "name": overlay.get("name"),
-            "lifecycle_state": overlay.get("state") or "draft",
-            "updated_at": overlay.get("updatedAt"),
-            "metadata": {
-                "archetype": overlay.get("archetype"),
-                "owner": overlay.get("owner"),
-                "risk_level": overlay.get("risk"),
-                "tenant_id": overlay.get("tenantId"),
-            },
-        })
-    return items
+        pid = str(item.get("id") or item.get("persona_id") or "").strip()
+        if pid:
+            records_by_id[pid] = dict(item)
+    clean_tenant = str(tenant_id or "").strip()
+    store = _persona_provisioning_store()
+    try:
+        if clean_tenant:
+            prov_records = store.list_by_tenant(clean_tenant)
+        else:
+            prov_records = store.list_all()
+    except Exception as exc:
+        log.warning("Persona provisioning store list failed for dependency %s", "persona_provisioning_store")
+        raise _bff_error(
+            503,
+            ErrorCode.DEPENDENCY_UNAVAILABLE,
+            "Persona durable readback is unavailable",
+            "Authoritative provisioning store is unreachable or degraded",
+            precondition_failed="persona_provisioning_store",
+            suggestion="Inspect persona provisioning persistence health before retrying",
+        ) from exc
+
+    for record in prov_records:
+        persona_proj, meta_proj = _persona_record_for_provisioning(
+            record,
+            payload=record.request_payload,
+            owner=str(record.request_payload.get("requested_by") or "pantheon-bff"),
+        )
+        pid = record.persona_id
+        if pid not in records_by_id:
+            records_by_id[pid] = persona_proj
+        else:
+            existing = records_by_id[pid]
+            existing_meta = dict(existing.get("metadata") or {}) if isinstance(existing.get("metadata"), dict) else {}
+            for k, v in meta_proj.items():
+                if v is not None and (k not in existing_meta or not existing_meta[k]):
+                    existing_meta[k] = v
+            existing["metadata"] = existing_meta
+            if record.state == "succeeded" and existing.get("lifecycle_state") in {None, "draft", "provisioning"}:
+                existing["lifecycle_state"] = "paper_running"
+
+    for pid, overlay in _PERSONA_BFF_OVERLAY.items():
+        if pid not in records_by_id:
+            records_by_id[pid] = {
+                "id": pid,
+                "persona_id": pid,
+                "name": overlay.get("name"),
+                "lifecycle_state": overlay.get("state") or "draft",
+                "updated_at": overlay.get("updatedAt"),
+                "metadata": {
+                    "archetype": overlay.get("archetype"),
+                    "owner": overlay.get("owner"),
+                    "risk_level": overlay.get("risk"),
+                    "tenant_id": overlay.get("tenantId"),
+                },
+            }
+
+    result = list(records_by_id.values())
+    if clean_tenant:
+        # Registry provenance is not tenant ownership.  A tenant-scoped
+        # read admits only an explicit matching owner tenant; tenantless
+        # registry rows are catalog or malformed data and fail closed.
+        result = [
+            raw
+            for raw in result
+            if _persona_record_tenant_id(raw) == clean_tenant
+        ]
+    result.sort(
+        key=lambda raw: (
+            str(raw.get("created_at") or raw.get("updated_at") or ""),
+            str(raw.get("persona_id") or raw.get("id") or ""),
+        )
+    )
+    return result
 
 
 @dataclass(frozen=True)
@@ -30976,11 +31086,11 @@ def _get_persona_directory_snapshot(
     records_by_id: Dict[str, Dict[str, Any]] = {}
     catalog_defaults_by_id: Dict[str, Dict[str, Any]] = {}
 
-    for raw in _list_persona_records():
+    for raw in _list_persona_records(clean_tenant):
         if not isinstance(raw, dict):
             continue
         rec_tenant = _persona_record_tenant_id(raw)
-        if clean_tenant and rec_tenant not in {"", clean_tenant}:
+        if clean_tenant and rec_tenant != clean_tenant:
             continue
         pid = str(raw.get("persona_id") or raw.get("id") or "").strip()
         if pid:
@@ -32876,12 +32986,15 @@ def _pm12_attribution_dimension_label(
     return key
 
 
-def _pm12_performance_attribution_sources() -> Dict[str, Any]:
+def _pm12_performance_attribution_sources(
+    tenant_id: Optional[str] = None,
+) -> Dict[str, Any]:
     runtime_bindings = read_store.list_runtime_bindings(include_market_persona_defaults=True) or []
     deployment_plans = read_store.list_deployment_plans() or []
     bindings = read_store.list_bindings(include_market_persona_defaults=True) or []
     capital_pools = read_store.list_capital_pools(include_market_persona_defaults=True) or []
-    personas = _list_persona_records()
+    clean_tenant = str(tenant_id or "").strip()
+    personas = _list_persona_records(clean_tenant or None)
     strategies = _list_strategy_summaries()
 
     plans_by_id = {
@@ -32945,6 +33058,7 @@ def _pm12_performance_attribution_sources() -> Dict[str, Any]:
             telemetry_by_runtime_id[runtime_id] = telemetry
 
     return {
+        "tenant_id": clean_tenant or None,
         "runtime_bindings": runtime_bindings,
         "deployment_plans": deployment_plans,
         "bindings": bindings,
@@ -32966,6 +33080,8 @@ def _pm12_performance_attribution_facts(sources: Dict[str, Any], period_key: str
     bindings_by_id = sources["bindings_by_id"]
     pools_by_id = sources["pools_by_id"]
     telemetry_by_runtime_id = sources["telemetry_by_runtime_id"]
+    scoped_tenant = str(sources.get("tenant_id") or "").strip()
+    personas_by_id = sources["personas_by_id"]
 
     for runtime in sources["runtime_bindings"]:
         runtime_id = _management_record_id(runtime, "runtime_id", "id", "binding_id")
@@ -33018,6 +33134,11 @@ def _pm12_performance_attribution_facts(sources: Dict[str, Any], period_key: str
                 persona_id = canonical_persona_id
             else:
                 persona_id = str(runtime.get("persona_id") or "").strip()
+            if scoped_tenant and persona_id and persona_id not in personas_by_id:
+                # A request-scoped attribution response may only disclose
+                # runtime facts whose Persona has an explicit matching tenant
+                # admission in the durable directory.
+                continue
             strategy_id = str(
                 _management_first_non_empty(
                     _management_dict_value(position, "strategy_id", "strategy_ref"),
@@ -33577,6 +33698,8 @@ def _management_strategy_allocation_runtime_facts(sources: Dict[str, Any]) -> Li
     bindings_by_id = sources["bindings_by_id"]
     pools_by_id = sources["pools_by_id"]
     telemetry_by_runtime_id = sources["telemetry_by_runtime_id"]
+    scoped_tenant = str(sources.get("tenant_id") or "").strip()
+    personas_by_id = sources["personas_by_id"]
     facts: List[Dict[str, Any]] = []
 
     for runtime in sources["runtime_bindings"]:
@@ -33631,6 +33754,8 @@ def _management_strategy_allocation_runtime_facts(sources: Dict[str, Any]) -> Li
             )
             or ""
         )
+        if scoped_tenant and persona_id and persona_id not in personas_by_id:
+            continue
         pool = pools_by_id.get(capital_pool_id, {})
         allocation = _management_runtime_allocation_payload(runtime, plan, persona_binding, telemetry)
         drift = _management_strategy_allocation_runtime_drift(runtime_id)
@@ -33827,9 +33952,10 @@ def _management_strategy_allocation_response(
     drift_status: Optional[str],
     page_token: Optional[str],
     page_size: int,
+    tenant_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     snapshot_at = utc_now()
-    sources = _pm12_performance_attribution_sources()
+    sources = _pm12_performance_attribution_sources(tenant_id)
     facts = _management_strategy_allocation_runtime_facts(sources)
     strategy_filter = set(_split_csv_query(strategy_id) or [])
     pool_filter = set(_split_csv_query(capital_pool_id) or [])
@@ -34142,9 +34268,10 @@ def _management_capital_flow_response(
     direction: Optional[str],
     page_token: Optional[str],
     page_size: int,
+    tenant_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     snapshot_at = utc_now()
-    sources = _pm12_performance_attribution_sources()
+    sources = _pm12_performance_attribution_sources(tenant_id)
     facts = _pm12_performance_attribution_facts(sources, "latest")
     pool_filter = set(_split_csv_query(capital_pool_id) or [])
     persona_filter = set(_split_csv_query(persona_id) or [])
@@ -34539,9 +34666,10 @@ def _management_risk_radar_response(
     risk_state: Optional[str],
     page_token: Optional[str],
     page_size: int,
+    tenant_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     snapshot_at = utc_now()
-    sources = _pm12_performance_attribution_sources()
+    sources = _pm12_performance_attribution_sources(tenant_id)
     facts = _pm12_performance_attribution_facts(sources, "latest")
     persona_filter = set(_split_csv_query(persona_id) or [])
     strategy_filter = set(_split_csv_query(strategy_id) or [])
@@ -35152,6 +35280,7 @@ async def bff_management_strategy_allocation(
     """BFF: active strategy allocation slice across capital pools with paper/live drift."""
     identity = _extract_identity(authorization)
     _require_read_role(identity)
+    tenant_id = str(_bff_me_tenant_payload(identity, requested_tenant=None)["id"])
     return _management_strategy_allocation_response(
         strategy_id=strategy_id,
         capital_pool_id=capital_pool_id,
@@ -35159,6 +35288,7 @@ async def bff_management_strategy_allocation(
         drift_status=drift_status,
         page_token=page_token,
         page_size=page_size,
+        tenant_id=tenant_id,
     )
 
 
@@ -35176,6 +35306,7 @@ async def bff_management_capital_flow(
     """BFF: read-only capital flow projection across pools, personas, and strategies."""
     identity = _extract_identity(authorization)
     _require_read_role(identity)
+    tenant_id = str(_bff_me_tenant_payload(identity, requested_tenant=None)["id"])
     return _management_capital_flow_response(
         capital_pool_id=capital_pool_id,
         persona_id=persona_id,
@@ -35184,6 +35315,7 @@ async def bff_management_capital_flow(
         direction=direction,
         page_token=page_token,
         page_size=page_size,
+        tenant_id=tenant_id,
     )
 
 
@@ -35200,6 +35332,7 @@ async def bff_management_risk_radar(
     """BFF: read-only cross-persona and strategy risk indicators."""
     identity = _extract_identity(authorization)
     _require_read_role(identity)
+    tenant_id = str(_bff_me_tenant_payload(identity, requested_tenant=None)["id"])
     return _management_risk_radar_response(
         persona_id=persona_id,
         strategy_id=strategy_id,
@@ -35207,6 +35340,7 @@ async def bff_management_risk_radar(
         risk_state=risk_state,
         page_token=page_token,
         page_size=page_size,
+        tenant_id=tenant_id,
     )
 
 
@@ -36579,97 +36713,6 @@ def _project_persona_fleet_item(
         "activeIncidents": active_incidents,
         "active_incidents": active_incidents,
         "allowedActions": allowed_actions,
-    }
-
-
-def _project_persona_fleet_payload(
-    *,
-    state: Optional[str],
-    health: Optional[str],
-    page_token: Optional[str],
-    page_size: int,
-) -> Dict[str, Any]:
-    snapshot_at = utc_now()
-    personas = _list_persona_records()
-    runtime_bindings = list(read_store.list_runtime_bindings() or [])
-    incidents = list(read_store.list_incidents() or [])
-    evolution_decisions = list(read_store.list_evolution_decisions() or [])
-    items = [
-        _project_persona_fleet_item(
-            persona,
-            all_runtime_bindings=runtime_bindings,
-            all_incidents=incidents,
-            all_evolution_decisions=evolution_decisions,
-        )
-        for persona in personas
-    ]
-
-    if state:
-        requested_states = {token.strip().lower() for token in state.split(",") if token.strip()}
-        items = [
-            item for item in items
-            if str((item.get("persona") or {}).get("state") or "").lower() in requested_states
-        ]
-    if health:
-        requested_health = {token.strip().lower() for token in health.split(",") if token.strip()}
-        items = [
-            item for item in items
-            if str((item.get("health") or {}).get("status") or "").lower() in requested_health
-        ]
-
-    items = sorted(
-        items,
-        key=lambda item: (
-            str((item.get("health") or {}).get("severity") or ""),
-            str((item.get("persona") or {}).get("updatedAt") or ""),
-            str(item.get("id") or ""),
-        ),
-        reverse=True,
-    )
-    total = len(items)
-    page_items, next_page_token = _page_slice(items, page_token, page_size)
-
-    source_surfaces = {
-        "personas": _dataset_surface_status("personas", snapshot_at=snapshot_at),
-        "persona_bindings": _dataset_surface_status("persona_bindings", snapshot_at=snapshot_at),
-        "runtime_bindings": _dataset_surface_status("runtime_bindings", snapshot_at=snapshot_at),
-        "telemetry_summaries": _dataset_surface_status("telemetry_summaries", snapshot_at=snapshot_at),
-        "teaching_sessions": _dataset_surface_status("teaching_sessions", snapshot_at=snapshot_at),
-        "evolution_decisions": _dataset_surface_status("evolution_decisions", snapshot_at=snapshot_at),
-    }
-    persona_fleet_surface = _aggregate_group_surface(
-        "persona_fleet",
-        list(source_surfaces.values()),
-        snapshot_at=snapshot_at,
-        unavailable_message="Persona fleet aggregate unavailable.",
-        degraded_message="Persona fleet aggregate is degraded because one or more source surfaces are degraded.",
-    )
-
-    summary = {
-        "total_personas": total,
-        "returned_personas": len(page_items),
-        "critical_personas": len([item for item in items if item["health"]["status"] == "critical"]),
-        "degraded_personas": len([item for item in items if item["health"]["status"] == "degraded"]),
-        "healthy_personas": len([item for item in items if item["health"]["status"] == "healthy"]),
-        "bound_personas": len([item for item in items if item["bindings"]]),
-        "runtime_bound_personas": len([item for item in items if item["runtimeBindings"]]),
-    }
-    return {
-        "data": page_items,
-        "items": page_items,
-        "summary": summary,
-        "page_info": {
-            "next_page_token": next_page_token,
-            "total": total,
-            "page_size": page_size,
-        },
-        "meta": {
-            **_snapshot_meta(snapshot_at),
-            "surfaces": {
-                "persona_fleet": persona_fleet_surface,
-                **source_surfaces,
-            },
-        },
     }
 
 
@@ -40204,13 +40247,13 @@ def _persona_intent_agora_item(session: Dict[str, Any]) -> Optional[Dict[str, An
     }
 
 
-def _persona_intent_all_items() -> tuple[
+def _persona_intent_all_items(tenant_id: Optional[str] = None) -> tuple[
     List[Dict[str, Any]],
     List[Dict[str, Any]],
     List[Dict[str, Any]],
     List[Dict[str, Any]],
 ]:
-    personas = _list_persona_records()
+    personas = _list_persona_records(tenant_id)
     items: List[Dict[str, Any]] = []
     persona_sessions: List[Dict[str, Any]] = []
     trainer_sessions: List[Dict[str, Any]] = []
@@ -40227,8 +40270,21 @@ def _persona_intent_all_items() -> tuple[
             if item is not None:
                 items.append(item)
 
+    visible_persona_ids = {
+        _persona_intent_text(persona.get("persona_id") or persona.get("id"))
+        for persona in personas
+        if _persona_intent_text(persona.get("persona_id") or persona.get("id"))
+    }
     agora_sessions = list(read_store.list_agora_sessions() or [])
     for session in agora_sessions:
+        referenced_persona_ids = _persona_intent_agora_persona_ids(session)
+        if referenced_persona_ids and not all(
+            persona_id in visible_persona_ids for persona_id in referenced_persona_ids
+        ):
+            # Agora session context is request-facing.  Do not disclose a
+            # session when any referenced Persona lacks an explicit matching
+            # tenant admission in the caller's directory.
+            continue
         item = _persona_intent_agora_item(session)
         if item is not None:
             items.append(item)
@@ -43489,7 +43545,7 @@ def _mgmt_nl_collect_context(focus: str, snapshot_at: str, tenant_id: Optional[s
 
     if use_all or focus == "persona_fleet":
         try:
-            personas = _mgmt_nl_filter_tenant_records(_list_persona_records(), tenant_id)
+            personas = _mgmt_nl_filter_tenant_records(_list_persona_records(tenant_id), tenant_id)
             runtime_bindings = _mgmt_nl_filter_tenant_records(list(read_store.list_runtime_bindings() or []), tenant_id)
             incidents = _mgmt_nl_filter_tenant_records(list(read_store.list_incidents() or []), tenant_id)
             evolution_decisions = _mgmt_nl_filter_tenant_records(list(read_store.list_evolution_decisions() or []), tenant_id)
@@ -43963,7 +44019,7 @@ def _mgmt_nl_build_context_pack(
     def collect_source(source_id: str, _request: Any, snapshot_at: str) -> Any:
         if source_id == "persona_health":
             persona_surface = _dataset_surface_status("personas", snapshot_at=snapshot_at)
-            scoped_personas = _mgmt_nl_filter_tenant_records(_list_persona_records(), caller_tenant_id)
+            scoped_personas = _mgmt_nl_filter_tenant_records(_list_persona_records(caller_tenant_id), caller_tenant_id)
             return AssistantCollectedSource(
                 source_id="persona_health",
                 href="/bff/v5/execution/persona-health",
@@ -45889,9 +45945,10 @@ async def bff_management_persona_intent(
     """BFF: compose redacted Persona Intent trace, trainer, and Agora summaries."""
     identity = _extract_identity(authorization)
     _require_read_role(identity)
+    caller_tenant_id = str(_bff_me_tenant_payload(identity, requested_tenant=None)["id"])
 
     snapshot_at = utc_now()
-    items, _persona_sessions, _trainer_sessions, _agora_sessions = _persona_intent_all_items()
+    items, _persona_sessions, _trainer_sessions, _agora_sessions = _persona_intent_all_items(caller_tenant_id)
     filtered = _persona_intent_filter_items(
         items,
         source_type=source_type,
@@ -47117,8 +47174,26 @@ def _project_persona_list_records(raw_personas: List[Dict[str, Any]]) -> List[Di
 
 
 def _persona_record_tenant_id(raw: Mapping[str, Any]) -> str:
+    """Return the explicit owner tenant for a Persona record.
+
+    Tenantless records are catalog or malformed rows, never tenant-admitted
+    Personas.  Read paths therefore must not treat a missing value as a
+    wildcard.  The registry and provisioning projections have used both
+    top-level and metadata forms over time, so normalize the supported aliases
+    here before applying the exact-match boundary.
+    """
     metadata = raw.get("metadata")
-    return str(metadata.get("tenant_id") or "").strip() if isinstance(metadata, dict) else ""
+    metadata = metadata if isinstance(metadata, Mapping) else {}
+    for value in (
+        raw.get("tenant_id"),
+        raw.get("tenantId"),
+        metadata.get("tenant_id"),
+        metadata.get("tenantId"),
+    ):
+        tenant_id = str(value or "").strip()
+        if tenant_id:
+            return tenant_id
+    return ""
 
 
 def _persona_record_projected_state(raw: Mapping[str, Any]) -> str:
@@ -47192,7 +47267,8 @@ async def bff_reconcile_persona_provisioning(
     identity = _extract_identity(authorization)
     _require_operator_role(identity)
     caller_tenant = str(_bff_me_tenant_payload(identity, requested_tenant=None)["id"])
-    raw = read_store.get_persona(persona_id)
+    directory = _get_persona_directory_snapshot(caller_tenant)
+    raw = directory.records_by_id.get(persona_id) or read_store.get_persona(persona_id)
     if (
         raw is None
         or _persona_record_tenant_id(raw) != caller_tenant
@@ -47520,6 +47596,7 @@ def _persona_record_for_provisioning(
     *,
     payload: Mapping[str, Any],
     owner: str,
+    mutate_store: bool = False,
 ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     canonical_owner = str(record.request_payload.get("requested_by") or owner).strip()
     ids = deterministic_provisioning_ids(record)
@@ -47564,7 +47641,7 @@ def _persona_record_for_provisioning(
     updater = getattr(read_store, "update_persona", None)
     existing = read_store.get_persona(record.persona_id)
     if existing is None:
-        if callable(creator):
+        if mutate_store and callable(creator):
             persona = creator(
                 persona_id=record.persona_id,
                 name=str(payload.get("name") or record.normalized_name),
@@ -47599,7 +47676,7 @@ def _persona_record_for_provisioning(
     else:
         existing_metadata = existing.get("metadata")
         existing_metadata = existing_metadata if isinstance(existing_metadata, dict) else {}
-        if (
+        if mutate_store and (
             str(existing.get("name") or "").strip()
             != str(payload.get("name") or record.normalized_name).strip()
             or str(existing_metadata.get("tenant_id") or record.tenant_id) != record.tenant_id
@@ -47612,7 +47689,9 @@ def _persona_record_for_provisioning(
             and str(existing.get("lifecycle_state") or "") == "paper_running"
         ):
             lifecycle_state = "paper_running"
-        if callable(updater):
+        elif existing.get("lifecycle_state") and record.state == "succeeded":
+            lifecycle_state = str(existing.get("lifecycle_state"))
+        if mutate_store and callable(updater):
             persona = updater(
                 record.persona_id,
                 lifecycle_state=lifecycle_state,
@@ -47623,17 +47702,17 @@ def _persona_record_for_provisioning(
                 **existing,
                 "id": record.persona_id,
                 "persona_id": record.persona_id,
-                "name": str(payload.get("name") or record.normalized_name),
-                "actor_id": canonical_owner,
-                "created_by": canonical_owner,
-                "archetype": archetype,
+                "name": str(existing.get("name") or payload.get("name") or record.normalized_name),
+                "actor_id": str(existing.get("actor_id") or canonical_owner),
+                "created_by": str(existing.get("created_by") or canonical_owner),
+                "archetype": existing.get("archetype") or archetype,
                 "lifecycle_state": lifecycle_state,
-                "risk_level": risk,
-                "mandate": mandate,
-                "strategy_family": strategy_family,
-                "traits": traits,
+                "risk_level": existing.get("risk_level") or risk,
+                "mandate": existing.get("mandate") or mandate,
+                "strategy_family": existing.get("strategy_family") or strategy_family,
+                "traits": existing.get("traits") or traits,
                 "metadata": {**existing_metadata, **metadata},
-                "required_data_sources": _persona_create_required_data_sources(payload),
+                "required_data_sources": existing.get("required_data_sources") or _persona_create_required_data_sources(payload),
             }
     return persona, metadata
 
@@ -47752,6 +47831,7 @@ def _coordinate_persona_create(
         active,
         payload=payload,
         owner=owner,
+        mutate_store=True,
     )
     ooda_packet = None
     if active.state not in {"failed", "compensated"}:
@@ -48076,8 +48156,18 @@ async def bff_get_persona(
                         routed_strategies=0,
                         evaluate_provisioning=False,
                     )
+        except HTTPException:
+            raise
         except Exception as exc:
-            log.warning("Failed to lookup persona %s from durable provisioning store: %s", persona_id, exc)
+            log.warning("Failed to lookup persona %s from durable provisioning store: dependency %s unavailable", persona_id, "persona_provisioning_store")
+            raise _bff_error(
+                503,
+                ErrorCode.DEPENDENCY_UNAVAILABLE,
+                "Persona durable readback is unavailable",
+                "Authoritative provisioning store is unreachable or degraded",
+                precondition_failed="persona_provisioning_store",
+                suggestion="Inspect persona provisioning persistence health before retrying",
+            ) from exc
     if not raw:
         raise _bff_error(
             404, ErrorCode.RESOURCE_NOT_FOUND,
@@ -48452,6 +48542,7 @@ async def bff_list_strategy_seed_inbox(
         min_confidence=min_confidence,
         page_token=page_token,
         page_size=page_size,
+        tenant_id=str(_bff_me_tenant_payload(identity, requested_tenant=None)["id"]),
     )
 
 
@@ -48463,7 +48554,10 @@ async def bff_get_strategy_seed_card(
     """BFF: governed StrategySpecSeed review card."""
     identity = _extract_identity(authorization)
     _require_read_role(identity)
-    return _strategy_seed_detail_response(seed_id)
+    return _strategy_seed_detail_response(
+        seed_id,
+        tenant_id=str(_bff_me_tenant_payload(identity, requested_tenant=None)["id"]),
+    )
 
 
 @app.post("/bff/management/strategy-seeds/{seed_id}/review", status_code=202)
@@ -51813,7 +51907,8 @@ def _promotion_review_items(
     q: str = "",
 ) -> tuple[List[Dict[str, Any]], Dict[str, Any], int, bool]:
     quarter_window = _pm12_quarter_window(quarter, snapshot_at)
-    rows = _pm12_persona_league_rows()
+    caller_tenant_id = str(_bff_me_tenant_payload(identity, requested_tenant=None)["id"])
+    rows = _pm12_persona_league_rows(tenant_id=caller_tenant_id)
     ranked_items = _pm12_quarterly_ranking_items(rows, quarter_window=quarter_window)
     (
         public_evidence_refs,
@@ -52761,8 +52856,9 @@ def _pm12_persona_league_rows(
     state: Optional[str] = None,
     archetype: Optional[str] = None,
     q: str = "",
+    tenant_id: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
-    raw_records = _list_persona_records()
+    raw_records = _list_persona_records(tenant_id)
     try:
         all_bindings = [
             record
@@ -53461,8 +53557,9 @@ async def bff_management_persona_league(
 
     identity = _extract_identity(authorization)
     _require_read_role(identity)
+    caller_tenant_id = str(_bff_me_tenant_payload(identity, requested_tenant=None)["id"])
     snapshot_at = utc_now()
-    all_rows = _pm12_persona_league_rows()
+    all_rows = _pm12_persona_league_rows(tenant_id=caller_tenant_id)
     ranking_basis, ranking_snapshot_id = _pm12_attach_ranking_snapshot(
         [_pm12_persona_league_ranking_item(row) for row in all_rows],
         surface="rolling",
@@ -53572,8 +53669,9 @@ async def bff_management_persona_league_rankings(
     """BFF: PM-12 persona-league ranking blocks computed from league rows."""
     identity = _extract_identity(authorization)
     _require_read_role(identity)
+    caller_tenant_id = str(_bff_me_tenant_payload(identity, requested_tenant=None)["id"])
     snapshot_at = utc_now()
-    rows = _pm12_persona_league_rows()
+    rows = _pm12_persona_league_rows(tenant_id=caller_tenant_id)
 
     # Pre-enrich and filter the base league rows represented as ranking items
     base_items, ranking_snapshot_id = _pm12_attach_ranking_snapshot(
@@ -53669,9 +53767,10 @@ async def bff_management_persona_league_movers(
 
     identity = _extract_identity(authorization)
     _require_read_role(identity)
+    caller_tenant_id = str(_bff_me_tenant_payload(identity, requested_tenant=None)["id"])
     snapshot_at = utc_now()
     normalized_direction = _pm12_normalize_mover_direction(direction)
-    rows = _pm12_persona_league_rows(state=state, archetype=archetype, q=q)
+    rows = _pm12_persona_league_rows(state=state, archetype=archetype, q=q, tenant_id=caller_tenant_id)
     movers, summary = _pm12_persona_league_mover_items(
         rows,
         direction=normalized_direction,
@@ -53751,8 +53850,9 @@ async def bff_management_persona_league_tiers(
     """BFF: PM-12 persona-league tier definitions and current season assignment."""
     identity = _extract_identity(authorization)
     _require_read_role(identity)
+    caller_tenant_id = str(_bff_me_tenant_payload(identity, requested_tenant=None)["id"])
     snapshot_at = utc_now()
-    rows = _pm12_persona_league_rows(state=state, archetype=archetype, q=q)
+    rows = _pm12_persona_league_rows(state=state, archetype=archetype, q=q, tenant_id=caller_tenant_id)
 
     base_items = [_pm12_persona_league_ranking_item(row) for row in rows]
     filtered_items = _filter_by_common_identifiers(
@@ -53820,8 +53920,9 @@ async def bff_management_persona_league_heatmap(
     """BFF: persona x time-bucket league heatmap using the PM-12 composite score."""
     identity = _extract_identity(authorization)
     _require_read_role(identity)
+    caller_tenant_id = str(_bff_me_tenant_payload(identity, requested_tenant=None)["id"])
     snapshot_at = utc_now()
-    rows = _pm12_persona_league_rows(state=state, archetype=archetype, q=q)[:limit]
+    rows = _pm12_persona_league_rows(state=state, archetype=archetype, q=q, tenant_id=caller_tenant_id)[:limit]
     bucket_key, buckets = _pm12_heatmap_buckets(
         snapshot_at,
         bucket=bucket,
@@ -53957,9 +54058,10 @@ async def bff_management_quarterly_ranking(
     """BFF: PM-12 quarterly persona ranking composed from league rows and evidence."""
     identity = _extract_identity(authorization)
     _require_read_role(identity)
+    caller_tenant_id = str(_bff_me_tenant_payload(identity, requested_tenant=None)["id"])
     snapshot_at = utc_now()
     quarter_window = _pm12_quarter_window(quarter, snapshot_at)
-    rows = _pm12_persona_league_rows()
+    rows = _pm12_persona_league_rows(tenant_id=caller_tenant_id)
     ranked_items = _pm12_quarterly_ranking_items(rows, quarter_window=quarter_window)
     (
         public_evidence_refs,
@@ -54107,6 +54209,7 @@ async def bff_management_quarterly_ranking_drilldown(
     """BFF: PM-12 single-persona contribution breakdown for quarterly ranking."""
     identity = _extract_identity(authorization)
     _require_read_role(identity)
+    caller_tenant_id = str(_bff_me_tenant_payload(identity, requested_tenant=None)["id"])
     correlation_id = str(x_correlation_id or "").strip() or f"pm12-drilldown-{uuid.uuid4().hex}"
     response.headers["X-Correlation-Id"] = correlation_id
 
@@ -54123,7 +54226,7 @@ async def bff_management_quarterly_ranking_drilldown(
 
     snapshot_at = utc_now()
     quarter_window = _pm12_quarter_window(quarter, snapshot_at)
-    rows = _pm12_persona_league_rows()
+    rows = _pm12_persona_league_rows(tenant_id=caller_tenant_id)
     ranked_items = _pm12_quarterly_ranking_items(rows, quarter_window=quarter_window)
     (
         public_evidence_refs,
@@ -54286,9 +54389,10 @@ async def bff_management_quarterly_ranking_recommendations(
     """BFF: PM-12 quarterly governance recommendations without live mutations."""
     identity = _extract_identity(authorization)
     _require_read_role(identity)
+    caller_tenant_id = str(_bff_me_tenant_payload(identity, requested_tenant=None)["id"])
     snapshot_at = utc_now()
     quarter_window = _pm12_quarter_window(quarter, snapshot_at)
-    rows = _pm12_persona_league_rows()
+    rows = _pm12_persona_league_rows(tenant_id=caller_tenant_id)
     ranked_items = _pm12_quarterly_ranking_items(rows, quarter_window=quarter_window)
     (
         public_evidence_refs,
@@ -54488,10 +54592,11 @@ def _pm12_performance_attribution_response(
     broker: Optional[str] = None,
     stage: Optional[str] = None,
     as_of: Optional[str] = None,
+    tenant_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     snapshot_at = utc_now()
     period_key = str(period or "").strip() or "latest"
-    sources = _pm12_performance_attribution_sources()
+    sources = _pm12_performance_attribution_sources(tenant_id)
     facts = _pm12_performance_attribution_facts(sources, period_key)
 
     # Apply common filters to facts list
@@ -54605,6 +54710,7 @@ def _ops_read_model_entry_for_persona(
     persona_id: str,
     *,
     period: str = "latest",
+    tenant_id: Optional[str] = None,
 ) -> Optional[OperationsReadModelEntry]:
     """MGMT-OPS-001: compose the shared identity/source-confidence entry for one persona.
 
@@ -54615,7 +54721,12 @@ def _ops_read_model_entry_for_persona(
     docs/04/pantheon_management_console_operations_workflow_2026-07-07/
     MANAGEMENT_CONSOLE_OPERATIONS_WORKFLOW_PLAN.md.
     """
-    persona = read_store.get_persona(persona_id)
+    clean_tenant = str(tenant_id or "").strip()
+    persona = (
+        _get_persona_directory_snapshot(clean_tenant).records_by_id.get(persona_id)
+        if clean_tenant
+        else read_store.get_persona(persona_id)
+    )
     if persona is None:
         return None
 
@@ -54653,7 +54764,7 @@ def _ops_read_model_entry_for_persona(
         "perf_delta": league_entry.get("perf_delta"),
     }
 
-    attribution_sources = _pm12_performance_attribution_sources()
+    attribution_sources = _pm12_performance_attribution_sources(clean_tenant or None)
     persona_facts = [
         fact
         for fact in _pm12_performance_attribution_facts(attribution_sources, period_key)
@@ -54842,7 +54953,11 @@ async def bff_management_operations_read_model(
     identity = _extract_identity(authorization)
     _require_read_role(identity)
     snapshot_at = utc_now()
-    entry = _ops_read_model_entry_for_persona(persona_id, period=period)
+    entry = _ops_read_model_entry_for_persona(
+        persona_id,
+        period=period,
+        tenant_id=str(_bff_me_tenant_payload(identity, requested_tenant=None)["id"]),
+    )
     if entry is None:
         raise _bff_error(
             404,
@@ -54888,6 +55003,7 @@ async def bff_management_performance_attribution(
     """BFF: PM-12 performance attribution by persona/strategy/pool/asset/broker/runtime/regime."""
     identity = _extract_identity(authorization)
     _require_read_role(identity)
+    tenant_id = str(_bff_me_tenant_payload(identity, requested_tenant=None)["id"])
     return _pm12_performance_attribution_response(
         dimensions=_pm12_normalize_attribution_dimensions(dimension),
         period=period,
@@ -54900,7 +55016,8 @@ async def bff_management_performance_attribution(
         sleeve_id=sleeve_id, sleeve=sleeve,
         artifact_id=artifact_id, artifact=artifact,
         broker_id=broker_id, broker=broker,
-        stage=stage, as_of=as_of
+        stage=stage, as_of=as_of,
+        tenant_id=tenant_id,
     )
 
 
@@ -54940,6 +55057,7 @@ async def bff_management_performance_attribution_by_strategy(
     """BFF: PM-12 performance attribution grouped by strategy."""
     identity = _extract_identity(authorization)
     _require_read_role(identity)
+    tenant_id = str(_bff_me_tenant_payload(identity, requested_tenant=None)["id"])
     return _pm12_performance_attribution_response(
         dimensions=["strategy"],
         period=period,
@@ -54954,7 +55072,8 @@ async def bff_management_performance_attribution_by_strategy(
         sleeve_id=sleeve_id, sleeve=sleeve,
         artifact_id=artifact_id, artifact=artifact,
         broker_id=broker_id, broker=broker,
-        stage=stage, as_of=as_of
+        stage=stage, as_of=as_of,
+        tenant_id=tenant_id,
     )
 
 
@@ -54985,6 +55104,7 @@ async def bff_management_performance_attribution_by_persona(
     """BFF: PM-12 performance attribution grouped by persona."""
     identity = _extract_identity(authorization)
     _require_read_role(identity)
+    tenant_id = str(_bff_me_tenant_payload(identity, requested_tenant=None)["id"])
     return _pm12_performance_attribution_response(
         dimensions=["persona"],
         period=period,
@@ -54999,7 +55119,8 @@ async def bff_management_performance_attribution_by_persona(
         sleeve_id=sleeve_id, sleeve=sleeve,
         artifact_id=artifact_id, artifact=artifact,
         broker_id=broker_id, broker=broker,
-        stage=stage, as_of=as_of
+        stage=stage, as_of=as_of,
+        tenant_id=tenant_id,
     )
 
 
@@ -55030,6 +55151,7 @@ async def bff_management_performance_attribution_by_pool(
     """BFF: PM-12 performance attribution grouped by capital pool."""
     identity = _extract_identity(authorization)
     _require_read_role(identity)
+    tenant_id = str(_bff_me_tenant_payload(identity, requested_tenant=None)["id"])
     return _pm12_performance_attribution_response(
         dimensions=["pool"],
         period=period,
@@ -55044,7 +55166,8 @@ async def bff_management_performance_attribution_by_pool(
         sleeve_id=sleeve_id, sleeve=sleeve,
         artifact_id=artifact_id, artifact=artifact,
         broker_id=broker_id, broker=broker,
-        stage=stage, as_of=as_of
+        stage=stage, as_of=as_of,
+        tenant_id=tenant_id,
     )
 
 
@@ -55639,9 +55762,10 @@ def _management_cost_attribution_response(
     period: str,
     page_token: Optional[str],
     page_size: int,
+    tenant_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     snapshot_at = utc_now()
-    sources = _pm12_performance_attribution_sources()
+    sources = _pm12_performance_attribution_sources(tenant_id)
     period_key = str(period or "").strip() or "latest"
     facts = _pm12_performance_attribution_facts(sources, period_key)
 
@@ -55785,6 +55909,7 @@ async def bff_management_cost_attribution(
     """BFF: read-only cost attribution across personas, strategies, and capital pools."""
     identity = _extract_identity(authorization)
     _require_read_role(identity)
+    tenant_id = str(_bff_me_tenant_payload(identity, requested_tenant=None)["id"])
     return _management_cost_attribution_response(
         persona_id=persona_id,
         strategy_id=strategy_id,
@@ -55792,6 +55917,7 @@ async def bff_management_cost_attribution(
         period=period,
         page_token=page_token,
         page_size=page_size,
+        tenant_id=tenant_id,
     )
 
 
@@ -55883,10 +56009,17 @@ async def _management_board_pack_response(
 ) -> Dict[str, Any]:
     snapshot_at = utc_now()
     period_key = str(period or "").strip() or "latest"
+    tenant_id = str(
+        _bff_me_tenant_payload(
+            _extract_identity(authorization),
+            requested_tenant=None,
+        )["id"]
+    )
 
     portfolio_book = await bff_management_portfolio_book(
         page_token=None,
         page_size=section_limit,
+        tenant_id=tenant_id,
         authorization=authorization,
     )
     portfolio_exposure = await bff_management_portfolio_book_exposure(
@@ -55930,6 +56063,7 @@ async def _management_board_pack_response(
         page_size=section_limit,
         data_id="pm12-performance-attribution-by-persona",
         surface_key="performance_attribution_by_persona",
+        tenant_id=tenant_id,
     )
     attribution_by_pool = _pm12_performance_attribution_response(
         dimensions=["pool"],
@@ -55938,6 +56072,7 @@ async def _management_board_pack_response(
         page_size=section_limit,
         data_id="pm12-performance-attribution-by-pool",
         surface_key="performance_attribution_by_pool",
+        tenant_id=tenant_id,
     )
 
     section_payload_refs = [
@@ -56287,7 +56422,8 @@ async def bff_search(
                 })
 
     if not requested_types or "persona" in requested_types:
-        for raw in _list_persona_records():
+        search_tenant_id = str(_bff_me_tenant_payload(identity, requested_tenant=None)["id"])
+        for raw in _list_persona_records(search_tenant_id):
             persona_id = str(raw.get("persona_id") or raw.get("id") or "")
             name = raw.get("name") or persona_id
             if _match(persona_id) or _match(name):
@@ -61775,6 +61911,7 @@ def _health_reason_sentinel_findings(
     kind: Optional[str] = None,
     status: Optional[str] = None,
     severity: Optional[str] = None,
+    tenant_id: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """Run the HealthReasonCode rule engine over the persona fleet.
 
@@ -61797,7 +61934,7 @@ def _health_reason_sentinel_findings(
         return []
     severity_filter = severity.lower() if severity is not None else None
 
-    personas = _list_persona_records()
+    personas = _list_persona_records(tenant_id)
     if not personas:
         return []
     runtime_bindings = list(read_store.list_runtime_bindings() or [])
@@ -61862,6 +61999,7 @@ async def bff_v5_sentinel_findings_list(
     """
     identity = _extract_identity(authorization)
     _require_read_role(identity)
+    caller_tenant_id = str(_bff_me_tenant_payload(identity, requested_tenant=None)["id"])
 
     if kind is not None and kind.lower() not in _SENTINEL_FINDING_KINDS:
         raise _bff_error(
@@ -61898,6 +62036,7 @@ async def bff_v5_sentinel_findings_list(
         kind=kind,
         status=status,
         severity=severity,
+        tenant_id=caller_tenant_id,
     )
     if health_findings:
         existing_ids = {str(r.get("id")) for r in records}
@@ -65588,7 +65727,7 @@ def _persona_fleet_slim_list_payload(
     paper_rankings = {
         str(item.get("persona_id") or item.get("id") or "").strip(): item
         for item in _pm12_quarterly_ranking_items(
-            _pm12_persona_league_rows(state=None, archetype=None, q=""),
+            _pm12_persona_league_rows(state=None, archetype=None, q="", tenant_id=tenant_id),
             quarter_window=quarter_window,
             telemetry_cache=telemetry_cache,
         )
@@ -68079,15 +68218,9 @@ def _resolve_agora_interaction_context_ref(
                 for item in context_refs
                 if item.get("kind") == "persona"
             }
-            persona = read_store.get_persona(persona_id)
-            if persona is None:
-                persona = next(
-                    (
-                        row for row in read_store.list_personas(include_market_persona_defaults=True)
-                        if str(row.get("persona_id") or row.get("id") or "") == persona_id
-                    ),
-                    None,
-                )
+            persona = _get_persona_directory_snapshot(
+                str(resolved.tenant_id or "").strip()
+            ).records_by_id.get(persona_id)
             episode_strategy = str(episode.get("strategy_id") or "")
             artifact_id = str(episode.get("artifact_id") or "")
             artifact_version = str(episode.get("artifact_version") or "")
@@ -68119,7 +68252,7 @@ def _resolve_agora_interaction_context_ref(
                 and artifact_version
                 and persona_id in referenced_personas
                 and isinstance(persona, dict)
-                and persona.get("tenant_id") == resolved.tenant_id
+                and _persona_record_tenant_id(persona) == resolved.tenant_id
                 and _trade_journal_allowed(identity, persona_id)
                 and episode_strategy == scoped_strategy
                 and (not episode_strategy_version or episode_strategy_version == scoped_version)
