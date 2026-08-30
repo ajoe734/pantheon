@@ -55814,9 +55814,14 @@
     "execute_plans": "7d30e78476be61222af63a089e7ab141aa43b809",
     "hosted_accepted_at": "2026-08-30T16:17:23Z",
     "hosted_backend": "2bcb4465399af83190c5027073f3b2296e377256",
+    "hosted_bff_version_source_commit_sha": "2bcb4465399af83190c5027073f3b2296e377256",
+    "hosted_controller_run_id": "33319323262",
     "hosted_deployment_state": "accepted",
+    "hosted_execute_plans_deploy_run_id": "33321494484",
     "hosted_frontend": "7d30e78476be61222af63a089e7ab141aa43b809",
+    "hosted_gate_run_id": "33320810888",
     "hosted_pair_id": "9de4cd001a8b7aaf18a1094fb1699ece19f0efd86d3d24994cd9f3562fe33727",
+    "hosted_release_candidate_id": "9783e78bd8e28608f2c335d566fd798db5b995c50da129876401170b45852e9a",
     "pantheon": "2bcb4465399af83190c5027073f3b2296e377256"
   },
   "prior_delivery_dispositions": [

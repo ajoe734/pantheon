@@ -320,7 +320,12 @@ def validate_catalog(catalog_path: str, main_py_path: str) -> None:
     assert pb.get("command_runtime_sha") == "2bcb4465399af83190c5027073f3b2296e377256", "Stale command runtime SHA in planning_baseline"
     assert pb.get("execute_plans") == "7d30e78476be61222af63a089e7ab141aa43b809", "Stale execute-plans baseline"
     assert pb.get("hosted_pair_id") == "9de4cd001a8b7aaf18a1094fb1699ece19f0efd86d3d24994cd9f3562fe33727", "Stale hosted pair ID"
+    assert pb.get("hosted_release_candidate_id") == "9783e78bd8e28608f2c335d566fd798db5b995c50da129876401170b45852e9a", "Stale release candidate ID"
     assert pb.get("hosted_backend") == "2bcb4465399af83190c5027073f3b2296e377256", "Stale hosted backend"
+    assert pb.get("hosted_bff_version_source_commit_sha") == "2bcb4465399af83190c5027073f3b2296e377256", "Stale /bff/version source commit SHA"
+    assert pb.get("hosted_controller_run_id") == "33319323262", "Stale hosted controller run ID"
+    assert pb.get("hosted_gate_run_id") == "33320810888", "Stale hosted gate run ID"
+    assert pb.get("hosted_execute_plans_deploy_run_id") == "33321494484", "Stale execute-plans deploy run ID"
     assert pb.get("hosted_frontend") == "7d30e78476be61222af63a089e7ab141aa43b809", "Stale hosted frontend"
     assert pb.get("hosted_accepted_at") == "2026-08-30T16:17:23Z", "Stale hosted accepted at"
 
