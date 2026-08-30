@@ -1,0 +1,61 @@
+{
+  "schema_version": "pantheon.agora-bounded-source-refresh-readback-review.v1",
+  "task_id": "AGORA-BOUNDED-SOURCE-REFRESH-READBACK-V1-20260830",
+  "generated_at": "2026-08-30T02:01:00Z",
+  "owner": "Antigravity2",
+  "reviewer": "Codex2",
+  "status": "implementation_complete_ready_for_exact_head_review",
+  "acceptance_state": "exact_head_review_merge_and_post_merge_release_proof_required",
+  "immutable_failure_reproduction": {
+    "workflow_run_id": 33283640789,
+    "workflow_url": "https://github.com/ajoe734/pantheon/actions/runs/33283640789",
+    "backend_sha": "ef66ef0d5b192028b08eb6267ce46e2cd68f689b",
+    "frontend_sha": "5ffee3db8c2b37b4070d43d091ed4207ef5d70e5",
+    "conclusion": "failure",
+    "failed_job": "Deploy dev under shared environment lease",
+    "failed_step": "Deploy dev VM stack under lease",
+    "failed_component": "source-ingest-scheduler controller one-shot reconcile_and_pull terminal readback",
+    "observed_failure": "source-ingest-scheduler terminal readback failed closed with tw-twse-tpex-official-market:freshness_not_accepted",
+    "root_cause": "The source-ingestion runtime (_connector_freshness_summary_from_snapshot), controller terminal readback validation (_validate_terminal_readback), and BFF surface projector (_freshness_metadata) computed staleness as age_seconds > 86400 without Taiwan market-session awareness. When one-shot bounded refresh ran on the weekend for tw-twse-tpex-official-market, the official Friday close (age ~150,000s) was marked stale, causing freshness_not_accepted and source_data_stale rejection before root compose admission could evaluate the healthy scheduler terminal result."
+  },
+  "two_distinct_official_closes_proof": {
+    "prior_task_id": "AGORA-OFFICIAL-SNAPSHOT-MIN-CLOSES-V1-20260829",
+    "prior_evidence_manifest": "docs/deployment/evidence/AGORA-OFFICIAL-SNAPSHOT-MIN-CLOSES-V1-20260829/summary.json",
+    "prior_anchor_commit": "db124458e4233e28e73b396389de3bc71d1cf758",
+    "prior_merge_pr": 5415,
+    "official_live_read_only_smoke": {
+      "test_citation": "services/source_ingestion/tests/test_taiwan_official_connectors.py::test_taiwan_official_live_read_only_smoke_for_one_twse_and_tpex_symbol",
+      "proved_behavior": "Real TaiwanOfficialMarketDatasetAdapter against official TWSE STOCK_DAY and TPEx tradingStock endpoints obtained exactly two chronologically distinct real official closes for 2330.TWSE and 3105.TPEX, each with tw-official:tw_price_daily: source-id prefix, without mock data, fixtures, or manual runtime writes."
+    },
+    "persistence_and_admission_tests": [
+      "services/source_ingestion/tests/test_latest_market_snapshot.py::test_latest_market_snapshot_retains_two_closes_for_active_symbols",
+      "services/execution/lean_runtime/test_paper_signal_producer.py::test_bounded_official_refresh_active_symbols_snapshot_two_closes"
+    ]
+  },
+  "resolution_summary": {
+    "runtime_freshness": "Updated services/source_ingestion/runtime.py::_connector_freshness_summary_from_snapshot to apply evaluate_taiwan_market_freshness for tw-twse-tpex-official-market, evaluating Taiwan session close (13:30 Asia/Taipei), weekends, official lineage, and governed calendar evidence, while strictly failing closed on missing record or non-official lineage.",
+    "controller_readback": "Updated services/source_ingestion/controller_worker.py::_validate_terminal_readback to apply evaluate_taiwan_market_freshness and tw-official: lineage verification for tw-twse-tpex-official-market, accepting weekend Friday close with fresh receipt while strictly rejecting missing, unparsable, or stale receipts (>24h), stale weekdays, non-official lineage, and future timestamps, with deterministic clock injection support.",
+    "surface_projector": "Updated scripts/project_market_data_to_bff_agora_surfaces.py::_freshness_metadata to apply evaluate_taiwan_market_freshness with real record source_id lineage validation for official Taiwan market daily price projections.",
+    "deploy_sha_contract": "Updated scripts/test_deploy_nonprod_bff_source_sha_contract.py to include agora-interaction-worker in prebuild and recreate command verification."
+  },
+  "fail_closed_boundaries": [
+    "Stale weekday data without valid holiday evidence is rejected as market_input_stale / source_data_stale.",
+    "Missing, unparsable, or stale refresh receipt older than 24h is rejected as market_input_stale_refresh / source_data_stale.",
+    "Missing or tampered calendar evidence during exchange closure is rejected as market_input_calendar_unverifiable / source_data_stale.",
+    "Non-official lineage (source_id not starting with tw-official:) is rejected as market_input_non_official_lineage / source_data_stale.",
+    "Future event_time or observed_at is rejected as market_input_invalid / source_data_stale.",
+    "Readiness or refresh failure compensates to exact accepted read-only FE/BFF baseline with all writes false."
+  ],
+  "validation": {
+    "focused_suite": "pytest -q services/source_ingestion/tests/test_scheduled_connector.py services/source_ingestion/tests/test_controller_worker.py scripts/test_project_market_data_to_bff_agora_surfaces.py scripts/test_source_ingest_deploy_diagnostics_contract.py scripts/test_deploy_nonprod_bff_source_sha_contract.py services/source_ingestion/tests/test_requirement_state.py services/execution/lean_runtime/test_paper_signal_producer.py services/control-plane/bff/agora/test_operational_readiness.py",
+    "focused_result": "255 passed, 1 warning, 6 subtests passed in 53.80s",
+    "broader_source_suite": "pytest -q services/source_ingestion/tests/",
+    "broader_source_result": "847 passed, 1 skipped, 5 warnings in 229.21s",
+    "syntax_check": "py_compile and git diff clean"
+  },
+  "release_closeout_gate": {
+    "required_backend": "the Pantheon dev merge containing this manifest and the independently approved head",
+    "required_frontend": "5ffee3db8c2b37b4070d43d091ed4207ef5d70e5",
+    "unblocks_task": "AGORA-AGC-14-HOSTED-DEMO-AUTHENTIC-V5-20260829"
+  }
+}

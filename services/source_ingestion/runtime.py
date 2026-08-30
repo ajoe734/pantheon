@@ -701,6 +701,7 @@ class SourceIngestionRuntime:
         runs: list[Any] | tuple[Any, ...],
         receipts: list[IngestReceipt] | tuple[IngestReceipt, ...],
         now: datetime,
+        latest_record: Any | None = None,
     ) -> dict[str, Any]:
         from .pipeline import _parse_utc_datetime
 
@@ -750,9 +751,39 @@ class SourceIngestionRuntime:
             connector_metadata,
             schedule,
         )
-        stale = source_timestamp_status != "valid" or (
-            age_seconds is not None and age_seconds > stale_threshold_seconds
-        )
+        is_taiwan = connector_id == "tw-twse-tpex-official-market"
+        if is_taiwan and source_timestamp_dt is not None and source_timestamp_status == "valid":
+            source_id_str = str(getattr(latest_record, "source_id", "") if latest_record is not None else "")
+            if latest_record is None or not source_id_str.startswith("tw-official:"):
+                stale = True
+            else:
+                lineage = {
+                    "connector_ids": [connector_id],
+                    "source_ids": [source_id_str],
+                }
+                cal_ev = None
+                if latest_record is not None and hasattr(latest_record, "metadata") and isinstance(latest_record.metadata, Mapping):
+                    cal_ev = latest_record.metadata.get("calendar_evidence")
+                if cal_ev is None and latest_success_receipt is not None and hasattr(latest_success_receipt, "metadata") and isinstance(latest_success_receipt.metadata, Mapping):
+                    cal_ev = latest_success_receipt.metadata.get("calendar_evidence")
+
+                from services.execution.market_snapshot_admission import (
+                    evaluate_taiwan_market_freshness,
+                )
+
+                tw_ok, _tw_reason, _tw_detail = evaluate_taiwan_market_freshness(
+                    event_time_dt=source_timestamp_dt,
+                    now_dt=now,
+                    refresh_receipt_dt=last_success_dt,
+                    lineage=lineage,
+                    max_refresh_age_seconds=stale_threshold_seconds,
+                    calendar_evidence=cal_ev,
+                )
+                stale = not tw_ok
+        else:
+            stale = source_timestamp_status != "valid" or (
+                age_seconds is not None and age_seconds > stale_threshold_seconds
+            )
         is_due = False
 
         if schedule is None:
@@ -844,6 +875,7 @@ class SourceIngestionRuntime:
             for receipt in snapshot["receipts"]
             if receipt.connector_id == connector_id
         )
+        latest_record = self._latest_source_record_by_connector().get(connector_id)
         return self._connector_freshness_summary_from_snapshot(
             connector_id,
             connector_metadata=(config.connector.metadata if config is not None else {}),
@@ -852,6 +884,7 @@ class SourceIngestionRuntime:
             runs=runs,
             receipts=receipts,
             now=datetime.now(timezone.utc),
+            latest_record=latest_record,
         )
 
     def _source_freshness_readiness(self) -> dict[str, Any]:
@@ -1096,6 +1129,7 @@ class SourceIngestionRuntime:
         for receipt in freshness_snapshot["receipts"]:
             receipts_by_connector.setdefault(receipt.connector_id, []).append(receipt)
         observed_at = datetime.now(timezone.utc)
+        latest_by_connector = self._latest_source_record_by_connector()
 
         connector_ids = set(configured_by_id)
         connectors = list(self.manager.list_connectors())
@@ -1122,6 +1156,7 @@ class SourceIngestionRuntime:
                         runs=runs_by_connector.get(connector_id, ()),
                         receipts=receipts_by_connector.get(connector_id, ()),
                         now=observed_at,
+                        latest_record=latest_by_connector.get(connector_id),
                     ),
                 )
             )
@@ -1286,6 +1321,7 @@ class SourceIngestionRuntime:
             "license_scope",
             "schema_hash",
             "source_ingest_run_id",
+            "calendar_evidence",
         )
         return {
             "source_id": payload["source_id"],
@@ -1336,6 +1372,7 @@ class SourceIngestionRuntime:
                 runs=runs_by_connector.get(connector_id, ()),
                 receipts=receipts_by_connector.get(connector_id, ()),
                 now=observed_at,
+                latest_record=latest_by_connector.get(connector_id),
             )
             health = self.source_health_store.get(connector_id)
             health_payload = health.to_dict() if health is not None else None

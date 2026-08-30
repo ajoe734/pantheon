@@ -9,7 +9,9 @@ Verifies:
 """
 from __future__ import annotations
 
+import tempfile
 from datetime import datetime, timezone, timedelta
+from pathlib import Path
 from typing import Any, Dict
 
 import pytest
@@ -26,6 +28,57 @@ from .operational_readiness import (
 def _utc_now_iso(offset_seconds: float = 0.0) -> str:
     dt = datetime.now(timezone.utc) + timedelta(seconds=offset_seconds)
     return dt.replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def _twse_lny_calendar_evidence() -> dict[str, Any]:
+    return {
+        "market": "TW",
+        "venue": "TWSE",
+        "timezone": "Asia/Taipei",
+        "authority": "Taiwan Stock Exchange 115 年市場開休市日期",
+        "source_url": "https://www.twse.com.tw/holidaySchedule/holidaySchedule?response=json&queryYear=115",
+        "fetched_at": "2026-02-23T01:00:00Z",
+        "version": "twse-2026-lny-v1",
+        "checksum": "55b2e23b9bd30af666a99c98da2dbbfad568dcd655631b1c6347d12ee8381596",
+        "coverage_start": "2026-02-11",
+        "coverage_end": "2026-02-23",
+        "holidays": {
+            "2026-02-12": {"name": "市場無交易，僅辦理結算交割作業"},
+            "2026-02-13": {"name": "市場無交易，僅辦理結算交割作業"},
+            "2026-02-16": {"name": "農曆除夕及春節"},
+            "2026-02-17": {"name": "農曆除夕及春節"},
+            "2026-02-18": {"name": "農曆除夕及春節"},
+            "2026-02-19": {"name": "農曆除夕及春節"},
+            "2026-02-20": {"name": "農曆除夕及春節"},
+        },
+        "trading_days": ["2026-02-11", "2026-02-23"],
+    }
+
+
+def _twse_source_public_holiday_snapshot() -> dict[str, Any]:
+    """Return the real-adapter Source contract passed to readiness."""
+    from services.source_ingestion.connectors.taiwan_official import (
+        TaiwanOfficialMarketDatasetAdapter,
+    )
+    from services.source_ingestion.requirement_state import LatestMarketSnapshotStore
+
+    records = TaiwanOfficialMarketDatasetAdapter(max_records=10).records_from_payload(
+        "tw_price_daily",
+        "TWSE",
+        [
+            {"Date": "1150210", "Code": "2330", "ClosingPrice": "950.00"},
+            {"Date": "1150211", "Code": "2330", "ClosingPrice": "955.00"},
+        ],
+        trace_id="trace-readiness-governed-calendar",
+    )
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        snapshot_store = LatestMarketSnapshotStore(Path(tmp_dir) / "snapshots.jsonl")
+        snapshot_store.append_normalized_records(
+            records,
+            ingest_run_id="ingest-twse-lny-calendar",
+            observed_at="2026-02-23T02:00:00Z",
+        )
+        return snapshot_store.get("2330.TWSE").to_public_dict()
 
 
 @pytest.fixture
@@ -352,45 +405,73 @@ def test_operational_readiness_tw_friday_close_stale_after_monday_session(
     assert data.status == "degraded"
 
 
-def test_operational_readiness_tw_holiday_with_calendar_evidence(
+def test_operational_readiness_tw_same_day_close_stale_before_session_completion(
     readiness_service: AgoraOperationalReadinessService,
 ) -> None:
-    """A valid Friday official close evaluated after a holiday span (e.g. Lunar New Year)
-    reads 'fresh' when valid official calendar evidence is attached."""
     readiness_service.set_source_snapshot({
-        "snapshot_id": "mss-tw-readiness-003",
+        "snapshot_id": "mss-tw-readiness-pre-close",
         "source_instance_id": "src-tw-twse-2330",
         "symbol": "2330.TWSE",
-        "event_time": "2026-02-13T05:30:00Z",
-        "observed_at": "2026-02-23T02:00:00Z",
+        "event_time": "2026-08-31T00:00:00Z",
+        "observed_at": "2026-08-31T01:00:00Z",
         "sla_seconds": 86400,
         "lineage": {
             "source_ids": ["tw-official:tw_price_daily:TWSE:2330:checksummed"],
             "connector_ids": ["tw-twse-tpex-official-market"],
         },
-        "calendar_evidence": {
-            "market": "TW",
-            "venue": "TWSE",
-            "timezone": "Asia/Taipei",
-            "authority": "TWSE/TPEx announced holiday schedule",
-            "source_url": "https://www.twse.com.tw/en/trading/calendar.html",
-            "fetched_at": "2026-02-23T01:00:00Z",
-            "version": "2026.1",
-            "checksum": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-            "coverage_start": "2026-01-01",
-            "coverage_end": "2026-12-31",
-            "holidays": {
-                "2026-02-16": {"name": "Lunar New Year (eve)"},
-                "2026-02-17": {"name": "Lunar New Year"},
-                "2026-02-18": {"name": "Lunar New Year"},
-                "2026-02-19": {"name": "Lunar New Year"},
-                "2026-02-20": {"name": "Lunar New Year (makeup)"},
-            },
+    })
+    readiness_service.set_signal_producer({
+        "status": "ok",
+        "consumed_snapshot_id": "mss-tw-readiness-pre-close",
+        "enqueued": 0,
+    })
+
+    envelope = readiness_service.compose_readiness(now_iso="2026-08-31T01:00:00Z")
+
+    assert envelope.data.source.freshness == "stale"
+    assert envelope.data.status == "degraded"
+
+
+def test_operational_readiness_tw_same_day_close_stale_for_premature_receipt(
+    readiness_service: AgoraOperationalReadinessService,
+) -> None:
+    readiness_service.set_source_snapshot({
+        "snapshot_id": "mss-tw-readiness-premature-receipt",
+        "source_instance_id": "src-tw-twse-2330",
+        "symbol": "2330.TWSE",
+        "event_time": "2026-08-31T00:00:00Z",
+        "observed_at": "2026-08-31T01:00:00Z",
+        "sla_seconds": 86400,
+        "lineage": {
+            "source_ids": ["tw-official:tw_price_daily:TWSE:2330:checksummed"],
+            "connector_ids": ["tw-twse-tpex-official-market"],
         },
     })
     readiness_service.set_signal_producer({
         "status": "ok",
-        "consumed_snapshot_id": "mss-tw-readiness-003",
+        "consumed_snapshot_id": "mss-tw-readiness-premature-receipt",
+        "enqueued": 0,
+    })
+
+    envelope = readiness_service.compose_readiness(now_iso="2026-08-31T06:00:00Z")
+
+    assert envelope.data.source.freshness == "stale"
+    assert envelope.data.status == "degraded"
+
+
+def test_operational_readiness_tw_holiday_with_calendar_evidence(
+    readiness_service: AgoraOperationalReadinessService,
+) -> None:
+    """A persisted Source public snapshot stays fresh across the LNY span."""
+    source_snapshot = _twse_source_public_holiday_snapshot()
+    source_snapshot.update({
+        "source_instance_id": "src-tw-twse-2330",
+        "sla_seconds": 86400,
+    })
+    readiness_service.set_source_snapshot(source_snapshot)
+    readiness_service.set_signal_producer({
+        "status": "ok",
+        "consumed_snapshot_id": source_snapshot["snapshot_id"],
         "enqueued": 3,
     })
 
@@ -399,3 +480,39 @@ def test_operational_readiness_tw_holiday_with_calendar_evidence(
 
     assert data.source.freshness == "fresh"
     assert data.status == "ok"
+
+
+@pytest.mark.parametrize(
+    ("event_time", "observed_at"),
+    [
+        ("2026-08-29T12:00:01Z", "2026-08-29T12:00:00Z"),
+        ("2026-08-28T05:30:00Z", "2026-08-29T12:00:01Z"),
+    ],
+)
+def test_operational_readiness_tw_any_future_timestamp_is_stale(
+    readiness_service: AgoraOperationalReadinessService,
+    event_time: str,
+    observed_at: str,
+) -> None:
+    readiness_service.set_source_snapshot({
+        "snapshot_id": "mss-tw-readiness-future",
+        "source_instance_id": "src-tw-twse-2330",
+        "symbol": "2330.TWSE",
+        "event_time": event_time,
+        "observed_at": observed_at,
+        "sla_seconds": 86400,
+        "lineage": {
+            "source_ids": ["tw-official:tw_price_daily:TWSE:2330:checksummed"],
+            "connector_ids": ["tw-twse-tpex-official-market"],
+        },
+    })
+    readiness_service.set_signal_producer({
+        "status": "ok",
+        "consumed_snapshot_id": "mss-tw-readiness-future",
+        "enqueued": 0,
+    })
+
+    envelope = readiness_service.compose_readiness(now_iso="2026-08-29T12:00:00Z")
+
+    assert envelope.data.source.freshness == "stale"
+    assert envelope.data.status == "degraded"

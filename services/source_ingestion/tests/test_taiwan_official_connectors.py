@@ -252,6 +252,50 @@ def test_taiwan_official_adapter_emits_authentic_monthly_history_records() -> No
     assert [record.metadata["normalized_row"]["close"] for record in tpex] == [117.0, 118.5]
     assert tpex[0].metadata["normalized_row"]["volume_lots"] == 2900
     assert tpex[0].metadata["raw_row"]["日 期"] == "115/06/09"
+    assert "calendar_evidence" not in twse[-1].metadata
+
+
+def test_taiwan_official_adapter_binds_exact_governed_twse_calendar_evidence() -> None:
+    adapter = TaiwanOfficialMarketDatasetAdapter(max_records=10)
+    records = adapter.records_from_payload(
+        "tw_price_daily",
+        "TWSE",
+        [
+            {"Date": "1150210", "Code": "2330", "ClosingPrice": "950.00"},
+            {"Date": "1150211", "Code": "2330", "ClosingPrice": "955.00"},
+        ],
+        trace_id="trace-governed-twse-calendar",
+    )
+
+    assert "calendar_evidence" not in records[0].metadata
+    evidence = records[1].metadata["calendar_evidence"]
+    assert evidence["venue"] == "TWSE"
+    assert evidence["version"] == "twse-2026-lny-v1"
+    assert evidence["coverage_start"] == "2026-02-11"
+    assert evidence["coverage_end"] == "2026-02-23"
+    assert evidence["trading_days"] == ["2026-02-11", "2026-02-23"]
+    assert evidence["checksum"] == (
+        "55b2e23b9bd30af666a99c98da2dbbfad568dcd655631b1c6347d12ee8381596"
+    )
+    [catalog_entry] = adapter.connector().metadata["governed_calendar_evidence"]
+    assert catalog_entry["venue"] == "TWSE"
+    assert catalog_entry["year"] == 2026
+    assert catalog_entry["sha256"] == evidence["checksum"]
+
+    # The production writer never relabels TWSE proof as TPEx proof or extends
+    # the bounded catalog to an uncovered record date.
+    tpex = adapter.records_from_payload(
+        "tw_price_daily",
+        "TPEx",
+        [{"Date": "1150211", "SecuritiesCompanyCode": "3105", "Close": "118.50"}],
+    )
+    august = adapter.records_from_payload(
+        "tw_price_daily",
+        "TWSE",
+        [{"Date": "1150828", "Code": "2330", "ClosingPrice": "960.00"}],
+    )
+    assert "calendar_evidence" not in tpex[0].metadata
+    assert "calendar_evidence" not in august[0].metadata
 
 
 def test_taiwan_official_history_fetch_is_bounded_and_uses_prior_month(
