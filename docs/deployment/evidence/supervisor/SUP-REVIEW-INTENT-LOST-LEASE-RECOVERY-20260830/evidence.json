@@ -1,0 +1,52 @@
+{
+  "task_id": "SUP-REVIEW-INTENT-LOST-LEASE-RECOVERY-20260830",
+  "recorded_at": "2026-08-30T11:38:29Z",
+  "ai_name": "Claude",
+  "incumbent_head": "d2bca5bc70bfae897e1ef3ca736ad3680a587679",
+  "root_cause_analysis": {
+    "observed_failure": "review_decision_intent_recovery_deadlock",
+    "observed_reason": "A pending review_decision_intent durably fences every task mutation and dispatch until the exact same actor replays the exact same command/message/nonce (AI_COLLABORATION_GUIDE.md section 3). scripts/ai_status.py already supports that idempotent replay, but .orchestrator/supervisor.py's task_execution_dispatch_candidate() and evaluate_task_delivery_admission() both treat any pending review_decision_intent as an unconditional Human/Ops hold. If the reviewer worker that reserved the intent loses its lease (crash, restart, lease reap) before replaying it, no worker -- including the original actor -- is ever dispatched again to retry it. The task becomes a permanent deadlock recoverable only by a human running the exact ai-status.sh command by hand.",
+    "findings": [
+      ".orchestrator/supervisor.py task_execution_dispatch_candidate() returned None unconditionally whenever review_decision_intent was pending, with no path back to dispatch even for the original reserving actor.",
+      ".orchestrator/supervisor.py evaluate_task_delivery_admission() set TaskIntent.human_ops_hold=True unconditionally on a pending review_decision_intent, which reserve_dispatch_plan() revalidates on every event before launch, so no supervisor-built recovery event could ever pass admission either.",
+      "No supervisor-owned mechanism observed the reserving worker's lease independently of the intent itself, so nothing detected 'the worker that reserved this decision is gone' and nothing authorized a narrow, exact-actor replay dispatch."
+    ]
+  },
+  "remediation": {
+    "recovery_receipt": ".orchestrator/rewrite/review_intent_recovery.py adds a typed, generation-bound recovery receipt (review_decision_intent_recovery) that binds the pending intent's exact nonce/actor/command/message plus the task's current generation and CAS digest. Its own task-row field, and the intent's, are excluded from review_decision_task_digest (mirrored in scripts/ai_status.py) so minting or clearing the receipt can never perturb the frozen CAS binding the intent reserved.",
+    "lease_detection": "supervisor.review_decision_intent_lease_is_lost() treats a pending intent's reservation as lost only once it has outlived one full worker-lease window AND no live worker record still holds an unexpired lease on the task -- both conditions guard against racing a reservation that is still legitimately in flight.",
+    "receipt_minting": "supervisor.reconcile_review_decision_intent_lease_recovery() runs on every poll cycle (wired alongside reconcile_pending_worker_recoveries in both poll_workers and the boot reconciliation path) and durably CAS-writes the recovery receipt via persist_review_decision_intent_recovery_receipt() without touching owner, reviewer, generation, or any other field the intent's digest depends on.",
+    "narrow_replay_admission": "supervisor.review_decision_intent_replay_eligible() is the single eligibility predicate, reused by task_execution_dispatch_candidate() (so the exact original actor falls through to ordinary REVIEW_READY/OWNED_* reason computation instead of being unconditionally fenced) and evaluate_task_delivery_admission() (so human_ops_hold is False only for that exact actor). Every other agent, and any stale or generation-mismatched receipt, still hits the unconditional fence -- this is what prevents impersonation and keeps generic workers fenced.",
+    "replay_instructions": "build_dispatch_event() injects the exact replay command (AI_NAME=<actor> ai-status.sh <command> <task_id> \"<message>\") into that one dispatch event's task payload 'next' field when the eligibility check passes, without ever mutating the canonical (frozen) task row's own 'next' field.",
+    "cli_side_symmetry": "scripts/ai_status.py clears the review_decision_intent_recovery marker alongside review_decision_intent at every point the intent itself is cleared (command_reopen, abort_review_decision_intent, command_operator_accept, command_approve), so a completed or aborted replay never leaves a stale receipt behind."
+  },
+  "safety_properties": {
+    "no_impersonation": "The recovery receipt's actor field is copied verbatim from the original intent at mint time under the exclusive canonical task-state lock; even if a wrong actor were ever dispatched, scripts/ai_status.py's enforce_pending_review_decision_fence independently re-validates current_actor() against the frozen intent, so the CLI itself refuses a mismatched replay regardless of what the supervisor dispatches.",
+    "generic_workers_fenced": "review_decision_intent_replay_eligible() requires canonical_agent_name(agent_name) == canonical_agent_name(intent.actor); every other agent continues to see human_ops_hold=True / task_execution_dispatch_candidate() returning None.",
+    "stale_generation_rejection": "review_decision_intent_recovery_is_current() requires exact equality on task_generation, task_digest, nonce, actor, command, and message; any drift (a bumped generation, a changed task, a different pending intent) makes the receipt non-current and the ordinary fence re-applies automatically.",
+    "no_premature_mutation": "The recovery lane never calls command_approve/command_reopen/command_operator_accept, never bumps task generation, and never edits any field review_decision_task_digest depends on; it only ever authorizes one more dispatch of the original actor to run the CLI's own existing idempotent replay path."
+  },
+  "verification": {
+    "test_suites": [
+      ".orchestrator/test_supervisor.py",
+      "scripts/test_ai_status.py"
+    ],
+    "new_tests": [
+      "SharedPlannerContractTests.test_review_intent_lease_recovery_replays_only_the_exact_original_actor",
+      "SharedPlannerContractTests.test_review_intent_lease_recovery_still_fences_every_other_agent",
+      "SharedPlannerContractTests.test_review_intent_lease_recovery_rejects_a_stale_generation_receipt",
+      "SharedPlannerContractTests.test_review_intent_lease_recovery_next_override_carries_exact_replay",
+      "ReviewDecisionIntentLeaseRecoveryTests.test_lease_is_lost_only_once_stale_and_no_live_worker_holds_it",
+      "ReviewDecisionIntentLeaseRecoveryTests.test_reconcile_mints_a_receipt_and_unblocks_only_the_original_actor",
+      "ReviewDecisionIntentLeaseRecoveryTests.test_reconcile_does_not_mint_while_a_live_worker_still_holds_the_lease",
+      "ReviewApprovedWorkflowTests.test_supervisor_recovery_marker_never_perturbs_the_frozen_digest",
+      "ReviewApprovedWorkflowTests.test_reviewer_reopen_uses_the_same_two_phase_intent_protocol (extended to assert the recovery marker is cleared on finalize)"
+    ],
+    "passed_tests_count": 577,
+    "passed_tests_breakdown": "204 in .orchestrator/test_supervisor.py (197 baseline + 7 new), 373 in scripts/test_ai_status.py (372 baseline + 1 new)",
+    "status": "PASS"
+  },
+  "follow_up": {
+    "not_in_scope": "Promoting the merged command runtime and retrying FULL-OPERATION-GAP-SA-SD-PLAN-FREEZE-20260830's frozen nonce after GitHub quota reset are downstream operational steps that happen after this PR merges and the supervisor's live command runtime is repromoted; they are not actions this worker can take from within a task worktree."
+  }
+}
