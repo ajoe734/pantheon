@@ -41,6 +41,8 @@ from fastapi import APIRouter, Body, Header, Query
 
 from models import ErrorCode, ObjectType
 
+from .service import ResearchNotFoundError, ResearchRouterService, ResearchValidationError
+
 PageSlice = Callable[[List[Dict[str, Any]], Optional[str], int], Tuple[List[Dict[str, Any]], Optional[str]]]
 SnapshotMeta = Callable[[str], Dict[str, Any]]
 SurfaceStatus = Callable[..., Dict[str, Any]]
@@ -370,5 +372,264 @@ def create_research_experiments_router(
         meta = snapshot_meta(snapshot_at)
         meta["surfaces"] = {"research_experiment_detail": surface}
         return {"data": experiment, "meta": meta}
+
+    return router
+
+
+def create_research_router(
+    *,
+    get_read_store: Callable[[], Any],
+    extract_identity: Callable[[Optional[str]], Any],
+    require_read_role: Callable[[Any], None],
+    bff_error: Callable[..., Exception],
+    utc_now: Callable[[], str],
+    page_slice: PageSlice = _default_page_slice,
+    snapshot_meta: SnapshotMeta = _default_snapshot_meta,
+    dataset_surface_status: SurfaceStatus = _default_surface_status,
+    require_operator_role: Optional[Callable[[Any], None]] = None,
+    submit_experiment_action: Optional[SubmitAction] = None,
+    include_prepared_subrouters: bool = True,
+) -> APIRouter:
+    """Build the standalone Research domain router.
+
+    The factory is intentionally not mounted by this preparation task.  A
+    composition-root task can inject main.py's existing identity, metadata and
+    action seams, then remove the generic aliases it supersedes without a
+    circular import back into ``main``.
+    """
+
+    router = APIRouter(tags=["research"])
+    service = ResearchRouterService(
+        port_getter=get_read_store,
+        utc_now=utc_now,
+        snapshot_meta=snapshot_meta,
+        page_slice=page_slice,
+    )
+
+    def _raise_service_error(exc: Exception) -> None:
+        if isinstance(exc, ResearchNotFoundError):
+            raise bff_error(
+                404,
+                ErrorCode.RESOURCE_NOT_FOUND,
+                f"{exc.label} not found",
+                str(exc),
+            ) from exc
+        if isinstance(exc, ResearchValidationError):
+            raise bff_error(
+                exc.status_code,
+                ErrorCode.VALIDATION_FAILED,
+                str(exc),
+                str(exc),
+                precondition_failed=exc.field,
+            ) from exc
+        raise exc
+
+    async def _list_analyses(
+        ticket_id: Optional[str],
+        experiment_id: Optional[str],
+        status: Optional[str],
+        date_range: Optional[str],
+        page_token: Optional[str],
+        page_size: int,
+        authorization: Optional[str],
+    ) -> Dict[str, Any]:
+        require_read_role(extract_identity(authorization))
+        try:
+            return service.list_analyses(
+                ticket_id=ticket_id,
+                experiment_id=experiment_id,
+                status=status,
+                date_range=date_range,
+                page_token=page_token,
+                page_size=page_size,
+            )
+        except (ResearchNotFoundError, ResearchValidationError) as exc:
+            _raise_service_error(exc)
+            raise AssertionError("unreachable")
+
+    async def _get_analysis(analysis_id: str, authorization: Optional[str]) -> Dict[str, Any]:
+        require_read_role(extract_identity(authorization))
+        try:
+            return service.get_analysis(analysis_id)
+        except (ResearchNotFoundError, ResearchValidationError) as exc:
+            _raise_service_error(exc)
+            raise AssertionError("unreachable")
+
+    @router.get("/api/v1/research/analyses")
+    async def list_research_analyses(
+        ticket_id: Optional[str] = None,
+        experiment_id: Optional[str] = None,
+        status: Optional[str] = None,
+        date_range: Optional[str] = None,
+        page_token: Optional[str] = None,
+        page_size: int = Query(default=20, ge=1, le=100),
+        authorization: Optional[str] = Header(default=None),
+    ) -> Dict[str, Any]:
+        return await _list_analyses(ticket_id, experiment_id, status, date_range, page_token, page_size, authorization)
+
+    @router.get("/api/v1/research/analyses/{analysis_id}")
+    async def get_research_analysis(
+        analysis_id: str,
+        authorization: Optional[str] = Header(default=None),
+    ) -> Dict[str, Any]:
+        return await _get_analysis(analysis_id, authorization)
+
+    @router.get("/api/v1/research/analysis")
+    async def list_research_analysis_compat(
+        ticket_id: Optional[str] = None,
+        experiment_id: Optional[str] = None,
+        status: Optional[str] = None,
+        date_range: Optional[str] = None,
+        page_token: Optional[str] = None,
+        page_size: int = Query(default=20, ge=1, le=100),
+        authorization: Optional[str] = Header(default=None),
+    ) -> Dict[str, Any]:
+        return await _list_analyses(ticket_id, experiment_id, status, date_range, page_token, page_size, authorization)
+
+    @router.get("/api/v1/research/analysis/{analysis_id}")
+    async def get_research_analysis_compat(
+        analysis_id: str,
+        authorization: Optional[str] = Header(default=None),
+    ) -> Dict[str, Any]:
+        return await _get_analysis(analysis_id, authorization)
+
+    async def _list_artifacts(
+        artifact_type: Optional[str],
+        status: Optional[str],
+        tags: Optional[str],
+        author: Optional[str],
+        date_range: Optional[str],
+        page_token: Optional[str],
+        page_size: int,
+        authorization: Optional[str],
+    ) -> Dict[str, Any]:
+        require_read_role(extract_identity(authorization))
+        try:
+            return service.list_artifacts(
+                artifact_type=artifact_type,
+                status=status,
+                tags=tags,
+                author=author,
+                date_range=date_range,
+                page_token=page_token,
+                page_size=page_size,
+            )
+        except (ResearchNotFoundError, ResearchValidationError) as exc:
+            _raise_service_error(exc)
+            raise AssertionError("unreachable")
+
+    async def _get_artifact(artifact_id: str, authorization: Optional[str]) -> Dict[str, Any]:
+        require_read_role(extract_identity(authorization))
+        try:
+            return service.get_artifact(artifact_id)
+        except (ResearchNotFoundError, ResearchValidationError) as exc:
+            _raise_service_error(exc)
+            raise AssertionError("unreachable")
+
+    @router.get("/api/v1/research/artifacts")
+    async def list_research_artifacts(
+        artifact_type: Optional[str] = None,
+        status: Optional[str] = None,
+        tags: Optional[str] = None,
+        author: Optional[str] = None,
+        date_range: Optional[str] = None,
+        page_token: Optional[str] = None,
+        page_size: int = Query(default=20, ge=1, le=100),
+        authorization: Optional[str] = Header(default=None),
+    ) -> Dict[str, Any]:
+        return await _list_artifacts(artifact_type, status, tags, author, date_range, page_token, page_size, authorization)
+
+    @router.get("/api/v1/research/artifacts/compare")
+    async def compare_research_artifacts(
+        artifact_ids: str,
+        authorization: Optional[str] = Header(default=None),
+    ) -> Dict[str, Any]:
+        require_read_role(extract_identity(authorization))
+        try:
+            return service.compare_artifacts(artifact_ids)
+        except (ResearchNotFoundError, ResearchValidationError) as exc:
+            _raise_service_error(exc)
+            raise AssertionError("unreachable")
+
+    @router.get("/api/v1/research/artifacts/{artifact_id}")
+    async def get_research_artifact(
+        artifact_id: str,
+        authorization: Optional[str] = Header(default=None),
+    ) -> Dict[str, Any]:
+        return await _get_artifact(artifact_id, authorization)
+
+    @router.get("/bff/research-analyses")
+    async def bff_list_research_analyses(
+        page_token: Optional[str] = None,
+        page_size: int = Query(default=20, ge=1, le=100),
+        authorization: Optional[str] = Header(default=None),
+    ) -> Dict[str, Any]:
+        result = await _list_analyses(None, None, None, None, page_token, page_size, authorization)
+        return {
+            "data": result["data"],
+            "items": result["data"],
+            "page_info": result["page_info"],
+            "meta": result["meta"],
+        }
+
+    @router.get("/bff/research-analyses/{analysis_id}")
+    async def bff_get_research_analysis(
+        analysis_id: str,
+        authorization: Optional[str] = Header(default=None),
+    ) -> Dict[str, Any]:
+        payload = await _get_analysis(analysis_id, authorization)
+        meta = payload.pop("meta")
+        return {"data": payload, "meta": meta}
+
+    @router.get("/bff/artifacts")
+    async def bff_list_research_artifacts(
+        page_token: Optional[str] = None,
+        page_size: int = Query(default=20, ge=1, le=100),
+        authorization: Optional[str] = Header(default=None),
+    ) -> Dict[str, Any]:
+        result = await _list_artifacts(None, None, None, None, None, page_token, page_size, authorization)
+        return {
+            "data": result["artifacts"],
+            "items": result["artifacts"],
+            "page_info": {"next_page_token": result["next_page_token"], "total": result["total_count"]},
+            "meta": result["meta"],
+        }
+
+    @router.get("/bff/artifacts/{artifact_id}")
+    async def bff_get_research_artifact(
+        artifact_id: str,
+        authorization: Optional[str] = Header(default=None),
+    ) -> Dict[str, Any]:
+        payload = await _get_artifact(artifact_id, authorization)
+        meta = payload.pop("meta")
+        return {"data": payload, "meta": meta}
+
+    if include_prepared_subrouters:
+        from console_gap.knowledge import create_knowledge_router
+
+        router.include_router(
+            create_knowledge_router(
+                extract_identity=extract_identity,
+                require_read_role=require_read_role,
+                read_store_getter=get_read_store,
+                utc_now=utc_now,
+                dataset_surface_status=dataset_surface_status,
+            )
+        )
+        if require_operator_role is not None:
+            router.include_router(
+                create_research_experiments_router(
+                    get_read_store=get_read_store,
+                    extract_identity=extract_identity,
+                    require_read_role=require_read_role,
+                    require_operator_role=require_operator_role,
+                    bff_error=bff_error,
+                    utc_now=utc_now,
+                    page_slice=page_slice,
+                    snapshot_meta=snapshot_meta,
+                    dataset_surface_status=dataset_surface_status,
+                    submit_experiment_action=submit_experiment_action,
+                )
+            )
 
     return router
