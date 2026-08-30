@@ -40,6 +40,7 @@ TASK_REVIEW_MANIFEST = {
         "pytest -q services/control-plane/bff/tests/test_command_adapters_router.py",
         "pytest -q services/control-plane/bff/tests/test_actions_to_commands_adapter.py",
         "pytest -q services/control-plane/bff/test_command_executor.py",
+        "python3 services/control-plane/bff/smoke_test.py",
     ],
 }
 
@@ -322,3 +323,54 @@ def test_typed_domain_command_dispatch_and_receipt() -> None:
     assert receipt["entity_type"] in ("strategy", "Strategy")
     assert receipt["entity_id"] == "stg-01"
     assert "domain_receipt" in receipt
+
+
+def test_main_app_operator_command_submission_regression() -> None:
+    """Regression test: verify POST /api/v1/operator/commands works in full main app with idempotency keys."""
+    from main import app as main_app, command_store as main_command_store
+
+    with tempfile.TemporaryDirectory() as td:
+        main_command_store.file_path = os.path.join(td, "main_commands.jsonl")
+        client = TestClient(main_app)
+
+        # 1. Submit with X-Idempotency-Key
+        resp = client.post(
+            "/api/v1/operator/commands",
+            headers={
+                "Authorization": "Bearer op-1:operator,approver:mfa",
+                "X-Idempotency-Key": "idmp-test-op-1",
+            },
+            json={
+                "command": "ApproveDeployment",
+                "target": {"type": "DeploymentPlan", "id": "dp-001"},
+                "action": "approve",
+                "params": {"deployment_plan_id": "dp-001", "approval_decision": "approve"},
+                "audit_context": {"reason": "Integration regression test"},
+            },
+        )
+        assert resp.status_code == 202, resp.text
+        data = resp.json()
+        assert data["status"] == "accepted"
+        assert "receipt_id" in data
+        assert data["command"] == "ApproveDeployment"
+
+        # 2. Submit with Idempotency-Key
+        resp2 = client.post(
+            "/api/v1/operator/commands",
+            headers={
+                "Authorization": "Bearer op-1:operator,approver:mfa",
+                "Idempotency-Key": "idmp-test-op-2",
+            },
+            json={
+                "command": "ApproveDeployment",
+                "target": {"type": "DeploymentPlan", "id": "dp-002"},
+                "action": "approve",
+                "params": {"deployment_plan_id": "dp-002", "approval_decision": "approve"},
+                "audit_context": {"reason": "Integration regression test 2"},
+            },
+        )
+        assert resp2.status_code == 202, resp2.text
+        data2 = resp2.json()
+        assert data2["status"] == "accepted"
+        assert "receipt_id" in data2
+        assert data2["command"] == "ApproveDeployment"

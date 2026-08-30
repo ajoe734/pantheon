@@ -21948,6 +21948,14 @@ def _submit_final_command_admission(
                 _process_command_stub, str(duplicate["command_id"])
             )
             duplicate_status = CommandStatus.SUBMITTED
+        if route == "POST /api/v1/operator/commands":
+            return _project_command_submission_response(
+                command_id=duplicate["command_id"],
+                command=cmd.command,
+                accepted_at=duplicate.get("submitted_at") or utc_now(),
+                status=duplicate_status,
+                staleness_warning=None,
+            )
         return _project_final_command_response(
             command_id=duplicate["command_id"],
             command=cmd.command,
@@ -21961,13 +21969,29 @@ def _submit_final_command_admission(
         )
 
     try:
-        precondition_evidence = _require_final_command_preconditions(
-            cmd=cmd,
-            payload=payload,
-            confirm_token=x_confirm_token,
-            identity=identity,
-            correlation_id=foundation_context["trace_context"].correlation_id,
-        )
+        if route == "POST /api/v1/operator/commands":
+            precondition_evidence = (
+                _require_final_command_preconditions(
+                    cmd=cmd,
+                    payload=payload,
+                    confirm_token=x_confirm_token,
+                    identity=identity,
+                    correlation_id=foundation_context["trace_context"].correlation_id,
+                )
+                if cmd.command in {
+                    CommandType.APPROVED_APPLY,
+                    CommandType.EMERGENCY_CONTAINMENT,
+                }
+                else {}
+            )
+        else:
+            precondition_evidence = _require_final_command_preconditions(
+                cmd=cmd,
+                payload=payload,
+                confirm_token=x_confirm_token,
+                identity=identity,
+                correlation_id=foundation_context["trace_context"].correlation_id,
+            )
     except HTTPException as exc:
         raise _foundation_bff_error(exc, foundation_context=foundation_context) from exc
 
@@ -21993,6 +22017,14 @@ def _submit_final_command_admission(
     staleness_warning = _check_read_surface_state()
     if _request_dry_run_requested():
         command_envelope: CommandEnvelope = foundation_context["command_envelope"]
+        if route == "POST /api/v1/operator/commands":
+            return _project_command_submission_response(
+                command_id=command_envelope.command_id,
+                command=cmd.command,
+                accepted_at=utc_now(),
+                status=CommandStatus.SUBMITTED,
+                staleness_warning=staleness_warning,
+            )
         return _project_final_command_response(
             command_id=command_envelope.command_id,
             command=cmd.command,
@@ -22070,6 +22102,17 @@ def _submit_final_command_admission(
                 confirm_token=x_confirm_token,
                 foundation_context=foundation_context,
             )
+            if route == "POST /api/v1/operator/commands":
+                return _project_command_submission_response(
+                    command_id=duplicate_after_precheck["command_id"],
+                    command=cmd.command,
+                    accepted_at=duplicate_after_precheck.get("submitted_at") or utc_now(),
+                    status=CommandStatus(
+                        duplicate_after_precheck.get("status")
+                        or CommandStatus.SUBMITTED.value
+                    ),
+                    staleness_warning=None,
+                )
             return _project_final_command_response(
                 command_id=duplicate_after_precheck["command_id"],
                 command=cmd.command,
@@ -22085,18 +22128,19 @@ def _submit_final_command_admission(
                 deprecation=response_deprecation,
             )
 
-        try:
-            revalidated_token_id = _require_final_command_confirm_token(
-                cmd=cmd,
-                payload=payload,
-                confirm_token=x_confirm_token,
-                identity=identity,
-                correlation_id=foundation_context["trace_context"].correlation_id,
-            )
-        except HTTPException as exc:
-            raise _foundation_bff_error(exc, foundation_context=foundation_context) from exc
-        if revalidated_token_id:
-            precondition_evidence["confirm_token_id"] = revalidated_token_id
+        if precondition_evidence.get("confirm_token_id"):
+            try:
+                revalidated_token_id = _require_final_command_confirm_token(
+                    cmd=cmd,
+                    payload=payload,
+                    confirm_token=x_confirm_token,
+                    identity=identity,
+                    correlation_id=foundation_context["trace_context"].correlation_id,
+                )
+            except HTTPException as exc:
+                raise _foundation_bff_error(exc, foundation_context=foundation_context) from exc
+            if revalidated_token_id:
+                precondition_evidence["confirm_token_id"] = revalidated_token_id
 
         record, active_after_precheck = _persist_admitted_command_with_confirm_token(
             command_id=command_id,
@@ -22128,6 +22172,14 @@ def _submit_final_command_admission(
     if enqueue:
         background_tasks.add_task(_process_command_stub, command_id)
 
+    if route == "POST /api/v1/operator/commands":
+        return _project_command_submission_response(
+            command_id=command_id,
+            command=cmd.command,
+            accepted_at=submitted_at,
+            status=CommandStatus.SUBMITTED,
+            staleness_warning=staleness_warning,
+        )
     return _project_final_command_response(
         command_id=command_id,
         command=cmd.command,
