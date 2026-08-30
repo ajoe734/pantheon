@@ -4069,6 +4069,11 @@ def _bridge_assignment_from_metadata(
         )
     normalized_spec["title"] = spec_title
 
+    target_repo = str(spec.get("target_repo") or "").strip()
+    if not target_repo:
+        raise SystemExit("Bridge assignment task_spec.target_repo is required")
+    normalized_spec["target_repo"] = target_repo
+
     for field in ("depends_on", "artifacts", "acceptance"):
         value = spec.get(field)
         if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
@@ -4357,6 +4362,7 @@ def command_assign(state: dict[str, Any], args: list[str]) -> bool | None:
         execution_resources = list(spec.get("execution_resources") or [])
         artifacts = list(spec.get("artifacts") or [])
         acceptance = list(spec.get("acceptance") or [])
+        target_repo = spec.get("target_repo")
     else:
         phase = os.environ.get("TASK_PHASE", "Unassigned")
         depends_on = parse_csv_env("TASK_DEPENDS_ON")
@@ -4382,6 +4388,7 @@ def command_assign(state: dict[str, Any], args: list[str]) -> bool | None:
             execution_resources = []
         artifacts = parse_csv_env("TASK_ARTIFACTS")
         acceptance = parse_csv_env("TASK_ACCEPTANCE")
+        target_repo = os.environ.get("TASK_TARGET_REPO") or metadata.get("target_repo")
     if any(
         not isinstance(key, str)
         or not isinstance(value, str)
@@ -4431,6 +4438,8 @@ def command_assign(state: dict[str, Any], args: list[str]) -> bool | None:
             "reviewer": reviewer,
             "title": title,
         }
+        if target_repo:
+            candidate["target_repo"] = str(target_repo).strip()
         config = load_config()
         try:
             validate_task_repository_scope(config, candidate)
@@ -4453,6 +4462,8 @@ def command_assign(state: dict[str, Any], args: list[str]) -> bool | None:
                 "title": title,
             }
         )
+        if target_repo:
+            candidate["target_repo"] = str(target_repo).strip()
         # This transition does not admit a new scope. Validate that the revised
         # candidate still matches the pre-existing exact guard, but do not
         # retroactively reject it because another already-active task later
@@ -4475,6 +4486,10 @@ def command_assign(state: dict[str, Any], args: list[str]) -> bool | None:
         if title and title != task.get("title"):
             raise SystemExit(
                 f"Task {task_id} title is immutable during reassignment."
+            )
+        if target_repo and target_repo != task.get("target_repo"):
+            raise SystemExit(
+                f"Task {task_id} target_repo is immutable during reassignment."
             )
     timestamp = iso_now()
     old_owner = str(task.get("owner") or "") if task is not None else ""
@@ -4501,6 +4516,8 @@ def command_assign(state: dict[str, Any], args: list[str]) -> bool | None:
             "next": assignment_next or "Assignment created",
             "last_update": timestamp,
         }
+        if target_repo:
+            task["target_repo"] = str(target_repo).strip()
         task.update(metadata)
         state["tasks"].append(task)
     else:

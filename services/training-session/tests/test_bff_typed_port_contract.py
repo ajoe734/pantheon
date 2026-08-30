@@ -1,7 +1,7 @@
 """Contract tests between the BFF Persona/Training typed ports and this service.
 
 These tests verify, from the Training Session side, the two claims made by
-``services/control-plane/bff/domain_ports/persona_training.py``:
+``services/control-plane/bff/ports/persona_training.py``:
 
 1. Trainer session create/read requests shaped the way
    ``read_store.ReadSurfaceStore`` sends them (and that
@@ -42,7 +42,7 @@ from strict_test_support import (
     materialize_strict_authority,
 )
 
-from domain_ports.persona_training import (
+from ports.persona_training import (
     RapidEvaluationOwnership,
     TrainingSessionTrainerPort,
 )

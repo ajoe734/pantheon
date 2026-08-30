@@ -23,6 +23,7 @@ from ..dev_bridge_dispatcher import _task_metadata, dispatch_task_packet
 from ..dev_bridge_inbox import drain_task_packet_inbox, queue_task_packet
 from ..dev_bridge_models import (
     BridgeActor,
+    BridgeConstraints,
     BridgeDispatchRequest,
     BridgeOperatorAuthorization,
     BridgeTask,
@@ -75,6 +76,7 @@ if command == "dev-bridge-materialize-batch":
             "title": spec["title"],
             "owner": spec["owner"],
             "reviewer": spec["reviewer"],
+            "target_repo": spec.get("target_repo") or "pantheon",
             "phase": spec["phase"],
             "depends_on": spec["depends_on"],
             "dependency_tracks": spec.get("dependency_tracks", {}),
@@ -118,6 +120,7 @@ if command == "dev-bridge-materialize-batch":
             "title": spec["title"],
             "owner": spec["owner"],
             "reviewer": spec["reviewer"],
+            "target_repo": spec.get("target_repo") or "pantheon",
             "phase": spec["phase"],
             "depends_on": spec["depends_on"],
             "dependency_tracks": spec.get("dependency_tracks", {}),
@@ -281,12 +284,13 @@ def test_focused_harness_never_binds_live_status_or_audit_paths() -> None:
     assert AI_STATUS.LOG_FILE.read_text(encoding="utf-8") == ""
 
 
-def _task(task_id: str) -> BridgeTask:
+def _task(task_id: str, *, target_repo: str = "pantheon") -> BridgeTask:
     return BridgeTask(
         id=task_id,
         title=f"Materialize {task_id}",
         owner="Codex",
         reviewer="Claude",
+        target_repo=target_repo,
         phase="Sprint Reliable / Dev bridge",
         dependsOn=["DEP,WITH,COMMAS", "DEP||WITH||PIPES"],
         artifacts=["path,with,commas.py", "path||with||pipes.py"],
@@ -2258,3 +2262,304 @@ def test_receipt_persistence_failure_leaves_processing_for_safe_retry(
     assert persisted["recoveredFromReplay"] is True
     assert persisted["result"]["replayRejected"] is True
     assert not processing.exists()
+
+
+def test_authoritative_materialization_and_readback_multi_repo_pantheon_and_execute_plans(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    status_root, event_log, initial_state = _authoritative_status_root(tmp_path)
+    command_sha = _git_stdout(REPO_ROOT, "rev-parse", "HEAD")
+    monkeypatch.setenv("PANTHEON_STATUS_ROOT", str(status_root))
+    monkeypatch.setenv("PANTHEON_COMMAND_ROOT", str(REPO_ROOT))
+    monkeypatch.setenv("PANTHEON_COMMAND_RUNTIME_SHA", command_sha)
+    monkeypatch.setenv("PANTHEON_COMMAND_REMOTE", "ajoe734/pantheon")
+    monkeypatch.setenv("PANTHEON_COMMAND_BASE_REF", "HEAD")
+    monkeypatch.setenv("PANTHEON_TASK_STATE_STORE_MODE", "authoritative")
+    monkeypatch.setenv("PANTHEON_TASK_STATE_EVENT_LOG", str(event_log))
+    monkeypatch.setenv("PANTHEON_ASSISTANT_DEV_BRIDGE_ALLOWED_REPOS", "pantheon,execute-plans")
+    monkeypatch.setenv(
+        CANONICAL_TASK_STATE_IDENTITY_ENV,
+        _canonical_identity_json(status_root, event_log),
+    )
+    for marker in dev_bridge_dispatcher.AUTO_WORKER_ENV_NAMES:
+        monkeypatch.delenv(marker, raising=False)
+
+    task_be = BridgeTask(
+        id="MULTI-REPO-BE-001",
+        title="Backend component task",
+        owner="Codex",
+        reviewer="Claude",
+        target_repo="pantheon",
+        phase="Sprint MultiRepo / Dev bridge",
+        artifacts=[".orchestrator/development_bridge/dev_bridge_dispatcher.py"],
+        acceptance=["Backend task accepted"],
+        summary="Materialize backend pantheon task.",
+    )
+    task_fe = BridgeTask(
+        id="MULTI-REPO-FE-001",
+        title="Frontend component task",
+        owner="Codex",
+        reviewer="Claude",
+        target_repo="execute-plans",
+        phase="Sprint MultiRepo / Dev bridge",
+        artifacts=["execute-plans/src/agora/pages/AskPersonas.tsx"],
+        acceptance=["Frontend task accepted"],
+        summary="Materialize frontend execute-plans task.",
+    )
+    packet = sign_packet(
+        DevTaskPacket(
+            packetId="pkt_multi_repo_authoritative",
+            emittedAt="2026-08-30T00:00:00Z",
+            actor=BridgeActor(
+                id="management-ai",
+                roles=["source"],
+                capabilities=["assistant.dev.source"],
+            ),
+            workClass="functional",
+            mode="kernel_debug",
+            sourceConversationId="conversation-multi-repo",
+            sourceTurnIds=["turn-1"],
+            documents=[],
+            tasks=[task_be, task_fe],
+            constraints=BridgeConstraints(
+                allowedRepos=["pantheon", "execute-plans"],
+                requiresBranchPrMerge=True,
+                noDirectShellFromWeb=True,
+            ),
+        ),
+        key_store=KEY_STORE,
+    )
+
+    result = dispatch_task_packet(
+        BridgeDispatchRequest(packet=packet, repoRoot=str(status_root)),
+        key_store=KEY_STORE,
+    )
+
+    assert result.errors == []
+    assert result.admission_status == "admitted"
+    assert result.replay_rejected is False
+    readback = result.audit_refs["materializationReadback"]
+    assert readback["status"] == "verified"
+    assert readback["taskIds"] == ["MULTI-REPO-BE-001", "MULTI-REPO-FE-001"]
+
+    tasks_by_id = {t["taskId"]: t for t in readback["tasks"]}
+    assert (
+        tasks_by_id["MULTI-REPO-BE-001"]["taskSpecHash"]
+        == dev_bridge_dispatcher._task_spec_hash(task_be)
+    )
+    assert (
+        tasks_by_id["MULTI-REPO-FE-001"]["taskSpecHash"]
+        == dev_bridge_dispatcher._task_spec_hash(task_fe)
+    )
+
+    snapshot = AI_STATUS.load_snapshot(event_log)
+    state_tasks = {t["id"]: t for t in snapshot["state"]["tasks"]}
+    assert state_tasks["MULTI-REPO-BE-001"]["target_repo"] == "pantheon"
+    assert state_tasks["MULTI-REPO-BE-001"]["artifacts"] == [
+        ".orchestrator/development_bridge/dev_bridge_dispatcher.py"
+    ]
+    assert state_tasks["MULTI-REPO-FE-001"]["target_repo"] == "execute-plans"
+    assert state_tasks["MULTI-REPO-FE-001"]["artifacts"] == [
+        "execute-plans/src/agora/pages/AskPersonas.tsx"
+    ]
+
+
+def test_dispatcher_rejects_packet_with_unconfigured_target_repo_before_mutation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    status_root, event_log, _ = _authoritative_status_root(tmp_path)
+    monkeypatch.setenv("PANTHEON_STATUS_ROOT", str(status_root))
+    monkeypatch.setenv("PANTHEON_TASK_STATE_STORE_MODE", "authoritative")
+    monkeypatch.setenv("PANTHEON_TASK_STATE_EVENT_LOG", str(event_log))
+    monkeypatch.setenv("PANTHEON_ASSISTANT_DEV_BRIDGE_ALLOWED_REPOS", "pantheon")
+
+    task = BridgeTask(
+        id="UNCONFIGURED-REPO-TASK",
+        title="Unconfigured repo task",
+        owner="Codex",
+        reviewer="Claude",
+        target_repo="unconfigured-repo",
+        phase="Sprint / Dev bridge",
+        artifacts=["src/main.py"],
+        acceptance=["Pass"],
+    )
+    packet = sign_packet(
+        DevTaskPacket(
+            packetId="pkt_unconfigured_repo_rejection",
+            emittedAt="2026-08-30T00:00:00Z",
+            actor=BridgeActor(id="mgmt-ai", roles=["operator"], capabilities=[]),
+            mode="kernel_repair",
+            sourceConversationId="conv-unconfigured",
+            tasks=[task],
+            constraints=BridgeConstraints(
+                allowedRepos=["pantheon", "unconfigured-repo"],
+                requiresBranchPrMerge=True,
+                noDirectShellFromWeb=True,
+            ),
+        ),
+        key_store=KEY_STORE,
+    )
+
+    initial_event_count = AI_STATUS.load_snapshot(event_log)["event_count"]
+    with pytest.raises(ValueError, match="unconfigured repositories"):
+        dispatch_task_packet(
+            BridgeDispatchRequest(packet=packet, repoRoot=str(status_root)),
+            key_store=KEY_STORE,
+        )
+
+    assert AI_STATUS.load_snapshot(event_log)["event_count"] == initial_event_count
+
+
+def test_dispatcher_rejects_task_target_repo_not_in_packet_allowed_repos(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    status_root, event_log, _ = _authoritative_status_root(tmp_path)
+    monkeypatch.setenv("PANTHEON_STATUS_ROOT", str(status_root))
+    monkeypatch.setenv("PANTHEON_TASK_STATE_STORE_MODE", "authoritative")
+    monkeypatch.setenv("PANTHEON_TASK_STATE_EVENT_LOG", str(event_log))
+    monkeypatch.setenv("PANTHEON_ASSISTANT_DEV_BRIDGE_ALLOWED_REPOS", "pantheon,execute-plans")
+
+    task = BridgeTask(
+        id="DISALLOWED-REPO-TASK",
+        title="Disallowed repo task",
+        owner="Codex",
+        reviewer="Claude",
+        target_repo="execute-plans",
+        phase="Sprint / Dev bridge",
+        artifacts=["execute-plans/src/App.tsx"],
+        acceptance=["Pass"],
+    )
+    packet = sign_packet(
+        DevTaskPacket(
+            packetId="pkt_disallowed_repo_rejection",
+            emittedAt="2026-08-30T00:00:00Z",
+            actor=BridgeActor(id="mgmt-ai", roles=["operator"], capabilities=[]),
+            mode="kernel_repair",
+            sourceConversationId="conv-disallowed",
+            tasks=[task],
+            constraints=BridgeConstraints(
+                allowedRepos=["pantheon"],  # execute-plans not allowed in packet constraint
+                requiresBranchPrMerge=True,
+                noDirectShellFromWeb=True,
+            ),
+        ),
+        key_store=KEY_STORE,
+    )
+
+    initial_event_count = AI_STATUS.load_snapshot(event_log)["event_count"]
+    with pytest.raises(ValueError, match="is not in packet allowedRepos"):
+        dispatch_task_packet(
+            BridgeDispatchRequest(packet=packet, repoRoot=str(status_root)),
+            key_store=KEY_STORE,
+        )
+
+    assert AI_STATUS.load_snapshot(event_log)["event_count"] == initial_event_count
+
+
+def test_authoritative_dispatch_rejects_conflicting_artifact_scope_atomic_rollback(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    status_root, event_log, _ = _authoritative_status_root(tmp_path)
+    command_sha = _git_stdout(REPO_ROOT, "rev-parse", "HEAD")
+    monkeypatch.setenv("PANTHEON_STATUS_ROOT", str(status_root))
+    monkeypatch.setenv("PANTHEON_COMMAND_ROOT", str(REPO_ROOT))
+    monkeypatch.setenv("PANTHEON_COMMAND_RUNTIME_SHA", command_sha)
+    monkeypatch.setenv("PANTHEON_COMMAND_REMOTE", "ajoe734/pantheon")
+    monkeypatch.setenv("PANTHEON_COMMAND_BASE_REF", "HEAD")
+    monkeypatch.setenv("PANTHEON_TASK_STATE_STORE_MODE", "authoritative")
+    monkeypatch.setenv("PANTHEON_TASK_STATE_EVENT_LOG", str(event_log))
+    monkeypatch.setenv("PANTHEON_ASSISTANT_DEV_BRIDGE_ALLOWED_REPOS", "pantheon,execute-plans")
+    monkeypatch.setenv(
+        CANONICAL_TASK_STATE_IDENTITY_ENV,
+        _canonical_identity_json(status_root, event_log),
+    )
+    for marker in dev_bridge_dispatcher.AUTO_WORKER_ENV_NAMES:
+        monkeypatch.delenv(marker, raising=False)
+
+    task_valid = BridgeTask(
+        id="CONFLICT-VALID-001",
+        title="Valid pantheon task",
+        owner="Codex",
+        reviewer="Claude",
+        target_repo="pantheon",
+        phase="Sprint / Dev bridge",
+        artifacts=[".orchestrator/dev_bridge.py"],
+        acceptance=["Valid task"],
+    )
+    task_conflicting = BridgeTask(
+        id="CONFLICT-INVALID-002",
+        title="Conflicting scope task",
+        owner="Codex",
+        reviewer="Claude",
+        target_repo="pantheon",  # Declared pantheon, but artifact has execute-plans prefix
+        phase="Sprint / Dev bridge",
+        artifacts=["execute-plans/src/page.tsx"],
+        acceptance=["Conflict task"],
+    )
+    packet = sign_packet(
+        DevTaskPacket(
+            packetId="pkt_conflicting_scope_rejection",
+            emittedAt="2026-08-30T00:00:00Z",
+            actor=BridgeActor(
+                id="management-ai",
+                roles=["source"],
+                capabilities=["assistant.dev.source"],
+            ),
+            workClass="functional",
+            mode="kernel_debug",
+            sourceConversationId="conv-conflict",
+            tasks=[task_valid, task_conflicting],
+            constraints=BridgeConstraints(
+                allowedRepos=["pantheon", "execute-plans"],
+                requiresBranchPrMerge=True,
+                noDirectShellFromWeb=True,
+            ),
+        ),
+        key_store=KEY_STORE,
+    )
+
+    initial_event_count = AI_STATUS.load_snapshot(event_log)["event_count"]
+    result = dispatch_task_packet(
+        BridgeDispatchRequest(packet=packet, repoRoot=str(status_root)),
+        key_store=KEY_STORE,
+    )
+
+    assert result.admission_status == "invalid_materialization"
+    assert any("conflicting repository scope" in err for err in result.errors)
+    assert AI_STATUS.load_snapshot(event_log)["event_count"] == initial_event_count
+    snapshot = AI_STATUS.load_snapshot(event_log)
+    state_task_ids = {t["id"] for t in snapshot["state"]["tasks"]}
+    assert "CONFLICT-VALID-001" not in state_task_ids
+    assert "CONFLICT-INVALID-002" not in state_task_ids
+
+
+def test_dispatcher_rejects_conflicting_task_target_repo_alias_keys_before_mutation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    status_root, event_log, _ = _authoritative_status_root(tmp_path)
+    for marker in dev_bridge_dispatcher.AUTO_WORKER_ENV_NAMES:
+        monkeypatch.delenv(marker, raising=False)
+
+    initial_event_count = AI_STATUS.load_snapshot(event_log)["event_count"]
+    from pydantic import ValidationError
+    with pytest.raises(ValidationError) as exc_info:
+        BridgeTask.model_validate(
+            {
+                "id": "CONFLICT-ALIAS-001",
+                "title": "Conflicting alias task",
+                "owner": "Codex",
+                "reviewer": "Claude",
+                "target_repo": "pantheon",
+                "targetRepo": "execute-plans",
+                "phase": "Sprint / Dev bridge",
+                "artifacts": [".orchestrator/dev_bridge.py"],
+                "acceptance": ["Conflict alias task"],
+            }
+        )
+    assert "Conflicting values for 'target_repo'" in str(exc_info.value)
+    assert AI_STATUS.load_snapshot(event_log)["event_count"] == initial_event_count

@@ -38,6 +38,7 @@ def _make_packet(packet_id: str) -> DevTaskPacket:
                 title="Materialize assistant generated task",
                 owner="Codex",
                 reviewer="Claude",
+                target_repo="pantheon",
                 phase="Sprint CLI / Dev bridge",
                 artifacts=[".orchestrator/development_bridge/dev_bridge_dispatcher.py"],
                 acceptance=["Task is assigned through ai_status.py"],

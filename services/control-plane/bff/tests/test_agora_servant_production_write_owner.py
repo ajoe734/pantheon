@@ -285,6 +285,90 @@ def test_service_restart_and_fresh_bff_port_preserve_identity_and_capability(
         assert len(fresh_owner.list_personas()) == 1
 
 
+def test_http_owner_restart_preserves_fleet_to_detail_read_symmetry(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A user-private servant remains navigable by same-tenant read roles.
+
+    The Fleet row is the browser's navigation source, so its ID and display
+    name must survive an HTTP Persona-owner restart and resolve through the
+    canonical detail facade.  This uses the actual service boundary rather
+    than an in-memory BFF overlay, and verifies that switching the caller's
+    tenant never widens the detail lookup.
+    """
+    ensure_headers = _ensure_headers(
+        tenant_id="tenant-alpha",
+        idempotency_key="production-servant-fleet-detail-001",
+        request_id="req-production-servant-fleet-detail-001",
+    )
+    with _running_persona_service(tmp_path) as first_url:
+        client, _first_owner, _read_ports, _openclaw = _install_production_wiring(
+            monkeypatch,
+            first_url,
+        )
+        created = client.post("/bff/agora/servant/ensure", headers=ensure_headers)
+        assert created.status_code == 200, created.text
+        persona_id = created.json()["data"]["persona_id"]
+
+    # A distinct service instance and distinct BFF read port prove that no
+    # process-local overlay is required for either Fleet or detail readback.
+    with _running_persona_service(tmp_path) as restarted_url:
+        _configure_service_env(monkeypatch, restarted_url)
+        fresh_owner = create_persona_registry_write_owner()
+        fresh_read_ports = create_read_surface_ports(persona_registry_store=fresh_owner)
+        monkeypatch.setattr(bff_main, "persona_write_owner", fresh_owner)
+        monkeypatch.setattr(bff_main, "read_store", fresh_read_ports)
+        fresh_client = TestClient(bff_main.app, raise_server_exceptions=False)
+
+        for role in ("operator", "viewer"):
+            headers = {"Authorization": f"Bearer production-fleet-readback:{role}"}
+            fleet = fresh_client.get(
+                "/bff/management/persona-fleet?page_size=100",
+                headers=headers,
+            )
+            assert fleet.status_code == 200, fleet.text
+            fleet_row = next(
+                item
+                for item in fleet.json()["data"]["items"]
+                if item["id"] == persona_id
+            )
+            assert fleet_row["name"] == "Agora Servant"
+
+            detail = fresh_client.get(
+                f"/bff/personas/{persona_id}",
+                headers=headers,
+            )
+            assert detail.status_code == 200, detail.text
+            assert detail.json()["data"]["id"] == persona_id
+            assert detail.json()["data"]["name"] == fleet_row["name"]
+
+        # Remove the test's default tenant so this separate caller's signed
+        # tenant claim is authoritative.  The private servant must disappear
+        # from Fleet and remain undiscoverable by ID.
+        monkeypatch.delenv("PANTHEON_BFF_TENANT_ID")
+        foreign_headers = {
+            "Authorization": "Bearer production-foreign:operator:tenant-beta"
+        }
+        foreign_fleet = fresh_client.get(
+            "/bff/management/persona-fleet?page_size=100",
+            headers=foreign_headers,
+        )
+        assert foreign_fleet.status_code == 200, foreign_fleet.text
+        assert persona_id not in {
+            item["id"] for item in foreign_fleet.json()["data"]["items"]
+        }
+        foreign_detail = fresh_client.get(
+            f"/bff/personas/{persona_id}",
+            headers=foreign_headers,
+        )
+        assert foreign_detail.status_code == 404, foreign_detail.text
+        assert foreign_detail.json()["error"]["code"] == "RESOURCE_NOT_FOUND"
+
+        unauthenticated = fresh_client.get(f"/bff/personas/{persona_id}")
+        assert unauthenticated.status_code == 401, unauthenticated.text
+
+
 def test_servant_identity_and_session_access_are_tenant_isolated_over_http_owner(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -479,3 +563,171 @@ def test_http_port_missing_service_credential_fails_before_write_network() -> No
     assert captured.value.dependency == "persona_registry_write_owner"
     assert "credential" in captured.value.reason
     assert called is False
+
+
+def test_servant_production_http_owner_included_in_interaction_eligibility_e2e(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    with _running_persona_service(tmp_path) as service_url:
+        client, write_owner, read_ports, _openclaw = _install_production_wiring(
+            monkeypatch,
+            service_url,
+        )
+        alpha_headers = _ensure_headers(
+            tenant_id="tenant-alpha",
+            idempotency_key="production-servant-e2e-alpha",
+            request_id="req-production-servant-e2e-alpha",
+        )
+
+        # 1. Provision Agora servant through production HTTP owner
+        created = client.post("/bff/agora/servant/ensure", headers=alpha_headers)
+        assert created.status_code == 200, created.text
+        servant_persona_id = created.json()["data"]["persona_id"]
+        assert created.json()["data"]["status"] == "paper_only"
+        assert created.json()["data"]["policy"]["execution_authority"] == "none"
+
+        # Verify stored persona lifecycle in the real Persona owner service
+        stored = read_ports.get_persona(servant_persona_id)
+        assert stored is not None
+        assert stored["lifecycle_state"] == "research_only"
+        assert stored["metadata"]["owner_scope"] == "user_private"
+        assert stored["metadata"]["environment_ceiling"] == "paper"
+        assert stored["metadata"]["execution_authority"] == "none"
+
+        # 2. Resolve context in workshop for tenant-alpha
+        context_res = client.post(
+            "/bff/agora/interactions/context:resolve",
+            headers={
+                "Authorization": "Bearer production-write-owner:operator",
+                "X-Tenant-Id": "tenant-alpha",
+                "Idempotency-Key": "e2e-context-resolve-1",
+            },
+            json={
+                "environment": "paper",
+                "context_refs": [
+                    {"type": "decision_event", "id": "dec-evt-1"},
+                ],
+            },
+        )
+        assert context_res.status_code == 200, context_res.text
+        workshop_id = context_res.json()["data"]["workshop_id"]
+
+        # 3. Check participant eligibility for persona_opinion
+        eligible_res = client.post(
+            "/bff/agora/interactions/participants:eligible",
+            headers={
+                "Authorization": "Bearer production-write-owner:operator",
+                "X-Tenant-Id": "tenant-alpha",
+            },
+            json={
+                "workshop_id": workshop_id,
+                "mode": "consult",
+                "environment": "paper",
+                "required_capability": "persona_opinion",
+            },
+        )
+        assert eligible_res.status_code == 200, eligible_res.text
+        eligible_data = eligible_res.json()["data"]
+        included_ids = [p["persona_id"] for p in eligible_data["included"]]
+        assert servant_persona_id in included_ids
+
+        servant_entry = next(
+            p for p in eligible_data["included"] if p["persona_id"] == servant_persona_id
+        )
+        assert servant_entry["eligible"] is True
+        assert servant_entry["reasons"] == []
+        assert servant_entry["capability_snapshot_id"] == stored["metadata"]["capability_snapshot_id"]
+        assert servant_entry["participant_snapshot"] is not None
+        assert servant_entry["participant_snapshot"]["persona_id"] == servant_persona_id
+        assert servant_entry["participant_snapshot"]["environment_ceiling"] == "paper"
+        assert servant_entry["participant_snapshot"]["capability_snapshot"] == ["persona_opinion"]
+
+        # 4. Submit interaction with the servant persona
+        interaction_res = client.post(
+            "/bff/agora/interactions",
+            headers={
+                "Authorization": "Bearer production-write-owner:operator",
+                "X-Tenant-Id": "tenant-alpha",
+                "Idempotency-Key": "e2e-submit-interaction-1",
+            },
+            json={
+                "workshop_id": workshop_id,
+                "mode": "consult",
+                "environment": "paper",
+                "topic": "Servant opinion on paper risk",
+                "participant_persona_ids": [servant_persona_id],
+                "context_refs": [
+                    {"type": "decision_event", "id": "dec-evt-1"},
+                ],
+            },
+        )
+        assert interaction_res.status_code == 202, interaction_res.text
+        interaction_data = interaction_res.json()["data"]
+        assert interaction_data["execution_authority"] == "none"
+        assert servant_persona_id in [
+            p["persona_id"] for p in interaction_data.get("participants", [])
+        ]
+
+        # 5. Verify tenant isolation: tenant-beta cannot see tenant-alpha servant
+        beta_context_res = client.post(
+            "/bff/agora/interactions/context:resolve",
+            headers={
+                "Authorization": "Bearer production-write-owner:operator",
+                "X-Tenant-Id": "tenant-beta",
+                "Idempotency-Key": "e2e-context-resolve-beta",
+            },
+            json={
+                "environment": "paper",
+                "context_refs": [
+                    {"type": "decision_event", "id": "dec-evt-2"},
+                ],
+            },
+        )
+        assert beta_context_res.status_code == 200, beta_context_res.text
+        beta_workshop_id = beta_context_res.json()["data"]["workshop_id"]
+
+        beta_eligible_res = client.post(
+            "/bff/agora/interactions/participants:eligible",
+            headers={
+                "Authorization": "Bearer production-write-owner:operator",
+                "X-Tenant-Id": "tenant-beta",
+            },
+            json={
+                "workshop_id": beta_workshop_id,
+                "mode": "consult",
+                "environment": "paper",
+                "required_capability": "persona_opinion",
+            },
+        )
+        assert beta_eligible_res.status_code == 200, beta_eligible_res.text
+        beta_included_ids = [p["persona_id"] for p in beta_eligible_res.json()["data"]["included"]]
+        assert servant_persona_id not in beta_included_ids
+        beta_excluded = {
+            p["persona_id"]: p["reasons"]
+            for p in beta_eligible_res.json()["data"]["excluded"]
+        }
+        assert "tenant_mismatch" in beta_excluded.get(servant_persona_id, [])
+
+        # 6. Verify environment ceiling gate: environment "live" is rejected for paper ceiling
+        live_eligible_res = client.post(
+            "/bff/agora/interactions/participants:eligible",
+            headers={
+                "Authorization": "Bearer production-write-owner:operator",
+                "X-Tenant-Id": "tenant-alpha",
+            },
+            json={
+                "workshop_id": workshop_id,
+                "mode": "consult",
+                "environment": "live",
+                "required_capability": "persona_opinion",
+            },
+        )
+        assert live_eligible_res.status_code == 200, live_eligible_res.text
+        live_included_ids = [p["persona_id"] for p in live_eligible_res.json()["data"]["included"]]
+        assert servant_persona_id not in live_included_ids
+        live_excluded = {
+            p["persona_id"]: p["reasons"]
+            for p in live_eligible_res.json()["data"]["excluded"]
+        }
+        assert "environment_ceiling_exceeded" in live_excluded.get(servant_persona_id, [])
