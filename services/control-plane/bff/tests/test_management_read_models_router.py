@@ -586,3 +586,39 @@ def test_real_bff_main_app_management_route_ownership():
         assert "management_read_models.router" in entry.owner_module, (
             f"Expected {path} to be owned by management_read_models.router, but owned by {entry.owner_module}"
         )
+
+
+def test_real_bff_main_app_degraded_control_guidance_contract(monkeypatch):
+    """Verify GET /api/v1/operator/degraded-control-guidance on real main.app preserves 200/206 and {data, meta.staleness} envelope."""
+    import main as real_main
+
+    client = TestClient(real_main.app, raise_server_exceptions=False)
+
+    # 1. Fresh state -> 200 with canonical {data, meta.staleness} envelope
+    monkeypatch.setattr(real_main, "_read_surface_state", lambda: "fresh")
+    resp = client.get("/api/v1/operator/degraded-control-guidance")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert "data" in body and "meta" in body
+    assert "staleness" in body["meta"]
+    guidance = body["data"]
+    assert guidance["current_state"] == "fresh"
+    assert guidance["primary_path"]["status"] == "available"
+    assert "admin_cli" in guidance["secondary_path"]
+    assert "protected_internal_api" in guidance["secondary_path"]
+    assert guidance["critical_actions_bypass_mfa"] is True
+
+    # 2. Degraded state -> 206 with canonical {data, meta.staleness} envelope
+    monkeypatch.setattr(real_main, "_read_surface_state", lambda: "degraded")
+    resp_degraded = client.get("/api/v1/operator/degraded-control-guidance")
+    assert resp_degraded.status_code == 206
+    body_degraded = resp_degraded.json()
+    assert "data" in body_degraded and "meta" in body_degraded
+    assert "staleness" in body_degraded["meta"]
+    guidance_degraded = body_degraded["data"]
+    assert guidance_degraded["current_state"] == "degraded"
+    assert guidance_degraded["primary_path"]["status"] == "degraded"
+    assert "admin_cli" in guidance_degraded["secondary_path"]
+    assert "protected_internal_api" in guidance_degraded["secondary_path"]
+    assert guidance_degraded["critical_actions_bypass_mfa"] is True
+

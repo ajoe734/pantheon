@@ -63670,58 +63670,6 @@ async def _build_management_evidence_for_router(
     return payload
 
 
-def _build_degraded_control_guidance_for_router():
-    state = _read_surface_state()
-    guidance = {
-        "current_state": state,
-        "command_backend_configured": bool(os.getenv("PANTHEON_INTERNAL_API_URL", "").strip()),
-        "primary_path": {
-            "url": "/api/v1/operator/commands",
-            "status": "available" if state == "fresh" else "degraded",
-            "note": (
-                "Primary BFF command path. Submit operator commands for async execution."
-                if state == "fresh"
-                else "BFF read surface is degraded. Commands may execute but status queries could return stale data."
-            ),
-        },
-        "secondary_path": {
-            "admin_cli": {
-                "description": "Local/SSH CLI with RBAC and MFA for destructive actions",
-                "commands": {
-                    "pause_runtime": "pantheon-admin runtime pause --binding-id <ID> --reason <REASON>",
-                    "resume_runtime": "pantheon-admin runtime resume --binding-id <ID>",
-                    "rollback": "pantheon-admin rollback --target-type <TYPE> --target-id <ID> --to-version <VER>",
-                    "kill_switch": "pantheon-admin kill-switch activate --scope <SCOPE> --reason <REASON>",
-                },
-            },
-            "protected_internal_api": {
-                "configured": bool(os.getenv("PANTHEON_INTERNAL_API_URL", "").strip()),
-                "base_url": os.getenv("PANTHEON_INTERNAL_API_URL", "http://127.0.0.1:8100").strip(),
-                "endpoints": {
-                    "kill_switch": "POST /internal/v1/kill-switch",
-                    "safe_mode": "POST /internal/v1/safe-mode",
-                    "pause_program": "POST /internal/v1/evolution/programs/{program_id}/pause",
-                    "rollback_program": "POST /internal/v1/evolution/programs/{program_id}/rollback",
-                },
-                "auth": "Requires PANTHEON_INTERNAL_API_SECRET bearer token",
-            },
-        },
-        "critical_actions_bypass_mfa": True,
-        "critical_action_list": [
-            "KILL_SWITCH_ACTIVATE",
-            "SAFE_MODE_ENABLE",
-            "PROGRAM_PAUSE",
-            "JOB_CANCEL",
-            "EMERGENCY_CIRCUIT_BREAKER",
-        ],
-        "escalation_contact": {
-            "oncall_role": "Platform Lead / Risk Lead",
-            "runbook": "docs/06-runbooks/APP-002-SECONDARY-CONTROL-PATH.md",
-        },
-    }
-    return JSONResponse(content=guidance)
-
-
 app.include_router(
     create_management_read_models_router(
         get_read_store=lambda: read_store,
@@ -63750,7 +63698,7 @@ app.include_router(
         intervention_stream_builder=_management_intervention_stream_response,
         evidence_builder=_build_management_evidence_for_router,
         operations_read_model_builder=_ops_read_model_entry_for_persona,
-        degraded_control_guidance_builder=_build_degraded_control_guidance_for_router,
+        degraded_control_guidance_builder=degraded_control_guidance,
     )
 )
 
