@@ -1891,7 +1891,7 @@
     "rules": [
       "Zero duplicate owned_code_surfaces across all child tasks.",
       "Every router task contains non-empty deletion inventory of replaced main.py symbols.",
-      "All 2,271 AST nodes mapped with valid disposition and zero stdlib extract_shared_port.",
+      "All 2,272 AST nodes mapped with valid disposition and zero stdlib extract_shared_port.",
       "Rollback specifications state fail-closed forward repair / previous release artifact without restoring deleted shims or duplicate handlers.",
       "Source contract enforces single-stimulus receipt reuse across OP-G12/OP-G19 with zero second egress.",
       "Capacity derived dynamically from live config with no hard-coded task or agent count assertions.",
@@ -55738,7 +55738,7 @@
       }
     },
     "agent_selector": "Dynamic capacity-aware assignment selecting active auto-worker agents with max_parallel > 0 and live credentials (Antigravity, Antigravity2, Codex, Codex2, Claude). Strictly enforces owner != reviewer on every task.",
-    "command_runtime_sha": "609937297bc7e0f48ff7a522de230de1301c15ae",
+    "command_runtime_sha": "2bcb4465399af83190c5027073f3b2296e377256",
     "dispatch_time_resolution": "Task materialization reads live config and worker slot availability at dispatch time. If any assigned lane is throttled or saturated, supervisor worker reassignment fallbacks reassign dynamically while preserving owner != reviewer.",
     "dynamic_derived": true,
     "live_config_command": "jq '{agents: .agents, ready_dispatcher: .ready_dispatcher}' .orchestrator/config.json",

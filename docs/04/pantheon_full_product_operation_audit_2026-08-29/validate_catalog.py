@@ -305,7 +305,7 @@ def validate_catalog(catalog_path: str, main_py_path: str) -> None:
     print("13. Verifying agent capacity, authoritative capability selectors, and task assignments...")
     cap = c.get("planning_agent_capacity", {})
     assert cap.get("dynamic_derived") is True, "Capacity must be dynamically derived"
-    assert cap.get("command_runtime_sha") == "609937297bc7e0f48ff7a522de230de1301c15ae", "Stale command runtime SHA"
+    assert cap.get("command_runtime_sha") == "2bcb4465399af83190c5027073f3b2296e377256", "Stale command runtime SHA"
     for t in tasks:
         assert t["owner"] != t["reviewer"], f"Owner equals reviewer in {t['id']}"
         assert cap["agent_eligibility"][t["owner"]]["eligible"], f"Owner {t['owner']} not eligible"
