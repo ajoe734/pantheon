@@ -599,3 +599,78 @@ def test_fast_path_semantic_commands() -> None:
         resp_dry = client.post(r, json={"reason": "test dry run"}, headers={"X-Dry-Run": "true"})
         assert resp_dry.status_code == 202
         assert resp_dry.json()["status"] == "accepted"
+
+
+def test_production_app_incident_routes_wiring() -> None:
+    """Verify that all 27 incident/alert routes are wired into the production app (main:app)."""
+    import main as bff_main
+
+    def _iter_routes(routes):
+        for r in routes:
+            if hasattr(r, "original_router"):
+                yield from _iter_routes(r.original_router.routes)
+            elif hasattr(r, "routes"):
+                yield from _iter_routes(r.routes)
+            else:
+                yield r
+
+    flat_routes = list(_iter_routes(bff_main.app.routes))
+    route_map = {(getattr(r, "path", None), tuple(sorted(getattr(r, "methods", set()) or []))): getattr(r, "endpoint", None).__name__ for r in flat_routes if getattr(r, "path", None)}
+
+    expected_endpoints = [
+        ("/api/v1/operator/alerts", ("GET",), "list_operator_alerts"),
+        ("/api/v1/incidents", ("GET",), "list_incidents"),
+        ("/api/v1/incidents/stream", ("GET",), "stream_incident_events"),
+        ("/api/v1/incidents/{incident_id}", ("GET",), "get_incident"),
+        ("/api/v1/kill-switch/status", ("GET",), "get_kill_switch_status"),
+        ("/api/v1/operator/incident-response/{incident_id}", ("GET",), "get_incident_response"),
+        ("/api/v1/operator/post-incident-review/{incident_id}", ("GET",), "get_post_incident_review"),
+        ("/bff/risk/alerts", ("GET",), "bff_list_risk_alerts"),
+        ("/bff/risk/alerts/{alert_id}", ("GET",), "bff_get_risk_alert"),
+        ("/bff/risk/alerts/{alert_id}/actions/{action_id}", ("POST",), "bff_risk_alert_action"),
+        ("/bff/incidents", ("GET",), "bff_list_incidents"),
+        ("/bff/incidents", ("POST",), "bff_create_incident"),
+        ("/bff/incidents/{incident_id}", ("GET",), "bff_get_incident"),
+        ("/bff/incidents/{incident_id}/actions/{action_id}", ("POST",), "bff_incident_action"),
+        ("/bff/alerts", ("GET",), "bff_list_alerts"),
+        ("/bff/alerts/{alert_id}", ("GET",), "bff_get_alert"),
+        ("/bff/alerts/{alert_id}/acknowledge", ("POST",), "bff_alert_acknowledge"),
+        ("/bff/audit", ("GET",), "bff_list_audit"),
+        ("/bff/audit/events", ("GET",), "bff_list_audit_events"),
+        ("/bff/audit/entities/{entity_type}/{entity_id}", ("GET",), "bff_get_entity_audit"),
+        ("/bff/audit/export", ("GET",), "bff_audit_export"),
+        ("/bff/audit/export", ("POST",), "sem_audit_export_command"),
+        ("/bff/incidents/{id}/start-mitigation", ("POST",), "sem_final_generic_id_command_alias"),
+        ("/bff/incidents/{id}/rollback-deployment", ("POST",), "sem_final_generic_id_command_alias"),
+        ("/bff/incidents/{id}/resolve", ("POST",), "sem_final_generic_id_command_alias"),
+        ("/bff/incidents/{id}/append-postmortem", ("POST",), "sem_final_generic_id_command_alias"),
+        ("/bff/alerts/{id}/escalate-incident", ("POST",), "sem_final_generic_id_command_alias"),
+    ]
+
+    for path, methods, ep_name in expected_endpoints:
+        # Check matching route
+        matching = [
+            (p, m, ep)
+            for (p, m), ep in route_map.items()
+            if p == path and set(methods).issubset(set(m))
+        ]
+        assert matching, f"Missing route in production app: {methods} {path} (expected {ep_name})"
+        assert any(ep == ep_name for _, _, ep in matching), (
+            f"Route {path} endpoint mismatch in production app: expected {ep_name}, found {[ep for _, _, ep in matching]}"
+        )
+
+    # Test client against production app instance
+    prod_client = TestClient(bff_main.app)
+    prod_headers = {"Authorization": "Bearer test:operator:ops"}
+
+    resp = prod_client.get("/bff/incidents", headers=prod_headers)
+    assert resp.status_code == 200
+    assert "items" in resp.json() or "data" in resp.json()
+
+    resp_alerts = prod_client.get("/bff/risk/alerts", headers=prod_headers)
+    assert resp_alerts.status_code == 200
+    assert "alerts" in resp_alerts.json()
+
+    resp_audit = prod_client.get("/bff/audit", headers=prod_headers)
+    assert resp_audit.status_code == 200
+

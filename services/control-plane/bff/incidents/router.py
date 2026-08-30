@@ -346,6 +346,15 @@ def create_incident_router(
     run_management_read: Optional[Callable[..., Any]] = None,
     request_dry_run_requested: Optional[Callable[..., bool]] = None,
     dry_run_success_response: Optional[Callable[..., Any]] = None,
+    build_operator_alerts_payload: Optional[Callable[[str], Dict[str, Any]]] = None,
+    list_governance_audit_events: Optional[Callable[..., List[Dict[str, Any]]]] = None,
+    get_bff_incident: Optional[Callable[[str], Optional[Dict[str, Any]]]] = None,
+    list_bff_incidents: Optional[Callable[..., List[Dict[str, Any]]]] = None,
+    incident_events: Optional[Any] = None,
+    incident_subscribers: Optional[Any] = None,
+    acknowledged_alerts: Optional[Any] = None,
+    incident_overlay: Optional[Any] = None,
+    idempotency_ledger: Optional[Any] = None,
 ) -> APIRouter:
     """Build the canonical BFF Incidents domain router.
 
@@ -373,10 +382,25 @@ def create_incident_router(
     _service = service or IncidentService(
         get_read_store=get_read_store,
         get_command_store=get_command_store,
+        incident_overlay=incident_overlay,
+        acknowledged_alerts=acknowledged_alerts,
+        idempotency_ledger=idempotency_ledger,
+        incident_events=incident_events,
+        incident_subscribers=incident_subscribers,
         utc_now=_utc_now,
         dataset_surface_status=dataset_surface_status,
         meta_staleness=meta_staleness,
     )
+
+    _build_alerts_payload = build_operator_alerts_payload or _service.build_operator_alerts_payload
+    _list_audit = list_governance_audit_events or _service.list_audit_events
+    _get_bff_inc = get_bff_incident or _service.get_bff_incident
+    _list_bff_inc = list_bff_incidents or _service.list_bff_incidents
+    _inc_events = incident_events if incident_events is not None else _service._incident_events
+    _inc_subscribers = incident_subscribers if incident_subscribers is not None else _service._incident_subscribers
+    _ack_alerts = acknowledged_alerts if acknowledged_alerts is not None else _service._acknowledged_alerts
+    _inc_overlay = incident_overlay if incident_overlay is not None else _service._incident_overlay
+    _idem_ledger = idempotency_ledger if idempotency_ledger is not None else _service._idempotency_ledger
 
     # -------------------------------------------------------------------------
     # Route 1: GET /api/v1/operator/alerts
@@ -389,7 +413,7 @@ def create_incident_router(
         identity = _extract_ident(authorization)
         _require_read(identity)
         snapshot_at = _utc_now()
-        return _service.build_operator_alerts_payload(snapshot_at)
+        return _build_alerts_payload(snapshot_at)
 
     # -------------------------------------------------------------------------
     # Route 2: GET /api/v1/incidents
@@ -459,7 +483,7 @@ def create_incident_router(
         """IN-SSE: Server-Sent Events stream for active incident events."""
         identity = _extract_ident(authorization)
         _require_read(identity)
-        return _handle_sse("incident", _service._incident_events, _service._incident_subscribers, last_event_id)
+        return _handle_sse("incident", _inc_events, _inc_subscribers, last_event_id)
 
     # -------------------------------------------------------------------------
     # Route 4: GET /api/v1/incidents/{incident_id}
@@ -568,7 +592,7 @@ def create_incident_router(
         identity = _extract_ident(authorization)
         _require_read(identity)
         snapshot_at = _utc_now()
-        return _service.build_operator_alerts_payload(snapshot_at)
+        return _build_alerts_payload(snapshot_at)
 
     # -------------------------------------------------------------------------
     # Route 9: GET /bff/risk/alerts/{alert_id}
@@ -582,7 +606,7 @@ def create_incident_router(
         identity = _extract_ident(authorization)
         _require_read(identity)
         snapshot_at = _utc_now()
-        payload = _service.build_operator_alerts_payload(snapshot_at)
+        payload = _build_alerts_payload(snapshot_at)
         clean_id = alert_id.strip()
         match = next(
             (a for a in payload.get("alerts", []) if str(a.get("alert_id") or a.get("id") or "") == clean_id),
@@ -654,7 +678,7 @@ def create_incident_router(
 
         snapshot_at = _utc_now()
         surface = _service.get_surface_status("incidents", snapshot_at=snapshot_at)
-        incidents = _service.list_bff_incidents(status=status, severity=severity, affected_pool_id=affected_pool_id)
+        incidents = _list_bff_inc(status=status, severity=severity, affected_pool_id=affected_pool_id)
         total = len(incidents)
         if surface.get("status") == "unavailable":
             incidents = []
@@ -705,7 +729,7 @@ def create_incident_router(
             pass
         _reject_key(payload)
 
-        existing = _service._idempotency_ledger.get(resolved_key)
+        existing = _idem_ledger.get(resolved_key)
         req_hash = _stable_json_hash(payload)
         if existing is not None:
             if existing.get("request_hash") != req_hash:
@@ -719,7 +743,34 @@ def create_incident_router(
                 )
             return existing["result"]
 
-        result = _service.create_incident(payload, operator_id=getattr(identity, "operator_id", "operator"), idempotency_key=resolved_key)
+        incident_id = str(payload.get("incident_id") or payload.get("id") or uuid.uuid4())
+        submitted_at = _utc_now()
+        operator_id = getattr(identity, "operator_id", "operator")
+        result = _project_bff_incident_case({
+            **payload,
+            "id": incident_id,
+            "incident_id": incident_id,
+            "status": payload.get("status") or "open",
+            "submitted_at": submitted_at,
+            "created_at": payload.get("created_at") or payload.get("opened_at") or submitted_at,
+            "updated_at": submitted_at,
+            "submitted_by": operator_id,
+            "title": payload.get("title") or "Untitled Incident",
+            "severity": payload.get("severity") or "medium",
+            "capital_pool_id": payload.get("capital_pool_id") or payload.get("affected_pool_id"),
+            "runtime_id": payload.get("runtime_id"),
+            "correlation_id": payload.get("correlation_id") or incident_id,
+            "trace_id": payload.get("trace_id") or payload.get("correlation_id") or incident_id,
+            "audit_ref": {
+                "target_type": "Incident",
+                "target_id": incident_id,
+                "href": f"/bff/audit/entities/Incident/{incident_id}",
+            },
+            "meta": {"idempotency_key": resolved_key},
+        })
+        _inc_overlay[incident_id] = result
+        _service._incident_overlay[incident_id] = result
+        _idem_ledger[resolved_key] = {"request_hash": req_hash, "result": result}
         _service._idempotency_ledger[resolved_key] = {"request_hash": req_hash, "result": result}
         return result
 
@@ -738,7 +789,7 @@ def create_incident_router(
         clean_id = incident_id.strip()
         snapshot_at = _utc_now()
         surface = _service.get_surface_status("incidents", snapshot_at=snapshot_at)
-        incident = _service.get_bff_incident(clean_id)
+        incident = _get_bff_inc(clean_id)
         if not incident:
             _raise_unavailable(surface, label="Incident")
             raise _err(
@@ -777,7 +828,7 @@ def create_incident_router(
         clean_id = incident_id.strip()
         snapshot_at = _utc_now()
         surface = _service.get_surface_status("incidents", snapshot_at=snapshot_at)
-        incident = _service.get_bff_incident(clean_id)
+        incident = _get_bff_inc(clean_id)
         if not incident:
             _raise_unavailable(surface, label="Incident")
             raise _err(
@@ -813,10 +864,10 @@ def create_incident_router(
         snapshot_at = _utc_now()
         if run_management_read is not None:
             try:
-                return await run_management_read(_service.build_operator_alerts_payload, snapshot_at)
+                return await run_management_read(_build_alerts_payload, snapshot_at)
             except Exception:
                 return _service.management_alerts_degraded_payload(snapshot_at)
-        return _service.build_operator_alerts_payload(snapshot_at)
+        return _build_alerts_payload(snapshot_at)
 
     # -------------------------------------------------------------------------
     # Route 16: GET /bff/alerts/{alert_id}
@@ -830,7 +881,7 @@ def create_incident_router(
         identity = _extract_ident(authorization)
         _require_read(identity)
         snapshot_at = _utc_now()
-        payload = _service.build_operator_alerts_payload(snapshot_at)
+        payload = _build_alerts_payload(snapshot_at)
         clean_id = alert_id.strip()
         match = next(
             (a for a in payload.get("alerts", []) if str(a.get("alert_id") or a.get("id") or "") == clean_id),
@@ -873,7 +924,7 @@ def create_incident_router(
         resolved_key = _resolve_key(idempotency_key, x_idempotency_key)
         request_hash = _stable_json_hash({"alert_id": clean_id, "action": "acknowledge", "payload": payload})
 
-        existing = _service._idempotency_ledger.get(resolved_key)
+        existing = _idem_ledger.get(resolved_key)
         if existing is not None:
             if existing.get("request_hash") != request_hash:
                 raise _err(
@@ -887,7 +938,7 @@ def create_incident_router(
             return existing["result"]
 
         snapshot_at = _utc_now()
-        alerts_payload = _service.build_operator_alerts_payload(snapshot_at)
+        alerts_payload = _build_alerts_payload(snapshot_at)
         alert_record = next(
             (a for a in alerts_payload.get("alerts", []) if str(a.get("alert_id") or a.get("id") or "") == clean_id),
             None,
@@ -921,11 +972,12 @@ def create_incident_router(
             except Exception as e:
                 log.warning("command_store.submit_command failed: %s", e)
 
-        _service._acknowledged_alerts[clean_id] = {
+        _ack_alerts[clean_id] = {
             "acknowledged_by": operator_id,
             "acknowledged_at": submitted_at,
             "note": ack_note,
         }
+        _service._acknowledged_alerts[clean_id] = _ack_alerts[clean_id]
 
         result = {
             "command_id": command_id,
@@ -939,6 +991,7 @@ def create_incident_router(
             },
             "meta": {"idempotency_key": resolved_key, "snapshot_at": snapshot_at},
         }
+        _idem_ledger[resolved_key] = {"request_hash": request_hash, "result": result}
         _service._idempotency_ledger[resolved_key] = {"request_hash": request_hash, "result": result}
         return result
 
@@ -961,7 +1014,7 @@ def create_incident_router(
         _require_read(identity)
         snapshot_at = _utc_now()
         action_types = [v.strip() for v in action_type.split(",") if v.strip()] if action_type else None
-        events = _service.list_audit_events(
+        events = _list_audit(
             actor=actor,
             action_types=action_types,
             target_type=target_type,
@@ -1001,7 +1054,7 @@ def create_incident_router(
         action_types = [v.strip() for v in action_type.split(",") if v.strip()] if action_type else None
         from_dt = _parse_rfc3339(from_ts) if from_ts else None
         to_dt = _parse_rfc3339(to_ts) if to_ts else None
-        events = _service.list_audit_events(
+        events = _list_audit(
             actor=actor,
             action_types=action_types,
             target_type=target_type,
@@ -1033,7 +1086,7 @@ def create_incident_router(
         clean_type = entity_type.strip()
         clean_id = entity_id.strip()
 
-        events = _service.list_audit_events(target_type=clean_type)
+        events = _list_audit(target_type=clean_type)
         entity_events = [
             e for e in events
             if str(e.get("target_id") or e.get("entity_id") or "") == clean_id
@@ -1066,7 +1119,7 @@ def create_incident_router(
         action_types = [v.strip() for v in action_type.split(",") if v.strip()] if action_type else None
         from_dt = _parse_rfc3339(from_ts) if from_ts else None
         to_dt = _parse_rfc3339(to_ts) if to_ts else None
-        events = _service.list_audit_events(
+        events = _list_audit(
             actor=actor,
             action_types=action_types,
             target_type=target_type,
