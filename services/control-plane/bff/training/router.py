@@ -35,12 +35,12 @@ def create_training_router(
     ):
         identity = extract_identity(authorization)
         require_read_role(identity)
-    
+
         persona_id = service.required_text(payload, "persona_id")
         session_type = service.required_text(payload, "session_type")
         objective = service.required_text(payload, "objective")
         context_refs = service.validate_context_refs(payload.get("context_refs"))
-    
+
         if session_type != "trainer":
             raise bff_error(
                 422,
@@ -49,7 +49,7 @@ def create_training_router(
                 "session_type must equal 'trainer' for TW-01",
                 precondition_failed="session_type",
             )
-    
+
         persona = service.read_store.get_persona(persona_id)
         if not persona:
             raise bff_error(
@@ -58,7 +58,7 @@ def create_training_router(
                 "Persona not found",
                 f"Persona {persona_id} does not exist",
             )
-    
+
         session = service.read_store.create_trainer_session(
             persona_id=persona_id,
             objective=objective,
@@ -73,7 +73,7 @@ def create_training_router(
                 "Trainer session store unavailable",
                 "Trainer session creation store is unavailable.",
             )
-    
+
         return {
             "session_id": session["session_id"],
             "persona_id": session["persona_id"],
@@ -84,8 +84,8 @@ def create_training_router(
             "allowedActions": session["allowedActions"],
             "links": session["links"],
         }
-    
-    
+
+
     @router.get("/api/v1/trainer/sessions")
     async def list_trainer_sessions(
         persona_id: Optional[str] = None,
@@ -96,7 +96,7 @@ def create_training_router(
     ):
         identity = extract_identity(authorization)
         require_read_role(identity)
-    
+
         # Enforce fail-closed ordering: authenticate before validating the required
         # persona_id query param, so an unauthenticated caller gets 401 (not 422) and
         # cannot probe endpoint existence/shape. Path-param siblings already do this.
@@ -108,7 +108,7 @@ def create_training_router(
                 "persona_id is required",
                 precondition_failed="persona_id",
             )
-    
+
         persona = service.read_store.get_persona(persona_id)
         if not persona:
             raise bff_error(
@@ -117,12 +117,12 @@ def create_training_router(
                 "Persona not found",
                 f"Persona {persona_id} does not exist",
             )
-    
+
         snapshot_at = utc_now()
         normalized_status = service.validate_session_status(status) if status is not None else None
         sessions = service.read_store.list_trainer_sessions(persona_id=persona_id, status=normalized_status) or []
         surface_state = service.trainer_dialog_surface_state(snapshot_at=snapshot_at, has_data=sessions is not None)
-    
+
         total = len(sessions)
         if surface_state == "unavailable":
             page_items = []
@@ -130,7 +130,7 @@ def create_training_router(
             total = 0
         else:
             page_items, next_page_token = page_slice(sessions, page_token, page_size)
-    
+
         return {
             "data": page_items,
             "page_info": {
@@ -144,8 +144,8 @@ def create_training_router(
                 },
             },
         }
-    
-    
+
+
     @router.get("/api/v1/trainer/sessions/{session_id}")
     async def get_trainer_session_detail(
         session_id: str,
@@ -153,7 +153,7 @@ def create_training_router(
     ):
         identity = extract_identity(authorization)
         require_read_role(identity)
-    
+
         session = service.read_store.get_trainer_session(session_id)
         if not session:
             raise bff_error(
@@ -162,7 +162,7 @@ def create_training_router(
                 "Trainer session not found",
                 f"Trainer session {session_id} does not exist",
             )
-    
+
         snapshot_at = utc_now()
         payload = dict(session)
         payload["meta"] = {
@@ -172,8 +172,8 @@ def create_training_router(
             },
         }
         return payload
-    
-    
+
+
     @router.get("/api/v1/trainer/sessions/{session_id}/controls")
     async def get_trainer_controls(
         session_id: str,
@@ -181,7 +181,7 @@ def create_training_router(
     ):
         identity = extract_identity(authorization)
         require_read_role(identity)
-    
+
         controls = service.read_store.get_trainer_controls(session_id, snapshot_at=utc_now())
         if not controls:
             raise bff_error(
@@ -191,8 +191,8 @@ def create_training_router(
                 f"Trainer session {session_id} does not exist",
             )
         return controls
-    
-    
+
+
     @router.post("/api/v1/trainer/sessions/{session_id}/patch")
     async def patch_trainer_controls(
         session_id: str,
@@ -202,7 +202,7 @@ def create_training_router(
         identity = extract_identity(authorization)
         require_read_role(identity)
         patches = service.validate_patch_payload(payload)
-    
+
         controls = service.read_store.get_trainer_controls(session_id, snapshot_at=utc_now())
         if not controls:
             raise bff_error(
@@ -227,7 +227,7 @@ def create_training_router(
                 "allowedActions.canPatchControls is false for this trainer session",
                 precondition_failed="allowedActions.canPatchControls",
             )
-    
+
         result = service.read_store.patch_trainer_controls(
             session_id,
             patches=patches,
@@ -241,8 +241,8 @@ def create_training_router(
                 "Trainer control patch store is unavailable.",
             )
         return result
-    
-    
+
+
     @router.post("/api/v1/trainer/sessions/{session_id}/message")
     async def append_trainer_message(
         session_id: str,
@@ -251,7 +251,7 @@ def create_training_router(
     ):
         identity = extract_identity(authorization)
         require_read_role(identity)
-    
+
         session = service.read_store.get_trainer_session(session_id)
         if not session:
             raise bff_error(
@@ -276,7 +276,7 @@ def create_training_router(
                 "allowedActions.canSendMessage is false for this trainer session",
                 precondition_failed="allowedActions.canSendMessage",
             )
-    
+
         message_body = service.required_text(payload, "message_body")
         result = service.read_store.append_trainer_message(
             session_id,
@@ -291,7 +291,7 @@ def create_training_router(
                 "Trainer session store unavailable",
                 "Trainer message append store is unavailable.",
             )
-    
+
         updated = result["session"]
         return {
             "session_id": updated["session_id"],
@@ -301,8 +301,8 @@ def create_training_router(
             "session_summary": updated["session_summary"],
             "allowedActions": updated["allowedActions"],
         }
-    
-    
+
+
     @router.get("/api/v1/trainer/sessions/{session_id}/preview")
     async def get_trainer_preview(
         session_id: str,
@@ -311,7 +311,7 @@ def create_training_router(
     ):
         identity = extract_identity(authorization)
         require_read_role(identity)
-    
+
         session = service.read_store.get_trainer_session(session_id)
         if not session:
             raise bff_error(
@@ -320,7 +320,7 @@ def create_training_router(
                 "Trainer session not found",
                 f"Trainer session {session_id} does not exist",
             )
-    
+
         snapshot_at = utc_now()
         preview = service.read_store.get_trainer_preview(
             session_id,
@@ -342,8 +342,8 @@ def create_training_router(
                 snapshot_at=snapshot_at,
             )
         return preview
-    
-    
+
+
     @router.post("/api/v1/trainer/sessions/{session_id}/preview")
     async def refresh_trainer_preview(
         session_id: str,
@@ -353,7 +353,7 @@ def create_training_router(
         identity = extract_identity(authorization)
         require_read_role(identity)
         service.validate_refresh_mode(payload)
-    
+
         session = service.read_store.get_trainer_session(session_id)
         if not session:
             raise bff_error(
@@ -362,7 +362,7 @@ def create_training_router(
                 "Trainer session not found",
                 f"Trainer session {session_id} does not exist",
             )
-    
+
         preview = service.read_store.get_trainer_preview(
             session_id,
             session_status=session.get("status"),
@@ -390,7 +390,7 @@ def create_training_router(
                 "allowedActions.canRefreshPreview is false for this trainer preview",
                 precondition_failed="allowedActions.canRefreshPreview",
             )
-    
+
         refreshed = service.read_store.refresh_trainer_preview(
             session_id,
             session_status=session.get("status"),
@@ -404,8 +404,8 @@ def create_training_router(
                 "Trainer preview refresh store is unavailable.",
             )
         return refreshed
-    
-    
+
+
     @router.get("/api/v1/trainer/replay")
     async def list_trainer_replays(
         persona_id: str,
@@ -416,7 +416,7 @@ def create_training_router(
     ):
         identity = extract_identity(authorization)
         require_read_role(identity)
-    
+
         persona = service.read_store.get_persona(persona_id)
         if not persona:
             raise bff_error(
@@ -425,7 +425,7 @@ def create_training_router(
                 "Persona not found",
                 f"Persona {persona_id} does not exist",
             )
-    
+
         if status is not None:
             normalized_status = str(status).strip().lower()
             if normalized_status not in service.replay_terminal_statuses:
@@ -438,7 +438,7 @@ def create_training_router(
                 )
         else:
             normalized_status = None
-    
+
         snapshot_at = utc_now()
         items, surface_state = service.read_store.list_trainer_replays(
             persona_id=persona_id,
@@ -460,8 +460,8 @@ def create_training_router(
                 },
             },
         }
-    
-    
+
+
     @router.get("/api/v1/trainer/replay/{session_id}")
     async def get_trainer_replay_detail(
         session_id: str,
@@ -469,7 +469,7 @@ def create_training_router(
     ):
         identity = extract_identity(authorization)
         require_read_role(identity)
-    
+
         snapshot_at = utc_now()
         replay = service.read_store.get_trainer_replay(session_id, snapshot_at=snapshot_at)
         if not replay:
@@ -480,7 +480,7 @@ def create_training_router(
                 f"Trainer replay session {session_id} does not exist",
             )
         return replay
-    
+
     @router.post("/api/v1/trainer/sessions/{session_id}/commit")
     async def commit_trainer_replay(
         session_id: str,
@@ -489,10 +489,10 @@ def create_training_router(
     ):
         identity = extract_identity(authorization)
         require_read_role(identity)
-    
+
         expected_candidate_snapshot_at = service.required_text(payload, "expected_candidate_snapshot_at")
         note = payload.get("note") or None
-    
+
         replay = service.read_store.get_trainer_replay(session_id)
         if not replay:
             raise bff_error(
@@ -501,7 +501,7 @@ def create_training_router(
                 "Trainer replay session not found",
                 f"Trainer replay session {session_id} does not exist",
             )
-    
+
         if str(replay.get("status") or "").strip().lower() != "completed":
             raise bff_error(
                 409,
@@ -510,7 +510,7 @@ def create_training_router(
                 "commit is only allowed when session status is completed",
                 precondition_failed="status",
             )
-    
+
         if not replay.get("allowedActions", {}).get("canCommit"):
             raise bff_error(
                 409,
@@ -519,7 +519,7 @@ def create_training_router(
                 "allowedActions.canCommit is false for this trainer replay session",
                 precondition_failed="allowedActions.canCommit",
             )
-    
+
         candidate_snapshot_at = service.candidate_snapshot_at(replay)
         if candidate_snapshot_at != expected_candidate_snapshot_at:
             raise bff_error(
@@ -529,7 +529,7 @@ def create_training_router(
                 "expected_candidate_snapshot_at does not match the current replayable candidate snapshot",
                 precondition_failed="expected_candidate_snapshot_at",
             )
-    
+
         result = service.read_store.commit_trainer_replay(
             session_id,
             expected_candidate_snapshot_at=expected_candidate_snapshot_at,
@@ -551,8 +551,8 @@ def create_training_router(
             identity=identity,
         )
         return result
-    
-    
+
+
     @router.post("/api/v1/trainer/sessions/{session_id}/discard")
     async def discard_trainer_replay(
         session_id: str,
@@ -561,10 +561,10 @@ def create_training_router(
     ):
         identity = extract_identity(authorization)
         require_read_role(identity)
-    
+
         expected_candidate_snapshot_at = service.required_text(payload, "expected_candidate_snapshot_at")
         note = payload.get("note") or None
-    
+
         replay = service.read_store.get_trainer_replay(session_id)
         if not replay:
             raise bff_error(
@@ -573,7 +573,7 @@ def create_training_router(
                 "Trainer replay session not found",
                 f"Trainer replay session {session_id} does not exist",
             )
-    
+
         if str(replay.get("status") or "").strip().lower() != "completed":
             raise bff_error(
                 409,
@@ -582,7 +582,7 @@ def create_training_router(
                 "discard is only allowed when session status is completed",
                 precondition_failed="status",
             )
-    
+
         if not replay.get("allowedActions", {}).get("canDiscard"):
             raise bff_error(
                 409,
@@ -591,7 +591,7 @@ def create_training_router(
                 "allowedActions.canDiscard is false for this trainer replay session",
                 precondition_failed="allowedActions.canDiscard",
             )
-    
+
         candidate_snapshot_at = service.candidate_snapshot_at(replay)
         if candidate_snapshot_at != expected_candidate_snapshot_at:
             raise bff_error(
@@ -601,7 +601,7 @@ def create_training_router(
                 "expected_candidate_snapshot_at does not match the current replayable candidate snapshot",
                 precondition_failed="expected_candidate_snapshot_at",
             )
-    
+
         result = service.read_store.discard_trainer_replay(
             session_id,
             expected_candidate_snapshot_at=expected_candidate_snapshot_at,
@@ -617,8 +617,8 @@ def create_training_router(
                 "Trainer replay discard store is unavailable.",
             )
         return result
-    
-    
+
+
     @router.post("/api/v1/trainer/sessions/{session_id}/rapid-eval")
     async def create_rapid_eval(
         session_id: str,
@@ -627,7 +627,7 @@ def create_training_router(
     ):
         identity = extract_identity(authorization)
         require_read_role(identity)
-    
+
         eval_scope = str(payload.get("eval_scope") or "").strip().lower()
         if not eval_scope or eval_scope not in service.rapid_eval_scopes:
             raise bff_error(
@@ -637,7 +637,7 @@ def create_training_router(
                 f"eval_scope must be one of {sorted(service.rapid_eval_scopes)}",
                 precondition_failed="eval_scope",
             )
-    
+
         dataset_version_id_raw = payload.get("dataset_version_id")
         if not dataset_version_id_raw or not str(dataset_version_id_raw).strip():
             raise bff_error(
@@ -648,7 +648,7 @@ def create_training_router(
                 precondition_failed="dataset_version_id",
             )
         dataset_version_id = str(dataset_version_id_raw).strip()
-    
+
         max_runtime_seconds_raw = payload.get("max_runtime_seconds")
         try:
             max_runtime_seconds = int(max_runtime_seconds_raw)
@@ -662,11 +662,11 @@ def create_training_router(
                 "max_runtime_seconds must be a positive integer",
                 precondition_failed="max_runtime_seconds",
             )
-    
+
         patch_ref = str(payload["patch_ref"]).strip() if payload.get("patch_ref") else None
         persona_id = str(payload["persona_id"]).strip() if payload.get("persona_id") else None
         strategy_id = str(payload["strategy_id"]).strip() if payload.get("strategy_id") else None
-    
+
         session = service.read_store.get_trainer_session(session_id)
         if not session:
             raise bff_error(
@@ -675,7 +675,7 @@ def create_training_router(
                 "Trainer session not found",
                 f"Trainer session {session_id} does not exist",
             )
-    
+
         if str(session.get("status") or "").strip().lower() not in service.rapid_eval_active_statuses:
             raise bff_error(
                 409,
@@ -684,7 +684,7 @@ def create_training_router(
                 "rapid-eval is only allowed while the trainer session status is active or paused",
                 precondition_failed="status",
             )
-    
+
         result = service.read_store.create_rapid_eval(
             session_id,
             persona_id=persona_id,
@@ -704,8 +704,8 @@ def create_training_router(
                 "Rapid eval creation store is unavailable.",
             )
         return result
-    
-    
+
+
     @router.get("/api/v1/trainer/sessions/{session_id}/rapid-eval/{eval_id}")
     async def get_rapid_eval(
         session_id: str,
@@ -714,7 +714,7 @@ def create_training_router(
     ):
         identity = extract_identity(authorization)
         require_read_role(identity)
-    
+
         session = service.read_store.get_trainer_session(session_id)
         if not session:
             raise bff_error(
@@ -723,7 +723,7 @@ def create_training_router(
                 "Trainer session not found",
                 f"Trainer session {session_id} does not exist",
             )
-    
+
         record = service.read_store.get_rapid_eval(eval_id, snapshot_at=utc_now())
         if not record or record.get("session_id") != session_id:
             raise bff_error(
