@@ -1323,3 +1323,99 @@ def verify_archive_anchor(
         "journal_sha256": digest.hexdigest(),
         "expected_journal_sha256": anchor["journal_sha256"],
     }
+
+
+REVIEW_DECISION_DIGEST_EXCLUDED_KEYS = frozenset(
+    {
+        "review_decision_intent",
+        "review_decision_intent_recovery",
+        "status_write_pending",
+        "status_write_pending_count",
+    }
+)
+
+
+def review_decision_task_digest(task: Mapping[str, Any]) -> str:
+    """Digest task business fields while excluding intent and recovery markers."""
+    candidate = {
+        key: value
+        for key, value in task.items()
+        if key not in REVIEW_DECISION_DIGEST_EXCLUDED_KEYS
+    }
+    return sha256_json(candidate)
+
+
+def find_exact_prior_task_state_from_journal(
+    event_path: str | Path,
+    task_id: str,
+    expected_digest: str,
+) -> dict[str, Any] | None:
+    """Find one unambiguous historical task state whose digest matches expected_digest.
+
+    Returns the exact task state dictionary if exactly one distinct matching
+    state is found in the journal; returns None if missing, corrupted, or ambiguous.
+    """
+    path = Path(event_path).expanduser().absolute()
+    if not path.is_file():
+        return None
+
+    task_id_str = str(task_id).strip()
+    expected_digest_str = str(expected_digest).strip()
+    if not task_id_str or not expected_digest_str:
+        return None
+
+    candidates: list[dict[str, Any]] = []
+    try:
+        with _store_lock(path, shared=True):
+            if _journal_size(path) == 0:
+                return None
+            for _, raw_line in _iter_journal_records(path):
+                if task_id_str.encode("utf-8") not in raw_line:
+                    continue
+                try:
+                    event = json.loads(raw_line.decode("utf-8"))
+                except (UnicodeDecodeError, json.JSONDecodeError):
+                    return None
+                if not isinstance(event, dict):
+                    continue
+                delta = event.get("delta")
+                if not isinstance(delta, dict):
+                    continue
+                upserts = delta.get("tasks", {}).get("upsert", [])
+                if isinstance(upserts, list):
+                    for task_row in upserts:
+                        if (
+                            isinstance(task_row, dict)
+                            and str(task_row.get("id") or "") == task_id_str
+                        ):
+                            digest = review_decision_task_digest(task_row)
+                            if digest == expected_digest_str:
+                                candidates.append(copy.deepcopy(task_row))
+    except Exception:
+        return None
+
+    if not candidates:
+        return None
+
+    first_candidate = candidates[0]
+    first_business = {
+        key: value
+        for key, value in first_candidate.items()
+        if key not in REVIEW_DECISION_DIGEST_EXCLUDED_KEYS and key != "worker_recovery"
+    }
+    first_canonical = canonical_json_bytes(first_business)
+
+    for other in candidates[1:]:
+        other_business = {
+            key: value
+            for key, value in other.items()
+            if key not in REVIEW_DECISION_DIGEST_EXCLUDED_KEYS and key != "worker_recovery"
+        }
+        if canonical_json_bytes(other_business) != first_canonical:
+            return None
+
+    res = copy.deepcopy(first_candidate)
+    res.pop("worker_recovery", None)
+    res.pop("review_decision_intent_recovery", None)
+    return res
+

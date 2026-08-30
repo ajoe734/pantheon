@@ -8332,13 +8332,14 @@ class ReviewDecisionIntentLeaseRecoveryTests(unittest.TestCase):
         }
         self.task = task_fixture(status="review", reviewer="Codex2", owner="Codex")
         self.task["delivery_binding"] = review_admission_binding()
+        digest = supervisor.review_intent_recovery_task_digest(self.task)
         self.task["review_decision_intent"] = {
             "schema_version": 1,
             "nonce": "2" * 32,
             "command": "approve",
             "decision": "approve",
             "task_id": "TASK-1",
-            "task_digest": "irrelevant-for-this-fixture",
+            "task_digest": digest,
             "actor": "Codex2",
             "message": "please retry",
             "repository": "ajoe734/pantheon",
@@ -8475,6 +8476,261 @@ class ReviewDecisionIntentLeaseRecoveryTests(unittest.TestCase):
                 self.config, task, "Codex2", {"TASK-1": task}
             )
         )
+
+    def test_generic_lost_lease_does_not_mutate_task_with_pending_review_intent(
+        self,
+    ) -> None:
+        initial_generation = self.task.get("generation", 1)
+        initial_next = self.task.get("next")
+        initial_last_update = self.task.get("last_update")
+
+        worker = {
+            "task_id": "TASK-1",
+            "run_id": "worker-1",
+            "agent_id": "codex2",
+            "provider": "codex2",
+            "status": "started",
+            "task_generation": initial_generation,
+            "request_snapshot": {"reason": supervisor.REASON_REVIEW_READY},
+        }
+        state = self._state({"worker-1": worker})
+
+        # When worker lease is lost, recover_lost_worker_lease should fence the worker
+        # but NOT mutate the task's generation, next, or last_update.
+        handled = supervisor.recover_lost_worker_lease(
+            self.config,
+            state,
+            worker,
+            reason_kind="worker_lease_expired",
+            reason="lease expired",
+        )
+        self.assertTrue(handled)
+        self.assertEqual(worker["status"], "superseded")
+
+        status = supervisor.load_status(self.config)
+        task = supervisor.task_index_from_status(self.config, status)["TASK-1"]
+        self.assertEqual(task.get("generation", 1), initial_generation)
+        self.assertEqual(task.get("next"), initial_next)
+        self.assertEqual(task.get("last_update"), initial_last_update)
+        self.assertNotIn(supervisor.WORKER_RECOVERY_TASK_KEY, task)
+
+    def test_reconcile_migrates_legacy_collision_from_journal_and_replays_intent(
+        self,
+    ) -> None:
+        event_log = Path(self.config["task_state_store"]["event_log"])
+        task_id = "FULL-OPERATION-GAP-SA-SD-PLAN-FREEZE-20260830"
+        prior_task = task_fixture(
+            status="review",
+            reviewer="Codex2",
+            owner="Antigravity2",
+        )
+        prior_task["id"] = task_id
+        prior_task["generation"] = 12
+        prior_task["last_update"] = "2026-08-30T10:50:40Z"
+        prior_task["next"] = "REVIEW_PR=5428 REVIEW_HEAD_SHA=eb477d1b61395437b7f18a5e5d32c0b38fa07c08"
+        prior_task["delivery_binding"] = review_admission_binding(
+            task_id=task_id,
+            head_sha="eb477d1b61395437b7f18a5e5d32c0b38fa07c08",
+        )
+        prior_digest = supervisor.review_intent_recovery_task_digest(prior_task)
+
+        intent = {
+            "schema_version": 1,
+            "nonce": "37ad9fe834fb2939e0e3039e6b082133",
+            "command": "reopen",
+            "decision": "reopen",
+            "task_id": task_id,
+            "task_digest": prior_digest,
+            "actor": "Codex2",
+            "message": "Independent review rejected: please rebase and fix findings.",
+            "repository": "ajoe734/pantheon",
+            "binding": copy.deepcopy(prior_task["delivery_binding"]),
+            "transition_payload": {},
+            "created_at": "2026-08-30T10:58:57Z",
+        }
+        unsigned = {key: value for key, value in intent.items() if key != "intent_sha256"}
+        intent["intent_sha256"] = supervisor.rewrite_task_state_store.sha256_json(unsigned)
+        prior_task["review_decision_intent"] = copy.deepcopy(intent)
+
+        # Seed the valid state into the authoritative journal (reproducing Seq 9611)
+        valid_status = {"tasks": [self.task, prior_task], "blockers": [], "handoffs": []}
+        supervisor.rewrite_task_state_store.append_state_commit(
+            event_log,
+            valid_status,
+            source="test-seq-9611",
+        )
+
+        # Mutate the board to simulate the legacy lost-lease collision (reproducing Seq 9612)
+        collided_task = copy.deepcopy(prior_task)
+        collided_task["generation"] = 13
+        collided_task["last_update"] = "2026-08-30T11:00:11Z"
+        collided_task["next"] = (
+            "Supervisor fenced lost worker lease lost-lease-45094bd7; "
+            "waiting for an eligible configured fallback assignment."
+        )
+        collided_task[supervisor.WORKER_RECOVERY_TASK_KEY] = {
+            "fence_generation": 13,
+            "receipt_id": "lost-lease-45094bd7",
+            "replacement_generation": None,
+            "status": "pending",
+            "task_generation": 12,
+        }
+        collided_status = {
+            "tasks": [self.task, collided_task],
+            "blockers": [],
+            "handoffs": [],
+            "worker_recovery_receipts": {
+                "lost-lease-45094bd7": {
+                    "receipt_id": "lost-lease-45094bd7",
+                    "task_id": task_id,
+                    "task_generation": 12,
+                    "status": "pending",
+                    "reason": "worker lease expired",
+                }
+            },
+        }
+        supervisor.rewrite_task_state_store.append_state_commit(
+            event_log,
+            collided_status,
+            source="test-seq-9612",
+        )
+        Path(self.config["paths"]["status_file"]).write_text(
+            json.dumps(collided_status), encoding="utf-8"
+        )
+
+        # Run reconciliation
+        state = self._state()
+        with mock.patch.object(supervisor, "sync_status_pipeline", return_value=True):
+            changed = supervisor.reconcile_review_decision_intent_lease_recovery(
+                self.config, state
+            )
+        self.assertTrue(changed)
+
+        # Verify state after reconciliation:
+        # 1. Task row was restored to prior generation and next, worker_recovery pointer removed
+        status_after = supervisor.load_status(self.config)
+        task_after = supervisor.task_index_from_status(self.config, status_after)[task_id]
+        self.assertEqual(task_after["generation"], 12)
+        self.assertEqual(task_after["next"], prior_task["next"])
+        self.assertNotIn(supervisor.WORKER_RECOVERY_TASK_KEY, task_after)
+        self.assertEqual(
+            supervisor.review_intent_recovery_task_digest(task_after),
+            prior_digest,
+        )
+
+        # 2. Generic lost-lease receipt was marked as resolved (not deleted)
+        receipts = status_after.get("worker_recovery_receipts", {})
+        self.assertIn("lost-lease-45094bd7", receipts)
+        self.assertEqual(receipts["lost-lease-45094bd7"]["status"], "resolved")
+
+        # 3. Typed review_decision_intent_recovery receipt was minted
+        recovery_rec = task_after.get("review_decision_intent_recovery")
+        self.assertIsInstance(recovery_rec, dict)
+        self.assertEqual(recovery_rec["actor"], "Codex2")
+        self.assertEqual(recovery_rec["nonce"], "37ad9fe834fb2939e0e3039e6b082133")
+        self.assertEqual(recovery_rec["task_generation"], 12)
+        self.assertEqual(recovery_rec["task_digest"], prior_digest)
+
+        # 4. Only original actor Codex2 is eligible for dispatch
+        candidate = supervisor.task_execution_dispatch_candidate(
+            self.config, task_after, "Codex2", {task_id: task_after, "TASK-1": self.task}
+        )
+        self.assertIsNotNone(candidate)
+        self.assertIsNone(
+            supervisor.task_execution_dispatch_candidate(
+                self.config, task_after, "Antigravity2", {task_id: task_after, "TASK-1": self.task}
+            )
+        )
+
+        # 5. Codex2 executes reopen replay against the migrated board
+        from scripts import ai_status
+
+        external_result = {
+            "command": "reopen",
+            "task_id": task_id,
+            "intent_nonce": intent["nonce"],
+            ai_status.REVIEW_BINDING_MISMATCH_PREFLIGHT_KEY: "binding mismatch",
+        }
+        ai_status.configure_status_root_paths(self.root)
+        with mock.patch.dict(
+            os.environ,
+            {
+                "AI_NAME": "Codex2",
+                "PANTHEON_TASK_STATE_EVENT_LOG": str(event_log),
+                "PANTHEON_TASK_STATE_STORE_MODE": "authoritative",
+            },
+        ):
+            status_loaded = supervisor.load_status(self.config)
+            ai_status.finalize_review_decision_intent(
+                status_loaded,
+                command="reopen",
+                args=[task_id, "Independent review rejected: please rebase and fix findings."],
+                external_result=external_result,
+            )
+
+        # 6. Verify task transitioned to in_progress, returned to owner Antigravity2,
+        # and all review decision intent & recovery markers were cleared!
+        status_final = supervisor.load_status(self.config)
+        task_final = supervisor.task_index_from_status(self.config, status_final)[task_id]
+        self.assertEqual(task_final["status"], "in_progress")
+        self.assertEqual(task_final["owner"], "Antigravity2")
+        self.assertNotIn("review_decision_intent", task_final)
+        self.assertNotIn("review_decision_intent_recovery", task_final)
+        self.assertNotIn(supervisor.WORKER_RECOVERY_TASK_KEY, task_final)
+
+    def test_legacy_collision_fails_closed_when_journal_is_missing_or_mismatched(
+        self,
+    ) -> None:
+        event_log = Path(self.config["task_state_store"]["event_log"])
+        task_id = "TASK-MISMATCH"
+        # Pre-recover self.task so it doesn't cause a status change in this test
+        self.task["review_decision_intent_recovery"] = (
+            supervisor.build_review_decision_intent_recovery_receipt(
+                task_id="TASK-1",
+                task_generation=1,
+                task_digest=supervisor.review_intent_recovery_task_digest(self.task),
+                intent=self.task["review_decision_intent"],
+            )
+        )
+        collided_task = task_fixture(
+            status="review",
+            reviewer="Codex2",
+            owner="Antigravity2",
+        )
+        collided_task["id"] = task_id
+        collided_task["generation"] = 13
+        collided_task["review_decision_intent"] = {
+            "schema_version": 1,
+            "nonce": "n1",
+            "command": "reopen",
+            "decision": "reopen",
+            "task_id": task_id,
+            "task_digest": "unmatchable-digest-0000000000000000000000000000000000000000000000",
+            "actor": "Codex2",
+            "message": "reopen",
+            "created_at": "2020-01-01T00:00:00Z",
+        }
+        collided_status = {"tasks": [self.task, collided_task], "blockers": [], "handoffs": []}
+        supervisor.rewrite_task_state_store.append_state_commit(
+            event_log,
+            collided_status,
+            source="test-mismatched",
+        )
+        Path(self.config["paths"]["status_file"]).write_text(
+            json.dumps(collided_status), encoding="utf-8"
+        )
+
+        state = self._state()
+        with mock.patch.object(supervisor, "sync_status_pipeline", return_value=True):
+            changed = supervisor.reconcile_review_decision_intent_lease_recovery(
+                self.config, state
+            )
+        self.assertFalse(changed)
+
+        status_after = supervisor.load_status(self.config)
+        task_after = supervisor.task_index_from_status(self.config, status_after)[task_id]
+        self.assertEqual(task_after["generation"], 13)
+        self.assertNotIn("review_decision_intent_recovery", task_after)
 
 
 if __name__ == "__main__":
