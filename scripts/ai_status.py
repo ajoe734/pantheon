@@ -6134,6 +6134,7 @@ def command_reopen(state: dict[str, Any], args: list[str]) -> None:
     ).strip()
     timestamp = iso_now()
     task.pop(REVIEW_DECISION_INTENT_KEY, None)
+    task.pop(REVIEW_DECISION_INTENT_RECOVERY_KEY, None)
     apply_task_lifecycle_transition(task, "reopen")
     generation = max(1, int(task.get("generation", 1) or 1))
     requeue_basis = {
@@ -7434,6 +7435,10 @@ GITHUB_REVIEW_BRIDGE_KEY = "github_review_bridge"
 OPERATOR_ACCEPTANCE_KEY = "operator_acceptance"
 REVIEW_DECISION_INTENT_KEY = "review_decision_intent"
 REVIEW_DECISION_INTENT_SCHEMA_VERSION = 1
+# Supervisor-owned lost-lease recovery receipt (.orchestrator/supervisor.py).
+# Excluded from review_decision_task_digest alongside the intent itself so a
+# supervisor-minted receipt can never invalidate the frozen reservation.
+REVIEW_DECISION_INTENT_RECOVERY_KEY = "review_decision_intent_recovery"
 REVIEW_DECISION_BRIDGE_REQUIRED_KEY = "review_decision_bridge_required"
 REVIEW_DECISION_RESUME_KEY = "review_decision_resume"
 REVIEW_DECISION_EXACT_BINDING_KEY = "review_decision_exact_binding"
@@ -8547,6 +8552,7 @@ def review_decision_task_digest(task: Mapping[str, Any]) -> str:
 
     candidate = deepcopy(dict(task))
     candidate.pop(REVIEW_DECISION_INTENT_KEY, None)
+    candidate.pop(REVIEW_DECISION_INTENT_RECOVERY_KEY, None)
     candidate.pop("status_write_pending", None)
     candidate.pop("status_write_pending_count", None)
     return task_mutation_cas_digest(candidate)
@@ -9446,6 +9452,7 @@ def abort_review_decision_intent(
             "fenced for explicit recovery"
         )
     task.pop(REVIEW_DECISION_INTENT_KEY, None)
+    task.pop(REVIEW_DECISION_INTENT_RECOVERY_KEY, None)
     save_state(state)
     return deepcopy(state)
 
@@ -9523,6 +9530,7 @@ def command_operator_accept(state: dict[str, Any], args: list[str]) -> None:
 
     timestamp = iso_now()
     task.pop(REVIEW_DECISION_INTENT_KEY, None)
+    task.pop(REVIEW_DECISION_INTENT_RECOVERY_KEY, None)
     apply_task_lifecycle_transition(task, "approve")
     task[APPROVAL_BINDING_KEY] = binding
     task[OPERATOR_ACCEPTANCE_KEY] = acceptance
@@ -9572,6 +9580,7 @@ def command_approve(state: dict[str, Any], args: list[str]) -> None:
 
     timestamp = iso_now()
     task.pop(REVIEW_DECISION_INTENT_KEY, None)
+    task.pop(REVIEW_DECISION_INTENT_RECOVERY_KEY, None)
     apply_task_lifecycle_transition(task, "approve")
     task["last_update"] = timestamp
     task["next"] = message
