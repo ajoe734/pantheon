@@ -5,12 +5,13 @@
 This document package provides the complete, root-cause System Architecture (SA), System Design (SD), and parallel Execution Task Catalog for remediating all 20 identified product operation gaps (**OP-G01** through **OP-G20**) across the **Pantheon** control plane and **execute-plans** desktop frontend repositories.
 
 #### Baseline Provenance
-- **Pantheon Baseline Commit**: `2bcb4465399af83190c5027073f3b2296e377256` (`origin/dev`)
+- **Pantheon Baseline Commit**: `84f7807dbe99166b9096551beeee88bbe4f7b20a` (`origin/dev`)
+- **Governed Command Runtime SHA**: `f12e300f4eb2cf38b34c3432658dc8041570d130` (promoted command runtime post PR #5440)
+- **Accepted Hosted / Product BFF Backend Identity**: `2bcb4465399af83190c5027073f3b2296e377256` (served `/deployment.json` and live `/bff/version` backend source commit)
 - **Execute-Plans Baseline Commit**: `7d30e78476be61222af63a089e7ab141aa43b809` (`origin/dev`)
 - **Hosted Environment**:
   - Served `/deployment.json`: Pair ID `9de4cd001a8b7aaf18a1094fb1699ece19f0efd86d3d24994cd9f3562fe33727`, Release Candidate ID `9783e78bd8e28608f2c335d566fd798db5b995c50da129876401170b45852e9a`, Backend `2bcb4465399af83190c5027073f3b2296e377256`, Frontend `7d30e78476be61222af63a089e7ab141aa43b809`, Controller Run `33319323262`, Integration Gate Run `33320810888`, Execute-Plans Deploy Run `33321494484`, Status `accepted` (accepted at `2026-08-30T16:17:23Z`).
   - Live `/bff/version`: Source Commit `2bcb4465399af83190c5027073f3b2296e377256`, Status `accepted`.
-- **Governed Command Runtime SHA**: `2bcb4465399af83190c5027073f3b2296e377256`
 
 ---
 
@@ -60,8 +61,8 @@ This document package provides the complete, root-cause System Architecture (SA)
 9. **Fail-Closed Forward Rollback**: All tasks specify forward repair or previous release artifact rollback, never restoring shims, duplicate handlers, or in-memory authority.
 10. **Clean Materialization Batches & Signed DevTaskPacket Inbox Mapping**:
     - **Batch A (Bootstrap)**: 1 task (`OPGAP-DEVTOOL-TARGET-REPO-BRIDGE-20260830`) — `materializable_now: true`, `allowed_repos: ["pantheon"]`.
-    - **Batch B (Parallel Domain Preparation)**: 14 tasks (Core, Persona, Training, Agora, Research, Governance, Evolution, Capital, Strategy, Management, Postmortem, Incident, Events, Ports Consolidation) — `materializable_now: false` (gated on Batch A bootstrap merge and command runtime promotion), `allowed_repos: ["pantheon"]`.
-    - **Batch C (Support & Frontend)**: 9 tasks (Tools, Control Loops, Command Adapters, Runtime Binding, Deployments, FE Cleanup, FE Management, FE Agora, FE Assembly) — `materializable_now: false` (gated on Batch A bootstrap merge, command runtime promotion, and multi-repo allowed-repos config), `allowed_repos: ["pantheon", "execute-plans"]`.
+    - **Batch B (Parallel Domain Preparation)**: 14 tasks (13 primary domain routers + ports consolidation: Core, Persona, Training, Agora, Research, Governance, Evolution, Capital, Strategy, Management, Postmortem, Incident, Events, Ports Consolidation) — `materializable_now: false` (gated on Batch A bootstrap merge and command runtime promotion), `allowed_repos: ["pantheon"]`.
+    - **Batch C (Support & Frontend)**: 9 tasks (5 support and infrastructure domain routers + 4 frontend tasks: Tools, Control Loops, Command Adapters, Runtime Binding, Deployments, FE Cleanup, FE Management, FE Agora, FE Assembly) — `materializable_now: false` (gated on Batch A bootstrap merge, command runtime promotion, and multi-repo allowed-repos config), `allowed_repos: ["pantheon", "execute-plans"]`.
     - **Batch D (Assembly, Retirement & Hosted Promotion/Acceptance)**: 6 tasks (Main Assembly, Command Cutover, Command Retirement, Hosted Promotion, Hosted Backend Acceptance, Hosted Management Acceptance) — `materializable_now: false` (gated on Batch B & C completion and signed readback), `allowed_repos: ["pantheon"]`.
     - Every batch satisfies `task_count <= 16` (fleet limit), forms a dependency-closed subgraph, maps to the signed local DevTaskPacket inbox (`.orchestrator/assistant-dev-packets/`), and produces durable processed receipts with authoritative readback.
 11. **Authoritative Capability Selectors & Non-Authoritative Snapshots**:

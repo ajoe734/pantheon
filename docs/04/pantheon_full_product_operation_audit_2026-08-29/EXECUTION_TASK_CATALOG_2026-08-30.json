@@ -55456,7 +55456,7 @@
         "target_router": "services/control-plane/bff/main.py"
       }
     ],
-    "source_commit": "2bcb4465399af83190c5027073f3b2296e377256",
+    "source_commit": "84f7807dbe99166b9096551beeee88bbe4f7b20a",
     "source_path": "services/control-plane/bff/main.py",
     "total_nodes": 2272
   },
@@ -55625,7 +55625,7 @@
         "target_repo_binding": "Explicit target_repo (pantheon or execute-plans) included in task spec hash to bind cross-repository delivery post-bootstrap."
       },
       "durable_receipt_and_readback_protocol": {
-        "authoritative_readback_command": "/home/lupin/pantheon-ci-deploy/command-runtimes/2bcb4465399af83190c5027073f3b2296e377256/scripts/ai-status.sh show <task-id>",
+        "authoritative_readback_command": "/home/lupin/pantheon-ci-deploy/command-runtimes/f12e300f4eb2cf38b34c3432658dc8041570d130/scripts/ai-status.sh show <task-id>",
         "prohibitions": [
           "Do not use retired planning-state.sh commands",
           "Do not hand-edit canonical task state JSON, ai-status.json, or queue JSON directly"
@@ -55738,7 +55738,7 @@
       }
     },
     "agent_selector": "Dynamic capacity-aware assignment selecting active auto-worker agents with max_parallel > 0 and live credentials (Antigravity, Antigravity2, Codex, Codex2, Claude). Strictly enforces owner != reviewer on every task.",
-    "command_runtime_sha": "2bcb4465399af83190c5027073f3b2296e377256",
+    "command_runtime_sha": "f12e300f4eb2cf38b34c3432658dc8041570d130",
     "dispatch_time_resolution": "Task materialization reads live config and worker slot availability at dispatch time. If any assigned lane is throttled or saturated, supervisor worker reassignment fallbacks reassign dynamically while preserving owner != reviewer.",
     "dynamic_derived": true,
     "live_config_command": "jq '{agents: .agents, ready_dispatcher: .ready_dispatcher}' .orchestrator/config.json",
@@ -55810,7 +55810,7 @@
     }
   },
   "planning_baseline": {
-    "command_runtime_sha": "2bcb4465399af83190c5027073f3b2296e377256",
+    "command_runtime_sha": "f12e300f4eb2cf38b34c3432658dc8041570d130",
     "execute_plans": "7d30e78476be61222af63a089e7ab141aa43b809",
     "hosted_accepted_at": "2026-08-30T16:17:23Z",
     "hosted_backend": "2bcb4465399af83190c5027073f3b2296e377256",
@@ -55822,7 +55822,7 @@
     "hosted_gate_run_id": "33320810888",
     "hosted_pair_id": "9de4cd001a8b7aaf18a1094fb1699ece19f0efd86d3d24994cd9f3562fe33727",
     "hosted_release_candidate_id": "9783e78bd8e28608f2c335d566fd798db5b995c50da129876401170b45852e9a",
-    "pantheon": "2bcb4465399af83190c5027073f3b2296e377256"
+    "pantheon": "84f7807dbe99166b9096551beeee88bbe4f7b20a"
   },
   "prior_delivery_dispositions": [
     {
@@ -67567,7 +67567,7 @@
       }
     ],
     "source": "services/control-plane/bff/main.py",
-    "source_commit": "2bcb4465399af83190c5027073f3b2296e377256",
+    "source_commit": "84f7807dbe99166b9096551beeee88bbe4f7b20a",
     "target_router_registry": [
       {
         "baseline_blob": "9f0400bb469bc6a0dec11132e00d03e699c06714",
