@@ -157,7 +157,7 @@ sequenceDiagram
     WRK->>BFF_WS: 寫入持久化成果並發布 SSE 事件
     BFF_WS-->>WS: SSE: interaction.completed
     WS->>BFF_WS: 讀取重構策略卡片 (Durable Readback)
-    
+
     User->>TR: 進入交易室並選擇候選策略池
     TR->>BFF_WS: GET /bff/agora/trading-room/candidate-pools/{id}
     BFF_WS-->>TR: 回傳真實候選策略清單

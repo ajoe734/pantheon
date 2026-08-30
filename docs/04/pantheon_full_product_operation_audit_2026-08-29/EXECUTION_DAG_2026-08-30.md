@@ -64,7 +64,7 @@ flowchart TD
     W0 --> T5
     W0 --> T6
     W0 --> T7
-    W0 --> W8
+    W0 --> T8
     W0 --> T9
 
     T1 --> T10
@@ -92,7 +92,7 @@ flowchart TD
 |---|---|:---:|---|
 | `services/control-plane/bff/main.py` | `OPGAP-BFF-MAIN-ASSEMBLY-20260830` | Wave 2 | Wave 1 各任務僅在各自 router 檔案編寫代碼；Wave 2 由本任務統一於 `main.py` 執行 `include_router` 並掛載 route guards。 |
 | `execute-plans:src/App.tsx` | `OPGAP-FE-INTEGRATION-ASSEMBLY-20260830` | Wave 2 | Wave 1 各前端任務僅修改各自頁面與元件；Wave 2 由本任務統一於 `App.tsx` 與 `ManagementLayout.tsx` 進行最終掛載與清理。 |
-| `execute-plans:src/lib/bff-v1/index.ts` | `OPGAP-FE-INTEGRATION-ASSEMBLY-20260830` | Wave 2 | Wave 1 在 `OPGAP-FE-BUNDLE-CLEANUP-20260830` 移除 `writeOverlay`；Wave 2 最終收斂所有 typed domain client 匯出。 |
+| `execute-plans:src/lib/bff-v1/index.ts` | `OPGAP-FE-INTEGRATION-ASSEMBLY-20260830` | Wave 2 | Wave 1 在 `OPGAP-FE-BUNDLE-CLEANUP-20260830` 移除 `writeOverlay` 本體；Wave 2 最終收斂所有 typed domain client 匯出。 |
 | `scripts/deploy_nonprod_vm.sh` | `OPGAP-DEPLOY-RELIABILITY-20260830` | Wave 1 | Wave 1 完成 lease 重試、rollback sealed authority 與 exit-code 門禁強化；Wave 3 直接呼叫執行。 |
 | `docker-compose.yml` | `OPGAP-HOSTED-DEV-PROMOTION-20260830` | Wave 3 | 由部署推廣任務作為最終單一擁有者，校驗所有容器健康度與環境變數注入。 |
 
@@ -100,22 +100,22 @@ flowchart TD
 
 ## 4. 完整任務清單與契約規格
 
-| 波次 | 任務 ID | 倉庫 | Owner / Reviewer | 主要職責與涵蓋 GAP | 相依前置任務 |
+| 波次 | 任務 ID | 倉庫 | Owner / Reviewer | 主要職責與單一擁有 GAP | 相依前置任務與 Track |
 |:---:|---|---|---|---|---|
 | **W0** | `FULL-OPERATION-GAP-SA-SD-PLAN-FREEZE-20260830` | Pantheon | Antigravity / Codex2 | 審查並合併本規劃文件套件 (Doc-only) | (無) |
-| **W1** | `OPGAP-BE-BFF-CORE-20260830` | Pantheon | Antigravity / Claude | BFF 核心路由抽取、Auth 探針非同步解耦 (OP-G05)、刪除 dead adapter (OP-G10)、Async ASGI 測試載具 (OP-G13) | W0 |
-| **W1** | `OPGAP-BE-AGORA-RESEARCH-20260830` | Pantheon | Claude / Antigravity | Agora 偽造 real 修復 (OP-G01)、建議生產者連線 (OP-G02)、私有 import 清理 (OP-G09)、能力標籤對齊 (OP-G15) | W0 |
-| **W1** | `OPGAP-BE-RUNTIME-BINDING-20260830` | Pantheon | Antigravity2 / Claude2 | 權威不可變 RuntimeBinding 物理投影生成 (OP-G17)、Paper 生產者訊號閉環單元驗證 (OP-G20) | W0 |
-| **W1** | `OPGAP-BE-SOURCE-MANAGEMENT-20260830` | Pantheon | Claude2 / Antigravity2 | Source 常態 reconcile-only 強制、單次有界手動更新契約、台灣時段新鮮度保護 (OP-G12, OP-G19) | W0 |
-| **W1** | `OPGAP-BE-MGMT-POSTMORTEM-20260830` | Pantheon | Antigravity / Claude | Canonical Postmortem 權威服務與 postmortem_id 綁定 (OP-G18)、十二循環純淨投影驗證 | W0 |
-| **W1** | `OPGAP-FE-BUNDLE-CLEANUP-20260830` | execute-plans | Claude / Antigravity | 前端 Production 打包隔離、完全切斷 mock/seed 依賴圖譜與構建門禁 (OP-G07) | W0 |
-| **W1** | `OPGAP-FE-MGMT-CRUD-POSTMORTEM-20260830` | execute-plans | Antigravity2 / Claude2 | 前端淘汰 writeOverlay 假寫入 (OP-G06)、Management 頁面改接 Postmortem 權威端點 (OP-G18) | W0 |
-| **W1** | `OPGAP-FE-AGORA-WORKSHOP-20260830` | execute-plans | Claude2 / Antigravity2 | Workshop 顯式呈現 Adapter 真實性 Badge、動態候選池加載、績效建議元件 (OP-G01, OP-G02, OP-G15) | W0 |
-| **W1** | `OPGAP-DEPLOY-RELIABILITY-20260830` | Pantheon | Antigravity / Claude | 部署租約心跳重試與本地封閉回滾授權 (OP-G16)、消除 CI 假綠燈與 fail-closed 強化 (OP-G04) | W0 |
-| **W2** | `OPGAP-BFF-MAIN-ASSEMBLY-20260830` | Pantheon | Claude / Antigravity | 單一擁有者收斂 `main.py` composition root、掛載所有領域 router 並通過 route guard 測試 (OP-G08) | T1, T2, T3, T4, T5 |
-| **W2** | `OPGAP-FE-INTEGRATION-ASSEMBLY-20260830` | execute-plans | Antigravity2 / Claude2 | 單一擁有者收斂 `App.tsx`、`bff-v1/index.ts`，通過全量前端型別與打包檢查 | T6, T7, T8 |
-| **W3** | `OPGAP-HOSTED-DEV-PROMOTION-20260830` | Pantheon+FE | Antigravity / Claude | 鎖定 `pantheon-dev-vm` 資源，執行 Dev VM 原子部署、容器健康驗證與 Agora/Paper 閉環 (OP-G03, OP-G19, OP-G20) | T9, T10, T11 |
-| **W4** | `OPGAP-HOSTED-E2E-ACCEPTANCE-20260830` | Pantheon+FE | Claude / Antigravity | 鎖定 `pantheon-dev-vm` 資源，執行十二循環全量測試 (OP-G11)、Source 有界更新週期 (OP-G12)、桌面端登入態 Playwright 矩陣 (OP-G14) | T12 |
+| **W1** | `OPGAP-BE-BFF-CORE-20260830` | Pantheon | Antigravity / Codex | BFF 核心路由抽取、Auth 探針非同步解耦 (OP-G05)、刪除 dead adapter (OP-G10)、Async ASGI 測試載具 (OP-G13) | W0 (functional) |
+| **W1** | `OPGAP-BE-AGORA-RESEARCH-20260830` | Pantheon | Antigravity2 / Claude | Agora 偽造 real 修復 (OP-G01)、建議生產者連線 (OP-G02)、私有 import 清理 (OP-G09) | W0 (functional) |
+| **W1** | `OPGAP-BE-RUNTIME-BINDING-20260830` | Pantheon | Gemini / Codex2 | 權威不可變 RuntimeBinding 物理投影生成 (OP-G17)、Paper 生產者訊號閉環單元驗證 | W0 (functional) |
+| **W1** | `OPGAP-BE-SOURCE-MANAGEMENT-20260830` | Pantheon | Antigravity / Gemini2 | Source 常態 reconcile-only 強制、單次有界手動更新契約、台灣時段新鮮度保護 (OP-G12) | W0 (functional) |
+| **W1** | `OPGAP-BE-MGMT-POSTMORTEM-20260830` | Pantheon | Antigravity2 / Claude2 | Canonical Postmortem 權威服務與 postmortem_id 綁定 (OP-G18)、十二循環純淨投影驗證 | W0 (functional) |
+| **W1** | `OPGAP-FE-BUNDLE-CLEANUP-20260830` | execute-plans | Gemini2 / Antigravity | 前端 Production 打包隔離、完全切斷 mock/seed 依賴圖譜與構建門禁 (OP-G07) | W0 (functional) |
+| **W1** | `OPGAP-FE-MGMT-CRUD-POSTMORTEM-20260830` | execute-plans | Antigravity / Claude | 前端淘汰 writeOverlay 假寫入 (OP-G06)、Management 頁面改接 Postmortem 權威端點 | W0 (functional) |
+| **W1** | `OPGAP-FE-AGORA-WORKSHOP-20260830` | execute-plans | Antigravity2 / Codex | Workshop 顯式呈現 Adapter 真實性 Badge、動態候選池加載、績效建議元件 (OP-G15) | W0 (functional) |
+| **W1** | `OPGAP-DEPLOY-RELIABILITY-20260830` | Pantheon | Gemini / Antigravity | 部署租約心跳重試與本地封閉回滾授權 (OP-G16)、消除 CI 假綠燈與 fail-closed 強化 (OP-G04) | W0 (functional) |
+| **W2** | `OPGAP-BFF-MAIN-ASSEMBLY-20260830` | Pantheon | Antigravity / Codex2 | 單一擁有者收斂 `main.py` composition root、掛載所有領域 router 並通過 route guard 測試 (OP-G08) | T1..T5 (functional) |
+| **W2** | `OPGAP-FE-INTEGRATION-ASSEMBLY-20260830` | execute-plans | Antigravity2 / Gemini2 | 單一擁有者收斂 `App.tsx`、`bff-v1/index.ts`，通過全量前端型別與打包檢查 | T6..T8 (functional) |
+| **W3** | `OPGAP-HOSTED-DEV-PROMOTION-20260830` | Pantheon+FE | Gemini / Claude | 鎖定 `pantheon-dev-vm` 資源，執行 Dev VM 原子部署、容器健康驗證與 Agora/Paper 閉環 (OP-G03, OP-G19, OP-G20) | T9..T11 (functional) |
+| **W4** | `OPGAP-HOSTED-E2E-ACCEPTANCE-20260830` | Pantheon+FE | Antigravity / Codex | 鎖定 `pantheon-dev-vm` 資源，執行十二循環全量測試 (OP-G11)、Source 有界更新週期、桌面端登入態 Playwright 矩陣 (OP-G14) | T12 (hosted) |
 
 ---
 
