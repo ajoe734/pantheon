@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
-from research.router import create_research_router  # noqa: E402
+from research.router import RESEARCH_ROUTE_INVENTORY, create_research_router  # noqa: E402
 
 
 class _Port:
@@ -37,6 +37,14 @@ class _Port:
                 "status": "superseded",
                 "allowedActions": {"canCompare": True},
             },
+        }
+        self.tickets: Dict[str, Dict[str, Any]] = {
+            "ticket-1": {
+                "ticket_id": "ticket-1",
+                "title": "Durable ticket",
+                "status": "open",
+                "allowedActions": {"canEdit": True},
+            }
         }
 
     def dataset_source(self, _dataset: str) -> str:
@@ -69,6 +77,43 @@ class _Port:
     def compare_research_artifacts(self, artifact_ids: List[str]) -> Dict[str, Any]:
         return {"artifacts": [self.artifacts[artifact_id] for artifact_id in artifact_ids], "comparisons": []}
 
+    def list_research_tickets(self, **_filters: Any) -> List[Dict[str, Any]]:
+        return list(self.tickets.values())
+
+    def get_research_ticket(self, ticket_id: str) -> Optional[Dict[str, Any]]:
+        return self.tickets.get(ticket_id)
+
+    def create_research_ticket(self, **payload: Any) -> Dict[str, Any]:
+        ticket = {
+            "ticket_id": "ticket-created",
+            "status": "open",
+            "created_at": payload["created_at"],
+            "allowedActions": {"canEdit": True},
+            **payload,
+        }
+        self.tickets[ticket["ticket_id"]] = ticket
+        return ticket
+
+    def patch_research_ticket(self, ticket_id: str, *, patch: Dict[str, Any], **_kwargs: Any) -> Optional[Dict[str, Any]]:
+        ticket = self.tickets.get(ticket_id)
+        if ticket is None:
+            return None
+        ticket.update(patch)
+        ticket["updated_at"] = "2026-08-30T00:00:00Z"
+        return ticket
+
+    def get_source_connector_registry(self) -> Dict[str, Any]:
+        return {"source": "service_client", "connectors": [{"connector_id": "source-1"}]}
+
+    def get_source_change_proposals(self, **_filters: Any) -> Dict[str, Any]:
+        return {"items": [{"proposal_id": "proposal-1"}]}
+
+    def get_source_ops_snapshot(self, **_filters: Any) -> Dict[str, Any]:
+        return {"source": "service_client", "summary": {"healthy": True}}
+
+    def get_search_ops_snapshot(self, **_filters: Any) -> Dict[str, Any]:
+        return {"source": "service_client", "summary": {"freshness_ok": True}}
+
 
 def _bff_error(status_code, code, message, reason, **extra):
     return HTTPException(
@@ -77,19 +122,65 @@ def _bff_error(status_code, code, message, reason, **extra):
     )
 
 
+def _router(port: _Port):
+    return create_research_router(
+        get_read_store=lambda: port,
+        extract_identity=lambda _authorization: object(),
+        require_read_role=lambda _identity: None,
+        require_operator_role=lambda _identity: None,
+        bff_error=_bff_error,
+        utc_now=lambda: "2026-08-30T00:00:00Z",
+        include_prepared_subrouters=False,
+    )
+
+
 def _client(port: _Port) -> TestClient:
     app = FastAPI()
-    app.include_router(
-        create_research_router(
-            get_read_store=lambda: port,
-            extract_identity=lambda _authorization: object(),
-            require_read_role=lambda _identity: None,
-            bff_error=_bff_error,
-            utc_now=lambda: "2026-08-30T00:00:00Z",
-            include_prepared_subrouters=False,
-        )
-    )
+    app.include_router(_router(port))
     return TestClient(app)
+
+
+def test_research_router_declares_all_47_assigned_decorators() -> None:
+    router = _router(_Port())
+    actual = {
+        (method, route.path)
+        for route in router.routes
+        for method in route.methods
+        if method not in {"HEAD", "OPTIONS"}
+    }
+
+    assert len(RESEARCH_ROUTE_INVENTORY) == 47
+    assert set(RESEARCH_ROUTE_INVENTORY) <= actual
+
+    # The final generic aliases are represented by typed port-backed reads and
+    # explicit fail-closed write semantics; no in-memory fallback is exposed.
+    assert ("GET", "/bff/artifacts/{artifact_id}") in actual
+    assert ("GET", "/bff/research-analyses/{analysis_id}") in actual
+    assert ("PATCH", "/bff/artifacts/{artifact_id}") in actual
+    assert ("POST", "/bff/artifacts") in actual
+
+
+def test_research_inventory_ticket_and_source_routes_use_injected_port() -> None:
+    client = _client(_Port())
+
+    listed = client.get("/api/v1/research/tickets")
+    assert listed.status_code == 200
+    assert listed.json()["data"][0]["ticket_id"] == "ticket-1"
+
+    created = client.post(
+        "/api/v1/research/tickets",
+        json={"title": "New", "description": "durable", "priority": "normal", "owner": "research"},
+    )
+    assert created.status_code == 200
+    assert created.json()["ticket_id"] == "ticket-created"
+
+    connectors = client.get("/api/v1/research/source-connectors")
+    assert connectors.status_code == 200
+    assert connectors.json()["data"] == [{"connector_id": "source-1"}]
+
+    source_ops = client.get("/api/v1/operator/source/ops")
+    assert source_ops.status_code == 200
+    assert source_ops.json()["data"]["source"] == "service_client"
 
 
 def test_typed_analysis_routes_use_durable_port_and_preserve_links() -> None:
