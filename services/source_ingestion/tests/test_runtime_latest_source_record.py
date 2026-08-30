@@ -186,4 +186,3 @@ def test_latest_source_record_prioritizes_newer_provider_event_time_over_later_c
     assert latest[connector_id].source_id == "tw-official:tw_price_daily:TWSE:2330:current"
     assert latest[connector_id].metadata["available_time"] == "2026-08-28T05:30:00Z"
     assert latest[connector_id].metadata["source_ingest_run_id"] == run_id
-

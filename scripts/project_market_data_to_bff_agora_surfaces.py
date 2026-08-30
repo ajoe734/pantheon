@@ -97,23 +97,17 @@ def _freshness_metadata(
         int(connector_freshness.get("stale_threshold_seconds") or default_stale_threshold_seconds),
     )
 
-    typed_failure = connector_freshness.get("last_typed_failure")
-    if isinstance(typed_failure, dict):
-        typed_failure = dict(typed_failure)
-    elif typed_failure is not None:
-        typed_failure = {"category": "freshness", "code": str(typed_failure), "retryable": False}
+    typed_failure: dict[str, Any] | None = None
 
     cid = str(connector_id or CONNECTOR_ID)
     sid = str(source_id or "")
     lineage_invalid = False
     if cid != CONNECTOR_ID:
         lineage_invalid = True
-        if typed_failure is None:
-            typed_failure = {"category": "receipt_binding", "code": "mismatched_connector", "retryable": False}
+        typed_failure = {"category": "receipt_binding", "code": "mismatched_connector", "retryable": False}
     elif not sid.startswith("tw-official:"):
         lineage_invalid = True
-        if typed_failure is None:
-            typed_failure = {"category": "lineage", "code": "market_input_non_official_lineage", "retryable": False}
+        typed_failure = {"category": "lineage", "code": "market_input_non_official_lineage", "retryable": False}
 
     run_mismatch = False
     if accepted_run_id:
@@ -137,8 +131,20 @@ def _freshness_metadata(
             if typed_failure is None:
                 typed_failure = {"category": "receipt_binding", "code": "mismatched_source", "retryable": False}
 
+    if source_timestamp_status == "future" and typed_failure is None:
+        typed_failure = {"category": "source_timestamp", "code": "future_timestamp", "retryable": False}
+    elif source_timestamp_status in {"missing", "invalid"} and typed_failure is None:
+        typed_failure = {"category": "source_timestamp", "code": f"{source_timestamp_status}_source_timestamp", "retryable": False}
+
+    if typed_failure is None:
+        cf_failure = connector_freshness.get("last_typed_failure")
+        if isinstance(cf_failure, dict):
+            typed_failure = dict(cf_failure)
+        elif cf_failure is not None:
+            typed_failure = {"category": "freshness", "code": str(cf_failure), "retryable": False}
+
     tw_stale = None
-    if parsed_source_timestamp is not None and source_timestamp_status == "valid" and not lineage_invalid:
+    if parsed_source_timestamp is not None and source_timestamp_status == "valid" and not lineage_invalid and not run_mismatch and not source_mismatch:
         last_success_at_str = connector_freshness.get("last_success_at")
         refresh_dt = _parse_timestamp(last_success_at_str)
         if refresh_dt is None:
@@ -176,11 +182,6 @@ def _freshness_metadata(
                         "retryable": False,
                         "detail": str(exc),
                     }
-
-    if source_timestamp_status == "future" and typed_failure is None:
-        typed_failure = {"category": "source_timestamp", "code": "future_timestamp", "retryable": False}
-    elif source_timestamp_status in {"missing", "invalid"} and typed_failure is None:
-        typed_failure = {"category": "source_timestamp", "code": f"{source_timestamp_status}_source_timestamp", "retryable": False}
 
     if tw_stale is not None:
         stale = (
