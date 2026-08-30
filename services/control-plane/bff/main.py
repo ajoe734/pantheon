@@ -17868,139 +17868,6 @@ def _shell_summary_session(identity: OperatorIdentity, *, checked_at: str) -> Di
     }
 
 
-@app.get("/bff/management/shell-summary")
-def bff_management_shell_summary(
-    authorization: Optional[str] = Header(default=None),
-    pantheon_session: Optional[str] = Cookie(default=None),
-    x_mfa_token: Optional[str] = Header(default=None, alias="X-MFA-Token"),
-):
-    """Cheap management shell summary for first-mount badges and session chrome."""
-    started = time.monotonic()
-    identity = _extract_identity(
-        authorization,
-        mfa_token=x_mfa_token,
-        session_cookie=pantheon_session,
-    )
-    _require_read_role(identity)
-    _raise_if_session_logged_out(identity)
-    count_payload = _build_shell_summary_counts()
-    checked_at = utc_now()
-    result = {
-        "data": {
-            "counts": count_payload["counts"],
-            "session": _shell_summary_session(identity, checked_at=checked_at),
-            "transport": {
-                "bff_status": "ok",
-                "service": "operator-bff",
-                "api_version": app.version,
-            },
-        },
-        "meta": {
-            "snapshot_at": count_payload["snapshot_at"],
-            "surfaces": count_payload["surfaces"],
-        },
-    }
-    _log_management_read_timing("shell_summary", started)
-    return result
-
-
-@app.get("/api/v1/operator/home")
-async def get_operator_home(
-    authorization: Optional[str] = Header(default=None),
-):
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-
-    snapshot_at = utc_now()
-    return _build_operator_home_payload(snapshot_at)
-
-
-@app.get(f"/bff{_MANAGEMENT_COCKPIT_ROUTE}")
-async def bff_management_cockpit(
-    authorization: Optional[str] = Header(default=None),
-):
-    """BFF-B3-001: Pantheon Management cockpit aggregate."""
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-
-    snapshot_at = utc_now()
-    human_inbox, _items, _sources, _failures = await _human_inbox_payload_bounded(
-        snapshot_at,
-        identity=identity,
-        page_size=None,
-    )
-    try:
-        return await _run_management_read(
-            _build_management_cockpit_payload,
-            snapshot_at,
-            human_inbox=human_inbox,
-            timeout_seconds=_management_cockpit_read_timeout_seconds(),
-            capacity=_MANAGEMENT_COCKPIT_READ_SLOTS,
-            executor=_MANAGEMENT_COCKPIT_READ_EXECUTOR,
-        )
-    except _ManagementReadSaturated:
-        return _management_cockpit_degraded_payload(
-            snapshot_at,
-            human_inbox=human_inbox,
-            saturated=True,
-        )
-    except _ManagementReadTimeout:
-        return _management_cockpit_degraded_payload(
-            snapshot_at,
-            human_inbox=human_inbox,
-            saturated=False,
-        )
-
-
-@app.get("/bff/management/trading-pulse")
-async def bff_management_trading_pulse(
-    authorization: Optional[str] = Header(default=None),
-):
-    """BFF-B3-004: Management Trading Pulse card aggregate."""
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-
-    snapshot_at = utc_now()
-    return _build_management_trading_pulse_route_payload(snapshot_at)
-
-
-@app.get("/bff/management/trading-pulse/rankings")
-async def bff_management_trading_pulse_rankings(
-    limit: int = Query(default=20, ge=1, le=200),
-    authorization: Optional[str] = Header(default=None),
-):
-    """BFF-B3-004: Management Trading Pulse ranking blocks."""
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-
-    snapshot_at = utc_now()
-    return _build_management_trading_pulse_rankings_payload(snapshot_at, limit=limit)
-
-
-@app.get("/bff/management/sentinel-pulse")
-async def bff_management_sentinel_pulse(
-    kind: Optional[str] = Query(default=None),
-    status: Optional[str] = Query(default=None),
-    severity: Optional[str] = Query(default=None),
-    q: str = Query(default=""),
-    page_token: Optional[str] = Query(default=None),
-    page_size: int = Query(default=20, ge=1, le=100),
-    authorization: Optional[str] = Header(default=None),
-):
-    """BFF: Management Sentinel Pulse composed from v5 sentinel read surfaces."""
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-
-    return _build_management_sentinel_pulse_response(
-        kind=kind,
-        status=status,
-        severity=severity,
-        q=q,
-        page_token=page_token,
-        page_size=page_size,
-    )
-
-
 @app.get("/api/v1/operator/paper-live-drift/{runtime_id}")
 async def get_operator_paper_live_drift(
     runtime_id: str,
@@ -18021,17 +17888,6 @@ async def get_operator_paper_live_drift(
 
     snapshot_at = utc_now()
     return _build_operator_paper_live_drift_payload(runtime_id, snapshot_at)
-
-
-@app.get("/api/v1/operator/health-status")
-async def get_operator_health_status(
-    authorization: Optional[str] = Header(default=None),
-):
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-
-    snapshot_at = utc_now()
-    return _build_operator_health_status_payload(snapshot_at)
 
 
 @app.get("/api/v1/workbench/consultation")
@@ -35256,25 +35112,6 @@ def _management_loop_throughput_response(
     }
 
 
-@app.get("/bff/management/loop-throughput")
-async def bff_management_loop_throughput(
-    status: Optional[str] = None,
-    runtime_id: Optional[str] = None,
-    page_token: Optional[str] = None,
-    page_size: int = Query(default=50, ge=1, le=200),
-    authorization: Optional[str] = Header(default=None),
-):
-    """BFF: read-only Management Console loop throughput over v5 loop runs."""
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-    return _management_loop_throughput_response(
-        status=status,
-        runtime_id=runtime_id,
-        page_token=page_token,
-        page_size=page_size,
-    )
-
-
 @app.get("/bff/management/strategy-allocation")
 async def bff_management_strategy_allocation(
     strategy_id: Optional[str] = None,
@@ -35326,57 +35163,6 @@ async def bff_management_capital_flow(
         tenant_id=tenant_id,
     )
 
-
-@app.get("/bff/management/risk-radar")
-async def bff_management_risk_radar(
-    persona_id: Optional[str] = None,
-    strategy_id: Optional[str] = None,
-    capital_pool_id: Optional[str] = None,
-    risk_state: Optional[str] = None,
-    page_token: Optional[str] = None,
-    page_size: int = Query(default=50, ge=1, le=200),
-    authorization: Optional[str] = Header(default=None),
-):
-    """BFF: read-only cross-persona and strategy risk indicators."""
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-    tenant_id = str(_bff_me_tenant_payload(identity, requested_tenant=None)["id"])
-    return _management_risk_radar_response(
-        persona_id=persona_id,
-        strategy_id=strategy_id,
-        capital_pool_id=capital_pool_id,
-        risk_state=risk_state,
-        page_token=page_token,
-        page_size=page_size,
-        tenant_id=tenant_id,
-    )
-
-
-@app.get("/bff/management/incident-timeline")
-async def bff_management_incident_timeline(
-    status: Optional[str] = None,
-    severity: Optional[str] = None,
-    capital_pool_id: Optional[str] = None,
-    affected_pool_id: Optional[str] = None,
-    runtime_id: Optional[str] = None,
-    sort_order: Optional[str] = None,
-    page_token: Optional[str] = None,
-    page_size: int = Query(default=50, ge=1, le=200),
-    authorization: Optional[str] = Header(default=None),
-):
-    """BFF: read-only Management Console incident chronology."""
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-    return _management_incident_timeline_response(
-        status=status,
-        severity=severity,
-        capital_pool_id=capital_pool_id,
-        affected_pool_id=affected_pool_id,
-        runtime_id=runtime_id,
-        sort_order=sort_order,
-        page_token=page_token,
-        page_size=page_size,
-    )
 
 
 @app.get("/bff/management/portfolio-book")
@@ -40421,156 +40207,6 @@ def _persona_intent_surfaces(
     }
 
 
-@app.get("/bff/management/human-inbox")
-async def bff_management_human_inbox(
-    source_type: Optional[str] = None,
-    status: Optional[str] = None,
-    priority: Optional[str] = None,
-    page_token: Optional[str] = None,
-    page_size: int = Query(default=20, ge=1, le=200),
-    authorization: Optional[str] = Header(default=None),
-):
-    """BFF: compose human-action inbox rows from governed human-review sources."""
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-
-    snapshot_at = utc_now()
-    started = time.monotonic()
-    payload, _items, _sources, failures = await _human_inbox_payload_bounded(
-        snapshot_at,
-        identity=identity,
-        source_type=source_type,
-        status=status,
-        priority=priority,
-        page_token=page_token,
-        page_size=page_size,
-    )
-    _log_management_read_timing(
-        "human_inbox",
-        started,
-        timed_out=any(surface.get("reason") == "read_timeout" for surface in failures.values()),
-    )
-    return payload
-
-
-@app.get("/bff/management/human-inbox/{item_id}")
-async def bff_management_human_inbox_detail(
-    item_id: str,
-    authorization: Optional[str] = Header(default=None),
-):
-    """BFF: detail for one composed human-action inbox row."""
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-
-    snapshot_at = utc_now()
-    source_types = _human_inbox_detail_source_types(item_id)
-    items, sources, failures = await _human_inbox_all_items_bounded(
-        snapshot_at,
-        identity=identity,
-        source_types=source_types,
-    )
-    for item in items:
-        if _human_inbox_detail_match(item, item_id):
-            detail = json.loads(json.dumps(item))
-            meta = _snapshot_meta(snapshot_at)
-            meta["surfaces"] = _human_inbox_surfaces(
-                snapshot_at=snapshot_at,
-                governance_review_records=sources["governance_review_records"],
-                approval_records=sources["approval_records"],
-                intervention_records=sources["intervention_records"],
-                sentinel_available=bool(sources["sentinel_available"]),
-                sentinel_records=sources["sentinel_records"],
-                persona_rows=sources["persona_rows"],
-                promotion_review_records=sources["promotion_review_records"],
-                source_types=source_types,
-                surface_failures=failures,
-                loaded_surfaces=sources.get("surfaces"),
-            )
-            if failures:
-                meta["partial"] = True
-                meta["degradation"] = {
-                    "reason": "one_or_more_human_inbox_contributors_incomplete",
-                    "contributors": sorted(failures),
-                }
-            return {"data": detail, "meta": meta}
-    if failures:
-        raise _bff_error(
-            503,
-            ErrorCode.DEPENDENCY_UNAVAILABLE,
-            "Human inbox detail could not be resolved from a partial aggregate",
-            "One or more Human Inbox contributors timed out or failed; retry before treating the item as absent.",
-            precondition_failed="human_inbox_partial_read",
-            suggestion="Retry the Human Inbox detail after the degraded contributor recovers.",
-        )
-    raise _bff_error(
-        404,
-        ErrorCode.RESOURCE_NOT_FOUND,
-        "Human inbox item not found",
-        f"Human inbox item {item_id} does not exist",
-    )
-
-
-@app.get("/bff/management/hiq-backlog")
-async def bff_management_hiq_backlog(
-    source_type: Optional[str] = Query(default=None),
-    status: Optional[str] = Query(default=None),
-    kind: Optional[str] = Query(default=None),
-    priority: Optional[str] = Query(default=None),
-    q: str = Query(default=""),
-    page_token: Optional[str] = None,
-    page_size: int = Query(default=50, ge=1, le=200),
-    authorization: Optional[str] = Header(default=None),
-):
-    """BFF: read-only HIQ backlog aggregate for sentinel and intervention review."""
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-    snapshot_at = utc_now()
-    inbox_source_types = {"intervention", "sentinel_finding"}
-    inbox_items, inbox_sources, inbox_failures = await _human_inbox_all_items_bounded(
-        snapshot_at,
-        identity=identity,
-        source_types=inbox_source_types,
-    )
-    return _management_hiq_backlog_response(
-        source_type=source_type,
-        status=status,
-        kind=kind,
-        priority=priority,
-        q=q,
-        page_token=page_token,
-        page_size=page_size,
-        human_inbox_items=inbox_items,
-        human_inbox_sources=inbox_sources,
-        human_inbox_failures=inbox_failures,
-        human_inbox_source_types=inbox_source_types,
-    )
-
-
-@app.get("/bff/management/intervention-stream")
-async def bff_management_intervention_stream(
-    persona_id: Optional[str] = Query(default=None),
-    personaId: Optional[str] = Query(default=None),
-    status: Optional[str] = Query(default=None),
-    kind: Optional[str] = Query(default=None),
-    q: str = Query(default=""),
-    window_hours: int = Query(default=24, ge=1, le=720),
-    windowHours: Optional[int] = Query(default=None, ge=1, le=720),
-    page_token: Optional[str] = None,
-    page_size: int = Query(default=50, ge=1, le=200),
-    authorization: Optional[str] = Header(default=None),
-):
-    """BFF: read-only intervention event stream for Management Console review."""
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-    return _management_intervention_stream_response(
-        persona_id=persona_id or personaId,
-        status=status,
-        kind=kind,
-        q=q,
-        window_hours=windowHours or window_hours,
-        page_token=page_token,
-        page_size=page_size,
-    )
 
 
 @app.get("/bff/management/evolution-journal")
@@ -45903,41 +45539,6 @@ async def bff_management_ai_attachment(
         headers={"Content-Disposition": f"inline; filename=\"{filename}\""},
     )
 
-
-@app.get("/bff/management/evidence")
-async def bff_management_evidence(
-    ref_id: Optional[str] = None,
-    linked_entity_type: Optional[str] = None,
-    linked_entity_ref: Optional[str] = None,
-    link_type: Optional[str] = None,
-    credibility_tier: Optional[str] = None,
-    verified: Optional[bool] = None,
-    page_token: Optional[str] = None,
-    page_size: int = Query(default=20, ge=1, le=100),
-    authorization: Optional[str] = Header(default=None),
-):
-    """BFF: adapt knowledge evidence refs into the Management Evidence Explorer."""
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-    started = time.monotonic()
-    try:
-        payload = await _run_management_read(
-            _build_management_evidence_payload,
-            identity=identity,
-            ref_id=ref_id,
-            linked_entity_type=linked_entity_type,
-            linked_entity_ref=linked_entity_ref,
-            link_type=link_type,
-            credibility_tier=credibility_tier,
-            verified=verified,
-            page_token=page_token,
-            page_size=page_size,
-        )
-    except _ManagementReadTimeout:
-        _log_management_read_timing("evidence", started, timed_out=True)
-        return _management_evidence_degraded_payload(page_size=page_size)
-    _log_management_read_timing("evidence", started)
-    return payload
 
 
 @app.get("/bff/management/persona-intent")
@@ -54941,47 +54542,6 @@ def _ops_read_model_entry_for_persona(
     )
 
 
-@app.get(
-    "/bff/management/operations-read-model/{persona_id}",
-    response_model=OperationsReadModelEnvelope,
-)
-async def bff_management_operations_read_model(
-    persona_id: str,
-    period: str = Query(default="latest"),
-    authorization: Optional[str] = Header(default=None),
-):
-    """MGMT-OPS-001: shared identity/source-confidence read model for one persona.
-
-    Composes runtime, performance-attribution, holdings, and persona-fleet
-    sources into a single envelope so Persona Fleet, Portfolio Book,
-    Performance Attribution, Persona League, and Human Review can agree on
-    identity and data confidence instead of each page inventing its own
-    fallback semantics.
-    """
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-    snapshot_at = utc_now()
-    entry = _ops_read_model_entry_for_persona(
-        persona_id,
-        period=period,
-        tenant_id=str(_bff_me_tenant_payload(identity, requested_tenant=None)["id"]),
-    )
-    if entry is None:
-        raise _bff_error(
-            404,
-            ErrorCode.RESOURCE_NOT_FOUND,
-            "Persona not found",
-            f"Persona {persona_id} does not exist",
-        )
-    return {
-        "data": entry.model_dump(mode="json"),
-        "meta": _read_surface_meta(
-            "operations_read_model",
-            "operations_read_model",
-            snapshot_at=snapshot_at,
-        ),
-    }
-
 
 @app.get("/bff/management/performance-attribution")
 async def bff_management_performance_attribution(
@@ -56813,7 +56373,6 @@ _process_command_stub = _process_command
 # Degraded Control Guidance (Wave 2 — Incident Response)
 # --------------------------------------------------------------------------- #
 
-@app.get("/api/v1/operator/degraded-control-guidance")
 async def degraded_control_guidance():
     """Return guidance for operators when the BFF is degraded or unavailable.
 
@@ -67938,6 +67497,176 @@ app.include_router(
     )
 )
 
+async def _management_cockpit_router_builder(snapshot_at=None, identity=None):
+    snap = snapshot_at or utc_now()
+    human_inbox, _items, _sources, _failures = await _human_inbox_payload_bounded(
+        snap,
+        identity=identity,
+        page_size=None,
+    )
+    try:
+        return await _run_management_read(
+            _build_management_cockpit_payload,
+            snap,
+            human_inbox=human_inbox,
+            timeout_seconds=_management_cockpit_read_timeout_seconds(),
+            capacity=_MANAGEMENT_COCKPIT_READ_SLOTS,
+            executor=_MANAGEMENT_COCKPIT_READ_EXECUTOR,
+        )
+    except _ManagementReadSaturated:
+        return _management_cockpit_degraded_payload(
+            snap,
+            human_inbox=human_inbox,
+            saturated=True,
+        )
+    except _ManagementReadTimeout:
+        return _management_cockpit_degraded_payload(
+            snap,
+            human_inbox=human_inbox,
+            saturated=False,
+        )
+
+
+async def _management_human_inbox_router_builder(
+    source_type=None,
+    status=None,
+    priority=None,
+    page_token=None,
+    page_size=20,
+    identity=None,
+):
+    snapshot_at = utc_now()
+    started = time.monotonic()
+    payload, _items, _sources, failures = await _human_inbox_payload_bounded(
+        snapshot_at,
+        identity=identity,
+        source_type=source_type,
+        status=status,
+        priority=priority,
+        page_token=page_token,
+        page_size=page_size,
+    )
+    _log_management_read_timing(
+        "human_inbox",
+        started,
+        timed_out=any(surface.get("reason") == "read_timeout" for surface in failures.values()),
+    )
+    return payload
+
+
+async def _management_human_inbox_detail_router_builder(item_id, identity=None):
+    snapshot_at = utc_now()
+    source_types = _human_inbox_detail_source_types(item_id)
+    items, sources, failures = await _human_inbox_all_items_bounded(
+        snapshot_at,
+        identity=identity,
+        source_types=source_types,
+    )
+    for item in items:
+        if _human_inbox_detail_match(item, item_id):
+            detail = json.loads(json.dumps(item))
+            meta = _snapshot_meta(snapshot_at)
+            meta["surfaces"] = _human_inbox_surfaces(
+                snapshot_at=snapshot_at,
+                governance_review_records=sources["governance_review_records"],
+                approval_records=sources["approval_records"],
+                intervention_records=sources["intervention_records"],
+                sentinel_available=bool(sources["sentinel_available"]),
+                sentinel_records=sources["sentinel_records"],
+                persona_rows=sources["persona_rows"],
+                promotion_review_records=sources["promotion_review_records"],
+                source_types=source_types,
+                surface_failures=failures,
+                loaded_surfaces=sources.get("surfaces"),
+            )
+            if failures:
+                meta["partial"] = True
+                meta["degradation"] = {
+                    "reason": "one_or_more_human_inbox_contributors_incomplete",
+                    "contributors": sorted(failures),
+                }
+            return {"data": detail, "meta": meta}
+    if failures:
+        raise _bff_error(
+            503,
+            ErrorCode.DEPENDENCY_UNAVAILABLE,
+            "Human inbox detail could not be resolved from a partial aggregate",
+            "One or more Human Inbox contributors timed out or failed; retry before treating the item as absent.",
+            precondition_failed="human_inbox_partial_read",
+            suggestion="Retry the Human Inbox detail after the degraded contributor recovers.",
+        )
+    raise _bff_error(
+        404,
+        ErrorCode.RESOURCE_NOT_FOUND,
+        "Human inbox item not found",
+        f"Human inbox item {item_id} does not exist",
+    )
+
+
+async def _management_hiq_backlog_router_builder(
+    source_type=None,
+    status=None,
+    kind=None,
+    priority=None,
+    q="",
+    page_token=None,
+    page_size=50,
+    identity=None,
+):
+    snapshot_at = utc_now()
+    inbox_source_types = {"intervention", "sentinel_finding"}
+    inbox_items, inbox_sources, inbox_failures = await _human_inbox_all_items_bounded(
+        snapshot_at,
+        identity=identity,
+        source_types=inbox_source_types,
+    )
+    return _management_hiq_backlog_response(
+        source_type=source_type,
+        status=status,
+        kind=kind,
+        priority=priority,
+        q=q,
+        page_token=page_token,
+        page_size=page_size,
+        human_inbox_items=inbox_items,
+        human_inbox_sources=inbox_sources,
+        human_inbox_failures=inbox_failures,
+        human_inbox_source_types=inbox_source_types,
+    )
+
+
+async def _management_evidence_router_builder(
+    ref_id=None,
+    linked_entity_type=None,
+    linked_entity_ref=None,
+    link_type=None,
+    credibility_tier=None,
+    verified=None,
+    page_token=None,
+    page_size=20,
+    identity=None,
+):
+    started = time.monotonic()
+    try:
+        payload = await _run_management_read(
+            _build_management_evidence_payload,
+            identity=identity,
+            ref_id=ref_id,
+            linked_entity_type=linked_entity_type,
+            linked_entity_ref=linked_entity_ref,
+            link_type=link_type,
+            credibility_tier=credibility_tier,
+            verified=verified,
+            page_token=page_token,
+            page_size=page_size,
+        )
+    except _ManagementReadTimeout:
+        _log_management_read_timing("evidence", started, timed_out=True)
+        return _management_evidence_degraded_payload(page_size=page_size)
+    _log_management_read_timing("evidence", started)
+    return payload
+
+
 from management_read_models import create_management_read_models_router  # noqa: E402
 app.include_router(
     create_management_read_models_router(
@@ -67946,6 +67675,29 @@ app.include_router(
         require_read_role=_require_read_role,
         snapshot_meta=_snapshot_meta,
         utc_now=utc_now,
+        bff_error=_bff_error,
+        raise_session_logged_out_fn=_raise_if_session_logged_out,
+        shell_summary_builder=_build_shell_summary_counts,
+        shell_summary_session_builder=_shell_summary_session,
+        operator_home_builder=_build_operator_home_payload,
+        cockpit_builder=_management_cockpit_router_builder,
+        trading_pulse_builder=_build_management_trading_pulse_route_payload,
+        trading_pulse_rankings_builder=_build_management_trading_pulse_rankings_payload,
+        sentinel_pulse_builder=_build_management_sentinel_pulse_response,
+        operator_health_status_builder=_build_operator_health_status_payload,
+        loop_throughput_builder=_management_loop_throughput_response,
+        risk_radar_builder=_management_risk_radar_response,
+        incident_timeline_builder=_management_incident_timeline_response,
+        human_inbox_builder=_management_human_inbox_router_builder,
+        human_inbox_all_items_builder=_management_human_inbox_detail_router_builder,
+        hiq_backlog_builder=_management_hiq_backlog_router_builder,
+        intervention_stream_builder=_management_intervention_stream_response,
+        evidence_builder=_management_evidence_router_builder,
+        operations_read_model_builder=_ops_read_model_entry_for_persona,
+        degraded_control_guidance_builder=degraded_control_guidance,
+        read_surface_state_getter=_read_surface_state,
+        log_read_timing_fn=_log_management_read_timing,
+        tenant_payload_fn=lambda id_: _bff_me_tenant_payload(id_, requested_tenant=None),
     )
 )
 

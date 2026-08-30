@@ -29,8 +29,10 @@ Also preserves the 5 composed Management read models:
 
 from __future__ import annotations
 
+import inspect
 import json
 import logging
+import time
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 from fastapi import APIRouter, Cookie, Header, HTTPException, Query, Response
@@ -44,6 +46,14 @@ from .models import (
     PostmortemsEnvelope,
 )
 from .service import ManagementService
+
+try:
+    from operations_read_model import OperationsReadModelEnvelope
+except ImportError:
+    try:
+        from services.control_plane.bff.operations_read_model import OperationsReadModelEnvelope  # type: ignore[no-redef]
+    except ImportError:
+        OperationsReadModelEnvelope = None  # type: ignore[misc,assignment]
 
 try:
     from models import ErrorCode
@@ -731,6 +741,33 @@ def create_management_read_models_router(
     utc_now: Optional[Callable] = None,
     bff_error: Optional[Callable] = None,
     raise_if_session_logged_out: Optional[Callable] = None,
+    raise_session_logged_out_fn: Optional[Callable] = None,
+    shell_summary_builder: Optional[Callable] = None,
+    shell_summary_session_builder: Optional[Callable] = None,
+    operator_home_builder: Optional[Callable] = None,
+    cockpit_builder: Optional[Callable] = None,
+    trading_pulse_builder: Optional[Callable] = None,
+    trading_pulse_rankings_builder: Optional[Callable] = None,
+    sentinel_pulse_builder: Optional[Callable] = None,
+    operator_health_status_builder: Optional[Callable] = None,
+    loop_throughput_builder: Optional[Callable] = None,
+    risk_radar_builder: Optional[Callable] = None,
+    incident_timeline_builder: Optional[Callable] = None,
+    human_inbox_builder: Optional[Callable] = None,
+    human_inbox_all_items_builder: Optional[Callable] = None,
+    hiq_backlog_builder: Optional[Callable] = None,
+    intervention_stream_builder: Optional[Callable] = None,
+    evidence_builder: Optional[Callable] = None,
+    operations_read_model_builder: Optional[Callable] = None,
+    degraded_control_guidance_builder: Optional[Callable] = None,
+    read_surface_state_getter: Optional[Callable] = None,
+    log_read_timing_fn: Optional[Callable] = None,
+    run_management_read_fn: Optional[Callable] = None,
+    cockpit_timeout_fn: Optional[Callable] = None,
+    cockpit_slots: Optional[Any] = None,
+    cockpit_executor: Optional[Any] = None,
+    cockpit_degraded_fn: Optional[Callable] = None,
+    tenant_payload_fn: Optional[Callable] = None,
     service: Optional[ManagementService] = None,
     jobs_reader: Optional[Callable[[], Tuple[bool, List[Dict[str, Any]]]]] = None,
     formula_jobs_reader: Optional[Callable[[], Tuple[bool, List[Dict[str, Any]]]]] = None,
@@ -749,6 +786,7 @@ def create_management_read_models_router(
     _snap_meta = snapshot_meta or _default_snapshot_meta
     _now = utc_now or _utc_now_rfc3339
     _err = bff_error or _default_bff_error
+    _raise_logged_out = raise_session_logged_out_fn or raise_if_session_logged_out
 
     svc = service or ManagementService(get_read_store=get_read_store, utc_now=_now)
 
@@ -760,11 +798,16 @@ def create_management_read_models_router(
                 return None
         return None
 
+    async def _eval(val: Any) -> Any:
+        if inspect.isawaitable(val):
+            return await val
+        return val
+
     # -----------------------------------------------------------------------
     # 1. Shell Summary
     # -----------------------------------------------------------------------
     @router.get("/bff/management/shell-summary")
-    def bff_management_shell_summary(
+    async def bff_management_shell_summary(
         authorization: Optional[str] = Header(default=None),
         pantheon_session: Optional[str] = Cookie(default=None),
         x_mfa_token: Optional[str] = Header(default=None, alias="X-MFA-Token"),
@@ -776,8 +819,47 @@ def create_management_read_models_router(
             session_cookie=pantheon_session,
         )
         _req_read(identity)
-        if raise_if_session_logged_out:
-            raise_if_session_logged_out(identity)
+        if _raise_logged_out:
+            _raise_logged_out(identity)
+
+        if shell_summary_builder is not None:
+            started = time.monotonic()
+            count_payload = await _eval(shell_summary_builder())
+            if log_read_timing_fn:
+                log_read_timing_fn("shell_summary", started)
+            checked_at = _now()
+            session_payload = (
+                await _eval(shell_summary_session_builder(identity, checked_at=checked_at))
+                if shell_summary_session_builder
+                else {
+                    "operator_id": getattr(identity, "operator_id", "op-user"),
+                    "operatorId": getattr(identity, "operator_id", "op-user"),
+                    "display_name": getattr(identity, "display_name", getattr(identity, "operator_id", "op-user")),
+                    "display_label": getattr(identity, "display_name", getattr(identity, "operator_id", "op-user")),
+                    "displayLabel": getattr(identity, "display_name", getattr(identity, "operator_id", "op-user")),
+                    "roles": list(getattr(identity, "roles", ["operator"])),
+                    "session_kind": getattr(identity, "session_kind", "bearer"),
+                    "sessionKind": getattr(identity, "session_kind", "bearer"),
+                    "state": "active",
+                    "fresh": True,
+                    "mfa_verified": getattr(identity, "mfa_verified", False),
+                }
+            )
+            return {
+                "data": {
+                    "counts": count_payload["counts"],
+                    "session": session_payload,
+                    "transport": {
+                        "bff_status": "ok",
+                        "service": "operator-bff",
+                        "api_version": "0.2.0",
+                    },
+                },
+                "meta": {
+                    "snapshot_at": count_payload["snapshot_at"],
+                    "surfaces": count_payload["surfaces"],
+                },
+            }
         return svc.get_shell_summary(identity)
 
     # -----------------------------------------------------------------------
@@ -791,6 +873,8 @@ def create_management_read_models_router(
         identity = _extract_id(authorization)
         _req_read(identity)
         snap = _now()
+        if operator_home_builder is not None:
+            return await _eval(operator_home_builder(snapshot_at=snap))
         return svc.get_operator_home(snapshot_at=snap)
 
     # -----------------------------------------------------------------------
@@ -804,6 +888,18 @@ def create_management_read_models_router(
         identity = _extract_id(authorization)
         _req_read(identity)
         snap = _now()
+        if cockpit_builder is not None:
+            if run_management_read_fn and cockpit_slots and cockpit_executor and cockpit_timeout_fn and cockpit_degraded_fn:
+                return await run_management_read_fn(
+                    "management_cockpit",
+                    cockpit_builder,
+                    semaphore=cockpit_slots,
+                    executor=cockpit_executor,
+                    timeout_seconds=cockpit_timeout_fn(),
+                    degraded_factory=cockpit_degraded_fn,
+                )
+            call_res = cockpit_builder(snapshot_at=snap, identity=identity) if "identity" in inspect.signature(cockpit_builder).parameters else cockpit_builder(snapshot_at=snap)
+            return await _eval(call_res)
         return svc.get_management_cockpit(snapshot_at=snap)
 
     # -----------------------------------------------------------------------
@@ -817,6 +913,8 @@ def create_management_read_models_router(
         identity = _extract_id(authorization)
         _req_read(identity)
         snap = _now()
+        if trading_pulse_builder is not None:
+            return await _eval(trading_pulse_builder(snapshot_at=snap))
         return svc.get_trading_pulse(snapshot_at=snap)
 
     # -----------------------------------------------------------------------
@@ -831,6 +929,8 @@ def create_management_read_models_router(
         identity = _extract_id(authorization)
         _req_read(identity)
         snap = _now()
+        if trading_pulse_rankings_builder is not None:
+            return await _eval(trading_pulse_rankings_builder(limit=limit, snapshot_at=snap))
         return svc.get_trading_pulse_rankings(limit=limit, snapshot_at=snap)
 
     # -----------------------------------------------------------------------
@@ -849,6 +949,15 @@ def create_management_read_models_router(
         """BFF: Management Sentinel Pulse composed from v5 sentinel read surfaces."""
         identity = _extract_id(authorization)
         _req_read(identity)
+        if sentinel_pulse_builder is not None:
+            return await _eval(sentinel_pulse_builder(
+                kind=kind,
+                status=status,
+                severity=severity,
+                q=q,
+                page_token=page_token,
+                page_size=page_size,
+            ))
         return svc.get_sentinel_pulse(
             kind=kind,
             status=status,
@@ -869,6 +978,8 @@ def create_management_read_models_router(
         identity = _extract_id(authorization)
         _req_read(identity)
         snap = _now()
+        if operator_health_status_builder is not None:
+            return await _eval(operator_health_status_builder(snapshot_at=snap))
         return svc.get_operator_health_status(snapshot_at=snap)
 
     # -----------------------------------------------------------------------
@@ -876,6 +987,8 @@ def create_management_read_models_router(
     # -----------------------------------------------------------------------
     @router.get("/bff/management/loop-throughput")
     async def bff_management_loop_throughput(
+        status: Optional[str] = Query(default=None),
+        runtime_id: Optional[str] = Query(default=None),
         loop_type: Optional[str] = Query(default=None),
         window_minutes: int = Query(default=60, ge=5, le=1440),
         page_token: Optional[str] = Query(default=None),
@@ -885,7 +998,16 @@ def create_management_read_models_router(
         """BFF: read-only loop execution throughput & metrics."""
         identity = _extract_id(authorization)
         _req_read(identity)
+        if loop_throughput_builder is not None:
+            return await _eval(loop_throughput_builder(
+                status=status,
+                runtime_id=runtime_id,
+                page_token=page_token,
+                page_size=page_size,
+            ))
         return svc.get_loop_throughput(
+            status=status,
+            runtime_id=runtime_id,
             loop_type=loop_type,
             window_minutes=window_minutes,
             page_token=page_token,
@@ -908,6 +1030,17 @@ def create_management_read_models_router(
         """BFF: read-only cross-persona and strategy risk indicators."""
         identity = _extract_id(authorization)
         _req_read(identity)
+        tenant_id = tenant_payload_fn(identity).get("tenant_id") if tenant_payload_fn else None
+        if risk_radar_builder is not None:
+            return await _eval(risk_radar_builder(
+                persona_id=persona_id,
+                strategy_id=strategy_id,
+                capital_pool_id=capital_pool_id,
+                risk_state=risk_state,
+                page_token=page_token,
+                page_size=page_size,
+                tenant_id=tenant_id,
+            ))
         return svc.get_risk_radar(
             persona_id=persona_id,
             strategy_id=strategy_id,
@@ -915,6 +1048,7 @@ def create_management_read_models_router(
             risk_state=risk_state,
             page_token=page_token,
             page_size=page_size,
+            tenant_id=tenant_id,
         )
 
     # -----------------------------------------------------------------------
@@ -935,6 +1069,17 @@ def create_management_read_models_router(
         """BFF: read-only Management Console incident chronology."""
         identity = _extract_id(authorization)
         _req_read(identity)
+        if incident_timeline_builder is not None:
+            return await _eval(incident_timeline_builder(
+                status=status,
+                severity=severity,
+                capital_pool_id=capital_pool_id,
+                affected_pool_id=affected_pool_id,
+                runtime_id=runtime_id,
+                sort_order=sort_order,
+                page_token=page_token,
+                page_size=page_size,
+            ))
         return svc.get_incident_timeline(
             status=status,
             severity=severity,
@@ -961,12 +1106,22 @@ def create_management_read_models_router(
         """BFF: compose human-action inbox rows from governed human-review sources."""
         identity = _extract_id(authorization)
         _req_read(identity)
+        if human_inbox_builder is not None:
+            return await _eval(human_inbox_builder(
+                source_type=source_type,
+                status=status,
+                priority=priority,
+                page_token=page_token,
+                page_size=page_size,
+                identity=identity,
+            ))
         return svc.get_human_inbox(
             source_type=source_type,
             status=status,
             priority=priority,
             page_token=page_token,
             page_size=page_size,
+            identity=identity,
         )
 
     # -----------------------------------------------------------------------
@@ -980,7 +1135,34 @@ def create_management_read_models_router(
         """BFF: detail for one composed human-action inbox row."""
         identity = _extract_id(authorization)
         _req_read(identity)
-        detail = svc.get_human_inbox_detail(item_id)
+        if human_inbox_all_items_builder is not None:
+            call_res = (
+                human_inbox_all_items_builder(item_id=item_id, identity=identity)
+                if "item_id" in inspect.signature(human_inbox_all_items_builder).parameters
+                else human_inbox_all_items_builder(identity)
+            )
+            res = await _eval(call_res)
+            if isinstance(res, dict) and "data" in res:
+                return res
+            items = res or []
+            detail = next((item for item in items if str(item.get("item_id") or item.get("id") or "") == item_id), None)
+            if detail is None:
+                raise _err(
+                    404,
+                    ErrorCode.RESOURCE_NOT_FOUND,
+                    "Human inbox item not found",
+                    f"Human inbox item '{item_id}' does not exist",
+                )
+            return {
+                "data": detail,
+                "meta": {
+                    "snapshot_at": _now(),
+                    "surfaces": {
+                        "human_inbox": {"status": "ok", "source": "bff_composed"},
+                    },
+                },
+            }
+        detail = svc.get_human_inbox_detail(item_id, identity=identity)
         if detail is None:
             raise _err(
                 404,
@@ -1007,6 +1189,17 @@ def create_management_read_models_router(
         """BFF: read-only HIQ backlog aggregate for sentinel and intervention review."""
         identity = _extract_id(authorization)
         _req_read(identity)
+        if hiq_backlog_builder is not None:
+            return await _eval(hiq_backlog_builder(
+                source_type=source_type,
+                status=status,
+                kind=kind,
+                priority=priority,
+                q=q,
+                page_token=page_token,
+                page_size=page_size,
+                identity=identity,
+            ))
         return svc.get_hiq_backlog(
             source_type=source_type,
             status=status,
@@ -1015,6 +1208,7 @@ def create_management_read_models_router(
             q=q,
             page_token=page_token,
             page_size=page_size,
+            identity=identity,
         )
 
     # -----------------------------------------------------------------------
@@ -1036,6 +1230,16 @@ def create_management_read_models_router(
         """BFF: read-only intervention event stream for Management Console review."""
         identity = _extract_id(authorization)
         _req_read(identity)
+        if intervention_stream_builder is not None:
+            return await _eval(intervention_stream_builder(
+                persona_id=persona_id or personaId,
+                status=status,
+                kind=kind,
+                q=q,
+                window_hours=windowHours or window_hours,
+                page_token=page_token,
+                page_size=page_size,
+            ))
         return svc.get_intervention_stream(
             persona_id=persona_id or personaId,
             status=status,
@@ -1064,6 +1268,18 @@ def create_management_read_models_router(
         """BFF: adapt knowledge evidence refs into the Management Evidence Explorer."""
         identity = _extract_id(authorization)
         _req_read(identity)
+        if evidence_builder is not None:
+            return await _eval(evidence_builder(
+                ref_id=ref_id,
+                linked_entity_type=linked_entity_type,
+                linked_entity_ref=linked_entity_ref,
+                link_type=link_type,
+                credibility_tier=credibility_tier,
+                verified=verified,
+                page_token=page_token,
+                page_size=page_size,
+                identity=identity,
+            ))
         return svc.get_evidence(
             ref_id=ref_id,
             linked_entity_type=linked_entity_type,
@@ -1073,21 +1289,63 @@ def create_management_read_models_router(
             verified=verified,
             page_token=page_token,
             page_size=page_size,
+            identity=identity,
         )
 
     # -----------------------------------------------------------------------
     # 16. Operations Read Model
     # -----------------------------------------------------------------------
-    @router.get("/bff/management/operations-read-model/{persona_id}")
+    operations_kwargs = {}
+    if OperationsReadModelEnvelope is not None:
+        operations_kwargs["response_model"] = OperationsReadModelEnvelope
+
+    @router.get(
+        "/bff/management/operations-read-model/{persona_id}",
+        **operations_kwargs,
+    )
     async def bff_management_operations_read_model(
         persona_id: str,
         period: str = Query(default="latest"),
         authorization: Optional[str] = Header(default=None),
-    ) -> Dict[str, Any]:
+    ) -> Any:
         """MGMT-OPS-001: shared identity/source-confidence read model for one persona."""
         identity = _extract_id(authorization)
         _req_read(identity)
-        res = svc.get_operations_read_model(persona_id=persona_id, period=period)
+        tenant_id = tenant_payload_fn(identity).get("tenant_id") if tenant_payload_fn else None
+
+        if operations_read_model_builder is not None:
+            entry = await _eval(operations_read_model_builder(persona_id, period=period, tenant_id=tenant_id))
+            if entry is None:
+                raise _err(
+                    404,
+                    ErrorCode.RESOURCE_NOT_FOUND,
+                    "Persona not found",
+                    f"Persona '{persona_id}' does not exist",
+                )
+            if hasattr(entry, "model_dump"):
+                entry_data = entry.model_dump(mode="json")
+            elif isinstance(entry, dict):
+                entry_data = entry
+            else:
+                entry_data = dict(entry)
+            return {
+                "data": entry_data,
+                "meta": {
+                    **_snap_meta(_now()),
+                    "surface": "operations_read_model",
+                    "composition_sources": [
+                        "GET /api/v1/personas",
+                        "GET /api/v1/persona-league",
+                        "GET /bff/management/performance-attribution",
+                        "GET /api/v1/capital-pools",
+                    ],
+                    "surfaces": {
+                        "operations_read_model": {"status": "ok", "source": "bff_composed"},
+                    },
+                },
+            }
+
+        res = svc.get_operations_read_model(persona_id=persona_id, period=period, tenant_id=tenant_id)
         if res is None:
             raise _err(
                 404,
@@ -1103,11 +1361,14 @@ def create_management_read_models_router(
     @router.get("/api/v1/operator/degraded-control-guidance")
     async def degraded_control_guidance() -> Response:
         """Return guidance for operators when the BFF is degraded or unavailable."""
+        if degraded_control_guidance_builder is not None:
+            return await _eval(degraded_control_guidance_builder())
         res = svc.get_degraded_control_guidance()
         return JSONResponse(
             status_code=res["status_code"],
             content=res["payload"],
         )
+
 
     # -----------------------------------------------------------------------
     # 18. Formula Jobs Read Model (Composed)
