@@ -285,6 +285,90 @@ def test_service_restart_and_fresh_bff_port_preserve_identity_and_capability(
         assert len(fresh_owner.list_personas()) == 1
 
 
+def test_http_owner_restart_preserves_fleet_to_detail_read_symmetry(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A user-private servant remains navigable by same-tenant read roles.
+
+    The Fleet row is the browser's navigation source, so its ID and display
+    name must survive an HTTP Persona-owner restart and resolve through the
+    canonical detail facade.  This uses the actual service boundary rather
+    than an in-memory BFF overlay, and verifies that switching the caller's
+    tenant never widens the detail lookup.
+    """
+    ensure_headers = _ensure_headers(
+        tenant_id="tenant-alpha",
+        idempotency_key="production-servant-fleet-detail-001",
+        request_id="req-production-servant-fleet-detail-001",
+    )
+    with _running_persona_service(tmp_path) as first_url:
+        client, _first_owner, _read_ports, _openclaw = _install_production_wiring(
+            monkeypatch,
+            first_url,
+        )
+        created = client.post("/bff/agora/servant/ensure", headers=ensure_headers)
+        assert created.status_code == 200, created.text
+        persona_id = created.json()["data"]["persona_id"]
+
+    # A distinct service instance and distinct BFF read port prove that no
+    # process-local overlay is required for either Fleet or detail readback.
+    with _running_persona_service(tmp_path) as restarted_url:
+        _configure_service_env(monkeypatch, restarted_url)
+        fresh_owner = create_persona_registry_write_owner()
+        fresh_read_ports = create_read_surface_ports(persona_registry_store=fresh_owner)
+        monkeypatch.setattr(bff_main, "persona_write_owner", fresh_owner)
+        monkeypatch.setattr(bff_main, "read_store", fresh_read_ports)
+        fresh_client = TestClient(bff_main.app, raise_server_exceptions=False)
+
+        for role in ("operator", "viewer"):
+            headers = {"Authorization": f"Bearer production-fleet-readback:{role}"}
+            fleet = fresh_client.get(
+                "/bff/management/persona-fleet?page_size=100",
+                headers=headers,
+            )
+            assert fleet.status_code == 200, fleet.text
+            fleet_row = next(
+                item
+                for item in fleet.json()["data"]["items"]
+                if item["id"] == persona_id
+            )
+            assert fleet_row["name"] == "Agora Servant"
+
+            detail = fresh_client.get(
+                f"/bff/personas/{persona_id}",
+                headers=headers,
+            )
+            assert detail.status_code == 200, detail.text
+            assert detail.json()["data"]["id"] == persona_id
+            assert detail.json()["data"]["name"] == fleet_row["name"]
+
+        # Remove the test's default tenant so this separate caller's signed
+        # tenant claim is authoritative.  The private servant must disappear
+        # from Fleet and remain undiscoverable by ID.
+        monkeypatch.delenv("PANTHEON_BFF_TENANT_ID")
+        foreign_headers = {
+            "Authorization": "Bearer production-foreign:operator:tenant-beta"
+        }
+        foreign_fleet = fresh_client.get(
+            "/bff/management/persona-fleet?page_size=100",
+            headers=foreign_headers,
+        )
+        assert foreign_fleet.status_code == 200, foreign_fleet.text
+        assert persona_id not in {
+            item["id"] for item in foreign_fleet.json()["data"]["items"]
+        }
+        foreign_detail = fresh_client.get(
+            f"/bff/personas/{persona_id}",
+            headers=foreign_headers,
+        )
+        assert foreign_detail.status_code == 404, foreign_detail.text
+        assert foreign_detail.json()["error"]["code"] == "RESOURCE_NOT_FOUND"
+
+        unauthenticated = fresh_client.get(f"/bff/personas/{persona_id}")
+        assert unauthenticated.status_code == 401, unauthenticated.text
+
+
 def test_servant_identity_and_session_access_are_tenant_isolated_over_http_owner(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
