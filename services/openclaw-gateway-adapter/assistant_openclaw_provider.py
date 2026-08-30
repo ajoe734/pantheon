@@ -21,6 +21,7 @@ Degrades cleanly when the binary is absent or the gateway is unreachable.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -46,6 +47,8 @@ DEFAULT_AGENT_ID = "main"
 DEFAULT_TIMEOUT_SECONDS = 90
 DEFAULT_READINESS_ANSWER_TIMEOUT_SECONDS = 20
 DEFAULT_OPENCLAW_BIN = "openclaw"
+DEFAULT_PRIMARY_MODEL = "anthropic/claude-opus-4-8"
+DEFAULT_FALLBACK_MODELS = ("openai/gpt-5.6-sol", "openai/gpt-5.5")
 CODEX_DELEGATED_KERNEL_MODES = frozenset({"kernel_debug"})
 # `openclaw agent` accepts the prompt ONLY as an argv string (`-m/--message
 # <text>`); it has NO stdin support and `--message -` is taken LITERALLY — the
@@ -92,6 +95,22 @@ def delegates_kernel_mode_to_codex(mode: str) -> bool:
     """
 
     return str(mode or "").strip().lower() in CODEX_DELEGATED_KERNEL_MODES
+
+
+def _sanitize_failure_reason(reason: Any, message: Any = None) -> str:
+    """Sanitize failure reason so diagnostics surface truthfully without leaking tokens or secrets."""
+    combined = f"{str(reason or '')} {str(message or '')}".strip().lower()
+    if any(k in combined for k in ("auth", "unauthorized", "expired", "401", "login", "oauth")):
+        return "OPENCLAW_AUTH_UNAVAILABLE"
+    if any(k in combined for k in ("timeout", "timed out", "deadline")):
+        return "OPENCLAW_GATEWAY_TIMEOUT"
+    if any(k in combined for k in ("connection refused", "unreachable", "econnrefused", "503")):
+        return "OPENCLAW_GATEWAY_UNREACHABLE"
+    raw = str(reason or "").strip()
+    if raw and re.fullmatch(r"^[A-Za-z0-9_:-]{1,96}$", raw):
+        return raw
+    digest = hashlib.sha256((str(message or raw)).encode("utf-8")).hexdigest()[:12]
+    return f"SHA256_{digest}"
 
 
 @dataclass(frozen=True)
@@ -179,6 +198,26 @@ class AssistantOpenClawProvider:
             return explicit
         return self._which(DEFAULT_OPENCLAW_BIN)
 
+    def _resolve_model_candidates(
+        self, requested_model: Optional[str] = None, *, for_responses: bool = False
+    ) -> List[str]:
+        if requested_model:
+            return [requested_model]
+        if for_responses:
+            primary = OPENRESPONSES_MODEL
+        else:
+            primary = os.getenv("OPENCLAW_PRIMARY_MODEL", "").strip() or DEFAULT_PRIMARY_MODEL
+        fallback_raw = os.getenv("OPENCLAW_FALLBACK_MODELS", "").strip()
+        if fallback_raw:
+            fallbacks = [m.strip() for m in fallback_raw.split(",") if m.strip()]
+        else:
+            fallbacks = list(DEFAULT_FALLBACK_MODELS)
+        candidates: List[str] = [primary]
+        for m in fallbacks:
+            if m and m not in candidates:
+                candidates.append(m)
+        return candidates
+
     def readiness(self, *, auth_probe: bool = False) -> Dict[str, Any]:
         usage = provider_usage_snapshot(OPENCLAW_PROVIDER_ID, OPENCLAW_PROVIDER)
         answer_timeout = self._readiness_answer_timeout_seconds()
@@ -240,63 +279,119 @@ class AssistantOpenClawProvider:
                 },
             }
         started_at = time.monotonic()
-        try:
-            result = self.invoke(
-                _READINESS_PROMPT,
-                mode="user",
-                operator_id="management-ai-readiness",
-                timeout_seconds=answer_timeout,
-            )
-        except OpenClawProviderError as exc:
-            duration_ms = max(0, int((time.monotonic() - started_at) * 1000))
-            return {
-                **base,
-                "ready": False,
-                "status": "degraded",
-                "reason": exc.error_code,
-                "binary_path": binary,
-                "answer_probe": {
-                    "status": "failed",
-                    "reason": exc.error_code,
+        deadline = started_at + answer_timeout
+        candidates = self._resolve_model_candidates()
+        primary = candidates[0]
+        primary_unavailable: Optional[Dict[str, Any]] = None
+        last_exc: Optional[OpenClawProviderError] = None
+
+        for idx, candidate in enumerate(candidates):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0.2:
+                break
+            has_fallback = idx < len(candidates) - 1
+            if has_fallback:
+                cand_timeout = min(answer_timeout * 0.35, max(2.0, remaining - 4.0))
+            else:
+                cand_timeout = remaining
+
+            cand_started = time.monotonic()
+            try:
+                result = self._invoke_single_model(
+                    _READINESS_PROMPT,
+                    model=candidate,
+                    mode="user",
+                    operator_id="management-ai-readiness",
+                    timeout_seconds=cand_timeout,
+                )
+                answer = self._result_text(result)
+                cand_dur = max(0, int((time.monotonic() - cand_started) * 1000))
+                total_dur = max(0, int((time.monotonic() - started_at) * 1000))
+                if not answer:
+                    if candidate == primary:
+                        primary_unavailable = {
+                            "model": primary,
+                            "status": "unavailable",
+                            "reason": "openclaw_answer_probe_empty",
+                            "duration_ms": cand_dur,
+                        }
+                    continue
+
+                is_fallback = candidate != primary
+                probe_result: Dict[str, Any] = {
+                    "status": "completed",
                     "deadline_seconds": answer_timeout,
-                    "duration_ms": duration_ms,
-                },
-            }
-        answer = self._result_text(result)
-        duration_ms = max(0, int((time.monotonic() - started_at) * 1000))
-        if not answer:
-            return {
-                **base,
-                "ready": False,
-                "status": "degraded",
-                "reason": "openclaw_answer_probe_empty",
-                "binary_path": binary,
-                "answer_probe": {
-                    "status": "failed",
-                    "reason": "openclaw_answer_probe_empty",
-                    "deadline_seconds": answer_timeout,
-                    "duration_ms": duration_ms,
-                },
-            }
+                    "duration_ms": total_dur,
+                    "reply_bytes": len(answer.encode("utf-8")),
+                    "active_model": candidate,
+                    "primary_model": primary,
+                }
+                if is_fallback and primary_unavailable:
+                    probe_result["fallback_used"] = True
+                    probe_result["fallback_model"] = candidate
+                    probe_result["primary_unavailable"] = primary_unavailable
+
+                return {
+                    **base,
+                    "ready": True,
+                    "status": "ready",
+                    "auth": "account_session",
+                    "auth_status": "ready",
+                    "binary_path": binary,
+                    "active_model": candidate,
+                    "primary_model": primary,
+                    **(
+                        {
+                            "primary_unavailable": primary_unavailable,
+                            "fallback_used": True,
+                            "fallback_model": candidate,
+                        }
+                        if is_fallback and primary_unavailable
+                        else {}
+                    ),
+                    "answer_probe": probe_result,
+                }
+            except OpenClawProviderError as exc:
+                cand_dur = max(0, int((time.monotonic() - cand_started) * 1000))
+                sanitized_reason = _sanitize_failure_reason(exc.error_code or exc.message)
+                if candidate == primary:
+                    primary_unavailable = {
+                        "model": primary,
+                        "status": "unavailable",
+                        "reason": sanitized_reason,
+                        "duration_ms": cand_dur,
+                    }
+                last_exc = exc
+                continue
+
+        total_dur = max(0, int((time.monotonic() - started_at) * 1000))
+        reason = last_exc.error_code if last_exc else "OPENCLAW_ALL_MODELS_UNAVAILABLE"
+        probe_err: Dict[str, Any] = {
+            "status": "failed",
+            "reason": reason,
+            "deadline_seconds": answer_timeout,
+            "duration_ms": total_dur,
+            "primary_model": primary,
+        }
+        if primary_unavailable:
+            probe_err["primary_unavailable"] = primary_unavailable
+
         return {
             **base,
-            "ready": True,
-            "status": "ready",
-            "auth": "account_session",
-            "auth_status": "ready",
+            "ready": False,
+            "status": "degraded",
+            "reason": reason,
             "binary_path": binary,
-            "answer_probe": {
-                "status": "completed",
-                "deadline_seconds": answer_timeout,
-                "duration_ms": duration_ms,
-                "reply_bytes": len(answer.encode("utf-8")),
-            },
+            "primary_model": primary,
+            **({"primary_unavailable": primary_unavailable} if primary_unavailable else {}),
+            "answer_probe": probe_err,
         }
 
-    def invoke(
+    def _invoke_single_model(
         self,
         prompt: str,
         *,
+        model: Optional[str] = None,
         agent_id: Optional[str] = None,
         session_id: Optional[str] = None,
         mode: str = "user",
@@ -307,24 +402,8 @@ class AssistantOpenClawProvider:
         trace_id: Optional[str] = None,
         timeout_seconds: Optional[float] = None,
     ) -> OpenClawProviderResult:
-        if delegates_kernel_mode_to_codex(mode):
-            raise OpenClawProviderError(
-                "OpenClaw kernel modes must be delegated to the adapter Codex runtime.",
-                status_code=409,
-                error_code="OPENCLAW_KERNEL_DELEGATION_REQUIRED",
-            )
         selected_agent_id = str(agent_id or self._agent_id).strip()
-        if not _AGENT_ID_PATTERN.fullmatch(selected_agent_id):
-            raise OpenClawProviderError(
-                "OpenClaw agent_id contains unsupported characters.",
-                status_code=422,
-                error_code="OPENCLAW_AGENT_ID_INVALID",
-            )
-
-        # When no URL was explicitly configured, fall back to the canonical
-        # docker-compose service name so the adapter works out of the box.
         effective_url = self._gateway_url or _DEFAULT_GATEWAY_WS_URL
-
         binary = self._openclaw_bin()
         if not binary:
             raise OpenClawProviderError(
@@ -339,22 +418,6 @@ class AssistantOpenClawProvider:
                 error_code="OPENCLAW_TOKEN_NOT_CONFIGURED",
             )
 
-        # The CLI only reads the prompt from `-m/--message <text>` (argv); it has
-        # no stdin mode.  Management AI context packs can exceed the safe argv
-        # budget, even when the user's question is small.  Those requests keep
-        # the same OpenClaw provider and agent, but use its body-based
-        # OpenResponses transport instead of silently truncating context or
-        # falling back to a synthetic BFF answer.
-        prompt_bytes = len(prompt.encode("utf-8"))
-        if prompt_bytes > _MAX_ARGV_PROMPT_BYTES:
-            return self._invoke_oversized_prompt_via_openresponses(
-                prompt,
-                mode=mode,
-                operator_id=operator_id,
-                session_id=session_id,
-                metadata=metadata,
-            )
-
         request_id = str(uuid.uuid4())
         started_at = time.monotonic()
         invocation_timeout = float(self._timeout)
@@ -367,17 +430,6 @@ class AssistantOpenClawProvider:
                 error_code="OPENCLAW_GATEWAY_TIMEOUT",
             )
 
-        # OpenClaw 2026.6.8 `agent` reads the gateway URL + token from the
-        # environment (OPENCLAW_GATEWAY_URL / OPENCLAW_GATEWAY_TOKEN); it does
-        # NOT accept --url/--token (those exist only on the gateway
-        # call/probe/status subcommands — passing them errors with
-        # "does not recognize option --url"). --json yields a structured
-        # envelope on stdout (diagnostics go to stderr).
-        #
-        # The prompt MUST be passed as the `-m/--message` argv value. `--message -`
-        # does NOT read stdin — the CLI takes "-" literally, so the agent gets a
-        # bare heartbeat tick and replies "HEARTBEAT_OK" (verified live on the
-        # 2026.6.8 gateway). See _MAX_ARGV_PROMPT_BYTES for the size guard above.
         cmd = [
             binary,
             "agent",
@@ -387,11 +439,9 @@ class AssistantOpenClawProvider:
             "--json",
             "--timeout", str(max(1, int(invocation_timeout))),
         ]
+        if model:
+            cmd.extend(["--model", model])
 
-        # Pass the normalized ws:// URL + token explicitly via the env the CLI
-        # reads, so we don't depend on how compose spells OPENCLAW_GATEWAY_URL.
-        # OPENCLAW_ALLOW_INSECURE_PRIVATE_WS (set in compose) is inherited from
-        # os.environ and permits plaintext ws:// on the trusted docker network.
         run_env = _openclaw_cli_state_env({
             **os.environ,
             "NO_COLOR": "1",
@@ -429,10 +479,19 @@ class AssistantOpenClawProvider:
 
         if proc.returncode != 0:
             stderr = (proc.stderr or "").strip()
+            stderr_low = stderr.lower()
+            if any(k in stderr_low for k in ("auth", "unauthorized", "expired", "401", "login", "oauth")):
+                err_code = "OPENCLAW_AUTH_UNAVAILABLE"
+            elif any(k in stderr_low for k in ("timeout", "timed out", "deadline")):
+                err_code = "OPENCLAW_GATEWAY_TIMEOUT"
+            elif any(k in stderr_low for k in ("connection refused", "unreachable", "econnrefused")):
+                err_code = "OPENCLAW_GATEWAY_UNREACHABLE"
+            else:
+                err_code = "OPENCLAW_GATEWAY_INVOCATION_FAILED"
             raise OpenClawProviderError(
                 f"openclaw agent exited with code {proc.returncode}: {stderr[:400]}",
                 status_code=502,
-                error_code="OPENCLAW_GATEWAY_INVOCATION_FAILED",
+                error_code=err_code,
             )
 
         text = self._extract_reply(proc.stdout or "")
@@ -443,6 +502,8 @@ class AssistantOpenClawProvider:
             stderr=proc.stderr or "",
             agent_id=selected_agent_id,
         )
+        if model:
+            output["active_model"] = model
 
         return OpenClawProviderResult(
             provider=OPENCLAW_PROVIDER,
@@ -450,6 +511,117 @@ class AssistantOpenClawProvider:
             status="completed",
             output=output,
             redaction={"provider_invocation": {"redacted_fields": 0}},
+        )
+
+    def invoke(
+        self,
+        prompt: str,
+        *,
+        model: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        mode: str = "user",
+        context_pack: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        messages: Optional[List[Dict[str, Any]]] = None,
+        operator_id: Optional[str] = None,
+        trace_id: Optional[str] = None,
+        timeout_seconds: Optional[float] = None,
+    ) -> OpenClawProviderResult:
+        if delegates_kernel_mode_to_codex(mode):
+            raise OpenClawProviderError(
+                "OpenClaw kernel modes must be delegated to the adapter Codex runtime.",
+                status_code=409,
+                error_code="OPENCLAW_KERNEL_DELEGATION_REQUIRED",
+            )
+        selected_agent_id = str(agent_id or self._agent_id).strip()
+        if not _AGENT_ID_PATTERN.fullmatch(selected_agent_id):
+            raise OpenClawProviderError(
+                "OpenClaw agent_id contains unsupported characters.",
+                status_code=422,
+                error_code="OPENCLAW_AGENT_ID_INVALID",
+            )
+
+        binary = self._openclaw_bin()
+        if not binary:
+            raise OpenClawProviderError(
+                "openclaw binary not found. Ensure the openclaw CLI is installed in the adapter image.",
+                status_code=503,
+                error_code="OPENCLAW_BINARY_NOT_FOUND",
+            )
+        if not self._token:
+            raise OpenClawProviderError(
+                "OPENCLAW_GATEWAY_TOKEN is not set. Configure the token in the compose env.",
+                status_code=503,
+                error_code="OPENCLAW_TOKEN_NOT_CONFIGURED",
+            )
+
+        prompt_bytes = len(prompt.encode("utf-8"))
+        if prompt_bytes > _MAX_ARGV_PROMPT_BYTES:
+            return self._invoke_oversized_prompt_via_openresponses(
+                prompt,
+                mode=mode,
+                operator_id=operator_id,
+                session_id=session_id,
+                metadata=metadata,
+                model=model,
+            )
+
+        invocation_timeout = float(self._timeout)
+        if timeout_seconds is not None:
+            invocation_timeout = min(invocation_timeout, float(timeout_seconds))
+        if invocation_timeout <= 0:
+            raise OpenClawProviderError(
+                "openclaw agent invocation exhausted its bounded deadline.",
+                status_code=504,
+                error_code="OPENCLAW_GATEWAY_TIMEOUT",
+            )
+
+        candidates = self._resolve_model_candidates(model)
+        primary = candidates[0]
+        deadline = time.monotonic() + invocation_timeout
+        last_exc: Optional[OpenClawProviderError] = None
+
+        for idx, candidate in enumerate(candidates):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0.2:
+                break
+            has_fallback = idx < len(candidates) - 1
+            if has_fallback:
+                cand_timeout = min(invocation_timeout * 0.4, max(5.0, remaining - 5.0))
+            else:
+                cand_timeout = remaining
+
+            try:
+                result = self._invoke_single_model(
+                    prompt,
+                    model=candidate,
+                    agent_id=selected_agent_id,
+                    session_id=session_id,
+                    mode=mode,
+                    context_pack=context_pack,
+                    metadata=metadata,
+                    messages=messages,
+                    operator_id=operator_id,
+                    trace_id=trace_id,
+                    timeout_seconds=cand_timeout,
+                )
+                if candidate != primary:
+                    result.output["fallback_used"] = True
+                    result.output["primary_model"] = primary
+                return result
+            except OpenClawProviderError as exc:
+                last_exc = exc
+                if not has_fallback:
+                    raise
+                continue
+
+        if last_exc is not None:
+            raise last_exc
+        raise OpenClawProviderError(
+            "openclaw agent invocation exhausted its bounded deadline.",
+            status_code=504,
+            error_code="OPENCLAW_GATEWAY_TIMEOUT",
         )
 
     def _invoke_oversized_prompt_via_openresponses(
@@ -460,6 +632,7 @@ class AssistantOpenClawProvider:
         operator_id: Optional[str],
         session_id: Optional[str],
         metadata: Optional[Dict[str, Any]],
+        model: Optional[str] = None,
     ) -> OpenClawProviderResult:
         """Run a large normal invocation through the existing Responses transport.
 
@@ -474,6 +647,7 @@ class AssistantOpenClawProvider:
         events = list(
             self.stream(
                 prompt,
+                model=model,
                 mode=mode,
                 operator_id=operator_id,
                 session_user=session_user,
@@ -718,6 +892,7 @@ class AssistantOpenClawProvider:
         self,
         prompt: str,
         *,
+        model: Optional[str] = None,
         mode: str = "user",
         operator_id: Optional[str] = None,
         trace_id: Optional[str] = None,
@@ -740,21 +915,87 @@ class AssistantOpenClawProvider:
                 error_code="OPENCLAW_KERNEL_DELEGATION_REQUIRED",
             )
         if not self._gateway_url:
-            yield {"type": "error", "error_code": "OPENCLAW_GATEWAY_URL_NOT_SET",
-                   "message": "OPENCLAW_GATEWAY_URL is not set."}
+            yield {
+                "type": "error",
+                "error_code": "OPENCLAW_GATEWAY_URL_NOT_SET",
+                "message": "OPENCLAW_GATEWAY_URL is not set.",
+            }
             return
         if not self._token:
-            yield {"type": "error", "error_code": "OPENCLAW_TOKEN_NOT_CONFIGURED",
-                   "message": "OPENCLAW_GATEWAY_TOKEN is not set."}
+            yield {
+                "type": "error",
+                "error_code": "OPENCLAW_TOKEN_NOT_CONFIGURED",
+                "message": "OPENCLAW_GATEWAY_TOKEN is not set.",
+            }
             return
 
+        candidates = self._resolve_model_candidates(model, for_responses=True)
+        last_error: Optional[Dict[str, Any]] = None
+
+        for idx, candidate in enumerate(candidates):
+            has_fallback = idx < len(candidates) - 1
+            stream_iter = self._stream_single_model(
+                prompt,
+                model=candidate,
+                operator_id=operator_id,
+                trace_id=trace_id,
+                session_user=session_user,
+            )
+            first_event = None
+            try:
+                first_event = next(stream_iter, None)
+            except Exception as exc:  # noqa: BLE001
+                last_error = {
+                    "type": "error",
+                    "error_code": "OPENCLAW_RESPONSES_UNREACHABLE",
+                    "status_code": 503,
+                    "message": f"/v1/responses endpoint could not be reached: {exc}",
+                }
+                if has_fallback:
+                    continue
+                yield last_error
+                return
+
+            if first_event is None:
+                last_error = {
+                    "type": "error",
+                    "error_code": "OPENCLAW_RESPONSES_EMPTY",
+                    "message": "Gateway completed /v1/responses without events.",
+                }
+                if has_fallback:
+                    continue
+                yield last_error
+                return
+
+            if first_event.get("type") == "error":
+                last_error = first_event
+                if has_fallback:
+                    continue
+                yield first_event
+                return
+
+            yield first_event
+            for evt in stream_iter:
+                yield evt
+            return
+
+        if last_error is not None:
+            yield last_error
+
+    def _stream_single_model(
+        self,
+        prompt: str,
+        *,
+        model: str,
+        operator_id: Optional[str] = None,
+        trace_id: Optional[str] = None,
+        session_user: Optional[str] = None,
+    ) -> Iterator[Dict[str, Any]]:
         url = f"{self._http_base()}/v1/responses"
-        # OpenClaw's canonical OpenResponses transport selects the Gateway agent
-        # with this header.  Keeping the model as the provider alias avoids
-        # treating an agent id as a model override while still making the target
-        # agent explicit (and stable across a gateway restart).
+        # If model is explicitly "openclaw", pass OPENRESPONSES_MODEL; otherwise pass candidate
+        model_name = OPENRESPONSES_MODEL if model == "openclaw" else model
         payload: Dict[str, Any] = {
-            "model": OPENRESPONSES_MODEL,
+            "model": model_name,
             "input": prompt,
             "stream": True,
         }
@@ -787,8 +1028,12 @@ class AssistantOpenClawProvider:
             except Exception:  # noqa: BLE001
                 pass
             code = "OPENCLAW_RESPONSES_DISABLED" if exc.code == 404 else "OPENCLAW_RESPONSES_HTTP_ERROR"
-            yield {"type": "error", "error_code": code, "status_code": exc.code,
-                   "message": f"/v1/responses HTTP {exc.code}: {body}"}
+            yield {
+                "type": "error",
+                "error_code": code,
+                "status_code": exc.code,
+                "message": f"/v1/responses HTTP {exc.code}: {body}",
+            }
             return
         except urllib.error.URLError as exc:
             reason = exc.reason
@@ -816,8 +1061,12 @@ class AssistantOpenClawProvider:
             }
             return
         except Exception as exc:  # noqa: BLE001
-            yield {"type": "error", "error_code": "OPENCLAW_RESPONSES_UNREACHABLE", "status_code": 503,
-                   "message": "/v1/responses endpoint could not be reached."}
+            yield {
+                "type": "error",
+                "error_code": "OPENCLAW_RESPONSES_UNREACHABLE",
+                "status_code": 503,
+                "message": "/v1/responses endpoint could not be reached.",
+            }
             return
 
         try:
@@ -864,12 +1113,18 @@ class AssistantOpenClawProvider:
                         "transport": "responses_http",
                     }
                 elif etype in ("response.failed", "error"):
-                    yield {"type": "error", "error_code": "OPENCLAW_RESPONSES_FAILED",
-                           "message": json.dumps(evt)[:300]}
+                    yield {
+                        "type": "error",
+                        "error_code": "OPENCLAW_RESPONSES_FAILED",
+                        "message": json.dumps(evt)[:300],
+                    }
                     return
         except Exception as exc:  # noqa: BLE001
-            yield {"type": "error", "error_code": "OPENCLAW_RESPONSES_STREAM_INTERRUPTED",
-                   "message": f"stream interrupted: {exc}"}
+            yield {
+                "type": "error",
+                "error_code": "OPENCLAW_RESPONSES_STREAM_INTERRUPTED",
+                "message": f"stream interrupted: {exc}",
+            }
             return
         finally:
             try:

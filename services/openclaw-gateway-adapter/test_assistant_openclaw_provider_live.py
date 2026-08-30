@@ -333,10 +333,108 @@ class TestAssistantOpenClawProviderUnit(unittest.TestCase):
         self.assertEqual(info["status"], "ready")
         self.assertEqual(info["answer_probe"]["status"], "completed")
         self.assertEqual(info["answer_probe"]["deadline_seconds"], 20.0)
-        self.assertEqual(captured["timeout"], 20.0)
+        self.assertLessEqual(captured["timeout"], 20.0)
+        self.assertGreaterEqual(captured["timeout"], 5.0)
         command = captured["cmd"]
         self.assertEqual(command[1], "agent")
         self.assertIn("PANTHEON_PROVIDER_READY", command[command.index("--message") + 1])
+
+    def test_readiness_auth_probe_converges_via_fallback_when_primary_claude_fails(self) -> None:
+        calls: list[list[str]] = []
+
+        def fake_run(cmd, **kwargs):
+            calls.append(list(cmd))
+            # First call is primary (anthropic/claude-opus-4-8) which fails with timeout
+            if len(calls) == 1:
+                raise subprocess.TimeoutExpired(cmd="openclaw agent", timeout=kwargs["timeout"])
+            # Second call is fallback (openai/gpt-5.6-sol) which succeeds
+            class R:
+                returncode = 0
+                stdout = TestAssistantOpenClawProviderUnit._agent_json("PANTHEON_PROVIDER_READY")
+                stderr = ""
+            return R()
+
+        provider = self._make_provider(run_func=fake_run)
+        info = provider.readiness(auth_probe=True)
+
+        self.assertTrue(info["ready"])
+        self.assertEqual(info["status"], "ready")
+        self.assertEqual(info["active_model"], "openai/gpt-5.6-sol")
+        self.assertEqual(info["primary_model"], "anthropic/claude-opus-4-8")
+        self.assertTrue(info["fallback_used"])
+        self.assertEqual(info["primary_unavailable"]["model"], "anthropic/claude-opus-4-8")
+        self.assertEqual(info["primary_unavailable"]["status"], "unavailable")
+        self.assertEqual(info["primary_unavailable"]["reason"], "OPENCLAW_GATEWAY_TIMEOUT")
+        self.assertEqual(info["answer_probe"]["status"], "completed")
+        self.assertEqual(info["answer_probe"]["active_model"], "openai/gpt-5.6-sol")
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(calls[0][calls[0].index("--model") + 1], "anthropic/claude-opus-4-8")
+        self.assertEqual(calls[1][calls[1].index("--model") + 1], "openai/gpt-5.6-sol")
+
+    def test_readiness_auth_probe_fails_closed_when_all_models_fail(self) -> None:
+        calls: list[list[str]] = []
+
+        def fake_run(cmd, **kwargs):
+            calls.append(list(cmd))
+            class R:
+                returncode = 1
+                stdout = ""
+                stderr = "auth session expired"
+            return R()
+
+        provider = self._make_provider(run_func=fake_run)
+        info = provider.readiness(auth_probe=True)
+
+        self.assertFalse(info["ready"])
+        self.assertEqual(info["status"], "degraded")
+        self.assertEqual(info["reason"], "OPENCLAW_AUTH_UNAVAILABLE")
+        self.assertEqual(info["primary_unavailable"]["model"], "anthropic/claude-opus-4-8")
+        self.assertEqual(info["primary_unavailable"]["status"], "unavailable")
+        self.assertEqual(info["primary_unavailable"]["reason"], "OPENCLAW_AUTH_UNAVAILABLE")
+        self.assertEqual(info["answer_probe"]["status"], "failed")
+        self.assertEqual(len(calls), 3)  # primary + 2 fallbacks
+
+    def test_readiness_primary_unavailable_evidence_is_sanitized(self) -> None:
+        def fake_run(cmd, **kwargs):
+            class R:
+                returncode = 1
+                stdout = ""
+                stderr = "error with token=sk-ant-secret-key-12345 login expired"
+            return R()
+
+        provider = self._make_provider(run_func=fake_run)
+        info = provider.readiness(auth_probe=True)
+
+        sanitized_reason = info["primary_unavailable"]["reason"]
+        self.assertNotIn("secret", sanitized_reason)
+        self.assertNotIn("12345", sanitized_reason)
+        self.assertEqual(sanitized_reason, "OPENCLAW_AUTH_UNAVAILABLE")
+
+    def test_invoke_converges_via_fallback_when_primary_fails(self) -> None:
+        calls: list[list[str]] = []
+
+        def fake_run(cmd, **kwargs):
+            calls.append(list(cmd))
+            if len(calls) == 1:
+                class R1:
+                    returncode = 1
+                    stdout = ""
+                    stderr = "Primary model unavailable"
+                return R1()
+            class R2:
+                returncode = 0
+                stdout = TestAssistantOpenClawProviderUnit._agent_json("fallback reply")
+                stderr = ""
+            return R2()
+
+        provider = self._make_provider(run_func=fake_run)
+        result = provider.invoke("test", mode="user", operator_id="op-1")
+
+        self.assertEqual(result.status, "completed")
+        self.assertEqual(result.output["transport"], "cli")
+        self.assertEqual(result.output["active_model"], "openai/gpt-5.6-sol")
+        self.assertTrue(result.output["fallback_used"])
+        self.assertEqual(len(calls), 2)
 
     @staticmethod
     def _agent_json(text: str) -> str:
@@ -527,7 +625,7 @@ class TestAssistantOpenClawProviderUnit(unittest.TestCase):
             class R:
                 returncode = 1
                 stdout = ""
-                stderr = "Connection refused"
+                stderr = "generic failure"
             return R()
 
         provider = self._make_provider(run_func=fake_run)
@@ -748,3 +846,41 @@ class TestAssistantOpenClawProviderStream(unittest.TestCase):
         events = list(provider.stream("hi", operator_id="op-1"))
         self.assertEqual(events[0]["type"], "error")
         self.assertEqual(events[0]["error_code"], "OPENCLAW_TOKEN_NOT_CONFIGURED")
+
+    def test_stream_converges_via_fallback_when_primary_fails(self) -> None:
+        import urllib.error
+        from unittest import mock
+
+        calls: list[dict] = []
+
+        class FakeResp:
+            def __iter__(self):
+                return iter([
+                    b'data: {"type":"response.output_text.delta","delta":"fallback streamed answer"}\n',
+                    b'data: {"type":"response.completed"}\n',
+                    b"data: [DONE]\n",
+                ])
+
+            def close(self):
+                pass
+
+        def fake_urlopen(req, timeout=None):
+            body = json.loads(req.data.decode("utf-8"))
+            calls.append(body)
+            if len(calls) == 1:
+                # Primary "openclaw" fails with 503
+                raise urllib.error.HTTPError(req.full_url, 503, "Service Unavailable", {}, None)
+            # Fallback "openai/gpt-5.6-sol" succeeds
+            return FakeResp()
+
+        provider = self._provider()
+        with mock.patch("urllib.request.urlopen", fake_urlopen):
+            events = list(provider.stream("hi", operator_id="op-1"))
+
+        done = [event for event in events if event["type"] == "done"]
+        self.assertEqual(len(done), 1)
+        self.assertEqual(done[0]["text"], "fallback streamed answer")
+        self.assertEqual(done[0]["transport"], "responses_http")
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(calls[0]["model"], "openclaw")
+        self.assertEqual(calls[1]["model"], "openai/gpt-5.6-sol")
