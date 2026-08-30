@@ -104,7 +104,7 @@ Residual frontend files are categorized according to graph reachability from `sr
 
 ## 7. Implementation-Ready Contract Dimensions
 
-Every child task in `EXECUTION_TASK_CATALOG_2026-08-30.json` adheres to strict structural contracts across eight dimensions:
+Every child task in `EXECUTION_TASK_CATALOG_2026-08-30.json` adheres to strict structural contracts across nine dimensions:
 
 1. **Owned Code Surfaces (`owned_code_surfaces`)**: Exclusive repository file and directory boundaries declared per task to prevent overlapping write collisions. Zero duplicate owned surfaces across all 30 tasks.
 2. **Contract Specification (`contract`)**: Interface, schema, API endpoint, and data-flow specifications governing the task's functional delivery.
@@ -114,3 +114,4 @@ Every child task in `EXECUTION_TASK_CATALOG_2026-08-30.json` adheres to strict s
 6. **Zero-Caller Deletion (`deletion`)**: Exhaustive non-empty inventory of removed dead adapters, obsolete shims, and legacy inline `main.py` handlers/helpers backed by AST caller proofs.
 7. **Fail-Closed Rollback (`rollback`)**: Explicit automated and manual forward repair or previous release artifact rollback procedures, never restoring deleted shims or duplicate handlers.
 8. **Durable Readback Boundaries (`durable_readback`)**: Cryptographic hashes, entity IDs, and projection checkpoints verifying end-to-end truth persistence.
+9. **Canonical Task Spec Hash Binding (`spec_hash`)**: Post-bootstrap tasks explicitly bind `acceptance`, `artifacts`, `delivery_repository`, `dependency_tracks`, `depends_on`, `execution_resources`, `id`, `owner`, `phase`, `reviewer`, `summary`, `target_repo`, `task_class`, and `title`.

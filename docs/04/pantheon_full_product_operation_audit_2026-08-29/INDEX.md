@@ -57,199 +57,41 @@ This document package provides the complete, root-cause System Architecture (SA)
 8. **Non-Empty Router Deletion Inventories**: Every router task declares the exact inline `main.py` route handlers, helper functions, and globals being eliminated.
 9. **Fail-Closed Forward Rollback**: All tasks specify forward repair or previous release artifact rollback, never restoring shims, duplicate handlers, or in-memory authority.
 10. **Clean Materialization Batches & Signed DevTaskPacket Inbox Mapping**:
-    - **Batch A (Bootstrap)**: 1 task (`OPGAP-DEVTOOL-TARGET-REPO-BRIDGE-20260830`)
-    - **Batch B (Parallel Domain Preparation)**: 14 tasks (Core, Persona, Training, Agora, Research, Governance, Evolution, Capital, Strategy, Management, Postmortem, Incident, Events, Ports Consolidation)
-    - **Batch C (Support & Frontend)**: 9 tasks (Tools, Control Loops, Command Adapters, Runtime Binding, Deployments, FE Cleanup, FE Management, FE Agora, FE Assembly)
-    - **Batch D (Assembly, Retirement & Hosted Promotion/Acceptance)**: 6 tasks (Main Assembly, Command Cutover, Command Retirement, Hosted Promotion, Hosted Backend Acceptance, Hosted Management Acceptance)
+    - **Batch A (Bootstrap)**: 1 task (`OPGAP-DEVTOOL-TARGET-REPO-BRIDGE-20260830`) — `materializable_now: true`, `allowed_repos: ["pantheon"]`.
+    - **Batch B (Parallel Domain Preparation)**: 14 tasks (Core, Persona, Training, Agora, Research, Governance, Evolution, Capital, Strategy, Management, Postmortem, Incident, Events, Ports Consolidation) — `materializable_now: false` (gated on Batch A bootstrap merge and command runtime promotion), `allowed_repos: ["pantheon"]`.
+    - **Batch C (Support & Frontend)**: 9 tasks (Tools, Control Loops, Command Adapters, Runtime Binding, Deployments, FE Cleanup, FE Management, FE Agora, FE Assembly) — `materializable_now: false` (gated on Batch A bootstrap merge, command runtime promotion, and multi-repo allowed-repos config), `allowed_repos: ["pantheon", "execute-plans"]`.
+    - **Batch D (Assembly, Retirement & Hosted Promotion/Acceptance)**: 6 tasks (Main Assembly, Command Cutover, Command Retirement, Hosted Promotion, Hosted Backend Acceptance, Hosted Management Acceptance) — `materializable_now: false` (gated on Batch B & C completion and signed readback), `allowed_repos: ["pantheon"]`.
     - Every batch satisfies `task_count <= 16` (fleet limit), forms a dependency-closed subgraph, maps to the signed local DevTaskPacket inbox (`.orchestrator/assistant-dev-packets/`), and produces durable processed receipts with authoritative readback.
+11. **Authoritative Capability Selectors & Non-Authoritative Snapshots**:
+    - `owner_selector` and `reviewer_selector` are the sole authoritative assignment rules for dispatch.
+    - Literal `owner` and `reviewer` fields in the catalog are non-authoritative planning snapshots. At materialization time, live distinct eligible worker identities are dynamically resolved and post-bootstrap BridgeTask spec hashes are computed from the resolved tasks.
+12. **Post-Bootstrap Canonical Spec Hash Binding**:
+    - Post-bootstrap BridgeTask spec hash explicitly binds 14 canonical fields: `acceptance`, `artifacts`, `delivery_repository`, `dependency_tracks`, `depends_on`, `execution_resources`, `id`, `owner`, `phase`, `reviewer`, `summary`, `target_repo`, `task_class`, and `title`.
 
 ---
 
 ## Reproducible Dynamic Validation Command
 
-Run this command from repository root to dynamically verify all catalog invariants:
+Run this command from repository root to dynamically verify all 16 catalog and architectural invariants:
 
 ```bash
-python3 -c "
-import ast, json, hashlib, os, sys
-
-source_code = open('services/control-plane/bff/main.py').read()
-tree = ast.parse(source_code)
-c = json.load(open('docs/04/pantheon_full_product_operation_audit_2026-08-29/EXECUTION_TASK_CATALOG_2026-08-30.json'))
-tasks = c['tasks']
-nodes = c['main_ast_node_inventory']['nodes']
-
-assert len(nodes) == len(tree.body) == 2271, f'AST count mismatch: catalog {len(nodes)} != live {len(tree.body)}'
-assert len(tasks) == 30, f'Task count mismatch: {len(tasks)} != 30'
-
-# 1. Verify AST digests and content parity across all nodes
-for i, (cat_node, ast_node) in enumerate(zip(nodes, tree.body)):
-    dump_str = ast.dump(ast_node, annotate_fields=True, include_attributes=False)
-    exp_digest = hashlib.sha256(dump_str.encode('utf-8')).hexdigest()[:16]
-    assert cat_node.get('ast_digest') == exp_digest, f'Node {i} AST digest mismatch'
-
-# 2. Verify Edge-Level Cutover Mapping Parity (100% match between named_consumers and consumer_cutover_mapping)
-for n in nodes:
-    nc = n.get('named_consumers')
-    cm = n.get('consumer_cutover_mapping')
-    if nc is not None:
-        assert cm is not None, f'Node {n.get(\"node_index\")} has named_consumers but missing consumer_cutover_mapping'
-        assert set(nc) == set(cm.keys()), f'Node {n.get(\"node_index\")} cutover mapping keys do not match named_consumers'
-        assert all(isinstance(v, str) and len(v) > 0 for v in cm.values()), f'Node {n.get(\"node_index\")} has empty cutover mapping values'
-    else:
-        assert cm is None, f'Node {n.get(\"node_index\")} has consumer_cutover_mapping but no named_consumers'
-
-# 3. Verify Legacy Action Cluster and os.makedirs disposition
-legacy_cluster_nodes = [n for n in nodes if n.get('legacy_action_cluster')]
-assert len(legacy_cluster_nodes) == 9, f'Expected 9 legacy action cluster nodes, found {len(legacy_cluster_nodes)}'
-for n in legacy_cluster_nodes:
-    assert n['owner_task'] == 'OPGAP-BFF-MAIN-ASSEMBLY-20260830', f'Legacy node {n[\"node_index\"]} must be owned by assembly'
-    assert n.get('zero_production_caller_evidence'), f'Legacy node {n[\"node_index\"]} missing zero_production_caller_evidence'
-
-n118 = nodes[118]
-assert n118['disposition'] == 'composition_keep' and n118['owner_task'] == 'OPGAP-BFF-MAIN-ASSEMBLY-20260830', 'os.makedirs node 118 invalid'
-
-# 4. Verify route migration inventory parity
-rmi = c.get('route_migration_inventory', {})
-assignments = rmi.get('assignments', [])
-handlers = rmi.get('handler_migration_dispositions', [])
-assert len(assignments) == 441, f'Assignments count mismatch: {len(assignments)} != 441'
-assert len(handlers) == 421, f'Handlers count mismatch: {len(handlers)} != 421'
-
-# 5. Verify batches and set equality
-batches = c['materialization_contract']['batches']
-batched_tasks = [tid for b in batches for tid in b['tasks']]
-assert len(batched_tasks) == len(tasks) == 30, f'Batch equality failed: {len(batched_tasks)} != {len(tasks)}'
-assert set(batched_tasks) == set(t['id'] for t in tasks), 'Batch task set does not match task inventory'
-assert all(len(b['tasks']) <= 16 for b in batches), 'A batch exceeds fleet limit of 16 tasks'
-
-# 6. Verify exclusive code surfaces (no duplicates, no prefix collisions)
-surfaces = {}
-for t in tasks:
-    for s in t.get('owned_code_surfaces', []):
-        surfaces.setdefault(s, []).append(t['id'])
-dups = {s: ids for s, ids in surfaces.items() if len(ids) > 1}
-assert not dups, f'Duplicate owned surfaces: {dups}'
-
-assert not [n for n in nodes if n.get('disposition') == 'extract_shared_port' and n.get('node_type') in ('Import', 'ImportFrom')], 'Found stdlib extract_shared_port'
-assert all(len(t.get('deletion', [])) > 0 for t in tasks), 'All tasks must have non-empty deletion inventory'
-
-# 7. Verify safe rollback semantics
-forbidden_rb = ['restores deleted', 'restore domain_ports', 'revert to in-memory', 'revert to local helper', 'preserve legacy']
-for t in tasks:
-    tid = t['id']
-    rb = t.get('rollback', '').lower()
-    for w in forbidden_rb:
-        assert w not in rb, f'Forbidden rollback in {tid}: {rb}'
-
-# 8. Verify DAG acyclicity
-graph = {t['id']: set(t.get('depends_on', [])) for t in tasks}
-visited, visiting = set(), set()
-def dfs(n):
-    if n in visiting: return False
-    if n in visited: return True
-    visiting.add(n)
-    for nbr in graph.get(n, []):
-        if nbr in graph and not dfs(nbr): return False
-    visiting.remove(n); visited.add(n)
-    return True
-assert all(dfs(t) for t in graph), 'Cycle detected in DAG'
-
-# 9. Verify Source Proof Contract
-sp = c.get('source_proof_contract', {})
-assert sp.get('receipt_binding') == 'source_proof_receipt_id', 'source_proof_contract missing receipt_binding'
-assert sp.get('max_ticks') == 1 and sp.get('max_records') == 100, 'source_proof_contract bounded limits invalid'
-assert sp.get('dev_mode_default') == 'reconcile_only', 'source_proof_contract dev_mode_default must be reconcile_only'
-
-assert all(n.get('rationale') for n in nodes), 'All AST nodes must have non-empty rationale'
-
-# 10. Verify Special node mappings
-n37 = nodes[37]
-assert n37['target_router'] == 'services/control-plane/bff/ports/param_utils.py' and len(n37['consumer_cutover_mapping']) >= 5, '_resolve_param mapping invalid'
-assert 'OPGAP-BE-MANAGEMENT-ROUTER-20260830' in n37['named_consumers'], '_resolve_param named_consumers missing Management'
-
-n39 = nodes[39]
-assert n39['target_router'] == 'services/control-plane/bff/ports/config.py' and len(n39['consumer_cutover_mapping']) >= 3, '_REPO_ROOT mapping invalid'
-
-n43 = nodes[43]
-assert n43['target_router'] == 'services/control-plane/bff/ports/config.py' and len(n43['consumer_cutover_mapping']) >= 3, '_CRON_SERVICE_DIR mapping invalid'
-
-n76 = nodes[76]
-assert n76['disposition'] == 'composition_keep' and n76.get('consumer_cutover_mapping') is not None, 'log node cutover invalid'
-assert n76['consumer_cutover_mapping']['OPGAP-BE-BFF-CORE-20260830'] == 'logging.getLogger(__name__)', 'log logger replacement invalid'
-
-# 11. Verify Reverse-Main Symbol Inventory & External Reverse-Main Inventory
-rev = c.get('reverse_main_symbol_inventory', [])
-assert len(rev) == 29, f'Expected 29 callsite-proven reverse-main symbols, found {len(rev)}'
-for entry in rev:
-    assert not entry['target_module'].endswith('/' + entry['symbol'] + '.py'), f'Fake port target detected: {entry}'
-
-rev_inv = c.get('external_reverse_main_symbol_inventory', {})
-assert rev_inv.get('total_import_instances', 0) == 269, f'Expected 269 reverse-main instances, found {rev_inv.get(\"total_import_instances\")}'
-assert rev_inv.get('unique_caller_files_count', 0) == 214, f'Expected 214 caller files, found {rev_inv.get(\"unique_caller_files_count\")}'
-assert rev_inv.get('unique_imported_symbols_count', 0) == 29, f'Expected 29 unique symbols, found {rev_inv.get(\"unique_imported_symbols_count\")}'
-
-# 12. Verify Domain Ports Caller Inventory
-dp_inv = c.get('domain_ports_caller_inventory', {})
-assert dp_inv.get('total_imported_symbol_rows') == 191, f'Expected 191 imported-symbol rows, found {dp_inv.get(\"total_imported_symbol_rows\")}'
-assert dp_inv.get('total_unique_caller_files') == 22, f'Expected 22 unique caller files, found {dp_inv.get(\"total_unique_caller_files\")}'
-assert dp_inv.get('production_caller_files_count') == 7, f'Expected 7 production caller files, found {dp_inv.get(\"production_caller_files_count\")}'
-assert dp_inv.get('test_caller_files_count') == 15, f'Expected 15 test caller files, found {dp_inv.get(\"test_caller_files_count\")}'
-assert dp_inv.get('production_imported_symbol_rows_count') == 129, f'Expected 129 production rows, found {dp_inv.get(\"production_imported_symbol_rows_count\")}'
-assert dp_inv.get('test_imported_symbol_rows_count') == 62, f'Expected 62 test rows, found {dp_inv.get(\"test_imported_symbol_rows_count\")}'
-
-# 13. Verify Planning Agent Capacity, Selectors & Task Assignment
-cap = c.get('planning_agent_capacity', {})
-assert cap.get('dynamic_derived') is True, 'Capacity must be dynamically derived'
-assert cap.get('command_runtime_sha') == '072ee68bbba8bbffb84a188ccf4d50d67429a7a8', 'Stale command runtime SHA'
-for t in tasks:
-    assert t['owner'] != t['reviewer'], f'Owner equals reviewer in {t[\"id\"]}'
-    assert cap['agent_eligibility'][t['owner']]['eligible'], f'Owner {t[\"owner\"]} not eligible'
-    assert cap['agent_eligibility'][t['reviewer']]['eligible'], f'Reviewer {t[\"reviewer\"]} not eligible'
-    assert 'owner_selector' in t and 'reviewer_selector' in t, f'Task {t[\"id\"]} missing selectors'
-    assert t['delivery_repository'] == t['target_repo'], f'Repository mismatch in {t[\"id\"]}'
-
-# 14. Verify Baseline
-pb = c.get('planning_baseline', {})
-assert pb.get('pantheon') == '072ee68bbba8bbffb84a188ccf4d50d67429a7a8', 'Stale pantheon baseline'
-assert pb.get('execute_plans') == '7d30e78476be61222af63a089e7ab141aa43b809', 'Stale execute-plans baseline'
-assert pb.get('hosted_pair_id') == '8961f959e54db4801438cef5fb7bb4047bc2506879afe6fc739572d0e2ba07f8', 'Stale hosted pair ID'
-assert pb.get('hosted_backend') == 'd5c312ef0a4139329d66bda13c7e487248602ed7', 'Stale hosted backend'
-assert pb.get('hosted_frontend') == '7d30e78476be61222af63a089e7ab141aa43b809', 'Stale hosted frontend'
-assert pb.get('hosted_accepted_at') == '2026-08-30T13:27:59Z', 'Stale hosted accepted at'
-
-# 15. Verify Execution Resources Bidirectional Invariant
-exec_res = c.get('execution_resources', {})
-pdev_consumers = set(exec_res.get('pantheon-dev', {}).get('consumers', []))
-task_pdev_consumers = set(t['id'] for t in tasks if 'pantheon-dev' in t.get('execution_resources', []))
-assert pdev_consumers == task_pdev_consumers, f'pantheon-dev consumers mismatch: {pdev_consumers} != {task_pdev_consumers}'
-
-# 16. Verify Signed DevTaskPacket Materialization Mapping & Post-Bootstrap Spec Hash Contract
-mat_map = c.get('materialization_contract', {}).get('signed_dev_task_packet_materialization_mapping', {})
-assert mat_map.get('max_tasks_per_packet') == 16, 'DevTaskPacket limit must be <= 16'
-assert mat_map.get('total_batches') == 4 and mat_map.get('total_tasks') == 30, 'DevTaskPacket batch/task count invalid'
-assert all(b['task_count'] <= 16 and b['dependency_closed'] for b in mat_map.get('batches_summary', [])), 'Batches must be <= 16 and dependency closed'
-assert len(mat_map.get('per_task_spec_hashes', {})) == 30, 'per_task_spec_hashes count invalid'
-assert mat_map.get('tasks_spec_catalog_sha256'), 'tasks_spec_catalog_sha256 missing'
-
-for t in tasks:
-    spec = {
-        'acceptance': list(t.get('acceptance', [])),
-        'artifacts': list(t.get('artifacts', [])),
-        'dependency_tracks': dict(t.get('dependency_tracks', {})),
-        'depends_on': list(t.get('depends_on', [])),
-        'execution_resources': list(t.get('execution_resources', [])),
-        'id': t['id'],
-        'owner': t['owner'],
-        'phase': t['phase'],
-        'reviewer': t['reviewer'],
-        'summary': t.get('summary') or t.get('summary_zh', ''),
-        'target_repo': t.get('target_repo', 'pantheon'),
-        'title': t['title'],
-    }
-    exp_h = hashlib.sha256(json.dumps(spec, sort_keys=True, separators=(',', ':'), ensure_ascii=True).encode('utf-8')).hexdigest()
-    assert mat_map['per_task_spec_hashes'][t['id']] == exp_h, f"Post-bootstrap spec hash mismatch for {t['id']}"
-
-print('SUCCESS: All 16 comprehensive dynamic validation assertions passed!')
-"
+python3 docs/04/pantheon_full_product_operation_audit_2026-08-29/validate_catalog.py
 ```
+
+The validation script executes 16 comprehensive verification phases:
+1. `main.py` live AST body count (2,271 nodes) and AST digest parity against catalog inventory
+2. Edge-level cutover mappings for 100% of consuming tasks across all AST nodes
+3. Legacy action cluster (9 nodes) assembly ownership and node 118 `os.makedirs` lifespan placement
+4. Route migration inventory parity (441 route decorators across 421 unique route handlers)
+5. Materialization batches (A: 1, B: 14, C: 9, D: 6), fleet limit `<= 16`, and task set equality
+6. Exclusive `owned_code_surfaces` with zero collisions across all 30 child tasks
+7. Safe forward rollback policies with zero forbidden shim/memory restoration keywords
+8. DAG acyclicity and topological sortability across all 30 child tasks
+9. Single-stimulus Source proof receipt contract (`source_proof_receipt_id`, 1 tick, 100 records max, `reconcile_only` default)
+10. Special AST node mappings (`_resolve_param`, `_REPO_ROOT`, `_CRON_SERVICE_DIR`, `log`)
+11. Reverse-main symbol inventory (29 callsite-proven symbols) and external caller files (214 files, 269 instances)
+12. `domain_ports` caller inventory (191 rows across 22 files: 129 production across 7 files, 62 test across 15 files)
+13. Dynamic planning agent capacity and authoritative capability selector validation
+14. Planning baseline provenance across Pantheon, execute-plans, and hosted runtime
+15. Bidirectional `pantheon-dev` execution resource mappings
+16. Post-bootstrap canonical task spec hashes (binding `target_repo` + `task_class` + `delivery_repository`) and catalog SHA-256 digest
