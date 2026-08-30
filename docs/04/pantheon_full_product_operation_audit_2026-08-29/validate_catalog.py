@@ -3,19 +3,21 @@
 
 Validates all 16 architectural and catalog invariants across:
 1. services/control-plane/bff/main.py AST nodes and cutover mapping parity
-2. Reverse-main symbol and external reverse-main import inventory
-3. Domain ports caller inventory and namespace consolidation
-4. Materialization batches, bootstrap gating, and fleet constraints (<=16/packet)
-5. Exclusive code surfaces and non-overlapping write ownership
-6. Safe forward rollback and non-empty deletion inventories
-7. DAG acyclicity across all 30 child tasks
-8. Single-stimulus Source proof receipt contract
-9. Special AST node mappings (_resolve_param, _REPO_ROOT, _CRON_SERVICE_DIR, log)
-10. Dynamic planning agent capacity and authoritative capability selectors
-11. Baseline provenance across Pantheon, execute-plans, and hosted runtime
-12. Bidirectional pantheon-dev execution resources
-13. Post-bootstrap canonical task spec hashes (binding target_repo + task_class + delivery_repository)
-14. Canonical catalog SHA-256 digest
+2. Edge-level cutover mapping parity across all named consumers
+3. Legacy action cluster (9 nodes) and os.makedirs (node 118) disposition
+4. Route migration inventory parity (441 decorators across 421 handlers)
+5. Materialization batches (A: 1, B: 14, C: 9, D: 6) and task set equality (<=16/packet)
+6. Exclusive code surfaces (zero duplicates and zero prefix collisions across 30 tasks)
+7. Safe forward rollback semantics across all tasks
+8. DAG acyclicity across all 30 child tasks
+9. Single-stimulus Source proof receipt contract
+10. Special AST node mappings (_resolve_param, _REPO_ROOT, _CRON_SERVICE_DIR, log)
+11. Reverse-main symbol inventory (29 symbols) and external caller AST instances (214 files, 269 instances recomputed from source)
+12. Domain ports caller inventory (191 rows across 22 files recomputed from source AST: 129 prod, 62 tests)
+13. Dynamic planning agent capacity and authoritative capability selectors
+14. Planning baseline provenance across Pantheon, execute-plans, and hosted runtime
+15. Bidirectional pantheon-dev execution resources invariant
+16. Signed DevTaskPacket materialization mapping and post-bootstrap spec hash contract (binding target_repo + task_class + delivery_repository)
 """
 from __future__ import annotations
 
@@ -33,6 +35,7 @@ def validate_catalog(catalog_path: str, main_py_path: str) -> None:
 
     tasks = c["tasks"]
     nodes = c["main_ast_node_inventory"]["nodes"]
+    repo_root = Path(main_py_path).resolve().parent.parent.parent.parent
 
     print(f"Parsing main.py from {main_py_path}...")
     source_code = Path(main_py_path).read_text(encoding="utf-8")
@@ -89,13 +92,25 @@ def validate_catalog(catalog_path: str, main_py_path: str) -> None:
     assert all(len(b["tasks"]) <= 16 for b in batches), "A batch exceeds fleet limit of 16 tasks"
 
     # 6. Verify exclusive code surfaces (no duplicates, no prefix collisions)
-    print("6. Verifying exclusive code surfaces (zero duplicates across 30 tasks)...")
+    print("6. Verifying exclusive code surfaces (zero duplicates and zero prefix collisions across 30 tasks)...")
     surfaces: dict[str, list[str]] = {}
+    surface_list: list[tuple[str, str]] = []
     for t in tasks:
         for s in t.get("owned_code_surfaces", []):
             surfaces.setdefault(s, []).append(t["id"])
+            surface_list.append((s, t["id"]))
     dups = {s: ids for s, ids in surfaces.items() if len(ids) > 1}
     assert not dups, f"Duplicate owned surfaces: {dups}"
+
+    prefix_collisions = []
+    for s1, t1 in surface_list:
+        for s2, t2 in surface_list:
+            if t1 != t2 and s1 != s2:
+                p1 = s1.rstrip("/") + "/"
+                p2 = s2.rstrip("/") + "/"
+                if p2.startswith(p1):
+                    prefix_collisions.append((s1, t1, s2, t2))
+    assert not prefix_collisions, f"Prefix collisions detected across tasks: {prefix_collisions}"
 
     assert not [n for n in nodes if n.get("disposition") == "extract_shared_port" and n.get("node_type") in ("Import", "ImportFrom")], "Found stdlib extract_shared_port"
     assert all(len(t.get("deletion", [])) > 0 for t in tasks), "All tasks must have non-empty deletion inventory"
@@ -149,36 +164,142 @@ def validate_catalog(catalog_path: str, main_py_path: str) -> None:
     assert n76["disposition"] == "composition_keep" and n76.get("consumer_cutover_mapping") is not None, "log node cutover invalid"
     assert n76["consumer_cutover_mapping"]["OPGAP-BE-BFF-CORE-20260830"] == "logging.getLogger(__name__)", "log logger replacement invalid"
 
-    # 11. Verify Reverse-Main Symbol Inventory & External Reverse-Main Inventory
-    print("11. Verifying reverse-main symbol inventory (29 symbols) and external caller files (214 files, 269 instances)...")
+    # 11. Verify Reverse-Main Symbol Inventory & External Reverse-Main Inventory (recomputed from source AST)
+    print("11. Verifying reverse-main symbol inventory (29 symbols) and external caller AST instances (214 files, 269 instances)...")
     rev = c.get("reverse_main_symbol_inventory", [])
     assert len(rev) == 29, f"Expected 29 callsite-proven reverse-main symbols, found {len(rev)}"
     for entry in rev:
         assert not entry["target_module"].endswith("/" + entry["symbol"] + ".py"), f"Fake port target detected: {entry}"
 
+    # Recompute reverse-main import instances from repository source AST
+    scanned_rev_instances: list[dict[str, any]] = []
+    target_files = ["scripts/bff_route_manifest_backend.py"]
+    for root, dirs, files in os.walk(repo_root / "services/control-plane/bff"):
+        for f in files:
+            if f.endswith(".py"):
+                full = Path(root) / f
+                rel = full.relative_to(repo_root).as_posix()
+                if rel != "services/control-plane/bff/main.py":
+                    target_files.append(rel)
+
+    for rel in sorted(target_files):
+        p = repo_root / rel
+        tree = ast.parse(p.read_text(encoding="utf-8"), filename=rel)
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom):
+                mod = node.module or ""
+                if mod in ("main", "bff.main") or mod.endswith(".bff.main") or mod.startswith("services.control_plane.bff.main") or mod.startswith("services.control-plane.bff.main"):
+                    for alias in node.names:
+                        scanned_rev_instances.append({
+                            "caller_file": rel,
+                            "line_number": node.lineno,
+                            "import_module": mod,
+                            "imported_symbol": alias.name,
+                            "asname": alias.asname,
+                        })
+            elif isinstance(node, ast.Import):
+                for alias in node.names:
+                    if alias.name in ("main", "bff.main") or alias.name.endswith(".bff.main") or alias.name.startswith("services.control_plane.bff.main") or alias.name.startswith("services.control-plane.bff.main"):
+                        scanned_rev_instances.append({
+                            "caller_file": rel,
+                            "line_number": node.lineno,
+                            "import_module": alias.name,
+                            "imported_symbol": "*",
+                            "asname": alias.asname,
+                        })
+
     rev_inv = c.get("external_reverse_main_symbol_inventory", {})
-    assert rev_inv.get("total_import_instances", 0) == 269, f"Expected 269 reverse-main instances, found {rev_inv.get('total_import_instances')}"
-    assert rev_inv.get("unique_caller_files_count", 0) == 214, f"Expected 214 caller files, found {rev_inv.get('unique_caller_files_count')}"
-    assert rev_inv.get("unique_imported_symbols_count", 0) == 29, f"Expected 29 unique symbols, found {rev_inv.get('unique_imported_symbols_count')}"
+    import_instances = rev_inv.get("import_instances", [])
+    assert len(import_instances) == len(scanned_rev_instances), f"Reverse main instance count mismatch: catalog {len(import_instances)} != source {len(scanned_rev_instances)}"
+
+    scanned_rev_files = set(x["caller_file"] for x in scanned_rev_instances)
+    scanned_rev_symbols = set(x["imported_symbol"] for x in scanned_rev_instances)
+    assert rev_inv.get("total_import_instances", 0) == len(scanned_rev_instances) == 269, f"Expected 269 reverse-main instances, found {rev_inv.get('total_import_instances')}"
+    assert rev_inv.get("unique_caller_files_count", 0) == len(scanned_rev_files) == 214, f"Expected 214 caller files, found {rev_inv.get('unique_caller_files_count')}"
+    assert rev_inv.get("unique_imported_symbols_count", 0) == len(scanned_rev_symbols) == 29, f"Expected 29 unique symbols, found {rev_inv.get('unique_imported_symbols_count')}"
+
+    # Verify 1-to-1 exact row parity between source AST and catalog
+    scanned_rev_tuples = set((x["caller_file"], x["line_number"], x["import_module"], x["imported_symbol"], x["asname"]) for x in scanned_rev_instances)
+    catalog_rev_tuples = set((x["caller_file"], x["line_number"], x["import_module"], x["imported_symbol"], x.get("asname")) for x in import_instances)
+    assert catalog_rev_tuples == scanned_rev_tuples, f"Mismatch in reverse-main row identities: diff {catalog_rev_tuples ^ scanned_rev_tuples}"
 
     # Verify caller files exist on disk
-    for inst in rev_inv.get("instances", []):
-        caller_f = inst.get("caller_file")
-        assert os.path.exists(caller_f), f"Caller file does not exist: {caller_f}"
+    for inst in import_instances:
+        caller_f = repo_root / inst.get("caller_file")
+        assert caller_f.exists(), f"Caller file does not exist: {caller_f}"
 
-    # 12. Verify Domain Ports Caller Inventory
-    print("12. Verifying domain_ports caller inventory (191 rows across 22 files: 129 prod, 62 tests)...")
+    # 12. Verify Domain Ports Caller Inventory (recomputed from source AST)
+    print("12. Verifying domain_ports caller inventory from source AST (191 rows across 22 files: 129 prod, 62 tests)...")
+    scanned_dp_rows: list[dict[str, any]] = []
+    skip_dirs = {".venv", "lean", ".git", "node_modules", "__pycache__", "dist", "build"}
+    for root, dirs, files in os.walk(repo_root):
+        dirs[:] = [d for d in dirs if d not in skip_dirs and not d.startswith(".")]
+        for f in files:
+            if f.endswith(".py"):
+                full = Path(root) / f
+                try:
+                    content = full.read_text(encoding="utf-8")
+                except Exception:
+                    continue
+                if "domain_ports" not in content:
+                    continue
+                rel = full.relative_to(repo_root).as_posix()
+                try:
+                    tree = ast.parse(content, filename=rel)
+                except Exception:
+                    continue
+                for node in ast.walk(tree):
+                    if isinstance(node, ast.ImportFrom):
+                        mod = node.module or ""
+                        if "domain_ports" in mod or mod.startswith("services.control_plane.bff.domain_ports") or mod.startswith("services.control-plane.bff.domain_ports"):
+                            is_test = rel.startswith("tests/") or "/tests/" in rel or Path(rel).name.startswith("test_")
+                            for alias in node.names:
+                                scanned_dp_rows.append({
+                                    "caller_file": rel,
+                                    "line_number": node.lineno,
+                                    "import_module": mod,
+                                    "imported_symbol": alias.name,
+                                    "asname": alias.asname,
+                                    "category": "test" if is_test else "production",
+                                })
+                    elif isinstance(node, ast.Import):
+                        for alias in node.names:
+                            if "domain_ports" in alias.name:
+                                is_test = rel.startswith("tests/") or "/tests/" in rel or Path(rel).name.startswith("test_")
+                                scanned_dp_rows.append({
+                                    "caller_file": rel,
+                                    "line_number": node.lineno,
+                                    "import_module": alias.name,
+                                    "imported_symbol": alias.name,
+                                    "asname": alias.asname,
+                                    "category": "test" if is_test else "production",
+                                })
+
     dp_inv = c.get("domain_ports_caller_inventory", {})
-    assert dp_inv.get("total_imported_symbol_rows") == 191, f"Expected 191 imported-symbol rows, found {dp_inv.get('total_imported_symbol_rows')}"
-    assert dp_inv.get("total_unique_caller_files") == 22, f"Expected 22 unique caller files, found {dp_inv.get('total_unique_caller_files')}"
-    assert dp_inv.get("production_caller_files_count") == 7, f"Expected 7 production caller files, found {dp_inv.get('production_caller_files_count')}"
-    assert dp_inv.get("test_caller_files_count") == 15, f"Expected 15 test caller files, found {dp_inv.get('test_caller_files_count')}"
-    assert dp_inv.get("production_imported_symbol_rows_count") == 129, f"Expected 129 production rows, found {dp_inv.get('production_imported_symbol_rows_count')}"
-    assert dp_inv.get("test_imported_symbol_rows_count") == 62, f"Expected 62 test rows, found {dp_inv.get('test_imported_symbol_rows_count')}"
+    callers = dp_inv.get("callers", [])
+    assert len(callers) == len(scanned_dp_rows), f"Domain ports callers count mismatch: catalog {len(callers)} != source {len(scanned_dp_rows)}"
 
-    for row in dp_inv.get("imported_symbol_rows", []):
-        caller_f = row.get("caller_file")
-        assert os.path.exists(caller_f), f"Domain ports caller file does not exist: {caller_f}"
+    scanned_dp_files = set(x["caller_file"] for x in scanned_dp_rows)
+    prod_files = set(x["caller_file"] for x in scanned_dp_rows if x["category"] == "production")
+    test_files = set(x["caller_file"] for x in scanned_dp_rows if x["category"] == "test")
+    prod_rows = [x for x in scanned_dp_rows if x["category"] == "production"]
+    test_rows = [x for x in scanned_dp_rows if x["category"] == "test"]
+
+    assert dp_inv.get("total_imported_symbol_rows") == len(scanned_dp_rows) == 191, f"Expected 191 imported-symbol rows, found {dp_inv.get('total_imported_symbol_rows')}"
+    assert dp_inv.get("total_unique_caller_files") == len(scanned_dp_files) == 22, f"Expected 22 unique caller files, found {dp_inv.get('total_unique_caller_files')}"
+    assert dp_inv.get("production_caller_files_count") == len(prod_files) == 7, f"Expected 7 production caller files, found {dp_inv.get('production_caller_files_count')}"
+    assert dp_inv.get("test_caller_files_count") == len(test_files) == 15, f"Expected 15 test caller files, found {dp_inv.get('test_caller_files_count')}"
+    assert dp_inv.get("production_imported_symbol_rows_count") == len(prod_rows) == 129, f"Expected 129 production rows, found {dp_inv.get('production_imported_symbol_rows_count')}"
+    assert dp_inv.get("test_imported_symbol_rows_count") == len(test_rows) == 62, f"Expected 62 test rows, found {dp_inv.get('test_imported_symbol_rows_count')}"
+
+    # Verify 1-to-1 exact row parity between source AST and catalog
+    scanned_dp_tuples = set((x["caller_file"], x["line_number"], x["import_module"], x["imported_symbol"], x["asname"], x["category"]) for x in scanned_dp_rows)
+    catalog_dp_tuples = set((x["caller_file"], x["line_number"], x["import_module"], x["imported_symbol"], x.get("asname"), x["category"]) for x in callers)
+    assert catalog_dp_tuples == scanned_dp_tuples, f"Mismatch in domain_ports row identities: diff {catalog_dp_tuples ^ scanned_dp_tuples}"
+
+    for row in callers:
+        caller_f = repo_root / row.get("caller_file")
+        assert caller_f.exists(), f"Domain ports caller file does not exist: {caller_f}"
 
     # 13. Verify Planning Agent Capacity, Selectors & Task Assignment
     print("13. Verifying agent capacity, authoritative capability selectors, and task assignments...")
