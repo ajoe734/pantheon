@@ -135,26 +135,19 @@ legacy internal surface必須退役，不能留作 degraded fallback。
 - official snapshot 必須經 market-calendar/freshness admission，然後自然觸發 signal→paper
   order→fill→position；驗收不可直接呼叫 signal helper。
 
-### 3.5 Safety proof
+### 3.5 Safety proof 與治理邊界
 
-- canary/live activation 只有一個 governed application service，輸入包含 MFA proof、兩個
-  distinct actor、approved plan、capital binding與 loader proof。
-- EP5 harness 呼叫同一 service 建立測試 binding，再觸發 kill/rollback；不開 internal bypass。
-- rollback 本身可以使用 runtime-owned containment authority，但測試環境建立不得跳過 forward
-  activation gate。
-- evidence ID、tenant prefix與 conflict sequence由版本化 builder產生，測試不可複製衍生值。
+- 本次為功能優先（Functional-First）之 Paper/Simulation 收斂：EP5 MFA/雙人審批治理 harness（OP-G22）與 Lineage/Sponsor 數值漂移（OP-G23）記錄為延後非功能性與測試治理觀察項，不列為本次阻塞項。
+- 運行時安全著重於 RuntimeBinding 權威物理投影校驗（OP-G17）及緊急熔斷/安全模式之 fail-closed 處置，杜絕 caller 任意注入自造 metadata。
 
-### 3.6 Delivery policy
+### 3.6 部署可靠度與發布邊界
 
-- 一份 versioned manifest 定義 promotion 必跑 checks、適用 path、required/optional 與輸出 schema。
-- 一個 canonical release orchestrator 在 exact candidate SHA 上呼叫 reusable checks，最後只輸出
-  `Pantheon release candidate gate`（名稱可在實作凍結時定案）這個 required context。
-- required check 的 fail、skip、startup failure、approval pending、missing run、wrong SHA 均為 fail。
-- branch protection 由 policy audit 驗證 required contexts、review count與admin enforcement，漂移即阻止
-  publish-promote。
-- 被 orchestrator 取代的 PR workflows、手動繞行與過期 required contexts在同一遷移完成後刪除。
-- atomic deployment採 gate-before-switch；rollback只依賴部署前 sealed local baseline，不重新借用
-  forward GitHub lease。
+- 組織級 GitHub branch-protection / organization security 管理列為延後觀察項（OP-G25），不列為本次發布阻塞項。
+- 本次部署可靠度（OP-G04 / OP-G16）聚焦於：
+  - 部署租約心跳指數退避與 60 秒寬限期，防止 GitHub API 瞬斷中斷部署。
+  - 回滾機制採用部署前 sealed local baseline，不依賴遠端 GitHub availability。
+  - 消除部署與門禁中的假綠燈：任何關鍵 step fail/skip 均使 exit code 非 0 嚴格 fail-closed。
+- atomic deployment 採 gate-before-switch；所有容器探針通過後始得更新 manifest 與切換軟連結。
 
 ### 3.7 開發工具邊界
 
@@ -170,9 +163,9 @@ manifest不得成為第二個 task writer。本方案只消費 authoritative tas
 | SA-I02 | domain/router 不 import composition root或其他 router private symbol | AST import-boundary gate |
 | SA-I03 | production UI 不可達 seed/mock/overlay | Rollup module graph + source import gate |
 | SA-I04 | 成功 command 可同 ID/version reload readback | contract + restart/integration test |
-| SA-I05 | canary/live proof走正式 MFA/two-person activation path | EP5 harness trace asserts same service/contract |
+| SA-I05 | 部署與門禁執行 fail-closed；關鍵步驟失敗即阻斷 | deployment exit-code & step gate |
 | SA-I06 | normalized route、operation ID、static shadowing皆為 0 | BFF composition test |
-| SA-I07 | required release policy結果綁 exact SHA，缺失即阻擋 | policy/branch-protection audit |
+| SA-I07 | 部署推廣與驗收結果綁定 exact candidate SHA，缺失即阻擋 | promotion/acceptance manifest audit |
 | SA-I08 | hosted manifest、FE、BFF、workers與checkpoint同屬 accepted candidate | pre/post-switch evidence validator |
 | SA-I09 | dev Source預設無 provider egress；one-shot profile有限且終止 | compose contract + hosted receipt |
 | SA-I10 | migration完成後舊路徑與專屬 fallback tests為 0 | retirement ledger gate |
@@ -192,8 +185,11 @@ manifest不得成為第二個 task writer。本方案只消費 authoritative tas
 
 ## 6. 非目標
 
-- 不開啟 real capital/live broker；本次只處理 Paper/Simulation。
+- 不開啟 real capital/live broker；本次只處理 Paper/Simulation 交易循環。
 - 不建立 mobile 專屬驗收。
-- 不重寫已合入且 source-level 已通過的 Source→Agora projection邏輯，只補 current hosted proof。
-- 不以文件任務重複開發已由 devtool package擁有的 TaskStore/supervisor修復。
+- 不展開複雜 EP5 MFA/雙人審批治理程式開發（列為延後非功能性觀察項 OP-G22）。
+- 不展開遙測 Lineage 與 Sponsor 測試數值漂移修復（列為延後測試治理待辦 OP-G23）。
+- 不展開組織級 GitHub branch-protection / organization security 管理（列為延後觀察項 OP-G25）。
+- 不重寫已合入且 source-level 已通過的 Source→Agora projection 邏輯，只補 current hosted proof。
+- 不以文件任務重複開發已由 devtool package 擁有的 TaskStore/supervisor 修復。
 - 不為了縮短行數機械拆檔；責任與依賴方向正確才是完成條件。
