@@ -16,7 +16,7 @@ import urllib.parse
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Iterable, Mapping
 
 from fastapi import HTTPException
 
@@ -137,6 +137,16 @@ def _resolve_data_dir() -> Path:
     data_dir = Path(os.getenv("SOURCE_INGEST_DATA_DIR", "/tmp/pantheon/source-ingest"))
     data_dir.mkdir(parents=True, exist_ok=True)
     return data_dir
+
+
+def _frontier_backlog_readback(frontier: Iterable[Any]) -> tuple[int, dict[str, int]]:
+    backlog_by_connector: dict[str, int] = {}
+    for item in frontier:
+        if item.status not in {"queued", "retry", "running"}:
+            continue
+        backlog_by_connector[item.connector_id] = backlog_by_connector.get(item.connector_id, 0) + 1
+    ordered = dict(sorted(backlog_by_connector.items()))
+    return sum(ordered.values()), ordered
 
 
 class SourceIngestionRuntime:
@@ -1367,7 +1377,7 @@ class SourceIngestionRuntime:
     def _default_controller_readback_payload(self) -> dict[str, Any]:
         connector_readbacks = self._controller_connector_readbacks()
         frontier = self.store.list_frontier()
-        frontier_backlog = sum(1 for item in frontier if item.status in {"queued", "retry", "running"})
+        frontier_backlog, frontier_backlog_by_connector = _frontier_backlog_readback(frontier)
         staleness_values = [
             int(item["freshness"]["staleness_seconds"])
             for item in connector_readbacks
@@ -1401,6 +1411,7 @@ class SourceIngestionRuntime:
             "unresolved_dlq_count": unresolved_dlq_count,
             "dlq_status_counts": dlq_status_counts,
             "frontier_backlog": frontier_backlog,
+            "frontier_backlog_by_connector": dict(sorted(frontier_backlog_by_connector.items())),
             "max_lag_seconds": max(staleness_values, default=0),
             "connectors": connector_readbacks,
         }

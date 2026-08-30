@@ -20,6 +20,55 @@ import common
 import runtime_state
 
 
+class TerminalQueueCompactionTests(unittest.TestCase):
+    def _record(self, event_id: str, status: str, processed_at: str) -> dict[str, object]:
+        return {
+            "intent": {"event_id": event_id, "task_id": f"task-{event_id}"},
+            "status": status,
+            "processed_at": processed_at,
+        }
+
+    def test_trim_keeps_nonterminal_and_newest_terminal_records(self) -> None:
+        state = runtime_state.default_state()
+        state["queue"]["events"] = {
+            "old": self._record("old", "completed", "2026-01-01T00:00:00Z"),
+            "failed": self._record("failed", "failed", "2026-01-02T00:00:00Z"),
+            "new": self._record("new", "completed", "2026-01-03T00:00:00Z"),
+            "queued": self._record("queued", "queued", ""),
+        }
+
+        removed = runtime_state.trim_terminal_queue_records(state, 2)
+
+        self.assertEqual(removed, 1)
+        self.assertEqual(set(state["queue"]["events"]), {"failed", "new", "queued"})
+        self.assertEqual(state["queue"]["compaction"]["total_removed"], 1)
+
+    def test_trim_preserves_worker_referenced_terminal_record(self) -> None:
+        state = runtime_state.default_state()
+        state["queue"]["events"] = {
+            "protected": self._record("protected", "completed", "2026-01-01T00:00:00Z"),
+            "new": self._record("new", "completed", "2026-01-02T00:00:00Z"),
+        }
+
+        removed = runtime_state.trim_terminal_queue_records(
+            state,
+            0,
+            protected_event_ids={"protected"},
+        )
+
+        self.assertEqual(removed, 1)
+        self.assertEqual(set(state["queue"]["events"]), {"protected"})
+
+    def test_trim_is_idempotent_when_within_limit(self) -> None:
+        state = runtime_state.default_state()
+        state["queue"]["events"] = {
+            "one": self._record("one", "completed", "2026-01-01T00:00:00Z"),
+        }
+
+        self.assertEqual(runtime_state.trim_terminal_queue_records(state, 1), 0)
+        self.assertNotIn("compaction", state["queue"])
+
+
 def _hold_runtime_lock(config: dict[str, object], connection: object) -> None:
     """Hold the real sidecar in a child until the parent asks for release."""
 

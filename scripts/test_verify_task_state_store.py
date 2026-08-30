@@ -202,3 +202,87 @@ def test_verifier_archive_audit_is_separate_from_hot_parity(
     payload = json.loads(capsys.readouterr().out)
     assert result == 0
     assert payload["archive_audit"]["ok"] is True
+
+
+def test_verifier_accepts_relocated_archive_only_when_hash_matches(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    original = tmp_path / "missing-original.jsonl"
+    relocated = tmp_path / "relocated.jsonl"
+    relocated.write_bytes(b"exact immutable archive bytes\n")
+    status = {"tasks": [{"id": "STATE-009", "status": "todo"}]}
+    status_file = tmp_path / "ai-status.json"
+    event_log = tmp_path / "events.jsonl"
+    status_file.write_text(json.dumps(status), encoding="utf-8")
+    write_archive_anchor(
+        event_log,
+        {
+            "version": ARCHIVE_ANCHOR_VERSION,
+            "type": ARCHIVE_ANCHOR_TYPE,
+            "archived_path": str(original),
+            "byte_size": relocated.stat().st_size,
+            "journal_sha256": hashlib.sha256(relocated.read_bytes()).hexdigest(),
+            "event_count": 1,
+            "last_event_id": "legacy-id",
+            "last_event_sha256": "a" * 64,
+            "state_sha256": sha256_json(status),
+            "created_at": "2026-08-11T00:00:00Z",
+        },
+    )
+    append_state_commit(event_log, status, source="migration")
+
+    result = verifier.main(
+        [
+            "--event-log", str(event_log),
+            "--status-file", str(status_file),
+            "--verify-archive",
+            "--archive-path", str(relocated),
+            "--json",
+        ]
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert result == 0
+    assert payload["archive_audit"]["archived_path"] == str(original)
+    assert payload["archive_audit"]["audited_path"] == str(relocated)
+
+
+def test_verifier_classifies_missing_historical_archive(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    missing = tmp_path / "missing-archive.jsonl"
+    status = {"tasks": [{"id": "STATE-010", "status": "todo"}]}
+    status_file = tmp_path / "ai-status.json"
+    event_log = tmp_path / "events.jsonl"
+    status_file.write_text(json.dumps(status), encoding="utf-8")
+    write_archive_anchor(
+        event_log,
+        {
+            "version": ARCHIVE_ANCHOR_VERSION,
+            "type": ARCHIVE_ANCHOR_TYPE,
+            "archived_path": str(missing),
+            "byte_size": 1,
+            "journal_sha256": hashlib.sha256(b"x").hexdigest(),
+            "event_count": 1,
+            "last_event_id": "legacy-id",
+            "last_event_sha256": "a" * 64,
+            "state_sha256": sha256_json(status),
+            "created_at": "2026-08-11T00:00:00Z",
+        },
+    )
+    append_state_commit(event_log, status, source="migration")
+
+    result = verifier.main(
+        [
+            "--event-log", str(event_log),
+            "--status-file", str(status_file),
+            "--verify-archive",
+            "--json",
+        ]
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert result == 3
+    assert payload["error_kind"] == "historical_archive_unavailable"

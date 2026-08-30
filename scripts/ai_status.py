@@ -109,6 +109,10 @@ from rewrite.task_state_store import (
     snapshot_transaction,
 )
 from rewrite import task_machine, task_state_store
+from rewrite.task_contract import (
+    validate_reassignment_against_acceptance,
+    validate_role_based_acceptance,
+)
 from common import (
     ActivityAuditInvariantError,
     CANONICAL_TASK_STATE_IDENTITY_ENV,
@@ -5590,6 +5594,10 @@ def command_assign(state: dict[str, Any], args: list[str]) -> bool | None:
                 f"Task {task_id} artifact conflict guard is immutable."
             )
     if task is None:
+        try:
+            validate_role_based_acceptance(acceptance, KNOWN_AGENTS)
+        except ValueError as exc:
+            raise SystemExit(f"Cannot assign task {task_id}: {exc}") from exc
         candidate = {
             "id": task_id,
             "artifacts": artifacts,
@@ -5700,6 +5708,14 @@ def command_assign(state: dict[str, Any], args: list[str]) -> bool | None:
                 f"Task {task_id} has active supervisor worker recovery; wait for "
                 "that receipt to materialize or reach a durable hold before reassignment."
             )
+        try:
+            validate_reassignment_against_acceptance(
+                task,
+                new_owner=owner,
+                new_reviewer=reviewer,
+            )
+        except ValueError as exc:
+            raise SystemExit(f"Cannot reassign task {task_id}: {exc}") from exc
         assignment_reason = (
             os.environ.get("TASK_ASSIGN_REASON", "").strip()
             or os.environ.get("HUMAN_OPS_REASON", "").strip()

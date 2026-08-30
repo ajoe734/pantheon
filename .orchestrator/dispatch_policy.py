@@ -228,6 +228,7 @@ def ready_dispatch_settings(config: dict[str, Any]) -> dict[str, Any]:
     if "max_concurrent_per_account" not in settings:
         settings["max_concurrent_per_account"] = dict(DEFAULT_MAX_CONCURRENT_PER_ACCOUNT)
     settings.setdefault("max_active_workers_per_task", DEFAULT_MAX_ACTIVE_WORKERS_PER_TASK)
+    settings.setdefault("terminal_queue_history_limit", 200)
     settings["execution_resource_limits"] = validate_execution_resource_limits(
         settings.get("execution_resource_limits")
     )

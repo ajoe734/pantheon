@@ -1142,6 +1142,11 @@ import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
+from services.execution.market_snapshot_admission import (
+    evaluate_taiwan_market_freshness,
+    is_taiwan_symbol,
+)
+
 
 def load(path):
     return json.loads(Path(path).read_text(encoding="utf-8"))
@@ -1267,10 +1272,11 @@ for requested_symbol in [item for item in priority_csv.split(",") if item]:
             f"for {requested_symbol}: closes={closes!r}"
         )
     event_time = timestamp(snapshot.get("event_time"))
-    age_seconds = (datetime.now(timezone.utc) - event_time).total_seconds()
-    if age_seconds < -300 or age_seconds > 86400:
+    now_dt = datetime.now(timezone.utc)
+    age_seconds = (now_dt - event_time).total_seconds()
+    if age_seconds < -300:
         raise SystemExit(
-            f"active paper snapshot is outside 24h for {requested_symbol}: "
+            f"active paper snapshot event_time is in the future for {requested_symbol}: "
             f"event_time={snapshot.get('event_time')} age_seconds={int(age_seconds)}"
         )
     lineage = snapshot.get("lineage") if isinstance(snapshot.get("lineage"), dict) else {}
@@ -1280,6 +1286,35 @@ for requested_symbol in [item for item in priority_csv.split(",") if item]:
     expected_prefix = f"tw-official:tw_price_daily:{source_venue}:"
     if connector_id not in connector_ids or not any(str(source_id).startswith(expected_prefix) for source_id in source_ids):
         raise SystemExit(f"active paper snapshot lacks official exchange lineage for {requested_symbol}")
+    if is_taiwan_symbol(canonical_symbol):
+        # Governed Taiwan (Asia/Taipei) market-session freshness rule shared
+        # with market_snapshot_admission: admits the latest official close
+        # across weekends/evidenced holidays instead of a flat 24h gate,
+        # while still fail-closing weekday staleness, a stale refresh
+        # receipt, unverifiable calendar evidence, and non-official lineage.
+        observed_at_raw = snapshot.get("observed_at")
+        refresh_dt = timestamp(observed_at_raw) if observed_at_raw else None
+        ev = snapshot.get("calendar_evidence")
+        if ev is None and isinstance(lineage, dict):
+            ev = lineage.get("calendar_evidence")
+        tw_ok, tw_reason, tw_detail = evaluate_taiwan_market_freshness(
+            event_time_dt=event_time,
+            now_dt=now_dt,
+            refresh_receipt_dt=refresh_dt,
+            lineage=lineage,
+            max_refresh_age_seconds=86400,
+            calendar_evidence=ev,
+        )
+        if not tw_ok:
+            raise SystemExit(
+                f"active paper snapshot failed Taiwan market-session freshness for "
+                f"{requested_symbol}: {tw_reason} {tw_detail}"
+            )
+    elif age_seconds > 86400:
+        raise SystemExit(
+            f"active paper snapshot is outside 24h for {requested_symbol}: "
+            f"event_time={snapshot.get('event_time')} age_seconds={int(age_seconds)}"
+        )
     print(
         "active paper snapshot accepted "
         f"execution={execution_symbol} official={canonical_symbol} "

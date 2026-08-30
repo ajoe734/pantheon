@@ -55,6 +55,15 @@ def _make_packet(packet_id: str) -> DevTaskPacket:
 def _write_fake_repo(tmp_path: Path) -> Path:
     repo_root = tmp_path / "repo"
     repo_root.mkdir()
+    shutil.copytree(
+        REPO_ROOT / ".orchestrator" / "development_bridge",
+        repo_root / ".orchestrator" / "development_bridge",
+        ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
+    )
+    shutil.copy2(
+        REPO_ROOT / ".orchestrator" / "dispatch_policy.py",
+        repo_root / ".orchestrator" / "dispatch_policy.py",
+    )
     write_materializing_ai_status(repo_root)
     return repo_root
 

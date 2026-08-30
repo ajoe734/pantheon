@@ -26,9 +26,15 @@ current disposition of its six proposals is:
 | Exact-head rejection and `waiting_for` cleanup | **COMPLETE** | Reopen uses a durable transactional outbox and clears stale delivery/review/waiting state; supervisor restart reconciliation is idempotent. |
 | Hosted probe aliasing/isolation | **OUT OF SUPERVISOR SCOPE** | Hosted verification belongs to product/delivery test suites and must not become supervisor task authority. |
 
-The only active supervisor-tooling follow-up from the 2026-08-29 code audit is
-the immutable launch boundary and its process-level recovery/integration tests.
-Do not implement Sections 3, 5, or 6 below as additive compatibility paths.
+The immutable launch boundary and its process-level recovery/integration tests
+are complete. A fresh code audit on 2026-08-29 found four narrower current
+gaps, addressed in the canonical implementation rather than by reviving any
+proposal below: bounded terminal queue cache retention; role-based acceptance
+that remains coherent under reassignment; stale missing worktree-lease cleanup
+across prior base roots; and explicit relocated historical-archive audit. The
+development-bridge and recovery suites are now included in the tooling CI
+gate. Do not implement Sections 3, 5, or 6 below as additive compatibility
+paths.
 
 ---
 

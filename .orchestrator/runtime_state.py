@@ -635,6 +635,69 @@ def queue_event_by_id(state: Mapping[str, Any], event_id: str | None) -> dict[st
     return event
 
 
+def trim_terminal_queue_records(
+    state: dict[str, Any],
+    max_entries: int,
+    *,
+    terminal_statuses: set[str] | None = None,
+    protected_event_ids: set[str] | None = None,
+) -> int:
+    """Bound completed queue history without touching launchable intents.
+
+    Queue records are runtime cache, not the durable activity audit.  Keeping
+    every terminal record makes each supervisor transaction rewrite an
+    ever-growing file.  All non-terminal records and worker-referenced records
+    are retained; only the oldest unreferenced terminal records are removed.
+    """
+
+    limit = max(0, int(max_entries))
+    statuses = {
+        str(value).strip().lower()
+        for value in (terminal_statuses or {"completed", "failed"})
+        if str(value).strip()
+    }
+    protected = {
+        str(value).strip()
+        for value in (protected_event_ids or set())
+        if str(value).strip()
+    }
+    queue = state.setdefault("queue", {})
+    records = queue.setdefault("events", {})
+    if not isinstance(records, dict):
+        return 0
+
+    terminal: list[tuple[str, str]] = []
+    for raw_event_id, raw_record in records.items():
+        event_id = str(raw_event_id or "").strip()
+        if (
+            not event_id
+            or event_id in protected
+            or not isinstance(raw_record, Mapping)
+            or str(raw_record.get("status") or "").strip().lower() not in statuses
+        ):
+            continue
+        timestamp = str(
+            raw_record.get("processed_at")
+            or raw_record.get("lease_released_at")
+            or raw_record.get("requeued_at")
+            or ""
+        )
+        terminal.append((timestamp, event_id))
+
+    remove_count = max(0, len(terminal) - limit)
+    if not remove_count:
+        return 0
+    for _, event_id in sorted(terminal)[:remove_count]:
+        records.pop(event_id, None)
+
+    compaction = queue.setdefault("compaction", {})
+    compaction["last_run_at"] = utc_now()
+    compaction["last_removed"] = remove_count
+    compaction["total_removed"] = int(compaction.get("total_removed") or 0) + remove_count
+    compaction["terminal_history_limit"] = limit
+    return remove_count
+
+
 def store_queue_event(state: dict[str, Any], event: Mapping[str, Any]) -> bool:
     """Store one immutable delivery intent with its mutable lease record.
 
