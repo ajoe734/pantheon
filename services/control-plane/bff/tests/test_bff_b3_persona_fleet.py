@@ -241,7 +241,7 @@ class _PersonaFleetTestStore:
             def get_capability_snapshot_for_persona(outer_self, pid):
                 return outer_self.outer.get_capability_snapshot_for_persona(pid)
 
-        from domain_ports.persona_training import PersonaTrainingDomainPort
+        from ports.persona_training import PersonaTrainingDomainPort
         training_port = PersonaTrainingDomainPort(persona_port=_PersonaShim())
 
         self.ports = create_in_memory_read_surface_ports(

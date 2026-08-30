@@ -25,7 +25,7 @@ class InMemoryTelemetryReadStore:
     """Narrow test double for the one method the ``/api/v1/telemetry`` handler
     calls on ``read_store``: ``list_telemetry_events_with_source``.
 
-    ``ReadSurfacePorts``/``domain_ports.lifecycle_telemetry_governance`` do
+    ``ReadSurfacePorts``/``ports.lifecycle_telemetry_governance`` do
     not replicate the legacy read-surface store's env-var-driven local-file fallback
     (real event-store file wins when non-empty; otherwise fall back to a
     projection of the summary store, with a distinct ``source``/``status``/

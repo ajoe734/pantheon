@@ -26,7 +26,7 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 import main as bff_main
-from domain_ports.persona_capital_runtime import PersonaFleetPort, PersonaCapitalRuntimeDomainPort
+from ports.persona_capital_runtime import PersonaFleetPort, PersonaCapitalRuntimeDomainPort
 from persona_provisioning import MemoryPersonaProvisioningStore, MemoryProvisioningBackend
 from ports import create_in_memory_read_surface_ports, create_read_surface_ports, ReadSurfacePorts
 from test_persona_provisioning_coordinator import FakeOwnerTransport, _schedule_receipt

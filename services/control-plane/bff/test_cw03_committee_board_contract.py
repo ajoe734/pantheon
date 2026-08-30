@@ -17,7 +17,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 
 import main as bff_main
 from command_queue import CommandStore
-from domain_ports.operations_consultation import DomainConsultationPort, _model_to_data
+from ports.operations_consultation import DomainConsultationPort, _model_to_data
 from services.consultation.models import (
     ActorRef,
     ConsultAuditEvent,
