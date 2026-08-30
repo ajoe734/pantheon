@@ -305,7 +305,7 @@ def validate_catalog(catalog_path: str, main_py_path: str) -> None:
     print("13. Verifying agent capacity, authoritative capability selectors, and task assignments...")
     cap = c.get("planning_agent_capacity", {})
     assert cap.get("dynamic_derived") is True, "Capacity must be dynamically derived"
-    assert cap.get("command_runtime_sha") == "609937297bc7e0f48ff7a522de230de1301c15ae", "Stale command runtime SHA"
+    assert cap.get("command_runtime_sha") == "2bcb4465399af83190c5027073f3b2296e377256", "Stale command runtime SHA"
     for t in tasks:
         assert t["owner"] != t["reviewer"], f"Owner equals reviewer in {t['id']}"
         assert cap["agent_eligibility"][t["owner"]]["eligible"], f"Owner {t['owner']} not eligible"
@@ -317,6 +317,7 @@ def validate_catalog(catalog_path: str, main_py_path: str) -> None:
     print("14. Verifying planning baseline provenance...")
     pb = c.get("planning_baseline", {})
     assert pb.get("pantheon") == "2bcb4465399af83190c5027073f3b2296e377256", "Stale pantheon baseline"
+    assert pb.get("command_runtime_sha") == "2bcb4465399af83190c5027073f3b2296e377256", "Stale command runtime SHA in planning_baseline"
     assert pb.get("execute_plans") == "7d30e78476be61222af63a089e7ab141aa43b809", "Stale execute-plans baseline"
     assert pb.get("hosted_pair_id") == "3b4c1f0b5a21245c63623583755785c5b9d81288025e6dd2eb33ccc82ccde742", "Stale hosted pair ID"
     assert pb.get("hosted_backend") == "92077907540d4554e9b8a1d12e2528505b2d1ebe", "Stale hosted backend"
@@ -335,6 +336,10 @@ def validate_catalog(catalog_path: str, main_py_path: str) -> None:
     mat_map = c.get("materialization_contract", {}).get("signed_dev_task_packet_materialization_mapping", {})
     assert mat_map.get("max_tasks_per_packet") == 16, "DevTaskPacket limit must be <= 16"
     assert mat_map.get("total_batches") == 4 and mat_map.get("total_tasks") == 30, "DevTaskPacket batch/task count invalid"
+
+    drrp = mat_map.get("durable_receipt_and_readback_protocol", {})
+    readback_cmd = drrp.get("authoritative_readback_command", "")
+    assert "2bcb4465399af83190c5027073f3b2296e377256" in readback_cmd, f"authoritative_readback_command must contain 2bcb4465399af83190c5027073f3b2296e377256, got: {readback_cmd}"
 
     batches_summary = mat_map.get("batches_summary", [])
     assert len(batches_summary) == 4, "batches_summary must have 4 batches"
