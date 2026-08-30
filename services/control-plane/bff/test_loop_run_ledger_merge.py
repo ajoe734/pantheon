@@ -12,7 +12,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from domain_ports.lifecycle_telemetry_governance import DomainLifecyclePort
+from ports.lifecycle_telemetry_governance import DomainLifecyclePort
 
 
 class _LoopLedgerFixturePort(DomainLifecyclePort):

@@ -18,7 +18,7 @@ import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
-from domain_ports.lifecycle_telemetry_governance import (
+from ports.lifecycle_telemetry_governance import (
     IncidentReaderPort,
     LifecycleReaderPort,
     GovernanceReaderPort,
