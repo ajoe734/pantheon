@@ -87,10 +87,11 @@ def receipt_id(payload: dict[str, object]) -> str:
 
 
 def bff_error_code(payload: dict[str, object]) -> str:
-    detail = payload.get("detail")
-    assert isinstance(detail, dict)
-    error = detail.get("error")
-    assert isinstance(error, dict)
+    # Structured BFF error responses put the envelope at the top level
+    # ({"error": {"code": ...}, "meta": ..., "foundation_error": ...}), not
+    # wrapped in FastAPI's default {"detail": ...}.
+    error = payload.get("error")
+    assert isinstance(error, dict), payload
     return str(error.get("code") or "")
 
 
@@ -122,7 +123,18 @@ def test_idempotency_key_replays_same_response_across_replicas() -> None:
 
             assert first.status_code == 202, first.text
             assert replay.status_code == 202, replay.text
-            assert replay.json() == first.json()
+            # The two responses are the same *stored result* replayed across
+            # replicas, but meta.idempotency.replayed correctly differs: the
+            # first call is a new command (replayed=False), the second is a
+            # cache hit on the same key from a different replica (replayed=True).
+            # A blanket equality check would wrongly require them identical.
+            first_body = first.json()
+            replay_body = replay.json()
+            assert first_body["meta"]["idempotency"]["replayed"] is False
+            assert replay_body["meta"]["idempotency"]["replayed"] is True
+            first_body["meta"]["idempotency"]["replayed"] = None
+            replay_body["meta"]["idempotency"]["replayed"] = None
+            assert replay_body == first_body
             first_receipt = receipt_id(first.json())
             assert first_receipt
 

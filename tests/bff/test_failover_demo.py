@@ -97,10 +97,11 @@ def receipt_id(payload: dict[str, object]) -> str:
 
 
 def bff_error_code(payload: dict[str, object]) -> str:
-    detail = payload.get("detail")
-    assert isinstance(detail, dict)
-    error = detail.get("error")
-    assert isinstance(error, dict)
+    # Structured BFF error responses put the envelope at the top level
+    # ({"error": {"code": ...}, "meta": ..., "foundation_error": ...}), not
+    # wrapped in FastAPI's default {"detail": ...}.
+    error = payload.get("error")
+    assert isinstance(error, dict), payload
     return str(error.get("code") or "")
 
 

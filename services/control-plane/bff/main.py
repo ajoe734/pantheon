@@ -68297,6 +68297,11 @@ _agora_router = _create_agora_router(
     require_write_role=_require_operator_role,
     bff_error=_bff_error,
     utc_now=utc_now,
+    # Passed explicitly (rather than resolved via a bare `import main` inside
+    # create_identity_router) so the identity router always reads this exact
+    # loaded instance of main.py, not whatever module last claimed the bare
+    # "main" name in sys.modules — see create_identity_router's main_module arg.
+    main_module=sys.modules[__name__],
     get_read_store=lambda: read_store,
     get_persona_write_owner=lambda: persona_write_owner,
     get_trade_journey_store=lambda: _trade_journeys.EVENT_STORE,
