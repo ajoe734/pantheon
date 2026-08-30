@@ -17,8 +17,18 @@ sys.path.insert(0, str(BFF_DIR))
 import main as bff_main  # noqa: E402
 
 
+def _iter_routes(routes):
+    for r in routes:
+        if hasattr(r, "original_router"):
+            yield from _iter_routes(r.original_router.routes)
+        elif hasattr(r, "routes"):
+            yield from _iter_routes(r.routes)
+        else:
+            yield r
+
+
 def _first_matching_endpoint(path: str):
-    for route in bff_main.app.routes:
+    for route in _iter_routes(bff_main.app.routes):
         regex = getattr(route, "path_regex", None)
         if regex is not None and regex.match(path):
             return route
