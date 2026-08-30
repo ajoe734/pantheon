@@ -1971,7 +1971,8 @@ class TestPaperFleetStaleSessionAdmissionAndResume(unittest.TestCase):
         now = datetime.now(timezone.utc)
         old_time = (now - timedelta(seconds=50000)).isoformat().replace("+00:00", "Z")
 
-        # Future snapshot (>300s)
+        # Any future snapshot is rejected; use a large offset here and cover
+        # the one-second boundary in the shared admission tests.
         future_snap = {
             "snapshot_id": "snap-future-001",
             "symbol": "AAPL.US",
@@ -2207,6 +2208,81 @@ class TestPaperFleetTaiwanSessionFreshness(unittest.TestCase):
             "closes": [950.0, 955.0],
         }
 
+    @staticmethod
+    def _twse_lny_calendar_evidence() -> Dict[str, Any]:
+        return {
+            "market": "TW",
+            "venue": "TWSE",
+            "timezone": "Asia/Taipei",
+            "authority": "Taiwan Stock Exchange 115 年市場開休市日期",
+            "source_url": "https://www.twse.com.tw/holidaySchedule/holidaySchedule?response=json&queryYear=115",
+            "fetched_at": "2026-02-23T05:00:00Z",
+            "version": "twse-2026-lny-v1",
+            "checksum": "55b2e23b9bd30af666a99c98da2dbbfad568dcd655631b1c6347d12ee8381596",
+            "coverage_start": "2026-02-11",
+            "coverage_end": "2026-02-23",
+            "holidays": {
+                "2026-02-12": {"name": "市場無交易，僅辦理結算交割作業"},
+                "2026-02-13": {"name": "市場無交易，僅辦理結算交割作業"},
+                "2026-02-16": {"name": "農曆除夕及春節"},
+                "2026-02-17": {"name": "農曆除夕及春節"},
+                "2026-02-18": {"name": "農曆除夕及春節"},
+                "2026-02-19": {"name": "農曆除夕及春節"},
+                "2026-02-20": {"name": "農曆除夕及春節"},
+            },
+            "trading_days": ["2026-02-11", "2026-02-23"],
+        }
+
+    @classmethod
+    def _tw_source_projection_holiday_snapshot(cls) -> Dict[str, Any]:
+        """Build the public Source snapshot from the real official adapter."""
+        from services.source_ingestion.connectors.taiwan_official import (
+            TaiwanOfficialMarketDatasetAdapter,
+        )
+        from services.source_ingestion.requirement_state import LatestMarketSnapshotStore
+
+        records = TaiwanOfficialMarketDatasetAdapter(max_records=10).records_from_payload(
+            "tw_price_daily",
+            "TWSE",
+            [
+                {"Date": "1150210", "Code": "2330", "ClosingPrice": "950.00"},
+                {"Date": "1150211", "Code": "2330", "ClosingPrice": "955.00"},
+            ],
+            trace_id="trace-fleet-governed-calendar",
+        )
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            snapshot_store = LatestMarketSnapshotStore(Path(tmp_dir) / "snapshots.jsonl")
+            snapshot_store.append_normalized_records(
+                records,
+                ingest_run_id="ingest-twse-lny-calendar",
+                observed_at="2026-02-23T02:00:00Z",
+            )
+            return snapshot_store.get("2330.TWSE").to_public_dict()
+
+    @patch(
+        "services.paper_fleet_reconciler.paper_fleet_reconciler._iso_now",
+        return_value="2026-02-23T03:00:00Z",
+    )
+    def test_tw_source_projection_holiday_snapshot_retains_active_worker(self, _mock_now) -> None:
+        snap = self._tw_source_projection_holiday_snapshot()
+        binding = _make_binding(
+            "b-tw-source-projection-holiday",
+            symbol="2330.TWSE",
+            market_data_policy={
+                "owner": "source-ingest",
+                "contract": "latest_stored_normalized",
+                "max_age_seconds": 86400,
+                "minimum_closes": 2,
+            },
+            market_input=snap,
+        )
+        _store, reconciler = self._make_store_and_recon([binding], source_snapshot=snap)
+
+        result = reconciler.reconcile_once()
+        self.assertEqual(result["worker_count"], 1)
+        self.assertEqual(result["running_count"], 1)
+        self.assertEqual(self.transitions, [])
+
     @patch(
         "services.paper_fleet_reconciler.paper_fleet_reconciler._iso_now",
         return_value="2026-08-29T12:00:00Z",
@@ -2228,10 +2304,61 @@ class TestPaperFleetTaiwanSessionFreshness(unittest.TestCase):
 
     @patch(
         "services.paper_fleet_reconciler.paper_fleet_reconciler._iso_now",
+        return_value="2026-08-31T01:00:00Z",
+    )
+    def test_tw_same_day_close_paused_before_own_session_completes(self, _mock_now) -> None:
+        snap = self._tw_snapshot("2026-08-31T00:00:00Z", "2026-08-31T01:00:00Z")
+        binding = _make_binding(
+            "b-tw-pre-close",
+            symbol="2330.TWSE",
+            market_data_policy={
+                "owner": "source-ingest",
+                "contract": "latest_stored_normalized",
+                "max_age_seconds": 86400,
+                "minimum_closes": 2,
+            },
+            market_input=snap,
+        )
+        store, reconciler = self._make_store_and_recon([binding], source_snapshot=snap)
+
+        result = reconciler.reconcile_once()
+        self.assertEqual(result["worker_count"], 0)
+        self.assertEqual(self.transitions[-1]["new_status"], "paused")
+        admission = store.get("b-tw-pre-close").metadata["session_admission"]
+        self.assertEqual(admission["reason_code"], "market_input_invalid")
+
+    @patch(
+        "services.paper_fleet_reconciler.paper_fleet_reconciler._iso_now",
         return_value="2026-08-31T06:00:00Z",
     )
-    def test_tw_friday_close_paused_once_monday_session_closes(self, _mock_now) -> None:
-        snap = self._tw_snapshot("2026-08-28T05:30:00Z", "2026-08-31T05:45:00Z")
+    def test_tw_same_day_close_paused_for_premature_refresh_receipt(self, _mock_now) -> None:
+        snap = self._tw_snapshot("2026-08-31T00:00:00Z", "2026-08-31T01:00:00Z")
+        binding = _make_binding(
+            "b-tw-premature-receipt",
+            symbol="2330.TWSE",
+            market_data_policy={
+                "owner": "source-ingest",
+                "contract": "latest_stored_normalized",
+                "max_age_seconds": 86400,
+                "minimum_closes": 2,
+            },
+            market_input=snap,
+        )
+        store, reconciler = self._make_store_and_recon([binding], source_snapshot=snap)
+
+        result = reconciler.reconcile_once()
+        self.assertEqual(result["worker_count"], 0)
+        self.assertEqual(self.transitions[-1]["new_status"], "paused")
+        admission = store.get("b-tw-premature-receipt").metadata["session_admission"]
+        self.assertEqual(admission["reason_code"], "market_input_invalid")
+
+    @patch(
+        "services.paper_fleet_reconciler.paper_fleet_reconciler._iso_now",
+        return_value="2026-02-23T06:00:00Z",
+    )
+    def test_tw_prior_close_paused_once_reopening_session_closes(self, _mock_now) -> None:
+        snap = self._tw_snapshot("2026-02-11T05:30:00Z", "2026-02-23T05:45:00Z")
+        snap["calendar_evidence"] = self._twse_lny_calendar_evidence()
         b = _make_binding(
             "b-tw-monday-stale-001",
             symbol="2330.TWSE",
@@ -2248,10 +2375,30 @@ class TestPaperFleetTaiwanSessionFreshness(unittest.TestCase):
         adm = saved.metadata.get("session_admission")
         self.assertEqual(adm["reason_code"], "market_input_stale")
 
+    @patch(
+        "services.paper_fleet_reconciler.paper_fleet_reconciler._iso_now",
+        return_value="2026-08-31T06:00:00Z",
+    )
+    def test_tw_friday_close_paused_without_calendar_evidence(self, _mock_now) -> None:
+        snap = self._tw_snapshot("2026-08-28T05:30:00Z", "2026-08-31T05:45:00Z")
+        b = _make_binding(
+            "b-tw-monday-unverifiable-001",
+            symbol="2330.TWSE",
+            market_data_policy={"owner": "source-ingest", "contract": "latest_stored_normalized", "max_age_seconds": 86400, "minimum_closes": 2},
+            market_input=snap,
+        )
+        store, recon = self._make_store_and_recon([b], source_snapshot=snap)
+
+        result = recon.reconcile_once()
+        self.assertEqual(result["worker_count"], 0)
+        self.assertEqual(len(self.transitions), 2)
+        self.assertEqual(self.transitions[1]["new_status"], "paused")
+        saved = store.get("b-tw-monday-unverifiable-001")
+        adm = saved.metadata.get("session_admission")
+        self.assertEqual(adm["reason_code"], "market_input_calendar_unverifiable")
 
 
 if __name__ == "__main__":
     import sys
     sys.path.insert(0, str(Path(__file__).parent))
     unittest.main()
-

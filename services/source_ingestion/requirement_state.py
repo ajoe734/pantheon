@@ -359,7 +359,7 @@ RequirementStateStore = RequirementSnapshotStore
 MARKET_SNAPSHOT_SCHEMA_VERSION = "source_ingest_latest_market_snapshot.v1"
 MARKET_SNAPSHOT_BATCH_SCHEMA_VERSION = "source_ingest_latest_market_snapshot_batch.v1"
 MARKET_SNAPSHOT_CHECKSUM_ALGORITHM = "sha256"
-_MARKET_SNAPSHOT_STATE_FIELDS = frozenset(
+_MARKET_SNAPSHOT_STATE_REQUIRED_FIELDS = frozenset(
     {
         "schema_version",
         "snapshot_id",
@@ -371,6 +371,7 @@ _MARKET_SNAPSHOT_STATE_FIELDS = frozenset(
         "points",
     }
 )
+_MARKET_SNAPSHOT_STATE_OPTIONAL_FIELDS = frozenset({"calendar_evidence"})
 _MARKET_SNAPSHOT_ENVELOPE_FIELDS = frozenset(
     {"state", "checksum_algorithm", "checksum"}
 )
@@ -429,6 +430,31 @@ def _market_snapshot_close(value: Any) -> float:
     if not math.isfinite(close) or close <= 0:
         raise MarketSnapshotStateError("close must be a positive finite number")
     return close
+
+
+def _market_snapshot_calendar_evidence(value: Any) -> dict[str, Any] | None:
+    """Return a canonical JSON-object copy of optional source calendar proof.
+
+    Calendar evidence is Source-owned snapshot metadata.  It remains opaque to
+    this storage layer because session trust pins are enforced by the shared
+    execution admission rule, but a non-object or non-JSON value cannot enter
+    the checksummed source projection.  A fresh source snapshot without this
+    field is intentionally valid and will fail closed at a consumer whenever a
+    completed weekday gap requires governed evidence.
+    """
+    if value is None:
+        return None
+    if not isinstance(value, Mapping):
+        raise MarketSnapshotStateError("calendar_evidence must be a JSON object when present")
+    try:
+        canonical = json.loads(_canonical_json(dict(value)))
+    except (TypeError, ValueError) as exc:
+        raise MarketSnapshotStateError(
+            f"calendar_evidence must be canonical JSON: {exc}"
+        ) from exc
+    if not isinstance(canonical, dict):  # Defensive: json object input must remain an object.
+        raise MarketSnapshotStateError("calendar_evidence must be a JSON object when present")
+    return canonical
 
 
 @dataclass(frozen=True)
@@ -505,6 +531,7 @@ class LatestMarketSnapshot:
     points: tuple[MarketSnapshotPoint, ...]
     observed_at: str
     schema_version: str = MARKET_SNAPSHOT_SCHEMA_VERSION
+    calendar_evidence: Mapping[str, Any] | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "symbol", _market_snapshot_symbol(self.symbol))
@@ -527,6 +554,11 @@ class LatestMarketSnapshot:
         )
         if self.schema_version != MARKET_SNAPSHOT_SCHEMA_VERSION:
             raise MarketSnapshotStateError("unsupported market snapshot schema")
+        object.__setattr__(
+            self,
+            "calendar_evidence",
+            _market_snapshot_calendar_evidence(self.calendar_evidence),
+        )
 
     @property
     def event_time(self) -> str:
@@ -555,10 +587,12 @@ class LatestMarketSnapshot:
             "lineage": self.lineage,
             "points": [point.to_dict() for point in self.points],
         }
+        if self.calendar_evidence is not None:
+            canonical["calendar_evidence"] = self.calendar_evidence
         return f"mss-{sha256(_canonical_json(canonical).encode('utf-8')).hexdigest()[:24]}"
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        state = {
             "schema_version": self.schema_version,
             "snapshot_id": self.snapshot_id,
             "symbol": self.symbol,
@@ -568,6 +602,9 @@ class LatestMarketSnapshot:
             "lineage": self.lineage,
             "points": [point.to_dict() for point in self.points],
         }
+        if self.calendar_evidence is not None:
+            state["calendar_evidence"] = _market_snapshot_calendar_evidence(self.calendar_evidence)
+        return state
 
     def to_public_dict(self, *, requested_symbol: Any | None = None) -> dict[str, Any]:
         public_symbol = self.symbol
@@ -578,7 +615,7 @@ class LatestMarketSnapshot:
                     f"requested symbol {public_symbol!r} does not resolve to "
                     f"stored snapshot symbol {self.symbol!r}"
                 )
-        return {
+        public = {
             "schema_version": self.schema_version,
             "snapshot_id": self.snapshot_id,
             "symbol": public_symbol,
@@ -588,10 +625,19 @@ class LatestMarketSnapshot:
             "lineage": self.lineage,
             "source_ref": f"source-ingest://snapshots/{self.snapshot_id}",
         }
+        if self.calendar_evidence is not None:
+            public["calendar_evidence"] = _market_snapshot_calendar_evidence(self.calendar_evidence)
+        return public
 
     @classmethod
     def from_dict(cls, value: Any) -> "LatestMarketSnapshot":
-        if not isinstance(value, Mapping) or set(value) != _MARKET_SNAPSHOT_STATE_FIELDS:
+        if (
+            not isinstance(value, Mapping)
+            or not _MARKET_SNAPSHOT_STATE_REQUIRED_FIELDS.issubset(value)
+            or not set(value).issubset(
+                _MARKET_SNAPSHOT_STATE_REQUIRED_FIELDS | _MARKET_SNAPSHOT_STATE_OPTIONAL_FIELDS
+            )
+        ):
             raise MarketSnapshotStateError("market snapshot state schema is invalid")
         if value.get("schema_version") != MARKET_SNAPSHOT_SCHEMA_VERSION:
             raise MarketSnapshotStateError("unsupported market snapshot schema")
@@ -602,6 +648,7 @@ class LatestMarketSnapshot:
             symbol=value.get("symbol"),
             points=tuple(MarketSnapshotPoint.from_dict(point) for point in points_value),
             observed_at=value.get("observed_at"),
+            calendar_evidence=value.get("calendar_evidence"),
         )
         if value.get("event_time") != snapshot.event_time:
             raise MarketSnapshotStateError("market snapshot event_time does not match points")
@@ -695,7 +742,11 @@ class LatestMarketSnapshotStore:
             return self._latest_by_symbol.get(_market_snapshot_lookup_symbol(symbol))
 
     @staticmethod
-    def _point_from_record(record: Any, *, ingest_run_id: str) -> tuple[str, MarketSnapshotPoint] | None:
+    def _point_from_record(
+        record: Any,
+        *,
+        ingest_run_id: str,
+    ) -> tuple[str, MarketSnapshotPoint, dict[str, Any] | None] | None:
         metadata = getattr(record, "metadata", None)
         if not isinstance(metadata, Mapping):
             return None
@@ -723,9 +774,18 @@ class LatestMarketSnapshotStore:
                 content_ref=getattr(record, "content_ref", None),
                 ingest_run_id=ingest_run_id,
             )
+            # Prefer the normalized market row because it is the exact
+            # source-selected record.  The metadata fallback preserves the
+            # contract for connectors that place shared calendar proof beside
+            # their normalized row.
+            calendar_evidence = _market_snapshot_calendar_evidence(
+                row.get("calendar_evidence")
+                if row.get("calendar_evidence") is not None
+                else metadata.get("calendar_evidence")
+            )
         except MarketSnapshotStateError:
             return None
-        return normalized_symbol, point
+        return normalized_symbol, point, calendar_evidence
 
     def append_normalized_records(
         self,
@@ -741,7 +801,7 @@ class LatestMarketSnapshotStore:
             observed_at or datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
             field_name="observed_at",
         )
-        grouped: dict[str, list[MarketSnapshotPoint]] = {}
+        grouped: dict[str, list[tuple[MarketSnapshotPoint, dict[str, Any] | None]]] = {}
         accepted_record_count = 0
         for record in records:
             if bool(getattr(record, "is_rejected", False)):
@@ -749,8 +809,8 @@ class LatestMarketSnapshotStore:
             candidate = self._point_from_record(record, ingest_run_id=run_id)
             if candidate is None:
                 continue
-            symbol, point = candidate
-            grouped.setdefault(symbol, []).append(point)
+            symbol, point, calendar_evidence = candidate
+            grouped.setdefault(symbol, []).append((point, calendar_evidence))
             accepted_record_count += 1
 
         if not grouped:
@@ -775,28 +835,36 @@ class LatestMarketSnapshotStore:
                         for symbol in sorted(grouped):
                             prior = current.get(symbol)
                             points_by_event_time = {
-                                point.event_time: point
+                                point.event_time: (point, prior.calendar_evidence)
                                 for point in (prior.points if prior is not None else ())
                             }
-                            for point in grouped[symbol]:
+                            for point, calendar_evidence in grouped[symbol]:
                                 # A newer normalized record for an already-seen
                                 # trading day replaces that day's lineage. This
                                 # keeps closes chronologically distinct while
                                 # retaining the exact official record selected
                                 # by the latest successful ingest run.
-                                points_by_event_time[point.event_time] = point
-                            points = tuple(
+                                points_by_event_time[point.event_time] = (point, calendar_evidence)
+                            points_with_evidence = tuple(
                                 sorted(
                                     points_by_event_time.values(),
-                                    key=lambda point: point.key,
+                                    key=lambda item: item[0].key,
                                 )[-self.max_closes :]
                             )
+                            points = tuple(point for point, _evidence in points_with_evidence)
+                            calendar_evidence = points_with_evidence[-1][1]
                             candidate = LatestMarketSnapshot(
                                 symbol=symbol,
                                 points=points,
                                 observed_at=observed,
+                                calendar_evidence=calendar_evidence,
                             )
-                            if prior is not None and prior.points == candidate.points:
+                            if (
+                                prior is not None
+                                and prior.points == candidate.points
+                                and prior.calendar_evidence == candidate.calendar_evidence
+                                and prior.observed_at == candidate.observed_at
+                            ):
                                 continue
                             state = candidate.to_dict()
                             envelope = {

@@ -1274,10 +1274,10 @@ for requested_symbol in [item for item in priority_csv.split(",") if item]:
     event_time = timestamp(snapshot.get("event_time"))
     now_dt = datetime.now(timezone.utc)
     age_seconds = (now_dt - event_time).total_seconds()
-    if age_seconds < -300:
+    if age_seconds < 0:
         raise SystemExit(
             f"active paper snapshot event_time is in the future for {requested_symbol}: "
-            f"event_time={snapshot.get('event_time')} age_seconds={int(age_seconds)}"
+            f"event_time={snapshot.get('event_time')} age_seconds={age_seconds:.6f}"
         )
     lineage = snapshot.get("lineage") if isinstance(snapshot.get("lineage"), dict) else {}
     connector_ids = lineage.get("connector_ids") if isinstance(lineage.get("connector_ids"), list) else []

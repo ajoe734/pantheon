@@ -60,6 +60,38 @@ TAIFEX_OPENAPI_BASE_URL = "https://openapi.taifex.com.tw/v1"
 TW_OFFICIAL_MIN_CLOSES_PER_ACTIVE_SYMBOL = 2
 TW_OFFICIAL_HISTORY_MAX_MONTHS = 2
 
+# Source-owned, immutable market-session evidence catalog.  The price adapter
+# binds this evidence only to TWSE records whose trade date is inside the exact
+# governed coverage window; it never infers trading status for an unlisted day
+# or silently treats a year-wide range as open.  The consumer-side trust root
+# independently pins the same canonical payload digest in
+# services.execution.market_snapshot_admission.
+TWSE_2026_LNY_CALENDAR_VERSION = "twse-2026-lny-v1"
+TWSE_2026_LNY_CALENDAR_SHA256 = (
+    "55b2e23b9bd30af666a99c98da2dbbfad568dcd655631b1c6347d12ee8381596"
+)
+TWSE_2026_LNY_CALENDAR_FETCHED_AT = "2026-02-23T01:00:00Z"
+_TWSE_2026_LNY_CALENDAR_PAYLOAD: Mapping[str, Any] = {
+    "authority": "Taiwan Stock Exchange 115 年市場開休市日期",
+    "coverage_end": "2026-02-23",
+    "coverage_start": "2026-02-11",
+    "holidays": {
+        "2026-02-12": {"name": "市場無交易，僅辦理結算交割作業"},
+        "2026-02-13": {"name": "市場無交易，僅辦理結算交割作業"},
+        "2026-02-16": {"name": "農曆除夕及春節"},
+        "2026-02-17": {"name": "農曆除夕及春節"},
+        "2026-02-18": {"name": "農曆除夕及春節"},
+        "2026-02-19": {"name": "農曆除夕及春節"},
+        "2026-02-20": {"name": "農曆除夕及春節"},
+    },
+    "market": "TW",
+    "source_url": "https://www.twse.com.tw/holidaySchedule/holidaySchedule?response=json&queryYear=115",
+    "timezone": "Asia/Taipei",
+    "trading_days": ["2026-02-11", "2026-02-23"],
+    "venue": "TWSE",
+    "version": TWSE_2026_LNY_CALENDAR_VERSION,
+}
+
 _DATASET_SCHEMA_HASHES = {
     "tw_price_daily": TW_PRICE_DAILY_SCHEMA_HASH,
     "tw_institutional_flow": TW_INSTITUTIONAL_FLOW_SCHEMA_HASH,
@@ -296,6 +328,58 @@ def _utc_now() -> str:
 def _stable_hash(payload: Mapping[str, Any]) -> str:
     body = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return hashlib.sha256(body).hexdigest()[:16]
+
+
+def governed_taiwan_calendar_evidence(
+    *,
+    venue: str,
+    trade_date: str,
+) -> dict[str, Any] | None:
+    """Return exact governed Source evidence for one official price record.
+
+    A missing catalog entry is represented by ``None`` so downstream admission
+    remains fail-closed whenever a completed weekday requires evidence.  This
+    writer is deliberately venue/date bounded: TWSE proof is never relabelled
+    as TPEx proof, and coverage alone never manufactures a session record.
+    """
+
+    canonical_venue = _canonical_venue(venue)
+    normalized_trade_date = _roc_date_to_iso(trade_date)
+    if canonical_venue != "TWSE" or not normalized_trade_date:
+        return None
+    if not (
+        _TWSE_2026_LNY_CALENDAR_PAYLOAD["coverage_start"]
+        <= normalized_trade_date
+        <= _TWSE_2026_LNY_CALENDAR_PAYLOAD["coverage_end"]
+    ):
+        return None
+
+    canonical_payload = json.loads(
+        json.dumps(
+            _TWSE_2026_LNY_CALENDAR_PAYLOAD,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+    )
+    digest = hashlib.sha256(
+        json.dumps(
+            canonical_payload,
+            allow_nan=False,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    if digest != TWSE_2026_LNY_CALENDAR_SHA256:
+        raise SourceEvidenceError(
+            "governed TWSE calendar payload digest does not match its exact version pin"
+        )
+    return {
+        **canonical_payload,
+        "fetched_at": TWSE_2026_LNY_CALENDAR_FETCHED_AT,
+        "checksum": digest,
+    }
 
 
 def _text(value: Any, default: str = "") -> str:
@@ -572,6 +656,17 @@ class TaiwanOfficialMarketDatasetAdapter(SourceConnectorProvider):
                     "minimum_distinct_closes": TW_OFFICIAL_MIN_CLOSES_PER_ACTIVE_SYMBOL,
                     "max_months_per_symbol": TW_OFFICIAL_HISTORY_MAX_MONTHS,
                 },
+                "governed_calendar_evidence": [
+                    {
+                        "venue": "TWSE",
+                        "year": 2026,
+                        "coverage_start": _TWSE_2026_LNY_CALENDAR_PAYLOAD["coverage_start"],
+                        "coverage_end": _TWSE_2026_LNY_CALENDAR_PAYLOAD["coverage_end"],
+                        "version": TWSE_2026_LNY_CALENDAR_VERSION,
+                        "sha256": TWSE_2026_LNY_CALENDAR_SHA256,
+                        "source_url": _TWSE_2026_LNY_CALENDAR_PAYLOAD["source_url"],
+                    }
+                ],
                 "tier_policy": {
                     "core_universe": ["tw_price_daily", "tw_institutional_flow", "tw_margin_short_balance", "tw_securities_lending", "tw_day_trading"],
                     "candidate_universe": ["tw_price_daily", "tw_institutional_flow", "tw_margin_short_balance", "tw_securities_lending", "tw_day_trading"],
@@ -897,9 +992,18 @@ class TaiwanOfficialMarketDatasetAdapter(SourceConnectorProvider):
         endpoint = dict(_endpoint_for(dataset, venue))
         records: list[SourceRecord] = []
         for row in normalized_rows[: self.max_records]:
-            row_hash = _stable_hash({"dataset": dataset, "venue": row["venue"], "row": row})
-            symbol = _text(row.get("symbol"), "market")
-            as_of_date = _text(row.get("date"), row_hash)
+            normalized_row = dict(row)
+            calendar_evidence = None
+            if dataset == "tw_price_daily":
+                calendar_evidence = governed_taiwan_calendar_evidence(
+                    venue=str(row["venue"]),
+                    trade_date=str(row.get("date") or ""),
+                )
+            row_hash = _stable_hash(
+                {"dataset": dataset, "venue": normalized_row["venue"], "row": normalized_row}
+            )
+            symbol = _text(normalized_row.get("symbol"), "market")
+            as_of_date = _text(normalized_row.get("date"), row_hash)
             content_ref = f"tw-official://{dataset}/{row['venue']}/{symbol}/{as_of_date}/{row_hash}"
             records.append(
                 SourceRecord(
@@ -923,14 +1027,19 @@ class TaiwanOfficialMarketDatasetAdapter(SourceConnectorProvider):
                         "cadence": endpoint.get("cadence"),
                         "tier_scope": list(endpoint.get("tier_scope") or []),
                         "universe_tier": tier,
-                        "normalized_row": dict(row),
-                        "raw_row": dict(row.get("raw_row") or {}),
+                        "normalized_row": normalized_row,
+                        **(
+                            {"calendar_evidence": calendar_evidence}
+                            if calendar_evidence is not None
+                            else {}
+                        ),
+                        "raw_row": dict(normalized_row.get("raw_row") or {}),
                         **(
                             {"history_window": row["history_window"]}
                             if row.get("history_window")
                             else {}
                         ),
-                        "body": json.dumps(dict(row), ensure_ascii=False, sort_keys=True),
+                        "body": json.dumps(normalized_row, ensure_ascii=False, sort_keys=True),
                         "access_scope": ["public", "research"],
                         "license_scope": "official_reference",
                         "schema_hash": _DATASET_SCHEMA_HASHES[dataset],
