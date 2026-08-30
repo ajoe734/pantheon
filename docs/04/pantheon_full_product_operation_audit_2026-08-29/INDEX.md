@@ -5,13 +5,13 @@
 This document package provides the complete, root-cause System Architecture (SA), System Design (SD), and parallel Execution Task Catalog for remediating all 20 identified product operation gaps (**OP-G01** through **OP-G20**) across the **Pantheon** control plane and **execute-plans** desktop frontend repositories.
 
 #### Baseline Provenance
-- **Pantheon Baseline Commit**: `4f0994be548f56da627740f5b7fb193844c1faed` (`origin/dev`)
-- **Governed Command Runtime SHA**: `f12e300f4eb2cf38b34c3432658dc8041570d130` (promoted command runtime post PR #5440)
-- **Accepted Hosted / Product BFF Backend Identity**: `2bcb4465399af83190c5027073f3b2296e377256` (served `/deployment.json` and live `/bff/version` backend source commit)
+- **Pantheon Baseline Commit**: `3322f802de76b91ee06fbbe08590ff2ed4bdaadf` (`origin/dev`)
+- **Governed Command Runtime SHA**: `b49ebd934f34b3c4a648c1da863adb51a917a397` (promoted command runtime post PR #5444)
+- **Accepted Hosted / Product BFF Backend Identity**: `4f0994be548f56da627740f5b7fb193844c1faed` (served `/deployment.json` and live `/bff/version` backend source commit)
 - **Execute-Plans Baseline Commit**: `7d30e78476be61222af63a089e7ab141aa43b809` (`origin/dev`)
 - **Hosted Environment**:
-  - Served `/deployment.json`: Pair ID `9de4cd001a8b7aaf18a1094fb1699ece19f0efd86d3d24994cd9f3562fe33727`, Release Candidate ID `9783e78bd8e28608f2c335d566fd798db5b995c50da129876401170b45852e9a`, Backend `2bcb4465399af83190c5027073f3b2296e377256`, Frontend `7d30e78476be61222af63a089e7ab141aa43b809`, Controller Run `33319323262`, Integration Gate Run `33320810888`, Execute-Plans Deploy Run `33321494484`, Status `accepted` (accepted at `2026-08-30T16:46:51.788Z`).
-  - Live `/bff/version`: Source Commit `2bcb4465399af83190c5027073f3b2296e377256`, Status `accepted`.
+  - Served `/deployment.json`: Pair ID `b9209d6382cf109fda2504d7622fe7d9f137a084b0214988cc5588fffdeabc93`, Release Candidate ID `1497419171e98b33b42a01ebfd76c60368ab20e75ea45ac5fda61636a289e1cd`, Backend `4f0994be548f56da627740f5b7fb193844c1faed`, Frontend `7d30e78476be61222af63a089e7ab141aa43b809`, Controller Run `33325479949`, Integration Gate Run `33327155009`, Execute-Plans Deploy Run `33327155009`, Status `accepted` (accepted at `2026-08-30T18:28:45Z`).
+  - Live `/bff/version`: Source Commit `4f0994be548f56da627740f5b7fb193844c1faed`, Status `accepted`.
 
 ---
 
