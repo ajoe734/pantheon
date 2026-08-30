@@ -537,6 +537,7 @@ def create_command_adapters_router(
         x_correlation_id: Optional[str] = Header(default=None, alias="X-Correlation-Id"),
         x_request_id: Optional[str] = Header(default=None, alias="X-Request-Id"),
         x_confirm_token: Optional[str] = Header(default=None, alias="X-Confirm-Token"),
+        idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
         x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
     ):
         """Submit an operator command for async execution."""
@@ -549,6 +550,7 @@ def create_command_adapters_router(
             x_correlation_id=x_correlation_id,
             x_request_id=x_request_id,
             x_confirm_token=x_confirm_token,
+            idempotency_key=idempotency_key,
             x_idempotency_key=x_idempotency_key,
         )
 

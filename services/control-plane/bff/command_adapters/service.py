@@ -886,6 +886,7 @@ class CommandAdapterService:
         x_correlation_id: Optional[str] = None,
         x_request_id: Optional[str] = None,
         x_confirm_token: Optional[str] = None,
+        idempotency_key: Optional[str] = None,
         x_idempotency_key: Optional[str] = None,
     ) -> Any:
         if self._submit_command_admission is not None:
@@ -898,6 +899,7 @@ class CommandAdapterService:
                 x_correlation_id=x_correlation_id,
                 x_request_id=x_request_id,
                 x_confirm_token=x_confirm_token,
+                idempotency_key=idempotency_key,
                 x_idempotency_key=x_idempotency_key,
                 route="POST /api/v1/operator/commands",
             )
@@ -909,7 +911,8 @@ class CommandAdapterService:
             target_id=str(payload.get("target_id") or "target-1"),
             payload=payload,
             identity=identity,
-            idempotency_key=x_idempotency_key,
+            idempotency_key=idempotency_key,
+            x_idempotency_key=x_idempotency_key,
         )
 
     def submit_final_command(
