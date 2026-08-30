@@ -131,6 +131,103 @@ from rewrite.worker_recovery import (
     build_lost_lease_receipt,
 )
 
+# Review-decision-intent lost-lease recovery (this module's own; not a
+# separate rewrite/ module -- see review_decision_intent_replay_eligible).
+REVIEW_INTENT_RECOVERY_TASK_KEY = "review_decision_intent_recovery"
+REVIEW_INTENT_RECOVERY_SCHEMA_VERSION = 1
+
+# Keys excluded from the digest so neither the pending intent itself nor its
+# recovery receipt can perturb the CAS binding the intent froze at
+# reservation time.
+_REVIEW_INTENT_RECOVERY_DIGEST_EXCLUDED_KEYS = frozenset(
+    {
+        "review_decision_intent",
+        REVIEW_INTENT_RECOVERY_TASK_KEY,
+        "status_write_pending",
+        "status_write_pending_count",
+    }
+)
+
+
+def review_intent_recovery_task_digest(task: Mapping[str, Any]) -> str:
+    """Digest business task truth, excluding the intent and recovery markers.
+
+    Mirrors ``scripts.ai_status.review_decision_task_digest`` exactly so a
+    receipt minted here is judged identically by the canonical CLI's own
+    finalize-time CAS check. Duplicated intentionally instead of importing
+    across the supervisor/ai_status boundary for one hash function.
+    """
+
+    candidate = {
+        key: value
+        for key, value in task.items()
+        if key not in _REVIEW_INTENT_RECOVERY_DIGEST_EXCLUDED_KEYS
+    }
+    encoded = json.dumps(
+        candidate, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def build_review_decision_intent_recovery_receipt(
+    *,
+    task_id: str,
+    task_generation: int,
+    task_digest: str,
+    intent: Mapping[str, Any],
+    detected_at: str | None = None,
+) -> dict[str, Any]:
+    """Build one typed, replay-stable receipt binding a lost review lease.
+
+    Bound exactly to the pending intent's nonce/actor/command/message and to
+    the task's current generation/digest, so a later stale intent, a
+    different actor, or a changed task can never satisfy this receipt's
+    currency check.
+    """
+
+    nonce = str(intent.get("nonce") or "")
+    basis = {"task_id": task_id, "task_generation": task_generation, "nonce": nonce}
+    digest = hashlib.sha256(
+        json.dumps(basis, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    return {
+        "schema_version": REVIEW_INTENT_RECOVERY_SCHEMA_VERSION,
+        "receipt_id": f"review-intent-lease-{digest}",
+        "task_id": task_id,
+        "task_generation": task_generation,
+        "task_digest": task_digest,
+        "nonce": nonce,
+        "actor": str(intent.get("actor") or ""),
+        "command": str(intent.get("command") or ""),
+        "message": str(intent.get("message") or ""),
+        "detected_at": detected_at or utc_now(),
+    }
+
+
+def review_decision_intent_recovery_is_current(
+    receipt: Any,
+    *,
+    task_id: str,
+    task_generation: int,
+    task_digest: str,
+    intent: Mapping[str, Any] | None,
+) -> bool:
+    """Whether a recovery receipt still authorizes replaying this exact intent."""
+
+    if not isinstance(receipt, Mapping) or not isinstance(intent, Mapping):
+        return False
+    if receipt.get("schema_version") != REVIEW_INTENT_RECOVERY_SCHEMA_VERSION:
+        return False
+    return (
+        str(receipt.get("task_id") or "") == task_id
+        and receipt.get("task_generation") == task_generation
+        and str(receipt.get("task_digest") or "") == task_digest
+        and str(receipt.get("nonce") or "") == str(intent.get("nonce") or "")
+        and str(receipt.get("actor") or "") == str(intent.get("actor") or "")
+        and str(receipt.get("command") or "") == str(intent.get("command") or "")
+        and str(receipt.get("message") or "") == str(intent.get("message") or "")
+    )
+
 
 
 
@@ -1574,6 +1671,42 @@ def build_delivery_admission_snapshot(
     )
 
 
+def review_decision_intent_replay_eligible(
+    config: dict[str, Any],
+    task: Mapping[str, Any],
+    agent_name: str,
+) -> bool:
+    """Whether ``agent_name`` may retry a pending review decision intent.
+
+    A pending ``review_decision_intent`` ordinarily fences every mutation and
+    dispatch for its task (see AI_COLLABORATION_GUIDE.md section 3): only the
+    exact actor who reserved it may replay the exact same command/message to
+    finalize its nonce. This is the one narrow, supervisor-owned exception --
+    true only when a durable recovery receipt
+    (this module's own ``review_decision_intent_recovery`` receipt) still exactly matches the live
+    pending intent's nonce/actor/command/message and the task's current
+    generation/digest, and ``agent_name`` is that exact actor. Any drift (a
+    different agent, a missing/stale receipt, a changed generation or digest)
+    fails closed to the ordinary fence -- this is what prevents both
+    impersonation and a generic worker racing the frozen reservation.
+    """
+
+    intent = task.get("review_decision_intent")
+    if not isinstance(intent, Mapping):
+        return False
+    if canonical_agent_name(config, agent_name) != canonical_agent_name(
+        config, str(intent.get("actor") or "")
+    ):
+        return False
+    return review_decision_intent_recovery_is_current(
+        task.get(REVIEW_INTENT_RECOVERY_TASK_KEY),
+        task_id=str(task.get("id") or ""),
+        task_generation=task_generation(task),
+        task_digest=review_intent_recovery_task_digest(task),
+        intent=intent,
+    )
+
+
 def evaluate_task_delivery_admission(
     config: dict[str, Any],
     state: dict[str, Any],
@@ -1608,7 +1741,12 @@ def evaluate_task_delivery_admission(
         ),
         human_ops_hold=bool(
             str(task.get("waiting_for") or "").strip()
-            or task.get("review_decision_intent") not in (None, {}, [])
+            or (
+                task.get("review_decision_intent") not in (None, {}, [])
+                and not review_decision_intent_replay_eligible(
+                    config, task, target_agent
+                )
+            )
         ),
         review_binding_current=rewrite_task_machine.delivery_binding_is_current(task),
         execution_resources=tuple(task_execution_resources(task)),
@@ -11481,6 +11619,9 @@ def poll_workers(
         )
         changed = bool(completion["changed"]) or changed
     changed = reconcile_pending_worker_recoveries(config, state) or changed
+    changed = (
+        reconcile_review_decision_intent_lease_recovery(config, state) or changed
+    )
     record_worker_runtime_measurement(
         config,
         state,
@@ -12814,6 +12955,196 @@ def recover_lost_worker_lease(
     ) or True
 
 
+def review_decision_intent_lease_is_lost(
+    config: dict[str, Any],
+    state: Mapping[str, Any],
+    task: Mapping[str, Any],
+    *,
+    now: datetime | None = None,
+) -> bool:
+    """Whether the worker that reserved a pending review intent is gone.
+
+    True only once the intent has outlived one full worker-lease window
+    *and* no live worker record still holds an unexpired lease on the task.
+    Both conditions guard against racing a reservation that is still
+    legitimately in flight (for example, mid GitHub I/O) -- the intent's own
+    age is checked first because a worker record can be reaped well before
+    its lease would nominally expire.
+    """
+
+    intent = task.get("review_decision_intent")
+    if not isinstance(intent, Mapping):
+        return False
+    task_id = str(task.get("id") or "").strip()
+    if not task_id:
+        return False
+    now_dt = now or datetime.now(timezone.utc)
+    created_at = _parse_iso_utc(str(intent.get("created_at") or ""))
+    if created_at is None:
+        return False
+    lease_seconds = max(
+        60, int(worker_runtime_settings(config).get("worker_lease_seconds", 1800))
+    )
+    if now_dt - created_at < timedelta(seconds=lease_seconds):
+        return False
+    live_statuses = {"started", "waiting_approval"} | normalized_status_set(
+        ready_dispatch_settings(config).get("active_worker_statuses"), []
+    )
+    for worker in (state.get("workers") or {}).values():
+        if not isinstance(worker, Mapping):
+            continue
+        if str(worker.get("task_id") or "") != task_id:
+            continue
+        if str(worker.get("status") or "") not in live_statuses:
+            continue
+        if worker_lease_is_expired(config, dict(worker), now_dt):
+            continue
+        return False
+    return True
+
+
+def _persist_review_decision_intent_recovery_receipt_locked(
+    config: dict[str, Any],
+    *,
+    task_id: str,
+    receipt: Mapping[str, Any],
+    expected_generation: int,
+    expected_task_digest: str,
+) -> bool:
+    status = load_status(config)
+    task = task_index_from_status(config, status).get(task_id)
+    if task is None:
+        return False
+    intent = task.get("review_decision_intent")
+    if (
+        not isinstance(intent, Mapping)
+        or task_generation(task) != expected_generation
+        or review_intent_recovery_task_digest(task) != expected_task_digest
+    ):
+        return False
+    if not review_decision_intent_recovery_is_current(
+        receipt,
+        task_id=task_id,
+        task_generation=expected_generation,
+        task_digest=expected_task_digest,
+        intent=intent,
+    ):
+        return False
+    existing = task.get(REVIEW_INTENT_RECOVERY_TASK_KEY)
+    if isinstance(existing, Mapping) and str(existing.get("receipt_id") or "") == str(
+        receipt.get("receipt_id") or ""
+    ):
+        return True
+    # Only the recovery-receipt field changes. Every other field, including
+    # ``last_update``, is left untouched: the frozen intent's CAS digest
+    # depends on the full task row, and this write must not perturb it.
+    task[REVIEW_INTENT_RECOVERY_TASK_KEY] = deepcopy(dict(receipt))
+    write_status(config, status, source="supervisor-review-intent-lease-recovery")
+    return True
+
+
+def persist_review_decision_intent_recovery_receipt(
+    config: dict[str, Any],
+    *,
+    task_id: str,
+    receipt: Mapping[str, Any],
+    expected_generation: int,
+    expected_task_digest: str,
+) -> bool:
+    """Durably mint one lost-lease recovery receipt onto its exact task row."""
+
+    status_path = config_path(config, "status_file")
+    with canonical_task_state_lock_file(status_path, shared=False, nonblocking=False):
+        applied = _persist_review_decision_intent_recovery_receipt_locked(
+            config,
+            task_id=task_id,
+            receipt=receipt,
+            expected_generation=expected_generation,
+            expected_task_digest=expected_task_digest,
+        )
+    if not applied:
+        return False
+    write_activity_log(
+        config,
+        {
+            "type": "review_decision_intent_lease_recovery_pending",
+            "task_id": task_id,
+            "receipt_id": receipt.get("receipt_id"),
+            "nonce": receipt.get("nonce"),
+            "actor": receipt.get("actor"),
+            "command": receipt.get("command"),
+            "message": (
+                "Supervisor detected a lost worker lease for the pending "
+                f"{receipt.get('command')} decision on {task_id}; "
+                f"{receipt.get('actor')} may now be redispatched to replay "
+                f"nonce {receipt.get('nonce')} exactly."
+            ),
+        },
+    )
+    return sync_status_pipeline(config)
+
+
+def reconcile_review_decision_intent_lease_recovery(
+    config: dict[str, Any],
+    state: dict[str, Any],
+) -> bool:
+    """Mint replay receipts for review decision intents with a lost lease.
+
+    This is the supervisor-owned half of the recovery lane: it never touches
+    GitHub, never mutates owner/reviewer/generation, and never edits any
+    field the frozen intent's CAS digest depends on. It only records, once
+    per lost lease, that the exact original actor may be redispatched to
+    replay the exact same nonce -- ``task_execution_dispatch_candidate`` and
+    ``evaluate_task_delivery_admission`` are what actually let that one
+    redispatch through.
+    """
+
+    status = load_status(config)
+    changed = False
+    for task in status.get("tasks", []) or []:
+        if not isinstance(task, dict):
+            continue
+        intent = task.get("review_decision_intent")
+        if not isinstance(intent, Mapping):
+            continue
+        task_id = str(task.get("id") or "").strip()
+        actor = str(intent.get("actor") or "").strip()
+        command = str(intent.get("command") or "").strip()
+        if not task_id or not actor or command not in {"approve", "reopen"}:
+            # operator_accept is a direct local Human/Ops action, never a
+            # dispatched worker lane; there is no worker lease to recover.
+            continue
+        if not review_decision_intent_lease_is_lost(config, state, task):
+            continue
+        generation = task_generation(task)
+        digest = review_intent_recovery_task_digest(task)
+        existing = task.get(REVIEW_INTENT_RECOVERY_TASK_KEY)
+        if review_decision_intent_recovery_is_current(
+            existing,
+            task_id=task_id,
+            task_generation=generation,
+            task_digest=digest,
+            intent=intent,
+        ):
+            continue
+        receipt = build_review_decision_intent_recovery_receipt(
+            task_id=task_id,
+            task_generation=generation,
+            task_digest=digest,
+            intent=intent,
+        )
+        if persist_review_decision_intent_recovery_receipt(
+            config,
+            task_id=task_id,
+            receipt=receipt,
+            expected_generation=generation,
+            expected_task_digest=digest,
+        ):
+            changed = True
+            status = load_status(config)
+    return changed
+
+
 def count_lost_worker_recovery_outcome(
     counts: dict[str, int],
     state: Mapping[str, Any],
@@ -13470,6 +13801,9 @@ def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> 
             counts["started_queue_records_failed"] += 1
         changed = True
     changed = reconcile_pending_worker_recoveries(config, state) or changed
+    changed = (
+        reconcile_review_decision_intent_lease_recovery(config, state) or changed
+    )
     corrective_counts = {
         key: value
         for key, value in counts.items()
@@ -13838,8 +14172,15 @@ def task_execution_dispatch_candidate(
     if task.get("review_decision_intent") not in (None, {}, []):
         # A crash between canonical reservation and GitHub/finalize leaves a
         # durable mutation fence. No owner/reviewer worker may race that exact
-        # decision; only the same ai-status command may replay its nonce.
-        return None
+        # decision; only the same ai-status command may replay its nonce. The
+        # one narrow exception is a supervisor-minted lost-lease recovery
+        # receipt that proves the original reserving worker's lease is gone:
+        # it lets the exact original actor fall through to the ordinary
+        # reason computation below, bound to the same nonce/command/message/
+        # generation. Any other agent, or a stale receipt, still hits this
+        # unconditional fence.
+        if not review_decision_intent_replay_eligible(config, task, agent_name):
+            return None
     dispatch_settings = settings or ready_dispatch_settings(config)
     review_statuses = normalized_status_set(
         dispatch_settings.get("review_statuses"),
@@ -14545,13 +14886,39 @@ def build_dispatch_event(
         else 0
     )
     requeue_intent = task_review_requeue_intent(task)
+    review_intent = task.get("review_decision_intent")
+    replay_next_override = None
+    if (
+        config is not None
+        and isinstance(review_intent, Mapping)
+        and review_decision_intent_replay_eligible(config, task, target_agent)
+    ):
+        # Lost-lease recovery: the canonical task row is frozen while the
+        # intent is pending, so the replay instruction cannot live in the
+        # task's own ``next`` field -- it is injected only into this one
+        # dispatch event instead.
+        replay_next_override = (
+            "Supervisor lost-lease recovery: a previous worker's lease was "
+            f"lost while a {review_intent.get('command')} decision for "
+            f"{task.get('id')} was durably reserved. Do not perform any "
+            "other task work or edit any file. Run exactly this command to "
+            f"replay nonce {review_intent.get('nonce')}: "
+            f"AI_NAME={review_intent.get('actor')} "
+            '"$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh" '
+            f"{review_intent.get('command')} {task.get('id')} "
+            f"\"{review_intent.get('message')}\""
+        )
     task_payload = {
         "id": task.get("id"),
         "generation": task_generation(task),
         "owner": task.get("owner"),
         "reviewer": task.get("reviewer"),
         "artifacts": list(task.get("artifacts", []) or []),
-        "next": task.get("next"),
+        "next": (
+            replay_next_override
+            if replay_next_override is not None
+            else task.get("next")
+        ),
         "depends_on": dependencies,
         "execution_resources": task_execution_resources(task),
         "dependency_truth": [

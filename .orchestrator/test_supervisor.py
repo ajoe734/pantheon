@@ -2373,6 +2373,116 @@ class SharedPlannerContractTests(unittest.TestCase):
             )
         )
 
+    def _pending_intent_task_with_recovery_receipt(
+        self,
+        *,
+        actor: str = "Codex2",
+        command: str = "approve",
+        generation: int = 1,
+    ) -> dict[str, object]:
+        task = task_fixture(status="review", reviewer="Codex2", owner="Codex")
+        task["generation"] = generation
+        task["delivery_binding"] = review_admission_binding()
+        task["review_decision_intent"] = {
+            "schema_version": 1,
+            "nonce": "1" * 32,
+            "command": command,
+            "decision": command,
+            "task_id": "TASK-1",
+            "task_digest": "irrelevant-for-this-fixture",
+            "actor": actor,
+            "message": "please retry",
+            "repository": "ajoe734/pantheon",
+            "binding": {},
+            "transition_payload": {},
+            "created_at": "2020-01-01T00:00:00Z",
+            "intent_sha256": "irrelevant-for-this-fixture",
+        }
+        digest = supervisor.review_intent_recovery_task_digest(task)
+        task["review_decision_intent_recovery"] = (
+            supervisor.build_review_decision_intent_recovery_receipt(
+                task_id="TASK-1",
+                task_generation=generation,
+                task_digest=digest,
+                intent=task["review_decision_intent"],
+            )
+        )
+        return task
+
+    def test_review_intent_lease_recovery_replays_only_the_exact_original_actor(
+        self,
+    ) -> None:
+        task = self._pending_intent_task_with_recovery_receipt()
+
+        candidate = supervisor.task_execution_dispatch_candidate(
+            self.config, task, "Codex2", {"TASK-1": task}
+        )
+        self.assertIsNotNone(candidate)
+        self.assertEqual(candidate[0], supervisor.REASON_REVIEW_READY)
+
+        accepted = planner_decision(self.config, task, target="Codex2")
+        self.assertTrue(accepted["eligible"])
+        self.assertEqual(accepted["reason"], supervisor.REASON_REVIEW_READY)
+
+    def test_review_intent_lease_recovery_still_fences_every_other_agent(
+        self,
+    ) -> None:
+        task = self._pending_intent_task_with_recovery_receipt()
+
+        self.assertIsNone(
+            supervisor.task_execution_dispatch_candidate(
+                self.config, task, "Codex", {"TASK-1": task}
+            )
+        )
+        rejected = planner_decision(self.config, task, target="Codex")
+        self.assertFalse(rejected["eligible"])
+        self.assertEqual(rejected["first_blocking_gate"], "human_hold")
+
+    def test_review_intent_lease_recovery_rejects_a_stale_generation_receipt(
+        self,
+    ) -> None:
+        task = self._pending_intent_task_with_recovery_receipt()
+        # The receipt was minted for generation 1; canonical truth has since
+        # moved on to generation 2, so the receipt no longer authorizes
+        # anything and the ordinary fence applies again.
+        task["generation"] = 2
+
+        self.assertIsNone(
+            supervisor.task_execution_dispatch_candidate(
+                self.config, task, "Codex2", {"TASK-1": task}
+            )
+        )
+        rejected = planner_decision(self.config, task, target="Codex2")
+        self.assertFalse(rejected["eligible"])
+        self.assertEqual(rejected["first_blocking_gate"], "human_hold")
+
+    def test_review_intent_lease_recovery_next_override_carries_exact_replay(
+        self,
+    ) -> None:
+        task = self._pending_intent_task_with_recovery_receipt()
+        event = supervisor.build_dispatch_event(
+            task,
+            "Codex2",
+            supervisor.REASON_REVIEW_READY,
+            {"TASK-1": task},
+            config=self.config,
+        )
+        next_text = event["task"]["next"]
+        self.assertIn("AI_NAME=Codex2", next_text)
+        self.assertIn('ai-status.sh" approve TASK-1 "please retry"', next_text)
+        self.assertIn("1" * 32, next_text)
+
+        # A different agent's event (e.g. an ordinary owner dispatch) must
+        # never receive the replay text, even for the same task.
+        other_event = supervisor.build_dispatch_event(
+            task,
+            "Codex",
+            supervisor.REASON_OWNED_IN_PROGRESS,
+            {"TASK-1": task},
+            config=self.config,
+        )
+        self.assertNotIn("Supervisor lost-lease recovery", str(other_event["task"]["next"]))
+
     def test_review_binding_retries_after_a_terminal_attempt_left_no_verdict(self) -> None:
         # A reviewer worker can exit (crash, timeout, silent no-op) without
         # ever calling approve/reopen. Since a real verdict necessarily
@@ -8201,6 +8311,170 @@ class SupervisorLaunchAuthorityTests(unittest.TestCase):
                         {"watchdog": {"supervisor_command": command}},
                         supervisor_path=Path(supervisor.__file__),
                     )
+
+
+
+class ReviewDecisionIntentLeaseRecoveryTests(unittest.TestCase):
+    """Supervisor-owned exact-intent replay lane for a lost reviewer lease."""
+
+    def setUp(self) -> None:
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        temp_root = Path(self.temp.name)
+        self.root = temp_root / "status"
+        (self.root / ".orchestrator").mkdir(parents=True)
+        (temp_root / "runtime").mkdir()
+        self.config = config_fixture(self.root)
+        event_log = temp_root / "runtime" / "tasks.jsonl"
+        self.config["task_state_store"] = {
+            "mode": "authoritative",
+            "event_log": str(event_log),
+        }
+        self.task = task_fixture(status="review", reviewer="Codex2", owner="Codex")
+        self.task["delivery_binding"] = review_admission_binding()
+        self.task["review_decision_intent"] = {
+            "schema_version": 1,
+            "nonce": "2" * 32,
+            "command": "approve",
+            "decision": "approve",
+            "task_id": "TASK-1",
+            "task_digest": "irrelevant-for-this-fixture",
+            "actor": "Codex2",
+            "message": "please retry",
+            "repository": "ajoe734/pantheon",
+            "binding": {},
+            "transition_payload": {},
+            "created_at": "2020-01-01T00:00:00Z",
+            "intent_sha256": "irrelevant-for-this-fixture",
+        }
+        self.status = {"tasks": [self.task], "blockers": [], "handoffs": []}
+        supervisor.rewrite_task_state_store.append_state_commit(
+            event_log,
+            self.status,
+            source="test-seed",
+        )
+        Path(self.config["paths"]["status_file"]).write_text(
+            json.dumps(self.status), encoding="utf-8"
+        )
+
+    def _state(self, workers: dict[str, object] | None = None) -> dict[str, object]:
+        return {
+            "workers": dict(workers or {}),
+            "queue": {"events": {}},
+            "seen_event_keys": {},
+        }
+
+    def test_lease_is_lost_only_once_stale_and_no_live_worker_holds_it(self) -> None:
+        now = datetime(2020, 1, 1, tzinfo=timezone.utc) + timedelta(hours=1)
+
+        # A fresh intent is never treated as a lost lease, even with no
+        # worker record -- it may still be reserved-but-not-yet-dispatched.
+        self.assertFalse(
+            supervisor.review_decision_intent_lease_is_lost(
+                self.config,
+                self._state(),
+                self.task,
+                now=datetime(2020, 1, 1, 0, 1, tzinfo=timezone.utc),
+            )
+        )
+
+        # Old enough, and no live worker: lost.
+        self.assertTrue(
+            supervisor.review_decision_intent_lease_is_lost(
+                self.config, self._state(), self.task, now=now
+            )
+        )
+
+        # Old enough, but a live worker with an unexpired lease still holds
+        # the task: not lost, must not be raced.
+        live_worker = {
+            "task_id": "TASK-1",
+            "status": "waiting_approval",
+            "lease_expires_at": supervisor._isoformat_utc(now + timedelta(minutes=30)),
+        }
+        self.assertFalse(
+            supervisor.review_decision_intent_lease_is_lost(
+                self.config,
+                self._state({"w1": live_worker}),
+                self.task,
+                now=now,
+            )
+        )
+
+    def test_reconcile_mints_a_receipt_and_unblocks_only_the_original_actor(self) -> None:
+        state = self._state()
+
+        with mock.patch.object(supervisor, "sync_status_pipeline", return_value=True):
+            changed = supervisor.reconcile_review_decision_intent_lease_recovery(
+                self.config, state
+            )
+        # Regular (non-frozen-clock) reconciliation call: the fixture intent
+        # is already old enough relative to wall-clock "now" that this must
+        # mint a receipt.
+        self.assertTrue(changed)
+
+        status = supervisor.load_status(self.config)
+        task = supervisor.task_index_from_status(self.config, status)["TASK-1"]
+        receipt = task.get("review_decision_intent_recovery")
+        self.assertIsInstance(receipt, dict)
+        self.assertEqual(receipt["actor"], "Codex2")
+        self.assertEqual(receipt["nonce"], "2" * 32)
+        self.assertEqual(receipt["task_generation"], 1)
+
+        # The exact original actor may now be redispatched...
+        candidate = supervisor.task_execution_dispatch_candidate(
+            self.config, task, "Codex2", {"TASK-1": task}
+        )
+        self.assertIsNotNone(candidate)
+        # ...but nobody else can, including the owner.
+        self.assertIsNone(
+            supervisor.task_execution_dispatch_candidate(
+                self.config, task, "Codex", {"TASK-1": task}
+            )
+        )
+
+        # Re-running reconciliation is idempotent: the same receipt_id, no
+        # second mutation.
+        state2 = self._state()
+        with mock.patch.object(supervisor, "sync_status_pipeline", return_value=True):
+            changed_again = supervisor.reconcile_review_decision_intent_lease_recovery(
+                self.config, state2
+            )
+        self.assertFalse(changed_again)
+        status2 = supervisor.load_status(self.config)
+        task2 = supervisor.task_index_from_status(self.config, status2)["TASK-1"]
+        self.assertEqual(
+            task2["review_decision_intent_recovery"]["receipt_id"],
+            receipt["receipt_id"],
+        )
+
+    def test_reconcile_does_not_mint_while_a_live_worker_still_holds_the_lease(
+        self,
+    ) -> None:
+        live_worker = {
+            "task_id": "TASK-1",
+            "status": "waiting_approval",
+            "lease_expires_at": supervisor._isoformat_utc(
+                datetime.now(timezone.utc) + timedelta(hours=1)
+            ),
+        }
+        state = self._state({"w1": live_worker})
+
+        with mock.patch.object(supervisor, "sync_status_pipeline", return_value=True):
+            changed = supervisor.reconcile_review_decision_intent_lease_recovery(
+                self.config, state
+            )
+        self.assertFalse(changed)
+        status = supervisor.load_status(self.config)
+        task = supervisor.task_index_from_status(self.config, status)["TASK-1"]
+        self.assertNotIn("review_decision_intent_recovery", task)
+        # No receipt means every agent, including the assigned reviewer,
+        # remains fenced -- the live worker is still the sole authority.
+        self.assertIsNone(
+            supervisor.task_execution_dispatch_candidate(
+                self.config, task, "Codex2", {"TASK-1": task}
+            )
+        )
 
 
 if __name__ == "__main__":

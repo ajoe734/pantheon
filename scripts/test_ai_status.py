@@ -3517,10 +3517,65 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
             task[ai_status.REVIEW_DECISION_INTENT_KEY]["binding"],
         )
 
+    def test_supervisor_recovery_marker_never_perturbs_the_frozen_digest(self) -> None:
+        """A supervisor-minted lost-lease recovery receipt is inert to the CAS.
+
+        The supervisor's own lost-lease recovery lane
+        (.orchestrator/supervisor.py) durably marks a task with a
+        ``review_decision_intent_recovery`` receipt while a
+        ``review_decision_intent`` is still pending. That receipt must never
+        change what ``review_decision_task_digest`` returns -- otherwise
+        minting it would itself invalidate the exact-head reservation it
+        exists to help recover.
+        """
+
+        message = "please retry"
+        self._set_pr_delivery_binding(pr=4269, head_sha="a" * 40)
+        task = self.state["tasks"][0]
+        with mock.patch.dict(os.environ, {"AI_NAME": "Claude"}, clear=False):
+            preflight = ai_status.prepare_external_mutation_preflight(
+                "reopen", task, ["REG-002", message]
+            )
+            ai_status.reserve_review_decision_intent(
+                self.state,
+                command="reopen",
+                args=["REG-002", message],
+                preflight=preflight,
+            )
+
+        digest_before = ai_status.review_decision_task_digest(task)
+        task[ai_status.REVIEW_DECISION_INTENT_RECOVERY_KEY] = {
+            "schema_version": 1,
+            "receipt_id": "review-intent-lease-deadbeef",
+            "task_id": "REG-002",
+            "task_generation": task.get("generation", 1),
+            "task_digest": digest_before,
+            "nonce": task[ai_status.REVIEW_DECISION_INTENT_KEY]["nonce"],
+            "actor": task[ai_status.REVIEW_DECISION_INTENT_KEY]["actor"],
+            "command": "reopen",
+            "message": message,
+            "detected_at": "2026-08-30T00:00:00Z",
+        }
+        self.assertEqual(
+            ai_status.review_decision_task_digest(task), digest_before
+        )
+
+        task.pop(ai_status.REVIEW_DECISION_INTENT_RECOVERY_KEY)
+        self.assertEqual(
+            ai_status.review_decision_task_digest(task), digest_before
+        )
+
     def test_reviewer_reopen_uses_the_same_two_phase_intent_protocol(self) -> None:
         message = "Reject through a durable intent."
         self._set_pr_delivery_binding(pr=4269, head_sha="a" * 40)
         task = self.state["tasks"][0]
+        # Simulate a stale supervisor lost-lease recovery marker left behind
+        # from an earlier crash/replay: finalize must clear it along with the
+        # intent it was bound to, not leave it dangling on the task row.
+        task[ai_status.REVIEW_DECISION_INTENT_RECOVERY_KEY] = {
+            "schema_version": 1,
+            "receipt_id": "review-intent-lease-deadbeef",
+        }
         with mock.patch.dict(os.environ, {"AI_NAME": "Claude"}, clear=False):
             preflight = ai_status.prepare_external_mutation_preflight(
                 "reopen", task, ["REG-002", message]
@@ -3576,6 +3631,7 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
 
         self.assertEqual(task["status"], "in_progress")
         self.assertNotIn(ai_status.REVIEW_DECISION_INTENT_KEY, task)
+        self.assertNotIn(ai_status.REVIEW_DECISION_INTENT_RECOVERY_KEY, task)
         self.assertNotIn(ai_status.DELIVERY_BINDING_KEY, task)
 
     def test_partial_bridge_failure_keeps_same_nonce_for_crash_retry(self) -> None:
