@@ -227,3 +227,13 @@ A green test suite or large line count does not prove normal operation. A compon
 9. **Explicit Observability & Correlation Receipts**: Every mutation and state transition emits a unique trace ID, correlation receipt ID, and journal sequence for end-to-end auditability.
 10. **Governed CI Workflow Verification**: Release workflows and pull-request checks execute all declared jobs; 0-job passes are treated as governance verification gaps and blocked.
 11. **Single Truth Reconciliation**: System state across canonical task store, Git repository HEAD, deployed container manifest, and live caller wiring is reconciled to a single consistent truth.
+
+---
+
+## 8. Development-Tooling Boundary: Dev-Bridge Allowlist Derivation (Errata, 2026-08-30)
+
+This is a **development-tooling** architecture note, not a product architecture change; it does not alter the 18-domain-router target state above.
+
+The signed DevTaskPacket dispatcher (`.orchestrator/development_bridge/dev_bridge_dispatcher.py`) admits a packet only if every `target_repo` it names is present in the dispatcher's allowlist. The live supervisor did not derive that allowlist from its own `coordination.repositories` configuration; it required an operator-injected `PANTHEON_ASSISTANT_DEV_BRIDGE_ALLOWED_REPOS` environment override. Batch A (`pantheon`-only) and Batch B materialized before `execute-plans` was added to that override; Batch C's mixed-repository packet was rejected until the operator widened it. Because the resulting Batch B canonical task rows could not be amended in place (Section "Canonical task definitions cannot be amended in place" in [EXECUTION_REPLACEMENT_LEDGER_2026-08-30.json](./EXECUTION_REPLACEMENT_LEDGER_2026-08-30.json)), they were retired via `supersede` and re-created as one-to-one V2 replacements once the corrected allowlist and command-runtime identity bindings were in place.
+
+Target state for this boundary: the dispatcher derives its allowlist directly from the live supervisor's authoritative `coordination.repositories` registry on every drain, with zero reliance on an operator-supplied environment variable, while still fail-closed rejecting any repository absent from that registry. This is tracked by `OPGAP-DEVTOOL-BRIDGE-REPO-ALLOWLIST-V3-20260830` and is explicitly out of scope for the 20-GAP product remediation (`OP-G01`-`OP-G20`); it is dev-tooling debt in the assistant/operator dispatch plane, not the product BFF/control-plane architecture.

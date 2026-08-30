@@ -148,6 +148,11 @@ All 30 child tasks are mapped to 4 dependency-closed materialization batches sat
    - `PPL-ALLOC-007`: Binding visibility route pruning verified in canonical codebase.
    - `PPL-ALLOC-009`: Sidecar BFF handoff closed in merged PRs.
    - `TJ-E2E-012`: Trade Journey E2E hosted acceptance verified as predecessor truth.
+4. **Plan-Execution Errata -- Live Dependency Ids Diverge From The Diagram Above**: the DAG diagram in Section 1 renders the frozen catalog's original Batch B task ids and its `BOOT --> ...` edges from `OPGAP-DEVTOOL-TARGET-REPO-BRIDGE-20260830`, exactly as planned. The live supervisor's actual canonical rows do not match those ids one-for-one:
+   - All 14 Batch B ids (`PORTS`, `CORE`, `PER`, `TRN`, `AGR`, `RES`, `GOV`, `EVO`, `CAP`, `STR`, `MGT`, `PST`, `INC`, `EVT` in the diagram) were superseded and now exist as their `-V2-20260830` replacements, depending on `OPGAP-DEVTOOL-TARGET-REPO-BRIDGE-V2-20260830` (not `BOOT`, which is terminal-superseded and satisfies no dependency).
+   - All 9 Batch C ids (`TOOL`, `LOOP`, `CMD`, `RUN`, `DEP`, `FE_CLN`, `FE_MGT`, `FE_AGR`, `FE_ASM`) were never superseded and materialized directly under the diagram's original ids, but their live `depends_on` likewise binds `OPGAP-DEVTOOL-TARGET-REPO-BRIDGE-V2-20260830`.
+   - When Batch D (`MAIN_ASM`, `CALLER`, `RETIRE`, `PROMO`, `ACCEPT_BE`, `ACCEPT_MG`) materializes, `OPGAP-BFF-MAIN-ASSEMBLY-20260830`'s `depends_on` must be rebound to the 14 V2 ids (the 5 Batch C support ids it depends on pass through unchanged).
+   - The exact one-to-one mapping, fail-closed evidence for why this diverged from plan, and the Batch D rebinding table are recorded in [EXECUTION_REPLACEMENT_LEDGER_2026-08-30.json](./EXECUTION_REPLACEMENT_LEDGER_2026-08-30.json), materialized by `OPGAP-PLAN-EXECUTION-ERRATA-V2-20260830`.
 
 ---
 
@@ -165,13 +170,13 @@ All 30 child tasks are mapped to 4 dependency-closed materialization batches sat
 
 ## 5. Reproducible Dynamic Validation Command
 
-Run this command from repository root to dynamically verify all 16 catalog and architectural invariants:
+Run this command from repository root to dynamically verify all 17 catalog and architectural invariants:
 
 ```bash
 python3 docs/04/pantheon_full_product_operation_audit_2026-08-29/validate_catalog.py
 ```
 
-The script executes 16 comprehensive assertions:
+The script executes 17 comprehensive assertions:
 1. AST digests and body parity (2,272 nodes) against live `main.py`
 2. Edge-level cutover mappings for 100% of consuming tasks across all AST nodes
 3. Legacy action cluster (9 nodes) assembly ownership and node 118 `os.makedirs` lifespan placement
@@ -188,3 +193,4 @@ The script executes 16 comprehensive assertions:
 14. Planning baseline provenance across Pantheon, execute-plans, and hosted runtime
 15. Bidirectional `pantheon-dev` execution resource invariant
 16. Signed DevTaskPacket materialization mapping and post-bootstrap spec hashes (binding `target_repo` + `task_class` + `delivery_repository`) and catalog SHA-256 digest
+17. Execution replacement ledger: exact 23-row Batch B/C lineage, one-to-one V2 supersede mapping, unchanged functional scope, and Batch D dependency transformation to the terminal V2 bootstrap id

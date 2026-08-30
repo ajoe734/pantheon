@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Reproducible Mutation-Negative Verification Suite for Catalog Invariants.
 
-Tests that validate_catalog.py fails closed (raises AssertionError) on 17 distinct
+Tests that validate_catalog.py fails closed (raises AssertionError) on 18 distinct
 intentional mutations corresponding to each validation phase:
 1. Phase 1: Corrupted AST digest in Node 0
 2. Phase 2: Missing edge-level consumer cutover mapping
@@ -20,6 +20,7 @@ intentional mutations corresponding to each validation phase:
 15. Phase 15: Execution resources bidirectional mapping mismatch
 16. Phase 16: Post-bootstrap spec hash mismatch
 17. Phase 1: Mutated dynamic_validation_contract rule (2,271 vs 2,272 AST nodes)
+18. Phase 17: Corrupted execution replacement ledger row count (22 vs exact 23-row Batch B/C lineage)
 """
 from __future__ import annotations
 
@@ -38,6 +39,7 @@ from validate_catalog import validate_catalog
 
 REPO_ROOT = CURRENT_DIR.parent.parent.parent
 CATALOG_PATH = CURRENT_DIR / "EXECUTION_TASK_CATALOG_2026-08-30.json"
+LEDGER_PATH = CURRENT_DIR / "EXECUTION_REPLACEMENT_LEDGER_2026-08-30.json"
 MAIN_PY_PATH = REPO_ROOT / "services/control-plane/bff/main.py"
 
 
@@ -66,8 +68,39 @@ def run_mutation_test(name: str, mutate_fn, expected_phase: int) -> bool:
             os.remove(tmp_path)
 
 
+def run_ledger_mutation_test(name: str, mutate_fn) -> bool:
+    with open(LEDGER_PATH, "r", encoding="utf-8") as f:
+        ledger = json.load(f)
+
+    mutated_ledger = mutate_fn(ledger)
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        tmp_dir_path = Path(tmp_dir)
+        # validate_catalog looks up the ledger relative to the catalog file's directory,
+        # so both files must be copied into the same isolated temp directory.
+        with open(CATALOG_PATH, "r", encoding="utf-8") as f:
+            catalog = json.load(f)
+        tmp_catalog_path = tmp_dir_path / "EXECUTION_TASK_CATALOG_2026-08-30.json"
+        with open(tmp_catalog_path, "w", encoding="utf-8") as f:
+            json.dump(catalog, f)
+        tmp_ledger_path = tmp_dir_path / "EXECUTION_REPLACEMENT_LEDGER_2026-08-30.json"
+        with open(tmp_ledger_path, "w", encoding="utf-8") as f:
+            json.dump(mutated_ledger, f)
+
+        try:
+            validate_catalog(str(tmp_catalog_path), str(MAIN_PY_PATH))
+            print(f"FAILED (did not raise): {name}")
+            return False
+        except AssertionError as e:
+            print(f"PASSED (Phase 17 caught mutation): {name} -> {e}")
+            return True
+        except Exception as e:
+            print(f"PASSED (Exception caught): {name} -> {e}")
+            return True
+
+
 def test_all_mutations() -> None:
-    print("Running 17 Mutation-Negative Checks across all Catalog Invariants...")
+    print("Running 18 Mutation-Negative Checks across all Catalog Invariants...")
 
     mutations = [
         (
@@ -170,9 +203,17 @@ def test_all_mutations() -> None:
         if run_mutation_test(name, mutate_fn, expected_phase):
             passed += 1
 
-    print(f"\nResult: {passed}/{len(mutations)} mutation-negative checks passed.")
-    assert passed == len(mutations) == 17, f"Mutation test suite failure: {passed}/17 passed"
-    print("SUCCESS: 17/17 mutation-negative validation assertions passed!")
+    ledger_passed = run_ledger_mutation_test(
+        "18. Corrupt Execution Replacement Ledger Row Count (drop a Batch C row)",
+        lambda l: (_mut(l, lambda x: x["batch_c_direct_materializations"].pop())),
+    )
+    if ledger_passed:
+        passed += 1
+    total = len(mutations) + 1
+
+    print(f"\nResult: {passed}/{total} mutation-negative checks passed.")
+    assert passed == total == 18, f"Mutation test suite failure: {passed}/18 passed"
+    print("SUCCESS: 18/18 mutation-negative validation assertions passed!")
 
 
 def _mut(obj, fn):

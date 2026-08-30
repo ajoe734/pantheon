@@ -65,7 +65,7 @@ try:
         TrainingSessionTrainerPort,
     )
 except ImportError:
-    from domain_ports.operations_consultation import (  # type: ignore[no-redef]
+    from services.control_plane.bff.ports.operations_consultation import (  # type: ignore[no-redef]
         CompositeOperationsConsultationPort,
         DomainConsultationPort,
         DomainOpenClawOperationsPort,
@@ -75,27 +75,31 @@ except ImportError:
         create_in_memory_operations_consultation_port,
         create_operations_consultation_port,
     )
-    from domain_ports.persona_capital_runtime import (  # type: ignore[no-redef]
+    from services.control_plane.bff.ports.persona_capital_runtime import (  # type: ignore[no-redef]
         CapitalPoolPort,
+        CompositePersonaCapitalRuntimePort,
         DeploymentPlanPort,
         EvolutionProjectionPort,
+        InMemoryPersonaCapitalRuntimePort,
         PersonaCapitalRuntimeDomainPort,
         PersonaFleetPort,
         RankingProjectionPort,
         RuntimePort,
+        create_in_memory_persona_capital_runtime_port,
+        create_persona_capital_runtime_port,
     )
-    from domain_ports.ooda_management import (  # type: ignore[no-redef]
+    from services.control_plane.bff.ports.ooda_management import (  # type: ignore[no-redef]
         InterventionsPort,
         ManagementReviewQueuePort,
         OodaManagementDomainPort,
         OodaPacketsPort,
         SynthesisConflictLogsPort,
     )
-    from domain_ports.research_knowledge_source import (  # type: ignore[no-redef]
+    from services.control_plane.bff.ports.research_knowledge_source import (  # type: ignore[no-redef]
         DefaultResearchKnowledgeSourcePort,
         ResearchKnowledgeSourcePort,
     )
-    from domain_ports.lifecycle_telemetry_governance import (  # type: ignore[no-redef]
+    from services.control_plane.bff.ports.lifecycle_telemetry_governance import (  # type: ignore[no-redef]
         CompositeLifecycleTelemetryGovernancePort,
         DomainGovernancePort,
         DomainIncidentPort,
@@ -106,7 +110,7 @@ except ImportError:
         create_in_memory_lifecycle_telemetry_governance_port,
         create_lifecycle_telemetry_governance_port,
     )
-    from domain_ports.persona_training import (  # type: ignore[no-redef]
+    from services.control_plane.bff.ports.persona_training import (  # type: ignore[no-redef]
         PersonaRegistryReadsPort,
         PersonaTrainingDomainPort,
         RapidEvaluationPort,
@@ -723,15 +727,21 @@ class ReadSurfacePorts:
         return self.persona_training.get_rapid_eval(eval_id, **kwargs)
 
     def get_capability_snapshot(self, snapshot_id: Optional[str]) -> Optional[Dict[str, Any]]:
-        if hasattr(self.persona_training, "get_capability_snapshot"):
-            return self.persona_training.get_capability_snapshot(snapshot_id)
+        try:
+            if hasattr(self.persona_training, "get_capability_snapshot"):
+                return self.persona_training.get_capability_snapshot(snapshot_id)
+        except Exception:
+            return None
         return None
 
     def get_capability_snapshot_for_persona(self, persona_id: Optional[str]) -> Optional[Dict[str, Any]]:
-        if hasattr(self.persona_training, "get_capability_snapshot_for_persona"):
-            return self.persona_training.get_capability_snapshot_for_persona(persona_id)
-        if persona_id and hasattr(self.persona_training, "get_persona_capabilities"):
-            return self.persona_training.get_persona_capabilities(persona_id)
+        try:
+            if hasattr(self.persona_training, "get_capability_snapshot_for_persona"):
+                return self.persona_training.get_capability_snapshot_for_persona(persona_id)
+            if persona_id and hasattr(self.persona_training, "get_persona_capabilities"):
+                return self.persona_training.get_persona_capabilities(persona_id)
+        except Exception:
+            return None
         return None
 
     def trade_journey_projection_reader(self) -> Any:
@@ -758,7 +768,19 @@ class ReadSurfacePorts:
     def get_ranking_snapshot(self, ranking_id: Optional[str]) -> Optional[Dict[str, Any]]:
         if not ranking_id:
             return None
+        if hasattr(self, "_ranking_snapshots") and ranking_id in self._ranking_snapshots:
+            return self._ranking_snapshots[ranking_id]
         return self.persona_capital_runtime.get_ranking(ranking_id)
+
+    def put_ranking_snapshot(self, record: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        if hasattr(self.persona_capital_runtime, "put_ranking_snapshot"):
+            return self.persona_capital_runtime.put_ranking_snapshot(record)
+        if not hasattr(self, "_ranking_snapshots"):
+            self._ranking_snapshots = {}
+        snapshot_id = record.get("ranking_snapshot_id") or record.get("id")
+        if snapshot_id:
+            self._ranking_snapshots[str(snapshot_id)] = record
+        return record
 
     def get_allocation_evaluation(self, alloc_id: Optional[str]) -> Optional[Dict[str, Any]]:
         if not alloc_id:
@@ -979,7 +1001,10 @@ class ReadSurfacePorts:
         return self.lifecycle_telemetry_governance.list_telemetry_events(**kwargs)
 
     def get_session(self, session_id: Optional[str]) -> Optional[Dict[str, Any]]:
-        return self.persona_training.get_trainer_session(session_id)
+        try:
+            return self.persona_training.get_trainer_session(session_id)
+        except Exception:
+            return None
 
     def get_sessions_for_persona(self, persona_id: str) -> List[Dict[str, Any]]:
         try:

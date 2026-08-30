@@ -55,6 +55,31 @@ def tearDownModule() -> None:
 
 
 class V2StartupCacheTests(unittest.TestCase):
+    def test_bridge_allowlist_uses_explicit_live_registry_contract_names(self) -> None:
+        config = config_fixture()
+        config["coordination"] = {
+            "repositories": {
+                "pantheon": {"repo": "ajoe734/pantheon"},
+                "execute_plans": {"repo": "ajoe734/execute-plans"},
+            }
+        }
+
+        self.assertEqual(
+            supervisor.assistant_dev_bridge_allowed_repositories(config),
+            ["pantheon", "execute-plans"],
+        )
+
+    def test_bridge_allowlist_rejects_registry_without_pantheon(self) -> None:
+        config = config_fixture()
+        config["coordination"] = {
+            "repositories": {
+                "execute_plans": {"repo": "ajoe734/execute-plans"},
+            }
+        }
+
+        with self.assertRaisesRegex(ValueError, "must explicitly admit pantheon"):
+            supervisor.assistant_dev_bridge_allowed_repositories(config)
+
     def test_task_projection_report_declares_authoritative_mode(self) -> None:
         state = runtime_state.default_state()
         snapshot = {
