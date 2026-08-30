@@ -191,9 +191,16 @@ class _PersonaFleetTestStore:
 
     def create_persona(self, **kwargs: Any) -> dict[str, Any]:
         pid = kwargs.get("persona_id") or kwargs.get("id")
+        tenant_id = str(kwargs["tenant_id"]).strip()
+        if not tenant_id:
+            raise ValueError("admitted Persona fixtures require an explicit tenant_id")
         rec = dict(kwargs)
         rec["id"] = pid
         rec["persona_id"] = pid
+        rec["tenant_id"] = tenant_id
+        metadata = dict(rec.get("metadata") or {})
+        metadata["tenant_id"] = tenant_id
+        rec["metadata"] = metadata
         if "created_at" in rec and "updated_at" not in rec:
             rec["updated_at"] = rec["created_at"]
         self._data[pid] = rec
@@ -563,6 +570,7 @@ def test_persona_fleet_mutation_evolution_contract() -> None:
             persona_id = "persona-20260528-04688755"
             bff_main.read_store.create_persona(
                 persona_id=persona_id,
+                tenant_id="pantheon-dev",
                 name="Crypto-Alt-Hunter",
                 actor_id="pantheon-dev-browser",
                 created_at="2026-06-03T08:00:00Z",
@@ -676,6 +684,7 @@ def test_paper_persona_fleet_rank_matches_quarterly_ranking_target() -> None:
             persona_id = "persona-20260528-04688755"
             bff_main.read_store.create_persona(
                 persona_id=persona_id,
+                tenant_id="pantheon-dev",
                 name="Crypto-Alt-Hunter",
                 actor_id="pantheon-dev-browser",
                 created_at="2026-06-03T08:00:00Z",
@@ -722,6 +731,7 @@ def test_paper_rank_snapshot_is_captured_before_broader_fleet_reads() -> None:
             persona_id = "persona-20260528-04688755"
             bff_main.read_store.create_persona(
                 persona_id=persona_id,
+                tenant_id="pantheon-dev",
                 name="Crypto-Alt-Hunter",
                 actor_id="pantheon-dev-browser",
                 created_at="2026-06-03T08:00:00Z",
@@ -908,4 +918,3 @@ def test_sd_agc_03_foreign_identities_and_unadmitted_catalog_defaults_return_404
             assert fleet_resp.json()["data"]["summary"]["catalog_default_total"] > 0
         finally:
             bff_main.read_store = original
-
