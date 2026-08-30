@@ -259,67 +259,13 @@ def create_identity_router(
     async def sem_agora_inbox(authorization: Optional[str] = Header(default=None)):
         identity = extract_identity(authorization)
         require_read_role(identity)
-        snapshot_at = utc_now()
-        insights = svc.list_insights()
-        signals = []
-        research_tasks = []
-        store = svc.read_store
-        if store is not None:
-            if hasattr(store, "list_agora_signals") and callable(store.list_agora_signals):
-                signals = store.list_agora_signals() or []
-            if hasattr(store, "list_agora_research_tasks") and callable(store.list_agora_research_tasks):
-                research_tasks = store.list_agora_research_tasks() or []
-
-        records = [
-            *(dict(item, inboxType="insight", sourceDataset="insight_cards") for item in insights),
-            *(dict(item, inboxType="signal", sourceDataset="agora_signals") for item in signals),
-            *(dict(item, inboxType="research_task", sourceDataset="research_tickets") for item in research_tasks),
-        ]
-        records.sort(
-            key=lambda rec: str(rec.get("updatedAt") or rec.get("updated_at") or rec.get("createdAt") or rec.get("created_at") or ""),
-            reverse=True,
-        )
-        return {
-            "data": records,
-            "items": records,
-            "page_info": {"next_page_token": None},
-            "meta": {
-                "snapshot_at": snapshot_at,
-                "surfaces": {
-                    "agora_inbox": {"status": "ok", "source": "bff_local"},
-                    "agora_inbox_insights": {"status": "ok", "source": "bff_local"},
-                    "agora_inbox_signals": {"status": "ok", "source": "bff_local"},
-                    "agora_inbox_research_tasks": {"status": "ok", "source": "bff_local"},
-                },
-                "composition": {
-                    "datasets": ["insight_cards", "agora_signals", "research_tickets"],
-                    "itemCounts": {
-                        "insight": len(insights),
-                        "signal": len(signals),
-                        "research_task": len(research_tasks),
-                    },
-                },
-            },
-        }
+        return svc.sem_agora_inbox_payload()
 
     @router.get("/bff/agora/ask/sessions")
     async def sem_agora_ask_sessions(authorization: Optional[str] = Header(default=None)):
         identity = extract_identity(authorization)
         require_read_role(identity)
-        sessions = [
-            item for item in svc.list_sessions()
-            if str(item.get("mode") or "") == "quick_ask"
-        ]
-        snapshot_at = utc_now()
-        return {
-            "data": sessions,
-            "items": sessions,
-            "page_info": {"next_page_token": None},
-            "meta": {
-                "snapshot_at": snapshot_at,
-                "surfaces": {"agora_ask_sessions": {"status": "ok", "source": "bff_local"}},
-            },
-        }
+        return svc.sem_list_payload("agora_sessions", "agora_ask_sessions", filter_mode="quick_ask")
 
     @router.post("/bff/agora/ask/sessions", status_code=201)
     async def sem_agora_ask_create_session(

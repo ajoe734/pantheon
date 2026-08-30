@@ -824,3 +824,26 @@ def test_agora_service_session_and_insight_lifecycle():
     assert ins["insightId"] == "ins-test-01"
     assert svc.get_insight("ins-test-01") is not None
 
+
+def test_main_py_has_zero_legacy_agora_route_decorators():
+    """Acceptance: main.py must have 0 legacy @app Agora route decorators remaining."""
+    import inspect
+    import re
+    import main as bff_main
+
+    main_src = inspect.getsource(bff_main)
+    pattern = re.compile(r'@app\.(get|post|put|patch|delete)\(\s*["\'](/bff/agora|/api/v1/agora|/bff/sse/agora|/bff/research/tasks)')
+    matches = pattern.findall(main_src)
+    assert len(matches) == 0, f"Found {len(matches)} legacy Agora decorators in main.py: {matches}"
+
+
+def test_agora_service_imports_ports_package_interfaces():
+    """Acceptance: agora/service.py must import canonical ports interfaces from ports package."""
+    import agora.service as agora_service
+    from ports import ReadSurfacePorts
+
+    assert hasattr(agora_service, "ReadSurfacePorts")
+    assert agora_service.ReadSurfacePorts is ReadSurfacePorts
+
+
+
