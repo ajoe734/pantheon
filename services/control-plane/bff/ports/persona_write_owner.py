@@ -332,7 +332,10 @@ class PersonaRegistryHttpWritePort:
                 body=patch,
                 write=True,
             )
-            if lifecycle_state == "paper_only" and current.get("lifecycle_state") == "draft":
+            target_lifecycle = lifecycle_state
+            if target_lifecycle in {"paper_only", "paper_running", "active"}:
+                target_lifecycle = "research_only"
+            if target_lifecycle == "research_only" and current.get("lifecycle_state") == "draft":
                 updated = self._request(
                     "PATCH",
                     f"/api/personas/{urllib.parse.quote(persona_id, safe='')}/lifecycle",

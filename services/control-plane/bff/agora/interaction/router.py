@@ -19,7 +19,12 @@ from ..governance.router import (
     build_proposal_record,
 )
 from ..governance.store import ProposalConflict, ProposalStore, payload_fingerprint
-from .provider import _persona_version, authority_boundary, build_participant_admission
+from .provider import (
+    _persona_version,
+    authority_boundary,
+    build_participant_admission,
+    is_persona_operational,
+)
 from .runner import drain_interaction_outbox, run_selected_persona_interaction
 from .store import InteractionConflict, InteractionLifecycleStore
 
@@ -229,8 +234,7 @@ def _persona_operational(persona: Dict[str, Any]) -> bool:
     # Only explicit Persona Registry lifecycle truth is accepted.  Generic
     # deployment labels (for example ``deployed``) must not grant interaction
     # eligibility.
-    lifecycle = str(persona.get("lifecycle_state") or "").strip().lower()
-    return lifecycle in {"active", "paper_running", "paper_only"}
+    return is_persona_operational(persona)
 
 
 def _environment_allowed(persona: Dict[str, Any], environment: str) -> bool:
