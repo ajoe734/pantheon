@@ -106,7 +106,7 @@
         ".github/pantheon-stage0-matrix.json",
         "BINDING_AND_DEPLOYMENT_SEMANTICS.md",
         "OPERATOR_ACCEPTANCE_MATRIX.md",
-        "Pantheon_GCP_GitHub_Docker_正式部署與環境設計_v2.md",
+        "Pantheon_GCP_GitHub_Docker_\u6b63\u5f0f\u90e8\u7f72\u8207\u74b0\u5883\u8a2d\u8a08_v2.md",
         "docs/deployment/bff-down-operator-drill-runbook.md",
         "docs/deployment/ep5-002-staging-live-runbook.md",
         "docs/deployment/runtime-repair-control-mode-2026-06-06.md",
@@ -1898,7 +1898,7 @@
       "DAG is strictly acyclic with topological order across materialization batches A, B, C, and D."
     ],
     "schema_version": 2,
-    "validation_command": "python3 -c \"\nimport ast, json, hashlib, os, sys\n\nsource_code = open('services/control-plane/bff/main.py').read()\ntree = ast.parse(source_code)\nc = json.load(open('docs/04/pantheon_full_product_operation_audit_2026-08-29/EXECUTION_TASK_CATALOG_2026-08-30.json'))\ntasks = c['tasks']\nnodes = c['main_ast_node_inventory']['nodes']\n\nassert len(nodes) == len(tree.body) == 2271, f'AST count mismatch: catalog {len(nodes)} != live {len(tree.body)}'\nassert len(tasks) == 30, f'Task count mismatch: {len(tasks)} != 30'\n\n# 1. Verify AST digests and content parity across all nodes\nfor i, (cat_node, ast_node) in enumerate(zip(nodes, tree.body)):\n    dump_str = ast.dump(ast_node, annotate_fields=True, include_attributes=False)\n    exp_digest = hashlib.sha256(dump_str.encode('utf-8')).hexdigest()[:16]\n    assert cat_node.get('ast_digest') == exp_digest, f'Node {i} AST digest mismatch'\n\n# 2. Verify Edge-Level Cutover Mapping Parity (100% match between named_consumers and consumer_cutover_mapping)\nfor n in nodes:\n    nc = n.get('named_consumers')\n    cm = n.get('consumer_cutover_mapping')\n    if nc is not None:\n        assert cm is not None, f'Node {n.get(\"node_index\")} has named_consumers but missing consumer_cutover_mapping'\n        assert set(nc) == set(cm.keys()), f'Node {n.get(\"node_index\")} cutover mapping keys do not match named_consumers'\n        assert all(isinstance(v, str) and len(v) > 0 for v in cm.values()), f'Node {n.get(\"node_index\")} has empty cutover mapping values'\n    else:\n        assert cm is None, f'Node {n.get(\"node_index\")} has consumer_cutover_mapping but no named_consumers'\n\n# 3. Verify Legacy Action Cluster and os.makedirs disposition\nlegacy_cluster_nodes = [n for n in nodes if n.get('legacy_action_cluster')]\nassert len(legacy_cluster_nodes) == 9, f'Expected 9 legacy action cluster nodes, found {len(legacy_cluster_nodes)}'\nfor n in legacy_cluster_nodes:\n    assert n['owner_task'] == 'OPGAP-BFF-MAIN-ASSEMBLY-20260830', f'Legacy node {n[\"node_index\"]} must be owned by assembly'\n    assert n.get('zero_production_caller_evidence'), f'Legacy node {n[\"node_index\"]} missing zero_production_caller_evidence'\n\nn118 = nodes[118]\nassert n118['disposition'] == 'composition_keep' and n118['owner_task'] == 'OPGAP-BFF-MAIN-ASSEMBLY-20260830', 'os.makedirs node 118 invalid'\n\n# 4. Verify route migration inventory parity\nrmi = c.get('route_migration_inventory', {})\nassignments = rmi.get('assignments', [])\nhandlers = rmi.get('handler_migration_dispositions', [])\nassert len(assignments) == 441, f'Assignments count mismatch: {len(assignments)} != 441'\nassert len(handlers) == 421, f'Handlers count mismatch: {len(handlers)} != 421'\n\n# 5. Verify batches and set equality\nbatches = c['materialization_contract']['batches']\nbatched_tasks = [tid for b in batches for tid in b['tasks']]\nassert len(batched_tasks) == len(tasks) == 30, f'Batch equality failed: {len(batched_tasks)} != {len(tasks)}'\nassert set(batched_tasks) == set(t['id'] for t in tasks), 'Batch task set does not match task inventory'\nassert all(len(b['tasks']) <= 16 for b in batches), 'A batch exceeds fleet limit of 16 tasks'\n\n# 6. Verify exclusive code surfaces (no duplicates, no prefix collisions)\nsurfaces = {}\nfor t in tasks:\n    for s in t.get('owned_code_surfaces', []):\n        surfaces.setdefault(s, []).append(t['id'])\ndups = {s: ids for s, ids in surfaces.items() if len(ids) > 1}\nassert not dups, f'Duplicate owned surfaces: {dups}'\n\nassert not [n for n in nodes if n.get('disposition') == 'extract_shared_port' and n.get('node_type') in ('Import', 'ImportFrom')], 'Found stdlib extract_shared_port'\nassert all(len(t.get('deletion', [])) > 0 for t in tasks), 'All tasks must have non-empty deletion inventory'\n\n# 7. Verify safe rollback semantics\nforbidden_rb = ['restores deleted', 'restore domain_ports', 'revert to in-memory', 'revert to local helper', 'preserve legacy']\nfor t in tasks:\n    tid = t['id']\n    rb = t.get('rollback', '').lower()\n    for w in forbidden_rb:\n        assert w not in rb, f'Forbidden rollback in {tid}: {rb}'\n\n# 8. Verify DAG acyclicity\ngraph = {t['id']: set(t.get('depends_on', [])) for t in tasks}\nvisited, visiting = set(), set()\ndef dfs(n):\n    if n in visiting: return False\n    if n in visited: return True\n    visiting.add(n)\n    for nbr in graph.get(n, []):\n        if nbr in graph and not dfs(nbr): return False\n    visiting.remove(n); visited.add(n)\n    return True\nassert all(dfs(t) for t in graph), 'Cycle detected in DAG'\n\n# 9. Verify Source Proof Contract\nsp = c.get('source_proof_contract', {})\nassert sp.get('receipt_binding') == 'source_proof_receipt_id', 'source_proof_contract missing receipt_binding'\nassert sp.get('max_ticks') == 1 and sp.get('max_records') == 100, 'source_proof_contract bounded limits invalid'\nassert sp.get('dev_mode_default') == 'reconcile_only', 'source_proof_contract dev_mode_default must be reconcile_only'\n\nassert all(n.get('rationale') for n in nodes), 'All AST nodes must have non-empty rationale'\n\n# 10. Verify Special node mappings\nn37 = nodes[37]\nassert n37['target_router'] == 'services/control-plane/bff/ports/param_utils.py' and len(n37['consumer_cutover_mapping']) >= 5, '_resolve_param mapping invalid'\nassert 'OPGAP-BE-MANAGEMENT-ROUTER-20260830' in n37['named_consumers'], '_resolve_param named_consumers missing Management'\n\nn39 = nodes[39]\nassert n39['target_router'] == 'services/control-plane/bff/ports/config.py' and len(n39['consumer_cutover_mapping']) >= 3, '_REPO_ROOT mapping invalid'\n\nn43 = nodes[43]\nassert n43['target_router'] == 'services/control-plane/bff/ports/config.py' and len(n43['consumer_cutover_mapping']) >= 3, '_CRON_SERVICE_DIR mapping invalid'\n\nn76 = nodes[76]\nassert n76['disposition'] == 'composition_keep' and n76.get('consumer_cutover_mapping') is not None, 'log node cutover invalid'\nassert n76['consumer_cutover_mapping']['OPGAP-BE-BFF-CORE-20260830'] == 'logging.getLogger(__name__)', 'log logger replacement invalid'\n\n# 11. Verify Reverse-Main Symbol Inventory & External Reverse-Main Inventory\nrev = c.get('reverse_main_symbol_inventory', [])\nassert len(rev) == 29, f'Expected 29 callsite-proven reverse-main symbols, found {len(rev)}'\nfor entry in rev:\n    assert not entry['target_module'].endswith('/' + entry['symbol'] + '.py'), f'Fake port target detected: {entry}'\n\nrev_inv = c.get('external_reverse_main_symbol_inventory', {})\nassert rev_inv.get('total_import_instances', 0) == 269, f'Expected 269 reverse-main instances, found {rev_inv.get(\"total_import_instances\")}'\nassert rev_inv.get('unique_caller_files_count', 0) == 214, f'Expected 214 caller files, found {rev_inv.get(\"unique_caller_files_count\")}'\nassert rev_inv.get('unique_imported_symbols_count', 0) == 29, f'Expected 29 unique symbols, found {rev_inv.get(\"unique_imported_symbols_count\")}'\n\n# 12. Verify Domain Ports Caller Inventory\ndp_inv = c.get('domain_ports_caller_inventory', {})\nassert dp_inv.get('total_imported_symbol_rows') == 191, f'Expected 191 imported-symbol rows, found {dp_inv.get(\"total_imported_symbol_rows\")}'\nassert dp_inv.get('total_unique_caller_files') == 22, f'Expected 22 unique caller files, found {dp_inv.get(\"total_unique_caller_files\")}'\nassert dp_inv.get('production_caller_files_count') == 7, f'Expected 7 production caller files, found {dp_inv.get(\"production_caller_files_count\")}'\nassert dp_inv.get('test_caller_files_count') == 15, f'Expected 15 test caller files, found {dp_inv.get(\"test_caller_files_count\")}'\nassert dp_inv.get('production_imported_symbol_rows_count') == 129, f'Expected 129 production rows, found {dp_inv.get(\"production_imported_symbol_rows_count\")}'\nassert dp_inv.get('test_imported_symbol_rows_count') == 62, f'Expected 62 test rows, found {dp_inv.get(\"test_imported_symbol_rows_count\")}'\n\n# 13. Verify Planning Agent Capacity, Selectors & Task Assignment\ncap = c.get('planning_agent_capacity', {})\nassert cap.get('dynamic_derived') is True, 'Capacity must be dynamically derived'\nassert cap.get('command_runtime_sha') == '072ee68bbba8bbffb84a188ccf4d50d67429a7a8', 'Stale command runtime SHA'\nfor t in tasks:\n    assert t['owner'] != t['reviewer'], f'Owner equals reviewer in {t[\"id\"]}'\n    assert cap['agent_eligibility'][t['owner']]['eligible'], f'Owner {t[\"owner\"]} not eligible'\n    assert cap['agent_eligibility'][t['reviewer']]['eligible'], f'Reviewer {t[\"reviewer\"]} not eligible'\n    assert 'owner_selector' in t and 'reviewer_selector' in t, f'Task {t[\"id\"]} missing selectors'\n    assert t['delivery_repository'] == t['target_repo'], f'Repository mismatch in {t[\"id\"]}'\n\n# 14. Verify Baseline\npb = c.get('planning_baseline', {})\nassert pb.get('pantheon') == '072ee68bbba8bbffb84a188ccf4d50d67429a7a8', 'Stale pantheon baseline'\nassert pb.get('execute_plans') == '7d30e78476be61222af63a089e7ab141aa43b809', 'Stale execute-plans baseline'\nassert pb.get('hosted_pair_id') == '8961f959e54db4801438cef5fb7bb4047bc2506879afe6fc739572d0e2ba07f8', 'Stale hosted pair ID'\nassert pb.get('hosted_backend') == 'd5c312ef0a4139329d66bda13c7e487248602ed7', 'Stale hosted backend'\nassert pb.get('hosted_frontend') == '7d30e78476be61222af63a089e7ab141aa43b809', 'Stale hosted frontend'\nassert pb.get('hosted_accepted_at') == '2026-08-30T13:27:59Z', 'Stale hosted accepted at'\n\n# 15. Verify Execution Resources Bidirectional Invariant\nexec_res = c.get('execution_resources', {})\npdev_consumers = set(exec_res.get('pantheon-dev', {}).get('consumers', []))\ntask_pdev_consumers = set(t['id'] for t in tasks if 'pantheon-dev' in t.get('execution_resources', []))\nassert pdev_consumers == task_pdev_consumers, f'pantheon-dev consumers mismatch: {pdev_consumers} != {task_pdev_consumers}'\n\n# 16. Verify Signed DevTaskPacket Materialization Mapping & Post-Bootstrap Spec Hash Contract\nmat_map = c.get('materialization_contract', {}).get('signed_dev_task_packet_materialization_mapping', {})\nassert mat_map.get('max_tasks_per_packet') == 16, 'DevTaskPacket limit must be <= 16'\nassert mat_map.get('total_batches') == 4 and mat_map.get('total_tasks') == 30, 'DevTaskPacket batch/task count invalid'\nassert all(b['task_count'] <= 16 and b['dependency_closed'] for b in mat_map.get('batches_summary', [])), 'Batches must be <= 16 and dependency closed'\nassert len(mat_map.get('per_task_spec_hashes', {})) == 30, 'per_task_spec_hashes count invalid'\nassert mat_map.get('tasks_spec_catalog_sha256'), 'tasks_spec_catalog_sha256 missing'\n\nfor t in tasks:\n    spec = {\n        'acceptance': list(t.get('acceptance', [])),\n        'artifacts': list(t.get('artifacts', [])),\n        'dependency_tracks': dict(t.get('dependency_tracks', {})),\n        'depends_on': list(t.get('depends_on', [])),\n        'execution_resources': list(t.get('execution_resources', [])),\n        'id': t['id'],\n        'owner': t['owner'],\n        'phase': t['phase'],\n        'reviewer': t['reviewer'],\n        'summary': t.get('summary') or t.get('summary_zh', ''),\n        'target_repo': t.get('target_repo', 'pantheon'),\n        'title': t['title'],\n    }\n    exp_h = hashlib.sha256(json.dumps(spec, sort_keys=True, separators=(',', ':'), ensure_ascii=True).encode('utf-8')).hexdigest()\n    assert mat_map['per_task_spec_hashes'][t['id']] == exp_h, f\"Post-bootstrap spec hash mismatch for {t['id']}\"\n\nprint('SUCCESS: All 16 comprehensive dynamic validation assertions passed!')\n\""
+    "validation_command": "python3 docs/04/pantheon_full_product_operation_audit_2026-08-29/validate_catalog.py"
   },
   "execution_resources": {
     "pantheon-dev": {
@@ -55497,6 +55497,8 @@
           ],
           "batch_id": "BATCH-A-BOOTSTRAP",
           "dependency_closed": true,
+          "materializable_now": true,
+          "materialization_gate": "none (bootstrap entrypoint)",
           "task_count": 1,
           "tasks": [
             "OPGAP-DEVTOOL-TARGET-REPO-BRIDGE-20260830"
@@ -55508,6 +55510,8 @@
           ],
           "batch_id": "BATCH-B-PARALLEL-DOMAIN-PREP",
           "dependency_closed": true,
+          "materializable_now": false,
+          "materialization_gate": "gated_on_bootstrap_merge_and_command_runtime_promotion",
           "task_count": 14,
           "tasks": [
             "OPGAP-BE-PORT-NAMESPACE-CONSOLIDATION-20260830",
@@ -55533,6 +55537,8 @@
           ],
           "batch_id": "BATCH-C-SUPPORT-AND-FRONTEND",
           "dependency_closed": true,
+          "materializable_now": false,
+          "materialization_gate": "gated_on_bootstrap_merge_command_runtime_promotion_and_allowed_repos_config",
           "task_count": 9,
           "tasks": [
             "OPGAP-BE-TOOLS-INTEGRATIONS-20260830",
@@ -55552,6 +55558,8 @@
           ],
           "batch_id": "BATCH-D-ASSEMBLY-RETIREMENT-PROMOTION",
           "dependency_closed": true,
+          "materializable_now": false,
+          "materialization_gate": "gated_on_batch_b_and_c_completion_and_signed_readback",
           "task_count": 6,
           "tasks": [
             "OPGAP-BFF-MAIN-ASSEMBLY-20260830",
@@ -55568,6 +55576,7 @@
         "fields": [
           "acceptance",
           "artifacts",
+          "delivery_repository",
           "dependency_tracks",
           "depends_on",
           "execution_resources",
@@ -55577,8 +55586,10 @@
           "reviewer",
           "summary",
           "target_repo",
+          "task_class",
           "title"
         ],
+        "post_bootstrap_binding": "Post-bootstrap task spec binds target_repo + task_class + delivery_repository in addition to core fields.",
         "target_repo_binding": "Explicit target_repo (pantheon or execute-plans) included in task spec hash to bind cross-repository delivery post-bootstrap."
       },
       "durable_receipt_and_readback_protocol": {
@@ -55602,40 +55613,40 @@
       "packet_drain_tool": "scripts/drain_assistant_dev_task_packet_inbox.py",
       "packet_queue_tool": "scripts/queue_assistant_dev_task_packet.py",
       "per_task_spec_hashes": {
-        "OPGAP-BE-AGORA-ROUTER-20260830": "4b5f6a118139bc134b2cf4dfab69703ac7d5060698de331d3f9b38d0e2d32330",
-        "OPGAP-BE-BFF-CORE-20260830": "746dcca04ef6e8d6ac0768acd4c71ff3def5706238dc12907e0cdf8c8e6f584e",
-        "OPGAP-BE-CAPITAL-ROUTER-20260830": "59927ce0678ae1767417b152301848c531221632b183addb8ee898cb14cbd365",
-        "OPGAP-BE-COMMAND-ADAPTERS-20260830": "cfb6894ff344f85ea37ac5bfe1ec871f25b458a731c296cf4ec67f0471d474de",
-        "OPGAP-BE-COMMAND-CALLER-CUTOVER-20260830": "d74447d4ffe4fbb701ccfdf7cf50563573a48a1558ab5357856319b48350cdd2",
-        "OPGAP-BE-COMMAND-PLANE-RETIREMENT-20260830": "f895db8dfd4a369aa1bdebecdcf450f67f202fcda7291a949d454a0bbf7faaf8",
-        "OPGAP-BE-CONTROL-LOOPS-20260830": "deee49cf3694fc9944e0325199bf877918ef59515a1e9b75521106036b603697",
-        "OPGAP-BE-EVENTS-ROUTER-20260830": "d43ca2d43dd7b1d3e2150e3da9f75f91720d3981cd98644983e19335c2b93f2e",
-        "OPGAP-BE-EVOLUTION-ROUTER-20260830": "99e54f09bfc2ae3b8c551228dcb18b447119b12a24c894541a22245aba800d8a",
-        "OPGAP-BE-GOVERNANCE-ROUTER-20260830": "dcc8d77d026f1079ed8db4353eb39c186a33a87f1bd6ab0003669812a849f8aa",
-        "OPGAP-BE-INCIDENT-ROUTER-20260830": "773c78114a6e8cb45a5a3e3f63bbb5440ff7366c10b0b84a929c7ab84ca26a19",
-        "OPGAP-BE-MANAGEMENT-ROUTER-20260830": "4041b146a356892831e02869f467e925d75499fe7d6207367c2e7777c593aaa5",
-        "OPGAP-BE-PERSONA-ROUTER-20260830": "d45ba352e02c806cbd9906eebcff05c1e4a44bea3c494b3a5243af225f4a5e51",
-        "OPGAP-BE-PORT-NAMESPACE-CONSOLIDATION-20260830": "29398cd8b41e2fc1db40b4bc1aebd19de5724c2628411647c774857dedb17a63",
-        "OPGAP-BE-POSTMORTEM-ROUTER-20260830": "f39037dec30bfebed12a072697988eba2f177fbafba55f21df55f48f88a74c82",
-        "OPGAP-BE-RESEARCH-ROUTER-20260830": "f9c1d5ce34fe7beb5e8bc82e0dace6a163e9e4a3275028abda8f19cf29ee6147",
-        "OPGAP-BE-RUNTIME-BINDING-20260830": "9f0ac61d739686e82f09add6798979e7e836be39dd36adad9846b0ea828e50c6",
-        "OPGAP-BE-STRATEGY-RANKING-20260830": "2c627cac0f44196969c1bda81b10d57e13b6ac7f06b2dfd8782e440ec5b41851",
-        "OPGAP-BE-TOOLS-INTEGRATIONS-20260830": "41e11b6ae8cb41cf927bba2cf3230e22da2d097a74b70c93ff1282f2a25c49cd",
-        "OPGAP-BE-TRAINING-ROUTER-20260830": "cc85bc7c2a78d16d2f58929cc5732ef38ffb6be3e83a5062707c3a29854e72be",
-        "OPGAP-BFF-MAIN-ASSEMBLY-20260830": "39576c399d720618db8d01c6cab0ba8e6cb2a3ad5d1989f58216ae1d60f58267",
-        "OPGAP-DEPLOY-RELIABILITY-20260830": "7f0cc5134ee57562de3c28f097f3f118b65c69fb86c0f86ab7736a112310c89d",
-        "OPGAP-DEVTOOL-TARGET-REPO-BRIDGE-20260830": "5fa02b1429625130f877a7bd73da5d48f504510adefd04d68d6a56f23c46e025",
-        "OPGAP-FE-AGORA-WORKSHOP-20260830": "15a200194586af5426f4ac54c71cace22a8fe707f20044ef98b8b5b910184b4e",
-        "OPGAP-FE-BUNDLE-CLEANUP-20260830": "e0e6be04dcfcf933d8d2a0df86c35114076c64a717d02ca02b976822608d6f65",
-        "OPGAP-FE-INTEGRATION-ASSEMBLY-20260830": "aaaf5ffba5dabb4d1b48953088c1f3fd05853da7bf722f2a7e1b826109ac9a55",
-        "OPGAP-FE-MGMT-CRUD-POSTMORTEM-20260830": "6787660406a9dcdf233b57616109460b9cb6ae50f4183f1b798f0d7fb2b14605",
-        "OPGAP-HOSTED-BACKEND-ACCEPTANCE-20260830": "670e5a5bb0831a1bf5fc8299cd0591aa3f2e909e6f302587f9bdbde4b674fdce",
-        "OPGAP-HOSTED-DEV-PROMOTION-20260830": "a047cedebb1b1ba50edd8c83d8d1ba1bba9b71ff2743a171a959e30d9989debf",
-        "OPGAP-HOSTED-MGMT-ACCEPTANCE-20260830": "0fbbb4b432b8255b0d176df69bf8147f7359dfa214f7e98b5913d4b26042e1b0"
+        "OPGAP-BE-AGORA-ROUTER-20260830": "759d97f721557fe6f0a33721d247f7cd4e6bb693f982dabccda42441c400e3e9",
+        "OPGAP-BE-BFF-CORE-20260830": "eb0fd356355ae9b8f28c0a7ded82507c844f4df6eb3acefd4f7cec57af6b7710",
+        "OPGAP-BE-CAPITAL-ROUTER-20260830": "15e36c62a6f2bfea499baeefbaf4aa8138311662899310effb0e0929353547b1",
+        "OPGAP-BE-COMMAND-ADAPTERS-20260830": "5e909a190fcae1db2eaaa40a8f46bc8898d76fcb0127fa335471683c0a5ed7f0",
+        "OPGAP-BE-COMMAND-CALLER-CUTOVER-20260830": "dba25d7298d44cae5acbb8e191849087c03a4f5000d2fa93a05e560323a24c6a",
+        "OPGAP-BE-COMMAND-PLANE-RETIREMENT-20260830": "326159423c0736e774c058d6d9d05b30874a56be3fd02ebb72fa545aa14de0dd",
+        "OPGAP-BE-CONTROL-LOOPS-20260830": "a952b05c4414833d40d575a10cd447e41184b20b4585203743f1721bff2eb843",
+        "OPGAP-BE-EVENTS-ROUTER-20260830": "78f1ccbb10f71f3a126959b6552988e30e6009eead14f5b82b4a74d3fc9fb31d",
+        "OPGAP-BE-EVOLUTION-ROUTER-20260830": "8bf97e761209dcb1926b963dd1f54d5761075a0579b3acb09bc6397c91cf7f60",
+        "OPGAP-BE-GOVERNANCE-ROUTER-20260830": "a60641f84f358dc11bc11dd9ba029628bb63fdab1d8ccd5fbcf3702ccc62c049",
+        "OPGAP-BE-INCIDENT-ROUTER-20260830": "790a98308eda9fa30f5eba766f1832b8cb98dd5e07e0ff2c08310b777a88e6ab",
+        "OPGAP-BE-MANAGEMENT-ROUTER-20260830": "6e5f547c6860ddcb65592f244e1dec5d02bdd0575e9f373538b1c82027b295ae",
+        "OPGAP-BE-PERSONA-ROUTER-20260830": "f6ccb74f5271d35e88499a64af8f52e82820c2075ec89df14b28ba98a68145a0",
+        "OPGAP-BE-PORT-NAMESPACE-CONSOLIDATION-20260830": "33cfd6a2b0d1e6342ef17fad03ed33d97edeb37f6e3f15e6cb24f1166725f905",
+        "OPGAP-BE-POSTMORTEM-ROUTER-20260830": "1e3f7d0836eb0b9154cd4710025273359b740863fce6efbd0bea1d4e8d607810",
+        "OPGAP-BE-RESEARCH-ROUTER-20260830": "4c3af6fc69310e70b58fef56e0721665b5736894b7471227939ed276181b3b61",
+        "OPGAP-BE-RUNTIME-BINDING-20260830": "b12c6f6690b0a2d57d2dd14d15e325cce6d8ca7f061d870a418dac7bea974719",
+        "OPGAP-BE-STRATEGY-RANKING-20260830": "0159ffff9ada442f9b5bc1cca7c9c19cd0b96f7522161e022ca5eea46161030c",
+        "OPGAP-BE-TOOLS-INTEGRATIONS-20260830": "518ac8c1e41bb36d768182a0801e4dc98bafbc6fbe3f368f0d87b7da21f9b408",
+        "OPGAP-BE-TRAINING-ROUTER-20260830": "908f2a6484ea0835441121efe8126785fe066b1465b384bcac05b5a3996ff907",
+        "OPGAP-BFF-MAIN-ASSEMBLY-20260830": "c3b903328c38056bf422c57b2b2899875d458e2612c0526b10aa2de628292525",
+        "OPGAP-DEPLOY-RELIABILITY-20260830": "a868cb634f9ae50b8fd4d4cf00b780192fbcc1936e3bd4bb82e172099c34abf7",
+        "OPGAP-DEVTOOL-TARGET-REPO-BRIDGE-20260830": "e94e3731c9cfbdaa2df4541f9e35a25c8ac971a90694a38afde546bf46f1b7d6",
+        "OPGAP-FE-AGORA-WORKSHOP-20260830": "d5c903bbe3ec42dbb5a2b667e98523e4c7b94409ca8a21d296ee288364d159bd",
+        "OPGAP-FE-BUNDLE-CLEANUP-20260830": "07c5ce24fc374bef758ade79732018e581ccf7f61539c1c0cbabcf7de3e46f2c",
+        "OPGAP-FE-INTEGRATION-ASSEMBLY-20260830": "ad876115a74e16f20fb9a9f8863f6e74fbb39689824d3a1bae8c57742a9a1f1b",
+        "OPGAP-FE-MGMT-CRUD-POSTMORTEM-20260830": "1a73dc6354a25470330e62cff40a89ad6e9f17359241fd4a2ccf021ed173af55",
+        "OPGAP-HOSTED-BACKEND-ACCEPTANCE-20260830": "f4e4c44aff5e2e465091741eda2294fd0b89d71bcc55da7f6f81f3094ae27df2",
+        "OPGAP-HOSTED-DEV-PROMOTION-20260830": "abcf7260764bb713fe6e845dac44602e851afcdf656274de003184d4020f9d3e",
+        "OPGAP-HOSTED-MGMT-ACCEPTANCE-20260830": "4d2fe7ad022e5a6760fed688bb648c5ed4a40a3555cf801bb4dd31863208a753"
       },
       "protocol_version": "pantheon.assistant.dev-task.v1",
       "signed_transport_directory": ".orchestrator/development_bridge/",
-      "tasks_spec_catalog_sha256": "9d547271a7250459700b4184e8f360013d3ab179b870152a9a0fafacf1d796d3",
+      "tasks_spec_catalog_sha256": "926d714297bcb9690bd7713c9d9e91671691331c183e3f9c3a2f4fbfe5794226",
       "total_batches": 4,
       "total_tasks": 30
     }
@@ -55756,6 +55767,14 @@
         },
         "max_concurrent_workers": 13
       }
+    },
+    "selector_authority_policy": {
+      "authoritative_selectors": [
+        "owner_selector",
+        "reviewer_selector"
+      ],
+      "description": "owner_selector and reviewer_selector are authoritative at packet generation; literal owner and reviewer fields are planning-time capacity snapshots resolved fresh and distinct during materialization.",
+      "literal_assignment_semantics": "non_authoritative_resolution_snapshot"
     }
   },
   "planning_baseline": {
@@ -67920,7 +67939,7 @@
       "state_transitions": [
         "Bootstrap development tooling bridge -> enable multi-repo task materialization"
       ],
-      "summary_zh": "修復本地 development bridge 遺失 target_repo 的已觀察缺口；不增加產品 BFF route。",
+      "summary_zh": "\u4fee\u5fa9\u672c\u5730 development bridge \u907a\u5931 target_repo \u7684\u5df2\u89c0\u5bdf\u7f3a\u53e3\uff1b\u4e0d\u589e\u52a0\u7522\u54c1 BFF route\u3002",
       "target_repo": "pantheon",
       "task_class": "development_tooling",
       "terminal_predecessors": [],
@@ -68024,7 +68043,7 @@
       "state_transitions": [
         "Consolidate ports -> migrate 22 direct callers -> delete 6 domain_ports/*.py files"
       ],
-      "summary_zh": "將 ports/ 確立為唯一公開與實作 namespace；遷移 22 處 direct domain_ports 呼叫端並刪除 6 個 domain_ports 檔案。",
+      "summary_zh": "\u5c07 ports/ \u78ba\u7acb\u70ba\u552f\u4e00\u516c\u958b\u8207\u5be6\u4f5c namespace\uff1b\u9077\u79fb 22 \u8655 direct domain_ports \u547c\u53eb\u7aef\u4e26\u522a\u9664 6 \u500b domain_ports \u6a94\u6848\u3002",
       "target_repo": "pantheon",
       "task_class": "functional",
       "terminal_predecessors": [
@@ -68652,7 +68671,7 @@
       "state_transitions": [
         "Decouple auth readiness from provider latency -> enable fast authenticated render"
       ],
-      "summary_zh": "將 auth、settings、assistant 與 core routes 移至具名 router，解耦 provider readiness。",
+      "summary_zh": "\u5c07 auth\u3001settings\u3001assistant \u8207 core routes \u79fb\u81f3\u5177\u540d router\uff0c\u89e3\u8026 provider readiness\u3002",
       "target_repo": "pantheon",
       "task_class": "functional",
       "terminal_predecessors": [
@@ -68977,7 +68996,7 @@
       "state_transitions": [
         "Extract persona route handlers from main.py -> mount under /bff/personas"
       ],
-      "summary_zh": "將 Persona domain 49 個 route decorators 移至 personas/router.py，解耦 main.py 依賴。",
+      "summary_zh": "\u5c07 Persona domain 49 \u500b route decorators \u79fb\u81f3 personas/router.py\uff0c\u89e3\u8026 main.py \u4f9d\u8cf4\u3002",
       "target_repo": "pantheon",
       "task_class": "functional",
       "terminal_predecessors": [
@@ -69100,7 +69119,7 @@
       "state_transitions": [
         "Extract training routes from main.py -> mount under /bff/trainer"
       ],
-      "summary_zh": "將 Training domain 14 個 route decorators 移至 training/router.py。",
+      "summary_zh": "\u5c07 Training domain 14 \u500b route decorators \u79fb\u81f3 training/router.py\u3002",
       "target_repo": "pantheon",
       "task_class": "functional",
       "terminal_predecessors": [
@@ -69338,7 +69357,7 @@
       "state_transitions": [
         "Extract Agora routes -> gate default stub to simulation -> wire PerformanceSuggestion producer"
       ],
-      "summary_zh": "將 Agora 38 個 route decorators 移至 agora/router.py 與 subrouters，解耦 identity/personalization 對 main.py 的 reverse import。",
+      "summary_zh": "\u5c07 Agora 38 \u500b route decorators \u79fb\u81f3 agora/router.py \u8207 subrouters\uff0c\u89e3\u8026 identity/personalization \u5c0d main.py \u7684 reverse import\u3002",
       "target_repo": "pantheon",
       "task_class": "functional",
       "terminal_predecessors": [
@@ -69571,7 +69590,7 @@
       "state_transitions": [
         "Extract research routes -> implement typed /api/v1/research/artifacts and /analyses"
       ],
-      "summary_zh": "將 Research domain 47 個 route decorators 移至 research/router.py。",
+      "summary_zh": "\u5c07 Research domain 47 \u500b route decorators \u79fb\u81f3 research/router.py\u3002",
       "target_repo": "pantheon",
       "task_class": "functional",
       "terminal_predecessors": [
@@ -69759,7 +69778,7 @@
       "state_transitions": [
         "Extract governance routes -> implement typed get_approval_detail endpoint"
       ],
-      "summary_zh": "將 Governance domain 35 個 route decorators 移至 governance/router.py。",
+      "summary_zh": "\u5c07 Governance domain 35 \u500b route decorators \u79fb\u81f3 governance/router.py\u3002",
       "target_repo": "pantheon",
       "task_class": "functional",
       "terminal_predecessors": [
@@ -69898,7 +69917,7 @@
       "state_transitions": [
         "Extract evolution routes from main.py -> mount under /bff/evolution"
       ],
-      "summary_zh": "將 Evolution domain 13 個 route decorators 移至 evolution/router.py。",
+      "summary_zh": "\u5c07 Evolution domain 13 \u500b route decorators \u79fb\u81f3 evolution/router.py\u3002",
       "target_repo": "pantheon",
       "task_class": "functional",
       "terminal_predecessors": [
@@ -70340,7 +70359,7 @@
       "state_transitions": [
         "Extract capital routes from main.py -> mount under /bff/capital"
       ],
-      "summary_zh": "將 Capital domain 25 個 route decorators 移至 capital/router.py。",
+      "summary_zh": "\u5c07 Capital domain 25 \u500b route decorators \u79fb\u81f3 capital/router.py\u3002",
       "target_repo": "pantheon",
       "task_class": "functional",
       "terminal_predecessors": [],
@@ -70501,7 +70520,7 @@
       "state_transitions": [
         "Extract strategy & ranking routes -> mount under /bff/strategies"
       ],
-      "summary_zh": "將 Strategy 與 Ranking 31 個 route decorators 移至 strategies/router.py 與 ranking_router.py；驗證 Source dev reconcile-only proof。",
+      "summary_zh": "\u5c07 Strategy \u8207 Ranking 31 \u500b route decorators \u79fb\u81f3 strategies/router.py \u8207 ranking_router.py\uff1b\u9a57\u8b49 Source dev reconcile-only proof\u3002",
       "target_repo": "pantheon",
       "task_class": "functional",
       "terminal_predecessors": [
@@ -70783,7 +70802,7 @@
       "state_transitions": [
         "Extract management routes -> provide canonical CRUD endpoints"
       ],
-      "summary_zh": "將 Management 17 個 route decorators 移至 management_read_models/router.py。",
+      "summary_zh": "\u5c07 Management 17 \u500b route decorators \u79fb\u81f3 management_read_models/router.py\u3002",
       "target_repo": "pantheon",
       "task_class": "functional",
       "terminal_predecessors": [
@@ -70876,7 +70895,7 @@
       "state_transitions": [
         "Extract postmortem routes -> provide canonical list/detail contracts"
       ],
-      "summary_zh": "將 Postmortem 2 個 route decorators 移至 postmortems/router.py。",
+      "summary_zh": "\u5c07 Postmortem 2 \u500b route decorators \u79fb\u81f3 postmortems/router.py\u3002",
       "target_repo": "pantheon",
       "task_class": "functional",
       "terminal_predecessors": [],
@@ -71024,7 +71043,7 @@
       "state_transitions": [
         "Extract incident routes from main.py -> mount under /bff/incidents"
       ],
-      "summary_zh": "將 Incident 27 個 route decorators 移至 incidents/router.py。",
+      "summary_zh": "\u5c07 Incident 27 \u500b route decorators \u79fb\u81f3 incidents/router.py\u3002",
       "target_repo": "pantheon",
       "task_class": "functional",
       "terminal_predecessors": [
@@ -71159,7 +71178,7 @@
       "state_transitions": [
         "Extract event stream routes -> mount under /bff/events"
       ],
-      "summary_zh": "將 Events 14 個 route decorators 移至 events/router.py。",
+      "summary_zh": "\u5c07 Events 14 \u500b route decorators \u79fb\u81f3 events/router.py\u3002",
       "target_repo": "pantheon",
       "task_class": "functional",
       "terminal_predecessors": [],
@@ -71320,7 +71339,7 @@
       "state_transitions": [
         "Extract tool & integration routes -> mount under /bff/tools"
       ],
-      "summary_zh": "將 Tools 與 Integrations 35 個 route decorators 移至 integrations/router.py。",
+      "summary_zh": "\u5c07 Tools \u8207 Integrations 35 \u500b route decorators \u79fb\u81f3 integrations/router.py\u3002",
       "target_repo": "pantheon",
       "task_class": "functional",
       "terminal_predecessors": [],
@@ -71463,7 +71482,7 @@
       "state_transitions": [
         "Extract loop trigger routes -> mount under /bff/loops"
       ],
-      "summary_zh": "將 Control Loops 24 個 route decorators 移至 control_loops/router.py。",
+      "summary_zh": "\u5c07 Control Loops 24 \u500b route decorators \u79fb\u81f3 control_loops/router.py\u3002",
       "target_repo": "pantheon",
       "task_class": "functional",
       "terminal_predecessors": [
@@ -71610,7 +71629,7 @@
       "state_transitions": [
         "Refactor command_executor.py to use ports/ -> eliminate reverse import of main.py"
       ],
-      "summary_zh": "將 Command Adapters 11 個 route decorators 移至 command_adapters/router.py。",
+      "summary_zh": "\u5c07 Command Adapters 11 \u500b route decorators \u79fb\u81f3 command_adapters/router.py\u3002",
       "target_repo": "pantheon",
       "task_class": "functional",
       "terminal_predecessors": [],
@@ -71740,7 +71759,7 @@
       "state_transitions": [
         "Emit immutable loader projection from Registry -> verify in RuntimeManager"
       ],
-      "summary_zh": "將 Runtime 17 個 route decorators 移至 runtime/router.py。",
+      "summary_zh": "\u5c07 Runtime 17 \u500b route decorators \u79fb\u81f3 runtime/router.py\u3002",
       "target_repo": "pantheon",
       "task_class": "functional",
       "terminal_predecessors": [
@@ -71884,7 +71903,7 @@
       "state_transitions": [
         "Enforce fail-closed gate verifier -> implement resilient rollback authority"
       ],
-      "summary_zh": "將 Deployment 12 個 route decorators 移至 deployment/router.py；完善部署可靠性閘門。",
+      "summary_zh": "\u5c07 Deployment 12 \u500b route decorators \u79fb\u81f3 deployment/router.py\uff1b\u5b8c\u5584\u90e8\u7f72\u53ef\u9760\u6027\u9598\u9580\u3002",
       "target_repo": "pantheon",
       "task_class": "functional",
       "terminal_predecessors": [
@@ -72036,7 +72055,7 @@
       "state_transitions": [
         "Remove mock/seed exports from production bundle -> delete 37 residual files"
       ],
-      "summary_zh": "清理 execute-plans 残留 mock/seed/fallback；保證嚴格 live client 呼叫。",
+      "summary_zh": "\u6e05\u7406 execute-plans \u6b8b\u7559 mock/seed/fallback\uff1b\u4fdd\u8b49\u56b4\u683c live client \u547c\u53eb\u3002",
       "target_repo": "execute-plans",
       "task_class": "functional",
       "terminal_predecessors": [
@@ -72143,7 +72162,7 @@
       "state_transitions": [
         "Wire canonical CRUD endpoints -> connect postmortem UI to /bff/postmortems"
       ],
-      "summary_zh": "實作 execute-plans Management AI desktop 與 postmortem view，提供專屬桌面操作證據。",
+      "summary_zh": "\u5be6\u4f5c execute-plans Management AI desktop \u8207 postmortem view\uff0c\u63d0\u4f9b\u5c08\u5c6c\u684c\u9762\u64cd\u4f5c\u8b49\u64da\u3002",
       "target_repo": "execute-plans",
       "task_class": "functional",
       "terminal_predecessors": [],
@@ -72239,7 +72258,7 @@
       "state_transitions": [
         "Display explicit provenance badges -> connect trading room to live projections"
       ],
-      "summary_zh": "實作 execute-plans Agora workshop 與 consultation 面板。",
+      "summary_zh": "\u5be6\u4f5c execute-plans Agora workshop \u8207 consultation \u9762\u677f\u3002",
       "target_repo": "execute-plans",
       "task_class": "functional",
       "terminal_predecessors": [
@@ -72338,7 +72357,7 @@
       "state_transitions": [
         "Assemble execute-plans frontend -> produce clean production build artifact"
       ],
-      "summary_zh": "組裝 execute-plans 前端路由與 live BFF wiring，完成端到端整合。",
+      "summary_zh": "\u7d44\u88dd execute-plans \u524d\u7aef\u8def\u7531\u8207 live BFF wiring\uff0c\u5b8c\u6210\u7aef\u5230\u7aef\u6574\u5408\u3002",
       "target_repo": "execute-plans",
       "task_class": "functional",
       "terminal_predecessors": [
@@ -72475,7 +72494,7 @@
       "state_transitions": [
         "Mount 18 domain routers in main.py -> delete sem_final_generic_read_alias -> enforce composition rules"
       ],
-      "summary_zh": "組裝 BFF main.py composition root，掛載所有具名 domain router，刪除已遷移的 legacy handlers 與 read_store.py。",
+      "summary_zh": "\u7d44\u88dd BFF main.py composition root\uff0c\u639b\u8f09\u6240\u6709\u5177\u540d domain router\uff0c\u522a\u9664\u5df2\u9077\u79fb\u7684 legacy handlers \u8207 read_store.py\u3002",
       "target_repo": "pantheon",
       "task_class": "functional",
       "terminal_predecessors": [
@@ -72574,7 +72593,7 @@
       "state_transitions": [
         "Cutover script callers -> eliminate external reverse imports of main.py"
       ],
-      "summary_zh": "切換 scripts/ 與 tools 中的 command callers 至具名 domain routes 與 ports。",
+      "summary_zh": "\u5207\u63db scripts/ \u8207 tools \u4e2d\u7684 command callers \u81f3\u5177\u540d domain routes \u8207 ports\u3002",
       "target_repo": "pantheon",
       "task_class": "functional",
       "terminal_predecessors": [],
@@ -72677,7 +72696,7 @@
       "state_transitions": [
         "Delete unreferenced dead command plane files -> retain command_executor.py"
       ],
-      "summary_zh": "保留 command_executor.py 作為 operator 指令執行器並消除 reverse-main 依賴；刪除未掛載的通用 action adapter 及無外部引用的 legacy 檔案。",
+      "summary_zh": "\u4fdd\u7559 command_executor.py \u4f5c\u70ba operator \u6307\u4ee4\u57f7\u884c\u5668\u4e26\u6d88\u9664 reverse-main \u4f9d\u8cf4\uff1b\u522a\u9664\u672a\u639b\u8f09\u7684\u901a\u7528 action adapter \u53ca\u7121\u5916\u90e8\u5f15\u7528\u7684 legacy \u6a94\u6848\u3002",
       "target_repo": "pantheon",
       "task_class": "functional",
       "terminal_predecessors": [],
@@ -72778,7 +72797,7 @@
       "state_transitions": [
         "Deploy atomic candidate pair to pantheon-dev -> verify Agora projection and producer health"
       ],
-      "summary_zh": "將完成重構的 FE 與 BFF heads 部署至 pantheon-dev 環境，執行 gate-before-switch 驗證。",
+      "summary_zh": "\u5c07\u5b8c\u6210\u91cd\u69cb\u7684 FE \u8207 BFF heads \u90e8\u7f72\u81f3 pantheon-dev \u74b0\u5883\uff0c\u57f7\u884c gate-before-switch \u9a57\u8b49\u3002",
       "target_repo": "pantheon",
       "task_class": "product",
       "terminal_predecessors": [
@@ -72879,7 +72898,7 @@
       "state_transitions": [
         "Execute 12-loop deployed proof -> run bounded Source canary -> verify reconcile-only readback"
       ],
-      "summary_zh": "在 pantheon-dev 上執行全量 E2E 與 backend acceptance probes，驗證完整產品功能閉環。",
+      "summary_zh": "\u5728 pantheon-dev \u4e0a\u57f7\u884c\u5168\u91cf E2E \u8207 backend acceptance probes\uff0c\u9a57\u8b49\u5b8c\u6574\u7522\u54c1\u529f\u80fd\u9589\u74b0\u3002",
       "target_repo": "pantheon",
       "task_class": "product",
       "terminal_predecessors": [
@@ -72980,7 +72999,7 @@
       "state_transitions": [
         "Launch Management browser smoke tests -> verify entity listing & postmortem view -> emit durable readback evidence"
       ],
-      "summary_zh": "在 pantheon-dev 上執行 Management 桌面 UI 的 authenticated hosted 驗收與 DOM/network readback 證明。",
+      "summary_zh": "\u5728 pantheon-dev \u4e0a\u57f7\u884c Management \u684c\u9762 UI \u7684 authenticated hosted \u9a57\u6536\u8207 DOM/network readback \u8b49\u660e\u3002",
       "target_repo": "pantheon",
       "task_class": "product",
       "terminal_predecessors": [
