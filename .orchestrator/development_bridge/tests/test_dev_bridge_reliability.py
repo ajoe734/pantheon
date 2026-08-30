@@ -13,6 +13,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+from pydantic import ValidationError
 
 from common import (
     CANONICAL_TASK_STATE_IDENTITY_ENV,
@@ -2535,4 +2536,56 @@ def test_authoritative_dispatch_rejects_conflicting_artifact_scope_atomic_rollba
     state_task_ids = {t["id"] for t in snapshot["state"]["tasks"]}
     assert "CONFLICT-VALID-001" not in state_task_ids
     assert "CONFLICT-INVALID-002" not in state_task_ids
+
+
+def test_bridge_task_rejects_conflicting_signed_target_repo_keys() -> None:
+    with pytest.raises(ValidationError, match="extra_forbidden"):
+        BridgeTask.model_validate(
+            {
+                "id": "CONFLICT-KEYS-001",
+                "title": "Conflicting keys task",
+                "owner": "Codex",
+                "reviewer": "Claude",
+                "target_repo": "pantheon",
+                "targetRepo": "execute-plans",
+            }
+        )
+
+
+def test_bridge_task_rejects_extra_unknown_fields() -> None:
+    with pytest.raises(ValidationError, match="extra_forbidden"):
+        BridgeTask.model_validate(
+            {
+                "id": "EXTRA-FIELD-001",
+                "title": "Extra field task",
+                "owner": "Codex",
+                "reviewer": "Claude",
+                "target_repo": "pantheon",
+                "unknown_extra_key": "injected",
+            }
+        )
+
+
+def test_bridge_task_accepts_single_key_snake_and_camel() -> None:
+    task_snake = BridgeTask.model_validate(
+        {
+            "id": "SNAKE-001",
+            "title": "Snake task",
+            "owner": "Codex",
+            "reviewer": "Claude",
+            "target_repo": "pantheon",
+        }
+    )
+    assert task_snake.target_repo == "pantheon"
+
+    task_camel = BridgeTask.model_validate(
+        {
+            "id": "CAMEL-001",
+            "title": "Camel task",
+            "owner": "Codex",
+            "reviewer": "Claude",
+            "targetRepo": "execute-plans",
+        }
+    )
+    assert task_camel.target_repo == "execute-plans"
 
