@@ -7,7 +7,7 @@ This document package provides the complete, root-cause System Architecture (SA)
 #### Baseline Provenance
 - **Pantheon Baseline Commit**: `072ee68bbba8bbffb84a188ccf4d50d67429a7a8` (`origin/dev`)
 - **Execute-Plans Baseline Commit**: `7d30e78476be61222af63a089e7ab141aa43b809` (`origin/dev`)
-- **Hosted Environment**: Pair ID `fd30ca36a429e4d5ffed736cb88c6c2888dca43f1b7b1f8f08dab8d1ff794002`, Backend `d2bca5bc70bfae897e1ef3ca736ad3680a587679`, Frontend `7d30e78476be61222af63a089e7ab141aa43b809`, Status `accepted` (accepted at `2026-08-30T12:52:59Z`).
+- **Hosted Environment**: Pair ID `8961f959e54db4801438cef5fb7bb4047bc2506879afe6fc739572d0e2ba07f8`, Backend `d5c312ef0a4139329d66bda13c7e487248602ed7`, Frontend `7d30e78476be61222af63a089e7ab141aa43b809`, Status `accepted` (accepted at `2026-08-30T13:27:59Z`).
 - **Governed Command Runtime SHA**: `072ee68bbba8bbffb84a188ccf4d50d67429a7a8`
 
 ---
@@ -213,10 +213,10 @@ for t in tasks:
 pb = c.get('planning_baseline', {})
 assert pb.get('pantheon') == '072ee68bbba8bbffb84a188ccf4d50d67429a7a8', 'Stale pantheon baseline'
 assert pb.get('execute_plans') == '7d30e78476be61222af63a089e7ab141aa43b809', 'Stale execute-plans baseline'
-assert pb.get('hosted_pair_id') == 'fd30ca36a429e4d5ffed736cb88c6c2888dca43f1b7b1f8f08dab8d1ff794002', 'Stale hosted pair ID'
-assert pb.get('hosted_backend') == 'd2bca5bc70bfae897e1ef3ca736ad3680a587679', 'Stale hosted backend'
+assert pb.get('hosted_pair_id') == '8961f959e54db4801438cef5fb7bb4047bc2506879afe6fc739572d0e2ba07f8', 'Stale hosted pair ID'
+assert pb.get('hosted_backend') == 'd5c312ef0a4139329d66bda13c7e487248602ed7', 'Stale hosted backend'
 assert pb.get('hosted_frontend') == '7d30e78476be61222af63a089e7ab141aa43b809', 'Stale hosted frontend'
-assert pb.get('hosted_accepted_at') == '2026-08-30T12:52:59Z', 'Stale hosted accepted at'
+assert pb.get('hosted_accepted_at') == '2026-08-30T13:27:59Z', 'Stale hosted accepted at'
 
 # 15. Verify Execution Resources Bidirectional Invariant
 exec_res = c.get('execution_resources', {})
@@ -224,13 +224,31 @@ pdev_consumers = set(exec_res.get('pantheon-dev', {}).get('consumers', []))
 task_pdev_consumers = set(t['id'] for t in tasks if 'pantheon-dev' in t.get('execution_resources', []))
 assert pdev_consumers == task_pdev_consumers, f'pantheon-dev consumers mismatch: {pdev_consumers} != {task_pdev_consumers}'
 
-# 16. Verify Signed DevTaskPacket Materialization Mapping
+# 16. Verify Signed DevTaskPacket Materialization Mapping & Post-Bootstrap Spec Hash Contract
 mat_map = c.get('materialization_contract', {}).get('signed_dev_task_packet_materialization_mapping', {})
 assert mat_map.get('max_tasks_per_packet') == 16, 'DevTaskPacket limit must be <= 16'
 assert mat_map.get('total_batches') == 4 and mat_map.get('total_tasks') == 30, 'DevTaskPacket batch/task count invalid'
 assert all(b['task_count'] <= 16 and b['dependency_closed'] for b in mat_map.get('batches_summary', [])), 'Batches must be <= 16 and dependency closed'
 assert len(mat_map.get('per_task_spec_hashes', {})) == 30, 'per_task_spec_hashes count invalid'
 assert mat_map.get('tasks_spec_catalog_sha256'), 'tasks_spec_catalog_sha256 missing'
+
+for t in tasks:
+    spec = {
+        'acceptance': list(t.get('acceptance', [])),
+        'artifacts': list(t.get('artifacts', [])),
+        'dependency_tracks': dict(t.get('dependency_tracks', {})),
+        'depends_on': list(t.get('depends_on', [])),
+        'execution_resources': list(t.get('execution_resources', [])),
+        'id': t['id'],
+        'owner': t['owner'],
+        'phase': t['phase'],
+        'reviewer': t['reviewer'],
+        'summary': t.get('summary') or t.get('summary_zh', ''),
+        'target_repo': t.get('target_repo', 'pantheon'),
+        'title': t['title'],
+    }
+    exp_h = hashlib.sha256(json.dumps(spec, sort_keys=True, separators=(',', ':'), ensure_ascii=True).encode('utf-8')).hexdigest()
+    assert mat_map['per_task_spec_hashes'][t['id']] == exp_h, f"Post-bootstrap spec hash mismatch for {t['id']}"
 
 print('SUCCESS: All 16 comprehensive dynamic validation assertions passed!')
 "

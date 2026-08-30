@@ -1898,7 +1898,7 @@
       "DAG is strictly acyclic with topological order across materialization batches A, B, C, and D."
     ],
     "schema_version": 2,
-    "validation_command": "python3 -c \"\nimport ast, json, hashlib, os, sys\n\nsource_code = open('services/control-plane/bff/main.py').read()\ntree = ast.parse(source_code)\nc = json.load(open('docs/04/pantheon_full_product_operation_audit_2026-08-29/EXECUTION_TASK_CATALOG_2026-08-30.json'))\ntasks = c['tasks']\nnodes = c['main_ast_node_inventory']['nodes']\n\nassert len(nodes) == len(tree.body) == 2271, f'AST count mismatch: catalog {len(nodes)} != live {len(tree.body)}'\nassert len(tasks) == 30, f'Task count mismatch: {len(tasks)} != 30'\n\n# 1. Verify AST digests and content parity across all nodes\nfor i, (cat_node, ast_node) in enumerate(zip(nodes, tree.body)):\n    dump_str = ast.dump(ast_node, annotate_fields=True, include_attributes=False)\n    exp_digest = hashlib.sha256(dump_str.encode('utf-8')).hexdigest()[:16]\n    assert cat_node.get('ast_digest') == exp_digest, f'Node {i} AST digest mismatch'\n    \n    src_seg = ast.get_source_segment(source_code, ast_node)\n    exp_src_hash = hashlib.sha256(src_seg.encode('utf-8')).hexdigest()[:16] if src_seg else ''\n    assert cat_node.get('source_segment_hash') == exp_src_hash, f'Node {i} source hash mismatch'\n\n# 2. Verify Edge-Level Cutover Mapping Parity (100% match between named_consumers and consumer_cutover_mapping)\nfor n in nodes:\n    nc = n.get('named_consumers')\n    cm = n.get('consumer_cutover_mapping')\n    if nc is not None:\n        assert cm is not None, f'Node {n.get(\"node_index\")} has named_consumers but missing consumer_cutover_mapping'\n        assert set(nc) == set(cm.keys()), f'Node {n.get(\"node_index\")} cutover mapping keys do not match named_consumers {set(nc)}'\n        assert all(isinstance(v, str) and len(v) > 0 for v in cm.values()), f'Node {n.get(\"node_index\")} has empty cutover mapping values'\n    else:\n        assert cm is None, f'Node {n.get(\"node_index\")} has consumer_cutover_mapping but no named_consumers'\n\n# 3. Verify Legacy Action Cluster and os.makedirs disposition\nlegacy_cluster_nodes = [n for n in nodes if n.get('legacy_action_cluster')]\nassert len(legacy_cluster_nodes) == 9, f'Expected 9 legacy action cluster nodes, found {len(legacy_cluster_nodes)}'\nfor n in legacy_cluster_nodes:\n    assert n['owner_task'] == 'OPGAP-BFF-MAIN-ASSEMBLY-20260830', f'Legacy node {n[\"node_index\"]} must be owned by assembly'\n    assert n.get('zero_production_caller_evidence'), f'Legacy node {n[\"node_index\"]} missing zero_production_caller_evidence'\n\nn118 = nodes[118]\nassert n118['disposition'] == 'composition_keep' and n118['owner_task'] == 'OPGAP-BFF-MAIN-ASSEMBLY-20260830', 'os.makedirs node 118 invalid'\n\n# 4. Verify route migration inventory parity\nrmi = c.get('route_migration_inventory', {})\nassignments = rmi.get('assignments', [])\nhandlers = rmi.get('handler_migration_dispositions', [])\nassert len(assignments) == 441, f'Assignments count mismatch: {len(assignments)} != 441'\nassert len(handlers) == 421, f'Handlers count mismatch: {len(handlers)} != 421'\n\n# 5. Verify batches and set equality\nbatches = c['materialization_contract']['batches']\nbatched_tasks = [tid for b in batches for tid in b['tasks']]\nassert len(batched_tasks) == len(tasks) == 30, f'Batch equality failed: {len(batched_tasks)} != {len(tasks)}'\nassert set(batched_tasks) == set(t['id'] for t in tasks), 'Batch task set does not match task inventory'\nassert all(len(b['tasks']) <= 16 for b in batches), 'A batch exceeds fleet limit of 16 tasks'\n\n# 6. Verify exclusive code surfaces (no duplicates, no prefix collisions)\nsurfaces = {}\nfor t in tasks:\n    for s in t.get('owned_code_surfaces', []):\n        surfaces.setdefault(s, []).append(t['id'])\ndups = {s: ids for s, ids in surfaces.items() if len(ids) > 1}\nassert not dups, f'Duplicate owned surfaces: {dups}'\n\nassert not [n for n in nodes if n.get('disposition') == 'extract_shared_port' and n.get('node_type') in ('Import', 'ImportFrom')], 'Found stdlib extract_shared_port'\nassert all(len(t.get('deletion', [])) > 0 for t in tasks), 'All tasks must have non-empty deletion inventory'\n\n# 7. Verify safe rollback semantics\nforbidden_rb = ['restores deleted', 'restore domain_ports', 'revert to in-memory', 'revert to local helper', 'preserve legacy']\nfor t in tasks:\n    tid = t['id']\n    rb = t.get('rollback', '').lower()\n    for w in forbidden_rb:\n        assert w not in rb, f'Forbidden rollback in {tid}: {rb}'\n\n# 8. Verify DAG acyclicity\ngraph = {t['id']: set(t.get('depends_on', [])) for t in tasks}\nvisited, visiting = set(), set()\ndef dfs(n):\n    if n in visiting: return False\n    if n in visited: return True\n    visiting.add(n)\n    for nbr in graph.get(n, []):\n        if nbr in graph and not dfs(nbr): return False\n    visiting.remove(n); visited.add(n)\n    return True\nassert all(dfs(t) for t in graph), 'Cycle detected in DAG'\n\n# 9. Verify Source Proof Contract\nsp = c.get('source_proof_contract', {})\nassert sp.get('receipt_binding') == 'source_proof_receipt_id', 'source_proof_contract missing receipt_binding'\nassert sp.get('max_ticks') == 1 and sp.get('max_records') == 100, 'source_proof_contract bounded limits invalid'\nassert sp.get('dev_mode_default') == 'reconcile_only', 'source_proof_contract dev_mode_default must be reconcile_only'\n\nassert all(n.get('rationale') for n in nodes), 'All AST nodes must have non-empty rationale'\n\n# 10. Verify Special node mappings\nn37 = nodes[37]\nassert n37['target_router'] == 'services/control-plane/bff/ports/param_utils.py' and len(n37['consumer_cutover_mapping']) >= 5, '_resolve_param mapping invalid'\nassert 'OPGAP-BE-MANAGEMENT-ROUTER-20260830' in n37['named_consumers'], '_resolve_param named_consumers missing Management'\n\nn39 = nodes[39]\nassert n39['target_router'] == 'services/control-plane/bff/ports/config.py' and len(n39['consumer_cutover_mapping']) >= 3, '_REPO_ROOT mapping invalid'\n\nn43 = nodes[43]\nassert n43['target_router'] == 'services/control-plane/bff/ports/config.py' and len(n43['consumer_cutover_mapping']) >= 3, '_CRON_SERVICE_DIR mapping invalid'\n\nn76 = nodes[76]\nassert n76['disposition'] == 'composition_keep' and n76.get('consumer_cutover_mapping') is not None, 'log node cutover invalid'\nassert n76['consumer_cutover_mapping']['OPGAP-BE-BFF-CORE-20260830'] == 'logging.getLogger(__name__)', 'log logger replacement invalid'\n\n# 11. Verify Reverse-Main Symbol Inventory & External Reverse-Main Inventory\nrev = c.get('reverse_main_symbol_inventory', [])\nassert len(rev) == 29, f'Expected 29 callsite-proven reverse-main symbols, found {len(rev)}'\nfor entry in rev:\n    assert not entry['target_module'].endswith('/' + entry['symbol'] + '.py'), f'Fake port target detected: {entry}'\n\nrev_inv = c.get('external_reverse_main_symbol_inventory', {})\nassert rev_inv.get('total_import_instances', 0) == 269, f'Expected 269 reverse-main instances, found {rev_inv.get(\"total_import_instances\")}'\nassert rev_inv.get('unique_caller_files_count', 0) == 214, f'Expected 214 caller files, found {rev_inv.get(\"unique_caller_files_count\")}'\nassert rev_inv.get('unique_imported_symbols_count', 0) == 29, f'Expected 29 unique symbols, found {rev_inv.get(\"unique_imported_symbols_count\")}'\n\n# 12. Verify Domain Ports Caller Inventory\ndp_inv = c.get('domain_ports_caller_inventory', {})\nassert dp_inv.get('total_imported_symbol_rows') == 191, f'Expected 191 imported-symbol rows, found {dp_inv.get(\"total_imported_symbol_rows\")}'\nassert dp_inv.get('total_unique_caller_files') == 22, f'Expected 22 unique caller files, found {dp_inv.get(\"total_unique_caller_files\")}'\nassert dp_inv.get('production_caller_files_count') == 7, f'Expected 7 production caller files, found {dp_inv.get(\"production_caller_files_count\")}'\nassert dp_inv.get('test_caller_files_count') == 15, f'Expected 15 test caller files, found {dp_inv.get(\"test_caller_files_count\")}'\nassert dp_inv.get('production_imported_symbol_rows_count') == 129, f'Expected 129 production rows, found {dp_inv.get(\"production_imported_symbol_rows_count\")}'\nassert dp_inv.get('test_imported_symbol_rows_count') == 62, f'Expected 62 test rows, found {dp_inv.get(\"test_imported_symbol_rows_count\")}'\n\n# 13. Verify Planning Agent Capacity, Selectors & Task Assignment\ncap = c.get('planning_agent_capacity', {})\nassert cap.get('dynamic_derived') is True, 'Capacity must be dynamically derived'\nassert cap.get('command_runtime_sha') == '072ee68bbba8bbffb84a188ccf4d50d67429a7a8', 'Stale command runtime SHA'\nfor t in tasks:\n    assert t['owner'] != t['reviewer'], f'Owner equals reviewer in {t[\"id\"]}'\n    assert cap['agent_eligibility'][t['owner']]['eligible'], f'Owner {t[\"owner\"]} not eligible'\n    assert cap['agent_eligibility'][t['reviewer']]['eligible'], f'Reviewer {t[\"reviewer\"]} not eligible'\n    assert 'owner_selector' in t and 'reviewer_selector' in t, f'Task {t[\"id\"]} missing selectors'\n    assert t['delivery_repository'] == t['target_repo'], f'Repository mismatch in {t[\"id\"]}'\n\n# 14. Verify Baseline\npb = c.get('planning_baseline', {})\nassert pb.get('pantheon') == '072ee68bbba8bbffb84a188ccf4d50d67429a7a8', 'Stale pantheon baseline'\nassert pb.get('execute_plans') == '7d30e78476be61222af63a089e7ab141aa43b809', 'Stale execute-plans baseline'\nassert pb.get('hosted_pair_id') == 'fd30ca36a429e4d5ffed736cb88c6c2888dca43f1b7b1f8f08dab8d1ff794002', 'Stale hosted pair ID'\nassert pb.get('hosted_backend') == 'd2bca5bc70bfae897e1ef3ca736ad3680a587679', 'Stale hosted backend'\nassert pb.get('hosted_frontend') == '7d30e78476be61222af63a089e7ab141aa43b809', 'Stale hosted frontend'\nassert pb.get('hosted_accepted_at') == '2026-08-30T12:52:59Z', 'Stale hosted accepted at'\n\n# 15. Verify Execution Resources Bidirectional Invariant\nexec_res = c.get('execution_resources', {})\npdev_consumers = set(exec_res.get('pantheon-dev', {}).get('consumers', []))\ntask_pdev_consumers = set(t['id'] for t in tasks if 'pantheon-dev' in t.get('execution_resources', []))\nassert pdev_consumers == task_pdev_consumers, f'pantheon-dev consumers mismatch: {pdev_consumers} != {task_pdev_consumers}'\n\n# 16. Verify Signed DevTaskPacket Materialization Mapping\nmat_map = c.get('materialization_contract', {}).get('signed_dev_task_packet_materialization_mapping', {})\nassert mat_map.get('max_tasks_per_packet') == 16, 'DevTaskPacket limit must be <= 16'\nassert mat_map.get('total_batches') == 4 and mat_map.get('total_tasks') == 30, 'DevTaskPacket batch/task count invalid'\nassert all(b['task_count'] <= 16 and b['dependency_closed'] for b in mat_map.get('batches_summary', [])), 'Batches must be <= 16 and dependency closed'\nassert len(mat_map.get('per_task_spec_hashes', {})) == 30, 'per_task_spec_hashes count invalid'\nassert mat_map.get('tasks_spec_catalog_sha256'), 'tasks_spec_catalog_sha256 missing'\n\nprint('SUCCESS: All 16 comprehensive dynamic validation assertions passed!')\n\""
+    "validation_command": "python3 -c \"\nimport ast, json, hashlib, os, sys\n\nsource_code = open('services/control-plane/bff/main.py').read()\ntree = ast.parse(source_code)\nc = json.load(open('docs/04/pantheon_full_product_operation_audit_2026-08-29/EXECUTION_TASK_CATALOG_2026-08-30.json'))\ntasks = c['tasks']\nnodes = c['main_ast_node_inventory']['nodes']\n\nassert len(nodes) == len(tree.body) == 2271, f'AST count mismatch: catalog {len(nodes)} != live {len(tree.body)}'\nassert len(tasks) == 30, f'Task count mismatch: {len(tasks)} != 30'\n\n# 1. Verify AST digests and content parity across all nodes\nfor i, (cat_node, ast_node) in enumerate(zip(nodes, tree.body)):\n    dump_str = ast.dump(ast_node, annotate_fields=True, include_attributes=False)\n    exp_digest = hashlib.sha256(dump_str.encode('utf-8')).hexdigest()[:16]\n    assert cat_node.get('ast_digest') == exp_digest, f'Node {i} AST digest mismatch'\n\n# 2. Verify Edge-Level Cutover Mapping Parity (100% match between named_consumers and consumer_cutover_mapping)\nfor n in nodes:\n    nc = n.get('named_consumers')\n    cm = n.get('consumer_cutover_mapping')\n    if nc is not None:\n        assert cm is not None, f'Node {n.get(\"node_index\")} has named_consumers but missing consumer_cutover_mapping'\n        assert set(nc) == set(cm.keys()), f'Node {n.get(\"node_index\")} cutover mapping keys do not match named_consumers'\n        assert all(isinstance(v, str) and len(v) > 0 for v in cm.values()), f'Node {n.get(\"node_index\")} has empty cutover mapping values'\n    else:\n        assert cm is None, f'Node {n.get(\"node_index\")} has consumer_cutover_mapping but no named_consumers'\n\n# 3. Verify Legacy Action Cluster and os.makedirs disposition\nlegacy_cluster_nodes = [n for n in nodes if n.get('legacy_action_cluster')]\nassert len(legacy_cluster_nodes) == 9, f'Expected 9 legacy action cluster nodes, found {len(legacy_cluster_nodes)}'\nfor n in legacy_cluster_nodes:\n    assert n['owner_task'] == 'OPGAP-BFF-MAIN-ASSEMBLY-20260830', f'Legacy node {n[\"node_index\"]} must be owned by assembly'\n    assert n.get('zero_production_caller_evidence'), f'Legacy node {n[\"node_index\"]} missing zero_production_caller_evidence'\n\nn118 = nodes[118]\nassert n118['disposition'] == 'composition_keep' and n118['owner_task'] == 'OPGAP-BFF-MAIN-ASSEMBLY-20260830', 'os.makedirs node 118 invalid'\n\n# 4. Verify route migration inventory parity\nrmi = c.get('route_migration_inventory', {})\nassignments = rmi.get('assignments', [])\nhandlers = rmi.get('handler_migration_dispositions', [])\nassert len(assignments) == 441, f'Assignments count mismatch: {len(assignments)} != 441'\nassert len(handlers) == 421, f'Handlers count mismatch: {len(handlers)} != 421'\n\n# 5. Verify batches and set equality\nbatches = c['materialization_contract']['batches']\nbatched_tasks = [tid for b in batches for tid in b['tasks']]\nassert len(batched_tasks) == len(tasks) == 30, f'Batch equality failed: {len(batched_tasks)} != {len(tasks)}'\nassert set(batched_tasks) == set(t['id'] for t in tasks), 'Batch task set does not match task inventory'\nassert all(len(b['tasks']) <= 16 for b in batches), 'A batch exceeds fleet limit of 16 tasks'\n\n# 6. Verify exclusive code surfaces (no duplicates, no prefix collisions)\nsurfaces = {}\nfor t in tasks:\n    for s in t.get('owned_code_surfaces', []):\n        surfaces.setdefault(s, []).append(t['id'])\ndups = {s: ids for s, ids in surfaces.items() if len(ids) > 1}\nassert not dups, f'Duplicate owned surfaces: {dups}'\n\nassert not [n for n in nodes if n.get('disposition') == 'extract_shared_port' and n.get('node_type') in ('Import', 'ImportFrom')], 'Found stdlib extract_shared_port'\nassert all(len(t.get('deletion', [])) > 0 for t in tasks), 'All tasks must have non-empty deletion inventory'\n\n# 7. Verify safe rollback semantics\nforbidden_rb = ['restores deleted', 'restore domain_ports', 'revert to in-memory', 'revert to local helper', 'preserve legacy']\nfor t in tasks:\n    tid = t['id']\n    rb = t.get('rollback', '').lower()\n    for w in forbidden_rb:\n        assert w not in rb, f'Forbidden rollback in {tid}: {rb}'\n\n# 8. Verify DAG acyclicity\ngraph = {t['id']: set(t.get('depends_on', [])) for t in tasks}\nvisited, visiting = set(), set()\ndef dfs(n):\n    if n in visiting: return False\n    if n in visited: return True\n    visiting.add(n)\n    for nbr in graph.get(n, []):\n        if nbr in graph and not dfs(nbr): return False\n    visiting.remove(n); visited.add(n)\n    return True\nassert all(dfs(t) for t in graph), 'Cycle detected in DAG'\n\n# 9. Verify Source Proof Contract\nsp = c.get('source_proof_contract', {})\nassert sp.get('receipt_binding') == 'source_proof_receipt_id', 'source_proof_contract missing receipt_binding'\nassert sp.get('max_ticks') == 1 and sp.get('max_records') == 100, 'source_proof_contract bounded limits invalid'\nassert sp.get('dev_mode_default') == 'reconcile_only', 'source_proof_contract dev_mode_default must be reconcile_only'\n\nassert all(n.get('rationale') for n in nodes), 'All AST nodes must have non-empty rationale'\n\n# 10. Verify Special node mappings\nn37 = nodes[37]\nassert n37['target_router'] == 'services/control-plane/bff/ports/param_utils.py' and len(n37['consumer_cutover_mapping']) >= 5, '_resolve_param mapping invalid'\nassert 'OPGAP-BE-MANAGEMENT-ROUTER-20260830' in n37['named_consumers'], '_resolve_param named_consumers missing Management'\n\nn39 = nodes[39]\nassert n39['target_router'] == 'services/control-plane/bff/ports/config.py' and len(n39['consumer_cutover_mapping']) >= 3, '_REPO_ROOT mapping invalid'\n\nn43 = nodes[43]\nassert n43['target_router'] == 'services/control-plane/bff/ports/config.py' and len(n43['consumer_cutover_mapping']) >= 3, '_CRON_SERVICE_DIR mapping invalid'\n\nn76 = nodes[76]\nassert n76['disposition'] == 'composition_keep' and n76.get('consumer_cutover_mapping') is not None, 'log node cutover invalid'\nassert n76['consumer_cutover_mapping']['OPGAP-BE-BFF-CORE-20260830'] == 'logging.getLogger(__name__)', 'log logger replacement invalid'\n\n# 11. Verify Reverse-Main Symbol Inventory & External Reverse-Main Inventory\nrev = c.get('reverse_main_symbol_inventory', [])\nassert len(rev) == 29, f'Expected 29 callsite-proven reverse-main symbols, found {len(rev)}'\nfor entry in rev:\n    assert not entry['target_module'].endswith('/' + entry['symbol'] + '.py'), f'Fake port target detected: {entry}'\n\nrev_inv = c.get('external_reverse_main_symbol_inventory', {})\nassert rev_inv.get('total_import_instances', 0) == 269, f'Expected 269 reverse-main instances, found {rev_inv.get(\"total_import_instances\")}'\nassert rev_inv.get('unique_caller_files_count', 0) == 214, f'Expected 214 caller files, found {rev_inv.get(\"unique_caller_files_count\")}'\nassert rev_inv.get('unique_imported_symbols_count', 0) == 29, f'Expected 29 unique symbols, found {rev_inv.get(\"unique_imported_symbols_count\")}'\n\n# 12. Verify Domain Ports Caller Inventory\ndp_inv = c.get('domain_ports_caller_inventory', {})\nassert dp_inv.get('total_imported_symbol_rows') == 191, f'Expected 191 imported-symbol rows, found {dp_inv.get(\"total_imported_symbol_rows\")}'\nassert dp_inv.get('total_unique_caller_files') == 22, f'Expected 22 unique caller files, found {dp_inv.get(\"total_unique_caller_files\")}'\nassert dp_inv.get('production_caller_files_count') == 7, f'Expected 7 production caller files, found {dp_inv.get(\"production_caller_files_count\")}'\nassert dp_inv.get('test_caller_files_count') == 15, f'Expected 15 test caller files, found {dp_inv.get(\"test_caller_files_count\")}'\nassert dp_inv.get('production_imported_symbol_rows_count') == 129, f'Expected 129 production rows, found {dp_inv.get(\"production_imported_symbol_rows_count\")}'\nassert dp_inv.get('test_imported_symbol_rows_count') == 62, f'Expected 62 test rows, found {dp_inv.get(\"test_imported_symbol_rows_count\")}'\n\n# 13. Verify Planning Agent Capacity, Selectors & Task Assignment\ncap = c.get('planning_agent_capacity', {})\nassert cap.get('dynamic_derived') is True, 'Capacity must be dynamically derived'\nassert cap.get('command_runtime_sha') == '072ee68bbba8bbffb84a188ccf4d50d67429a7a8', 'Stale command runtime SHA'\nfor t in tasks:\n    assert t['owner'] != t['reviewer'], f'Owner equals reviewer in {t[\"id\"]}'\n    assert cap['agent_eligibility'][t['owner']]['eligible'], f'Owner {t[\"owner\"]} not eligible'\n    assert cap['agent_eligibility'][t['reviewer']]['eligible'], f'Reviewer {t[\"reviewer\"]} not eligible'\n    assert 'owner_selector' in t and 'reviewer_selector' in t, f'Task {t[\"id\"]} missing selectors'\n    assert t['delivery_repository'] == t['target_repo'], f'Repository mismatch in {t[\"id\"]}'\n\n# 14. Verify Baseline\npb = c.get('planning_baseline', {})\nassert pb.get('pantheon') == '072ee68bbba8bbffb84a188ccf4d50d67429a7a8', 'Stale pantheon baseline'\nassert pb.get('execute_plans') == '7d30e78476be61222af63a089e7ab141aa43b809', 'Stale execute-plans baseline'\nassert pb.get('hosted_pair_id') == '8961f959e54db4801438cef5fb7bb4047bc2506879afe6fc739572d0e2ba07f8', 'Stale hosted pair ID'\nassert pb.get('hosted_backend') == 'd5c312ef0a4139329d66bda13c7e487248602ed7', 'Stale hosted backend'\nassert pb.get('hosted_frontend') == '7d30e78476be61222af63a089e7ab141aa43b809', 'Stale hosted frontend'\nassert pb.get('hosted_accepted_at') == '2026-08-30T13:27:59Z', 'Stale hosted accepted at'\n\n# 15. Verify Execution Resources Bidirectional Invariant\nexec_res = c.get('execution_resources', {})\npdev_consumers = set(exec_res.get('pantheon-dev', {}).get('consumers', []))\ntask_pdev_consumers = set(t['id'] for t in tasks if 'pantheon-dev' in t.get('execution_resources', []))\nassert pdev_consumers == task_pdev_consumers, f'pantheon-dev consumers mismatch: {pdev_consumers} != {task_pdev_consumers}'\n\n# 16. Verify Signed DevTaskPacket Materialization Mapping & Post-Bootstrap Spec Hash Contract\nmat_map = c.get('materialization_contract', {}).get('signed_dev_task_packet_materialization_mapping', {})\nassert mat_map.get('max_tasks_per_packet') == 16, 'DevTaskPacket limit must be <= 16'\nassert mat_map.get('total_batches') == 4 and mat_map.get('total_tasks') == 30, 'DevTaskPacket batch/task count invalid'\nassert all(b['task_count'] <= 16 and b['dependency_closed'] for b in mat_map.get('batches_summary', [])), 'Batches must be <= 16 and dependency closed'\nassert len(mat_map.get('per_task_spec_hashes', {})) == 30, 'per_task_spec_hashes count invalid'\nassert mat_map.get('tasks_spec_catalog_sha256'), 'tasks_spec_catalog_sha256 missing'\n\nfor t in tasks:\n    spec = {\n        'acceptance': list(t.get('acceptance', [])),\n        'artifacts': list(t.get('artifacts', [])),\n        'dependency_tracks': dict(t.get('dependency_tracks', {})),\n        'depends_on': list(t.get('depends_on', [])),\n        'execution_resources': list(t.get('execution_resources', [])),\n        'id': t['id'],\n        'owner': t['owner'],\n        'phase': t['phase'],\n        'reviewer': t['reviewer'],\n        'summary': t.get('summary') or t.get('summary_zh', ''),\n        'target_repo': t.get('target_repo', 'pantheon'),\n        'title': t['title'],\n    }\n    exp_h = hashlib.sha256(json.dumps(spec, sort_keys=True, separators=(',', ':'), ensure_ascii=True).encode('utf-8')).hexdigest()\n    assert mat_map['per_task_spec_hashes'][t['id']] == exp_h, f\"Post-bootstrap spec hash mismatch for {t['id']}\"\n\nprint('SUCCESS: All 16 comprehensive dynamic validation assertions passed!')\n\""
   },
   "execution_resources": {
     "pantheon-dev": {
@@ -5687,11 +5687,11 @@
     {
       "gap_id": "OP-G03",
       "owner_task": "OPGAP-HOSTED-DEV-PROMOTION-20260830",
-      "remediation_summary": "Reconcile unverified hosted identity conflict (/deployment.json declares BFF d2bca5bc... while live /bff/version reports d5c312ef...) by deploying exact atomic pair (Pantheon dev + execute-plans dev) and verifying matching runtime SHA-256 identities.",
+      "remediation_summary": "Reconcile unverified hosted identity by deploying verified atomic pair (Pantheon dev + execute-plans dev) in Batch D and verifying matching runtime SHA-256 identities in /deployment.json and live /bff/version.",
       "severity": "P0",
       "state": "active",
-      "summary": "Current source FE/BFF not deployed as verified atomic pair due to hosted manifest/runtime version divergence.",
-      "title": "Current source FE/BFF not deployed as atomic pair"
+      "summary": "Current source FE/BFF requires verified atomic pair promotion and post-switch identity verification.",
+      "title": "Current source FE/BFF atomic pair deployment and identity verification"
     },
     {
       "gap_id": "OP-G04",
@@ -55424,7 +55424,7 @@
         "target_router": "services/control-plane/bff/main.py"
       }
     ],
-    "source_commit": "d2bca5bc70bfae897e1ef3ca736ad3680a587679",
+    "source_commit": "072ee68bbba8bbffb84a188ccf4d50d67429a7a8",
     "source_path": "services/control-plane/bff/main.py",
     "total_nodes": 2271
   },
@@ -55563,6 +55563,24 @@
           ]
         }
       ],
+      "canonical_spec_contract": {
+        "bootstrap_task": "OPGAP-DEVTOOL-TARGET-REPO-BRIDGE-20260830",
+        "fields": [
+          "acceptance",
+          "artifacts",
+          "dependency_tracks",
+          "depends_on",
+          "execution_resources",
+          "id",
+          "owner",
+          "phase",
+          "reviewer",
+          "summary",
+          "target_repo",
+          "title"
+        ],
+        "target_repo_binding": "Explicit target_repo (pantheon or execute-plans) included in task spec hash to bind cross-repository delivery post-bootstrap."
+      },
       "durable_receipt_and_readback_protocol": {
         "authoritative_readback_command": "/home/lupin/pantheon-ci-deploy/command-runtimes/072ee68bbba8bbffb84a188ccf4d50d67429a7a8/scripts/ai-status.sh show <task-id>",
         "prohibitions": [
@@ -55583,43 +55601,43 @@
       "packet_dispatch_tool": "scripts/dispatch_assistant_dev_task_packet.py",
       "packet_drain_tool": "scripts/drain_assistant_dev_task_packet_inbox.py",
       "packet_queue_tool": "scripts/queue_assistant_dev_task_packet.py",
+      "per_task_spec_hashes": {
+        "OPGAP-BE-AGORA-ROUTER-20260830": "4b5f6a118139bc134b2cf4dfab69703ac7d5060698de331d3f9b38d0e2d32330",
+        "OPGAP-BE-BFF-CORE-20260830": "746dcca04ef6e8d6ac0768acd4c71ff3def5706238dc12907e0cdf8c8e6f584e",
+        "OPGAP-BE-CAPITAL-ROUTER-20260830": "59927ce0678ae1767417b152301848c531221632b183addb8ee898cb14cbd365",
+        "OPGAP-BE-COMMAND-ADAPTERS-20260830": "cfb6894ff344f85ea37ac5bfe1ec871f25b458a731c296cf4ec67f0471d474de",
+        "OPGAP-BE-COMMAND-CALLER-CUTOVER-20260830": "d74447d4ffe4fbb701ccfdf7cf50563573a48a1558ab5357856319b48350cdd2",
+        "OPGAP-BE-COMMAND-PLANE-RETIREMENT-20260830": "f895db8dfd4a369aa1bdebecdcf450f67f202fcda7291a949d454a0bbf7faaf8",
+        "OPGAP-BE-CONTROL-LOOPS-20260830": "deee49cf3694fc9944e0325199bf877918ef59515a1e9b75521106036b603697",
+        "OPGAP-BE-EVENTS-ROUTER-20260830": "d43ca2d43dd7b1d3e2150e3da9f75f91720d3981cd98644983e19335c2b93f2e",
+        "OPGAP-BE-EVOLUTION-ROUTER-20260830": "99e54f09bfc2ae3b8c551228dcb18b447119b12a24c894541a22245aba800d8a",
+        "OPGAP-BE-GOVERNANCE-ROUTER-20260830": "dcc8d77d026f1079ed8db4353eb39c186a33a87f1bd6ab0003669812a849f8aa",
+        "OPGAP-BE-INCIDENT-ROUTER-20260830": "773c78114a6e8cb45a5a3e3f63bbb5440ff7366c10b0b84a929c7ab84ca26a19",
+        "OPGAP-BE-MANAGEMENT-ROUTER-20260830": "4041b146a356892831e02869f467e925d75499fe7d6207367c2e7777c593aaa5",
+        "OPGAP-BE-PERSONA-ROUTER-20260830": "d45ba352e02c806cbd9906eebcff05c1e4a44bea3c494b3a5243af225f4a5e51",
+        "OPGAP-BE-PORT-NAMESPACE-CONSOLIDATION-20260830": "29398cd8b41e2fc1db40b4bc1aebd19de5724c2628411647c774857dedb17a63",
+        "OPGAP-BE-POSTMORTEM-ROUTER-20260830": "f39037dec30bfebed12a072697988eba2f177fbafba55f21df55f48f88a74c82",
+        "OPGAP-BE-RESEARCH-ROUTER-20260830": "f9c1d5ce34fe7beb5e8bc82e0dace6a163e9e4a3275028abda8f19cf29ee6147",
+        "OPGAP-BE-RUNTIME-BINDING-20260830": "9f0ac61d739686e82f09add6798979e7e836be39dd36adad9846b0ea828e50c6",
+        "OPGAP-BE-STRATEGY-RANKING-20260830": "2c627cac0f44196969c1bda81b10d57e13b6ac7f06b2dfd8782e440ec5b41851",
+        "OPGAP-BE-TOOLS-INTEGRATIONS-20260830": "41e11b6ae8cb41cf927bba2cf3230e22da2d097a74b70c93ff1282f2a25c49cd",
+        "OPGAP-BE-TRAINING-ROUTER-20260830": "cc85bc7c2a78d16d2f58929cc5732ef38ffb6be3e83a5062707c3a29854e72be",
+        "OPGAP-BFF-MAIN-ASSEMBLY-20260830": "39576c399d720618db8d01c6cab0ba8e6cb2a3ad5d1989f58216ae1d60f58267",
+        "OPGAP-DEPLOY-RELIABILITY-20260830": "7f0cc5134ee57562de3c28f097f3f118b65c69fb86c0f86ab7736a112310c89d",
+        "OPGAP-DEVTOOL-TARGET-REPO-BRIDGE-20260830": "5fa02b1429625130f877a7bd73da5d48f504510adefd04d68d6a56f23c46e025",
+        "OPGAP-FE-AGORA-WORKSHOP-20260830": "15a200194586af5426f4ac54c71cace22a8fe707f20044ef98b8b5b910184b4e",
+        "OPGAP-FE-BUNDLE-CLEANUP-20260830": "e0e6be04dcfcf933d8d2a0df86c35114076c64a717d02ca02b976822608d6f65",
+        "OPGAP-FE-INTEGRATION-ASSEMBLY-20260830": "aaaf5ffba5dabb4d1b48953088c1f3fd05853da7bf722f2a7e1b826109ac9a55",
+        "OPGAP-FE-MGMT-CRUD-POSTMORTEM-20260830": "6787660406a9dcdf233b57616109460b9cb6ae50f4183f1b798f0d7fb2b14605",
+        "OPGAP-HOSTED-BACKEND-ACCEPTANCE-20260830": "670e5a5bb0831a1bf5fc8299cd0591aa3f2e909e6f302587f9bdbde4b674fdce",
+        "OPGAP-HOSTED-DEV-PROMOTION-20260830": "a047cedebb1b1ba50edd8c83d8d1ba1bba9b71ff2743a171a959e30d9989debf",
+        "OPGAP-HOSTED-MGMT-ACCEPTANCE-20260830": "0fbbb4b432b8255b0d176df69bf8147f7359dfa214f7e98b5913d4b26042e1b0"
+      },
       "protocol_version": "pantheon.assistant.dev-task.v1",
       "signed_transport_directory": ".orchestrator/development_bridge/",
+      "tasks_spec_catalog_sha256": "9d547271a7250459700b4184e8f360013d3ab179b870152a9a0fafacf1d796d3",
       "total_batches": 4,
-      "total_tasks": 30,
-      "per_task_spec_hashes": {
-        "OPGAP-DEVTOOL-TARGET-REPO-BRIDGE-20260830": "4f73ab123c8146f80927e882c0ea5f188a677250903db81bf73e548314e7a525",
-        "OPGAP-BE-PORT-NAMESPACE-CONSOLIDATION-20260830": "6e0d6aea9805b44d8437ccaa8b2ff3db2b421cac94eaff2b3b34be4abef5dc71",
-        "OPGAP-BE-BFF-CORE-20260830": "87ae266f0f3ab34f2a850e6d1b78fb58a17206cd5b57482701228e5e0a21cce0",
-        "OPGAP-BE-PERSONA-ROUTER-20260830": "8380bd33a1e3a8dd822748655837ed6d3b35fbe8745d5481e77b7280d9542de1",
-        "OPGAP-BE-TRAINING-ROUTER-20260830": "ff5d990f34005ba21ed25f245d73326b6851e59b2caafadd2de4e83f4560a6aa",
-        "OPGAP-BE-AGORA-ROUTER-20260830": "be40e30999f900d1f41e028a981aaf9042b6ce10b4f9cbb9b671337232733cc2",
-        "OPGAP-BE-RESEARCH-ROUTER-20260830": "3fd619c3a307f7c9952c5a26d7cc1c3dd8401778aebd652e80b929bf2d28681f",
-        "OPGAP-BE-GOVERNANCE-ROUTER-20260830": "5e14dfebe2a5b5f50468bed7405f2f0a67c3f47752d54caa4ad5a085384c7050",
-        "OPGAP-BE-EVOLUTION-ROUTER-20260830": "727d836c22ad187af63987048f101e6427bf69f267f02d7bf20f7a22d85b5482",
-        "OPGAP-BE-CAPITAL-ROUTER-20260830": "4e5aad8a739b72b4f969c919981ca54a7bae30383dd5017dc875f57240accfd9",
-        "OPGAP-BE-STRATEGY-RANKING-20260830": "ae364e12a7cfd3247ad015e4b24774da298f6854a9e0cf0eaba83e8436294612",
-        "OPGAP-BE-MANAGEMENT-ROUTER-20260830": "8a3466954f3fa3257388dc026fcf5148dcd0226dbaf7cf73d80605ba71390dcf",
-        "OPGAP-BE-POSTMORTEM-ROUTER-20260830": "11ff2850c066a79f16f07329025439481d52c7e6d94ae058cb0f7646ec39834e",
-        "OPGAP-BE-INCIDENT-ROUTER-20260830": "985ad0d129313ea79e3c58a3d8f3fcd3274aa20013a7b258286a9310e2d0ebf7",
-        "OPGAP-BE-EVENTS-ROUTER-20260830": "d67d3446a93a1d779531b2188d920821024abff829d4e2d495e802772422d938",
-        "OPGAP-BE-TOOLS-INTEGRATIONS-20260830": "d5bc8260ba88a5eb0a8ea94153c3be1ea5ad35cf9555dea36f5befd3ec383f3a",
-        "OPGAP-BE-CONTROL-LOOPS-20260830": "00b58b6fb765958b715045c98567c136086b8fdd8a0ee9b9026e82bfa75a3855",
-        "OPGAP-BE-COMMAND-ADAPTERS-20260830": "4286143f336869b9c568ca146290aff74dc8d56fefe3a02f538041b27fb81b87",
-        "OPGAP-BE-RUNTIME-BINDING-20260830": "e20fe9eda012feeb02ea4e309fc99f20e8f9eeca619fb75e22606dfa59fc610f",
-        "OPGAP-DEPLOY-RELIABILITY-20260830": "fb41fa95ceb615a558a031f48624eb8c485d7f00fede021b974da9d4bc051f1e",
-        "OPGAP-FE-BUNDLE-CLEANUP-20260830": "06096a89cef2fc32d5176ec1b9334aa29feb9831b01c521276c898f44fe4524c",
-        "OPGAP-FE-MGMT-CRUD-POSTMORTEM-20260830": "e248effb02bd6ba616b8a732d25049a6df8f57f0b3394bdaa73a1e2635959453",
-        "OPGAP-FE-AGORA-WORKSHOP-20260830": "90ea6af4eb4c1ef1b5d4659a18589e7e9779d9b69d465de290caed11efd6a181",
-        "OPGAP-FE-INTEGRATION-ASSEMBLY-20260830": "082c9eca70e12301a942f812021f3d07d822651a244468327a4ce5aa072270d2",
-        "OPGAP-BFF-MAIN-ASSEMBLY-20260830": "9db08bdc4acaca769e48b4f0a93ca4ca1e1939f22daf461e50015094efe95921",
-        "OPGAP-BE-COMMAND-CALLER-CUTOVER-20260830": "a8b49a4faba55bb9e907e87c6983cd79559c1c2af539b46e01ce8042c994531b",
-        "OPGAP-BE-COMMAND-PLANE-RETIREMENT-20260830": "98cb3f110725c2762b6769885b82bcd5fdfa0892dd2517ee70e50d2614ee5694",
-        "OPGAP-HOSTED-DEV-PROMOTION-20260830": "ee41452d5d5154599fdd79578ba0dac3680775e9385db316061e5ec879c5aa7d",
-        "OPGAP-HOSTED-BACKEND-ACCEPTANCE-20260830": "7ae413745bb8ea7634526fe6f05c750a111ebbbd0131be198d4fe50cdf7434d0",
-        "OPGAP-HOSTED-MGMT-ACCEPTANCE-20260830": "0298d4c6b497b1d454e576f657a372b0ea55bc7b24778cb50224746a1545a59d"
-      },
-      "tasks_spec_catalog_sha256": "cd5653a914efd552da9be09369528ec5a241a4fa0b497f72bd9d9cac1a45eb26"
+      "total_tasks": 30
     }
   },
   "materialization_id": "FULL-OPERATION-GAP-CLOSURE-20260830",
@@ -55743,11 +55761,11 @@
   "planning_baseline": {
     "command_runtime_sha": "072ee68bbba8bbffb84a188ccf4d50d67429a7a8",
     "execute_plans": "7d30e78476be61222af63a089e7ab141aa43b809",
-    "hosted_accepted_at": "2026-08-30T12:52:59Z",
-    "hosted_backend": "d2bca5bc70bfae897e1ef3ca736ad3680a587679",
+    "hosted_accepted_at": "2026-08-30T13:27:59Z",
+    "hosted_backend": "d5c312ef0a4139329d66bda13c7e487248602ed7",
     "hosted_deployment_state": "accepted",
     "hosted_frontend": "7d30e78476be61222af63a089e7ab141aa43b809",
-    "hosted_pair_id": "fd30ca36a429e4d5ffed736cb88c6c2888dca43f1b7b1f8f08dab8d1ff794002",
+    "hosted_pair_id": "8961f959e54db4801438cef5fb7bb4047bc2506879afe6fc739572d0e2ba07f8",
     "pantheon": "072ee68bbba8bbffb84a188ccf4d50d67429a7a8"
   },
   "prior_delivery_dispositions": [
@@ -67493,7 +67511,7 @@
       }
     ],
     "source": "services/control-plane/bff/main.py",
-    "source_commit": "d2bca5bc70bfae897e1ef3ca736ad3680a587679",
+    "source_commit": "072ee68bbba8bbffb84a188ccf4d50d67429a7a8",
     "target_router_registry": [
       {
         "baseline_blob": "9f0400bb469bc6a0dec11132e00d03e699c06714",
@@ -67860,9 +67878,44 @@
         ".orchestrator/worker_runtime.py"
       ],
       "owner": "Antigravity",
+      "owner_selector": {
+        "capability_required": [
+          "gcp",
+          "ci-cd",
+          "worker-ops"
+        ],
+        "exclude": [],
+        "preferred_agents": [
+          "Antigravity",
+          "Antigravity2",
+          "Codex",
+          "Codex2",
+          "Claude"
+        ],
+        "target_repo": "pantheon"
+      },
       "phase": "Wave 1 / materialization bootstrap",
       "residual_scope_only": "Fix only signed target_repo persistence/readback in development tooling.",
       "reviewer": "Codex",
+      "reviewer_selector": {
+        "capability_required": [
+          "integration",
+          "status-system",
+          "schema",
+          "acceptance"
+        ],
+        "exclude": [
+          "Antigravity"
+        ],
+        "preferred_agents": [
+          "Codex",
+          "Codex2",
+          "Claude",
+          "Antigravity",
+          "Antigravity2"
+        ],
+        "target_repo": "pantheon"
+      },
       "rollback": "Forward repair or fail closed to single-repo pantheon defaults if target_repo signature validation fails; does not restore unverified bridge state.",
       "state_transitions": [
         "Bootstrap development tooling bridge -> enable multi-repo task materialization"
@@ -67875,42 +67928,7 @@
         "pytest .orchestrator/test_multi_repo_registry.py",
         "python3 scripts/ai_status.py validate_target_repo"
       ],
-      "title": "Preserve target_repo through signed bridge materialization and readback",
-      "owner_selector": {
-        "capability_required": [
-          "gcp",
-          "ci-cd",
-          "worker-ops"
-        ],
-        "target_repo": "pantheon",
-        "preferred_agents": [
-          "Antigravity",
-          "Antigravity2",
-          "Codex",
-          "Codex2",
-          "Claude"
-        ],
-        "exclude": []
-      },
-      "reviewer_selector": {
-        "capability_required": [
-          "integration",
-          "status-system",
-          "schema",
-          "acceptance"
-        ],
-        "target_repo": "pantheon",
-        "preferred_agents": [
-          "Codex",
-          "Codex2",
-          "Claude",
-          "Antigravity",
-          "Antigravity2"
-        ],
-        "exclude": [
-          "Antigravity"
-        ]
-      }
+      "title": "Preserve target_repo through signed bridge materialization and readback"
     },
     {
       "acceptance": [
@@ -67966,9 +67984,42 @@
         "services/control-plane/bff/domain_ports/"
       ],
       "owner": "Claude",
+      "owner_selector": {
+        "capability_required": [
+          "execution",
+          "control-plane"
+        ],
+        "exclude": [],
+        "preferred_agents": [
+          "Antigravity",
+          "Antigravity2",
+          "Codex",
+          "Codex2",
+          "Claude"
+        ],
+        "target_repo": "pantheon"
+      },
       "phase": "Wave 2 / port namespace consolidation",
       "residual_scope_only": "Complete the port namespace consolidation and delete the residual domain_ports tree.",
       "reviewer": "Antigravity",
+      "reviewer_selector": {
+        "capability_required": [
+          "integration",
+          "schema",
+          "acceptance"
+        ],
+        "exclude": [
+          "Claude"
+        ],
+        "preferred_agents": [
+          "Codex",
+          "Codex2",
+          "Claude",
+          "Antigravity",
+          "Antigravity2"
+        ],
+        "target_repo": "pantheon"
+      },
       "rollback": "Forward repair or revert to previous immutable release commit; does not restore deleted domain_ports forwarding shims or secondary namespaces.",
       "state_transitions": [
         "Consolidate ports -> migrate 22 direct callers -> delete 6 domain_ports/*.py files"
@@ -67983,40 +68034,7 @@
         "pytest services/control-plane/bff/tests/test_ports_namespace_uniqueness.py",
         "git grep 'domain_ports' services/"
       ],
-      "title": "Consolidate ports as sole public and implementation namespace and delete domain_ports",
-      "owner_selector": {
-        "capability_required": [
-          "execution",
-          "control-plane"
-        ],
-        "target_repo": "pantheon",
-        "preferred_agents": [
-          "Antigravity",
-          "Antigravity2",
-          "Codex",
-          "Codex2",
-          "Claude"
-        ],
-        "exclude": []
-      },
-      "reviewer_selector": {
-        "capability_required": [
-          "integration",
-          "schema",
-          "acceptance"
-        ],
-        "target_repo": "pantheon",
-        "preferred_agents": [
-          "Codex",
-          "Codex2",
-          "Claude",
-          "Antigravity",
-          "Antigravity2"
-        ],
-        "exclude": [
-          "Claude"
-        ]
-      }
+      "title": "Consolidate ports as sole public and implementation namespace and delete domain_ports"
     },
     {
       "acceptance": [
@@ -68594,9 +68612,42 @@
         "services/control-plane/bff/core/"
       ],
       "owner": "Codex",
+      "owner_selector": {
+        "capability_required": [
+          "execution",
+          "control-plane"
+        ],
+        "exclude": [],
+        "preferred_agents": [
+          "Antigravity",
+          "Antigravity2",
+          "Codex",
+          "Codex2",
+          "Claude"
+        ],
+        "target_repo": "pantheon"
+      },
       "phase": "Wave 2 / core routing",
       "residual_scope_only": "Implement decoupled core routing without touching main.py.",
       "reviewer": "Antigravity2",
+      "reviewer_selector": {
+        "capability_required": [
+          "integration",
+          "schema",
+          "governance-review"
+        ],
+        "exclude": [
+          "Codex"
+        ],
+        "preferred_agents": [
+          "Codex",
+          "Codex2",
+          "Claude",
+          "Antigravity",
+          "Antigravity2"
+        ],
+        "target_repo": "pantheon"
+      },
       "rollback": "Forward repair or return degraded auth state; does not restore synchronous provider blocking or unverified credentials.",
       "state_transitions": [
         "Decouple auth readiness from provider latency -> enable fast authenticated render"
@@ -68611,40 +68662,7 @@
         "pytest services/control-plane/bff/test_bff_auth_facade.py",
         "pytest services/control-plane/bff/tests/test_auth_jwks_strict.py"
       ],
-      "title": "Decouple core auth and settings routing from provider readiness",
-      "owner_selector": {
-        "capability_required": [
-          "execution",
-          "control-plane"
-        ],
-        "target_repo": "pantheon",
-        "preferred_agents": [
-          "Antigravity",
-          "Antigravity2",
-          "Codex",
-          "Codex2",
-          "Claude"
-        ],
-        "exclude": []
-      },
-      "reviewer_selector": {
-        "capability_required": [
-          "integration",
-          "schema",
-          "governance-review"
-        ],
-        "target_repo": "pantheon",
-        "preferred_agents": [
-          "Codex",
-          "Codex2",
-          "Claude",
-          "Antigravity",
-          "Antigravity2"
-        ],
-        "exclude": [
-          "Codex"
-        ]
-      }
+      "title": "Decouple core auth and settings routing from provider readiness"
     },
     {
       "acceptance": [
@@ -68919,9 +68937,42 @@
         "services/control-plane/bff/personas/"
       ],
       "owner": "Antigravity2",
+      "owner_selector": {
+        "capability_required": [
+          "execution",
+          "control-plane"
+        ],
+        "exclude": [],
+        "preferred_agents": [
+          "Antigravity",
+          "Antigravity2",
+          "Codex",
+          "Codex2",
+          "Claude"
+        ],
+        "target_repo": "pantheon"
+      },
       "phase": "Wave 2 / persona routing",
       "residual_scope_only": "Migrate persona routes into dedicated domain router.",
       "reviewer": "Codex2",
+      "reviewer_selector": {
+        "capability_required": [
+          "integration",
+          "schema",
+          "acceptance"
+        ],
+        "exclude": [
+          "Antigravity2"
+        ],
+        "preferred_agents": [
+          "Codex",
+          "Codex2",
+          "Claude",
+          "Antigravity",
+          "Antigravity2"
+        ],
+        "target_repo": "pantheon"
+      },
       "rollback": "Forward repair or revert to previous immutable release commit; does not restore deleted inline persona handlers or duplicate authority.",
       "state_transitions": [
         "Extract persona route handlers from main.py -> mount under /bff/personas"
@@ -68935,40 +68986,7 @@
       "tests": [
         "pytest services/control-plane/bff/tests/test_persona_router.py"
       ],
-      "title": "Migrate Persona domain routes and lifecycle management",
-      "owner_selector": {
-        "capability_required": [
-          "execution",
-          "control-plane"
-        ],
-        "target_repo": "pantheon",
-        "preferred_agents": [
-          "Antigravity",
-          "Antigravity2",
-          "Codex",
-          "Codex2",
-          "Claude"
-        ],
-        "exclude": []
-      },
-      "reviewer_selector": {
-        "capability_required": [
-          "integration",
-          "schema",
-          "acceptance"
-        ],
-        "target_repo": "pantheon",
-        "preferred_agents": [
-          "Codex",
-          "Codex2",
-          "Claude",
-          "Antigravity",
-          "Antigravity2"
-        ],
-        "exclude": [
-          "Antigravity2"
-        ]
-      }
+      "title": "Migrate Persona domain routes and lifecycle management"
     },
     {
       "acceptance": [
@@ -69042,9 +69060,42 @@
         "services/control-plane/bff/training/service.py"
       ],
       "owner": "Codex2",
+      "owner_selector": {
+        "capability_required": [
+          "execution",
+          "control-plane"
+        ],
+        "exclude": [],
+        "preferred_agents": [
+          "Antigravity",
+          "Antigravity2",
+          "Codex",
+          "Codex2",
+          "Claude"
+        ],
+        "target_repo": "pantheon"
+      },
       "phase": "Wave 2 / training routing",
       "residual_scope_only": "Migrate training routes into dedicated domain router.",
       "reviewer": "Claude",
+      "reviewer_selector": {
+        "capability_required": [
+          "integration",
+          "schema",
+          "acceptance"
+        ],
+        "exclude": [
+          "Codex2"
+        ],
+        "preferred_agents": [
+          "Codex",
+          "Codex2",
+          "Claude",
+          "Antigravity",
+          "Antigravity2"
+        ],
+        "target_repo": "pantheon"
+      },
       "rollback": "Forward repair or revert to previous immutable release commit; does not restore unrouted inline training handlers.",
       "state_transitions": [
         "Extract training routes from main.py -> mount under /bff/trainer"
@@ -69058,40 +69109,7 @@
       "tests": [
         "pytest services/control-plane/bff/tests/test_training_router.py"
       ],
-      "title": "Migrate Training domain routes and session management",
-      "owner_selector": {
-        "capability_required": [
-          "execution",
-          "control-plane"
-        ],
-        "target_repo": "pantheon",
-        "preferred_agents": [
-          "Antigravity",
-          "Antigravity2",
-          "Codex",
-          "Codex2",
-          "Claude"
-        ],
-        "exclude": []
-      },
-      "reviewer_selector": {
-        "capability_required": [
-          "integration",
-          "schema",
-          "acceptance"
-        ],
-        "target_repo": "pantheon",
-        "preferred_agents": [
-          "Codex",
-          "Codex2",
-          "Claude",
-          "Antigravity",
-          "Antigravity2"
-        ],
-        "exclude": [
-          "Codex2"
-        ]
-      }
+      "title": "Migrate Training domain routes and session management"
     },
     {
       "acceptance": [
@@ -69280,9 +69298,42 @@
         "scripts/test_project_market_data_to_bff_agora_surfaces.py"
       ],
       "owner": "Antigravity",
+      "owner_selector": {
+        "capability_required": [
+          "execution",
+          "control-plane"
+        ],
+        "exclude": [],
+        "preferred_agents": [
+          "Antigravity",
+          "Antigravity2",
+          "Codex",
+          "Codex2",
+          "Claude"
+        ],
+        "target_repo": "pantheon"
+      },
       "phase": "Wave 2 / agora routing",
       "residual_scope_only": "Complete agora routing migration and eliminate reverse imports of main.py.",
       "reviewer": "Codex",
+      "reviewer_selector": {
+        "capability_required": [
+          "integration",
+          "schema",
+          "acceptance"
+        ],
+        "exclude": [
+          "Antigravity"
+        ],
+        "preferred_agents": [
+          "Codex",
+          "Codex2",
+          "Claude",
+          "Antigravity",
+          "Antigravity2"
+        ],
+        "target_repo": "pantheon"
+      },
       "rollback": "Forward repair or mark candidate truth unavailable; does not generate fake real candidates or restore simulation stubs as live truth.",
       "state_transitions": [
         "Extract Agora routes -> gate default stub to simulation -> wire PerformanceSuggestion producer"
@@ -69299,40 +69350,7 @@
         "pytest scripts/test_project_market_data_to_bff_agora_surfaces.py",
         "pytest services/control-plane/bff/agora/performance/test_agora_projections_performance_widgets.py"
       ],
-      "title": "Migrate Agora domain routes and decouple identity and personalization from main",
-      "owner_selector": {
-        "capability_required": [
-          "execution",
-          "control-plane"
-        ],
-        "target_repo": "pantheon",
-        "preferred_agents": [
-          "Antigravity",
-          "Antigravity2",
-          "Codex",
-          "Codex2",
-          "Claude"
-        ],
-        "exclude": []
-      },
-      "reviewer_selector": {
-        "capability_required": [
-          "integration",
-          "schema",
-          "acceptance"
-        ],
-        "target_repo": "pantheon",
-        "preferred_agents": [
-          "Codex",
-          "Codex2",
-          "Claude",
-          "Antigravity",
-          "Antigravity2"
-        ],
-        "exclude": [
-          "Antigravity"
-        ]
-      }
+      "title": "Migrate Agora domain routes and decouple identity and personalization from main"
     },
     {
       "acceptance": [
@@ -69513,9 +69531,42 @@
         "services/control-plane/bff/research/service.py"
       ],
       "owner": "Claude",
+      "owner_selector": {
+        "capability_required": [
+          "execution",
+          "control-plane"
+        ],
+        "exclude": [],
+        "preferred_agents": [
+          "Antigravity",
+          "Antigravity2",
+          "Codex",
+          "Codex2",
+          "Claude"
+        ],
+        "target_repo": "pantheon"
+      },
       "phase": "Wave 2 / research routing",
       "residual_scope_only": "Migrate research routes into dedicated domain router.",
       "reviewer": "Antigravity2",
+      "reviewer_selector": {
+        "capability_required": [
+          "integration",
+          "schema",
+          "acceptance"
+        ],
+        "exclude": [
+          "Claude"
+        ],
+        "preferred_agents": [
+          "Codex",
+          "Codex2",
+          "Claude",
+          "Antigravity",
+          "Antigravity2"
+        ],
+        "target_repo": "pantheon"
+      },
       "rollback": "Forward repair or revert to previous immutable release commit; does not restore generic alias shims or duplicate routing authority.",
       "state_transitions": [
         "Extract research routes -> implement typed /api/v1/research/artifacts and /analyses"
@@ -69529,40 +69580,7 @@
       "tests": [
         "pytest services/control-plane/bff/tests/test_research_router.py"
       ],
-      "title": "Migrate Research knowledge and framework integration routes",
-      "owner_selector": {
-        "capability_required": [
-          "execution",
-          "control-plane"
-        ],
-        "target_repo": "pantheon",
-        "preferred_agents": [
-          "Antigravity",
-          "Antigravity2",
-          "Codex",
-          "Codex2",
-          "Claude"
-        ],
-        "exclude": []
-      },
-      "reviewer_selector": {
-        "capability_required": [
-          "integration",
-          "schema",
-          "acceptance"
-        ],
-        "target_repo": "pantheon",
-        "preferred_agents": [
-          "Codex",
-          "Codex2",
-          "Claude",
-          "Antigravity",
-          "Antigravity2"
-        ],
-        "exclude": [
-          "Claude"
-        ]
-      }
+      "title": "Migrate Research knowledge and framework integration routes"
     },
     {
       "acceptance": [
@@ -69701,9 +69719,42 @@
         "services/control-plane/bff/governance/service.py"
       ],
       "owner": "Codex",
+      "owner_selector": {
+        "capability_required": [
+          "execution",
+          "control-plane"
+        ],
+        "exclude": [],
+        "preferred_agents": [
+          "Antigravity",
+          "Antigravity2",
+          "Codex",
+          "Codex2",
+          "Claude"
+        ],
+        "target_repo": "pantheon"
+      },
       "phase": "Wave 2 / governance routing",
       "residual_scope_only": "Migrate governance routes into dedicated domain router.",
       "reviewer": "Antigravity",
+      "reviewer_selector": {
+        "capability_required": [
+          "integration",
+          "schema",
+          "acceptance"
+        ],
+        "exclude": [
+          "Codex"
+        ],
+        "preferred_agents": [
+          "Codex",
+          "Codex2",
+          "Claude",
+          "Antigravity",
+          "Antigravity2"
+        ],
+        "target_repo": "pantheon"
+      },
       "rollback": "Forward repair or return explicit degraded/unavailable status; does not restore unpersisted in-memory governance authority.",
       "state_transitions": [
         "Extract governance routes -> implement typed get_approval_detail endpoint"
@@ -69717,40 +69768,7 @@
       "tests": [
         "pytest services/control-plane/bff/tests/test_governance_router.py"
       ],
-      "title": "Migrate Governance policy and committee routes",
-      "owner_selector": {
-        "capability_required": [
-          "execution",
-          "control-plane"
-        ],
-        "target_repo": "pantheon",
-        "preferred_agents": [
-          "Antigravity",
-          "Antigravity2",
-          "Codex",
-          "Codex2",
-          "Claude"
-        ],
-        "exclude": []
-      },
-      "reviewer_selector": {
-        "capability_required": [
-          "integration",
-          "schema",
-          "acceptance"
-        ],
-        "target_repo": "pantheon",
-        "preferred_agents": [
-          "Codex",
-          "Codex2",
-          "Claude",
-          "Antigravity",
-          "Antigravity2"
-        ],
-        "exclude": [
-          "Codex"
-        ]
-      }
+      "title": "Migrate Governance policy and committee routes"
     },
     {
       "acceptance": [
@@ -69840,9 +69858,42 @@
         "services/control-plane/bff/evolution/service.py"
       ],
       "owner": "Antigravity2",
+      "owner_selector": {
+        "capability_required": [
+          "execution",
+          "control-plane"
+        ],
+        "exclude": [],
+        "preferred_agents": [
+          "Antigravity",
+          "Antigravity2",
+          "Codex",
+          "Codex2",
+          "Claude"
+        ],
+        "target_repo": "pantheon"
+      },
       "phase": "Wave 2 / evolution routing",
       "residual_scope_only": "Migrate evolution routes into dedicated domain router.",
       "reviewer": "Codex2",
+      "reviewer_selector": {
+        "capability_required": [
+          "integration",
+          "schema",
+          "acceptance"
+        ],
+        "exclude": [
+          "Antigravity2"
+        ],
+        "preferred_agents": [
+          "Codex",
+          "Codex2",
+          "Claude",
+          "Antigravity",
+          "Antigravity2"
+        ],
+        "target_repo": "pantheon"
+      },
       "rollback": "Forward repair or safe-mode pause on divergent loop; does not restore unversioned parameter mutations or unvetted rules.",
       "state_transitions": [
         "Extract evolution routes from main.py -> mount under /bff/evolution"
@@ -69856,40 +69907,7 @@
       "tests": [
         "pytest services/control-plane/bff/tests/test_evolution_router.py"
       ],
-      "title": "Migrate Evolution loop convergence and cooldown routes",
-      "owner_selector": {
-        "capability_required": [
-          "execution",
-          "control-plane"
-        ],
-        "target_repo": "pantheon",
-        "preferred_agents": [
-          "Antigravity",
-          "Antigravity2",
-          "Codex",
-          "Codex2",
-          "Claude"
-        ],
-        "exclude": []
-      },
-      "reviewer_selector": {
-        "capability_required": [
-          "integration",
-          "schema",
-          "acceptance"
-        ],
-        "target_repo": "pantheon",
-        "preferred_agents": [
-          "Codex",
-          "Codex2",
-          "Claude",
-          "Antigravity",
-          "Antigravity2"
-        ],
-        "exclude": [
-          "Antigravity2"
-        ]
-      }
+      "title": "Migrate Evolution loop convergence and cooldown routes"
     },
     {
       "acceptance": [
@@ -70282,9 +70300,42 @@
         "services/control-plane/bff/capital/service.py"
       ],
       "owner": "Codex2",
+      "owner_selector": {
+        "capability_required": [
+          "execution",
+          "control-plane"
+        ],
+        "exclude": [],
+        "preferred_agents": [
+          "Antigravity",
+          "Antigravity2",
+          "Codex",
+          "Codex2",
+          "Claude"
+        ],
+        "target_repo": "pantheon"
+      },
       "phase": "Wave 2 / capital routing",
       "residual_scope_only": "Migrate capital routes into dedicated domain router.",
       "reviewer": "Claude",
+      "reviewer_selector": {
+        "capability_required": [
+          "integration",
+          "schema",
+          "acceptance"
+        ],
+        "exclude": [
+          "Codex2"
+        ],
+        "preferred_agents": [
+          "Codex",
+          "Codex2",
+          "Claude",
+          "Antigravity",
+          "Antigravity2"
+        ],
+        "target_repo": "pantheon"
+      },
       "rollback": "Forward repair or enforce strict zero-allocation fail-closed on risk boundary violations; does not bypass capital limits.",
       "state_transitions": [
         "Extract capital routes from main.py -> mount under /bff/capital"
@@ -70296,40 +70347,7 @@
       "tests": [
         "pytest services/control-plane/bff/tests/test_capital_router.py"
       ],
-      "title": "Migrate Capital pool allocation and risk limits routes",
-      "owner_selector": {
-        "capability_required": [
-          "execution",
-          "control-plane"
-        ],
-        "target_repo": "pantheon",
-        "preferred_agents": [
-          "Antigravity",
-          "Antigravity2",
-          "Codex",
-          "Codex2",
-          "Claude"
-        ],
-        "exclude": []
-      },
-      "reviewer_selector": {
-        "capability_required": [
-          "integration",
-          "schema",
-          "acceptance"
-        ],
-        "target_repo": "pantheon",
-        "preferred_agents": [
-          "Codex",
-          "Codex2",
-          "Claude",
-          "Antigravity",
-          "Antigravity2"
-        ],
-        "exclude": [
-          "Codex2"
-        ]
-      }
+      "title": "Migrate Capital pool allocation and risk limits routes"
     },
     {
       "acceptance": [
@@ -70443,9 +70461,42 @@
         "services/control-plane/bff/management_read_models/ranking_router.py"
       ],
       "owner": "Claude",
+      "owner_selector": {
+        "capability_required": [
+          "execution",
+          "control-plane"
+        ],
+        "exclude": [],
+        "preferred_agents": [
+          "Antigravity",
+          "Antigravity2",
+          "Codex",
+          "Codex2",
+          "Claude"
+        ],
+        "target_repo": "pantheon"
+      },
       "phase": "Wave 2 / strategy ranking routing",
       "residual_scope_only": "Migrate strategy and ranking routes into dedicated domain routers.",
       "reviewer": "Antigravity",
+      "reviewer_selector": {
+        "capability_required": [
+          "integration",
+          "schema",
+          "acceptance"
+        ],
+        "exclude": [
+          "Claude"
+        ],
+        "preferred_agents": [
+          "Codex",
+          "Codex2",
+          "Claude",
+          "Antigravity",
+          "Antigravity2"
+        ],
+        "target_repo": "pantheon"
+      },
       "rollback": "Forward repair or return explicit degraded ranking status; does not restore obsolete formula schemas.",
       "state_transitions": [
         "Extract strategy & ranking routes -> mount under /bff/strategies"
@@ -70459,40 +70510,7 @@
       "tests": [
         "pytest services/control-plane/bff/tests/test_strategy_ranking.py"
       ],
-      "title": "Migrate Strategy registry and ranking projection read models",
-      "owner_selector": {
-        "capability_required": [
-          "execution",
-          "control-plane"
-        ],
-        "target_repo": "pantheon",
-        "preferred_agents": [
-          "Antigravity",
-          "Antigravity2",
-          "Codex",
-          "Codex2",
-          "Claude"
-        ],
-        "exclude": []
-      },
-      "reviewer_selector": {
-        "capability_required": [
-          "integration",
-          "schema",
-          "acceptance"
-        ],
-        "target_repo": "pantheon",
-        "preferred_agents": [
-          "Codex",
-          "Codex2",
-          "Claude",
-          "Antigravity",
-          "Antigravity2"
-        ],
-        "exclude": [
-          "Claude"
-        ]
-      }
+      "title": "Migrate Strategy registry and ranking projection read models"
     },
     {
       "acceptance": [
@@ -70725,9 +70743,42 @@
         "services/control-plane/bff/management_read_models/service.py"
       ],
       "owner": "Antigravity",
+      "owner_selector": {
+        "capability_required": [
+          "execution",
+          "control-plane"
+        ],
+        "exclude": [],
+        "preferred_agents": [
+          "Antigravity",
+          "Antigravity2",
+          "Codex",
+          "Codex2",
+          "Claude"
+        ],
+        "target_repo": "pantheon"
+      },
       "phase": "Wave 2 / management routing",
       "residual_scope_only": "Migrate management routes into dedicated domain router.",
       "reviewer": "Codex",
+      "reviewer_selector": {
+        "capability_required": [
+          "integration",
+          "schema",
+          "acceptance"
+        ],
+        "exclude": [
+          "Antigravity"
+        ],
+        "preferred_agents": [
+          "Codex",
+          "Codex2",
+          "Claude",
+          "Antigravity",
+          "Antigravity2"
+        ],
+        "target_repo": "pantheon"
+      },
       "rollback": "Forward repair or return 503 Service Unavailable on OpenClaw provider timeout; does not restore unbacked mock handlers.",
       "state_transitions": [
         "Extract management routes -> provide canonical CRUD endpoints"
@@ -70741,40 +70792,7 @@
       "tests": [
         "pytest services/control-plane/bff/tests/test_management_router.py"
       ],
-      "title": "Migrate Management CRUD and natural-language ask routes",
-      "owner_selector": {
-        "capability_required": [
-          "execution",
-          "control-plane"
-        ],
-        "target_repo": "pantheon",
-        "preferred_agents": [
-          "Antigravity",
-          "Antigravity2",
-          "Codex",
-          "Codex2",
-          "Claude"
-        ],
-        "exclude": []
-      },
-      "reviewer_selector": {
-        "capability_required": [
-          "integration",
-          "schema",
-          "acceptance"
-        ],
-        "target_repo": "pantheon",
-        "preferred_agents": [
-          "Codex",
-          "Codex2",
-          "Claude",
-          "Antigravity",
-          "Antigravity2"
-        ],
-        "exclude": [
-          "Antigravity"
-        ]
-      }
+      "title": "Migrate Management CRUD and natural-language ask routes"
     },
     {
       "acceptance": [
@@ -70818,9 +70836,42 @@
         "services/control-plane/bff/postmortems/"
       ],
       "owner": "Codex",
+      "owner_selector": {
+        "capability_required": [
+          "execution",
+          "control-plane"
+        ],
+        "exclude": [],
+        "preferred_agents": [
+          "Antigravity",
+          "Antigravity2",
+          "Codex",
+          "Codex2",
+          "Claude"
+        ],
+        "target_repo": "pantheon"
+      },
       "phase": "Wave 2 / postmortem routing",
       "residual_scope_only": "Migrate postmortem routes into dedicated domain router.",
       "reviewer": "Antigravity2",
+      "reviewer_selector": {
+        "capability_required": [
+          "integration",
+          "schema",
+          "acceptance"
+        ],
+        "exclude": [
+          "Codex"
+        ],
+        "preferred_agents": [
+          "Codex",
+          "Codex2",
+          "Claude",
+          "Antigravity",
+          "Antigravity2"
+        ],
+        "target_repo": "pantheon"
+      },
       "rollback": "Forward repair or return empty canonical list if postmortem storage is uninitialized; does not restore string-parsed timeline derivations.",
       "state_transitions": [
         "Extract postmortem routes -> provide canonical list/detail contracts"
@@ -70832,40 +70883,7 @@
       "tests": [
         "pytest services/control-plane/bff/tests/test_postmortem_router.py"
       ],
-      "title": "Migrate Postmortem records and root-cause diagnostic routes",
-      "owner_selector": {
-        "capability_required": [
-          "execution",
-          "control-plane"
-        ],
-        "target_repo": "pantheon",
-        "preferred_agents": [
-          "Antigravity",
-          "Antigravity2",
-          "Codex",
-          "Codex2",
-          "Claude"
-        ],
-        "exclude": []
-      },
-      "reviewer_selector": {
-        "capability_required": [
-          "integration",
-          "schema",
-          "acceptance"
-        ],
-        "target_repo": "pantheon",
-        "preferred_agents": [
-          "Codex",
-          "Codex2",
-          "Claude",
-          "Antigravity",
-          "Antigravity2"
-        ],
-        "exclude": [
-          "Codex"
-        ]
-      }
+      "title": "Migrate Postmortem records and root-cause diagnostic routes"
     },
     {
       "acceptance": [
@@ -70966,9 +70984,42 @@
         "services/control-plane/bff/incidents/"
       ],
       "owner": "Antigravity2",
+      "owner_selector": {
+        "capability_required": [
+          "execution",
+          "control-plane"
+        ],
+        "exclude": [],
+        "preferred_agents": [
+          "Antigravity",
+          "Antigravity2",
+          "Codex",
+          "Codex2",
+          "Claude"
+        ],
+        "target_repo": "pantheon"
+      },
       "phase": "Wave 2 / incident routing",
       "residual_scope_only": "Migrate incident routes into dedicated domain router.",
       "reviewer": "Codex2",
+      "reviewer_selector": {
+        "capability_required": [
+          "integration",
+          "schema",
+          "acceptance"
+        ],
+        "exclude": [
+          "Antigravity2"
+        ],
+        "preferred_agents": [
+          "Codex",
+          "Codex2",
+          "Claude",
+          "Antigravity",
+          "Antigravity2"
+        ],
+        "target_repo": "pantheon"
+      },
       "rollback": "Forward repair or emit fail-closed critical alert on logger error; does not drop audit events or suppress incidents.",
       "state_transitions": [
         "Extract incident routes from main.py -> mount under /bff/incidents"
@@ -70982,40 +71033,7 @@
       "tests": [
         "pytest services/control-plane/bff/tests/test_incident_router.py"
       ],
-      "title": "Migrate Incident management and fast-path alert routes",
-      "owner_selector": {
-        "capability_required": [
-          "execution",
-          "control-plane"
-        ],
-        "target_repo": "pantheon",
-        "preferred_agents": [
-          "Antigravity",
-          "Antigravity2",
-          "Codex",
-          "Codex2",
-          "Claude"
-        ],
-        "exclude": []
-      },
-      "reviewer_selector": {
-        "capability_required": [
-          "integration",
-          "schema",
-          "acceptance"
-        ],
-        "target_repo": "pantheon",
-        "preferred_agents": [
-          "Codex",
-          "Codex2",
-          "Claude",
-          "Antigravity",
-          "Antigravity2"
-        ],
-        "exclude": [
-          "Antigravity2"
-        ]
-      }
+      "title": "Migrate Incident management and fast-path alert routes"
     },
     {
       "acceptance": [
@@ -71101,9 +71119,42 @@
         "services/control-plane/bff/events/service.py"
       ],
       "owner": "Codex2",
+      "owner_selector": {
+        "capability_required": [
+          "execution",
+          "control-plane"
+        ],
+        "exclude": [],
+        "preferred_agents": [
+          "Antigravity",
+          "Antigravity2",
+          "Codex",
+          "Codex2",
+          "Claude"
+        ],
+        "target_repo": "pantheon"
+      },
       "phase": "Wave 2 / events routing",
       "residual_scope_only": "Migrate event routes into dedicated domain router.",
       "reviewer": "Claude",
+      "reviewer_selector": {
+        "capability_required": [
+          "integration",
+          "schema",
+          "acceptance"
+        ],
+        "exclude": [
+          "Codex2"
+        ],
+        "preferred_agents": [
+          "Codex",
+          "Codex2",
+          "Claude",
+          "Antigravity",
+          "Antigravity2"
+        ],
+        "target_repo": "pantheon"
+      },
       "rollback": "Forward repair with client reconnect backoff; does not restore synchronous polling fallbacks.",
       "state_transitions": [
         "Extract event stream routes -> mount under /bff/events"
@@ -71115,40 +71166,7 @@
       "tests": [
         "pytest services/control-plane/bff/tests/test_events_router.py"
       ],
-      "title": "Migrate Event stream subscription and outbox delivery routes",
-      "owner_selector": {
-        "capability_required": [
-          "execution",
-          "control-plane"
-        ],
-        "target_repo": "pantheon",
-        "preferred_agents": [
-          "Antigravity",
-          "Antigravity2",
-          "Codex",
-          "Codex2",
-          "Claude"
-        ],
-        "exclude": []
-      },
-      "reviewer_selector": {
-        "capability_required": [
-          "integration",
-          "schema",
-          "acceptance"
-        ],
-        "target_repo": "pantheon",
-        "preferred_agents": [
-          "Codex",
-          "Codex2",
-          "Claude",
-          "Antigravity",
-          "Antigravity2"
-        ],
-        "exclude": [
-          "Codex2"
-        ]
-      }
+      "title": "Migrate Event stream subscription and outbox delivery routes"
     },
     {
       "acceptance": [
@@ -71262,9 +71280,42 @@
         "services/control-plane/bff/integrations/"
       ],
       "owner": "Antigravity",
+      "owner_selector": {
+        "capability_required": [
+          "execution",
+          "control-plane"
+        ],
+        "exclude": [],
+        "preferred_agents": [
+          "Antigravity",
+          "Antigravity2",
+          "Codex",
+          "Codex2",
+          "Claude"
+        ],
+        "target_repo": "pantheon"
+      },
       "phase": "Wave 2 / tools & integrations routing",
       "residual_scope_only": "Migrate tools and integrations routes into dedicated domain router.",
       "reviewer": "Codex",
+      "reviewer_selector": {
+        "capability_required": [
+          "integration",
+          "schema",
+          "acceptance"
+        ],
+        "exclude": [
+          "Antigravity"
+        ],
+        "preferred_agents": [
+          "Codex",
+          "Codex2",
+          "Claude",
+          "Antigravity",
+          "Antigravity2"
+        ],
+        "target_repo": "pantheon"
+      },
       "rollback": "Forward repair or disable failing external MCP tool without interrupting core BFF; does not restore unadmitted tool executions.",
       "state_transitions": [
         "Extract tool & integration routes -> mount under /bff/tools"
@@ -71276,40 +71327,7 @@
       "tests": [
         "pytest services/control-plane/bff/tests/test_tools_integrations.py"
       ],
-      "title": "Migrate Tools diagnostic endpoints and third-party integrations",
-      "owner_selector": {
-        "capability_required": [
-          "execution",
-          "control-plane"
-        ],
-        "target_repo": "pantheon",
-        "preferred_agents": [
-          "Antigravity",
-          "Antigravity2",
-          "Codex",
-          "Codex2",
-          "Claude"
-        ],
-        "exclude": []
-      },
-      "reviewer_selector": {
-        "capability_required": [
-          "integration",
-          "schema",
-          "acceptance"
-        ],
-        "target_repo": "pantheon",
-        "preferred_agents": [
-          "Codex",
-          "Codex2",
-          "Claude",
-          "Antigravity",
-          "Antigravity2"
-        ],
-        "exclude": [
-          "Antigravity"
-        ]
-      }
+      "title": "Migrate Tools diagnostic endpoints and third-party integrations"
     },
     {
       "acceptance": [
@@ -71405,9 +71423,42 @@
         "services/control-plane/bff/control_loops/"
       ],
       "owner": "Codex",
+      "owner_selector": {
+        "capability_required": [
+          "execution",
+          "control-plane"
+        ],
+        "exclude": [],
+        "preferred_agents": [
+          "Antigravity",
+          "Antigravity2",
+          "Codex",
+          "Codex2",
+          "Claude"
+        ],
+        "target_repo": "pantheon"
+      },
       "phase": "Wave 2 / control loops routing",
       "residual_scope_only": "Migrate control loops routes into dedicated domain router.",
       "reviewer": "Antigravity2",
+      "reviewer_selector": {
+        "capability_required": [
+          "integration",
+          "schema",
+          "acceptance"
+        ],
+        "exclude": [
+          "Codex"
+        ],
+        "preferred_agents": [
+          "Codex",
+          "Codex2",
+          "Claude",
+          "Antigravity",
+          "Antigravity2"
+        ],
+        "target_repo": "pantheon"
+      },
       "rollback": "Forward repair or pause scheduled loop runs if dependency pre-checks fail; does not restore unvetted trigger races.",
       "state_transitions": [
         "Extract loop trigger routes -> mount under /bff/loops"
@@ -71421,40 +71472,7 @@
       "tests": [
         "pytest services/control-plane/bff/tests/test_control_loops.py"
       ],
-      "title": "Migrate Control Loops execution and trigger management routes",
-      "owner_selector": {
-        "capability_required": [
-          "execution",
-          "control-plane"
-        ],
-        "target_repo": "pantheon",
-        "preferred_agents": [
-          "Antigravity",
-          "Antigravity2",
-          "Codex",
-          "Codex2",
-          "Claude"
-        ],
-        "exclude": []
-      },
-      "reviewer_selector": {
-        "capability_required": [
-          "integration",
-          "schema",
-          "acceptance"
-        ],
-        "target_repo": "pantheon",
-        "preferred_agents": [
-          "Codex",
-          "Codex2",
-          "Claude",
-          "Antigravity",
-          "Antigravity2"
-        ],
-        "exclude": [
-          "Codex"
-        ]
-      }
+      "title": "Migrate Control Loops execution and trigger management routes"
     },
     {
       "acceptance": [
@@ -71552,9 +71570,42 @@
         "services/control-plane/bff/command_executor.py"
       ],
       "owner": "Antigravity2",
+      "owner_selector": {
+        "capability_required": [
+          "execution",
+          "control-plane"
+        ],
+        "exclude": [],
+        "preferred_agents": [
+          "Antigravity",
+          "Antigravity2",
+          "Codex",
+          "Codex2",
+          "Claude"
+        ],
+        "target_repo": "pantheon"
+      },
       "phase": "Wave 2 / command adapters routing",
       "residual_scope_only": "Migrate command adapter routes into dedicated domain router.",
       "reviewer": "Codex2",
+      "reviewer_selector": {
+        "capability_required": [
+          "integration",
+          "schema",
+          "acceptance"
+        ],
+        "exclude": [
+          "Antigravity2"
+        ],
+        "preferred_agents": [
+          "Codex",
+          "Codex2",
+          "Claude",
+          "Antigravity",
+          "Antigravity2"
+        ],
+        "target_repo": "pantheon"
+      },
       "rollback": "Forward repair or return fail-closed error; does not restore unrouted local helper dispatch or duplicate authority.",
       "state_transitions": [
         "Refactor command_executor.py to use ports/ -> eliminate reverse import of main.py"
@@ -71566,40 +71617,7 @@
       "tests": [
         "pytest services/control-plane/bff/test_command_executor.py"
       ],
-      "title": "Migrate command adapter endpoints and typed execution dispatch",
-      "owner_selector": {
-        "capability_required": [
-          "execution",
-          "control-plane"
-        ],
-        "target_repo": "pantheon",
-        "preferred_agents": [
-          "Antigravity",
-          "Antigravity2",
-          "Codex",
-          "Codex2",
-          "Claude"
-        ],
-        "exclude": []
-      },
-      "reviewer_selector": {
-        "capability_required": [
-          "integration",
-          "schema",
-          "acceptance"
-        ],
-        "target_repo": "pantheon",
-        "preferred_agents": [
-          "Codex",
-          "Codex2",
-          "Claude",
-          "Antigravity",
-          "Antigravity2"
-        ],
-        "exclude": [
-          "Antigravity2"
-        ]
-      }
+      "title": "Migrate command adapter endpoints and typed execution dispatch"
     },
     {
       "acceptance": [
@@ -71682,9 +71700,42 @@
         "services/runtime-manager/main.py"
       ],
       "owner": "Codex2",
+      "owner_selector": {
+        "capability_required": [
+          "execution",
+          "control-plane"
+        ],
+        "exclude": [],
+        "preferred_agents": [
+          "Antigravity",
+          "Antigravity2",
+          "Codex",
+          "Codex2",
+          "Claude"
+        ],
+        "target_repo": "pantheon"
+      },
       "phase": "Wave 2 / runtime binding",
       "residual_scope_only": "Migrate runtime routes into dedicated domain router.",
       "reviewer": "Claude",
+      "reviewer_selector": {
+        "capability_required": [
+          "integration",
+          "schema",
+          "acceptance"
+        ],
+        "exclude": [
+          "Codex2"
+        ],
+        "preferred_agents": [
+          "Codex",
+          "Codex2",
+          "Claude",
+          "Antigravity",
+          "Antigravity2"
+        ],
+        "target_repo": "pantheon"
+      },
       "rollback": "Forward repair or reject unprojected binding and prevent execution container startup; does not bypass runtime verification.",
       "state_transitions": [
         "Emit immutable loader projection from Registry -> verify in RuntimeManager"
@@ -71698,40 +71749,7 @@
       "tests": [
         "pytest services/control-plane/bff/tests/test_runtime_binding.py"
       ],
-      "title": "Migrate Runtime binding and deployment mode routes",
-      "owner_selector": {
-        "capability_required": [
-          "execution",
-          "control-plane"
-        ],
-        "target_repo": "pantheon",
-        "preferred_agents": [
-          "Antigravity",
-          "Antigravity2",
-          "Codex",
-          "Codex2",
-          "Claude"
-        ],
-        "exclude": []
-      },
-      "reviewer_selector": {
-        "capability_required": [
-          "integration",
-          "schema",
-          "acceptance"
-        ],
-        "target_repo": "pantheon",
-        "preferred_agents": [
-          "Codex",
-          "Codex2",
-          "Claude",
-          "Antigravity",
-          "Antigravity2"
-        ],
-        "exclude": [
-          "Codex2"
-        ]
-      }
+      "title": "Migrate Runtime binding and deployment mode routes"
     },
     {
       "acceptance": [
@@ -71824,9 +71842,44 @@
         "services/control-plane/bff/deployment/"
       ],
       "owner": "Claude",
+      "owner_selector": {
+        "capability_required": [
+          "gcp",
+          "ci-cd",
+          "runtime-packaging",
+          "worker-ops"
+        ],
+        "exclude": [],
+        "preferred_agents": [
+          "Antigravity",
+          "Antigravity2",
+          "Codex",
+          "Codex2",
+          "Claude"
+        ],
+        "target_repo": "pantheon"
+      },
       "phase": "Wave 2 / deployment reliability",
       "residual_scope_only": "Implement deployment reliability routes in dedicated domain router.",
       "reviewer": "Antigravity",
+      "reviewer_selector": {
+        "capability_required": [
+          "integration",
+          "governance-review",
+          "acceptance"
+        ],
+        "exclude": [
+          "Claude"
+        ],
+        "preferred_agents": [
+          "Codex",
+          "Codex2",
+          "Claude",
+          "Antigravity",
+          "Antigravity2"
+        ],
+        "target_repo": "pantheon"
+      },
       "rollback": "Automatic fail-closed rollback to previous healthy manifest pair on verification failure; does not advance unverified release state.",
       "state_transitions": [
         "Enforce fail-closed gate verifier -> implement resilient rollback authority"
@@ -71840,42 +71893,7 @@
       "tests": [
         "bash scripts/test_deploy_diagnostics.sh"
       ],
-      "title": "Implement deployment health check and zero-downtime release gates",
-      "owner_selector": {
-        "capability_required": [
-          "gcp",
-          "ci-cd",
-          "runtime-packaging",
-          "worker-ops"
-        ],
-        "target_repo": "pantheon",
-        "preferred_agents": [
-          "Antigravity",
-          "Antigravity2",
-          "Codex",
-          "Codex2",
-          "Claude"
-        ],
-        "exclude": []
-      },
-      "reviewer_selector": {
-        "capability_required": [
-          "integration",
-          "governance-review",
-          "acceptance"
-        ],
-        "target_repo": "pantheon",
-        "preferred_agents": [
-          "Codex",
-          "Codex2",
-          "Claude",
-          "Antigravity",
-          "Antigravity2"
-        ],
-        "exclude": [
-          "Claude"
-        ]
-      }
+      "title": "Implement deployment health check and zero-downtime release gates"
     },
     {
       "acceptance": [
@@ -71979,9 +71997,41 @@
         "execute-plans:src/lib/bff-v1/mocks/registry.ts"
       ],
       "owner": "Antigravity",
+      "owner_selector": {
+        "capability_required": [
+          "frontend",
+          "control-plane"
+        ],
+        "exclude": [],
+        "preferred_agents": [
+          "Antigravity",
+          "Antigravity2",
+          "Codex",
+          "Codex2",
+          "Claude"
+        ],
+        "target_repo": "execute-plans"
+      },
       "phase": "Wave 2 / frontend cleanup",
       "residual_scope_only": "Only the current bd03c863 production residual files enumerated by frontend_residual_inventory; already absent paths must stay absent.",
       "reviewer": "Codex",
+      "reviewer_selector": {
+        "capability_required": [
+          "integration",
+          "governance-review"
+        ],
+        "exclude": [
+          "Antigravity"
+        ],
+        "preferred_agents": [
+          "Codex",
+          "Codex2",
+          "Claude",
+          "Antigravity",
+          "Antigravity2"
+        ],
+        "target_repo": "execute-plans"
+      },
       "rollback": "Forward repair or revert to previous immutable release commit; displays strictLiveFixtureUnavailable error banner if live contract missing and never restores mock files.",
       "state_transitions": [
         "Remove mock/seed exports from production bundle -> delete 37 residual files"
@@ -71998,39 +72048,7 @@
         "npm run build",
         "npm run test:bundle"
       ],
-      "title": "Remove frontend mock fallbacks and dead seeds in execute-plans",
-      "owner_selector": {
-        "capability_required": [
-          "frontend",
-          "control-plane"
-        ],
-        "target_repo": "execute-plans",
-        "preferred_agents": [
-          "Antigravity",
-          "Antigravity2",
-          "Codex",
-          "Codex2",
-          "Claude"
-        ],
-        "exclude": []
-      },
-      "reviewer_selector": {
-        "capability_required": [
-          "integration",
-          "governance-review"
-        ],
-        "target_repo": "execute-plans",
-        "preferred_agents": [
-          "Codex",
-          "Codex2",
-          "Claude",
-          "Antigravity",
-          "Antigravity2"
-        ],
-        "exclude": [
-          "Antigravity"
-        ]
-      }
+      "title": "Remove frontend mock fallbacks and dead seeds in execute-plans"
     },
     {
       "acceptance": [
@@ -72086,9 +72104,41 @@
         "execute-plans:src/lib/bff/createEntity.ts"
       ],
       "owner": "Codex",
+      "owner_selector": {
+        "capability_required": [
+          "frontend",
+          "control-plane"
+        ],
+        "exclude": [],
+        "preferred_agents": [
+          "Antigravity",
+          "Antigravity2",
+          "Codex",
+          "Codex2",
+          "Claude"
+        ],
+        "target_repo": "execute-plans"
+      },
       "phase": "Wave 2 / frontend management desktop",
       "residual_scope_only": "The four enumerated page/write residuals plus canonical Postmortem list/detail client; no bundle-wide cleanup.",
       "reviewer": "Antigravity2",
+      "reviewer_selector": {
+        "capability_required": [
+          "integration",
+          "governance-review"
+        ],
+        "exclude": [
+          "Codex"
+        ],
+        "preferred_agents": [
+          "Codex",
+          "Codex2",
+          "Claude",
+          "Antigravity",
+          "Antigravity2"
+        ],
+        "target_repo": "execute-plans"
+      },
       "rollback": "Forward repair or disable action button with unsupported badge if backend CRUD endpoint is missing; does not restore writeOverlay mutations.",
       "state_transitions": [
         "Wire canonical CRUD endpoints -> connect postmortem UI to /bff/postmortems"
@@ -72100,39 +72150,7 @@
       "tests": [
         "npm run test:management"
       ],
-      "title": "Implement Management AI desktop and postmortem view in execute-plans",
-      "owner_selector": {
-        "capability_required": [
-          "frontend",
-          "control-plane"
-        ],
-        "target_repo": "execute-plans",
-        "preferred_agents": [
-          "Antigravity",
-          "Antigravity2",
-          "Codex",
-          "Codex2",
-          "Claude"
-        ],
-        "exclude": []
-      },
-      "reviewer_selector": {
-        "capability_required": [
-          "integration",
-          "governance-review"
-        ],
-        "target_repo": "execute-plans",
-        "preferred_agents": [
-          "Codex",
-          "Codex2",
-          "Claude",
-          "Antigravity",
-          "Antigravity2"
-        ],
-        "exclude": [
-          "Codex"
-        ]
-      }
+      "title": "Implement Management AI desktop and postmortem view in execute-plans"
     },
     {
       "acceptance": [
@@ -72182,9 +72200,41 @@
         "execute-plans:src/pages/TradingRoom/"
       ],
       "owner": "Antigravity2",
+      "owner_selector": {
+        "capability_required": [
+          "frontend",
+          "control-plane"
+        ],
+        "exclude": [],
+        "preferred_agents": [
+          "Antigravity",
+          "Antigravity2",
+          "Codex",
+          "Codex2",
+          "Claude"
+        ],
+        "target_repo": "execute-plans"
+      },
       "phase": "Wave 2 / frontend agora workshop",
       "residual_scope_only": "Backend-driven capability badges, candidate admission truth, and trigger-ID reload only.",
       "reviewer": "Codex2",
+      "reviewer_selector": {
+        "capability_required": [
+          "integration",
+          "governance-review"
+        ],
+        "exclude": [
+          "Antigravity2"
+        ],
+        "preferred_agents": [
+          "Codex",
+          "Codex2",
+          "Claude",
+          "Antigravity",
+          "Antigravity2"
+        ],
+        "target_repo": "execute-plans"
+      },
       "rollback": "Forward repair or display simulation badge if backend returns non-real candidate provenance; does not mask stub candidates as real truth.",
       "state_transitions": [
         "Display explicit provenance badges -> connect trading room to live projections"
@@ -72198,39 +72248,7 @@
       "tests": [
         "npm run test:agora"
       ],
-      "title": "Implement Agora workshop and consultation views in execute-plans",
-      "owner_selector": {
-        "capability_required": [
-          "frontend",
-          "control-plane"
-        ],
-        "target_repo": "execute-plans",
-        "preferred_agents": [
-          "Antigravity",
-          "Antigravity2",
-          "Codex",
-          "Codex2",
-          "Claude"
-        ],
-        "exclude": []
-      },
-      "reviewer_selector": {
-        "capability_required": [
-          "integration",
-          "governance-review"
-        ],
-        "target_repo": "execute-plans",
-        "preferred_agents": [
-          "Codex",
-          "Codex2",
-          "Claude",
-          "Antigravity",
-          "Antigravity2"
-        ],
-        "exclude": [
-          "Antigravity2"
-        ]
-      }
+      "title": "Implement Agora workshop and consultation views in execute-plans"
     },
     {
       "acceptance": [
@@ -72281,9 +72299,41 @@
         "execute-plans:src/lib/bff-v1/index.ts"
       ],
       "owner": "Codex2",
+      "owner_selector": {
+        "capability_required": [
+          "frontend",
+          "control-plane"
+        ],
+        "exclude": [],
+        "preferred_agents": [
+          "Antigravity",
+          "Antigravity2",
+          "Codex",
+          "Codex2",
+          "Claude"
+        ],
+        "target_repo": "execute-plans"
+      },
       "phase": "Wave 3 / frontend integration assembly",
       "residual_scope_only": "Current App/Layout/barrel assembly and zero-mock production graph after predecessor residuals only.",
       "reviewer": "Claude",
+      "reviewer_selector": {
+        "capability_required": [
+          "integration",
+          "governance-review"
+        ],
+        "exclude": [
+          "Codex2"
+        ],
+        "preferred_agents": [
+          "Codex",
+          "Codex2",
+          "Claude",
+          "Antigravity",
+          "Antigravity2"
+        ],
+        "target_repo": "execute-plans"
+      },
       "rollback": "Forward repair or revert to previous immutable release commit; does not restore deleted mock fallbacks or old FE routing.",
       "state_transitions": [
         "Assemble execute-plans frontend -> produce clean production build artifact"
@@ -72299,39 +72349,7 @@
         "npm run build",
         "npm run test:all"
       ],
-      "title": "Assemble frontend integration routes and live BFF wiring in execute-plans",
-      "owner_selector": {
-        "capability_required": [
-          "frontend",
-          "control-plane"
-        ],
-        "target_repo": "execute-plans",
-        "preferred_agents": [
-          "Antigravity",
-          "Antigravity2",
-          "Codex",
-          "Codex2",
-          "Claude"
-        ],
-        "exclude": []
-      },
-      "reviewer_selector": {
-        "capability_required": [
-          "integration",
-          "governance-review"
-        ],
-        "target_repo": "execute-plans",
-        "preferred_agents": [
-          "Codex",
-          "Codex2",
-          "Claude",
-          "Antigravity",
-          "Antigravity2"
-        ],
-        "exclude": [
-          "Codex2"
-        ]
-      }
+      "title": "Assemble frontend integration routes and live BFF wiring in execute-plans"
     },
     {
       "acceptance": [
@@ -72417,9 +72435,42 @@
         "services/control-plane/bff/read_store.py"
       ],
       "owner": "Claude",
+      "owner_selector": {
+        "capability_required": [
+          "execution",
+          "control-plane"
+        ],
+        "exclude": [],
+        "preferred_agents": [
+          "Antigravity",
+          "Antigravity2",
+          "Codex",
+          "Codex2",
+          "Claude"
+        ],
+        "target_repo": "pantheon"
+      },
       "phase": "Wave 4 / main assembly",
       "residual_scope_only": "Assemble main.py composition root and delete residual legacy handlers.",
       "reviewer": "Antigravity",
+      "reviewer_selector": {
+        "capability_required": [
+          "integration",
+          "schema",
+          "governance-review"
+        ],
+        "exclude": [
+          "Claude"
+        ],
+        "preferred_agents": [
+          "Codex",
+          "Codex2",
+          "Claude",
+          "Antigravity",
+          "Antigravity2"
+        ],
+        "target_repo": "pantheon"
+      },
       "rollback": "Forward repair or revert to previous immutable release commit; does not restore monolithic in-memory authority or deleted handlers.",
       "state_transitions": [
         "Mount 18 domain routers in main.py -> delete sem_final_generic_read_alias -> enforce composition rules"
@@ -72435,40 +72486,7 @@
         "pytest services/control-plane/bff/tests/test_main_composition_root.py",
         "python3 scripts/benchmark_bff_main_startup.py"
       ],
-      "title": "Assemble BFF main.py composition root and retire legacy handlers",
-      "owner_selector": {
-        "capability_required": [
-          "execution",
-          "control-plane"
-        ],
-        "target_repo": "pantheon",
-        "preferred_agents": [
-          "Antigravity",
-          "Antigravity2",
-          "Codex",
-          "Codex2",
-          "Claude"
-        ],
-        "exclude": []
-      },
-      "reviewer_selector": {
-        "capability_required": [
-          "integration",
-          "schema",
-          "governance-review"
-        ],
-        "target_repo": "pantheon",
-        "preferred_agents": [
-          "Codex",
-          "Codex2",
-          "Claude",
-          "Antigravity",
-          "Antigravity2"
-        ],
-        "exclude": [
-          "Claude"
-        ]
-      }
+      "title": "Assemble BFF main.py composition root and retire legacy handlers"
     },
     {
       "acceptance": [
@@ -72516,9 +72534,42 @@
         "scripts/benchmark_bff_main_startup.py"
       ],
       "owner": "Antigravity",
+      "owner_selector": {
+        "capability_required": [
+          "execution",
+          "control-plane"
+        ],
+        "exclude": [],
+        "preferred_agents": [
+          "Antigravity",
+          "Antigravity2",
+          "Codex",
+          "Codex2",
+          "Claude"
+        ],
+        "target_repo": "pantheon"
+      },
       "phase": "Wave 4 / command caller cutover",
       "residual_scope_only": "Cut over command callers to typed domain endpoints.",
       "reviewer": "Codex",
+      "reviewer_selector": {
+        "capability_required": [
+          "integration",
+          "schema",
+          "acceptance"
+        ],
+        "exclude": [
+          "Antigravity"
+        ],
+        "preferred_agents": [
+          "Codex",
+          "Codex2",
+          "Claude",
+          "Antigravity",
+          "Antigravity2"
+        ],
+        "target_repo": "pantheon"
+      },
       "rollback": "Forward repair or revert to previous immutable release commit; scripts fail closed on unrouted target without restoring reverse-main imports.",
       "state_transitions": [
         "Cutover script callers -> eliminate external reverse imports of main.py"
@@ -72531,40 +72582,7 @@
         "python3 scripts/bff_route_manifest_backend.py --verify",
         "python3 scripts/run_command_idempotency_regression.py"
       ],
-      "title": "Cut over command callers to typed domain routes and ports",
-      "owner_selector": {
-        "capability_required": [
-          "execution",
-          "control-plane"
-        ],
-        "target_repo": "pantheon",
-        "preferred_agents": [
-          "Antigravity",
-          "Antigravity2",
-          "Codex",
-          "Codex2",
-          "Claude"
-        ],
-        "exclude": []
-      },
-      "reviewer_selector": {
-        "capability_required": [
-          "integration",
-          "schema",
-          "acceptance"
-        ],
-        "target_repo": "pantheon",
-        "preferred_agents": [
-          "Codex",
-          "Codex2",
-          "Claude",
-          "Antigravity",
-          "Antigravity2"
-        ],
-        "exclude": [
-          "Antigravity"
-        ]
-      }
+      "title": "Cut over command callers to typed domain routes and ports"
     },
     {
       "acceptance": [
@@ -72619,9 +72637,42 @@
         "services/control-plane/bff/smoke_test_incident.py"
       ],
       "owner": "Codex",
+      "owner_selector": {
+        "capability_required": [
+          "execution",
+          "control-plane"
+        ],
+        "exclude": [],
+        "preferred_agents": [
+          "Antigravity",
+          "Antigravity2",
+          "Codex",
+          "Codex2",
+          "Claude"
+        ],
+        "target_repo": "pantheon"
+      },
       "phase": "Wave 5 / command plane retirement",
       "residual_scope_only": "Complete command plane retirement.",
       "reviewer": "Antigravity2",
+      "reviewer_selector": {
+        "capability_required": [
+          "integration",
+          "schema",
+          "acceptance"
+        ],
+        "exclude": [
+          "Codex"
+        ],
+        "preferred_agents": [
+          "Codex",
+          "Codex2",
+          "Claude",
+          "Antigravity",
+          "Antigravity2"
+        ],
+        "target_repo": "pantheon"
+      },
       "rollback": "Forward repair or revert to previous immutable release commit; does not restore deleted generic action adapters or unreferenced files.",
       "state_transitions": [
         "Delete unreferenced dead command plane files -> retain command_executor.py"
@@ -72634,40 +72685,7 @@
         "pytest services/control-plane/bff/test_command_executor.py",
         "git grep '_execute_bff_action_adapter'"
       ],
-      "title": "Retire dead command plane files and generic action adapter while retaining command executor",
-      "owner_selector": {
-        "capability_required": [
-          "execution",
-          "control-plane"
-        ],
-        "target_repo": "pantheon",
-        "preferred_agents": [
-          "Antigravity",
-          "Antigravity2",
-          "Codex",
-          "Codex2",
-          "Claude"
-        ],
-        "exclude": []
-      },
-      "reviewer_selector": {
-        "capability_required": [
-          "integration",
-          "schema",
-          "acceptance"
-        ],
-        "target_repo": "pantheon",
-        "preferred_agents": [
-          "Codex",
-          "Codex2",
-          "Claude",
-          "Antigravity",
-          "Antigravity2"
-        ],
-        "exclude": [
-          "Codex"
-        ]
-      }
+      "title": "Retire dead command plane files and generic action adapter while retaining command executor"
     },
     {
       "acceptance": [
@@ -72718,9 +72736,44 @@
         "docs/deployment/evidence/OPGAP-HOSTED-DEV-PROMOTION-20260830/"
       ],
       "owner": "Antigravity2",
+      "owner_selector": {
+        "capability_required": [
+          "gcp",
+          "ci-cd",
+          "runtime-packaging",
+          "worker-ops"
+        ],
+        "exclude": [],
+        "preferred_agents": [
+          "Antigravity",
+          "Antigravity2",
+          "Codex",
+          "Codex2",
+          "Claude"
+        ],
+        "target_repo": "pantheon"
+      },
       "phase": "Wave 6 / hosted deployment",
       "residual_scope_only": "Deploy and promote the newly verified heads.",
       "reviewer": "Codex2",
+      "reviewer_selector": {
+        "capability_required": [
+          "integration",
+          "governance-review",
+          "acceptance"
+        ],
+        "exclude": [
+          "Antigravity2"
+        ],
+        "preferred_agents": [
+          "Codex",
+          "Codex2",
+          "Claude",
+          "Antigravity",
+          "Antigravity2"
+        ],
+        "target_repo": "pantheon"
+      },
       "rollback": "Automatic compensation rollback to previous healthy pair on projection or producer gate failure; does not switch traffic to unverified candidate.",
       "state_transitions": [
         "Deploy atomic candidate pair to pantheon-dev -> verify Agora projection and producer health"
@@ -72737,42 +72790,7 @@
         "bash scripts/deploy_nonprod_vm.sh --verify-only",
         "python3 scripts/test_deploy_nonprod_vm.py"
       ],
-      "title": "Promote and deploy verified FE and BFF heads to pantheon-dev",
-      "owner_selector": {
-        "capability_required": [
-          "gcp",
-          "ci-cd",
-          "runtime-packaging",
-          "worker-ops"
-        ],
-        "target_repo": "pantheon",
-        "preferred_agents": [
-          "Antigravity",
-          "Antigravity2",
-          "Codex",
-          "Codex2",
-          "Claude"
-        ],
-        "exclude": []
-      },
-      "reviewer_selector": {
-        "capability_required": [
-          "integration",
-          "governance-review",
-          "acceptance"
-        ],
-        "target_repo": "pantheon",
-        "preferred_agents": [
-          "Codex",
-          "Codex2",
-          "Claude",
-          "Antigravity",
-          "Antigravity2"
-        ],
-        "exclude": [
-          "Antigravity2"
-        ]
-      }
+      "title": "Promote and deploy verified FE and BFF heads to pantheon-dev"
     },
     {
       "acceptance": [
@@ -72819,9 +72837,44 @@
         "docs/deployment/evidence/OPGAP-HOSTED-BACKEND-ACCEPTANCE-20260830/"
       ],
       "owner": "Codex2",
+      "owner_selector": {
+        "capability_required": [
+          "gcp",
+          "ci-cd",
+          "runtime-packaging",
+          "worker-ops"
+        ],
+        "exclude": [],
+        "preferred_agents": [
+          "Antigravity",
+          "Antigravity2",
+          "Codex",
+          "Codex2",
+          "Claude"
+        ],
+        "target_repo": "pantheon"
+      },
       "phase": "Wave 6 / hosted acceptance",
       "residual_scope_only": "Complete end-to-end hosted functional acceptance.",
       "reviewer": "Claude",
+      "reviewer_selector": {
+        "capability_required": [
+          "integration",
+          "governance-review",
+          "acceptance"
+        ],
+        "exclude": [
+          "Codex2"
+        ],
+        "preferred_agents": [
+          "Codex",
+          "Codex2",
+          "Claude",
+          "Antigravity",
+          "Antigravity2"
+        ],
+        "target_repo": "pantheon"
+      },
       "rollback": "Record detailed audit diagnostics on probe failure without modifying production state; fail-closed acceptance verdict.",
       "state_transitions": [
         "Execute 12-loop deployed proof -> run bounded Source canary -> verify reconcile-only readback"
@@ -72838,42 +72891,7 @@
         "python3 scripts/verify_external_source_management_acceptance.py",
         "python3 scripts/verify_e2e_producer_chain.py"
       ],
-      "title": "Validate hosted backend and E2E acceptance on pantheon-dev",
-      "owner_selector": {
-        "capability_required": [
-          "gcp",
-          "ci-cd",
-          "runtime-packaging",
-          "worker-ops"
-        ],
-        "target_repo": "pantheon",
-        "preferred_agents": [
-          "Antigravity",
-          "Antigravity2",
-          "Codex",
-          "Codex2",
-          "Claude"
-        ],
-        "exclude": []
-      },
-      "reviewer_selector": {
-        "capability_required": [
-          "integration",
-          "governance-review",
-          "acceptance"
-        ],
-        "target_repo": "pantheon",
-        "preferred_agents": [
-          "Codex",
-          "Codex2",
-          "Claude",
-          "Antigravity",
-          "Antigravity2"
-        ],
-        "exclude": [
-          "Codex2"
-        ]
-      }
+      "title": "Validate hosted backend and E2E acceptance on pantheon-dev"
     },
     {
       "acceptance": [
@@ -72920,9 +72938,44 @@
         "docs/deployment/evidence/full-operation-gap/OPGAP-HOSTED-MGMT-ACCEPTANCE-20260830/"
       ],
       "owner": "Claude",
+      "owner_selector": {
+        "capability_required": [
+          "gcp",
+          "ci-cd",
+          "runtime-packaging",
+          "worker-ops"
+        ],
+        "exclude": [],
+        "preferred_agents": [
+          "Antigravity",
+          "Antigravity2",
+          "Codex",
+          "Codex2",
+          "Claude"
+        ],
+        "target_repo": "pantheon"
+      },
       "phase": "Wave 6 / hosted acceptance",
       "residual_scope_only": "Complete Management desktop UI hosted acceptance.",
       "reviewer": "Antigravity",
+      "reviewer_selector": {
+        "capability_required": [
+          "integration",
+          "governance-review",
+          "acceptance"
+        ],
+        "exclude": [
+          "Claude"
+        ],
+        "preferred_agents": [
+          "Codex",
+          "Codex2",
+          "Claude",
+          "Antigravity",
+          "Antigravity2"
+        ],
+        "target_repo": "pantheon"
+      },
       "rollback": "Record detailed browser diagnostics and network trace on failure without modifying production state; fail-closed acceptance verdict.",
       "state_transitions": [
         "Launch Management browser smoke tests -> verify entity listing & postmortem view -> emit durable readback evidence"
@@ -72938,42 +72991,7 @@
         "python3 scripts/probe_bff_authenticated_live.py",
         "python3 scripts/verify_hosted_scenarios.py"
       ],
-      "title": "Validate authenticated Management desktop UI on pantheon-dev",
-      "owner_selector": {
-        "capability_required": [
-          "gcp",
-          "ci-cd",
-          "runtime-packaging",
-          "worker-ops"
-        ],
-        "target_repo": "pantheon",
-        "preferred_agents": [
-          "Antigravity",
-          "Antigravity2",
-          "Codex",
-          "Codex2",
-          "Claude"
-        ],
-        "exclude": []
-      },
-      "reviewer_selector": {
-        "capability_required": [
-          "integration",
-          "governance-review",
-          "acceptance"
-        ],
-        "target_repo": "pantheon",
-        "preferred_agents": [
-          "Codex",
-          "Codex2",
-          "Claude",
-          "Antigravity",
-          "Antigravity2"
-        ],
-        "exclude": [
-          "Claude"
-        ]
-      }
+      "title": "Validate authenticated Management desktop UI on pantheon-dev"
     }
   ]
 }
