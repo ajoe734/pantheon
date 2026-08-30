@@ -46,7 +46,12 @@ def validate_catalog(catalog_path: str, main_py_path: str) -> None:
     assert len(tasks) == 30, f"Task count mismatch: {len(tasks)} != 30"
 
     # 1. Verify AST digests and content parity across all nodes
-    print("1. Verifying AST digests and content parity across all 2,272 nodes...")
+    print("1. Verifying AST digests, content parity, and dynamic validation contract across all 2,272 nodes...")
+    dvc = c.get("dynamic_validation_contract", {})
+    rules = dvc.get("rules", [])
+    exp_rule = "All 2,272 AST nodes mapped with valid disposition and zero stdlib extract_shared_port."
+    assert exp_rule in rules, f"Missing dynamic_validation_contract rule: '{exp_rule}' not in {rules}"
+
     for i, (cat_node, ast_node) in enumerate(zip(nodes, tree.body)):
         dump_str = ast.dump(ast_node, annotate_fields=True, include_attributes=False)
         exp_digest = hashlib.sha256(dump_str.encode("utf-8")).hexdigest()[:16]

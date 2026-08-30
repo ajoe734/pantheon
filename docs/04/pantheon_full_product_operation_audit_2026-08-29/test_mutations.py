@@ -3,7 +3,7 @@
 
 Tests that validate_catalog.py fails closed (raises AssertionError) on 16 distinct
 intentional mutations corresponding to each validation phase:
-1. Phase 1: Corrupted AST digest
+1. Phase 1: Mutated dynamic_validation_contract rule (2,271 vs 2,272 AST nodes)
 2. Phase 2: Missing edge-level consumer cutover mapping
 3. Phase 3: Invalid legacy action cluster owner
 4. Phase 4: Route migration inventory handler count mismatch
@@ -70,8 +70,16 @@ def test_all_mutations() -> None:
 
     mutations = [
         (
-            "1. Corrupt AST Digest in Node 0",
-            lambda c: (_mut(c, lambda x: x["main_ast_node_inventory"]["nodes"][0].__setitem__("ast_digest", "deadbeef00000000"))),
+            "1. Mutate dynamic_validation_contract rule to 2,271 AST nodes",
+            lambda c: (
+                _mut(
+                    c,
+                    lambda x: x["dynamic_validation_contract"].__setitem__(
+                        "rules",
+                        [r.replace("2,272", "2,271") for r in x["dynamic_validation_contract"]["rules"]],
+                    ),
+                )
+            ),
             1,
         ),
         (
