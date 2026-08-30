@@ -279,8 +279,8 @@ def test_command_confirmations_lifecycle() -> None:
             json={"command_id": "cmd-test-200", "confirm_token": "ct-conf-002"},
         )
         assert confirm_token_resp.status_code == 202, confirm_token_resp.text
-        assert confirm_token_resp.json()["status"] == "accepted"
-        assert confirm_token_resp.json()["data"]["command_id"] == "cmd-test-200"
+        assert confirm_token_resp.json()["data"]["status"] == "accepted"
+        assert confirm_token_resp.json()["data"]["commandId"] == "cmd-test-200"
 
 
 def test_operator_command_status_readback() -> None:
@@ -374,3 +374,127 @@ def test_main_app_operator_command_submission_regression() -> None:
         assert data2["status"] == "accepted"
         assert "receipt_id" in data2
         assert data2["command"] == "ApproveDeployment"
+
+
+def test_confirm_command_by_token_contract_and_regressions() -> None:
+    """Test POST /bff/command-confirmations/{token}/confirm contract and regression invariants."""
+    published_events: List[Tuple[str, Dict[str, Any]]] = []
+
+    def _mock_publish_event(event_type: str, data: Dict[str, Any]) -> None:
+        published_events.append((event_type, data))
+
+    with tempfile.TemporaryDirectory() as td:
+        store = CommandStore(os.path.join(td, "commands.jsonl"))
+        app = FastAPI()
+        router = create_command_adapters_router(
+            get_command_store=lambda: store,
+            get_read_store=lambda: None,
+            publish_event=_mock_publish_event,
+        )
+        app.include_router(router)
+        client = TestClient(app)
+
+        # 1. Unknown token returns typed 404
+        unknown_resp = client.post(
+            "/bff/command-confirmations/unknown-token-123/confirm",
+            headers={**HEADERS, "Idempotency-Key": "conf-tok-unk-01"},
+            json={"command_id": "cmd-unk-01"},
+        )
+        assert unknown_resp.status_code == 404, unknown_resp.text
+        err = unknown_resp.json().get("error") or unknown_resp.json().get("detail", {}).get("error", {})
+        assert err["code"] == "RESOURCE_NOT_FOUND"
+        assert err["details"]["precondition_failed"] == "confirm_token_not_found"
+
+        # 2. Seed token
+        seed_resp = client.post(
+            "/bff/confirm-tokens",
+            headers={**HEADERS, "Idempotency-Key": "conf-tok-seed-01"},
+            json={"tokenId": "tok-test-p04-reg", "ttlSeconds": 300},
+        )
+        assert seed_resp.status_code == 201
+
+        # 3. Mismatched body token returns 412
+        mismatch_resp = client.post(
+            "/bff/command-confirmations/tok-test-p04-reg/confirm",
+            headers={**HEADERS, "Idempotency-Key": "conf-tok-mismatch-01"},
+            json={"command_id": "cmd-mismatch-01", "confirm_token": "different-token"},
+        )
+        assert mismatch_resp.status_code == 412, mismatch_resp.text
+        mismatch_err = mismatch_resp.json().get("error") or mismatch_resp.json().get("detail", {}).get("error", {})
+        assert mismatch_err["code"] == "PRECONDITION_FAILED"
+        assert mismatch_err["details"]["precondition_failed"] == "confirm_token_invalid"
+
+        # 4. Missing command_id returns 422
+        missing_cmd_resp = client.post(
+            "/bff/command-confirmations/tok-test-p04-reg/confirm",
+            headers={**HEADERS, "Idempotency-Key": "conf-tok-missing-01"},
+            json={},
+        )
+        assert missing_cmd_resp.status_code == 422, missing_cmd_resp.text
+        missing_err = missing_cmd_resp.json().get("error") or missing_cmd_resp.json().get("detail", {}).get("error", {})
+        assert missing_err["code"] == "VALIDATION_FAILED"
+        assert missing_err["details"]["precondition_failed"] == "command_id_missing"
+
+        # 5. Dry-run returns 200 with meta.dryRun=True and no side effects
+        dry_run_resp = client.post(
+            "/bff/command-confirmations/tok-test-p04-reg/confirm",
+            headers={
+                **HEADERS,
+                "Idempotency-Key": "conf-tok-dry-01",
+                "X-Dry-Run": "1",
+                "X-Correlation-Id": "corr-dry-01",
+            },
+            json={"command_id": "cmd-dry-01"},
+        )
+        assert dry_run_resp.status_code == 200, dry_run_resp.text
+        dry_payload = dry_run_resp.json()
+        assert dry_payload["data"]["status"] == "accepted"
+        assert dry_payload["data"]["commandId"] == "cmd-dry-01"
+        assert dry_payload["meta"]["dryRun"] is True
+        assert dry_payload["meta"]["evidenceKind"] == "command.confirm"
+        assert len(published_events) == 0
+
+        # Token status should still be created (not redeemed)
+        tok_status = client.get("/bff/confirm-tokens/tok-test-p04-reg", headers=HEADERS)
+        assert tok_status.json()["data"]["status"] == "created"
+
+        # 6. Valid confirm returns 202, records redeem, and publishes audit event
+        valid_resp = client.post(
+            "/bff/command-confirmations/tok-test-p04-reg/confirm",
+            headers={
+                **HEADERS,
+                "Idempotency-Key": "conf-tok-valid-01",
+                "X-Correlation-Id": "corr-valid-01",
+            },
+            json={"command_id": "cmd-valid-01"},
+        )
+        assert valid_resp.status_code == 202, valid_resp.text
+        valid_payload = valid_resp.json()
+        assert valid_payload["data"]["status"] == "accepted"
+        assert valid_payload["data"]["commandId"] == "cmd-valid-01"
+        assert valid_payload["meta"]["dryRun"] is False
+        assert valid_payload["meta"]["evidenceKind"] == "command.confirm"
+        assert valid_payload["meta"]["correlationId"] == "corr-valid-01"
+
+        # Check published event
+        assert len(published_events) == 1
+        assert published_events[0][0] == "command.confirm"
+        assert published_events[0][1]["commandId"] == "cmd-valid-01"
+        assert published_events[0][1]["tokenId"] == "tok-test-p04-reg"
+
+        # Check token lifecycle status is now redeemed
+        tok_after = client.get("/bff/confirm-tokens/tok-test-p04-reg", headers=HEADERS)
+        assert tok_after.json()["data"]["status"] == "redeemed"
+
+        # 7. Replay returns 202 with identical data
+        replay_resp = client.post(
+            "/bff/command-confirmations/tok-test-p04-reg/confirm",
+            headers={
+                **HEADERS,
+                "Idempotency-Key": "conf-tok-valid-01",
+                "X-Correlation-Id": "corr-valid-01",
+            },
+            json={"command_id": "cmd-valid-01"},
+        )
+        assert replay_resp.status_code == 202, replay_resp.text
+        assert replay_resp.json()["data"] == valid_payload["data"]

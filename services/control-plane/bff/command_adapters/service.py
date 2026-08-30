@@ -16,7 +16,7 @@ import re
 import uuid
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-from fastapi import HTTPException
+from fastapi import HTTPException, Response
 from fastapi.responses import JSONResponse
 
 from action_catalog import get_action_catalog, get_catalog_entry
@@ -102,6 +102,15 @@ def _audit_datetime(value: Any) -> Optional[datetime]:
         return None
 
 
+def _truthy_header(value: Any) -> bool:
+    if value is None:
+        return False
+    if isinstance(value, bool):
+        return value
+    val = str(value).strip().lower()
+    return val in ("1", "true", "yes", "on")
+
+
 class CommandAdapterService:
     """Domain service managing operator commands, action adapters, and confirmation tokens."""
 
@@ -117,6 +126,8 @@ class CommandAdapterService:
         utc_now_fn: Optional[Callable[[], str]] = None,
         submit_command_admission: Optional[Callable[..., Any]] = None,
         dispatch_command_fn: Optional[Callable[..., Any]] = None,
+        publish_event: Optional[Callable[[str, Dict[str, Any]], Any]] = None,
+        gov_bff_idempotency: Optional[Dict[str, Dict[str, Any]]] = None,
     ) -> None:
         self._get_command_store = get_command_store
         self._get_read_store = get_read_store
@@ -127,9 +138,12 @@ class CommandAdapterService:
         self._utc_now = utc_now_fn or utc_now
         self._submit_command_admission = submit_command_admission
         self._dispatch_command = dispatch_command_fn or dispatch_domain_command
+        self._publish_event = publish_event
 
         self._final_contract_idempotency: Dict[str, Dict[str, Any]] = {}
-        self._gov_bff_idempotency: Dict[str, Dict[str, Any]] = {}
+        self._gov_bff_idempotency: Dict[str, Dict[str, Any]] = (
+            gov_bff_idempotency if gov_bff_idempotency is not None else {}
+        )
 
     @property
     def command_store(self) -> Any:
@@ -813,13 +827,22 @@ class CommandAdapterService:
         idempotency_key: Optional[str] = None,
         x_idempotency_key: Optional[str] = None,
         x_correlation_id: Optional[str] = None,
-    ) -> Dict[str, Any]:
+        x_request_id: Optional[str] = None,
+        x_dry_run: Optional[str] = None,
+        response: Optional[Response] = None,
+    ) -> Any:
         self.check_operator_role(identity)
         resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
         correlation_id = str(x_correlation_id or "").strip() or str(uuid.uuid4())
+        if response is not None:
+            response.headers["X-Correlation-Id"] = correlation_id
+
+        payload = dict(payload or {})
         _reject_body_idempotency_key(payload)
 
-        body_confirm_token = str(payload.get("confirm_token") or payload.get("confirmToken") or "").strip()
+        body_confirm_token = str(
+            payload.get("confirm_token") or payload.get("confirmToken") or ""
+        ).strip()
         if body_confirm_token and body_confirm_token != token:
             raise self._raise_error(
                 412,
@@ -843,38 +866,100 @@ class CommandAdapterService:
                 correlation_id=correlation_id,
             )
 
+        token_state = self.confirm_token_lifecycle_payload(token)
+        if token_state.get("status") == "available":
+            raise self._raise_error(
+                404,
+                ErrorCode.RESOURCE_NOT_FOUND,
+                "Confirm token not found",
+                f"Confirm token {token!r} has not been issued",
+                precondition_failed="confirm_token_not_found",
+                suggestion="Ensure the token was issued for a guarded command and has not been redeemed",
+                correlation_id=correlation_id,
+            )
+
         self.raise_if_confirm_token_expired(token)
+
+        dry_run = _truthy_header(x_dry_run)
+        snapshot_at = self._utc_now()
         confirmation_id = str(uuid.uuid4())
-        confirmed_at = self._utc_now()
+
+        if dry_run:
+            return JSONResponse(
+                status_code=200,
+                content={
+                    "data": {
+                        "status": "accepted",
+                        "commandId": command_id,
+                        "confirmed_at": snapshot_at,
+                        "tokenId": token,
+                    },
+                    "meta": {
+                        "snapshot_at": snapshot_at,
+                        "dryRun": True,
+                        "correlationId": correlation_id,
+                        "requestId": str(x_request_id or "").strip() or None,
+                        "evidenceKind": "command.confirm",
+                    },
+                },
+                headers={"X-Correlation-Id": correlation_id},
+            )
+
         req_hash = _stable_json_hash({"command_id": command_id, "confirm_token": token})
+        existing = self._gov_bff_idempotency.get(resolved_key)
+        if existing is not None:
+            if existing.get("request_hash") != req_hash:
+                raise self._raise_error(
+                    409,
+                    ErrorCode.IDEMPOTENCY_CONFLICT,
+                    "Idempotency key already used with a different payload",
+                    f"Key {resolved_key!r} is bound to a different confirmation request",
+                    precondition_failed="idempotency_conflict",
+                    suggestion="Use a new Idempotency-Key or resubmit the original confirmation unchanged",
+                    correlation_id=correlation_id,
+                )
+            return existing["result"]
 
         self.record_command_confirmation_redeem(
             token_id=token,
             command_id=command_id,
             confirmation_id=confirmation_id,
-            confirmed_at=confirmed_at,
+            confirmed_at=snapshot_at,
             identity=identity,
             idempotency_key=resolved_key,
             request_hash=req_hash,
         )
 
-        return {
-            "status": "accepted",
+        if self._publish_event is not None:
+            self._publish_event(
+                "command.confirm",
+                {
+                    "commandId": command_id,
+                    "tokenId": token,
+                    "confirmationId": confirmation_id,
+                    "confirmed_at": snapshot_at,
+                    "actor": identity.operator_id,
+                },
+            )
+
+        result = {
             "data": {
-                "command_id": command_id,
-                "token": token,
-                "tokenId": token,
-                "confirmation_id": confirmation_id,
                 "status": "accepted",
-                "confirmed_at": confirmed_at,
-                "confirmed_by": identity.operator_id,
+                "commandId": command_id,
+                "confirmed_at": snapshot_at,
+                "tokenId": token,
+                "confirmationId": confirmation_id,
             },
             "meta": {
-                "idempotency": {"idempotencyKey": resolved_key, "replayed": False},
-                "correlation_id": correlation_id,
-                "snapshot_at": confirmed_at,
+                "snapshot_at": snapshot_at,
+                "dryRun": False,
+                "correlationId": correlation_id,
+                "requestId": str(x_request_id or "").strip() or None,
+                "evidenceKind": "command.confirm",
             },
         }
+        self._gov_bff_idempotency[resolved_key] = {"request_hash": req_hash, "result": result}
+        return result
 
     def submit_command(
         self,

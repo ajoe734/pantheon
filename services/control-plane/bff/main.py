@@ -65134,6 +65134,13 @@ app.include_router(
         bff_error=_bff_error,
         utc_now=utc_now,
         submit_command_admission=_submit_final_command_admission,
+        publish_event=lambda event_type, data: _publish_event(
+            _sse_buffers["audit"],
+            _sse_subscribers["audit"],
+            event_type,
+            data,
+        ),
+        gov_bff_idempotency=_GOV_BFF_IDEMPOTENCY,
     )
 )
 

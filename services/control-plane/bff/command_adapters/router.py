@@ -501,6 +501,8 @@ def create_command_adapters_router(
     utc_now: Optional[Callable[[], str]] = None,
     submit_command_admission: Optional[Callable[..., Any]] = None,
     dispatch_command: Optional[Callable[..., Any]] = None,
+    publish_event: Optional[Callable[[str, Dict[str, Any]], Any]] = None,
+    gov_bff_idempotency: Optional[Dict[str, Dict[str, Any]]] = None,
     service: Optional[CommandAdapterService] = None,
 ) -> APIRouter:
     """Create the full command adapters router with all 11 command endpoints."""
@@ -515,6 +517,8 @@ def create_command_adapters_router(
         utc_now_fn=utc_now,
         submit_command_admission=submit_command_admission,
         dispatch_command_fn=dispatch_command,
+        publish_event=publish_event,
+        gov_bff_idempotency=gov_bff_idempotency,
     )
 
     # 1. Action Catalog
@@ -651,6 +655,9 @@ def create_command_adapters_router(
             idempotency_key=idempotency_key,
             x_idempotency_key=x_idempotency_key,
             x_correlation_id=x_correlation_id,
+            x_request_id=x_request_id,
+            x_dry_run=x_dry_run,
+            response=response,
         )
 
     # 8. Create Confirm Token
