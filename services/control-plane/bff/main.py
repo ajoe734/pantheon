@@ -20474,7 +20474,6 @@ def get_consult_policy(
 # Command submission (write path — async execution)
 # --------------------------------------------------------------------------- #
 
-@app.post("/api/v1/operator/commands", response_model=CommandSubmissionResponse, status_code=202)
 async def submit_command(
     background_tasks: BackgroundTasks,
     payload: Dict[str, Any] = Body(...),
@@ -20827,6 +20826,14 @@ def _submit_final_command_admission(
                 _process_command_stub, str(duplicate["command_id"])
             )
             duplicate_status = CommandStatus.SUBMITTED
+        if route == "POST /api/v1/operator/commands":
+            return _project_command_submission_response(
+                command_id=duplicate["command_id"],
+                command=cmd.command,
+                accepted_at=duplicate.get("submitted_at") or utc_now(),
+                status=duplicate_status,
+                staleness_warning=None,
+            )
         return _project_final_command_response(
             command_id=duplicate["command_id"],
             command=cmd.command,
@@ -20840,13 +20847,29 @@ def _submit_final_command_admission(
         )
 
     try:
-        precondition_evidence = _require_final_command_preconditions(
-            cmd=cmd,
-            payload=payload,
-            confirm_token=x_confirm_token,
-            identity=identity,
-            correlation_id=foundation_context["trace_context"].correlation_id,
-        )
+        if route == "POST /api/v1/operator/commands":
+            precondition_evidence = (
+                _require_final_command_preconditions(
+                    cmd=cmd,
+                    payload=payload,
+                    confirm_token=x_confirm_token,
+                    identity=identity,
+                    correlation_id=foundation_context["trace_context"].correlation_id,
+                )
+                if cmd.command in {
+                    CommandType.APPROVED_APPLY,
+                    CommandType.EMERGENCY_CONTAINMENT,
+                }
+                else {}
+            )
+        else:
+            precondition_evidence = _require_final_command_preconditions(
+                cmd=cmd,
+                payload=payload,
+                confirm_token=x_confirm_token,
+                identity=identity,
+                correlation_id=foundation_context["trace_context"].correlation_id,
+            )
     except HTTPException as exc:
         raise _foundation_bff_error(exc, foundation_context=foundation_context) from exc
 
@@ -20872,6 +20895,14 @@ def _submit_final_command_admission(
     staleness_warning = _check_read_surface_state()
     if _request_dry_run_requested():
         command_envelope: CommandEnvelope = foundation_context["command_envelope"]
+        if route == "POST /api/v1/operator/commands":
+            return _project_command_submission_response(
+                command_id=command_envelope.command_id,
+                command=cmd.command,
+                accepted_at=utc_now(),
+                status=CommandStatus.SUBMITTED,
+                staleness_warning=staleness_warning,
+            )
         return _project_final_command_response(
             command_id=command_envelope.command_id,
             command=cmd.command,
@@ -20949,6 +20980,17 @@ def _submit_final_command_admission(
                 confirm_token=x_confirm_token,
                 foundation_context=foundation_context,
             )
+            if route == "POST /api/v1/operator/commands":
+                return _project_command_submission_response(
+                    command_id=duplicate_after_precheck["command_id"],
+                    command=cmd.command,
+                    accepted_at=duplicate_after_precheck.get("submitted_at") or utc_now(),
+                    status=CommandStatus(
+                        duplicate_after_precheck.get("status")
+                        or CommandStatus.SUBMITTED.value
+                    ),
+                    staleness_warning=None,
+                )
             return _project_final_command_response(
                 command_id=duplicate_after_precheck["command_id"],
                 command=cmd.command,
@@ -20964,18 +21006,19 @@ def _submit_final_command_admission(
                 deprecation=response_deprecation,
             )
 
-        try:
-            revalidated_token_id = _require_final_command_confirm_token(
-                cmd=cmd,
-                payload=payload,
-                confirm_token=x_confirm_token,
-                identity=identity,
-                correlation_id=foundation_context["trace_context"].correlation_id,
-            )
-        except HTTPException as exc:
-            raise _foundation_bff_error(exc, foundation_context=foundation_context) from exc
-        if revalidated_token_id:
-            precondition_evidence["confirm_token_id"] = revalidated_token_id
+        if precondition_evidence.get("confirm_token_id"):
+            try:
+                revalidated_token_id = _require_final_command_confirm_token(
+                    cmd=cmd,
+                    payload=payload,
+                    confirm_token=x_confirm_token,
+                    identity=identity,
+                    correlation_id=foundation_context["trace_context"].correlation_id,
+                )
+            except HTTPException as exc:
+                raise _foundation_bff_error(exc, foundation_context=foundation_context) from exc
+            if revalidated_token_id:
+                precondition_evidence["confirm_token_id"] = revalidated_token_id
 
         record, active_after_precheck = _persist_admitted_command_with_confirm_token(
             command_id=command_id,
@@ -21007,6 +21050,14 @@ def _submit_final_command_admission(
     if enqueue:
         background_tasks.add_task(_process_command_stub, command_id)
 
+    if route == "POST /api/v1/operator/commands":
+        return _project_command_submission_response(
+            command_id=command_id,
+            command=cmd.command,
+            accepted_at=submitted_at,
+            status=CommandStatus.SUBMITTED,
+            staleness_warning=staleness_warning,
+        )
     return _project_final_command_response(
         command_id=command_id,
         command=cmd.command,
@@ -21020,7 +21071,6 @@ def _submit_final_command_admission(
     )
 
 
-@app.post("/bff/v1/commands", status_code=202)
 async def submit_final_command(
     background_tasks: BackgroundTasks,
     payload: Dict[str, Any] = Body(...),
@@ -22655,7 +22705,6 @@ async def bff_agora_persona_lab_submit_commit(
     return result
 
 
-@app.get("/bff/actions", response_model=BffActionCatalogResponse)
 async def get_action_catalog_endpoint(
     authorization: Optional[str] = Header(default=None),
 ):
@@ -52458,7 +52507,6 @@ async def remediate_v5_intervention(
     )
 
 
-@app.get("/api/v1/operator/commands/{command_id}", response_model=CommandStatusResponse)
 async def get_command_status(command_id: str, authorization: Optional[str] = Header(default=None)):
     """
     Poll for the status of a previously submitted command.
@@ -54619,8 +54667,9 @@ def _gov_bff_action_command(
         status=CommandStatus.SUBMITTED,
         staleness_warning=staleness_warning,
     )
-    _GOV_BFF_IDEMPOTENCY[resolved_key] = {"request_hash": request_hash, "result": result}
-    return result
+    result_dict = result.model_dump(mode="json")
+    _GOV_BFF_IDEMPOTENCY[resolved_key] = {"request_hash": request_hash, "result": result_dict}
+    return result_dict
 
 
 # -- Governance reviews ------------------------------------------------------
@@ -55077,7 +55126,7 @@ async def bff_runtime_action(
 
 
 # -- Command confirmations ---------------------------------------------------
-@app.post("/bff/command-confirmations", status_code=202)
+
 async def bff_command_confirmation(
     request: Request,
     idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
@@ -55177,7 +55226,6 @@ async def bff_command_confirmation(
     return result
 
 
-@app.get("/bff/command-confirmations/{token}")
 async def bff_command_confirmation_status(
     token: str,
     authorization: Optional[str] = Header(default=None),
@@ -55210,7 +55258,6 @@ async def bff_command_confirmation_status(
     }
 
 
-@app.post("/bff/command-confirmations/{token}/confirm", status_code=202)
 async def bff_confirm_command_by_token(
     token: str,
     request: Request,
@@ -56165,7 +56212,6 @@ def _record_command_confirmation_redeem(
     )
 
 
-@app.post("/bff/confirm-tokens", status_code=201)
 async def sem_create_confirm_token_command(
     payload: Dict[str, Any] = Body(default_factory=dict),
     authorization: Optional[str] = Header(default=None),
@@ -56216,7 +56262,6 @@ async def sem_create_confirm_token_command(
     return JSONResponse(status_code=201, content=content)
 
 
-@app.get("/bff/confirm-tokens/{tokenId}")
 async def sem_get_confirm_token(tokenId: str, authorization: Optional[str] = Header(default=None)):
     identity = _extract_identity(authorization)
     _require_read_role(identity)
@@ -56227,7 +56272,6 @@ async def sem_get_confirm_token(tokenId: str, authorization: Optional[str] = Hea
     }
 
 
-@app.post("/bff/confirm-tokens/{tokenId}/redeem", status_code=202)
 async def sem_redeem_confirm_token_command(
     tokenId: str,
     payload: Dict[str, Any] = Body(default_factory=dict),
@@ -56257,7 +56301,6 @@ async def sem_redeem_confirm_token_command(
     )
 
 
-@app.delete("/bff/confirm-tokens/{tokenId}", status_code=202)
 async def sem_delete_confirm_token_command(
     tokenId: str,
     payload: Dict[str, Any] = Body(default_factory=dict),
@@ -62768,8 +62811,11 @@ app.include_router(
     )
 )
 
-# ACG-01-011: Action command adapter router
-from command_adapters.router import create_action_command_router as _create_action_command_router
+# OPGAP-BE-COMMAND-ADAPTERS-V2-20260830: Command adapter router
+from command_adapters.router import (
+    create_action_command_router as _create_action_command_router,
+    create_command_adapters_router as _create_command_adapters_router,
+)
 app.include_router(
     _create_action_command_router(
         submit_command_admission=_submit_final_command_admission,
@@ -62778,6 +62824,26 @@ app.include_router(
         bff_error=_bff_error,
         utc_now=utc_now,
         command_store=lambda: command_store,
+    )
+)
+app.include_router(
+    _create_command_adapters_router(
+        get_command_store=lambda: command_store,
+        get_read_store=lambda: read_store,
+        extract_identity=_extract_identity,
+        require_operator_role=_require_operator_role,
+        require_read_role=_require_read_role,
+        bff_error=_bff_error,
+        utc_now=utc_now,
+        submit_command_admission=_submit_final_command_admission,
+        publish_event=lambda event_type, data: _publish_event(
+            _sse_buffers["audit"],
+            _sse_subscribers["audit"],
+            event_type,
+            data,
+        ),
+        gov_bff_idempotency=_GOV_BFF_IDEMPOTENCY,
+        check_read_surface_state=_check_read_surface_state,
     )
 )
 
