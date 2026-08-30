@@ -2,7 +2,7 @@
   "schema_version": "pantheon.agora-source-frontier-recovery-review.v2",
   "task_id": "AGORA-SOURCE-FRONTIER-RECOVERY-V1-20260829",
   "task_generation": 2,
-  "generated_at": "2026-08-30T14:15:40Z",
+  "generated_at": "2026-08-30T14:17:28Z",
   "owner": "Codex",
   "reviewer": "Antigravity2",
   "status": "implementation_ready_for_review",
@@ -17,10 +17,10 @@
       "reason": "The canonical reopen explicitly forbids retrying the old head or its stale exact pair."
     },
     "current_pantheon_base": {
-      "sha": "609937297bc7e0f48ff7a522de230de1301c15ae",
+      "sha": "92077907540d4554e9b8a1d12e2528505b2d1ebe",
       "branch": "dev",
       "contains_corrective_merge": "8f8383b507b1fb631d44422031f01ebea5024d5e",
-      "corrective_distance_commits": 69
+      "corrective_distance_commits": 74
     },
     "current_frontend": {
       "repository": "ajoe734/execute-plans",
@@ -233,7 +233,7 @@
       ]
     },
     "generation_2_current_dev": {
-      "base_sha": "609937297bc7e0f48ff7a522de230de1301c15ae",
+      "base_sha": "92077907540d4554e9b8a1d12e2528505b2d1ebe",
       "command": ".venv-pantheon/bin/python -m pytest -q services/source_ingestion/tests/test_controller_worker.py services/source_ingestion/tests/test_taiwan_official_connectors.py services/source_ingestion/tests/test_runtime_latest_source_record.py scripts/test_source_ingest_deploy_diagnostics_contract.py scripts/test_project_market_data_to_bff_agora_surfaces.py services/execution/lean_runtime/test_paper_signal_producer.py",
       "result": "183 passed, 1 skipped, 1 warning, 6 subtests passed in 39.97s",
       "warning": "Existing FastAPI TestClient Starlette deprecation warning only.",
@@ -265,7 +265,7 @@
   "release_closeout_gate": {
     "status": "pending_post_merge",
     "success_claimed": false,
-    "required_backend": "The exact Pantheon dev merge commit containing the new generation-2 reviewed evidence head based on 609937297bc7e0f48ff7a522de230de1301c15ae; neither 34283649ed119094f72dbcfc736fe9ba3501cf57 nor the stale prior exact pair may be retried.",
+    "required_backend": "The exact Pantheon dev merge commit containing the new generation-2 reviewed evidence head based on 92077907540d4554e9b8a1d12e2528505b2d1ebe; neither 34283649ed119094f72dbcfc736fe9ba3501cf57 nor the stale prior exact pair may be retried.",
     "required_frontend_sha": "7d30e78476be61222af63a089e7ab141aa43b809",
     "required_dispatch": {
       "environment": "dev",
