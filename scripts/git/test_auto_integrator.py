@@ -16,6 +16,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT))
 
 from scripts.git import auto_integrator
+from rewrite import task_state_store
 
 
 class FakeRunner(auto_integrator.CommandRunner):
@@ -3261,6 +3262,138 @@ class IntegrationReceiptWiringTests(unittest.TestCase):
         candidates = auto_integrator.integration_candidates(state)
         self.assertEqual([c.task_id for c in candidates], ["ABC-001"])
 
+    def test_event_path_resolves_from_config_when_env_unset(self) -> None:
+        """Regression test for a live-canary finding (2026-08-30): the
+        cron-launched auto-integrator does not inherit
+        PANTHEON_TASK_STATE_STORE_MODE/PANTHEON_TASK_STATE_EVENT_LOG the way a
+        supervisor-spawned worker does. Without a config fallback, every
+        receipt landed only in the flat ai-status.json projection; the very
+        next governed ai_status.py command (which reads from the V2 journal)
+        silently reverted it within seconds. The live config's own
+        task_state_store block must be consulted directly."""
+
+        config = {
+            "task_state_store": {
+                "mode": "authoritative",
+                "event_log": "/home/lupin/pantheon-ci-deploy/runtime/task-state-events-v2.jsonl",
+            }
+        }
+        with mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("PANTHEON_TASK_STATE_STORE_MODE", None)
+            os.environ.pop("PANTHEON_TASK_STATE_EVENT_LOG", None)
+            result = auto_integrator._canonical_task_state_event_path(config)
+        self.assertEqual(
+            result, Path("/home/lupin/pantheon-ci-deploy/runtime/task-state-events-v2.jsonl")
+        )
+
+    def test_event_path_env_var_still_wins_over_config(self) -> None:
+        config = {
+            "task_state_store": {
+                "mode": "authoritative",
+                "event_log": "/from-config.jsonl",
+            }
+        }
+        with mock.patch.dict(
+            os.environ,
+            {
+                "PANTHEON_TASK_STATE_STORE_MODE": "authoritative",
+                "PANTHEON_TASK_STATE_EVENT_LOG": "/from-env.jsonl",
+            },
+        ):
+            result = auto_integrator._canonical_task_state_event_path(config)
+        self.assertEqual(result, Path("/from-env.jsonl"))
+
+    def test_event_path_none_without_config_or_env(self) -> None:
+        with mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("PANTHEON_TASK_STATE_STORE_MODE", None)
+            os.environ.pop("PANTHEON_TASK_STATE_EVENT_LOG", None)
+            self.assertIsNone(auto_integrator._canonical_task_state_event_path(None))
+            self.assertIsNone(auto_integrator._canonical_task_state_event_path({}))
+
+    def test_event_path_none_when_config_mode_not_authoritative(self) -> None:
+        config = {"task_state_store": {"mode": "legacy", "event_log": "/x.jsonl"}}
+        with mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("PANTHEON_TASK_STATE_STORE_MODE", None)
+            os.environ.pop("PANTHEON_TASK_STATE_EVENT_LOG", None)
+            self.assertIsNone(auto_integrator._canonical_task_state_event_path(config))
+
+    def test_execute_merge_persists_receipt_through_config_resolved_v2_journal(self) -> None:
+        """End-to-end: with only the config (no env vars) carrying V2 store
+        identity, a real merge's receipt must reach the V2 journal, not just
+        the flat projection -- otherwise the very next governed command
+        reverts it (the exact live bug this regression test targets)."""
+
+        candidate = auto_integrator.TaskCandidate(
+            task_id="ABC-001",
+            title="Ready",
+            owner="Codex",
+            reviewer="Claude",
+            branch="task/ABC-001",
+        )
+        runner = FakeRunner(pr=green_pr(number=44), merge_sha="e" * 40)
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            status_file = self._fresh_state_file(tmp_dir)
+            event_path = Path(tmp_dir) / "task-state-events-v2.jsonl"
+            # Seed the V2 journal with the same initial state the flat status
+            # file carries, as production keeps both in sync before any
+            # receipt write is attempted.
+            task_state_store.append_state_commit(
+                event_path,
+                json.loads(status_file.read_text(encoding="utf-8")),
+                source="test-seed",
+            )
+            lock_path = Path(tmp_dir) / "auto-integrator.lock"
+            lock_path.write_text(
+                json.dumps(
+                    {
+                        "schema": auto_integrator.LOCK_SCHEMA,
+                        "state": "held",
+                        "pid": os.getpid(),
+                    }
+                ),
+                encoding="utf-8",
+            )
+            config = {
+                "paths": {"status_file": str(status_file)},
+                "task_state_store": {"mode": "authoritative", "event_log": str(event_path)},
+            }
+            with mock.patch.dict(os.environ, {}, clear=False), mock.patch.object(
+                auto_integrator.integration_receipt,
+                "validate_status_command_runtime",
+                return_value={},
+            ):
+                # This test's own worktree is not named after its HEAD sha (unlike a
+                # promoted command-runtimes/<sha> checkout), so the promoted-runtime
+                # identity check -- already exhaustively covered in
+                # test_integration_receipt.py -- is bypassed here; this test's own
+                # focus is V2 persistence, not that plumbing.
+                os.environ.pop("PANTHEON_TASK_STATE_STORE_MODE", None)
+                os.environ.pop("PANTHEON_TASK_STATE_EVENT_LOG", None)
+                result = auto_integrator.integrate_candidate(
+                    candidate,
+                    auto_integrator.Settings(smoke_commands=("true",), lock_path=lock_path),
+                    runner,
+                    execute=True,
+                    gate=approved_gate(),
+                    config=config,
+                    canonical_state_file=status_file,
+                    status_root=status_file.parent,
+                )
+
+            self.assertEqual(result.action, "merged")
+            self.assertTrue(event_path.exists())
+            events = [
+                json.loads(line) for line in event_path.read_text().splitlines() if line.strip()
+            ]
+            self.assertEqual(len(events), 2)  # the seed commit, then the receipt commit
+            self.assertEqual(events[-1]["source"], "canonical_auto_integrator")
+            snapshot = task_state_store.load_snapshot(event_path)
+            committed_task = next(
+                t for t in snapshot["state"]["tasks"] if t["id"] == "ABC-001"
+            )
+            self.assertIn("integration_receipt", committed_task)
+
     @staticmethod
     def _fresh_state_file(tmp_dir: str, task_id: str = "ABC-001") -> Path:
         """A real status file matching ``approved_gate``'s fixture state, so
@@ -3278,6 +3411,13 @@ class IntegrationReceiptWiringTests(unittest.TestCase):
                             "status": "review_approved",
                             "owner": "Codex",
                             "reviewer": "Claude",
+                            "generation": 1,
+                            "review_binding": {
+                                "pr": 44,
+                                "head_sha": APPROVED_HEAD,
+                                "head_branch": f"task/{task_id}",
+                                "base": "dev",
+                            },
                         }
                     ]
                 }

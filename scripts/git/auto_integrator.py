@@ -2030,16 +2030,29 @@ def preflight_repository(
     return None
 
 
-def _canonical_task_state_event_path() -> Path | None:
+def _canonical_task_state_event_path(config: Mapping[str, Any] | None) -> Path | None:
     """The live V2 journal path, only when this process runs in authoritative
     store mode -- mirrors ``scripts/ai_status.py``'s own ``store_mode`` check
-    rather than assuming it (SD.md DTG-INT-01 §6.4 point 6)."""
+    rather than assuming it (SD.md DTG-INT-01 §6.4 point 6).
+
+    The auto-integrator is cron-launched, not supervisor-launched, so it does
+    not inherit ``PANTHEON_TASK_STATE_STORE_MODE``/``PANTHEON_TASK_STATE_EVENT_LOG``
+    the way a supervisor-spawned worker does; the live config's own
+    ``task_state_store`` block is the authoritative source here, matching how
+    ``resolve_execute_authority`` already reads ``paths``/``watchdog`` directly
+    from the same config rather than assuming an inherited environment. The
+    environment variables are checked first only so an explicit override (as
+    used in tests) still wins.
+    """
 
     mode = str(os.environ.get("PANTHEON_TASK_STATE_STORE_MODE") or "").strip().lower()
-    if mode != "authoritative":
-        return None
     raw = str(os.environ.get("PANTHEON_TASK_STATE_EVENT_LOG") or "").strip()
-    if not raw:
+    if not mode and not raw and isinstance(config, Mapping):
+        store_config = config.get("task_state_store")
+        if isinstance(store_config, Mapping):
+            mode = str(store_config.get("mode") or "").strip().lower()
+            raw = str(store_config.get("event_log") or "").strip()
+    if mode != "authoritative" or not raw:
         return None
     path = Path(os.path.expanduser(raw))
     return path if path.is_absolute() else None
@@ -2108,7 +2121,7 @@ def _record_merge_integration_receipt(
             merge_commit_sha=merge_commit_sha,
             observed_at=orchestrator_common.utc_now(),
             status_file=status_file,
-            event_path=_canonical_task_state_event_path(),
+            event_path=_canonical_task_state_event_path(config),
             authority=authority,
         )
     except integration_receipt.IntegrationReceiptError as exc:
