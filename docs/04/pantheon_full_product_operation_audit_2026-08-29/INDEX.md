@@ -30,7 +30,11 @@
 4. **共享執行資源模型化（Execution Resource Modeling）**：
    - 將實體部署目標 `pantheon-dev` VM（`35.201.204.12`）模型化為容量為 1（`capacity=1`）之執行資源 `pantheon-dev-vm`。
    - 本地開發、單元測試、契約測試、靜態分析與 PR 審查維持高度平行（Parallel Preparation Lanes）；僅部署切換與 hosted 驗收階段依序取得 VM 資源。
-5. **功能優先邊界（Functional-First Boundary & Non-Goals）**：
+5. **Supervisor Clone Session 平行機制與註冊身分邊界**：
+   - 任務擁有者全面指派給具備 active capacity 之註冊身分 `Antigravity` 與 `Antigravity2`（共 13 項實作任務：Antigravity 7 項、Antigravity2 6 項）。
+   - Supervisor 支援透過 clone sessions 在各獨立 git worktree lease 中平行派發多個同型 worker，不受單一進程限制。
+   - 審查者指派給相異且具備即時審查能力之註冊身分（`Antigravity`、`Antigravity2`、`Codex2`、`Claude`、`Claude2`），禁止使用未註冊或已退役之幽靈身分，且在 materialization 時自動執行 live capacity preflight 檢驗。
+6. **功能優先邊界（Functional-First Boundary & Non-Goals）**：
    - 專注於 Desktop browser 之完整 Management 與 Agora 功能旅程。
    - 專注於 Paper/Simulation 交易循環；不包含真實資金（Real Capital）或 live broker 交易權限。
    - Source Ingestion 在 dev 維持 `reconcile-only` 預設模式，僅允許人工、單次、有界（max 1 tick, max 100 records）之 provider pull 驗證。
@@ -44,7 +48,7 @@
 
 | 文件路徑 | 文件性質 | 主要內容摘要 |
 |---|---|---|
-| [`INDEX.md`](INDEX.md) | 總導覽與規劃索引 | 規劃背景、基線版本、核心原則、文件導覽與非目標宣告。 |
+| [`INDEX.md`](INDEX.md) | 總導覽與規劃索引 | 規劃背景、基線版本、核心原則、文件導覽、機器可讀檢驗與非目標宣告。 |
 | [`CURRENT_GAP_DISPOSITION_2026-08-30.md`](CURRENT_GAP_DISPOSITION_2026-08-30.md) | 落差處置矩陣 | OP-G01 至 OP-G20 逐項處置、直接證據、歷史對齊與單一任務歸屬。 |
 | [`SA_GAP_REMEDIATION_2026-08-30.md`](SA_GAP_REMEDIATION_2026-08-30.md) | 目標系統分析 (SA) | 6 大子系統之單一 owner 架構、資料流、狀態不變量與邊界規範。 |
 | [`SD_GAP_REMEDIATION_2026-08-30.md`](SD_GAP_REMEDIATION_2026-08-30.md) | 系統設計規格 (SD) | 11 個設計單元（Design Units）之程式碼面、DTO 契約、狀態轉移與測試規範。 |
@@ -80,7 +84,39 @@
 
 ---
 
-## 4. 交付與簽收條件
+## 4. 機器可讀不變量檢驗指令與結果 (Machine-Checkable Invariant Proofs)
+
+本規劃套件之任務目錄（`EXECUTION_TASK_CATALOG_2026-08-30.json`）具備以下 100% 確定性之 jq 機器檢驗保證：
+
+1. **GAP 單一擁有者檢驗 (OP-G01..OP-G20 恰好各出現一次)**：
+   ```bash
+   jq -e '[.tasks[].gaps[]] | sort | (length == 20 and . == ["OP-G01","OP-G02","OP-G03","OP-G04","OP-G05","OP-G06","OP-G07","OP-G08","OP-G09","OP-G10","OP-G11","OP-G12","OP-G13","OP-G14","OP-G15","OP-G16","OP-G17","OP-G18","OP-G19","OP-G20"])' docs/04/pantheon_full_product_operation_audit_2026-08-29/EXECUTION_TASK_CATALOG_2026-08-30.json
+   # Result: true (Exit 0)
+   ```
+2. **修改構件唯一性檢驗 (無跨任務衝突寫入)**：
+   ```bash
+   jq -e '[.plan_freeze_task.artifacts[], .tasks[].artifacts[]] | length == (unique | length)' docs/04/pantheon_full_product_operation_audit_2026-08-29/EXECUTION_TASK_CATALOG_2026-08-30.json
+   # Result: true (Exit 0)
+   ```
+3. **Owner != Reviewer 檢驗 (嚴格獨立審查)**：
+   ```bash
+   jq -e '[.plan_freeze_task, .tasks[]] | all(.owner != .reviewer)' docs/04/pantheon_full_product_operation_audit_2026-08-29/EXECUTION_TASK_CATALOG_2026-08-30.json
+   # Result: true (Exit 0)
+   ```
+4. **Dev VM 執行資源限定檢驗 (僅 Wave 3/4 宣告 `pantheon-dev-vm`)**：
+   ```bash
+   jq -e '[.tasks[] | if (.id == "OPGAP-HOSTED-DEV-PROMOTION-20260830" or .id == "OPGAP-HOSTED-E2E-ACCEPTANCE-20260830") then .execution_resources == ["pantheon-dev-vm"] else .execution_resources == [] end] | all' docs/04/pantheon_full_product_operation_audit_2026-08-29/EXECUTION_TASK_CATALOG_2026-08-30.json
+   # Result: true (Exit 0)
+   ```
+5. **註冊身分合法性檢驗 (無幽靈或退役身分)**：
+   ```bash
+   jq -e '[.plan_freeze_task, .tasks[]] | all((.owner | IN("Antigravity", "Antigravity2", "Codex2", "Claude", "Claude2", "Copilot")) and (.reviewer | IN("Antigravity", "Antigravity2", "Codex2", "Claude", "Claude2", "Copilot")))' docs/04/pantheon_full_product_operation_audit_2026-08-29/EXECUTION_TASK_CATALOG_2026-08-30.json
+   # Result: true (Exit 0)
+   ```
+
+---
+
+## 5. 交付與簽收條件
 
 本凍結套件之簽收需滿足：
 1. 本套件 6 份文件內容一致、交叉引用精確、無死結或幽靈相依。

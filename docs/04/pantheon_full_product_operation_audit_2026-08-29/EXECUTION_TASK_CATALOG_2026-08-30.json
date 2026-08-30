@@ -22,6 +22,8 @@
     "no_new_facade_or_truth_store": true,
     "move_and_delete_same_delivery_unit": true,
     "functional_failure_requires_gap_report_before_repair_task": true,
+    "supervisor_clone_sessions_parallelism": true,
+    "materialization_capacity_preflight_required": true,
     "hot_files": {
       "services/control-plane/bff/main.py": "OPGAP-BFF-MAIN-ASSEMBLY-20260830",
       "execute-plans:src/App.tsx": "OPGAP-FE-INTEGRATION-ASSEMBLY-20260830",
@@ -29,6 +31,13 @@
       "docker-compose.yml": "OPGAP-HOSTED-DEV-PROMOTION-20260830",
       "scripts/deploy_nonprod_vm.sh": "OPGAP-DEPLOY-RELIABILITY-20260830"
     }
+  },
+  "validation": {
+    "gap_uniqueness_check": "jq -e '[.tasks[].gaps[]] | sort | (length == 20 and . == [\"OP-G01\",\"OP-G02\",\"OP-G03\",\"OP-G04\",\"OP-G05\",\"OP-G06\",\"OP-G07\",\"OP-G08\",\"OP-G09\",\"OP-G10\",\"OP-G11\",\"OP-G12\",\"OP-G13\",\"OP-G14\",\"OP-G15\",\"OP-G16\",\"OP-G17\",\"OP-G18\",\"OP-G19\",\"OP-G20\"])' docs/04/pantheon_full_product_operation_audit_2026-08-29/EXECUTION_TASK_CATALOG_2026-08-30.json",
+    "artifact_uniqueness_check": "jq -e '[.plan_freeze_task.artifacts[], .tasks[].artifacts[]] | length == (unique | length)' docs/04/pantheon_full_product_operation_audit_2026-08-29/EXECUTION_TASK_CATALOG_2026-08-30.json",
+    "owner_reviewer_distinct_check": "jq -e '[.plan_freeze_task, .tasks[]] | all(.owner != .reviewer)' docs/04/pantheon_full_product_operation_audit_2026-08-29/EXECUTION_TASK_CATALOG_2026-08-30.json",
+    "execution_resources_check": "jq -e '[.tasks[] | if (.id == \"OPGAP-HOSTED-DEV-PROMOTION-20260830\" or .id == \"OPGAP-HOSTED-E2E-ACCEPTANCE-20260830\") then .execution_resources == [\"pantheon-dev-vm\"] else .execution_resources == [] end] | all' docs/04/pantheon_full_product_operation_audit_2026-08-29/EXECUTION_TASK_CATALOG_2026-08-30.json",
+    "configured_identities_check": "jq -e '[.plan_freeze_task, .tasks[]] | all((.owner | IN(\"Antigravity\", \"Antigravity2\", \"Codex2\", \"Claude\", \"Claude2\", \"Copilot\")) and (.reviewer | IN(\"Antigravity\", \"Antigravity2\", \"Codex2\", \"Claude\", \"Claude2\", \"Copilot\")))' docs/04/pantheon_full_product_operation_audit_2026-08-29/EXECUTION_TASK_CATALOG_2026-08-30.json"
   },
   "execution_resources": {
     "pantheon-dev-vm": {
@@ -56,10 +65,11 @@
     ],
     "acceptance": [
       "Catalog contains exactly 13 execution tasks plus this plan-freeze task",
-      "All 20 OP-G01 through OP-G20 items are mapped to exact dispositions and task assignments",
+      "All 20 OP-G01 through OP-G20 items are mapped to exact dispositions and single task assignments",
       "Execution DAG is acyclic and all dependencies resolve cleanly",
       "Hot files have singular exclusive owners in assembly waves",
       "Dev VM execution resource is modeled with capacity 1 for deploy and e2e waves",
+      "Deterministic jq invariant validation passes across gap uniqueness, artifact uniqueness, owner!=reviewer, and execution resources",
       "Independent exact-head review passes and document package merges to dev"
     ],
     "priority": 0,
@@ -74,7 +84,7 @@
       "summary_zh": "依 SD-Unit-1 執行：抽取 BFF main.py 領域路由、解除 auth 對 OpenClaw 同步探針依賴 (OP-G05)、刪除 dead action adapter (OP-G10)、並將 HTTP 整合測試改寫為 Async ASGI 客戶端 (OP-G13)。",
       "phase": "W1-preparation-backend",
       "owner": "Antigravity",
-      "reviewer": "Codex",
+      "reviewer": "Antigravity2",
       "target_repo": "pantheon",
       "depends_on": [
         "FULL-OPERATION-GAP-SA-SD-PLAN-FREEZE-20260830"
@@ -111,7 +121,7 @@
       "summary_zh": "依 SD-Unit-2 執行：修復 Agora research 偽造 real 標籤問題 (OP-G01)、將 PerformanceSuggestionProducer 連線至真實遙測 (OP-G02)、清除 router 跨域私有 import (OP-G09)。",
       "phase": "W1-preparation-backend",
       "owner": "Antigravity2",
-      "reviewer": "Claude",
+      "reviewer": "Antigravity",
       "target_repo": "pantheon",
       "depends_on": [
         "FULL-OPERATION-GAP-SA-SD-PLAN-FREEZE-20260830"
@@ -146,7 +156,7 @@
       "title": "Executable RuntimeBinding authority projection generation and paper producer verification",
       "summary_zh": "依 SD-Unit-3 執行：由 Registry 權威自動衍生不可變之 object_store、loader 與 market policy 物理投影 (OP-G17)，並驗證 paper-signal-producer 單元訊號生成。",
       "phase": "W1-preparation-backend",
-      "owner": "Gemini",
+      "owner": "Antigravity",
       "reviewer": "Codex2",
       "target_repo": "pantheon",
       "depends_on": [
@@ -179,8 +189,8 @@
       "title": "Source Ingestion reconcile-only enforcement, bounded refresh contract, and market freshness protection",
       "summary_zh": "依 SD-Unit-4 執行：強化 Source Controller 常態 reconcile_only 模式、實作單次有界 manual refresh 契約 (OP-G12)、並確保台灣交易日曆新鮮度規則生效。",
       "phase": "W1-preparation-backend",
-      "owner": "Antigravity",
-      "reviewer": "Gemini2",
+      "owner": "Antigravity2",
+      "reviewer": "Antigravity",
       "target_repo": "pantheon",
       "depends_on": [
         "FULL-OPERATION-GAP-SA-SD-PLAN-FREEZE-20260830"
@@ -212,8 +222,8 @@
       "title": "Canonical Management Postmortem domain service and pure 12-loop projection verification",
       "summary_zh": "依 SD-Unit-5 執行：建立具備 postmortem_id 權威之 Postmortem 讀寫領域模型與端點 (OP-G18)，並驗證 12-loop truth 純淨投影。",
       "phase": "W1-preparation-backend",
-      "owner": "Antigravity2",
-      "reviewer": "Claude2",
+      "owner": "Antigravity",
+      "reviewer": "Claude",
       "target_repo": "pantheon",
       "depends_on": [
         "FULL-OPERATION-GAP-SA-SD-PLAN-FREEZE-20260830"
@@ -244,7 +254,7 @@
       "title": "Frontend production bundle mock/seed graph isolation and dependency checks",
       "summary_zh": "依 SD-Unit-6 執行：自前端程式切斷 production bundle 對 @/mocks/seed 與 writeOverlay 之依賴可達性，並加入構建圖譜門禁 (OP-G07)。",
       "phase": "W1-preparation-frontend",
-      "owner": "Gemini2",
+      "owner": "Antigravity2",
       "reviewer": "Antigravity",
       "target_repo": "execute-plans",
       "depends_on": [
@@ -277,7 +287,7 @@
       "summary_zh": "依 SD-Unit-7 執行：消除 createEntity.ts 中的 writeOverlay 假寫入 (OP-G06)，並將 PostmortemLibrary.tsx 改接 canonical postmortem 權威端點。",
       "phase": "W1-preparation-frontend",
       "owner": "Antigravity",
-      "reviewer": "Claude",
+      "reviewer": "Claude2",
       "target_repo": "execute-plans",
       "depends_on": [
         "FULL-OPERATION-GAP-SA-SD-PLAN-FREEZE-20260830"
@@ -310,7 +320,7 @@
       "summary_zh": "依 SD-Unit-8 執行：在 Workshop UI 顯式標示 Adapter 真實性狀態 (OP-G15)、交易室動態加載候選池、並呈現績效建議元件。",
       "phase": "W1-preparation-frontend",
       "owner": "Antigravity2",
-      "reviewer": "Codex",
+      "reviewer": "Codex2",
       "target_repo": "execute-plans",
       "depends_on": [
         "FULL-OPERATION-GAP-SA-SD-PLAN-FREEZE-20260830"
@@ -342,8 +352,8 @@
       "title": "Deployment lease heartbeat grace, local sealed rollback authority, and CI false-green elimination",
       "summary_zh": "依 SD-Unit-9 執行：強化部署租約心跳重試與寬限期、提供本地封閉回滾授權 (OP-G16)、並杜絕 CI/CD 將失敗步驟包裝為警告之假綠燈 (OP-G04)。",
       "phase": "W1-preparation-infra",
-      "owner": "Gemini",
-      "reviewer": "Antigravity",
+      "owner": "Antigravity",
+      "reviewer": "Antigravity2",
       "target_repo": "pantheon",
       "depends_on": [
         "FULL-OPERATION-GAP-SA-SD-PLAN-FREEZE-20260830"
@@ -415,7 +425,7 @@
       "summary_zh": "作為單一整合擁有者：收斂 execute-plans 之 src/App.tsx、ManagementLayout.tsx 與 src/lib/bff-v1/index.ts，完成所有前端頁面整合與打包驗證。",
       "phase": "W2-assembly-frontend",
       "owner": "Antigravity2",
-      "reviewer": "Gemini2",
+      "reviewer": "Antigravity",
       "target_repo": "execute-plans",
       "depends_on": [
         "OPGAP-FE-BUNDLE-CLEANUP-20260830",
@@ -448,7 +458,7 @@
       "title": "Dev VM nonprod atomic promotion, container health validation, and projection binding closure",
       "summary_zh": "依 SD-Unit-10 執行：鎖定 pantheon-dev-vm 資源，執行 Dev VM 原子部署，驗證全容器健康、PostgreSQL checkpoint 同步、Agora projection 綁定與 Paper producer 運行 (OP-G03, OP-G19, OP-G20)。",
       "phase": "W3-promotion-vm",
-      "owner": "Gemini",
+      "owner": "Antigravity",
       "reviewer": "Claude",
       "target_repo": "pantheon+execute-plans",
       "depends_on": [
@@ -488,8 +498,8 @@
       "title": "Full twelve-loop stimulus-readback, source lifecycle, and authenticated desktop Playwright acceptance",
       "summary_zh": "依 SD-Unit-11 執行：鎖定 pantheon-dev-vm 資源，於已部署之 Dev VM 執行 12 循環全量刺激讀回 (OP-G11)、Source 有界更新週期 (OP-G12 驗證)、及桌面端登入態 Playwright 旅程驗收 (OP-G14)，完成全產品簽收。",
       "phase": "W4-acceptance-vm",
-      "owner": "Antigravity",
-      "reviewer": "Codex",
+      "owner": "Antigravity2",
+      "reviewer": "Codex2",
       "target_repo": "pantheon+execute-plans",
       "depends_on": [
         "OPGAP-HOSTED-DEV-PROMOTION-20260830"
