@@ -28,12 +28,12 @@ def test_projects_latest_real_row_with_provenance() -> None:
         [_record("src-old", "2330", "2026-07-06", 900), _record("src-new", "2330", "2026-07-07", 905)],
         connector_freshness={
             "status": "fresh",
-            "last_success_at": "2026-07-07T01:00:00Z",
-            "next_run_at": "2026-07-08T01:00:00Z",
+            "last_success_at": "2026-07-07T06:00:00Z",
+            "next_run_at": "2026-07-08T06:00:00Z",
             "stale_threshold_seconds": 172800,
             "last_typed_failure": None,
         },
-        now=datetime(2026, 7, 7, 2, tzinfo=timezone.utc),
+        now=datetime(2026, 7, 7, 6, tzinfo=timezone.utc),
     )
     market = stores["agora_watchlist"]["market-2330"]
     signal = stores["agora_signals"]["market-signal-2330-2026-07-07"]
@@ -46,15 +46,35 @@ def test_projects_latest_real_row_with_provenance() -> None:
         "schemaVersion": "agora_source_freshness.v1",
         "status": "fresh",
         "stale": False,
-        "lastSuccessAt": "2026-07-07T01:00:00Z",
+        "lastSuccessAt": "2026-07-07T06:00:00Z",
         "sourceTimestamp": "2026-07-07",
         "sourceTimeStatus": "valid",
-        "ageSeconds": 7200,
+        "ageSeconds": 21600,
         "staleThresholdSeconds": 172800,
-        "nextRunAt": "2026-07-08T01:00:00Z",
+        "nextRunAt": "2026-07-08T06:00:00Z",
         "lastTypedFailure": None,
     }
     assert signal["projectionOwner"] == PROJECTOR
+
+
+def test_projects_weekend_friday_close_as_fresh() -> None:
+    # Friday 2026-08-28 official close projected on Sunday 2026-08-30 with fresh receipt
+    stores = project(
+        [_record("src-fri", "2330", "2026-08-28", 920)],
+        connector_freshness={
+            "status": "fresh",
+            "last_success_at": "2026-08-30T01:00:00Z",
+            "next_run_at": "2026-08-31T01:00:00Z",
+            "stale_threshold_seconds": 86400,
+            "last_typed_failure": None,
+        },
+        now=datetime(2026, 8, 30, 1, tzinfo=timezone.utc),
+    )
+    market = stores["agora_watchlist"]["market-2330"]
+    assert market["close"] == 920
+    assert market["freshnessStatus"] == "fresh"
+    assert market["stale"] is False
+    assert market["freshness"]["sourceTimeStatus"] == "valid"
 
 
 def test_ignores_non_market_records_and_preserves_other_projectors(tmp_path) -> None:

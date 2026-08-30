@@ -1316,3 +1316,171 @@ def test_run_scheduled_returns_empty_when_no_schedules_configured(client) -> Non
     assert body["summary"]["total_skipped"] == 0
     assert body["summary"]["total_failed"] == 0
     assert body["ran"] == []
+
+
+def test_freshness_summary_taiwan_official_weekend_accepts_friday_close() -> None:
+    from datetime import datetime, timezone
+    from services.source_ingestion.runtime import SourceIngestionRuntime
+    from services.source_ingestion.scheduler import IngestReceipt
+    from services.source_ingestion.connectors.base import SourceRecord
+
+    runtime = SourceIngestionRuntime()
+    now = datetime(2026, 8, 30, 1, 0, 0, tzinfo=timezone.utc)  # Sunday
+    receipts = [
+        IngestReceipt(
+            ingest_run_id="run-tw-weekend",
+            connector_id="tw-twse-tpex-official-market",
+            status="completed",
+            trigger_type="manual_one_shot",
+            trace_id="trace-test",
+            started_at="2026-08-30T00:59:55Z",
+            finished_at="2026-08-30T01:00:00Z",
+            raw_count=1,
+            normalized_count=1,
+            rejected_count=0,
+            watermark=None,
+            source_timestamp="2026-08-28T05:30:00Z",  # Friday close
+            source_timestamp_status="valid",
+        )
+    ]
+    record = SourceRecord(
+        source_id="tw-official:tw_price_daily:TWSE:2330:weekend",
+        connector_id="tw-twse-tpex-official-market",
+        source_type="market",
+        title="2330 Daily Close",
+        content_ref="tw-official://tw_price_daily/TWSE/2330/2026-08-28",
+        status="normalized",
+        trace_id="trace-test",
+        created_at="2026-08-30T01:00:00Z",
+        metadata={
+            "provider": "TWSE OpenAPI",
+            "dataset": "tw_price_daily",
+            "available_time": "2026-08-28T05:30:00Z",
+        },
+    )
+
+    summary = runtime._connector_freshness_summary_from_snapshot(
+        "tw-twse-tpex-official-market",
+        connector_metadata={"market": "TW", "venue": "TWSE"},
+        schedule=None,
+        watermark=None,
+        runs=[],
+        receipts=receipts,
+        now=now,
+        latest_record=record,
+    )
+
+    assert summary["stale"] is False
+    assert summary["status"] == "unscheduled"
+    assert summary["source_timestamp_status"] == "valid"
+
+
+def test_freshness_summary_taiwan_official_rejects_stale_weekday() -> None:
+    from datetime import datetime, timezone
+    from services.source_ingestion.runtime import SourceIngestionRuntime
+    from services.source_ingestion.scheduler import IngestReceipt
+    from services.source_ingestion.connectors.base import SourceRecord
+
+    runtime = SourceIngestionRuntime()
+    now = datetime(2026, 8, 28, 6, 0, 0, tzinfo=timezone.utc)  # Friday afternoon after close
+    receipts = [
+        IngestReceipt(
+            ingest_run_id="run-tw-stale",
+            connector_id="tw-twse-tpex-official-market",
+            status="completed",
+            trigger_type="manual_one_shot",
+            trace_id="trace-test",
+            started_at="2026-08-28T05:59:55Z",
+            finished_at="2026-08-28T06:00:00Z",
+            raw_count=1,
+            normalized_count=1,
+            rejected_count=0,
+            watermark=None,
+            source_timestamp="2026-08-25T05:30:00Z",  # Tuesday close (stale without holiday proof)
+            source_timestamp_status="valid",
+        )
+    ]
+    record = SourceRecord(
+        source_id="tw-official:tw_price_daily:TWSE:2330:tuesday",
+        connector_id="tw-twse-tpex-official-market",
+        source_type="market",
+        title="2330 Daily Close",
+        content_ref="tw-official://tw_price_daily/TWSE/2330/2026-08-25",
+        status="normalized",
+        trace_id="trace-test",
+        created_at="2026-08-28T06:00:00Z",
+        metadata={
+            "provider": "TWSE OpenAPI",
+            "dataset": "tw_price_daily",
+            "available_time": "2026-08-25T05:30:00Z",
+        },
+    )
+
+    summary = runtime._connector_freshness_summary_from_snapshot(
+        "tw-twse-tpex-official-market",
+        connector_metadata={"market": "TW", "venue": "TWSE"},
+        schedule=None,
+        watermark=None,
+        runs=[],
+        receipts=receipts,
+        now=now,
+        latest_record=record,
+    )
+
+    assert summary["stale"] is True
+
+
+def test_freshness_summary_taiwan_official_rejects_non_official_lineage() -> None:
+    from datetime import datetime, timezone
+    from services.source_ingestion.runtime import SourceIngestionRuntime
+    from services.source_ingestion.scheduler import IngestReceipt
+    from services.source_ingestion.connectors.base import SourceRecord
+
+    runtime = SourceIngestionRuntime()
+    now = datetime(2026, 8, 30, 1, 0, 0, tzinfo=timezone.utc)
+    receipts = [
+        IngestReceipt(
+            ingest_run_id="run-tw-mock",
+            connector_id="tw-twse-tpex-official-market",
+            status="completed",
+            trigger_type="manual_one_shot",
+            trace_id="trace-test",
+            started_at="2026-08-30T00:59:55Z",
+            finished_at="2026-08-30T01:00:00Z",
+            raw_count=1,
+            normalized_count=1,
+            rejected_count=0,
+            watermark=None,
+            source_timestamp="2026-08-28T05:30:00Z",
+            source_timestamp_status="valid",
+        )
+    ]
+    record = SourceRecord(
+        source_id="mock-vendor:tw_price_daily:TWSE:2330:mock",  # non-official lineage
+        connector_id="tw-twse-tpex-official-market",
+        source_type="market",
+        title="2330 Daily Close",
+        content_ref="mock-vendor://tw_price_daily/TWSE/2330/2026-08-28",
+        status="normalized",
+        trace_id="trace-test",
+        created_at="2026-08-30T01:00:00Z",
+        metadata={
+            "provider": "Mock Provider",
+            "dataset": "tw_price_daily",
+            "available_time": "2026-08-28T05:30:00Z",
+        },
+    )
+
+    summary = runtime._connector_freshness_summary_from_snapshot(
+        "tw-twse-tpex-official-market",
+        connector_metadata={"market": "TW", "venue": "TWSE"},
+        schedule=None,
+        watermark=None,
+        runs=[],
+        receipts=receipts,
+        now=now,
+        latest_record=record,
+    )
+
+    assert summary["stale"] is True
+
