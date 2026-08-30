@@ -5,7 +5,7 @@
 This document package provides the complete, root-cause System Architecture (SA), System Design (SD), and parallel Execution Task Catalog for remediating all 20 identified product operation gaps (**OP-G01** through **OP-G20**) across the **Pantheon** control plane and **execute-plans** desktop frontend repositories.
 
 #### Baseline Provenance
-- **Pantheon Baseline Commit**: `84f7807dbe99166b9096551beeee88bbe4f7b20a` (`origin/dev`)
+- **Pantheon Baseline Commit**: `4f0994be548f56da627740f5b7fb193844c1faed` (`origin/dev`)
 - **Governed Command Runtime SHA**: `f12e300f4eb2cf38b34c3432658dc8041570d130` (promoted command runtime post PR #5440)
 - **Accepted Hosted / Product BFF Backend Identity**: `2bcb4465399af83190c5027073f3b2296e377256` (served `/deployment.json` and live `/bff/version` backend source commit)
 - **Execute-Plans Baseline Commit**: `7d30e78476be61222af63a089e7ab141aa43b809` (`origin/dev`)
