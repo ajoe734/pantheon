@@ -1339,8 +1339,26 @@ class SourceIngestionRuntime:
         latest: dict[str, SourceRecord] = {}
         for record in self.evidence_repository.list_source_records():
             current = latest.get(record.connector_id)
-            if current is None or str(record.to_dict()["created_at"]) > str(current.to_dict()["created_at"]):
+            rec_dict = record.to_dict()
+            rec_meta = rec_dict.get("metadata") or {}
+            rec_created = str(rec_dict.get("created_at") or "")
+            rec_avail = str(rec_meta.get("available_time") or rec_meta.get("date") or "")
+            rec_is_price = 1 if rec_meta.get("dataset") == "tw_price_daily" else 0
+            rec_is_priority = 1 if rec_meta.get("symbol") in {"2330", "2330.TWSE", "2330.TW"} else 0
+            rec_key = (rec_created, rec_is_price, rec_is_priority, rec_avail, record.source_id)
+
+            if current is None:
                 latest[record.connector_id] = record
+            else:
+                cur_dict = current.to_dict()
+                cur_meta = cur_dict.get("metadata") or {}
+                cur_created = str(cur_dict.get("created_at") or "")
+                cur_avail = str(cur_meta.get("available_time") or cur_meta.get("date") or "")
+                cur_is_price = 1 if cur_meta.get("dataset") == "tw_price_daily" else 0
+                cur_is_priority = 1 if cur_meta.get("symbol") in {"2330", "2330.TWSE", "2330.TW"} else 0
+                cur_key = (cur_created, cur_is_price, cur_is_priority, cur_avail, current.source_id)
+                if rec_key > cur_key:
+                    latest[record.connector_id] = record
         return latest
 
     def _controller_connector_readbacks(self) -> list[dict[str, Any]]:

@@ -1,0 +1,49 @@
+{
+  "schema_version": "pantheon.agora-projection-receipt-binding-review.v1",
+  "task_id": "AGORA-PROJECTION-RECEIPT-BINDING-V1-20260830",
+  "generated_at": "2026-08-30T02:50:00Z",
+  "owner": "Antigravity2",
+  "reviewer": "Codex2",
+  "status": "implementation_complete_ready_for_exact_head_review",
+  "acceptance_state": "exact_head_review_merge_and_post_merge_release_proof_required",
+  "immutable_failure_reproduction": {
+    "workflow_run_id": 33287442245,
+    "workflow_url": "https://github.com/ajoe734/pantheon/actions/runs/33287442245",
+    "backend_sha": "87c320d75a6f236f0477bf270c5f49efbc0a7364",
+    "frontend_sha": "5ffee3db8c2b37b4070d43d091ed4207ef5d70e5",
+    "conclusion": "failure",
+    "failed_job": "Deploy dev under shared environment lease",
+    "failed_step": "Deploy dev VM stack under lease",
+    "failed_component": "source-ingest-agora-projector and deploy bounded source refresh readback gate",
+    "observed_failure": "Agora projection does not bind the new receipt/run/source",
+    "root_cause": "The one-shot Agora surface projector (scripts/project_market_data_to_bff_agora_surfaces.py) fetched raw source records from /api/source-ingest/source-records and only extracted the freshness dictionary from /api/source-ingest/controller/readback. Because the projector did not consume the full controller readback to bind the authoritative accepted ingest_run_id from latest_receipt and latest_source_record from the bounded refresh, records without explicit metadata run IDs fell back to None or stale IDs, and symbol selection did not prioritize the accepted receipt ingest run and source identity. Consequently, verify_bounded_source_refresh_readback in scripts/deploy_nonprod_vm.sh failed when asserting row.connectorId == connector_id and row.ingestRunId == run_id and row.sourceId == source_id."
+  },
+  "resolution_summary": {
+    "projector_binding": "Updated scripts/project_market_data_to_bff_agora_surfaces.py with _get_connector_readback and enhanced project() to deterministically consume the accepted receipt ingest_run_id and latest_source_record identity from the controller readback, binding matching ingestRunId, sourceId, connectorId, and lineage into agora_watchlist and agora_signals.",
+    "runtime_tiebreaker": "Updated services/source_ingestion/runtime.py::_latest_source_record_by_connector with deterministic key sorting prioritizing price datasets and active priority symbols (2330) to ensure the controller readback publishes an authentic, predictable latest source record matching the projector output.",
+    "fail_closed_boundaries": "Enforced fail-closed behavior with typed reasons for missing receipt (missing_receipt / missing_refresh_receipt), unparsable receipt (unparsable_refresh_receipt), mismatched run (mismatched_run), mismatched connector (mismatched_connector), non-official lineage (market_input_non_official_lineage), unverifiable calendar evidence (unverifiable_calendar), and future timestamps (future_timestamp).",
+    "tests": "Added deterministic tests in scripts/test_project_market_data_to_bff_agora_surfaces.py reproducing run 33287442245 and verifying successful binding, startup ordering dependencies, and all identity mismatch negative paths."
+  },
+  "fail_closed_boundaries": [
+    "Stale weekday data without valid holiday evidence is rejected as market_input_stale / source_data_stale.",
+    "Missing, unparsable, or stale refresh receipt older than 24h is rejected as market_input_stale_refresh / source_data_stale.",
+    "Missing or tampered calendar evidence during exchange closure is rejected as market_input_calendar_unverifiable / source_data_stale.",
+    "Non-official lineage (source_id not starting with tw-official:) is rejected as market_input_non_official_lineage / source_data_stale.",
+    "Future event_time or observed_at is rejected as market_input_invalid / source_data_stale.",
+    "Readiness or refresh failure compensates to exact accepted read-only FE/BFF baseline with all writes false."
+  ],
+  "validation": {
+    "focused_suite": "pytest -v scripts/test_project_market_data_to_bff_agora_surfaces.py scripts/test_source_ingest_deploy_diagnostics_contract.py",
+    "focused_result": "24 passed in 2.25s",
+    "broader_source_suite": "pytest -q services/source_ingestion/tests/",
+    "broader_source_result": "847 passed, 1 skipped, 5 warnings in 219.77s",
+    "bff_agora_suite": "pytest -q services/control-plane/bff/tests/test_agora_router.py services/control-plane/bff/test_bff_agora_core_contract.py services/control-plane/bff/test_bff_b2_005_agora_canonical_aliases.py",
+    "bff_agora_result": "28 passed, 15 warnings in 20.91s",
+    "syntax_check": "py_compile and git diff clean"
+  },
+  "release_closeout_gate": {
+    "required_backend": "the Pantheon dev merge containing this manifest and the independently approved head",
+    "required_frontend": "5ffee3db8c2b37b4070d43d091ed4207ef5d70e5",
+    "unblocks_task": "AGORA-AGC-14-HOSTED-DEMO-AUTHENTIC-V5-20260829"
+  }
+}

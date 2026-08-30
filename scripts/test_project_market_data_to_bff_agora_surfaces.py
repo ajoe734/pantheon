@@ -211,3 +211,174 @@ def test_compose_wires_both_projected_agora_stores() -> None:
 
     assert "PANTHEON_BFF_AGORA_SIGNAL_STORE: ${PANTHEON_BFF_AGORA_SIGNAL_STORE:-/data/bff/agora_signals.json}" in compose
     assert "PANTHEON_BFF_AGORA_WATCHLIST_STORE: ${PANTHEON_BFF_AGORA_WATCHLIST_STORE:-/data/bff/agora_watchlist.json}" in compose
+    assert "source-ingest-agora-projector:" in compose
+    assert "source-ingest-scheduler:" in compose
+
+
+def test_reproduces_and_resolves_run_33287442245_projection_binding() -> None:
+    run_id = "33287442245"
+    source_id = f"tw-official:tw_price_daily:TWSE:2330:{run_id}"
+    record = {
+        "source_id": source_id,
+        "connector_id": "tw-twse-tpex-official-market",
+        "metadata": {
+            "source_ingest_run_id": run_id,
+            "normalized_row": {
+                "dataset": "tw_price_daily",
+                "date": "2026-08-28",
+                "available_time": "2026-08-28T05:30:00Z",
+                "symbol": "2330",
+                "market": "TW",
+                "venue": "TWSE",
+                "name": "TSMC",
+                "close": 940.0,
+                "change": 10.0,
+                "volume": 25000,
+            },
+        },
+    }
+    connector_readback = {
+        "connector_id": "tw-twse-tpex-official-market",
+        "freshness": {
+            "status": "fresh",
+            "stale": False,
+            "last_success_at": "2026-08-30T01:00:00Z",
+            "source_timestamp": "2026-08-28T05:30:00Z",
+            "source_timestamp_status": "valid",
+            "stale_threshold_seconds": 86400,
+            "latest_receipt": {
+                "ingest_run_id": run_id,
+                "status": "completed",
+                "source_timestamp": "2026-08-28T05:30:00Z",
+                "source_timestamp_status": "valid",
+                "finished_at": "2026-08-30T01:00:00Z",
+            },
+            "latest_run": {
+                "ingest_run_id": run_id,
+                "status": "completed",
+            },
+        },
+        "latest_source_record": {
+            "source_id": source_id,
+            "connector_id": "tw-twse-tpex-official-market",
+            "provenance": {
+                "source_ingest_run_id": run_id,
+                "dataset": "tw_price_daily",
+                "available_time": "2026-08-28T05:30:00Z",
+            },
+        },
+    }
+    stores = project(
+        [record],
+        connector_readback=connector_readback,
+        now=datetime(2026, 8, 30, 1, tzinfo=timezone.utc),
+    )
+    market = stores["agora_watchlist"]["market-2330"]
+    signal = stores["agora_signals"]["market-signal-2330-2026-08-28"]
+
+    assert market["connectorId"] == "tw-twse-tpex-official-market"
+    assert market["ingestRunId"] == run_id
+    assert market["sourceId"] == source_id
+    assert market["close"] == 940.0
+    assert market["freshnessStatus"] == "fresh"
+    assert market["stale"] is False
+    assert market["freshness"]["sourceTimeStatus"] == "valid"
+    assert market["freshness"]["lastTypedFailure"] is None
+
+    assert signal["connectorId"] == "tw-twse-tpex-official-market"
+    assert signal["ingestRunId"] == run_id
+    assert signal["sourceId"] == source_id
+
+
+def test_rejects_mismatched_run_id_between_receipt_and_record() -> None:
+    receipt_run_id = "run-receipt-999"
+    record_run_id = "run-old-111"
+    record = {
+        "source_id": f"tw-official:tw_price_daily:TWSE:2330:{record_run_id}",
+        "connector_id": "tw-twse-tpex-official-market",
+        "metadata": {
+            "source_ingest_run_id": record_run_id,
+            "normalized_row": {
+                "dataset": "tw_price_daily",
+                "date": "2026-08-28",
+                "available_time": "2026-08-28T05:30:00Z",
+                "symbol": "2330",
+                "market": "TW",
+                "venue": "TWSE",
+                "name": "TSMC",
+                "close": 940.0,
+            },
+        },
+    }
+    connector_readback = {
+        "connector_id": "tw-twse-tpex-official-market",
+        "freshness": {
+            "status": "fresh",
+            "stale": False,
+            "last_success_at": "2026-08-30T01:00:00Z",
+            "source_timestamp": "2026-08-28T05:30:00Z",
+            "source_timestamp_status": "valid",
+            "stale_threshold_seconds": 86400,
+            "latest_receipt": {
+                "ingest_run_id": receipt_run_id,
+                "status": "completed",
+            },
+        },
+    }
+    stores = project(
+        [record],
+        connector_readback=connector_readback,
+        now=datetime(2026, 8, 30, 1, tzinfo=timezone.utc),
+    )
+    market = stores["agora_watchlist"]["market-2330"]
+    assert market["freshnessStatus"] == "stale"
+    assert market["stale"] is True
+    assert market["freshness"]["lastTypedFailure"]["code"] == "mismatched_run"
+
+
+def test_rejects_unverifiable_calendar_evidence() -> None:
+    record = {
+        "source_id": "tw-official:tw_price_daily:TWSE:2330:badcal",
+        "connector_id": "tw-twse-tpex-official-market",
+        "metadata": {
+            "source_ingest_run_id": "run-001",
+            "calendar_evidence": {
+                "schema_hash": "invalid-schema",
+                "settlement_session": "invalid",
+            },
+            "normalized_row": {
+                "dataset": "tw_price_daily",
+                "date": "2026-08-28",
+                "available_time": "2026-08-28T05:30:00Z",
+                "symbol": "2330",
+                "market": "TW",
+                "venue": "TWSE",
+                "name": "TSMC",
+                "close": 940.0,
+            },
+        },
+    }
+    connector_readback = {
+        "connector_id": "tw-twse-tpex-official-market",
+        "freshness": {
+            "status": "fresh",
+            "stale": False,
+            "last_success_at": "2026-08-30T01:00:00Z",
+            "source_timestamp": "2026-08-28T05:30:00Z",
+            "source_timestamp_status": "valid",
+            "stale_threshold_seconds": 86400,
+            "latest_receipt": {
+                "ingest_run_id": "run-001",
+                "status": "completed",
+            },
+        },
+    }
+    stores = project(
+        [record],
+        connector_readback=connector_readback,
+        now=datetime(2026, 8, 30, 1, tzinfo=timezone.utc),
+    )
+    market = stores["agora_watchlist"]["market-2330"]
+    # Either fails calendar validation or marks stale fail-closed
+    assert market["freshnessStatus"] == "stale" or market["stale"] is True
+

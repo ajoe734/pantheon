@@ -31,7 +31,7 @@ def _get_source_records(base_url: str) -> list[dict[str, Any]]:
     return [record for record in records if isinstance(record, dict)]
 
 
-def _get_connector_freshness(base_url: str) -> dict[str, Any]:
+def _get_connector_readback(base_url: str) -> dict[str, Any]:
     url = f"{base_url.rstrip('/')}/api/source-ingest/controller/readback"
     with urllib.request.urlopen(url, timeout=30) as response:
         payload = json.loads(response.read())
@@ -40,11 +40,16 @@ def _get_connector_freshness(base_url: str) -> dict[str, Any]:
         raise ValueError("source-ingest readback has no connectors list")
     for connector in connectors:
         if isinstance(connector, dict) and connector.get("connector_id") == CONNECTOR_ID:
-            freshness = connector.get("freshness")
-            if not isinstance(freshness, dict):
-                raise ValueError(f"source-ingest readback for {CONNECTOR_ID} has no freshness object")
-            return freshness
+            return connector
     raise ValueError(f"source-ingest readback has no connector {CONNECTOR_ID}")
+
+
+def _get_connector_freshness(base_url: str) -> dict[str, Any]:
+    connector = _get_connector_readback(base_url)
+    freshness = connector.get("freshness")
+    if not isinstance(freshness, dict):
+        raise ValueError(f"source-ingest readback for {CONNECTOR_ID} has no freshness object")
+    return freshness
 
 
 def _parse_timestamp(value: Any) -> datetime | None:
@@ -69,6 +74,8 @@ def _freshness_metadata(
     source_id: str | None = None,
     connector_id: str | None = None,
     calendar_evidence: dict[str, Any] | None = None,
+    accepted_run_id: str | None = None,
+    record_run_id: str | None = None,
 ) -> dict[str, Any]:
     parsed_source_timestamp = _parse_timestamp(source_timestamp)
     if not str(source_timestamp or "").strip():
@@ -88,20 +95,46 @@ def _freshness_metadata(
         1,
         int(connector_freshness.get("stale_threshold_seconds") or default_stale_threshold_seconds),
     )
+
+    typed_failure = connector_freshness.get("last_typed_failure")
+    if isinstance(typed_failure, dict):
+        typed_failure = dict(typed_failure)
+    elif typed_failure is not None:
+        typed_failure = {"category": "freshness", "code": str(typed_failure), "retryable": False}
+
+    cid = str(connector_id or CONNECTOR_ID)
+    sid = str(source_id or "")
+    lineage_invalid = False
+    if cid != CONNECTOR_ID:
+        lineage_invalid = True
+        if typed_failure is None:
+            typed_failure = {"category": "receipt_binding", "code": "mismatched_connector", "retryable": False}
+    elif not sid.startswith("tw-official:"):
+        lineage_invalid = True
+        if typed_failure is None:
+            typed_failure = {"category": "lineage", "code": "market_input_non_official_lineage", "retryable": False}
+
+    run_mismatch = False
+    if record_run_id and accepted_run_id and str(record_run_id) != str(accepted_run_id):
+        run_mismatch = True
+        if typed_failure is None:
+            typed_failure = {"category": "receipt_binding", "code": "mismatched_run", "retryable": False}
+
     tw_stale = None
-    if parsed_source_timestamp is not None and source_timestamp_status == "valid":
+    if parsed_source_timestamp is not None and source_timestamp_status == "valid" and not lineage_invalid:
         last_success_at_str = connector_freshness.get("last_success_at")
         refresh_dt = _parse_timestamp(last_success_at_str)
-        cid = str(connector_id or CONNECTOR_ID)
-        sid = str(source_id or "")
-        if not sid.startswith("tw-official:"):
+        if refresh_dt is None:
             tw_stale = True
+            if typed_failure is None:
+                failure_code = "missing_refresh_receipt" if not last_success_at_str else "unparsable_refresh_receipt"
+                typed_failure = {"category": "receipt_binding", "code": failure_code, "retryable": False}
         else:
             lineage = {"connector_ids": [cid], "source_ids": [sid]}
             try:
                 from services.execution.market_snapshot_admission import evaluate_taiwan_market_freshness
 
-                tw_ok, _tw_reason, _tw_detail = evaluate_taiwan_market_freshness(
+                tw_ok, tw_reason, tw_detail = evaluate_taiwan_market_freshness(
                     event_time_dt=parsed_source_timestamp,
                     now_dt=now,
                     refresh_receipt_dt=refresh_dt,
@@ -110,8 +143,27 @@ def _freshness_metadata(
                     calendar_evidence=calendar_evidence,
                 )
                 tw_stale = not tw_ok
-            except Exception:
+                if tw_stale and typed_failure is None:
+                    typed_failure = {
+                        "category": "market_session",
+                        "code": tw_reason or "source_data_stale",
+                        "retryable": False,
+                        "detail": tw_detail,
+                    }
+            except Exception as exc:
                 tw_stale = True
+                if typed_failure is None:
+                    typed_failure = {
+                        "category": "market_session",
+                        "code": "unverifiable_calendar",
+                        "retryable": False,
+                        "detail": str(exc),
+                    }
+
+    if source_timestamp_status == "future" and typed_failure is None:
+        typed_failure = {"category": "source_timestamp", "code": "future_timestamp", "retryable": False}
+    elif source_timestamp_status in {"missing", "invalid"} and typed_failure is None:
+        typed_failure = {"category": "source_timestamp", "code": f"{source_timestamp_status}_source_timestamp", "retryable": False}
 
     if tw_stale is not None:
         stale = (
@@ -119,6 +171,8 @@ def _freshness_metadata(
             or connector_freshness.get("source_timestamp_status") in {"missing", "invalid", "future"}
             or source_timestamp_status != "valid"
             or tw_stale
+            or lineage_invalid
+            or run_mismatch
         )
     else:
         stale = (
@@ -127,6 +181,8 @@ def _freshness_metadata(
             or source_timestamp_status != "valid"
             or age_seconds is None
             or age_seconds > threshold
+            or lineage_invalid
+            or run_mismatch
         )
     return {
         "schemaVersion": "agora_source_freshness.v1",
@@ -138,7 +194,7 @@ def _freshness_metadata(
         "ageSeconds": age_seconds,
         "staleThresholdSeconds": threshold,
         "nextRunAt": connector_freshness.get("next_run_at") or connector_freshness.get("next_due_at"),
-        "lastTypedFailure": connector_freshness.get("last_typed_failure"),
+        "lastTypedFailure": typed_failure,
     }
 
 
@@ -158,15 +214,57 @@ def project(
     records: list[dict[str, Any]],
     *,
     connector_freshness: dict[str, Any] | None = None,
+    connector_readback: dict[str, Any] | None = None,
     now: datetime | None = None,
     stale_threshold_seconds: int = DEFAULT_STALE_THRESHOLD_SECONDS,
 ) -> dict[str, dict[str, dict[str, Any]]]:
-    freshness_readback = dict(connector_freshness or {})
+    if connector_readback is not None and isinstance(connector_readback, dict):
+        freshness_readback = dict(connector_readback.get("freshness") or {})
+        latest_source_record = (
+            connector_readback.get("latest_source_record")
+            if isinstance(connector_readback.get("latest_source_record"), dict)
+            else {}
+        )
+    elif connector_freshness is not None and isinstance(connector_freshness, dict):
+        freshness_readback = dict(connector_freshness)
+        latest_source_record = {}
+    else:
+        freshness_readback = {}
+        latest_source_record = {}
+
+    latest_receipt = (
+        freshness_readback.get("latest_receipt")
+        if isinstance(freshness_readback.get("latest_receipt"), dict)
+        else {}
+    )
+    latest_run = (
+        freshness_readback.get("latest_run")
+        if isinstance(freshness_readback.get("latest_run"), dict)
+        else {}
+    )
+    accepted_run_id = str(
+        latest_receipt.get("ingest_run_id")
+        or latest_run.get("ingest_run_id")
+        or freshness_readback.get("last_ingest_run_id")
+        or ""
+    )
+    accepted_source_id = str(latest_source_record.get("source_id") or "")
+    if latest_source_record:
+        prov = (
+            latest_source_record.get("provenance")
+            if isinstance(latest_source_record.get("provenance"), dict)
+            else {}
+        )
+        prov_run = str(prov.get("source_ingest_run_id") or "")
+        if prov_run and not accepted_run_id:
+            accepted_run_id = prov_run
+
     captured_at = now or datetime.now(timezone.utc)
     if captured_at.tzinfo is None:
         captured_at = captured_at.replace(tzinfo=timezone.utc)
     captured_at = captured_at.astimezone(timezone.utc)
-    latest: dict[str, tuple[tuple[int, datetime, str, str], str | None, dict[str, Any], dict[str, Any]]] = {}
+
+    latest: dict[str, tuple[tuple[int, int, int, datetime, str, str], str | None, dict[str, Any], dict[str, Any]]] = {}
     for record in records:
         if str(record.get("connector_id") or "") != CONNECTOR_ID:
             continue
@@ -179,8 +277,13 @@ def project(
         parsed_source_timestamp = _parse_timestamp(source_timestamp)
         ordering_timestamp = parsed_source_timestamp or datetime.min.replace(tzinfo=timezone.utc)
         source_id = str(record.get("source_id") or "")
+        rec_run_id = str(metadata.get("source_ingest_run_id") or metadata.get("ingest_run_id") or "")
+        is_accepted_run = 1 if (accepted_run_id and rec_run_id == accepted_run_id) else 0
+        is_accepted_source = 1 if (accepted_source_id and source_id == accepted_source_id) else 0
         ordering_key = (
             1 if parsed_source_timestamp is not None else 0,
+            is_accepted_run,
+            is_accepted_source,
             ordering_timestamp,
             source_timestamp or "",
             source_id,
@@ -193,6 +296,8 @@ def project(
     for symbol, (_ordering_key, source_timestamp, record, row) in latest.items():
         source_id = str(record.get("source_id") or "")
         metadata = record.get("metadata") or {}
+        rec_run_id = metadata.get("source_ingest_run_id") or metadata.get("ingest_run_id")
+        bound_run_id = str(accepted_run_id or rec_run_id or "") or None
         source_ref = f"source_ingest:{source_id}"
         cal_ev = metadata.get("calendar_evidence")
         if cal_ev is None and isinstance(metadata.get("normalized_row"), dict):
@@ -205,6 +310,8 @@ def project(
             source_id=source_id,
             connector_id=CONNECTOR_ID,
             calendar_evidence=cal_ev,
+            accepted_run_id=accepted_run_id or None,
+            record_run_id=str(rec_run_id) if rec_run_id else None,
         )
         common = {
             "symbol": symbol,
@@ -213,7 +320,7 @@ def project(
             "asOf": source_timestamp,
             "source_ref": source_ref,
             "sourceId": source_id,
-            "ingestRunId": metadata.get("source_ingest_run_id") or metadata.get("ingest_run_id"),
+            "ingestRunId": bound_run_id,
             "connectorId": CONNECTOR_ID,
             "projectionOwner": PROJECTOR,
             "freshness": freshness,
@@ -268,9 +375,12 @@ def write_projection(stores: dict[str, dict[str, dict[str, Any]]], out_dir: str 
 def main() -> int:
     base_url = os.environ.get("SOURCE_INGEST_URL", "http://source-ingest:8097")
     out_dir = os.environ.get("OUT_DIR", "/data/bff")
+    connector_readback = _get_connector_readback(base_url)
+    freshness = connector_readback.get("freshness") if isinstance(connector_readback.get("freshness"), dict) else {}
     stores = project(
         _get_source_records(base_url),
-        connector_freshness=_get_connector_freshness(base_url),
+        connector_freshness=freshness,
+        connector_readback=connector_readback,
         stale_threshold_seconds=max(
             1,
             int(os.environ.get("AGORA_MARKET_STALE_THRESHOLD_SECONDS", str(DEFAULT_STALE_THRESHOLD_SECONDS))),
