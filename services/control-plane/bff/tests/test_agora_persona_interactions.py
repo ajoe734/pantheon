@@ -19,7 +19,13 @@ class FakeReadStore:
         return [
             {"persona_id": "ready", "tenant_id": "pantheon-dev", "display_name": "Ready", "lifecycle_state": "active", "environment_ceiling": "paper"},
             {"persona_id": "paper-running", "tenant_id": "pantheon-dev", "display_name": "Paper Running", "lifecycle_state": "paper_running", "metadata": {"deployment_stage": "paper", "environment_ceiling": "paper"}},
+            {"persona_id": "research-only", "tenant_id": "pantheon-dev", "display_name": "Research Only", "lifecycle_state": "research_only", "environment_ceiling": "paper"},
+            {"persona_id": "consultable", "tenant_id": "pantheon-dev", "display_name": "Consultable", "lifecycle_state": "consultable", "environment_ceiling": "paper"},
+            {"persona_id": "paper-owner", "tenant_id": "pantheon-dev", "display_name": "Paper Owner", "lifecycle_state": "paper_owner", "environment_ceiling": "paper"},
+            {"persona_id": "live-owner", "tenant_id": "pantheon-dev", "display_name": "Live Owner", "lifecycle_state": "live_owner", "environment_ceiling": "paper"},
             {"persona_id": "draft", "tenant_id": "pantheon-dev", "display_name": "Draft", "lifecycle_state": "draft", "environment_ceiling": "paper"},
+            {"persona_id": "frozen", "tenant_id": "pantheon-dev", "display_name": "Frozen", "lifecycle_state": "frozen", "environment_ceiling": "paper"},
+            {"persona_id": "retired", "tenant_id": "pantheon-dev", "display_name": "Retired", "lifecycle_state": "retired", "environment_ceiling": "paper"},
             {"persona_id": "research", "tenant_id": "pantheon-dev", "display_name": "Research", "lifecycle_state": "active", "environment_ceiling": "research"},
             {"persona_id": "unscoped", "tenant_id": None, "display_name": "Unscoped", "lifecycle_state": "active", "environment_ceiling": "paper"},
             {"persona_id": "snapshot-missing", "tenant_id": "pantheon-dev", "display_name": "No Snapshot", "lifecycle_state": "active", "environment_ceiling": "paper"},
@@ -169,9 +175,18 @@ def test_eligibility_includes_and_excludes_with_reasons(monkeypatch):
     })
     assert response.status_code == 200, response.text
     body = response.json()["data"]
-    assert [x["persona_id"] for x in body["included"]] == ["ready", "paper-running"]
+    assert [x["persona_id"] for x in body["included"]] == [
+        "ready",
+        "paper-running",
+        "research-only",
+        "consultable",
+        "paper-owner",
+        "live-owner",
+    ]
     excluded = {x["persona_id"]: x["reasons"] for x in body["excluded"]}
     assert "persona_not_active" in excluded["draft"]
+    assert "persona_not_active" in excluded["frozen"]
+    assert "persona_not_active" in excluded["retired"]
     assert "environment_ceiling_exceeded" in excluded["research"]
     assert "tenant_mismatch" in excluded["unscoped"]
     assert "capability_snapshot_unavailable" in excluded["snapshot-missing"]
