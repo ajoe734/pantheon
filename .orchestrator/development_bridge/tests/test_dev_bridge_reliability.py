@@ -2461,6 +2461,49 @@ def test_dispatcher_rejects_packet_with_unconfigured_target_repo_before_mutation
     assert AI_STATUS.load_snapshot(event_log)["event_count"] == initial_event_count
 
 
+def test_dispatcher_constraint_allowlist_uses_supervisor_runtime_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("PANTHEON_ASSISTANT_DEV_BRIDGE_ALLOWED_REPOS", "pantheon")
+    task = BridgeTask(
+        id="SUPERVISOR-RUNTIME-ALLOWLIST-001",
+        title="Supervisor runtime allowlist",
+        owner="Codex",
+        reviewer="Claude",
+        target_repo="execute-plans",
+        phase="Sprint / Dev bridge",
+        artifacts=["execute-plans/src/App.tsx"],
+        acceptance=["Pass"],
+    )
+    packet = DevTaskPacket(
+        packetId="pkt_supervisor_runtime_allowlist",
+        emittedAt="2026-08-30T00:00:00Z",
+        actor=BridgeActor(id="mgmt-ai", roles=["operator"], capabilities=[]),
+        mode="kernel_repair",
+        sourceConversationId="conv-supervisor-runtime-allowlist",
+        tasks=[task],
+        constraints=BridgeConstraints(
+            allowedRepos=["pantheon", "execute-plans"],
+            requiresBranchPrMerge=True,
+            noDirectShellFromWeb=True,
+        ),
+    )
+
+    assert dev_bridge_dispatcher._check_constraints(
+        packet,
+        environment={
+            "PANTHEON_ASSISTANT_DEV_BRIDGE_ALLOWED_REPOS": "pantheon,execute-plans"
+        },
+    ) == []
+    assert dev_bridge_dispatcher._check_constraints(
+        packet,
+        environment={"PANTHEON_ASSISTANT_DEV_BRIDGE_ALLOWED_REPOS": "pantheon"},
+    ) == [
+        "Packet constraint allowedRepos contains unconfigured repositories: "
+        "execute-plans"
+    ]
+
+
 def test_dispatcher_rejects_task_target_repo_not_in_packet_allowed_repos(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
