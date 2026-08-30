@@ -523,6 +523,7 @@ class IncidentService:
         utc_now: Optional[Callable[[], str]] = None,
         dataset_surface_status: Optional[Callable[..., Dict[str, Any]]] = None,
         meta_staleness: Optional[Callable[[], Optional[Dict[str, Any]]]] = None,
+        surface_degradation_reason: Optional[Callable[..., Optional[str]]] = None,
     ) -> None:
         self._get_read_store = get_read_store or (lambda: None)
         self._get_command_store = get_command_store or (lambda: None)
@@ -544,6 +545,7 @@ class IncidentService:
         self._utc_now = utc_now or _default_utc_now
         self._dataset_surface_status_fn = dataset_surface_status
         self._meta_staleness_fn = meta_staleness
+        self._surface_degradation_reason_fn = surface_degradation_reason
 
     def get_read_store(self) -> Any:
         return self._get_read_store()
@@ -591,6 +593,30 @@ class IncidentService:
         if self._meta_staleness_fn is not None:
             return self._meta_staleness_fn()
         return None
+
+    def surface_degradation_reason(
+        self,
+        surface: Dict[str, Any],
+        *,
+        degraded_reason: str,
+        unavailable_reason: str,
+    ) -> Optional[str]:
+        if self._surface_degradation_reason_fn is not None:
+            return self._surface_degradation_reason_fn(
+                surface,
+                degraded_reason=degraded_reason,
+                unavailable_reason=unavailable_reason,
+            )
+        status = surface.get("status")
+        if status == "ok":
+            return None
+        if status == "unavailable":
+            return unavailable_reason
+        if surface.get("message"):
+            return str(surface["message"])
+        if surface.get("note"):
+            return str(surface["note"])
+        return degraded_reason
 
     # -- Incident Queries & Mutations -----------------------------------------
 
@@ -1154,6 +1180,24 @@ class IncidentService:
         staleness = self.get_staleness()
         if staleness is not None:
             meta["staleness"] = staleness
+
+        degradation: Dict[str, Any] = {}
+        kill_switch_reason = self.surface_degradation_reason(
+            kill_switch_surface,
+            degraded_reason="Kill switch status is degraded and may be stale.",
+            unavailable_reason="Kill switch status is currently unavailable.",
+        )
+        if kill_switch_reason is not None:
+            degradation["kill_switch_reason"] = kill_switch_reason
+        allowed_actions_reason = self.surface_degradation_reason(
+            allowed_actions_surface,
+            degraded_reason="Action authority is degraded. All CTAs disabled for safety.",
+            unavailable_reason="Action authority service is unavailable. All CTAs disabled for safety.",
+        )
+        if allowed_actions_reason is not None:
+            degradation["allowedActions_reason"] = allowed_actions_reason
+        if degradation:
+            meta["degradation"] = degradation
 
         return {
             "kill_switch": _project_kill_switch_contract(ks, kill_switch_surface),

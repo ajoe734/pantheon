@@ -390,6 +390,7 @@ def create_incident_router(
         utc_now=_utc_now,
         dataset_surface_status=dataset_surface_status,
         meta_staleness=meta_staleness,
+        surface_degradation_reason=_degradation_reason,
     )
 
     _build_alerts_payload = build_operator_alerts_payload or _service.build_operator_alerts_payload
@@ -961,6 +962,15 @@ def create_incident_router(
 
         cmd_store = _service.get_command_store()
         if cmd_store and hasattr(cmd_store, "submit_command"):
+            audit_record = {
+                "operator_id": operator_id,
+                "roles_at_submission": getattr(identity, "roles", ["operator"]),
+                "action": "acknowledge",
+                "preconditions_checked": ["authentication", "authorization", "idempotency"],
+                "timestamp": submitted_at,
+                "idempotency_key": resolved_key,
+                "request_hash": request_hash,
+            }
             try:
                 cmd_store.submit_command(
                     command_id=command_id,
@@ -968,6 +978,7 @@ def create_incident_router(
                     target={"type": ObjectType.RISK_ALERT, "id": clean_id},
                     submitted_at=submitted_at,
                     params={"alert_id": clean_id, "action": "acknowledge", **payload},
+                    audit_context=audit_record,
                 )
             except Exception as e:
                 log.warning("command_store.submit_command failed: %s", e)
@@ -979,15 +990,42 @@ def create_incident_router(
         }
         _service._acknowledged_alerts[clean_id] = _ack_alerts[clean_id]
 
+        tracking_url = f"/api/v1/operator/commands/{command_id}"
+        cmd_type_str = (
+            CommandType.ALERT_ACKNOWLEDGE.value
+            if hasattr(CommandType.ALERT_ACKNOWLEDGE, "value")
+            else str(CommandType.ALERT_ACKNOWLEDGE)
+        )
         result = {
+            "status": "submitted",
             "command_id": command_id,
-            "command": CommandType.ALERT_ACKNOWLEDGE,
+            "command": cmd_type_str,
             "accepted_at": submitted_at,
-            "status": CommandStatus.SUBMITTED,
             "data": {
+                "command_id": command_id,
+                "commandId": command_id,
+                "command": cmd_type_str,
+                "accepted_at": submitted_at,
+                "status": "accepted",
+                "tracking_url": tracking_url,
+                "trackingUrl": tracking_url,
                 "alert_id": clean_id,
-                "status": "acknowledged",
                 "acknowledged_at": submitted_at,
+                "receipt": {
+                    "command_id": command_id,
+                    "command_type": cmd_type_str,
+                    "target": {"type": "RiskAlert", "id": clean_id},
+                    "submitted_at": submitted_at,
+                    "status": "accepted",
+                    "tracking_url": tracking_url,
+                    "trackingUrl": tracking_url,
+                },
+                "receipt_dual_write": {
+                    "command_id": command_id,
+                    "command": "AlertAcknowledge",
+                    "status": "accepted",
+                    "accepted_at": submitted_at,
+                },
             },
             "meta": {"idempotency_key": resolved_key, "snapshot_at": snapshot_at},
         }
