@@ -56376,13 +56376,17 @@
       "terminal_outcome": "merged_dev"
     },
     {
-      "disposition": "Dedicated active Agora hosted demo lane in execute-plans, blocked on BFF servant ensure path; distinct from OPGAP-HOSTED-MGMT-ACCEPTANCE-20260830",
+      "child_workflow_run": "33323122321",
+      "disposition": "Dedicated active Agora hosted demo lane in execute-plans, blocked on BFF port contracts (child run 33323122321 failed, evidence head e45ac480e in draft PR #700); distinct from OPGAP-HOSTED-MGMT-ACCEPTANCE-20260830",
+      "draft_pull_request": 700,
+      "evidence_head": "e45ac480e",
+      "last_update": "2026-08-30T16:56:38Z",
       "merge_commit": "bb438d1c7",
       "pull_request": 699,
       "repository": "execute_plans",
       "status": "blocked",
       "task_id": "AGORA-AGC-14-HOSTED-DEMO-AUTHENTIC-V5-20260829",
-      "waiting_for": "Human/Ops"
+      "waiting_for": "Antigravity"
     },
     {
       "disposition": "Historical board-drift task; binding visibility route pruning delivered in canonical codebase",
