@@ -330,7 +330,7 @@ def validate_catalog(catalog_path: str, main_py_path: str) -> None:
     assert pb.get("hosted_bff_version_source_commit_sha") == "4f0994be548f56da627740f5b7fb193844c1faed", "Stale /bff/version source commit SHA"
     assert pb.get("hosted_controller_run_id") == "33325479949", "Stale hosted controller run ID"
     assert pb.get("hosted_gate_run_id") == "33327155009", "Stale hosted gate run ID"
-    assert pb.get("hosted_execute_plans_deploy_run_id") == "33327155009", "Stale execute-plans deploy run ID"
+    assert pb.get("hosted_execute_plans_deploy_run_id") == "33327736542", "Stale execute-plans deploy run ID"
     assert pb.get("hosted_frontend") == "7d30e78476be61222af63a089e7ab141aa43b809", "Stale hosted frontend"
     assert pb.get("hosted_accepted_at") == "2026-08-30T18:28:45Z", "Stale hosted accepted at"
 

@@ -55817,7 +55817,7 @@
     "hosted_bff_version_source_commit_sha": "4f0994be548f56da627740f5b7fb193844c1faed",
     "hosted_controller_run_id": "33325479949",
     "hosted_deployment_state": "accepted",
-    "hosted_execute_plans_deploy_run_id": "33327155009",
+    "hosted_execute_plans_deploy_run_id": "33327736542",
     "hosted_frontend": "7d30e78476be61222af63a089e7ab141aa43b809",
     "hosted_gate_run_id": "33327155009",
     "hosted_pair_id": "b9209d6382cf109fda2504d7622fe7d9f137a084b0214988cc5588fffdeabc93",
@@ -56376,17 +56376,16 @@
       "terminal_outcome": "merged_dev"
     },
     {
-      "child_workflow_run": "33323122321",
-      "disposition": "Dedicated active Agora hosted demo lane in execute-plans, blocked on BFF port contracts (child run 33323122321 failed, evidence head e45ac480e in draft PR #700); distinct from OPGAP-HOSTED-MGMT-ACCEPTANCE-20260830",
-      "draft_pull_request": 700,
-      "evidence_head": "e45ac480e",
-      "last_update": "2026-08-30T16:56:38Z",
-      "merge_commit": "bb438d1c7",
-      "pull_request": 699,
+      "canonical_generation": 9,
+      "disposition": "Dedicated active Agora hosted demo lane in execute-plans, canonical generation 9 in_progress under supervisor worker codex1_2 (parent write-proof run 33328350776 dispatched for accepted pair b9209d6382cf109fda2504d7622fe7d9f137a084b0214988cc5588fffdeabc93 following PR #5442 backend fix and accepted pair restoration); distinct from OPGAP-HOSTED-MGMT-ACCEPTANCE-20260830",
+      "environment": "pantheon-dev",
+      "last_update": "2026-08-30T18:37:08Z",
+      "owner": "Codex",
+      "parent_write_proof_run": "33328350776",
       "repository": "execute_plans",
-      "status": "blocked",
-      "task_id": "AGORA-AGC-14-HOSTED-DEMO-AUTHENTIC-V5-20260829",
-      "waiting_for": "Antigravity"
+      "reviewer": "Antigravity",
+      "status": "in_progress",
+      "task_id": "AGORA-AGC-14-HOSTED-DEMO-AUTHENTIC-V5-20260829"
     },
     {
       "disposition": "Historical board-drift task; binding visibility route pruning delivered in canonical codebase",
