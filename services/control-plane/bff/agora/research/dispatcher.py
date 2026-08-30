@@ -97,7 +97,7 @@ class StageAdapter(Protocol):
 class DefaultAllowlistedAdapter:
     """Standard adapter implementation for allowlisted research backends."""
 
-    def __init__(self, stage_type: str, preferred_backend: str, default_provenance: str = "real") -> None:
+    def __init__(self, stage_type: str, preferred_backend: str, default_provenance: str = "simulation") -> None:
         self.stage_type = stage_type
         self.preferred_backend = preferred_backend
         self.default_provenance = default_provenance
@@ -111,8 +111,18 @@ class DefaultAllowlistedAdapter:
         downstream_key: str,
     ) -> ResearchStageResult:
         routing = stage.get("routing") or {}
-        requested_mode = routing.get("backend_mode") or context.get("backend_mode") or "real"
-        provenance = "fixture" if requested_mode == "fixture" else ("simulation" if requested_mode == "simulation" else self.default_provenance)
+        has_real_receipt = bool(context.get("has_real_receipt") or stage.get("real_backend_receipt_id"))
+        requested_mode = routing.get("backend_mode") or context.get("backend_mode") or "simulation"
+        if requested_mode == "fixture":
+            provenance = "fixture"
+        elif requested_mode == "simulation":
+            provenance = "simulation"
+        elif requested_mode == "real" and has_real_receipt:
+            provenance = "real"
+        elif requested_mode == "real" and not has_real_receipt:
+            provenance = "simulation"
+        else:
+            provenance = self.default_provenance
         if provenance not in VALID_PROVENANCE_VALUES:
             provenance = "unavailable"
 

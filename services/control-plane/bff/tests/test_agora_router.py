@@ -728,3 +728,99 @@ def test_servant_ensure_fails_if_read_surface_ports_is_used_as_write_owner(monke
     )
     assert resp.status_code == 503, resp.text
     assert resp.json()["error"]["code"] == "DEPENDENCY_UNAVAILABLE"
+
+
+def test_agora_routers_have_zero_reverse_imports_of_main():
+    """Verify that agora identity and personalization routers do not import main.py."""
+    import agora.identity.router as id_router
+    import agora.personalization.router as pers_router
+    import agora.service as agora_service
+    import inspect
+
+    id_src = inspect.getsource(id_router)
+    pers_src = inspect.getsource(pers_router)
+    svc_src = inspect.getsource(agora_service)
+
+    assert "import main" not in id_src, "agora.identity.router still imports main"
+    assert "from main import" not in id_src, "agora.identity.router still imports from main"
+    assert "import main" not in pers_src, "agora.personalization.router still imports main"
+    assert "from main import" not in pers_src, "agora.personalization.router still imports from main"
+    assert "import main" not in svc_src, "agora.service still imports main"
+    assert "from main import" not in svc_src, "agora.service still imports from main"
+
+
+def test_default_allowlisted_adapter_emits_simulation_provenance_by_default():
+    """OP-G01: DefaultAllowlistedAdapter must emit simulation provenance unless real backend receipt exists."""
+    from agora.research.dispatcher import DefaultAllowlistedAdapter
+
+    adapter = DefaultAllowlistedAdapter("backtest", "vectorbt_runner")
+    assert adapter.default_provenance == "simulation"
+
+    result = adapter.execute(
+        stage={"stage_id": "stg-1", "routing": {}},
+        plan={"strategy_id": "strat-1"},
+        context={},
+        downstream_key="key-1",
+    )
+    assert result.provenance == "simulation"
+    assert result.outcome == "succeeded"
+    assert result.metrics[0]["provenance"] == "simulation"
+
+    # When real mode is requested WITHOUT real receipt, must emit simulation
+    result_unverified_real = adapter.execute(
+        stage={"stage_id": "stg-2", "routing": {"backend_mode": "real"}},
+        plan={"strategy_id": "strat-1"},
+        context={},
+        downstream_key="key-2",
+    )
+    assert result_unverified_real.provenance == "simulation"
+
+    # When real mode is requested WITH real receipt, emits real
+    result_verified_real = adapter.execute(
+        stage={"stage_id": "stg-3", "routing": {"backend_mode": "real"}, "real_backend_receipt_id": "rcpt-123"},
+        plan={"strategy_id": "strat-1"},
+        context={"has_real_receipt": True},
+        downstream_key="key-3",
+    )
+    assert result_verified_real.provenance == "real"
+
+
+def test_agora_service_session_and_insight_lifecycle():
+    """Verify AgoraService session creation, message append, and insight creation."""
+    from agora.service import AgoraService
+
+    store = _create_test_agora_store()
+    svc = AgoraService(get_read_store=lambda: store)
+
+    # Session lifecycle
+    sess = svc.create_session(
+        session_id="sess-test-01",
+        title="Test Session",
+        actor_id="test-operator",
+        payload={"mode": "quick_ask"},
+        created_at="2026-08-30T00:00:00Z",
+    )
+    assert sess["sessionId"] == "sess-test-01"
+    assert svc.get_session("sess-test-01") is not None
+
+    msg = svc.append_session_message(
+        "sess-test-01",
+        message_id="msg-test-01",
+        content="Hello Agora",
+        actor_id="test-operator",
+        payload={"role": "user"},
+        created_at="2026-08-30T00:00:01Z",
+    )
+    assert msg["messageId"] == "msg-test-01"
+
+    # Insight lifecycle
+    ins = svc.create_insight(
+        insight_id="ins-test-01",
+        summary="Test Insight",
+        actor_id="test-operator",
+        payload={"scope": "global"},
+        created_at="2026-08-30T00:00:00Z",
+    )
+    assert ins["insightId"] == "ins-test-01"
+    assert svc.get_insight("ins-test-01") is not None
+

@@ -1,9 +1,13 @@
 """Agora personalization router — agora.personalization.v1."""
 from __future__ import annotations
 
+import uuid
 from typing import Any, Callable, Dict, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Body, Header, HTTPException, Query
+
+from models import CommandType, ErrorCode, ObjectType
+from ..service import AgoraService
 
 
 def create_personalization_router(
@@ -12,29 +16,36 @@ def create_personalization_router(
     require_read_role: Callable[..., None],
     bff_error: Callable[..., HTTPException],
     utc_now: Callable[[], str],
+    service: Optional[AgoraService] = None,
+    require_write_role: Optional[Callable[..., None]] = None,
+    get_read_store: Optional[Callable[[], Any]] = None,
+    get_command_store: Optional[Callable[[], Any]] = None,
+    idempotency_store: Optional[Dict[str, Any]] = None,
 ) -> APIRouter:
-    """Personalization router — migrated from main.py."""
+    """Personalization router — insights and institutional memory."""
     router = APIRouter(tags=["agora-personalization"])
 
-    import main
-    from main import (
-        _agora_list_response,
-        _require_operator_role,
-        _reject_body_idempotency_key,
-        _resolve_final_idempotency_key,
-        _stable_json_hash,
-        _agora_core_idempotency_check,
-        _request_dry_run_requested,
-        _dry_run_success_response,
-        _agora_required_text,
-        ErrorCode,
-        ObjectType,
-        CommandType,
-        _agora_get_insight,
-        _agora_action_command,
+    svc = service or AgoraService(
+        get_read_store=get_read_store,
+        get_command_store=get_command_store,
+        idempotency_store=idempotency_store,
+        utc_now=utc_now,
+        bff_error=bff_error,
     )
-    import uuid
-    from fastapi import Body, Header, Query
+
+    def _require_operator(identity: Any) -> None:
+        if require_write_role is not None:
+            require_write_role(identity)
+            return
+        roles = set(getattr(identity, "roles", []) or [])
+        if not roles.intersection({"operator", "approver", "admin", "reviewer"}):
+            raise bff_error(
+                403,
+                ErrorCode.FORBIDDEN,
+                "Operator role required",
+                "Action requires operator-level access",
+                precondition_failed="role_check",
+            )
 
     @router.get("/bff/agora/insights")
     async def bff_agora_insights(
@@ -46,10 +57,10 @@ def create_personalization_router(
         identity = extract_identity(authorization)
         require_read_role(identity)
         snapshot_at = utc_now()
-        return _agora_list_response(
+        return svc.agora_list_response(
             dataset="insight_cards",
             surface_key="agora_insight_list",
-            items=main.read_store.list_agora_insights(),
+            items=svc.list_insights(),
             page_token=page_token,
             page_size=page_size,
             snapshot_at=snapshot_at,
@@ -64,45 +75,28 @@ def create_personalization_router(
     ):
         """BFF: create an Agora insight card."""
         identity = extract_identity(authorization)
-        _require_operator_role(identity)
-        _reject_body_idempotency_key(payload)
-        summary = _agora_required_text(payload, "summary", "title")
-        resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
-        request_hash = _stable_json_hash({"route": "POST /bff/agora/insights", "payload": payload})
-        dry_run = _request_dry_run_requested()
-        if not dry_run:
-            cached = _agora_core_idempotency_check(resolved_key, request_hash)
-            if cached is not None:
-                return cached
+        _require_operator(identity)
+        svc.reject_body_idempotency_key(payload)
+        summary = svc.agora_required_text(payload, "summary", "title")
+        resolved_key = svc.resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+        request_hash = svc.stable_json_hash({"route": "POST /bff/agora/insights", "payload": payload})
+        cached = svc.check_idempotency(resolved_key, request_hash)
+        if cached is not None:
+            return cached
         snapshot_at = utc_now()
         insight_id = str(payload.get("id") or payload.get("insight_id") or f"ins-agora-{uuid.uuid4().hex[:10]}")
-        if dry_run:
-            return _dry_run_success_response(
-                {
-                    "id": insight_id,
-                    "insight_id": insight_id,
-                    "summary": summary,
-                    "scope": payload.get("scope") or "global",
-                    "status": payload.get("status") or "classified",
-                    "tags": list(payload.get("tags") or []),
-                    "created_at": snapshot_at,
-                    "updated_at": snapshot_at,
-                },
-                snapshot_at=snapshot_at,
-                idempotency_key=resolved_key,
-                evidence_kind="agora.insight.create",
-            )
+        created = svc.create_insight(
+            insight_id=insight_id,
+            summary=summary,
+            actor_id=identity.operator_id,
+            payload=payload,
+            created_at=snapshot_at,
+        )
         result = {
-            "data": main.read_store.create_agora_insight(
-                insight_id=insight_id,
-                summary=summary,
-                actor_id=identity.operator_id,
-                payload=payload,
-                created_at=snapshot_at,
-            ),
+            "data": created,
             "meta": {"snapshot_at": snapshot_at},
         }
-        main._AGORA_CORE_BFF_IDEMPOTENCY[resolved_key] = {"request_hash": request_hash, "result": result}
+        svc.record_idempotency(resolved_key, request_hash, result)
         return result
 
     @router.post("/bff/agora/insights/{insightId}/actions/{actionId}", status_code=202)
@@ -117,9 +111,9 @@ def create_personalization_router(
         """BFF: route an Agora insight action through command admission."""
         identity = extract_identity(authorization)
         require_read_role(identity)
-        _reject_body_idempotency_key(payload)
-        resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
-        if not _agora_get_insight(insightId):
+        svc.reject_body_idempotency_key(payload)
+        resolved_key = svc.resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+        if not svc.get_insight(insightId):
             raise bff_error(
                 404,
                 ErrorCode.RESOURCE_NOT_FOUND,
@@ -127,7 +121,7 @@ def create_personalization_router(
                 f"Agora insight {insightId} does not exist",
                 precondition_failed="insight_id",
             )
-        return _agora_action_command(
+        return svc.submit_action_command(
             route="POST /bff/agora/insights/{insightId}/actions/{actionId}",
             entity_type=ObjectType.AGORA_INSIGHT,
             entity_id=insightId,
@@ -148,10 +142,10 @@ def create_personalization_router(
         identity = extract_identity(authorization)
         require_read_role(identity)
         snapshot_at = utc_now()
-        return _agora_list_response(
+        return svc.agora_list_response(
             dataset="institutional_memory_entries",
             surface_key="agora_memory_list",
-            items=main.read_store.list_agora_memory(),
+            items=svc.list_memory(),
             page_token=page_token,
             page_size=page_size,
             snapshot_at=snapshot_at,
@@ -160,8 +154,7 @@ def create_personalization_router(
     @router.post("/bff/agora/memory/{memoryId}/actions/{actionId}", status_code=202)
     async def bff_agora_memory_action(
         memoryId: str,
-        memoryId_val: Optional[str] = None, # dummy for parameter compatibility if any
-        actionId: str = None,
+        actionId: str,
         payload: Dict[str, Any] = Body(default_factory=dict),
         authorization: Optional[str] = Header(default=None),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
@@ -170,9 +163,9 @@ def create_personalization_router(
         """BFF: route an Agora memory action through command admission."""
         identity = extract_identity(authorization)
         require_read_role(identity)
-        _reject_body_idempotency_key(payload)
-        resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
-        if not main.read_store.get_agora_memory_entry(memoryId):
+        svc.reject_body_idempotency_key(payload)
+        resolved_key = svc.resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+        if not svc.get_memory_entry(memoryId):
             raise bff_error(
                 404,
                 ErrorCode.RESOURCE_NOT_FOUND,
@@ -180,7 +173,7 @@ def create_personalization_router(
                 f"Agora memory entry {memoryId} does not exist",
                 precondition_failed="memory_id",
             )
-        return _agora_action_command(
+        return svc.submit_action_command(
             route="POST /bff/agora/memory/{memoryId}/actions/{actionId}",
             entity_type=ObjectType.AGORA_MEMORY,
             entity_id=memoryId,
@@ -202,9 +195,9 @@ def create_personalization_router(
         """BFF: execute-plans compatibility alias for memory quarantine."""
         identity = extract_identity(authorization)
         require_read_role(identity)
-        _reject_body_idempotency_key(payload)
-        resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
-        if not main.read_store.get_agora_memory_entry(memoryId):
+        svc.reject_body_idempotency_key(payload)
+        resolved_key = svc.resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+        if not svc.get_memory_entry(memoryId):
             raise bff_error(
                 404,
                 ErrorCode.RESOURCE_NOT_FOUND,
@@ -212,7 +205,7 @@ def create_personalization_router(
                 f"Memory entry {memoryId} does not exist",
                 precondition_failed="memory_id",
             )
-        return _agora_action_command(
+        return svc.submit_action_command(
             route="POST /bff/memory/{memoryId}/actions/quarantine",
             entity_type=ObjectType.AGORA_MEMORY,
             entity_id=memoryId,
@@ -234,9 +227,9 @@ def create_personalization_router(
         """BFF: execute-plans compatibility alias for attaching an insight to a strategy."""
         identity = extract_identity(authorization)
         require_read_role(identity)
-        _reject_body_idempotency_key(payload)
-        resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
-        if not _agora_get_insight(insightId):
+        svc.reject_body_idempotency_key(payload)
+        resolved_key = svc.resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
+        if not svc.get_insight(insightId):
             raise bff_error(
                 404,
                 ErrorCode.RESOURCE_NOT_FOUND,
@@ -244,7 +237,7 @@ def create_personalization_router(
                 f"Insight {insightId} does not exist",
                 precondition_failed="insight_id",
             )
-        return _agora_action_command(
+        return svc.submit_action_command(
             route="POST /bff/insights/{insightId}/actions/attach-strategy",
             entity_type=ObjectType.AGORA_INSIGHT,
             entity_id=insightId,
