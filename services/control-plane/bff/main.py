@@ -30996,8 +30996,6 @@ def _list_persona_records(tenant_id: Optional[str] = None) -> List[Dict[str, Any
         pid = str(item.get("id") or item.get("persona_id") or "").strip()
         if pid:
             records_by_id[pid] = dict(item)
-    canonical_registry_ids = set(records_by_id)
-
     clean_tenant = str(tenant_id or "").strip()
     store = _persona_provisioning_store()
     try:
@@ -31053,31 +31051,14 @@ def _list_persona_records(tenant_id: Optional[str] = None) -> List[Dict[str, Any
 
     result = list(records_by_id.values())
     if clean_tenant:
-        admitted: List[Dict[str, Any]] = []
-        legacy_default_tenant = _persona_legacy_registry_default_tenant_id()
-        for raw in result:
-            record_tenant = _persona_record_tenant_id(raw)
-            if record_tenant == clean_tenant:
-                admitted.append(raw)
-                continue
-
-            persona_id = str(raw.get("persona_id") or raw.get("id") or "").strip()
-            if (
-                not record_tenant
-                and persona_id in canonical_registry_ids
-                and clean_tenant == legacy_default_tenant
-            ):
-                # Old registry records predate tenant attribution.  Preserve
-                # their compatibility only in the configured migration
-                # tenant; do not let tenantless overlays or arbitrary caller
-                # tenants turn a missing value into a wildcard admission.
-                projected = dict(raw)
-                metadata = projected.get("metadata")
-                metadata = dict(metadata) if isinstance(metadata, Mapping) else {}
-                metadata["tenant_id"] = clean_tenant
-                projected["metadata"] = metadata
-                admitted.append(projected)
-        result = admitted
+        # Registry provenance is not tenant ownership.  A tenant-scoped
+        # read admits only an explicit matching owner tenant; tenantless
+        # registry rows are catalog or malformed data and fail closed.
+        result = [
+            raw
+            for raw in result
+            if _persona_record_tenant_id(raw) == clean_tenant
+        ]
     result.sort(
         key=lambda raw: (
             str(raw.get("created_at") or raw.get("updated_at") or ""),
@@ -36735,97 +36716,6 @@ def _project_persona_fleet_item(
     }
 
 
-def _project_persona_fleet_payload(
-    *,
-    state: Optional[str],
-    health: Optional[str],
-    page_token: Optional[str],
-    page_size: int,
-) -> Dict[str, Any]:
-    snapshot_at = utc_now()
-    personas = _list_persona_records()
-    runtime_bindings = list(read_store.list_runtime_bindings() or [])
-    incidents = list(read_store.list_incidents() or [])
-    evolution_decisions = list(read_store.list_evolution_decisions() or [])
-    items = [
-        _project_persona_fleet_item(
-            persona,
-            all_runtime_bindings=runtime_bindings,
-            all_incidents=incidents,
-            all_evolution_decisions=evolution_decisions,
-        )
-        for persona in personas
-    ]
-
-    if state:
-        requested_states = {token.strip().lower() for token in state.split(",") if token.strip()}
-        items = [
-            item for item in items
-            if str((item.get("persona") or {}).get("state") or "").lower() in requested_states
-        ]
-    if health:
-        requested_health = {token.strip().lower() for token in health.split(",") if token.strip()}
-        items = [
-            item for item in items
-            if str((item.get("health") or {}).get("status") or "").lower() in requested_health
-        ]
-
-    items = sorted(
-        items,
-        key=lambda item: (
-            str((item.get("health") or {}).get("severity") or ""),
-            str((item.get("persona") or {}).get("updatedAt") or ""),
-            str(item.get("id") or ""),
-        ),
-        reverse=True,
-    )
-    total = len(items)
-    page_items, next_page_token = _page_slice(items, page_token, page_size)
-
-    source_surfaces = {
-        "personas": _dataset_surface_status("personas", snapshot_at=snapshot_at),
-        "persona_bindings": _dataset_surface_status("persona_bindings", snapshot_at=snapshot_at),
-        "runtime_bindings": _dataset_surface_status("runtime_bindings", snapshot_at=snapshot_at),
-        "telemetry_summaries": _dataset_surface_status("telemetry_summaries", snapshot_at=snapshot_at),
-        "teaching_sessions": _dataset_surface_status("teaching_sessions", snapshot_at=snapshot_at),
-        "evolution_decisions": _dataset_surface_status("evolution_decisions", snapshot_at=snapshot_at),
-    }
-    persona_fleet_surface = _aggregate_group_surface(
-        "persona_fleet",
-        list(source_surfaces.values()),
-        snapshot_at=snapshot_at,
-        unavailable_message="Persona fleet aggregate unavailable.",
-        degraded_message="Persona fleet aggregate is degraded because one or more source surfaces are degraded.",
-    )
-
-    summary = {
-        "total_personas": total,
-        "returned_personas": len(page_items),
-        "critical_personas": len([item for item in items if item["health"]["status"] == "critical"]),
-        "degraded_personas": len([item for item in items if item["health"]["status"] == "degraded"]),
-        "healthy_personas": len([item for item in items if item["health"]["status"] == "healthy"]),
-        "bound_personas": len([item for item in items if item["bindings"]]),
-        "runtime_bound_personas": len([item for item in items if item["runtimeBindings"]]),
-    }
-    return {
-        "data": page_items,
-        "items": page_items,
-        "summary": summary,
-        "page_info": {
-            "next_page_token": next_page_token,
-            "total": total,
-            "page_size": page_size,
-        },
-        "meta": {
-            **_snapshot_meta(snapshot_at),
-            "surfaces": {
-                "persona_fleet": persona_fleet_surface,
-                **source_surfaces,
-            },
-        },
-    }
-
-
 # ---------------- /bff/management aggregate routes ----------------
 
 _HUMAN_INBOX_OPEN_APPROVAL_STATES = {
@@ -40380,8 +40270,21 @@ def _persona_intent_all_items(tenant_id: Optional[str] = None) -> tuple[
             if item is not None:
                 items.append(item)
 
+    visible_persona_ids = {
+        _persona_intent_text(persona.get("persona_id") or persona.get("id"))
+        for persona in personas
+        if _persona_intent_text(persona.get("persona_id") or persona.get("id"))
+    }
     agora_sessions = list(read_store.list_agora_sessions() or [])
     for session in agora_sessions:
+        referenced_persona_ids = _persona_intent_agora_persona_ids(session)
+        if referenced_persona_ids and not all(
+            persona_id in visible_persona_ids for persona_id in referenced_persona_ids
+        ):
+            # Agora session context is request-facing.  Do not disclose a
+            # session when any referenced Persona lacks an explicit matching
+            # tenant admission in the caller's directory.
+            continue
         item = _persona_intent_agora_item(session)
         if item is not None:
             items.append(item)
@@ -47291,21 +47194,6 @@ def _persona_record_tenant_id(raw: Mapping[str, Any]) -> str:
         if tenant_id:
             return tenant_id
     return ""
-
-
-def _persona_legacy_registry_default_tenant_id() -> str:
-    """Return the sole migration tenant for pre-tenant registry rows.
-
-    This mirrors the BFF tenant fallback rather than inheriting a request
-    claim.  A tenantless canonical record is therefore compatible with one
-    explicit migration tenant, never with every tenant that can authenticate.
-    """
-    return _first_nonblank(
-        os.getenv("PANTHEON_BFF_TENANT_ID"),
-        os.getenv("PANTHEON_BFF_DEFAULT_TENANT_ID"),
-        os.getenv("PANTHEON_TENANT_ID"),
-        "pantheon-dev",
-    )
 
 
 def _persona_record_projected_state(raw: Mapping[str, Any]) -> str:

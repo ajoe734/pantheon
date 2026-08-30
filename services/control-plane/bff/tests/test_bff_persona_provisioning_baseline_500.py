@@ -877,10 +877,9 @@ def test_dev_paper_baseline_tenantless_overlay_is_never_admitted_to_tenant_readb
         assert detail.json()["error"]["code"] == "RESOURCE_NOT_FOUND"
 
 
-def test_dev_paper_baseline_legacy_tenantless_registry_row_has_one_migration_tenant(monkeypatch):
-    """A legacy registry row is compatible with one configured tenant only."""
+def test_dev_paper_baseline_tenantless_registry_row_is_never_admitted(monkeypatch):
+    """A tenantless registry row has no tenant ownership and fails closed."""
     _setup_mock_services(monkeypatch)
-    monkeypatch.setenv("PANTHEON_BFF_TENANT_ID", "tenant-dev")
     read_store = create_in_memory_read_surface_ports()
     monkeypatch.setattr(
         read_store,
@@ -896,23 +895,54 @@ def test_dev_paper_baseline_legacy_tenantless_registry_row_has_one_migration_ten
     bff_main.read_store = read_store
     bff_main._PERSONA_BFF_OVERLAY.clear()
 
-    migration_ids = {
+    tenant_dev_ids = {
         item["persona_id"]
         for item in bff_main._list_persona_records("tenant-dev")
     }
-    foreign_ids = {
+    tenant_other_ids = {
         item["persona_id"]
         for item in bff_main._list_persona_records("tenant-other")
     }
-    assert "persona-legacy-tenantless-canary" in migration_ids
-    assert "persona-legacy-tenantless-canary" not in foreign_ids
+    assert "persona-legacy-tenantless-canary" not in tenant_dev_ids
+    assert "persona-legacy-tenantless-canary" not in tenant_other_ids
+
+    client = TestClient(bff_main.app)
+    listed = client.get("/bff/personas", headers=OPERATOR_HEADERS)
+    assert listed.status_code == 200
+    assert "persona-legacy-tenantless-canary" not in [item["id"] for item in listed.json()["data"]]
+
+    detail = client.get("/bff/personas/persona-legacy-tenantless-canary", headers=OPERATOR_HEADERS)
+    assert detail.status_code == 404
+    assert detail.json()["error"]["code"] == "RESOURCE_NOT_FOUND"
 
 
-def test_dev_paper_baseline_strategy_seed_suggestions_only_match_caller_tenant(monkeypatch):
-    """Strategy-seed suggestions must not examine a durable Persona from another tenant."""
+def test_dev_paper_baseline_strategy_seed_route_excludes_other_tenant_persona(monkeypatch):
+    """GET /bff/management/strategy-seeds cannot suggest a foreign Persona."""
     _, store = _setup_mock_services(monkeypatch)
     bff_main.read_store = create_in_memory_read_surface_ports()
     canary_id = _reserve_cross_tenant_persona(store)
+
+    seed = SimpleNamespace(
+        seed_id="seed-cross-tenant",
+        source_id="source-cross-tenant",
+        source_ids=["source-cross-tenant"],
+        evidence_bundle_id="bundle-cross-tenant",
+        hypothesis="Cross-tenant regression canary.",
+        asset_class=["equity"],
+        market_scope=["US"],
+        holding_period="swing",
+        required_data=["ohlcv"],
+        confidence=0.9,
+        status="draft",
+        metadata={"strategy_family": "momentum"},
+        lineage={},
+    )
+
+    class _SeedStore:
+        path = "strategy-seeds-cross-tenant-test"
+
+        def list_all(self):
+            return [seed]
 
     class _Match:
         def to_dict(self):
@@ -928,17 +958,22 @@ def test_dev_paper_baseline_strategy_seed_suggestions_only_match_caller_tenant(m
         def match_candidates(self, *_args, **_kwargs):
             return [_Match()]
 
+    monkeypatch.setattr(bff_main, "StrategySpecSeedStore", _SeedStore)
     monkeypatch.setattr(bff_main, "PersonaStrategyDiscoveryService", _Discovery)
-    suggestions = bff_main._strategy_seed_persona_suggestions(
-        SimpleNamespace(seed_id="seed-cross-tenant"),
-        snapshot_at="2026-08-30T00:00:00Z",
-        tenant_id="tenant-dev",
+    client = TestClient(bff_main.app)
+    response = client.get(
+        "/bff/management/strategy-seeds",
+        headers=OPERATOR_HEADERS,
     )
-    assert suggestions == [], f"strategy-seed suggestions leaked {canary_id}: {suggestions}"
+    assert response.status_code == 200, response.text
+    cards = response.json()["data"]["items"]
+    assert len(cards) == 1
+    assert cards[0]["suggested_actions"] == []
+    assert canary_id not in response.text
 
 
-def test_dev_paper_baseline_pm12_attribution_excludes_other_tenant_runtime(monkeypatch):
-    """PM12 request projections discard runtime facts without a caller-tenant Persona."""
+def test_dev_paper_baseline_pm12_route_excludes_other_tenant_runtime(monkeypatch):
+    """GET PM12 attribution excludes runtime facts without a caller-tenant Persona."""
     _, store = _setup_mock_services(monkeypatch)
     read_store = create_in_memory_read_surface_ports()
     bff_main.read_store = read_store
@@ -968,6 +1003,45 @@ def test_dev_paper_baseline_pm12_attribution_excludes_other_tenant_runtime(monke
     sources = bff_main._pm12_performance_attribution_sources("tenant-dev")
     assert bff_main._pm12_performance_attribution_facts(sources, "latest") == []
     assert bff_main._management_strategy_allocation_runtime_facts(sources) == []
+
+    client = TestClient(bff_main.app)
+    response = client.get(
+        "/bff/management/performance-attribution/by-strategy",
+        headers=OPERATOR_HEADERS,
+    )
+    assert response.status_code == 200, response.text
+    assert canary_id not in response.text
+
+
+def test_dev_paper_baseline_agora_persona_intent_route_excludes_other_tenant_context(monkeypatch):
+    """GET Persona Intent excludes an Agora session tied to a foreign Persona."""
+    _, store = _setup_mock_services(monkeypatch)
+    read_store = create_in_memory_read_surface_ports()
+    bff_main.read_store = read_store
+    canary_id = _reserve_cross_tenant_persona(store)
+    monkeypatch.setattr(
+        read_store,
+        "list_agora_sessions",
+        lambda **_kwargs: [{
+            "sessionId": "agora-cross-tenant-session",
+            "status": "active",
+            "mode": "committee",
+            "title": "Foreign Persona Agora Context",
+            "createdAt": "2026-08-30T00:00:00Z",
+            "updatedAt": "2026-08-30T00:00:00Z",
+            "contextRefs": [{"type": "persona", "id": canary_id}],
+        }],
+    )
+
+    client = TestClient(bff_main.app)
+    response = client.get(
+        "/bff/management/persona-intent?source_type=agora_session",
+        headers=OPERATOR_HEADERS,
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["data"]["items"] == []
+    assert "agora-cross-tenant-session" not in response.text
+    assert canary_id not in response.text
 
 
 def test_dev_paper_baseline_fleet_reports_catalog_defaults_without_ghost_rows(monkeypatch):
