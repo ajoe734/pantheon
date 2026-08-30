@@ -23,6 +23,9 @@
    - 跨任務共用檔案在 Wave 1 僅由所屬領域子模組獨立實作，在 Wave 2/3 由指定任務統籌合併，杜絕 git conflict 與工作樹污染。
 3. **容量為 1 之部署資源排隊（Capacity-1 Resource Modeling）**：
    - 將 `pantheon-dev` VM 模型化為 `pantheon-dev-vm` 資源。本地開發與單元測試不受此限制；Wave 3 與 Wave 4 自動依序鎖定此資源。
+4. **Supervisor Clone Sessions 多 Worker 平行機制**：
+   - 任務擁有者分配於 `Antigravity`（7 任務）與 `Antigravity2`（6 任務），Supervisor 支援透過獨立的 clone sessions 在各自的 git worktree lease 中平行派發多個同型 worker，不受單一進程限制。
+   - 審查者採用相異且具備即時審查能力之註冊身分（`Antigravity`、`Antigravity2`、`Codex2`、`Claude`、`Claude2`），並在 materialization 時自動 preflight live capacity。
 
 ---
 
@@ -103,26 +106,26 @@ flowchart TD
 | 波次 | 任務 ID | 倉庫 | Owner / Reviewer | 主要職責與單一擁有 GAP | 相依前置任務與 Track |
 |:---:|---|---|---|---|---|
 | **W0** | `FULL-OPERATION-GAP-SA-SD-PLAN-FREEZE-20260830` | Pantheon | Antigravity / Codex2 | 審查並合併本規劃文件套件 (Doc-only) | (無) |
-| **W1** | `OPGAP-BE-BFF-CORE-20260830` | Pantheon | Antigravity / Codex | BFF 核心路由抽取、Auth 探針非同步解耦 (OP-G05)、刪除 dead adapter (OP-G10)、Async ASGI 測試載具 (OP-G13) | W0 (functional) |
-| **W1** | `OPGAP-BE-AGORA-RESEARCH-20260830` | Pantheon | Antigravity2 / Claude | Agora 偽造 real 修復 (OP-G01)、建議生產者連線 (OP-G02)、私有 import 清理 (OP-G09) | W0 (functional) |
-| **W1** | `OPGAP-BE-RUNTIME-BINDING-20260830` | Pantheon | Gemini / Codex2 | 權威不可變 RuntimeBinding 物理投影生成 (OP-G17)、Paper 生產者訊號閉環單元驗證 | W0 (functional) |
-| **W1** | `OPGAP-BE-SOURCE-MANAGEMENT-20260830` | Pantheon | Antigravity / Gemini2 | Source 常態 reconcile-only 強制、單次有界手動更新契約、台灣時段新鮮度保護 (OP-G12) | W0 (functional) |
-| **W1** | `OPGAP-BE-MGMT-POSTMORTEM-20260830` | Pantheon | Antigravity2 / Claude2 | Canonical Postmortem 權威服務與 postmortem_id 綁定 (OP-G18)、十二循環純淨投影驗證 | W0 (functional) |
-| **W1** | `OPGAP-FE-BUNDLE-CLEANUP-20260830` | execute-plans | Gemini2 / Antigravity | 前端 Production 打包隔離、完全切斷 mock/seed 依賴圖譜與構建門禁 (OP-G07) | W0 (functional) |
-| **W1** | `OPGAP-FE-MGMT-CRUD-POSTMORTEM-20260830` | execute-plans | Antigravity / Claude | 前端淘汰 writeOverlay 假寫入 (OP-G06)、Management 頁面改接 Postmortem 權威端點 | W0 (functional) |
-| **W1** | `OPGAP-FE-AGORA-WORKSHOP-20260830` | execute-plans | Antigravity2 / Codex | Workshop 顯式呈現 Adapter 真實性 Badge、動態候選池加載、績效建議元件 (OP-G15) | W0 (functional) |
-| **W1** | `OPGAP-DEPLOY-RELIABILITY-20260830` | Pantheon | Gemini / Antigravity | 部署租約心跳重試與本地封閉回滾授權 (OP-G16)、消除 CI 假綠燈與 fail-closed 強化 (OP-G04) | W0 (functional) |
+| **W1** | `OPGAP-BE-BFF-CORE-20260830` | Pantheon | Antigravity / Antigravity2 | BFF 核心路由抽取、Auth 探針非同步解耦 (OP-G05)、刪除 dead adapter (OP-G10)、Async ASGI 測試載具 (OP-G13) | W0 (functional) |
+| **W1** | `OPGAP-BE-AGORA-RESEARCH-20260830` | Pantheon | Antigravity2 / Antigravity | Agora 偽造 real 修復 (OP-G01)、建議生產者連線 (OP-G02)、私有 import 清理 (OP-G09) | W0 (functional) |
+| **W1** | `OPGAP-BE-RUNTIME-BINDING-20260830` | Pantheon | Antigravity / Codex2 | 權威不可變 RuntimeBinding 物理投影生成 (OP-G17)、Paper 生產者訊號閉環單元驗證 | W0 (functional) |
+| **W1** | `OPGAP-BE-SOURCE-MANAGEMENT-20260830` | Pantheon | Antigravity2 / Antigravity | Source 常態 reconcile-only 強制、單次有界手動更新契約、台灣時段新鮮度保護 (OP-G12) | W0 (functional) |
+| **W1** | `OPGAP-BE-MGMT-POSTMORTEM-20260830` | Pantheon | Antigravity / Claude | Canonical Postmortem 權威服務與 postmortem_id 綁定 (OP-G18)、十二循環純淨投影驗證 | W0 (functional) |
+| **W1** | `OPGAP-FE-BUNDLE-CLEANUP-20260830` | execute-plans | Antigravity2 / Antigravity | 前端 Production 打包隔離、完全切斷 mock/seed 依賴圖譜與構建門禁 (OP-G07) | W0 (functional) |
+| **W1** | `OPGAP-FE-MGMT-CRUD-POSTMORTEM-20260830` | execute-plans | Antigravity / Claude2 | 前端淘汰 writeOverlay 假寫入 (OP-G06)、Management 頁面改接 Postmortem 權威端點 | W0 (functional) |
+| **W1** | `OPGAP-FE-AGORA-WORKSHOP-20260830` | execute-plans | Antigravity2 / Codex2 | Workshop 顯式呈現 Adapter 真實性 Badge、動態候選池加載、績效建議元件 (OP-G15) | W0 (functional) |
+| **W1** | `OPGAP-DEPLOY-RELIABILITY-20260830` | Pantheon | Antigravity / Antigravity2 | 部署租約心跳重試與本地封閉回滾授權 (OP-G16)、消除 CI 假綠燈與 fail-closed 強化 (OP-G04) | W0 (functional) |
 | **W2** | `OPGAP-BFF-MAIN-ASSEMBLY-20260830` | Pantheon | Antigravity / Codex2 | 單一擁有者收斂 `main.py` composition root、掛載所有領域 router 並通過 route guard 測試 (OP-G08) | T1..T5 (functional) |
-| **W2** | `OPGAP-FE-INTEGRATION-ASSEMBLY-20260830` | execute-plans | Antigravity2 / Gemini2 | 單一擁有者收斂 `App.tsx`、`bff-v1/index.ts`，通過全量前端型別與打包檢查 | T6..T8 (functional) |
-| **W3** | `OPGAP-HOSTED-DEV-PROMOTION-20260830` | Pantheon+FE | Gemini / Claude | 鎖定 `pantheon-dev-vm` 資源，執行 Dev VM 原子部署、容器健康驗證與 Agora/Paper 閉環 (OP-G03, OP-G19, OP-G20) | T9..T11 (functional) |
-| **W4** | `OPGAP-HOSTED-E2E-ACCEPTANCE-20260830` | Pantheon+FE | Antigravity / Codex | 鎖定 `pantheon-dev-vm` 資源，執行十二循環全量測試 (OP-G11)、Source 有界更新週期、桌面端登入態 Playwright 矩陣 (OP-G14) | T12 (hosted) |
+| **W2** | `OPGAP-FE-INTEGRATION-ASSEMBLY-20260830` | execute-plans | Antigravity2 / Antigravity | 單一擁有者收斂 `App.tsx`、`bff-v1/index.ts`，通過全量前端型別與打包檢查 | T6..T8 (functional) |
+| **W3** | `OPGAP-HOSTED-DEV-PROMOTION-20260830` | Pantheon+FE | Antigravity / Claude | 鎖定 `pantheon-dev-vm` 資源，執行 Dev VM 原子部署、容器健康驗證與 Agora/Paper 閉環 (OP-G03, OP-G19, OP-G20) | T9..T11 (functional) |
+| **W4** | `OPGAP-HOSTED-E2E-ACCEPTANCE-20260830` | Pantheon+FE | Antigravity2 / Codex2 | 鎖定 `pantheon-dev-vm` 資源，執行十二循環全量測試 (OP-G11)、Source 有界更新週期、桌面端登入態 Playwright 矩陣 (OP-G14) | T12 (hosted) |
 
 ---
 
 ## 5. 資源模型化與平行執行規則
 
 1. **本地執行環境（Local Compute Lanes）**：
-   - Wave 1（任務 T1~T9）及 Wave 2（任務 T10~T11）不消耗實體 VM 資源。Auto-workers 可在各自獨立的 git worktree 中平行編寫、執行本機 pytest / vitest 測試、產出 PR 並由不同身分之 Reviewer 進行審查。
+   - Wave 1（任務 T1~T9）及 Wave 2（任務 T10~T11）不消耗實體 VM 資源。Auto-workers 可在各自獨立的 git worktree 中平行編寫、執行本機 pytest / vitest 測試、產出 PR 並由相異身分之 Reviewer 進行審查。
 2. **實體 VM 執行環境（`pantheon-dev-vm`）**：
    - 資源識別碼：`pantheon-dev-vm`（容量 = 1）。
    - 僅 Wave 3（`OPGAP-HOSTED-DEV-PROMOTION-20260830`）與 Wave 4（`OPGAP-HOSTED-E2E-ACCEPTANCE-20260830`）在 `execution_resources` 中宣告。
