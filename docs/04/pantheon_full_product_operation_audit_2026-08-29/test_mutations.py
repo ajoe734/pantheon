@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Reproducible Mutation-Negative Verification Suite for Catalog Invariants.
 
-Tests that validate_catalog.py fails closed (raises AssertionError) on 16 distinct
+Tests that validate_catalog.py fails closed (raises AssertionError) on 17 distinct
 intentional mutations corresponding to each validation phase:
-1. Phase 1: Mutated dynamic_validation_contract rule (2,271 vs 2,272 AST nodes)
+1. Phase 1: Corrupted AST digest in Node 0
 2. Phase 2: Missing edge-level consumer cutover mapping
 3. Phase 3: Invalid legacy action cluster owner
 4. Phase 4: Route migration inventory handler count mismatch
@@ -19,6 +19,7 @@ intentional mutations corresponding to each validation phase:
 14. Phase 14: Stale planning baseline (corrupted hosted pair ID / controller run)
 15. Phase 15: Execution resources bidirectional mapping mismatch
 16. Phase 16: Post-bootstrap spec hash mismatch
+17. Phase 1: Mutated dynamic_validation_contract rule (2,271 vs 2,272 AST nodes)
 """
 from __future__ import annotations
 
@@ -66,20 +67,12 @@ def run_mutation_test(name: str, mutate_fn, expected_phase: int) -> bool:
 
 
 def test_all_mutations() -> None:
-    print("Running 16 Mutation-Negative Checks across all Catalog Invariants...")
+    print("Running 17 Mutation-Negative Checks across all Catalog Invariants...")
 
     mutations = [
         (
-            "1. Mutate dynamic_validation_contract rule to 2,271 AST nodes",
-            lambda c: (
-                _mut(
-                    c,
-                    lambda x: x["dynamic_validation_contract"].__setitem__(
-                        "rules",
-                        [r.replace("2,272", "2,271") for r in x["dynamic_validation_contract"]["rules"]],
-                    ),
-                )
-            ),
+            "1. Corrupt AST Digest in Node 0",
+            lambda c: (_mut(c, lambda x: x["main_ast_node_inventory"]["nodes"][0].__setitem__("ast_digest", "deadbeef00000000"))),
             1,
         ),
         (
@@ -157,6 +150,19 @@ def test_all_mutations() -> None:
             lambda c: (_mut(c, lambda x: x["materialization_contract"]["signed_dev_task_packet_materialization_mapping"]["per_task_spec_hashes"].__setitem__(x["tasks"][0]["id"], "0000000000000000000000000000000000000000000000000000000000000000"))),
             16,
         ),
+        (
+            "17. Mutate dynamic_validation_contract rule to 2,271 AST nodes",
+            lambda c: (
+                _mut(
+                    c,
+                    lambda x: x["dynamic_validation_contract"].__setitem__(
+                        "rules",
+                        [r.replace("2,272", "2,271") for r in x["dynamic_validation_contract"]["rules"]],
+                    ),
+                )
+            ),
+            1,
+        ),
     ]
 
     passed = 0
@@ -165,8 +171,8 @@ def test_all_mutations() -> None:
             passed += 1
 
     print(f"\nResult: {passed}/{len(mutations)} mutation-negative checks passed.")
-    assert passed == len(mutations) == 16, f"Mutation test suite failure: {passed}/16 passed"
-    print("SUCCESS: 16/16 mutation-negative validation assertions passed!")
+    assert passed == len(mutations) == 17, f"Mutation test suite failure: {passed}/17 passed"
+    print("SUCCESS: 17/17 mutation-negative validation assertions passed!")
 
 
 def _mut(obj, fn):
