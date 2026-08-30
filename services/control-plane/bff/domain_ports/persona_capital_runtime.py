@@ -92,6 +92,7 @@ class PersonaFleetPort:
     ) -> None:
         self._store = store
         self._records_provider = records_provider
+        self._personas: Dict[str, Dict[str, Any]] = {}
 
     def _get_raw_records(self) -> Tuple[str, List[Dict[str, Any]]]:
         if self._store is not None:
@@ -106,6 +107,8 @@ class PersonaFleetPort:
                 return "service", [dict(r) for r in (records or [])]
             except Exception:
                 return "unavailable", []
+        if hasattr(self, "_personas") and self._personas:
+            return "typed_store", list(self._personas.values())
         return "missing", []
 
     def get_surface_status(self) -> Dict[str, Any]:
@@ -161,6 +164,8 @@ class PersonaFleetPort:
                 return _deep_copy(found) if found is not None else None
             except Exception:
                 pass
+        if hasattr(self, "_personas") and clean_id in self._personas:
+            return _deep_copy(self._personas[clean_id])
         for persona in self.list_personas():
             if self._persona_id(persona) == clean_id:
                 return persona
@@ -168,6 +173,44 @@ class PersonaFleetPort:
 
     def list_operational_personas(self) -> List[Dict[str, Any]]:
         return self.list_personas(operational_only=True)
+
+    def create_persona(self, **kwargs: Any) -> Dict[str, Any]:
+        if self._store is not None and hasattr(self._store, "create_persona") and callable(self._store.create_persona):
+            return self._store.create_persona(**kwargs)
+        pid = str(kwargs.get("persona_id") or kwargs.get("id") or "").strip()
+        rec = {
+            "id": pid,
+            "persona_id": pid,
+            "name": str(kwargs.get("name") or pid),
+            "archetype": str(kwargs.get("archetype") or "generalist"),
+            "state": str(kwargs.get("state") or kwargs.get("lifecycle_state") or "active"),
+            "lifecycle_state": str(kwargs.get("lifecycle_state") or kwargs.get("state") or "active"),
+            **kwargs,
+            "metadata": dict(kwargs.get("metadata") or {}),
+        }
+        if not hasattr(self, "_personas"):
+            self._personas = {}
+        if pid:
+            self._personas[pid] = rec
+        return _deep_copy(rec)
+
+    def update_persona(self, persona_id: Optional[str], **kwargs: Any) -> Optional[Dict[str, Any]]:
+        clean_id = str(persona_id or "").strip()
+        if not clean_id:
+            return None
+        if self._store is not None and hasattr(self._store, "update_persona") and callable(self._store.update_persona):
+            return self._store.update_persona(clean_id, **kwargs)
+        if not hasattr(self, "_personas"):
+            self._personas = {}
+        rec = self._personas.get(clean_id)
+        if rec is not None:
+            if "metadata" in kwargs:
+                meta = dict(rec.get("metadata") or {})
+                meta.update(kwargs["metadata"])
+                kwargs["metadata"] = meta
+            rec.update(kwargs)
+            return _deep_copy(rec)
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -867,6 +910,12 @@ class PersonaCapitalRuntimeDomainPort:
 
     def list_operational_personas(self) -> List[Dict[str, Any]]:
         return self.persona.list_operational_personas()
+
+    def create_persona(self, **kwargs: Any) -> Dict[str, Any]:
+        return self.persona.create_persona(**kwargs)
+
+    def update_persona(self, persona_id: Optional[str], **kwargs: Any) -> Optional[Dict[str, Any]]:
+        return self.persona.update_persona(persona_id, **kwargs)
 
     # Capital delegates
     def list_capital_pools(self, **kwargs: Any) -> List[Dict[str, Any]]:

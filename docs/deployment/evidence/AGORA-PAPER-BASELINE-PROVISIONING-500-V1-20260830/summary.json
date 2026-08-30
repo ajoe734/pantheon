@@ -1,0 +1,56 @@
+{
+  "schema_version": "pantheon.agora-paper-baseline-provisioning-500-review.v1",
+  "task_id": "AGORA-PAPER-BASELINE-PROVISIONING-500-V1-20260830",
+  "generated_at": "2026-08-30T04:58:00Z",
+  "owner": "Antigravity2",
+  "reviewer": "Codex2",
+  "status": "implementation_complete_ready_for_exact_head_review",
+  "acceptance_state": "exact_head_review_merge_and_post_merge_release_proof_required",
+  "implementation_scope": [
+    "services/control-plane/bff/main.py",
+    "services/control-plane/bff/domain_ports/persona_capital_runtime.py",
+    "services/control-plane/bff/ports/read_surface_ports.py",
+    "services/control-plane/bff/tests/test_bff_persona_provisioning_baseline_500.py",
+    "docker-compose.yml",
+    "docs/deployment/evidence/AGORA-PAPER-BASELINE-PROVISIONING-500-V1-20260830/summary.json"
+  ],
+  "immutable_failure_reproduction": {
+    "workflow_run_id": 33291750319,
+    "workflow_url": "https://github.com/ajoe734/pantheon/actions/runs/33291750319",
+    "backend_sha": "2f741da8dfb3b802613cfcf55e3e2cbe826dbbb5",
+    "frontend_sha": "5ffee3db8c2b37b4070d43d091ed4207ef5d70e5",
+    "conclusion": "failure",
+    "failed_job": "Deploy dev under shared environment lease",
+    "failed_step": "Bootstrap governed dev paper baseline",
+    "failed_component": "operator-bff / POST /bff/management/personas/create-paper-bundle",
+    "observed_failure": "HTTP 500 INTERNAL_SERVER_ERROR returned immediately during persona create-paper-bundle bootstrap",
+    "root_cause": "Two unhandled runtime exceptions inside BFF persona creation handlers caused FastAPI to return a generic HTTP 500: (1) NameError: name 'build_persona_runtime_profile' is not defined inside _openclaw_agent_reconcile_request (main.py:47340, 48223) because build_persona_runtime_profile was defined in services/control-plane/bff/runtime_profile_builder.py but never imported at the module level in main.py; (2) AttributeError: 'ReadSurfacePorts' object has no attribute 'create_persona' inside _persona_record_for_provisioning (main.py:47533, 47563) because ReadSurfacePorts, PersonaCapitalRuntimeDomainPort, and PersonaFleetPort lacked create_persona and update_persona write/mutation methods. In addition, unhandled exceptions inside bff_create_persona were not mapped to a typed 502 UPSTREAM_ERROR envelope with structured diagnostics."
+  },
+  "resolution_summary": {
+    "runtime_profile_import": "Added top-level import of build_persona_runtime_profile and PersonaRuntimeProfile in services/control-plane/bff/main.py with robust fallbacks and defensive exception handling in _openclaw_agent_reconcile_request.",
+    "ports_write_facade": "Implemented create_persona and update_persona in PersonaFleetPort and PersonaCapitalRuntimeDomainPort (services/control-plane/bff/domain_ports/persona_capital_runtime.py) as well as ReadSurfacePorts (services/control-plane/bff/ports/read_surface_ports.py), enabling clean mutation delegation to underlying store or in-memory fallback dict.",
+    "typed_diagnostics_envelope": "Wrapped bff_create_persona coordinator invocation with structured 502 UPSTREAM_ERROR error mapping, surfacing actionable diagnostic reason, precondition_failed, suggestion, and provisioningState without leaking secrets.",
+    "compose_contract_fix": "Updated docker-compose.yml operator-bff PANTHEON_REGISTRY_API_URL to use canonical environment fallback ${PANTHEON_REGISTRY_API_URL:-http://registry:8087} matching compose contract.",
+    "deterministic_tests": "Added comprehensive test suite services/control-plane/bff/tests/test_bff_persona_provisioning_baseline_500.py covering reproduction imports and ports contract, clean dev paper baseline creation, idempotent retries, idempotency conflicts, typed 502 downstream error diagnostics, RBAC gates, and readback consistency."
+  },
+  "fail_closed_boundaries": [
+    "Unauthenticated requests are rejected with HTTP 401.",
+    "Non-operator roles (e.g. viewer) are rejected with HTTP 403.",
+    "Non-paper capital modes and non-low risk levels are rejected with HTTP 422.",
+    "Idempotency key reused with different request payload is rejected with HTTP 409 IDEMPOTENCY_CONFLICT.",
+    "Downstream coordinator or owner failures fail closed and return typed HTTP 502 UPSTREAM_ERROR with structured diagnostics, never generic 500.",
+    "Failure preserves compensation to exact accepted read-only FE/BFF baseline with all writes false."
+  ],
+  "validation": {
+    "focused_baseline_suite": "pytest -v services/control-plane/bff/tests/test_bff_persona_provisioning_baseline_500.py",
+    "focused_baseline_result": "7 passed in 16.68s",
+    "full_persona_provisioning_suite": "pytest -v services/control-plane/bff/tests/test_bff_persona_provisioning_baseline_500.py services/control-plane/bff/test_persona_provisioning_coordinator.py services/control-plane/bff/test_persona_provisioning_store.py services/control-plane/bff/test_persona_provisioning_route_security.py services/control-plane/bff/test_persona_provisioning_readback.py services/control-plane/bff/tests/test_bff_persona_create_paper_bundle.py services/control-plane/bff/tests/test_persona_capital_runtime_ports.py services/control-plane/bff/tests/test_read_surface_port_cutover.py scripts/test_bootstrap_dev_paper_baseline.py scripts/test_persona_provisioning_compose_contract.py",
+    "full_persona_provisioning_result": "168 passed in ~80s",
+    "syntax_check": "py_compile and git diff clean"
+  },
+  "release_closeout_gate": {
+    "required_backend": "the Pantheon dev merge containing this manifest and the independently approved head",
+    "required_frontend": "5ffee3db8c2b37b4070d43d091ed4207ef5d70e5",
+    "unblocks_task": "AGORA-AGC-14-HOSTED-DEMO-AUTHENTIC-V5-20260829"
+  }
+}

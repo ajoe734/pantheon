@@ -290,6 +290,12 @@ class ReadSurfacePorts:
     def list_operational_personas(self, **kwargs: Any) -> List[Dict[str, Any]]:
         return self.persona_capital_runtime.list_operational_personas()
 
+    def create_persona(self, **kwargs: Any) -> Dict[str, Any]:
+        return self.persona_capital_runtime.create_persona(**kwargs)
+
+    def update_persona(self, persona_id: Optional[str], **kwargs: Any) -> Optional[Dict[str, Any]]:
+        return self.persona_capital_runtime.update_persona(persona_id, **kwargs)
+
     def list_capital_pools(self, **kwargs: Any) -> List[Dict[str, Any]]:
         return self.persona_capital_runtime.list_capital_pools(**kwargs)
 

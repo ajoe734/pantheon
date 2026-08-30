@@ -237,6 +237,20 @@ from persona_provisioning_coordinator import (
     PersonaProvisioningCoordinator,
     deterministic_provisioning_ids,
 )
+try:
+    from services.persona.runtime_profile import (
+        PersonaRuntimeProfile,
+        build_persona_runtime_profile,
+    )
+except ImportError:
+    try:
+        from persona.runtime_profile import (  # type: ignore[no-redef]
+            PersonaRuntimeProfile,
+            build_persona_runtime_profile,
+        )
+    except ImportError:
+        build_persona_runtime_profile = None  # type: ignore[assignment]
+        PersonaRuntimeProfile = None  # type: ignore[assignment,misc]
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger(__name__)
@@ -47336,15 +47350,25 @@ def _openclaw_agent_reconcile_request(
         "model_id": f"openclaw/{persona_id}" if persona_id else "",
         "consumer": "scripts/openclaw-sync-persona-agents.py",
     }
-    try:
-        profile = build_persona_runtime_profile(persona, route_policy=route_policy).to_dict()
-    except ValueError as exc:
-        request.update({
-            "status": "blocked",
-            "blocked_reason": str(exc),
-            "repair_action": "fix_persona_runtime_profile",
-        })
-        return request
+    if callable(build_persona_runtime_profile):
+        try:
+            profile = build_persona_runtime_profile(persona, route_policy=route_policy).to_dict()
+        except ValueError as exc:
+            request.update({
+                "status": "blocked",
+                "blocked_reason": str(exc),
+                "repair_action": "fix_persona_runtime_profile",
+            })
+            return request
+        except Exception as exc:
+            request.update({
+                "status": "blocked",
+                "blocked_reason": f"runtime_profile_generation_failed: {exc}",
+                "repair_action": "check_persona_runtime_profile_inputs",
+            })
+            return request
+    else:
+        profile = {}
     routing = dict(profile.get("model_routing") or {})
     if routing.get("status") != "ready":
         request.update({
@@ -47850,6 +47874,21 @@ async def bff_create_persona(
             str(exc),
             precondition_failed="provisioning_coordinator",
             suggestion="Retry the same Idempotency-Key after the active coordinator lease expires",
+        ) from exc
+    except Exception as exc:
+        log.exception("Unexpected error during persona provisioning coordination: %s", exc)
+        raise _bff_error(
+            502,
+            ErrorCode.UPSTREAM_ERROR,
+            "Persona provisioning failed due to an upstream dependency or persistence error",
+            str(exc),
+            precondition_failed="provisioning_coordination",
+            suggestion="Inspect the Persona provisioning logs before retrying with the same Idempotency-Key",
+            details_extra={
+                "personaId": record.persona_id,
+                "idempotencyKey": record.idempotency_key,
+                "terminalReason": str(exc),
+            },
         ) from exc
 
     response = _persona_create_response(
