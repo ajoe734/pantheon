@@ -1205,6 +1205,282 @@ class ManagementService:
             "meta": inbox.get("meta", {}),
         }
 
+    def get_operator_alerts(self, snapshot_at: Optional[str] = None) -> Dict[str, Any]:
+        snap = snapshot_at or self._utc_now()
+        store = self._resolve_store()
+        surfaces: Dict[str, Any] = {}
+
+        if store is None:
+            alerts_surface = {"status": "unavailable", "source": "missing", "dataset": "alerts", "snapshot_at": snap}
+            meta = _snapshot_meta(snap)
+            meta["surfaces"] = {
+                "alerts": alerts_surface,
+                "incident_feed": alerts_surface,
+                "review_queue": alerts_surface,
+                "approval_queue": alerts_surface,
+                "kill_switch": alerts_surface,
+                "runtime_roster": alerts_surface,
+                "telemetry_summary": alerts_surface,
+            }
+            return {
+                "alerts": [],
+                "summary": {
+                    "total_active": 0,
+                    "highest_severity": "normal",
+                    "by_severity": {"critical": 0, "high": 0, "medium": 0, "low": 0, "normal": 0},
+                    "by_category": {"incident": 0, "governance": 0, "runtime": 0, "kill_switch": 0},
+                },
+                "meta": meta,
+            }
+
+        # 1. Incidents
+        incident_alerts = []
+        try:
+            if hasattr(store, "list_incidents"):
+                raw_incidents = store.list_incidents() or []
+            elif hasattr(store, "list_incident_alerts"):
+                raw_incidents = store.list_incident_alerts() or []
+            else:
+                raw_incidents = []
+            for inc in raw_incidents:
+                if not isinstance(inc, dict):
+                    continue
+                st = str(inc.get("status") or "").lower()
+                if st in ("open", "active", "triggered", "elevated"):
+                    inc_id = str(inc.get("incident_id") or inc.get("id") or "")
+                    incident_alerts.append({
+                        "alert_id": inc_id or f"inc-{len(incident_alerts)}",
+                        "severity": str(inc.get("severity") or "high").lower(),
+                        "category": "incident",
+                        "raised_at": inc.get("created_at") or snap,
+                        "summary": inc.get("title") or inc.get("summary") or "Active incident",
+                        "status": st,
+                    })
+            surfaces["incident_feed"] = {"status": "ok", "source": "store"}
+        except Exception:
+            surfaces["incident_feed"] = {"status": "unavailable", "source": "error"}
+
+        # 2. Governance review queue
+        gov_alerts = []
+        try:
+            if hasattr(store, "list_governance_review_queue_items"):
+                reviews = store.list_governance_review_queue_items() or []
+                for rev in reviews:
+                    if isinstance(rev, dict) and str(rev.get("status") or "").lower() in ("pending", "in_review", "open"):
+                        gov_alerts.append({
+                            "alert_id": str(rev.get("item_id") or rev.get("id") or ""),
+                            "severity": str(rev.get("risk_level") or rev.get("priority") or "medium").lower(),
+                            "category": "governance",
+                            "raised_at": rev.get("submitted_at") or rev.get("created_at") or snap,
+                            "summary": rev.get("title") or rev.get("item_type") or "Pending governance review",
+                            "status": str(rev.get("status") or "pending").lower(),
+                        })
+            surfaces["review_queue"] = {"status": "ok", "source": "store"}
+        except Exception:
+            surfaces["review_queue"] = {"status": "unavailable", "source": "error"}
+
+        # 3. Approval queue
+        approval_alerts = []
+        try:
+            if hasattr(store, "list_approval_queue_items"):
+                approvals = store.list_approval_queue_items() or []
+                for app in approvals:
+                    if isinstance(app, dict) and str(app.get("decision_state") or app.get("status") or "").lower() in ("pending", "in_review", "open"):
+                        approval_alerts.append({
+                            "alert_id": str(app.get("decision_id") or app.get("id") or ""),
+                            "severity": str(app.get("risk_level") or app.get("priority") or "high").lower(),
+                            "category": "governance",
+                            "raised_at": app.get("submitted_at") or app.get("created_at") or snap,
+                            "summary": app.get("title") or app.get("decision_type") or "Pending operator approval",
+                            "status": str(app.get("decision_state") or app.get("status") or "pending").lower(),
+                        })
+            surfaces["approval_queue"] = {"status": "ok", "source": "store"}
+        except Exception:
+            surfaces["approval_queue"] = {"status": "unavailable", "source": "error"}
+
+        # 4. Kill switch
+        kill_alerts = []
+        try:
+            if hasattr(store, "get_kill_switch_status"):
+                ks = store.get_kill_switch_status() or {}
+                if isinstance(ks, dict) and ks.get("active"):
+                    kill_alerts.append({
+                        "alert_id": "alert-kill-switch-active",
+                        "severity": "critical",
+                        "category": "kill_switch",
+                        "raised_at": ks.get("last_triggered_at") or snap,
+                        "summary": "Kill switch is active",
+                        "status": "active",
+                    })
+            surfaces["kill_switch"] = {"status": "ok", "source": "store"}
+        except Exception:
+            surfaces["kill_switch"] = {"status": "unavailable", "source": "error"}
+
+        # 5. Runtime anomalies / alerts
+        runtime_alerts = []
+        try:
+            runtime_bindings = []
+            if hasattr(store, "list_runtime_bindings"):
+                runtime_bindings = store.list_runtime_bindings() or []
+            surfaces["runtime_roster"] = {"status": "ok", "source": "store"}
+            surfaces["telemetry_summary"] = {"status": "ok", "source": "store"}
+            telemetry_map = {}
+            if hasattr(store, "list_telemetry_summaries"):
+                t_res = store.list_telemetry_summaries()
+                if isinstance(t_res, dict):
+                    telemetry_map = t_res
+                elif isinstance(t_res, list):
+                    telemetry_map = {str(t.get("runtime_id") or t.get("id") or ""): t for t in t_res if isinstance(t, dict)}
+            for b in runtime_bindings:
+                if not isinstance(b, dict):
+                    continue
+                rt_id = str(b.get("runtime_id") or b.get("id") or "")
+                if not rt_id:
+                    continue
+                t_entry = telemetry_map.get(rt_id) or {}
+                dd = _as_float(t_entry.get("drawdown") or (t_entry.get("metrics") or {}).get("drawdown"))
+                if dd is not None and dd >= 0.10:
+                    runtime_alerts.append({
+                        "alert_id": f"alert-runtime-{rt_id}",
+                        "severity": "high",
+                        "category": "runtime",
+                        "raised_at": t_entry.get("collected_at") or snap,
+                        "summary": f"Runtime {rt_id} drawdown breach ({dd:.2%})",
+                        "status": "active",
+                    })
+        except Exception:
+            surfaces["runtime_roster"] = {"status": "unavailable", "source": "error"}
+            surfaces["telemetry_summary"] = {"status": "unavailable", "source": "error"}
+
+        alerts = incident_alerts + gov_alerts + approval_alerts + kill_alerts + runtime_alerts
+        alerts_surface = _aggregate_group_surface("alerts", list(surfaces.values()), snapshot_at=snap)
+
+        meta = _snapshot_meta(snap)
+        meta["acknowledgement_supported"] = True
+        meta["surfaces"] = {
+            "alerts": alerts_surface,
+            **surfaces,
+        }
+
+        by_sev: Dict[str, int] = {}
+        by_cat: Dict[str, int] = {}
+        for a in alerts:
+            s = str(a.get("severity") or "normal").lower()
+            c = str(a.get("category") or "runtime").lower()
+            by_sev[s] = by_sev.get(s, 0) + 1
+            by_cat[c] = by_cat.get(c, 0) + 1
+
+        highest = "normal"
+        for candidate in ("critical", "sev1", "high", "sev2", "medium", "sev3", "low", "normal"):
+            if by_sev.get(candidate, 0) > 0:
+                highest = candidate
+                break
+
+        return {
+            "alerts": alerts,
+            "summary": {
+                "total_active": len(alerts),
+                "highest_severity": highest,
+                "by_severity": by_sev,
+                "by_category": by_cat,
+            },
+            "meta": meta,
+        }
+
+    def get_management_anomalies(self, snapshot_at: Optional[str] = None) -> Dict[str, Any]:
+        snap = snapshot_at or self._utc_now()
+        store = self._resolve_store()
+        anomalies: List[Dict[str, Any]] = []
+        surfaces: Dict[str, Any] = {}
+
+        if store is None:
+            surface = {"status": "unavailable", "source": "missing", "dataset": "management_anomalies", "snapshot_at": snap}
+            meta = _snapshot_meta(snap)
+            meta["surfaces"] = {
+                "management_anomalies": surface,
+                "anomalies": surface,
+            }
+            return {
+                "items": [],
+                "summary": {"total": 0},
+                "meta": meta,
+            }
+
+        # 1. Sentinel findings
+        try:
+            if hasattr(store, "list_sentinel_findings"):
+                res = store.list_sentinel_findings()
+                findings = res[1] if isinstance(res, tuple) else (res or [])
+                for f in findings:
+                    if not isinstance(f, dict):
+                        continue
+                    f_id = str(f.get("id") or f.get("finding_id") or "")
+                    if not f_id:
+                        continue
+                    anomalies.append({
+                        "id": f_id,
+                        "kind": f.get("kind") or "sentinel_finding",
+                        "severity": str(f.get("severity") or f.get("risk_level") or "medium").lower(),
+                        "status": f.get("status") or "active",
+                        "summary": f.get("title") or f.get("summary") or f_id,
+                        "created_at": f.get("created_at") or snap,
+                    })
+                surfaces["sentinel_findings"] = {"status": "ok", "source": "store"}
+            else:
+                surfaces["sentinel_findings"] = {"status": "unavailable", "source": "missing"}
+        except Exception:
+            surfaces["sentinel_findings"] = {"status": "unavailable", "source": "error"}
+
+        # 2. Runtime anomalies
+        try:
+            runtime_bindings = []
+            if hasattr(store, "list_runtime_bindings"):
+                runtime_bindings = store.list_runtime_bindings() or []
+            telemetry_map = {}
+            if hasattr(store, "list_telemetry_summaries"):
+                t_res = store.list_telemetry_summaries()
+                if isinstance(t_res, dict):
+                    telemetry_map = t_res
+                elif isinstance(t_res, list):
+                    telemetry_map = {str(t.get("runtime_id") or t.get("id") or ""): t for t in t_res if isinstance(t, dict)}
+            for b in runtime_bindings:
+                if not isinstance(b, dict):
+                    continue
+                rt_id = str(b.get("runtime_id") or b.get("id") or "")
+                if not rt_id:
+                    continue
+                t_entry = telemetry_map.get(rt_id) or {}
+                dd = _as_float(t_entry.get("drawdown") or (t_entry.get("metrics") or {}).get("drawdown"))
+                if dd is not None and dd >= 0.10:
+                    anomalies.append({
+                        "id": f"anomaly-runtime-{rt_id}",
+                        "kind": "runtime_alert",
+                        "severity": "high",
+                        "status": "active",
+                        "summary": f"Runtime {rt_id} drawdown breach ({dd:.2%})",
+                        "raised_at": t_entry.get("collected_at") or snap,
+                    })
+            surfaces["runtime_roster"] = {"status": "ok", "source": "store"}
+            surfaces["telemetry_summary"] = {"status": "ok", "source": "store"}
+        except Exception:
+            surfaces["runtime_roster"] = {"status": "unavailable", "source": "error"}
+            surfaces["telemetry_summary"] = {"status": "unavailable", "source": "error"}
+
+        anomalies_surface = _aggregate_group_surface("management_anomalies", list(surfaces.values()), snapshot_at=snap)
+
+        meta = _snapshot_meta(snap)
+        meta["surfaces"] = {
+            "management_anomalies": anomalies_surface,
+            "anomalies": anomalies_surface,
+            **surfaces,
+        }
+
+        return {
+            "items": anomalies,
+            "summary": {"total": len(anomalies)},
+            "meta": meta,
+        }
+
     # -----------------------------------------------------------------------
     # 7. Cockpit Aggregate
     # -----------------------------------------------------------------------
@@ -1219,38 +1495,27 @@ class ManagementService:
         trading_pulse = self.get_trading_pulse(snapshot_at=snap)
         if human_inbox is None:
             human_inbox = self.get_human_inbox()
+        alerts_payload = self.get_operator_alerts(snapshot_at=snap)
+        anomalies_payload = self.get_management_anomalies(snapshot_at=snap)
 
         alerts = {
-            "items": [],
-            "summary": {
-                "total_active": runtime_health.get("group_counts", {}).get("degraded", 0),
-                "highest_severity": "normal",
-            },
-            "meta": {"snapshot_at": snap},
+            "items": alerts_payload.get("alerts", []),
+            "summary": alerts_payload.get("summary", {}),
+            "meta": alerts_payload.get("meta", {}),
         }
-        anomalies = {
-            "summary": {"total": 2},
-            "meta": {"snapshot_at": snap, "surfaces": {"management_anomalies": {"status": "ok", "source": "bff_composed"}}},
-        }
+
+        tp_surface = trading_pulse.get("meta", {}).get("surfaces", {}).get("management_trading_pulse") or trading_pulse.get("meta", {}).get("surfaces", {}).get("trading_pulse", {"status": "ok", "source": "store"})
 
         cockpit_surface = _aggregate_group_surface("management_cockpit", [
             operator_home.get("meta", {}).get("surfaces", {}).get("operator_home", {"status": "ok"}),
             runtime_health.get("meta", {}).get("surfaces", {}).get("health_status", {"status": "ok"}),
+            alerts_payload.get("meta", {}).get("surfaces", {}).get("alerts", {"status": "ok"}),
             human_inbox.get("meta", {}).get("surfaces", {}).get("human_inbox", {"status": "ok"}),
-            trading_pulse.get("meta", {}).get("surfaces", {}).get("management_trading_pulse", {"status": "ok"}),
+            tp_surface,
+            anomalies_payload.get("meta", {}).get("surfaces", {}).get("management_anomalies", {"status": "ok"}),
         ], snapshot_at=snap)
 
-        system_kpis = {
-            "total_strategies": 12,
-            "active_strategies": 8,
-            "system_health": runtime_health.get("overall_status", "ok"),
-            "open_incidents": runtime_health.get("group_counts", {}).get("degraded", 0),
-        }
-        cockpit_cards = [
-            {"id": "execution_status", "title": "Execution State", "status": "active", "value": "Normal"},
-            {"id": "risk_state", "title": "Risk State", "status": "nominal", "value": "Safe"},
-            {"id": "governance_state", "title": "Governance", "status": "ok", "value": "Compliant"},
-        ]
+        tp_data = trading_pulse.get("data") if isinstance(trading_pulse.get("data"), dict) else trading_pulse
 
         return {
             "data": {
@@ -1260,10 +1525,8 @@ class ManagementService:
                 "runtime_health": runtime_health,
                 "alerts": alerts,
                 "human_inbox": human_inbox,
-                "trading_pulse": trading_pulse.get("data", {}),
-                "anomalies": anomalies,
-                "system_kpis": system_kpis,
-                "cards": cockpit_cards,
+                "trading_pulse": tp_data,
+                "anomalies": anomalies_payload,
                 "links": {
                     "self": "/bff/management/cockpit",
                     "operator_home": "/api/v1/operator/home",
@@ -1279,10 +1542,12 @@ class ManagementService:
                     "management_cockpit": cockpit_surface,
                     "operator_home": operator_home.get("meta", {}).get("surfaces", {}).get("operator_home", {"status": "ok"}),
                     "runtime_health": runtime_health.get("meta", {}).get("surfaces", {}).get("health_status", {"status": "ok"}),
-                    "alerts": {"status": "ok", "source": "bff_composed"},
+                    "alerts": alerts_payload.get("meta", {}).get("surfaces", {}).get("alerts", {"status": "ok"}),
                     "human_inbox": human_inbox.get("meta", {}).get("surfaces", {}).get("human_inbox", {"status": "ok"}),
-                    "trading_pulse": trading_pulse.get("meta", {}).get("surfaces", {}).get("management_trading_pulse", {"status": "ok"}),
-                    "anomalies": anomalies.get("meta", {}).get("surfaces", {}).get("management_anomalies", {"status": "ok"}),
+                    "trading_pulse": tp_surface,
+                    "management_trading_pulse": tp_surface,
+                    "anomalies": anomalies_payload.get("meta", {}).get("surfaces", {}).get("management_anomalies", {"status": "ok"}),
+                    "management_anomalies": anomalies_payload.get("meta", {}).get("surfaces", {}).get("management_anomalies", {"status": "ok"}),
                 },
             },
         }
@@ -1423,6 +1688,8 @@ class ManagementService:
         filtered = []
         for r in raw_rows:
             if not isinstance(r, dict):
+                continue
+            if tenant_id and r.get("tenant_id") and r.get("tenant_id") != tenant_id:
                 continue
             if persona_id and r.get("persona_id") != persona_id:
                 continue
@@ -1725,6 +1992,10 @@ class ManagementService:
 
         # Hard failure: if persona does not exist in store, return None (never fabricate synthetic persona)
         if persona is None:
+            return None
+
+        # Tenant isolation check: if persona belongs to a specific tenant, ensure tenant_id matches
+        if tenant_id and persona.get("tenant_id") and persona.get("tenant_id") != tenant_id:
             return None
 
         league_entry: Dict[str, Any] = {}

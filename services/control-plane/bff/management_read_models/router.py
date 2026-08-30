@@ -82,30 +82,72 @@ def _default_snapshot_meta(snapshot_at: Optional[str] = None) -> Dict[str, Any]:
     }
 
 
+def _extract_tenant_id(
+    identity: Any,
+    tenant_payload_fn: Optional[Callable[[Any], Any]] = None,
+) -> Optional[str]:
+    if not tenant_payload_fn:
+        return None
+    try:
+        payload = tenant_payload_fn(identity)
+    except Exception:
+        return None
+    if isinstance(payload, dict):
+        val = payload.get("id") or payload.get("tenant_id")
+        return str(val) if val is not None else None
+    if isinstance(payload, str):
+        return payload.strip() or None
+    return None
+
+
 def _default_extract_identity(
     authorization: Optional[str] = None,
     mfa_token: Optional[str] = None,
     session_cookie: Optional[str] = None,
 ) -> Any:
     class DummyIdentity:
-        operator_id = "op-user"
-        roles = {"operator", "viewer", "admin"}
+        operator_id: Optional[str] = None
+        roles: Set[str] = set()
         session_kind = "bearer"
         mfa_verified = False
-        display_name = "Operator"
+        display_name = "Anonymous"
+        is_authenticated = False
 
     ident = DummyIdentity()
-    if authorization:
-        token = authorization.replace("Bearer ", "").strip()
-        parts = token.split(":")
-        ident.operator_id = parts[0]
-        if len(parts) > 1:
-            ident.roles = set(parts[1].split(","))
+    token = authorization or session_cookie
+    if token:
+        token_str = token.replace("Bearer ", "").strip()
+        if token_str:
+            ident.is_authenticated = True
+            parts = token_str.split(":")
+            ident.operator_id = parts[0]
+            if len(parts) > 1:
+                ident.roles = set(parts[1].split(","))
+            else:
+                ident.roles = {"operator", "viewer", "admin", "reader", "reviewer"}
+            ident.display_name = ident.operator_id
     return ident
 
 
 def _default_require_read_role(identity: Any) -> None:
-    pass
+    is_auth = getattr(identity, "is_authenticated", False)
+    op_id = getattr(identity, "operator_id", None)
+    roles = getattr(identity, "roles", set()) or set()
+    if not is_auth or not op_id:
+        raise _default_bff_error(
+            401,
+            ErrorCode.AUTH_REQUIRED,
+            "Authentication required",
+            "Missing or invalid bearer token/session cookie",
+        )
+    allowed_roles = {"reader", "viewer", "operator", "admin", "reviewer"}
+    if not (roles & allowed_roles):
+        raise _default_bff_error(
+            403,
+            ErrorCode.FORBIDDEN,
+            "Forbidden: insufficient permissions",
+            "Read role required",
+        )
 
 
 def _default_bff_error(
@@ -1030,7 +1072,7 @@ def create_management_read_models_router(
         """BFF: read-only cross-persona and strategy risk indicators."""
         identity = _extract_id(authorization)
         _req_read(identity)
-        tenant_id = tenant_payload_fn(identity).get("tenant_id") if tenant_payload_fn else None
+        tenant_id = _extract_tenant_id(identity, tenant_payload_fn)
         if risk_radar_builder is not None:
             return await _eval(risk_radar_builder(
                 persona_id=persona_id,
@@ -1311,7 +1353,7 @@ def create_management_read_models_router(
         """MGMT-OPS-001: shared identity/source-confidence read model for one persona."""
         identity = _extract_id(authorization)
         _req_read(identity)
-        tenant_id = tenant_payload_fn(identity).get("tenant_id") if tenant_payload_fn else None
+        tenant_id = _extract_tenant_id(identity, tenant_payload_fn)
 
         if operations_read_model_builder is not None:
             entry = await _eval(operations_read_model_builder(persona_id, period=period, tenant_id=tenant_id))
@@ -1819,4 +1861,3 @@ def create_management_read_models_router(
 
 
 create_management_router = create_management_read_models_router
-

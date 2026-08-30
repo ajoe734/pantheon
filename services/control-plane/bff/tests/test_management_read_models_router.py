@@ -227,8 +227,11 @@ def test_management_cockpit_and_trading_pulse():
     assert resp.status_code == 200
     data = resp.json()
     assert data["data"]["id"] == "management-cockpit"
-    assert "system_kpis" in data["data"]
-    assert "cards" in data["data"]
+    assert "alerts" in data["data"]
+    assert "anomalies" in data["data"]
+    assert "human_inbox" in data["data"]
+    assert "trading_pulse" in data["data"]
+    assert data["meta"]["surfaces"]["management_cockpit"]["status"] in {"ok", "degraded"}
 
     # 2. Trading pulse
     resp = client.get("/bff/management/trading-pulse", headers={"Authorization": "Bearer op-1:operator"})
@@ -424,3 +427,122 @@ def test_composed_read_models_via_router():
     resp = client.get("/bff/management/postmortems", headers={"Authorization": "Bearer op-1:operator"})
     assert resp.status_code == 200
     assert resp.json()["data"]["id"] == "management-postmortems"
+
+
+def test_tenant_payload_fn_production_shape():
+    """Verify tenant_payload_fn receives and parses production shape {'id': 'tenant-proof'}."""
+    captured_tenants: List[Optional[str]] = []
+
+    def mock_risk_radar_builder(**kwargs):
+        captured_tenants.append(kwargs.get("tenant_id"))
+        return {"data": {"id": "management-risk-radar", "rows": [], "summary": {}}, "meta": {}}
+
+    def mock_ops_builder(persona_id, **kwargs):
+        captured_tenants.append(kwargs.get("tenant_id"))
+        return {
+            "identity": {
+                "persona_id": persona_id,
+                "persona_label": f"Persona {persona_id}",
+                "stage": "paper",
+                "runtime_ids": [f"rt-{persona_id}"],
+                "paper_ledger_ids": [],
+                "capital_pool_ids": [],
+                "sleeve_ids": [],
+                "strategy_ids": [],
+                "artifact_ids": [],
+                "broker_ids": [],
+                "period": "latest",
+                "as_of": "2026-08-30T10:00:00Z",
+            },
+            "performance": {
+                "pnl": 0.0,
+                "pnl_pct": 0.0,
+                "drawdown_pct": 0.0,
+                "risk_pct": 0.0,
+                "sharpe": 1.0,
+                "rank": 1,
+                "score": 90.0,
+            },
+            "data_confidence": "formal",
+            "sources": [],
+            "diagnostics": [],
+        }
+
+    app = FastAPI()
+    app.include_router(
+        create_management_read_models_router(
+            risk_radar_builder=mock_risk_radar_builder,
+            operations_read_model_builder=mock_ops_builder,
+            tenant_payload_fn=lambda id_: {"id": "tenant-proof"},
+        )
+    )
+    client = TestClient(app)
+
+    # 1. Risk radar probe
+    resp = client.get("/bff/management/risk-radar", headers={"Authorization": "Bearer op-1:operator"})
+    assert resp.status_code == 200
+    assert captured_tenants[-1] == "tenant-proof"
+
+    # 2. Operations read model probe
+    resp = client.get("/bff/management/operations-read-model/persona-1", headers={"Authorization": "Bearer op-1:operator"})
+    assert resp.status_code == 200
+    assert captured_tenants[-1] == "tenant-proof"
+
+    # 3. Alternative payload shape with tenant_id key
+    captured_tenants.clear()
+    app2 = FastAPI()
+    app2.include_router(
+        create_management_read_models_router(
+            risk_radar_builder=mock_risk_radar_builder,
+            operations_read_model_builder=mock_ops_builder,
+            tenant_payload_fn=lambda id_: {"tenant_id": "tenant-alt"},
+        )
+    )
+    client2 = TestClient(app2)
+    resp = client2.get("/bff/management/risk-radar", headers={"Authorization": "Bearer op-1:operator"})
+    assert resp.status_code == 200
+    assert captured_tenants[-1] == "tenant-alt"
+
+
+def test_unauthenticated_requests_rejected_with_401():
+    """Verify default router fails closed on unauthenticated requests returning 401 AUTH_REQUIRED."""
+    app = FastAPI()
+    app.include_router(create_management_read_models_router())
+    client = TestClient(app, raise_server_exceptions=False)
+
+    # Cockpit requires read auth
+    resp = client.get("/bff/management/cockpit")
+    assert resp.status_code == 401
+    assert resp.json()["detail"]["error"]["code"] == "AUTH_REQUIRED"
+
+    # Shell summary requires read auth
+    resp = client.get("/bff/management/shell-summary")
+    assert resp.status_code == 401
+    assert resp.json()["detail"]["error"]["code"] == "AUTH_REQUIRED"
+
+    # Risk radar requires read auth
+    resp = client.get("/bff/management/risk-radar")
+    assert resp.status_code == 401
+    assert resp.json()["detail"]["error"]["code"] == "AUTH_REQUIRED"
+
+    # Operator home requires read auth
+    resp = client.get("/api/v1/operator/home")
+    assert resp.status_code == 401
+    assert resp.json()["detail"]["error"]["code"] == "AUTH_REQUIRED"
+
+
+def test_cockpit_composition_with_empty_store():
+    """Verify cockpit reports unavailable surfaces and 0 counts without synthetic constants when store is missing."""
+    app = FastAPI()
+    app.include_router(create_management_read_models_router(get_read_store=lambda: None))
+    client = TestClient(app)
+
+    resp = client.get("/bff/management/cockpit", headers={"Authorization": "Bearer op-1:operator"})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["data"]["id"] == "management-cockpit"
+    assert data["data"]["alerts"]["summary"]["total_active"] == 0
+    assert data["data"]["anomalies"]["summary"]["total"] == 0
+    assert "system_kpis" not in data["data"]
+    assert "cards" not in data["data"]
+    assert data["meta"]["surfaces"]["management_cockpit"]["status"] in {"unavailable", "degraded"}
