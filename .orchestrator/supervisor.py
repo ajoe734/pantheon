@@ -914,11 +914,11 @@ def drain_assistant_dev_packet_inbox(config: dict[str, Any], state: dict[str, An
         limit = 4
     bridge_runtime_env = {
         "PANTHEON_STATUS_ROOT": str(repo_root.resolve()),
+        "PANTHEON_ASSISTANT_DEV_BRIDGE_REQUIRE_TASK_STATE_READBACK": "1",
+        **status_command_runtime_env(config),
         "PANTHEON_ASSISTANT_DEV_BRIDGE_ALLOWED_REPOS": ",".join(
             assistant_dev_bridge_allowed_repositories(config)
         ),
-        "PANTHEON_ASSISTANT_DEV_BRIDGE_REQUIRE_TASK_STATE_READBACK": "1",
-        **status_command_runtime_env(config),
     }
     result = drain_task_packet_inbox(
         repo_root=str(repo_root),
