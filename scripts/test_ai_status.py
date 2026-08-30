@@ -30,7 +30,7 @@ import ai_status
 import task_archive
 import common
 from common import rotate_activity_log_unlocked
-from rewrite import task_machine, task_state_store
+from rewrite import status_projection, task_machine, task_state_store
 
 
 def _canonical_state_identity_json(status_root: Path, event_log: Path) -> str:
@@ -2134,6 +2134,7 @@ class StatusRootRoutingTests(unittest.TestCase):
             ".orchestrator/rewrite/task_machine.py",
             ".orchestrator/rewrite/task_contract.py",
             ".orchestrator/rewrite/task_state_store.py",
+            ".orchestrator/rewrite/status_projection.py",
             ".orchestrator/config.json",
         ):
             source = repo_root / rel
@@ -11283,7 +11284,7 @@ class HumanOpsAgentTests(unittest.TestCase):
 
 class RuntimeWorkerLivenessTests(unittest.TestCase):
     def test_pid_is_alive_rejects_zombie_processes(self) -> None:
-        with mock.patch.object(ai_status, "proc_pid_state", return_value="Z"):
+        with mock.patch.object(status_projection, "proc_pid_state", return_value="Z"):
             self.assertFalse(ai_status.pid_is_alive(1234))
 
     def test_normalize_runtime_workers_marks_zombie_running_worker_stale(self) -> None:
@@ -11316,7 +11317,7 @@ class RuntimeWorkerLivenessTests(unittest.TestCase):
             }
         }
 
-        with mock.patch.object(ai_status, "proc_pid_state", return_value="Z"):
+        with mock.patch.object(status_projection, "proc_pid_state", return_value="Z"):
             workers = ai_status.normalize_runtime_workers(state, orchestrator_state)
 
         self.assertEqual(workers[0]["bucket"], "stale")
@@ -11508,7 +11509,7 @@ class PortableStateRenderingTests(unittest.TestCase):
             with (
                 mock.patch.object(ai_status, "CURRENT_WORK_FILE", output_path),
                 mock.patch.object(
-                    ai_status,
+                    status_projection,
                     "load_archive_index",
                     return_value={
                         "updated_at": "2026-04-10T01:00:00Z",
@@ -11517,7 +11518,7 @@ class PortableStateRenderingTests(unittest.TestCase):
                     },
                 ),
                 mock.patch.object(
-                    ai_status,
+                    status_projection,
                     "recent_terminal_summaries",
                     return_value=[
                         {
@@ -11650,7 +11651,7 @@ class PortableStateRenderingTests(unittest.TestCase):
             with (
                 mock.patch.object(ai_status, "CURRENT_WORK_FILE", output_path),
                 mock.patch.object(
-                    ai_status,
+                    status_projection,
                     "load_archive_index",
                     return_value={
                         "updated_at": "2026-08-06T00:00:00Z",
@@ -11659,7 +11660,7 @@ class PortableStateRenderingTests(unittest.TestCase):
                     },
                 ),
                 mock.patch.object(
-                    ai_status, "recent_terminal_summaries", return_value=[]
+                    status_projection, "recent_terminal_summaries", return_value=[]
                 ),
             ):
                 ai_status.write_current_work(state, [])
@@ -11781,7 +11782,7 @@ class PortableStateRenderingTests(unittest.TestCase):
             with (
                 mock.patch.object(ai_status, "CURRENT_WORK_FILE", output_path),
                 mock.patch.object(
-                    ai_status,
+                    status_projection,
                     "load_archive_index",
                     return_value={
                         "updated_at": None,
@@ -11789,7 +11790,8 @@ class PortableStateRenderingTests(unittest.TestCase):
                         "recent_terminal_ids": [],
                     },
                 ),
-                mock.patch.object(ai_status, "recent_terminal_summaries", return_value=[]),
+                mock.patch.object(
+                    status_projection, "recent_terminal_summaries", return_value=[]),
             ):
                 ai_status.write_current_work(state, logs)
 
@@ -11901,7 +11903,7 @@ class PortableStateRenderingTests(unittest.TestCase):
         with (
             mock.patch.object(ai_status, "task_resolver", return_value=resolver),
             mock.patch.object(
-                ai_status,
+                    status_projection,
                 "load_archive_index",
                 return_value={"updated_at": None, "counts": {"total": 0, "completed": 0, "superseded": 0}, "recent_terminal_ids": []},
             ),
@@ -12165,7 +12167,7 @@ class PortableStateRenderingTests(unittest.TestCase):
         with (
             mock.patch.object(ai_status, "task_resolver", return_value=resolver),
             mock.patch.object(
-                ai_status,
+                    status_projection,
                 "load_archive_index",
                 return_value={"updated_at": None, "counts": {"total": 0, "completed": 0, "superseded": 0}, "recent_terminal_ids": []},
             ),
@@ -12220,7 +12222,7 @@ class PortableStateRenderingTests(unittest.TestCase):
         with (
             mock.patch.object(ai_status, "task_resolver", return_value=resolver),
             mock.patch.object(
-                ai_status,
+                    status_projection,
                 "load_archive_index",
                 return_value={"updated_at": None, "counts": {"total": 0, "completed": 0, "superseded": 0}, "recent_terminal_ids": []},
             ),
@@ -12275,7 +12277,7 @@ class PortableStateRenderingTests(unittest.TestCase):
         with (
             mock.patch.object(ai_status, "task_resolver", return_value=resolver),
             mock.patch.object(
-                ai_status,
+                    status_projection,
                 "load_archive_index",
                 return_value={"updated_at": None, "counts": {"total": 0, "completed": 0, "superseded": 0}, "recent_terminal_ids": []},
             ),
@@ -12338,7 +12340,7 @@ class PortableStateRenderingTests(unittest.TestCase):
         with (
             mock.patch.object(ai_status, "task_resolver", return_value=resolver),
             mock.patch.object(
-                ai_status,
+                    status_projection,
                 "load_archive_index",
                 return_value={"updated_at": None, "counts": {"total": 0, "completed": 0, "superseded": 0}, "recent_terminal_ids": []},
             ),
@@ -12377,7 +12379,7 @@ class PortableStateRenderingTests(unittest.TestCase):
             with mock.patch.object(ai_status, "DASHBOARD_BUNDLE_FILE", output_path):
                 with mock.patch.object(ai_status, "load_config", return_value=config):
                     with mock.patch.object(ai_status, "load_runtime_state", return_value=orchestrator_state) as load_runtime_state:
-                        with mock.patch.object(ai_status, "load_json_file", return_value=approval_state) as load_json_file:
+                        with mock.patch.object(status_projection, "load_json_file", return_value=approval_state) as load_json_file:
                             ai_status.write_dashboard_bundle(state)
 
             bundle = json.loads(output_path.read_text(encoding="utf-8"))
@@ -12434,7 +12436,7 @@ class PortableStateRenderingTests(unittest.TestCase):
         with (
             mock.patch.object(ai_status, "task_resolver", return_value=resolver),
             mock.patch.object(
-                ai_status,
+                    status_projection,
                 "load_archive_index",
                 return_value={
                     "updated_at": "2026-04-14T02:00:00Z",
@@ -12513,8 +12515,9 @@ class PortableStateRenderingTests(unittest.TestCase):
 
         with (
             mock.patch.object(ai_status, "load_config", return_value=config),
-            mock.patch.object(ai_status, "load_archive_index", return_value={"updated_at": None, "counts": {"total": 0, "completed": 0, "superseded": 0}, "recent_terminal_ids": []}),
-            mock.patch.object(ai_status, "pid_is_alive", return_value=True),
+            mock.patch.object(
+                    status_projection, "load_archive_index", return_value={"updated_at": None, "counts": {"total": 0, "completed": 0, "superseded": 0}, "recent_terminal_ids": []}),
+            mock.patch.object(status_projection, "pid_is_alive", return_value=True),
         ):
             bundle = ai_status.build_dashboard_bundle(state, orchestrator_state, approval_state)
 
@@ -12577,8 +12580,9 @@ class PortableStateRenderingTests(unittest.TestCase):
 
         with (
             mock.patch.object(ai_status, "load_config", return_value=config),
-            mock.patch.object(ai_status, "load_archive_index", return_value={"updated_at": None, "counts": {"total": 0, "completed": 0, "superseded": 0}, "recent_terminal_ids": []}),
-            mock.patch.object(ai_status, "pid_is_alive", return_value=True),
+            mock.patch.object(
+                    status_projection, "load_archive_index", return_value={"updated_at": None, "counts": {"total": 0, "completed": 0, "superseded": 0}, "recent_terminal_ids": []}),
+            mock.patch.object(status_projection, "pid_is_alive", return_value=True),
         ):
             bundle = ai_status.build_dashboard_bundle(state, orchestrator_state, approval_state)
 
@@ -12648,7 +12652,7 @@ class PortableStateRenderingTests(unittest.TestCase):
             "history": [],
         }
 
-        with mock.patch.object(ai_status, "pid_is_alive", return_value=False):
+        with mock.patch.object(status_projection, "pid_is_alive", return_value=False):
             bundle = ai_status.build_dashboard_bundle(state, orchestrator_state, approval_state)
 
         self.assertEqual(bundle["runtime_summary"]["running_workers"], 0)
@@ -13883,11 +13887,11 @@ class ActivityLogRotationTests(unittest.TestCase):
         tail = b"last-two-lines\n"
         with (
             mock.patch.object(
-                ai_status,
+                status_projection,
                 "read_activity_log_tail_bytes",
                 return_value=tail,
             ) as read_tail,
-            mock.patch.object(ai_status, "durable_write_bytes") as durable_write,
+            mock.patch.object(status_projection, "durable_write_bytes") as durable_write,
         ):
             ai_status._mirror_log_tail(log_path, target, 2)
 
