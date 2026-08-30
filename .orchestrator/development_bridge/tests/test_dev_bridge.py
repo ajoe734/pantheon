@@ -128,6 +128,78 @@ class TestDevTaskPacketModel(unittest.TestCase):
         task = BridgeTask(id="T1", title="t", owner="Codex", reviewer="Claude", targetRepo="execute-plans")
         self.assertEqual(task.target_repo, "execute-plans")
 
+    def test_bridge_task_target_repo_conflict_keys_rejected(self):
+        from pydantic import ValidationError
+
+        # Conflicting target_repo and targetRepo via model_validate
+        with self.assertRaises(ValidationError) as ctx:
+            BridgeTask.model_validate(
+                {
+                    "id": "T1",
+                    "title": "t",
+                    "owner": "Codex",
+                    "reviewer": "Claude",
+                    "target_repo": "pantheon",
+                    "targetRepo": "execute-plans",
+                }
+            )
+        self.assertIn("Conflicting values for 'target_repo'", str(ctx.exception))
+
+        # Conflicting target_repo and targetRepo via kwargs
+        with self.assertRaises(ValidationError) as ctx:
+            BridgeTask(
+                id="T1",
+                title="t",
+                owner="Codex",
+                reviewer="Claude",
+                target_repo="pantheon",
+                targetRepo="execute-plans",
+            )
+        self.assertIn("Conflicting values for 'target_repo'", str(ctx.exception))
+
+        # Conflicting depends_on and dependsOn
+        with self.assertRaises(ValidationError) as ctx:
+            BridgeTask.model_validate(
+                {
+                    "id": "T1",
+                    "title": "t",
+                    "owner": "Codex",
+                    "reviewer": "Claude",
+                    "target_repo": "pantheon",
+                    "depends_on": ["DEP-1"],
+                    "dependsOn": ["DEP-2"],
+                }
+            )
+        self.assertIn("Conflicting values for 'depends_on'", str(ctx.exception))
+
+        # Matching target_repo and targetRepo normalizes without duplicate in model_extra
+        task = BridgeTask.model_validate(
+            {
+                "id": "T1",
+                "title": "t",
+                "owner": "Codex",
+                "reviewer": "Claude",
+                "target_repo": "pantheon",
+                "targetRepo": "pantheon",
+            }
+        )
+        self.assertEqual(task.target_repo, "pantheon")
+        self.assertEqual(task.model_extra, {})
+
+        # Matching with whitespace normalizes cleanly
+        task_ws = BridgeTask.model_validate(
+            {
+                "id": "T1",
+                "title": "t",
+                "owner": "Codex",
+                "reviewer": "Claude",
+                "target_repo": "pantheon",
+                "targetRepo": " pantheon ",
+            }
+        )
+        self.assertEqual(task_ws.target_repo, "pantheon")
+        self.assertEqual(task_ws.model_extra, {})
+
     def test_bridge_task_depends_on_defaults_empty(self):
         task = BridgeTask(
             id="T1", title="t", owner="Codex", reviewer="Claude", target_repo="pantheon"

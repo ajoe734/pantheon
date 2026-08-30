@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 # Sixteen tasks keep the worst-case governed assign + per-task authoritative
@@ -28,6 +28,36 @@ except ImportError:
 
 class BridgeBaseModel(BaseModel):
     model_config = ConfigDict(extra="allow", populate_by_name=True)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_and_reject_conflicting_aliases(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+        data = dict(data)
+        for field_name, field_info in cls.model_fields.items():
+            alias = field_info.alias
+            if alias and alias != field_name and field_name in data and alias in data:
+                val_field = data[field_name]
+                val_alias = data[alias]
+                cmp_field = val_field
+                cmp_alias = val_alias
+                if isinstance(val_field, str) and isinstance(val_alias, str):
+                    cmp_field = val_field.strip()
+                    cmp_alias = val_alias.strip()
+                elif field_name == "execution_resources":
+                    try:
+                        cmp_field = normalize_execution_resources(val_field)
+                        cmp_alias = normalize_execution_resources(val_alias)
+                    except Exception:
+                        pass
+                if cmp_field != cmp_alias:
+                    raise ValueError(
+                        f"Conflicting values for '{field_name}' ({val_field!r}) and alias '{alias}' ({val_alias!r})"
+                    )
+                data[field_name] = cmp_field
+                del data[alias]
+        return data
 
 
 # ---------------------------------------------------------------------------

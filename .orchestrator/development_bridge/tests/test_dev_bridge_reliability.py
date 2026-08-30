@@ -2536,3 +2536,30 @@ def test_authoritative_dispatch_rejects_conflicting_artifact_scope_atomic_rollba
     assert "CONFLICT-VALID-001" not in state_task_ids
     assert "CONFLICT-INVALID-002" not in state_task_ids
 
+
+def test_dispatcher_rejects_conflicting_task_target_repo_alias_keys_before_mutation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    status_root, event_log, _ = _authoritative_status_root(tmp_path)
+    for marker in dev_bridge_dispatcher.AUTO_WORKER_ENV_NAMES:
+        monkeypatch.delenv(marker, raising=False)
+
+    initial_event_count = AI_STATUS.load_snapshot(event_log)["event_count"]
+    from pydantic import ValidationError
+    with pytest.raises(ValidationError) as exc_info:
+        BridgeTask.model_validate(
+            {
+                "id": "CONFLICT-ALIAS-001",
+                "title": "Conflicting alias task",
+                "owner": "Codex",
+                "reviewer": "Claude",
+                "target_repo": "pantheon",
+                "targetRepo": "execute-plans",
+                "phase": "Sprint / Dev bridge",
+                "artifacts": [".orchestrator/dev_bridge.py"],
+                "acceptance": ["Conflict alias task"],
+            }
+        )
+    assert "Conflicting values for 'target_repo'" in str(exc_info.value)
+    assert AI_STATUS.load_snapshot(event_log)["event_count"] == initial_event_count
