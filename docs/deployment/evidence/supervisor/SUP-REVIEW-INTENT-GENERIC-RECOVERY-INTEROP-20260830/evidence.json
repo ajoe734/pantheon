@@ -1,0 +1,46 @@
+{
+  "task_id": "SUP-REVIEW-INTENT-GENERIC-RECOVERY-INTEROP-20260830",
+  "recorded_at": "2026-08-30T12:45:00Z",
+  "ai_name": "Antigravity2",
+  "incumbent_head": "d5c312ef0a4139329d66bda13c7e487248602ed7",
+  "root_cause_analysis": {
+    "observed_failure": "review_decision_intent_generic_lost_lease_collision",
+    "observed_reason": "Sequence 9611 committed a two-phase review decision intent (reopen) for FULL-OPERATION-GAP-SA-SD-PLAN-FREEZE-20260830 with frozen task digest 48ffd87da25cb7a1f0c98ec1dff8ead8154db045af42caf2f5bef17c6e640442 and generation 12. Sequence 9612 occurred when supervisor generic worker lost-lease detection (source=supervisor-worker-lost-lease) ran _persist_worker_recovery_receipt_locked, bumping generation 12->13, updating last_update, overwriting next with generic lost-lease text, and attaching worker_recovery pointer to the task row. This mutation altered review_decision_task_digest(task) from 48ffd87d... to 8a0c20df..., causing all subsequent attempts by Codex2 to replay the reopen intent via ai_status.py to fail closed with CAS mismatch.",
+    "findings": [
+      "Generic worker lost-lease recovery (_persist_worker_recovery_receipt_locked and recover_lost_worker_lease) lacked an interlock checking task.get(\"review_decision_intent\"), allowing generic worker recovery to overwrite task generation, next, and last_update while a review decision intent was pending.",
+      "Review decision intent has its own typed recovery receipt (review_decision_intent_recovery) which fences generic workers and preserves the frozen task digest, but legacy collisions created before this interlock were left with mismatched digests.",
+      "Authoritative TaskStore journal history (task-state-events-v2.jsonl) retains the exact uncorrupted prior state at Sequence 9611 with exact matching digest 48ffd87d...",
+      "Automatic migration of legacy collisions from journal history can safely restore the exact prior task row (recovering generation, last_update, next, and removing worker_recovery pointer) while resolving the generic lost-lease receipt in worker_recovery_receipts as immutable history, without manual JSON editing."
+    ]
+  },
+  "remediation": {
+    "generic_lost_lease_guard": ".orchestrator/supervisor.py adds guards across generic lost-lease paths (_persist_worker_recovery_receipt_locked, recover_lost_worker_lease, _persist_approved_worker_recovery_binding_locked, _resolve_obsolete_worker_recovery_receipt_locked, _persist_task_reassignment_locked, _mark_worker_recovery_materialized_locked, _rearm_worker_recovery_receipt_locked, attempt_worker_recovery_reassignment, reconcile_pending_worker_recoveries) ensuring tasks with pending review_decision_intent never have their generation bumped, next/last_update overwritten, or worker_recovery pointers attached.",
+    "journal_lookup_utility": ".orchestrator/rewrite/task_state_store.py implements find_exact_prior_task_state_from_journal(event_path, task_id, expected_digest) and review_decision_task_digest(task) to scan authoritative journal deltas for unambiguous matching historical states.",
+    "legacy_collision_reconciliation": ".orchestrator/supervisor.py implements reconcile_legacy_review_decision_intent_collision and _migrate_legacy_review_intent_collision_locked in reconcile_review_decision_intent_lease_recovery(). When a task's digest does not match its frozen intent digest, it queries the authoritative journal for the unique prior task state matching expected_digest, restores the prior business state under canonical task-state lock, marks any associated generic lost-lease receipt as resolved immutable history, and writes the state commit.",
+    "fail_closed_guarantees": "If journal lookup finds 0 matches or ambiguous conflicting matching states, migration fails closed without modifying task state.",
+    "exact_intent_replay": "Once the digest matches the frozen intent, reconcile_review_decision_intent_lease_recovery mints the typed review_decision_intent_recovery receipt, dispatching only the exact original reserving actor (Codex2) to replay the review decision, cleanly transitioning the task to in_progress and clearing intent/recovery markers upon finalize."
+  },
+  "safety_properties": {
+    "immutable_journal_provenance": "Legacy task state restoration requires unambiguous historical proof from the cryptographic JSONL event log; no synthesized or inferred states are accepted.",
+    "generic_receipt_retention": "Colliding generic lost-lease receipts in worker_recovery_receipts are marked resolved rather than deleted, preserving full audit history.",
+    "no_hand_edited_json": "All migrations execute through the authoritative TaskStore append_state_commit and supervisor write_status pipeline under exclusive file locks.",
+    "fail_closed_on_ambiguity": "Any mismatch or ambiguous journal evidence aborts migration without task mutation."
+  },
+  "verification": {
+    "test_suites": [
+      ".orchestrator/rewrite/test_task_state_store.py",
+      ".orchestrator/test_supervisor.py",
+      "scripts/test_ai_status.py"
+    ],
+    "new_tests": [
+      "test_find_exact_prior_task_state_from_journal_exact_match",
+      "test_find_exact_prior_task_state_from_journal_missing_or_mismatched_fails_closed",
+      "test_find_exact_prior_task_state_from_journal_ambiguous_fails_closed",
+      "ReviewDecisionIntentLeaseRecoveryTests.test_generic_lost_lease_does_not_mutate_task_with_pending_review_intent",
+      "ReviewDecisionIntentLeaseRecoveryTests.test_reconcile_migrates_legacy_collision_from_journal_and_replays_intent",
+      "ReviewDecisionIntentLeaseRecoveryTests.test_legacy_collision_fails_closed_when_journal_is_missing_or_mismatched"
+    ],
+    "regression_reproduction": "test_reconcile_migrates_legacy_collision_from_journal_and_replays_intent reproduces sequence 9611 -> 9612 and proves that reconcile restores the task row, marks the generic receipt as resolved, mints the review recovery receipt, dispatches Codex2, and successfully replays reopen to return the task to Antigravity2 in in_progress status.",
+    "status": "PASS"
+  }
+}

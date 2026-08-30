@@ -351,3 +351,79 @@ def test_verify_projection_reports_current_head_parity(tmp_path: Path) -> None:
     assert report["event_count"] == 1
     assert report["replayed_tail_events"] == 0
     assert report["nonterminal_task_count"] == 1
+
+
+def test_find_exact_prior_task_state_from_journal_exact_match(tmp_path: Path) -> None:
+    path = tmp_path / "events.jsonl"
+    s1 = state("todo", note="seed")
+    store.append_state_commit(path, s1, source="test-seed")
+
+    s2 = state("review", note="prior")
+    s2["tasks"][0]["generation"] = 5
+    s2["tasks"][0]["next"] = "REVIEW_PR=123"
+    digest = store.review_decision_task_digest(s2["tasks"][0])
+    s2["tasks"][0]["review_decision_intent"] = {
+        "nonce": "n1",
+        "task_digest": digest,
+    }
+    store.append_state_commit(path, s2, source="test-intent")
+
+    # Later corrupted state
+    s3 = copy.deepcopy(s2)
+    s3["tasks"][0]["generation"] = 6
+    s3["tasks"][0]["next"] = "corrupted next"
+    s3["tasks"][0]["worker_recovery"] = {"receipt_id": "r1"}
+    store.append_state_commit(path, s3, source="test-lost-lease")
+
+    prior = store.find_exact_prior_task_state_from_journal(path, "T1", digest)
+    assert prior is not None
+    assert prior["id"] == "T1"
+    assert prior["generation"] == 5
+    assert prior["next"] == "REVIEW_PR=123"
+    assert "worker_recovery" not in prior
+    assert store.review_decision_task_digest(prior) == digest
+
+
+def test_find_exact_prior_task_state_from_journal_missing_or_mismatched_fails_closed(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "events.jsonl"
+    s1 = state("todo")
+    store.append_state_commit(path, s1, source="test-seed")
+
+    # Mismatched digest lookup
+    result = store.find_exact_prior_task_state_from_journal(path, "T1", "0" * 64)
+    assert result is None
+
+    # Missing task lookup
+    result = store.find_exact_prior_task_state_from_journal(path, "NONEXISTENT", "0" * 64)
+    assert result is None
+
+    # Missing journal file
+    result = store.find_exact_prior_task_state_from_journal(
+        tmp_path / "does_not_exist.jsonl", "T1", "0" * 64
+    )
+    assert result is None
+
+
+def test_find_exact_prior_task_state_from_journal_ambiguous_fails_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "events.jsonl"
+    s1 = state("todo", note="seed")
+    store.append_state_commit(path, s1, source="test-seed")
+
+    s2 = state("review", note="prior")
+    s2["tasks"][0]["generation"] = 5
+    store.append_state_commit(path, s2, source="test-1")
+
+    s3 = state("review", note="different")
+    s3["tasks"][0]["generation"] = 6
+    store.append_state_commit(path, s3, source="test-2")
+
+    # When digest function returns the same digest for two distinct business states,
+    # find_exact_prior_task_state_from_journal must detect ambiguity and return None.
+    monkeypatch.setattr(store, "review_decision_task_digest", lambda task: "colliding-digest")
+    assert store.find_exact_prior_task_state_from_journal(path, "T1", "colliding-digest") is None
+
+
