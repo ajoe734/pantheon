@@ -1,0 +1,94 @@
+{
+  "schema_version": "pantheon.supervisor-evidence.v1",
+  "task_id": "OPGAP-DEVTOOL-TARGET-REPO-BRIDGE-V2-20260830",
+  "title": "Deliver signed target_repo bridge persistence with review evidence",
+  "program_id": "PANTHEON-FULL-OPERATION-GAP-CLOSURE-20260830",
+  "design_unit": "SD-OPGAP-DEVTOOL-TARGET-REPO-BRIDGE",
+  "recorded_at": "2026-08-30T19:45:00Z",
+  "ai_name": "Antigravity",
+  "owner": "Antigravity",
+  "reviewer": "Codex",
+  "target_repo": "pantheon",
+  "task_class": "development_tooling",
+  "summary_zh": "承接 PR #5450 已驗證的 target_repo bridge 修復，補齊 exact-head evidence 後正式 review/merge；V1 僅保留為 catalog dependency anchor。",
+  "adopt_from": {
+    "pr": 5450,
+    "head_sha": "66009ff2059ec5ae800e77b72039ec62dcfa85af"
+  },
+  "artifacts": [
+    ".orchestrator/development_bridge/dev_bridge_dispatcher.py",
+    ".orchestrator/development_bridge/dev_bridge_materialize.py",
+    ".orchestrator/development_bridge/dev_bridge_models.py",
+    ".orchestrator/development_bridge/tests/dev_bridge_test_support.py",
+    ".orchestrator/development_bridge/tests/test_dev_bridge.py",
+    ".orchestrator/development_bridge/tests/test_dev_bridge_dispatch_cli.py",
+    ".orchestrator/development_bridge/tests/test_dev_bridge_inbox.py",
+    ".orchestrator/development_bridge/tests/test_dev_bridge_inbox_cli.py",
+    ".orchestrator/development_bridge/tests/test_dev_bridge_reliability.py",
+    "scripts/ai_status.py",
+    "scripts/test_ai_status.py",
+    "docs/deployment/evidence/supervisor/OPGAP-DEVTOOL-TARGET-REPO-BRIDGE-V2-20260830/evidence.json",
+    "docs/deployment/evidence/supervisor/OPGAP-DEVTOOL-TARGET-REPO-BRIDGE-V2-20260830/evidence.sha256"
+  ],
+  "scope": {
+    "owned": [
+      ".orchestrator/development_bridge/dev_bridge_dispatcher.py",
+      ".orchestrator/development_bridge/dev_bridge_materialize.py",
+      ".orchestrator/development_bridge/dev_bridge_models.py",
+      ".orchestrator/development_bridge/tests/dev_bridge_test_support.py",
+      ".orchestrator/development_bridge/tests/test_dev_bridge.py",
+      ".orchestrator/development_bridge/tests/test_dev_bridge_dispatch_cli.py",
+      ".orchestrator/development_bridge/tests/test_dev_bridge_inbox.py",
+      ".orchestrator/development_bridge/tests/test_dev_bridge_inbox_cli.py",
+      ".orchestrator/development_bridge/tests/test_dev_bridge_reliability.py",
+      "scripts/ai_status.py",
+      "scripts/test_ai_status.py",
+      "docs/deployment/evidence/supervisor/OPGAP-DEVTOOL-TARGET-REPO-BRIDGE-V2-20260830/evidence.json",
+      "docs/deployment/evidence/supervisor/OPGAP-DEVTOOL-TARGET-REPO-BRIDGE-V2-20260830/evidence.sha256"
+    ],
+    "not_changing": [
+      "services/control-plane/bff",
+      "services/source_ingestion",
+      "services/telemetry",
+      "execute-plans product runtime"
+    ],
+    "composes_with": [
+      "OPGAP-DEVTOOL-TARGET-REPO-BRIDGE-20260830 (catalog dependency anchor)",
+      "FULL-OPERATION-GAP-SA-SD-PLAN-FREEZE-20260830"
+    ]
+  },
+  "contracts": {
+    "bridge_task_target_repo_required": "BridgeTask requires target_repo field and includes it in signed task_spec_hash calculation.",
+    "alias_conflict_rejection_and_normalization": "BridgeTask model validation normalizes identical alias keys without extra model pollution and rejects conflicting target_repo / targetRepo alias values before signed hashing or state mutation.",
+    "canonical_materialization_persistence": "Canonical dev-bridge batch materialization persists target_repo in ai-status task state and task state store events.",
+    "readback_immutable_matching": "Authoritative readback validates exact immutable target_repo matching between canonical task state and signed task_spec for both pantheon and execute-plans repositories.",
+    "pre_mutation_scope_validation": "Batch materialization rejects unknown repository scopes, ambiguous multi-repository values (e.g. 'pantheon+execute-plans'), and conflicting artifact prefixes (e.g. target_repo 'pantheon' with 'execute-plans/...' artifacts) before any canonical state mutation or journal event emission."
+  },
+  "verification": {
+    "test_suites": [
+      ".orchestrator/development_bridge/tests/test_dev_bridge.py",
+      ".orchestrator/development_bridge/tests/test_dev_bridge_dispatch_cli.py",
+      ".orchestrator/development_bridge/tests/test_dev_bridge_inbox.py",
+      ".orchestrator/development_bridge/tests/test_dev_bridge_inbox_cli.py",
+      ".orchestrator/development_bridge/tests/test_dev_bridge_reliability.py",
+      "scripts/test_ai_status.py"
+    ],
+    "verification_commands": [
+      "PYTHONPATH=.orchestrator .venv-pantheon/bin/python3 -m pytest -q .orchestrator/development_bridge/tests/",
+      ".venv-pantheon/bin/python3 -m unittest -v scripts.test_ai_status.DevBridgeMaterializeBatchTests"
+    ],
+    "status": "PASS"
+  },
+  "review": {
+    "status": "ready_for_independent_review",
+    "reviewer": "Codex",
+    "required_checks": [
+      "verify BridgeTask requires target_repo and includes it in task_spec_hash",
+      "verify canonical materialization persists target_repo on task state and events",
+      "verify readback validates immutable target_repo matching for pantheon and execute-plans",
+      "verify unknown, mixed, or artifact-conflicting repository scopes fail before canonical mutation",
+      "verify all development bridge and ai_status test suites pass",
+      "bind this manifest path (docs/deployment/evidence/supervisor/OPGAP-DEVTOOL-TARGET-REPO-BRIDGE-V2-20260830/evidence.json) in the canonical approve command"
+    ]
+  }
+}

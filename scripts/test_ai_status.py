@@ -2167,6 +2167,35 @@ class DevBridgeMaterializeBatchTests(unittest.TestCase):
         self.assertIsNone(ai_status.get_task(state, "BATCH-VALID-ROW-1"))
         self.assertIsNone(ai_status.get_task(state, "BATCH-INVALID-ROW-2"))
 
+    def test_batch_rejects_conflicting_target_repo_alias_keys_without_canonical_mutation(self) -> None:
+        packet_id = "pkt-batch-conflict-aliases-20260830T000000Z"
+        row = self._task_row(
+            "BATCH-CONFLICT-ALIASES",
+            packet_id=packet_id,
+            target_repo="pantheon",
+        )
+        payload = self._payload_path([row], packet_id=packet_id, packet_digest="0" * 64)
+        raw = json.loads(payload.read_text(encoding="utf-8"))
+        raw["signed_packet"]["tasks"][0]["target_repo"] = "pantheon"
+        raw["signed_packet"]["tasks"][0]["targetRepo"] = "execute-plans"
+        body = deepcopy(raw["signed_packet"])
+        body.pop("signature")
+        canonical = json.dumps(body, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode()
+        digest = hashlib.sha256(canonical).hexdigest()
+        raw["packet_digest"] = digest
+        raw["signed_packet"]["signature"]["value"] = base64.urlsafe_b64encode(
+            self.bridge_private_key.sign(canonical)
+        ).decode().rstrip("=")
+        raw["tasks"][0]["task_metadata"]["dev_bridge"]["packet_digest"] = digest
+        payload.write_text(json.dumps(raw), encoding="utf-8")
+
+        with self.assertRaisesRegex(SystemExit, "conflicting target_repo and targetRepo"):
+            self._run_main(payload)
+
+        self.assertEqual(len(load_events(self.journal)), 1)
+        state = ai_status.load_state()
+        self.assertIsNone(ai_status.get_task(state, "BATCH-CONFLICT-ALIASES"))
+
     def test_human_ops_reassignment_is_not_blocked_by_retired_wave_state(self) -> None:
         state = {
             "agents": [

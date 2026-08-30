@@ -329,6 +329,11 @@ def verify_signed_dev_bridge_packet(
                 raise SystemExit(
                     f"Dev bridge signed packet task {index} {field} binding failed"
                 )
+        if "target_repo" in packet_task and "targetRepo" in packet_task:
+            if str(packet_task.get("target_repo") or "").strip() != str(packet_task.get("targetRepo") or "").strip():
+                raise SystemExit(
+                    f"Dev bridge signed packet task {index} has conflicting target_repo and targetRepo"
+                )
         packet_task_repo = str(packet_task.get("target_repo") or packet_task.get("targetRepo") or "").strip()
         spec_repo = str(
             ((row.get("task_metadata") or {}).get("dev_bridge") or {})
