@@ -79,6 +79,7 @@ except ImportError:
         )
     except Exception:
         class ErrorCode(str, Enum):  # type: ignore[no-redef]
+            AUTH_REQUIRED = "AUTH_REQUIRED"
             RESOURCE_NOT_FOUND = "RESOURCE_NOT_FOUND"
             VALIDATION_FAILED = "VALIDATION_FAILED"
             DEPENDENCY_UNAVAILABLE = "DEPENDENCY_UNAVAILABLE"
@@ -98,24 +99,24 @@ except ImportError:
             COMPLETED = "COMPLETED"
             REJECTED = "REJECTED"
 
-        class ObjectType(str, Enum):  # type: ignore[no-redef]
-            TOOL = "Tool"
-            MCP_SERVER = "McpServer"
-            SKILL = "Skill"
-
         class CommandType(str, Enum):  # type: ignore[no-redef]
-            TOOL_ACTION = "ToolAction"
-            MCP_SERVER_ACTION = "McpServerAction"
-            SKILL_ACTION = "SkillAction"
+            TOOL_ACTION = "TOOL_ACTION"
+            MCP_SERVER_ACTION = "MCP_SERVER_ACTION"
+            MCP_TOOL_ACTION = "MCP_TOOL_ACTION"
+            SKILL_ACTION = "SKILL_ACTION"
+
+        class ObjectType(str, Enum):  # type: ignore[no-redef]
+            TOOL = "TOOL"
+            MCP_SERVER = "MCP_SERVER"
+            MCP_TOOL = "MCP_TOOL"
+            SKILL = "SKILL"
+            CHANNEL = "CHANNEL"
 
         class McpToolClass(str, Enum):  # type: ignore[no-redef]
-            research = "research"
-            status = "status"
-            monitoring = "monitoring"
-            execution_signal = "execution_signal"
-            governance = "governance"
-            deployment = "deployment"
-            lean_direct = "lean_direct"
+            GENERIC = "generic"
+            RESEARCH = "research"
+            STATUS = "status"
+            LEAN_DIRECT = "lean_direct"
 
         class McpToolActionVerb(str, Enum):  # type: ignore[no-redef]
             GRANT = "grant"
@@ -125,8 +126,7 @@ except ImportError:
 
         class McpToolLifecycleStatus(str, Enum):  # type: ignore[no-redef]
             IMPORTED = "imported"
-            GRANTED = "granted"
-            REVOKED = "revoked"
+            ENABLED = "enabled"
             DISABLED = "disabled"
             TESTED = "tested"
 
@@ -158,11 +158,30 @@ except ImportError:
             def list_live_gate_audit(self, **kwargs: Any) -> Dict[str, Any]:
                 return {"items": [], "total": 0}
 
-            def create_session(self, **kwargs: Any) -> Dict[str, Any]:
-                return {"session_id": f"session-{uuid.uuid4().hex[:8]}", "status": "created"}
+            def create_session(
+                self,
+                *,
+                agent_id: str,
+                session_type: str,
+                operator_id: str,
+                idempotency_key: str,
+                context_bundle: Optional[Dict[str, Any]] = None,
+            ) -> Dict[str, Any]:
+                return {
+                    "session_id": f"session-{uuid.uuid4().hex[:8]}",
+                    "status": "created",
+                    "agent_id": agent_id,
+                    "session_type": session_type,
+                }
 
-            def cancel_session(self, **kwargs: Any) -> Dict[str, Any]:
-                return {"session_id": kwargs.get("session_id"), "status": "canceled"}
+            def cancel_session(
+                self,
+                *,
+                session_id: str,
+                operator_id: str,
+                idempotency_key: str,
+            ) -> Dict[str, Any]:
+                return {"session_id": session_id, "status": "canceled"}
 
 log = logging.getLogger(__name__)
 

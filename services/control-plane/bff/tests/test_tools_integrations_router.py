@@ -17,7 +17,7 @@ if BFF_DIR not in sys.path:
     sys.path.insert(0, BFF_DIR)
 
 from integrations.router import create_integrations_router, router
-from integrations.service import IntegrationsService
+from integrations.service import IntegrationsService, default_bff_error
 
 TASK_REVIEW_MANIFEST = {
     "task_id": "OPGAP-BE-TOOLS-INTEGRATIONS-V2-20260830",
@@ -70,26 +70,31 @@ class FakeOpenClawClient:
 
     def create_session(
         self,
+        *,
         agent_id: str,
+        session_type: str,
         operator_id: str,
         idempotency_key: str,
-        tools_mode: str = "read_only",
-        metadata: Optional[Dict[str, Any]] = None,
+        context_bundle: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         session_id = f"openclaw-sess-{idempotency_key[:8]}"
         session = {
             "session_id": session_id,
             "agent_id": agent_id,
+            "session_type": session_type,
             "operator_id": operator_id,
-            "tools_mode": tools_mode,
-            "metadata": metadata or {},
+            "context_bundle": context_bundle or {},
             "status": "created",
         }
         self.sessions[session_id] = session
         return {"session": session, "status": "created", "replayed": False}
 
     def cancel_session(
-        self, session_id: str, operator_id: str, idempotency_key: str
+        self,
+        *,
+        session_id: str,
+        operator_id: str,
+        idempotency_key: str,
     ) -> Dict[str, Any]:
         self.canceled_sessions.append(session_id)
         return {
@@ -176,13 +181,25 @@ def _extract_identity(authorization: Optional[str]) -> Any:
             self.id = op_id
             self.roles = roles
 
-    if not authorization:
-        return Identity("operator-1", ["operator", "viewer", "admin"])
+    if not authorization or not authorization.startswith("Bearer "):
+        raise default_bff_error(
+            status_code=401,
+            code="AUTH_REQUIRED",
+            message="Missing or invalid Authorization header",
+            reason="Token is absent or not a Bearer token",
+        )
     token = authorization.replace("Bearer ", "").strip()
+    if not token:
+        raise default_bff_error(
+            status_code=401,
+            code="AUTH_REQUIRED",
+            message="Missing or invalid Authorization header",
+            reason="Token is absent or not a Bearer token",
+        )
     if ":" in token:
         parts = token.split(":", 1)
         return Identity(parts[0], [r.strip() for r in parts[1].split(",")])
-    return Identity("operator-1", ["operator", "viewer", "admin"])
+    return Identity(token, ["operator", "viewer", "admin"])
 
 
 def test_zero_reverse_imports():
@@ -234,8 +251,8 @@ def test_openclaw_session_create_and_cancel(client: TestClient):
     headers = {**OPERATOR_HEADERS, "X-Idempotency-Key": "idem-openclaw-001"}
     create_payload = {
         "agent_id": "assistant-trader",
-        "tools_mode": "read_only",
-        "metadata": {"source": "test"},
+        "session_type": "agora_servant",
+        "context_bundle": {"source": "test"},
     }
     resp = client.post(
         "/api/v1/operator/openclaw/sessions", json=create_payload, headers=headers
@@ -245,6 +262,7 @@ def test_openclaw_session_create_and_cancel(client: TestClient):
     assert res_data["data"]["command"] == "OpenClawCreateSession"
     assert res_data["data"]["status"] == "accepted"
     session_id = res_data["data"]["session"]["session_id"]
+    assert res_data["data"]["session"]["session_type"] == "agora_servant"
 
     # Cancel session
     cancel_headers = {**OPERATOR_HEADERS, "X-Idempotency-Key": "idem-openclaw-cancel-001"}
@@ -661,3 +679,105 @@ def test_tools_skills_channels_404(client: TestClient):
     # Channel 404
     resp_chan = client.get("/bff/channels/non-existent-channel", headers=OPERATOR_HEADERS)
     assert resp_chan.status_code == 404
+
+
+def test_openclaw_session_validation_failures(client: TestClient):
+    headers = {**OPERATOR_HEADERS, "X-Idempotency-Key": "idem-val-fail-001"}
+
+    # Missing agent_id
+    resp1 = client.post(
+        "/api/v1/operator/openclaw/sessions",
+        json={"session_type": "agora_servant"},
+        headers=headers,
+    )
+    assert resp1.status_code == 422
+    assert resp1.json()["detail"]["error"]["code"] == "VALIDATION_FAILED"
+
+    # Missing session_type
+    resp2 = client.post(
+        "/api/v1/operator/openclaw/sessions",
+        json={"agent_id": "assistant-1"},
+        headers=headers,
+    )
+    assert resp2.status_code == 422
+    assert resp2.json()["detail"]["error"]["code"] == "VALIDATION_FAILED"
+
+    # Invalid context_bundle (not a dict)
+    resp3 = client.post(
+        "/api/v1/operator/openclaw/sessions",
+        json={
+            "agent_id": "assistant-1",
+            "session_type": "agora_servant",
+            "context_bundle": "invalid_string_not_dict",
+        },
+        headers=headers,
+    )
+    assert resp3.status_code == 422
+    assert resp3.json()["detail"]["error"]["code"] == "VALIDATION_FAILED"
+
+
+def test_openclaw_production_client_signature_contract():
+    import inspect
+    from openclaw_ops_client import OpenClawOpsClient
+
+    sig_create = inspect.signature(OpenClawOpsClient.create_session)
+    create_params = list(sig_create.parameters.keys())
+    assert "agent_id" in create_params
+    assert "session_type" in create_params
+    assert "operator_id" in create_params
+    assert "idempotency_key" in create_params
+    assert "context_bundle" in create_params
+
+    sig_cancel = inspect.signature(OpenClawOpsClient.cancel_session)
+    cancel_params = list(sig_cancel.parameters.keys())
+    assert "session_id" in cancel_params
+    assert "operator_id" in cancel_params
+    assert "idempotency_key" in cancel_params
+
+
+def test_standalone_exported_router_unauthenticated_and_rbac():
+    """Verify that standalone create_integrations_router() and exported router enforce 401 on unauthenticated requests."""
+    standalone_app = FastAPI()
+    standalone_app.include_router(router)
+    standalone_client = TestClient(standalone_app)
+
+    # 1. Unauthenticated requests should receive 401 AUTH_REQUIRED
+    unauth_endpoints = [
+        ("GET", "/bff/tools"),
+        ("GET", "/bff/skills"),
+        ("GET", "/bff/mcp-servers"),
+        ("GET", "/bff/mcp-tools"),
+        ("GET", "/bff/channels"),
+        ("GET", "/api/v1/operator/openclaw/ops"),
+        ("GET", "/api/v1/operator/openclaw/live-gate/status"),
+        ("POST", "/api/v1/operator/openclaw/sessions"),
+        ("POST", "/bff/tools"),
+        ("POST", "/bff/skills"),
+    ]
+    for method, path in unauth_endpoints:
+        if method == "GET":
+            resp = standalone_client.get(path)
+        else:
+            resp = standalone_client.post(path, json={"name": "test"})
+        assert resp.status_code == 401, f"{method} {path} returned {resp.status_code} instead of 401"
+        data = resp.json()
+        assert data["detail"]["error"]["code"] == "AUTH_REQUIRED"
+
+    # 2. Invalid authorization token should receive 401
+    inv_resp = standalone_client.get("/bff/tools", headers={"Authorization": "InvalidFormatToken"})
+    assert inv_resp.status_code == 401
+    assert inv_resp.json()["detail"]["error"]["code"] == "AUTH_REQUIRED"
+
+    # 3. Viewer token on OpenClaw session write should receive 403 FORBIDDEN
+    viewer_headers = {"Authorization": "Bearer viewer-only:viewer", "X-Idempotency-Key": "key-1"}
+    forb_resp = standalone_client.post(
+        "/api/v1/operator/openclaw/sessions",
+        json={"agent_id": "ag-1", "session_type": "agora_servant"},
+        headers=viewer_headers,
+    )
+    assert forb_resp.status_code == 403
+    assert forb_resp.json()["detail"]["error"]["code"] == "FORBIDDEN"
+
+    # 4. Valid viewer token on read route should succeed (200)
+    ok_resp = standalone_client.get("/bff/tools", headers=viewer_headers)
+    assert ok_resp.status_code == 200

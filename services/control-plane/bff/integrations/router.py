@@ -59,7 +59,18 @@ except ImportError:
             utc_now,
         )
     except Exception:
-        pass
+        from enum import Enum
+
+        class ErrorCode(str, Enum):  # type: ignore[no-redef]
+            AUTH_REQUIRED = "AUTH_REQUIRED"
+            RESOURCE_NOT_FOUND = "RESOURCE_NOT_FOUND"
+            VALIDATION_FAILED = "VALIDATION_FAILED"
+            DEPENDENCY_UNAVAILABLE = "DEPENDENCY_UNAVAILABLE"
+            IDEMPOTENCY_CONFLICT = "IDEMPOTENCY_CONFLICT"
+            FORBIDDEN = "FORBIDDEN"
+            PRECONDITION_FAILED = "PRECONDITION_FAILED"
+            OPERATION_NOT_ALLOWED = "OPERATION_NOT_ALLOWED"
+            INTERNAL_ERROR = "INTERNAL_ERROR"
 
 try:
     from openclaw_ops_client import OpenClawOpsClient, OpenClawOpsClientError
@@ -87,15 +98,62 @@ PageSlice = Callable[[Sequence[Any], Optional[str], int], Tuple[List[Any], Optio
 
 
 def _default_extract_identity(authorization: Optional[str] = None) -> Any:
+    if not authorization or not authorization.startswith("Bearer "):
+        raise default_bff_error(
+            status_code=401,
+            code=ErrorCode.AUTH_REQUIRED,
+            message="Missing or invalid Authorization header",
+            reason="Token is absent or not a Bearer token",
+            suggestion="Re-authenticate and include a valid Bearer token",
+        )
+    token = authorization[len("Bearer "):].strip()
+    if not token:
+        raise default_bff_error(
+            status_code=401,
+            code=ErrorCode.AUTH_REQUIRED,
+            message="Missing or invalid Authorization header",
+            reason="Token is absent or not a Bearer token",
+            suggestion="Re-authenticate and include a valid Bearer token",
+        )
+
     class Identity:
-        operator_id = "operator-1"
-        roles = {"operator", "viewer", "reviewer", "approver", "admin"}
+        def __init__(self, op_id: str, roles: Set[str]) -> None:
+            self.operator_id = op_id
+            self.id = op_id
+            self.roles = roles
 
-    return Identity()
+    if ":" in token:
+        parts = token.split(":", 1)
+        return Identity(parts[0], {r.strip() for r in parts[1].split(",") if r.strip()})
+    return Identity(token, {"operator", "viewer", "reviewer", "approver", "admin"})
 
 
-def _default_require_role(identity: Any) -> None:
-    return None
+def _default_require_read_role(identity: Any) -> None:
+    roles = set(getattr(identity, "roles", []) or [])
+    read_roles = {"viewer", "view_only", "operator", "approver", "admin", "reviewer"}
+    if not read_roles.intersection(roles):
+        raise default_bff_error(
+            status_code=403,
+            code=ErrorCode.FORBIDDEN,
+            message="Read access requires viewer-level role",
+            reason="Operator does not hold the required role",
+            precondition_failed="role_check",
+            suggestion="Escalate to a user with viewer, operator, approver, admin, or reviewer role",
+        )
+
+
+def _default_require_operator_role(identity: Any) -> None:
+    roles = set(getattr(identity, "roles", []) or [])
+    write_roles = {"operator", "approver", "admin", "reviewer"}
+    if not write_roles.intersection(roles):
+        raise default_bff_error(
+            status_code=403,
+            code=ErrorCode.FORBIDDEN,
+            message="Operator command access requires operator-level role",
+            reason="Operator does not hold the required command role",
+            precondition_failed="role_check",
+            suggestion="Escalate to a user with operator, approver, admin, or reviewer role",
+        )
 
 
 def _default_snapshot_meta(snapshot_at: str) -> Dict[str, Any]:
@@ -142,8 +200,8 @@ def create_integrations_router(
 
     router = APIRouter()
     _extract = extract_identity or _default_extract_identity
-    _require_read = require_read_role or _default_require_role
-    _require_operator = require_operator_role or _default_require_role
+    _require_read = require_read_role or _default_require_read_role
+    _require_operator = require_operator_role or _default_require_operator_role
     _err = bff_error or default_bff_error
     _now = utc_now_fn or utc_now_rfc3339
     _page = page_slice_fn or page_slice
@@ -162,8 +220,12 @@ def create_integrations_router(
             submit_command_fn=submit_command,
         )
 
-    _require_openclaw = require_openclaw_command_role or resolved_service.require_openclaw_command_role
-    _require_mcp_write = require_mcp_tool_write_role or resolved_service.require_mcp_tool_write_role
+    _require_openclaw = require_openclaw_command_role or (
+        resolved_service.require_openclaw_command_role if resolved_service else _default_require_operator_role
+    )
+    _require_mcp_write = require_mcp_tool_write_role or (
+        resolved_service.require_mcp_tool_write_role if resolved_service else _default_require_operator_role
+    )
 
     # ========================================================================
     # 1. OpenClaw Operator Surfaces (7 handlers, 8 decorators)
@@ -238,15 +300,36 @@ def create_integrations_router(
         identity = _extract(authorization)
         _require_openclaw(identity)
         idempotency_key = resolved_service.require_openclaw_idempotency_key(x_idempotency_key)
+        agent_id = str(payload.get("agent_id") or payload.get("agentId") or "").strip()
+        session_type = str(payload.get("session_type") or payload.get("sessionType") or "").strip()
+        if not agent_id or not session_type:
+            raise _err(
+                422,
+                ErrorCode.VALIDATION_FAILED,
+                "agent_id and session_type are required",
+                "OpenClaw session create requires non-empty agent_id and session_type",
+                precondition_failed="agent_id_and_session_type",
+            )
+        context_bundle = payload.get("context_bundle")
+        if context_bundle is None and "contextBundle" in payload:
+            context_bundle = payload.get("contextBundle")
+        if context_bundle is not None and not isinstance(context_bundle, dict):
+            raise _err(
+                422,
+                ErrorCode.VALIDATION_FAILED,
+                "context_bundle must be an object when provided",
+                "OpenClaw session context_bundle must be a JSON object",
+                precondition_failed="context_bundle",
+            )
         op_id = getattr(identity, "operator_id", None) or getattr(identity, "id", "operator-1")
         client = resolved_service.get_openclaw_client()
         try:
             adapter_payload = client.create_session(
-                agent_id=payload.get("agent_id") or payload.get("agentId") or "assistant",
+                agent_id=agent_id,
+                session_type=session_type,
                 operator_id=op_id,
                 idempotency_key=idempotency_key,
-                tools_mode=payload.get("tools_mode") or payload.get("toolsMode") or "read_only",
-                metadata=payload.get("metadata") or {},
+                context_bundle=context_bundle,
             )
         except OpenClawOpsClientError as exc:
             raise resolved_service.openclaw_client_error(exc) from exc
