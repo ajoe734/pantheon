@@ -1,12 +1,12 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "program_id": "FULL-OPERATION-GAP-CLOSURE-20260830",
   "materialization_id": "FULL-OPERATION-GAP-MATERIALIZE-20260830",
   "status": "ready_for_plan_freeze",
   "source": {
     "plan_freeze_task_id": "FULL-OPERATION-GAP-SA-SD-PLAN-FREEZE-20260830",
-    "backend_dev_sha": "9c9adf426",
-    "frontend_dev_sha": "bd03c863e",
+    "backend_dev_sha": "9c9adf426f04276d1b1a0a1401eb1f81bc0ebec4",
+    "frontend_dev_sha": "bd03c863e3c2c1c64b9b7797f27cefaf84df17c1",
     "hosted_bff_sha": "dcb14231d29f08f1646a4ee962b83fd2d4b67560",
     "hosted_fe_sha": "c230fc76bef78fc297135152f2acba690314bb9d",
     "audit_report": "docs/04/pantheon_full_product_operation_audit_2026-08-29/FULL_OPERATION_AUDIT_2026-08-29.md",
@@ -20,36 +20,36 @@
     "owner_reviewer_must_differ": true,
     "implementation_starts_after_plan_freeze": true,
     "no_new_facade_or_truth_store": true,
-    "move_and_delete_same_delivery_unit": true,
-    "functional_failure_requires_gap_report_before_repair_task": true,
-    "supervisor_clone_sessions_parallelism": true,
+    "no_second_route_for_existing_capability": true,
+    "move_cutover_delete_same_delivery_unit": true,
+    "retirement_requires_zero_production_callers": true,
     "materialization_capacity_preflight_required": true,
     "hot_files": {
+      "services/runtime_manager/service.py": "OPGAP-SAFETY-PROOF-CONTRACT-20260830",
+      ".github/workflows/publish-promote.yml": "OPGAP-DELIVERY-POLICY-20260830",
+      "scripts/deploy_nonprod_vm.sh": "OPGAP-DELIVERY-POLICY-20260830",
       "services/control-plane/bff/main.py": "OPGAP-BFF-MAIN-ASSEMBLY-20260830",
+      "docker-compose.yml": "OPGAP-COMMAND-PLANE-RETIREMENT-20260830",
       "execute-plans:src/App.tsx": "OPGAP-FE-INTEGRATION-ASSEMBLY-20260830",
-      "execute-plans:src/lib/bff-v1/index.ts": "OPGAP-FE-INTEGRATION-ASSEMBLY-20260830",
-      "docker-compose.yml": "OPGAP-HOSTED-DEV-PROMOTION-20260830",
-      "scripts/deploy_nonprod_vm.sh": "OPGAP-DEPLOY-RELIABILITY-20260830"
+      "execute-plans:src/management/ManagementLayout.tsx": "OPGAP-FE-INTEGRATION-ASSEMBLY-20260830",
+      "execute-plans:src/lib/bff-v1/index.ts": "OPGAP-FE-INTEGRATION-ASSEMBLY-20260830"
     }
   },
   "validation": {
-    "gap_uniqueness_check": "jq -e '[.tasks[].gaps[]] | sort | (length == 20 and . == [\"OP-G01\",\"OP-G02\",\"OP-G03\",\"OP-G04\",\"OP-G05\",\"OP-G06\",\"OP-G07\",\"OP-G08\",\"OP-G09\",\"OP-G10\",\"OP-G11\",\"OP-G12\",\"OP-G13\",\"OP-G14\",\"OP-G15\",\"OP-G16\",\"OP-G17\",\"OP-G18\",\"OP-G19\",\"OP-G20\"])' docs/04/pantheon_full_product_operation_audit_2026-08-29/EXECUTION_TASK_CATALOG_2026-08-30.json",
-    "artifact_uniqueness_check": "jq -e '[.plan_freeze_task.artifacts[], .tasks[].artifacts[]] | length == (unique | length)' docs/04/pantheon_full_product_operation_audit_2026-08-29/EXECUTION_TASK_CATALOG_2026-08-30.json",
-    "owner_reviewer_distinct_check": "jq -e '[.plan_freeze_task, .tasks[]] | all(.owner != .reviewer)' docs/04/pantheon_full_product_operation_audit_2026-08-29/EXECUTION_TASK_CATALOG_2026-08-30.json",
-    "execution_resources_check": "jq -e '[.tasks[] | if (.id == \"OPGAP-HOSTED-DEV-PROMOTION-20260830\" or .id == \"OPGAP-HOSTED-E2E-ACCEPTANCE-20260830\") then .execution_resources == [\"pantheon-dev\"] else .execution_resources == [] end] | all' docs/04/pantheon_full_product_operation_audit_2026-08-29/EXECUTION_TASK_CATALOG_2026-08-30.json",
-    "target_repo_artifact_scope_check": "jq -e '[.plan_freeze_task, .tasks[]] | all((.target_repo | IN(\"pantheon\", \"execute-plans\")) and (if .target_repo == \"pantheon\" then (.artifacts | all(startswith(\"execute-plans:\") | not)) else (.artifacts | all(startswith(\"execute-plans:\"))) end))' docs/04/pantheon_full_product_operation_audit_2026-08-29/EXECUTION_TASK_CATALOG_2026-08-30.json",
-    "configured_identities_check": "jq -e '[.plan_freeze_task, .tasks[]] | all((.owner | IN(\"Antigravity\", \"Antigravity2\", \"Codex2\", \"Claude\", \"Claude2\", \"Copilot\")) and (.reviewer | IN(\"Antigravity\", \"Antigravity2\", \"Codex2\", \"Claude\", \"Claude2\", \"Copilot\")))' docs/04/pantheon_full_product_operation_audit_2026-08-29/EXECUTION_TASK_CATALOG_2026-08-30.json"
+    "task_count": "jq -e '.tasks|length==15' docs/04/pantheon_full_product_operation_audit_2026-08-29/EXECUTION_TASK_CATALOG_2026-08-30.json",
+    "gap_uniqueness": "jq -e '[.tasks[].gaps[]]|sort|length==25 and .==[\"OP-G01\",\"OP-G02\",\"OP-G03\",\"OP-G04\",\"OP-G05\",\"OP-G06\",\"OP-G07\",\"OP-G08\",\"OP-G09\",\"OP-G10\",\"OP-G11\",\"OP-G12\",\"OP-G13\",\"OP-G14\",\"OP-G15\",\"OP-G16\",\"OP-G17\",\"OP-G18\",\"OP-G19\",\"OP-G20\",\"OP-G21\",\"OP-G22\",\"OP-G23\",\"OP-G24\",\"OP-G25\"]' docs/04/pantheon_full_product_operation_audit_2026-08-29/EXECUTION_TASK_CATALOG_2026-08-30.json",
+    "artifact_uniqueness": "jq -e '[.plan_freeze_task.artifacts[],.tasks[].artifacts[]]|length==(unique|length)' docs/04/pantheon_full_product_operation_audit_2026-08-29/EXECUTION_TASK_CATALOG_2026-08-30.json",
+    "dependency_tracks": "jq -e '[.plan_freeze_task,.tasks[]]|all((.dependency_tracks|keys|sort)==(.depends_on|sort))' docs/04/pantheon_full_product_operation_audit_2026-08-29/EXECUTION_TASK_CATALOG_2026-08-30.json",
+    "owner_reviewer": "jq -e '[.plan_freeze_task,.tasks[]]|all(.owner!=.reviewer)' docs/04/pantheon_full_product_operation_audit_2026-08-29/EXECUTION_TASK_CATALOG_2026-08-30.json",
+    "execution_resources": "jq -e '[.tasks[]|if(.id|IN(\"OPGAP-HOSTED-DEV-PROMOTION-20260830\",\"OPGAP-HOSTED-E2E-ACCEPTANCE-20260830\"))then.execution_resources==[\"pantheon-dev\"]else.execution_resources==[]end]|all' docs/04/pantheon_full_product_operation_audit_2026-08-29/EXECUTION_TASK_CATALOG_2026-08-30.json"
   },
   "execution_resources": {
-    "pantheon-dev": {
-      "capacity": 1,
-      "description": "Dedicated dev VM (35.201.204.12) for deployment and hosted acceptance"
-    }
+    "pantheon-dev": {"capacity": 1, "description": "35.201.204.12; exact-pair promotion and hosted acceptance only"}
   },
   "plan_freeze_task": {
     "id": "FULL-OPERATION-GAP-SA-SD-PLAN-FREEZE-20260830",
-    "title": "Freeze current full-operation GAP SA SD and parallel execution DAG",
-    "summary_zh": "以最新 origin/dev、execute-plans dev、hosted runtime 與 canonical task truth，將完整產品盤點的 OP-G01 至 OP-G20 重整為不重工、可平行執行的 SA、SD、execution DAG 與 materialization-ready catalog。",
+    "title": "Freeze GAP, SA, SD, retirement ledger, and execution DAG",
+    "summary_zh": "凍結25項GAP與15個不重疊execution tasks；本task不修改產品runtime。",
     "phase": "W0-plan-freeze",
     "owner": "Antigravity",
     "reviewer": "Codex2",
@@ -64,15 +64,7 @@
       "docs/04/pantheon_full_product_operation_audit_2026-08-29/EXECUTION_DAG_2026-08-30.md",
       "docs/04/pantheon_full_product_operation_audit_2026-08-29/EXECUTION_TASK_CATALOG_2026-08-30.json"
     ],
-    "acceptance": [
-      "Catalog contains exactly 13 execution tasks plus this plan-freeze task",
-      "All 20 OP-G01 through OP-G20 items are mapped to exact dispositions and single task assignments",
-      "Execution DAG is acyclic and all dependencies resolve cleanly",
-      "Hot files have singular exclusive owners in assembly waves",
-      "Dev VM execution resource is modeled with capacity 1 for deploy and e2e waves",
-      "Deterministic jq invariant validation passes across gap uniqueness, artifact uniqueness, owner!=reviewer, and execution resources",
-      "Independent exact-head review passes and document package merges to dev"
-    ],
+    "acceptance": ["25 GAP each map once", "15 tasks have unique artifacts", "independent exact-head review passes"],
     "priority": 0,
     "wave": 0,
     "design_unit": "SA-SD-PLAN-FREEZE",
@@ -80,456 +72,169 @@
   },
   "tasks": [
     {
+      "id": "OPGAP-SAFETY-PROOF-CONTRACT-20260830",
+      "title": "Restore executable EP5 safety proof and canonical evidence builders",
+      "summary_zh": "用正式MFA/雙人activation建立binding；消除copied evidence literals。",
+      "phase": "W1-root-contracts", "owner": "Antigravity", "reviewer": "Codex2", "target_repo": "pantheon",
+      "depends_on": ["FULL-OPERATION-GAP-SA-SD-PLAN-FREEZE-20260830"],
+      "dependency_tracks": {"FULL-OPERATION-GAP-SA-SD-PLAN-FREEZE-20260830": "functional"},
+      "artifacts": ["services/runtime_manager/service.py", "services/governance/ep5_proof/kill_switch_harness.py", "services/governance/ep5_proof/rollback_drill_harness.py", "services/governance/ep5_proof/packet_generator.py", "services/governance/ep5_proof/persona_lineage.py", "services/governance/multi_persona/sponsor_resolver.py", "services/evolution/cooldown_enforcement.py", "tests/governance/test_kill_switch_harness.py", "tests/governance/test_rollback_drill_harness.py", "tests/governance/test_persona_lineage.py", "tests/governance/test_sponsor_resolver.py"],
+      "acceptance": ["no bypass", "distinct actors and MFA", "kill/rollback and evidence suites pass"],
+      "gaps": ["OP-G22", "OP-G23"], "priority": 0, "wave": 1, "design_unit": "SD-10", "execution_resources": []
+    },
+    {
+      "id": "OPGAP-DELIVERY-POLICY-20260830",
+      "title": "Create one exact-head release gate and sealed rollback authority",
+      "summary_zh": "以單一policy manifest/orchestrator取代未被強制的分散workflows。",
+      "phase": "W1-root-contracts", "owner": "Antigravity2", "reviewer": "Codex2", "target_repo": "pantheon",
+      "depends_on": ["FULL-OPERATION-GAP-SA-SD-PLAN-FREEZE-20260830"],
+      "dependency_tracks": {"FULL-OPERATION-GAP-SA-SD-PLAN-FREEZE-20260830": "functional"},
+      "artifacts": [".github/workflows/publish-promote.yml", ".github/workflows/release-candidate-gate.yml", ".github/release-policy.json", "scripts/release_policy.py", "scripts/git/publish_promote.py", "scripts/dev_environment_lease.py", "scripts/deploy_nonprod_vm.sh", "scripts/test_release_policy.py"],
+      "acceptance": ["fail/skip/zero-job/missing/wrong-SHA block", "branch protection matches policy", "rollback works without GitHub", "superseded workflows deleted"],
+      "gaps": ["OP-G04", "OP-G16", "OP-G25"], "priority": 0, "wave": 1, "design_unit": "SD-11", "execution_resources": []
+    },
+    {
       "id": "OPGAP-BE-BFF-CORE-20260830",
-      "title": "BFF Core router extraction, async auth decoupling, dead adapter cleanup, and async ASGI test harness",
-      "summary_zh": "依 SD-Unit-1 執行：抽取 BFF main.py 領域路由、解除 auth 對 OpenClaw 同步探針依賴 (OP-G05)、刪除 dead action adapter (OP-G10)、並將 HTTP 整合測試改寫為 Async ASGI 客戶端 (OP-G13)。",
-      "phase": "W1-preparation-backend",
-      "owner": "Antigravity",
-      "reviewer": "Antigravity2",
-      "target_repo": "pantheon",
-      "depends_on": [
-        "FULL-OPERATION-GAP-SA-SD-PLAN-FREEZE-20260830"
-      ],
-      "dependency_tracks": {
-        "FULL-OPERATION-GAP-SA-SD-PLAN-FREEZE-20260830": "functional"
-      },
-      "artifacts": [
-        "services/control-plane/bff/auth.py",
-        "services/control-plane/bff/command_executor.py",
-        "services/control-plane/bff/command_adapters/",
-        "services/control-plane/bff/routers/",
-        "tests/control-plane/bff/test_auth_async.py"
-      ],
-      "acceptance": [
-        "Auth 端點在 Provider 離線或延遲時維持 < 10ms 回應，狀態改由非同步快取提供",
-        "_execute_bff_action_adapter 及其 legacy 測試徹底刪除，無殘留 production 引用",
-        "FastAPI 整合測試全面改用 httpx.AsyncClient(transport=ASGITransport) 並配置硬性超時，AnyIO 死鎖問題完全根除",
-        "各領域 router 獨立定義完成，待 Wave 2 assembly 掛載"
-      ],
-      "gaps": [
-        "OP-G05",
-        "OP-G10",
-        "OP-G13"
-      ],
-      "priority": 1,
-      "wave": 1,
-      "design_unit": "SD-Unit-1",
-      "execution_resources": []
+      "title": "Decouple BFF auth and standardize async ASGI tests",
+      "summary_zh": "auth只依賴本地session/RBAC；provider readiness背景快取；HTTP tests使用async ASGI。",
+      "phase": "W1-domain", "owner": "Antigravity", "reviewer": "Antigravity2", "target_repo": "pantheon",
+      "depends_on": ["FULL-OPERATION-GAP-SA-SD-PLAN-FREEZE-20260830"],
+      "dependency_tracks": {"FULL-OPERATION-GAP-SA-SD-PLAN-FREEZE-20260830": "functional"},
+      "artifacts": ["services/control-plane/bff/auth.py", "services/control-plane/bff/provider_readiness_cache.py", "services/control-plane/bff/tests/test_auth_async.py", "services/control-plane/bff/tests/async_asgi.py"],
+      "acceptance": ["provider outage does not block auth", "deadlock tests fail rather than skip"],
+      "gaps": ["OP-G05", "OP-G13"], "priority": 1, "wave": 1, "design_unit": "SD-01", "execution_resources": []
     },
     {
       "id": "OPGAP-BE-AGORA-RESEARCH-20260830",
-      "title": "Agora research provenance truth, suggestion producer wiring, and private import cleanup",
-      "summary_zh": "依 SD-Unit-2 執行：修復 Agora research 偽造 real 標籤問題 (OP-G01)、將 PerformanceSuggestionProducer 連線至真實遙測 (OP-G02)、清除 router 跨域私有 import (OP-G09)。",
-      "phase": "W1-preparation-backend",
-      "owner": "Antigravity2",
-      "reviewer": "Antigravity",
-      "target_repo": "pantheon",
-      "depends_on": [
-        "FULL-OPERATION-GAP-SA-SD-PLAN-FREEZE-20260830"
-      ],
-      "dependency_tracks": {
-        "FULL-OPERATION-GAP-SA-SD-PLAN-FREEZE-20260830": "functional"
-      },
-      "artifacts": [
-        "services/control-plane/bff/agora/research/dispatcher.py",
-        "services/control-plane/bff/agora/performance/producer.py",
-        "services/control-plane/bff/agora/trading_room/router.py",
-        "services/control-plane/bff/agora/strategy_workshop/router.py"
-      ],
-      "acceptance": [
-        "DefaultAllowlistedAdapter 產出明確標記為 simulated/unavailable，非真實後端結果嚴格禁止進入 real candidate pool",
-        "PerformanceSuggestionProducer 實例化並成功註冊事件監聽，生成之建議具備持久化 ID 並支援讀回",
-        "Agora 各子 router 完全移除跨模組私有符號引用",
-        "本地單元與契約測試全部通過"
-      ],
-      "gaps": [
-        "OP-G01",
-        "OP-G02",
-        "OP-G09"
-      ],
-      "priority": 1,
-      "wave": 1,
-      "design_unit": "SD-Unit-2",
-      "execution_resources": []
+      "title": "Make Agora provenance, suggestions, and store ownership truthful",
+      "summary_zh": "real只來自receipt；接線producer；刪private imports與第二Workshop store。",
+      "phase": "W1-domain", "owner": "Antigravity2", "reviewer": "Antigravity", "target_repo": "pantheon",
+      "depends_on": ["FULL-OPERATION-GAP-SA-SD-PLAN-FREEZE-20260830"],
+      "dependency_tracks": {"FULL-OPERATION-GAP-SA-SD-PLAN-FREEZE-20260830": "functional"},
+      "artifacts": ["services/control-plane/bff/agora/research/dispatcher.py", "services/control-plane/bff/agora/performance/producer.py", "services/control-plane/bff/agora/strategy_workshop/store.py", "services/control-plane/bff/agora/strategy_workshop/router.py", "services/control-plane/bff/agora/trading_room/router.py"],
+      "acceptance": ["fallback never real", "producer has durable same-ID readback or is deleted", "one Workshop store owner"],
+      "gaps": ["OP-G01", "OP-G02", "OP-G09"], "priority": 0, "wave": 1, "design_unit": "SD-03", "execution_resources": []
     },
     {
       "id": "OPGAP-BE-RUNTIME-BINDING-20260830",
-      "title": "Executable RuntimeBinding authority projection generation and paper producer verification",
-      "summary_zh": "依 SD-Unit-3 執行：由 Registry 權威自動衍生不可變之 object_store、loader 與 market policy 物理投影 (OP-G17)，並驗證 paper-signal-producer 單元訊號生成。",
-      "phase": "W1-preparation-backend",
-      "owner": "Antigravity",
-      "reviewer": "Codex2",
-      "target_repo": "pantheon",
-      "depends_on": [
-        "FULL-OPERATION-GAP-SA-SD-PLAN-FREEZE-20260830"
-      ],
-      "dependency_tracks": {
-        "FULL-OPERATION-GAP-SA-SD-PLAN-FREEZE-20260830": "functional"
-      },
-      "artifacts": [
-        "services/runtime-manager/deploy_authority.py",
-        "services/deployment/runtime_manager_dispatch_adapter.py",
-        "services/execution/lean_runtime/paper_signal_producer.py",
-        "services/execution/market_snapshot_admission.py"
-      ],
-      "acceptance": [
-        "verify_deploy_authorities() 自動產出權威投影，DeploymentPlan 僅持有合法引用並拒絕 caller 自訂任意 metadata",
-        "RuntimeBinding 具備完整物理執行欄位，Runtime Manager 驗證通過始建 active binding",
-        "paper-signal-producer 單元與契約測試通過，在接收合規行情快照時正確產出 signal"
-      ],
-      "gaps": [
-        "OP-G17"
-      ],
-      "priority": 1,
-      "wave": 1,
-      "design_unit": "SD-Unit-3",
-      "execution_resources": []
+      "title": "Generate immutable RuntimeBinding projections from Registry authority",
+      "summary_zh": "Deployment只引用Registry projection；Runtime驗digest，拒絕caller metadata。",
+      "phase": "W1-domain", "owner": "Codex2", "reviewer": "Antigravity", "target_repo": "pantheon",
+      "depends_on": ["FULL-OPERATION-GAP-SA-SD-PLAN-FREEZE-20260830"],
+      "dependency_tracks": {"FULL-OPERATION-GAP-SA-SD-PLAN-FREEZE-20260830": "functional"},
+      "artifacts": ["services/runtime-manager/deploy_authority.py", "services/deployment/runtime_manager_dispatch_adapter.py", "services/runtime_manager/runtime_binding.py", "services/execution/lean_runtime/paper_signal_producer.py", "services/execution/market_snapshot_admission.py"],
+      "acceptance": ["Registry/Deployment/Runtime IDs and digests match", "missing or tampered projection fails closed"],
+      "gaps": ["OP-G17"], "priority": 0, "wave": 1, "design_unit": "SD-04", "execution_resources": []
     },
     {
-      "id": "OPGAP-BE-SOURCE-MANAGEMENT-20260830",
-      "title": "Source Ingestion reconcile-only enforcement, bounded refresh contract, and market freshness protection",
-      "summary_zh": "依 SD-Unit-4 執行：強化 Source Controller 常態 reconcile_only 模式、實作單次有界 manual refresh 契約 (OP-G12)、並確保台灣交易日曆新鮮度規則生效。",
-      "phase": "W1-preparation-backend",
-      "owner": "Antigravity2",
-      "reviewer": "Antigravity",
-      "target_repo": "pantheon",
-      "depends_on": [
-        "FULL-OPERATION-GAP-SA-SD-PLAN-FREEZE-20260830"
-      ],
-      "dependency_tracks": {
-        "FULL-OPERATION-GAP-SA-SD-PLAN-FREEZE-20260830": "functional"
-      },
-      "artifacts": [
-        "services/source_ingestion/main.py",
-        "services/source_ingestion/controller_worker.py",
-        "services/source_ingestion/connectors/taiwan_official.py",
-        "services/source_ingestion/market_data_storage.py"
-      ],
-      "acceptance": [
-        "Controller worker 啟動與常態運作嚴格鎖定在 reconcile_only 模式",
-        "單次手動更新限制為 1 tick、max 100 records、1800s timeout，完成後自動回退 reconcile_only",
-        "Taiwan market session freshness 邏輯正確認可週末/例假日的週五官方有效收盤價"
-      ],
-      "gaps": [
-        "OP-G12"
-      ],
-      "priority": 1,
-      "wave": 1,
-      "design_unit": "SD-Unit-4",
-      "execution_resources": []
+      "id": "OPGAP-BE-SOURCE-CLOSURE-20260830",
+      "title": "Close Source one-shot proof and retire compatibility exports",
+      "summary_zh": "沿用existing one-shot，不建manual route；驗receipt後刪main aliases。",
+      "phase": "W1-domain", "owner": "Antigravity", "reviewer": "Codex2", "target_repo": "pantheon",
+      "depends_on": ["FULL-OPERATION-GAP-SA-SD-PLAN-FREEZE-20260830"],
+      "dependency_tracks": {"FULL-OPERATION-GAP-SA-SD-PLAN-FREEZE-20260830": "functional"},
+      "artifacts": ["services/source_ingestion/main.py", "services/source_ingestion/runtime.py", "services/source_ingestion/controller_worker.py", "services/source_ingestion/connectors/taiwan_official.py", "services/source_ingestion/market_data_storage.py", "services/source_ingestion/tests/"],
+      "acceptance": ["default reconcile-only and egress deny", "bounded profile terminates", "compat exports zero and deleted"],
+      "gaps": ["OP-G12"], "priority": 1, "wave": 1, "design_unit": "SD-05", "execution_resources": []
     },
     {
-      "id": "OPGAP-BE-MGMT-POSTMORTEM-20260830",
-      "title": "Canonical Management Postmortem domain service and pure 12-loop projection verification",
-      "summary_zh": "依 SD-Unit-5 執行：建立具備 postmortem_id 權威之 Postmortem 讀寫領域模型與端點 (OP-G18)，並驗證 12-loop truth 純淨投影。",
-      "phase": "W1-preparation-backend",
-      "owner": "Antigravity",
-      "reviewer": "Antigravity2",
-      "target_repo": "pantheon",
-      "depends_on": [
-        "FULL-OPERATION-GAP-SA-SD-PLAN-FREEZE-20260830"
-      ],
-      "dependency_tracks": {
-        "FULL-OPERATION-GAP-SA-SD-PLAN-FREEZE-20260830": "functional"
-      },
-      "artifacts": [
-        "services/control-plane/bff/management_read_models/postmortem.py",
-        "services/control-plane/bff/management_read_models/loop_truth.py",
-        "services/control-plane/bff/routers/management_postmortem.py"
-      ],
-      "acceptance": [
-        "GET /bff/management/postmortems 與詳細端點回傳正規 PostmortemRecord 結構，支援 durable readback",
-        "loop_truth.py 嚴格輸出固定 12 rows 之循環真相，無外部依賴漂移",
-        "單元與契約測試全部通過"
-      ],
-      "gaps": [
-        "OP-G18"
-      ],
-      "priority": 1,
-      "wave": 1,
-      "design_unit": "SD-Unit-5",
-      "execution_resources": []
+      "id": "OPGAP-BE-POSTMORTEM-READ-CUTOVER-20260830",
+      "title": "Bind BFF reads to the existing Postmortem service",
+      "summary_zh": "只新增typed reader，不建立第二store/service。",
+      "phase": "W1-domain", "owner": "Antigravity2", "reviewer": "Antigravity", "target_repo": "pantheon",
+      "depends_on": ["FULL-OPERATION-GAP-SA-SD-PLAN-FREEZE-20260830"],
+      "dependency_tracks": {"FULL-OPERATION-GAP-SA-SD-PLAN-FREEZE-20260830": "functional"},
+      "artifacts": ["services/control-plane/bff/management_read_models/router.py", "services/control-plane/bff/management_read_models/models.py", "services/control-plane/bff/domain_ports/lifecycle_telemetry_governance.py", "services/postmortems/test_main_routes.py"],
+      "acceptance": ["canonical postmortem_id comes from existing owner", "failure never falls back to incident-derived data"],
+      "gaps": [], "priority": 1, "wave": 1, "design_unit": "SD-06", "execution_resources": []
     },
     {
-      "id": "OPGAP-FE-BUNDLE-CLEANUP-20260830",
-      "title": "Frontend production bundle mock/seed graph isolation and dependency checks",
-      "summary_zh": "依 SD-Unit-6 執行：自前端程式切斷 production bundle 對 @/mocks/seed 與 writeOverlay 之依賴可達性，並加入構建圖譜門禁 (OP-G07)。",
-      "phase": "W1-preparation-frontend",
-      "owner": "Antigravity2",
-      "reviewer": "Antigravity",
-      "target_repo": "execute-plans",
-      "depends_on": [
-        "FULL-OPERATION-GAP-SA-SD-PLAN-FREEZE-20260830"
-      ],
-      "dependency_tracks": {
-        "FULL-OPERATION-GAP-SA-SD-PLAN-FREEZE-20260830": "functional"
-      },
-      "artifacts": [
-        "execute-plans:src/lib/bff-v1/writeOverlay.ts",
-        "execute-plans:vite.config.ts",
-        "execute-plans:scripts/check_bundle_mock_reachability.ts"
-      ],
-      "acceptance": [
-        "Production 打包產物完全排除 @/mocks/seed 與 writeOverlay 模組",
-        "靜態分析腳本 check_bundle_mock_reachability.ts 檢查通過（mock 引用數 = 0）",
-        "前端 typecheck 與既有 unit tests 通過"
-      ],
-      "gaps": [
-        "OP-G07"
-      ],
-      "priority": 1,
-      "wave": 1,
-      "design_unit": "SD-Unit-6",
-      "execution_resources": []
+      "id": "OPGAP-FE-TRANSPORT-RETIREMENT-20260830",
+      "title": "Converge frontend transport and delete mock/overlay/dead NL paths",
+      "summary_zh": "bff-v1為唯一transport；v5 pure-only；刪seed graph、overlay、writeFallback與dead UI。",
+      "phase": "W1-domain", "owner": "Antigravity", "reviewer": "Antigravity2", "target_repo": "execute-plans",
+      "depends_on": ["FULL-OPERATION-GAP-SA-SD-PLAN-FREEZE-20260830"],
+      "dependency_tracks": {"FULL-OPERATION-GAP-SA-SD-PLAN-FREEZE-20260830": "functional"},
+      "artifacts": ["execute-plans:src/lib/bff/writeOverlay.ts", "execute-plans:src/lib/bff/client.ts", "execute-plans:src/lib/bff/agora.ts", "execute-plans:src/lib/bff/persistence.ts", "execute-plans:src/lib/bff/scenarios.ts", "execute-plans:src/lib/bff/mutations.ts", "execute-plans:src/lib/bff/v5.ts", "execute-plans:src/lib/bff-v1/writeFallback.ts", "execute-plans:src/lib/bff-v1/seed.ts", "execute-plans:src/lib/bff-v1/lists.ts", "execute-plans:src/lib/bff-v1/tradeJournal.ts", "execute-plans:src/lib/bff-v1/managementNl.ts", "execute-plans:src/management/components/nl/NlAssistantDrawer.tsx", "execute-plans:src/management/pages/oversight/NlConsole.tsx", "execute-plans:src/management/pages/oversight/_stubs.tsx", "execute-plans:vite.config.ts"],
+      "acceptance": ["production graph cannot reach mock/seed/overlay", "transport SCCs zero", "retired files deleted"],
+      "gaps": ["OP-G07"], "priority": 1, "wave": 1, "design_unit": "SD-07", "execution_resources": []
     },
     {
-      "id": "OPGAP-FE-MGMT-CRUD-POSTMORTEM-20260830",
-      "title": "Frontend generic CRUD overlay elimination and canonical Postmortem UI wiring",
-      "summary_zh": "依 SD-Unit-7 執行：消除 createEntity.ts 中的 writeOverlay 假寫入 (OP-G06)，並將 PostmortemLibrary.tsx 改接 canonical postmortem 權威端點。",
-      "phase": "W1-preparation-frontend",
-      "owner": "Antigravity",
-      "reviewer": "Codex2",
-      "target_repo": "execute-plans",
-      "depends_on": [
-        "FULL-OPERATION-GAP-SA-SD-PLAN-FREEZE-20260830"
-      ],
-      "dependency_tracks": {
-        "FULL-OPERATION-GAP-SA-SD-PLAN-FREEZE-20260830": "functional"
-      },
-      "artifacts": [
-        "execute-plans:src/management/components/write/createEntity.ts",
-        "execute-plans:src/management/pages/ObjectListPage.tsx",
-        "execute-plans:src/management/pages/phase2/PostmortemLibrary.tsx",
-        "execute-plans:src/lib/bff-v1/postmortemClient.ts"
-      ],
-      "acceptance": [
-        "非 Persona 之通用 CRUD 表單若無後端支援則明確禁用並提示 unavailable，嚴禁本地假成功",
-        "Postmortem 頁面以 canonical postmortem_id 渲染清單與詳細資訊，徹底廢除 pm_<incident> 字串拼接",
-        "前端單元測試通過"
-      ],
-      "gaps": [
-        "OP-G06"
-      ],
-      "priority": 1,
-      "wave": 1,
-      "design_unit": "SD-Unit-7",
-      "execution_resources": []
+      "id": "OPGAP-COMMAND-PLANE-RETIREMENT-20260830",
+      "title": "Cut commands to domain owners and delete runtime-manager compatibility plane",
+      "summary_zh": "direct-to-owner parity後刪generic executor、internal API、mount、env與tests。",
+      "phase": "W1-domain", "owner": "Antigravity", "reviewer": "Codex2", "target_repo": "pantheon",
+      "depends_on": ["FULL-OPERATION-GAP-SA-SD-PLAN-FREEZE-20260830"],
+      "dependency_tracks": {"FULL-OPERATION-GAP-SA-SD-PLAN-FREEZE-20260830": "functional"},
+      "artifacts": ["services/control-plane/bff/command_executor.py", "services/control-plane/bff/command_adapters/", "services/control-plane/internal/internal_api.py", "services/control-plane/internal/internal_api_min.py", "services/runtime-manager/internal_api_routes.py", "services/runtime-manager/main.py", "docker-compose.yml", "services/control-plane/internal/test_internal_api_incident.py", "services/runtime-manager/test_internal_api_routes.py"],
+      "acceptance": ["one owner per command", "legacy callers zero", "legacy plane/env/tests deleted", "no compat facade"],
+      "gaps": ["OP-G10", "OP-G24"], "priority": 0, "wave": 1, "design_unit": "SD-09", "execution_resources": []
     },
     {
-      "id": "OPGAP-FE-AGORA-WORKSHOP-20260830",
-      "title": "Frontend Agora research adapter truth badging, dynamic candidate pool, and performance suggestions",
-      "summary_zh": "依 SD-Unit-8 執行：在 Workshop UI 顯式標示 Adapter 真實性狀態 (OP-G15)、交易室動態加載候選池、並呈現績效建議元件。",
-      "phase": "W1-preparation-frontend",
-      "owner": "Antigravity2",
-      "reviewer": "Codex2",
-      "target_repo": "execute-plans",
-      "depends_on": [
-        "FULL-OPERATION-GAP-SA-SD-PLAN-FREEZE-20260830"
-      ],
-      "dependency_tracks": {
-        "FULL-OPERATION-GAP-SA-SD-PLAN-FREEZE-20260830": "functional"
-      },
-      "artifacts": [
-        "execute-plans:src/agora/pages/strategy-workshop/WorkshopSessionView.tsx",
-        "execute-plans:src/agora/pages/trading-room/TradingRoomWorkspace.tsx",
-        "execute-plans:src/agora/pages/trading-room/AttributionReportView.tsx"
-      ],
-      "acceptance": [
-        "Workshop 清楚呈現 Real Backend / Simulation / Unavailable 標籤",
-        "Trading Room 依據後端 candidatePoolId 正確渲染候選策略，無寫死 lens-A..E",
-        "Attribution 頁面正確拉取並顯示 PerformanceSuggestion 列表",
-        "前端單元與元件測試通過"
-      ],
-      "gaps": [
-        "OP-G15"
-      ],
-      "priority": 1,
-      "wave": 1,
-      "design_unit": "SD-Unit-8",
-      "execution_resources": []
+      "id": "OPGAP-FE-MGMT-BINDING-20260830",
+      "title": "Replace generic Management writes and incident-derived Postmortems",
+      "summary_zh": "只保留owner-backed commands；PostmortemLibrary接canonical IDs。",
+      "phase": "W2-consumer", "owner": "Antigravity2", "reviewer": "Codex2", "target_repo": "execute-plans",
+      "depends_on": ["OPGAP-FE-TRANSPORT-RETIREMENT-20260830", "OPGAP-BE-POSTMORTEM-READ-CUTOVER-20260830"],
+      "dependency_tracks": {"OPGAP-FE-TRANSPORT-RETIREMENT-20260830": "interface", "OPGAP-BE-POSTMORTEM-READ-CUTOVER-20260830": "functional"},
+      "artifacts": ["execute-plans:src/management/components/write/createEntity.ts", "execute-plans:src/management/pages/ObjectListPage.tsx", "execute-plans:src/management/pages/PersonaOnboarding.tsx", "execute-plans:src/management/pages/phase2/PostmortemLibrary.tsx", "execute-plans:src/lib/bff-v1/postmortems.ts", "execute-plans:src/lib/writeIntents/types.ts"],
+      "acceptance": ["no owner means no success control", "writes reload same ID", "no pm_<incident> derivation"],
+      "gaps": ["OP-G06", "OP-G18"], "priority": 0, "wave": 2, "design_unit": "SD-06", "execution_resources": []
     },
     {
-      "id": "OPGAP-DEPLOY-RELIABILITY-20260830",
-      "title": "Deployment lease heartbeat grace, local sealed rollback authority, and CI false-green elimination",
-      "summary_zh": "依 SD-Unit-9 執行：強化部署租約心跳重試與寬限期、提供本地封閉回滾授權 (OP-G16)、並杜絕 CI/CD 將失敗步驟包裝為警告之假綠燈 (OP-G04)。",
-      "phase": "W1-preparation-infra",
-      "owner": "Antigravity",
-      "reviewer": "Antigravity2",
-      "target_repo": "pantheon",
-      "depends_on": [
-        "FULL-OPERATION-GAP-SA-SD-PLAN-FREEZE-20260830"
-      ],
-      "dependency_tracks": {
-        "FULL-OPERATION-GAP-SA-SD-PLAN-FREEZE-20260830": "functional"
-      },
-      "artifacts": [
-        "scripts/deploy/environment_lease.py",
-        "scripts/deploy_nonprod_vm.sh",
-        ".github/workflows/nonprod-deploy.yml"
-      ],
-      "acceptance": [
-        "租約心跳支援 3 次指數退避與 60s 寬限，短暫 GitHub API timeout 不再直接導致部署中止",
-        "Rollback 機制具備本機 sealed authority，在遠端異常時仍可獨立完成服務回滾",
-        "部署腳本與 CI 工作流中，任何關鍵測試或驗收步驟 skip/fail 均嚴格 fail-closed (exit != 0)"
-      ],
-      "gaps": [
-        "OP-G04",
-        "OP-G16"
-      ],
-      "priority": 1,
-      "wave": 1,
-      "design_unit": "SD-Unit-9",
-      "execution_resources": []
+      "id": "OPGAP-FE-AGORA-CAPABILITY-20260830",
+      "title": "Render Agora capability truth",
+      "summary_zh": "UI不自行推斷real；非real不可promotion。",
+      "phase": "W2-consumer", "owner": "Codex2", "reviewer": "Antigravity", "target_repo": "execute-plans",
+      "depends_on": ["OPGAP-FE-TRANSPORT-RETIREMENT-20260830", "OPGAP-BE-AGORA-RESEARCH-20260830"],
+      "dependency_tracks": {"OPGAP-FE-TRANSPORT-RETIREMENT-20260830": "interface", "OPGAP-BE-AGORA-RESEARCH-20260830": "functional"},
+      "artifacts": ["execute-plans:src/agora/pages/strategy-workshop/StrategyWorkshopPage.tsx", "execute-plans:src/agora/pages/trading-room/TradingRoomPage.tsx", "execute-plans:src/agora/pages/strategy-performance/StrategyPerformancePage.tsx"],
+      "acceptance": ["status only from backend contract", "suggestion ID has owner readback"],
+      "gaps": ["OP-G15"], "priority": 1, "wave": 2, "design_unit": "SD-08", "execution_resources": []
     },
     {
       "id": "OPGAP-BFF-MAIN-ASSEMBLY-20260830",
-      "title": "BFF composition root assembly and route guard verification",
-      "summary_zh": "作為單一整合擁有者：收斂 services/control-plane/bff/main.py，掛載 Wave 1 產出之所有領域 router，並通過 route guard 驗證 (OP-G08)。",
-      "phase": "W2-assembly-backend",
-      "owner": "Antigravity",
-      "reviewer": "Codex2",
-      "target_repo": "pantheon",
-      "depends_on": [
-        "OPGAP-BE-BFF-CORE-20260830",
-        "OPGAP-BE-AGORA-RESEARCH-20260830",
-        "OPGAP-BE-RUNTIME-BINDING-20260830",
-        "OPGAP-BE-SOURCE-MANAGEMENT-20260830",
-        "OPGAP-BE-MGMT-POSTMORTEM-20260830"
-      ],
-      "dependency_tracks": {
-        "OPGAP-BE-BFF-CORE-20260830": "functional",
-        "OPGAP-BE-AGORA-RESEARCH-20260830": "functional",
-        "OPGAP-BE-RUNTIME-BINDING-20260830": "functional",
-        "OPGAP-BE-SOURCE-MANAGEMENT-20260830": "functional",
-        "OPGAP-BE-MGMT-POSTMORTEM-20260830": "functional"
-      },
-      "artifacts": [
-        "services/control-plane/bff/main.py",
-        "tests/control-plane/bff/test_route_composition.py"
-      ],
-      "acceptance": [
-        "main.py 行數縮減至 500 行以內，僅作為 Composition Root",
-        "所有領域路由（Agora, Management, Postmortem, Source, Auth, Telemetry）正確掛載且無衝突",
-        "BFF 全量單元與非同步整合測試 100% 通過"
-      ],
-      "gaps": [
-        "OP-G08"
-      ],
-      "priority": 2,
-      "wave": 2,
-      "design_unit": "SD-Unit-1",
-      "execution_resources": []
+      "title": "Make BFF main a multi-replica-safe composition root",
+      "summary_zh": "切route ownership、刪import main/read-store fallback/Postmortem aliases並使route IDs唯一。",
+      "phase": "W2-assembly", "owner": "Antigravity2", "reviewer": "Codex2", "target_repo": "pantheon",
+      "depends_on": ["OPGAP-BE-BFF-CORE-20260830", "OPGAP-BE-AGORA-RESEARCH-20260830", "OPGAP-BE-RUNTIME-BINDING-20260830", "OPGAP-BE-SOURCE-CLOSURE-20260830", "OPGAP-BE-POSTMORTEM-READ-CUTOVER-20260830", "OPGAP-COMMAND-PLANE-RETIREMENT-20260830"],
+      "dependency_tracks": {"OPGAP-BE-BFF-CORE-20260830": "functional", "OPGAP-BE-AGORA-RESEARCH-20260830": "functional", "OPGAP-BE-RUNTIME-BINDING-20260830": "functional", "OPGAP-BE-SOURCE-CLOSURE-20260830": "functional", "OPGAP-BE-POSTMORTEM-READ-CUTOVER-20260830": "functional", "OPGAP-COMMAND-PLANE-RETIREMENT-20260830": "functional"},
+      "artifacts": ["services/control-plane/bff/main.py", "services/control-plane/bff/agora/identity/router.py", "services/control-plane/bff/agora/personalization/router.py", "services/control-plane/bff/read_store.py", "services/control-plane/bff/test_normalized_route_uniqueness.py", "tests/bff/"],
+      "acceptance": ["main is composition only", "three app instances pass", "normalized/operation-ID collisions zero", "retirement targets deleted"],
+      "gaps": ["OP-G08", "OP-G21"], "priority": 0, "wave": 2, "design_unit": "SD-02", "execution_resources": []
     },
     {
       "id": "OPGAP-FE-INTEGRATION-ASSEMBLY-20260830",
-      "title": "Frontend application shell, router mount, and bundle integration assembly",
-      "summary_zh": "作為單一整合擁有者：收斂 execute-plans 之 src/App.tsx、ManagementLayout.tsx 與 src/lib/bff-v1/index.ts，完成所有前端頁面整合與打包驗證。",
-      "phase": "W2-assembly-frontend",
-      "owner": "Antigravity2",
-      "reviewer": "Antigravity",
-      "target_repo": "execute-plans",
-      "depends_on": [
-        "OPGAP-FE-BUNDLE-CLEANUP-20260830",
-        "OPGAP-FE-MGMT-CRUD-POSTMORTEM-20260830",
-        "OPGAP-FE-AGORA-WORKSHOP-20260830"
-      ],
-      "dependency_tracks": {
-        "OPGAP-FE-BUNDLE-CLEANUP-20260830": "functional",
-        "OPGAP-FE-MGMT-CRUD-POSTMORTEM-20260830": "functional",
-        "OPGAP-FE-AGORA-WORKSHOP-20260830": "functional"
-      },
-      "artifacts": [
-        "execute-plans:src/App.tsx",
-        "execute-plans:src/management/ManagementLayout.tsx",
-        "execute-plans:src/lib/bff-v1/index.ts",
-        "execute-plans:tests/e2e/desktop_authenticated_journey.spec.ts"
-      ],
-      "acceptance": [
-        "所有 Management 與 Agora 路由於 App.tsx 正確掛載且導航無死角",
-        "bff-v1/index.ts 統一匯出 typed domain clients，完全無 mock 符號",
-        "前端 build、typecheck、lint 及 depgraph 測試全部通過"
-      ],
-      "gaps": [],
-      "priority": 2,
-      "wave": 2,
-      "design_unit": "SD-Unit-6",
-      "execution_resources": []
+      "title": "Assemble one frontend client graph and acceptance specs",
+      "summary_zh": "單一owner收斂App/layout/barrel與authenticated browser specs。",
+      "phase": "W2-assembly", "owner": "Antigravity", "reviewer": "Antigravity2", "target_repo": "execute-plans",
+      "depends_on": ["OPGAP-FE-TRANSPORT-RETIREMENT-20260830", "OPGAP-FE-MGMT-BINDING-20260830", "OPGAP-FE-AGORA-CAPABILITY-20260830"],
+      "dependency_tracks": {"OPGAP-FE-TRANSPORT-RETIREMENT-20260830": "functional", "OPGAP-FE-MGMT-BINDING-20260830": "functional", "OPGAP-FE-AGORA-CAPABILITY-20260830": "functional"},
+      "artifacts": ["execute-plans:src/App.tsx", "execute-plans:src/management/ManagementLayout.tsx", "execute-plans:src/lib/bff-v1/index.ts", "execute-plans:e2e/management-product-journey.spec.ts", "execute-plans:e2e/agora-product-journey.spec.ts", "execute-plans:e2e/agora-strategy-workshop-hosted.spec.ts", "execute-plans:e2e/helpers/auth.ts", "execute-plans:e2e/helpers/bff.ts"],
+      "acceptance": ["one transport direction", "typecheck/build/tests pass", "authenticated same-ID specs ready"],
+      "gaps": [], "priority": 1, "wave": 2, "design_unit": "SD-12", "execution_resources": []
     },
     {
       "id": "OPGAP-HOSTED-DEV-PROMOTION-20260830",
-      "title": "Dev VM nonprod atomic promotion, container health validation, and projection binding closure",
-      "summary_zh": "依 SD-Unit-10 執行：鎖定 pantheon-dev 資源，執行 Dev VM 原子部署，驗證全容器健康、PostgreSQL checkpoint 同步、Agora projection 綁定與 Paper producer 運行 (OP-G03, OP-G19, OP-G20)。",
-      "phase": "W3-promotion-vm",
-      "owner": "Antigravity",
-      "reviewer": "Codex2",
-      "target_repo": "pantheon",
-      "depends_on": [
-        "OPGAP-DEPLOY-RELIABILITY-20260830",
-        "OPGAP-BFF-MAIN-ASSEMBLY-20260830",
-        "OPGAP-FE-INTEGRATION-ASSEMBLY-20260830"
-      ],
-      "dependency_tracks": {
-        "OPGAP-DEPLOY-RELIABILITY-20260830": "functional",
-        "OPGAP-BFF-MAIN-ASSEMBLY-20260830": "functional",
-        "OPGAP-FE-INTEGRATION-ASSEMBLY-20260830": "functional"
-      },
-      "artifacts": [
-        "docker-compose.yml",
-        "docs/deployment/evidence/full-operation-gap/OPGAP-HOSTED-DEV-PROMOTION-20260830/evidence.json"
-      ],
-      "acceptance": [
-        "Live VM 成功切換至 current candidate FE 與 BFF 版本，/deployment.json 與 /bff/version 一致",
-        "所有 Compose 容器健康探測通過 (healthy)，PostgreSQL checkpoint caught up",
-        "Agora projection 綁定驗證通過，paper-signal-producer 正常運行且無 500 錯誤",
-        "產出結構化部署證據 manifest"
-      ],
-      "gaps": [
-        "OP-G03",
-        "OP-G19",
-        "OP-G20"
-      ],
-      "priority": 3,
-      "wave": 3,
-      "design_unit": "SD-Unit-10",
-      "execution_resources": [
-        "pantheon-dev"
-      ]
+      "title": "Promote one exact FE/BFF pair with gate-before-switch",
+      "summary_zh": "排他部署exact pair並證明Source→Agora及snapshot→paper receipts。",
+      "phase": "W3-hosted", "owner": "Antigravity2", "reviewer": "Codex2", "target_repo": "pantheon",
+      "depends_on": ["OPGAP-SAFETY-PROOF-CONTRACT-20260830", "OPGAP-DELIVERY-POLICY-20260830", "OPGAP-BFF-MAIN-ASSEMBLY-20260830", "OPGAP-FE-INTEGRATION-ASSEMBLY-20260830"],
+      "dependency_tracks": {"OPGAP-SAFETY-PROOF-CONTRACT-20260830": "safety", "OPGAP-DELIVERY-POLICY-20260830": "release", "OPGAP-BFF-MAIN-ASSEMBLY-20260830": "functional", "OPGAP-FE-INTEGRATION-ASSEMBLY-20260830": "functional"},
+      "artifacts": ["docs/deployment/evidence/full-operation-gap-20260830/promotion-evidence.json"],
+      "acceptance": ["manifest binds exact SHAs", "all gates precede atomic switch", "receipt chains use natural stimuli"],
+      "gaps": ["OP-G03", "OP-G19", "OP-G20"], "priority": 0, "wave": 3, "design_unit": "SD-12", "execution_resources": ["pantheon-dev"]
     },
     {
       "id": "OPGAP-HOSTED-E2E-ACCEPTANCE-20260830",
-      "title": "Full twelve-loop stimulus-readback, source lifecycle, and authenticated desktop Playwright acceptance",
-      "summary_zh": "依 SD-Unit-11 執行：鎖定 pantheon-dev 資源，於已部署之 Dev VM 執行 12 循環全量刺激讀回 (OP-G11)、Source 有界更新週期 (OP-G12 驗證)、及桌面端登入態 Playwright 旅程驗收 (OP-G14)，完成全產品簽收。",
-      "phase": "W4-acceptance-vm",
-      "owner": "Antigravity2",
-      "reviewer": "Codex2",
-      "target_repo": "pantheon",
-      "depends_on": [
-        "OPGAP-HOSTED-DEV-PROMOTION-20260830"
-      ],
-      "dependency_tracks": {
-        "OPGAP-HOSTED-DEV-PROMOTION-20260830": "hosted"
-      },
-      "artifacts": [
-        "scripts/e2e/twelve_loop_acceptance_suite.py",
-        "scripts/e2e/verify_source_reconcile_only_cycle.py",
-        "docs/deployment/evidence/full-operation-gap/OPGAP-HOSTED-E2E-ACCEPTANCE-20260830/evidence.json"
-      ],
-      "acceptance": [
-        "12-loop 全量測試自動化通過，每循環均取得真實 receipt、terminal state 與相同 ID 讀回",
-        "Source Management 走完建立/驗證/單次有界更新並證明自動恢復 reconcile_only",
-        "桌面端登入態 Playwright 執行已預先就緒之 execute-plans desktop_authenticated_journey.spec.ts，遍歷 Management 與 Agora 核心路由，無阻斷性 console/network 錯誤",
-        "產出最終簽收證據 manifest，正式宣告全產品正常運作閉環"
-      ],
-      "gaps": [
-        "OP-G11",
-        "OP-G14"
-      ],
-      "priority": 4,
-      "wave": 4,
-      "design_unit": "SD-Unit-11",
-      "execution_resources": [
-        "pantheon-dev"
-      ]
+      "title": "Produce exact-pair 12-loop and authenticated desktop evidence",
+      "summary_zh": "每loop具stimulus/owner receipt/terminal/readback；桌面證據綁同pair。",
+      "phase": "W4-hosted", "owner": "Codex2", "reviewer": "Antigravity", "target_repo": "pantheon",
+      "depends_on": ["OPGAP-HOSTED-DEV-PROMOTION-20260830"],
+      "dependency_tracks": {"OPGAP-HOSTED-DEV-PROMOTION-20260830": "hosted"},
+      "artifacts": ["scripts/full_operation_hosted_acceptance.py", "scripts/test_full_operation_hosted_acceptance.py", "docs/deployment/evidence/full-operation-gap-20260830/acceptance-evidence.json"],
+      "acceptance": ["12 loops no skip", "authenticated DOM/network/console evidence", "wrong SHA or missing evidence fails"],
+      "gaps": ["OP-G11", "OP-G14"], "priority": 0, "wave": 4, "design_unit": "SD-12", "execution_resources": ["pantheon-dev"]
     }
   ]
 }
