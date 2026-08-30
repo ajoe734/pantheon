@@ -1,0 +1,278 @@
+{
+  "schema_version": "product_evidence.v1",
+  "schema_status": {
+    "formal_schema_owner": "schemas/product-evidence.schema.json",
+    "formalization_trigger": "Product-task exact-head review admission requires a schema-valid task evidence manifest.",
+    "note": "Owner-authored evidence cut committed before independent review; governed review binding supplies the final immutable PR head.",
+    "status": "formalized"
+  },
+  "evidence_policy": {
+    "checksum_file": "docs/deployment/evidence/agora/AGORA-PERSONA-FLEET-DETAIL-SYMMETRY-REPAIR-V2-20260830/evidence.sha256",
+    "missing_or_contradicted_proof_fails_closed": true,
+    "mutation_rule": "Any source or evidence change after this cut requires a new exact-head review binding before merge.",
+    "recording_mode": "logical_append_only",
+    "redacted": false,
+    "self_hashing": false
+  },
+  "task": {
+    "base_branch": "dev",
+    "evidence_cut_at": "2026-08-30T19:23:31Z",
+    "evidence_cut_semantics": "The source regression delta was adopted unchanged from PR #5448 head 978865cd087dd9719b1a78a3398e78a7ed60b3cd and committed as anchor be329e86157ffce120a877a4dabf1b444dc49e21. This manifest is committed before review; canonical handoff binds the resulting PR's immutable head.",
+    "id": "AGORA-PERSONA-FLEET-DETAIL-SYMMETRY-REPAIR-V2-20260830",
+    "overall_admission": "owner_asserted_pass_pending_independent_review_and_merge",
+    "owner": "Codex2",
+    "phase": "Agora authentic demo repair / Persona detail symmetry delivery",
+    "product_level_required": true,
+    "repository": "ajoe734/pantheon",
+    "review_file": "docs/deployment/evidence/agora/AGORA-PERSONA-FLEET-DETAIL-SYMMETRY-REPAIR-V2-20260830/evidence.json",
+    "reviewer": "Claude",
+    "target_environment": "local BFF production-owner boundary regression suite; no hosted deployment claim",
+    "target_maturity": "review-ready source delivery",
+    "task_branch": "task/AGORA-PERSONA-FLEET-DETAIL-SYMMETRY-REPAIR-V2-20260830",
+    "title": "Close Persona Fleet to detail symmetry with review evidence"
+  },
+  "authorities": {
+    "actual_state": [
+      "services/control-plane/bff/main.py Persona Fleet and detail facades",
+      "services/persona.write_owner HTTP persistence owner",
+      "task brief adoption contract for PR #5448 head 978865cd087dd9719b1a78a3398e78a7ed60b3cd"
+    ],
+    "desired_state": [
+      "A same-tenant user-private Agora Servant Fleet row resolves through the canonical detail facade after an HTTP owner restart.",
+      "Foreign-tenant and unauthenticated callers remain denied without widening ID lookup."
+    ],
+    "task_packet": ".orchestrator/worker-runtime/task-context/agora-persona-fleet-detail-symmetry-repair-v2-20260830.md"
+  },
+  "scope": {
+    "authoritative_write_owner": "Persona service HTTP write owner; the BFF read ports remain read-only projections over Persona-owned records.",
+    "composes_with": [
+      "Existing /bff/management/persona-fleet tenant filtering in services/control-plane/bff/main.py",
+      "Existing /bff/personas/{persona_id} canonical detail tenant admission",
+      "Claude's governed exact-head review and supervisor MERGE delivery"
+    ],
+    "evidence_changed_files": [
+      "docs/deployment/evidence/agora/AGORA-PERSONA-FLEET-DETAIL-SYMMETRY-REPAIR-V2-20260830/evidence.json",
+      "docs/deployment/evidence/agora/AGORA-PERSONA-FLEET-DETAIL-SYMMETRY-REPAIR-V2-20260830/evidence.sha256"
+    ],
+    "implementation_changed_files": [
+      "services/control-plane/bff/tests/test_agora_servant_production_write_owner.py",
+      "services/control-plane/bff/tests/test_bff_b2_list_detail_facade.py"
+    ],
+    "not_changing": "Production Persona detail or Fleet handlers, Agora write authority, auth token parsing, runtime binding semantics, hosted deployment state, or live-capital policy.",
+    "owned_layer": "HTTP Persona-owner restart regression and B2 fixture tenant provenance that jointly prove Fleet-to-detail read symmetry."
+  },
+  "implementation_delivery": {
+    "anchor_commits": [
+      {
+        "sha": "978865cd087dd9719b1a78a3398e78a7ed60b3cd",
+        "subject": "AGORA-PERSONA-FLEET-DETAIL-SYMMETRY-REPAIR-V1-20260830: anchor",
+        "delivery_state": "adoption_source",
+        "hosted_cut_inclusion": false,
+        "note": "Task packet mandates this exact preserved source diff."
+      },
+      {
+        "sha": "be329e86157ffce120a877a4dabf1b444dc49e21",
+        "subject": "AGORA-PERSONA-FLEET-V2: anchor tests",
+        "delivery_state": "task_anchor",
+        "hosted_cut_inclusion": false,
+        "note": "Reproduces the source diff unchanged on the current dev-derived task branch."
+      }
+    ],
+    "required_checks": [
+      {
+        "workflow": "Focused BFF production-owner, B2 list-detail, and B3 Persona Fleet pytest suites",
+        "event": "local validation before evidence cut",
+        "conclusion": "success"
+      },
+      {
+        "workflow": "product-evidence Draft 7 schema validation",
+        "event": "local validation before exact-head handoff",
+        "conclusion": "success"
+      },
+      {
+        "workflow": "evidence companion checksum",
+        "event": "local validation before exact-head handoff",
+        "conclusion": "success"
+      }
+    ]
+  },
+  "validation": {
+    "commands": [
+      {
+        "command": "pytest -q -rA services/control-plane/bff/tests/test_agora_servant_production_write_owner.py services/control-plane/bff/tests/test_bff_b2_list_detail_facade.py services/control-plane/bff/tests/test_bff_b3_persona_fleet.py",
+        "result": "pass",
+        "conclusion": "Focused production HTTP-owner, B2 facade, and B3 Fleet suites completed successfully after adopting the exact source delta."
+      },
+      {
+        "command": "pytest -vv -rA services/control-plane/bff/tests/test_agora_servant_production_write_owner.py::test_http_owner_restart_preserves_fleet_to_detail_read_symmetry",
+        "result": "pass",
+        "conclusion": "The added end-to-end regression proves same-tenant operator and viewer Fleet-to-detail symmetry across restart; foreign tenant gets 404 and unauthenticated detail gets 401."
+      },
+      {
+        "command": "python3 -c \"import json, jsonschema; jsonschema.validate(json.load(open('docs/deployment/evidence/agora/AGORA-PERSONA-FLEET-DETAIL-SYMMETRY-REPAIR-V2-20260830/evidence.json')), json.load(open('schemas/product-evidence.schema.json')))\"",
+        "result": "pass",
+        "conclusion": "The manifest validates against schemas/product-evidence.schema.json before its evidence commit."
+      },
+      {
+        "command": "(cd docs/deployment/evidence/agora/AGORA-PERSONA-FLEET-DETAIL-SYMMETRY-REPAIR-V2-20260830 && sha256sum -c evidence.sha256)",
+        "result": "pass",
+        "conclusion": "The companion checksum matches evidence.json before its evidence commit."
+      }
+    ],
+    "validated_at": "2026-08-30T19:23:31Z",
+    "validated_base_sha": "47304a11d4db87c139d4974505a6f2e633c9aca6",
+    "validated_head_sha": "be329e86157ffce120a877a4dabf1b444dc49e21"
+  },
+  "deployment": {
+    "applicable": false,
+    "environment": "local BFF regression validation",
+    "public_bff_base_url": "not_applicable",
+    "publish_cut": {
+      "status": "not_applicable"
+    },
+    "canonical_root_deploy": {
+      "status": "not_applicable"
+    },
+    "identity_admission": {
+      "status": "local auth-stub contract only; no hosted identity claim"
+    }
+  },
+  "hosted_readback": {
+    "pre_deploy": {
+      "status": "not_applicable",
+      "reason": "This task adds regression coverage and fixture provenance only; it does not deploy or restart hosted services."
+    }
+  },
+  "behavioral_proof": {
+    "duplicate_safety": {
+      "proof": "The pre-existing servant ensure idempotency path is exercised before restart; this task does not alter write behavior."
+    },
+    "failure_and_degraded_behavior": {
+      "proof": "A foreign tenant cannot enumerate or detail-read the private Persona, and unauthenticated detail read returns 401."
+    },
+    "request_receipt_downstream_correlation": {
+      "proof": "The test uses stable idempotency and request IDs while traversing BFF to the actual HTTP Persona owner."
+    },
+    "restart_and_recovery": {
+      "proof": "A new Persona service instance and fresh BFF read port recover the persisted Persona ID and display name without an in-memory overlay."
+    },
+    "rollback_or_compensation": {
+      "proof": "No mutable production behavior is changed; the delivery is regression coverage and test fixture provenance only."
+    }
+  },
+  "security_and_safety": {
+    "environment_boundary": {
+      "status": "pass",
+      "proof": "The test asserts paper-only/no-execution authority on the created servant and introduces no runtime write path."
+    },
+    "hosted_frontend": {
+      "status": "not_applicable",
+      "proof": "No frontend or hosted deployment change is included."
+    },
+    "mfa": {
+      "status": "not_applicable",
+      "proof": "No approval or mutation flow is modified."
+    },
+    "no_live_capital": {
+      "status": "pass",
+      "proof": "The regression remains explicitly paper-only with execution authority none."
+    },
+    "rbac": {
+      "status": "pass",
+      "proof": "Both authorized read roles succeed; unauthenticated detail access returns 401."
+    },
+    "tenant_isolation": {
+      "status": "pass",
+      "proof": "The foreign tenant does not receive the Fleet row and gets RESOURCE_NOT_FOUND by Persona ID."
+    },
+    "two_person_approval": {
+      "status": "pending",
+      "proof": "Claude must independently approve the immutable PR head through the governed review gate before merge."
+    }
+  },
+  "acceptance": [
+    {
+      "id": "AC-01",
+      "statement": "The exact test and fixture delta preserved at PR #5448 head 978865cd087dd9719b1a78a3398e78a7ed60b3cd is adopted on the current dev-derived task branch.",
+      "status": "pass",
+      "evidence_refs": [
+        "anchor be329e86157ffce120a877a4dabf1b444dc49e21",
+        "git diff comparison against PR #5448 source head"
+      ]
+    },
+    {
+      "id": "AC-02",
+      "statement": "The same user-private Persona ID and Agora Servant display name resolve from Fleet through detail after HTTP Persona owner restart for operator and viewer roles, while foreign tenant and unauthenticated reads remain denied.",
+      "status": "pass",
+      "evidence_refs": [
+        "test_http_owner_restart_preserves_fleet_to_detail_read_symmetry",
+        "focused pytest validation"
+      ]
+    },
+    {
+      "id": "AC-03",
+      "statement": "B2, B3, and production HTTP-owner regression suites pass and a schema-valid evidence manifest plus checksum are committed before review.",
+      "status": "pass",
+      "evidence_refs": [
+        "validation.commands",
+        "evidence_policy.checksum_file"
+      ]
+    },
+    {
+      "id": "AC-04",
+      "statement": "The assigned reviewer independently reviews the exact delivery head through the canonical review gate before merge.",
+      "status": "pending_independent_review_and_merge",
+      "evidence_refs": [
+        "security_and_safety.two_person_approval"
+      ],
+      "blocking_until": "Claude approves the immutable handoff-bound PR head and the supervisor integration runner merges it to dev."
+    }
+  ],
+  "residual_risks": {
+    "independent_review_and_merge": {
+      "blocking_for_this_task": true,
+      "containment": "Do not arm auto-merge or claim deployment; use governed exact-head handoff to Claude.",
+      "description": "The source delivery is owner-validated but has not yet received independent review or merge evidence.",
+      "expiry": "After Claude approves the frozen exact head and the supervisor merge completes.",
+      "owner": "Claude and supervisor integration runner",
+      "recheck_trigger": "Before governed handoff and again after GitHub reports merge.",
+      "severity": "release_gate"
+    },
+    "hosted_runtime": {
+      "blocking_for_this_task": false,
+      "containment": "Manifest makes no hosted deployment or runtime-readback claim.",
+      "description": "The local restart proof does not establish the currently hosted BFF version or a hosted Persona service restart.",
+      "expiry": "Only a separately scoped hosted deployment verification can remove this boundary.",
+      "owner": "future hosted verification task",
+      "recheck_trigger": "If a future task asserts hosted Fleet-to-detail behavior.",
+      "severity": "scope_boundary"
+    }
+  },
+  "integrity": {
+    "algorithm": "sha256",
+    "checksum_coverage": [
+      "evidence.json"
+    ],
+    "companion_checksum_path": "docs/deployment/evidence/agora/AGORA-PERSONA-FLEET-DETAIL-SYMMETRY-REPAIR-V2-20260830/evidence.sha256",
+    "hosted_semantic_sha256": {},
+    "manifest_path": "docs/deployment/evidence/agora/AGORA-PERSONA-FLEET-DETAIL-SYMMETRY-REPAIR-V2-20260830/evidence.json",
+    "normalized_hosted_readback": {},
+    "self_hash_omitted": true,
+    "self_hash_reason": "The companion checksum covers the immutable manifest file; embedding its own digest would be circular.",
+    "source_artifact_sha256_by_epoch": {
+      "source_pr_5448_head": "978865cd087dd9719b1a78a3398e78a7ed60b3cd",
+      "adopted_task_anchor": "be329e86157ffce120a877a4dabf1b444dc49e21"
+    }
+  },
+  "record_log": [
+    {
+      "sequence": 1,
+      "recorded_at": "2026-08-30T19:23:31Z",
+      "kind": "owner_source_delta_adopted",
+      "status": "owner_asserted_pass_pending_independent_review",
+      "actor": "Codex2",
+      "sha": "be329e86157ffce120a877a4dabf1b444dc49e21",
+      "reference": "Reproduced the PR #5448 exact source diff and completed focused BFF regression validation before evidence commit."
+    }
+  ]
+}
