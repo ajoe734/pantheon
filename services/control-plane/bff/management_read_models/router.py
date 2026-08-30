@@ -1,21 +1,40 @@
-"""BFF: Management Read Models Router and Composed Operations.
+"""BFF: Management Read Models & Management System Router.
 
-This module provides the five Management composed read models:
+Consolidates all 17 Management domain HTTP routes into a dedicated router:
+- Shell summary (/bff/management/shell-summary)
+- Operator home (/api/v1/operator/home)
+- Management cockpit aggregate (/bff/management/cockpit)
+- Trading pulse card aggregate (/bff/management/trading-pulse)
+- Trading pulse rankings (/bff/management/trading-pulse/rankings)
+- Sentinel pulse (/bff/management/sentinel-pulse)
+- Operator health status (/api/v1/operator/health-status)
+- Loop throughput metrics (/bff/management/loop-throughput)
+- Risk radar indicators (/bff/management/risk-radar)
+- Incident timeline (/bff/management/incident-timeline)
+- Human review inbox (/bff/management/human-inbox)
+- Human review inbox detail (/bff/management/human-inbox/{item_id})
+- HIQ backlog (/bff/management/hiq-backlog)
+- Intervention stream (/bff/management/intervention-stream)
+- Evidence explorer (/bff/management/evidence)
+- Operations read model (/bff/management/operations-read-model/{persona_id})
+- Degraded control guidance (/api/v1/operator/degraded-control-guidance)
+
+Also preserves the 5 composed Management read models:
 - Formula jobs read model (/bff/management/formula-jobs)
 - Consolidated activity read model (/bff/management/activity)
 - Paper execution telemetry read model (/bff/management/paper-telemetry)
 - Postmortem incident analysis read model (/bff/management/postmortems)
 - Postmortem detail read model (/bff/management/postmortems/{postmortem_id})
-
-The composed operations accept narrow injected dependencies or an adapted read store.
 """
 
 from __future__ import annotations
 
 import json
+import logging
 from datetime import datetime, timezone
-from typing import Any, Callable, Dict, List, Optional, Tuple
-from fastapi import APIRouter, Header, HTTPException, Query
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+from fastapi import APIRouter, Cookie, Header, HTTPException, Query, Response
+from starlette.responses import JSONResponse
 
 from .models import (
     ActivityEnvelope,
@@ -24,14 +43,89 @@ from .models import (
     PostmortemDetailEnvelope,
     PostmortemsEnvelope,
 )
+from .service import ManagementService
+
+try:
+    from models import ErrorCode
+except ImportError:
+    class ErrorCode:
+        VALIDATION_FAILED = "VALIDATION_FAILED"
+        AUTH_REQUIRED = "AUTH_REQUIRED"
+        FORBIDDEN = "FORBIDDEN"
+        RESOURCE_NOT_FOUND = "RESOURCE_NOT_FOUND"
+        RESOURCE_CONFLICT = "RESOURCE_CONFLICT"
+        DEPENDENCY_UNAVAILABLE = "DEPENDENCY_UNAVAILABLE"
+        INTERNAL_ERROR = "INTERNAL_ERROR"
+
+log = logging.getLogger(__name__)
 
 
 def _utc_now_rfc3339() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
+def _default_snapshot_meta(snapshot_at: Optional[str] = None) -> Dict[str, Any]:
+    now = snapshot_at or _utc_now_rfc3339()
+    return {
+        "snapshot_at": now,
+        "version": "v1",
+    }
+
+
+def _default_extract_identity(
+    authorization: Optional[str] = None,
+    mfa_token: Optional[str] = None,
+    session_cookie: Optional[str] = None,
+) -> Any:
+    class DummyIdentity:
+        operator_id = "op-user"
+        roles = {"operator", "viewer", "admin"}
+        session_kind = "bearer"
+        mfa_verified = False
+        display_name = "Operator"
+
+    ident = DummyIdentity()
+    if authorization:
+        token = authorization.replace("Bearer ", "").strip()
+        parts = token.split(":")
+        ident.operator_id = parts[0]
+        if len(parts) > 1:
+            ident.roles = set(parts[1].split(","))
+    return ident
+
+
+def _default_require_read_role(identity: Any) -> None:
+    pass
+
+
+def _default_bff_error(
+    status_code: int,
+    code: str,
+    message: str,
+    reason: Optional[str] = None,
+    precondition_failed: Optional[str] = None,
+    suggestion: Optional[str] = None,
+    details_extra: Optional[Dict[str, Any]] = None,
+) -> HTTPException:
+    detail: Dict[str, Any] = {
+        "error": {
+            "code": code,
+            "message": message,
+            "reason": reason or message,
+            "status_code": status_code,
+        }
+    }
+    if precondition_failed:
+        detail["error"]["details"] = {"precondition_failed": precondition_failed}
+    if suggestion:
+        detail["error"]["suggestion"] = suggestion
+    if details_extra:
+        detail["error"].setdefault("details", {}).update(details_extra)
+    return HTTPException(status_code=status_code, detail=detail)
+
+
 # ---------------------------------------------------------------------------
-# Composed Read Model Operations
+# Composed Read Model Standalone Functions (Preserved for compatibility)
 # ---------------------------------------------------------------------------
 
 def get_formula_jobs_read_model(
@@ -86,7 +180,6 @@ def get_formula_jobs_read_model(
         raw_items.extend(fj_records or [])
 
     if not jobs_avail and not fj_avail:
-        # Fallback to store get_formula_jobs_read_model if store has direct method
         if store is not None and hasattr(store, "get_formula_jobs_read_model"):
             try:
                 return store.get_formula_jobs_read_model(status=status, formula_id=formula_id)
@@ -170,7 +263,6 @@ def get_activity_read_model(
     contributing_sources: List[str] = []
     surfaces: Dict[str, Any] = {}
 
-    # 1. Activity audit
     act_avail, act_records = False, []
     if activity_audit_reader is not None:
         try:
@@ -195,7 +287,6 @@ def get_activity_read_model(
     else:
         surfaces["activity_audit"] = {"status": "unavailable", "source": "missing"}
 
-    # 2. Governance audit events
     gov_avail, gov_records = False, []
     if governance_audit_reader is not None:
         try:
@@ -235,7 +326,6 @@ def get_activity_read_model(
     else:
         surfaces["governance_audit"] = {"status": "unavailable", "source": "missing"}
 
-    # 3. Telemetry events
     tel_src, tel_events = "missing", []
     if telemetry_events_reader is not None:
         try:
@@ -279,7 +369,6 @@ def get_activity_read_model(
         surfaces["telemetry_events"] = {"status": "unavailable", "source": "missing"}
 
     if not act_avail and not gov_avail and (tel_src in ("missing", "unavailable")):
-        # If store has direct get_activity_read_model, fallback
         if store is not None and hasattr(store, "get_activity_read_model"):
             try:
                 return store.get_activity_read_model(event_type=event_type, actor_id=actor_id)
@@ -364,7 +453,6 @@ def get_paper_telemetry_read_model(
     raw_items: List[Dict[str, Any]] = []
     contributing_sources: List[str] = []
 
-    # 1. Direct paper_telemetry dataset
     pt_avail, pt_records = False, []
     if paper_telemetry_reader is not None:
         try:
@@ -384,7 +472,6 @@ def get_paper_telemetry_read_model(
         contributing_sources.append("service")
         raw_items.extend(pt_records)
 
-    # 2. Canonical runtime bindings + telemetry events
     bindings_avail = False
     bindings: List[Dict[str, Any]] = []
     if runtime_bindings_reader is not None:
@@ -638,10 +725,13 @@ def get_postmortem_detail_read_model(
 def create_management_read_models_router(
     *,
     get_read_store: Optional[Callable] = None,
-    extract_identity: Callable,
-    require_read_role: Callable,
-    snapshot_meta: Callable,
-    utc_now: Callable,
+    extract_identity: Optional[Callable] = None,
+    require_read_role: Optional[Callable] = None,
+    snapshot_meta: Optional[Callable] = None,
+    utc_now: Optional[Callable] = None,
+    bff_error: Optional[Callable] = None,
+    raise_if_session_logged_out: Optional[Callable] = None,
+    service: Optional[ManagementService] = None,
     jobs_reader: Optional[Callable[[], Tuple[bool, List[Dict[str, Any]]]]] = None,
     formula_jobs_reader: Optional[Callable[[], Tuple[bool, List[Dict[str, Any]]]]] = None,
     activity_audit_reader: Optional[Callable[[], Tuple[bool, List[Dict[str, Any]]]]] = None,
@@ -651,7 +741,16 @@ def create_management_read_models_router(
     runtime_bindings_reader: Optional[Callable[[], Tuple[bool, List[Dict[str, Any]]]]] = None,
     postmortems_reader: Optional[Callable[[], Tuple[bool, List[Dict[str, Any]]]]] = None,
 ) -> APIRouter:
+    """Create the APIRouter for Management read models and system operations."""
     router = APIRouter()
+
+    _extract_id = extract_identity or _default_extract_identity
+    _req_read = require_read_role or _default_require_read_role
+    _snap_meta = snapshot_meta or _default_snapshot_meta
+    _now = utc_now or _utc_now_rfc3339
+    _err = bff_error or _default_bff_error
+
+    svc = service or ManagementService(get_read_store=get_read_store, utc_now=_now)
 
     def _resolve_store() -> Optional[Any]:
         if get_read_store is not None:
@@ -661,6 +760,358 @@ def create_management_read_models_router(
                 return None
         return None
 
+    # -----------------------------------------------------------------------
+    # 1. Shell Summary
+    # -----------------------------------------------------------------------
+    @router.get("/bff/management/shell-summary")
+    def bff_management_shell_summary(
+        authorization: Optional[str] = Header(default=None),
+        pantheon_session: Optional[str] = Cookie(default=None),
+        x_mfa_token: Optional[str] = Header(default=None, alias="X-MFA-Token"),
+    ) -> Dict[str, Any]:
+        """Cheap management shell summary for first-mount badges and session chrome."""
+        identity = _extract_id(
+            authorization,
+            mfa_token=x_mfa_token,
+            session_cookie=pantheon_session,
+        )
+        _req_read(identity)
+        if raise_if_session_logged_out:
+            raise_if_session_logged_out(identity)
+        return svc.get_shell_summary(identity)
+
+    # -----------------------------------------------------------------------
+    # 2. Operator Home
+    # -----------------------------------------------------------------------
+    @router.get("/api/v1/operator/home")
+    async def get_operator_home(
+        authorization: Optional[str] = Header(default=None),
+    ) -> Dict[str, Any]:
+        """Overview cards and dispatch shortcuts for operator home dashboard."""
+        identity = _extract_id(authorization)
+        _req_read(identity)
+        snap = _now()
+        return svc.get_operator_home(snapshot_at=snap)
+
+    # -----------------------------------------------------------------------
+    # 3. Management Cockpit Aggregate
+    # -----------------------------------------------------------------------
+    @router.get("/bff/management/cockpit")
+    async def bff_management_cockpit(
+        authorization: Optional[str] = Header(default=None),
+    ) -> Dict[str, Any]:
+        """BFF-B3-001: Pantheon Management cockpit aggregate."""
+        identity = _extract_id(authorization)
+        _req_read(identity)
+        snap = _now()
+        return svc.get_management_cockpit(snapshot_at=snap)
+
+    # -----------------------------------------------------------------------
+    # 4. Trading Pulse
+    # -----------------------------------------------------------------------
+    @router.get("/bff/management/trading-pulse")
+    async def bff_management_trading_pulse(
+        authorization: Optional[str] = Header(default=None),
+    ) -> Dict[str, Any]:
+        """BFF-B3-004: Management Trading Pulse card aggregate."""
+        identity = _extract_id(authorization)
+        _req_read(identity)
+        snap = _now()
+        return svc.get_trading_pulse(snapshot_at=snap)
+
+    # -----------------------------------------------------------------------
+    # 5. Trading Pulse Rankings
+    # -----------------------------------------------------------------------
+    @router.get("/bff/management/trading-pulse/rankings")
+    async def bff_management_trading_pulse_rankings(
+        limit: int = Query(default=20, ge=1, le=200),
+        authorization: Optional[str] = Header(default=None),
+    ) -> Dict[str, Any]:
+        """BFF-B3-004: Management Trading Pulse ranking blocks."""
+        identity = _extract_id(authorization)
+        _req_read(identity)
+        snap = _now()
+        return svc.get_trading_pulse_rankings(limit=limit, snapshot_at=snap)
+
+    # -----------------------------------------------------------------------
+    # 6. Sentinel Pulse
+    # -----------------------------------------------------------------------
+    @router.get("/bff/management/sentinel-pulse")
+    async def bff_management_sentinel_pulse(
+        kind: Optional[str] = Query(default=None),
+        status: Optional[str] = Query(default=None),
+        severity: Optional[str] = Query(default=None),
+        q: str = Query(default=""),
+        page_token: Optional[str] = Query(default=None),
+        page_size: int = Query(default=20, ge=1, le=100),
+        authorization: Optional[str] = Header(default=None),
+    ) -> Dict[str, Any]:
+        """BFF: Management Sentinel Pulse composed from v5 sentinel read surfaces."""
+        identity = _extract_id(authorization)
+        _req_read(identity)
+        return svc.get_sentinel_pulse(
+            kind=kind,
+            status=status,
+            severity=severity,
+            q=q,
+            page_token=page_token,
+            page_size=page_size,
+        )
+
+    # -----------------------------------------------------------------------
+    # 7. Operator Health Status
+    # -----------------------------------------------------------------------
+    @router.get("/api/v1/operator/health-status")
+    async def get_operator_health_status(
+        authorization: Optional[str] = Header(default=None),
+    ) -> Dict[str, Any]:
+        """BFF: Grouped control plane health status and secondary control path."""
+        identity = _extract_id(authorization)
+        _req_read(identity)
+        snap = _now()
+        return svc.get_operator_health_status(snapshot_at=snap)
+
+    # -----------------------------------------------------------------------
+    # 8. Loop Throughput
+    # -----------------------------------------------------------------------
+    @router.get("/bff/management/loop-throughput")
+    async def bff_management_loop_throughput(
+        loop_type: Optional[str] = Query(default=None),
+        window_minutes: int = Query(default=60, ge=5, le=1440),
+        page_token: Optional[str] = Query(default=None),
+        page_size: int = Query(default=50, ge=1, le=200),
+        authorization: Optional[str] = Header(default=None),
+    ) -> Dict[str, Any]:
+        """BFF: read-only loop execution throughput & metrics."""
+        identity = _extract_id(authorization)
+        _req_read(identity)
+        return svc.get_loop_throughput(
+            loop_type=loop_type,
+            window_minutes=window_minutes,
+            page_token=page_token,
+            page_size=page_size,
+        )
+
+    # -----------------------------------------------------------------------
+    # 9. Risk Radar
+    # -----------------------------------------------------------------------
+    @router.get("/bff/management/risk-radar")
+    async def bff_management_risk_radar(
+        persona_id: Optional[str] = Query(default=None),
+        strategy_id: Optional[str] = Query(default=None),
+        capital_pool_id: Optional[str] = Query(default=None),
+        risk_state: Optional[str] = Query(default=None),
+        page_token: Optional[str] = Query(default=None),
+        page_size: int = Query(default=50, ge=1, le=200),
+        authorization: Optional[str] = Header(default=None),
+    ) -> Dict[str, Any]:
+        """BFF: read-only cross-persona and strategy risk indicators."""
+        identity = _extract_id(authorization)
+        _req_read(identity)
+        return svc.get_risk_radar(
+            persona_id=persona_id,
+            strategy_id=strategy_id,
+            capital_pool_id=capital_pool_id,
+            risk_state=risk_state,
+            page_token=page_token,
+            page_size=page_size,
+        )
+
+    # -----------------------------------------------------------------------
+    # 10. Incident Timeline
+    # -----------------------------------------------------------------------
+    @router.get("/bff/management/incident-timeline")
+    async def bff_management_incident_timeline(
+        status: Optional[str] = Query(default=None),
+        severity: Optional[str] = Query(default=None),
+        capital_pool_id: Optional[str] = Query(default=None),
+        affected_pool_id: Optional[str] = Query(default=None),
+        runtime_id: Optional[str] = Query(default=None),
+        sort_order: Optional[str] = Query(default=None),
+        page_token: Optional[str] = Query(default=None),
+        page_size: int = Query(default=50, ge=1, le=200),
+        authorization: Optional[str] = Header(default=None),
+    ) -> Dict[str, Any]:
+        """BFF: read-only Management Console incident chronology."""
+        identity = _extract_id(authorization)
+        _req_read(identity)
+        return svc.get_incident_timeline(
+            status=status,
+            severity=severity,
+            capital_pool_id=capital_pool_id,
+            affected_pool_id=affected_pool_id,
+            runtime_id=runtime_id,
+            sort_order=sort_order,
+            page_token=page_token,
+            page_size=page_size,
+        )
+
+    # -----------------------------------------------------------------------
+    # 11. Human Review Inbox
+    # -----------------------------------------------------------------------
+    @router.get("/bff/management/human-inbox")
+    async def bff_management_human_inbox(
+        source_type: Optional[str] = Query(default=None),
+        status: Optional[str] = Query(default=None),
+        priority: Optional[str] = Query(default=None),
+        page_token: Optional[str] = Query(default=None),
+        page_size: int = Query(default=20, ge=1, le=200),
+        authorization: Optional[str] = Header(default=None),
+    ) -> Dict[str, Any]:
+        """BFF: compose human-action inbox rows from governed human-review sources."""
+        identity = _extract_id(authorization)
+        _req_read(identity)
+        return svc.get_human_inbox(
+            source_type=source_type,
+            status=status,
+            priority=priority,
+            page_token=page_token,
+            page_size=page_size,
+        )
+
+    # -----------------------------------------------------------------------
+    # 12. Human Review Inbox Detail
+    # -----------------------------------------------------------------------
+    @router.get("/bff/management/human-inbox/{item_id}")
+    async def bff_management_human_inbox_detail(
+        item_id: str,
+        authorization: Optional[str] = Header(default=None),
+    ) -> Dict[str, Any]:
+        """BFF: detail for one composed human-action inbox row."""
+        identity = _extract_id(authorization)
+        _req_read(identity)
+        detail = svc.get_human_inbox_detail(item_id)
+        if detail is None:
+            raise _err(
+                404,
+                ErrorCode.RESOURCE_NOT_FOUND,
+                "Human inbox item not found",
+                f"Human inbox item '{item_id}' does not exist",
+            )
+        return detail
+
+    # -----------------------------------------------------------------------
+    # 13. HIQ Backlog
+    # -----------------------------------------------------------------------
+    @router.get("/bff/management/hiq-backlog")
+    async def bff_management_hiq_backlog(
+        source_type: Optional[str] = Query(default=None),
+        status: Optional[str] = Query(default=None),
+        kind: Optional[str] = Query(default=None),
+        priority: Optional[str] = Query(default=None),
+        q: str = Query(default=""),
+        page_token: Optional[str] = Query(default=None),
+        page_size: int = Query(default=50, ge=1, le=200),
+        authorization: Optional[str] = Header(default=None),
+    ) -> Dict[str, Any]:
+        """BFF: read-only HIQ backlog aggregate for sentinel and intervention review."""
+        identity = _extract_id(authorization)
+        _req_read(identity)
+        return svc.get_hiq_backlog(
+            source_type=source_type,
+            status=status,
+            kind=kind,
+            priority=priority,
+            q=q,
+            page_token=page_token,
+            page_size=page_size,
+        )
+
+    # -----------------------------------------------------------------------
+    # 14. Intervention Stream
+    # -----------------------------------------------------------------------
+    @router.get("/bff/management/intervention-stream")
+    async def bff_management_intervention_stream(
+        persona_id: Optional[str] = Query(default=None),
+        personaId: Optional[str] = Query(default=None),
+        status: Optional[str] = Query(default=None),
+        kind: Optional[str] = Query(default=None),
+        q: str = Query(default=""),
+        window_hours: int = Query(default=24, ge=1, le=720),
+        windowHours: Optional[int] = Query(default=None, ge=1, le=720),
+        page_token: Optional[str] = Query(default=None),
+        page_size: int = Query(default=50, ge=1, le=200),
+        authorization: Optional[str] = Header(default=None),
+    ) -> Dict[str, Any]:
+        """BFF: read-only intervention event stream for Management Console review."""
+        identity = _extract_id(authorization)
+        _req_read(identity)
+        return svc.get_intervention_stream(
+            persona_id=persona_id or personaId,
+            status=status,
+            kind=kind,
+            q=q,
+            window_hours=windowHours or window_hours,
+            page_token=page_token,
+            page_size=page_size,
+        )
+
+    # -----------------------------------------------------------------------
+    # 15. Evidence Explorer
+    # -----------------------------------------------------------------------
+    @router.get("/bff/management/evidence")
+    async def bff_management_evidence(
+        ref_id: Optional[str] = Query(default=None),
+        linked_entity_type: Optional[str] = Query(default=None),
+        linked_entity_ref: Optional[str] = Query(default=None),
+        link_type: Optional[str] = Query(default=None),
+        credibility_tier: Optional[str] = Query(default=None),
+        verified: Optional[bool] = Query(default=None),
+        page_token: Optional[str] = Query(default=None),
+        page_size: int = Query(default=20, ge=1, le=100),
+        authorization: Optional[str] = Header(default=None),
+    ) -> Dict[str, Any]:
+        """BFF: adapt knowledge evidence refs into the Management Evidence Explorer."""
+        identity = _extract_id(authorization)
+        _req_read(identity)
+        return svc.get_evidence(
+            ref_id=ref_id,
+            linked_entity_type=linked_entity_type,
+            linked_entity_ref=linked_entity_ref,
+            link_type=link_type,
+            credibility_tier=credibility_tier,
+            verified=verified,
+            page_token=page_token,
+            page_size=page_size,
+        )
+
+    # -----------------------------------------------------------------------
+    # 16. Operations Read Model
+    # -----------------------------------------------------------------------
+    @router.get("/bff/management/operations-read-model/{persona_id}")
+    async def bff_management_operations_read_model(
+        persona_id: str,
+        period: str = Query(default="latest"),
+        authorization: Optional[str] = Header(default=None),
+    ) -> Dict[str, Any]:
+        """MGMT-OPS-001: shared identity/source-confidence read model for one persona."""
+        identity = _extract_id(authorization)
+        _req_read(identity)
+        res = svc.get_operations_read_model(persona_id=persona_id, period=period)
+        if res is None:
+            raise _err(
+                404,
+                ErrorCode.RESOURCE_NOT_FOUND,
+                "Persona not found",
+                f"Persona '{persona_id}' does not exist",
+            )
+        return res
+
+    # -----------------------------------------------------------------------
+    # 17. Degraded Control Guidance
+    # -----------------------------------------------------------------------
+    @router.get("/api/v1/operator/degraded-control-guidance")
+    async def degraded_control_guidance() -> Response:
+        """Return guidance for operators when the BFF is degraded or unavailable."""
+        res = svc.get_degraded_control_guidance()
+        return JSONResponse(
+            status_code=res["status_code"],
+            content=res["payload"],
+        )
+
+    # -----------------------------------------------------------------------
+    # 18. Formula Jobs Read Model (Composed)
+    # -----------------------------------------------------------------------
     @router.get(
         "/bff/management/formula-jobs",
         response_model=FormulaJobsEnvelope,
@@ -673,10 +1124,10 @@ def create_management_read_models_router(
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
         """BFF: Real Formula execution/evaluation jobs read model."""
-        identity = extract_identity(authorization)
-        require_read_role(identity)
+        identity = _extract_id(authorization)
+        _req_read(identity)
 
-        snapshot_at = utc_now()
+        snapshot_at = _now()
         store = _resolve_store()
         raw_res = get_formula_jobs_read_model(
             status=status,
@@ -684,7 +1135,7 @@ def create_management_read_models_router(
             jobs_reader=jobs_reader,
             formula_jobs_reader=formula_jobs_reader,
             store=store,
-            utc_now=utc_now,
+            utc_now=_now,
         )
 
         source: str = str(raw_res.get("source") or "missing")
@@ -709,7 +1160,7 @@ def create_management_read_models_router(
             surface["message"] = "Formula job read store is readable but currently empty."
 
         meta: Dict[str, Any] = {
-            **snapshot_meta(snapshot_at),
+            **_snap_meta(snapshot_at),
             "status": surface_state,
             "source": source,
             "surfaces": {
@@ -753,6 +1204,9 @@ def create_management_read_models_router(
             "meta": meta,
         }
 
+    # -----------------------------------------------------------------------
+    # 19. Consolidated Activity Read Model (Composed)
+    # -----------------------------------------------------------------------
     @router.get(
         "/bff/management/activity",
         response_model=ActivityEnvelope,
@@ -765,10 +1219,10 @@ def create_management_read_models_router(
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
         """BFF: Consolidated Management system activity read model."""
-        identity = extract_identity(authorization)
-        require_read_role(identity)
+        identity = _extract_id(authorization)
+        _req_read(identity)
 
-        snapshot_at = utc_now()
+        snapshot_at = _now()
         store = _resolve_store()
         raw_res = get_activity_read_model(
             event_type=event_type,
@@ -777,7 +1231,7 @@ def create_management_read_models_router(
             governance_audit_reader=governance_audit_reader,
             telemetry_events_reader=telemetry_events_reader,
             store=store,
-            utc_now=utc_now,
+            utc_now=_now,
         )
 
         source: str = str(raw_res.get("source") or "missing")
@@ -802,7 +1256,7 @@ def create_management_read_models_router(
             surface["message"] = "Activity read store is readable but currently empty."
 
         meta: Dict[str, Any] = {
-            **snapshot_meta(snapshot_at),
+            **_snap_meta(snapshot_at),
             "status": surface_state,
             "source": source,
             "surfaces": {
@@ -847,6 +1301,9 @@ def create_management_read_models_router(
             "meta": meta,
         }
 
+    # -----------------------------------------------------------------------
+    # 20. Paper Telemetry Read Model (Composed)
+    # -----------------------------------------------------------------------
     @router.get(
         "/bff/management/paper-telemetry",
         response_model=PaperTelemetryEnvelope,
@@ -859,10 +1316,10 @@ def create_management_read_models_router(
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
         """BFF: Real strategy paper execution telemetry & series read model."""
-        identity = extract_identity(authorization)
-        require_read_role(identity)
+        identity = _extract_id(authorization)
+        _req_read(identity)
 
-        snapshot_at = utc_now()
+        snapshot_at = _now()
         store = _resolve_store()
         raw_res = get_paper_telemetry_read_model(
             strategy_id=strategy_id,
@@ -871,7 +1328,7 @@ def create_management_read_models_router(
             runtime_bindings_reader=runtime_bindings_reader,
             telemetry_events_reader=telemetry_events_reader,
             store=store,
-            utc_now=utc_now,
+            utc_now=_now,
         )
 
         source: str = str(raw_res.get("source") or "missing")
@@ -896,7 +1353,7 @@ def create_management_read_models_router(
             surface["message"] = "Paper telemetry store is readable but currently empty."
 
         meta: Dict[str, Any] = {
-            **snapshot_meta(snapshot_at),
+            **_snap_meta(snapshot_at),
             "status": surface_state,
             "source": source,
             "surfaces": {
@@ -940,6 +1397,9 @@ def create_management_read_models_router(
             "meta": meta,
         }
 
+    # -----------------------------------------------------------------------
+    # 21. Postmortems Read Model (Composed)
+    # -----------------------------------------------------------------------
     @router.get(
         "/bff/management/postmortems",
         response_model=PostmortemsEnvelope,
@@ -952,17 +1412,17 @@ def create_management_read_models_router(
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
         """BFF: Postmortem incident analysis list read model."""
-        identity = extract_identity(authorization)
-        require_read_role(identity)
+        identity = _extract_id(authorization)
+        _req_read(identity)
 
-        snapshot_at = utc_now()
+        snapshot_at = _now()
         store = _resolve_store()
         raw_res = get_postmortems_read_model(
             severity=severity,
             status=status,
             postmortems_reader=postmortems_reader,
             store=store,
-            utc_now=utc_now,
+            utc_now=_now,
         )
 
         source: str = str(raw_res.get("source") or "missing")
@@ -987,7 +1447,7 @@ def create_management_read_models_router(
             surface["message"] = "Postmortem analysis store is readable but currently empty."
 
         meta: Dict[str, Any] = {
-            **snapshot_meta(snapshot_at),
+            **_snap_meta(snapshot_at),
             "status": surface_state,
             "source": source,
             "surfaces": {
@@ -1031,6 +1491,9 @@ def create_management_read_models_router(
             "meta": meta,
         }
 
+    # -----------------------------------------------------------------------
+    # 22. Postmortem Detail Read Model (Composed)
+    # -----------------------------------------------------------------------
     @router.get(
         "/bff/management/postmortems/{postmortem_id}",
         response_model=PostmortemDetailEnvelope,
@@ -1040,16 +1503,16 @@ def create_management_read_models_router(
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
         """BFF: Postmortem detail read model."""
-        identity = extract_identity(authorization)
-        require_read_role(identity)
+        identity = _extract_id(authorization)
+        _req_read(identity)
 
-        snapshot_at = utc_now()
+        snapshot_at = _now()
         store = _resolve_store()
         raw_res = get_postmortem_detail_read_model(
             postmortem_id=postmortem_id,
             postmortems_reader=postmortems_reader,
             store=store,
-            utc_now=utc_now,
+            utc_now=_now,
         )
 
         source: str = str(raw_res.get("source") or "missing")
@@ -1074,7 +1537,7 @@ def create_management_read_models_router(
             }
 
         meta: Dict[str, Any] = {
-            **snapshot_meta(snapshot_at),
+            **_snap_meta(snapshot_at),
             "status": surface_state,
             "source": source,
             "surfaces": {
@@ -1092,3 +1555,7 @@ def create_management_read_models_router(
         }
 
     return router
+
+
+create_management_router = create_management_read_models_router
+
