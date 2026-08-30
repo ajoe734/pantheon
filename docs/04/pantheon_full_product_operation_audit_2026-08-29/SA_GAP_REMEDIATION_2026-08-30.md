@@ -10,7 +10,7 @@
 ### 1.2 Port Namespace Consolidation
 - **Sole Namespace**: `services/control-plane/bff/ports/` is the sole public interface and implementation namespace for domain ports.
 - **Complete Elimination of `domain_ports`**: All 22 direct callers across tests, bff, and services are migrated to `ports/`. The 6 files under `services/control-plane/bff/domain_ports/` are deleted.
-- **No Third / Compat Namespace**: Forbids creating any forwarding shims or secondary port directories.
+- **No Third / Compat Namespace**: Forbids creating any forwarding shims or secondary port directories. Rollback never restores deleted forwarding shims.
 
 ### 1.3 Reverse Import Elimination & Composition Root Isolation
 - `services/control-plane/bff/main.py` serves strictly as the application assembly root (FastAPI app instantiation, lifespan, CORS, middleware, router mounts).
@@ -22,7 +22,7 @@
 
 ### 1.5 Single-Receipt Source Contract
 - In development mode, Source operates in `reconcile_only` mode by default.
-- Bounded live provider egress uses a single receipt contract (`source_proof_receipt_id`) containing `connectorId` + `ingestRunId` + `sourceId` + `snapshotId`. Pre-switch stimulus occurs exactly once; post-switch access is strictly read-only reuse of existing receipt IDs.
+- Bounded live provider egress uses a single receipt contract (`source_proof_receipt_id`) containing `connectorId` + `ingestRunId` + `sourceId` + `snapshotId`. Pre-switch stimulus occurs exactly once; post-switch access is strictly read-only reuse of existing receipt IDs with zero second egress.
 
 ---
 
@@ -87,4 +87,4 @@ The 441 HTTP route decorators and 421 unique handlers in `main.py` are partition
 15. **Control Loops** (`OPGAP-BE-CONTROL-LOOPS-20260830`): Trigger management, loop dispatch.
 16. **Command Adapters** (`OPGAP-BE-COMMAND-ADAPTERS-20260830`): Typed execution adapters & command executor.
 17. **Runtime Binding** (`OPGAP-BE-RUNTIME-BINDING-20260830`): Runtime discovery, environment configs.
-18. **Deployment Reliability** (`OPGAP-DEPLOY-RELIABILITY-20260830`): Release gates, deployment health.
+18. **Deployment Reliability** (`OPGAP-DEPLOY-RELIABILITY-20260830`): Release gates, deployment health.\n

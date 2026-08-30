@@ -138,4 +138,54 @@ graph TD
 ## 4. Resource & Agent Capacity Constraints
 
 1. **Host Capacity**: `pantheon-dev` has strict capacity = 1. Only hosted promotion and acceptance tasks (`OPGAP-HOSTED-DEV-PROMOTION-20260830`, `OPGAP-HOSTED-BACKEND-ACCEPTANCE-20260830`, `AGORA-AGC-14-HOSTED-DEMO-AUTHENTIC-V5-20260829`) acquire this resource.
-2. **Agent Capability Lanes**: Every child task has distinct owner and reviewer from the live agent pool (`Codex`, `Codex2`, `Antigravity`, `Antigravity2`, `Claude`, `Claude2`, `Gemini`, `Gemini2`, `Copilot`).
+2. **Agent Capability Lanes**: Every child task has distinct owner and reviewer from the live agent pool (`Codex`, `Codex2`, `Antigravity`, `Antigravity2`, `Claude`, `Claude2`, `Gemini`, `Gemini2`, `Copilot`). Capacity is dynamically derived from live configuration at materialization.
+
+---
+
+## 5. Reproducible Dynamic Validation Command
+
+```bash
+python3 -c "
+import json, sys, ast
+with open('docs/04/pantheon_full_product_operation_audit_2026-08-29/EXECUTION_TASK_CATALOG_2026-08-30.json') as f:
+    c = json.load(f)
+
+tasks = c['tasks']
+# 1. Zero duplicate owned surfaces
+surfaces = {}
+for t in tasks:
+    for s in t.get('owned_code_surfaces', []):
+        surfaces.setdefault(s, []).append(t['id'])
+dups = {s: tids for s, tids in surfaces.items() if len(tids) > 1}
+assert not dups, f'Duplicate owned surfaces: {dups}'
+
+# 2. Total AST nodes == 2271
+nodes = c['main_ast_node_inventory']['nodes']
+assert len(nodes) == 2271, f'Expected 2271 AST nodes, got {len(nodes)}'
+
+# 3. Zero stdlib extract_shared_port
+stdlib_shared = [n for n in nodes if n.get('disposition') == 'extract_shared_port' and n.get('node_type') in ('Import', 'ImportFrom')]
+assert not stdlib_shared, f'Found stdlib extract_shared_port: {stdlib_shared}'
+
+# 4. Non-empty deletion inventories
+assert all(len(t.get('deletion', [])) > 0 for t in tasks), 'All tasks must have non-empty deletion inventory'
+
+# 5. Clean rollback specifications
+assert all('restores deleted' not in t.get('rollback', '').lower() and 'restore domain_ports' not in t.get('rollback', '').lower() for t in tasks), 'Rollback cannot restore deleted shims'
+
+# 6. DAG acyclicity
+graph = {t['id']: set(t.get('depends_on', [])) for t in tasks}
+visited, visiting = set(), set()
+def dfs(node):
+    if node in visiting: return False
+    if node in visited: return True
+    visiting.add(node)
+    for neighbor in graph.get(node, []):
+        if neighbor in graph and not dfs(neighbor): return False
+    visiting.remove(node); visited.add(node)
+    return True
+assert all(dfs(t) for t in graph), 'Cycle detected in DAG'
+
+print('All catalog dynamic validation assertions passed successfully.')
+"
+```\n

@@ -27,7 +27,7 @@ Every top-level AST body node in `services/control-plane/bff/main.py` (2,271 nod
 - **437 Assignments**:
   - `Assign` (375 nodes) & `AnnAssign` (62 nodes): Constant definitions, router instantiations, and domain store definitions.
 - **80 Imports**:
-  - `ImportFrom` (66 nodes) & `Import` (14 nodes): Module imports migrated to domain router files or consolidated in `ports/`.
+  - `ImportFrom` (66 nodes) & `Import` (14 nodes): Module imports migrated to domain router files or consolidated in `ports/`. Zero standard library imports classified as `extract_shared_port`.
 - **21 Expression Nodes** (`Expr`): Module docstrings and router registrations.
 - **7 Class Definitions** (`ClassDef`): Pydantic models and request schemas migrated to domain schemas/ports.
 - **5 Conditional Blocks** (`If`): Configuration checks and debug initialization.
@@ -42,7 +42,7 @@ All residual mock fallbacks, seed references, and speculative write overlays in 
 1. `OPGAP-FE-BUNDLE-CLEANUP-20260830`: Removes 37 residual files across locales, libraries, and mock utilities.
 2. `OPGAP-FE-MGMT-CRUD-POSTMORTEM-20260830`: Disables unsupported generic CRUD mutations and provides typed postmortem views.
 3. `OPGAP-FE-AGORA-WORKSHOP-20260830`: Connects Agora strategy workshop and trading room to live backend contracts.
-4. `OPGAP-FE-INTEGRATION-ASSEMBLY-20260830`: Assembles `App.tsx`, `ManagementLayout.tsx`, and `bff-v1/index.ts`.
+4. `OPGAP-FE-INTEGRATION-ASSEMBLY-20260830`: Assembles `App.tsx`, `ManagementLayout.tsx`, and `bff-v1/index.ts` with exclusive ownership.
 
 ---
 
@@ -74,11 +74,11 @@ All updated to call typed domain router modules directly without reverse depende
 
 Every child task in `EXECUTION_TASK_CATALOG_2026-08-30.json` adheres to strict implementation-ready structural contracts across eight dimensions:
 
-1. **Owned Code Surfaces (`owned_code_surfaces`)**: Exclusive repository file and directory boundaries declared per task to prevent overlapping write collisions.
+1. **Owned Code Surfaces (`owned_code_surfaces`)**: Exclusive repository file and directory boundaries declared per task to prevent overlapping write collisions. Zero duplicate owned surfaces across all 29 tasks.
 2. **Contract Specification (`contract`)**: Interface, schema, API endpoint, and data-flow specifications governing the task's functional delivery.
 3. **State Transitions (`state_transitions`)**: Explicit operational and lifecycle phase progressions enacted by the task.
 4. **Focused Test Suites (`tests`)**: Concrete automated verification commands and test files verifying the unit's acceptance.
 5. **Migration Operations (`migration`)**: Precise caller cutover, symbol relocation, and schema evolution steps.
-6. **Zero-Caller Deletion (`deletion`)**: Exhaustive inventory of removed dead adapters, obsolete shims, and legacy files backed by AST and grep caller proofs.
-7. **Fail-Closed Rollback (`rollback`)**: Explicit automated and manual fallback procedures ensuring system integrity upon delivery faults.
-8. **Durable Readback Boundaries (`durable_readback`)**: Cryptographic hashes, entity IDs, and projection checkpoints verifying end-to-end truth persistence.
+6. **Zero-Caller Deletion (`deletion`)**: Exhaustive non-empty inventory of removed dead adapters, obsolete shims, and legacy inline `main.py` handlers/helpers backed by AST and grep caller proofs.
+7. **Fail-Closed Rollback (`rollback`)**: Explicit automated and manual forward repair or previous release artifact rollback procedures, never restoring deleted shims or duplicate handlers.
+8. **Durable Readback Boundaries (`durable_readback`)**: Cryptographic hashes, entity IDs, and projection checkpoints verifying end-to-end truth persistence.\n

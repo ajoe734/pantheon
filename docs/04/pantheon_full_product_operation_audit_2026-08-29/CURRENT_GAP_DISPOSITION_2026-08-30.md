@@ -21,14 +21,14 @@ All 20 identified operational gaps (**OP-G01** through **OP-G20**) from the full
 | `OP-G09` | P1 | `active` | `OPGAP-BE-AGORA-ROUTER-20260830` | Agora routers cross-import private stores/helpers across domain boundaries. Inject shared stores and helpers from composition root and eliminate cross-router private imports. |
 | `OP-G10` | P2 | `active` | `OPGAP-BE-COMMAND-PLANE-RETIREMENT-20260830` | Generic legacy action adapter `_execute_bff_action_adapter` and dead command plane artifacts remain. Delete dead generic action adapter and unreferenced legacy files while retaining `command_executor.py` without reverse-main imports. [Merged with Finding F24]. |
 | `OP-G11` | P0 | `verify` | `OPGAP-HOSTED-BACKEND-ACCEPTANCE-20260830` | 12-loop cross-loop deployed proof is opt-in via environment variables. Automate default execution of 12-loop cross-loop deployed proof in backend acceptance. |
-| `OP-G12` | P1 | `verify` | `OPGAP-HOSTED-BACKEND-ACCEPTANCE-20260830` | Source Management lacks hosted effect proof (add-disabled, validate, canary, reconcile-only). Execute hosted canary journey and verify automatic return to reconcile-only mode. |
+| `OP-G12` | P1 | `verify` | `OPGAP-HOSTED-BACKEND-ACCEPTANCE-20260830` | Source Management lacks hosted effect proof (add-disabled, validate, canary, reconcile-only). Execute hosted canary journey and verify automatic return to reconcile-only mode with single-stimulus receipt reuse (`source_proof_receipt_id`). |
 | `OP-G13` | P1 | `active` | `OPGAP-BE-BFF-CORE-20260830` | Synchronous FastAPI TestClient verification tool deadlocks on AnyIO event loop. Pin compatible async ASGI dependencies and migrate ASGI test suites to async transport with hard timeouts. |
 | `OP-G14` | P1 | `in_progress` | `AGORA-AGC-14-HOSTED-DEMO-AUTHENTIC-V5-20260829` | Management and Agora authenticated hosted UI lacks direct verifiable evidence. Reuses active in_progress task `AGORA-AGC-14-HOSTED-DEMO-AUTHENTIC-V5-20260829` (Agora-only authentic hosted demo); no duplicate OPGAP FE acceptance task is materialized. |
 | `OP-G15` | P1 | `active` | `OPGAP-FE-AGORA-WORKSHOP-20260830` | Research adapters default to stub/deferred in Compose while UI expects real candidates. Display explicit stub/deferred/real provenance in UI and gate candidate truth to non-stub outputs. |
 | `OP-G16` | P0 | `active` | `OPGAP-DEPLOY-RELIABILITY-20260830` | Deployment lease and rollback share fragile remote GitHub API dependency. Implement bounded heartbeat retry/grace and allow rollback from local sealed authority. |
 | `OP-G17` | P0 | `active` | `OPGAP-BE-RUNTIME-BINDING-20260830` | Registry -> Deployment -> RuntimeBinding executable loader/market projection is not naturally produced. Emit immutable loader projection and market policy from canonical Registry for Runtime Manager verification. |
 | `OP-G18` | P1 | `active` | `OPGAP-BE-MANAGEMENT-ROUTER-20260830` | Management Postmortem lacks canonical read owner (derived from incident timeline strings). Provide canonical postmortem read model, list/detail API contracts, and durable ID readback. |
-| `OP-G19` | P0 | `verify` | `OPGAP-HOSTED-DEV-PROMOTION-20260830` | Source-to-Agora Read Projection deploy gate verification failure on new receipt/run/source. Ensure Agora read projection binds latest receipt/run/source and verifies successfully during promotion. |
+| `OP-G19` | P0 | `verify` | `OPGAP-HOSTED-DEV-PROMOTION-20260830` | Source-to-Agora Read Projection deploy gate verification failure on new receipt/run/source. Ensure Agora read projection binds existing `source_proof_receipt_id` and verifies successfully during promotion with zero second egress. |
 | `OP-G20` | P0 | `verify` | `OPGAP-HOSTED-DEV-PROMOTION-20260830` | Paper signal producer runtime health and full signal->order/fill/heartbeat lifecycle not closed in live promotion. Execute nonprod deployment with latest candidate, prove producer enters healthy, and complete signal->order/fill readback. |
 
 ---
@@ -43,8 +43,8 @@ All 20 identified operational gaps (**OP-G01** through **OP-G20**) from the full
 
 ### 3. Verify GAPs
 - **OP-G11**: Verified in `OPGAP-HOSTED-BACKEND-ACCEPTANCE-20260830` via live 12-loop cross-plane deployed proof.
-- **OP-G12**: Verified in `OPGAP-HOSTED-BACKEND-ACCEPTANCE-20260830` via hosted Source Management canary journey.
-- **OP-G19**: Verified in `OPGAP-HOSTED-DEV-PROMOTION-20260830` via gate-before-switch Agora read projection binding verification.
+- **OP-G12**: Verified in `OPGAP-HOSTED-BACKEND-ACCEPTANCE-20260830` via hosted Source Management canary journey with single-stimulus receipt contract.
+- **OP-G19**: Verified in `OPGAP-HOSTED-DEV-PROMOTION-20260830` via gate-before-switch Agora read projection binding verification reusing existing receipt ID.
 - **OP-G20**: Verified in `OPGAP-HOSTED-DEV-PROMOTION-20260830` via live paper-signal-producer health and order/fill readback.
 
 ### 4. Active Implementation GAPs
@@ -74,4 +74,4 @@ All 20 identified operational gaps (**OP-G01** through **OP-G20**) from the full
 ### 2. Unresolved Scope Exclusions
 - **Finding F22** (EP5 governed activation proof): Unresolved scope exclusion; EP5 governed evolution activation and observation window verification are excluded from this desktop-first functional plan.
 - **Finding F23** (Tenant-prefix assertion drift): Unresolved scope exclusion; tenant-prefix assertion and multi-tenant isolation drift are excluded from this desktop-first functional plan.
-- **Finding F25** (Zero-job merge-workflow governance risk): Unresolved scope exclusion; zero-job merge-workflow governance risk when job count evaluates to zero is excluded from this desktop-first functional plan.
+- **Finding F25** (Zero-job merge-workflow governance risk): Unresolved scope exclusion; zero-job merge-workflow governance risk when job count evaluates to zero is excluded from this desktop-first functional plan.\n
