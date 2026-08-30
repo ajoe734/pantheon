@@ -83,6 +83,8 @@ def classify_paths(manifest: dict[str, Any], paths: list[str]) -> dict[str, Any]
         "unknown_paths": unknown,
         "domains": domains,
         "product_touched": product_touched,
+        "development_tooling_touched": "development_tooling" in domains,
+        "delivery_touched": "delivery" in domains,
         "tooling_only": bool(paths) and not product_touched,
     }
 

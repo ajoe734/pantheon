@@ -58,6 +58,8 @@ components:
       - scripts/test_orchestrator_bundle.py
       - scripts/test_ai_status.py
       - scripts/dev/
+      - scripts/test_supervisor_watchdog_install.py
+      - scripts/test_supervisor_launch_ownership.py
       - docs-site/js/dashboard-*.js
       - docs/02-architecture/component-boundary.yaml
       - docs/02-architecture/development-tooling-product-boundary.md
@@ -65,6 +67,18 @@ components:
       - ai-task-archive/
     runtime_required: false
     removal_condition: "all engineering tasks archived and no worker/lease remains"
+
+  - id: git-integration-authority
+    domain: development_tooling
+    paths:
+      - scripts/git/
+      - scripts/run-auto-integrator.sh
+      - scripts/auto_integrator_install.py
+      - scripts/test_run_auto_integrator.py
+      - scripts/test_auto_integrator_install.py
+    runtime_required: false
+    removal_condition: "auto-integrator merge lane is retired and no review-approved task remains"
+    boundary: "sole merge-execution authority; excluded from every product container and deployment"
 
   - id: assistant-dev-bridge
     domain: development_tooling

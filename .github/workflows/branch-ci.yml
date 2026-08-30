@@ -262,11 +262,17 @@ jobs:
             classification="$(python3 scripts/component_boundary.py --base "${HEAD_SHA}~1" --head "$HEAD_SHA" --json)"
           fi
           echo "$classification"
-          tooling_only="$(CLASSIFICATION="$classification" python3 -c 'import json, os; print(str(json.loads(os.environ["CLASSIFICATION"])["tooling_only"]).lower())')"
-          echo "tooling_only=$tooling_only" >> "$GITHUB_OUTPUT"
+          for field in tooling_only development_tooling_touched product_touched delivery_touched; do
+            value="$(CLASSIFICATION="$classification" FIELD="$field" python3 -c 'import json, os; print(str(json.loads(os.environ["CLASSIFICATION"])[os.environ["FIELD"]]).lower())')"
+            echo "${field}=${value}" >> "$GITHUB_OUTPUT"
+          done
 
+      # DTG-CI-01: these three gates are independent, not mutually exclusive.
+      # A mixed tooling/product diff must run every applicable gate; an
+      # unknown-only or delivery-only diff falls through to the product/mixed
+      # gate below so there is never a successful no-test path.
       - name: Run tooling smoke gate
-        if: steps.boundary.outputs.tooling_only == 'true'
+        if: steps.boundary.outputs.development_tooling_touched == 'true'
         run: |
           PYTHONPATH=.orchestrator python3 -m unittest \
             test_supervisor test_runtime_state test_approval_queue \
@@ -279,8 +285,20 @@ jobs:
             .orchestrator/development_bridge/tests/test_dev_bridge_reliability.py \
             scripts/test_verify_task_state_store.py
 
+      - name: Run tooling integration-authority gate
+        if: steps.boundary.outputs.development_tooling_touched == 'true'
+        run: |
+          PYTHONPATH=.orchestrator python3 -m pytest -q \
+            scripts/git/test_auto_integrator.py \
+            scripts/git/test_task_review_merge_gate.py \
+            scripts/git/test_github_review_bridge.py \
+            scripts/test_run_auto_integrator.py \
+            scripts/test_auto_integrator_install.py \
+            scripts/test_supervisor_launch_ownership.py \
+            scripts/test_supervisor_watchdog_install.py
+
       - name: Run product or mixed smoke gate
-        if: steps.boundary.outputs.tooling_only != 'true'
+        if: steps.boundary.outputs.product_touched == 'true' || (steps.boundary.outputs.development_tooling_touched != 'true' && steps.boundary.outputs.product_touched != 'true')
         run: |
           if [[ -x scripts/run-acceptance.sh ]]; then
             ./scripts/run-acceptance.sh smoke
