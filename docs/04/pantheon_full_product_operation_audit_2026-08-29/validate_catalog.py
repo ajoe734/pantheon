@@ -310,7 +310,7 @@ def validate_catalog(catalog_path: str, main_py_path: str) -> None:
     print("13. Verifying agent capacity, authoritative capability selectors, and task assignments...")
     cap = c.get("planning_agent_capacity", {})
     assert cap.get("dynamic_derived") is True, "Capacity must be dynamically derived"
-    assert cap.get("command_runtime_sha") == "f12e300f4eb2cf38b34c3432658dc8041570d130", "Stale command runtime SHA"
+    assert cap.get("command_runtime_sha") == "b49ebd934f34b3c4a648c1da863adb51a917a397", "Stale command runtime SHA"
     for t in tasks:
         assert t["owner"] != t["reviewer"], f"Owner equals reviewer in {t['id']}"
         assert cap["agent_eligibility"][t["owner"]]["eligible"], f"Owner {t['owner']} not eligible"
@@ -321,18 +321,18 @@ def validate_catalog(catalog_path: str, main_py_path: str) -> None:
     # 14. Verify Baseline
     print("14. Verifying planning baseline provenance...")
     pb = c.get("planning_baseline", {})
-    assert pb.get("pantheon") == "4f0994be548f56da627740f5b7fb193844c1faed", "Stale pantheon baseline"
-    assert pb.get("command_runtime_sha") == "f12e300f4eb2cf38b34c3432658dc8041570d130", "Stale command runtime SHA in planning_baseline"
+    assert pb.get("pantheon") == "3322f802de76b91ee06fbbe08590ff2ed4bdaadf", "Stale pantheon baseline"
+    assert pb.get("command_runtime_sha") == "b49ebd934f34b3c4a648c1da863adb51a917a397", "Stale command runtime SHA in planning_baseline"
     assert pb.get("execute_plans") == "7d30e78476be61222af63a089e7ab141aa43b809", "Stale execute-plans baseline"
-    assert pb.get("hosted_pair_id") == "9de4cd001a8b7aaf18a1094fb1699ece19f0efd86d3d24994cd9f3562fe33727", "Stale hosted pair ID"
-    assert pb.get("hosted_release_candidate_id") == "9783e78bd8e28608f2c335d566fd798db5b995c50da129876401170b45852e9a", "Stale release candidate ID"
-    assert pb.get("hosted_backend") == "2bcb4465399af83190c5027073f3b2296e377256", "Stale hosted backend"
-    assert pb.get("hosted_bff_version_source_commit_sha") == "2bcb4465399af83190c5027073f3b2296e377256", "Stale /bff/version source commit SHA"
-    assert pb.get("hosted_controller_run_id") == "33319323262", "Stale hosted controller run ID"
-    assert pb.get("hosted_gate_run_id") == "33320810888", "Stale hosted gate run ID"
-    assert pb.get("hosted_execute_plans_deploy_run_id") == "33321494484", "Stale execute-plans deploy run ID"
+    assert pb.get("hosted_pair_id") == "b9209d6382cf109fda2504d7622fe7d9f137a084b0214988cc5588fffdeabc93", "Stale hosted pair ID"
+    assert pb.get("hosted_release_candidate_id") == "1497419171e98b33b42a01ebfd76c60368ab20e75ea45ac5fda61636a289e1cd", "Stale release candidate ID"
+    assert pb.get("hosted_backend") == "4f0994be548f56da627740f5b7fb193844c1faed", "Stale hosted backend"
+    assert pb.get("hosted_bff_version_source_commit_sha") == "4f0994be548f56da627740f5b7fb193844c1faed", "Stale /bff/version source commit SHA"
+    assert pb.get("hosted_controller_run_id") == "33325479949", "Stale hosted controller run ID"
+    assert pb.get("hosted_gate_run_id") == "33327155009", "Stale hosted gate run ID"
+    assert pb.get("hosted_execute_plans_deploy_run_id") == "33327736542", "Stale execute-plans deploy run ID"
     assert pb.get("hosted_frontend") == "7d30e78476be61222af63a089e7ab141aa43b809", "Stale hosted frontend"
-    assert pb.get("hosted_accepted_at") == "2026-08-30T16:46:51.788Z", "Stale hosted accepted at"
+    assert pb.get("hosted_accepted_at") == "2026-08-30T18:28:45Z", "Stale hosted accepted at"
 
     # 15. Verify Execution Resources Bidirectional Invariant
     print("15. Verifying execution resources bidirectional mapping (pantheon-dev)...")
@@ -349,7 +349,7 @@ def validate_catalog(catalog_path: str, main_py_path: str) -> None:
 
     drrp = mat_map.get("durable_receipt_and_readback_protocol", {})
     readback_cmd = drrp.get("authoritative_readback_command", "")
-    assert "f12e300f4eb2cf38b34c3432658dc8041570d130" in readback_cmd, f"authoritative_readback_command must contain f12e300f4eb2cf38b34c3432658dc8041570d130, got: {readback_cmd}"
+    assert "b49ebd934f34b3c4a648c1da863adb51a917a397" in readback_cmd, f"authoritative_readback_command must contain b49ebd934f34b3c4a648c1da863adb51a917a397, got: {readback_cmd}"
 
     batches_summary = mat_map.get("batches_summary", [])
     assert len(batches_summary) == 4, "batches_summary must have 4 batches"

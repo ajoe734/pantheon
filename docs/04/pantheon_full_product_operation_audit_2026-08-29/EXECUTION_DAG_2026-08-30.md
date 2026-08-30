@@ -142,7 +142,7 @@ All 30 child tasks are mapped to 4 dependency-closed materialization batches sat
    - Canonical status: `done` (terminal done, merged to Pantheon dev `d2bca5bc70bfae897e1ef3ca736ad3680a587679` via PR #5427).
    - Recorded as predecessor truth; unblocks Batch D assembly.
 2. **`AGORA-AGC-14-HOSTED-DEMO-AUTHENTIC-V5-20260829`**:
-   - Canonical status: `blocked` (waiting_for `Antigravity`, last_update `2026-08-30T16:56:38Z`, PR #699 merged on execute-plans dev at `bb438d1c7`, child run `33323122321` failed on BFF port contracts, evidence head `e45ac480e` in draft PR #700).
+   - Canonical status: `in_progress` (generation 9, owner `Codex`, reviewer `Antigravity`, supervisor worker `codex1_2`, parent write-proof run `33328350776` dispatched for accepted pair `b9209d6382cf109fda2504d7622fe7d9f137a084b0214988cc5588fffdeabc93` following PR #5442 backend fix and accepted pair restoration).
    - Reused as the sole owner for `OP-G14` in Agora scope; Management desktop hosted acceptance is separately materialized under `OPGAP-HOSTED-MGMT-ACCEPTANCE-20260830`.
 3. **Reconciled Board-Drift Tasks**:
    - `PPL-ALLOC-007`: Binding visibility route pruning verified in canonical codebase.
