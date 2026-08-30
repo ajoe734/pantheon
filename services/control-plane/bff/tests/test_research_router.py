@@ -13,6 +13,60 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 from research.router import RESEARCH_ROUTE_INVENTORY, create_research_router  # noqa: E402
 
 
+# Copied from the audited migration assignment, not derived from router.py.
+# This protects against a future edit reducing the router-owned surface while
+# updating its exported inventory to match.
+EXPECTED_RESEARCH_ROUTE_DECORATORS = {
+    ("GET", "/api/v1/workbench/knowledge"),
+    ("GET", "/api/v1/operator/research/oss-activation-ready"),
+    ("GET", "/api/v1/operator/research/oss-preactivation"),
+    ("GET", "/api/v1/operator/source/ops"),
+    ("GET", "/api/v1/operator/search/ops"),
+    ("POST", "/api/v1/operator/source/dlq/replay"),
+    ("POST", "/api/v1/operator/source/frontier/{frontier_id}/replay"),
+    ("POST", "/api/v1/operator/search/index/refresh"),
+    ("POST", "/api/v1/operator/search/index/materialize"),
+    ("POST", "/api/v1/research/tickets"),
+    ("GET", "/api/v1/research/tickets"),
+    ("GET", "/api/v1/research/tickets/{ticket_id}"),
+    ("PATCH", "/api/v1/research/tickets/{ticket_id}"),
+    ("GET", "/api/v1/research/search"),
+    ("GET", "/api/v1/research/source-connectors"),
+    ("GET", "/api/v1/research/source-change-proposals"),
+    ("GET", "/api/v1/research/analysis"),
+    ("GET", "/api/v1/research/analysis/{analysis_id}"),
+    ("POST", "/api/v1/experiments/launch"),
+    ("GET", "/api/v1/experiments"),
+    ("GET", "/api/v1/experiments/{experiment_id}"),
+    ("POST", "/api/v1/experiments/{experiment_id}/cancel"),
+    ("GET", "/api/v1/artifacts"),
+    ("GET", "/api/v1/artifacts/compare"),
+    ("GET", "/api/v1/artifacts/{artifact_id}"),
+    ("POST", "/api/v1/knowledge/notes"),
+    ("GET", "/api/v1/knowledge/notes"),
+    ("GET", "/api/v1/knowledge/notes/{note_id}"),
+    ("GET", "/api/v1/knowledge/evidence"),
+    ("GET", "/api/v1/knowledge/evidence/{ref_id}"),
+    ("GET", "/api/v1/knowledge/insights"),
+    ("GET", "/api/v1/knowledge/insights/{insight_id}"),
+    ("GET", "/api/v1/knowledge/strategy-specs"),
+    ("GET", "/api/v1/knowledge/strategy-specs/{strategy_id}"),
+    ("GET", "/api/v1/knowledge/strategy-specs/{strategy_id}/versions"),
+    ("GET", "/api/v1/knowledge/strategy-specs/{strategy_id}/compare"),
+    ("GET", "/api/v1/knowledge/memory"),
+    ("GET", "/api/v1/knowledge/memory/{entry_id}"),
+    ("GET", "/bff/synthesis/conflict-logs"),
+    ("GET", "/bff/synthesis/conflict-logs/{log_id}"),
+    ("GET", "/bff/search"),
+    ("GET", "/bff/artifacts"),
+    ("GET", "/bff/artifacts/{artifact_id}"),
+    ("GET", "/bff/research-analyses"),
+    ("GET", "/bff/research-analyses/{analysis_id}"),
+    ("PATCH", "/bff/artifacts/{artifact_id}"),
+    ("POST", "/bff/artifacts"),
+}
+
+
 class _Port:
     def __init__(self, *, source: str = "typed_store") -> None:
         self.source = source
@@ -149,8 +203,9 @@ def test_research_router_declares_all_47_assigned_decorators() -> None:
         if method not in {"HEAD", "OPTIONS"}
     }
 
-    assert len(RESEARCH_ROUTE_INVENTORY) == 47
-    assert set(RESEARCH_ROUTE_INVENTORY) <= actual
+    assert len(EXPECTED_RESEARCH_ROUTE_DECORATORS) == 47
+    assert set(RESEARCH_ROUTE_INVENTORY) == EXPECTED_RESEARCH_ROUTE_DECORATORS
+    assert EXPECTED_RESEARCH_ROUTE_DECORATORS <= actual
 
     # The final generic aliases are represented by typed port-backed reads and
     # explicit fail-closed write semantics; no in-memory fallback is exposed.
@@ -181,6 +236,23 @@ def test_research_inventory_ticket_and_source_routes_use_injected_port() -> None
     source_ops = client.get("/api/v1/operator/source/ops")
     assert source_ops.status_code == 200
     assert source_ops.json()["data"]["source"] == "service_client"
+
+    # The source command seam is composition-owned.  The prepared domain
+    # router fails closed instead of falling back to main.py's client globals.
+    command = client.post("/api/v1/operator/search/index/materialize")
+    assert command.status_code == 501
+
+
+def test_generic_artifact_write_aliases_are_replaced_with_typed_fail_closed_contracts() -> None:
+    client = _client(_Port())
+
+    immutable = client.patch("/bff/artifacts/artifact-1", json={"status": "sealed"})
+    assert immutable.status_code == 409
+    assert immutable.json()["detail"]["code"] == "OPERATION_NOT_ALLOWED"
+
+    unsupported = client.post("/bff/artifacts", json={"name": "not-a-generic-artifact"})
+    assert unsupported.status_code == 501
+    assert unsupported.json()["detail"]["code"] == "NOT_IMPLEMENTED"
 
 
 def test_typed_analysis_routes_use_durable_port_and_preserve_links() -> None:
