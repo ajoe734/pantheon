@@ -432,6 +432,33 @@ def test_operational_readiness_tw_same_day_close_stale_before_session_completion
     assert envelope.data.status == "degraded"
 
 
+def test_operational_readiness_tw_same_day_close_stale_for_premature_receipt(
+    readiness_service: AgoraOperationalReadinessService,
+) -> None:
+    readiness_service.set_source_snapshot({
+        "snapshot_id": "mss-tw-readiness-premature-receipt",
+        "source_instance_id": "src-tw-twse-2330",
+        "symbol": "2330.TWSE",
+        "event_time": "2026-08-31T00:00:00Z",
+        "observed_at": "2026-08-31T01:00:00Z",
+        "sla_seconds": 86400,
+        "lineage": {
+            "source_ids": ["tw-official:tw_price_daily:TWSE:2330:checksummed"],
+            "connector_ids": ["tw-twse-tpex-official-market"],
+        },
+    })
+    readiness_service.set_signal_producer({
+        "status": "ok",
+        "consumed_snapshot_id": "mss-tw-readiness-premature-receipt",
+        "enqueued": 0,
+    })
+
+    envelope = readiness_service.compose_readiness(now_iso="2026-08-31T06:00:00Z")
+
+    assert envelope.data.source.freshness == "stale"
+    assert envelope.data.status == "degraded"
+
+
 def test_operational_readiness_tw_holiday_with_calendar_evidence(
     readiness_service: AgoraOperationalReadinessService,
 ) -> None:

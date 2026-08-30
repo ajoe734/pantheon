@@ -467,6 +467,19 @@ def evaluate_taiwan_market_freshness(
             f"(closes at {event_session_close.isoformat()})",
         )
 
+    # A refresh receipt taken before the event date's own session close
+    # cannot attest that session's official close, even when the decision is
+    # made later in the day.  Without this causal boundary an official-looking
+    # 09:00 receipt for a 13:30 close could become admissible at 14:00.
+    if refresh_receipt_dt < event_session_close:
+        return (
+            False,
+            "market_input_invalid",
+            "refresh receipt observed_at "
+            f"{refresh_receipt_dt.isoformat()} predates event trade date "
+            f"{event_date_iso} session close {event_session_close.isoformat()}",
+        )
+
     # The gap check below only proves that no *newer* session is missing.  It
     # must not make the snapshot's own trade date self-authenticating: a
     # fabricated Saturday (or a known exchange closure) cannot be an official

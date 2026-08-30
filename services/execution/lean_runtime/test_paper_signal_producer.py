@@ -515,6 +515,42 @@ class TestPaperSignalProducer(unittest.TestCase):
         self.assertIn("market_input_invalid", producer.degraded_bindings["rb-tw-pre-close"])
         self.assertIn("has not completed", producer.degraded_bindings["rb-tw-pre-close"])
 
+    def test_same_day_tw_close_rejects_receipt_from_before_session_close(self) -> None:
+        from services.execution.lean_runtime.paper_signal_producer import CurrentArtifactStrategy
+        from services.execution.lean_runtime.test_current_artifact_signal import _artifact, _binding
+
+        artifact = _artifact()
+        artifact["parameters"]["symbols"] = ["2330.TWSE"]
+        binding = _binding(
+            artifact,
+            binding_id="rb-tw-premature-receipt",
+            include_market_input=False,
+        )
+        binding["symbol"] = "2330.TWSE"
+        binding["market_data_policy"] = {
+            "owner": "source-ingest",
+            "contract": "latest_stored_normalized",
+            "max_age_seconds": 86400,
+            "minimum_closes": 2,
+        }
+        binding["market_input"] = TestSharedSnapshotAdmissionDecisions._tw_snapshot(
+            "2026-08-31T00:00:00Z",
+            "2026-08-31T01:00:00Z",
+        )
+        store = InMemoryPendingSignalStore()
+        producer = PaperSignalProducer(
+            store_for=lambda _: store,
+            strategy=CurrentArtifactStrategy(),
+        )
+
+        self.assertEqual(producer.tick([binding], "2026-08-31T06:00:00Z"), {
+            "rb-tw-premature-receipt": 0,
+        })
+        self.assertEqual(store.queue_depth(), 0)
+        detail = producer.degraded_bindings["rb-tw-premature-receipt"]
+        self.assertIn("market_input_invalid", detail)
+        self.assertIn("predates event trade date", detail)
+
     @patch("urllib.request.urlopen")
     def test_stale_source_snapshot_emits_no_signal_with_typed_reason(self, mock_urlopen) -> None:
         from services.execution.lean_runtime.paper_signal_producer import CurrentArtifactStrategy
@@ -777,6 +813,19 @@ class TestSharedSnapshotAdmissionDecisions(unittest.TestCase):
         self.assertFalse(dec.admitted)
         self.assertEqual(dec.reason_code, "market_input_invalid")
         self.assertIn("has not completed its 13:30 Asia/Taipei cash session", dec.detail)
+
+    def test_tw_same_day_close_rejects_receipt_before_own_session_close(self) -> None:
+        from services.execution.market_snapshot_admission import admit_market_snapshot
+
+        snapshot = self._tw_snapshot("2026-08-31T00:00:00Z", "2026-08-31T01:00:00Z")
+        dec = admit_market_snapshot(
+            snapshot,
+            max_age_seconds=86400,
+            now_iso="2026-08-31T06:00:00Z",
+        )
+        self.assertFalse(dec.admitted)
+        self.assertEqual(dec.reason_code, "market_input_invalid")
+        self.assertIn("predates event trade date 2026-08-31 session close", dec.detail)
 
     def test_tw_weekend_event_trade_date_rejected(self) -> None:
         from services.execution.market_snapshot_admission import admit_market_snapshot

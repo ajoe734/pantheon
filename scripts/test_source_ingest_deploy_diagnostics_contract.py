@@ -209,6 +209,10 @@ def test_bounded_source_refresh_deploy_waits_and_gates_readback() -> None:
     # producer, fleet reconciler, and readiness surfaces.
     assert "event_time_dt=event_time" in gate
     assert "now_dt=now_dt" in gate
+    # The receipt clock is passed to the shared rule as well.  Therefore a
+    # same-day snapshot received before the 13:30 close remains fail-closed
+    # when this deploy gate evaluates it after the close.
+    assert "refresh_receipt_dt=refresh_dt" in gate
     # The deploy gate consumes governed proof from the Source public snapshot;
     # it must not rely on a deploy-only calendar fixture or local heuristic.
     assert 'ev = snapshot.get("calendar_evidence")' in gate

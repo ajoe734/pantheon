@@ -2329,6 +2329,31 @@ class TestPaperFleetTaiwanSessionFreshness(unittest.TestCase):
 
     @patch(
         "services.paper_fleet_reconciler.paper_fleet_reconciler._iso_now",
+        return_value="2026-08-31T06:00:00Z",
+    )
+    def test_tw_same_day_close_paused_for_premature_refresh_receipt(self, _mock_now) -> None:
+        snap = self._tw_snapshot("2026-08-31T00:00:00Z", "2026-08-31T01:00:00Z")
+        binding = _make_binding(
+            "b-tw-premature-receipt",
+            symbol="2330.TWSE",
+            market_data_policy={
+                "owner": "source-ingest",
+                "contract": "latest_stored_normalized",
+                "max_age_seconds": 86400,
+                "minimum_closes": 2,
+            },
+            market_input=snap,
+        )
+        store, reconciler = self._make_store_and_recon([binding], source_snapshot=snap)
+
+        result = reconciler.reconcile_once()
+        self.assertEqual(result["worker_count"], 0)
+        self.assertEqual(self.transitions[-1]["new_status"], "paused")
+        admission = store.get("b-tw-premature-receipt").metadata["session_admission"]
+        self.assertEqual(admission["reason_code"], "market_input_invalid")
+
+    @patch(
+        "services.paper_fleet_reconciler.paper_fleet_reconciler._iso_now",
         return_value="2026-02-23T06:00:00Z",
     )
     def test_tw_prior_close_paused_once_reopening_session_closes(self, _mock_now) -> None:
