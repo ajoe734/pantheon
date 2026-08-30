@@ -697,6 +697,12 @@ def test_full_supervisor_cycle_drains_signed_packet_with_authoritative_readback(
         "enabled": True,
         "max_packets_per_tick": 1,
     }
+    config["coordination"] = {
+        "repositories": {
+            "pantheon": {"repo": "ajoe734/pantheon"},
+            "execute_plans": {"repo": "ajoe734/execute-plans"},
+        }
+    }
     benchmark.supervisor_module.PLANNING_STATE_FILE = (
         status_root / ".orchestrator" / "planning-state.json"
     )
@@ -717,7 +723,49 @@ def test_full_supervisor_cycle_drains_signed_packet_with_authoritative_readback(
     for marker in dev_bridge_dispatcher.AUTO_WORKER_ENV_NAMES:
         monkeypatch.delenv(marker, raising=False)
 
-    packet = _signed_without_dependencies("pkt_full_supervisor_authoritative")
+    task_be = BridgeTask(
+        id="FULL-SUPERVISOR-BRIDGE-BE-001",
+        title="Full supervisor backend task",
+        owner="Codex",
+        reviewer="Claude",
+        target_repo="pantheon",
+        phase="Sprint MultiRepo / Dev bridge",
+        artifacts=[".orchestrator/development_bridge/dev_bridge_dispatcher.py"],
+        acceptance=["Backend task accepted"],
+    )
+    task_fe = BridgeTask(
+        id="FULL-SUPERVISOR-BRIDGE-FE-001",
+        title="Full supervisor frontend task",
+        owner="Codex",
+        reviewer="Claude",
+        target_repo="execute-plans",
+        phase="Sprint MultiRepo / Dev bridge",
+        artifacts=["execute-plans/src/agora/pages/AskPersonas.tsx"],
+        acceptance=["Frontend task accepted"],
+    )
+    packet = sign_packet(
+        DevTaskPacket(
+            packetId="pkt_full_supervisor_authoritative",
+            emittedAt="2026-08-30T00:00:00Z",
+            actor=BridgeActor(
+                id="management-ai",
+                roles=["source"],
+                capabilities=["assistant.dev.source"],
+            ),
+            workClass="functional",
+            mode="kernel_debug",
+            sourceConversationId="conversation-full-supervisor-multi-repo",
+            sourceTurnIds=["turn-1"],
+            documents=[],
+            tasks=[task_be, task_fe],
+            constraints=BridgeConstraints(
+                allowedRepos=["pantheon", "execute-plans"],
+                requiresBranchPrMerge=True,
+                noDirectShellFromWeb=True,
+            ),
+        ),
+        key_store=KEY_STORE,
+    )
     queued = queue_task_packet(
         packet,
         repo_root=str(status_root),
@@ -749,16 +797,17 @@ def test_full_supervisor_cycle_drains_signed_packet_with_authoritative_readback(
     assert receipt["result"]["admissionStatus"] == "admitted"
     readback = receipt["result"]["auditRefs"]["materializationReadback"]
     assert readback["status"] == "verified"
-    assert readback["taskIds"] == [packet.tasks[0].id]
+    assert readback["taskIds"] == [task_be.id, task_fe.id]
     final_snapshot = AI_STATUS.load_snapshot(event_log)
     materialized = next(
         task
         for task in final_snapshot["state"]["tasks"]
-        if task.get("id") == packet.tasks[0].id
+        if task.get("id") == task_fe.id
     )
-    assert materialized["owner"] == packet.tasks[0].owner
-    assert materialized["reviewer"] == packet.tasks[0].reviewer
+    assert materialized["owner"] == task_fe.owner
+    assert materialized["reviewer"] == task_fe.reviewer
     assert materialized["status"] == "todo"
+    assert materialized["target_repo"] == "execute-plans"
     assert benchmark.store.sha256_json(
         json.loads(status_path.read_text(encoding="utf-8"))
     ) == final_snapshot["state_sha256"]
@@ -2410,6 +2459,49 @@ def test_dispatcher_rejects_packet_with_unconfigured_target_repo_before_mutation
         )
 
     assert AI_STATUS.load_snapshot(event_log)["event_count"] == initial_event_count
+
+
+def test_dispatcher_constraint_allowlist_uses_supervisor_runtime_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("PANTHEON_ASSISTANT_DEV_BRIDGE_ALLOWED_REPOS", "pantheon")
+    task = BridgeTask(
+        id="SUPERVISOR-RUNTIME-ALLOWLIST-001",
+        title="Supervisor runtime allowlist",
+        owner="Codex",
+        reviewer="Claude",
+        target_repo="execute-plans",
+        phase="Sprint / Dev bridge",
+        artifacts=["execute-plans/src/App.tsx"],
+        acceptance=["Pass"],
+    )
+    packet = DevTaskPacket(
+        packetId="pkt_supervisor_runtime_allowlist",
+        emittedAt="2026-08-30T00:00:00Z",
+        actor=BridgeActor(id="mgmt-ai", roles=["operator"], capabilities=[]),
+        mode="kernel_repair",
+        sourceConversationId="conv-supervisor-runtime-allowlist",
+        tasks=[task],
+        constraints=BridgeConstraints(
+            allowedRepos=["pantheon", "execute-plans"],
+            requiresBranchPrMerge=True,
+            noDirectShellFromWeb=True,
+        ),
+    )
+
+    assert dev_bridge_dispatcher._check_constraints(
+        packet,
+        environment={
+            "PANTHEON_ASSISTANT_DEV_BRIDGE_ALLOWED_REPOS": "pantheon,execute-plans"
+        },
+    ) == []
+    assert dev_bridge_dispatcher._check_constraints(
+        packet,
+        environment={"PANTHEON_ASSISTANT_DEV_BRIDGE_ALLOWED_REPOS": "pantheon"},
+    ) == [
+        "Packet constraint allowedRepos contains unconfigured repositories: "
+        "execute-plans"
+    ]
 
 
 def test_dispatcher_rejects_task_target_repo_not_in_packet_allowed_repos(

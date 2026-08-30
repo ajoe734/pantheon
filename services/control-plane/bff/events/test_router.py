@@ -49,7 +49,7 @@ def test_events_router_routes_uniqueness():
 
     assert len(events_get_routes) == 1
     assert len(stream_get_routes) == 1
-    assert len(router.routes) == 2
+    assert len(router.routes) == 14
 
 
 def test_events_router_list_events_and_filtering():
