@@ -63,7 +63,7 @@ All 20 identified operational gaps (**OP-G01** through **OP-G20**) from the full
 ### Pass 3: Deployed Runtime -> Hosted Desktop UI Acceptance
 - Held in unverified state pending complete execution of Batch B/C/D implementation and promotion.
 - Split into two independent acceptance lanes:
-  - Agora authentic hosted demo: Assigned to `AGORA-AGC-14-HOSTED-DEMO-AUTHENTIC-V5-20260829` (in `execute-plans`, canonical status `blocked` on BFF servant ensure path; PR #699 merged on `dev` at `bb438d1c7`).
+  - Agora authentic hosted demo: Assigned to `AGORA-AGC-14-HOSTED-DEMO-AUTHENTIC-V5-20260829` (in `execute-plans`, canonical status `blocked` waiting_for `Antigravity`; PR #699 merged on `dev` at `bb438d1c7`, child run `33323122321` failed on BFF port contracts, evidence head `e45ac480e` in draft PR #700).
   - Management desktop authenticated UI: Materialized under `OPGAP-HOSTED-MGMT-ACCEPTANCE-20260830`.
 
 ---
@@ -91,7 +91,7 @@ All 20 identified operational gaps (**OP-G01** through **OP-G20**) from the full
 1. **Task-Board-vs-Git Drift & Reconciled Board IDs**:
    - `ai-status.json` and canonical task stores may show historical task assignments or stale in-progress statuses that have diverged from Git `origin/dev` commits.
    - **`AGORA-PERSONA-DURABLE-LIST-READBACK-V2-20260830`**: Recorded as merged on `origin/dev` (`d2bca5bc70bfae897e1ef3ca736ad3680a587679` via PR #5427) and is terminal `done`, unblocking Batch D assembly.
-   - **`AGORA-AGC-14-HOSTED-DEMO-AUTHENTIC-V5-20260829`**: Canonical status `blocked` (waiting_for `Human/Ops`, PR #699 merged on execute-plans dev at `bb438d1c7`, blocked on servant ensure path; distinct from `OPGAP-HOSTED-MGMT-ACCEPTANCE-20260830`).
+   - **`AGORA-AGC-14-HOSTED-DEMO-AUTHENTIC-V5-20260829`**: Canonical status `blocked` (waiting_for `Antigravity`, last_update `2026-08-30T16:56:38Z`, PR #699 merged on execute-plans dev at `bb438d1c7`, child run `33323122321` failed on BFF port contracts, evidence head `e45ac480e` in draft PR #700, watchdog restored accepted pair; distinct from `OPGAP-HOSTED-MGMT-ACCEPTANCE-20260830`).
    - **`PPL-ALLOC-007`**: Historical board-drift task; binding visibility route pruning verified in canonical codebase.
    - **`PPL-ALLOC-009`**: Historical board-drift task; sidecar BFF handoff closed in merged PRs.
    - **`TJ-E2E-012`**: Historical Trade Journey E2E hosted acceptance task; canonical predecessor truth verified.
