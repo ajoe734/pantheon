@@ -110,6 +110,25 @@ class TestPersonaFleetPort:
         assert status["status"] == "unavailable"
         assert port.list_personas() == []
 
+    def test_include_market_persona_defaults_accepted_and_filters_applied(self):
+        personas = [
+            {"persona_id": "p-1", "lifecycle_state": "active", "mandate": "momentum"},
+            {"persona_id": "p-2", "lifecycle_state": "draft", "mandate": "income"},
+        ]
+        port = PersonaFleetPort(records_provider=lambda: personas)
+        res = port.list_personas(include_market_persona_defaults=True)
+        assert len(res) == 2
+
+        active = port.list_personas(lifecycle_state="active", include_market_persona_defaults=True)
+        assert len(active) == 1
+        assert active[0]["persona_id"] == "p-1"
+
+    def test_rejects_broad_unsupported_kwargs(self):
+        import pytest
+        port = PersonaFleetPort(records_provider=lambda: [])
+        with pytest.raises(TypeError):
+            port.list_personas(unsupported_broad_kwarg=123)  # type: ignore[call-arg]
+
 
 # ---------------------------------------------------------------------------
 # 2. CapitalPoolPort
@@ -182,6 +201,21 @@ class TestCapitalPoolPort:
         port2 = CapitalPoolPort(pools_provider=lambda: [], bindings_provider=lambda: [])
         status2 = port2.get_surface_status()
         assert status2["status"] == "degraded"
+
+    def test_include_market_persona_defaults_accepted(self):
+        pools = [{"pool_id": "pool-1", "status": "active"}]
+        bindings = [{"binding_id": "b-1", "persona_id": "p-1", "capital_pool_id": "pool-1", "role": "paper_owner"}]
+        port = CapitalPoolPort(pools_provider=lambda: pools, bindings_provider=lambda: bindings)
+        assert len(port.list_capital_pools(include_market_persona_defaults=True)) == 1
+        assert len(port.list_bindings(include_market_persona_defaults=True)) == 1
+
+    def test_rejects_broad_unsupported_kwargs(self):
+        import pytest
+        port = CapitalPoolPort(pools_provider=lambda: [], bindings_provider=lambda: [])
+        with pytest.raises(TypeError):
+            port.list_capital_pools(unsupported_kwarg=123)  # type: ignore[call-arg]
+        with pytest.raises(TypeError):
+            port.list_bindings(unsupported_kwarg=123)  # type: ignore[call-arg]
 
 
 # ---------------------------------------------------------------------------
@@ -257,6 +291,17 @@ class TestRuntimePort:
         status = port.get_surface_status()
         assert status["source"] == "store"
         assert port.list_runtime_bindings()[0]["runtime_id"] == "rt-store"
+
+    def test_include_market_persona_defaults_accepted(self):
+        bindings = [{"runtime_id": "rt-1", "deployment_mode": "paper"}]
+        port = RuntimePort(runtime_bindings_provider=lambda: bindings)
+        assert len(port.list_runtime_bindings(include_market_persona_defaults=True)) == 1
+
+    def test_rejects_broad_unsupported_kwargs(self):
+        import pytest
+        port = RuntimePort(runtime_bindings_provider=lambda: [])
+        with pytest.raises(TypeError):
+            port.list_runtime_bindings(unsupported_kwarg=123)  # type: ignore[call-arg]
 
     def test_unavailable(self):
         port = RuntimePort()
