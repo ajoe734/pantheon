@@ -545,11 +545,18 @@ def test_mcp_servers_and_skills_crud(client: TestClient):
     # Skills: Sandbox Eval
     eval_resp = client.post(
         f"/bff/skills/{skill_id}/sandbox-eval",
-        json={"input": {"text": "Bullish trend expected"}},
+        json={"inputs": {"text": "Bullish trend expected"}},
         headers={**OPERATOR_HEADERS, "Idempotency-Key": "idem-skill-eval-1"},
     )
     assert eval_resp.status_code == 202
-    assert eval_resp.json()["command"] == "SkillSandboxEval"
+    eval_data = eval_resp.json()
+    assert eval_data["status"] == "queued"
+    assert eval_data["sandbox_mode"] is True
+    assert eval_data["inputs"] == {"text": "Bullish trend expected"}
+    assert eval_data["skill_id"] == skill_id
+    assert "job_id" in eval_data
+    assert "audit" in eval_data
+    assert "meta" in eval_data
 
 
 # --------------------------------------------------------------------------- #
@@ -652,19 +659,71 @@ def test_mcp_server_import_standalone_create_unauthorized_rejected(client: TestC
 
 
 def test_skills_dry_run_create(client: TestClient):
-    payload = {
-        "name": "Dry Run Skill",
-        "description": "Will not be saved",
+    # 1. Header-based dry run with X-Dry-Run: 1
+    hdr_payload = {
+        "name": "Header Dry Run Skill",
+        "description": "Will not be saved via X-Dry-Run",
+    }
+    resp1 = client.post(
+        "/bff/skills",
+        json=hdr_payload,
+        headers={**OPERATOR_HEADERS, "X-Dry-Run": "1", "Idempotency-Key": "idem-skill-dry-hdr-1"},
+    )
+    assert resp1.status_code == 200, resp1.text
+    data1 = resp1.json()
+    assert data1["meta"]["dryRun"] is True
+    assert data1["meta"]["durable"] is False
+    assert data1["meta"]["liveCapitalSideEffects"] is False
+    assert data1["meta"]["evidenceKind"] == "skill.create"
+    assert data1["meta"]["idempotency"]["key"] == "idem-skill-dry-hdr-1"
+    assert "id" in data1["data"]
+    created_id = data1["data"]["id"]
+
+    # Verify non-persistence: GET by ID returns 404
+    get_resp = client.get(f"/bff/skills/{created_id}", headers=OPERATOR_HEADERS)
+    assert get_resp.status_code == 404
+
+    # Verify list does not contain dry-run skill
+    list_resp = client.get("/bff/skills", headers=OPERATOR_HEADERS)
+    assert list_resp.status_code == 200
+    assert all(s.get("id") != created_id for s in list_resp.json()["data"])
+
+    # 2. Body-based dry run with dry_run: True
+    body_payload = {
+        "name": "Body Dry Run Skill",
+        "description": "Will not be saved via dry_run in body",
         "dry_run": True,
     }
-    resp = client.post(
+    resp2 = client.post(
         "/bff/skills",
-        json=payload,
-        headers={**OPERATOR_HEADERS, "Idempotency-Key": "idem-skill-dry-1"},
+        json=body_payload,
+        headers={**OPERATOR_HEADERS, "Idempotency-Key": "idem-skill-dry-body-1"},
     )
-    assert resp.status_code == 200
-    data = resp.json()
-    assert data["meta"]["dryRun"] is True
+    assert resp2.status_code == 200
+    assert resp2.json()["meta"]["dryRun"] is True
+
+    # 3. Body-based dry run with dryRun: True
+    camel_payload = {
+        "name": "Camel Dry Run Skill",
+        "description": "Will not be saved via dryRun in body",
+        "dryRun": True,
+    }
+    resp3 = client.post(
+        "/bff/skills",
+        json=camel_payload,
+        headers={**OPERATOR_HEADERS, "Idempotency-Key": "idem-skill-dry-camel-1"},
+    )
+    assert resp3.status_code == 200
+    assert resp3.json()["meta"]["dryRun"] is True
+
+    # 4. Validation failure in dry-run mode still returns 422
+    val_resp = client.post(
+        "/bff/skills",
+        json={"name": "   ", "description": "Empty name"},
+        headers={**OPERATOR_HEADERS, "X-Dry-Run": "1", "Idempotency-Key": "idem-skill-dry-val-1"},
+    )
+    assert val_resp.status_code == 422
+    assert val_resp.json()["detail"]["error"]["code"] == "VALIDATION_FAILED"
 
 
 def test_tools_skills_channels_404(client: TestClient):
@@ -781,3 +840,130 @@ def test_standalone_exported_router_unauthenticated_and_rbac():
     # 4. Valid viewer token on read route should succeed (200)
     ok_resp = standalone_client.get("/bff/tools", headers=viewer_headers)
     assert ok_resp.status_code == 200
+
+
+def test_skills_sandbox_eval_contract_and_idempotent_replay(client: TestClient):
+    # 1. Create a skill first
+    sk_resp = client.post(
+        "/bff/skills",
+        json={"name": "Eval Target Skill", "description": "Target for eval testing"},
+        headers={**OPERATOR_HEADERS, "Idempotency-Key": "idem-eval-target-create"},
+    )
+    assert sk_resp.status_code == 201
+    skill_id = sk_resp.json()["id"]
+
+    # 2. Execute sandbox eval
+    eval_payload = {
+        "inputs": {
+            "query": "Market regime classification",
+            "parameters": {"lookback_days": 30, "threshold": 0.05},
+        }
+    }
+    idem_key = "idem-skill-eval-replay-001"
+    headers = {**OPERATOR_HEADERS, "Idempotency-Key": idem_key}
+
+    eval_resp = client.post(
+        f"/bff/skills/{skill_id}/sandbox-eval",
+        json=eval_payload,
+        headers=headers,
+    )
+    assert eval_resp.status_code == 202
+    res = eval_resp.json()
+
+    # Exact baseline contract assertions
+    assert res["status"] == "queued"
+    assert res["sandbox_mode"] is True
+    assert res["skill_id"] == skill_id
+    assert res["inputs"] == eval_payload["inputs"]
+    assert res["job_id"].startswith(f"sandbox-eval-{skill_id}-")
+    assert "submitted_at" in res
+    assert res["submitted_by"] == "op-user"
+
+    # Audit record verification
+    audit = res["audit"]
+    assert audit["operator_id"] == "op-user"
+    assert audit["action_id"] == "sandbox-eval"
+    assert audit["skill_id"] == skill_id
+    assert audit["idempotency_key"] == idem_key
+    assert "operator" in audit["roles_at_submission"]
+
+    # Meta estimation verification
+    assert res["meta"]["estimated_processing_time_ms"] == 3000
+    assert res["meta"]["next_poll_after_ms"] == 500
+
+    # 3. Idempotent replay with same key returns identical cached result
+    replay_resp = client.post(
+        f"/bff/skills/{skill_id}/sandbox-eval",
+        json=eval_payload,
+        headers=headers,
+    )
+    assert replay_resp.status_code == 202
+    assert replay_resp.json() == res
+
+    # 4. Validation failure on empty skill_id
+    empty_id_resp = client.post(
+        "/bff/skills/%20%20/sandbox-eval",
+        json=eval_payload,
+        headers=headers,
+    )
+    assert empty_id_resp.status_code == 422
+
+
+def test_skills_rbac_rules(client: TestClient):
+    # 1. Viewer trying to POST /bff/skills receives 403 FORBIDDEN
+    resp_create = client.post(
+        "/bff/skills",
+        json={"name": "Unauthorized Skill"},
+        headers={**VIEWER_HEADERS, "Idempotency-Key": "idem-unauth-skill"},
+    )
+    assert resp_create.status_code == 403
+    assert resp_create.json()["detail"]["error"]["code"] == "FORBIDDEN"
+
+    # 2. Viewer trying to POST /bff/skills/{id}/sandbox-eval succeeds (202) because sandbox-eval requires read role
+    resp_eval = client.post(
+        "/bff/skills/skill-any/sandbox-eval",
+        json={"inputs": {"test": True}},
+        headers={**VIEWER_HEADERS, "Idempotency-Key": "idem-viewer-eval"},
+    )
+    assert resp_eval.status_code == 202
+    assert resp_eval.json()["status"] == "queued"
+
+
+def test_dependency_injected_dry_run_resolver_and_context():
+    from contextvars import ContextVar
+
+    custom_dry_run_ctx: ContextVar[bool] = ContextVar("custom_dry_run_ctx", default=False)
+
+    def custom_resolver(header_val: Optional[str]) -> bool:
+        return header_val == "custom-dry-run-flag"
+
+    custom_router = create_integrations_router(
+        dry_run_resolver=custom_resolver,
+        dry_run_context=custom_dry_run_ctx,
+    )
+    custom_app = FastAPI()
+    custom_app.include_router(custom_router)
+    custom_client = TestClient(custom_app)
+
+    # 1. Custom resolver trigger
+    resp1 = custom_client.post(
+        "/bff/skills",
+        json={"name": "Resolver Skill"},
+        headers={**OPERATOR_HEADERS, "X-Dry-Run": "custom-dry-run-flag", "Idempotency-Key": "k1"},
+    )
+    assert resp1.status_code == 200
+    assert resp1.json()["meta"]["dryRun"] is True
+
+    # 2. Custom ContextVar trigger
+    token = custom_dry_run_ctx.set(True)
+    try:
+        resp2 = custom_client.post(
+            "/bff/skills",
+            json={"name": "ContextVar Skill"},
+            headers={**OPERATOR_HEADERS, "Idempotency-Key": "k2"},
+        )
+        assert resp2.status_code == 200
+        assert resp2.json()["meta"]["dryRun"] is True
+    finally:
+        custom_dry_run_ctx.reset(token)
+

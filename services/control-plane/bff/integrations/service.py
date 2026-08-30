@@ -18,6 +18,7 @@ import os
 import re
 import uuid
 from copy import deepcopy
+from contextvars import ContextVar
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple, Union
@@ -365,6 +366,39 @@ def deprecated_bff_path_response(*, route: str, replacement: str) -> JSONRespons
             },
         },
     )
+
+
+REQUEST_DRY_RUN_CONTEXT: ContextVar[bool] = ContextVar("request_dry_run_context", default=False)
+
+
+def truthy_header(value: Optional[str]) -> bool:
+    return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def is_dry_run_requested(
+    explicit_header: Optional[str] = None,
+    payload: Optional[Dict[str, Any]] = None,
+    resolver: Optional[Callable[[Optional[str]], bool]] = None,
+    context_var: Optional[ContextVar[bool]] = None,
+) -> bool:
+    if resolver is not None:
+        try:
+            if resolver(explicit_header):
+                return True
+        except Exception:
+            pass
+    if truthy_header(explicit_header):
+        return True
+    ctx = context_var or REQUEST_DRY_RUN_CONTEXT
+    try:
+        if ctx.get():
+            return True
+    except Exception:
+        pass
+    if payload and isinstance(payload, dict):
+        if bool(payload.get("dry_run", False) or payload.get("dryRun", False)):
+            return True
+    return False
 
 
 def dry_run_success_response(

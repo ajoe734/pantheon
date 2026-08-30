@@ -80,15 +80,20 @@ except ImportError:
     except Exception:
         pass
 
+from contextvars import ContextVar
+
 from .service import (
     IntegrationsService,
+    REQUEST_DRY_RUN_CONTEXT,
     default_bff_error,
     deprecated_bff_path_response,
     dry_run_success_response,
+    is_dry_run_requested,
     page_slice,
     reject_body_idempotency_key,
     resolve_final_idempotency_key,
     stable_json_hash,
+    truthy_header,
     utc_now_rfc3339,
 )
 
@@ -195,6 +200,8 @@ def create_integrations_router(
     snapshot_meta: Optional[Callable[[str], Dict[str, Any]]] = None,
     read_surface_meta: Optional[Callable[..., Dict[str, Any]]] = None,
     submit_command: Optional[Callable[..., Any]] = None,
+    dry_run_resolver: Optional[Callable[[Optional[str]], bool]] = None,
+    dry_run_context: Optional[ContextVar[bool]] = None,
 ) -> APIRouter:
     """Build the exact 35-route Tools & Integrations domain router."""
 
@@ -207,6 +214,17 @@ def create_integrations_router(
     _page = page_slice_fn or page_slice
     _snapshot = snapshot_meta or _default_snapshot_meta
     _read_meta = read_surface_meta or _default_read_surface_meta
+
+    def _is_dry_run(
+        explicit_header: Optional[str] = None,
+        payload: Optional[Dict[str, Any]] = None,
+    ) -> bool:
+        return is_dry_run_requested(
+            explicit_header=explicit_header,
+            payload=payload,
+            resolver=dry_run_resolver,
+            context_var=dry_run_context,
+        )
 
     resolved_service = service
     if resolved_service is None:
@@ -600,7 +618,8 @@ def create_integrations_router(
                 precondition_failed="name",
             )
         snapshot_at = _now()
-        tool_id = f"tool-{snapshot_at[:10].replace("-", "")}-{uuid.uuid4().hex[:8]}"
+        clean_date = snapshot_at[:10].replace("-", "")
+        tool_id = f"tool-{clean_date}-{uuid.uuid4().hex[:8]}"
         op_id = getattr(identity, "operator_id", None) or getattr(identity, "id", "operator-1")
         result = {
             "id": tool_id,
@@ -776,7 +795,8 @@ def create_integrations_router(
                 precondition_failed="name",
             )
         snapshot_at = _now()
-        server_id = f"mcp-srv-{snapshot_at[:10].replace("-", "")}-{uuid.uuid4().hex[:8]}"
+        clean_date = snapshot_at[:10].replace("-", "")
+        server_id = f"mcp-srv-{clean_date}-{uuid.uuid4().hex[:8]}"
         op_id = getattr(identity, "operator_id", None) or getattr(identity, "id", "operator-1")
         result = {
             "id": server_id,
@@ -907,15 +927,16 @@ def create_integrations_router(
         authorization: Optional[str] = Header(default=None),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
         x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+        x_dry_run: Optional[str] = Header(default=None, alias="X-Dry-Run"),
     ) -> Any:
         identity = _extract(authorization)
-        _require_read(identity)
+        _require_operator(identity)
         reject_body_idempotency_key(payload, bff_error_fn=_err)
         resolved_key = resolve_final_idempotency_key(
             idempotency_key, x_idempotency_key, bff_error_fn=_err
         )
         request_hash = stable_json_hash({"route": "POST /bff/skills", "payload": payload})
-        dry_run = bool(payload.get("dry_run", False) or payload.get("dryRun", False))
+        dry_run = _is_dry_run(x_dry_run, payload)
         if not dry_run:
             cached = resolved_service.skills_bff_idempotency_check(resolved_key, request_hash)
             if cached is not None:
@@ -930,7 +951,8 @@ def create_integrations_router(
                 precondition_failed="name",
             )
         snapshot_at = _now()
-        skill_id = f"skill-{snapshot_at[:10].replace("-", "")}-{uuid.uuid4().hex[:8]}"
+        clean_date = snapshot_at[:10].replace("-", "")
+        skill_id = f"skill-{clean_date}-{uuid.uuid4().hex[:8]}"
         op_id = getattr(identity, "operator_id", None) or getattr(identity, "id", "operator-1")
         result = {
             "id": skill_id,
@@ -1101,17 +1123,16 @@ def create_integrations_router(
         }
         result = {
             "job_id": job_id,
-            "command": "SkillSandboxEval",
             "skill_id": clean_id,
-            "status": "SUBMITTED",
+            "status": "queued",
+            "sandbox_mode": True,
+            "inputs": payload.get("inputs") or {},
             "submitted_at": snapshot_at,
+            "submitted_by": op_id,
             "audit": audit_record,
-            "result": {
-                "evaluation_id": job_id,
-                "skill_id": clean_id,
-                "mode": "sandbox_isolated",
-                "status": "queued",
-                "input": payload.get("input") or {},
+            "meta": {
+                "estimated_processing_time_ms": 3000,
+                "next_poll_after_ms": 500,
             },
         }
         resolved_service.skills_bff_idempotency[resolved_key] = {
