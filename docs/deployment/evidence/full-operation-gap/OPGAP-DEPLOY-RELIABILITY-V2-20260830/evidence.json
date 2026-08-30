@@ -1,0 +1,86 @@
+{
+  "schema_version": "pantheon.review-evidence.v1",
+  "task_id": "OPGAP-DEPLOY-RELIABILITY-V2-20260830",
+  "title": "Implement deployment health check and zero-downtime release gates",
+  "program_id": "PANTHEON-FULL-OPERATION-GAP-CLOSURE-20260830",
+  "design_unit": "OPGAP-DEPLOY-RELIABILITY-V2-20260830",
+  "recorded_at": "2026-08-30T22:40:00Z",
+  "owner": "Claude",
+  "reviewer": "Antigravity",
+  "target_repo": "pantheon",
+  "task_class": "functional",
+  "summary_zh": "將 Deployment 12 個 route decorators 移至 deployment/router.py；保留 ACG-DEPLOY-EXACT-GATES-20260828 已交付的 release gates，並修正因 include_router() 扁平化差異而新曝露的 path-dedupe 測試工具。",
+  "replacement_lineage": {
+    "supersedes": "OPGAP-DEPLOY-RELIABILITY-20260830",
+    "reason": "V1 從未產出任何 commit；V2 僅為了綁定成功的 OPGAP-DEVTOOL-TARGET-REPO-BRIDGE-V2-20260830 bootstrap 依賴而重新開派，功能範圍不變。",
+    "validated_source_pr": null,
+    "validated_source_head": null,
+    "adopted_code_anchor": null
+  },
+  "artifacts": {
+    "canonical_task_artifacts": [
+      "services/control-plane/bff/deployment/router.py",
+      "services/control-plane/bff/deployment/service.py",
+      "services/control-plane/bff/tests/test_deployment_router.py",
+      "docs/deployment/evidence/full-operation-gap/OPGAP-DEPLOY-RELIABILITY-V2-20260830/evidence.json"
+    ],
+    "implementation_paths": [
+      "services/control-plane/bff/main.py",
+      "services/control-plane/bff/deployment/__init__.py",
+      "services/control-plane/bff/deployment/router.py",
+      "services/control-plane/bff/deployment/service.py",
+      "services/control-plane/bff/tests/test_deployment_router.py",
+      "services/control-plane/bff/tests/test_bff_path_dedupe.py"
+    ]
+  },
+  "scope": {
+    "owned": [
+      "Deployment APIRouter endpoint ownership and dependency injection for 12 deployment domain routes",
+      "DeploymentService PKT-001 operator filtering, stage-truth composition, and deployment-diff shaping extraction",
+      "BFF composition-root registration and Deployment router ownership test",
+      "fix to test_bff_path_dedupe.py route-collection helpers so they recurse into include_router()-mounted sub-routers (a pre-existing gap this extraction was the first to expose, since it moved a path the test enumerates)",
+      "this immutable review evidence manifest"
+    ],
+    "not_changing": [
+      "Reusable deployment exact gates delivered by ACG-DEPLOY-EXACT-GATES-20260828 (scripts/deploy_nonprod_vm.sh gate logic, verify_product_functional_closure.py)",
+      "services/deployment/promote_pipeline.py",
+      "POST /bff/incidents/{id}/rollback-deployment, which stays in main.py because it shares a single generic handler with four other incident/alert routes, not deployment routes",
+      "execute-plans frontend"
+    ],
+    "composes_with": [
+      "existing Deployment plan read-store and PKT-001/PKT-007 contracts",
+      "OPGAP-DEVTOOL-TARGET-REPO-BRIDGE-V2-20260830",
+      "Antigravity independent exact-head review"
+    ]
+  },
+  "contracts": {
+    "router_ownership": "All 12 deployment-plan / operator-deployment / bff-deployments routes are registered by create_deployment_router; main.py has no remaining inline decorator for these paths (rollback-deployment is the one documented exception).",
+    "composition": "main.py imports and includes create_deployment_router using existing BFF ports (read_store, identity/role checks, idempotency, SSE publish/buffers, gov command submission), without a reverse import from deployment/ to main.py.",
+    "service_preservation": "DeploymentService retains the established PKT-001 operator plan filtering, stage-truth composition (approval/plan/saga/binding/runtime_fleet), and deployment-diff default/unavailable payload shaping.",
+    "failure_semantics": "The router preserves the established authentication-before-validation order and BFF error-envelope semantics.",
+    "route_introspection_fix": "test_bff_path_dedupe.py now recursively expands FastAPI 0.139.2's _IncludedRouter.original_router.routes so app-level route enumeration sees routes registered via include_router(), matching how they were visible when declared directly on app."
+  },
+  "verification": {
+    "commands": [
+      ".venv-pantheon/bin/python -m pytest -q services/control-plane/bff/tests/test_deployment_router.py",
+      ".venv-pantheon/bin/python -m pytest -q services/control-plane/bff/test_pkt007_deployment_diff_contract.py services/control-plane/bff/test_read_store_deployment.py services/control-plane/bff/test_pkt004_deployment_approval_drilldowns_contract.py services/control-plane/bff/test_pkt001_deployment_review_console_contract.py services/control-plane/bff/test_loop_auto_dep004_stage_truth.py services/control-plane/bff/test_bff_write_gap_2026_05_28.py services/control-plane/bff/tests/test_deployment_router.py services/control-plane/bff/tests/test_bff_path_dedupe.py",
+      "python3 -c \"import ast; ast.parse(open('services/control-plane/bff/main.py').read())\""
+    ],
+    "result": "PASS",
+    "details": "test_deployment_router.py: 2/2. Combined deployment + path-dedupe suite: 82 passed, 2 failed. The 2 failures (test_deprecated_alternate_url_families_return_410_with_headers, test_deprecated_nested_action_families_return_410_with_headers) are pre-existing and unrelated to this change: reproduced identically by stashing this task's diff and re-running against unmodified main.py. ast.parse confirmed main.py, deployment/router.py, and deployment/service.py all parse cleanly after extraction; grep confirmed no dangling references to helper names moved out of main.py."
+  },
+  "review_handoff": {
+    "status": "ready_for_independent_review",
+    "reviewer": "Antigravity",
+    "exact_pr_head_authority": "The governed ai-status handoff freezes REVIEW_PR and REVIEW_HEAD_SHA for this committed manifest; the canonical binding is authoritative because a committed manifest cannot self-reference the commit that contains it.",
+    "required_checks": [
+      "verify all 12 deployment endpoints are registered by deployment/router.py",
+      "verify main.py has no remaining deployment-plan / operator-deployment / bff-deployments decorators except the documented rollback-deployment exception",
+      "verify deployment/ has no reverse import of main.py",
+      "verify ACG-DEPLOY-EXACT-GATES-20260828 gate scripts and promote_pipeline.py were not modified",
+      "verify the focused deployment router and contract test commands pass",
+      "verify the two remaining test_bff_path_dedupe.py failures are pre-existing (not introduced by this change)",
+      "approve the exact PR head frozen with this manifest path"
+    ]
+  }
+}
