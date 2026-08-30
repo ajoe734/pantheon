@@ -332,7 +332,7 @@ def validate_catalog(catalog_path: str, main_py_path: str) -> None:
     assert pb.get("hosted_gate_run_id") == "33320810888", "Stale hosted gate run ID"
     assert pb.get("hosted_execute_plans_deploy_run_id") == "33321494484", "Stale execute-plans deploy run ID"
     assert pb.get("hosted_frontend") == "7d30e78476be61222af63a089e7ab141aa43b809", "Stale hosted frontend"
-    assert pb.get("hosted_accepted_at") == "2026-08-30T16:17:23Z", "Stale hosted accepted at"
+    assert pb.get("hosted_accepted_at") == "2026-08-30T16:46:51.788Z", "Stale hosted accepted at"
 
     # 15. Verify Execution Resources Bidirectional Invariant
     print("15. Verifying execution resources bidirectional mapping (pantheon-dev)...")

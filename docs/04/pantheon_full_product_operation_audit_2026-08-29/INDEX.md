@@ -10,7 +10,7 @@ This document package provides the complete, root-cause System Architecture (SA)
 - **Accepted Hosted / Product BFF Backend Identity**: `2bcb4465399af83190c5027073f3b2296e377256` (served `/deployment.json` and live `/bff/version` backend source commit)
 - **Execute-Plans Baseline Commit**: `7d30e78476be61222af63a089e7ab141aa43b809` (`origin/dev`)
 - **Hosted Environment**:
-  - Served `/deployment.json`: Pair ID `9de4cd001a8b7aaf18a1094fb1699ece19f0efd86d3d24994cd9f3562fe33727`, Release Candidate ID `9783e78bd8e28608f2c335d566fd798db5b995c50da129876401170b45852e9a`, Backend `2bcb4465399af83190c5027073f3b2296e377256`, Frontend `7d30e78476be61222af63a089e7ab141aa43b809`, Controller Run `33319323262`, Integration Gate Run `33320810888`, Execute-Plans Deploy Run `33321494484`, Status `accepted` (accepted at `2026-08-30T16:17:23Z`).
+  - Served `/deployment.json`: Pair ID `9de4cd001a8b7aaf18a1094fb1699ece19f0efd86d3d24994cd9f3562fe33727`, Release Candidate ID `9783e78bd8e28608f2c335d566fd798db5b995c50da129876401170b45852e9a`, Backend `2bcb4465399af83190c5027073f3b2296e377256`, Frontend `7d30e78476be61222af63a089e7ab141aa43b809`, Controller Run `33319323262`, Integration Gate Run `33320810888`, Execute-Plans Deploy Run `33321494484`, Status `accepted` (accepted at `2026-08-30T16:46:51.788Z`).
   - Live `/bff/version`: Source Commit `2bcb4465399af83190c5027073f3b2296e377256`, Status `accepted`.
 
 ---
