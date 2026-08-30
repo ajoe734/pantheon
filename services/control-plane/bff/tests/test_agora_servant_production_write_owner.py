@@ -398,6 +398,7 @@ def test_unavailable_http_capability_owner_is_typed_and_persona_stays_draft(
 
 
 def test_bff_owner_port_does_not_import_or_open_persona_application_stores() -> None:
+    assert isinstance(bff_main.persona_write_owner, PersonaRegistryHttpWritePort)
     module_source = (
         Path(__file__).resolve().parents[1] / "ports" / "persona_write_owner.py"
     ).read_text(encoding="utf-8")
