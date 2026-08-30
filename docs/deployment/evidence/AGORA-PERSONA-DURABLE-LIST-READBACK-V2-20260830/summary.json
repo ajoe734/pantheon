@@ -1,10 +1,10 @@
 {
   "schema_version": "pantheon.agora-persona-durable-list-readback-v2-review.v1",
   "task_id": "AGORA-PERSONA-DURABLE-LIST-READBACK-V2-20260830",
-  "generated_at": "2026-08-30T07:42:04Z",
+  "generated_at": "2026-08-30T07:59:54Z",
   "owner": "Codex2",
   "reviewer": "Antigravity",
-  "status": "implementation_complete_pending_clean_history_and_exact_head_review",
+  "status": "implementation_complete_pending_corrected_exact_head_review",
   "acceptance_state": "exact_head_review_merge_and_post_merge_release_proof_required",
   "implementation_scope": [
     "services/control-plane/bff/persona_provisioning.py",
@@ -32,8 +32,18 @@
     "evidence_identity_correction": "Corrected immutable failure reproduction backend_sha to c6f7cc2340011624a8b22814ad2dc1d549617d1b and target unblocks_task to AGORA-AGC-14-HOSTED-DEMO-AUTHENTIC-V5-20260829.",
     "comprehensive_regression_suite": "Expanded test_bff_persona_provisioning_baseline_500.py with deterministic tests covering restart list readback with fresh store instances, typed 503 fail-closed store outage diagnostics, list ordering/filtering/pagination, and multi-tenant isolation.",
     "restart_proof_public_protocol": "Replaced private-state restart simulation with MemoryProvisioningBackend, an explicit shared durable-state object accepted by MemoryPersonaProvisioningStore's constructor; two distinct store instances over one backend prove durable readback through the store's public protocol only, the in-process analogue of two BFF replicas reading one shared Postgres table.",
-    "tenant_scoped_list_surfaces": "Threaded an explicit tenant_id through durable Persona directory callers. Tenantless records are now catalog or malformed rows, never wildcard admissions. Authenticated list/detail, search, Persona League, Persona Intent, Sentinel, Strategy Seed suggestion, PM12 attribution, allocation, cost, risk, Operations Read Model, and Agora journal-context paths derive and propagate the caller tenant; privileged reconciler traversal remains explicit and isolated from response composition.",
-    "reviewer_recovery_scope": "Recovered the interrupted owner lane under canonical owner Codex2 and reviewer Antigravity. The recovery closes the additional exact-head audit findings: PPL-ALLOC-009 refresh no longer hard-codes a tenant, request-facing Strategy Seed and PM12 projections reject cross-tenant Persona runtime facts, Agora journal context resolves only caller-tenant directory Personas, and Persona Fleet continues to report catalog-default totals without admitting or navigating ghost rows."
+    "tenant_scoped_list_surfaces": "Tenant-scoped Persona reads now admit only records carrying an explicit tenant_id or tenantId that exactly matches the authenticated caller. Tenantless registry rows are catalog or malformed rows and are excluded rather than projected into a configured/default tenant. Authenticated list/detail, search, Persona League, Persona Intent, Sentinel, Strategy Seed suggestion, PM12 attribution, allocation, cost, risk, Operations Read Model, and Agora journal-context paths derive and propagate the caller tenant; privileged reconciler traversal remains explicit and isolated from response composition.",
+    "reviewer_recovery_scope": "Recovered the interrupted owner lane under canonical owner Codex2 and reviewer Antigravity. The corrected delivery removes the dead unscoped _project_persona_fleet_payload path, verifies Strategy Seed and PM12 through request routes rather than helpers alone, and excludes Agora Persona Intent session context unless every referenced Persona is admitted in the caller tenant directory."
+  },
+  "security_rejection_remediation": {
+    "rejected_pr": 5432,
+    "rejected_head": "a6d5bfd8f3bf076d97046de13c031a19f4414da7",
+    "review_comment": "https://github.com/ajoe734/pantheon/pull/5432#issuecomment-5467464667",
+    "resolved_findings": [
+      "Removed legacy/default-tenant inference and its asserting migration test; tenantless registry rows are excluded from all tenant-scoped list and detail readbacks.",
+      "Removed the dead request-facing _project_persona_fleet_payload helper that invoked _list_persona_records without an authenticated tenant.",
+      "Added direct HTTP route regressions for GET /bff/management/strategy-seeds, GET /bff/management/performance-attribution/by-strategy, and GET /bff/management/persona-intent?source_type=agora_session with a Persona durably reserved under tenant-other."
+    ]
   },
   "fail_closed_boundaries": [
     "Unauthenticated requests are rejected with HTTP 401.",
@@ -46,9 +56,9 @@
   ],
   "validation": {
     "focused_baseline_suite": "pytest -v services/control-plane/bff/tests/test_bff_persona_provisioning_baseline_500.py",
-    "focused_baseline_result": "21 passed (16 prior durable-list regressions plus tenantless-record, Strategy Seed, PM12-attribution, and catalog-default recovery regressions)",
+    "focused_baseline_result": "22 passed, including tenantless-registry exclusion plus direct Strategy Seed, PM12, and Agora cross-tenant route negatives.",
     "full_persona_provisioning_suite": "pytest -v services/control-plane/bff/tests/test_bff_persona_provisioning_baseline_500.py services/control-plane/bff/test_persona_provisioning_coordinator.py services/control-plane/bff/test_persona_provisioning_store.py services/control-plane/bff/test_persona_provisioning_route_security.py services/control-plane/bff/test_persona_provisioning_readback.py services/control-plane/bff/tests/test_bff_persona_create_paper_bundle.py services/control-plane/bff/tests/test_persona_capital_runtime_ports.py services/control-plane/bff/tests/test_read_surface_port_cutover.py scripts/test_bootstrap_dev_paper_baseline.py scripts/test_persona_provisioning_compose_contract.py",
-    "full_persona_provisioning_result": "184 passed",
+    "full_persona_provisioning_result": "185 passed",
     "syntax_check": "python3 -m py_compile services/control-plane/bff/main.py services/control-plane/bff/persona_provisioning.py services/control-plane/bff/tests/test_bff_persona_provisioning_baseline_500.py; git diff --check clean"
   },
   "release_closeout_gate": {
