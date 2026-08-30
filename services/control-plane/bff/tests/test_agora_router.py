@@ -642,3 +642,89 @@ def test_existing_agora_signals_not_broken(monkeypatch):
     client = _client(monkeypatch)
     resp = client.get("/bff/agora/signals", headers={"Authorization": _OPERATOR_AUTH})
     assert resp.status_code == 200, f"Existing /bff/agora/signals broken: {resp.status_code}"
+
+
+def test_servant_ensure_and_eligibility_with_read_surface_ports_and_explicit_write_owner(monkeypatch, tmp_path):
+    """Verifies that ReadSurfacePorts resolves list_personas with include_market_persona_defaults=True
+
+    and eligibility returns 200 with the freshly ensured servant when write owner is explicit.
+    """
+    from ports.read_surface_ports import create_read_surface_ports
+
+    write_owner = _create_test_agora_store(allow_fallback=False)
+    read_surface = create_read_surface_ports(persona_registry_store=write_owner)
+
+    monkeypatch.setattr(bff_main, "read_store", read_surface)
+    monkeypatch.setattr(bff_main, "persona_write_owner", write_owner)
+    monkeypatch.setattr(
+        bff_main,
+        "_ensure_agora_servant_openclaw_agent",
+        lambda persona: {
+            "status": "created",
+            "agent_id": persona["persona_id"],
+            "model_id": f"openclaw/{persona['persona_id']}",
+            "workspace_ref": f"/home/node/.openclaw/workspaces/{persona['persona_id']}",
+        },
+    )
+
+    client = _client(monkeypatch)
+    suffix = uuid.uuid4().hex
+    ensure_headers = {
+        "Authorization": _OPERATOR_AUTH,
+        "Idempotency-Key": f"ensure-rsp-compat-{suffix}",
+        "X-Request-Id": f"req-ensure-rsp-compat-{suffix}",
+    }
+    ensured = client.post("/bff/agora/servant/ensure", headers=ensure_headers)
+    assert ensured.status_code == 200, ensured.text
+    persona_id = ensured.json()["data"]["persona_id"]
+
+    context = client.post(
+        "/bff/agora/interactions/context:resolve",
+        headers={
+            "Authorization": _OPERATOR_AUTH,
+            "Idempotency-Key": f"context-rsp-compat-{suffix}",
+        },
+        json={
+            "environment": "paper",
+            "context_refs": [
+                {"type": "strategy", "id": "strategy-rsp-compat", "version_id": "v1"}
+            ],
+        },
+    )
+    assert context.status_code == 200, context.text
+
+    eligibility = client.post(
+        "/bff/agora/interactions/participants:eligible",
+        headers={"Authorization": _OPERATOR_AUTH},
+        json={
+            "workshop_id": context.json()["data"]["workshop_id"],
+            "mode": "consult",
+            "environment": "paper",
+            "required_capability": "persona_opinion",
+        },
+    )
+    assert eligibility.status_code == 200, eligibility.text
+    included = eligibility.json()["data"]["included"]
+    assert [row["persona_id"] for row in included] == [persona_id]
+
+
+def test_servant_ensure_fails_if_read_surface_ports_is_used_as_write_owner(monkeypatch):
+    """Verifies that servant ensure requires an explicit command-capable write owner and never treats ReadSurfacePorts as a writer."""
+    from ports.read_surface_ports import create_in_memory_read_surface_ports
+
+    read_surface = create_in_memory_read_surface_ports()
+    monkeypatch.setattr(bff_main, "read_store", read_surface)
+    monkeypatch.setattr(bff_main, "persona_write_owner", read_surface)
+
+    client = _client(monkeypatch)
+    suffix = uuid.uuid4().hex
+    resp = client.post(
+        "/bff/agora/servant/ensure",
+        headers={
+            "Authorization": _OPERATOR_AUTH,
+            "Idempotency-Key": f"ensure-fail-{suffix}",
+            "X-Request-Id": f"req-ensure-fail-{suffix}",
+        },
+    )
+    assert resp.status_code == 503, resp.text
+    assert resp.json()["error"]["code"] == "DEPENDENCY_UNAVAILABLE"

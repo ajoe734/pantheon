@@ -986,3 +986,27 @@ def test_sd_agc_03_foreign_identities_and_unadmitted_catalog_defaults_return_404
             assert fleet_resp.json()["data"]["summary"]["catalog_default_total"] > 0
         finally:
             bff_main.read_store = original
+
+
+def test_persona_fleet_returns_200_for_operator_and_viewer_with_read_surface_ports() -> None:
+    """Acceptance criterion 4: GET management persona-fleet returns 200 for authenticated operator and viewer cases used by the hosted journey."""
+    from ports.read_surface_ports import create_read_surface_ports
+
+    with tempfile.TemporaryDirectory() as td:
+        original = bff_main.read_store
+        try:
+            client = _fresh_client(td)
+            backing_store = bff_main.read_store
+            bff_main.read_store = create_read_surface_ports(persona_registry_store=backing_store)
+            assert isinstance(bff_main.read_store, bff_main.ReadSurfacePorts)
+
+            op_resp = client.get("/bff/management/persona-fleet", headers=OPERATOR_HEADERS)
+            assert op_resp.status_code == 200, op_resp.text
+            assert "items" in op_resp.json()["data"]
+
+            viewer_headers = {"Authorization": "Bearer viewer-b3:viewer"}
+            viewer_resp = client.get("/bff/management/persona-fleet", headers=viewer_headers)
+            assert viewer_resp.status_code == 200, viewer_resp.text
+            assert "items" in viewer_resp.json()["data"]
+        finally:
+            bff_main.read_store = original
