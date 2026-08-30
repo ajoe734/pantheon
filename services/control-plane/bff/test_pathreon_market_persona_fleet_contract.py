@@ -668,6 +668,7 @@ def test_real_paper_runtime_identity_drives_formal_persona_attribution_and_fleet
             {
                 persona_a: {
                     "persona_id": persona_a,
+                    "tenant_id": "pantheon-dev",
                     "name": "Paper Alpha",
                     "lifecycle_state": "paper_running",
                     "status": "paper_running",
@@ -683,6 +684,7 @@ def test_real_paper_runtime_identity_drives_formal_persona_attribution_and_fleet
                 },
                 persona_b: {
                     "persona_id": persona_b,
+                    "tenant_id": "pantheon-dev",
                     "name": "Paper Beta",
                     "lifecycle_state": "paper_running",
                     "status": "paper_running",
@@ -1467,6 +1469,7 @@ def test_unassigned_runtime_telemetry_isolation_and_no_seed_leaks(
             {
                 persona_custom: {
                     "persona_id": persona_custom,
+                    "tenant_id": "pantheon-dev",
                     "name": "Custom Empty US",
                     "lifecycle_state": "deployed",
                     "status": "deployed",
@@ -1588,6 +1591,7 @@ def test_canonical_binding_precedence_and_mixed_topology(
             {
                 persona_test: {
                     "persona_id": persona_test,
+                    "tenant_id": "pantheon-dev",
                     "name": "Precedence Persona",
                     "lifecycle_state": "deployed",
                     "status": "deployed",
@@ -1600,6 +1604,7 @@ def test_canonical_binding_precedence_and_mixed_topology(
                 },
                 persona_missing: {
                     "persona_id": persona_missing,
+                    "tenant_id": "pantheon-dev",
                     "name": "Missing Telemetry Persona",
                     "lifecycle_state": "deployed",
                     "status": "deployed",
