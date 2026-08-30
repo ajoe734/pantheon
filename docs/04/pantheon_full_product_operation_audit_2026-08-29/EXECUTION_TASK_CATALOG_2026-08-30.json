@@ -45,6 +45,7 @@
     "reviewer": "Codex2",
     "target_repo": "pantheon",
     "depends_on": [],
+    "dependency_tracks": {},
     "artifacts": [
       "docs/04/pantheon_full_product_operation_audit_2026-08-29/INDEX.md",
       "docs/04/pantheon_full_product_operation_audit_2026-08-29/CURRENT_GAP_DISPOSITION_2026-08-30.md",
@@ -73,11 +74,14 @@
       "summary_zh": "依 SD-Unit-1 執行：抽取 BFF main.py 領域路由、解除 auth 對 OpenClaw 同步探針依賴 (OP-G05)、刪除 dead action adapter (OP-G10)、並將 HTTP 整合測試改寫為 Async ASGI 客戶端 (OP-G13)。",
       "phase": "W1-preparation-backend",
       "owner": "Antigravity",
-      "reviewer": "Claude",
+      "reviewer": "Codex",
       "target_repo": "pantheon",
       "depends_on": [
         "FULL-OPERATION-GAP-SA-SD-PLAN-FREEZE-20260830"
       ],
+      "dependency_tracks": {
+        "FULL-OPERATION-GAP-SA-SD-PLAN-FREEZE-20260830": "functional"
+      },
       "artifacts": [
         "services/control-plane/bff/auth.py",
         "services/control-plane/bff/command_executor.py",
@@ -91,7 +95,11 @@
         "FastAPI 整合測試全面改用 httpx.AsyncClient(transport=ASGITransport) 並配置硬性超時，AnyIO 死鎖問題完全根除",
         "各領域 router 獨立定義完成，待 Wave 2 assembly 掛載"
       ],
-      "gaps": ["OP-G05", "OP-G08", "OP-G10", "OP-G13"],
+      "gaps": [
+        "OP-G05",
+        "OP-G10",
+        "OP-G13"
+      ],
       "priority": 1,
       "wave": 1,
       "design_unit": "SD-Unit-1",
@@ -100,14 +108,17 @@
     {
       "id": "OPGAP-BE-AGORA-RESEARCH-20260830",
       "title": "Agora research provenance truth, suggestion producer wiring, and private import cleanup",
-      "summary_zh": "依 SD-Unit-2 執行：修復 Agora research 偽造 real 標籤問題 (OP-G01)、將 PerformanceSuggestionProducer 連線至真實遙測 (OP-G02)、清除 router 跨域私有 import (OP-G09)、並校驗 projection 綁定 (OP-G19)。",
+      "summary_zh": "依 SD-Unit-2 執行：修復 Agora research 偽造 real 標籤問題 (OP-G01)、將 PerformanceSuggestionProducer 連線至真實遙測 (OP-G02)、清除 router 跨域私有 import (OP-G09)。",
       "phase": "W1-preparation-backend",
-      "owner": "Claude",
-      "reviewer": "Antigravity",
+      "owner": "Antigravity2",
+      "reviewer": "Claude",
       "target_repo": "pantheon",
       "depends_on": [
         "FULL-OPERATION-GAP-SA-SD-PLAN-FREEZE-20260830"
       ],
+      "dependency_tracks": {
+        "FULL-OPERATION-GAP-SA-SD-PLAN-FREEZE-20260830": "functional"
+      },
       "artifacts": [
         "services/control-plane/bff/agora/research/dispatcher.py",
         "services/control-plane/bff/agora/performance/producer.py",
@@ -120,7 +131,11 @@
         "Agora 各子 router 完全移除跨模組私有符號引用",
         "本地單元與契約測試全部通過"
       ],
-      "gaps": ["OP-G01", "OP-G02", "OP-G09", "OP-G15", "OP-G19"],
+      "gaps": [
+        "OP-G01",
+        "OP-G02",
+        "OP-G09"
+      ],
       "priority": 1,
       "wave": 1,
       "design_unit": "SD-Unit-2",
@@ -129,14 +144,17 @@
     {
       "id": "OPGAP-BE-RUNTIME-BINDING-20260830",
       "title": "Executable RuntimeBinding authority projection generation and paper producer verification",
-      "summary_zh": "依 SD-Unit-3 執行：由 Registry 權威自動衍生不可變之 object_store、loader 與 market policy 物理投影 (OP-G17)，並驗證 paper-signal-producer 訊號生命週期 (OP-G20)。",
+      "summary_zh": "依 SD-Unit-3 執行：由 Registry 權威自動衍生不可變之 object_store、loader 與 market policy 物理投影 (OP-G17)，並驗證 paper-signal-producer 單元訊號生成。",
       "phase": "W1-preparation-backend",
-      "owner": "Antigravity2",
-      "reviewer": "Claude2",
+      "owner": "Gemini",
+      "reviewer": "Codex2",
       "target_repo": "pantheon",
       "depends_on": [
         "FULL-OPERATION-GAP-SA-SD-PLAN-FREEZE-20260830"
       ],
+      "dependency_tracks": {
+        "FULL-OPERATION-GAP-SA-SD-PLAN-FREEZE-20260830": "functional"
+      },
       "artifacts": [
         "services/runtime-manager/deploy_authority.py",
         "services/deployment/runtime_manager_dispatch_adapter.py",
@@ -148,7 +166,9 @@
         "RuntimeBinding 具備完整物理執行欄位，Runtime Manager 驗證通過始建 active binding",
         "paper-signal-producer 單元與契約測試通過，在接收合規行情快照時正確產出 signal"
       ],
-      "gaps": ["OP-G17", "OP-G20"],
+      "gaps": [
+        "OP-G17"
+      ],
       "priority": 1,
       "wave": 1,
       "design_unit": "SD-Unit-3",
@@ -157,14 +177,17 @@
     {
       "id": "OPGAP-BE-SOURCE-MANAGEMENT-20260830",
       "title": "Source Ingestion reconcile-only enforcement, bounded refresh contract, and market freshness protection",
-      "summary_zh": "依 SD-Unit-4 執行：強化 Source Controller 常態 reconcile_only 模式、實作單次有界 manual refresh 契約 (OP-G12)、並確保台灣交易日曆新鮮度規則生效 (OP-G19)。",
+      "summary_zh": "依 SD-Unit-4 執行：強化 Source Controller 常態 reconcile_only 模式、實作單次有界 manual refresh 契約 (OP-G12)、並確保台灣交易日曆新鮮度規則生效。",
       "phase": "W1-preparation-backend",
-      "owner": "Claude2",
-      "reviewer": "Antigravity2",
+      "owner": "Antigravity",
+      "reviewer": "Gemini2",
       "target_repo": "pantheon",
       "depends_on": [
         "FULL-OPERATION-GAP-SA-SD-PLAN-FREEZE-20260830"
       ],
+      "dependency_tracks": {
+        "FULL-OPERATION-GAP-SA-SD-PLAN-FREEZE-20260830": "functional"
+      },
       "artifacts": [
         "services/source_ingestion/main.py",
         "services/source_ingestion/controller_worker.py",
@@ -176,7 +199,9 @@
         "單次手動更新限制為 1 tick、max 100 records、1800s timeout，完成後自動回退 reconcile_only",
         "Taiwan market session freshness 邏輯正確認可週末/例假日的週五官方有效收盤價"
       ],
-      "gaps": ["OP-G12", "OP-G19"],
+      "gaps": [
+        "OP-G12"
+      ],
       "priority": 1,
       "wave": 1,
       "design_unit": "SD-Unit-4",
@@ -187,12 +212,15 @@
       "title": "Canonical Management Postmortem domain service and pure 12-loop projection verification",
       "summary_zh": "依 SD-Unit-5 執行：建立具備 postmortem_id 權威之 Postmortem 讀寫領域模型與端點 (OP-G18)，並驗證 12-loop truth 純淨投影。",
       "phase": "W1-preparation-backend",
-      "owner": "Antigravity",
-      "reviewer": "Claude",
+      "owner": "Antigravity2",
+      "reviewer": "Claude2",
       "target_repo": "pantheon",
       "depends_on": [
         "FULL-OPERATION-GAP-SA-SD-PLAN-FREEZE-20260830"
       ],
+      "dependency_tracks": {
+        "FULL-OPERATION-GAP-SA-SD-PLAN-FREEZE-20260830": "functional"
+      },
       "artifacts": [
         "services/control-plane/bff/management_read_models/postmortem.py",
         "services/control-plane/bff/management_read_models/loop_truth.py",
@@ -203,7 +231,9 @@
         "loop_truth.py 嚴格輸出固定 12 rows 之循環真相，無外部依賴漂移",
         "單元與契約測試全部通過"
       ],
-      "gaps": ["OP-G18"],
+      "gaps": [
+        "OP-G18"
+      ],
       "priority": 1,
       "wave": 1,
       "design_unit": "SD-Unit-5",
@@ -212,16 +242,18 @@
     {
       "id": "OPGAP-FE-BUNDLE-CLEANUP-20260830",
       "title": "Frontend production bundle mock/seed graph isolation and dependency checks",
-      "summary_zh": "依 SD-Unit-6 執行：自 bff-v1 移除 writeOverlay 匯出，切斷 production bundle 對 @/mocks/seed 之依賴可達性，並加入構建圖譜門禁 (OP-G07)。",
+      "summary_zh": "依 SD-Unit-6 執行：自前端程式切斷 production bundle 對 @/mocks/seed 與 writeOverlay 之依賴可達性，並加入構建圖譜門禁 (OP-G07)。",
       "phase": "W1-preparation-frontend",
-      "owner": "Claude",
+      "owner": "Gemini2",
       "reviewer": "Antigravity",
       "target_repo": "execute-plans",
       "depends_on": [
         "FULL-OPERATION-GAP-SA-SD-PLAN-FREEZE-20260830"
       ],
+      "dependency_tracks": {
+        "FULL-OPERATION-GAP-SA-SD-PLAN-FREEZE-20260830": "functional"
+      },
       "artifacts": [
-        "execute-plans:src/lib/bff-v1/index.ts",
         "execute-plans:src/lib/bff-v1/writeOverlay.ts",
         "execute-plans:vite.config.ts",
         "execute-plans:scripts/check_bundle_mock_reachability.ts"
@@ -231,7 +263,9 @@
         "靜態分析腳本 check_bundle_mock_reachability.ts 檢查通過（mock 引用數 = 0）",
         "前端 typecheck 與既有 unit tests 通過"
       ],
-      "gaps": ["OP-G07"],
+      "gaps": [
+        "OP-G07"
+      ],
       "priority": 1,
       "wave": 1,
       "design_unit": "SD-Unit-6",
@@ -240,14 +274,17 @@
     {
       "id": "OPGAP-FE-MGMT-CRUD-POSTMORTEM-20260830",
       "title": "Frontend generic CRUD overlay elimination and canonical Postmortem UI wiring",
-      "summary_zh": "依 SD-Unit-7 執行：消除 createEntity.ts 中的 writeOverlay 假寫入 (OP-G06)，並將 PostmortemLibrary.tsx 改接 canonical postmortem 權威端點 (OP-G18)。",
+      "summary_zh": "依 SD-Unit-7 執行：消除 createEntity.ts 中的 writeOverlay 假寫入 (OP-G06)，並將 PostmortemLibrary.tsx 改接 canonical postmortem 權威端點。",
       "phase": "W1-preparation-frontend",
-      "owner": "Antigravity2",
-      "reviewer": "Claude2",
+      "owner": "Antigravity",
+      "reviewer": "Claude",
       "target_repo": "execute-plans",
       "depends_on": [
         "FULL-OPERATION-GAP-SA-SD-PLAN-FREEZE-20260830"
       ],
+      "dependency_tracks": {
+        "FULL-OPERATION-GAP-SA-SD-PLAN-FREEZE-20260830": "functional"
+      },
       "artifacts": [
         "execute-plans:src/management/components/write/createEntity.ts",
         "execute-plans:src/management/pages/ObjectListPage.tsx",
@@ -259,7 +296,9 @@
         "Postmortem 頁面以 canonical postmortem_id 渲染清單與詳細資訊，徹底廢除 pm_<incident> 字串拼接",
         "前端單元測試通過"
       ],
-      "gaps": ["OP-G06", "OP-G18"],
+      "gaps": [
+        "OP-G06"
+      ],
       "priority": 1,
       "wave": 1,
       "design_unit": "SD-Unit-7",
@@ -268,14 +307,17 @@
     {
       "id": "OPGAP-FE-AGORA-WORKSHOP-20260830",
       "title": "Frontend Agora research adapter truth badging, dynamic candidate pool, and performance suggestions",
-      "summary_zh": "依 SD-Unit-8 執行：在 Workshop UI 顯式標示 Adapter 真實性狀態 (OP-G01, OP-G15)、交易室動態加載候選池、並呈現績效建議元件 (OP-G02)。",
+      "summary_zh": "依 SD-Unit-8 執行：在 Workshop UI 顯式標示 Adapter 真實性狀態 (OP-G15)、交易室動態加載候選池、並呈現績效建議元件。",
       "phase": "W1-preparation-frontend",
-      "owner": "Claude2",
-      "reviewer": "Antigravity2",
+      "owner": "Antigravity2",
+      "reviewer": "Codex",
       "target_repo": "execute-plans",
       "depends_on": [
         "FULL-OPERATION-GAP-SA-SD-PLAN-FREEZE-20260830"
       ],
+      "dependency_tracks": {
+        "FULL-OPERATION-GAP-SA-SD-PLAN-FREEZE-20260830": "functional"
+      },
       "artifacts": [
         "execute-plans:src/agora/pages/strategy-workshop/WorkshopSessionView.tsx",
         "execute-plans:src/agora/pages/trading-room/TradingRoomWorkspace.tsx",
@@ -287,7 +329,9 @@
         "Attribution 頁面正確拉取並顯示 PerformanceSuggestion 列表",
         "前端單元與元件測試通過"
       ],
-      "gaps": ["OP-G01", "OP-G02", "OP-G15"],
+      "gaps": [
+        "OP-G15"
+      ],
       "priority": 1,
       "wave": 1,
       "design_unit": "SD-Unit-8",
@@ -298,12 +342,15 @@
       "title": "Deployment lease heartbeat grace, local sealed rollback authority, and CI false-green elimination",
       "summary_zh": "依 SD-Unit-9 執行：強化部署租約心跳重試與寬限期、提供本地封閉回滾授權 (OP-G16)、並杜絕 CI/CD 將失敗步驟包裝為警告之假綠燈 (OP-G04)。",
       "phase": "W1-preparation-infra",
-      "owner": "Antigravity",
-      "reviewer": "Claude",
+      "owner": "Gemini",
+      "reviewer": "Antigravity",
       "target_repo": "pantheon",
       "depends_on": [
         "FULL-OPERATION-GAP-SA-SD-PLAN-FREEZE-20260830"
       ],
+      "dependency_tracks": {
+        "FULL-OPERATION-GAP-SA-SD-PLAN-FREEZE-20260830": "functional"
+      },
       "artifacts": [
         "scripts/deploy/environment_lease.py",
         "scripts/deploy_nonprod_vm.sh",
@@ -314,7 +361,10 @@
         "Rollback 機制具備本機 sealed authority，在遠端異常時仍可獨立完成服務回滾",
         "部署腳本與 CI 工作流中，任何關鍵測試或驗收步驟 skip/fail 均嚴格 fail-closed (exit != 0)"
       ],
-      "gaps": ["OP-G04", "OP-G16"],
+      "gaps": [
+        "OP-G04",
+        "OP-G16"
+      ],
       "priority": 1,
       "wave": 1,
       "design_unit": "SD-Unit-9",
@@ -325,8 +375,8 @@
       "title": "BFF composition root assembly and route guard verification",
       "summary_zh": "作為單一整合擁有者：收斂 services/control-plane/bff/main.py，掛載 Wave 1 產出之所有領域 router，並通過 route guard 驗證 (OP-G08)。",
       "phase": "W2-assembly-backend",
-      "owner": "Claude",
-      "reviewer": "Antigravity",
+      "owner": "Antigravity",
+      "reviewer": "Codex2",
       "target_repo": "pantheon",
       "depends_on": [
         "OPGAP-BE-BFF-CORE-20260830",
@@ -335,6 +385,13 @@
         "OPGAP-BE-SOURCE-MANAGEMENT-20260830",
         "OPGAP-BE-MGMT-POSTMORTEM-20260830"
       ],
+      "dependency_tracks": {
+        "OPGAP-BE-BFF-CORE-20260830": "functional",
+        "OPGAP-BE-AGORA-RESEARCH-20260830": "functional",
+        "OPGAP-BE-RUNTIME-BINDING-20260830": "functional",
+        "OPGAP-BE-SOURCE-MANAGEMENT-20260830": "functional",
+        "OPGAP-BE-MGMT-POSTMORTEM-20260830": "functional"
+      },
       "artifacts": [
         "services/control-plane/bff/main.py",
         "tests/control-plane/bff/test_route_composition.py"
@@ -344,7 +401,9 @@
         "所有領域路由（Agora, Management, Postmortem, Source, Auth, Telemetry）正確掛載且無衝突",
         "BFF 全量單元與非同步整合測試 100% 通過"
       ],
-      "gaps": ["OP-G08"],
+      "gaps": [
+        "OP-G08"
+      ],
       "priority": 2,
       "wave": 2,
       "design_unit": "SD-Unit-1",
@@ -356,13 +415,18 @@
       "summary_zh": "作為單一整合擁有者：收斂 execute-plans 之 src/App.tsx、ManagementLayout.tsx 與 src/lib/bff-v1/index.ts，完成所有前端頁面整合與打包驗證。",
       "phase": "W2-assembly-frontend",
       "owner": "Antigravity2",
-      "reviewer": "Claude2",
+      "reviewer": "Gemini2",
       "target_repo": "execute-plans",
       "depends_on": [
         "OPGAP-FE-BUNDLE-CLEANUP-20260830",
         "OPGAP-FE-MGMT-CRUD-POSTMORTEM-20260830",
         "OPGAP-FE-AGORA-WORKSHOP-20260830"
       ],
+      "dependency_tracks": {
+        "OPGAP-FE-BUNDLE-CLEANUP-20260830": "functional",
+        "OPGAP-FE-MGMT-CRUD-POSTMORTEM-20260830": "functional",
+        "OPGAP-FE-AGORA-WORKSHOP-20260830": "functional"
+      },
       "artifacts": [
         "execute-plans:src/App.tsx",
         "execute-plans:src/management/ManagementLayout.tsx",
@@ -373,7 +437,7 @@
         "bff-v1/index.ts 統一匯出 typed domain clients，完全無 mock 符號",
         "前端 build、typecheck、lint 及 depgraph 測試全部通過"
       ],
-      "gaps": ["OP-G06", "OP-G07", "OP-G15", "OP-G18"],
+      "gaps": [],
       "priority": 2,
       "wave": 2,
       "design_unit": "SD-Unit-6",
@@ -384,7 +448,7 @@
       "title": "Dev VM nonprod atomic promotion, container health validation, and projection binding closure",
       "summary_zh": "依 SD-Unit-10 執行：鎖定 pantheon-dev-vm 資源，執行 Dev VM 原子部署，驗證全容器健康、PostgreSQL checkpoint 同步、Agora projection 綁定與 Paper producer 運行 (OP-G03, OP-G19, OP-G20)。",
       "phase": "W3-promotion-vm",
-      "owner": "Antigravity",
+      "owner": "Gemini",
       "reviewer": "Claude",
       "target_repo": "pantheon+execute-plans",
       "depends_on": [
@@ -392,9 +456,13 @@
         "OPGAP-BFF-MAIN-ASSEMBLY-20260830",
         "OPGAP-FE-INTEGRATION-ASSEMBLY-20260830"
       ],
+      "dependency_tracks": {
+        "OPGAP-DEPLOY-RELIABILITY-20260830": "functional",
+        "OPGAP-BFF-MAIN-ASSEMBLY-20260830": "functional",
+        "OPGAP-FE-INTEGRATION-ASSEMBLY-20260830": "functional"
+      },
       "artifacts": [
         "docker-compose.yml",
-        "scripts/deploy_nonprod_vm.sh",
         "docs/deployment/evidence/full-operation-gap/OPGAP-HOSTED-DEV-PROMOTION-20260830/evidence.json"
       ],
       "acceptance": [
@@ -403,7 +471,11 @@
         "Agora projection 綁定驗證通過，paper-signal-producer 正常運行且無 500 錯誤",
         "產出結構化部署證據 manifest"
       ],
-      "gaps": ["OP-G03", "OP-G19", "OP-G20"],
+      "gaps": [
+        "OP-G03",
+        "OP-G19",
+        "OP-G20"
+      ],
       "priority": 3,
       "wave": 3,
       "design_unit": "SD-Unit-10",
@@ -414,14 +486,17 @@
     {
       "id": "OPGAP-HOSTED-E2E-ACCEPTANCE-20260830",
       "title": "Full twelve-loop stimulus-readback, source lifecycle, and authenticated desktop Playwright acceptance",
-      "summary_zh": "依 SD-Unit-11 執行：鎖定 pantheon-dev-vm 資源，於已部署之 Dev VM 執行 12 循環全量刺激讀回 (OP-G11)、Source 有界更新週期 (OP-G12)、及桌面端登入態 Playwright 旅程驗收 (OP-G14)，完成全產品簽收。",
+      "summary_zh": "依 SD-Unit-11 執行：鎖定 pantheon-dev-vm 資源，於已部署之 Dev VM 執行 12 循環全量刺激讀回 (OP-G11)、Source 有界更新週期 (OP-G12 驗證)、及桌面端登入態 Playwright 旅程驗收 (OP-G14)，完成全產品簽收。",
       "phase": "W4-acceptance-vm",
-      "owner": "Claude",
-      "reviewer": "Antigravity",
+      "owner": "Antigravity",
+      "reviewer": "Codex",
       "target_repo": "pantheon+execute-plans",
       "depends_on": [
         "OPGAP-HOSTED-DEV-PROMOTION-20260830"
       ],
+      "dependency_tracks": {
+        "OPGAP-HOSTED-DEV-PROMOTION-20260830": "hosted"
+      },
       "artifacts": [
         "scripts/e2e/twelve_loop_acceptance_suite.py",
         "scripts/e2e/verify_source_reconcile_only_cycle.py",
@@ -434,7 +509,10 @@
         "桌面端登入態 Playwright 遍歷 Management 與 Agora 核心路由，無阻斷性 console/network 錯誤",
         "產出最終簽收證據 manifest，正式宣告全產品正常運作閉環"
       ],
-      "gaps": ["OP-G11", "OP-G12", "OP-G14"],
+      "gaps": [
+        "OP-G11",
+        "OP-G14"
+      ],
       "priority": 4,
       "wave": 4,
       "design_unit": "SD-Unit-11",

@@ -139,7 +139,7 @@
 - **歷史對齊**：先前架構清理（ACG）已建立 router 基礎，但 main.py 巨型單體切換尚未最終收斂。
 - **處置分類**：`ACTIVE_REMEDIATION`
 - **目標設計單元**：`SD-Unit-1` (BFF Core Routing Extraction) 及整合任務
-- **歸屬執行任務**：`OPGAP-BE-BFF-CORE-20260830`（抽取）與 `OPGAP-BFF-MAIN-ASSEMBLY-20260830`（最終集成）
+- **歸屬執行任務**：`OPGAP-BFF-MAIN-ASSEMBLY-20260830`（底層路由模組於 `OPGAP-BE-BFF-CORE-20260830` 平行抽取）
 - **正確完成邊界**：
   - 所有 domain route bodies 完整搬移至各領域 router（`command_adapters/`、`agora/`、`management_read_models/` 等）；`main.py` 僅保留 app 初始化、middleware 掛載、生命週期管理與 router include；通過 architecture route guard 測試。
 
@@ -192,7 +192,7 @@
 - **歷史對齊**：具備本機單元測試，但未完成 hosted 效應簽收。
 - **處置分類**：`HOSTED_EFFECT_PROOF`
 - **目標設計單元**：`SD-Unit-4` (Source Ingestion Bounded Refresh) 與 `SD-Unit-11` (Acceptance Harness)
-- **歸屬執行任務**：`OPGAP-BE-SOURCE-MANAGEMENT-20260830`（準備）與 `OPGAP-HOSTED-E2E-ACCEPTANCE-20260830`（驗收）
+- **歸屬執行任務**：`OPGAP-BE-SOURCE-MANAGEMENT-20260830`（由 `OPGAP-HOSTED-E2E-ACCEPTANCE-20260830` 執行 hosted 閉環驗收）
 - **正確完成邊界**：
   - 使用測試 source instance 完整走完 add-disabled -> validate -> manual canary -> reload readback，並證明執行完畢後 controller mode 嚴格維持在 `reconcile_only`。
 
@@ -231,7 +231,7 @@
 - **歷史對齊**：Adapter 能力與前端呈現脫節。
 - **處置分類**：`CONTRACT_AND_UI_ALIGNMENT`
 - **目標設計單元**：`SD-Unit-2` (Agora Provenance Truth) 與 `SD-Unit-8` (Frontend Agora Gating)
-- **歸屬執行任務**：`OPGAP-BE-AGORA-RESEARCH-20260830` 與 `OPGAP-FE-AGORA-WORKSHOP-20260830`
+- **歸屬執行任務**：`OPGAP-FE-AGORA-WORKSHOP-20260830`（後端真值已由 `OPGAP-BE-AGORA-RESEARCH-20260830` 奠定）
 - **正確完成邊界**：
   - 後端 API 與前端 UI 明確標註每個 adapter 之真實能力（`stub` / `deferred` / `real`）；非 real adapter 產出不得偽裝進入正式 candidate truth。
 
@@ -270,7 +270,7 @@
 - **歷史對齊**：Postmortem 資料由 incident 衍生解析，而非讀取 canonical 實體。
 - **處置分類**：`ACTIVE_REMEDIATION`
 - **目標設計單元**：`SD-Unit-5` (Canonical Management Postmortem) 與 `SD-Unit-7` (Frontend Postmortem Binding)
-- **歸屬執行任務**：`OPGAP-BE-MGMT-POSTMORTEM-20260830` 與 `OPGAP-FE-MGMT-CRUD-POSTMORTEM-20260830`
+- **歸屬執行任務**：`OPGAP-BE-MGMT-POSTMORTEM-20260830`（前端 UI 串接由 `OPGAP-FE-MGMT-CRUD-POSTMORTEM-20260830` 負責）
 - **正確完成邊界**：
   - 後端建立專屬 Postmortem read model 與 API 端點；前端 `PostmortemLibrary.tsx` 透過 canonical 端點讀取具備 `postmortem_id` 之正式記錄。
 
@@ -284,7 +284,7 @@
 - **歷史對齊**：Source 邏輯已在 source-level 合併修復，但尚未在 live VM 重新跑過部署門禁與閉環驗證。
 - **處置分類**：`SOURCE_FIX_MERGED_PENDING_LIVE_VERIFY`
 - **目標設計單元**：`SD-Unit-2` (Agora Backend) 與 `SD-Unit-10` (Dev VM Promotion)
-- **歸屬執行任務**：`OPGAP-BE-AGORA-RESEARCH-20260830`（本地契約驗證）與 `OPGAP-HOSTED-DEV-PROMOTION-20260830`（Live 閉環）
+- **歸屬執行任務**：`OPGAP-HOSTED-DEV-PROMOTION-20260830`（本地 Agora 契約由 `OPGAP-BE-AGORA-RESEARCH-20260830` 驗證）
 - **正確完成邊界**：
   - 於部署門禁中執行 bounded manual Source refresh，並驗證 `projection_path` 準確讀取並綁定新 receipt/run/source 記錄，門禁順利通過。
 
@@ -298,7 +298,7 @@
 - **歷史對齊**：後端核心邏輯已修復並合入 dev，待 live promotion 實體閉環。
 - **處置分類**：`SOURCE_FIX_MERGED_PENDING_LIVE_VERIFY`
 - **目標設計單元**：`SD-Unit-3` (Paper Producer Lifecycle) 與 `SD-Unit-10` (Dev VM Promotion)
-- **歸屬執行任務**：`OPGAP-BE-RUNTIME-BINDING-20260830`（本地單元測試）與 `OPGAP-HOSTED-DEV-PROMOTION-20260830`（Live 運行驗證）
+- **歸屬執行任務**：`OPGAP-HOSTED-DEV-PROMOTION-20260830`（本地 Runtime 綁定由 `OPGAP-BE-RUNTIME-BINDING-20260830` 驗證）
 - **正確完成邊界**：
   - Live VM 部署後，`paper-signal-producer` container 維持 healthy，成功由 official snapshot 產生 signal 並驅動 paper order/fill/heartbeat 讀回。
 
@@ -306,18 +306,18 @@
 
 ## 3. 處置與執行任務映射匯總表
 
-| 執行任務 ID | 倉庫 | 負責處置之 GAP 項目 | 預估波次 | 執行資源 |
+| 執行任務 ID | 倉庫 | 唯一主要負責處置之 GAP 項目 | 預估波次 | 執行資源 |
 |---|---|---|:---:|---|
-| `OPGAP-BE-BFF-CORE-20260830` | Pantheon | OP-G05, OP-G08 (part), OP-G10, OP-G13 | Wave 1 | Local |
-| `OPGAP-BE-AGORA-RESEARCH-20260830` | Pantheon | OP-G01, OP-G02, OP-G09, OP-G15 (part), OP-G19 (verify) | Wave 1 | Local |
-| `OPGAP-BE-RUNTIME-BINDING-20260830` | Pantheon | OP-G17, OP-G20 (verify) | Wave 1 | Local |
-| `OPGAP-BE-SOURCE-MANAGEMENT-20260830` | Pantheon | OP-G12 (prep) | Wave 1 | Local |
-| `OPGAP-BE-MGMT-POSTMORTEM-20260830` | Pantheon | OP-G18 (part) | Wave 1 | Local |
+| `OPGAP-BE-BFF-CORE-20260830` | Pantheon | OP-G05, OP-G10, OP-G13 | Wave 1 | Local |
+| `OPGAP-BE-AGORA-RESEARCH-20260830` | Pantheon | OP-G01, OP-G02, OP-G09 | Wave 1 | Local |
+| `OPGAP-BE-RUNTIME-BINDING-20260830` | Pantheon | OP-G17 | Wave 1 | Local |
+| `OPGAP-BE-SOURCE-MANAGEMENT-20260830` | Pantheon | OP-G12 | Wave 1 | Local |
+| `OPGAP-BE-MGMT-POSTMORTEM-20260830` | Pantheon | OP-G18 | Wave 1 | Local |
 | `OPGAP-FE-BUNDLE-CLEANUP-20260830` | execute-plans | OP-G07 | Wave 1 | Local |
-| `OPGAP-FE-MGMT-CRUD-POSTMORTEM-20260830` | execute-plans | OP-G06, OP-G18 (part) | Wave 1 | Local |
-| `OPGAP-FE-AGORA-WORKSHOP-20260830` | execute-plans | OP-G15 (part) | Wave 1 | Local |
+| `OPGAP-FE-MGMT-CRUD-POSTMORTEM-20260830` | execute-plans | OP-G06 | Wave 1 | Local |
+| `OPGAP-FE-AGORA-WORKSHOP-20260830` | execute-plans | OP-G15 | Wave 1 | Local |
 | `OPGAP-DEPLOY-RELIABILITY-20260830` | Pantheon | OP-G04, OP-G16 | Wave 1 | Local |
-| `OPGAP-BFF-MAIN-ASSEMBLY-20260830` | Pantheon | OP-G08 (assembly) | Wave 2 | Local |
-| `OPGAP-FE-INTEGRATION-ASSEMBLY-20260830` | execute-plans | 前端全量集成與打包驗證 | Wave 2 | Local |
-| `OPGAP-HOSTED-DEV-PROMOTION-20260830` | Pantheon+FE | OP-G03, OP-G19 (close), OP-G20 (close) | Wave 3 | `pantheon-dev-vm` |
-| `OPGAP-HOSTED-E2E-ACCEPTANCE-20260830` | Pantheon+FE | OP-G11, OP-G12 (close), OP-G14 | Wave 4 | `pantheon-dev-vm` |
+| `OPGAP-BFF-MAIN-ASSEMBLY-20260830` | Pantheon | OP-G08 | Wave 2 | Local |
+| `OPGAP-FE-INTEGRATION-ASSEMBLY-20260830` | execute-plans | (前端組件與客戶端集成匯總) | Wave 2 | Local |
+| `OPGAP-HOSTED-DEV-PROMOTION-20260830` | Pantheon+FE | OP-G03, OP-G19, OP-G20 | Wave 3 | `pantheon-dev-vm` |
+| `OPGAP-HOSTED-E2E-ACCEPTANCE-20260830` | Pantheon+FE | OP-G11, OP-G14 | Wave 4 | `pantheon-dev-vm` |

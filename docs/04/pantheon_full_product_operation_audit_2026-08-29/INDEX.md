@@ -21,7 +21,7 @@
 
 1. **單一真實來源與單一擁有者（Single Source of Truth & Single Owner）**：
    - 拒絕相容層、雙重寫入、雙重資料庫或暫存假 facade。
-   - 每一項可見功能與核心數據均有且僅有一個明確的 canonical backend/service owner。
+   - 每一項可見功能、核心數據與 20 項 GAP 均有且僅有一個明確的 canonical primary execution owner。
 2. **不重工與歷史事實不可變（No Redundant Work & Immutable Task History）**：
    - 充分繼承 ACG（Architecture Cleanup Gap）與 PFG（Product Functional Closure）已合併之有效產出，不重開或覆蓋已完成之歷史任務。
    - 針對 PR #5410~#5426 已在 `origin/dev` 完成之 source-level 修復（如 bare image ID 正規化、frontier recovery、snapshot alias、min-closes 歷史、TW session freshness、Agora projection 綁定與 baseline 500 修復），將其處置明確定位為「source 已修復，待 live atomic switch 與 hosted 閉環驗證」，避免重複開發。
@@ -45,7 +45,7 @@
 | 文件路徑 | 文件性質 | 主要內容摘要 |
 |---|---|---|
 | [`INDEX.md`](INDEX.md) | 總導覽與規劃索引 | 規劃背景、基線版本、核心原則、文件導覽與非目標宣告。 |
-| [`CURRENT_GAP_DISPOSITION_2026-08-30.md`](CURRENT_GAP_DISPOSITION_2026-08-30.md) | 落差處置矩陣 | OP-G01 至 OP-G20 逐項處置、直接證據、歷史對齊與任務歸屬。 |
+| [`CURRENT_GAP_DISPOSITION_2026-08-30.md`](CURRENT_GAP_DISPOSITION_2026-08-30.md) | 落差處置矩陣 | OP-G01 至 OP-G20 逐項處置、直接證據、歷史對齊與單一任務歸屬。 |
 | [`SA_GAP_REMEDIATION_2026-08-30.md`](SA_GAP_REMEDIATION_2026-08-30.md) | 目標系統分析 (SA) | 6 大子系統之單一 owner 架構、資料流、狀態不變量與邊界規範。 |
 | [`SD_GAP_REMEDIATION_2026-08-30.md`](SD_GAP_REMEDIATION_2026-08-30.md) | 系統設計規格 (SD) | 11 個設計單元（Design Units）之程式碼面、DTO 契約、狀態轉移與測試規範。 |
 | [`EXECUTION_DAG_2026-08-30.md`](EXECUTION_DAG_2026-08-30.md) | 平行執行 DAG | 5 波次（Wave 0~4）相依圖、熱點檔案擁有者分配、資源鎖定與交付排程。 |
@@ -55,7 +55,7 @@
 
 ## 3. 20 項 GAP 處置總覽摘要
 
-| GAP ID | 嚴重度 | 標題摘要 | 處置分類 | 歸屬執行任務 |
+| GAP ID | 嚴重度 | 標題摘要 | 處置分類 | 單一歸屬執行任務 |
 |---|---:|---|---|---|
 | **OP-G01** | P0 | Agora research 偽造 `real` 候選真值 | 主動修復 (Active Remediation) | `OPGAP-BE-AGORA-RESEARCH-20260830` |
 | **OP-G02** | P0 | Agora PerformanceSuggestion 無 production caller | 主動修復 (Active Remediation) | `OPGAP-BE-AGORA-RESEARCH-20260830` |
@@ -64,19 +64,19 @@
 | **OP-G05** | P1 | auth readiness 同步依賴 OpenClaw 探針延遲 | 主動修復 (Active Remediation) | `OPGAP-BE-BFF-CORE-20260830` |
 | **OP-G06** | P0 | Management generic CRUD 無 durable owner | 主動修復 (Active Remediation) | `OPGAP-FE-MGMT-CRUD-POSTMORTEM-20260830` |
 | **OP-G07** | P1 | Frontend production graph 可達 mock/seed | 主動修復 (Active Remediation) | `OPGAP-FE-BUNDLE-CLEANUP-20260830` |
-| **OP-G08** | P1 | BFF `main.py` 巨型路由未完成拆分 | 主動修復 (Active Remediation) | `OPGAP-BE-BFF-CORE-20260830` & `OPGAP-BFF-MAIN-ASSEMBLY-20260830` |
+| **OP-G08** | P1 | BFF `main.py` 巨型路由未完成拆分 | 主動修復 (Active Remediation) | `OPGAP-BFF-MAIN-ASSEMBLY-20260830` |
 | **OP-G09** | P1 | Agora routers 跨域 import 私有 helper/store | 主動修復 (Active Remediation) | `OPGAP-BE-AGORA-RESEARCH-20260830` |
 | **OP-G10** | P2 | generic legacy action adapter 殘留 dead code | 清理刪除 (Cleanup & Deletion) | `OPGAP-BE-BFF-CORE-20260830` |
 | **OP-G11** | P0 | 十二循環完整 deployed proof 為 opt-in/skipped | 驗證與簽收 (Verify & Closure) | `OPGAP-HOSTED-E2E-ACCEPTANCE-20260830` |
-| **OP-G12** | P1 | current Source Management 缺 hosted 效應證據 | 驗證與簽收 (Verify & Closure) | `OPGAP-BE-SOURCE-MANAGEMENT-20260830` & `OPGAP-HOSTED-E2E-ACCEPTANCE-20260830` |
+| **OP-G12** | P1 | current Source Management 缺 hosted 效應證據 | 主動修復與驗證 (Active Remediation) | `OPGAP-BE-SOURCE-MANAGEMENT-20260830` |
 | **OP-G13** | P1 | 同步 FastAPI `TestClient` 在 AnyIO portal 死鎖 | 測試工具修復 (Tooling Fix) | `OPGAP-BE-BFF-CORE-20260830` |
 | **OP-G14** | P1 | Management/Agora authenticated hosted UI 缺證據 | 驗證與簽收 (Verify & Closure) | `OPGAP-HOSTED-E2E-ACCEPTANCE-20260830` |
-| **OP-G15** | P1 | research adapters 宣告與產品 UI 不一致 | 契約對齊 (Contract Alignment) | `OPGAP-BE-AGORA-RESEARCH-20260830` & `OPGAP-FE-AGORA-WORKSHOP-20260830` |
+| **OP-G15** | P1 | research adapters 宣告與產品 UI 不一致 | 契約對齊與 UI (Contract & UI Alignment) | `OPGAP-FE-AGORA-WORKSHOP-20260830` |
 | **OP-G16** | P0 | deployment lease 與 rollback 共用脆弱遠端依賴 | 部署韌性強化 (Deploy Reliability) | `OPGAP-DEPLOY-RELIABILITY-20260830` |
 | **OP-G17** | P0 | Registry→Deployment→RuntimeBinding 投影未自然產生 | 主動修復 (Active Remediation) | `OPGAP-BE-RUNTIME-BINDING-20260830` |
-| **OP-G18** | P1 | Management Postmortem 缺少 canonical read owner | 主動修復 (Active Remediation) | `OPGAP-BE-MGMT-POSTMORTEM-20260830` & `OPGAP-FE-MGMT-CRUD-POSTMORTEM-20260830` |
-| **OP-G19** | P0 | Source-to-Agora projection 綁定在部署門禁中斷 | Source 已修復待 Live 驗證 (Verify & Close) | `OPGAP-BE-AGORA-RESEARCH-20260830` & `OPGAP-HOSTED-DEV-PROMOTION-20260830` |
-| **OP-G20** | P0 | paper-signal-producer 運行時健全度與生命週期閉環 | Source 已修復待 Live 驗證 (Verify & Close) | `OPGAP-BE-RUNTIME-BINDING-20260830` & `OPGAP-HOSTED-DEV-PROMOTION-20260830` |
+| **OP-G18** | P1 | Management Postmortem 缺少 canonical read owner | 主動修復 (Active Remediation) | `OPGAP-BE-MGMT-POSTMORTEM-20260830` |
+| **OP-G19** | P0 | Source-to-Agora projection 綁定在部署門禁中斷 | 部署驗證與閉環 (Verify & Close) | `OPGAP-HOSTED-DEV-PROMOTION-20260830` |
+| **OP-G20** | P0 | paper-signal-producer 運行時健全度與生命週期閉環 | 部署驗證與閉環 (Verify & Close) | `OPGAP-HOSTED-DEV-PROMOTION-20260830` |
 
 ---
 
