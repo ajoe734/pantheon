@@ -1,114 +1,196 @@
-# System Design — Development Tooling Four-Gap Closure
+# Complete System Design — Development Tooling Four-Gap Closure
 
-Status: implementation-ready design; package IDs are planning identifiers, not
-canonical supervisor tasks.
+Status: execution-ready design for one continuous Claude implementation run
 
-## 1. Delivery rules
+Baseline: `origin/dev` at or after
+`9c9adf426f04276d1b1a0a1401eb1f81bc0ebec4`
 
-1. Every package starts from current `origin/dev` in a clean worktree.
-2. DTG-CI-01 lands before code movement so later waves cannot evade tests.
-3. Each extraction wave adds characterization tests before moving callers.
-4. One integration lane owns edits to each monolith; parallel lanes may prepare
-   target modules/tests but may not independently delete from the source file.
-5. No package combines product-runtime changes with tooling cleanup.
-6. Existing external command names, task transitions, lock order, runtime paths,
-   and exit codes remain stable unless explicitly specified here.
-7. A moved implementation is deleted from the source file in the same wave.
-8. No execution task is materialized from this document until a separate
-   operator request.
+This document is normative for implementation. Where an older statement in
+`SA.md`, `GAP_AUDIT.md`, or `THREE_PASS_REVIEW.md` conflicts with this
+file, this file wins. Canonical mutation means use of the single V2 TaskStore
+transaction/projection contract; it does not mean every internal tooling writer
+must impersonate a leased worker through the public `ai-status` CLI.
 
-## 2. DTG-ARCH-01 design
+## 1. Objective
 
-### 2.1 Inventory
+Close the four residual development-tooling gaps without adding a second
+scheduler, merge lane, task store, status authority, runtime cache, or generic
+facade:
 
-Record the immutable tuple from the live anchor in a custody worksheet:
+1. `DTG-ARCH-01`: recover and verify the immutable V1 journal if exact bytes
+   exist, or produce an honest bounded-loss disposition.
+2. `DTG-CI-01`: make CI select every applicable tooling/product gate for a
+   changed-path set, including mixed diffs.
+3. `DTG-INT-01`: persist exact integration consumption so an already-landed
+   delivery is not re-evaluated every five minutes.
+4. `DTG-CLEAN-01`: reduce the two development-tooling monoliths by moving
+   behavior to canonical owners and classify historical brief evidence by
+   proof rather than filename.
+
+The implementation is complete only when all source changes, migrations,
+deletions, tests, documentation, and live canaries in this document pass. A
+local refactor or green unit subset is not completion.
+
+## 2. Scope and explicit non-goals
+
+### 2.1 In scope
+
+- `.orchestrator/supervisor.py` and its development-tooling owner modules.
+- `scripts/ai_status.py` and its canonical task/projection owner modules.
+- `scripts/git/auto_integrator.py` and its focused tests/contract.
+- `scripts/component_boundary.py`, component-boundary manifest, and branch CI.
+- V2 task contract/TaskStore code required for `integration_receipt`.
+- Development-tooling tests and documentation.
+- Read-only inventory of historical task briefs and proven, separately
+  reviewed removals.
+- Offline V1 archive recovery verification.
+
+### 2.2 Out of scope
+
+- Product BFF, twelve-loop, Management UI, frontend, product database, product
+  readiness, production deployment, trading, or capital-affecting behavior.
+- Security-hardening programs, permission redesign, secret rotation, archive
+  encryption, immutable filesystem flags, or custody infrastructure.
+- A new scheduler, queue, TaskStore, merge process, bridge, worker role, task
+  class, generic mutation command, or product API endpoint.
+- Automatic Human/Ops or owner finalization after merge.
+- Synthetic reconstruction of a missing V1 archive.
+- Mechanical file splitting solely to reach a line-count target.
+- Blanket deletion based on `sidecar` or `integration_unblock` names.
+
+## 3. Required starting conditions
+
+The executor must stop before editing if any condition is false:
+
+1. Fetch `origin` and create a clean worktree/branch from current
+   `origin/dev`.
+2. Record the baseline SHA in delivery evidence.
+3. Confirm no live worker owns the same files through a current task.
+4. Confirm live supervisor health is green using the promoted command runtime
+   and exact live config, not a shared checkout.
+5. Confirm the working tree is clean.
+
+Do not use `/home/lupin/pantheon` dirty/shared state as source truth. Do not
+edit canonical task JSON, queue JSON, activity logs, or V2 journals by hand.
+
+## 4. Canonical architecture and invariants
+
+### 4.1 Authority map
+
+| Concern | Canonical owner |
+|---|---|
+| task state and transition journal | V2 TaskStore |
+| human/worker task command CLI | `scripts/ai_status.py` |
+| scheduler/cycle/singleton | `.orchestrator/supervisor.py` |
+| merge execution | `scripts/git/auto_integrator.py` |
+| dispatch policy | `.orchestrator/dispatch_policy.py` and `.orchestrator/rewrite/dispatch_admission.py` |
+| worker recovery policy | existing `.orchestrator/rewrite/worker_recovery.py` and lifecycle modules |
+| signed development packet transport | `.orchestrator/development_bridge/` |
+| GitHub review probes | existing Git review-gate/bridge modules |
+| derived current-work/dashboard files | one narrow status projection owner |
+| changed-path classification | `scripts/component_boundary.py` plus manifest |
+
+### 4.2 Invariants
+
+1. There is one V2 canonical task-state journal and one derived projection.
+2. Every canonical mutation commits through the existing V2 TaskStore
+   transaction and updates derived views through the existing projection
+   contract.
+3. Public `ai-status` worker commands retain active-lease validation.
+4. Internal supervisor/integrator mutations use narrow purpose-specific
+   functions with their own authority checks; they do not fake a worker lease
+   or enable `PANTHEON_LOCAL_HUMAN_OPS`.
+5. The supervisor remains one singleton and `run_once` remains the sole cycle
+   coordinator.
+6. The auto-integrator remains the sole merge owner and retains one canonical
+   flock.
+7. Workers, PR helpers, and product runtime never merge or mutate integration
+   receipts.
+8. Runtime `state.json` remains bounded operational state, never canonical
+   delivery truth.
+9. Every extraction wave moves callers and deletes the replaced body in the
+   same commit. No permanent forwarding facade is accepted.
+10. External command names, exit codes, task transitions, lock ordering,
+    runtime paths, and exact-head review rules remain compatible unless this
+    design explicitly changes them.
+
+## 5. DTG-CI-01 — independent CI gate selection
+
+### 5.1 Root defect
+
+`scripts/component_boundary.py` currently derives:
 
 ```text
-byte_size=9135812318
-journal_sha256=185ba10f7d6d05a28d2b7bd53e8e13cb39a1297a25c249ddc7da5cfa063cc1bd
-event_count=17135
-last_event_sha256=b2aaa4cc71345ec63aad8ae507ccf450ce92efeff87d70ade3de181de2531f6b
-state_sha256=ba2db008d4813600919bdc46667c49db0f4aee2f1a7c1b7a226377c3fbaebcb6
+product_touched = product_runtime in domains
+tooling_only = changed paths exist and product_touched is false
 ```
 
-Search only authorized backup/custody locations. For every candidate, compare
-file type and byte size before hashing 9.13 GB. Record path, storage owner,
-observation time, size result, digest result, and disposition. Do not copy a
-mismatching candidate into the runtime directory.
+Branch CI then chooses tooling or product smoke with mutually exclusive
+conditions. A mixed product/tooling diff therefore skips the tooling authority
+suite. Unknown-only and delivery-only diffs can also be mislabeled tooling.
 
-### 2.2 Recovery
+### 5.2 Files owned by this change
 
-If an exact candidate is found:
+- `scripts/component_boundary.py`
+- `scripts/test_component_boundary.py`
+- `docs/02-architecture/component-boundary.yaml`
+- `.github/workflows/branch-ci.yml`
+- focused workflow tests already present in the repository, if required
 
-1. copy it to an operator-selected durable archive location using a temporary
-   filename on the destination filesystem;
-2. fsync and atomically rename;
-3. make it non-world-readable and immutable by operational policy where
-   supported;
-4. run the existing verifier with `--archive-path`;
-5. store the verifier JSON and custody manifest as documentation/evidence; and
-6. leave the anchor unchanged.
+### 5.3 Classifier contract
 
-The canonical runtime path need not be restored if the relocated path is the
-declared custody location. No live config change is necessary because the
-archive is verified only on explicit request.
-
-### 2.3 Irrecoverable branch
-
-If every authorized location is exhausted, create a factual disposition that
-lists searched locations and preserves the expected tuple. Do not change the
-verifier to green. Acceptance is “loss explicitly bounded,” not “archive
-verified.”
-
-### 2.4 Tests
-
-Retain and extend verifier tests for:
-
-- relocated exact candidate passes;
-- wrong size fails without claiming digest match;
-- correct size/wrong digest fails;
-- symlink/non-regular candidate fails;
-- absent candidate returns `historical_archive_unavailable`; and
-- hot V2 projection remains independent.
-
-## 3. DTG-CI-01 design
-
-### 3.1 Classifier contract
-
-Extend `classify_paths()` to return:
+Add these independent booleans:
 
 ```json
 {
   "development_tooling_touched": true,
-  "product_touched": false,
-  "delivery_touched": true,
+  "product_touched": true,
+  "delivery_touched": false,
   "tooling_only": false
 }
 ```
 
-`tooling_only` remains temporarily defined as development tooling touched and
-neither product nor delivery touched. Add explicit manifest coverage for:
+Rules:
+
+- `development_tooling_touched` is true only when a matched component has the
+  `development_tooling` domain.
+- `product_touched` is true only when a matched component has the
+  `product_runtime` domain.
+- `delivery_touched` is true only when a matched component has the
+  `delivery` domain.
+- Keep legacy `tooling_only` unchanged during this delivery:
+  `bool(paths) and not product_touched`.
+- Branch CI must stop using `tooling_only`; deprecation requires a separate
+  caller inventory.
+- Unknown paths remain listed. They do not silently become development
+  tooling.
+- Do not add a documentation domain in this change.
+
+Add manifest coverage for executable tooling paths currently omitted:
 
 - `scripts/git/`
 - `scripts/run-auto-integrator.sh`
 - `scripts/auto_integrator_install.py`
 - `scripts/supervisor_watchdog_install.py`
-- the four-gap documentation directory as documentation, not runtime code.
+- associated focused test files
 
-Unknown paths remain reported. Branch CI must not derive development-tooling
-ownership from “not product.”
+Do not classify this documentation directory as runtime code.
 
-### 3.2 Workflow gates
+### 5.4 Workflow behavior
 
-Replace the mutually exclusive workflow conditions with independent steps:
+Replace mutually exclusive smoke selection with independent steps:
 
-1. `Run tooling core gate` when `development_tooling_touched`.
-2. `Run tooling integration authority gate` when
-   `development_tooling_touched`.
-3. `Run product smoke gate` when `product_touched`.
-4. Run delivery checks already owned by the workflow when `delivery_touched`.
+1. Run existing tooling core gate when
+   `development_tooling_touched == true`.
+2. Run tooling integration-authority gate when
+   `development_tooling_touched == true`.
+3. Run existing product smoke when `product_touched == true`.
+4. Preserve existing delivery checks. Do not invent a new delivery program in
+   this scope; `delivery_touched` is exposed for explicit callers.
+5. Unknown-only diffs retain the repository's conservative/default smoke
+   behavior; there must be no successful no-test path.
 
-The integration authority command is:
+The tooling integration-authority gate is exactly:
 
 ```bash
 PYTHONPATH=.orchestrator python3 -m pytest -q \
@@ -121,298 +203,524 @@ PYTHONPATH=.orchestrator python3 -m pytest -q \
   scripts/test_supervisor_watchdog_install.py
 ```
 
-Do not replace the existing core suite with this command; both are required.
+It supplements, not replaces, the existing tooling core gate.
 
-### 3.3 Acceptance
+### 5.5 Required tests
 
-- Classifier tests cover all domain combinations.
-- A mixed synthetic diff selects both product and tooling commands.
-- A `scripts/git/auto_integrator.py`-only diff selects tooling gates without
-  relying on `unknown_paths`.
-- Existing 1,026 tests and 7 subtests pass in the CI environment.
-- The required-check name remains stable or branch protection is updated in
-  the same delivery.
+Add table-driven classifier tests for tooling-only, product-only,
+delivery-only, every two-domain pair, all three domains, docs-only,
+unknown-only, and `scripts/git/auto_integrator.py` alone.
 
-## 4. DTG-INT-01 design
+Add a workflow assertion proving a mixed tooling/product diff selects both
+tooling gates and product smoke. Preserve the required check name unless branch
+protection is changed in the same tooling delivery.
 
-### 4.1 Task contract
+### 5.6 Acceptance
 
-Add `integration_receipt` validation to the existing task contract. It is
-optional and must not change role-based acceptance. Required fields are those
-defined in SA ADR-03. SHA fields are lowercase 40-character Git OIDs, PR is a
-positive integer, and `source` is exactly `canonical_auto_integrator`.
+- No applicable gate is skipped for any tested domain union.
+- No executable `scripts/git/` integrator change is classified unknown.
+- Existing legacy callers of `tooling_only` receive the old value.
+- Tooling core, integration-authority, and product smoke commands pass.
 
-### 4.2 Governed command
+## 6. DTG-INT-01 — exact integration consumption receipt
 
-Add a narrow internal command such as:
+### 6.1 Root defect
 
-```text
-ai-status record-integration-receipt TASK_ID \
-  --generation N --repository OWNER/REPO --target-branch dev \
-  --pr N --head-sha SHA --merge-commit-sha SHA --result merged
-```
+Candidate discovery selects every eligible `review_approved` row. After a PR
+is already merged, the integrator returns `already_merged` but persists no
+consumption. The five-minute cron repeats GitHub/ancestry work indefinitely.
 
-Admission rules:
+A normal `ai-status` command is not a valid write path for the cron:
+public mutation admission requires an active worker lease or explicit local
+Human/Ops mode. The integrator has neither and must not impersonate either.
 
-1. caller runs from the promoted command runtime;
-2. task exists and is `review_approved` or an allowed merge-then-review state;
-3. generation and delivery binding exactly match;
-4. actor/source identifies the canonical integration runner;
-5. the command performs no GitHub call and trusts no unbound text evidence;
-6. identical replay is a no-op; and
-7. a conflicting receipt is rejected rather than overwritten.
+### 6.2 Canonical receipt schema
 
-The integrator supplies evidence only after its existing live GitHub and target
-ancestry checks. The command commits through the existing TaskStore transaction
-and activity outbox.
-
-### 4.3 Candidate filter
-
-Add a pure predicate:
-
-```text
-integration_receipt_consumes_candidate(task) -> bool
-```
-
-It returns true only for the complete exact identity. Candidate discovery then
-omits the consumed row. It must return false for a malformed receipt, missing
-delivery binding, changed generation, changed exact head, changed PR, changed
-repository/target, or nonterminal receipt result.
-
-### 4.4 Reopen/rebind behavior
-
-`reopen`, `handoff`, operator reaccept, and any command that changes the frozen
-delivery identity must either clear the receipt in the same canonical
-transition or make it nonmatching by incrementing generation/changing binding.
-Tests must prove the task becomes eligible again.
-
-### 4.5 Crash windows
-
-| Window | Result |
-|---|---|
-| before merge | no receipt; normal retry |
-| merge succeeds, process dies before receipt | next cron verifies already merged and writes receipt |
-| receipt commits, process dies before output | next cron filters exact receipt |
-| receipt command rejects stale identity | no suppression; current candidate is evaluated |
-
-### 4.6 Tests and live acceptance
-
-- unit tests for receipt schema and predicate;
-- command tests for idempotency/conflict and TaskStore persistence;
-- integrator tests for performed merge and already-merged reconciliation;
-- restart test proving the receipt survives a new process;
-- generation/rebind invalidation tests;
-- live canary with one already-merged `review_approved` task: first run records
-  once, later cron runs produce no candidate/result line for that exact binding;
-- task status and Human/Ops/owner finalization requirements remain unchanged.
-
-## 5. DTG-CLEAN-01A monolith design
-
-### 5.1 Wave M0 — characterization and dependency map
-
-Before moving code, generate a checked review artifact listing every top-level
-symbol in both monoliths, production callers, test callers, globals read/written,
-external IO, locks acquired, and target owner. The artifact is migration
-evidence, not a runtime registry.
-
-Add tests that freeze:
-
-- supervisor phase order and lock order;
-- dispatch explanation parity;
-- worker launch/recovery/requeue results;
-- command names, arguments, exit codes, and actor restrictions;
-- status/current-work/dashboard projections; and
-- imports used by `scripts/explain_dispatch.py`,
-  `scripts/prune_command_runtimes.py`, and `scripts/loop_done_guardrail.py`.
-
-### 5.2 Wave M1 — projection-only status output
-
-Move current-work and dashboard rendering, normalization needed only for those
-views, and projection file writes from `ai_status.py` into one narrow status
-projection module. It may read canonical snapshots but cannot mutate tasks.
-
-Update tests to import the new owner directly. Remove the old bodies from
-`ai_status.py`; do not leave forwarding copies after callers migrate.
-
-### 5.3 Wave M2 — development bridge commands
-
-Move signed packet verification, batch loading, dependency-closure validation,
-materialization, and readback into the existing `development_bridge/` package.
-`ai_status.py` retains CLI routing and opens the canonical transaction; bridge
-code returns validated mutations/results.
-
-The product BFF remains uninvolved.
-
-### 5.4 Wave M3 — delivery and review evidence
-
-Move pure delivery-binding, manifest, exact-head, and merged-evidence validation
-to the existing task contract/review-gate ownership. Keep GitHub calls in
-`scripts/git/github_review_bridge.py` and task mutation in the status command.
-Delete duplicated parsing from `ai_status.py` after its command handlers call
-the owner directly.
-
-DTG-INT-01 should compose here rather than add another evidence module.
-
-### 5.5 Wave M4 — worker workspace filesystem
-
-Extract worktree preparation, reuse refresh, dirt classification, dirty archive,
-registered lease cleanup, and orphan pruning into a narrow filesystem module.
-It accepts explicit repository/worktree/config values and returns typed results;
-it never reads or writes canonical task status.
-
-Supervisor remains responsible for deciding when an operation occurs and for
-persisting the returned lifecycle fact.
-
-### 5.6 Wave M5 — recovery state transitions
-
-Move pure receipt construction/validation and state transitions into the
-existing `rewrite/worker_recovery.py` and lifecycle modules. Keep process
-observation/termination and bounded external IO in the supervisor coordinator
-until separated behind explicit operation results.
-
-There must still be one recovery fence and one durable receipt schema.
-
-### 5.7 Wave M6 — dispatch planning
-
-Move candidate evaluation, capacity accounting, assignment pair selection, and
-dispatch explanation to existing dispatch policy/admission owners. Both live
-dispatch and `scripts/explain_dispatch.py` call the same pure decision function.
-
-Supervisor keeps snapshot loading, reservation transaction, worker start, and
-result persistence. No scheduler class or alternate run loop is introduced.
-
-### 5.8 Wave M7 — cycle composition finish
-
-Reduce `run_once` to an explicit ordered phase table or short coordinator.
-`supervisor.py` retains process signals, singleton acquisition, configuration,
-phase invocation, and lifecycle reporting. `ai_status.py` retains path binding,
-CLI parser/routing, transaction opening, and final projection invocation.
-
-Guardrails at completion:
-
-- `supervisor.py` no longer owns domain implementations for bridge, worktree,
-  recovery policy, provider policy, or dispatch policy;
-- `ai_status.py` no longer owns projection rendering, bridge protocol, or
-  delivery-evidence parsing;
-- no extracted module exceeds the original monolith by becoming a generic
-  replacement;
-- no circular production import is introduced;
-- no forwarding-only module remains;
-- all direct production imports are documented and point to the canonical
-  owner; and
-- source size is materially reduced, with review required if either entrypoint
-  remains above 4,000 lines.
-
-The line threshold is a review trigger, not permission to split code
-mechanically. Responsibility acceptance takes precedence.
-
-## 6. DTG-CLEAN-01B evidence design
-
-### 6.1 Inventory schema
-
-Generate a non-runtime report with one row per candidate historical brief:
+Add one optional row-bound field to the existing task contract:
 
 ```json
 {
-  "path": ".orchestrator/task-briefs/...md",
+  "integration_receipt": {
+    "version": 1,
+    "result": "landed",
+    "observation": "performed_merge",
+    "task_generation": 4,
+    "repository": "ajoe734/pantheon",
+    "target_branch": "dev",
+    "pr": 5411,
+    "head_sha": "254d2e7b05096dad3f6c7512db089ae2cbd8fe08",
+    "merge_commit_sha": "8f8383b507b1fb631d44422031f01ebea5024d5e",
+    "observed_at": "2026-08-29T23:05:12Z",
+    "source": "canonical_auto_integrator"
+  }
+}
+```
+
+Contract:
+
+- Receipt is bound to the containing row; do not duplicate `task_id`.
+- `version` is integer 1 and `result` is exactly `landed`.
+- `observation` is `performed_merge` or
+  `reconciled_existing_merge`.
+- Generation equals the current row; repository/branch equal frozen delivery.
+- PR is positive; SHAs are lowercase 40-character Git OIDs.
+- Timestamp is UTC RFC3339; source is `canonical_auto_integrator`.
+- Unknown versions or malformed receipts are non-consuming evidence and must
+  not make the canonical projection unreadable.
+
+### 6.3 Receipt identity
+
+The consuming identity is:
+
+```text
+(task row id, task generation, repository, target branch, PR number,
+ exact approved head SHA, merge commit SHA, result=landed)
+```
+
+`observation`, timestamp, and source are audited fields, not alternate
+identity.
+
+### 6.4 Internal mutation owner
+
+Implement one narrow internal mutation function in the existing canonical
+task-state/status owner. Do not add a general task amendment API.
+
+Suggested interface:
+
+```python
+record_integration_receipt(
+    *,
+    config: Mapping[str, Any],
+    task_id: str,
+    expected_generation: int,
+    expected_delivery_binding: IntegrationBinding,
+    receipt: IntegrationReceipt,
+    authority: IntegrationAuthority,
+) -> ReceiptWriteResult
+```
+
+Use an existing task-contract/status module, or one narrow
+`integration_receipt.py` if no existing owner can hold schema, comparison,
+and mutation without a circular import. It must not become a generic status
+service or facade.
+
+Authority validation must prove:
+
+1. source is the promoted command runtime recorded by live config;
+2. status root is the canonical absolute status root;
+3. canonical auto-integrator flock is held by the current process and owner
+   metadata matches the current process generation;
+4. row, generation, repository, branch, PR, and approved head still match the
+   revalidated delivery snapshot;
+5. status remains `review_approved` or the explicitly supported
+   merge-then-review state; and
+6. mutation uses existing TaskStore transaction, activity audit, and derived
+   projection paths.
+
+Do not set `ORCH_RUN_ID`, create a fake lease, set
+`PANTHEON_LOCAL_HUMAN_OPS`, or trust the literal source string.
+
+Lock order remains:
+
+```text
+auto-integrator flock
+  -> existing task-state transaction lock
+  -> existing activity/projection locks in their current order
+```
+
+No runtime-state lock is added.
+
+### 6.5 Write semantics
+
+- Successful merge: verify GitHub state, exact head, merge commit, and target
+  ancestry; write `performed_merge`.
+- Already merged: perform the same review/ancestry checks; write
+  `reconciled_existing_merge`.
+- Identical replay is no-op success.
+- Conflicting non-empty receipt is rejected, never overwritten.
+- Merge success plus receipt failure leaves the task `review_approved`; next
+  cron reconciles it.
+- Receipt never finalizes the task or bypasses owner/Human-Ops closeout.
+
+### 6.6 Candidate filter
+
+Implement a pure row predicate:
+
+```python
+integration_receipt_consumes_candidate(task) -> bool
+```
+
+It compares only the canonical row and frozen delivery binding. It performs no
+GitHub call, fetch, filesystem operation, or ancestry query.
+
+Return false for missing/malformed/unknown-version receipt, non-`landed`
+result, changed generation/repository/branch/PR/head, missing merge commit, or
+incomplete current delivery binding.
+
+Target ancestry is proved before receipt creation. History-rewrite monitoring
+belongs to delivery-integrity diagnostics, not this per-cron predicate.
+
+### 6.7 Reopen and rebind
+
+Inventory every command that can change generation or frozen delivery. For
+each, prove either that it atomically clears the receipt or makes it nonmatching
+by changing generation/binding.
+
+At minimum cover `reopen`, `handoff`, operator reaccept, PR rebind,
+exact-head change, repository change, and target-branch change.
+
+### 6.8 Required tests
+
+- schema accept/reject and pure identity matrices;
+- exact replay no-op and conflicting receipt rejection;
+- TaskStore journal and derived projection persistence;
+- performed merge and already-merged reconciliation;
+- crash before merge, after merge/before receipt, after receipt/before output;
+- process restart suppression;
+- generation and every delivery-binding invalidation;
+- public worker lease checks remain unchanged;
+- integrator cannot write without canonical flock/runtime identity; and
+- task remains `review_approved` after receipt.
+
+### 6.9 Live canary
+
+With one already-merged `review_approved` exact binding:
+
+1. capture task row and cron log position;
+2. run canonical integrator once;
+3. verify exactly one V2 transition and projection receipt;
+4. allow at least two scheduled cron cycles;
+5. prove the exact candidate/result line no longer appears;
+6. prove finalization authority/status is unchanged; and
+7. require official supervisor health all green.
+
+## 7. DTG-CLEAN-01A — canonical-owner decomposition
+
+### 7.1 Success definition
+
+Success is one canonical owner per behavior, all callers migrated, old bodies
+removed, no new circular import, and stable external behavior. File size alone
+is not acceptance.
+
+Entrypoints remain:
+
+- `.orchestrator/supervisor.py`: config/bootstrap, singleton, ordered cycle,
+  external-operation orchestration, lifecycle reporting.
+- `scripts/ai_status.py`: parsing/routing, public actor admission,
+  transaction opening, final projection invocation.
+
+### 7.2 Mandatory M0 disposition
+
+Create
+`docs/operations/development-tooling-four-gap-2026-08-30/MONOLITH_SYMBOL_DISPOSITION.json`
+with one row for every top-level class/function in both monoliths:
+
+```json
+{
+  "source": ".orchestrator/supervisor.py",
+  "symbol": "example",
+  "line": 123,
+  "production_callers": [],
+  "test_callers": [],
+  "globals_read": [],
+  "globals_written": [],
+  "external_io": [],
+  "locks": [],
+  "disposition": "KEEP|MIGRATE|MERGE|REMOVE|VERIFY",
+  "target_owner": "module.symbol or null",
+  "wave": "M1..M7",
+  "reason": "..."
+}
+```
+
+Explicitly include production imports from `scripts/explain_dispatch.py`,
+`scripts/prune_command_runtimes.py`, and
+`scripts/loop_done_guardrail.py`.
+
+M1 may not begin if any symbol lacks a disposition, a MIGRATE/MERGE row lacks
+an owner, two targets claim one authority, a lock-bearing function lacks order
+notes, a production caller is unresolved, or a production import cycle would
+result. M0 is evidence; production code must not load it.
+
+### 7.3 Rules common to M1–M7
+
+Every wave:
+
+1. adds characterization tests;
+2. moves implementation to the canonical owner;
+3. migrates all production/test callers;
+4. deletes the old body in the same commit;
+5. adds no forwarding-only compatibility module;
+6. runs focused plus core supervisor/status suites;
+7. records final owner/commit in M0 evidence; and
+8. stops if parity requires behavior changes outside this design.
+
+Only one integration lane edits a monolith at a time. One Claude run performs
+the waves sequentially.
+
+### 7.4 M1 — derived status projection
+
+Move current-work/dashboard rendering, view-only normalization, and projection
+file writes into one narrow status projection module. It may read snapshots
+and write derived views; it cannot mutate tasks or implement command policy.
+
+Require semantic/byte parity fixtures, unchanged failure/atomic-write behavior,
+and deletion of duplicate renderers from `ai_status.py`.
+
+### 7.5 M2 — development bridge commands
+
+Move signed packet verification, batch loading, dependency closure,
+materialization planning, and readback into existing
+`.orchestrator/development_bridge/`.
+
+`ai_status.py` retains CLI routing, public authority admission, and canonical
+transaction boundary. Bridge code returns validated mutations/results and
+never exposes a product BFF route.
+
+Require signature, replay rejection, dependency closure, materialization, and
+readback tests; remove duplicate protocol bodies.
+
+### 7.6 M3 — delivery and review evidence
+
+Move pure delivery binding, exact-head, manifest, review, and merged-evidence
+validation to existing task-contract/review-gate owners. Keep GitHub calls in
+existing bridge/integrator modules and canonical mutation in TaskStore/status
+ownership. Compose Section 6 here; do not add a second evidence module.
+
+Require unchanged role/exact-head behavior, removal of duplicate parsers, and
+no GitHub calls inside task contract validation.
+
+### 7.7 M4 — worker workspace filesystem
+
+Move worktree preparation, safe reuse/refresh, dirt classification, dirty
+archive, registered-lease cleanup, and orphan pruning into one narrow workspace
+filesystem owner if no existing owner fits.
+
+It accepts explicit inputs and returns typed results. It never reads/writes
+canonical tasks or decides dispatch. Supervisor retains timing and persistence.
+
+Require clean reuse, dirty refusal/archive, lease-owned cleanup, orphan cleanup,
+and path-boundary tests. Add no worktree registry or lease store.
+
+### 7.8 M5 — worker recovery transitions
+
+Move pure lost-lease receipt construction/validation and recovery transitions
+into existing worker recovery/lifecycle owners. Keep process observation,
+termination, and bounded external I/O in supervisor until modeled as explicit
+operation inputs/results.
+
+Require one durable lost-lease receipt, atomic/idempotent reassignment, stale
+generation fencing, and removal of duplicate recovery policy.
+
+### 7.9 M6 — dispatch planning
+
+Move pure candidate evaluation, dependency eligibility, capacity accounting,
+agent/provider selection, and explanation to existing dispatch
+policy/admission owners.
+
+Live dispatch and `scripts/explain_dispatch.py` use the same pure decision.
+Supervisor retains snapshot load, reservation transaction, worker launch, and
+result persistence.
+
+Require explain/live parity, capacity/fallback, claim helper, dependency, and
+same-cycle reservation tests. Add no scheduler or alternate run loop.
+
+### 7.10 M7 — composition finish
+
+Reduce `run_once` to a short explicit coordinator invoking named phases in the
+existing order. Do not add a data-driven phase framework unless it removes real
+duplication.
+
+Supervisor retains signals, singleton, config/dependencies, transaction
+orchestration, phase invocation, and lifecycle reporting.
+
+ai-status retains parser/routing, path/runtime binding, public actor/lease
+admission, transaction opening, and final projection invocation.
+
+Completion review requires one owner per concern, no duplicate/forwarding-only
+module, no new import cycle, documented production imports, and material source
+reduction attributable to moved behavior. Remaining files above 4,000 lines
+require an ownership explanation; 4,000 lines is not a failure by itself.
+
+## 8. DTG-CLEAN-01B — historical evidence disposition
+
+Generate a non-runtime inventory for every candidate brief:
+
+```json
+{
+  "path": ".orchestrator/task-briefs/example.md",
+  "git_tracked": true,
   "task_id": "...",
   "canonical_status": "done|superseded|missing|active",
   "archive_snapshot": "path or null",
   "review_references": [],
   "delivery_references": [],
   "documentation_references": [],
+  "runtime_callers": [],
   "content_sha256": "...",
   "disposition": "KEEP|MIGRATE|REMOVE|VERIFY",
   "reason": "..."
 }
 ```
 
-### 6.2 Disposition rules
+- KEEP: active, exact evidence, runtime caller, or unresolved reference.
+- MIGRATE: exact bytes fit an existing archive and all callers move atomically.
+- REMOVE: terminal, zero reference/caller, exact archive copy, no verifier path
+  dependency.
+- VERIFY: ambiguous/corrupt identity or unresolved cross-repository evidence.
 
-- **KEEP:** active task, exact review/delivery binding, immutable incident
-  evidence, or unresolved reference.
-- **MIGRATE:** only when an existing canonical archive owner can retain the
-  exact bytes and every live caller can move atomically.
-- **REMOVE:** zero caller/reference, terminal canonical task, exact content
-  already held by an accepted canonical archive, and no verifier requires the
-  original path.
-- **VERIFY:** missing/corrupt task identity, ambiguous cross-repository path,
-  or evidence mismatch.
+Names alone are never removal evidence. Keep `sidecar_cleanup.py` and
+`evidence_retention_policy.py` while `support/sidecars/` uses them.
+Filesystem lock-sidecars are unrelated.
 
-`integration_unblock_` and `sidecar` in a filename are not REMOVE criteria.
+Do not add a prevention linter unless M0 proves new materialization can still
+emit a retired scheduler class. If proven, validate only at the existing
+materialization boundary and allow explicit historical fixtures.
 
-### 6.3 Existing retention owner
+Inventory and removal are separate commits. Before removal, recheck exact-path
+references from current `origin/dev`, prove archive equality, run
+task/review/delivery/evidence verifiers, and remove only the reviewed exact
+list. Any changed evidence downgrades the row to VERIFY.
 
-Keep `sidecar_cleanup.py` and `evidence_retention_policy.py` while
-`support/sidecars/` retention uses them. Retire those files only after their
-production callers are zero and a replacement is not required. Lock sidecars
-in `common.py`/`runtime_state.py` are unrelated and stay.
+## 9. DTG-ARCH-01 — offline V1 archive disposition
 
-### 6.4 Prevention
+Use the live anchor tuple:
 
-Add a focused test or linter that rejects new task metadata using retired
-sidecar scheduler fields/classes. It must allow historical fixtures explicitly
-marked as legacy and ordinary filesystem lock-sidecar terminology.
+```text
+byte_size=9135812318
+journal_sha256=185ba10f7d6d05a28d2b7bd53e8e13cb39a1297a25c249ddc7da5cfa063cc1bd
+event_count=17135
+last_event_sha256=b2aaa4cc71345ec63aad8ae507ccf450ce92efeff87d70ade3de181de2531f6b
+state_sha256=ba2db008d4813600919bdc46667c49db0f4aee2f1a7c1b7a226377c3fbaebcb6
+```
 
-### 6.5 Acceptance
+Search only authorized backup/custody locations. Record candidate path, type,
+size, observation time, digest, and disposition.
 
-- all 815 candidates have a disposition and reason;
-- no active/review-bound file is removed;
-- every REMOVE row has zero-reference and archive-content proof;
-- git diff contains only the exact approved removals/migrations;
-- task archive/review verification still resolves every retained path; and
-- supervisor, status, bridge, review, and integrator suites pass afterward.
+If exact bytes exist, copy to an operator-selected durable path through a
+temporary destination, fsync and atomically rename, run the existing verifier
+with `--verify-archive --archive-path`, retain verifier JSON/custody facts,
+and leave anchor/hot V2 config unchanged.
 
-## 7. Planning package DAG
+Do not add permission hardening, encryption, immutable flags, daemon, startup
+check, fallback reader, or live configuration dependency.
 
-These are planning packages, not execution tasks:
+If exact bytes do not exist, retain `historical_archive_unavailable` and
+document exhausted locations. Never synthesize bytes or weaken verification.
+Archive work is independent and cannot block healthy hot tooling delivery.
 
-| Package | Scope | Dependencies | Parallelism |
-|---|---|---|---|
-| DTG-CI-01A | classifier independent predicates and manifest paths | none | parallel with archive inventory |
-| DTG-CI-01B | branch workflow authority suite | CI-01A | short serial integration |
-| DTG-INT-01A | receipt contract, command, predicate tests | CI-01B | independent of monolith inventory |
-| DTG-INT-01B | integrator write/filter/restart canary | INT-01A | serial exact-owner integration |
-| DTG-CLEAN-M0 | symbol/caller/lock characterization | CI-01B | can run beside INT-01 |
-| DTG-CLEAN-M1 | status projection extraction | CLEAN-M0 | parallel preparation |
-| DTG-CLEAN-M2 | bridge extraction | CLEAN-M0 | parallel preparation |
-| DTG-CLEAN-M3 | delivery/review evidence extraction | INT-01B, CLEAN-M0 | composes receipt |
-| DTG-CLEAN-M4 | worktree extraction | CLEAN-M0 | parallel preparation |
-| DTG-CLEAN-M5 | recovery extraction | CLEAN-M0 | parallel preparation |
-| DTG-CLEAN-M6 | dispatch decision extraction | CLEAN-M0 | parallel preparation |
-| DTG-CLEAN-M7 | entrypoint/cycle finish | CLEAN-M1–M6 | serial final integration |
-| DTG-CLEAN-E1 | evidence inventory only | none | parallel with all code preparation |
-| DTG-CLEAN-E2 | proven retention actions | CLEAN-E1, CLEAN-M0 | independent bounded batch |
-| DTG-ARCH-01A | authorized custody search | none | fully independent |
-| DTG-ARCH-01B | exact recovery or loss disposition | ARCH-01A | external-data dependent |
+## 10. One-run implementation order
 
-Parallel lanes prepare target files and tests. The integration lane serializes
-deletions from `supervisor.py` and `ai_status.py` to avoid overlapping edits.
+Claude performs this on one task branch:
 
-## 8. Full validation matrix
+1. Capture baseline and pre-change focused tests.
+2. Implement and validate DTG-CI-01.
+3. Implement receipt schema, predicate, mutation authority, and tests.
+4. Integrate receipt write/filter into auto-integrator.
+5. Complete M0 disposition.
+6. Execute M1, M2, M4, M5, and M6 sequentially.
+7. Execute M3 after receipt ownership is stable.
+8. Execute M7.
+9. Generate evidence inventory; perform no deletion before its gate.
+10. Perform only proven migrations/removals.
+11. Run the full validation matrix.
+12. Rebase/merge current `origin/dev`; rerun conflict-affected tests.
+13. Commit, push, and deliver through the development-tooling flow.
+14. Promote the exact merged commit and run live receipt/health canaries.
+15. Perform archive search independently when authorized storage is available.
 
-| Area | Required validation |
+Multiple commits are rollback boundaries, not permission to leave duplicate
+bodies or partially migrated callers in the delivered result.
+
+## 11. Recommended commits
+
+1. `DTG-CI-01: select independent tooling and product gates`
+2. `DTG-INT-01: persist canonical integration receipts`
+3. `DTG-CLEAN-M0: record monolith symbol ownership`
+4. one commit per M1–M6 wave
+5. `DTG-CLEAN-M7: finish tooling entrypoint composition`
+6. `DTG-CLEAN-E1: classify historical brief evidence`
+7. `DTG-CLEAN-E2: remove proven redundant evidence` only with REMOVE rows
+8. `DTG-ARCH-01: record archive recovery disposition` only when performed
+
+Every commit uses required trailers and contains no product change.
+
+## 12. Full validation matrix
+
+Run the existing core tooling gate and:
+
+```bash
+PYTHONPATH=.orchestrator python3 -m pytest -q \
+  scripts/git/test_auto_integrator.py \
+  scripts/git/test_task_review_merge_gate.py \
+  scripts/git/test_github_review_bridge.py \
+  scripts/test_run_auto_integrator.py \
+  scripts/test_auto_integrator_install.py \
+  scripts/test_supervisor_launch_ownership.py \
+  scripts/test_supervisor_watchdog_install.py
+```
+
+Run all focused suites changed by M1–M7: supervisor, ai-status, TaskStore,
+runtime state, bridge, recovery, worktree, dispatch, review, loop guardrail,
+command runtime, container/entrypoint, and component boundary.
+
+| Area | Required proof |
 |---|---|
-| TaskStore | hot parity, full V2 replay, explicit archive audit classification |
-| Supervisor | singleton, phase order, runtime health, process recovery E2E |
-| Dispatch | candidate matrix, capacity/fallback, explain/live decision parity |
-| Worker | launch, heartbeat, completion, lost lease, reassignment, worktree cleanup |
-| Review | handoff manifest, exact head, reopen/requeue, role acceptance |
-| Integration | lock ownership, no auto-merge, exact-head merge, already-merged receipt, restart |
-| Bridge | signature, admission, replay rejection, dependency closure, receipt/readback |
-| CI | tooling/product/delivery/mixed classifier fixtures and named suites |
-| Evidence | reference inventory, archive resolution, zero-reference deletion proof |
-| Live canary | official health all dimensions green; one dispatch; one merge receipt; later cron suppression |
+| TaskStore | hot parity, journal append, projection, full V2 replay |
+| Supervisor | singleton, phase/lock order, health, recovery E2E |
+| Dispatch | candidate/capacity/fallback, claim helper, explain/live parity |
+| Worker | launch, heartbeat, done, lost lease, reassignment, cleanup |
+| Review | handoff, exact head, reopen/requeue, role acceptance |
+| Integration | sole lock owner, merge, receipt, restart suppression |
+| Bridge | signature, replay rejection, dependency closure, readback |
+| CI | all domain combinations and mixed union |
+| Evidence | complete dispositions and zero-reference deletion proof |
+| Deployment | exact command runtime and container/entrypoint tests |
 
-## 9. Rollback
+After exact merged tooling commit promotion, require:
 
-- CI predicate changes revert as one workflow/classifier commit if they
-  incorrectly suppress a required gate; never merge a bypassing predicate.
-- Receipt code can stop filtering while retaining receipts as inert evidence.
-  Do not delete or rewrite canonical receipts during rollback.
-- Each extraction wave is independently revertible because it moves one
-  responsibility and its callers together.
-- Archive recovery has no runtime rollback. A copied candidate is accepted only
-  after exact verification; a rejected candidate is quarantined outside runtime.
-- Evidence deletions require a recoverable git commit and exact inventory; no
-  broad filesystem deletion is part of this design.
+- official supervisor health all green;
+- promoted command root SHA equals delivered tooling SHA;
+- one normal dispatch/worker lifecycle completes;
+- one already-merged canary records once;
+- two later cron cycles omit that exact candidate;
+- finalization authority remains unchanged;
+- no new supervisor/integrator/scheduler/queue/TaskStore path appears; and
+- no lease-bypass attempt or repeated receipt conflict appears in logs.
+
+## 13. Failure and rollback
+
+- CI regression: revert classifier/workflow together.
+- Receipt failure before merge: no receipt; retry normally.
+- Merge succeeds before receipt failure: remain review-approved; reconcile next
+  cron.
+- Conflicting receipt: stop and diagnose; never overwrite.
+- Extraction parity failure: revert that wave; do not add a facade.
+- Import cycle: restore previous owner and redesign the wave.
+- Evidence uncertainty: KEEP/VERIFY.
+- Archive mismatch/absence: preserve anchor; hot V2 remains unaffected.
+- Live regression: roll back prior promoted command runtime and retain failed
+  exact-SHA evidence.
+
+## 14. Definition of done
+
+All are mandatory:
+
+- independent CI predicates and mixed gates merged;
+- canonical receipt persists and suppresses repeat evaluation;
+- no fake lease or Human/Ops bypass;
+- task finalization authority unchanged;
+- M0 covers every monolith symbol;
+- each executed wave has one owner, migrated callers, deleted old body;
+- no duplicate scheduler/queue/store/merge lane/facade/import cycle;
+- evidence inventory complete and only proven rows removed;
+- archive exactly verified or honestly unavailable;
+- all local/repository checks pass;
+- exact merged tooling commit promoted;
+- live health and receipt canaries pass; and
+- evidence records baseline/final SHA, commits, commands, results, runtime
+  identity, canary observations, and retained VERIFY items.
+
+If any item is missing, report the exact blocker and leave the work incomplete.
+Do not reinterpret acceptance or generate repair layers over an unproven
+design.
