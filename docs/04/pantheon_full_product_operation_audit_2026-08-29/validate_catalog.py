@@ -316,7 +316,7 @@ def validate_catalog(catalog_path: str, main_py_path: str) -> None:
     # 14. Verify Baseline
     print("14. Verifying planning baseline provenance...")
     pb = c.get("planning_baseline", {})
-    assert pb.get("pantheon") == "f56538a8063be69a5033ee7e6359b40e18e06ef1", "Stale pantheon baseline"
+    assert pb.get("pantheon") == "2bcb4465399af83190c5027073f3b2296e377256", "Stale pantheon baseline"
     assert pb.get("execute_plans") == "7d30e78476be61222af63a089e7ab141aa43b809", "Stale execute-plans baseline"
     assert pb.get("hosted_pair_id") == "3b4c1f0b5a21245c63623583755785c5b9d81288025e6dd2eb33ccc82ccde742", "Stale hosted pair ID"
     assert pb.get("hosted_backend") == "92077907540d4554e9b8a1d12e2528505b2d1ebe", "Stale hosted backend"
