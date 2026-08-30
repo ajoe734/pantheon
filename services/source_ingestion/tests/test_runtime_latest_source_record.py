@@ -150,3 +150,40 @@ def test_latest_source_record_prioritizes_active_paper_symbol_from_env(tmp_path:
     latest = runtime._latest_source_record_by_connector({connector_id: [receipt]})
     assert latest[connector_id].source_id == "tw-official:tw_price_daily:TWSE:2454:active"
     assert latest[connector_id].metadata["symbol"] == "2454"
+
+
+def test_latest_source_record_prioritizes_newer_provider_event_time_over_later_created_historical_row(tmp_path: Path) -> None:
+    runtime = SourceIngestionRuntime(data_dir=tmp_path)
+    connector_id = "tw-twse-tpex-official-market"
+    run_id = "run-same-001"
+
+    # Historical market record with older available_time/date but later created_at
+    historical_record = _make_record(
+        "tw-official:tw_price_daily:TWSE:2330:historical",
+        connector_id,
+        dataset="tw_price_daily",
+        symbol="2330",
+        run_id=run_id,
+        available_time="2026-08-27T05:30:00Z",
+        created_at="2026-08-30T02:00:00Z",
+    )
+    # Current market record with newer provider available_time/date but earlier created_at
+    current_record = _make_record(
+        "tw-official:tw_price_daily:TWSE:2330:current",
+        connector_id,
+        dataset="tw_price_daily",
+        symbol="2330",
+        run_id=run_id,
+        available_time="2026-08-28T05:30:00Z",
+        created_at="2026-08-30T01:00:00Z",
+    )
+    runtime.evidence_repository.add_source_record(historical_record)
+    runtime.evidence_repository.add_source_record(current_record)
+
+    receipt = _make_receipt(connector_id, run_id=run_id)
+
+    latest = runtime._latest_source_record_by_connector({connector_id: [receipt]})
+    assert latest[connector_id].source_id == "tw-official:tw_price_daily:TWSE:2330:current"
+    assert latest[connector_id].metadata["available_time"] == "2026-08-28T05:30:00Z"
+    assert latest[connector_id].metadata["source_ingest_run_id"] == run_id
+
