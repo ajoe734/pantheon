@@ -117,14 +117,14 @@ All 30 child tasks are mapped to 4 dependency-closed materialization batches sat
 ### Batch B: Parallel Domain Preparation (14 Tasks)
 - Status: `materializable_now: false` (gated on Batch A bootstrap merge and command runtime promotion), `allowed_repos: ["pantheon"]`.
 - Runs in parallel immediately after Batch A completes.
-- Decouples all 18 domain routes and consolidates `ports/`.
+- Decouples 13 primary domain routers and consolidates `ports/` (with the remaining 5 support and infrastructure domain routers decoupled in Batch C).
 - Tasks: `OPGAP-BE-PORT-NAMESPACE-CONSOLIDATION-20260830`, `OPGAP-BE-BFF-CORE-20260830`, `OPGAP-BE-PERSONA-ROUTER-20260830`, `OPGAP-BE-TRAINING-ROUTER-20260830`, `OPGAP-BE-AGORA-ROUTER-20260830`, `OPGAP-BE-RESEARCH-ROUTER-20260830`, `OPGAP-BE-GOVERNANCE-ROUTER-20260830`, `OPGAP-BE-EVOLUTION-ROUTER-20260830`, `OPGAP-BE-CAPITAL-ROUTER-20260830`, `OPGAP-BE-STRATEGY-RANKING-20260830`, `OPGAP-BE-MANAGEMENT-ROUTER-20260830`, `OPGAP-BE-POSTMORTEM-ROUTER-20260830`, `OPGAP-BE-INCIDENT-ROUTER-20260830`, `OPGAP-BE-EVENTS-ROUTER-20260830`.
 - All deliver to `pantheon`, class `functional`.
 
 ### Batch C: Support & Frontend (9 Tasks)
 - Status: `materializable_now: false` (gated on Batch A bootstrap merge, command runtime promotion, and multi-repo allowed-repos config), `allowed_repos: ["pantheon", "execute-plans"]`.
 - Runs in parallel with Batch B.
-- Cleans frontend residuals (3 deleted mock files, 1 moved to test-only, 16 live cleaned), fixes generic CRUD, prepares desktop views, and provides support routers.
+- Cleans frontend residuals (3 deleted mock files, 1 moved to test-only, 16 live cleaned), fixes generic CRUD, prepares desktop views, and decouples the remaining 5 support and infrastructure domain routers (Tools & Integrations, Control Loops, Command Adapters, Runtime Binding, Deployments & Rollback).
 - Backend Tasks (Repo: `pantheon`): `OPGAP-BE-TOOLS-INTEGRATIONS-20260830`, `OPGAP-BE-CONTROL-LOOPS-20260830`, `OPGAP-BE-COMMAND-ADAPTERS-20260830`, `OPGAP-BE-RUNTIME-BINDING-20260830`, `OPGAP-DEPLOY-RELIABILITY-20260830`.
 - Frontend Tasks (Repo: `execute-plans`): `OPGAP-FE-BUNDLE-CLEANUP-20260830`, `OPGAP-FE-MGMT-CRUD-POSTMORTEM-20260830`, `OPGAP-FE-AGORA-WORKSHOP-20260830`, `OPGAP-FE-INTEGRATION-ASSEMBLY-20260830`.
 
