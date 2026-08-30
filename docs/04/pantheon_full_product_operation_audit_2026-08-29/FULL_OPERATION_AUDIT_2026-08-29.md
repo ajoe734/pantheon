@@ -264,7 +264,7 @@ HAR/DOM與skip來源。因此它們不是獨立可重現的功能證據，且被
 | Source active-symbol frontier 重啟丟失 | `f227360`（PR #5412）在 controller worker 加入 explicit frontier recovery，重啟時可由既有 SourceRecord 恢復 checkpoint | source-level 已修；待 hosted deployment 驗證 |
 | Active paper symbol snapshot alias 與 official refresh 優先序 | `9e9ab33`（PR #5413）新增 snapshot alias read view 與 active paper symbol 的 Taiwan official refresh 優先路由 | source-level 已修；待 hosted deployment 驗證 |
 | Active symbol 官方收盤歷史不足導致 producer 阻斷 | `44895a2`（PR #5415）引入 2 個月有界歷史獲取、distinct-day snapshot 去重與 >=2 distinct closes 診斷門檻 | source-level 已修；待 hosted deployment 驗證 |
-| 週末與例假日官方收盤價被 flat 24h 判為過期 | `394eb05`（PR #5416）實作 governed Taiwan market-session freshness 規則，承認週末/例假日的週五官方收盤有效性 | source-level 已修（197 tests passed）；待 exact hosted promotion 驗證 |
+| 週末與例假日官方收盤價被 flat 24h 判為過期 | `394eb05`（PR #5416）實作 governed Taiwan market-session freshness 規則，承認週末/例假日的週五官方收盤有效性 | source-level 已修（歷史 PR #5416 套件 197 passed；最新 focused verifier 套件為 144 passed、2 failed、1 skipped，2 個失敗為 verifier fixture 在 stage_04 遭 official lineage fail-closed 拒絕，待 exact hosted promotion 驗證） |
 
 ### 4.2 Current direct GAP
 
@@ -288,7 +288,8 @@ HAR/DOM與skip來源。因此它們不是獨立可重現的功能證據，且被
 | OP-G16 | P0 | deployment lease與rollback共用同一個脆弱遠端依賴 | 一次GitHub API timeout同時使長部署失敗、rollback lease失敗；補償exit 78卻在step summary顯示success | lease heartbeat採有界retry/grace而非單次遠端timeout即殺部署；rollback已有本地sealed authority可獨立執行；補償失敗必須是顯式red且自動驗證served pair |
 | OP-G17 | P0 | Registry→Deployment→RuntimeBinding的executable projection仍非自然產生 | `verify_deploy_authorities()`驗證canonical artifact identity/checksum，但不回傳`object_store`/loader projection/`market_data_policy`；deployment adapter只原樣轉送`deploy_context.metadata`，fleet再於下游拒絕缺欄位binding。舊closeout tests沒有檢查這段投影 | Registry authority以同一artifact/version/checksum產生immutable loader projection與market policy，DeploymentPlan持有引用，Runtime Manager驗證後才建active binding；不接受caller任意metadata |
 | OP-G18 | P1 | Management Postmortem仍無canonical read owner | `PostmortemLibrary.tsx`不再固定3筆，但由Incident timeline中`[postmortem]`字串臨時產生`pm_<incident>`，沒有讀Postmortem authority的ID/revision/status | 由postmortem owner提供list/detail契約；Incident只保存`postmortem_id`引用，UI reload後讀同一durable object |
-| OP-G19 | P0 | paper-signal-producer runtime healthy 與 Agora projection 尚未在 live promotion 閉環 | image ID 正規化（`b3b26a7`）、frontier recovery（`f227360`）、snapshot alias（`9e9ab33`）、2-month history / min closes（`44895a2`）及 Taiwan weekend session freshness（`394eb05`）均已在 source 完成；在 run `33280168821` 中 container 啟動與 session freshness 驗證通過，但在部署 gate 的 Agora projection 綁定驗證（`scripts/deploy_nonprod_vm.sh:1218`）中斷並補償恢復；最新 candidate 仍待通過完整 promotion 在 live VM 閉環 | 部署流程排查 Agora projection 綁定並保存 producer health payload 與 service logs；以最新 source candidate 執行 nonprod deploy，證明 producer 進入 healthy、Agora projection 驗證通過且完成 signal→order/fill/heartbeat readback |
+| OP-G19 | P0 | Source-to-Agora Read Projection 綁定與身份同步在部署門禁失敗 | 在 run `33280168821` 中，bounded manual Source refresh 成功產出 active paper symbol（2330.TW）的 Taiwan official receipt 後，部署門禁於 `scripts/deploy_nonprod_vm.sh:1218` 驗證 Agora read projection 時，因 projection 內容未綁定新 receipt/run/source（`Agora projection does not bind the new receipt/run/source`）而 fail-closed 退出並觸發補償回滾。觀察事實與推論邊界區分：直接觀察事實為驗證腳本讀取 `projection_path` 時未找到符合 `connectorId == connector_id`、`ingestRunId == run_id` 且 `sourceId == source_id` 之 projected row；非 auth、非 billing、非 VM/Docker 故障、非 Source egress、非 paper-signal-producer 啟動異常，亦非 session freshness 問題 | Agora / Source Ingestion Integration owner 排查並修正 Source refresh 到 Agora read projection 的寫入與同步機制，確保 deploy script 讀取到最新 receipt/run/source 綁定記錄 |
+| OP-G20 | P0 | paper-signal-producer 運行時健全度與完整訊號→訂單生命週期尚未在 live promotion 閉環 | image ID 正規化（`b3b26a7`）、frontier recovery（`f227360`）、snapshot alias（`9e9ab33`）、2-month history / min closes（`44895a2`）及 Taiwan weekend session freshness（`394eb05`）均已在 source 完成；在 run `33280168821` 中 container 啟動與 session freshness 驗證通過，但因部署在 Agora projection 驗證失敗並補償回滾，paper-signal-producer 及其完整的 signal→order/fill/position/heartbeat 鏈路尚未在 live VM 完成 atomic switch 與真實運行驗收 | Execution / Lean Runtime owner 在部署門禁修復後，以最新 source candidate 執行 nonprod deploy，證明 producer 進入 healthy、完成 signal→order/fill/heartbeat readback 閉環 |
 
 ### 4.3 架構簡化 SA/SD 逐項驗收
 
@@ -448,7 +449,9 @@ served FE、authenticated network、canonical data與reload readback補齊前，
 - Source reconcile-only contract 1 test通過；
 - Source command/schema/concurrency 18個非HTTP tests通過；
 - governed search、structured alpha、reviewed memory 25個非HTTP tests通過；
-- paper signal producer、market snapshot admission、Taiwan official connectors、controller worker、Agora operational readiness、deploy diagnostics contract 核心套件共 197 passed、1 skipped（live opt-in）；
+- 歷史 PR #5416 驗證時 paper signal producer、market snapshot admission、Taiwan official connectors、controller worker、Agora operational readiness、deploy diagnostics contract 核心套件共 197 passed、1 skipped（live opt-in）；
+- 最新 current dev 執行 focused verifier 套件（`scripts/test_verify_agora_*.py`、`test_paper_signal_producer.py`、`test_paper_fleet_reconciler.py`、`test_operational_readiness.py`、`test_source_ingest_deploy_diagnostics_contract.py`、`test_taiwan_official_connectors.py`）之實際結果為 **144 passed、2 failed、1 skipped**；
+- **2 個 failed 之真因與邊界分析**：失敗案例為 `scripts/test_verify_agora_operational_readiness.py` 中的 `test_verifier_full_positive_run` 與 `test_verifier_fails_on_order_authority_claim`。兩者皆在 `stage_04_bounded_recovery_sequence` 執行時拋出 `[bounded_recovery_sequence] Market snapshot admission failed: market_input_non_official_lineage (snapshot lineage is not an official TWSE/TPEx source)`。此為 verifier 內部測試 fixture 構造之 mock market snapshot lineage 未帶有 `394eb05` 所要求的 `tw-official:` / `tw-twse-tpex-official-market` 官方標記，因而被 `market_snapshot_admission.py` fail-closed 拒絕。此結果證明了 Taiwan official lineage 門禁確實嚴格生效，但也揭示了 standalone verifier 測試套件本身在 current dev 仍待更新 fixture lineage；
 - current BFF以async ASGI transport呼叫`/livez`與authenticated data-sources list均回200。
 
 同一批的sync `TestClient` 在Source HTTP第一個case即死鎖；因此沒有把後續未終止
@@ -457,7 +460,7 @@ tests算failed或passed。這個分類很重要：產品ASGI route直接可執�
 
 ## 8. 修正優先序（功能可運作優先）
 
-1. 排查並修正 `scripts/deploy_nonprod_vm.sh:1218` 在 bounded manual Source refresh 後 Agora projection 對新 receipt/run/source 的綁定檢查，並以最新 source candidate（含 Compose bare image ID 正規化、active-symbol frontier recovery、2-month history / 2-close min closes、Taiwan market-session freshness 及 Agora projection 修復）執行 nonprod deployment，確認 VM 部署成功、paper-signal-producer 進入 healthy、Agora projection 驗證通過並完成 atomic switch（OP-G19、OP-G03）。
+1. 排查並修正 Agora projection 綁定機制（OP-G19），確保 bounded manual Source refresh 後 Agora read projection 正確綁定新 receipt/run/source；並以最新 source candidate（含 Compose bare image ID 正規化、active-symbol frontier recovery、2-month history / 2-close min closes、Taiwan market-session freshness 及 Agora projection 修復）執行 nonprod deployment，確認 VM 部署成功、paper-signal-producer 進入 healthy、完成 signal→order/fill/heartbeat readback 閉環（OP-G20、OP-G03）。
 2. 修正lease/rollback/compensation單點與false-green，再atomic promotion一組current FE/BFF/manifest；目前舊pair雖已恢復，仍不是current驗收目標。
 3. 將Agora BFF假`real` adapter改為simulation/unavailable，再接一條admitted bounded、non-stub research lane與real candidate。
 4. 完成Registry→DeploymentPlan→RuntimeBinding的canonical executable projection，再跑paper lifecycle。
@@ -469,7 +472,7 @@ tests算failed或passed。這個分類很重要：產品ASGI route直接可執�
 10. 修正sync TestClient/dependency組合，將需要ASGI的tests改成async transport並加入硬timeout。
 11. 重跑三遍對照；未取得direct evidence者保留`UNVERIFIED`，不以task/PR/test數量補空白。
 
-目前可下的產品級結論是：**舊版BFF process、Lifecycle PostgreSQL projection與列出的核心依賴在補償後可達，舊FE/BFF pair也已恢復一致（PostgreSQL checkpoint `7,637,654`）；image identity false-negative、frontier recovery、min closes 與 Taiwan session freshness 已在 current source 完成修復（197 tests passed），但在 run `33280168821` 中 Agora projection 綁定驗證受阻並觸發補償回滾；paper-signal-producer 仍待 live atomic switch 閉環，Agora research與RuntimeBinding又有current source P0，所以不是所有功能正常，也不具備全產品簽收條件。**
+目前可下的產品級結論是：**舊版BFF process、Lifecycle PostgreSQL projection與列出的核心依賴在補償後可達，舊FE/BFF pair也已恢復一致（PostgreSQL checkpoint `7,637,654`）；image identity false-negative、frontier recovery、min closes 與 Taiwan session freshness 已在 current source 完成修復（歷史 197 passed；最新 focused verifier 144 passed / 2 failed / 1 skipped），但在 run `33280168821` 中 Agora projection 綁定驗證受阻（OP-G19）並觸發補償回滾；paper-signal-producer 仍待 live atomic switch 閉環（OP-G20），Agora research與RuntimeBinding又有current source P0，所以不是所有功能正常，也不具備全產品簽收條件。**
 
 ## 9. 三遍前後對照方法
 
@@ -501,7 +504,7 @@ tests算failed或passed。這個分類很重要：產品ASGI route直接可執�
 
 | 對照遍次 | 正向查核 | 反向查核 | 結果 |
 |---|---|---|---|
-| 第一遍：SA/SD→code | 找到Source commands/search/memory、Agora worker、loop projection、Management UI actions、`5ffee3d` Workshop tenant修正、`b3b26a7` deploy/source recovery、`f227360` frontier recovery、`9e9ab33` snapshot alias、`44895a2` min closes 及 `394eb05` TW session freshness | 搜尋production caller、stub、seed、overlay、private imports、dead compatibility；找到假`real` research、無caller performance producer、generic CRUD overlay、BFF main未拆完 | 舊GAP一部分關閉，19個current GAP保留 |
+| 第一遍：SA/SD→code | 找到Source commands/search/memory、Agora worker、loop projection、Management UI actions、`5ffee3d` Workshop tenant修正、`b3b26a7` deploy/source recovery、`f227360` frontier recovery、`9e9ab33` snapshot alias、`44895a2` min closes 及 `394eb05` TW session freshness | 搜尋production caller、stub、seed、overlay、private imports、dead compatibility；找到假`real` research、無caller performance producer、generic CRUD overlay、BFF main未拆完 | 舊GAP一部分關閉，20個current GAP保留（OP-G19 與 OP-G20 分立） |
 | 第二遍：code→runtime | 逐次對照Compose、entrypoint、public version/readyz、Lifecycle checkpoint（`7,637,654`）與workflow target SHAs | 發現RuntimeBinding投影不完整、production research disabled；run `33280168821` 揭示 bounded refresh 後 Agora projection 綁定阻斷；補償後成功維持舊 pair `c230fc7/dcb1423` 一致性 | current runtime gate `FAIL`；rollback restoration `PASS` |
 | 第三遍：UI→durable truth→UI | 檢查current route mount、`e205643`的175 focused tests、`5ffee3d`的52-test增量、舊artifact與public auth-boundary | 逐項查原始workflow與artifact logs；發現authenticated/write/exact-pair steps skipped、hosted logs失敗卻summary passed；run `33280168821` 補償後仍運行舊 pair，current candidate 未切換 | current pair未部署，不以舊pair補驗；全產品sign-off `FAIL` |
 
@@ -513,8 +516,8 @@ tests算failed或passed。這個分類很重要：產品ASGI route直接可執�
 
 最終結論是：**不是所有功能都正常運作，也不是所有架構簡化都完成。** 已確認
 Source Management、Lifecycle PostgreSQL、Agora interaction worker、Workshop tenant submit、Management UI action、Source frontier recovery、snapshot alias、min-closes 歷史獲取、Taiwan market-session freshness 與多項去synthetic
-修正存在；但在 run `33280168821` 中，Agora projection 綁定驗證受阻並補償恢復舊版，Agora fake-real research/performance wiring、canonical executable RuntimeBinding、
-current hosted delivery、paper producer live promotion 閉環、Source/Management/Agora/十二循環durable journeys、Postmortem owner及大型/dead-code
+修正存在；但在 run `33280168821` 中，Agora projection 綁定驗證受阻（OP-G19）並補償恢復舊版，paper producer live promotion 閉環（OP-G20）、Agora fake-real research/performance wiring、canonical executable RuntimeBinding、
+current hosted delivery、Source/Management/Agora/十二循環durable journeys、Postmortem owner及大型/dead-code
 cleanup仍有直接落差。在atomic promotion、第三遍exact desktop journey與durable readback補齊前，
 本報告明確拒絕全產品簽收。
 
@@ -568,7 +571,7 @@ cleanup仍有直接落差。在atomic promotion、第三遍exact desktop journey
   - Source reconcile-only contract 1 passed；
   - Source command/schema/concurrency 18 passed；
   - governed search、structured alpha、reviewed memory 25 passed；
-  - paper signal producer、market snapshot admission、Taiwan official connectors、controller worker、Agora operational readiness、deploy diagnostics contract 共 197 passed、1 skipped；
+  - paper signal producer、market snapshot admission、Taiwan official connectors、controller worker、Agora operational readiness、deploy diagnostics contract 歷史套件共 197 passed、1 skipped；最新 current dev 執行 focused verifier 套件（`scripts/test_verify_agora_*.py` 等）為 144 passed、2 failed（2 個失敗在 `stage_04_bounded_recovery_sequence` 觸發 `market_input_non_official_lineage` 嚴格拒絕）、1 skipped；
   - async ASGI `/livez`／data-sources 直接呼叫 200。
 - execute-plans validation：`e205643` 基線 typecheck/175 focused tests；`5ffee3d` exact source typecheck、Strategy Workshop 52 tests、變更檔 ESLint 0 errors；`bd03c86` PR #694 closeout manifest。
 
