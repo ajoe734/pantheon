@@ -28,12 +28,12 @@
 3. **熱點檔案獨占擁有（Exclusive Hot-File Ownership）**：
    - 針對跨任務共用檔案（如 `services/control-plane/bff/main.py`、`execute-plans/src/App.tsx`、`execute-plans/src/lib/bff-v1/index.ts`、`docker-compose.yml`、`scripts/deploy_nonprod_vm.sh`），在各準備階段由模組化子目錄獨立實作，並指定單一整合任務在集成波次（Assembly Wave）進行切換，防止多 worker 同時編輯造成工作樹衝突。
 4. **共享執行資源模型化（Execution Resource Modeling）**：
-   - 將實體部署目標 `pantheon-dev` VM（`35.201.204.12`）模型化為容量為 1（`capacity=1`）之執行資源 `pantheon-dev-vm`。
+   - 將實體部署目標 `pantheon-dev` VM（`35.201.204.12`）模型化為容量為 1（`capacity=1`）之執行資源 `pantheon-dev`。
    - 本地開發、單元測試、契約測試、靜態分析與 PR 審查維持高度平行（Parallel Preparation Lanes）；僅部署切換與 hosted 驗收階段依序取得 VM 資源。
 5. **Supervisor Clone Session 平行機制與註冊身分邊界**：
    - 任務擁有者全面指派給具備 active capacity 之註冊身分 `Antigravity` 與 `Antigravity2`（共 13 項實作任務：Antigravity 7 項、Antigravity2 6 項）。
    - Supervisor 支援透過 clone sessions 在各獨立 git worktree lease 中平行派發多個同型 worker，不受單一進程限制。
-   - 審查者指派給相異且具備即時審查能力之註冊身分（`Antigravity`、`Antigravity2`、`Codex2`、`Claude`、`Claude2`），禁止使用未註冊或已退役之幽靈身分，且在 materialization 時自動執行 live capacity preflight 檢驗。
+   - 審查者指派給相異且具備即時審查能力之註冊身分（`Antigravity`、`Antigravity2`、`Codex2`），關鍵審查路徑不依賴外部 Claude/Claude2，且在 materialization 時自動執行 live capacity preflight 檢驗。
 6. **功能優先邊界（Functional-First Boundary & Non-Goals）**：
    - 專注於 Desktop browser 之完整 Management 與 Agora 功能旅程。
    - 專注於 Paper/Simulation 交易循環；不包含真實資金（Real Capital）或 live broker 交易權限。
@@ -103,12 +103,17 @@
    jq -e '[.plan_freeze_task, .tasks[]] | all(.owner != .reviewer)' docs/04/pantheon_full_product_operation_audit_2026-08-29/EXECUTION_TASK_CATALOG_2026-08-30.json
    # Result: true (Exit 0)
    ```
-4. **Dev VM 執行資源限定檢驗 (僅 Wave 3/4 宣告 `pantheon-dev-vm`)**：
+4. **Dev VM 執行資源限定檢驗 (僅 Wave 3/4 宣告 `pantheon-dev`)**：
    ```bash
-   jq -e '[.tasks[] | if (.id == "OPGAP-HOSTED-DEV-PROMOTION-20260830" or .id == "OPGAP-HOSTED-E2E-ACCEPTANCE-20260830") then .execution_resources == ["pantheon-dev-vm"] else .execution_resources == [] end] | all' docs/04/pantheon_full_product_operation_audit_2026-08-29/EXECUTION_TASK_CATALOG_2026-08-30.json
+   jq -e '[.tasks[] | if (.id == "OPGAP-HOSTED-DEV-PROMOTION-20260830" or .id == "OPGAP-HOSTED-E2E-ACCEPTANCE-20260830") then .execution_resources == ["pantheon-dev"] else .execution_resources == [] end] | all' docs/04/pantheon_full_product_operation_audit_2026-08-29/EXECUTION_TASK_CATALOG_2026-08-30.json
    # Result: true (Exit 0)
    ```
-5. **註冊身分合法性檢驗 (無幽靈或退役身分)**：
+5. **單一倉庫與構件路徑相容性檢驗 (無複合 target_repo，且構件路徑符合倉庫範疇)**：
+   ```bash
+   jq -e '[.plan_freeze_task, .tasks[]] | all((.target_repo | IN("pantheon", "execute-plans")) and (if .target_repo == "pantheon" then (.artifacts | all(startswith("execute-plans:") | not)) else (.artifacts | all(startswith("execute-plans:"))) end))' docs/04/pantheon_full_product_operation_audit_2026-08-29/EXECUTION_TASK_CATALOG_2026-08-30.json
+   # Result: true (Exit 0)
+   ```
+6. **註冊身分合法性檢驗 (無幽靈或退役身分)**：
    ```bash
    jq -e '[.plan_freeze_task, .tasks[]] | all((.owner | IN("Antigravity", "Antigravity2", "Codex2", "Claude", "Claude2", "Copilot")) and (.reviewer | IN("Antigravity", "Antigravity2", "Codex2", "Claude", "Claude2", "Copilot")))' docs/04/pantheon_full_product_operation_audit_2026-08-29/EXECUTION_TASK_CATALOG_2026-08-30.json
    # Result: true (Exit 0)

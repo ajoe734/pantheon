@@ -36,11 +36,12 @@
     "gap_uniqueness_check": "jq -e '[.tasks[].gaps[]] | sort | (length == 20 and . == [\"OP-G01\",\"OP-G02\",\"OP-G03\",\"OP-G04\",\"OP-G05\",\"OP-G06\",\"OP-G07\",\"OP-G08\",\"OP-G09\",\"OP-G10\",\"OP-G11\",\"OP-G12\",\"OP-G13\",\"OP-G14\",\"OP-G15\",\"OP-G16\",\"OP-G17\",\"OP-G18\",\"OP-G19\",\"OP-G20\"])' docs/04/pantheon_full_product_operation_audit_2026-08-29/EXECUTION_TASK_CATALOG_2026-08-30.json",
     "artifact_uniqueness_check": "jq -e '[.plan_freeze_task.artifacts[], .tasks[].artifacts[]] | length == (unique | length)' docs/04/pantheon_full_product_operation_audit_2026-08-29/EXECUTION_TASK_CATALOG_2026-08-30.json",
     "owner_reviewer_distinct_check": "jq -e '[.plan_freeze_task, .tasks[]] | all(.owner != .reviewer)' docs/04/pantheon_full_product_operation_audit_2026-08-29/EXECUTION_TASK_CATALOG_2026-08-30.json",
-    "execution_resources_check": "jq -e '[.tasks[] | if (.id == \"OPGAP-HOSTED-DEV-PROMOTION-20260830\" or .id == \"OPGAP-HOSTED-E2E-ACCEPTANCE-20260830\") then .execution_resources == [\"pantheon-dev-vm\"] else .execution_resources == [] end] | all' docs/04/pantheon_full_product_operation_audit_2026-08-29/EXECUTION_TASK_CATALOG_2026-08-30.json",
+    "execution_resources_check": "jq -e '[.tasks[] | if (.id == \"OPGAP-HOSTED-DEV-PROMOTION-20260830\" or .id == \"OPGAP-HOSTED-E2E-ACCEPTANCE-20260830\") then .execution_resources == [\"pantheon-dev\"] else .execution_resources == [] end] | all' docs/04/pantheon_full_product_operation_audit_2026-08-29/EXECUTION_TASK_CATALOG_2026-08-30.json",
+    "target_repo_artifact_scope_check": "jq -e '[.plan_freeze_task, .tasks[]] | all((.target_repo | IN(\"pantheon\", \"execute-plans\")) and (if .target_repo == \"pantheon\" then (.artifacts | all(startswith(\"execute-plans:\") | not)) else (.artifacts | all(startswith(\"execute-plans:\"))) end))' docs/04/pantheon_full_product_operation_audit_2026-08-29/EXECUTION_TASK_CATALOG_2026-08-30.json",
     "configured_identities_check": "jq -e '[.plan_freeze_task, .tasks[]] | all((.owner | IN(\"Antigravity\", \"Antigravity2\", \"Codex2\", \"Claude\", \"Claude2\", \"Copilot\")) and (.reviewer | IN(\"Antigravity\", \"Antigravity2\", \"Codex2\", \"Claude\", \"Claude2\", \"Copilot\")))' docs/04/pantheon_full_product_operation_audit_2026-08-29/EXECUTION_TASK_CATALOG_2026-08-30.json"
   },
   "execution_resources": {
-    "pantheon-dev-vm": {
+    "pantheon-dev": {
       "capacity": 1,
       "description": "Dedicated dev VM (35.201.204.12) for deployment and hosted acceptance"
     }
@@ -223,7 +224,7 @@
       "summary_zh": "依 SD-Unit-5 執行：建立具備 postmortem_id 權威之 Postmortem 讀寫領域模型與端點 (OP-G18)，並驗證 12-loop truth 純淨投影。",
       "phase": "W1-preparation-backend",
       "owner": "Antigravity",
-      "reviewer": "Claude",
+      "reviewer": "Antigravity2",
       "target_repo": "pantheon",
       "depends_on": [
         "FULL-OPERATION-GAP-SA-SD-PLAN-FREEZE-20260830"
@@ -287,7 +288,7 @@
       "summary_zh": "依 SD-Unit-7 執行：消除 createEntity.ts 中的 writeOverlay 假寫入 (OP-G06)，並將 PostmortemLibrary.tsx 改接 canonical postmortem 權威端點。",
       "phase": "W1-preparation-frontend",
       "owner": "Antigravity",
-      "reviewer": "Claude2",
+      "reviewer": "Codex2",
       "target_repo": "execute-plans",
       "depends_on": [
         "FULL-OPERATION-GAP-SA-SD-PLAN-FREEZE-20260830"
@@ -440,7 +441,8 @@
       "artifacts": [
         "execute-plans:src/App.tsx",
         "execute-plans:src/management/ManagementLayout.tsx",
-        "execute-plans:src/lib/bff-v1/index.ts"
+        "execute-plans:src/lib/bff-v1/index.ts",
+        "execute-plans:tests/e2e/desktop_authenticated_journey.spec.ts"
       ],
       "acceptance": [
         "所有 Management 與 Agora 路由於 App.tsx 正確掛載且導航無死角",
@@ -456,11 +458,11 @@
     {
       "id": "OPGAP-HOSTED-DEV-PROMOTION-20260830",
       "title": "Dev VM nonprod atomic promotion, container health validation, and projection binding closure",
-      "summary_zh": "依 SD-Unit-10 執行：鎖定 pantheon-dev-vm 資源，執行 Dev VM 原子部署，驗證全容器健康、PostgreSQL checkpoint 同步、Agora projection 綁定與 Paper producer 運行 (OP-G03, OP-G19, OP-G20)。",
+      "summary_zh": "依 SD-Unit-10 執行：鎖定 pantheon-dev 資源，執行 Dev VM 原子部署，驗證全容器健康、PostgreSQL checkpoint 同步、Agora projection 綁定與 Paper producer 運行 (OP-G03, OP-G19, OP-G20)。",
       "phase": "W3-promotion-vm",
       "owner": "Antigravity",
-      "reviewer": "Claude",
-      "target_repo": "pantheon+execute-plans",
+      "reviewer": "Codex2",
+      "target_repo": "pantheon",
       "depends_on": [
         "OPGAP-DEPLOY-RELIABILITY-20260830",
         "OPGAP-BFF-MAIN-ASSEMBLY-20260830",
@@ -490,17 +492,17 @@
       "wave": 3,
       "design_unit": "SD-Unit-10",
       "execution_resources": [
-        "pantheon-dev-vm"
+        "pantheon-dev"
       ]
     },
     {
       "id": "OPGAP-HOSTED-E2E-ACCEPTANCE-20260830",
       "title": "Full twelve-loop stimulus-readback, source lifecycle, and authenticated desktop Playwright acceptance",
-      "summary_zh": "依 SD-Unit-11 執行：鎖定 pantheon-dev-vm 資源，於已部署之 Dev VM 執行 12 循環全量刺激讀回 (OP-G11)、Source 有界更新週期 (OP-G12 驗證)、及桌面端登入態 Playwright 旅程驗收 (OP-G14)，完成全產品簽收。",
+      "summary_zh": "依 SD-Unit-11 執行：鎖定 pantheon-dev 資源，於已部署之 Dev VM 執行 12 循環全量刺激讀回 (OP-G11)、Source 有界更新週期 (OP-G12 驗證)、及桌面端登入態 Playwright 旅程驗收 (OP-G14)，完成全產品簽收。",
       "phase": "W4-acceptance-vm",
       "owner": "Antigravity2",
       "reviewer": "Codex2",
-      "target_repo": "pantheon+execute-plans",
+      "target_repo": "pantheon",
       "depends_on": [
         "OPGAP-HOSTED-DEV-PROMOTION-20260830"
       ],
@@ -510,13 +512,12 @@
       "artifacts": [
         "scripts/e2e/twelve_loop_acceptance_suite.py",
         "scripts/e2e/verify_source_reconcile_only_cycle.py",
-        "execute-plans:tests/e2e/desktop_authenticated_journey.spec.ts",
         "docs/deployment/evidence/full-operation-gap/OPGAP-HOSTED-E2E-ACCEPTANCE-20260830/evidence.json"
       ],
       "acceptance": [
         "12-loop 全量測試自動化通過，每循環均取得真實 receipt、terminal state 與相同 ID 讀回",
         "Source Management 走完建立/驗證/單次有界更新並證明自動恢復 reconcile_only",
-        "桌面端登入態 Playwright 遍歷 Management 與 Agora 核心路由，無阻斷性 console/network 錯誤",
+        "桌面端登入態 Playwright 執行已預先就緒之 execute-plans desktop_authenticated_journey.spec.ts，遍歷 Management 與 Agora 核心路由，無阻斷性 console/network 錯誤",
         "產出最終簽收證據 manifest，正式宣告全產品正常運作閉環"
       ],
       "gaps": [
@@ -527,7 +528,7 @@
       "wave": 4,
       "design_unit": "SD-Unit-11",
       "execution_resources": [
-        "pantheon-dev-vm"
+        "pantheon-dev"
       ]
     }
   ]

@@ -243,11 +243,12 @@
 ### SD-Unit-11: 十二循環與桌面端登入態驗收載具
 - **檔案範圍**：
   - `scripts/e2e/twelve_loop_acceptance_suite.py`
-  - `execute-plans:tests/e2e/desktop_authenticated_journey.spec.ts`
   - `scripts/e2e/verify_source_reconcile_only_cycle.py`
+  - `docs/deployment/evidence/full-operation-gap/OPGAP-HOSTED-E2E-ACCEPTANCE-20260830/evidence.json`
+  - *(讀取執行)* `execute-plans:tests/e2e/desktop_authenticated_journey.spec.ts`（由 Wave 2 `OPGAP-FE-INTEGRATION-ASSEMBLY-20260830` 在 execute-plans 倉庫準備與擁有）
 - **設計與變更規格**：
   1. **十二循環端到端自動化 (OP-G11)**：編寫 `twelve_loop_acceptance_suite.py`，依序對 Loop 1 至 Loop 12 注入自然刺激（Stimulus），驗證每個循環均產生對應的 Receipt、Terminal State 及 Management 讀回 ID。
   2. **Source 完整週期驗證 (OP-G12)**：編寫 `verify_source_reconcile_only_cycle.py`，建立測試 Data Source -> 驗證 -> 觸發單次有界 Refresh -> 讀取快照 -> 證明 Controller 自動回到 `reconcile_only`。
-  3. **Playwright 桌面端登入態矩陣 (OP-G14)**：編寫 `desktop_authenticated_journey.spec.ts`，使用短效 dev-login token 登入，遍歷 Management（Cockpit、Loops、Fleet、Sources、Postmortems）與 Agora（Workshop、Trading Room、Attribution）所有核心路由，捕捉 Network HAR 與 DOM 快照，斷言 0 個未處理之 console error。
+  3. **Playwright 桌面端登入態矩陣 (OP-G14)**：執行已由前端任務就緒之 `desktop_authenticated_journey.spec.ts`，使用短效 dev-login token 登入，遍歷 Management（Cockpit、Loops、Fleet、Sources、Postmortems）與 Agora（Workshop、Trading Room、Attribution）所有核心路由，捕捉 Network HAR 與 DOM 快照，斷言 0 個未處理之 console error。
 - **測試與驗證門禁**：
   - 驗收腳本輸出結構化 JSON 證據，包含逐一 Journey ID、HTTP 狀態碼、讀回 ID 與執行時間戳。
