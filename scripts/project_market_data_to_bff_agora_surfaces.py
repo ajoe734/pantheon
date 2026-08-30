@@ -115,10 +115,15 @@ def _freshness_metadata(
             typed_failure = {"category": "lineage", "code": "market_input_non_official_lineage", "retryable": False}
 
     run_mismatch = False
-    if record_run_id and accepted_run_id and str(record_run_id) != str(accepted_run_id):
-        run_mismatch = True
-        if typed_failure is None:
-            typed_failure = {"category": "receipt_binding", "code": "mismatched_run", "retryable": False}
+    if accepted_run_id:
+        if not record_run_id:
+            run_mismatch = True
+            if typed_failure is None:
+                typed_failure = {"category": "receipt_binding", "code": "missing_record_run", "retryable": False}
+        elif str(record_run_id) != str(accepted_run_id):
+            run_mismatch = True
+            if typed_failure is None:
+                typed_failure = {"category": "receipt_binding", "code": "mismatched_run", "retryable": False}
 
     tw_stale = None
     if parsed_source_timestamp is not None and source_timestamp_status == "valid" and not lineage_invalid:
@@ -297,7 +302,7 @@ def project(
         source_id = str(record.get("source_id") or "")
         metadata = record.get("metadata") or {}
         rec_run_id = metadata.get("source_ingest_run_id") or metadata.get("ingest_run_id")
-        bound_run_id = str(accepted_run_id or rec_run_id or "") or None
+        record_run_id = str(rec_run_id) if rec_run_id else None
         source_ref = f"source_ingest:{source_id}"
         cal_ev = metadata.get("calendar_evidence")
         if cal_ev is None and isinstance(metadata.get("normalized_row"), dict):
@@ -311,7 +316,7 @@ def project(
             connector_id=CONNECTOR_ID,
             calendar_evidence=cal_ev,
             accepted_run_id=accepted_run_id or None,
-            record_run_id=str(rec_run_id) if rec_run_id else None,
+            record_run_id=record_run_id,
         )
         common = {
             "symbol": symbol,
@@ -320,7 +325,7 @@ def project(
             "asOf": source_timestamp,
             "source_ref": source_ref,
             "sourceId": source_id,
-            "ingestRunId": bound_run_id,
+            "ingestRunId": record_run_id,
             "connectorId": CONNECTOR_ID,
             "projectionOwner": PROJECTOR,
             "freshness": freshness,

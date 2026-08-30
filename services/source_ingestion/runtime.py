@@ -149,6 +149,26 @@ def _frontier_backlog_readback(frontier: Iterable[Any]) -> tuple[int, dict[str, 
     return sum(ordered.values()), ordered
 
 
+def _active_contract_symbols() -> set[str]:
+    raw = os.getenv("SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS", "")
+    symbols: set[str] = set()
+    for item in raw.split(","):
+        clean = item.strip().upper()
+        if not clean:
+            continue
+        symbols.add(clean)
+        if "." in clean:
+            base, _ = clean.rsplit(".", 1)
+            symbols.add(base)
+            try:
+                from .connectors.taiwan_official import canonical_taiwan_equity_symbol
+
+                symbols.add(canonical_taiwan_equity_symbol(clean))
+            except Exception:
+                pass
+    return symbols
+
+
 class SourceIngestionRuntime:
     """Explicit runtime holding stores, managers, locks, and configuration."""
 
@@ -1335,31 +1355,57 @@ class SourceIngestionRuntime:
             "provenance": {key: metadata[key] for key in provenance_keys if key in metadata},
         }
 
-    def _latest_source_record_by_connector(self) -> dict[str, SourceRecord]:
-        latest: dict[str, SourceRecord] = {}
+    def _latest_source_record_by_connector(
+        self,
+        receipts_by_connector: Mapping[str, Sequence[IngestReceipt]] | None = None,
+    ) -> dict[str, SourceRecord]:
+        active_symbols = _active_contract_symbols()
+        latest_run_by_connector: dict[str, str] = {}
+        if receipts_by_connector is not None:
+            for cid, recs in receipts_by_connector.items():
+                latest_completed = next((r for r in reversed(recs) if r.status == "completed"), None)
+                if latest_completed and latest_completed.ingest_run_id:
+                    latest_run_by_connector[cid] = str(latest_completed.ingest_run_id)
+        else:
+            try:
+                snapshot = self.store.read_freshness_snapshot()
+                for receipt in snapshot.get("receipts", ()):
+                    if receipt.status == "completed" and receipt.ingest_run_id:
+                        latest_run_by_connector[receipt.connector_id] = str(receipt.ingest_run_id)
+            except Exception:
+                pass
+
+        latest: dict[str, tuple[tuple[int, int, int, str, str, str], SourceRecord]] = {}
         for record in self.evidence_repository.list_source_records():
-            current = latest.get(record.connector_id)
+            cid = record.connector_id
             rec_dict = record.to_dict()
             rec_meta = rec_dict.get("metadata") or {}
-            rec_created = str(rec_dict.get("created_at") or "")
-            rec_avail = str(rec_meta.get("available_time") or rec_meta.get("date") or "")
-            rec_is_price = 1 if rec_meta.get("dataset") == "tw_price_daily" else 0
-            rec_is_priority = 1 if rec_meta.get("symbol") in {"2330", "2330.TWSE", "2330.TW"} else 0
-            rec_key = (rec_created, rec_is_price, rec_is_priority, rec_avail, record.source_id)
+            norm_row = rec_meta.get("normalized_row") if isinstance(rec_meta.get("normalized_row"), dict) else {}
+            rec_run_id = str(rec_meta.get("source_ingest_run_id") or rec_meta.get("ingest_run_id") or "")
+            target_run_id = latest_run_by_connector.get(cid, "")
+            is_accepted_run = 1 if (target_run_id and rec_run_id == target_run_id) else 0
 
-            if current is None:
-                latest[record.connector_id] = record
-            else:
-                cur_dict = current.to_dict()
-                cur_meta = cur_dict.get("metadata") or {}
-                cur_created = str(cur_dict.get("created_at") or "")
-                cur_avail = str(cur_meta.get("available_time") or cur_meta.get("date") or "")
-                cur_is_price = 1 if cur_meta.get("dataset") == "tw_price_daily" else 0
-                cur_is_priority = 1 if cur_meta.get("symbol") in {"2330", "2330.TWSE", "2330.TW"} else 0
-                cur_key = (cur_created, cur_is_price, cur_is_priority, cur_avail, current.source_id)
-                if rec_key > cur_key:
-                    latest[record.connector_id] = record
-        return latest
+            dataset = str(rec_meta.get("dataset") or norm_row.get("dataset") or "")
+            is_price = 1 if dataset == "tw_price_daily" or dataset.endswith("_price_daily") else 0
+
+            symbol = str(rec_meta.get("symbol") or norm_row.get("symbol") or "").strip().upper()
+            is_active_symbol = 1 if (active_symbols and symbol in active_symbols) else 0
+
+            rec_avail = str(
+                rec_meta.get("available_time")
+                or rec_meta.get("date")
+                or norm_row.get("available_time")
+                or norm_row.get("date")
+                or ""
+            )
+            rec_created = str(rec_dict.get("created_at") or "")
+            source_id = str(record.source_id or "")
+
+            rec_key = (is_accepted_run, is_price, is_active_symbol, rec_avail, rec_created, source_id)
+            if cid not in latest or rec_key > latest[cid][0]:
+                latest[cid] = (rec_key, record)
+
+        return {cid: item[1] for cid, item in latest.items()}
 
     def _controller_connector_readbacks(self) -> list[dict[str, Any]]:
         configs, fetch_states = self.connector_store.read_snapshot()
@@ -1376,7 +1422,7 @@ class SourceIngestionRuntime:
         for receipt in snapshot["receipts"]:
             receipts_by_connector.setdefault(receipt.connector_id, []).append(receipt)
         observed_at = datetime.now(timezone.utc)
-        latest_by_connector = self._latest_source_record_by_connector()
+        latest_by_connector = self._latest_source_record_by_connector(receipts_by_connector=receipts_by_connector)
         readbacks: list[dict[str, Any]] = []
         for config in sorted(configs, key=lambda item: item.connector.connector_id):
             connector = config.connector
