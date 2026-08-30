@@ -109,6 +109,10 @@ class PersonaProvisioningStore(Protocol):
 
     def get_by_persona(self, tenant_id: str, persona_id: str) -> ProvisioningRecord | None: ...
 
+    def list_by_tenant(self, tenant_id: str) -> list[ProvisioningRecord]: ...
+
+    def list_all(self) -> list[ProvisioningRecord]: ...
+
     def acquire(
         self,
         tenant_id: str,
@@ -135,14 +139,36 @@ class PersonaProvisioningStore(Protocol):
     ) -> ProvisioningRecord: ...
 
 
+class MemoryProvisioningBackend:
+    """Shared durable state for :class:`MemoryPersonaProvisioningStore`.
+
+    Passing the same backend instance to two distinct store objects lets
+    tests prove readback survives a process/replica restart (a fresh store
+    object reading state it did not itself populate) while every read and
+    write still goes through the public store protocol -- exactly what a
+    shared Postgres table gives two live BFF replicas.
+    """
+
+    def __init__(self) -> None:
+        self.records: dict[tuple[str, str], ProvisioningRecord] = {}
+        self.names: dict[tuple[str, str], tuple[str, str]] = {}
+        self.personas: dict[tuple[str, str], tuple[str, str]] = {}
+        self.lock = RLock()
+
+
 class MemoryPersonaProvisioningStore:
     """Thread-safe test backend with the same lease and conflict semantics."""
 
-    def __init__(self) -> None:
-        self._records: dict[tuple[str, str], ProvisioningRecord] = {}
-        self._names: dict[tuple[str, str], tuple[str, str]] = {}
-        self._personas: dict[tuple[str, str], tuple[str, str]] = {}
-        self._lock = RLock()
+    def __init__(self, backend: Optional[MemoryProvisioningBackend] = None) -> None:
+        self._backend = backend if backend is not None else MemoryProvisioningBackend()
+
+    @property
+    def backend(self) -> MemoryProvisioningBackend:
+        """The shared durable-state object; pass it to another store instance
+        (``MemoryPersonaProvisioningStore(backend=store.backend)``) to prove
+        two identity-distinct stores read the same backing state through the
+        public protocol, the way two BFF replicas share one Postgres table."""
+        return self._backend
 
     @staticmethod
     def _copy(record: ProvisioningRecord) -> ProvisioningRecord:
@@ -160,13 +186,13 @@ class MemoryPersonaProvisioningStore:
     ) -> tuple[ProvisioningRecord, bool]:
         key = (tenant_id, idempotency_key)
         name_key = (tenant_id, normalized_name)
-        with self._lock:
-            existing = self._records.get(key)
-            if existing is None and name_key in self._names:
-                existing = self._records[self._names[name_key]]
+        with self._backend.lock:
+            existing = self._backend.records.get(key)
+            if existing is None and name_key in self._backend.names:
+                existing = self._backend.records[self._backend.names[name_key]]
             if existing is not None:
                 if existing.request_hash != request_hash:
-                    scope = "idempotency key" if self._records.get(key) is existing else "Persona name"
+                    scope = "idempotency key" if self._backend.records.get(key) is existing else "Persona name"
                     raise ProvisioningConflict(f"{scope} already has different request semantics")
                 return self._copy(existing), False
             record = ProvisioningRecord(
@@ -177,21 +203,37 @@ class MemoryPersonaProvisioningStore:
                 persona_id=persona_id,
                 request_payload=dict(request_payload),
             )
-            self._records[key] = record
-            self._names[name_key] = key
-            self._personas[(tenant_id, persona_id)] = key
+            self._backend.records[key] = record
+            self._backend.names[name_key] = key
+            self._backend.personas[(tenant_id, persona_id)] = key
             return self._copy(record), True
 
     def get(self, tenant_id: str, idempotency_key: str) -> ProvisioningRecord | None:
-        with self._lock:
-            record = self._records.get((tenant_id, idempotency_key))
+        with self._backend.lock:
+            record = self._backend.records.get((tenant_id, idempotency_key))
             return self._copy(record) if record is not None else None
 
     def get_by_persona(self, tenant_id: str, persona_id: str) -> ProvisioningRecord | None:
-        with self._lock:
-            key = self._personas.get((tenant_id, persona_id))
-            record = self._records.get(key) if key is not None else None
+        with self._backend.lock:
+            key = self._backend.personas.get((tenant_id, persona_id))
+            record = self._backend.records.get(key) if key is not None else None
             return self._copy(record) if record is not None else None
+
+    def list_by_tenant(self, tenant_id: str) -> list[ProvisioningRecord]:
+        with self._backend.lock:
+            records = [
+                self._copy(record)
+                for record in self._backend.records.values()
+                if record.tenant_id == tenant_id
+            ]
+            records.sort(key=lambda r: (r.created_at, r.persona_id))
+            return records
+
+    def list_all(self) -> list[ProvisioningRecord]:
+        with self._backend.lock:
+            records = [self._copy(record) for record in self._backend.records.values()]
+            records.sort(key=lambda r: (r.created_at, r.persona_id))
+            return records
 
     def acquire(
         self,
@@ -201,8 +243,8 @@ class MemoryPersonaProvisioningStore:
         lease_owner: str,
         lease_seconds: int,
     ) -> ProvisioningRecord | None:
-        with self._lock:
-            record = self._records.get((tenant_id, idempotency_key))
+        with self._backend.lock:
+            record = self._backend.records.get((tenant_id, idempotency_key))
             if record is None:
                 return None
             now = datetime.now(timezone.utc)
@@ -232,8 +274,8 @@ class MemoryPersonaProvisioningStore:
         lease_seconds: int = 60,
     ) -> ProvisioningRecord:
         key = (record.tenant_id, record.idempotency_key)
-        with self._lock:
-            current = self._records.get(key)
+        with self._backend.lock:
+            current = self._backend.records.get(key)
             now = datetime.now(timezone.utc)
             lease_expiry = _parse_time(current.lease_expires_at) if current is not None else None
             if (
@@ -249,7 +291,7 @@ class MemoryPersonaProvisioningStore:
                 microsecond=0
             ).isoformat().replace("+00:00", "Z")
             saved.updated_at = utc_now()
-            self._records[key] = saved
+            self._backend.records[key] = saved
             return self._copy(saved)
 
     def release(
@@ -265,8 +307,8 @@ class MemoryPersonaProvisioningStore:
             lease_seconds=lease_seconds,
         )
         key = (saved.tenant_id, saved.idempotency_key)
-        with self._lock:
-            current = self._records[key]
+        with self._backend.lock:
+            current = self._backend.records[key]
             current.lease_owner = None
             current.lease_expires_at = None
             current.updated_at = utc_now()
@@ -442,6 +484,23 @@ class PostgresPersonaProvisioningStore:
                 "tenant_id=%s AND persona_id=%s",
                 (tenant_id, persona_id),
             )
+
+    def list_by_tenant(self, tenant_id: str) -> list[ProvisioningRecord]:
+        with self._connect(self.dsn) as conn, conn.cursor() as cur:
+            cur.execute(
+                f"SELECT {self._COLUMNS} FROM {self.table} WHERE tenant_id=%s ORDER BY created_at ASC, persona_id ASC",
+                (tenant_id,),
+            )
+            rows = cur.fetchall()
+            return [self._record(row) for row in rows]
+
+    def list_all(self) -> list[ProvisioningRecord]:
+        with self._connect(self.dsn) as conn, conn.cursor() as cur:
+            cur.execute(
+                f"SELECT {self._COLUMNS} FROM {self.table} ORDER BY created_at ASC, persona_id ASC"
+            )
+            rows = cur.fetchall()
+            return [self._record(row) for row in rows]
 
     def acquire(
         self,

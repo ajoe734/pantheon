@@ -71,7 +71,7 @@ def _stub_fleet(reasons: List[str]) -> Iterator[None]:
     original_item = bff_main._project_persona_fleet_item
     fake_persona = {"id": "persona-under-test", "persona_id": "persona-under-test"}
 
-    def _fake_list() -> List[Dict[str, Any]]:
+    def _fake_list(tenant_id: Any = None) -> List[Dict[str, Any]]:
         return [fake_persona]
 
     def _fake_item(persona, **_kwargs):  # type: ignore[no-untyped-def]
@@ -160,7 +160,7 @@ def test_healthy_persona_produces_no_findings():
 def test_no_personas_produces_no_findings():
     """With no persona records the rule engine yields nothing (no fallback noise)."""
     original = bff_main._list_persona_records
-    bff_main._list_persona_records = lambda: []
+    bff_main._list_persona_records = lambda tenant_id=None: []
     try:
         assert bff_main._health_reason_sentinel_findings() == []
     finally:

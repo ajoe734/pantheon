@@ -1338,7 +1338,7 @@ services:
       PANTHEON_POSTMORTEMS_API_URL: http://postmortems:8091
       PANTHEON_TELEMETRY_API_URL: http://telemetry:8083
       PANTHEON_LINEAGE_READ_URL: http://lineage-read:8094
-      PANTHEON_REGISTRY_API_URL: http://registry:8087
+      PANTHEON_REGISTRY_API_URL: ${PANTHEON_REGISTRY_API_URL:-http://registry:8087}
       PANTHEON_CONSULTATION_API_URL: http://consultation-svc:8096
       PANTHEON_SOURCE_INGEST_API_URL: http://source-ingest:8097
       PANTHEON_SEARCH_API_URL: http://search-svc:8098

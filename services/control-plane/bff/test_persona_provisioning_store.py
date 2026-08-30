@@ -337,6 +337,11 @@ class _RecordingCursor:
     def fetchone(self) -> Any:
         return self.backend.rows.popleft() if self.backend.rows else None
 
+    def fetchall(self) -> list[Any]:
+        rows = list(self.backend.rows)
+        self.backend.rows.clear()
+        return rows
+
 
 class _RecordingConnection:
     def __init__(self, backend: "_RecordingConnect") -> None:
@@ -450,3 +455,43 @@ def test_postgres_lease_sql_is_atomic_and_checkpoint_is_expiry_guarded() -> None
     assert "lease_expires_at=now() + (%s * interval '1 second')" in checkpoint_sql
     assert checkpoint_params[-4] == 45
     assert checkpoint_params[-3:] == (TENANT, IDEMPOTENCY_KEY, "worker-postgres")
+
+
+def test_memory_store_list_by_tenant_and_list_all() -> None:
+    store = MemoryPersonaProvisioningStore()
+    _reserve(store, tenant_id="tenant-1", idempotency_key="key-1", normalized_name="name 1", persona_id="p-1")
+    _reserve(store, tenant_id="tenant-1", idempotency_key="key-2", normalized_name="name 2", persona_id="p-2")
+    _reserve(store, tenant_id="tenant-2", idempotency_key="key-3", normalized_name="name 3", persona_id="p-3")
+
+    tenant1_records = store.list_by_tenant("tenant-1")
+    assert len(tenant1_records) == 2
+    assert [r.persona_id for r in tenant1_records] == ["p-1", "p-2"]
+
+    tenant2_records = store.list_by_tenant("tenant-2")
+    assert len(tenant2_records) == 1
+    assert tenant2_records[0].persona_id == "p-3"
+
+    all_records = store.list_all()
+    assert len(all_records) == 3
+
+
+def test_postgres_store_list_by_tenant_and_list_all() -> None:
+    connect = _RecordingConnect()
+    store = PostgresPersonaProvisioningStore(
+        "postgresql://example/provisioning",
+        connect=connect,
+    )
+    connect.rows.append(_postgres_row(state="succeeded"))
+    records = store.list_by_tenant(TENANT)
+    assert len(records) == 1
+    assert records[0].persona_id == PERSONA_ID
+    list_sql, list_params = connect.executions[-1]
+    assert "WHERE tenant_id=%s" in list_sql
+    assert "ORDER BY created_at ASC, persona_id ASC" in list_sql
+    assert list_params == (TENANT,)
+
+    connect.rows.append(_postgres_row(state="succeeded"))
+    all_records = store.list_all()
+    assert len(all_records) == 1
+    all_sql, _ = connect.executions[-1]
+    assert "ORDER BY created_at ASC, persona_id ASC" in all_sql
