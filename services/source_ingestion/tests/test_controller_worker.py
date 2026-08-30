@@ -279,6 +279,7 @@ def _validate_terminal_readback(
     schedule: dict[str, Any],
     actual: dict[str, Any],
     expected_exclusive_connector_ids: tuple[str, ...] = (),
+    now: datetime | None = None,
 ) -> None:
     controller_state = actual["controller_state"]
     _validate_terminal_readback_impl(
@@ -289,6 +290,7 @@ def _validate_terminal_readback(
         expected_sequence_no=controller_state["sequence_no"],
         expected_deployment=controller_state["deployment"],
         expected_exclusive_connector_ids=expected_exclusive_connector_ids,
+        now=now,
     )
 
 
@@ -1436,7 +1438,9 @@ def test_refresh_runtime_identity_replaces_stale_persisted_deployment(
 def test_terminal_readback_accepts_weekend_taiwan_official_market_bounded_refresh() -> None:
     # Reproducer for run 33283640789:
     # Friday 2026-08-28 official session close evaluated on Sunday 2026-08-30 with fresh receipt.
+    now = datetime(2026, 8, 30, 1, 0, 0, tzinfo=timezone.utc)
     actual = _actual_readback()
+    actual["captured_at"] = "2026-08-30T01:00:00Z"
     actual["connectors"][0]["connector_id"] = "tw-twse-tpex-official-market"
     actual["connectors"][0]["connector"]["connector_id"] = "tw-twse-tpex-official-market"
     actual["connectors"][0]["schedule"]["connector_id"] = "tw-twse-tpex-official-market"
@@ -1445,7 +1449,7 @@ def test_terminal_readback_accepts_weekend_taiwan_official_market_bounded_refres
             "status": "fresh",
             "is_due": False,
             "staleness_seconds": 5,
-            "last_success_at": actual["captured_at"],
+            "last_success_at": "2026-08-30T01:00:00Z",
             "last_ingest_run_id": "run-tw-weekend",
             "latest_run": {"ingest_run_id": "run-tw-weekend", "status": "completed"},
         }
@@ -1477,14 +1481,18 @@ def test_terminal_readback_accepts_weekend_taiwan_official_market_bounded_refres
         reconcile=reconcile,
         schedule=_schedule(),
         actual=actual,
+        now=now,
     )
 
 
 def test_terminal_readback_rejects_stale_weekday_taiwan_official_data() -> None:
+    now = datetime(2026, 8, 28, 6, 0, 0, tzinfo=timezone.utc)
     actual = _actual_readback()
+    actual["captured_at"] = "2026-08-28T06:00:00Z"
     actual["connectors"][0]["connector_id"] = "tw-twse-tpex-official-market"
     actual["connectors"][0]["connector"]["connector_id"] = "tw-twse-tpex-official-market"
     actual["connectors"][0]["schedule"]["connector_id"] = "tw-twse-tpex-official-market"
+    actual["connectors"][0]["freshness"]["last_success_at"] = "2026-08-28T06:00:00Z"
     # Tuesday 2026-08-25 data evaluated on Friday 2026-08-28 without holiday proof
     actual["connectors"][0]["latest_source_record"]["provenance"]["available_time"] = "2026-08-25T05:30:00Z"
     actual["connectors"][0]["latest_source_record"]["source_id"] = "tw-official:tw_price_daily:TWSE:2330:tuesday"
@@ -1499,14 +1507,18 @@ def test_terminal_readback_rejects_stale_weekday_taiwan_official_data() -> None:
             reconcile=reconcile,
             schedule=_schedule(),
             actual=actual,
+            now=now,
         )
 
 
 def test_terminal_readback_rejects_future_timestamp_taiwan_official_data() -> None:
+    now = datetime(2026, 8, 30, 1, 0, 0, tzinfo=timezone.utc)
     actual = _actual_readback()
+    actual["captured_at"] = "2026-08-30T01:00:00Z"
     actual["connectors"][0]["connector_id"] = "tw-twse-tpex-official-market"
     actual["connectors"][0]["connector"]["connector_id"] = "tw-twse-tpex-official-market"
     actual["connectors"][0]["schedule"]["connector_id"] = "tw-twse-tpex-official-market"
+    actual["connectors"][0]["freshness"]["last_success_at"] = "2026-08-30T01:00:00Z"
     actual["connectors"][0]["latest_source_record"]["provenance"]["available_time"] = "2099-01-01T00:00:00Z"
     actual["connectors"][0]["latest_source_record"]["source_id"] = "tw-official:tw_price_daily:TWSE:2330:future"
     actual["connectors"][0]["latest_source_record"]["connector_id"] = "tw-twse-tpex-official-market"
@@ -1520,14 +1532,18 @@ def test_terminal_readback_rejects_future_timestamp_taiwan_official_data() -> No
             reconcile=reconcile,
             schedule=_schedule(),
             actual=actual,
+            now=now,
         )
 
 
 def test_terminal_readback_rejects_non_official_lineage_taiwan_data() -> None:
+    now = datetime(2026, 8, 30, 1, 0, 0, tzinfo=timezone.utc)
     actual = _actual_readback()
+    actual["captured_at"] = "2026-08-30T01:00:00Z"
     actual["connectors"][0]["connector_id"] = "tw-twse-tpex-official-market"
     actual["connectors"][0]["connector"]["connector_id"] = "tw-twse-tpex-official-market"
     actual["connectors"][0]["schedule"]["connector_id"] = "tw-twse-tpex-official-market"
+    actual["connectors"][0]["freshness"]["last_success_at"] = "2026-08-30T01:00:00Z"
     actual["connectors"][0]["latest_source_record"]["source_id"] = "mock-vendor:tw_price_daily:TWSE:2330:mock"
     actual["connectors"][0]["latest_source_record"]["connector_id"] = "tw-twse-tpex-official-market"
     actual["connectors"][0]["latest_source_record"]["provenance"]["available_time"] = "2026-08-28T05:30:00Z"
@@ -1541,11 +1557,14 @@ def test_terminal_readback_rejects_non_official_lineage_taiwan_data() -> None:
             reconcile=reconcile,
             schedule=_schedule(),
             actual=actual,
+            now=now,
         )
 
 
 def test_terminal_readback_rejects_stale_refresh_receipt() -> None:
+    now = datetime(2026, 8, 30, 1, 0, 0, tzinfo=timezone.utc)
     actual = _actual_readback()
+    actual["captured_at"] = "2026-08-30T01:00:00Z"
     actual["connectors"][0]["connector_id"] = "tw-twse-tpex-official-market"
     actual["connectors"][0]["connector"]["connector_id"] = "tw-twse-tpex-official-market"
     actual["connectors"][0]["schedule"]["connector_id"] = "tw-twse-tpex-official-market"
@@ -1563,5 +1582,5 @@ def test_terminal_readback_rejects_stale_refresh_receipt() -> None:
             reconcile=reconcile,
             schedule=_schedule(),
             actual=actual,
+            now=now,
         )
-

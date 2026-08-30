@@ -598,6 +598,7 @@ def _validate_terminal_readback(
     expected_sequence_no: int,
     expected_deployment: Mapping[str, Any],
     expected_exclusive_connector_ids: Sequence[str] = (),
+    now: datetime | None = None,
 ) -> int:
     if actual.get("schema_version") != "source_ingest_controller_readback.v1":
         raise ControllerTickError(
@@ -607,8 +608,9 @@ def _validate_terminal_readback(
             schedule=schedule,
             actual_readback=actual,
         )
+    now_dt = now or datetime.now(timezone.utc)
     captured_at = parse_utc(str(actual.get("captured_at") or ""))
-    if captured_at is None or (datetime.now(timezone.utc) - captured_at).total_seconds() > 300:
+    if captured_at is None or (now_dt - captured_at).total_seconds() > 300:
         raise ControllerTickError(
             "actual_readback",
             "authoritative source readback is stale",
@@ -864,7 +866,7 @@ def _validate_terminal_readback(
                 )
                 is_tw = connector_id == "tw-twse-tpex-official-market"
                 if is_tw:
-                    now_dt = captured_at or datetime.now(timezone.utc)
+                    eval_now_dt = now or captured_at or now_dt
                     source_id_str = str(record.get("source_id") or "")
                     if not source_id_str.startswith("tw-official:"):
                         invalid.append(f"{connector_id}:source_data_stale")
@@ -875,7 +877,7 @@ def _validate_terminal_readback(
                     except ControllerStateError:
                         pass
                     if refresh_receipt_dt is None:
-                        refresh_receipt_dt = now_dt
+                        refresh_receipt_dt = eval_now_dt
 
                     cal_ev = (
                         record.get("metadata", {}).get("calendar_evidence")
@@ -897,7 +899,7 @@ def _validate_terminal_readback(
 
                         tw_ok, _tw_reason, _tw_detail = evaluate_taiwan_market_freshness(
                             event_time_dt=available_at,
-                            now_dt=now_dt,
+                            now_dt=eval_now_dt,
                             refresh_receipt_dt=refresh_receipt_dt,
                             lineage=lineage,
                             max_refresh_age_seconds=max_source_age or 86400,
@@ -909,8 +911,8 @@ def _validate_terminal_readback(
                     if (
                         available_at is None
                         or max_source_age is None
-                        or (datetime.now(timezone.utc) - available_at).total_seconds() > max_source_age
-                        or (available_at - datetime.now(timezone.utc)).total_seconds() > 300
+                        or (now_dt - available_at).total_seconds() > max_source_age
+                        or (available_at - now_dt).total_seconds() > 300
                     ):
                         invalid.append(f"{connector_id}:source_data_stale")
             connector_payload = item.get("connector") if isinstance(item.get("connector"), Mapping) else {}

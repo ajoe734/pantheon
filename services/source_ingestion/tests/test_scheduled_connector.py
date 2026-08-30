@@ -1484,3 +1484,90 @@ def test_freshness_summary_taiwan_official_rejects_non_official_lineage() -> Non
 
     assert summary["stale"] is True
 
+
+def test_freshness_summary_taiwan_official_rejects_missing_latest_record() -> None:
+    from datetime import datetime, timezone
+    from services.source_ingestion.runtime import SourceIngestionRuntime
+    from services.source_ingestion.scheduler import IngestReceipt
+
+    runtime = SourceIngestionRuntime()
+    now = datetime(2026, 8, 30, 1, 0, 0, tzinfo=timezone.utc)
+    receipts = [
+        IngestReceipt(
+            ingest_run_id="run-tw-weekend",
+            connector_id="tw-twse-tpex-official-market",
+            status="completed",
+            trigger_type="manual_one_shot",
+            trace_id="trace-test",
+            started_at="2026-08-30T00:59:55Z",
+            finished_at="2026-08-30T01:00:00Z",
+            raw_count=1,
+            normalized_count=1,
+            rejected_count=0,
+            watermark=None,
+            source_timestamp="2026-08-28T05:30:00Z",
+            source_timestamp_status="valid",
+        )
+    ]
+
+    summary = runtime._connector_freshness_summary_from_snapshot(
+        "tw-twse-tpex-official-market",
+        connector_metadata={"market": "TW", "venue": "TWSE"},
+        schedule=None,
+        watermark=None,
+        runs=[],
+        receipts=receipts,
+        now=now,
+        latest_record=None,
+    )
+
+    assert summary["stale"] is True
+
+
+def test_freshness_summary_taiwan_official_rejects_missing_source_id() -> None:
+    from datetime import datetime, timezone
+    from services.source_ingestion.runtime import SourceIngestionRuntime
+    from services.source_ingestion.scheduler import IngestReceipt
+    from services.source_ingestion.connectors.base import SourceRecord
+
+    runtime = SourceIngestionRuntime()
+    now = datetime(2026, 8, 30, 1, 0, 0, tzinfo=timezone.utc)
+    receipts = [
+        IngestReceipt(
+            ingest_run_id="run-tw-weekend",
+            connector_id="tw-twse-tpex-official-market",
+            status="completed",
+            trigger_type="manual_one_shot",
+            trace_id="trace-test",
+            started_at="2026-08-30T00:59:55Z",
+            finished_at="2026-08-30T01:00:00Z",
+            raw_count=1,
+            normalized_count=1,
+            rejected_count=0,
+            watermark=None,
+            source_timestamp="2026-08-28T05:30:00Z",
+            source_timestamp_status="valid",
+        )
+    ]
+    record = type(
+        "MockRecord",
+        (),
+        {
+            "source_id": "",
+            "connector_id": "tw-twse-tpex-official-market",
+            "metadata": {},
+        },
+    )()
+
+    summary = runtime._connector_freshness_summary_from_snapshot(
+        "tw-twse-tpex-official-market",
+        connector_metadata={"market": "TW", "venue": "TWSE"},
+        schedule=None,
+        watermark=None,
+        runs=[],
+        receipts=receipts,
+        now=now,
+        latest_record=record,
+    )
+
+    assert summary["stale"] is True

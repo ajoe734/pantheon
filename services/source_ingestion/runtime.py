@@ -754,16 +754,12 @@ class SourceIngestionRuntime:
         is_taiwan = connector_id == "tw-twse-tpex-official-market"
         if is_taiwan and source_timestamp_dt is not None and source_timestamp_status == "valid":
             source_id_str = str(getattr(latest_record, "source_id", "") if latest_record is not None else "")
-            if latest_record is not None and not source_id_str.startswith("tw-official:"):
+            if latest_record is None or not source_id_str.startswith("tw-official:"):
                 stale = True
             else:
                 lineage = {
                     "connector_ids": [connector_id],
-                    "source_ids": (
-                        [source_id_str]
-                        if source_id_str
-                        else ["tw-official:"]
-                    ),
+                    "source_ids": [source_id_str],
                 }
                 cal_ev = None
                 if latest_record is not None and hasattr(latest_record, "metadata") and isinstance(latest_record.metadata, Mapping):

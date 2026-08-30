@@ -66,6 +66,8 @@ def _freshness_metadata(
     connector_freshness: dict[str, Any],
     now: datetime,
     default_stale_threshold_seconds: int,
+    source_id: str | None = None,
+    connector_id: str | None = None,
     calendar_evidence: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     parsed_source_timestamp = _parse_timestamp(source_timestamp)
@@ -90,21 +92,26 @@ def _freshness_metadata(
     if parsed_source_timestamp is not None and source_timestamp_status == "valid":
         last_success_at_str = connector_freshness.get("last_success_at")
         refresh_dt = _parse_timestamp(last_success_at_str)
-        lineage = {"connector_ids": [CONNECTOR_ID], "source_ids": ["tw-official:"]}
-        try:
-            from services.execution.market_snapshot_admission import evaluate_taiwan_market_freshness
+        cid = str(connector_id or CONNECTOR_ID)
+        sid = str(source_id or "")
+        if not sid.startswith("tw-official:"):
+            tw_stale = True
+        else:
+            lineage = {"connector_ids": [cid], "source_ids": [sid]}
+            try:
+                from services.execution.market_snapshot_admission import evaluate_taiwan_market_freshness
 
-            tw_ok, _tw_reason, _tw_detail = evaluate_taiwan_market_freshness(
-                event_time_dt=parsed_source_timestamp,
-                now_dt=now,
-                refresh_receipt_dt=refresh_dt,
-                lineage=lineage,
-                max_refresh_age_seconds=threshold,
-                calendar_evidence=calendar_evidence,
-            )
-            tw_stale = not tw_ok
-        except Exception:
-            pass
+                tw_ok, _tw_reason, _tw_detail = evaluate_taiwan_market_freshness(
+                    event_time_dt=parsed_source_timestamp,
+                    now_dt=now,
+                    refresh_receipt_dt=refresh_dt,
+                    lineage=lineage,
+                    max_refresh_age_seconds=threshold,
+                    calendar_evidence=calendar_evidence,
+                )
+                tw_stale = not tw_ok
+            except Exception:
+                tw_stale = True
 
     if tw_stale is not None:
         stale = (
@@ -195,6 +202,8 @@ def project(
             connector_freshness=freshness_readback,
             now=captured_at,
             default_stale_threshold_seconds=stale_threshold_seconds,
+            source_id=source_id,
+            connector_id=CONNECTOR_ID,
             calendar_evidence=cal_ev,
         )
         common = {
