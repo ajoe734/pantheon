@@ -4,7 +4,7 @@
 |---|---|
 | 文件狀態 | **全產品 GAP 盤點處置、目標 SA/SD 與平行執行 DAG 凍結基準** |
 | 規劃依據 | `docs/04/pantheon_full_product_operation_audit_2026-08-29/FULL_OPERATION_AUDIT_2026-08-29.md`（含 2026-08-29T23:41Z 最新稽核基準與 post-cutoff PRs #5410~#5426） |
-| Pantheon 基線 | `origin/dev@e7f010dcc`（含 PR #5426 Agora baseline 500 修復、PR #5425 Agora projection receipt 綁定、PR #5424 TW bounded refresh 讀回、PR #5417 TW market session 新鮮度、PR #5411 Source frontier 範圍修復） |
+| Pantheon 基線 | `origin/dev@9c9adf426`（含 PR #5426 Agora baseline 500 修復、PR #5425 Agora projection receipt 綁定、PR #5424 TW bounded refresh 讀回、PR #5417 TW market session 新鮮度、PR #5411 Source frontier 範圍修復） |
 | execute-plans 基線 | `origin/dev@bd03c863e`（含 PR #694 evidence manifest，前端 UI 程式碼同 `5ffee3db8` Workshop tenant 修正） |
 | Hosted live BFF | `dcb14231d29f08f1646a4ee962b83fd2d4b67560`（VM `pantheon-lupin-dev` IP `35.201.204.12`，PostgreSQL checkpoint `7,649,369`，backlog 0，quarantine 0，ready/live） |
 | Hosted live FE | `c230fc76bef78fc297135152f2acba690314bb9d`（pairId `0429052b...`，profile `read-only`，`VITE_BFF_MODE=live`，`VITE_BFF_FALLBACK=strict`，`VITE_BFF_REAL_WRITES=false`） |

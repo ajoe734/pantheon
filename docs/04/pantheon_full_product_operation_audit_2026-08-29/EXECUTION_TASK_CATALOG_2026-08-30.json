@@ -5,7 +5,7 @@
   "status": "ready_for_plan_freeze",
   "source": {
     "plan_freeze_task_id": "FULL-OPERATION-GAP-SA-SD-PLAN-FREEZE-20260830",
-    "backend_dev_sha": "e7f010dcc",
+    "backend_dev_sha": "9c9adf426",
     "frontend_dev_sha": "bd03c863e",
     "hosted_bff_sha": "dcb14231d29f08f1646a4ee962b83fd2d4b67560",
     "hosted_fe_sha": "c230fc76bef78fc297135152f2acba690314bb9d",
