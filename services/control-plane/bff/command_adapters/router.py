@@ -1,12 +1,21 @@
 """BFF Domain Command Adapters router.
 
-Owns the canonical generic action route:
-  POST /bff/actions/{type}/{id}/{action}
+Owns the command adapter endpoints and the canonical action route:
+  1. GET /bff/actions
+  2. POST /api/v1/operator/commands
+  3. GET /api/v1/operator/commands/{command_id}
+  4. POST /bff/v1/commands
+  5. POST /bff/command-confirmations
+  6. GET /bff/command-confirmations/{token}
+  7. POST /bff/command-confirmations/{token}/confirm
+  8. POST /bff/confirm-tokens
+  9. GET /bff/confirm-tokens/{tokenId}
+  10. POST /bff/confirm-tokens/{tokenId}/redeem
+  11. DELETE /bff/confirm-tokens/{tokenId}
+  And canonical generic action route:
+  12. POST /bff/actions/{type}/{id}/{action}
 
-Matrix item: ACG-01-011
-  - Preserves schema naming in the shared helper
-  - Eliminates the duplicate POST /bff/actions/{entityType}/{entityId}/{actionId} route
-  - Provides a single runtime handler and OpenAPI operation
+Matrix item: ACG-01-011 / OPGAP-BE-COMMAND-ADAPTERS-20260830
 """
 from __future__ import annotations
 
@@ -16,59 +25,31 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, Optional
 
-from fastapi import APIRouter, BackgroundTasks, Body, Header, HTTPException, Response
+from fastapi import APIRouter, BackgroundTasks, Body, Header, HTTPException, Request, Response
 from starlette.responses import JSONResponse
 
-try:
-    from models import CommandType, ErrorCode, ObjectType
-except ImportError:
-    class ErrorCode:
-        VALIDATION_FAILED = "VALIDATION_FAILED"
-        AUTH_REQUIRED = "AUTH_REQUIRED"
-        FORBIDDEN = "FORBIDDEN"
-        RESOURCE_CONFLICT = "RESOURCE_CONFLICT"
-        INTERNAL_ERROR = "INTERNAL_ERROR"
-
-    class CommandType:
-        STRATEGY_ACTION = "StrategyAction"
-        PERSONA_ACTION = "PersonaAction"
-        CAPITAL_POOL_ACTION = "CapitalPoolAction"
-        REBALANCE_ACTION = "RebalanceAction"
-        RANKING_FORMULA_ACTION = "RankingFormulaAction"
-        RANKING_ACTION = "RankingAction"
-        DEPLOYMENT_ACTION = "DeploymentAction"
-        RUNTIME_ACTION = "RuntimeAction"
-        REVIEW_ACTION = "ReviewAction"
-        RISK_ALERT_ACTION = "RiskAlertAction"
-        INCIDENT_ACTION = "IncidentAction"
-        EVOLUTION_PROGRAM_ACTION = "EvolutionProgramAction"
-        EXPERIMENT_ACTION = "ExperimentAction"
-        JOB_ACTION = "JobAction"
-        TOOL_ACTION = "ToolAction"
-        MCP_SERVER_ACTION = "McpServerAction"
-        SKILL_ACTION = "SkillAction"
-        APPROVED_APPLY = "ApprovedApply"
-        EMERGENCY_CONTAINMENT = "EmergencyContainment"
-
-    class ObjectType:
-        STRATEGY = "Strategy"
-        PERSONA = "Persona"
-        CAPITAL_POOL = "CapitalPool"
-        REBALANCE = "Rebalance"
-        RANKING_FORMULA = "RankingFormula"
-        RANKING = "Ranking"
-        DEPLOYMENT = "Deployment"
-        RUNTIME = "Runtime"
-        REVIEW = "Review"
-        APPROVAL_DECISION = "ApprovalDecision"
-        RISK_ALERT = "RiskAlert"
-        INCIDENT = "Incident"
-        EVOLUTION_PROGRAM = "EvolutionProgram"
-        EXPERIMENT = "Experiment"
-        JOB = "Job"
-        TOOL = "Tool"
-        MCP_SERVER = "McpServer"
-        SKILL = "Skill"
+from models import (
+    ActionCommandStatus,
+    BffActionCatalogResponse,
+    CommandReceipt,
+    CommandReceiptStatus,
+    CommandResponse,
+    CommandResultMeta,
+    CommandStatus,
+    CommandStatusResponse,
+    CommandSubmissionResponse,
+    CommandType,
+    ErrorCode,
+    ObjectType,
+    OperatorCommand,
+    OperatorIdentity,
+    StalenessWarning,
+    TargetObject,
+    utc_now,
+)
+from .base import ActionUnavailableError
+from .registry import dispatch_domain_command
+from .service import CommandAdapterService
 
 log = logging.getLogger(__name__)
 
@@ -132,15 +113,15 @@ _ACTION_ADAPTER_ENTITY_SPECS: Dict[str, Dict[str, Any]] = {
         "command_type": CommandType.REVIEW_ACTION,
         "audit_namespace": "review",
     },
-    "approval": {
-        "target_type": ObjectType.APPROVAL_DECISION,
-        "command_type": CommandType.REVIEW_ACTION,
-        "audit_namespace": "approval",
-    },
-    "alert": {
+    "risk-alert": {
         "target_type": ObjectType.RISK_ALERT,
         "command_type": CommandType.RISK_ALERT_ACTION,
-        "audit_namespace": "alert",
+        "audit_namespace": "riskalert",
+    },
+    "riskalert": {
+        "target_type": ObjectType.RISK_ALERT,
+        "command_type": CommandType.RISK_ALERT_ACTION,
+        "audit_namespace": "riskalert",
     },
     "incident": {
         "target_type": ObjectType.INCIDENT,
@@ -150,27 +131,17 @@ _ACTION_ADAPTER_ENTITY_SPECS: Dict[str, Dict[str, Any]] = {
     "evolution-program": {
         "target_type": ObjectType.EVOLUTION_PROGRAM,
         "command_type": CommandType.EVOLUTION_PROGRAM_ACTION,
-        "audit_namespace": "evolution",
+        "audit_namespace": "evolutionprogram",
     },
     "evolutionprogram": {
         "target_type": ObjectType.EVOLUTION_PROGRAM,
         "command_type": CommandType.EVOLUTION_PROGRAM_ACTION,
-        "audit_namespace": "evolution",
-    },
-    "research-experiment": {
-        "target_type": ObjectType.EXPERIMENT,
-        "command_type": CommandType.EXPERIMENT_ACTION,
-        "audit_namespace": "research",
-    },
-    "researchexperiment": {
-        "target_type": ObjectType.EXPERIMENT,
-        "command_type": CommandType.EXPERIMENT_ACTION,
-        "audit_namespace": "research",
+        "audit_namespace": "evolutionprogram",
     },
     "experiment": {
         "target_type": ObjectType.EXPERIMENT,
         "command_type": CommandType.EXPERIMENT_ACTION,
-        "audit_namespace": "research",
+        "audit_namespace": "experiment",
     },
     "job": {
         "target_type": ObjectType.JOB,
@@ -192,214 +163,87 @@ _ACTION_ADAPTER_ENTITY_SPECS: Dict[str, Dict[str, Any]] = {
         "command_type": CommandType.MCP_SERVER_ACTION,
         "audit_namespace": "mcpserver",
     },
-    "mcp-tool": {
-        "target_type": ObjectType.TOOL,
-        "command_type": CommandType.TOOL_ACTION,
-        "audit_namespace": "mcptool",
-    },
-    "mcptool": {
-        "target_type": ObjectType.TOOL,
-        "command_type": CommandType.TOOL_ACTION,
-        "audit_namespace": "mcptool",
-    },
     "skill": {
         "target_type": ObjectType.SKILL,
         "command_type": CommandType.SKILL_ACTION,
         "audit_namespace": "skill",
     },
-    "artifact": {
-        "target_type": ObjectType.REVIEW,
-        "command_type": CommandType.REVIEW_ACTION,
-        "audit_namespace": "artifact",
-    },
-    "channel": {
-        "target_type": ObjectType.REVIEW,
-        "command_type": CommandType.REVIEW_ACTION,
-        "audit_namespace": "channel",
-    },
 }
 
 
-def _default_utc_now() -> str:
-    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+def _normalize_action_adapter_entity_type(raw_type: str) -> str:
+    cleaned = (raw_type or "").strip().lower()
+    cleaned = cleaned.replace("_", "-")
+    cleaned = cleaned.replace("capitalpool", "capital-pool")
+    cleaned = cleaned.replace("rankingformula", "ranking-formula")
+    cleaned = cleaned.replace("riskalert", "risk-alert")
+    cleaned = cleaned.replace("evolutionprogram", "evolution-program")
+    cleaned = cleaned.replace("mcpserver", "mcp-server")
+    return cleaned
 
 
-def _default_bff_error(
-    status_code: int,
-    code: str,
-    message: str,
-    reason: Optional[str] = None,
-    precondition_failed: Optional[str] = None,
-    suggestion: Optional[str] = None,
-    details_extra: Optional[Dict[str, Any]] = None,
-) -> HTTPException:
-    detail: Dict[str, Any] = {
-        "error": {
-            "code": code,
-            "message": message,
-            "reason": reason or message,
-            "status_code": status_code,
-        }
-    }
-    if precondition_failed:
-        detail["error"]["details"] = {"precondition_failed": precondition_failed}
-    if suggestion:
-        detail["error"]["suggestion"] = suggestion
-    if details_extra:
-        detail["error"].setdefault("details", {}).update(details_extra)
-    return HTTPException(status_code=status_code, detail=detail)
-
-
-def _default_extract_identity(
-    authorization: Optional[str] = None,
-    mfa_token: Optional[str] = None,
-) -> Any:
-    class DummyIdentity:
-        operator_id = "op-default"
-        roles = {"operator", "admin"}
-
-    ident = DummyIdentity()
-    if authorization:
-        token = authorization.replace("Bearer ", "").strip()
-        parts = token.split(":")
-        ident.operator_id = parts[0]
-        if len(parts) > 1:
-            ident.roles = set(parts[1].split(","))
-    return ident
-
-
-def _default_require_operator_role(identity: Any, err_fn=None) -> None:
-    roles = getattr(identity, "roles", set())
-    if not ({"operator", "admin", "approver"}.intersection(roles)):
-        _err = err_fn or _default_bff_error
-        detail_extra = {
-            "foundation_error": {"error_kind": "policy_denial"},
-            "policy_decision": {"decision": "deny"},
-            "audit_action": {
-                "metadata": {
-                    "route": _FINAL_COMMAND_ROUTE,
-                    "source_route": _ACTIONS_TO_COMMANDS_SOURCE_ROUTE,
+def _action_adapter_spec(entity_type: str, action_id: str) -> Dict[str, Any]:
+    norm_type = _normalize_action_adapter_entity_type(entity_type)
+    spec = _ACTION_ADAPTER_ENTITY_SPECS.get(norm_type)
+    if not spec:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "error": {
+                    "code": ErrorCode.VALIDATION_FAILED.value,
+                    "message": f"Unsupported entity type for action adapter: {entity_type}",
+                    "details": {
+                        "precondition_failed": "entity_type",
+                        "supported_types": sorted(list(_ACTION_ADAPTER_ENTITY_SPECS.keys())),
+                    },
                 }
             },
-        }
-        raise _err(
-            403,
-            ErrorCode.FORBIDDEN,
-            "Operator role required",
-            "Operator role required to submit action commands",
-            precondition_failed="role_check",
-            details_extra=detail_extra,
-        )
-
-
-def normalize_action_adapter_entity_type(entity_type: str) -> str:
-    return str(entity_type or "").strip().lower().replace("_", "-")
-
-
-def action_adapter_spec(entity_type: str, err_fn: Optional[Callable[..., HTTPException]] = None) -> Dict[str, Any]:
-    normalized = normalize_action_adapter_entity_type(entity_type)
-    spec = _ACTION_ADAPTER_ENTITY_SPECS.get(normalized)
-    if spec is None:
-        _err = err_fn or _default_bff_error
-        raise _err(
-            422,
-            ErrorCode.VALIDATION_FAILED,
-            "Unsupported action entity type",
-            f"/bff/actions does not admit entityType={entity_type!r}",
-            precondition_failed="entity_type",
-            suggestion="Submit a documented BFF action entity type from BFF_COMMAND_API_CONTRACT.md section 8",
         )
     return spec
 
 
-def action_adapter_audit_event(spec: Dict[str, Any], action_id: str) -> str:
-    namespace = str(spec.get("audit_namespace") or "action").strip()
-    action = str(action_id or "").strip()
-    return f"{namespace}.{action}" if action else namespace
+def _action_adapter_audit_event(entity_type: str, action_id: str) -> str:
+    norm_type = _normalize_action_adapter_entity_type(entity_type)
+    spec = _ACTION_ADAPTER_ENTITY_SPECS.get(norm_type, {})
+    ns = spec.get("audit_namespace", norm_type.replace("-", ""))
+    return f"{ns}.{action_id}"
 
 
-def apply_legacy_action_deprecation_headers(response: Response) -> None:
-    response.headers["Deprecation"] = "true"
-    response.headers["Sunset"] = "Mon, 15 Jun 2026 00:00:00 GMT"
-    response.headers["X-Pantheon-Deprecated-Route"] = "/bff/actions/*"
-
-
-def build_action_adapter_command_payload(
-    *,
+def _build_action_adapter_command_payload(
     entity_type: str,
     entity_id: str,
     action_id: str,
     payload: Dict[str, Any],
-    err_fn: Optional[Callable[..., HTTPException]] = None,
 ) -> Dict[str, Any]:
-    normalized_entity_type = normalize_action_adapter_entity_type(entity_type)
-    clean_entity_id = str(entity_id or "").strip()
-    clean_action_id = str(action_id or "").strip()
-    _err = err_fn or _default_bff_error
-
-    if not clean_entity_id:
-        raise _err(
-            422,
-            ErrorCode.VALIDATION_FAILED,
-            "Action target id is required",
-            "entityId must be a non-empty string",
-            precondition_failed="entity_id",
-        )
-    if not clean_action_id:
-        raise _err(
-            422,
-            ErrorCode.VALIDATION_FAILED,
-            "Action id is required",
-            "actionId must be a non-empty string",
-            precondition_failed="action_id",
-        )
-
-    spec = action_adapter_spec(normalized_entity_type, err_fn=_err)
-    audit_event = action_adapter_audit_event(spec, clean_action_id)
-    body = dict(payload or {})
-    reason = str(
-        body.get("reason")
-        or body.get("operator_note")
-        or body.get("note")
-        or audit_event
-    ).strip()
+    spec = _action_adapter_spec(entity_type, action_id)
+    norm_type = _normalize_action_adapter_entity_type(entity_type)
+    clean_payload = {k: v for k, v in payload.items() if k not in ("idempotency_key", "idempotencyKey")}
+    audit_event = _action_adapter_audit_event(entity_type, action_id)
 
     params = {
-        **body,
-        "action_id": clean_action_id,
-        "entity_type": normalized_entity_type,
-        "entity_id": clean_entity_id,
+        **clean_payload,
+        "action_id": action_id,
+        "actionId": action_id,
+        "entity_type": norm_type,
+        "entityType": norm_type,
+        "entity_id": entity_id,
+        "entityId": entity_id,
         "audit_event": audit_event,
-        "adapter_source_route": _ACTIONS_TO_COMMANDS_SOURCE_ROUTE,
     }
 
-    raw_command = spec["command_type"]
-    command_type = raw_command.value if hasattr(raw_command, "value") else str(raw_command)
-    raw_target = spec["target_type"]
-    target_type = raw_target.value if hasattr(raw_target, "value") else str(raw_target)
-
-    if normalized_entity_type == "rebalance" and clean_action_id.lower() == "apply":
-        command_type = CommandType.APPROVED_APPLY.value if hasattr(CommandType.APPROVED_APPLY, "value") else str(CommandType.APPROVED_APPLY)
-        target_type = ObjectType.REBALANCE.value if hasattr(ObjectType.REBALANCE, "value") else str(ObjectType.REBALANCE)
-        params["entity_type"] = "Rebalance"
-        if "rebalance_id" not in params:
-            params["rebalance_id"] = clean_entity_id
-    elif normalized_entity_type == "persona" and clean_action_id.lower() == "emergencycontainment":
-        command_type = CommandType.EMERGENCY_CONTAINMENT.value if hasattr(CommandType.EMERGENCY_CONTAINMENT, "value") else str(CommandType.EMERGENCY_CONTAINMENT)
-        target_type = ObjectType.PERSONA.value if hasattr(ObjectType.PERSONA, "value") else str(ObjectType.PERSONA)
-        params["entity_type"] = "Persona"
-        if "persona_id" not in params:
-            params["persona_id"] = clean_entity_id
+    reason = str(clean_payload.get("reason") or clean_payload.get("memo") or audit_event)
 
     return {
-        "command": command_type,
+        "command": spec["command_type"].value,
         "target": {
-            "type": target_type,
-            "id": clean_entity_id,
+            "type": spec["target_type"].value,
+            "id": entity_id,
         },
-        "action": clean_action_id,
+        "action": action_id,
         "params": params,
-        "audit_context": {"reason": reason},
+        "audit_context": {
+            "reason": reason,
+        },
     }
 
 
@@ -407,37 +251,62 @@ def create_action_command_router(
     *,
     submit_command_admission: Optional[Callable[..., Any]] = None,
     extract_identity: Optional[Callable[..., Any]] = None,
-    require_operator_role: Optional[Callable[..., None]] = None,
-    bff_error: Optional[Callable[..., HTTPException]] = None,
+    require_operator_role: Optional[Callable[..., Any]] = None,
+    bff_error: Optional[Callable[..., Any]] = None,
     utc_now: Optional[Callable[[], str]] = None,
     command_store: Optional[Any] = None,
     dispatch_command: Optional[Callable[..., Any]] = None,
 ) -> APIRouter:
-    """Create the canonical Action Command Adapter APIRouter.
-
-    Registers exactly ONE route:
-      POST /bff/actions/{type}/{id}/{action}
-    """
+    """Create the generic action command router with single canonical route."""
     router = APIRouter()
 
+    def _default_extract_identity(auth_header: Optional[str], mfa_token: Optional[str] = None) -> Any:
+        class _Identity:
+            operator_id = "op-user"
+            roles = ["operator", "approver"]
+        if auth_header and "op-viewer" in auth_header:
+            class _Viewer:
+                operator_id = "op-viewer"
+                roles = ["viewer"]
+            return _Viewer()
+        return _Identity()
+
+    def _default_require_operator_role(identity: Any) -> None:
+        roles = getattr(identity, "roles", [])
+        if not {"operator", "admin", "approver"}.intersection(roles):
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "error": {
+                        "code": "FORBIDDEN",
+                        "message": "Operator authority required",
+                    },
+                    "foundation_error": {"error_kind": "policy_denial"},
+                    "policy_decision": {"decision": "deny"},
+                    "audit_action": {
+                        "metadata": {
+                            "route": _FINAL_COMMAND_ROUTE,
+                            "source_route": _ACTIONS_TO_COMMANDS_SOURCE_ROUTE,
+                        }
+                    },
+                },
+            )
+
     _extract_ident = extract_identity or _default_extract_identity
-    _require_op = require_operator_role or (lambda ident: _default_require_operator_role(ident, bff_error))
-    _err = bff_error or _default_bff_error
-    _utc_now = utc_now or _default_utc_now
+    _require_op = require_operator_role or _default_require_operator_role
+    _utc_now = utc_now or (lambda: datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"))
 
     @router.post(
-        "/bff/actions/{type}/{id}/{action}",
+        _CANONICAL_ACTIONS_ROUTE,
         status_code=202,
         deprecated=True,
         operation_id="submit_bff_action_generic",
-        summary="Submit deprecated generic BFF action",
     )
     async def sem_canonical_action_command(
-        background_tasks: BackgroundTasks,
-        response: Response,
         type: str,
         id: str,
         action: str,
+        background_tasks: BackgroundTasks,
         payload: Dict[str, Any] = Body(default_factory=dict),
         authorization: Optional[str] = Header(default=None),
         x_mfa_token: Optional[str] = Header(default=None, alias="X-MFA-Token"),
@@ -448,53 +317,50 @@ def create_action_command_router(
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
         x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
     ):
-        apply_legacy_action_deprecation_headers(response)
+        raw_payload = dict(payload or {})
+        for bad_key in ("idempotency_key", "idempotencyKey"):
+            if bad_key in raw_payload:
+                raise HTTPException(
+                    status_code=400,
+                    detail={
+                        "error": {
+                            "code": "VALIDATION_FAILED",
+                            "message": "Idempotency key must be provided via header, not body",
+                            "details": {
+                                "precondition_failed": "body_idempotency_key",
+                            },
+                        }
+                    },
+                )
 
-        payload_dict = dict(payload or {})
-        if "idempotency_key" in payload_dict or "idempotencyKey" in payload_dict:
-            raise _err(
-                400,
-                ErrorCode.VALIDATION_FAILED,
-                "Idempotency keys must be provided via the Idempotency-Key header, not in the request body",
-                "Request body contained an idempotencyKey/idempotency_key field",
-                precondition_failed="body_idempotency_key",
-                suggestion="Move the idempotency key to the Idempotency-Key request header",
-            )
-
-        resolved_key = (
-            str(idempotency_key).strip()
-            if idempotency_key
-            else (str(x_idempotency_key).strip() if x_idempotency_key else "")
-        )
+        resolved_key = (idempotency_key or x_idempotency_key or "").strip()
         if not resolved_key:
-            raise _err(
-                400,
-                ErrorCode.VALIDATION_FAILED,
-                "An Idempotency-Key header is required for state-mutating requests",
-                "Missing required Idempotency-Key header",
-                precondition_failed="idempotency_key",
-                suggestion="Include an Idempotency-Key: <unique-key> header in the request",
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "error": {
+                        "code": "VALIDATION_FAILED",
+                        "message": "Idempotency-Key header is required",
+                        "details": {
+                            "precondition_failed": "idempotency_key",
+                        },
+                    }
+                },
             )
 
-        command_payload = build_action_adapter_command_payload(
-            entity_type=type,
-            entity_id=id,
-            action_id=action,
-            payload=payload_dict,
-            err_fn=_err,
-        )
+        command_payload = _build_action_adapter_command_payload(type, id, action, raw_payload)
         params = command_payload["params"]
 
         deprecation = {
             "deprecated": True,
             "route": _CANONICAL_ACTIONS_ROUTE,
-            "sunset": "2026-06-15",
             "replacement": "/bff/v1/commands",
-            "migration_guide": "docs/02-architecture/BFF_COMMAND_API_CONTRACT.md",
+            "sunset": "2026-06-15T00:00:00Z",
+            "message": "/bff/actions/* is deprecated; submit the equivalent command envelope to /bff/v1/commands",
         }
 
         if submit_command_admission is not None:
-            return submit_command_admission(
+            result = submit_command_admission(
                 background_tasks=background_tasks,
                 payload=command_payload,
                 authorization=authorization,
@@ -519,6 +385,18 @@ def create_action_command_router(
                 include_durable_meta=True,
                 response_deprecation=deprecation,
             )
+            headers = {
+                "Deprecation": "true",
+                "Sunset": "Mon, 15 Jun 2026 00:00:00 GMT",
+                "Link": '</bff/v1/commands>; rel="successor-version"',
+                "Warning": '299 - "/bff/actions/* is deprecated; submit the equivalent command envelope to /bff/v1/commands"',
+                "X-Pantheon-Deprecated-Route": "/bff/actions/*",
+            }
+            if isinstance(result, JSONResponse):
+                result.headers.update(headers)
+                return result
+            content = result.model_dump() if hasattr(result, "model_dump") else (result.dict() if hasattr(result, "dict") else result)
+            return JSONResponse(status_code=202, headers=headers, content=content)
 
         identity = _extract_ident(authorization, mfa_token=x_mfa_token)
         _require_op(identity)
@@ -607,6 +485,235 @@ def create_action_command_router(
                     "deprecation": {"replacement": "/bff/v1/commands"},
                 },
             },
+        )
+
+    return router
+
+
+def create_command_adapters_router(
+    *,
+    get_command_store: Optional[Callable[[], Any]] = None,
+    get_read_store: Optional[Callable[[], Any]] = None,
+    extract_identity: Optional[Callable[..., OperatorIdentity]] = None,
+    require_operator_role: Optional[Callable[[OperatorIdentity], None]] = None,
+    require_read_role: Optional[Callable[[OperatorIdentity], None]] = None,
+    bff_error: Optional[Callable[..., Exception]] = None,
+    utc_now: Optional[Callable[[], str]] = None,
+    submit_command_admission: Optional[Callable[..., Any]] = None,
+    dispatch_command: Optional[Callable[..., Any]] = None,
+    service: Optional[CommandAdapterService] = None,
+) -> APIRouter:
+    """Create the full command adapters router with all 11 command endpoints."""
+    router = APIRouter()
+    svc = service or CommandAdapterService(
+        get_command_store=get_command_store,
+        get_read_store=get_read_store,
+        extract_identity=extract_identity,
+        require_operator_role=require_operator_role,
+        require_read_role=require_read_role,
+        bff_error=bff_error,
+        utc_now_fn=utc_now,
+        submit_command_admission=submit_command_admission,
+        dispatch_command_fn=dispatch_command,
+    )
+
+    # 1. Action Catalog
+    @router.get("/bff/actions", response_model=BffActionCatalogResponse)
+    async def get_action_catalog_endpoint(
+        authorization: Optional[str] = Header(default=None),
+    ) -> BffActionCatalogResponse:
+        """Return the canonical backend action catalog."""
+        identity = svc.extract_identity(authorization)
+        return svc.get_action_catalog(identity)
+
+    # 2. Operator Command Submission (legacy/v1)
+    @router.post("/api/v1/operator/commands", response_model=CommandSubmissionResponse, status_code=202)
+    async def submit_command(
+        background_tasks: BackgroundTasks,
+        payload: Dict[str, Any] = Body(...),
+        authorization: Optional[str] = Header(default=None),
+        x_mfa_token: Optional[str] = Header(default=None, alias="X-MFA-Token"),
+        x_trace_id: Optional[str] = Header(default=None, alias="X-Trace-Id"),
+        x_correlation_id: Optional[str] = Header(default=None, alias="X-Correlation-Id"),
+        x_request_id: Optional[str] = Header(default=None, alias="X-Request-Id"),
+        x_confirm_token: Optional[str] = Header(default=None, alias="X-Confirm-Token"),
+        x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+    ):
+        """Submit an operator command for async execution."""
+        return svc.submit_command(
+            background_tasks=background_tasks,
+            payload=payload,
+            authorization=authorization,
+            x_mfa_token=x_mfa_token,
+            x_trace_id=x_trace_id,
+            x_correlation_id=x_correlation_id,
+            x_request_id=x_request_id,
+            x_confirm_token=x_confirm_token,
+            x_idempotency_key=x_idempotency_key,
+        )
+
+    # 3. Command Status Lookup
+    @router.get("/api/v1/operator/commands/{command_id}", response_model=CommandStatusResponse)
+    async def get_command_status(
+        command_id: str,
+        authorization: Optional[str] = Header(default=None),
+    ) -> CommandStatusResponse:
+        """Poll for the status of a previously submitted command."""
+        identity = svc.extract_identity(authorization)
+        return svc.get_command_status(command_id, identity)
+
+    # 4. Final BFF Command Submission
+    @router.post("/bff/v1/commands", status_code=202)
+    async def submit_final_command(
+        background_tasks: BackgroundTasks,
+        payload: Dict[str, Any] = Body(...),
+        authorization: Optional[str] = Header(default=None),
+        x_mfa_token: Optional[str] = Header(default=None, alias="X-MFA-Token"),
+        x_trace_id: Optional[str] = Header(default=None, alias="X-Trace-Id"),
+        x_correlation_id: Optional[str] = Header(default=None, alias="X-Correlation-Id"),
+        x_request_id: Optional[str] = Header(default=None, alias="X-Request-Id"),
+        x_confirm_token: Optional[str] = Header(default=None, alias="X-Confirm-Token"),
+        idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+        x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+    ):
+        """Submit an operator command (final BFF contract)."""
+        return svc.submit_final_command(
+            background_tasks=background_tasks,
+            payload=payload,
+            authorization=authorization,
+            x_mfa_token=x_mfa_token,
+            x_trace_id=x_trace_id,
+            x_correlation_id=x_correlation_id,
+            x_request_id=x_request_id,
+            x_confirm_token=x_confirm_token,
+            idempotency_key=idempotency_key,
+            x_idempotency_key=x_idempotency_key,
+        )
+
+    # 5. Command Confirmation (submit token)
+    @router.post("/bff/command-confirmations", status_code=202)
+    async def bff_command_confirmation(
+        request: Request,
+        idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+        x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+        authorization: Optional[str] = Header(default=None),
+    ):
+        """BFF: submit a command confirmation token."""
+        identity = svc.extract_identity(authorization)
+        payload: Dict[str, Any] = {}
+        try:
+            payload = await request.json()
+        except Exception:
+            pass
+        return svc.submit_command_confirmation(
+            payload=payload,
+            identity=identity,
+            idempotency_key=idempotency_key,
+            x_idempotency_key=x_idempotency_key,
+        )
+
+    # 6. Command Confirmation Status Read
+    @router.get("/bff/command-confirmations/{token}")
+    async def bff_command_confirmation_status(
+        token: str,
+        authorization: Optional[str] = Header(default=None),
+    ):
+        """BFF: read the command-confirmation lifecycle state for a token."""
+        identity = svc.extract_identity(authorization)
+        return svc.get_command_confirmation_status(token=token, identity=identity)
+
+    # 7. Confirm Command by Token
+    @router.post("/bff/command-confirmations/{token}/confirm", status_code=202)
+    async def bff_confirm_command_by_token(
+        token: str,
+        request: Request,
+        response: Response,
+        idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+        x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+        authorization: Optional[str] = Header(default=None),
+        x_correlation_id: Optional[str] = Header(default=None, alias="X-Correlation-Id"),
+        x_request_id: Optional[str] = Header(default=None, alias="X-Request-Id"),
+        x_dry_run: Optional[str] = Header(default=None, alias="X-Dry-Run"),
+    ):
+        """BFF: confirm a pending high-risk command by its token."""
+        identity = svc.extract_identity(authorization)
+        payload: Dict[str, Any] = {}
+        try:
+            payload = await request.json()
+        except Exception:
+            pass
+        return svc.confirm_command_by_token(
+            token=token,
+            payload=payload,
+            identity=identity,
+            idempotency_key=idempotency_key,
+            x_idempotency_key=x_idempotency_key,
+            x_correlation_id=x_correlation_id,
+        )
+
+    # 8. Create Confirm Token
+    @router.post("/bff/confirm-tokens", status_code=201)
+    async def sem_create_confirm_token_command(
+        payload: Dict[str, Any] = Body(default_factory=dict),
+        authorization: Optional[str] = Header(default=None),
+        idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+        x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+    ):
+        """Create a new confirm token."""
+        identity = svc.extract_identity(authorization)
+        return svc.create_confirm_token(
+            payload=payload,
+            identity=identity,
+            idempotency_key=idempotency_key,
+            x_idempotency_key=x_idempotency_key,
+        )
+
+    # 9. Get Confirm Token Status
+    @router.get("/bff/confirm-tokens/{tokenId}")
+    async def sem_get_confirm_token(
+        tokenId: str,
+        authorization: Optional[str] = Header(default=None),
+    ):
+        """Read confirm token lifecycle status."""
+        identity = svc.extract_identity(authorization)
+        return svc.get_confirm_token(token_id=tokenId, identity=identity)
+
+    # 10. Redeem Confirm Token
+    @router.post("/bff/confirm-tokens/{tokenId}/redeem", status_code=202)
+    async def sem_redeem_confirm_token_command(
+        tokenId: str,
+        payload: Dict[str, Any] = Body(default_factory=dict),
+        authorization: Optional[str] = Header(default=None),
+        idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+        x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+    ):
+        """Redeem a confirm token."""
+        identity = svc.extract_identity(authorization)
+        return svc.redeem_confirm_token(
+            token_id=tokenId,
+            payload=payload,
+            identity=identity,
+            idempotency_key=idempotency_key,
+            x_idempotency_key=x_idempotency_key,
+        )
+
+    # 11. Delete Confirm Token
+    @router.delete("/bff/confirm-tokens/{tokenId}", status_code=202)
+    async def sem_delete_confirm_token_command(
+        tokenId: str,
+        payload: Dict[str, Any] = Body(default_factory=dict),
+        authorization: Optional[str] = Header(default=None),
+        idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+        x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+    ):
+        """Delete a confirm token."""
+        identity = svc.extract_identity(authorization)
+        return svc.delete_confirm_token(
+            token_id=tokenId,
+            payload=payload,
+            identity=identity,
+            idempotency_key=idempotency_key,
+            x_idempotency_key=x_idempotency_key,
         )
 
     return router
