@@ -1,7 +1,7 @@
 {
   "schema_version": "pantheon.agora-taiwan-market-session-freshness-review.v2",
   "task_id": "AGORA-TAIWAN-MARKET-SESSION-FRESHNESS-V1-20260829",
-  "generated_at": "2026-08-29T23:54:08Z",
+  "generated_at": "2026-08-30T00:16:45Z",
   "owner": "Codex",
   "reviewer": "Codex2",
   "status": "corrective_implementation_ready_for_exact_head_review",
@@ -10,17 +10,19 @@
     "original_pr": 5416,
     "original_merge_commit": "394eb050124d763db14ff89d2da01da70a75fb94",
     "corrective_pr": 5417,
-      "rejected_heads": [
-        "723e57ce41e68196b330387be021e1a8cdd925dd",
-        "5d3493c9feff4d2b818412d3269c62d1ddc94aea",
-        "2086aa2ed7b8514b568dcdddae30dd4fbde0b77c"
-      ],
-      "corrective_anchor_commits": [
-        "8c6c42d28",
-        "e15733d45",
-        "3b6321202",
-        "63936d6ad",
-        "e3bef9e79"
+    "rejected_heads": [
+      "723e57ce41e68196b330387be021e1a8cdd925dd",
+      "5d3493c9feff4d2b818412d3269c62d1ddc94aea",
+      "2086aa2ed7b8514b568dcdddae30dd4fbde0b77c",
+      "a8d7e86318bdd12207faf7fdebe0285aeebdf6f4"
+    ],
+    "corrective_anchor_commits": [
+      "8c6c42d28",
+      "e15733d45",
+      "3b6321202",
+      "63936d6ad",
+      "e3bef9e79",
+      "bd618b902"
     ],
     "exact_review_head": "bound_by_governed_handoff_after_this_manifest_is_committed"
   },
@@ -119,6 +121,10 @@
     {
       "finding": "A same-day official-looking close could be admitted before its own 13:30 Asia/Taipei cash session completed.",
       "resolution": "The shared evaluator now requires the event trade date's own session close to be at or before the decision clock. Exact pre-close tests reject through direct admission, paper-signal-producer, paper-fleet-reconciler, Agora readiness, and the deploy gate's shared evaluator argument contract."
+    },
+    {
+      "finding": "A same-day close was still admitted after 13:30 when its refresh receipt observed_at predated that session close.",
+      "resolution": "The shared evaluator now requires refresh_receipt_dt to be at or after the event trade date's own 13:30 Asia/Taipei close. The exact 09:00 receipt / 14:00 decision reproducer rejects as market_input_invalid through direct admission, paper-signal-producer, paper-fleet-reconciler and Agora readiness; the deploy contract proves it passes the same receipt clock into the shared evaluator."
     }
   ],
   "shared_decision": {
@@ -146,7 +152,7 @@
   },
   "validation": {
     "focused_command": ".venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_taiwan_official_connectors.py services/source_ingestion/tests/test_latest_market_snapshot.py services/execution/lean_runtime/test_paper_signal_producer.py services/paper_fleet_reconciler/test_paper_fleet_reconciler.py services/control-plane/bff/agora/test_operational_readiness.py scripts/test_source_ingest_deploy_diagnostics_contract.py",
-    "focused_result": "156 passed, 1 skipped, 6 subtests passed, 1 existing Starlette deprecation warning",
+    "focused_result": "160 passed, 1 skipped, 6 subtests passed, 1 existing Starlette deprecation warning in 48.01s",
     "syntax_commands": [
       ".venv-pantheon/bin/python3 -m py_compile services/execution/market_snapshot_admission.py services/source_ingestion/connectors/taiwan_official.py services/source_ingestion/requirement_state.py",
       "bash -n scripts/deploy_nonprod_vm.sh",
@@ -154,25 +160,27 @@
       "git diff --check"
     ],
     "syntax_result": "passed",
-    "broader_command": ".venv-pantheon/bin/python3 -m pytest -q services/execution/lean_runtime services/paper_fleet_reconciler services/source_ingestion/tests services/control-plane/bff/agora",
-    "broader_result": "1423 passed, 20 skipped, 40 subtests passed, 10 local-host failures, 9 warnings in 490.05s",
+    "broader_command": "PANTHEON_LIFECYCLE_OUTBOX_PATH=<task-temp-dir>/lifecycle-outbox.json .venv-pantheon/bin/python3 -m pytest -q services/execution/lean_runtime services/paper_fleet_reconciler services/source_ingestion/tests services/control-plane/bff/agora",
+    "broader_result": "1428 passed, 20 skipped, 40 subtests passed, 9 unchanged-module failures, 9 warnings in 395.29s",
     "broader_failure_classification": {
       "task_regressions": 0,
-      "local_host_failures": 10,
+      "unchanged_module_failures": 9,
       "unchanged_modules": [
         "services/execution/lean_runtime/test_devloop_wire.py",
         "services/execution/lean_runtime/test_paper_runtime_smoke.py",
         "services/execution/lean_runtime/paper_runtime.py"
       ],
       "observed_causes": [
-        "All 10 failures abort PaperRuntimeService.drain_once before telemetry/trade assertions because the default durable lifecycle outbox path /data/runtime/lifecycle-outbox is read-only in this worker host.",
-        "The same 10-test local-host class was recorded before this head; no failure module is changed by this task relative to origin/dev. A clean-runner Branch CI gate remains required on the pushed exact head."
+        "Two test_devloop_wire failures occur because the suite-wide writable PANTHEON_LIFECYCLE_OUTBOX_PATH override makes 15 independent runtimes share one pending outbox state, producing aggregate_type mismatch before telemetry/trade assertions.",
+        "Seven test_paper_runtime_smoke failures occur because that unchanged module's legacy _signal payload omits runtime_id and the current signal consumer fail-closes it before fill, bracket, PnL, or position assertions.",
+        "No failure module is changed by this task relative to origin/dev. A clean-runner Branch CI gate remains required on the pushed exact head."
       ],
       "scope_proof": "No broader-failure module is changed by this corrective PR relative to origin/dev."
     },
     "reviewer_required_negative_cases": [
       "fabricated Saturday event trade date is rejected",
       "a same-day close is rejected before its own 13:30 Asia/Taipei cash session completes across all shared consumers",
+      "a same-day close evaluated after 13:30 is rejected when its refresh receipt predates that session close across all shared consumers and the deploy gate's shared receipt-clock contract",
       "governed holiday event trade date is rejected and a covered event date lacking an explicit trading record is unverifiable",
       "real TaiwanOfficialMarketDatasetAdapter records carry exact covered TWSE evidence but never relabel it for TPEx or uncovered dates",
       "checksummed Source persisted state and /api/source-ingest/snapshots/latest return adapter-owned calendar_evidence; a new receipt for unchanged closes replaces observed_at",
