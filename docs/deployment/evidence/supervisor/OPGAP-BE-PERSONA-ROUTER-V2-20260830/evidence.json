@@ -1,0 +1,73 @@
+{
+  "schema_version": "pantheon.supervisor-evidence.v1",
+  "task_id": "OPGAP-BE-PERSONA-ROUTER-V2-20260830",
+  "title": "Migrate Persona domain routes and lifecycle management",
+  "program_id": "PANTHEON-FULL-OPERATION-GAP-CLOSURE-20260830",
+  "design_unit": "SD-OPGAP-BE-PERSONA-ROUTER",
+  "recorded_at": "2026-08-30T20:50:00Z",
+  "ai_name": "Antigravity2",
+  "owner": "Antigravity2",
+  "reviewer": "Codex2",
+  "target_repo": "pantheon",
+  "task_class": "functional",
+  "summary_zh": "\u5c07 Persona domain 49 \u500b route decorators \u79fb\u81f3 personas/router.py\uff0c\u89e3\u8026 main.py \u4f9d\u8cf4\u3002",
+  "artifacts": [
+    "services/control-plane/bff/personas/__init__.py",
+    "services/control-plane/bff/personas/router.py",
+    "services/control-plane/bff/personas/service.py",
+    "services/control-plane/bff/ports/read_surface_ports.py",
+    "services/control-plane/bff/tests/test_persona_router.py",
+    "docs/deployment/evidence/supervisor/OPGAP-BE-PERSONA-ROUTER-V2-20260830/evidence.json",
+    "docs/deployment/evidence/supervisor/OPGAP-BE-PERSONA-ROUTER-V2-20260830/evidence.sha256"
+  ],
+  "scope": {
+    "owned": [
+      "services/control-plane/bff/personas/__init__.py",
+      "services/control-plane/bff/personas/router.py",
+      "services/control-plane/bff/personas/service.py",
+      "services/control-plane/bff/ports/read_surface_ports.py",
+      "services/control-plane/bff/tests/test_persona_router.py",
+      "docs/deployment/evidence/supervisor/OPGAP-BE-PERSONA-ROUTER-V2-20260830/evidence.json",
+      "docs/deployment/evidence/supervisor/OPGAP-BE-PERSONA-ROUTER-V2-20260830/evidence.sha256"
+    ],
+    "not_changing": [
+      "services/control-plane/bff/main.py (deferred to OPGAP-BFF-MAIN-ASSEMBLY-20260830)",
+      "services/source_ingestion",
+      "services/telemetry",
+      "execute-plans frontend"
+    ],
+    "composes_with": [
+      "OPGAP-DEVTOOL-TARGET-REPO-BRIDGE-V2-20260830",
+      "ACG-RS-PERSONA-CAPITAL-20260828",
+      "OPGAP-BFF-MAIN-ASSEMBLY-20260830"
+    ]
+  },
+  "contracts": {
+    "persona_routes_in_domain_router": "All 49 Persona domain route decorators and 45 unique handlers operate in services/control-plane/bff/personas/router.py.",
+    "zero_reverse_imports": "Zero reverse imports of main.py or bff_main exist across the personas package.",
+    "persona_service_layer": "Dedicated PersonaService and create_personas_router factory facilitate standalone dependency injection and unified domain lifecycle handling.",
+    "capital_ports_preservation": "Reusable persona capital port logic from ACG-RS-PERSONA-CAPITAL-20260828 is preserved and cleanly wired into read_surface_ports and personas service."
+  },
+  "verification": {
+    "test_suites": [
+      "services/control-plane/bff/tests/test_persona_router.py",
+      "services/control-plane/bff/tests/test_persona_*.py"
+    ],
+    "verification_commands": [
+      ".venv-pantheon/bin/python3 -m pytest -v services/control-plane/bff/tests/test_persona_router.py",
+      ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_persona_*.py services/control-plane/bff/tests/test_persona_router.py"
+    ],
+    "status": "PASS"
+  },
+  "review": {
+    "status": "ready_for_independent_review",
+    "reviewer": "Codex2",
+    "required_checks": [
+      "verify all 49 persona domain route decorators are registered on personas/router.py",
+      "verify zero reverse imports of main.py across services/control-plane/bff/personas/",
+      "verify ReadSurfacePorts and PersonaService composition without circular dependencies",
+      "verify 100% pass rate on test_persona_router.py and all existing persona test suites",
+      "bind this manifest path (docs/deployment/evidence/supervisor/OPGAP-BE-PERSONA-ROUTER-V2-20260830/evidence.json) in the canonical approve command"
+    ]
+  }
+}
