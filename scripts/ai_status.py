@@ -7435,7 +7435,7 @@ GITHUB_REVIEW_BRIDGE_KEY = "github_review_bridge"
 OPERATOR_ACCEPTANCE_KEY = "operator_acceptance"
 REVIEW_DECISION_INTENT_KEY = "review_decision_intent"
 REVIEW_DECISION_INTENT_SCHEMA_VERSION = 1
-# Supervisor-owned lost-lease recovery receipt (rewrite.review_intent_recovery).
+# Supervisor-owned lost-lease recovery receipt (.orchestrator/supervisor.py).
 # Excluded from review_decision_task_digest alongside the intent itself so a
 # supervisor-minted receipt can never invalidate the frozen reservation.
 REVIEW_DECISION_INTENT_RECOVERY_KEY = "review_decision_intent_recovery"

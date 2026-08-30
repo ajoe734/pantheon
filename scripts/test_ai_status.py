@@ -3520,8 +3520,8 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
     def test_supervisor_recovery_marker_never_perturbs_the_frozen_digest(self) -> None:
         """A supervisor-minted lost-lease recovery receipt is inert to the CAS.
 
-        The supervisor's own lost-lease recovery lane (rewrite.
-        review_intent_recovery) durably marks a task with a
+        The supervisor's own lost-lease recovery lane
+        (.orchestrator/supervisor.py) durably marks a task with a
         ``review_decision_intent_recovery`` receipt while a
         ``review_decision_intent`` is still pending. That receipt must never
         change what ``review_decision_task_digest`` returns -- otherwise
