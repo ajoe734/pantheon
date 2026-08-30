@@ -88,6 +88,22 @@ class PersonaRegistryReadsPort:
         store = self._require_store()
         return store.get_capability_snapshot_for_persona(persona_id)
 
+    def get_capability_snapshot(
+        self,
+        snapshot_id: Optional[str],
+    ) -> Optional[Dict[str, Any]]:
+        if not snapshot_id:
+            return None
+        return self._require_store().get_capability_snapshot(snapshot_id)
+
+    def get_capability_snapshot_for_persona(
+        self,
+        persona_id: Optional[str],
+    ) -> Optional[Dict[str, Any]]:
+        if not persona_id:
+            return None
+        return self._require_store().get_capability_snapshot_for_persona(persona_id)
+
 
 # ---------------------------------------------------------------------------
 # Training Session Trainer / Replay Port
@@ -258,6 +274,18 @@ class PersonaTrainingDomainPort:
 
     def get_persona_capabilities(self, persona_id: str) -> Optional[Dict[str, Any]]:
         return self.persona.get_persona_capabilities(persona_id)
+
+    def get_capability_snapshot(
+        self,
+        snapshot_id: Optional[str],
+    ) -> Optional[Dict[str, Any]]:
+        return self.persona.get_capability_snapshot(snapshot_id)
+
+    def get_capability_snapshot_for_persona(
+        self,
+        persona_id: Optional[str],
+    ) -> Optional[Dict[str, Any]]:
+        return self.persona.get_capability_snapshot_for_persona(persona_id)
 
     # Trainer delegates
     def create_trainer_session(self, **kwargs: Any) -> Optional[Dict[str, Any]]:

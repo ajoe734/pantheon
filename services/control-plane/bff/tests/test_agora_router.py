@@ -181,6 +181,11 @@ def _client(monkeypatch) -> TestClient:
     return TestClient(bff_main.app, raise_server_exceptions=False)
 
 
+def _install_agora_store(monkeypatch, store) -> None:
+    monkeypatch.setattr(bff_main, "read_store", store)
+    monkeypatch.setattr(bff_main, "persona_write_owner", store)
+
+
 # --------------------------------------------------------------------------- #
 # Import smoke tests
 # --------------------------------------------------------------------------- #
@@ -370,7 +375,7 @@ def test_agora_servant_ensure_provisions_profile(monkeypatch, tmp_path):
             "workspace_ref": f"/home/node/.openclaw/workspaces/{persona_id}",
         }
 
-    monkeypatch.setattr(bff_main, "read_store", store)
+    _install_agora_store(monkeypatch, store)
     monkeypatch.setattr(bff_main, "_ensure_agora_servant_openclaw_agent", fake_sync)
     client = _client(monkeypatch)
     resp = client.post(
@@ -406,7 +411,7 @@ def test_agora_servant_ensure_provisions_profile(monkeypatch, tmp_path):
 
 def test_agora_servant_ensure_reconciles_existing_profile(monkeypatch, tmp_path):
     store = _create_test_agora_store(allow_fallback=True)
-    monkeypatch.setattr(bff_main, "read_store", store)
+    _install_agora_store(monkeypatch, store)
 
     calls = []
 
@@ -449,7 +454,7 @@ def test_agora_servant_ensure_reconciles_existing_profile(monkeypatch, tmp_path)
 def test_ensured_servant_is_exactly_eligible_for_paper_persona_opinion(monkeypatch, tmp_path):
     """The supported proof path uses ensure, not full trading Persona provisioning."""
     store = _create_test_agora_store(allow_fallback=False)
-    monkeypatch.setattr(bff_main, "read_store", store)
+    _install_agora_store(monkeypatch, store)
     expected_persona_id = "agora-servant-" + hashlib.sha256(
         "pantheon-dev\0agora-test-user\0agora_servant".encode("utf-8")
     ).hexdigest()[:20]
@@ -538,9 +543,8 @@ def test_ensured_servant_is_exactly_eligible_for_paper_persona_opinion(monkeypat
 
 
 def test_agora_servant_ensure_requires_idempotency_headers(monkeypatch, tmp_path):
-    monkeypatch.setattr(
-        bff_main,
-        "read_store",
+    _install_agora_store(
+        monkeypatch,
         _create_test_agora_store(allow_fallback=True),
     )
     monkeypatch.setattr(bff_main, "_ensure_agora_servant_openclaw_agent", lambda persona: {})
@@ -552,7 +556,7 @@ def test_agora_servant_ensure_requires_idempotency_headers(monkeypatch, tmp_path
 
 def test_agora_servant_ensure_viewer_cannot_create_persona_or_capability_snapshot(monkeypatch, tmp_path):
     store = _create_test_agora_store(allow_fallback=False)
-    monkeypatch.setattr(bff_main, "read_store", store)
+    _install_agora_store(monkeypatch, store)
     sync_calls = []
     monkeypatch.setattr(
         bff_main,
@@ -581,7 +585,7 @@ def test_agora_servant_ensure_viewer_cannot_create_persona_or_capability_snapsho
 
 def test_agora_servant_sync_failure_leaves_new_persona_ineligible(monkeypatch, tmp_path):
     store = _create_test_agora_store(allow_fallback=False)
-    monkeypatch.setattr(bff_main, "read_store", store)
+    _install_agora_store(monkeypatch, store)
 
     def fail_sync(_persona):
         raise RuntimeError("OpenClaw unavailable")

@@ -95,6 +95,7 @@ def create_agora_router(
     sync_servant_agent: Callable[[Dict[str, Any]], Dict[str, Any]],
     canonical_context_ref_resolver: Optional[Callable[..., Any]] = None,
     get_trade_journey_store: Callable[[], Any] = lambda: None,
+    get_persona_write_owner: Optional[Callable[[], Any]] = None,
 ) -> APIRouter:
     """Return the Agora top-level APIRouter.
 
@@ -208,6 +209,7 @@ def create_agora_router(
         require_write_role=require_write_role,
         get_read_store=get_read_store,
         sync_servant_agent=sync_servant_agent,
+        get_persona_write_owner=get_persona_write_owner,
     ))
     router.include_router(create_strategy_workshop_router(
         **_kw,

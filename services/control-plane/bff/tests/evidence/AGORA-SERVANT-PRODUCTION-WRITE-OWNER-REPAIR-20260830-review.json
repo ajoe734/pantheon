@@ -1,0 +1,124 @@
+{
+  "schema_version": 1,
+  "task_id": "AGORA-SERVANT-PRODUCTION-WRITE-OWNER-REPAIR-20260830",
+  "generated_at": "2026-08-30T14:07:02Z",
+  "evidence_policy": "observed_immutable_only",
+  "owner": "Codex",
+  "reviewer": "Antigravity",
+  "review_status": "pending_independent_exact_head_review",
+  "repository": "ajoe734/pantheon",
+  "branch": "task/AGORA-SERVANT-PRODUCTION-WRITE-OWNER-REPAIR-20260830",
+  "source_base_sha": "072ee68bbba8bbffb84a188ccf4d50d67429a7a8",
+  "last_committed_anchor_sha": "9644a6b5e42a39a31dda7b4b226dd36a764a25c9",
+  "delivery_boundary": {
+    "persona_owner": "The deployed control-plane Persona service is the only process that opens Persona Registry and capability snapshot stores.",
+    "bff": "The BFF uses an authenticated, timeout-bounded HTTP port configured by PERSONA_URL and PANTHEON_PERSONA_SERVICE_TOKEN.",
+    "read_surface": "ReadSurfacePorts contains only read delegates and exposes no Persona create, update, or capability upsert method.",
+    "execution_authority": "Agora servant Personas remain user-private, paper-opinion-only, and carry execution_authority=none."
+  },
+  "acceptance_matrix": [
+    {
+      "criterion": "Production create_read_surface_ports and mounted Agora router use a separate owner without a fake write store",
+      "evidence": "test_production_router_uses_authenticated_http_owner_and_read_only_surface",
+      "status": "passed"
+    },
+    {
+      "criterion": "Stable tenant/user Persona create and replay",
+      "evidence": "The production route test replays the same idempotency semantics and observes one stable Persona identity and one owner record.",
+      "status": "passed"
+    },
+    {
+      "criterion": "ReadSurfacePorts remains read-only",
+      "evidence": "The production test asserts the absence of create_persona, update_persona, and upsert_persona_capability_snapshot on ReadSurfacePorts.",
+      "status": "passed"
+    },
+    {
+      "criterion": "Capability persistence survives a fresh Persona service and BFF port",
+      "evidence": "test_service_restart_and_fresh_bff_port_preserve_identity_and_capability stops the TCP service, constructs fresh owner stores and a fresh BFF HTTP port, then reads and replays the durable record.",
+      "status": "passed"
+    },
+    {
+      "criterion": "Tenant isolation",
+      "evidence": "test_servant_identity_and_session_access_are_tenant_isolated_over_http_owner observes distinct tenant identities and a typed 403 CROSS_USER_ACCESS_FORBIDDEN response.",
+      "status": "passed"
+    },
+    {
+      "criterion": "No trade, order, capital, live, or execution authority",
+      "evidence": "Production readback asserts research_only canonical lifecycle, user_private ownership, paper environment ceiling, persona_opinion capability, and execution_authority=none.",
+      "status": "passed"
+    },
+    {
+      "criterion": "Typed dependency failures",
+      "evidence": "Unreachable Persona TCP service and a 503 capability-owner response map to DEPENDENCY_UNAVAILABLE with exact precondition_failed values; capability failure leaves the Persona in draft.",
+      "status": "passed"
+    },
+    {
+      "criterion": "BFF does not import Persona owner stores",
+      "evidence": "test_bff_owner_port_does_not_import_or_open_persona_application_stores and source inspection prove the BFF port has no services.persona or owner-builder import.",
+      "status": "passed"
+    },
+    {
+      "criterion": "Deployed service exposes authenticated owner endpoints",
+      "evidence": "test_deployed_main_exposes_authenticated_owner_api_and_restart_readback exercises services/control-plane/persona/main.py with correct and incorrect service credentials and a fresh service app.",
+      "status": "passed"
+    },
+    {
+      "criterion": "Production compose config supplies URL, credential, durable Postgres owner configuration, and acyclic startup direction",
+      "evidence": "Both root and control compose files render successfully; Persona depends on Postgres while operator-bff depends on Persona.",
+      "status": "passed"
+    }
+  ],
+  "validation": [
+    {
+      "command": "pytest -q services/control-plane/bff/tests/test_agora_servant_production_write_owner.py services/control-plane/persona/test_main.py tests/persona_capital_write_owner/test_persistent_owners.py -W error -W ignore::DeprecationWarning -W ignore::UserWarning --tb=short",
+      "result": "27 passed, 3 subtests passed",
+      "warnings_emitted": 0
+    },
+    {
+      "command": "pytest -q services/control-plane/bff/tests/test_agora_router.py services/control-plane/bff/tests/test_agora_servant_sessions.py services/control-plane/bff/tests/test_agora_servant_production_write_owner.py services/control-plane/bff/tests/test_persona_training_ports.py services/control-plane/bff/tests/test_read_surface_port_cutover.py services/control-plane/tests/agora/test_cross_user_isolation.py services/control-plane/persona/test_main.py tests/persona_capital_write_owner/test_persistent_owners.py -W error -W ignore::DeprecationWarning -W ignore::UserWarning --tb=short",
+      "result": "92 passed, 3 subtests passed",
+      "warnings_emitted": 0
+    },
+    {
+      "command": "pytest -q services/control-plane/bff/tests/test_agora*.py --deselect services/control-plane/bff/tests/test_agora_governed_proposals.py::test_approval_accepts_matching_canonical_decision --deselect services/control-plane/bff/tests/test_agora_research_run_projection.py::test_research_run_detail_returns_schema_projection --deselect services/control-plane/bff/tests/test_agora_research_run_projection.py::test_research_run_list_artifacts_and_sse_are_canonical -W error -W ignore::DeprecationWarning -W ignore::UserWarning --tb=short",
+      "result": "266 passed, 8 skipped, 3 deselected",
+      "warnings_emitted": 0,
+      "duration_seconds": 330.39
+    },
+    {
+      "command": "pytest -q services/control-plane/bff/tests/test_agora*.py -W error -W ignore::DeprecationWarning -W ignore::UserWarning --tb=short",
+      "result": "266 passed, 8 skipped, 3 failed",
+      "warnings_emitted": 0,
+      "baseline_comparison": "All three failures reproduce exactly at source base 072ee68bbba8bbffb84a188ccf4d50d67429a7a8: test_approval_accepts_matching_canonical_decision, test_research_run_detail_returns_schema_projection, and test_research_run_list_artifacts_and_sse_are_canonical."
+    },
+    {
+      "command": "docker compose -f docker-compose.yml config --quiet",
+      "result": "passed"
+    },
+    {
+      "command": "PANTHEON_PERSONA_SERVICE_TOKEN=<test> PANTHEON_OPENCLAW_GATEWAY_ADAPTER_URL=<test-url> PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN=<test> docker compose -f docker-compose.control.yml config --quiet",
+      "result": "passed"
+    },
+    {
+      "command": "python3 -m py_compile services/control-plane/bff/ports/persona_write_owner.py services/control-plane/persona/main.py services/persona/write_owner.py",
+      "result": "passed"
+    },
+    {
+      "command": "git diff --check",
+      "result": "passed"
+    }
+  ],
+  "warning_policy": "Task code warnings are errors. Known dependency DeprecationWarning and Starlette TestClient UserWarning categories are ignored explicitly; no warning output was emitted by the recorded task suites.",
+  "delivery": {
+    "pr": null,
+    "exact_head_sha": null,
+    "merge_method_required": "MERGE",
+    "merge_sha": null,
+    "note": "PR number and exact head are frozen by the canonical handoff record after this manifest is committed. Merge remains pending independent review."
+  },
+  "non_actions": [
+    "No production or dev deployment was performed.",
+    "No live trading, broker, order, capital, or execution setting was enabled.",
+    "No reviewer approval or merge evidence is claimed by this owner manifest."
+  ]
+}
