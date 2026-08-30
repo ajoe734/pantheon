@@ -98,6 +98,26 @@ def test_projects_weekend_non_official_lineage_as_stale() -> None:
     assert market["stale"] is True
 
 
+def test_rejects_missing_source_id_as_non_official_lineage() -> None:
+    # A record with empty/missing source_id fails closed as non-official lineage
+    stores = project(
+        [_record("", "2330", "2026-08-28", 920)],
+        connector_freshness={
+            "status": "fresh",
+            "last_success_at": "2026-08-30T01:00:00Z",
+            "next_run_at": "2026-08-31T01:00:00Z",
+            "stale_threshold_seconds": 86400,
+            "last_typed_failure": None,
+        },
+        now=datetime(2026, 8, 30, 1, tzinfo=timezone.utc),
+    )
+    market = stores["agora_watchlist"]["market-2330"]
+    assert market["freshnessStatus"] == "stale"
+    assert market["stale"] is True
+    assert market["freshness"]["lastTypedFailure"]["category"] == "lineage"
+    assert market["freshness"]["lastTypedFailure"]["code"] == "market_input_non_official_lineage"
+
+
 def test_projects_weekend_missing_refresh_receipt_as_stale() -> None:
     # Friday 2026-08-28 close on Sunday 2026-08-30 without refresh receipt must fail closed
     stores = project(

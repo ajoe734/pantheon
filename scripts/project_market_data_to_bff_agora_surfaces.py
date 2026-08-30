@@ -122,11 +122,7 @@ def _freshness_metadata(
 
     source_mismatch = False
     if accepted_source_id:
-        if not sid:
-            source_mismatch = True
-            if typed_failure is None:
-                typed_failure = {"category": "receipt_binding", "code": "missing_record_source", "retryable": False}
-        elif str(sid) != str(accepted_source_id):
+        if not sid or str(sid) != str(accepted_source_id):
             source_mismatch = True
             if typed_failure is None:
                 typed_failure = {"category": "receipt_binding", "code": "mismatched_source", "retryable": False}

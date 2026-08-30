@@ -1,7 +1,7 @@
 {
   "schema_version": "pantheon.agora-projection-receipt-binding-review.v1",
   "task_id": "AGORA-PROJECTION-RECEIPT-BINDING-V1-20260830",
-  "generated_at": "2026-08-30T03:32:50Z",
+  "generated_at": "2026-08-30T03:52:00Z",
   "owner": "Antigravity2",
   "reviewer": "Codex2",
   "status": "implementation_complete_ready_for_exact_head_review",
@@ -28,10 +28,10 @@
     "root_cause": "The one-shot Agora surface projector (scripts/project_market_data_to_bff_agora_surfaces.py) fetched raw source records from /api/source-ingest/source-records and only extracted the freshness dictionary from /api/source-ingest/controller/readback. Because the projector did not consume the full controller readback to bind the authoritative accepted ingest_run_id from latest_receipt and latest_source_record from the bounded refresh, records without explicit metadata run IDs fell back to None or stale IDs, and symbol selection did not prioritize the accepted receipt ingest run and source identity. Consequently, verify_bounded_source_refresh_readback in scripts/deploy_nonprod_vm.sh failed when asserting row.connectorId == connector_id and row.ingestRunId == run_id and row.sourceId == source_id."
   },
   "resolution_summary": {
-    "projector_binding": "Updated scripts/project_market_data_to_bff_agora_surfaces.py to consume the accepted receipt ingest_run_id and latest_source_record identity from the controller readback, emitting the record's authentic ingestRunId and sourceId without synthesizing provenance onto mismatched rows, and enforcing typed fail-closed rejection for missing record run (missing_record_run), run mismatch (mismatched_run), missing record source (missing_record_source), or source mismatch (mismatched_source).",
+    "projector_binding": "Updated scripts/project_market_data_to_bff_agora_surfaces.py to consume the accepted receipt ingest_run_id and latest_source_record identity from the controller readback, emitting the record's authentic ingestRunId and sourceId without synthesizing provenance onto mismatched rows, and enforcing typed fail-closed rejection for missing record run (missing_record_run), run mismatch (mismatched_run), or source mismatch (mismatched_source).",
     "runtime_tiebreaker": "Refactored services/source_ingestion/runtime.py::_latest_source_record_by_connector to remove hardcoded symbols, dynamically respect the active paper symbol contract from SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS, and prioritize accepted receipt runs, primary price daily datasets, active symbols, and provider event time before creation time tie-breaks in the record ordering key.",
-    "fail_closed_boundaries": "Enforced fail-closed behavior with typed reasons for missing receipt (missing_refresh_receipt), unparsable receipt (unparsable_refresh_receipt), missing record run (missing_record_run), mismatched run (mismatched_run), missing record source (missing_record_source), mismatched source (mismatched_source), mismatched connector (mismatched_connector), non-official lineage (market_input_non_official_lineage), unverifiable calendar evidence (market_input_calendar_unverifiable), and future timestamps (future_timestamp).",
-    "tests": "Added deterministic tests in scripts/test_project_market_data_to_bff_agora_surfaces.py and services/source_ingestion/tests/test_runtime_latest_source_record.py covering exact typed failures, actual record ingestRunId and sourceId provenance without synthesis, missing record run rejection, same-run mismatched source ID rejection (mismatched_source), non-hardcoded priority symbols, accepted receipt run priority, price dataset priority, newer provider event time priority over later created historical records, and priority of binding mismatch over pre-existing freshness failure."
+    "fail_closed_boundaries": "Enforced fail-closed behavior with typed reasons for missing receipt (missing_refresh_receipt), unparsable receipt (unparsable_refresh_receipt), missing record run (missing_record_run), mismatched run (mismatched_run), mismatched source (mismatched_source), mismatched connector (mismatched_connector), non-official lineage (market_input_non_official_lineage), unverifiable calendar evidence (market_input_calendar_unverifiable), and future timestamps (future_timestamp).",
+    "tests": "Added deterministic tests in scripts/test_project_market_data_to_bff_agora_surfaces.py and services/source_ingestion/tests/test_runtime_latest_source_record.py covering exact typed failures, actual record ingestRunId and sourceId provenance without synthesis, missing record run rejection, same-run mismatched source ID rejection (mismatched_source), missing source ID rejection as non-official lineage (market_input_non_official_lineage), non-hardcoded priority symbols, accepted receipt run priority, price dataset priority, newer provider event time priority over later created historical records, and priority of binding mismatch over pre-existing freshness failure."
   },
   "fail_closed_boundaries": [
     "Stale weekday data without valid holiday evidence is rejected as market_input_stale / source_data_stale.",
@@ -43,11 +43,11 @@
   ],
   "validation": {
     "focused_suite": "pytest -v scripts/test_project_market_data_to_bff_agora_surfaces.py scripts/test_source_ingest_deploy_diagnostics_contract.py services/source_ingestion/tests/test_runtime_latest_source_record.py",
-    "focused_result": "32 passed in 6.28s",
+    "focused_result": "33 passed in 6.28s",
     "broader_source_suite": "pytest -q services/source_ingestion/tests/",
-    "broader_source_result": "850 passed, 1 skipped, 5 warnings in 280.18s",
+    "broader_source_result": "851 passed, 1 skipped, 5 warnings in 230.54s",
     "bff_agora_suite": "pytest -q services/control-plane/bff/tests/test_agora_router.py services/control-plane/bff/test_bff_agora_core_contract.py services/control-plane/bff/test_bff_b2_005_agora_canonical_aliases.py",
-    "bff_agora_result": "28 passed, 15 warnings in 20.97s",
+    "bff_agora_result": "28 passed, 15 warnings in 22.80s",
     "syntax_check": "py_compile and git diff clean"
   },
   "release_closeout_gate": {
