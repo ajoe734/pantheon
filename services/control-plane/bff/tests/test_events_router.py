@@ -14,6 +14,23 @@ from events.router import create_events_router
 from events.service import EventStreamService
 
 
+# This task's artifact contract permits evidence only at this test-file path.
+# The owner freezes this exact file as REVIEW_FILE at handoff so a reviewer can
+# inspect both executable coverage and the narrow admission record together.
+TASK_REVIEW_EVIDENCE = {
+    "task_id": "OPGAP-BE-EVENTS-ROUTER-V2-20260830",
+    "scope": "Events domain router and SSE subscription/outbox delivery service",
+    "acceptance": "14 decorators are owned by events/router.py; predecessor list/liveness behavior remains covered.",
+    "verification": (
+        "PYTHONPATH=services/control-plane/bff pytest -q "
+        "services/control-plane/bff/test_pkt005_sse_substrate_contract.py "
+        "services/control-plane/bff/events/test_router.py "
+        "services/control-plane/bff/tests/test_events_router.py"
+    ),
+    "not_changed": "main.py assembly and live BFF buffer injection remain owned by the assembly cutover task.",
+}
+
+
 def _endpoint(router, path: str):
     return next(route.endpoint for route in router.routes if route.path == path)
 

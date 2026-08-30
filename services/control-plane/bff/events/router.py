@@ -3,6 +3,7 @@
 Consolidates:
   - GET /bff/events: authenticated paginated event/audit feed with telemetry and audit filtering
   - GET /bff/events/stream: authenticated replay-capable SSE stream / unauthenticated liveness stream
+  - /api/v1/stream plus ten execute-plans compatibility subscriptions and internal SSE delivery
 """
 from __future__ import annotations
 
