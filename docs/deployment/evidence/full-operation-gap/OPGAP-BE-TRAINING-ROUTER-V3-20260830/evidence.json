@@ -61,10 +61,11 @@
     "commands": [
       ".venv-pantheon/bin/python -m pytest -ra services/control-plane/bff/tests/test_training_router.py",
       ".venv-pantheon/bin/python -m pytest -ra services/control-plane/bff/test_trn002_trainer_session_contract.py",
-      ".venv-pantheon/bin/python -m pytest -ra services/control-plane/bff/test_trn003_rapid_eval_contract.py services/control-plane/bff/test_tw01_teaching_dialog_contract.py services/control-plane/bff/test_tw02_parameter_controls_contract.py services/control-plane/bff/test_tw03_before_after_compare_contract.py services/control-plane/bff/test_tw04_teaching_replay_contract.py"
+      ".venv-pantheon/bin/python -m pytest -ra services/control-plane/bff/test_trn003_rapid_eval_contract.py services/control-plane/bff/test_tw01_teaching_dialog_contract.py services/control-plane/bff/test_tw02_parameter_controls_contract.py",
+      ".venv-pantheon/bin/python -m pytest -ra services/control-plane/bff/test_tw03_before_after_compare_contract.py services/control-plane/bff/test_tw04_teaching_replay_contract.py"
     ],
     "result": "PASS",
-    "details": "The standalone ownership suite passed 2/2. Existing focused Training contract suites were rerun against the V3 extraction with no recorded failures."
+    "details": "The standalone ownership suite passed 2/2; trainer session passed 27/27; rapid-eval, dialog, and controls passed 23/23; preview and replay passed 38/38 (90 tests total)."
   },
   "review_handoff": {
     "status": "ready_for_independent_review",
