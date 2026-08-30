@@ -1334,6 +1334,7 @@ class SourceIngestionRuntime:
             "source_dataset",
             "venue",
             "market",
+            "symbol",
             "event_time",
             "available_time",
             "api_endpoint",

@@ -76,6 +76,7 @@ def _freshness_metadata(
     calendar_evidence: dict[str, Any] | None = None,
     accepted_run_id: str | None = None,
     record_run_id: str | None = None,
+    accepted_source_id: str | None = None,
 ) -> dict[str, Any]:
     parsed_source_timestamp = _parse_timestamp(source_timestamp)
     if not str(source_timestamp or "").strip():
@@ -125,6 +126,17 @@ def _freshness_metadata(
             if typed_failure is None:
                 typed_failure = {"category": "receipt_binding", "code": "mismatched_run", "retryable": False}
 
+    source_mismatch = False
+    if accepted_source_id:
+        if not sid:
+            source_mismatch = True
+            if typed_failure is None:
+                typed_failure = {"category": "receipt_binding", "code": "missing_record_source", "retryable": False}
+        elif str(sid) != str(accepted_source_id):
+            source_mismatch = True
+            if typed_failure is None:
+                typed_failure = {"category": "receipt_binding", "code": "mismatched_source", "retryable": False}
+
     tw_stale = None
     if parsed_source_timestamp is not None and source_timestamp_status == "valid" and not lineage_invalid:
         last_success_at_str = connector_freshness.get("last_success_at")
@@ -160,7 +172,7 @@ def _freshness_metadata(
                 if typed_failure is None:
                     typed_failure = {
                         "category": "market_session",
-                        "code": "unverifiable_calendar",
+                        "code": "market_input_calendar_unverifiable",
                         "retryable": False,
                         "detail": str(exc),
                     }
@@ -178,6 +190,7 @@ def _freshness_metadata(
             or tw_stale
             or lineage_invalid
             or run_mismatch
+            or source_mismatch
         )
     else:
         stale = (
@@ -188,6 +201,7 @@ def _freshness_metadata(
             or age_seconds > threshold
             or lineage_invalid
             or run_mismatch
+            or source_mismatch
         )
     return {
         "schemaVersion": "agora_source_freshness.v1",
@@ -254,6 +268,7 @@ def project(
         or ""
     )
     accepted_source_id = str(latest_source_record.get("source_id") or "")
+    accepted_symbol = ""
     if latest_source_record:
         prov = (
             latest_source_record.get("provenance")
@@ -263,6 +278,11 @@ def project(
         prov_run = str(prov.get("source_ingest_run_id") or "")
         if prov_run and not accepted_run_id:
             accepted_run_id = prov_run
+        accepted_symbol = str(prov.get("symbol") or latest_source_record.get("symbol") or "")
+        if not accepted_symbol and accepted_source_id.startswith("tw-official:"):
+            parts = accepted_source_id.split(":")
+            if len(parts) >= 4:
+                accepted_symbol = parts[3]
 
     captured_at = now or datetime.now(timezone.utc)
     if captured_at.tzinfo is None:
@@ -307,6 +327,14 @@ def project(
         cal_ev = metadata.get("calendar_evidence")
         if cal_ev is None and isinstance(metadata.get("normalized_row"), dict):
             cal_ev = metadata["normalized_row"].get("calendar_evidence")
+        target_accepted_source = (
+            accepted_source_id
+            if (
+                accepted_source_id
+                and (not accepted_symbol or accepted_symbol.upper() == symbol.upper())
+            )
+            else None
+        )
         freshness = _freshness_metadata(
             source_timestamp=source_timestamp,
             connector_freshness=freshness_readback,
@@ -317,6 +345,7 @@ def project(
             calendar_evidence=cal_ev,
             accepted_run_id=accepted_run_id or None,
             record_run_id=record_run_id,
+            accepted_source_id=target_accepted_source,
         )
         common = {
             "symbol": symbol,
