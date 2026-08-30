@@ -406,11 +406,16 @@ def _make_store(
 
     def create_persona(**kwargs: Any) -> dict[str, Any]:
         persona_id = str(kwargs["persona_id"])
+        tenant_id = str(kwargs["tenant_id"]).strip()
+        if not tenant_id:
+            raise ValueError("admitted Persona fixtures require an explicit tenant_id")
         metadata = deepcopy(kwargs.get("metadata") or {})
         metadata.setdefault("owner", kwargs["actor_id"])
+        metadata["tenant_id"] = tenant_id
         record = {
             "id": persona_id,
             "persona_id": persona_id,
+            "tenant_id": tenant_id,
             "name": kwargs["name"],
             "owner": kwargs["actor_id"],
             "created_by": kwargs["actor_id"],
@@ -584,6 +589,7 @@ def test_management_persona_fleet_prefers_declared_runtime_identity_over_market_
     store = _make_store(allow_local_snapshot_fallback=True)
     store.create_persona(
         persona_id=persona_id,
+        tenant_id="pantheon-dev",
         name="Crypto-Alt-Hunter",
         actor_id="pantheon-dev-browser",
         created_at="2026-05-28T00:00:00Z",
@@ -662,6 +668,7 @@ def test_real_paper_runtime_identity_drives_formal_persona_attribution_and_fleet
             {
                 persona_a: {
                     "persona_id": persona_a,
+                    "tenant_id": "pantheon-dev",
                     "name": "Paper Alpha",
                     "lifecycle_state": "paper_running",
                     "status": "paper_running",
@@ -677,6 +684,7 @@ def test_real_paper_runtime_identity_drives_formal_persona_attribution_and_fleet
                 },
                 persona_b: {
                     "persona_id": persona_b,
+                    "tenant_id": "pantheon-dev",
                     "name": "Paper Beta",
                     "lifecycle_state": "paper_running",
                     "status": "paper_running",
@@ -1004,6 +1012,7 @@ def test_management_persona_fleet_keeps_market_personas_with_live_dev_overlay_on
     store = _make_store(allow_local_snapshot_fallback=False)
     store.create_persona(
         persona_id="persona-dev-probe",
+        tenant_id="pantheon-dev",
         name="dev-probe",
         actor_id="pantheon-dev-browser",
         lifecycle_state="paper",
@@ -1460,6 +1469,7 @@ def test_unassigned_runtime_telemetry_isolation_and_no_seed_leaks(
             {
                 persona_custom: {
                     "persona_id": persona_custom,
+                    "tenant_id": "pantheon-dev",
                     "name": "Custom Empty US",
                     "lifecycle_state": "deployed",
                     "status": "deployed",
@@ -1581,6 +1591,7 @@ def test_canonical_binding_precedence_and_mixed_topology(
             {
                 persona_test: {
                     "persona_id": persona_test,
+                    "tenant_id": "pantheon-dev",
                     "name": "Precedence Persona",
                     "lifecycle_state": "deployed",
                     "status": "deployed",
@@ -1593,6 +1604,7 @@ def test_canonical_binding_precedence_and_mixed_topology(
                 },
                 persona_missing: {
                     "persona_id": persona_missing,
+                    "tenant_id": "pantheon-dev",
                     "name": "Missing Telemetry Persona",
                     "lifecycle_state": "deployed",
                     "status": "deployed",

@@ -12,7 +12,6 @@ import os
 import sys
 import tempfile
 
-import pytest
 from fastapi.testclient import TestClient
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
@@ -99,14 +98,77 @@ def _load_default_fixture_pack_datasets() -> dict[str, Any]:
     return merged
 
 
-@pytest.fixture(autouse=True)
-def _enable_market_persona_seed(monkeypatch):
-    """This legacy-fleet contract must explicitly opt into demo records."""
-
-    monkeypatch.setenv("PANTHEON_BFF_MARKET_PERSONA_SEED", "1")
-
-
 OPERATOR_HEADERS = {"Authorization": "Bearer op-b3:operator"}
+B3_ADMITTED_FIXTURE_TENANT_ID = "pantheon-dev"
+B3_ADMITTED_FIXTURE_PERSONA_IDS = frozenset(
+    {
+        "persona-alpha",
+        "persona-tw-equity",
+        "persona-crypto",
+    }
+)
+B3_EXPLICIT_ADMITTED_PERSONAS = {
+    "persona-tw-equity": {
+        "id": "persona-tw-equity",
+        "persona_id": "persona-tw-equity",
+        "name": "TW Equity Research Operator",
+        "lifecycle_state": "paper_owner",
+        "metadata": {
+            "market_scope": ["TW"],
+            "data_source_status": {
+                "state": "datasource_smoke_ok",
+                "provider_statuses": {
+                    "shioaji": "read_ok",
+                    "twse": "read_ok",
+                    "tpex": "read_ok",
+                    "mops": "read_ok",
+                    "finmind": "read_ok",
+                },
+            },
+            "data_sources": [
+                {
+                    "provider_key": "shioaji",
+                    "provider": "Shioaji quote",
+                    "market": "TW",
+                    "source_class": "broker_execution",
+                    "status": "read_ok",
+                    "order_capable_provider": True,
+                    "read_only": True,
+                    "order_side_effects_allowed": False,
+                    "capital_side_effects_allowed": False,
+                },
+                {"provider_key": "twse", "status": "read_ok"},
+                {"provider_key": "tpex", "status": "read_ok"},
+                {"provider_key": "mops", "status": "read_ok"},
+                {"provider_key": "finmind", "status": "read_ok"},
+            ],
+            "research_status": {"stage": "management_review_linked"},
+            "current_research_projects": [{"project_id": "tw-equity-paper"}],
+        },
+    },
+    "persona-crypto": {
+        "id": "persona-crypto",
+        "persona_id": "persona-crypto",
+        "name": "Crypto Market Research Operator",
+        "lifecycle_state": "paper_owner",
+        "metadata": {
+            "market_scope": ["CRYPTO"],
+            "data_source_status": {
+                "state": "datasource_smoke_ok",
+                "provider_statuses": {
+                    "kraken": "datasource_smoke_ok",
+                    "coingecko": "read_unavailable",
+                },
+            },
+            "data_sources": [
+                {"provider_key": "kraken", "status": "datasource_smoke_ok"},
+                {"provider_key": "coingecko", "status": "read_unavailable"},
+            ],
+            "research_status": {"stage": "research"},
+            "current_research_projects": [{"project_id": "crypto-paper"}],
+        },
+    },
+}
 PERSONA_FLEET_ROW_HARD_LIMIT_BYTES = 8_000
 PERSONA_FLEET_FORBIDDEN_LIST_KEYS = {
     "currentResearchProjects",
@@ -191,9 +253,16 @@ class _PersonaFleetTestStore:
 
     def create_persona(self, **kwargs: Any) -> dict[str, Any]:
         pid = kwargs.get("persona_id") or kwargs.get("id")
+        tenant_id = str(kwargs["tenant_id"]).strip()
+        if not tenant_id:
+            raise ValueError("admitted Persona fixtures require an explicit tenant_id")
         rec = dict(kwargs)
         rec["id"] = pid
         rec["persona_id"] = pid
+        rec["tenant_id"] = tenant_id
+        metadata = dict(rec.get("metadata") or {})
+        metadata["tenant_id"] = tenant_id
+        rec["metadata"] = metadata
         if "created_at" in rec and "updated_at" not in rec:
             rec["updated_at"] = rec["created_at"]
         self._data[pid] = rec
@@ -314,6 +383,26 @@ class _PersonaFleetTestStore:
         raise AttributeError(f"'_PersonaFleetTestStore' has no attribute '{name}'")
 
 
+def _admit_b3_fixture_personas(data: dict[str, Any]) -> None:
+    """Declare only the B3 contract's known fixtures in its test tenant."""
+
+    personas = data.get("personas")
+    if not isinstance(personas, dict):
+        return
+    for persona_id, fixture in B3_EXPLICIT_ADMITTED_PERSONAS.items():
+        personas.setdefault(persona_id, json.loads(json.dumps(fixture)))
+    for persona_id in B3_ADMITTED_FIXTURE_PERSONA_IDS:
+        record = personas.get(persona_id)
+        if not isinstance(record, dict):
+            continue
+        metadata = record.get("metadata")
+        if not isinstance(metadata, dict):
+            metadata = {}
+            record["metadata"] = metadata
+        record["tenant_id"] = B3_ADMITTED_FIXTURE_TENANT_ID
+        metadata["tenant_id"] = B3_ADMITTED_FIXTURE_TENANT_ID
+
+
 def _fresh_client(td: str) -> TestClient:
     snapshot_path = os.path.join(td, "read_surfaces.json")
     if os.path.exists(snapshot_path):
@@ -342,21 +431,7 @@ def _fresh_client(td: str) -> TestClient:
         elif isinstance(data[k], list) and isinstance(v, list):
             data[k] = [*data[k], *v]
 
-    if os.environ.get("PANTHEON_BFF_MARKET_PERSONA_SEED") == "1":
-        try:
-            # Deliberate, narrow exception: _merge_market_persona_fleet is a
-            # ~685-line synthetic US/TW/CRYPTO fleet generator with its own
-            # env-gated config-driven discovery (_market_persona_seed_enabled)
-            # and market-data-provider defaulting logic. It is not static
-            # fixture data (unlike _load_default_fixture_pack_datasets above)
-            # so it is not something a local test double can faithfully
-            # reproduce without duplicating read_store's own business logic;
-            # importing the real function here is the honest choice.
-            from read_store import _merge_market_persona_fleet
-            _merge_market_persona_fleet(data)
-        except Exception:
-            pass
-
+    _admit_b3_fixture_personas(data)
     bff_main.read_store = _PersonaFleetTestStore(data)
     bff_main._PERSONA_BFF_OVERLAY.clear()
     bff_main._STRATEGY_BFF_OVERLAY.clear()
@@ -563,6 +638,7 @@ def test_persona_fleet_mutation_evolution_contract() -> None:
             persona_id = "persona-20260528-04688755"
             bff_main.read_store.create_persona(
                 persona_id=persona_id,
+                tenant_id="pantheon-dev",
                 name="Crypto-Alt-Hunter",
                 actor_id="pantheon-dev-browser",
                 created_at="2026-06-03T08:00:00Z",
@@ -676,6 +752,7 @@ def test_paper_persona_fleet_rank_matches_quarterly_ranking_target() -> None:
             persona_id = "persona-20260528-04688755"
             bff_main.read_store.create_persona(
                 persona_id=persona_id,
+                tenant_id="pantheon-dev",
                 name="Crypto-Alt-Hunter",
                 actor_id="pantheon-dev-browser",
                 created_at="2026-06-03T08:00:00Z",
@@ -722,6 +799,7 @@ def test_paper_rank_snapshot_is_captured_before_broader_fleet_reads() -> None:
             persona_id = "persona-20260528-04688755"
             bff_main.read_store.create_persona(
                 persona_id=persona_id,
+                tenant_id="pantheon-dev",
                 name="Crypto-Alt-Hunter",
                 actor_id="pantheon-dev-browser",
                 created_at="2026-06-03T08:00:00Z",
@@ -908,4 +986,3 @@ def test_sd_agc_03_foreign_identities_and_unadmitted_catalog_defaults_return_404
             assert fleet_resp.json()["data"]["summary"]["catalog_default_total"] > 0
         finally:
             bff_main.read_store = original
-

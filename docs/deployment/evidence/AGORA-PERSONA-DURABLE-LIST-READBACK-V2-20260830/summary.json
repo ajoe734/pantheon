@@ -1,0 +1,101 @@
+{
+  "schema_version": "pantheon.agora-persona-durable-list-readback-v2-review.v1",
+  "task_id": "AGORA-PERSONA-DURABLE-LIST-READBACK-V2-20260830",
+  "generated_at": "2026-08-30T08:28:01Z",
+  "owner": "Codex2",
+  "reviewer": "Antigravity",
+  "status": "implementation_complete_pending_corrected_exact_head_review",
+  "acceptance_state": "exact_head_review_merge_and_post_merge_release_proof_required",
+  "implementation_scope": [
+    "services/control-plane/bff/persona_provisioning.py",
+    "services/control-plane/bff/main.py",
+    "services/control-plane/bff/test_pathreon_market_persona_fleet_contract.py",
+    "services/control-plane/bff/tests/test_bff_b3_persona_fleet.py",
+    "services/control-plane/bff/tests/test_bff_persona_provisioning_baseline_500.py",
+    "docs/deployment/evidence/AGORA-PERSONA-DURABLE-LIST-READBACK-V2-20260830/summary.json"
+  ],
+  "immutable_failure_reproduction": {
+    "workflow_run_id": 33291750319,
+    "workflow_url": "https://github.com/ajoe734/pantheon/actions/runs/33291750319",
+    "backend_sha": "c6f7cc2340011624a8b22814ad2dc1d549617d1b",
+    "frontend_sha": "5ffee3db8c2b37b4070d43d091ed4207ef5d70e5",
+    "conclusion": "failure",
+    "failed_job": "Deploy dev under shared environment lease",
+    "failed_step": "Bootstrap governed dev paper baseline",
+    "failed_component": "operator-bff / POST /bff/management/personas/create-paper-bundle & subsequent durable readback",
+    "observed_failure": "Workflow 33291750319 failed at 'Bootstrap governed dev paper baseline' on backend head c6f7cc2340011624a8b22814ad2dc1d549617d1b during POST bootstrap. While merge e7f010dc addressed the initial mutation path, post-merge analysis and focused regressions proved that newly provisioned personas were absent from GET /bff/personas after BFF process restart because list read only canonical read_store and process-local in-memory overlay; additionally, authoritative store outages in detail readback were swallowed and converted to false 404 RESOURCE_NOT_FOUND errors instead of failing closed.",
+    "root_cause": "1. GET /bff/personas relied on _list_persona_records which only merged read_store and _PERSONA_BFF_OVERLAY; on process restart, _PERSONA_BFF_OVERLAY was wiped and PersonaProvisioningStore was not queried for tenant-scoped list records. 2. PersonaProvisioningStore lacked list_by_tenant and list_all methods on the protocol, Memory store, and Postgres store. 3. Detail readback in bff_get_persona swallowed provisioning store exceptions and raised a false 404 rather than failing closed with a typed 503 DEPENDENCY_UNAVAILABLE error. 4. Prior evidence manifest misattributed workflow 33291750319 directly to merge e7f010dc and listed a pre-workflow commit SHA (2f741da8dfb3b802613cfcf55e3e2cbe826dbbb5) with a typo in unblocks_task."
+  },
+  "resolution_summary": {
+    "durable_store_list_protocol": "Added list_by_tenant(tenant_id) and list_all() to PersonaProvisioningStore Protocol, MemoryPersonaProvisioningStore, and PostgresPersonaProvisioningStore with deterministic sorting by (created_at, persona_id).",
+    "durable_list_projection_and_merge": "Updated _list_persona_records(tenant_id) and _get_persona_directory_snapshot(tenant_id) in main.py to query the authoritative provisioning store, deterministically project and merge durable provisioning records with canonical directory records, ensuring newly provisioned personas appear in GET /bff/personas with complete DTOs even after fresh-process restarts.",
+    "fail_closed_typed_dependency_diagnostics": "Enforced fail-closed behavior across both list and detail read paths by raising typed HTTP 503 DEPENDENCY_UNAVAILABLE with precondition_failed='persona_provisioning_store' whenever the authoritative store is unreachable or throws an exception, eliminating false 404 and false empty lists.",
+    "deterministic_pagination_and_filtering": "Enforced deterministic sorting by (created_at/updated_at, persona_id) across directory snapshots, ensuring stable filtering by state and archetype and accurate page_info totals and slices.",
+    "evidence_identity_correction": "Corrected immutable failure reproduction backend_sha to c6f7cc2340011624a8b22814ad2dc1d549617d1b and target unblocks_task to AGORA-AGC-14-HOSTED-DEMO-AUTHENTIC-V5-20260829.",
+    "comprehensive_regression_suite": "Expanded test_bff_persona_provisioning_baseline_500.py with deterministic tests covering restart list readback with fresh store instances, typed 503 fail-closed store outage diagnostics, list ordering/filtering/pagination, and multi-tenant isolation.",
+    "restart_proof_public_protocol": "Replaced private-state restart simulation with MemoryProvisioningBackend, an explicit shared durable-state object accepted by MemoryPersonaProvisioningStore's constructor; two distinct store instances over one backend prove durable readback through the store's public protocol only, the in-process analogue of two BFF replicas reading one shared Postgres table.",
+    "tenant_scoped_list_surfaces": "Tenant-scoped Persona reads now admit only records carrying an explicit tenant_id or tenantId that exactly matches the authenticated caller. Tenantless registry rows are catalog or malformed rows and are excluded rather than projected into a configured/default tenant. Authenticated list/detail, search, Persona League, Persona Intent, Sentinel, Strategy Seed suggestion, PM12 attribution, allocation, cost, risk, Operations Read Model, and Agora journal-context paths derive and propagate the caller tenant; privileged reconciler traversal remains explicit and isolated from response composition.",
+    "fleet_fixture_provenance": "Pathreon admitted Persona helper calls now require and persist an explicit tenant_id. B3 Fleet uses explicit local TW and CRYPTO fixture records admitted only for pantheon-dev and no longer swallows an import failure for a missing synthetic fixture helper. Tenantless catalog records remain unadmitted.",
+    "reviewer_recovery_scope": "Recovered the interrupted owner lane under canonical owner Codex2 and reviewer Antigravity. The corrected delivery removes the dead unscoped _project_persona_fleet_payload path, verifies Strategy Seed and PM12 through request routes rather than helpers alone, and excludes Agora Persona Intent session context unless every referenced Persona is admitted in the caller tenant directory."
+  },
+  "security_rejection_remediation": {
+    "rejected_pr": 5432,
+    "rejected_head": "a6d5bfd8f3bf076d97046de13c031a19f4414da7",
+    "review_comment": "https://github.com/ajoe734/pantheon/pull/5432#issuecomment-5467464667",
+    "resolved_findings": [
+      "Removed legacy/default-tenant inference and its asserting migration test; tenantless registry rows are excluded from all tenant-scoped list and detail readbacks.",
+      "Removed the dead request-facing _project_persona_fleet_payload helper that invoked _list_persona_records without an authenticated tenant.",
+      "Added direct HTTP route regressions for GET /bff/management/strategy-seeds, GET /bff/management/performance-attribution/by-strategy, and GET /bff/management/persona-intent?source_type=agora_session with a Persona durably reserved under tenant-other.",
+      "Repaired the admitted Pathreon and B3 Fleet test fixtures so every admitted Persona has explicit tenant provenance; catalog defaults remain tenantless and excluded."
+    ]
+  },
+  "fail_closed_boundaries": [
+    "Unauthenticated requests are rejected with HTTP 401.",
+    "Non-operator roles (e.g. viewer) are rejected with HTTP 403 on mutation endpoints.",
+    "Non-paper capital modes and non-low risk levels are rejected with HTTP 422.",
+    "Idempotency key reused with different request payload is rejected with HTTP 409 IDEMPOTENCY_CONFLICT.",
+    "Authoritative provisioning store outages on list and detail fail closed with typed HTTP 503 DEPENDENCY_UNAVAILABLE.",
+    "Downstream coordinator or owner failures fail closed and return typed HTTP 502 UPSTREAM_ERROR with structured sanitized diagnostics.",
+    "Tenant isolation is strictly enforced across list and detail readbacks."
+  ],
+  "validation": {
+    "fleet_contract_suites": [
+      {
+        "suite": "Pathreon Fleet",
+        "command": "/usr/bin/timeout --preserve-status 300s $PANTHEON_PY -m pytest -q -rA services/control-plane/bff/test_pathreon_market_persona_fleet_contract.py",
+        "result": "16 passed, 7 warnings in 8.39s; observed exit 0."
+      },
+      {
+        "suite": "B3 Fleet",
+        "command": "/usr/bin/timeout --preserve-status 300s $PANTHEON_PY -m pytest -q -rA services/control-plane/bff/tests/test_bff_b3_persona_fleet.py",
+        "result": "11 passed, 7 warnings in 7.81s; observed exit 0."
+      }
+    ],
+    "focused_baseline_suite": "/usr/bin/timeout --preserve-status 300s $PANTHEON_PY -m pytest -q -rA services/control-plane/bff/tests/test_bff_persona_provisioning_baseline_500.py",
+    "focused_baseline_result": "22 passed, 7 warnings in 10.68s; observed exit 0. The two captured Persona provisioning-store list warnings exercise the expected typed-503 fail-closed path.",
+    "full_persona_provisioning_suite": "/usr/bin/timeout --preserve-status 600s $PANTHEON_PY -m pytest -q -rA services/control-plane/bff/tests/test_bff_persona_provisioning_baseline_500.py services/control-plane/bff/test_persona_provisioning_coordinator.py services/control-plane/bff/test_persona_provisioning_store.py services/control-plane/bff/test_persona_provisioning_route_security.py services/control-plane/bff/test_persona_provisioning_readback.py services/control-plane/bff/tests/test_bff_persona_create_paper_bundle.py services/control-plane/bff/tests/test_persona_capital_runtime_ports.py services/control-plane/bff/tests/test_read_surface_port_cutover.py scripts/test_bootstrap_dev_paper_baseline.py scripts/test_persona_provisioning_compose_contract.py",
+    "full_persona_provisioning_result": "185 passed, 19 warnings in 54.88s; completed under the 600-second bound.",
+    "syntax_check": "python3 -m py_compile services/control-plane/bff/main.py services/control-plane/bff/persona_provisioning.py services/control-plane/bff/tests/test_bff_persona_provisioning_baseline_500.py; git diff --check clean"
+  },
+  "release_closeout_gate": {
+    "required_backend": "the Pantheon dev merge containing this manifest and the independently approved head",
+    "required_frontend": "5ffee3db8c2b37b4070d43d091ed4207ef5d70e5",
+    "unblocks_task": "AGORA-AGC-14-HOSTED-DEMO-AUTHENTIC-V5-20260829"
+  },
+  "prior_rejection_round": {
+    "pr": 5427,
+    "rejected_head": "09ab6a77af5799b0471a527ee4fd169b6e8be03f",
+    "immutable_baseline_audit": "https://github.com/ajoe734/pantheon/pull/5427#issuecomment-5467017193",
+    "baseline_sha": "e7f010dccee33185bc260d06048f09e6d2125f28",
+    "reviewer_findings": [
+      "Restart regressions instantiated a fresh MemoryPersonaProvisioningStore and then wrote its private _records/_names/_personas fields directly (plus a private _copy call) instead of proving two identity-distinct public-protocol store instances read one shared durable backend.",
+      "_list_persona_records() defaulted an absent tenant to store.list_all(), so GET /bff/search (and other unscoped callers) leaked a Persona reserved under another tenant to an authenticated caller (proven with persona-cross-tenant-durable-canary via GET /bff/search as op-2:operator).",
+      "Two of the three commits on the branch (962a881d8, 1faa11543) used a conventional-commit subject (\"fix(bff): ...\") instead of the required \"<TASK-ID>: <summary>\" prefix, failing the required Commit trailers check across the whole PR range."
+    ],
+    "repair_this_round": [
+      "Added MemoryProvisioningBackend, a shared durable-state object; MemoryPersonaProvisioningStore(backend=...) lets a second identity-distinct store instance read the same backing state through only the public reserve/get/list_by_tenant/list_all/acquire/checkpoint/release protocol. The three restart tests now construct fresh_store = MemoryPersonaProvisioningStore(backend=store.backend) and assert fresh_store is not store, with no private-field writes anywhere in the test file.",
+      "_list_persona_records, _pm12_persona_league_rows, _persona_intent_all_items, and _health_reason_sentinel_findings now take an explicit tenant_id and every authenticated user-facing caller (GET /bff/search, the persona-league family, GET /bff/management/persona-intent, GET /bff/v5/sentinel/findings, and the management NL assistant) derives the caller's own tenant via _bff_me_tenant_payload and passes it through, instead of defaulting to list_all(). Fixed a related latent bug in _bff_me_tenant_payload where its default-tenant claim lookup only checked singular tenant_id/tenantId claim keys, not the plural tenant_ids/tenantIds keys already used for allowed-tenant validation, which could route a caller's default tenant to the wrong value. Added four negative regressions (search, persona-league, persona-intent, sentinel/findings) that reserve a Persona under tenant-other directly via the store and assert it never appears in a tenant-dev caller's response.",
+      "The recovered implementation is ready to be carried by clean task-scoped history. The existing remote PR #5427 still contains the two earlier non-compliant commit subjects cited above, so it is not evidence of an approvable delivery and must not be merged without an authorized clean-history recovery."
+    ]
+  }
+}
