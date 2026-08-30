@@ -83,6 +83,12 @@ try:
         create_read_surface_ports,
         create_in_memory_read_surface_ports,
     )
+    from ports.persona_write_owner import (
+        PersistentPersonaRegistryWritePort,
+        PersonaWriteConflict,
+        PersonaWriteOwnerUnavailable,
+        create_persona_registry_write_owner,
+    )
 except ImportError:
     from services.control_plane.bff.ports.operations_consultation import (  # type: ignore[no-redef]
         WorkflowHookCatalogReaderPort,
@@ -152,6 +158,12 @@ except ImportError:
         create_read_surface_ports,
         create_in_memory_read_surface_ports,
     )
+    from services.control_plane.bff.ports.persona_write_owner import (  # type: ignore[no-redef]
+        PersistentPersonaRegistryWritePort,
+        PersonaWriteConflict,
+        PersonaWriteOwnerUnavailable,
+        create_persona_registry_write_owner,
+    )
 
 __all__ = [
     # Operations & Consultation
@@ -215,4 +227,9 @@ __all__ = [
     "ReadSurfacePorts",
     "create_read_surface_ports",
     "create_in_memory_read_surface_ports",
+    # Persona write owner (deliberately outside ReadSurfacePorts)
+    "PersistentPersonaRegistryWritePort",
+    "PersonaWriteConflict",
+    "PersonaWriteOwnerUnavailable",
+    "create_persona_registry_write_owner",
 ]
