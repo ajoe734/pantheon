@@ -24,8 +24,10 @@ from typing import (
     Union,
 )
 
-from fastapi import APIRouter, Cookie, Header, HTTPException, Query, Request, Response
+from fastapi import APIRouter, Body, Cookie, Header, HTTPException, Query, Request, Response
 from starlette.responses import JSONResponse, StreamingResponse
+
+from .service import EventStreamService
 
 try:
     from models import ErrorCode
@@ -257,6 +259,7 @@ def create_events_router(
     handle_sse_stream: Optional[Callable[..., Any]] = None,
     frontend_bff_event_stream: Optional[Callable[..., Any]] = None,
     resolve_session_kind: Optional[Callable[..., str]] = None,
+    event_stream_service: Optional[EventStreamService] = None,
 ) -> APIRouter:
     """Create canonical BFF Events router.
 
@@ -271,11 +274,51 @@ def create_events_router(
     _extract_ident = extract_identity or _default_extract_identity
     _require_read = require_read_role or _default_require_read_role
     _err = bff_error or _default_bff_error
-    _active_sse_channels = frozenset(sse_channels) if sse_channels else DEFAULT_SSE_CHANNELS
-    _buffers = sse_buffers if sse_buffers is not None else {c: deque() for c in _active_sse_channels}
-    _subscribers = sse_subscribers if sse_subscribers is not None else {c: [] for c in _active_sse_channels}
-    _handle_sse = handle_sse_stream or _default_handle_sse_stream
+    # ``EventStreamService`` owns replay, connection management, and internal
+    # delivery.  The assembly layer can inject the live BFF buffers later;
+    # this prepared router deliberately does not import ``main``.
+    _event_stream = event_stream_service or EventStreamService(
+        channels=sse_channels,
+        buffers=sse_buffers,
+        subscribers=sse_subscribers,
+    )
+    _active_sse_channels = frozenset(_event_stream.channels)
+    _buffers = _event_stream.buffers
+    _subscribers = _event_stream.subscribers
     _frontend_stream = frontend_bff_event_stream or _default_frontend_bff_event_stream
+
+    def _stream_channel(
+        channel: str,
+        last_event_id: Optional[str],
+        authorization: Optional[str],
+    ) -> StreamingResponse:
+        if channel not in _active_sse_channels:
+            raise _err(
+                400,
+                ErrorCode.VALIDATION_FAILED,
+                f"Unknown SSE channel: {channel}",
+                f"Channel must be one of {sorted(_active_sse_channels)}",
+            )
+        identity = _extract_ident(authorization)
+        _require_read(identity)
+        extra_headers: Dict[str, str] = {}
+        if resolve_session_kind is not None:
+            extra_headers["X-BFF-Session-Kind"] = resolve_session_kind(identity)
+        if handle_sse_stream is not None:
+            return handle_sse_stream(
+                channel,
+                _buffers[channel],
+                _subscribers[channel],
+                last_event_id,
+                extra_headers=extra_headers or None,
+            )
+        return _event_stream.stream_response(
+            channel,
+            last_event_id,
+            bff_error=_err,
+            conflict_code=ErrorCode.RESOURCE_CONFLICT,
+            extra_headers=extra_headers or None,
+        )
 
     @router.get("/bff/events")
     async def bff_list_events(
@@ -392,20 +435,20 @@ def create_events_router(
             extra_headers: Dict[str, str] = {}
             if resolve_session_kind is not None:
                 extra_headers["X-BFF-Session-Kind"] = resolve_session_kind(identity)
-            buf = _buffers.get(selected_channel)
-            if buf is None:
-                buf = deque()
-                _buffers[selected_channel] = buf
-            subs = _subscribers.get(selected_channel)
-            if subs is None:
-                subs = []
-                _subscribers[selected_channel] = subs
-            return _handle_sse(
+            if handle_sse_stream is not None:
+                return handle_sse_stream(
+                    selected_channel,
+                    _buffers[selected_channel],
+                    _subscribers[selected_channel],
+                    resolved_last_event_id,
+                    extra_headers=extra_headers or None,
+                )
+            return _event_stream.stream_response(
                 selected_channel,
-                buf,
-                subs,
                 resolved_last_event_id,
-                extra_headers=extra_headers if extra_headers else None,
+                bff_error=_err,
+                conflict_code=ErrorCode.RESOURCE_CONFLICT,
+                extra_headers=extra_headers or None,
             )
 
         headers = {
@@ -422,5 +465,114 @@ def create_events_router(
             media_type="text/event-stream",
             headers=headers,
         )
+
+    @router.get("/api/v1/stream/{channel}")
+    async def stream_generic_events(
+        channel: str,
+        last_event_id: Optional[str] = Query(default=None, alias="last_event_id"),
+        authorization: Optional[str] = Header(default=None),
+    ) -> StreamingResponse:
+        """Authenticated replay-capable stream for a catalog channel."""
+        return _stream_channel(channel, last_event_id, authorization)
+
+    # Execute-plans compatibility subscriptions.  These aliases intentionally
+    # delegate to the same generic subscription path and therefore retain one
+    # replay/error/header contract.
+    @router.get("/bff/sse/notifications")
+    async def bff_sse_notifications_alias(
+        last_event_id: Optional[str] = Query(default=None, alias="last_event_id"),
+        authorization: Optional[str] = Header(default=None),
+    ) -> StreamingResponse:
+        return _stream_channel("inbox", last_event_id, authorization)
+
+    @router.get("/bff/sse/command-center/kpi")
+    async def bff_sse_cc_kpi_alias(
+        last_event_id: Optional[str] = Query(default=None, alias="last_event_id"),
+        authorization: Optional[str] = Header(default=None),
+    ) -> StreamingResponse:
+        return _stream_channel("ranking", last_event_id, authorization)
+
+    @router.get("/bff/sse/command-center/events")
+    async def bff_sse_cc_events_alias(
+        last_event_id: Optional[str] = Query(default=None, alias="last_event_id"),
+        authorization: Optional[str] = Header(default=None),
+    ) -> StreamingResponse:
+        return _stream_channel("loop", last_event_id, authorization)
+
+    @router.get("/bff/sse/jobs/{jobId}/progress")
+    async def bff_sse_job_progress_alias(
+        jobId: str,
+        last_event_id: Optional[str] = Query(default=None, alias="last_event_id"),
+        authorization: Optional[str] = Header(default=None),
+    ) -> StreamingResponse:
+        """Subscription is channel-based; job filtering remains client-side."""
+        return _stream_channel("tool", last_event_id, authorization)
+
+    @router.get("/bff/sse/alerts")
+    async def bff_sse_alerts_alias(
+        last_event_id: Optional[str] = Query(default=None, alias="last_event_id"),
+        authorization: Optional[str] = Header(default=None),
+    ) -> StreamingResponse:
+        return _stream_channel("sentinel", last_event_id, authorization)
+
+    @router.get("/bff/sse/incidents/{incidentId}/timeline")
+    async def bff_sse_incident_timeline_alias(
+        incidentId: str,
+        last_event_id: Optional[str] = Query(default=None, alias="last_event_id"),
+        authorization: Optional[str] = Header(default=None),
+    ) -> StreamingResponse:
+        return _stream_channel("journal", last_event_id, authorization)
+
+    @router.get("/bff/sse/deployment/events")
+    async def bff_sse_deployment_events_alias(
+        last_event_id: Optional[str] = Query(default=None, alias="last_event_id"),
+        authorization: Optional[str] = Header(default=None),
+    ) -> StreamingResponse:
+        return _stream_channel("artifact", last_event_id, authorization)
+
+    @router.get("/bff/sse/review/updates")
+    async def bff_sse_review_updates_alias(
+        last_event_id: Optional[str] = Query(default=None, alias="last_event_id"),
+        authorization: Optional[str] = Header(default=None),
+    ) -> StreamingResponse:
+        return _stream_channel("approval", last_event_id, authorization)
+
+    @router.get("/bff/sse/agora/signals")
+    async def bff_sse_agora_signals_alias(
+        last_event_id: Optional[str] = Query(default=None, alias="last_event_id"),
+        authorization: Optional[str] = Header(default=None),
+    ) -> StreamingResponse:
+        return _stream_channel("signal", last_event_id, authorization)
+
+    @router.get("/bff/sse/agora/sessions/{sessionId}")
+    async def bff_sse_agora_session_alias(
+        sessionId: str,
+        last_event_id: Optional[str] = Query(default=None, alias="last_event_id"),
+        authorization: Optional[str] = Header(default=None),
+    ) -> StreamingResponse:
+        return _stream_channel("ask", last_event_id, authorization)
+
+    @router.post("/api/v1/internal/sse/publish")
+    async def publish_sse_event(
+        event_type: str = Query(..., description="Event type: runtime_state_changed, incident_created, etc."),
+        channel: Optional[str] = Query(default=None, description="Optional channel name; inferred from event_type if missing"),
+        runtime_id: Optional[str] = Query(default=None),
+        incident_id: Optional[str] = Query(default=None),
+        payload: Dict[str, Any] = Body(default_factory=dict),
+        authorization: Optional[str] = Header(default=None),
+    ) -> Dict[str, str]:
+        """Deliver an internal event through the domain-owned SSE outbox."""
+        identity = _extract_ident(authorization)
+        _require_read(identity)
+        event_id = _event_stream.publish_internal(
+            event_type=event_type,
+            channel=channel,
+            runtime_id=runtime_id,
+            incident_id=incident_id,
+            payload=payload,
+            bff_error=_err,
+            validation_code=ErrorCode.VALIDATION_FAILED,
+        )
+        return {"event_id": event_id, "status": "published"}
 
     return router
