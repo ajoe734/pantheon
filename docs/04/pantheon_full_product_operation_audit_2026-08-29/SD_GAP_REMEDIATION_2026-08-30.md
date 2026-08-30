@@ -115,3 +115,19 @@ Every child task in `EXECUTION_TASK_CATALOG_2026-08-30.json` adheres to strict s
 7. **Fail-Closed Rollback (`rollback`)**: Explicit automated and manual forward repair or previous release artifact rollback procedures, never restoring deleted shims or duplicate handlers.
 8. **Durable Readback Boundaries (`durable_readback`)**: Cryptographic hashes, entity IDs, and projection checkpoints verifying end-to-end truth persistence.
 9. **Canonical Task Spec Hash Binding (`spec_hash`)**: Post-bootstrap tasks explicitly bind `acceptance`, `artifacts`, `delivery_repository`, `dependency_tracks`, `depends_on`, `execution_resources`, `id`, `owner`, `phase`, `reviewer`, `summary`, `target_repo`, `task_class`, and `title`.
+
+---
+
+## 8. Dev-Bridge Dispatcher Allowlist Design (Errata, 2026-08-30)
+
+Design note for `.orchestrator/development_bridge/dev_bridge_dispatcher.py`, not a product BFF/frontend component.
+
+**Observed defect**: the dispatcher's repository allowlist check is `Packet constraint allowedRepos contains unconfigured repositories: <repo>`, sourced from an operator-supplied `PANTHEON_ASSISTANT_DEV_BRIDGE_ALLOWED_REPOS` environment value rather than the live supervisor's `coordination.repositories` registry. Two further admission checks in the same dispatch path also require exact operator/runtime identity: `PANTHEON_TASK_STATE_STORE_MODE=authoritative is required for dev bridge dispatch` and `PANTHEON_COMMAND_RUNTIME_SHA is required with PANTHEON_COMMAND_ROOT`.
+
+**Concrete effect on Batch B/C materialization** (exact evidence in [EXECUTION_REPLACEMENT_LEDGER_2026-08-30.json](./EXECUTION_REPLACEMENT_LEDGER_2026-08-30.json) `fail_closed_evidence`):
+- Batch C's first drain attempt (packet `...51d9f9ef...`) was rejected outright for the unconfigured `execute-plans` repository.
+- Two subsequent attempts (`...a7d3f578...`, `...82e9abb1...`) failed the command-runtime identity checks before the allowlist was ever reached.
+- The fourth attempt (`...ead79e62...`) succeeded once both the allowlist and the runtime identity bindings were corrected, admitting all 9 Batch C tasks in one packet.
+- Because 14 Batch B task rows had already materialized against the stale allowlist state, and canonical task rows cannot be amended in place, each was retired via `supersede` and replaced one-to-one under a `-V2-20260830` id bound to the corrected `OPGAP-DEVTOOL-TARGET-REPO-BRIDGE-V2-20260830` dependency.
+
+**Target design** (tracked by `OPGAP-DEVTOOL-BRIDGE-REPO-ALLOWLIST-V3-20260830`): the dispatcher reads `coordination.repositories` directly from the authoritative live supervisor config on every drain and normalizes repository aliases to the bridge's canonical names (`pantheon`, `execute-plans`) before the allowlist check, removing the operator-injected environment override as a hard dependency while still fail-closed rejecting any repository absent from the canonical registry.

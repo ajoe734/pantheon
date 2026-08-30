@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Authoritative validator for Full Product Operation GAP SA/SD and Execution Catalog.
 
-Validates all 16 architectural and catalog invariants across:
+Validates all 17 architectural and catalog invariants across:
 1. services/control-plane/bff/main.py AST nodes and cutover mapping parity
 2. Edge-level cutover mapping parity across all named consumers
 3. Legacy action cluster (9 nodes) and os.makedirs (node 118) disposition
@@ -18,6 +18,7 @@ Validates all 16 architectural and catalog invariants across:
 14. Planning baseline provenance across Pantheon, execute-plans, and hosted runtime
 15. Bidirectional pantheon-dev execution resources invariant
 16. Signed DevTaskPacket materialization mapping and post-bootstrap spec hash contract (binding target_repo + task_class + delivery_repository)
+17. Execution replacement ledger: exact 23-row Batch B/C lineage, one-to-one V2 supersede mapping, unchanged functional scope, and Batch D dependency transformation to the terminal V2 bootstrap id
 """
 from __future__ import annotations
 
@@ -387,7 +388,73 @@ def validate_catalog(catalog_path: str, main_py_path: str) -> None:
     exp_catalog_sha256 = hashlib.sha256(json.dumps(calculated_hashes, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("utf-8")).hexdigest()
     assert mat_map["tasks_spec_catalog_sha256"] == exp_catalog_sha256, f"Catalog SHA256 mismatch: expected {exp_catalog_sha256}, got {mat_map['tasks_spec_catalog_sha256']}"
 
-    print("SUCCESS: All 16 comprehensive dynamic validation assertions passed!")
+    # 17. Verify Execution Replacement Ledger (Batch B/C errata lineage)
+    print("17. Verifying execution replacement ledger (23-row Batch B/C lineage, Batch D dependency transformation)...")
+    ledger_path = Path(catalog_path).resolve().parent / "EXECUTION_REPLACEMENT_LEDGER_2026-08-30.json"
+    assert ledger_path.exists(), f"Missing execution replacement ledger: {ledger_path}"
+    with open(ledger_path, "r", encoding="utf-8") as f:
+        ledger = json.load(f)
+
+    batch_b = ledger.get("batch_b_replacements", [])
+    batch_c = ledger.get("batch_c_direct_materializations", [])
+    assert len(batch_b) == 14, f"Expected 14 Batch B replacement rows, found {len(batch_b)}"
+    assert len(batch_c) == 9, f"Expected 9 Batch C rows, found {len(batch_c)}"
+    assert len(batch_b) + len(batch_c) == 23, f"Expected exact 23-row Batch B/C lineage, found {len(batch_b) + len(batch_c)}"
+
+    rcs = ledger.get("row_count_summary", {})
+    assert rcs.get("batch_b_rows") == 14 and rcs.get("batch_c_rows") == 9 and rcs.get("total_batch_b_and_c_rows") == 23, f"row_count_summary invalid: {rcs}"
+
+    catalog_task_ids = set(t["id"] for t in tasks)
+    for row in batch_b:
+        oid, rid = row["original_id"], row["replacement_id"]
+        assert oid in catalog_task_ids, f"Batch B ledger row original_id not in frozen catalog: {oid}"
+        assert rid == oid.replace("-20260830", "-V2-20260830"), f"Batch B ledger row is not a one-to-one V2 replacement: {oid} -> {rid}"
+        assert rid != oid, f"Batch B ledger row must actually change id: {oid}"
+        assert row.get("functional_scope_change") == "none", f"Batch B replacement {oid} must preserve functional scope, found {row.get('functional_scope_change')}"
+
+    for row in batch_c:
+        oid, rid = row["original_id"], row["replacement_id"]
+        assert oid in catalog_task_ids, f"Batch C ledger row original_id not in frozen catalog: {oid}"
+        assert rid == oid, f"Batch C row must be an identity mapping (never superseded), found {oid} -> {rid}"
+        assert row.get("functional_scope_change") == "none", f"Batch C row {oid} must preserve functional scope, found {row.get('functional_scope_change')}"
+
+    b_ids = set(r["original_id"] for r in batch_b)
+    c_ids = set(r["original_id"] for r in batch_c)
+    assert not (b_ids & c_ids), f"Batch B/C ledger id sets must be disjoint, overlap: {b_ids & c_ids}"
+    batch_bc_task_ids = {t["id"] for t in tasks if t["id"] in (b_ids | c_ids)}
+    assert batch_bc_task_ids == (b_ids | c_ids), "Ledger Batch B/C ids must exactly match the frozen catalog's Batch B/C task ids"
+
+    b_replacement_ids = set(r["replacement_id"] for r in batch_b)
+    assert len(b_replacement_ids) == 14, "Batch B replacement ids must be unique (no two originals collapsed onto one V2 id)"
+
+    # Verify the Batch D dependency transformation table is internally consistent with the B/C mapping
+    tasks_by_id = {t["id"]: t for t in tasks}
+    bdt = ledger.get("batch_d_dependency_transformation", {})
+    transformed = bdt.get("transformed_dependencies", [])
+    frozen_bd_task = bdt.get("frozen_catalog_task")
+    assert frozen_bd_task in tasks_by_id, f"batch_d_dependency_transformation references unknown frozen task: {frozen_bd_task}"
+
+    frozen_bd_deps = tasks_by_id[frozen_bd_task].get("depends_on", [])
+    assert bdt.get("frozen_depends_on_count") == len(frozen_bd_deps), "frozen_depends_on_count does not match the frozen catalog task's depends_on length"
+    assert len(transformed) == len(frozen_bd_deps), "Batch D transformed_dependencies row count must match the frozen task's depends_on length"
+
+    b_replacement_map = {r["original_id"]: r["replacement_id"] for r in batch_b}
+    c_replacement_map = {r["original_id"]: r["replacement_id"] for r in batch_c}
+    transformed_by_frozen_id = {row["frozen_catalog_id"]: row for row in transformed}
+    assert set(transformed_by_frozen_id) == set(frozen_bd_deps), "Batch D transformed_dependencies must cover exactly the frozen task's depends_on ids"
+
+    for dep in frozen_bd_deps:
+        row = transformed_by_frozen_id[dep]
+        if dep in b_replacement_map:
+            assert row["live_dependency_id"] == b_replacement_map[dep], f"Batch D dependency {dep} must rebind to its Batch B V2 replacement"
+            assert row["transformation"] == "rebound_to_v2_supersede", f"Batch D dependency {dep} must be marked rebound_to_v2_supersede"
+        elif dep in c_replacement_map:
+            assert row["live_dependency_id"] == c_replacement_map[dep] == dep, f"Batch D dependency {dep} is a never-superseded Batch C id and must pass through unchanged"
+            assert row["transformation"] == "unchanged_never_superseded", f"Batch D dependency {dep} must be marked unchanged_never_superseded"
+        else:
+            raise AssertionError(f"Batch D frozen dependency {dep} is neither a Batch B nor Batch C ledger id")
+
+    print("SUCCESS: All 17 comprehensive dynamic validation assertions passed!")
 
 if __name__ == "__main__":
     repo_root = Path(__file__).resolve().parent.parent.parent.parent
