@@ -26,7 +26,7 @@ All 20 identified operational gaps (**OP-G01** through **OP-G20**) from the full
 | **P-14** | Agora UI | Trading room, workshop, performance routes and detail views | `PARTIAL` | Active authentic demo underway in `AGORA-AGC-14-HOSTED-DEMO-AUTHENTIC-V5-20260829`; workshop card provenance fixed in `OPGAP-FE-AGORA-WORKSHOP-20260830`. |
 | **P-15** | Management UI | Mounted nav, canonical redirects, detail/empty/degraded views | `PARTIAL` | Navigation converged; authenticated desktop journey matrix verified under `OPGAP-HOSTED-MGMT-ACCEPTANCE-20260830`. |
 | **P-16** | Delivery/runtime truth | Exact pair, health, dependency readiness, rollback-safe served identity | `FAIL` | Release workflow summary wraps failures (`OP-G04`), lease and rollback share fragile remote API (`OP-G16`); remediated in `OPGAP-DEPLOY-RELIABILITY-20260830`. |
-| **P-17** | Architecture Simplification | Single owner, zero route collision, zero production mock reachability | `FAIL` | Monolithic `main.py` 68,304 lines (`OP-G08`), cross-router imports (`OP-G09`), dead generic adapters (`OP-G10`); remediated across Batch B, C, and D. |
+| **P-17** | Architecture Simplification | Single owner, zero route collision, zero production mock reachability | `FAIL` | Monolithic `main.py` 68,313 lines (`OP-G08`), cross-router imports (`OP-G09`), dead generic adapters (`OP-G10`); remediated across Batch B, C, and D. |
 
 ---
 
@@ -41,7 +41,7 @@ All 20 identified operational gaps (**OP-G01** through **OP-G20**) from the full
    - Trading Room fixed lenses: Fixed; dynamic candidate pools driven by BFF `candidatePoolId`.
    - ReadSurfaceStore God class: Permanently deleted.
 2. **Current Code Gaps**:
-   - Monolithic `main.py`: 68,304 lines, 2,272 top-level AST body nodes, 453 `@app` decorators across 441 HTTP route decorators and 421 unique route handlers (`OP-G08`).
+   - Monolithic `main.py`: 68,313 lines, 2,272 top-level AST body nodes, 453 `@app` decorators across 441 HTTP route decorators and 421 unique route handlers (`OP-G08`).
    - Cross-router private imports in Agora (`OP-G09`).
    - Dead generic action adapter legacy code (`OP-G10`).
    - Auth readiness synchronous dependency on OpenClaw provider network latency (`OP-G05`).
@@ -57,13 +57,13 @@ All 20 identified operational gaps (**OP-G01** through **OP-G20**) from the full
    - Run 33272385942: Failed on flat 24h market freshness on Saturday (TWSE close on Friday was 44h old). Fixed by Taiwan market session freshness policy in PR #5416 (`394eb05`).
    - Run 33280168821: Failed at `scripts/deploy_nonprod_vm.sh:1218` during Agora read projection binding check on bounded manual source refresh (`OP-G19`). Compensated back to safe baseline.
 2. **Current Baseline State**:
-   - Hosted Pair: Pair ID `9de4cd001a8b7aaf18a1094fb1699ece19f0efd86d3d24994cd9f3562fe33727`, Release Candidate ID `9783e78bd8e28608f2c335d566fd798db5b995c50da129876401170b45852e9a`, accepted at `2026-08-30T16:17:23Z`, Backend `2bcb4465399af83190c5027073f3b2296e377256`, Frontend `7d30e78476be61222af63a089e7ab141aa43b809`, Controller Run `33319323262`, Gate Run `33320810888`, Execute-Plans Deploy Run `33321494484`, Status `accepted`.
-   - Hosted identity baseline: Served `/deployment.json` and live `/bff/version` both report backend source commit `2bcb4465399af83190c5027073f3b2296e377256` (reconciling previous manifest/runtime drift via controller run 33319323262 / gate 33320810888 / deploy run 33321494484); `OP-G03` remains planned for target candidate promotion under `OPGAP-HOSTED-DEV-PROMOTION-20260830` to deploy the unified post-remediation release candidate and verify matching runtime SHA-256 identities.
+   - Hosted Pair: Pair ID `9de4cd001a8b7aaf18a1094fb1699ece19f0efd86d3d24994cd9f3562fe33727`, Release Candidate ID `9783e78bd8e28608f2c335d566fd798db5b995c50da129876401170b45852e9a`, accepted at `2026-08-30T16:46:51.788Z`, Backend `2bcb4465399af83190c5027073f3b2296e377256`, Frontend `7d30e78476be61222af63a089e7ab141aa43b809`, Controller Run `33319323262`, Gate Run `33320810888`, Execute-Plans Deploy Run `33321494484`, Status `accepted`.
+   - Hosted identity baseline: Served `/deployment.json` and live `/bff/version` both report backend source commit `2bcb4465399af83190c5027073f3b2296e377256` (reconciling previous manifest/runtime drift via controller run 33319323262 / gate 33320810888 / deploy run 33321494484); this product BFF runtime is distinct from remote `origin/dev` (`4f0994be548f56da627740f5b7fb193844c1faed`) and the promoted command runtime (`f12e300f4eb2cf38b34c3432658dc8041570d130`). `OP-G03` remains planned for target candidate promotion under `OPGAP-HOSTED-DEV-PROMOTION-20260830` to deploy the unified post-remediation release candidate and verify matching runtime SHA-256 identities.
 
 ### Pass 3: Deployed Runtime -> Hosted Desktop UI Acceptance
 - Held in unverified state pending complete execution of Batch B/C/D implementation and promotion.
 - Split into two independent acceptance lanes:
-  - Agora authentic hosted demo: Assigned to `AGORA-AGC-14-HOSTED-DEMO-AUTHENTIC-V5-20260829` (in `execute-plans`, canonical status `blocked` on BFF servant ensure path; PR #699 merged on `dev` at `bb438d1c7`).
+  - Agora authentic hosted demo: Assigned to `AGORA-AGC-14-HOSTED-DEMO-AUTHENTIC-V5-20260829` (in `execute-plans`, canonical status `blocked` waiting_for `Antigravity`; PR #699 merged on `dev` at `bb438d1c7`, child run `33323122321` failed on BFF port contracts, evidence head `e45ac480e` in draft PR #700).
   - Management desktop authenticated UI: Materialized under `OPGAP-HOSTED-MGMT-ACCEPTANCE-20260830`.
 
 ---
@@ -73,7 +73,7 @@ All 20 identified operational gaps (**OP-G01** through **OP-G20**) from the full
 | 原始稽核觀察項目 | 判定 | 規劃真實與必要限縮 |
 |---|---|---|
 | 48 個後端 service 目錄；兩個 `NotImplementedError` 是抽象 Port | 正確（稽核基線） | 程式碼目錄存在不代表 production 運作；抽象方法本身不是未完成功能。 |
-| BFF 在 `services/control-plane/bff`，有大量 routes/tests | 正確 | 本基線 AST 包含 68,304 行、2,272 AST nodes、441 個 HTTP decorators、421 unique handlers，所有 inline 路由需解耦至 18 domain routers。 |
+| BFF 在 `services/control-plane/bff`，有大量 routes/tests | 正確 | 本基線 AST 包含 68,313 行、2,272 AST nodes、441 個 HTTP decorators、421 unique handlers，所有 inline 路由需解耦至 18 domain routers。 |
 | Agora write matrix、Postgres persistence、33/33 測試 | 正確（該批次） | 尚不能證明 suggestion 有自然 production caller、hosted receipt 與 same-ID durable readback。 |
 | Management 在 execute-plans，不是本 repo legacy app；0 mock import | 方向正確 | import grep 不能證明 production bundle 不可達 seed/overlay/fallback，需 bundle depgraph gate。 |
 | 核心系統是真的做出來 | 正確 | 證明非空殼，但唯一 write authority、failure semantics、hosted effect、安全治理與 clean retirement 仍需證明。 |
@@ -91,7 +91,7 @@ All 20 identified operational gaps (**OP-G01** through **OP-G20**) from the full
 1. **Task-Board-vs-Git Drift & Reconciled Board IDs**:
    - `ai-status.json` and canonical task stores may show historical task assignments or stale in-progress statuses that have diverged from Git `origin/dev` commits.
    - **`AGORA-PERSONA-DURABLE-LIST-READBACK-V2-20260830`**: Recorded as merged on `origin/dev` (`d2bca5bc70bfae897e1ef3ca736ad3680a587679` via PR #5427) and is terminal `done`, unblocking Batch D assembly.
-   - **`AGORA-AGC-14-HOSTED-DEMO-AUTHENTIC-V5-20260829`**: Canonical status `blocked` (waiting_for `Human/Ops`, PR #699 merged on execute-plans dev at `bb438d1c7`, blocked on servant ensure path; distinct from `OPGAP-HOSTED-MGMT-ACCEPTANCE-20260830`).
+   - **`AGORA-AGC-14-HOSTED-DEMO-AUTHENTIC-V5-20260829`**: Canonical status `blocked` (waiting_for `Antigravity`, last_update `2026-08-30T16:56:38Z`, PR #699 merged on execute-plans dev at `bb438d1c7`, child run `33323122321` failed on BFF port contracts, evidence head `e45ac480e` in draft PR #700, watchdog restored accepted pair; distinct from `OPGAP-HOSTED-MGMT-ACCEPTANCE-20260830`).
    - **`PPL-ALLOC-007`**: Historical board-drift task; binding visibility route pruning verified in canonical codebase.
    - **`PPL-ALLOC-009`**: Historical board-drift task; sidecar BFF handoff closed in merged PRs.
    - **`TJ-E2E-012`**: Historical Trade Journey E2E hosted acceptance task; canonical predecessor truth verified.
@@ -116,7 +116,7 @@ All 20 identified operational gaps (**OP-G01** through **OP-G20**) from the full
 | `OP-G05` | P1 | `planned` | `OPGAP-BE-BFF-CORE-20260830` | Auth readiness route blocks synchronously on `_safe_provider_readiness()` calling external OpenClaw provider probes. | Decouple local session/tenant authentication from upstream provider probes; read provider readiness asynchronously from degraded cache. | `OPGAP-BE-BFF-CORE-20260830` | Auth route returns HTTP 200 within 50ms regardless of OpenClaw latency; provider degradation reflected in async status. |
 | `OP-G06` | P0 | `planned` | `OPGAP-FE-MGMT-CRUD-POSTMORTEM-20260830` | `createEntity.ts` routes non-Persona CRUD to `writeOverlay` in mock mode or throws in strict live mode; lacks durable mutation. | Wire all visible entity CRUD actions to canonical durable BFF endpoints, or disable unbacked actions in strict live. | `OPGAP-FE-MGMT-CRUD-POSTMORTEM-20260830` | Hosted browser CRUD journey produces genuine BFF command receipt and durable same-ID readback without `writeOverlay`. |
 | `OP-G07` | P1 | `planned` | `OPGAP-FE-BUNDLE-CLEANUP-20260830` | Production bundle graph can reach `writeOverlay.ts` and legacy mock/seed files through unguarded barrel imports. | Eliminate residual mock files (`delete_after_zero_reachability`), clean live files (`retain_and_clean`), and enforce `check_bundle_mock_reachability.mjs` gate. | `OPGAP-FE-BUNDLE-CLEANUP-20260830` | Automated bundle analyzer proves 0 reachability from `src/main.tsx` to `writeOverlay` or seed data. |
-| `OP-G08` | P1 | `planned` | `OPGAP-BFF-MAIN-ASSEMBLY-20260830` | Monolithic `main.py` contains 68,304 lines and 441 route decorators, causing reverse-main import sprawl and multi-replica collisions. [Merged with F21]. | Extract all 441 decorators and 421 handlers into 18 domain routers; reduce `main.py` to a pure composition root with zero reverse-main imports. | `OPGAP-BFF-MAIN-ASSEMBLY-20260830` | `main.py` contains <= 1,000 lines, 0 inline route handlers, pure composition root nodes, and 0 reverse-main imports. |
+| `OP-G08` | P1 | `planned` | `OPGAP-BFF-MAIN-ASSEMBLY-20260830` | Monolithic `main.py` contains 68,313 lines and 441 route decorators, causing reverse-main import sprawl and multi-replica collisions. [Merged with F21]. | Extract all 441 decorators and 421 handlers into 18 domain routers; reduce `main.py` to a pure composition root with zero reverse-main imports. | `OPGAP-BFF-MAIN-ASSEMBLY-20260830` | `main.py` contains <= 1,000 lines, 0 inline route handlers, pure composition root nodes, and 0 reverse-main imports. |
 | `OP-G09` | P1 | `planned` | `OPGAP-BE-AGORA-ROUTER-20260830` | Agora domain routers cross-import private stores and unexported helpers across domain boundaries (e.g. `_build_readiness_assessment`). | Inject shared store contracts and helpers from composition root; eliminate all private cross-router imports. | `OPGAP-BE-AGORA-ROUTER-20260830` | Architecture linter proves 0 private cross-router imports across all Agora modules. |
 | `OP-G10` | P2 | `planned` | `OPGAP-BE-COMMAND-PLANE-RETIREMENT-20260830` | Generic legacy action adapter `_execute_bff_action_adapter` and dead command plane artifacts remain. [Merged with F24]. | Delete dead generic action adapter and legacy test scripts while retaining `command_executor.py` as central command authority without reverse-main imports. | `OPGAP-BE-COMMAND-PLANE-RETIREMENT-20260830` | Dead generic action adapter deleted; `command_executor.py` operates as pure dispatcher importing from `ports/`. |
 | `OP-G11` | P0 | `planned` | `OPGAP-HOSTED-BACKEND-ACCEPTANCE-20260830` | 12-loop cross-loop deployed proof is opt-in via environment variables, skipping verification by default. | Automate default execution of 12-loop cross-plane proof during backend acceptance on `pantheon-dev`. | `OPGAP-HOSTED-BACKEND-ACCEPTANCE-20260830` | Automated 12-loop test suite runs by default and produces 12 distinct stage receipts with durable same-ID readback. |
