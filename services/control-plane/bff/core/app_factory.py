@@ -273,7 +273,7 @@ create_core_app = create_app
 
 
 class _UnavailableSettingsStore:
-    def _raise(self):
+    def _raise(self, *_args: Any, **_kwargs: Any):
         raise _missing_handler("settings_store")
 
     get = update = export_json = import_json = _raise
@@ -281,7 +281,13 @@ class _UnavailableSettingsStore:
 
 def _assert_route_assignment(app: FastAPI) -> None:
     actual: set[tuple[str, str]] = set()
-    for route in app.routes:
+    pending = list(app.routes)
+    while pending:
+        route = pending.pop()
+        included_router = getattr(route, "original_router", None)
+        if included_router is not None:
+            pending.extend(included_router.routes)
+            continue
         if not isinstance(route, APIRoute):
             continue
         for method in route.methods or set():
@@ -292,4 +298,3 @@ def _assert_route_assignment(app: FastAPI) -> None:
         missing = sorted(expected - actual)
         extra = sorted(actual - expected)
         raise RuntimeError(f"core route assignment mismatch: missing={missing}, extra={extra}")
-
