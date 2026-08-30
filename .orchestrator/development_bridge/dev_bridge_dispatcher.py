@@ -671,6 +671,13 @@ def _check_constraints(packet: DevTaskPacket) -> List[str]:
             "Packet constraint allowedRepos contains unconfigured repositories: "
             + ", ".join(unconfigured)
         )
+    for task in packet.tasks:
+        if not task.target_repo:
+            violations.append(f"Task {task.id} target_repo is required")
+        elif task.target_repo not in requested_repos:
+            violations.append(
+                f"Task {task.id} target_repo {task.target_repo!r} is not in packet allowedRepos {sorted(requested_repos)!r}"
+            )
     return violations
 
 
@@ -680,6 +687,7 @@ def _task_spec(task: BridgeTask) -> Dict[str, object]:
         "title": task.title,
         "owner": task.owner,
         "reviewer": task.reviewer,
+        "target_repo": task.target_repo,
         "phase": task.phase,
         "depends_on": list(task.depends_on),
         "dependency_tracks": dict(task.dependency_tracks),

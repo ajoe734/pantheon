@@ -19,6 +19,7 @@ from ..dev_bridge_inbox import (
 )
 from ..dev_bridge_models import (
     BridgeActor,
+    BridgeConstraints,
     BridgeDispatchResult,
     BridgeTask,
     DevTaskPacket,
@@ -87,12 +88,18 @@ def _make_packet(packet_id: str) -> DevTaskPacket:
                 title="Materialize queued assistant task",
                 owner="Codex",
                 reviewer="Claude",
+                target_repo="execute-plans",
                 phase="Sprint Inbox / Dev bridge",
                 artifacts=["execute-plans/src/agora/pages/AskPersonas.tsx"],
                 acceptance=["Task is queued then assigned through supervisor drain"],
                 summary="Verify assistant dev packet inbox path.",
             )
         ],
+        constraints=BridgeConstraints(
+            allowedRepos=["pantheon", "execute-plans"],
+            requiresBranchPrMerge=True,
+            noDirectShellFromWeb=True,
+        ),
         auditConversationHref="/bff/assistant/sessions/mgmt-nl-inbox/transcript",
     )
 

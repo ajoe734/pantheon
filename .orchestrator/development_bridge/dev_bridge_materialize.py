@@ -329,6 +329,17 @@ def verify_signed_dev_bridge_packet(
                 raise SystemExit(
                     f"Dev bridge signed packet task {index} {field} binding failed"
                 )
+        packet_task_repo = str(packet_task.get("target_repo") or packet_task.get("targetRepo") or "").strip()
+        spec_repo = str(
+            ((row.get("task_metadata") or {}).get("dev_bridge") or {})
+            .get("task_spec", {})
+            .get("target_repo")
+            or ""
+        ).strip()
+        if packet_task_repo != spec_repo:
+            raise SystemExit(
+                f"Dev bridge signed packet task {index} target_repo binding failed"
+            )
     if state is not None and requires_operator_authorization:
         try:
             consumed = dev_bridge_replay_ledger(state)
@@ -514,6 +525,7 @@ def read_dev_bridge_materialized_batch(
     immutable_fields = {
         "id": "id",
         "title": "title",
+        "target_repo": "target_repo",
         "phase": "phase",
         "depends_on": "depends_on",
         "dependency_tracks": "dependency_tracks",
@@ -554,6 +566,8 @@ def read_dev_bridge_materialized_batch(
                 expected = {}
             if spec_field == "execution_resources" and spec_field not in signed_spec:
                 expected = []
+            if spec_field == "target_repo" and spec_field not in signed_spec:
+                expected = task.get("target_repo")
             if spec_field in {"depends_on", "artifacts", "acceptance", "execution_resources"}:
                 expected = list(expected or [])
                 observed = list(observed or []) if isinstance(observed, list) else observed

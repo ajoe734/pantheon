@@ -71,6 +71,7 @@ def _make_packet(*, packet_id: str = "pkt_test001") -> DevTaskPacket:
                 title="Implement feature X",
                 owner="Codex",
                 reviewer="Claude",
+                target_repo="pantheon",
                 phase="Sprint TEST / Feature X",
                 artifacts=["services/foo/bar.py"],
                 acceptance=["Feature X works end to end"],
@@ -108,15 +109,34 @@ class TestDevTaskPacketModel(unittest.TestCase):
         self.assertTrue(c.no_direct_shell_from_web)
         self.assertTrue(c.requires_branch_pr_merge)
 
+    def test_bridge_task_target_repo_required(self):
+        from pydantic import ValidationError
+
+        # Missing target_repo
+        with self.assertRaises(ValidationError):
+            BridgeTask(id="T1", title="t", owner="Codex", reviewer="Claude")
+
+        # Empty string
+        with self.assertRaises(ValidationError):
+            BridgeTask(id="T1", title="t", owner="Codex", reviewer="Claude", target_repo="")
+
+        # Whitespace
+        with self.assertRaises(ValidationError):
+            BridgeTask(id="T1", title="t", owner="Codex", reviewer="Claude", target_repo="   ")
+
+        # Alias targetRepo works
+        task = BridgeTask(id="T1", title="t", owner="Codex", reviewer="Claude", targetRepo="execute-plans")
+        self.assertEqual(task.target_repo, "execute-plans")
+
     def test_bridge_task_depends_on_defaults_empty(self):
         task = BridgeTask(
-            id="T1", title="t", owner="Codex", reviewer="Claude"
+            id="T1", title="t", owner="Codex", reviewer="Claude", target_repo="pantheon"
         )
         self.assertEqual(task.depends_on, [])
 
     def test_bridge_task_execution_resources_defaults_empty(self):
         task = BridgeTask(
-            id="T1", title="t", owner="Codex", reviewer="Claude"
+            id="T1", title="t", owner="Codex", reviewer="Claude", target_repo="pantheon"
         )
         self.assertEqual(task.execution_resources, [])
 
@@ -126,6 +146,7 @@ class TestDevTaskPacketModel(unittest.TestCase):
             title="t",
             owner="Codex",
             reviewer="Claude",
+            target_repo="pantheon",
             execution_resources=["pantheon-dev"],
         )
         self.assertEqual(task.execution_resources, ["pantheon-dev"])
@@ -135,27 +156,27 @@ class TestDevTaskPacketModel(unittest.TestCase):
 
         # Explicit None / null
         with self.assertRaises(ValidationError):
-            BridgeTask(id="T1", title="t", owner="Codex", reviewer="Claude", execution_resources=None)
+            BridgeTask(id="T1", title="t", owner="Codex", reviewer="Claude", target_repo="pantheon", execution_resources=None)
 
         # Non-list
         with self.assertRaises(ValidationError):
-            BridgeTask(id="T1", title="t", owner="Codex", reviewer="Claude", execution_resources="pantheon-dev")
+            BridgeTask(id="T1", title="t", owner="Codex", reviewer="Claude", target_repo="pantheon", execution_resources="pantheon-dev")
 
         # Non-string element
         with self.assertRaises(ValidationError):
-            BridgeTask(id="T1", title="t", owner="Codex", reviewer="Claude", execution_resources=[123])
+            BridgeTask(id="T1", title="t", owner="Codex", reviewer="Claude", target_repo="pantheon", execution_resources=[123])
 
         # Empty string element
         with self.assertRaises(ValidationError):
-            BridgeTask(id="T1", title="t", owner="Codex", reviewer="Claude", execution_resources=[""])
+            BridgeTask(id="T1", title="t", owner="Codex", reviewer="Claude", target_repo="pantheon", execution_resources=[""])
 
         # Unallowlisted
         with self.assertRaises(ValidationError):
-            BridgeTask(id="T1", title="t", owner="Codex", reviewer="Claude", execution_resources=["bad-resource"])
+            BridgeTask(id="T1", title="t", owner="Codex", reviewer="Claude", target_repo="pantheon", execution_resources=["bad-resource"])
 
         # Duplicate
         with self.assertRaises(ValidationError):
-            BridgeTask(id="T1", title="t", owner="Codex", reviewer="Claude", execution_resources=["pantheon-dev", "pantheon-dev"])
+            BridgeTask(id="T1", title="t", owner="Codex", reviewer="Claude", target_repo="pantheon", execution_resources=["pantheon-dev", "pantheon-dev"])
 
     def test_packet_serialises_round_trip(self):
         pkt = _make_packet()
