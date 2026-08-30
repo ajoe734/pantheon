@@ -312,7 +312,6 @@ class GovernanceService:
             "priority": priority,
             "consultation_type": consultation_type,
         }
-
     def create_consult_request(self, payload: Mapping[str, Any], identity: Any) -> Dict[str, Any]:
         fields = self.validate_consult_request(payload)
         created = self._call(
@@ -763,4 +762,3 @@ class GovernanceService:
                 "filters": {"source_type": source_type, "status": status, "q": q},
             },
         }
-
