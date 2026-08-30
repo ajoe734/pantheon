@@ -12,7 +12,7 @@ from fastapi.testclient import TestClient
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
-from domain_ports.research_knowledge_source import (
+from ports.research_knowledge_source import (
     DefaultResearchKnowledgeSourcePort,
     ResearchKnowledgeSourcePort,
     _parse_rfc3339,
