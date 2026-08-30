@@ -1,0 +1,83 @@
+{
+  "schema_version": "pantheon.review-evidence.v1",
+  "task_id": "OPGAP-BE-TRAINING-ROUTER-V3-20260830",
+  "title": "Migrate Training domain routes and session management",
+  "program_id": "PANTHEON-FULL-OPERATION-GAP-CLOSURE-20260830",
+  "design_unit": "SD-OPGAP-BE-TRAINING-ROUTER",
+  "recorded_at": "2026-08-30T21:32:00Z",
+  "owner": "Codex2",
+  "reviewer": "Claude",
+  "target_repo": "pantheon",
+  "task_class": "functional",
+  "summary_zh": "將 Training 的十四個 trainer route decorators 移入可注入的 domain router，保留既有 session persistence 與 persona-training port 行為，並以 V3 evidence contract 取代 V2 不完整交付。",
+  "replacement_lineage": {
+    "supersedes": "OPGAP-BE-TRAINING-ROUTER-V2-20260830",
+    "reason": "V2 的功能實作已驗證，但沒有本 task 所需的 immutable evidence-manifest artifact contract。",
+    "validated_source_pr": 5458,
+    "validated_source_head": "d19abb51a54a01876123f6ed2bd888a34444ea13",
+    "adopted_code_anchor": "762d91cb42b75640273cfa936510f0d6011f9ce2"
+  },
+  "artifacts": {
+    "canonical_task_artifacts": [
+      "services/control-plane/bff/training/router.py",
+      "services/control-plane/bff/training/service.py",
+      "services/control-plane/bff/tests/test_training_router.py",
+      "docs/deployment/evidence/full-operation-gap/OPGAP-BE-TRAINING-ROUTER-V3-20260830/evidence.json"
+    ],
+    "implementation_paths": [
+      "services/control-plane/bff/main.py",
+      "services/control-plane/bff/training/__init__.py",
+      "services/control-plane/bff/training/router.py",
+      "services/control-plane/bff/training/service.py",
+      "services/control-plane/bff/tests/test_training_router.py"
+    ]
+  },
+  "scope": {
+    "owned": [
+      "Training APIRouter endpoint ownership and dependency injection",
+      "TrainingSessionService validation and trainer-seed bridge extraction",
+      "BFF composition-root registration and Training router ownership test",
+      "this immutable review evidence manifest"
+    ],
+    "not_changing": [
+      "Reusable persona training port logic",
+      "Training Session read-store and persistence behaviour",
+      "source-ingestion bridge semantics",
+      "execute-plans frontend"
+    ],
+    "composes_with": [
+      "existing Training Session read-store contract",
+      "OPGAP-DEVTOOL-TARGET-REPO-BRIDGE-V2-20260830",
+      "Claude independent exact-head review"
+    ]
+  },
+  "contracts": {
+    "router_ownership": "All fourteen /api/v1/trainer GET and POST endpoints are registered by create_training_router; main.py has no remaining trainer route decorator.",
+    "composition": "main.py imports and includes create_training_router using existing BFF ports, without a reverse import from training/ to main.py.",
+    "session_preservation": "TrainingSessionService retains the established validation, session status, replay, rapid-evaluation, and trainer-seed bridge behaviour while resolving the existing read store per request.",
+    "failure_semantics": "The router preserves the established authentication-before-validation order and BFF error-envelope semantics."
+  },
+  "verification": {
+    "commands": [
+      ".venv-pantheon/bin/python -m pytest -ra services/control-plane/bff/tests/test_training_router.py",
+      ".venv-pantheon/bin/python -m pytest -ra services/control-plane/bff/test_trn002_trainer_session_contract.py",
+      ".venv-pantheon/bin/python -m pytest -ra services/control-plane/bff/test_trn003_rapid_eval_contract.py services/control-plane/bff/test_tw01_teaching_dialog_contract.py services/control-plane/bff/test_tw02_parameter_controls_contract.py",
+      ".venv-pantheon/bin/python -m pytest -ra services/control-plane/bff/test_tw03_before_after_compare_contract.py services/control-plane/bff/test_tw04_teaching_replay_contract.py"
+    ],
+    "result": "PASS",
+    "details": "The standalone ownership suite passed 2/2; trainer session passed 27/27; rapid-eval, dialog, and controls passed 23/23; preview and replay passed 38/38 (90 tests total)."
+  },
+  "review_handoff": {
+    "status": "ready_for_independent_review",
+    "reviewer": "Claude",
+    "exact_pr_head_authority": "The governed ai-status handoff freezes REVIEW_PR and REVIEW_HEAD_SHA for this committed manifest; the canonical binding is authoritative because a committed manifest cannot self-reference the commit that contains it.",
+    "required_checks": [
+      "verify all fourteen trainer endpoints are registered by training/router.py",
+      "verify main.py has no /api/v1/trainer decorators and includes the injected router",
+      "verify training/ has no reverse import of main.py",
+      "verify existing Training Session persistence and persona-training ports were not changed",
+      "verify the focused Training router and contract test commands pass",
+      "approve the exact PR head frozen with this manifest path"
+    ]
+  }
+}

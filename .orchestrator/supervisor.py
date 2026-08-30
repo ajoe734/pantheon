@@ -822,6 +822,58 @@ def assistant_dev_bridge_tooling_dirs(repo_root: Path) -> list[Path]:
     return dirs
 
 
+def assistant_dev_bridge_allowed_repositories(config: dict[str, Any]) -> list[str]:
+    """Return the bridge-contract names explicitly admitted by the live registry.
+
+    ``repositories(config)`` supplies the canonical metadata and aliases, but
+    its defaults include retired or host-local integrations.  A live bridge
+    must not silently admit those defaults: only entries explicitly declared
+    in ``coordination.repositories`` are part of this supervisor's authority.
+    The bridge protocol names repositories by their canonical display name,
+    except Pantheon's stable lowercase protocol spelling.
+    """
+
+    coordination = config.get("coordination")
+    configured = (
+        coordination.get("repositories")
+        if isinstance(coordination, Mapping)
+        else None
+    )
+    if not isinstance(configured, Mapping) or not configured:
+        raise ValueError(
+            "assistant development bridge requires non-empty "
+            "coordination.repositories live registry"
+        )
+
+    allowed: list[str] = []
+    for repository_id in configured:
+        normalized_id = str(repository_id or "").strip()
+        if not normalized_id:
+            raise ValueError("coordination.repositories contains an empty repository id")
+        repository = resolve_repository(config, normalized_id)
+        if normalized_id == "pantheon":
+            bridge_name = "pantheon"
+        else:
+            bridge_name = str(repository.get("display_name") or "").strip()
+        if not bridge_name:
+            raise ValueError(
+                "assistant development bridge repository has no contract name: "
+                f"{normalized_id}"
+            )
+        if bridge_name in allowed:
+            raise ValueError(
+                "assistant development bridge registry has duplicate contract name: "
+                f"{bridge_name}"
+            )
+        allowed.append(bridge_name)
+
+    if "pantheon" not in allowed:
+        raise ValueError(
+            "assistant development bridge registry must explicitly admit pantheon"
+        )
+    return allowed
+
+
 def drain_assistant_dev_packet_inbox(config: dict[str, Any], state: dict[str, Any]) -> bool:
     settings = config.get("assistant_dev_bridge") if isinstance(config.get("assistant_dev_bridge"), dict) else {}
     if settings.get("enabled") is False:
@@ -864,6 +916,9 @@ def drain_assistant_dev_packet_inbox(config: dict[str, Any], state: dict[str, An
         "PANTHEON_STATUS_ROOT": str(repo_root.resolve()),
         "PANTHEON_ASSISTANT_DEV_BRIDGE_REQUIRE_TASK_STATE_READBACK": "1",
         **status_command_runtime_env(config),
+        "PANTHEON_ASSISTANT_DEV_BRIDGE_ALLOWED_REPOS": ",".join(
+            assistant_dev_bridge_allowed_repositories(config)
+        ),
     }
     result = drain_task_packet_inbox(
         repo_root=str(repo_root),
