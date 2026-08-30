@@ -18,6 +18,29 @@ ADVISORY_ENVIRONMENT_ORDER = ("analysis", "research", "shadow", "paper")
 ADVISORY_ENVIRONMENTS = frozenset(ADVISORY_ENVIRONMENT_ORDER)
 PERSONA_WORKSPACE_ROOT = "/home/node/.openclaw/workspaces"
 
+OPERATIONAL_LIFECYCLE_STATES = frozenset(
+    {
+        "research_only",
+        "consultable",
+        "paper_owner",
+        "live_owner",
+        "active",
+        "paper_running",
+        "paper_only",
+    }
+)
+
+
+def is_persona_operational(persona: Dict[str, Any]) -> bool:
+    """Return whether the Persona lifecycle is operational for opinion interactions.
+
+    Only explicit Persona Registry lifecycle truth (and supported operational aliases)
+    is accepted. Generic deployment labels (e.g. ``deployed``) or draft/frozen/retired
+    states must not grant interaction eligibility.
+    """
+    lifecycle = str(persona.get("lifecycle_state") or "").strip().lower()
+    return lifecycle in OPERATIONAL_LIFECYCLE_STATES
+
 
 def authority_boundary() -> Dict[str, Any]:
     return {
@@ -237,7 +260,7 @@ def build_participant_admission(
     requested_environment = str(environment or "").strip().lower()
     if not tenant_id or persona_tenant_id != tenant_id:
         raise ValueError("Persona tenant does not match the interaction tenant")
-    if lifecycle not in {"active", "paper_running", "paper_only"}:
+    if not is_persona_operational(persona):
         raise ValueError("Persona lifecycle is not operational")
     if not persona_id or snapshot_persona_id != persona_id or not snapshot_id:
         raise ValueError("Persona capability snapshot identity is incomplete or mismatched")

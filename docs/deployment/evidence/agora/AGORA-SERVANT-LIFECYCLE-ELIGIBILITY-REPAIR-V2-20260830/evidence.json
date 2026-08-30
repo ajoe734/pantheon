@@ -1,0 +1,318 @@
+{
+  "schema_version": "product_evidence.v1",
+  "schema_status": {
+    "formal_schema_owner": "schemas/product-evidence.schema.json",
+    "formalization_trigger": "Product-task exact-head review admission requires a schema-valid task evidence manifest.",
+    "note": "Pre-review owner evidence for Agora servant lifecycle eligibility repair and exact-head review evidence.",
+    "status": "formalized"
+  },
+  "evidence_policy": {
+    "checksum_file": "docs/deployment/evidence/agora/AGORA-SERVANT-LIFECYCLE-ELIGIBILITY-REPAIR-V2-20260830/evidence.sha256",
+    "missing_or_contradicted_proof_fails_closed": true,
+    "mutation_rule": "Task-scoped evidence changes require a Pantheon task commit and independent reviewer verification.",
+    "recording_mode": "logical_append_only",
+    "redacted": false,
+    "self_hashing": false
+  },
+  "task": {
+    "base_branch": "dev",
+    "evidence_cut_at": "2026-08-30T19:38:00Z",
+    "evidence_cut_semantics": "Task owner evidence for Agora servant lifecycle eligibility repair. Adopts and verifies the implementation diff from PR #5447 head 98d4332eff25275edd46e47df755f0c0b3bd3014, ensuring research_only personas are eligible for persona_opinion interactions while strictly preserving tenant isolation, paper environment ceilings, and execution_authority=none.",
+    "id": "AGORA-SERVANT-LIFECYCLE-ELIGIBILITY-REPAIR-V2-20260830",
+    "overall_admission": "owner_asserted_pass_pending_independent_review_and_merge",
+    "owner": "Antigravity2",
+    "phase": "Agora authentic demo repair / lifecycle eligibility delivery",
+    "product_level_required": true,
+    "repository": "ajoe734/pantheon",
+    "review_file": "docs/deployment/evidence/agora/AGORA-SERVANT-LIFECYCLE-ELIGIBILITY-REPAIR-V2-20260830/evidence.json",
+    "reviewer": "Codex2",
+    "target_environment": "local BFF production-owner boundary regression suite; no hosted deployment claim",
+    "target_maturity": "review-ready source delivery",
+    "task_branch": "task/AGORA-SERVANT-LIFECYCLE-ELIGIBILITY-REPAIR-V2-20260830",
+    "title": "Repair Agora servant lifecycle eligibility with review evidence"
+  },
+  "authorities": {
+    "actual_state": [
+      "services/control-plane/bff/agora/interaction/provider.py: OPERATIONAL_LIFECYCLE_STATES and is_persona_operational()",
+      "services/control-plane/bff/agora/interaction/router.py: _persona_operational()",
+      "services/control-plane/bff/ports/persona_write_owner.py: target_lifecycle mapping to research_only for Persona Service"
+    ],
+    "desired_state": [
+      "Persona Service write owner lifecycle mapping for Agora servant (status=paper_only -> lifecycle_state=research_only)",
+      "Agora interaction operational lifecycle vocabulary includes research_only, consultable, paper_owner, live_owner, active, paper_running, paper_only",
+      "Fail-closed tenant isolation, capability snapshot binding, environment ceilings, and execution_authority=none remain strictly enforced"
+    ],
+    "task_packet": ".orchestrator/worker-runtime/task-context/agora-servant-lifecycle-eligibility-repair-v2-20260830.md"
+  },
+  "scope": {
+    "authoritative_write_owner": "Antigravity2 for Agora interaction lifecycle eligibility vocabulary, Persona Service HTTP write port lifecycle mapping, and focused regression proof",
+    "composes_with": [
+      "PR #5447 (V1 implementation head 98d4332eff25275edd46e47df755f0c0b3bd3014)",
+      "Codex2 canonical review gate"
+    ],
+    "evidence_changed_files": [
+      "docs/deployment/evidence/agora/AGORA-SERVANT-LIFECYCLE-ELIGIBILITY-REPAIR-V2-20260830/evidence.json",
+      "docs/deployment/evidence/agora/AGORA-SERVANT-LIFECYCLE-ELIGIBILITY-REPAIR-V2-20260830/evidence.sha256"
+    ],
+    "implementation_changed_files": [
+      "services/control-plane/bff/agora/interaction/provider.py",
+      "services/control-plane/bff/agora/interaction/router.py",
+      "services/control-plane/bff/ports/persona_write_owner.py",
+      "services/control-plane/bff/tests/test_agora_persona_interactions.py",
+      "services/control-plane/bff/tests/test_agora_servant_production_write_owner.py"
+    ],
+    "not_changing": "Frontend generated client, runtime execution authority, live broker/capital actions, or Persona Service persistence schemas",
+    "owned_layer": "Agora interaction eligibility lifecycle vocabulary alignment and production Persona HTTP write owner mapping"
+  },
+  "implementation_delivery": {
+    "anchor_commits": [
+      {
+        "sha": "98d4332eff25275edd46e47df755f0c0b3bd3014",
+        "subject": "AGORA-SERVANT-LIFECYCLE-ELIGIBILITY-REPAIR-V1-20260830: fix lifecycle",
+        "delivery_state": "adoption_source",
+        "hosted_cut_inclusion": false,
+        "note": "Task packet mandates this exact preserved source diff."
+      }
+    ],
+    "required_checks": [
+      {
+        "workflow": "Focused BFF production-owner, interactions, and durable interaction regression suites",
+        "event": "local validation before evidence cut",
+        "conclusion": "success"
+      },
+      {
+        "workflow": "product-evidence Draft 7 schema validation",
+        "event": "local validation before exact-head handoff",
+        "conclusion": "success"
+      },
+      {
+        "workflow": "evidence companion checksum",
+        "event": "local validation before exact-head handoff",
+        "conclusion": "success"
+      }
+    ]
+  },
+  "validation": {
+    "commands": [
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -v services/control-plane/bff/tests/test_agora_servant_production_write_owner.py services/control-plane/bff/tests/test_agora_persona_interactions.py",
+        "result": "pass",
+        "conclusion": "23 passed in 26.44s. Confirms servant production HTTP write owner provisioning, research_only lifecycle eligibility, tenant isolation, and environment ceiling gates."
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -v services/control-plane/bff/agora/interaction/ services/control-plane/bff/tests/test_pint_013_durable_interactions.py",
+        "result": "pass",
+        "conclusion": "48 passed in 27.61s. Confirms durable interaction worker and interaction router regression suite."
+      },
+      {
+        "command": "python3 -c \"import json, jsonschema; jsonschema.validate(json.load(open('docs/deployment/evidence/agora/AGORA-SERVANT-LIFECYCLE-ELIGIBILITY-REPAIR-V2-20260830/evidence.json')), json.load(open('schemas/product-evidence.schema.json')))\"",
+        "result": "pass",
+        "conclusion": "The manifest validates against schemas/product-evidence.schema.json before its evidence commit."
+      },
+      {
+        "command": "(cd docs/deployment/evidence/agora/AGORA-SERVANT-LIFECYCLE-ELIGIBILITY-REPAIR-V2-20260830 && sha256sum -c evidence.sha256)",
+        "result": "pass",
+        "conclusion": "The companion checksum matches evidence.json before its evidence commit."
+      }
+    ],
+    "validated_at": "2026-08-30T19:38:00Z",
+    "validated_base_sha": "6167cc9890a70bde447a4b347e7ed5b53473ad83",
+    "validated_head_sha": "98d4332eff25275edd46e47df755f0c0b3bd3014"
+  },
+  "deployment": {
+    "applicable": false,
+    "environment": "local BFF regression validation",
+    "public_bff_base_url": "not_applicable",
+    "publish_cut": {
+      "status": "not_applicable"
+    },
+    "canonical_root_deploy": {
+      "status": "not_applicable"
+    },
+    "identity_admission": {
+      "status": "local auth-stub contract only; no hosted identity claim"
+    }
+  },
+  "hosted_readback": {
+    "pre_deploy": {
+      "status": "not_applicable",
+      "reason": "This task adds regression coverage and lifecycle alignment only; it does not deploy or restart hosted services."
+    }
+  },
+  "behavioral_proof": {
+    "duplicate_safety": {
+      "proof": [
+        "Provisioning servant via /bff/agora/servant/ensure with existing stable persona returns existing record idempotently.",
+        "Submission with duplicate idempotency key replays exact interaction without duplicate events."
+      ]
+    },
+    "failure_and_degraded_behavior": {
+      "proof": [
+        "Unavailable HTTP Persona Service returns typed dependency error (503) without mutating local state.",
+        "Missing service credential fails before write network call."
+      ]
+    },
+    "request_receipt_downstream_correlation": {
+      "proof": [
+        "Stored persona lifecycle_state=research_only in Persona Service correlates to operational status for Agora interaction participant admission.",
+        "Participant snapshot binds capability_snapshot_id and persona_id deterministically."
+      ]
+    },
+    "restart_and_recovery": {
+      "proof": [
+        "Service restart and fresh BFF port preserve servant identity and capability snapshot.",
+        "Durable interaction store and worker recover pending interactions across process restarts."
+      ]
+    },
+    "rollback_or_compensation": {
+      "proof": [
+        "Failed capability creation leaves persona in draft without leaking active credentials or granting interaction eligibility."
+      ]
+    }
+  },
+  "security_and_safety": {
+    "environment_boundary": {
+      "status": "pass",
+      "proof": "Servant persona environment ceiling is fixed to paper; live environment interactions are rejected with environment_ceiling_exceeded."
+    },
+    "hosted_frontend": {
+      "status": "not_applicable",
+      "proof": "Backend HTTP write owner and interaction endpoints operate independently of frontend client generation."
+    },
+    "mfa": {
+      "status": "not_applicable",
+      "proof": "Write owner operations require valid operator authorization; missing credentials fail closed."
+    },
+    "no_live_capital": {
+      "status": "pass",
+      "proof": "Execution authority is strictly fixed to none for Agora servant personas, forbidding automated trading orders or capital allocation."
+    },
+    "rbac": {
+      "status": "pass",
+      "proof": "Interaction endpoints require authenticated tenant and write scopes."
+    },
+    "tenant_isolation": {
+      "status": "pass",
+      "proof": "Servant persona provisioned under tenant-alpha is excluded from tenant-beta interaction context with tenant_mismatch."
+    },
+    "two_person_approval": {
+      "status": "pending",
+      "proof": "Codex2 must independently approve the immutable PR head through the governed review gate before merge."
+    }
+  },
+  "acceptance": [
+    {
+      "id": "AC1",
+      "statement": "Adopt and independently revalidate the exact implementation diff preserved at PR 5447 head 98d4332eff25275edd46e47df755f0c0b3bd3014",
+      "status": "pass",
+      "evidence_refs": [
+        "PR #5447 head 98d4332eff25275edd46e47df755f0c0b3bd3014",
+        "services/control-plane/bff/agora/interaction/provider.py",
+        "services/control-plane/bff/agora/interaction/router.py",
+        "services/control-plane/bff/ports/persona_write_owner.py"
+      ]
+    },
+    {
+      "id": "AC2",
+      "statement": "Production HTTP ensure returns the stable Persona ID and research_only is eligible for persona_opinion",
+      "status": "pass",
+      "evidence_refs": [
+        "services/control-plane/bff/tests/test_agora_servant_production_write_owner.py::test_servant_production_http_owner_included_in_interaction_eligibility_e2e"
+      ]
+    },
+    {
+      "id": "AC3",
+      "statement": "Tenant isolation capability snapshot paper ceiling and execution_authority none remain fail closed",
+      "status": "pass",
+      "evidence_refs": [
+        "services/control-plane/bff/tests/test_agora_servant_production_write_owner.py::test_servant_production_http_owner_included_in_interaction_eligibility_e2e",
+        "services/control-plane/bff/tests/test_agora_persona_interactions.py::test_ineligible_participant_and_cross_tenant_fail_closed"
+      ]
+    },
+    {
+      "id": "AC4",
+      "statement": "Focused production-owner interaction and Agora regression suites pass",
+      "status": "pass",
+      "evidence_refs": [
+        "services/control-plane/bff/tests/test_agora_servant_production_write_owner.py",
+        "services/control-plane/bff/tests/test_agora_persona_interactions.py",
+        "services/control-plane/bff/tests/test_pint_013_durable_interactions.py"
+      ]
+    },
+    {
+      "id": "AC5",
+      "statement": "A schema-valid evidence manifest and checksum are committed on the exact PR head",
+      "status": "pass",
+      "evidence_refs": [
+        "docs/deployment/evidence/agora/AGORA-SERVANT-LIFECYCLE-ELIGIBILITY-REPAIR-V2-20260830/evidence.json",
+        "docs/deployment/evidence/agora/AGORA-SERVANT-LIFECYCLE-ELIGIBILITY-REPAIR-V2-20260830/evidence.sha256"
+      ]
+    },
+    {
+      "id": "AC6",
+      "statement": "The assigned reviewer reviews the exact head through the canonical review gate before merge",
+      "status": "pending_independent_review_and_merge",
+      "evidence_refs": [
+        "security_and_safety.two_person_approval"
+      ],
+      "blocking_until": "Codex2 approves the immutable handoff-bound PR head and the supervisor integration runner merges it to dev."
+    }
+  ],
+  "residual_risks": {
+    "RISK-01": {
+      "blocking_for_this_task": false,
+      "containment": "Servant personas are hard-constrained to execution_authority=none and environment_ceiling=paper.",
+      "description": "Servant persona interaction opinions are advisory and cannot dispatch orders or modify live portfolio allocations.",
+      "expiry": "2026-09-30Z",
+      "owner": "Antigravity2",
+      "recheck_trigger": "Agora live trading integration audit",
+      "severity": "low"
+    },
+    "independent_review_and_merge": {
+      "blocking_for_this_task": true,
+      "containment": "Do not arm auto-merge or claim deployment; use governed exact-head handoff to Codex2.",
+      "description": "The source delivery is owner-validated but has not yet received independent review or merge evidence.",
+      "expiry": "After Codex2 approves the frozen exact head and the supervisor merge completes.",
+      "owner": "Codex2 and supervisor integration runner",
+      "recheck_trigger": "Before governed handoff and again after GitHub reports merge.",
+      "severity": "release_gate"
+    }
+  },
+  "integrity": {
+    "algorithm": "sha256",
+    "checksum_coverage": [
+      "docs/deployment/evidence/agora/AGORA-SERVANT-LIFECYCLE-ELIGIBILITY-REPAIR-V2-20260830/evidence.json"
+    ],
+    "companion_checksum_path": "docs/deployment/evidence/agora/AGORA-SERVANT-LIFECYCLE-ELIGIBILITY-REPAIR-V2-20260830/evidence.sha256",
+    "hosted_semantic_sha256": {},
+    "manifest_path": "docs/deployment/evidence/agora/AGORA-SERVANT-LIFECYCLE-ELIGIBILITY-REPAIR-V2-20260830/evidence.json",
+    "normalized_hosted_readback": {},
+    "self_hash_omitted": true,
+    "self_hash_reason": "Companion evidence.sha256 covers evidence.json to avoid self-referential manifest hashing.",
+    "source_artifact_sha256_by_epoch": {
+      "2026-08-30T19:38:00Z": {
+        "services/control-plane/bff/agora/interaction/provider.py": "8761a935328e7085ba065855e54183d854499c3d6f847639a49c4eaa74a59d8a",
+        "services/control-plane/bff/agora/interaction/router.py": "2751c1383cb4ff2ccb426e7a26cca18ce80058a047dfb3fe9b8ad25cf2259904",
+        "services/control-plane/bff/ports/persona_write_owner.py": "5afc44fef1ce5c53af95754169ae04be9a8545bccb2cc4f2a84ab36125bfd37d",
+        "services/control-plane/bff/tests/test_agora_persona_interactions.py": "2cb6aca744c1378d38bce44d7bbad5a4ab78dc1d824d43d9d79ea03212519020",
+        "services/control-plane/bff/tests/test_agora_servant_production_write_owner.py": "0338c5b5b357d7491704310c0b1021623df725e62b8c963b7b0e98061e5d19b3"
+      }
+    }
+  },
+  "record_log": [
+    {
+      "sequence": 1,
+      "recorded_at": "2026-08-30T19:38:00Z",
+      "kind": "implementation_adoption",
+      "status": "recorded",
+      "reference": "Adopted verified diff from PR 5447 head 98d4332eff25275edd46e47df755f0c0b3bd3014"
+    },
+    {
+      "sequence": 2,
+      "recorded_at": "2026-08-30T19:38:00Z",
+      "kind": "local_validation",
+      "status": "pass",
+      "reference": "23 passed in servant and interaction test suites; 48 passed in durable interaction regressions"
+    }
+  ]
+}
