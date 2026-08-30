@@ -305,7 +305,7 @@ def validate_catalog(catalog_path: str, main_py_path: str) -> None:
     print("13. Verifying agent capacity, authoritative capability selectors, and task assignments...")
     cap = c.get("planning_agent_capacity", {})
     assert cap.get("dynamic_derived") is True, "Capacity must be dynamically derived"
-    assert cap.get("command_runtime_sha") == "072ee68bbba8bbffb84a188ccf4d50d67429a7a8", "Stale command runtime SHA"
+    assert cap.get("command_runtime_sha") == "609937297bc7e0f48ff7a522de230de1301c15ae", "Stale command runtime SHA"
     for t in tasks:
         assert t["owner"] != t["reviewer"], f"Owner equals reviewer in {t['id']}"
         assert cap["agent_eligibility"][t["owner"]]["eligible"], f"Owner {t['owner']} not eligible"
@@ -316,12 +316,12 @@ def validate_catalog(catalog_path: str, main_py_path: str) -> None:
     # 14. Verify Baseline
     print("14. Verifying planning baseline provenance...")
     pb = c.get("planning_baseline", {})
-    assert pb.get("pantheon") == "072ee68bbba8bbffb84a188ccf4d50d67429a7a8", "Stale pantheon baseline"
+    assert pb.get("pantheon") == "f56538a8063be69a5033ee7e6359b40e18e06ef1", "Stale pantheon baseline"
     assert pb.get("execute_plans") == "7d30e78476be61222af63a089e7ab141aa43b809", "Stale execute-plans baseline"
-    assert pb.get("hosted_pair_id") == "8961f959e54db4801438cef5fb7bb4047bc2506879afe6fc739572d0e2ba07f8", "Stale hosted pair ID"
-    assert pb.get("hosted_backend") == "d5c312ef0a4139329d66bda13c7e487248602ed7", "Stale hosted backend"
+    assert pb.get("hosted_pair_id") == "3b4c1f0b5a21245c63623583755785c5b9d81288025e6dd2eb33ccc82ccde742", "Stale hosted pair ID"
+    assert pb.get("hosted_backend") == "92077907540d4554e9b8a1d12e2528505b2d1ebe", "Stale hosted backend"
     assert pb.get("hosted_frontend") == "7d30e78476be61222af63a089e7ab141aa43b809", "Stale hosted frontend"
-    assert pb.get("hosted_accepted_at") == "2026-08-30T13:27:59Z", "Stale hosted accepted at"
+    assert pb.get("hosted_accepted_at") == "2026-08-30T15:18:26Z", "Stale hosted accepted at"
 
     # 15. Verify Execution Resources Bidirectional Invariant
     print("15. Verifying execution resources bidirectional mapping (pantheon-dev)...")
