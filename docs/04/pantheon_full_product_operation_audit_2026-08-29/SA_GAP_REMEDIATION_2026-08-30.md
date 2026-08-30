@@ -189,8 +189,9 @@ sequenceDiagram
 
     par Parallel Domain Preparation
         Prep->>Prep: Consolidate ports/ & delete domain_ports/
-        Prep->>Prep: Extract 14 domain routers with typed handlers
+        Prep->>Prep: Extract 13 primary domain routers with typed handlers
     and Support & Frontend Preparation
+        Support->>Support: Extract 5 support/infra domain routers
         Support->>Support: Delete 3 proven mock files, move seed.ts, clean 16 live files
         Support->>Support: Prepare generic CRUD & Agora workshop UI
         Support->>Support: Assemble frontend in OPGAP-FE-INTEGRATION-ASSEMBLY
