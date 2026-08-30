@@ -143,17 +143,20 @@ def create_governance_router(
     _redact = redact_evidence_refs or _default_redact_evidence_refs
     _capabilities = capabilities_for_identity or (lambda identity: None)
 
+    resolved_service = governance_service
+
     def _service() -> GovernanceService:
-        if governance_service is not None:
-            return governance_service
-        return GovernanceService(
-            _get_store(),
-            utc_now=_now,
-            page_slice_fn=_page,
-            submit_action=submit_action,
-            publish_event=publish_event,
-            get_interventions=get_interventions,
-        )
+        nonlocal resolved_service
+        if resolved_service is None:
+            resolved_service = GovernanceService(
+                _get_store(),
+                utc_now=_now,
+                page_slice_fn=_page,
+                submit_action=submit_action,
+                publish_event=publish_event,
+                get_interventions=get_interventions,
+            )
+        return resolved_service
 
     def _fail(
         status_code: int,
@@ -941,4 +944,3 @@ def create_governance_router(
         )
 
     return router
-
