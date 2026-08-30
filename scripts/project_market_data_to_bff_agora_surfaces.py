@@ -66,6 +66,9 @@ def _freshness_metadata(
     connector_freshness: dict[str, Any],
     now: datetime,
     default_stale_threshold_seconds: int,
+    source_id: str | None = None,
+    connector_id: str | None = None,
+    calendar_evidence: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     parsed_source_timestamp = _parse_timestamp(source_timestamp)
     if not str(source_timestamp or "").strip():
@@ -85,13 +88,46 @@ def _freshness_metadata(
         1,
         int(connector_freshness.get("stale_threshold_seconds") or default_stale_threshold_seconds),
     )
-    stale = (
-        connector_freshness.get("status") == "stale"
-        or connector_freshness.get("source_timestamp_status") in {"missing", "invalid", "future"}
-        or source_timestamp_status != "valid"
-        or age_seconds is None
-        or age_seconds > threshold
-    )
+    tw_stale = None
+    if parsed_source_timestamp is not None and source_timestamp_status == "valid":
+        last_success_at_str = connector_freshness.get("last_success_at")
+        refresh_dt = _parse_timestamp(last_success_at_str)
+        cid = str(connector_id or CONNECTOR_ID)
+        sid = str(source_id or "")
+        if not sid.startswith("tw-official:"):
+            tw_stale = True
+        else:
+            lineage = {"connector_ids": [cid], "source_ids": [sid]}
+            try:
+                from services.execution.market_snapshot_admission import evaluate_taiwan_market_freshness
+
+                tw_ok, _tw_reason, _tw_detail = evaluate_taiwan_market_freshness(
+                    event_time_dt=parsed_source_timestamp,
+                    now_dt=now,
+                    refresh_receipt_dt=refresh_dt,
+                    lineage=lineage,
+                    max_refresh_age_seconds=threshold,
+                    calendar_evidence=calendar_evidence,
+                )
+                tw_stale = not tw_ok
+            except Exception:
+                tw_stale = True
+
+    if tw_stale is not None:
+        stale = (
+            connector_freshness.get("status") == "stale"
+            or connector_freshness.get("source_timestamp_status") in {"missing", "invalid", "future"}
+            or source_timestamp_status != "valid"
+            or tw_stale
+        )
+    else:
+        stale = (
+            connector_freshness.get("status") == "stale"
+            or connector_freshness.get("source_timestamp_status") in {"missing", "invalid", "future"}
+            or source_timestamp_status != "valid"
+            or age_seconds is None
+            or age_seconds > threshold
+        )
     return {
         "schemaVersion": "agora_source_freshness.v1",
         "status": "stale" if stale else "fresh",
@@ -158,11 +194,17 @@ def project(
         source_id = str(record.get("source_id") or "")
         metadata = record.get("metadata") or {}
         source_ref = f"source_ingest:{source_id}"
+        cal_ev = metadata.get("calendar_evidence")
+        if cal_ev is None and isinstance(metadata.get("normalized_row"), dict):
+            cal_ev = metadata["normalized_row"].get("calendar_evidence")
         freshness = _freshness_metadata(
             source_timestamp=source_timestamp,
             connector_freshness=freshness_readback,
             now=captured_at,
             default_stale_threshold_seconds=stale_threshold_seconds,
+            source_id=source_id,
+            connector_id=CONNECTOR_ID,
+            calendar_evidence=cal_ev,
         )
         common = {
             "symbol": symbol,
