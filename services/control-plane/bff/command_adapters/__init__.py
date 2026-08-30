@@ -32,9 +32,14 @@ from .capabilities_adapter import CapabilitiesCommandAdapter
 from .agora_adapter import AgoraCommandAdapter
 from .audit_adapter import AuditCommandAdapter
 from .registry import dispatch_domain_command, find_adapter
+from .service import CommandAdapterService
+from .router import create_action_command_router, create_command_adapters_router
 
 __all__ = [
     "ActionUnavailableError",
+    "CommandAdapterService",
+    "create_action_command_router",
+    "create_command_adapters_router",
     "DomainCommandAdapter",
     "CapitalCommandAdapter",
     "RuntimeCommandAdapter",

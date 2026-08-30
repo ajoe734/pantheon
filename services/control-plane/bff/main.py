@@ -21603,7 +21603,6 @@ def get_consult_policy(
 # Command submission (write path — async execution)
 # --------------------------------------------------------------------------- #
 
-@app.post("/api/v1/operator/commands", response_model=CommandSubmissionResponse, status_code=202)
 async def submit_command(
     background_tasks: BackgroundTasks,
     payload: Dict[str, Any] = Body(...),
@@ -22149,7 +22148,6 @@ def _submit_final_command_admission(
     )
 
 
-@app.post("/bff/v1/commands", status_code=202)
 async def submit_final_command(
     background_tasks: BackgroundTasks,
     payload: Dict[str, Any] = Body(...),
@@ -23784,7 +23782,6 @@ async def bff_agora_persona_lab_submit_commit(
     return result
 
 
-@app.get("/bff/actions", response_model=BffActionCatalogResponse)
 async def get_action_catalog_endpoint(
     authorization: Optional[str] = Header(default=None),
 ):
@@ -55576,7 +55573,6 @@ async def remediate_v5_intervention(
     )
 
 
-@app.get("/api/v1/operator/commands/{command_id}", response_model=CommandStatusResponse)
 async def get_command_status(command_id: str, authorization: Optional[str] = Header(default=None)):
     """
     Poll for the status of a previously submitted command.
@@ -59309,7 +59305,6 @@ async def bff_audit_export(
 
 # -- Command confirmations ---------------------------------------------------
 
-@app.post("/bff/command-confirmations", status_code=202)
 async def bff_command_confirmation(
     request: Request,
     idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
@@ -59409,7 +59404,6 @@ async def bff_command_confirmation(
     return result
 
 
-@app.get("/bff/command-confirmations/{token}")
 async def bff_command_confirmation_status(
     token: str,
     authorization: Optional[str] = Header(default=None),
@@ -59442,7 +59436,6 @@ async def bff_command_confirmation_status(
     }
 
 
-@app.post("/bff/command-confirmations/{token}/confirm", status_code=202)
 async def bff_confirm_command_by_token(
     token: str,
     request: Request,
@@ -60461,7 +60454,6 @@ def _record_command_confirmation_redeem(
     )
 
 
-@app.post("/bff/confirm-tokens", status_code=201)
 async def sem_create_confirm_token_command(
     payload: Dict[str, Any] = Body(default_factory=dict),
     authorization: Optional[str] = Header(default=None),
@@ -60512,7 +60504,6 @@ async def sem_create_confirm_token_command(
     return JSONResponse(status_code=201, content=content)
 
 
-@app.get("/bff/confirm-tokens/{tokenId}")
 async def sem_get_confirm_token(tokenId: str, authorization: Optional[str] = Header(default=None)):
     identity = _extract_identity(authorization)
     _require_read_role(identity)
@@ -60523,7 +60514,6 @@ async def sem_get_confirm_token(tokenId: str, authorization: Optional[str] = Hea
     }
 
 
-@app.post("/bff/confirm-tokens/{tokenId}/redeem", status_code=202)
 async def sem_redeem_confirm_token_command(
     tokenId: str,
     payload: Dict[str, Any] = Body(default_factory=dict),
@@ -60553,7 +60543,6 @@ async def sem_redeem_confirm_token_command(
     )
 
 
-@app.delete("/bff/confirm-tokens/{tokenId}", status_code=202)
 async def sem_delete_confirm_token_command(
     tokenId: str,
     payload: Dict[str, Any] = Body(default_factory=dict),
@@ -67064,8 +67053,11 @@ app.include_router(
     )
 )
 
-# ACG-01-011: Action command adapter router
-from command_adapters.router import create_action_command_router as _create_action_command_router
+# OPGAP-BE-COMMAND-ADAPTERS-V2-20260830: Command adapter router
+from command_adapters.router import (
+    create_action_command_router as _create_action_command_router,
+    create_command_adapters_router as _create_command_adapters_router,
+)
 app.include_router(
     _create_action_command_router(
         submit_command_admission=_submit_final_command_admission,
@@ -67074,6 +67066,18 @@ app.include_router(
         bff_error=_bff_error,
         utc_now=utc_now,
         command_store=lambda: command_store,
+    )
+)
+app.include_router(
+    _create_command_adapters_router(
+        get_command_store=lambda: command_store,
+        get_read_store=lambda: read_store,
+        extract_identity=_extract_identity,
+        require_operator_role=_require_operator_role,
+        require_read_role=_require_read_role,
+        bff_error=_bff_error,
+        utc_now=utc_now,
+        submit_command_admission=_submit_final_command_admission,
     )
 )
 
