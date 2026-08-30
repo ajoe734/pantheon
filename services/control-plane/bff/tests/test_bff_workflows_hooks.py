@@ -13,7 +13,7 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 import main as bff_main
-from domain_ports.operations_consultation import create_operations_consultation_port
+from ports.operations_consultation import create_operations_consultation_port
 from ports import create_read_surface_ports
 
 
