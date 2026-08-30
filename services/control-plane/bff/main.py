@@ -30774,6 +30774,7 @@ def _project_persona_dto(
     metadata = dict(raw.get("metadata") or {}) if isinstance(raw.get("metadata"), dict) else {}
     archetype = str(
         metadata.get("archetype")
+        or raw.get("archetype")
         or raw.get("strategy_family")
         or raw.get("mandate")
         or "generalist"
@@ -47354,16 +47355,18 @@ def _openclaw_agent_reconcile_request(
         try:
             profile = build_persona_runtime_profile(persona, route_policy=route_policy).to_dict()
         except ValueError as exc:
+            log.warning("Validation error in runtime profile generation for %s: %s", persona_id, exc)
             request.update({
                 "status": "blocked",
-                "blocked_reason": str(exc),
+                "blocked_reason": "invalid_persona_runtime_profile_inputs",
                 "repair_action": "fix_persona_runtime_profile",
             })
             return request
         except Exception as exc:
+            log.warning("Unexpected error generating runtime profile for %s: %s", persona_id, exc)
             request.update({
                 "status": "blocked",
-                "blocked_reason": f"runtime_profile_generation_failed: {exc}",
+                "blocked_reason": "runtime_profile_generation_failed",
                 "repair_action": "check_persona_runtime_profile_inputs",
             })
             return request
@@ -47401,6 +47404,11 @@ def _persona_provisioning_metadata(
     runtime_binding_id = str(record.references.get("runtime_binding_id") or "").strip()
     runtime_id = str(record.references.get("runtime_id") or "").strip()
     metadata: Dict[str, Any] = {
+        "owner": owner,
+        "archetype": archetype,
+        "risk_level": risk,
+        "mandate": mandate,
+        "strategy_family": strategy_family,
         "description": payload.get("description"),
         "memo": payload.get("memo"),
         "tenant_id": record.tenant_id,
@@ -47552,22 +47560,42 @@ def _persona_record_for_provisioning(
         traits=traits,
         lifecycle_state=lifecycle_state,
     )
+    creator = getattr(read_store, "create_persona", None)
+    updater = getattr(read_store, "update_persona", None)
     existing = read_store.get_persona(record.persona_id)
     if existing is None:
-        persona = read_store.create_persona(
-            persona_id=record.persona_id,
-            name=str(payload.get("name") or record.normalized_name),
-            actor_id=canonical_owner,
-            created_at=record.created_at,
-            archetype=archetype,
-            lifecycle_state=lifecycle_state,
-            risk_level=risk,
-            mandate=mandate,
-            strategy_family=strategy_family,
-            traits=traits,
-            metadata=metadata,
-            required_data_sources=_persona_create_required_data_sources(payload),
-        )
+        if callable(creator):
+            persona = creator(
+                persona_id=record.persona_id,
+                name=str(payload.get("name") or record.normalized_name),
+                actor_id=canonical_owner,
+                created_at=record.created_at,
+                archetype=archetype,
+                lifecycle_state=lifecycle_state,
+                risk_level=risk,
+                mandate=mandate,
+                strategy_family=strategy_family,
+                traits=traits,
+                metadata=metadata,
+                required_data_sources=_persona_create_required_data_sources(payload),
+            )
+        else:
+            persona = {
+                "id": record.persona_id,
+                "persona_id": record.persona_id,
+                "name": str(payload.get("name") or record.normalized_name),
+                "actor_id": canonical_owner,
+                "created_by": canonical_owner,
+                "created_at": record.created_at,
+                "archetype": archetype,
+                "lifecycle_state": lifecycle_state,
+                "risk_level": risk,
+                "mandate": mandate,
+                "strategy_family": strategy_family,
+                "traits": traits,
+                "metadata": metadata,
+                "required_data_sources": _persona_create_required_data_sources(payload),
+            }
     else:
         existing_metadata = existing.get("metadata")
         existing_metadata = existing_metadata if isinstance(existing_metadata, dict) else {}
@@ -47584,11 +47612,29 @@ def _persona_record_for_provisioning(
             and str(existing.get("lifecycle_state") or "") == "paper_running"
         ):
             lifecycle_state = "paper_running"
-        persona = read_store.update_persona(
-            record.persona_id,
-            lifecycle_state=lifecycle_state,
-            metadata=metadata,
-        ) or existing
+        if callable(updater):
+            persona = updater(
+                record.persona_id,
+                lifecycle_state=lifecycle_state,
+                metadata=metadata,
+            ) or existing
+        else:
+            persona = {
+                **existing,
+                "id": record.persona_id,
+                "persona_id": record.persona_id,
+                "name": str(payload.get("name") or record.normalized_name),
+                "actor_id": canonical_owner,
+                "created_by": canonical_owner,
+                "archetype": archetype,
+                "lifecycle_state": lifecycle_state,
+                "risk_level": risk,
+                "mandate": mandate,
+                "strategy_family": strategy_family,
+                "traits": traits,
+                "metadata": {**existing_metadata, **metadata},
+                "required_data_sources": _persona_create_required_data_sources(payload),
+            }
     return persona, metadata
 
 
@@ -47862,7 +47908,7 @@ async def bff_create_persona(
             409,
             ErrorCode.IDEMPOTENCY_CONFLICT,
             "Persona create conflicts with an existing durable reservation",
-            str(exc),
+            "Idempotency key or Persona name conflicts with an existing reservation",
             precondition_failed="idempotency_or_tenant_name",
             suggestion="Replay the original request unchanged or choose a different Persona name",
         ) from exc
@@ -47871,7 +47917,7 @@ async def bff_create_persona(
             503,
             ErrorCode.DEPENDENCY_UNAVAILABLE,
             "Persona provisioning coordinator is unavailable",
-            str(exc),
+            "Persona provisioning coordinator lease is held by another worker or unavailable",
             precondition_failed="provisioning_coordinator",
             suggestion="Retry the same Idempotency-Key after the active coordinator lease expires",
         ) from exc
@@ -47881,13 +47927,12 @@ async def bff_create_persona(
             502,
             ErrorCode.UPSTREAM_ERROR,
             "Persona provisioning failed due to an upstream dependency or persistence error",
-            str(exc),
+            "Downstream owner service or persistence coordinator returned an error",
             precondition_failed="provisioning_coordination",
             suggestion="Inspect the Persona provisioning logs before retrying with the same Idempotency-Key",
             details_extra={
                 "personaId": record.persona_id,
-                "idempotencyKey": record.idempotency_key,
-                "terminalReason": str(exc),
+                "provisioningState": "failed",
             },
         ) from exc
 
@@ -47900,13 +47945,13 @@ async def bff_create_persona(
         ooda_packet=ooda_packet,
     )
     if active.state in {"failed", "compensated"}:
-        reason = str((active.error or {}).get("terminal_reason") or "downstream provisioning failed")
+        failed_step = str((active.error or {}).get("failed_step") or "provisioning")
         raise _bff_error(
             502,
             ErrorCode.UPSTREAM_ERROR,
             "Persona provisioning failed",
-            reason,
-            precondition_failed=str((active.error or {}).get("failed_step") or "provisioning"),
+            "Downstream owner rejected persona provisioning step",
+            precondition_failed=failed_step,
             suggestion="Inspect the persisted Persona provisioning receipt before a governed retry",
             details_extra={
                 "personaId": active.persona_id,
@@ -48000,6 +48045,39 @@ async def bff_get_persona(
     caller_tenant = str(_bff_me_tenant_payload(identity, requested_tenant=None)["id"])
     directory = _get_persona_directory_snapshot(caller_tenant, snapshot_at=snapshot_at)
     raw = directory.records_by_id.get(persona_id)
+    if not raw:
+        try:
+            prov_record = _persona_provisioning_store().get_by_persona(caller_tenant, persona_id)
+            if prov_record is not None:
+                persona_proj, meta_proj = _persona_record_for_provisioning(
+                    prov_record,
+                    payload=prov_record.request_payload,
+                    owner=str(prov_record.request_payload.get("requested_by") or identity.operator_id),
+                )
+                raw = persona_proj
+                if persona_id not in _PERSONA_BFF_OVERLAY:
+                    ids = deterministic_provisioning_ids(prov_record)
+                    _PERSONA_BFF_OVERLAY[persona_id] = _project_persona_dto(
+                        persona_proj,
+                        overlay={
+                            "routedStrategies": int(prov_record.request_payload.get("routedStrategies") or 0),
+                            "successRate": float(prov_record.request_payload.get("successRate") or 0.0),
+                            "capitalMode": "paper",
+                            "paperLedgerId": meta_proj["paper_ledger_id"],
+                            "paperLedger": meta_proj["paper_ledger"],
+                            "legacyPaperCapitalPoolId": ids.capital_pool_id,
+                            "deploymentPlanId": ids.deployment_plan_id,
+                            "deploymentStage": "paper",
+                            "evidenceRefs": list(meta_proj["evidence_refs"]),
+                            "runtimeId": meta_proj.get("runtime_id"),
+                            "runtimeBindingId": meta_proj.get("runtime_binding_id"),
+                            "tenantId": prov_record.tenant_id,
+                        },
+                        routed_strategies=0,
+                        evaluate_provisioning=False,
+                    )
+        except Exception as exc:
+            log.warning("Failed to lookup persona %s from durable provisioning store: %s", persona_id, exc)
     if not raw:
         raise _bff_error(
             404, ErrorCode.RESOURCE_NOT_FOUND,
