@@ -8,6 +8,7 @@ fallback.  BFF callers are expected to use this HTTP boundary instead of
 """
 from __future__ import annotations
 
+import hmac
 import os
 import uuid
 from datetime import datetime, timezone
@@ -193,6 +194,26 @@ def _persona_auth_env() -> dict[str, str]:
 def _authenticate_persona_mutation(
     authorization: str | None,
 ) -> PersonaInboundAuthority:
+    configured_service_token = str(
+        os.getenv("PANTHEON_PERSONA_SERVICE_TOKEN")
+        or os.getenv("PERSONA_SERVICE_TOKEN")
+        or ""
+    ).strip()
+    supplied_service_token = ""
+    if str(authorization or "").startswith("Bearer "):
+        supplied_service_token = str(authorization)[len("Bearer ") :].strip()
+    if (
+        configured_service_token
+        and supplied_service_token
+        and hmac.compare_digest(configured_service_token, supplied_service_token)
+    ):
+        return PersonaInboundAuthority(
+            actor_id=str(
+                os.getenv("PANTHEON_PERSONA_SERVICE_ACTOR_ID") or "operator-bff"
+            ).strip(),
+            roles=_PERSONA_PLANE_ROLES,
+            token_kind="service",
+        )
     try:
         context: AuthContext = validate_request_auth(
             authorization=authorization,

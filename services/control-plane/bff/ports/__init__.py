@@ -84,7 +84,7 @@ try:
         create_in_memory_read_surface_ports,
     )
     from ports.persona_write_owner import (
-        PersistentPersonaRegistryWritePort,
+        PersonaRegistryHttpWritePort,
         PersonaWriteConflict,
         PersonaWriteOwnerUnavailable,
         create_persona_registry_write_owner,
@@ -159,7 +159,7 @@ except ImportError:
         create_in_memory_read_surface_ports,
     )
     from services.control_plane.bff.ports.persona_write_owner import (  # type: ignore[no-redef]
-        PersistentPersonaRegistryWritePort,
+        PersonaRegistryHttpWritePort,
         PersonaWriteConflict,
         PersonaWriteOwnerUnavailable,
         create_persona_registry_write_owner,
@@ -228,7 +228,7 @@ __all__ = [
     "create_read_surface_ports",
     "create_in_memory_read_surface_ports",
     # Persona write owner (deliberately outside ReadSurfacePorts)
-    "PersistentPersonaRegistryWritePort",
+    "PersonaRegistryHttpWritePort",
     "PersonaWriteConflict",
     "PersonaWriteOwnerUnavailable",
     "create_persona_registry_write_owner",
