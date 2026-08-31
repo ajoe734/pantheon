@@ -30,7 +30,7 @@ import ai_status
 import task_archive
 import common
 from common import rotate_activity_log_unlocked
-from rewrite import status_projection, task_machine, task_state_store
+from rewrite import status_projection, task_contract, task_machine, task_state_store
 
 
 def _canonical_state_identity_json(status_root: Path, event_log: Path) -> str:
@@ -3135,7 +3135,7 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
             return_value=True,
         )
         self._pr_discovery_patcher = mock.patch.object(
-            ai_status,
+            task_contract,
             "_discover_open_pull_request_for_branch",
             return_value=ai_status.OpenPullRequestDiscovery(pr=None),
         )
@@ -3388,7 +3388,7 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
             mock.patch.object(ai_status, "load_state", return_value=self.state),
             mock.patch.object(ai_status, "validate_active_status_command_lease"),
             mock.patch.object(
-                ai_status,
+                task_contract,
                 "validate_handoff_pr_delivery_binding",
                 side_effect=admit,
             ) as admission,
@@ -3450,7 +3450,7 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
             mock.patch.object(ai_status, "load_state", return_value=pending_state),
             mock.patch.object(ai_status, "validate_active_status_command_lease"),
             mock.patch.object(
-                ai_status,
+                task_contract,
                 "validate_handoff_pr_delivery_binding",
                 side_effect=SystemExit("admission rejected"),
             ),
@@ -4858,7 +4858,7 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
                 with (
                     mock.patch.dict(os.environ, {"AI_NAME": "Claude"}, clear=False),
                     mock.patch.object(
-                        ai_status,
+                        task_contract,
                         "_discover_open_pull_request_for_branch",
                         return_value=ai_status.OpenPullRequestDiscovery(
                             pr=4820,
@@ -4889,7 +4889,7 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
                 with (
                     mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False),
                     mock.patch.object(
-                        ai_status,
+                        task_contract,
                         "_discover_open_pull_request_for_branch",
                         return_value=ai_status.OpenPullRequestDiscovery(
                             pr=4820,
@@ -4915,7 +4915,7 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
         with (
             mock.patch.dict(os.environ, {"AI_NAME": "Claude"}, clear=False),
             mock.patch.object(
-                ai_status,
+                task_contract,
                 "_discover_open_pull_request_for_branch",
                 return_value=ai_status.OpenPullRequestDiscovery(pr=None),
             ) as discover,
@@ -4941,7 +4941,7 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
         with (
             mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False),
             mock.patch.object(
-                ai_status,
+                task_contract,
                 "_discover_open_pull_request_for_branch",
                 return_value=ai_status.OpenPullRequestDiscovery(pr=None),
             ) as discover,
@@ -4966,7 +4966,7 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
                 task["source_ref"] = {"pr": 4820, "head_sha": "a" * 40}
                 with (
                     mock.patch.object(
-                        ai_status, "_discover_open_pull_request_for_branch"
+                        task_contract, "_discover_open_pull_request_for_branch"
                     ) as discover,
                     self.assertRaisesRegex(
                         SystemExit, "unknown legacy delivery identity"
@@ -5505,7 +5505,7 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
         with (
             mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False),
             mock.patch.object(
-                ai_status,
+                task_contract,
                 "_discover_open_pull_request_for_branch",
                 return_value=ai_status.OpenPullRequestDiscovery(
                     pr=4820,
@@ -6684,7 +6684,7 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
             },
             clear=False,
         ), mock.patch.object(
-            ai_status,
+            task_contract,
             "validate_handoff_pr_delivery_binding",
             side_effect=lambda _task, _config, binding, **_kwargs: self._review_admission_binding(
                 binding, review_file
@@ -6757,14 +6757,14 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
                 clear=False,
             ),
             mock.patch.object(
-                ai_status,
+                task_contract,
                 "_discover_open_pull_request_for_branch",
                 return_value=ai_status.OpenPullRequestDiscovery(
                     pr=4820, head_sha="a" * 40
                 ),
             ) as discover,
             mock.patch.object(
-                ai_status,
+                task_contract,
                 "validate_handoff_pr_delivery_binding",
                 side_effect=lambda _task, _config, binding, **_kwargs: self._review_admission_binding(
                     binding, review_file
@@ -6871,7 +6871,7 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
         with (
             mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False),
             mock.patch.object(
-                ai_status,
+                task_contract,
                 "_discover_open_pull_request_for_branch",
                 return_value=ai_status.OpenPullRequestDiscovery(pr=None),
             ),
@@ -6951,14 +6951,14 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
                 clear=False,
             ),
             mock.patch.object(
-                ai_status,
+                task_contract,
                 "_discover_open_pull_request_for_branch",
                 return_value=ai_status.OpenPullRequestDiscovery(
                     pr=4820, head_sha="a" * 40
                 ),
             ) as discover,
             mock.patch.object(
-                ai_status,
+                task_contract,
                 "validate_handoff_pr_delivery_binding",
                 side_effect=lambda _task, _config, binding, **_kwargs: self._review_admission_binding(
                     binding, review_file
@@ -6984,7 +6984,7 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
                 clear=False,
             ),
             mock.patch.object(
-                ai_status,
+                task_contract,
                 "validate_handoff_pr_delivery_binding",
                 side_effect=SystemExit("GitHub head mismatch"),
             ),
