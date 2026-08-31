@@ -36,6 +36,7 @@ from __future__ import annotations
 import inspect
 import json
 import logging
+import os
 import time
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
@@ -776,6 +777,473 @@ def get_postmortem_detail_read_model(
 
 
 # ---------------------------------------------------------------------------
+# Composed Management Read Models
+# ---------------------------------------------------------------------------
+
+def _register_composed_read_models(
+    router: APIRouter,
+    *,
+    _extract_id: Callable,
+    _req_read: Callable,
+    _snap_meta: Callable,
+    _now: Callable,
+    _resolve_store: Callable,
+    jobs_reader: Optional[Callable[[], Tuple[bool, List[Dict[str, Any]]]]] = None,
+    formula_jobs_reader: Optional[Callable[[], Tuple[bool, List[Dict[str, Any]]]]] = None,
+    activity_audit_reader: Optional[Callable[[], Tuple[bool, List[Dict[str, Any]]]]] = None,
+    governance_audit_reader: Optional[Callable[[], Tuple[bool, List[Dict[str, Any]]]]] = None,
+    telemetry_events_reader: Optional[Callable[[], Tuple[str, List[Dict[str, Any]]]]] = None,
+    paper_telemetry_reader: Optional[Callable[[], Tuple[bool, List[Dict[str, Any]]]]] = None,
+    runtime_bindings_reader: Optional[Callable[[], Tuple[bool, List[Dict[str, Any]]]]] = None,
+    postmortems_reader: Optional[Callable[[], Tuple[bool, List[Dict[str, Any]]]]] = None,
+) -> None:
+    # -----------------------------------------------------------------------
+    # 18. Formula Jobs Read Model (Composed)
+    # -----------------------------------------------------------------------
+    @router.get(
+        "/bff/management/formula-jobs",
+        response_model=FormulaJobsEnvelope,
+    )
+    async def bff_management_formula_jobs(
+        status: Optional[str] = Query(default=None),
+        formula_id: Optional[str] = Query(default=None),
+        page_token: Optional[str] = Query(default=None),
+        page_size: int = Query(default=20, ge=1, le=200),
+        authorization: Optional[str] = Header(default=None),
+    ) -> Dict[str, Any]:
+        """BFF: Real Formula execution/evaluation jobs read model."""
+        identity = _extract_id(authorization)
+        _req_read(identity)
+
+        snapshot_at = _now()
+        store = _resolve_store()
+        raw_res = get_formula_jobs_read_model(
+            status=status,
+            formula_id=formula_id,
+            jobs_reader=jobs_reader,
+            formula_jobs_reader=formula_jobs_reader,
+            store=store,
+            utc_now=_now,
+        )
+
+        source: str = str(raw_res.get("source") or "missing")
+        items: List[Dict[str, Any]] = list(raw_res.get("items") or [])
+
+        if source in ("missing", "unavailable"):
+            surface_state = "unavailable"
+        else:
+            surface_state = "ok" if items else "degraded"
+
+        surface = {
+            "status": surface_state,
+            "source": source,
+        }
+        if surface_state == "unavailable":
+            surface["message"] = "Formula job executor read store is unavailable or unconfigured."
+            surface["staleness"] = {
+                "served_from": "unverifiable" if source == "missing" else source,
+                "last_known_at": snapshot_at,
+            }
+        elif surface_state == "degraded":
+            surface["message"] = "Formula job read store is readable but currently empty."
+
+        meta: Dict[str, Any] = {
+            **_snap_meta(snapshot_at),
+            "status": surface_state,
+            "source": source,
+            "surfaces": {
+                "formula_jobs": surface,
+            },
+        }
+        if surface_state == "unavailable":
+            meta["degradation"] = {
+                "reason": "Formula jobs read model is currently unavailable.",
+            }
+
+        start = 0
+        if page_token:
+            try:
+                start = int(page_token)
+            except (TypeError, ValueError):
+                start = 0
+        page_items = items[start: start + page_size]
+        next_page_token = str(start + page_size) if start + page_size < len(items) else None
+
+        summary = {
+            "total_items": len(items),
+            "returned_items": len(page_items),
+            "status": surface_state,
+            "source": source,
+            "freshness": snapshot_at,
+        }
+
+        return {
+            "data": {
+                "id": "management-formula-jobs",
+                "items": page_items,
+                "summary": summary,
+                "status": surface_state,
+                "source": source,
+            },
+            "page_info": {
+                "next_page_token": next_page_token,
+                "total": len(items),
+            },
+            "meta": meta,
+        }
+
+    # -----------------------------------------------------------------------
+    # 19. Consolidated Activity Read Model (Composed)
+    # -----------------------------------------------------------------------
+    @router.get(
+        "/bff/management/activity",
+        response_model=ActivityEnvelope,
+    )
+    async def bff_management_activity(
+        event_type: Optional[str] = Query(default=None),
+        actor_id: Optional[str] = Query(default=None),
+        page_token: Optional[str] = Query(default=None),
+        page_size: int = Query(default=50, ge=1, le=200),
+        authorization: Optional[str] = Header(default=None),
+    ) -> Dict[str, Any]:
+        """BFF: Consolidated Management system activity read model."""
+        identity = _extract_id(authorization)
+        _req_read(identity)
+
+        snapshot_at = _now()
+        store = _resolve_store()
+        raw_res = get_activity_read_model(
+            event_type=event_type,
+            actor_id=actor_id,
+            activity_audit_reader=activity_audit_reader,
+            governance_audit_reader=governance_audit_reader,
+            telemetry_events_reader=telemetry_events_reader,
+            store=store,
+            utc_now=_now,
+        )
+
+        source: str = str(raw_res.get("source") or "missing")
+        items: List[Dict[str, Any]] = list(raw_res.get("items") or [])
+
+        if source in ("missing", "unavailable"):
+            surface_state = "unavailable"
+        else:
+            surface_state = "ok" if items else "degraded"
+
+        surface = {
+            "status": surface_state,
+            "source": source,
+        }
+        if surface_state == "unavailable":
+            surface["message"] = "Activity audit event store is unavailable or unconfigured."
+            surface["staleness"] = {
+                "served_from": "unverifiable" if source == "missing" else source,
+                "last_known_at": snapshot_at,
+            }
+        elif surface_state == "degraded":
+            surface["message"] = "Activity read store is readable but currently empty."
+
+        meta: Dict[str, Any] = {
+            **_snap_meta(snapshot_at),
+            "status": surface_state,
+            "source": source,
+            "surfaces": {
+                "activity": surface,
+                **(raw_res.get("surfaces") or {}),
+            },
+        }
+        if surface_state == "unavailable":
+            meta["degradation"] = {
+                "reason": "Activity read model is currently unavailable.",
+            }
+
+        start = 0
+        if page_token:
+            try:
+                start = int(page_token)
+            except (TypeError, ValueError):
+                start = 0
+        page_items = items[start: start + page_size]
+        next_page_token = str(start + page_size) if start + page_size < len(items) else None
+
+        summary = {
+            "total_items": len(items),
+            "returned_items": len(page_items),
+            "status": surface_state,
+            "source": source,
+            "freshness": snapshot_at,
+        }
+
+        return {
+            "data": {
+                "id": "management-activity",
+                "items": page_items,
+                "summary": summary,
+                "status": surface_state,
+                "source": source,
+            },
+            "page_info": {
+                "next_page_token": next_page_token,
+                "total": len(items),
+            },
+            "meta": meta,
+        }
+
+    # -----------------------------------------------------------------------
+    # 20. Paper Telemetry Read Model (Composed)
+    # -----------------------------------------------------------------------
+    @router.get(
+        "/bff/management/paper-telemetry",
+        response_model=PaperTelemetryEnvelope,
+    )
+    async def bff_management_paper_telemetry(
+        strategy_id: Optional[str] = Query(default=None),
+        persona_id: Optional[str] = Query(default=None),
+        page_token: Optional[str] = Query(default=None),
+        page_size: int = Query(default=20, ge=1, le=200),
+        authorization: Optional[str] = Header(default=None),
+    ) -> Dict[str, Any]:
+        """BFF: Real strategy paper execution telemetry & series read model."""
+        identity = _extract_id(authorization)
+        _req_read(identity)
+
+        snapshot_at = _now()
+        store = _resolve_store()
+        raw_res = get_paper_telemetry_read_model(
+            strategy_id=strategy_id,
+            persona_id=persona_id,
+            paper_telemetry_reader=paper_telemetry_reader,
+            runtime_bindings_reader=runtime_bindings_reader,
+            telemetry_events_reader=telemetry_events_reader,
+            store=store,
+            utc_now=_now,
+        )
+
+        source: str = str(raw_res.get("source") or "missing")
+        items: List[Dict[str, Any]] = list(raw_res.get("items") or [])
+
+        if source in ("missing", "unavailable"):
+            surface_state = "unavailable"
+        else:
+            surface_state = "ok" if items else "degraded"
+
+        surface = {
+            "status": surface_state,
+            "source": source,
+        }
+        if surface_state == "unavailable":
+            surface["message"] = "Paper execution telemetry store is unavailable or unconfigured."
+            surface["staleness"] = {
+                "served_from": "unverifiable" if source == "missing" else source,
+                "last_known_at": snapshot_at,
+            }
+        elif surface_state == "degraded":
+            surface["message"] = "Paper telemetry store is readable but currently empty."
+
+        meta: Dict[str, Any] = {
+            **_snap_meta(snapshot_at),
+            "status": surface_state,
+            "source": source,
+            "surfaces": {
+                "paper_telemetry": surface,
+            },
+        }
+        if surface_state == "unavailable":
+            meta["degradation"] = {
+                "reason": "Paper telemetry read model is currently unavailable.",
+            }
+
+        start = 0
+        if page_token:
+            try:
+                start = int(page_token)
+            except (TypeError, ValueError):
+                start = 0
+        page_items = items[start: start + page_size]
+        next_page_token = str(start + page_size) if start + page_size < len(items) else None
+
+        summary = {
+            "total_items": len(items),
+            "returned_items": len(page_items),
+            "status": surface_state,
+            "source": source,
+            "freshness": snapshot_at,
+        }
+
+        return {
+            "data": {
+                "id": "management-paper-telemetry",
+                "items": page_items,
+                "summary": summary,
+                "status": surface_state,
+                "source": source,
+            },
+            "page_info": {
+                "next_page_token": next_page_token,
+                "total": len(items),
+            },
+            "meta": meta,
+        }
+
+    # -----------------------------------------------------------------------
+    # 21. Postmortems Read Model (Composed)
+    # -----------------------------------------------------------------------
+    @router.get(
+        "/bff/management/postmortems",
+        response_model=PostmortemsEnvelope,
+    )
+    async def bff_management_postmortems(
+        severity: Optional[str] = Query(default=None),
+        status: Optional[str] = Query(default=None),
+        page_token: Optional[str] = Query(default=None),
+        page_size: int = Query(default=20, ge=1, le=200),
+        authorization: Optional[str] = Header(default=None),
+    ) -> Dict[str, Any]:
+        """BFF: Postmortem incident analysis list read model."""
+        identity = _extract_id(authorization)
+        _req_read(identity)
+
+        snapshot_at = _now()
+        store = _resolve_store()
+        raw_res = get_postmortems_read_model(
+            severity=severity,
+            status=status,
+            postmortems_reader=postmortems_reader,
+            store=store,
+            utc_now=_now,
+        )
+
+        source: str = str(raw_res.get("source") or "missing")
+        items: List[Dict[str, Any]] = list(raw_res.get("items") or [])
+
+        if source in ("missing", "unavailable"):
+            surface_state = "unavailable"
+        else:
+            surface_state = "ok" if items else "degraded"
+
+        surface = {
+            "status": surface_state,
+            "source": source,
+        }
+        if surface_state == "unavailable":
+            surface["message"] = "Postmortem analysis store is unavailable or unconfigured."
+            surface["staleness"] = {
+                "served_from": "unverifiable" if source == "missing" else source,
+                "last_known_at": snapshot_at,
+            }
+        elif surface_state == "degraded":
+            surface["message"] = "Postmortem analysis store is readable but currently empty."
+
+        meta: Dict[str, Any] = {
+            **_snap_meta(snapshot_at),
+            "status": surface_state,
+            "source": source,
+            "surfaces": {
+                "postmortems": surface,
+            },
+        }
+        if surface_state == "unavailable":
+            meta["degradation"] = {
+                "reason": "Postmortems read model is currently unavailable.",
+            }
+
+        start = 0
+        if page_token:
+            try:
+                start = int(page_token)
+            except (TypeError, ValueError):
+                start = 0
+        page_items = items[start: start + page_size]
+        next_page_token = str(start + page_size) if start + page_size < len(items) else None
+
+        summary = {
+            "total_items": len(items),
+            "returned_items": len(page_items),
+            "status": surface_state,
+            "source": source,
+            "freshness": snapshot_at,
+        }
+
+        return {
+            "data": {
+                "id": "management-postmortems",
+                "items": page_items,
+                "summary": summary,
+                "status": surface_state,
+                "source": source,
+            },
+            "page_info": {
+                "next_page_token": next_page_token,
+                "total": len(items),
+            },
+            "meta": meta,
+        }
+
+    # -----------------------------------------------------------------------
+    # 22. Postmortem Detail Read Model (Composed)
+    # -----------------------------------------------------------------------
+    @router.get(
+        "/bff/management/postmortems/{postmortem_id}",
+        response_model=PostmortemDetailEnvelope,
+    )
+    async def bff_management_postmortem_detail(
+        postmortem_id: str,
+        authorization: Optional[str] = Header(default=None),
+    ) -> Dict[str, Any]:
+        """BFF: Postmortem detail read model."""
+        identity = _extract_id(authorization)
+        _req_read(identity)
+
+        snapshot_at = _now()
+        store = _resolve_store()
+        raw_res = get_postmortem_detail_read_model(
+            postmortem_id=postmortem_id,
+            postmortems_reader=postmortems_reader,
+            store=store,
+            utc_now=_now,
+        )
+
+        source: str = str(raw_res.get("source") or "missing")
+        item: Optional[Dict[str, Any]] = raw_res.get("item")
+
+        if source in ("missing", "unavailable"):
+            surface_state = "unavailable"
+        elif not item:
+            raise HTTPException(status_code=404, detail=f"Postmortem '{postmortem_id}' not found")
+        else:
+            surface_state = "ok"
+
+        surface = {
+            "status": surface_state,
+            "source": source,
+        }
+        if surface_state == "unavailable":
+            surface["message"] = "Postmortem analysis store is unavailable or unconfigured."
+            surface["staleness"] = {
+                "served_from": "unverifiable" if source == "missing" else source,
+                "last_known_at": snapshot_at,
+            }
+
+        meta: Dict[str, Any] = {
+            **_snap_meta(snapshot_at),
+            "status": surface_state,
+            "source": source,
+            "surfaces": {
+                "postmortem_detail": surface,
+            },
+        }
+        if surface_state == "unavailable":
+            meta["degradation"] = {
+                "reason": "Postmortem detail read model is currently unavailable.",
+            }
+
+        return {
+            "data": item,
+            "meta": meta,
+        }
+
+
+# ---------------------------------------------------------------------------
 # Router Factory
 # ---------------------------------------------------------------------------
 
@@ -832,6 +1300,7 @@ def create_management_read_models_router(
     conversation_store: Optional[Any] = None,
     attachment_store: Optional[Any] = None,
     control_mode_store: Optional[Any] = None,
+    include_migrated_crud: Optional[bool] = None,
 ) -> APIRouter:
     """Create the APIRouter for Management read models and system operations."""
     router = APIRouter()
@@ -865,6 +1334,47 @@ def create_management_read_models_router(
         if inspect.isawaitable(val):
             return await val
         return val
+
+    if include_migrated_crud is None:
+        env_flag = os.environ.get("PANTHEON_BFF_MANAGEMENT_ROUTER_MIGRATED_ROUTES")
+        if env_flag is not None:
+            include_migrated_crud = env_flag.strip().lower() in ("1", "true", "yes", "on")
+        else:
+            # When called from main.py, main.py still defines legacy CRUD & NL routes inline.
+            # Keep main app collision-free during pre-cutover assembly.
+            # In standalone domain router composition & tests, default to True.
+            frame = inspect.currentframe()
+            caller_file = ""
+            caller_module = ""
+            if frame is not None and frame.f_back is not None:
+                caller_file = frame.f_back.f_code.co_filename
+                caller_module = frame.f_back.f_globals.get("__name__", "")
+            is_main_caller = (
+                caller_module == "main"
+                or os.path.basename(caller_file) == "main.py"
+                or caller_file.endswith("/main.py")
+            )
+            include_migrated_crud = not is_main_caller
+
+    _register_composed_read_models(
+        router,
+        _extract_id=_extract_id,
+        _req_read=_req_read,
+        _snap_meta=_snap_meta,
+        _now=_now,
+        _resolve_store=_resolve_store,
+        jobs_reader=jobs_reader,
+        formula_jobs_reader=formula_jobs_reader,
+        activity_audit_reader=activity_audit_reader,
+        governance_audit_reader=governance_audit_reader,
+        telemetry_events_reader=telemetry_events_reader,
+        paper_telemetry_reader=paper_telemetry_reader,
+        runtime_bindings_reader=runtime_bindings_reader,
+        postmortems_reader=postmortems_reader,
+    )
+
+    if not include_migrated_crud:
+        return router
 
     # -----------------------------------------------------------------------
     # 1. Shell Summary
@@ -1452,452 +1962,6 @@ def create_management_read_models_router(
             status_code=res["status_code"],
             content=res["payload"],
         )
-
-
-    # -----------------------------------------------------------------------
-    # 18. Formula Jobs Read Model (Composed)
-    # -----------------------------------------------------------------------
-    @router.get(
-        "/bff/management/formula-jobs",
-        response_model=FormulaJobsEnvelope,
-    )
-    async def bff_management_formula_jobs(
-        status: Optional[str] = Query(default=None),
-        formula_id: Optional[str] = Query(default=None),
-        page_token: Optional[str] = Query(default=None),
-        page_size: int = Query(default=20, ge=1, le=200),
-        authorization: Optional[str] = Header(default=None),
-    ) -> Dict[str, Any]:
-        """BFF: Real Formula execution/evaluation jobs read model."""
-        identity = _extract_id(authorization)
-        _req_read(identity)
-
-        snapshot_at = _now()
-        store = _resolve_store()
-        raw_res = get_formula_jobs_read_model(
-            status=status,
-            formula_id=formula_id,
-            jobs_reader=jobs_reader,
-            formula_jobs_reader=formula_jobs_reader,
-            store=store,
-            utc_now=_now,
-        )
-
-        source: str = str(raw_res.get("source") or "missing")
-        items: List[Dict[str, Any]] = list(raw_res.get("items") or [])
-
-        if source in ("missing", "unavailable"):
-            surface_state = "unavailable"
-        else:
-            surface_state = "ok" if items else "degraded"
-
-        surface = {
-            "status": surface_state,
-            "source": source,
-        }
-        if surface_state == "unavailable":
-            surface["message"] = "Formula job executor read store is unavailable or unconfigured."
-            surface["staleness"] = {
-                "served_from": "unverifiable" if source == "missing" else source,
-                "last_known_at": snapshot_at,
-            }
-        elif surface_state == "degraded":
-            surface["message"] = "Formula job read store is readable but currently empty."
-
-        meta: Dict[str, Any] = {
-            **_snap_meta(snapshot_at),
-            "status": surface_state,
-            "source": source,
-            "surfaces": {
-                "formula_jobs": surface,
-            },
-        }
-        if surface_state == "unavailable":
-            meta["degradation"] = {
-                "reason": "Formula jobs read model is currently unavailable.",
-            }
-
-        start = 0
-        if page_token:
-            try:
-                start = int(page_token)
-            except (TypeError, ValueError):
-                start = 0
-        page_items = items[start: start + page_size]
-        next_page_token = str(start + page_size) if start + page_size < len(items) else None
-
-        summary = {
-            "total_items": len(items),
-            "returned_items": len(page_items),
-            "status": surface_state,
-            "source": source,
-            "freshness": snapshot_at,
-        }
-
-        return {
-            "data": {
-                "id": "management-formula-jobs",
-                "items": page_items,
-                "summary": summary,
-                "status": surface_state,
-                "source": source,
-            },
-            "page_info": {
-                "next_page_token": next_page_token,
-                "total": len(items),
-            },
-            "meta": meta,
-        }
-
-    # -----------------------------------------------------------------------
-    # 19. Consolidated Activity Read Model (Composed)
-    # -----------------------------------------------------------------------
-    @router.get(
-        "/bff/management/activity",
-        response_model=ActivityEnvelope,
-    )
-    async def bff_management_activity(
-        event_type: Optional[str] = Query(default=None),
-        actor_id: Optional[str] = Query(default=None),
-        page_token: Optional[str] = Query(default=None),
-        page_size: int = Query(default=50, ge=1, le=200),
-        authorization: Optional[str] = Header(default=None),
-    ) -> Dict[str, Any]:
-        """BFF: Consolidated Management system activity read model."""
-        identity = _extract_id(authorization)
-        _req_read(identity)
-
-        snapshot_at = _now()
-        store = _resolve_store()
-        raw_res = get_activity_read_model(
-            event_type=event_type,
-            actor_id=actor_id,
-            activity_audit_reader=activity_audit_reader,
-            governance_audit_reader=governance_audit_reader,
-            telemetry_events_reader=telemetry_events_reader,
-            store=store,
-            utc_now=_now,
-        )
-
-        source: str = str(raw_res.get("source") or "missing")
-        items: List[Dict[str, Any]] = list(raw_res.get("items") or [])
-
-        if source in ("missing", "unavailable"):
-            surface_state = "unavailable"
-        else:
-            surface_state = "ok" if items else "degraded"
-
-        surface = {
-            "status": surface_state,
-            "source": source,
-        }
-        if surface_state == "unavailable":
-            surface["message"] = "Activity audit event store is unavailable or unconfigured."
-            surface["staleness"] = {
-                "served_from": "unverifiable" if source == "missing" else source,
-                "last_known_at": snapshot_at,
-            }
-        elif surface_state == "degraded":
-            surface["message"] = "Activity read store is readable but currently empty."
-
-        meta: Dict[str, Any] = {
-            **_snap_meta(snapshot_at),
-            "status": surface_state,
-            "source": source,
-            "surfaces": {
-                "activity": surface,
-                **(raw_res.get("surfaces") or {}),
-            },
-        }
-        if surface_state == "unavailable":
-            meta["degradation"] = {
-                "reason": "Activity read model is currently unavailable.",
-            }
-
-        start = 0
-        if page_token:
-            try:
-                start = int(page_token)
-            except (TypeError, ValueError):
-                start = 0
-        page_items = items[start: start + page_size]
-        next_page_token = str(start + page_size) if start + page_size < len(items) else None
-
-        summary = {
-            "total_items": len(items),
-            "returned_items": len(page_items),
-            "status": surface_state,
-            "source": source,
-            "freshness": snapshot_at,
-        }
-
-        return {
-            "data": {
-                "id": "management-activity",
-                "items": page_items,
-                "summary": summary,
-                "status": surface_state,
-                "source": source,
-            },
-            "page_info": {
-                "next_page_token": next_page_token,
-                "total": len(items),
-            },
-            "meta": meta,
-        }
-
-    # -----------------------------------------------------------------------
-    # 20. Paper Telemetry Read Model (Composed)
-    # -----------------------------------------------------------------------
-    @router.get(
-        "/bff/management/paper-telemetry",
-        response_model=PaperTelemetryEnvelope,
-    )
-    async def bff_management_paper_telemetry(
-        strategy_id: Optional[str] = Query(default=None),
-        persona_id: Optional[str] = Query(default=None),
-        page_token: Optional[str] = Query(default=None),
-        page_size: int = Query(default=20, ge=1, le=200),
-        authorization: Optional[str] = Header(default=None),
-    ) -> Dict[str, Any]:
-        """BFF: Real strategy paper execution telemetry & series read model."""
-        identity = _extract_id(authorization)
-        _req_read(identity)
-
-        snapshot_at = _now()
-        store = _resolve_store()
-        raw_res = get_paper_telemetry_read_model(
-            strategy_id=strategy_id,
-            persona_id=persona_id,
-            paper_telemetry_reader=paper_telemetry_reader,
-            runtime_bindings_reader=runtime_bindings_reader,
-            telemetry_events_reader=telemetry_events_reader,
-            store=store,
-            utc_now=_now,
-        )
-
-        source: str = str(raw_res.get("source") or "missing")
-        items: List[Dict[str, Any]] = list(raw_res.get("items") or [])
-
-        if source in ("missing", "unavailable"):
-            surface_state = "unavailable"
-        else:
-            surface_state = "ok" if items else "degraded"
-
-        surface = {
-            "status": surface_state,
-            "source": source,
-        }
-        if surface_state == "unavailable":
-            surface["message"] = "Paper execution telemetry store is unavailable or unconfigured."
-            surface["staleness"] = {
-                "served_from": "unverifiable" if source == "missing" else source,
-                "last_known_at": snapshot_at,
-            }
-        elif surface_state == "degraded":
-            surface["message"] = "Paper telemetry store is readable but currently empty."
-
-        meta: Dict[str, Any] = {
-            **_snap_meta(snapshot_at),
-            "status": surface_state,
-            "source": source,
-            "surfaces": {
-                "paper_telemetry": surface,
-            },
-        }
-        if surface_state == "unavailable":
-            meta["degradation"] = {
-                "reason": "Paper telemetry read model is currently unavailable.",
-            }
-
-        start = 0
-        if page_token:
-            try:
-                start = int(page_token)
-            except (TypeError, ValueError):
-                start = 0
-        page_items = items[start: start + page_size]
-        next_page_token = str(start + page_size) if start + page_size < len(items) else None
-
-        summary = {
-            "total_items": len(items),
-            "returned_items": len(page_items),
-            "status": surface_state,
-            "source": source,
-            "freshness": snapshot_at,
-        }
-
-        return {
-            "data": {
-                "id": "management-paper-telemetry",
-                "items": page_items,
-                "summary": summary,
-                "status": surface_state,
-                "source": source,
-            },
-            "page_info": {
-                "next_page_token": next_page_token,
-                "total": len(items),
-            },
-            "meta": meta,
-        }
-
-    # -----------------------------------------------------------------------
-    # 21. Postmortems Read Model (Composed)
-    # -----------------------------------------------------------------------
-    @router.get(
-        "/bff/management/postmortems",
-        response_model=PostmortemsEnvelope,
-    )
-    async def bff_management_postmortems(
-        severity: Optional[str] = Query(default=None),
-        status: Optional[str] = Query(default=None),
-        page_token: Optional[str] = Query(default=None),
-        page_size: int = Query(default=20, ge=1, le=200),
-        authorization: Optional[str] = Header(default=None),
-    ) -> Dict[str, Any]:
-        """BFF: Postmortem incident analysis list read model."""
-        identity = _extract_id(authorization)
-        _req_read(identity)
-
-        snapshot_at = _now()
-        store = _resolve_store()
-        raw_res = get_postmortems_read_model(
-            severity=severity,
-            status=status,
-            postmortems_reader=postmortems_reader,
-            store=store,
-            utc_now=_now,
-        )
-
-        source: str = str(raw_res.get("source") or "missing")
-        items: List[Dict[str, Any]] = list(raw_res.get("items") or [])
-
-        if source in ("missing", "unavailable"):
-            surface_state = "unavailable"
-        else:
-            surface_state = "ok" if items else "degraded"
-
-        surface = {
-            "status": surface_state,
-            "source": source,
-        }
-        if surface_state == "unavailable":
-            surface["message"] = "Postmortem analysis store is unavailable or unconfigured."
-            surface["staleness"] = {
-                "served_from": "unverifiable" if source == "missing" else source,
-                "last_known_at": snapshot_at,
-            }
-        elif surface_state == "degraded":
-            surface["message"] = "Postmortem analysis store is readable but currently empty."
-
-        meta: Dict[str, Any] = {
-            **_snap_meta(snapshot_at),
-            "status": surface_state,
-            "source": source,
-            "surfaces": {
-                "postmortems": surface,
-            },
-        }
-        if surface_state == "unavailable":
-            meta["degradation"] = {
-                "reason": "Postmortems read model is currently unavailable.",
-            }
-
-        start = 0
-        if page_token:
-            try:
-                start = int(page_token)
-            except (TypeError, ValueError):
-                start = 0
-        page_items = items[start: start + page_size]
-        next_page_token = str(start + page_size) if start + page_size < len(items) else None
-
-        summary = {
-            "total_items": len(items),
-            "returned_items": len(page_items),
-            "status": surface_state,
-            "source": source,
-            "freshness": snapshot_at,
-        }
-
-        return {
-            "data": {
-                "id": "management-postmortems",
-                "items": page_items,
-                "summary": summary,
-                "status": surface_state,
-                "source": source,
-            },
-            "page_info": {
-                "next_page_token": next_page_token,
-                "total": len(items),
-            },
-            "meta": meta,
-        }
-
-    # -----------------------------------------------------------------------
-    # 22. Postmortem Detail Read Model (Composed)
-    # -----------------------------------------------------------------------
-    @router.get(
-        "/bff/management/postmortems/{postmortem_id}",
-        response_model=PostmortemDetailEnvelope,
-    )
-    async def bff_management_postmortem_detail(
-        postmortem_id: str,
-        authorization: Optional[str] = Header(default=None),
-    ) -> Dict[str, Any]:
-        """BFF: Postmortem detail read model."""
-        identity = _extract_id(authorization)
-        _req_read(identity)
-
-        snapshot_at = _now()
-        store = _resolve_store()
-        raw_res = get_postmortem_detail_read_model(
-            postmortem_id=postmortem_id,
-            postmortems_reader=postmortems_reader,
-            store=store,
-            utc_now=_now,
-        )
-
-        source: str = str(raw_res.get("source") or "missing")
-        item: Optional[Dict[str, Any]] = raw_res.get("item")
-
-        if source in ("missing", "unavailable"):
-            surface_state = "unavailable"
-        elif not item:
-            raise HTTPException(status_code=404, detail=f"Postmortem '{postmortem_id}' not found")
-        else:
-            surface_state = "ok"
-
-        surface = {
-            "status": surface_state,
-            "source": source,
-        }
-        if surface_state == "unavailable":
-            surface["message"] = "Postmortem analysis store is unavailable or unconfigured."
-            surface["staleness"] = {
-                "served_from": "unverifiable" if source == "missing" else source,
-                "last_known_at": snapshot_at,
-            }
-
-        meta: Dict[str, Any] = {
-            **_snap_meta(snapshot_at),
-            "status": surface_state,
-            "source": source,
-            "surfaces": {
-                "postmortem_detail": surface,
-            },
-        }
-        if surface_state == "unavailable":
-            meta["degradation"] = {
-                "reason": "Postmortem detail read model is currently unavailable.",
-            }
-
-        return {
-            "data": item,
-            "meta": meta,
-        }
 
     # -----------------------------------------------------------------------
     # 23. Management NL Ask Query Endpoint

@@ -774,11 +774,16 @@ def test_management_nl_ask_endpoint():
     assert body["meta"]["status"] == "ok"
 
 
-def test_management_nl_ask_dry_run_and_validation():
+def test_management_nl_ask_dry_run_and_validation(tmp_path: Path):
     """Test POST /bff/management/nl/ask dry-run mode, header idempotency, and input validation."""
+    from management_nl_command_idempotency import ManagementNlCommandIdempotencyStore
+    idem_store = ManagementNlCommandIdempotencyStore(storage_path=str(tmp_path / "idem_dry_val.json"))
     mock_store = MockManagementReadStore()
     app = FastAPI()
-    app.include_router(create_management_read_models_router(get_read_store=lambda: mock_store))
+    app.include_router(create_management_read_models_router(
+        get_read_store=lambda: mock_store,
+        idempotency_store=idem_store,
+    ))
     client = TestClient(app)
 
     # 1. Dry run query returns 202 compact receipt
@@ -1226,3 +1231,77 @@ def test_management_nl_ask_with_injected_provider_client(tmp_path: Path):
     assert fake_provider.last_question == "Analyze current risk posture"
     assert body["data"]["answer"] == "Fake assistant provider answer for testing."
     assert body["data"]["provider_status"]["provider"] == "fake_codex"
+
+
+def test_management_nl_ask_dry_run_idempotency_replay_after_recovery_window(tmp_path: Path):
+    """Isolated regression: dry-run idempotency completes terminally and replays cleanly after recovery expiry."""
+    from management_nl_command_idempotency import ManagementNlCommandIdempotencyStore
+    import time
+
+    idem_store_path = tmp_path / "idem_dry_replay.json"
+    idem_store = ManagementNlCommandIdempotencyStore(
+        storage_path=str(idem_store_path),
+        recovery_seconds=0.1,
+    )
+    mock_store = MockManagementReadStore()
+    app = FastAPI()
+    app.include_router(create_management_read_models_router(
+        get_read_store=lambda: mock_store,
+        idempotency_store=idem_store,
+    ))
+    client = TestClient(app)
+
+    payload = {
+        "question": "What is the trading pulse and risk status?",
+        "dry_run": True,
+        "sessionId": "session-dry-rec-1",
+    }
+    headers = {
+        "Authorization": "Bearer op-1:operator",
+        "Idempotency-Key": "test-key-dry-recovery-001",
+        "X-Tenant-Id": "tenant-test",
+    }
+
+    # 1. First dry-run execution
+    resp1 = client.post("/bff/management/nl/ask", json=payload, headers=headers)
+    assert resp1.status_code == 202
+    body1 = resp1.json()
+    assert body1["data"]["confidence"] == "dry_run"
+    assert body1["meta"]["dry_run_mode"] == "compact_receipt"
+
+    # 2. Wait past the recovery window (0.1s recovery_seconds)
+    time.sleep(0.2)
+
+    # 3. Replay exact same request with same key after recovery window
+    resp2 = client.post("/bff/management/nl/ask", json=payload, headers=headers)
+    assert resp2.status_code == 202
+    body2 = resp2.json()
+    assert body2["data"]["confidence"] == "dry_run"
+    assert body2["meta"]["dry_run_mode"] == "compact_receipt"
+    assert body2["meta"]["idempotency"]["replayed"] is True
+
+
+def test_management_router_conditional_registration_crud_cutover():
+    """Verify conditional registration keeps pre-cutover main app clean (5 routes) while full router has 24."""
+    # 1. Composed read-models only (include_migrated_crud=False)
+    router_composed_only = create_management_read_models_router(include_migrated_crud=False)
+    assert len(router_composed_only.routes) == 5
+    paths_composed = [r.path for r in router_composed_only.routes]
+    assert "/bff/management/formula-jobs" in paths_composed
+    assert "/bff/management/activity" in paths_composed
+    assert "/bff/management/paper-telemetry" in paths_composed
+    assert "/bff/management/postmortems" in paths_composed
+    assert "/bff/management/postmortems/{postmortem_id}" in paths_composed
+    assert "/bff/management/shell-summary" not in paths_composed
+    assert "/bff/management/cockpit" not in paths_composed
+    assert "/bff/management/nl/ask" not in paths_composed
+
+    # 2. Full management router (include_migrated_crud=True)
+    router_full = create_management_read_models_router(include_migrated_crud=True)
+    assert len(router_full.routes) == 24
+    paths_full = [r.path for r in router_full.routes]
+    assert "/bff/management/shell-summary" in paths_full
+    assert "/bff/management/cockpit" in paths_full
+    assert "/bff/management/nl/ask" in paths_full
+    assert "/bff/management/formula-jobs" in paths_full
+
