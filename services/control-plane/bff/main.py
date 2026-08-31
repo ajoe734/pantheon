@@ -62421,10 +62421,29 @@ def _agora_ask_deterministic_fallback(prompt: str) -> str:
     )
 
 
+def _auth_readiness_provider_timeout_seconds() -> float:
+    """Bound the optional provider probe used by browser auth readiness.
+
+    Auth readiness is decided entirely by BFF-local session and verifier
+    state.  The provider result is observability only, so an unavailable
+    OpenClaw adapter must not make the login probe wait for the assistant
+    invocation timeout (which is intentionally much longer for real asks).
+    """
+    raw = os.getenv(
+        "PANTHEON_BFF_AUTH_READINESS_PROVIDER_TIMEOUT_SECONDS", "2.0"
+    ).strip()
+    try:
+        return max(0.05, float(raw))
+    except (TypeError, ValueError):
+        return 2.0
+
+
 def _assistant_provider_readiness() -> Dict[str, Any]:
     provider = _mgmt_nl_provider_name()
     try:
-        return OpenClawOpsClient().get_assistant_readiness(provider=provider, auth_probe=True)
+        return OpenClawOpsClient(
+            timeout_seconds=_auth_readiness_provider_timeout_seconds()
+        ).get_assistant_readiness(provider=provider, auth_probe=True)
     except OpenClawOpsClientError as exc:
         return {
             "provider": provider,
