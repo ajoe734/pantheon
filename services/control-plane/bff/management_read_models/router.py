@@ -1343,11 +1343,6 @@ def create_management_router(
     raise_session_logged_out_fn: Optional[Callable] = None,
     tenant_payload_fn: Optional[Callable] = None,
     service: Optional[ManagementService] = None,
-    provider_client: Optional[Any] = None,
-    idempotency_store: Optional[Any] = None,
-    conversation_store: Optional[Any] = None,
-    attachment_store: Optional[Any] = None,
-    control_mode_store: Optional[Any] = None,
 ) -> APIRouter:
     """Create the APIRouter for all 17 Management domain HTTP GET routes."""
     router = APIRouter()
@@ -1362,11 +1357,6 @@ def create_management_router(
     svc = service or ManagementService(
         get_read_store=get_read_store,
         utc_now=_now,
-        provider_client=provider_client,
-        idempotency_store=idempotency_store,
-        conversation_store=conversation_store,
-        attachment_store=attachment_store,
-        control_mode_store=control_mode_store,
     )
 
     # -----------------------------------------------------------------------
