@@ -3,7 +3,7 @@
   "title": "Plan-Execution Errata: Frozen Batch B/C and Post-Freeze Canonical Lineage",
   "generated_at": "2026-08-30T20:45:00Z",
   "generated_by_task": "OPGAP-PLAN-EXECUTION-ERRATA-V2-20260830",
-  "last_reconciled_at": "2026-08-31T01:56:12Z",
+  "last_reconciled_at": "2026-08-31T02:10:43Z",
   "last_reconciled_by_task": "OPGAP-PLAN-EXECUTION-ERRATA-V3-20260830",
   "errata_revisions": [
     {
@@ -76,7 +76,7 @@
         "execute-plans",
         "pantheon"
       ],
-      "note": "First successful admission for all 9 Batch C tasks. Because no prior canonical row for these ids ever reached admission, Batch C task ids were never superseded -- they materialized directly under their original catalog ids with no replacement lineage required.",
+      "note": "First successful admission for all 9 Batch C tasks. Because no prior canonical row for these ids ever reached admission, Batch C task ids had not been superseded at this V2 cutoff -- they materialized directly under their original catalog ids. Their later governed V2 replacements are recorded separately in post_freeze_batch_c_replacements.",
       "receipt_path": ".orchestrator/assistant-dev-packets/processed/full-operation-gap-batch-c-support-and-frontend-functional-ead79e62-f7a8-4b56-b870-ebb97fbefdcb.json"
     }
   ],
@@ -346,7 +346,7 @@
       "gap_id": "OP-G21",
       "title": "Persona provisioning reconciliation crossed the read-only port boundary",
       "owner_task": "OPGAP-BE-PERSONA-RECONCILIATION-MUTATION-PORT-20260830",
-      "canonical_status_snapshot": "in_progress",
+      "canonical_status_snapshot": "review",
       "observed_failure": "ReadSurfacePorts object has no attribute update_persona",
       "required_boundary": "ReadSurfacePorts remains mutation-free; provisioning and provisioning_failed terminal transitions use one explicit typed Persona mutation port backed by the authoritative store."
     },

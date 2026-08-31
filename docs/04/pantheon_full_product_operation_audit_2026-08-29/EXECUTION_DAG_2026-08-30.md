@@ -126,7 +126,7 @@ graph TD
     MAIN2 --> CALLER2[Command Caller Cutover<br/>todo]
     CALLER2 --> RETIRE2[Command Plane Retirement<br/>todo]
 
-    BRIDGE2 --> PERSONA_MUT[Persona Reconciliation Mutation Port<br/>OP-G21 / in_progress]
+    BRIDGE2 --> PERSONA_MUT[Persona Reconciliation Mutation Port<br/>OP-G21 / review]
     BRIDGE2 --> OCLAW[OpenClaw Readiness Fallback<br/>OP-G22 / done]
 
     MAIN2 --> PRODUCT[Functional Batch D + Hosted Product Proof<br/>not complete]
@@ -219,7 +219,7 @@ Run this command from repository root to dynamically verify all 18 catalog and a
 python3 docs/04/pantheon_full_product_operation_audit_2026-08-29/validate_catalog.py
 ```
 
-The script executes 17 comprehensive assertions:
+The script executes 18 comprehensive assertions:
 1. AST digests and body parity (2,272 nodes) against live `main.py`
 2. Edge-level cutover mappings for 100% of consuming tasks across all AST nodes
 3. Legacy action cluster (9 nodes) assembly ownership and node 118 `os.makedirs` lifespan placement
