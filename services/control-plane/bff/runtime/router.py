@@ -9,7 +9,7 @@ import json
 import uuid
 from typing import Any, Callable, Dict, List, Mapping, Optional
 
-from fastapi import APIRouter, Body, Header, Query
+from fastapi import APIRouter, Body, Header, Query, Request
 
 from models import CommandType, ErrorCode, ObjectType
 

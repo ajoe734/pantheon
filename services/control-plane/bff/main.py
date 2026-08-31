@@ -65915,12 +65915,14 @@ app.include_router(
 
 # OPGAP-BE-RUNTIME-BINDING-V2-20260830: dedicated RuntimeBinding domain.
 from runtime.router import create_runtime_router as _create_runtime_router
-app.include_router(
-    _create_runtime_router(
-        get_read_store=lambda: read_store,
-        dependencies=globals(),
-    )
+_runtime_router = _create_runtime_router(
+    get_read_store=lambda: read_store,
+    dependencies=globals(),
 )
+# Keep the moved endpoints flat on ``app.routes``.  This preserves the route
+# inventory contract used by compatibility checks while the router retains
+# domain ownership and BFF-only dependency injection.
+app.routes.extend(_runtime_router.routes)
 
 # ACG-01-011: Action command adapter router
 from command_adapters.router import create_action_command_router as _create_action_command_router

@@ -51,6 +51,7 @@ def test_runtime_router_owns_all_runtime_routes() -> None:
 def test_main_composes_runtime_router_without_runtime_decorators() -> None:
     main_source = (BFF_ROOT / "main.py").read_text(encoding="utf-8")
     assert "from runtime.router import create_runtime_router" in main_source
+    assert "app.routes.extend(_runtime_router.routes)" in main_source
 
     for _method, path in {
         ("GET", "/api/v1/bindings"),
@@ -89,3 +90,24 @@ def test_runtime_router_resolves_the_bff_read_store_per_request() -> None:
     assert client.get("/api/v1/bindings").json()["data"] == [
         {"binding_id": "binding-second"}
     ]
+
+
+def test_runtime_action_route_injects_request_without_a_query_parameter() -> None:
+    router = create_runtime_router(
+        dependencies={
+            "_deprecated_bff_path_response": lambda **kwargs: {"deprecated": kwargs},
+        },
+    )
+    app = FastAPI()
+    app.include_router(router)
+    client = TestClient(app)
+
+    response = client.post("/bff/runtimes/runtime-1/actions/pause")
+
+    assert response.status_code == 202
+    assert response.json() == {
+        "deprecated": {
+            "route": "/bff/runtimes/{runtime_id}/actions/{action_id}",
+            "replacement": "/bff/actions/runtime/{runtime_id}/{action_id}",
+        }
+    }
