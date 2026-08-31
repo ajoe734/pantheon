@@ -4,7 +4,7 @@
   "title": "Remove Persona reconciliation mutations from ReadSurfacePorts",
   "program_id": "PANTHEON-FULL-OPERATION-GAP-CLOSURE-20260830",
   "design_unit": "OPGAP-BE-PERSONA-RECONCILIATION-MUTATION-PORT-20260830",
-  "recorded_at": "2026-08-31T00:00:00Z",
+  "recorded_at": "2026-08-31T02:32:09Z",
   "owner": "Codex2",
   "reviewer": "Codex",
   "target_repo": "pantheon",
@@ -22,8 +22,6 @@
       "services/control-plane/bff/main.py",
       "services/control-plane/bff/ports/persona_capital_runtime.py",
       "services/control-plane/bff/personas/reconciliation.py",
-      "services/control-plane/bff/personas/service.py",
-      "services/control-plane/bff/test_persona_provisioning_readback.py",
       "services/control-plane/bff/tests/test_persona_provisioning_read_surface_mutation.py"
     ]
   },
@@ -38,6 +36,7 @@
       "Persona service lifecycle transition policy and governance authority",
       "Deployment and Capital compensation ownership",
       "first-evaluation cron owner semantics",
+      "the extracted personas/service.py router boundary and its existing readback suite until the canonical artifact contract is formally expanded",
       "ReadSurfacePorts read-only public API",
       "execute-plans frontend"
     ],
@@ -50,7 +49,7 @@
     ]
   },
   "contracts": {
-    "read_write_boundary": "ReadSurfacePorts exposes no create_persona or update_persona compatibility delegation. Both main.py and the extracted personas/service.py reconciliation paths persist only through PersonaProvisioningReconciliationMutationPort backed by the authoritative Persona write owner.",
+    "read_write_boundary": "The owned reconciliation paths in main.py use one PersonaProvisioningReconciliationMutationPort backed by persona_write_owner. ReadSurfacePorts remains read-only and this task does not add a compatibility mutation delegation to it.",
     "terminal_durability": "paper_running and provisioning_failed reconciliation projections carry their state and metadata to the write owner, while the durable provisioning ledger remains the terminal decision source.",
     "preserved_behaviour": "The change leaves lifecycle policy, compensation, required cron cleanup, authoritative runtime readback, and BFF overlay updates in their existing owners and execution order.",
     "failure_signature": "The deployed warning being repaired is: ReadSurfacePorts object has no attribute update_persona. The new regression invokes reconciliation against a real read-only ReadSurfacePorts instance and asserts the signature is absent."
@@ -59,12 +58,19 @@
     "commands": [
       "python3 scripts/dev/provision_python_distribution.py",
       ".venv-pantheon/bin/python -m pytest -q services/control-plane/bff/tests/test_persona_provisioning_read_surface_mutation.py",
-      ".venv-pantheon/bin/python -m pytest -q services/control-plane/bff/test_persona_provisioning_readback.py",
-      ".venv-pantheon/bin/python -m pytest -q services/control-plane/bff/tests/test_persona_router.py",
-      "python3 -m py_compile services/control-plane/bff/main.py services/control-plane/bff/ports/persona_capital_runtime.py services/control-plane/bff/personas/reconciliation.py services/control-plane/bff/personas/service.py"
+      ".venv-pantheon/bin/python -m pytest services/control-plane/bff/test_persona_provisioning_readback.py -xvv --tb=short",
+      ".venv-pantheon/bin/python -m py_compile services/control-plane/bff/main.py services/control-plane/bff/ports/persona_capital_runtime.py services/control-plane/bff/personas/reconciliation.py"
     ],
-    "result": "PASS_WITH_UNRELATED_ROUTER_BASELINE_FAILURES",
-    "details": "The new read-surface regression suite passed 3/3. Existing authoritative provisioning readback coverage passed 52/52. The broader Persona router suite passed 39 tests and has 2 unrelated baseline failures in quarterly-ranking and promotion-review handlers: both raise NameError for _human_inbox_trusted_promotion_submission, a symbol absent from services/control-plane/bff/personas/service.py before this task anchor and outside this task's diff."
+    "result": "FOCUSED_SCOPE_PASS_ARTIFACT_RECONCILIATION_REQUIRED",
+    "details": "The declared read-surface regression suite passed 3/3. After removing the undeclared test_persona_provisioning_readback.py drift, the legacy readback suite passed its first 2 cases then failed at test_exact_authoritative_identity_fresh_single_worker_and_first_eval_succeeds because its fixture does not inject the explicit PersonaProvisioningReconciliationMutationPort; the production port correctly fails closed with PersonaWriteOwnerUnavailable when no Persona service URL is configured. This is a task-related fixture mismatch, not an unrelated baseline failure. The task must not enter review until Human/Ops either adds that test to the canonical artifacts or directs a different in-scope compatibility strategy."
+  },
+  "scope_reconciliation": {
+    "status": "blocked_pending_human_ops",
+    "removed_undeclared_paths": [
+      "services/control-plane/bff/personas/service.py",
+      "services/control-plane/bff/test_persona_provisioning_readback.py"
+    ],
+    "required_decision": "Approve adding test_persona_provisioning_readback.py to the artifact contract so its isolated mutation-port fixture can be updated, or provide an alternative approved compatibility boundary."
   },
   "hosted_acceptance": {
     "status": "required_after_merge",
@@ -76,14 +82,14 @@
     ]
   },
   "review_handoff": {
-    "status": "ready_for_independent_review",
+    "status": "blocked_pending_artifact_contract_reconciliation",
     "reviewer": "Codex",
     "exact_pr_head_authority": "The governed ai-status handoff freezes REVIEW_PR, REVIEW_HEAD_SHA, this committed manifest path, and its blob identity. The canonical binding is authoritative because this manifest cannot self-reference the commit that contains it.",
     "required_checks": [
       "verify ReadSurfacePorts remains mutation-free and no reconciliation code delegates update_persona or create_persona to it",
       "verify PersonaProvisioningReconciliationMutationPort is backed only by persona_write_owner",
       "verify paper_running, provisioning_failed, compensation, cron cleanup, and overlay update paths remain fail-closed",
-      "run the listed focused regression and readback tests",
+      "do not approve until the canonical artifact decision resolves the failing readback fixture",
       "confirm the post-merge hosted acceptance conditions are carried forward",
       "approve the exact PR head frozen with this manifest path"
     ]

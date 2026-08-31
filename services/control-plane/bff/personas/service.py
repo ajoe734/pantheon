@@ -46,8 +46,6 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.params import Param as FastAPIParam
 from starlette.responses import JSONResponse
 
-from .reconciliation import PersonaProvisioningReconciliationMutationPort
-
 BFF_DATA_DIR = os.getenv("BFF_DATA_DIR", "/tmp/pantheon/bff")
 
 from models import (
@@ -277,13 +275,6 @@ log = logging.getLogger(__name__)
 persona_write_owner = (
     create_persona_registry_write_owner()
     if create_persona_registry_write_owner is not None
-    else None
-)
-persona_reconciliation_mutation_port = (
-    PersonaProvisioningReconciliationMutationPort(
-        persona_mutation_port=persona_write_owner,
-    )
-    if persona_write_owner is not None
     else None
 )
 
@@ -1084,22 +1075,6 @@ def _append_persona_reconcile_diagnostic(
         diagnostics.append(dependency)
 
 
-def _persist_persona_provisioning_terminal_transition(
-    persona_id: str,
-    *,
-    lifecycle_state: str,
-    metadata: Mapping[str, Any],
-) -> Dict[str, Any]:
-    """Persist a provisioning reconciliation projection outside the read surface."""
-    if persona_reconciliation_mutation_port is None:
-        raise RuntimeError("Persona reconciliation mutation port is unavailable")
-    return persona_reconciliation_mutation_port.persist_terminal_transition(
-        persona_id,
-        lifecycle_state=lifecycle_state,
-        metadata=metadata,
-    )
-
-
 # --- _materialize_terminal_persona_provisioning_ledger ---
 def _materialize_terminal_persona_provisioning_ledger(
     persona_id: str,
@@ -1221,7 +1196,7 @@ def _materialize_terminal_persona_provisioning_ledger(
         _append_persona_reconcile_diagnostic(diagnostics, "provisioning_ledger")
         return "provisioning"
 
-    _persist_persona_provisioning_terminal_transition(
+    read_store.update_persona(
         persona_id,
         lifecycle_state=new_state,
         metadata=metadata_updates,
@@ -1317,7 +1292,7 @@ def _evaluate_persona_provisioning_status(
             if metadata.get(key) != value
         }
         if changed_updates:
-            _persist_persona_provisioning_terminal_transition(
+            read_store.update_persona(
                 persona_id,
                 lifecycle_state="provisioning_failed",
                 metadata=changed_updates,
@@ -1840,7 +1815,7 @@ def _evaluate_persona_provisioning_status(
                     )
 
     if new_state != current_state or metadata_updates:
-        _persist_persona_provisioning_terminal_transition(
+        read_store.update_persona(
             persona_id,
             lifecycle_state=new_state,
             metadata=metadata_updates,
@@ -3736,12 +3711,12 @@ def _persona_record_for_provisioning(
         traits=traits,
         lifecycle_state=lifecycle_state,
     )
+    creator = getattr(read_store, "create_persona", None)
+    updater = getattr(read_store, "update_persona", None)
     existing = read_store.get_persona(record.persona_id)
     if existing is None:
-        if mutate_store:
-            if persona_write_owner is None:
-                raise RuntimeError("Persona mutation owner is unavailable")
-            persona = persona_write_owner.create_persona(
+        if mutate_store and callable(creator):
+            persona = creator(
                 persona_id=record.persona_id,
                 name=str(payload.get("name") or record.normalized_name),
                 actor_id=canonical_owner,
@@ -3790,10 +3765,8 @@ def _persona_record_for_provisioning(
             lifecycle_state = "paper_running"
         elif existing.get("lifecycle_state") and record.state == "succeeded":
             lifecycle_state = str(existing.get("lifecycle_state"))
-        if mutate_store:
-            if persona_write_owner is None:
-                raise RuntimeError("Persona mutation owner is unavailable")
-            persona = persona_write_owner.update_persona(
+        if mutate_store and callable(updater):
+            persona = updater(
                 record.persona_id,
                 lifecycle_state=lifecycle_state,
                 metadata=metadata,
