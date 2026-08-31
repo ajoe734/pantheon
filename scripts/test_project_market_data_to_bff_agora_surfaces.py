@@ -677,4 +677,3 @@ def test_binds_explicit_source_proof_receipt_id() -> None:
     assert market["snapshotId"] == "snap-market-123"
     assert market["freshness"]["source_proof_receipt_id"] == "spr-custom-receipt-999"
     assert market["freshness"]["sourceProofReceiptId"] == "spr-custom-receipt-999"
-
