@@ -1,0 +1,71 @@
+{
+  "schema_version": "pantheon.supervisor-evidence.v1",
+  "task_id": "OPGAP-BE-RESEARCH-ROUTER-V2-20260830",
+  "title": "Migrate Research knowledge and framework integration routes",
+  "program_id": "PANTHEON-FULL-OPERATION-GAP-CLOSURE-20260830",
+  "design_unit": "SD-OPGAP-BE-RESEARCH-ROUTER",
+  "recorded_at": "2026-08-31T15:00:00Z",
+  "ai_name": "Codex2",
+  "owner": "Codex2",
+  "reviewer": "Codex",
+  "target_repo": "pantheon",
+  "task_class": "functional",
+  "summary_zh": "\u5c07 Research domain 47 \u500b route decorators \u79fb\u81f3 research/router.py\uff0c\u4e26\u4ee5 typed route \u53d6\u4ee3\u88ab\u62c6\u89e3\u7684 generic aliases\u3002",
+  "artifacts": [
+    "services/control-plane/bff/research/router.py",
+    "services/control-plane/bff/research/service.py",
+    "services/control-plane/bff/tests/test_research_router.py",
+    "docs/deployment/evidence/supervisor/OPGAP-BE-RESEARCH-ROUTER-V2-20260830/evidence.json"
+  ],
+  "scope": {
+    "owned": [
+      "services/control-plane/bff/research/router.py",
+      "services/control-plane/bff/research/service.py",
+      "services/control-plane/bff/tests/test_research_router.py",
+      "docs/deployment/evidence/supervisor/OPGAP-BE-RESEARCH-ROUTER-V2-20260830/evidence.json"
+    ],
+    "not_changing": [
+      "services/control-plane/bff/main.py (deferred to OPGAP-BFF-MAIN-ASSEMBLY-20260830)",
+      "ResearchKnowledgeSourcePort implementation delivered by ACG-RS-RESEARCH-SOURCE-20260828",
+      "services/source_ingestion",
+      "services/telemetry",
+      "execute-plans frontend"
+    ],
+    "composes_with": [
+      "OPGAP-DEVTOOL-TARGET-REPO-BRIDGE-V2-20260830",
+      "ACG-RS-RESEARCH-SOURCE-20260828",
+      "OPGAP-BFF-MAIN-ASSEMBLY-20260830"
+    ]
+  },
+  "contracts": {
+    "research_routes_in_domain_router": "RESEARCH_ROUTE_INVENTORY declares and create_research_router registers all 47 assigned Research route method/path pairs in services/control-plane/bff/research/router.py.",
+    "typed_generic_alias_replacements": "Typed Research analysis and artifact routes preserve durable source-port reads while the prior generic artifact write aliases fail closed with explicit operation errors.",
+    "source_port_preservation": "The router injects and uses the existing ResearchKnowledgeSourcePort rather than reimplementing reusable source-port logic or falling back to main.py globals.",
+    "composition_boundary": "main.py inclusion and deletion of legacy route blocks remain the responsibility of OPGAP-BFF-MAIN-ASSEMBLY-20260830."
+  },
+  "verification": {
+    "test_suites": [
+      "services/control-plane/bff/tests/test_research_router.py",
+      "services/control-plane/bff/research/test_router.py"
+    ],
+    "verification_commands": [
+      ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_research_router.py services/control-plane/bff/research/test_router.py",
+      ".venv-pantheon/bin/python3 -m py_compile services/control-plane/bff/research/router.py services/control-plane/bff/research/service.py services/control-plane/bff/tests/test_research_router.py",
+      "git diff --check origin/dev...HEAD"
+    ],
+    "status": "PASS"
+  },
+  "head_binding_policy": "The owner binds the final PR head SHA through REVIEW_HEAD_SHA at handoff. This committed manifest identifies the reviewed scope and evidence but does not claim to contain its own final commit SHA.",
+  "review": {
+    "status": "ready_for_independent_review",
+    "reviewer": "Codex",
+    "required_checks": [
+      "verify all 47 assigned Research route method/path pairs are registered by create_research_router",
+      "verify typed analysis and artifact routes use the injected durable source port and preserve their compatibility links",
+      "verify the generic BFF artifact writes are explicit fail-closed replacements rather than in-memory fallbacks",
+      "verify the predecessor ResearchKnowledgeSourcePort is not reimplemented and main.py composition remains out of scope",
+      "run the two focused Research router test suites and confirm the verification commands pass",
+      "bind this manifest path (docs/deployment/evidence/supervisor/OPGAP-BE-RESEARCH-ROUTER-V2-20260830/evidence.json) at exact PR head during canonical handoff"
+    ]
+  }
+}
