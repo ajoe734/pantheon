@@ -1239,9 +1239,29 @@ def _recoverable_capital_command(record: Dict[str, Any]) -> bool:
     return _retryable_terminal_capital_command(record)
 
 
+def _prewarm_jwks_cache() -> None:
+    """Populate the JWKS cache before /readyz, off the event loop thread."""
+    jwks_uri = os.getenv("PANTHEON_BFF_JWKS_URI", "").strip()
+    discovery_url = os.getenv("PANTHEON_BFF_OIDC_DISCOVERY_URL", "").strip()
+    if not jwks_uri and not discovery_url:
+        return
+    try:
+        try:
+            from services.runtime_auth_inbound import _fetch_jwks_keys, _fetch_oidc_metadata
+        except ImportError:
+            from runtime_auth_inbound import _fetch_jwks_keys, _fetch_oidc_metadata  # type: ignore[no-redef]
+        if jwks_uri:
+            _fetch_jwks_keys(jwks_uri)
+        elif discovery_url:
+            _fetch_jwks_keys(str(_fetch_oidc_metadata(discovery_url)["jwks_uri"]).strip())
+    except Exception as exc:  # noqa: BLE001 - warm-up must never block startup
+        log.warning("JWKS cache pre-warm failed, first real login will pay the fetch cost: %s", exc)
+
+
 @app.on_event("startup")
 async def _start_downstream_health_monitor() -> None:
     global _PERSONA_PROVISIONING_RECONCILER_TASK
+    await asyncio.to_thread(_prewarm_jwks_cache)
     await downstream_health_monitor.start()
     # A crash can leave a durable owner command submitted/processing.  Replay
     # only the idempotent Capital authority commands; generic adapter commands
