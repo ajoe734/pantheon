@@ -1,0 +1,93 @@
+{
+  "schema_version": "pantheon.review-evidence.v1",
+  "task_id": "OPGAP-BE-RUNTIME-BINDING-V2-20260830",
+  "title": "Migrate Runtime binding and deployment mode routes",
+  "program_id": "PANTHEON-FULL-OPERATION-GAP-CLOSURE-20260830",
+  "design_unit": "SD-OPGAP-BE-RUNTIME-BINDING",
+  "recorded_at": "2026-08-31T15:30:00Z",
+  "owner": "Codex2",
+  "reviewer": "Claude",
+  "target_repo": "pantheon",
+  "task_class": "functional",
+  "summary_zh": "將 RuntimeBinding 與 deployment-mode 的十七個 BFF route decorators 移入可注入的 runtime router；保留 Runtime Manager 的 RuntimeBinding 寫入權限與現有 deployment/binding 語意。",
+  "replacement_lineage": {
+    "supersedes": "OPGAP-BE-RUNTIME-BINDING-20260830",
+    "reason": "功能範圍不變；V2 僅將已完成的 target-repository bootstrap dependency 與 immutable review-manifest contract 綁定。",
+    "satisfied_dependency": "OPGAP-DEVTOOL-TARGET-REPO-BRIDGE-V2-20260830",
+    "adopted_code_anchor": "f252745dcd03fd934315b6813010cba5e1bb3935"
+  },
+  "artifacts": {
+    "canonical_task_artifacts": [
+      "services/control-plane/bff/runtime/router.py",
+      "services/control-plane/bff/runtime/service.py",
+      "services/runtime-manager/main.py",
+      "services/control-plane/bff/tests/test_runtime_router.py",
+      "services/control-plane/bff/main.py",
+      "docs/deployment/evidence/full-operation-gap/OPGAP-BE-RUNTIME-BINDING-V2-20260830/evidence.json"
+    ],
+    "implementation_paths": [
+      "services/control-plane/bff/main.py",
+      "services/control-plane/bff/runtime/__init__.py",
+      "services/control-plane/bff/runtime/router.py",
+      "services/control-plane/bff/runtime/service.py",
+      "services/control-plane/bff/tests/test_runtime_router.py"
+    ],
+    "preserved_related_path": "services/runtime-manager/main.py"
+  },
+  "scope": {
+    "owned": [
+      "RuntimeBinding BFF endpoint ownership and BFF-only dependency injection",
+      "flat BFF route composition that preserves the established runtime route inventory",
+      "late-bound BFF read-store resolution and Runtime route ownership tests",
+      "this immutable review evidence manifest"
+    ],
+    "not_changing": [
+      "Runtime Manager loader or RuntimeBinding write authority",
+      "DeploymentPlan, governance approval, or Capital Pool write contracts",
+      "existing Runtime Manager API behavior",
+      "execute-plans frontend"
+    ],
+    "composes_with": [
+      "existing Runtime Manager RuntimeBinding contract",
+      "BINDING_AND_DEPLOYMENT_SEMANTICS.md write-owner boundary",
+      "OPGAP-DEVTOOL-TARGET-REPO-BRIDGE-V2-20260830",
+      "Claude independent exact-head review"
+    ]
+  },
+  "contracts": {
+    "router_ownership": "All seventeen RuntimeBinding, runtime-state, paper/live drift, runtime SSE, runtime BFF, and v5 execution-health GET/POST endpoints are registered by create_runtime_router; main.py contains none of their @app route decorators.",
+    "composition": "main.py supplies its existing BFF ports to create_runtime_router and extends app.routes with the router routes. The flat registration preserves direct route inventory and OpenAPI behavior without a reverse import from runtime/ to main.py.",
+    "runtime_authority": "The extraction does not add a RuntimeBinding write path outside Runtime Manager. Binding remains governance/capital-owned and RuntimeBinding deployment_mode remains the actual runtime stage.",
+    "request_injection": "The legacy runtime-action deprecation endpoint retains FastAPI Request injection, so Request is not exposed as an accidental required query parameter."
+  },
+  "verification": {
+    "commands": [
+      "python3 -m py_compile services/control-plane/bff/runtime/router.py services/control-plane/bff/runtime/service.py services/control-plane/bff/main.py",
+      ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_runtime_router.py",
+      ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_bff_b2_006_v5_closed_loop_reads.py",
+      ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_bff_path_dedupe.py -k path_parameter_dedupe_keeps_only_snake_case_canonical_templates",
+      "git diff --check origin/dev...HEAD"
+    ],
+    "result": "PASS",
+    "details": "py_compile passed; runtime router ownership and request-injection suite passed 4/4; v5 BFF endpoint and direct-handler suite passed 14/14; the runtime template is present in the flat route inventory (1/1 selected path-dedupe test); git diff --check passed."
+  },
+  "diagnostic_non_gate": {
+    "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_bff_path_dedupe.py",
+    "result": "2 pre-existing failures, 2 passes",
+    "reason": "The two unrelated deprecated-path assertions expect body.error while origin/dev's unchanged _deprecated_bff_path_response returns body.detail.error. The runtime inventory assertion passes after this extraction.",
+    "source_basis": "origin/dev:services/control-plane/bff/main.py contains the same deprecated response envelope."
+  },
+  "review_handoff": {
+    "status": "ready_for_independent_review",
+    "reviewer": "Claude",
+    "exact_pr_head_authority": "The governed ai-status handoff freezes REVIEW_PR and REVIEW_HEAD_SHA for this committed manifest. The canonical delivery binding is authoritative because the manifest cannot self-reference the commit that contains it.",
+    "required_checks": [
+      "verify all seventeen Runtime routes are registered by runtime/router.py",
+      "verify main.py has no migrated Runtime @app decorators and flat-composes the injected router",
+      "verify runtime/ has no reverse import of main.py",
+      "verify Runtime Manager write authority and deployment/binding semantics were not changed",
+      "verify the focused runtime router and v5 BFF suites pass",
+      "approve the exact PR head frozen with this manifest path"
+    ]
+  }
+}
