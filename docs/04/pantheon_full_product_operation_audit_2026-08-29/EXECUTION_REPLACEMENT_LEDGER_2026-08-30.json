@@ -1,13 +1,33 @@
 {
-  "version": 1,
-  "title": "Plan-Execution Errata: Batch B/C Canonical Replacement Lineage",
+  "version": 2,
+  "title": "Plan-Execution Errata: Frozen Batch B/C and Post-Freeze Canonical Lineage",
   "generated_at": "2026-08-30T20:45:00Z",
   "generated_by_task": "OPGAP-PLAN-EXECUTION-ERRATA-V2-20260830",
+  "last_reconciled_at": "2026-08-31T02:10:43Z",
+  "last_reconciled_by_task": "OPGAP-PLAN-EXECUTION-ERRATA-V3-20260830",
+  "errata_revisions": [
+    {
+      "revision": 1,
+      "task_id": "OPGAP-PLAN-EXECUTION-ERRATA-V2-20260830",
+      "delivery_pr": 5462,
+      "delivery_head": "58da56ea59f8d0dcfc2cdf83b64542cc6b71736a",
+      "merge_commit": "4cb0007386a6ad0c48b68cc2d71663f3655e5424",
+      "scope_snapshot": "Recorded the first 23 Batch B/C admissions and the then-pending Batch D dependency transformation."
+    },
+    {
+      "revision": 2,
+      "task_id": "OPGAP-PLAN-EXECUTION-ERRATA-V3-20260830",
+      "supersedes_documentation_result": "OPGAP-PLAN-EXECUTION-ERRATA-V2-20260830",
+      "does_not_rewrite_prior_history": true,
+      "reason": "PR #5462 was correct for its 2026-08-30T20:45:00Z cutoff, but later governed events made its completion claim incomplete: all nine Batch C rows were subsequently superseded by V2 replacements, Training V2 and bridge-allowlist V3 required evidence-contract replacements, Batch D materialized against transformed dependencies, two post-freeze product gaps were discovered, and the exact deployment/write-proof outcomes were not recorded."
+    }
+  ],
   "purpose": "The frozen EXECUTION_TASK_CATALOG_2026-08-30.json (immutable planning evidence, 30 tasks) is never edited in place. This ledger records what the live supervisor actually did when it dispatched the 23 Batch B + Batch C child tasks from that catalog: canonical task rows cannot be amended in place, so any task that failed to materialize correctly under its catalog task_id was retired via `supersede` and re-created under a new one-to-one replacement id, never rewritten. This is a machine-checkable correction of the plan-vs-execution divergence; it does not change the frozen catalog's 30 task specs.",
   "root_cause": {
     "summary": "Batch A bootstrap (OPGAP-DEVTOOL-TARGET-REPO-BRIDGE-20260830) delivered a dev-bridge dispatcher that could route signed DevTaskPackets, but its allowlist of writable repositories was not derived from the live supervisor's coordination.repositories configuration. Batch B was materialized while only pantheon was configured; when Batch C's mixed pantheon/execute-plans packet drained, the dispatcher rejected it because execute-plans was not yet a configured repository.",
     "canonical_task_definitions_cannot_be_amended_in_place": "ai_status.py has no update-in-place path for a task's id, artifacts, owner/reviewer pairing, or dependency binding once the row exists; the only lifecycle exits from a stuck todo/in_progress row are done, blocked, or supersede. Because the Batch B rows were created before the allowlist/command-runtime fixes existed, they could not be repaired by editing their depends_on or artifacts -- they had to be superseded by a new row that carries the corrected dependency binding.",
-    "supervisor_gap_still_open": "OPGAP-DEVTOOL-BRIDGE-REPO-ALLOWLIST-V3-20260830 (status: blocked as of this snapshot) tracks the still-unresolved defect: the live supervisor still cannot derive PANTHEON_ASSISTANT_DEV_BRIDGE_ALLOWED_REPOS from coordination.repositories on its own and depends on an operator-injected environment override. This is a tooling gap, not a product gap, and is out of scope for the frozen SA/SD product remediation."
+    "supervisor_gap_still_open": "OPGAP-DEVTOOL-BRIDGE-REPO-ALLOWLIST-V3-20260830 (status: blocked as of this V2 snapshot) tracked the then-unresolved defect: the live supervisor still could not derive PANTHEON_ASSISTANT_DEV_BRIDGE_ALLOWED_REPOS from coordination.repositories on its own and depended on an operator-injected environment override. This is retained as historical V2 truth, not current status.",
+    "post_freeze_resolution": "The functional implementation was validated in PR #5459, then V3 was superseded only after OPGAP-DEVTOOL-BRIDGE-REPO-ALLOWLIST-V4-20260830 supplied the missing immutable evidence-manifest contract. V4 exact head f0e1481a1b07c95ec0800a9f93ac99da2ccbe46b merged as 5b0d02196acfc9c3ef956ae4c47865601bc43da6 via PR #5473. Repository allowlist derivation is therefore delivered; any frontend packet still requires a promoted command runtime containing that merge and remains fail-closed if the live registry omits execute-plans."
   },
   "fail_closed_evidence": [
     {
@@ -56,7 +76,7 @@
         "execute-plans",
         "pantheon"
       ],
-      "note": "First successful admission for all 9 Batch C tasks. Because no prior canonical row for these ids ever reached admission, Batch C task ids were never superseded -- they materialized directly under their original catalog ids with no replacement lineage required.",
+      "note": "First successful admission for all 9 Batch C tasks. Because no prior canonical row for these ids ever reached admission, Batch C task ids had not been superseded at this V2 cutoff -- they materialized directly under their original catalog ids. Their later governed V2 replacements are recorded separately in post_freeze_batch_c_replacements.",
       "receipt_path": ".orchestrator/assistant-dev-packets/processed/full-operation-gap-batch-c-support-and-frontend-functional-ead79e62-f7a8-4b56-b870-ebb97fbefdcb.json"
     }
   ],
@@ -87,8 +107,17 @@
     {
       "id": "OPGAP-DEVTOOL-BRIDGE-REPO-ALLOWLIST-V3-20260830",
       "batch": "A (post-hoc tooling follow-up, not part of the frozen 30-task catalog)",
-      "status_snapshot": "blocked",
-      "reason": "Tracks the still-open allowlist auto-derivation gap described in root_cause.supervisor_gap_still_open; not required by any Batch B/C/D acceptance criterion."
+      "status_snapshot": "done/superseded",
+      "superseded_by": "OPGAP-DEVTOOL-BRIDGE-REPO-ALLOWLIST-V4-20260830",
+      "reason": "Functional implementation was valid, but the immutable task artifact contract omitted the evidence manifest required for independent review."
+    },
+    {
+      "id": "OPGAP-DEVTOOL-BRIDGE-REPO-ALLOWLIST-V4-20260830",
+      "batch": "A (post-hoc tooling evidence-contract replacement, not part of the frozen 30-task catalog)",
+      "status_snapshot": "done/completed",
+      "delivery": "PR #5473, head f0e1481a1b07c95ec0800a9f93ac99da2ccbe46b, merged as 5b0d02196acfc9c3ef956ae4c47865601bc43da6",
+      "review_file": "docs/deployment/evidence/full-operation-gap/OPGAP-DEVTOOL-BRIDGE-REPO-ALLOWLIST-V4-20260830/evidence.json",
+      "reason": "One-to-one V4 replacement preserved the V3 functional scope and added the immutable evidence-manifest artifact contract."
     }
   ],
   "superseded_terminal_facts_do_not_satisfy_dependencies": "A task row whose terminal_outcome is 'superseded' is archived with terminal_status 'done' for bookkeeping, but the supervisor's dependency-satisfaction check binds to the specific task id named in depends_on. Every live Batch B/C/D row in ai-status.json now names the *-V2-20260830 (or original, for never-superseded Batch C) id explicitly; none depend on a superseded id. This ledger exists so that a reviewer diffing the frozen catalog's depends_on entries against live canonical state does not mistake the intentional supersede-then-rebind pattern for drift.",
@@ -234,6 +263,171 @@
       "functional_scope_change": "none"
     }
   ],
+  "post_freeze_batch_c_replacements": [
+    {
+      "original_id": "OPGAP-BE-TOOLS-INTEGRATIONS-20260830",
+      "replacement_id": "OPGAP-BE-TOOLS-INTEGRATIONS-V2-20260830",
+      "canonical_status_snapshot": "done/completed",
+      "functional_scope_change": "none"
+    },
+    {
+      "original_id": "OPGAP-BE-CONTROL-LOOPS-20260830",
+      "replacement_id": "OPGAP-BE-CONTROL-LOOPS-V2-20260830",
+      "canonical_status_snapshot": "todo",
+      "functional_scope_change": "none"
+    },
+    {
+      "original_id": "OPGAP-BE-COMMAND-ADAPTERS-20260830",
+      "replacement_id": "OPGAP-BE-COMMAND-ADAPTERS-V2-20260830",
+      "canonical_status_snapshot": "done/completed",
+      "functional_scope_change": "none"
+    },
+    {
+      "original_id": "OPGAP-BE-RUNTIME-BINDING-20260830",
+      "replacement_id": "OPGAP-BE-RUNTIME-BINDING-V2-20260830",
+      "canonical_status_snapshot": "blocked",
+      "functional_scope_change": "none"
+    },
+    {
+      "original_id": "OPGAP-DEPLOY-RELIABILITY-20260830",
+      "replacement_id": "OPGAP-DEPLOY-RELIABILITY-V2-20260830",
+      "canonical_status_snapshot": "done/completed",
+      "functional_scope_change": "none"
+    },
+    {
+      "original_id": "OPGAP-FE-BUNDLE-CLEANUP-20260830",
+      "replacement_id": "OPGAP-FE-BUNDLE-CLEANUP-V2-20260830",
+      "canonical_status_snapshot": "review",
+      "functional_scope_change": "none"
+    },
+    {
+      "original_id": "OPGAP-FE-MGMT-CRUD-POSTMORTEM-20260830",
+      "replacement_id": "OPGAP-FE-MGMT-CRUD-POSTMORTEM-V2-20260830",
+      "canonical_status_snapshot": "todo",
+      "functional_scope_change": "none"
+    },
+    {
+      "original_id": "OPGAP-FE-AGORA-WORKSHOP-20260830",
+      "replacement_id": "OPGAP-FE-AGORA-WORKSHOP-V2-20260830",
+      "canonical_status_snapshot": "blocked",
+      "functional_scope_change": "none"
+    },
+    {
+      "original_id": "OPGAP-FE-INTEGRATION-ASSEMBLY-20260830",
+      "replacement_id": "OPGAP-FE-INTEGRATION-ASSEMBLY-V2-20260830",
+      "canonical_status_snapshot": "todo",
+      "functional_scope_change": "none"
+    }
+  ],
+  "post_freeze_evidence_contract_replacements": [
+    {
+      "superseded_id": "OPGAP-BE-TRAINING-ROUTER-V2-20260830",
+      "replacement_id": "OPGAP-BE-TRAINING-ROUTER-V3-20260830",
+      "reason": "V2 preserved the functional Training scope but omitted the immutable evidence-manifest artifact contract.",
+      "canonical_status_snapshot": "done/completed",
+      "delivery_pr": 5474,
+      "delivery_head": "6541c4cbedad8451602291707a236b62962075f5",
+      "merge_commit": "fb55131864957a5ede398164e6ee060da1e0dead",
+      "review_file": "docs/deployment/evidence/full-operation-gap/OPGAP-BE-TRAINING-ROUTER-V3-20260830/evidence.json"
+    },
+    {
+      "superseded_id": "OPGAP-DEVTOOL-BRIDGE-REPO-ALLOWLIST-V3-20260830",
+      "replacement_id": "OPGAP-DEVTOOL-BRIDGE-REPO-ALLOWLIST-V4-20260830",
+      "reason": "V3 preserved the functional allowlist derivation scope but omitted the immutable evidence-manifest artifact contract.",
+      "canonical_status_snapshot": "done/completed",
+      "delivery_pr": 5473,
+      "delivery_head": "f0e1481a1b07c95ec0800a9f93ac99da2ccbe46b",
+      "merge_commit": "5b0d02196acfc9c3ef956ae4c47865601bc43da6",
+      "review_file": "docs/deployment/evidence/full-operation-gap/OPGAP-DEVTOOL-BRIDGE-REPO-ALLOWLIST-V4-20260830/evidence.json"
+    }
+  ],
+  "post_freeze_gaps": [
+    {
+      "gap_id": "OP-G21",
+      "title": "Persona provisioning reconciliation crossed the read-only port boundary",
+      "owner_task": "OPGAP-BE-PERSONA-RECONCILIATION-MUTATION-PORT-20260830",
+      "canonical_status_snapshot": "review",
+      "observed_failure": "ReadSurfacePorts object has no attribute update_persona",
+      "required_boundary": "ReadSurfacePorts remains mutation-free; provisioning and provisioning_failed terminal transitions use one explicit typed Persona mutation port backed by the authoritative store."
+    },
+    {
+      "gap_id": "OP-G22",
+      "title": "OpenClaw readiness exhausted its budget before an eligible fallback",
+      "owner_task": "OPGAP-OPENCLAW-PROVIDER-READINESS-FALLBACK-20260830",
+      "canonical_status_snapshot": "done/completed",
+      "observed_failure": "OPENCLAW_GATEWAY_TIMEOUT in deployment run 33332882810 job 99314532003",
+      "authority_boundary": "The task changed readiness selection and side-effect safety only; it did not change credentials, tokens, secrets, or provider priority."
+    }
+  ],
+  "deployment_reconciliation": {
+    "controller_run": {
+      "repository": "ajoe734/pantheon",
+      "run_id": "33332882810",
+      "head_sha": "cbf4e0a7303de1c0e9a51614c99ac2d8ddd96cfe",
+      "conclusion": "failure",
+      "failure_step": "Dev OpenClaw assistant live smoke under lease",
+      "release_controller_job": "success"
+    },
+    "integration_gate": {
+      "repository": "ajoe734/execute-plans",
+      "run_id": "33334694659",
+      "head_sha": "7d30e78476be61222af63a089e7ab141aa43b809",
+      "conclusion": "success",
+      "release_candidate_id": "9122d0fecd5cf9d5ae574c4c5e802df1d336dd2fd778a54019d2ad4995a2843d"
+    },
+    "read_only_switch": {
+      "repository": "ajoe734/execute-plans",
+      "run_id": "33335314834",
+      "conclusion": "success",
+      "deployment_profile": "read-only",
+      "pair_id": "b33741b326b82dea85a647d812bf75880cf7e7e97f0a012cc5375e84ea2f5f21",
+      "frontend_sha": "7d30e78476be61222af63a089e7ab141aa43b809",
+      "bff_sha": "cbf4e0a7303de1c0e9a51614c99ac2d8ddd96cfe",
+      "real_writes": false,
+      "stub_writes": false,
+      "bounded_persona_write_proof_job": "skipped",
+      "same_pair_read_only_restore_job": "skipped"
+    },
+    "truth_boundary": "The successful gate and read-only switch do not turn the failed controller run into a successful product deployment proof and do not prove any Firebase-backed mutation."
+  },
+  "post_freeze_batch_d_materialization": {
+    "initial_v2_dependency_transformation_applied": true,
+    "current_dependency_binding_complete": false,
+    "main_assembly_task": "OPGAP-BFF-MAIN-ASSEMBLY-20260830",
+    "main_assembly_status_snapshot": "todo",
+    "main_assembly_dependency_count": 19,
+    "stale_post_materialization_dependency": {
+      "canonical_dependency_id": "OPGAP-BE-TRAINING-ROUTER-V2-20260830",
+      "terminal_outcome": "superseded",
+      "required_live_dependency_id": "OPGAP-BE-TRAINING-ROUTER-V3-20260830",
+      "required_governed_action": "Because canonical task definitions cannot be amended in place, supersede and reissue Main Assembly (or otherwise use the governed replacement mechanism) before execution so its exact dependency binds Training V3."
+    },
+    "command_caller_cutover_status_snapshot": "todo",
+    "command_plane_retirement_status_snapshot": "todo",
+    "hosted_promotion_task_materialized": false,
+    "hosted_backend_acceptance_task_materialized": false,
+    "hosted_management_acceptance_task_materialized": false
+  },
+  "product_proof_prerequisites": [
+    {
+      "id": "frontend_batch_c_promoted_allowlist_runtime",
+      "satisfied_for_current_materialization": true,
+      "evidence": "Current governed command runtime contains OPGAP-DEVTOOL-BRIDGE-REPO-ALLOWLIST-V4-20260830 merge 5b0d02196acfc9c3ef956ae4c47865601bc43da6; every new or replayed mixed-repository packet remains fail-closed unless its promoted runtime derives execute-plans from coordination.repositories."
+    },
+    {
+      "id": "functional_batch_d_canonical_dependencies",
+      "satisfied": false,
+      "evidence": "OPGAP-BFF-MAIN-ASSEMBLY-20260830 is todo, still names terminal-superseded Training V2 instead of completed Training V3, and several other governed Batch B/C V2 predecessors are not done; caller cutover and command-plane retirement are also todo."
+    },
+    {
+      "id": "bounded_firebase_write_proof_and_watchdog_restore",
+      "satisfied": false,
+      "owner_task": "AGORA-AGC-14-HOSTED-DEMO-AUTHENTIC-V5-20260829",
+      "canonical_status_snapshot": "in_progress",
+      "evidence": "Run 33335314834 switched the read-only candidate but skipped both Coordinate bounded authenticated Persona proof and Confirm independent same-pair read-only restore. No hosted product completion claim is admissible until a parent-bound write-proof with proof_window_ack and armed watchdog succeeds and restores the same pair to accepted read-only."
+    }
+  ],
+  "task_evidence_manifest": "docs/deployment/evidence/full-operation-gap/OPGAP-PLAN-EXECUTION-ERRATA-V3-20260830/evidence.json",
   "row_count_summary": {
     "batch_b_rows": 14,
     "batch_c_rows": 9,

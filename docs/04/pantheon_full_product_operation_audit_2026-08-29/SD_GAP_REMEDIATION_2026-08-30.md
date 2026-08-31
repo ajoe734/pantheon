@@ -1,6 +1,6 @@
 # Target System Design for Operation Gap Remediation (2026-08-30)
 
-## 1. Domain Router Specifications & Exact Route Breakdown
+## 1. Frozen Domain Router Specifications & Exact Route Breakdown
 
 The monolithic `services/control-plane/bff/main.py` contains exactly **441 HTTP route decorators** across **421 unique route handlers**. In the target design, all 441 decorators and 421 handlers are partitioned into 18 domain routers under `services/control-plane/bff/`:
 
@@ -130,4 +130,61 @@ Design note for `.orchestrator/development_bridge/dev_bridge_dispatcher.py`, not
 - The fourth attempt (`...ead79e62...`) succeeded once both the allowlist and the runtime identity bindings were corrected, admitting all 9 Batch C tasks in one packet.
 - Because 14 Batch B task rows had already materialized against the stale allowlist state, and canonical task rows cannot be amended in place, each was retired via `supersede` and replaced one-to-one under a `-V2-20260830` id bound to the corrected `OPGAP-DEVTOOL-TARGET-REPO-BRIDGE-V2-20260830` dependency.
 
-**Target design** (tracked by `OPGAP-DEVTOOL-BRIDGE-REPO-ALLOWLIST-V3-20260830`): the dispatcher reads `coordination.repositories` directly from the authoritative live supervisor config on every drain and normalizes repository aliases to the bridge's canonical names (`pantheon`, `execute-plans`) before the allowlist check, removing the operator-injected environment override as a hard dependency while still fail-closed rejecting any repository absent from the canonical registry.
+**Delivered design and evidence-contract lineage**: PR #5459 implemented direct `coordination.repositories` derivation and alias normalization. The implementation's V3 task lacked an allowed immutable evidence-manifest artifact; `OPGAP-DEVTOOL-BRIDGE-REPO-ALLOWLIST-V4-20260830` preserved the functional scope, added that contract, and merged as `5b0d02196acfc9c3ef956ae4c47865601bc43da6` in PR #5473. The dispatcher still fail-closed rejects a repository absent from the live registry, and mixed-repository packets require a promoted command runtime containing V4.
+
+---
+
+## 9. Post-Freeze Execution Design Addendum
+
+### 9.1 Evidence-Contract Replacement Lineage
+
+The following replacements correct immutable task contracts without changing functional design:
+
+| Superseded task | Governed replacement | Functional change | Evidence completion |
+|---|---|---|---|
+| `OPGAP-BE-TRAINING-ROUTER-V2-20260830` | `OPGAP-BE-TRAINING-ROUTER-V3-20260830` | None | PR #5474 head `6541c4cbedad8451602291707a236b62962075f5`, merge `fb55131864957a5ede398164e6ee060da1e0dead`, immutable V3 manifest |
+| `OPGAP-DEVTOOL-BRIDGE-REPO-ALLOWLIST-V3-20260830` | `OPGAP-DEVTOOL-BRIDGE-REPO-ALLOWLIST-V4-20260830` | None | PR #5473 head `f0e1481a1b07c95ec0800a9f93ac99da2ccbe46b`, merge `5b0d02196acfc9c3ef956ae4c47865601bc43da6`, immutable V4 manifest |
+
+The original nine Batch C ids also have one-to-one `-V2-20260830` governed replacements. The V2 ledger's direct-materialization entries remain historical admission truth; the post-freeze replacement array is the current execution truth.
+
+### 9.2 Persona Provisioning Reconciliation Mutation Port (OP-G21)
+
+`ReadSurfacePorts` exposes reads only. It must not declare, dynamically delegate, or receive calls to `update_persona`. Reconciliation receives two independently injected capabilities:
+
+1. a read port that loads the current Persona identity/version and verifies projection readback;
+2. a typed mutation/command port backed by the authoritative Persona store that persists only explicit terminal transitions (`provisioning`, `provisioning_failed`) with expected-version, correlation, and failure-reason fields.
+
+The mutation returns a same-ID/version receipt. Reconciliation then reads through the read port and fails closed on identity or version mismatch. Existing lifecycle compensation, cron cleanup, and overlay presentation may consume the resulting projection but cannot become alternate write authorities. Focused tests must first reproduce `ReadSurfacePorts object has no attribute update_persona`, then prove mutation-port persistence and zero startup warning.
+
+### 9.3 OpenClaw Provider Readiness Fallback (OP-G22)
+
+The adapter state machine is:
+
+```text
+configured candidates -> partitioned exact-sentinel readiness probes
+                      -> retain first proven active model
+                      -> one single-attempt invoke
+                      -> completed | typed fail-closed outcome
+```
+
+Required behavior:
+
+- normalize the readiness reply and require exact equality with `PANTHEON_PROVIDER_READY`;
+- reserve bounded time for every remaining configured candidate instead of allowing the primary to consume the whole budget;
+- retain sanitized `primary_unavailable` evidence such as `OPENCLAW_GATEWAY_TIMEOUT` without secrets;
+- use the already-probed active model for the next default-agent invoke while preserving per-agent routing when no model override was requested;
+- never retry invoke on unproven auth errors, timeouts, cancellations, post-execution errors, or generic invocation failures;
+- keep OpenResponses streaming on the upstream `model=openclaw` contract;
+- leave credentials, secrets, provider priority, and operator login repair outside source authority.
+
+### 9.4 Exact Read-Only Deployment and Product-Proof Gate
+
+The post-freeze release evidence binds these immutable identities:
+
+| Evidence | Outcome | Bound identity |
+|---|---|---|
+| Pantheon controller run `33332882810` | `failure` | BFF `cbf4e0a7303de1c0e9a51614c99ac2d8ddd96cfe`; failed OpenClaw smoke |
+| execute-plans integration gate `33334694659` | `success` | FE `7d30e78476be61222af63a089e7ab141aa43b809`; candidate `9122d0fecd5cf9d5ae574c4c5e802df1d336dd2fd778a54019d2ad4995a2843d` |
+| execute-plans switch `33335314834` | `success` | pair `b33741b326b82dea85a647d812bf75880cf7e7e97f0a012cc5375e84ea2f5f21`; profile `read-only`; real/stub writes false |
+
+The switch workflow skipped both the bounded authenticated Persona proof and independent same-pair restore jobs. The accepted design therefore treats this as read-only deployment evidence only. Full hosted product proof requires a parent-bound Firebase/BFF mutation window with `proof_window_ack`, an armed watchdog, immutable child receipts, and an independently verified restore of the same pair to read-only.
