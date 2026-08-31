@@ -312,6 +312,12 @@ def test_research_note_create_preserves_server_owned_validation_and_identity() -
 
 def test_research_note_list_preserves_legacy_filters_and_envelope() -> None:
     port = _Port()
+    matching_ticket_ref = "tkt-11111111-1111-1111-1111-111111111111"
+    port.tickets[matching_ticket_ref] = {
+        "ticket_id": matching_ticket_ref,
+        "title": "Attached ticket",
+        "status": "open",
+    }
     port.notes = {
         "note-include": {
             "note_id": "note-include",
@@ -348,7 +354,16 @@ def test_research_note_list_preserves_legacy_filters_and_envelope() -> None:
             "body": "This must be excluded.",
             "owner_ref": {"owner_id": "op-a"},
             "attachment_type": "research_ticket",
-            "attachment_ref": "tkt-11111111-1111-1111-1111-111111111111",
+            "attachment_ref": matching_ticket_ref,
+            "tags": ["alpha"],
+        },
+        "note-wrong-ref": {
+            "note_id": "note-wrong-ref",
+            "title": "Excluded attachment ref",
+            "body": "This must be excluded.",
+            "owner_ref": {"owner_id": "op-a"},
+            "attachment_type": "research_ticket",
+            "attachment_ref": "tkt-22222222-2222-2222-2222-222222222222",
             "tags": ["alpha"],
         },
     }
@@ -371,6 +386,23 @@ def test_research_note_list_preserves_legacy_filters_and_envelope() -> None:
         "has_more": False,
     }
     assert payload["meta"]["surfaces"]["research_note_list"] == "ok"
+
+    attached = client.get(
+        "/api/v1/knowledge/notes",
+        params={
+            "owner_ref": "op-a",
+            "attachment_type": "research_ticket",
+            "attachment_ref": matching_ticket_ref,
+            "tags": "alpha",
+        },
+    )
+    assert attached.status_code == 200, attached.text
+    assert [note["note_id"] for note in attached.json()["notes"]] == ["note-wrong-attachment"]
+    assert attached.json()["notes"][0]["attachment"] == {
+        "type": "research_ticket",
+        "ref": matching_ticket_ref,
+        "display_label": "Attached ticket",
+    }
 
     invalid_ref = client.get("/api/v1/knowledge/notes", params={"attachment_ref": "ticket-1"})
     assert invalid_ref.status_code == 400

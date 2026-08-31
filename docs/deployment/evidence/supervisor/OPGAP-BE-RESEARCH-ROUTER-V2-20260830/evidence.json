@@ -4,7 +4,7 @@
   "title": "Migrate Research knowledge and framework integration routes",
   "program_id": "PANTHEON-FULL-OPERATION-GAP-CLOSURE-20260830",
   "design_unit": "SD-OPGAP-BE-RESEARCH-ROUTER",
-  "recorded_at": "2026-08-31T17:25:00Z",
+  "recorded_at": "2026-08-31T18:10:00Z",
   "ai_name": "Codex2",
   "owner": "Codex2",
   "reviewer": "Codex",
@@ -44,6 +44,7 @@
     "ticket_and_experiment_validation": "Ticket priority/status, ticket patch lifecycle, experiment status, and experiment launch run_config validation preserve the legacy fail-closed 422/409 behavior; live experiment execution_mode is rejected.",
     "source_change_proposal_projection": "GET /api/v1/research/source-change-proposals projects the ResearchKnowledgeSourcePort proposals field and reports the port's source and availability in metadata, preserving live proposal records.",
     "research_note_create_contract": "POST /api/v1/knowledge/notes rejects caller-supplied owner_ref, preserves required body and attachment validation, resolves the owner from the authenticated operator, persists a note-{UUID} record, and returns only the legacy 201 create receipt.",
+    "research_note_list_contract": "GET /api/v1/knowledge/notes validates attachment filter combinations, filters by owner_ref, attachment_type, attachment_ref, and CSV tags before pagination, and returns the legacy notes/pagination/meta envelope with projected note summaries rather than raw records.",
     "source_port_preservation": "The router injects and uses the existing ResearchKnowledgeSourcePort rather than reimplementing reusable source-port logic or falling back to main.py globals.",
     "composition_boundary": "main.py inclusion and deletion of legacy route blocks remain the responsibility of OPGAP-BFF-MAIN-ASSEMBLY-20260830."
   },
@@ -56,20 +57,21 @@
       "PANTHEON_PY=\"$(python3 scripts/dev/provision_python_distribution.py --print-python)\"; \"$PANTHEON_PY\" -m py_compile services/control-plane/bff/research/router.py",
       "git diff --check"
     ],
-    "result": "9 passed (with one upstream Starlette TestClient deprecation warning)",
+    "result": "10 passed (with one upstream Starlette TestClient deprecation warning)",
     "status": "PASS"
   },
   "head_binding_policy": "The owner binds the final PR head SHA through REVIEW_HEAD_SHA at handoff. This committed manifest identifies the reviewed scope and evidence but does not claim to contain its own final commit SHA.",
   "review": {
     "status": "ready_for_independent_review",
     "reviewer": "Codex",
-    "remediation": "The prior exact head 933036c94a0fa397a0218663cd0a329629022556 was independently rejected because source-change-proposals discarded the ResearchKnowledgeSourcePort proposals envelope and knowledge-note creation accepted caller identity while omitting legacy body/attachment validation. This successor restores both contracts and adds router-level regression coverage.",
+    "remediation": "The prior exact head a21adfe4eb7234092d0f1a73665c88afe3081478 was independently rejected because GET /api/v1/knowledge/notes declared owner_ref, attachment_type/ref, and tags but discarded them, returned unfiltered raw records, and changed the legacy notes/pagination envelope. This successor restores the migrated filter and envelope contract with exclusion regressions.",
     "required_checks": [
       "verify all 47 assigned Research route method/path pairs are registered by create_research_router",
       "verify typed analysis and artifact routes use the injected durable source port and preserve their compatibility links",
       "verify the generic BFF artifact writes are explicit fail-closed replacements rather than in-memory fallbacks",
       "verify source-change-proposals returns the injected port's proposals field and source metadata",
       "verify knowledge-note create rejects caller owner_ref and malformed body/attachment input, then assigns the authenticated operator as owner on a valid write",
+      "verify knowledge-note listing excludes records that do not match owner_ref, attachment_type, attachment_ref, or tags and returns the legacy notes/pagination/meta projection",
       "verify the predecessor ResearchKnowledgeSourcePort is not reimplemented and main.py composition remains out of scope",
       "run the focused Research router test suite and confirm the ticket priority, experiment status, execution_mode=live, and OpenAPI signature regression cases pass",
       "bind this manifest path (docs/deployment/evidence/supervisor/OPGAP-BE-RESEARCH-ROUTER-V2-20260830/evidence.json) at exact PR head during canonical handoff"
