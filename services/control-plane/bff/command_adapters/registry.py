@@ -41,11 +41,11 @@ _DEFAULT_ADAPTERS: List[DomainCommandAdapter] = [
 ]
 
 
-def find_adapter(command_type: str, entity_type: str = "", action_id: str = "") -> Optional[DomainCommandAdapter]:
+def find_adapter(command_type: Any, entity_type: Any = "", action_id: Any = "") -> Optional[DomainCommandAdapter]:
     """Find a domain adapter capable of handling the command/entity/action."""
-    clean_cmd = str(command_type or "").strip()
-    clean_entity = str(entity_type or "").strip()
-    clean_action = str(action_id or "").strip()
+    clean_cmd = command_type.value if hasattr(command_type, "value") else str(command_type or "").strip()
+    clean_entity = entity_type.value if hasattr(entity_type, "value") else str(entity_type or "").strip()
+    clean_action = action_id.value if hasattr(action_id, "value") else str(action_id or "").strip()
 
     for adapter in _DEFAULT_ADAPTERS:
         if adapter.can_handle(clean_cmd, clean_entity, clean_action):

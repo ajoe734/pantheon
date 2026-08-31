@@ -215,7 +215,10 @@ def test_approval_and_ask_stream_routes_publish_replay_metadata_headers() -> Non
 
 
 def test_execute_plans_sse_compatibility_routes_are_registered() -> None:
-    registered_paths = {getattr(route, "path", "") for route in bff_main.app.routes}
+    # Included routers are represented as lazy ``_IncludedRouter`` entries in
+    # current FastAPI, so ``app.routes`` does not flatten their child paths.
+    # OpenAPI is the compiled client-visible routing surface.
+    registered_paths = set(bff_main.app.openapi()["paths"])
 
     assert {
         "/bff/events/stream",

@@ -629,9 +629,12 @@ def _status_command_context(
     return str(ai_status), env, True
 
 
-def _configured_allowed_repos() -> set[str]:
+def _configured_allowed_repos(
+    *, environment: Optional[Mapping[str, str]] = None
+) -> set[str]:
+    source = environment if environment is not None else os.environ
     configured = str(
-        os.environ.get("PANTHEON_ASSISTANT_DEV_BRIDGE_ALLOWED_REPOS") or "pantheon"
+        source.get("PANTHEON_ASSISTANT_DEV_BRIDGE_ALLOWED_REPOS") or "pantheon"
     )
     return {item.strip() for item in configured.split(",") if item.strip()}
 
@@ -640,7 +643,11 @@ def _configured_allowed_repos() -> set[str]:
 # Constraint enforcement
 # ---------------------------------------------------------------------------
 
-def _check_constraints(packet: DevTaskPacket) -> List[str]:
+def _check_constraints(
+    packet: DevTaskPacket,
+    *,
+    environment: Optional[Mapping[str, str]] = None,
+) -> List[str]:
     """Return a list of constraint violation messages (empty = OK)."""
     c: BridgeConstraints = packet.constraints
     violations: List[str] = []
@@ -658,7 +665,7 @@ def _check_constraints(packet: DevTaskPacket) -> List[str]:
         for item in c.allowed_repos
         if str(item or "").strip()
     }
-    configured_repos = _configured_allowed_repos()
+    configured_repos = _configured_allowed_repos(environment=environment)
     if not requested_repos:
         violations.append("Packet constraint allowedRepos must not be empty")
     if "pantheon" not in requested_repos:
@@ -1245,7 +1252,7 @@ def _dispatch_task_packet_under_fence(
 
     verification_started = time.monotonic()
     verify_packet(packet, key_store=key_store)
-    violations = _check_constraints(packet)
+    violations = _check_constraints(packet, environment=environment)
     if violations:
         raise ValueError("Packet constraint violation: " + "; ".join(violations))
 
@@ -1531,8 +1538,11 @@ def dispatch_task_packet(
             runtime_env=runtime_env,
         )
 
+    environment = _merged_environment(runtime_env)
+    if key_store:
+        environment[PUBLIC_KEYS_ENV] = public_key_environment(key_store)
     verify_packet(packet, key_store=key_store)
-    violations = _check_constraints(packet)
+    violations = _check_constraints(packet, environment=environment)
     if violations:
         raise ValueError("Packet constraint violation: " + "; ".join(violations))
 
