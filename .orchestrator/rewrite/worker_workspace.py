@@ -46,6 +46,7 @@ from multi_repo_registry import (
     validate_task_repository_scope,
 )
 from rewrite.task_identity import task_generation
+from rewrite.worker_recovery import _canonical_worker_recovery_receipt
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -737,7 +738,7 @@ def _lost_lease_replacement_may_adopt_worktree(
     task = supervisor.task_index_from_status(config, status).get(task_id)
     if task is None:
         return False
-    receipt = supervisor._canonical_worker_recovery_receipt(status, task)
+    receipt = _canonical_worker_recovery_receipt(status, task)
     if receipt is None or str(receipt.get("task_id") or "") != task_id:
         return False
     if str(receipt.get("status") or "") != "reassigned":
