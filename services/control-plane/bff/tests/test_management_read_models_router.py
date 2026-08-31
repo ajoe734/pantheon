@@ -1281,7 +1281,7 @@ def test_management_nl_ask_dry_run_idempotency_replay_after_recovery_window(tmp_
 
 
 def test_management_router_conditional_registration_crud_cutover():
-    """Verify conditional registration keeps pre-cutover main app clean (5 routes) while full router has 24."""
+    """Verify default full registration (24 routes) and conditional registration (5 routes)."""
     # 1. Composed read-models only (include_migrated_crud=False)
     router_composed_only = create_management_read_models_router(include_migrated_crud=False)
     assert len(router_composed_only.routes) == 5
@@ -1295,14 +1295,41 @@ def test_management_router_conditional_registration_crud_cutover():
     assert "/bff/management/cockpit" not in paths_composed
     assert "/bff/management/nl/ask" not in paths_composed
 
-    # 2. Full management router (include_migrated_crud=True)
-    router_full = create_management_read_models_router(include_migrated_crud=True)
-    assert len(router_full.routes) == 24
-    paths_full = [r.path for r in router_full.routes]
+    # 2. Full management router default (include_migrated_crud=True)
+    router_default = create_management_read_models_router()
+    assert len(router_default.routes) == 24
+    paths_full = [r.path for r in router_default.routes]
     assert "/bff/management/shell-summary" in paths_full
     assert "/bff/management/cockpit" in paths_full
     assert "/bff/management/nl/ask" in paths_full
     assert "/bff/management/formula-jobs" in paths_full
+
+
+def test_main_app_management_routes_zero_duplicates():
+    """Verify main.py has zero duplicate verb/path pairs across its management routes."""
+    import main as bff_main
+    from collections import Counter
+
+    def _iter_all_routes(routes):
+        flattened = []
+        for route in routes:
+            sub_router = getattr(route, "original_router", None)
+            if sub_router is not None:
+                flattened.extend(_iter_all_routes(sub_router.routes))
+                continue
+            flattened.append(route)
+        return flattened
+
+    verb_paths = []
+    for route in _iter_all_routes(bff_main.app.routes):
+        methods = getattr(route, "methods", None) or ["GET"]
+        path = getattr(route, "path", "")
+        for method in methods:
+            verb_paths.append((method, path))
+
+    counts = Counter(verb_paths)
+    management_dupes = {k: v for k, v in counts.items() if v > 1 and "/management" in k[1]}
+    assert management_dupes == {}, f"Duplicate management routes found in main.app: {management_dupes}"
 
 
 def test_management_nl_ask_concurrent_wait_and_observe_completion():

@@ -1337,7 +1337,7 @@ def create_management_read_models_router(
     conversation_store: Optional[Any] = None,
     attachment_store: Optional[Any] = None,
     control_mode_store: Optional[Any] = None,
-    include_migrated_crud: Optional[bool] = None,
+    include_migrated_crud: bool = True,
 ) -> APIRouter:
     """Create the APIRouter for Management read models and system operations."""
     router = APIRouter()
@@ -1372,26 +1372,10 @@ def create_management_read_models_router(
             return await val
         return val
 
-    if include_migrated_crud is None:
-        env_flag = os.environ.get("PANTHEON_BFF_MANAGEMENT_ROUTER_MIGRATED_ROUTES")
-        if env_flag is not None:
-            include_migrated_crud = env_flag.strip().lower() in ("1", "true", "yes", "on")
-        else:
-            # When called from main.py, main.py still defines legacy CRUD & NL routes inline.
-            # Keep main app collision-free during pre-cutover assembly.
-            # In standalone domain router composition & tests, default to True.
-            frame = inspect.currentframe()
-            caller_file = ""
-            caller_module = ""
-            if frame is not None and frame.f_back is not None:
-                caller_file = frame.f_back.f_code.co_filename
-                caller_module = frame.f_back.f_globals.get("__name__", "")
-            is_main_caller = (
-                caller_module == "main"
-                or os.path.basename(caller_file) == "main.py"
-                or caller_file.endswith("/main.py")
-            )
-            include_migrated_crud = not is_main_caller
+    def _call_builder(builder: Callable, **available_kwargs: Any) -> Any:
+        sig = inspect.signature(builder)
+        kwargs = {k: v for k, v in available_kwargs.items() if k in sig.parameters}
+        return builder(**kwargs)
 
     _register_composed_read_models(
         router,
@@ -1508,8 +1492,12 @@ def create_management_read_models_router(
                     timeout_seconds=cockpit_timeout_fn(),
                     degraded_factory=cockpit_degraded_fn,
                 )
-            call_res = cockpit_builder(snapshot_at=snap, identity=identity) if "identity" in inspect.signature(cockpit_builder).parameters else cockpit_builder(snapshot_at=snap)
-            return await _eval(call_res)
+            return await _eval(_call_builder(
+                cockpit_builder,
+                snapshot_at=snap,
+                identity=identity,
+                authorization=authorization,
+            ))
         return svc.get_management_cockpit(snapshot_at=snap)
 
     # -----------------------------------------------------------------------
@@ -1717,13 +1705,15 @@ def create_management_read_models_router(
         identity = _extract_id(authorization)
         _req_read(identity)
         if human_inbox_builder is not None:
-            return await _eval(human_inbox_builder(
+            return await _eval(_call_builder(
+                human_inbox_builder,
                 source_type=source_type,
                 status=status,
                 priority=priority,
                 page_token=page_token,
                 page_size=page_size,
                 identity=identity,
+                authorization=authorization,
             ))
         return svc.get_human_inbox(
             source_type=source_type,
@@ -1746,12 +1736,12 @@ def create_management_read_models_router(
         identity = _extract_id(authorization)
         _req_read(identity)
         if human_inbox_detail_builder is not None:
-            call_res = (
-                human_inbox_detail_builder(item_id=item_id, identity=identity)
-                if "identity" in inspect.signature(human_inbox_detail_builder).parameters
-                else human_inbox_detail_builder(item_id)
-            )
-            return await _eval(call_res)
+            return await _eval(_call_builder(
+                human_inbox_detail_builder,
+                item_id=item_id,
+                identity=identity,
+                authorization=authorization,
+            ))
         if human_inbox_all_items_builder is not None:
             call_res = (
                 human_inbox_all_items_builder(item_id=item_id, identity=identity)
@@ -1807,7 +1797,8 @@ def create_management_read_models_router(
         identity = _extract_id(authorization)
         _req_read(identity)
         if hiq_backlog_builder is not None:
-            return await _eval(hiq_backlog_builder(
+            return await _eval(_call_builder(
+                hiq_backlog_builder,
                 source_type=source_type,
                 status=status,
                 kind=kind,
@@ -1816,6 +1807,7 @@ def create_management_read_models_router(
                 page_token=page_token,
                 page_size=page_size,
                 identity=identity,
+                authorization=authorization,
             ))
         return svc.get_hiq_backlog(
             source_type=source_type,
@@ -1848,14 +1840,19 @@ def create_management_read_models_router(
         identity = _extract_id(authorization)
         _req_read(identity)
         if intervention_stream_builder is not None:
-            return await _eval(intervention_stream_builder(
+            return await _eval(_call_builder(
+                intervention_stream_builder,
                 persona_id=persona_id or personaId,
+                personaId=personaId,
                 status=status,
                 kind=kind,
                 q=q,
                 window_hours=windowHours or window_hours,
+                windowHours=windowHours,
                 page_token=page_token,
                 page_size=page_size,
+                identity=identity,
+                authorization=authorization,
             ))
         return svc.get_intervention_stream(
             persona_id=persona_id or personaId,
@@ -1887,7 +1884,8 @@ def create_management_read_models_router(
         _req_read(identity)
         try:
             if evidence_builder is not None:
-                return await _eval(evidence_builder(
+                return await _eval(_call_builder(
+                    evidence_builder,
                     ref_id=ref_id,
                     linked_entity_type=linked_entity_type,
                     linked_entity_ref=linked_entity_ref,
@@ -1897,6 +1895,7 @@ def create_management_read_models_router(
                     page_token=page_token,
                     page_size=page_size,
                     identity=identity,
+                    authorization=authorization,
                 ))
             return svc.get_evidence(
                 ref_id=ref_id,
@@ -2041,11 +2040,14 @@ def create_management_read_models_router(
         final_idempotency_key = idempotency_key or x_idempotency_key
 
         if nl_ask_handler is not None:
-            res = await _eval(nl_ask_handler(
+            res = await _eval(_call_builder(
+                nl_ask_handler,
                 payload=payload,
+                authorization=authorization,
                 identity=identity,
                 tenant_id=caller_tenant,
                 idempotency_key=final_idempotency_key,
+                x_idempotency_key=x_idempotency_key,
                 x_tenant_id=x_tenant_id,
                 x_pantheon_tenant=x_pantheon_tenant,
             ))
@@ -2175,11 +2177,14 @@ def create_management_read_models_router(
         final_idempotency_key = idempotency_key or x_idempotency_key
 
         if nl_ask_stream_handler is not None:
-            res = await _eval(nl_ask_stream_handler(
+            res = await _eval(_call_builder(
+                nl_ask_stream_handler,
                 payload=payload,
+                authorization=authorization,
                 identity=identity,
                 tenant_id=caller_tenant,
                 idempotency_key=final_idempotency_key,
+                x_idempotency_key=x_idempotency_key,
                 x_tenant_id=x_tenant_id,
                 x_pantheon_tenant=x_pantheon_tenant,
             ))
