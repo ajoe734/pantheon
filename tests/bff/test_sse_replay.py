@@ -168,7 +168,12 @@ def test_shared_sse_replay_fails_closed_when_cursor_is_unavailable() -> None:
 
     assert error.status_code == 409
     assert error.headers["X-SSE-Replay-Store"] == "file"
-    assert detail["error"]["code"] == "SSE_REPLAY_UNAVAILABLE"
+    # "SSE_REPLAY_UNAVAILABLE" is an internal semantic name that main.py's
+    # error-code table maps onto the generic wire-level ErrorCode.RESOURCE_CONFLICT
+    # (see main.py's SSE_REPLAY_UNAVAILABLE -> ErrorCode.RESOURCE_CONFLICT.value
+    # mapping); the specific reason still round-trips in details.reason below,
+    # matching the pattern test_pkt005_sse_substrate_contract.py already uses.
+    assert detail["error"]["code"] == "RESOURCE_CONFLICT"
     assert detail["error"]["details"]["reason"] == "SSE_REPLAY_HISTORY_MISSING"
     assert detail["error"]["details"]["lastEventId"] == "evt-ha-008-v2-missing"
     assert detail["error"]["details"]["channel"] == "approval"

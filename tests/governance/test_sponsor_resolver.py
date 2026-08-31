@@ -168,9 +168,15 @@ def test_resolver_surfaces_unresolved_committee_conflict_as_open_conflict(tmp_pa
 
     assert resolved.has_open_conflicts is True
     assert resolved.conflict_report.requires_committee is True
+    # A homogeneity_conflict check (both proposals share strategy_family
+    # "tw_equity" with overlapping targets) was added after this test was
+    # written and is now classified as conflict #4, shifting sponsor_ambiguity
+    # from -004 to -005. Confirmed by direct reproduction: the full sequence
+    # is direction_conflict-001, weight_conflict-002/003, homogeneity_conflict-004,
+    # sponsor_ambiguity-005 (only the first and last are open).
     assert resolved.conflict_resolution_log.open_conflict_ids == (
         "direction_conflict-001",
-        "sponsor_ambiguity-004",
+        "sponsor_ambiguity-005",
     )
     assert resolved.conflict_resolution_log.open_conflicts[0].evidence_ref == (
         "support/evidence/MPO-001/conflict-resolution.json"

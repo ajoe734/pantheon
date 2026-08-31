@@ -2295,6 +2295,13 @@ services:
       RECONCILIATION_DRIFT_INCIDENT_LISTENER_HEALTH_FILE: ${RECONCILIATION_DRIFT_INCIDENT_LISTENER_HEALTH_FILE:-/tmp/reconciliation-drift-incident-listener-health.json}
       RECONCILIATION_DRIFT_INCIDENT_LISTENER_HEALTH_MAX_AGE_SECONDS: ${RECONCILIATION_DRIFT_INCIDENT_LISTENER_HEALTH_MAX_AGE_SECONDS:-300}
       RECONCILIATION_DRIFT_AUTH_TOKEN: ${RECONCILIATION_DRIFT_AUTH_TOKEN:-pantheon-local-reconciliation-drift-service}
+      # Must match reconciliation-drift-svc's own _configured_tenant_id()
+      # fallback ("default" when PANTHEON_TENANT_ID/RECONCILIATION_DRIFT_DEFAULT_TENANT_ID
+      # are unset) so post_incident_trigger() has a tenant to put in
+      # X-Tenant-Id when the fetched incident carries none. Without this the
+      # svc's token-auth middleware rejects every consume call with 400
+      # "X-Tenant-Id is required", and the listener silently retries forever.
+      PANTHEON_TENANT_ID: ${PANTHEON_TENANT_ID:-default}
     volumes:
       - reconciliation-drift-data:/data/reconciliation-drift
     depends_on:
