@@ -1,6 +1,6 @@
 # Execution DAG and Parallelization Architecture (2026-08-30)
 
-## 1. Execution Dependency Graph (30 Tasks)
+## 1. Frozen Execution Dependency Graph (30 Tasks)
 
 ```mermaid
 graph TD
@@ -105,6 +105,41 @@ graph TD
 
 ---
 
+### 1.1 Post-Freeze Governed Execution Overlay
+
+The diagram above is immutable planning evidence. The live execution overlay below records later task identities and product-proof gates without pretending they were present at freeze time:
+
+```mermaid
+graph TD
+    BRIDGE1[Target Repo Bridge V1<br/>superseded] --> BRIDGE2[Target Repo Bridge V2<br/>done]
+    ALLOW3[Allowlist V3<br/>superseded: evidence contract] --> ALLOW4[Allowlist V4<br/>done / promoted runtime gate]
+    BRIDGE2 --> ALLOW4
+
+    B_ORIG[14 Batch B original ids<br/>superseded] --> B_V2[14 Batch B V2 ids]
+    C_ORIG[9 Batch C original ids<br/>first admitted, later superseded] --> C_V2[9 Batch C V2 ids]
+    TRN2[Training V2<br/>superseded: evidence contract] --> TRN3[Training V3<br/>done]
+    ALLOW4 -. mixed-repo admission .-> C_V2
+
+    B_V2 --> MAIN2[Main Assembly<br/>todo]
+    C_V2 --> MAIN2
+    TRN3 -. current Training completion .-> MAIN2
+    MAIN2 --> CALLER2[Command Caller Cutover<br/>todo]
+    CALLER2 --> RETIRE2[Command Plane Retirement<br/>todo]
+
+    BRIDGE2 --> PERSONA_MUT[Persona Reconciliation Mutation Port<br/>OP-G21 / review]
+    BRIDGE2 --> OCLAW[OpenClaw Readiness Fallback<br/>OP-G22 / done]
+
+    MAIN2 --> PRODUCT[Functional Batch D + Hosted Product Proof<br/>not complete]
+    RETIRE2 --> PRODUCT
+    C_V2 --> PRODUCT
+    PERSONA_MUT --> PRODUCT
+    AGC14[AGORA-AGC-14 V5<br/>bounded Firebase proof + watchdog / in_progress] --> PRODUCT
+```
+
+The allowlist V4 merge satisfies today's bridge implementation/runtime prerequisite, but it remains a fail-closed gate for any new or replayed mixed-repository packet. It does not mark the Batch C V2 tasks complete.
+
+---
+
 ### 2. Batch Composition & Parallel Execution Rules (Signed DevTaskPacket Inbox Mapping)
 
 All 30 child tasks are mapped to 4 dependency-closed materialization batches satisfying the supervisor fleet constraint (`task_count <= 16` per atomic packet) via the signed local DevTaskPacket bridge (`.orchestrator/assistant-dev-packets/`):
@@ -127,12 +162,14 @@ All 30 child tasks are mapped to 4 dependency-closed materialization batches sat
 - Cleans frontend residuals (3 deleted mock files, 1 moved to test-only, 16 live cleaned), fixes generic CRUD, prepares desktop views, and decouples the remaining 5 support and infrastructure domain routers (Tools & Integrations, Control Loops, Command Adapters, Runtime Binding, Deployments & Rollback).
 - Backend Tasks (Repo: `pantheon`): `OPGAP-BE-TOOLS-INTEGRATIONS-20260830`, `OPGAP-BE-CONTROL-LOOPS-20260830`, `OPGAP-BE-COMMAND-ADAPTERS-20260830`, `OPGAP-BE-RUNTIME-BINDING-20260830`, `OPGAP-DEPLOY-RELIABILITY-20260830`.
 - Frontend Tasks (Repo: `execute-plans`): `OPGAP-FE-BUNDLE-CLEANUP-20260830`, `OPGAP-FE-MGMT-CRUD-POSTMORTEM-20260830`, `OPGAP-FE-AGORA-WORKSHOP-20260830`, `OPGAP-FE-INTEGRATION-ASSEMBLY-20260830`.
+- Post-freeze canonical truth: all nine original ids above were governed-superseded by one-to-one `-V2-20260830` replacements. The original ids remain in this frozen batch description; live execution and dependency checks use the V2 ids.
 
 ### Batch D: Assembly, Retirement & Hosted Promotion/Acceptance (6 Tasks)
 - Status: `materializable_now: false` (gated on Batch B and Batch C completion and signed readback), `allowed_repos: ["pantheon"]`.
 - Requires completion of all Batch B and Batch C tasks.
 - Executes `main.py` assembly, command plane deletion, and hosted dev deployment / backend acceptance / Management UI acceptance.
 - Tasks: `OPGAP-BFF-MAIN-ASSEMBLY-20260830`, `OPGAP-BE-COMMAND-CALLER-CUTOVER-20260830`, `OPGAP-BE-COMMAND-PLANE-RETIREMENT-20260830`, `OPGAP-HOSTED-DEV-PROMOTION-20260830` (Class: `product`), `OPGAP-HOSTED-BACKEND-ACCEPTANCE-20260830` (Class: `product`), `OPGAP-HOSTED-MGMT-ACCEPTANCE-20260830` (Class: `product`).
+- Post-freeze canonical truth: Main Assembly, Caller Cutover, and Command Plane Retirement are materialized but `todo`; the three frozen hosted product task ids are not yet materialized. Main Assembly's initial 19-dependency transformation targeted governed Batch B/C V2 ids, but its exact row now still names terminal-superseded Training V2 instead of completed Training V3. Because canonical rows are immutable, Main Assembly must be governed-reissued/replaced before execution in addition to waiting for other non-terminal predecessors.
 
 ---
 
@@ -148,11 +185,17 @@ All 30 child tasks are mapped to 4 dependency-closed materialization batches sat
    - `PPL-ALLOC-007`: Binding visibility route pruning verified in canonical codebase.
    - `PPL-ALLOC-009`: Sidecar BFF handoff closed in merged PRs.
    - `TJ-E2E-012`: Trade Journey E2E hosted acceptance verified as predecessor truth.
-4. **Plan-Execution Errata -- Live Dependency Ids Diverge From The Diagram Above**: the DAG diagram in Section 1 renders the frozen catalog's original Batch B task ids and its `BOOT --> ...` edges from `OPGAP-DEVTOOL-TARGET-REPO-BRIDGE-20260830`, exactly as planned. The live supervisor's actual canonical rows do not match those ids one-for-one:
+4. **Plan-Execution Errata -- Live Dependency Ids Diverge From The Diagram Above**: the DAG diagram in Section 1 renders the frozen catalog's original task ids and its `BOOT --> ...` edges from `OPGAP-DEVTOOL-TARGET-REPO-BRIDGE-20260830`, exactly as planned. The live supervisor's actual canonical rows do not match those ids one-for-one:
    - All 14 Batch B ids (`PORTS`, `CORE`, `PER`, `TRN`, `AGR`, `RES`, `GOV`, `EVO`, `CAP`, `STR`, `MGT`, `PST`, `INC`, `EVT` in the diagram) were superseded and now exist as their `-V2-20260830` replacements, depending on `OPGAP-DEVTOOL-TARGET-REPO-BRIDGE-V2-20260830` (not `BOOT`, which is terminal-superseded and satisfies no dependency).
-   - All 9 Batch C ids (`TOOL`, `LOOP`, `CMD`, `RUN`, `DEP`, `FE_CLN`, `FE_MGT`, `FE_AGR`, `FE_ASM`) were never superseded and materialized directly under the diagram's original ids, but their live `depends_on` likewise binds `OPGAP-DEVTOOL-TARGET-REPO-BRIDGE-V2-20260830`.
-   - When Batch D (`MAIN_ASM`, `CALLER`, `RETIRE`, `PROMO`, `ACCEPT_BE`, `ACCEPT_MG`) materializes, `OPGAP-BFF-MAIN-ASSEMBLY-20260830`'s `depends_on` must be rebound to the 14 V2 ids (the 5 Batch C support ids it depends on pass through unchanged).
-   - The exact one-to-one mapping, fail-closed evidence for why this diverged from plan, and the Batch D rebinding table are recorded in [EXECUTION_REPLACEMENT_LEDGER_2026-08-30.json](./EXECUTION_REPLACEMENT_LEDGER_2026-08-30.json), materialized by `OPGAP-PLAN-EXECUTION-ERRATA-V2-20260830`.
+   - All 9 Batch C ids (`TOOL`, `LOOP`, `CMD`, `RUN`, `DEP`, `FE_CLN`, `FE_MGT`, `FE_AGR`, `FE_ASM`) first materialized directly, exactly as V2 recorded, then were later superseded by governed one-to-one V2 task ids. Both events are retained in the ledger as time-ordered truth.
+   - Training's governed V2 row was later superseded by V3 solely to repair the immutable evidence-manifest artifact contract. Bridge allowlist V3 was similarly superseded by evidence-complete V4.
+   - Batch D's `OPGAP-BFF-MAIN-ASSEMBLY-20260830` materialized with the first-stage 19-dependency transformation to Batch B/C V2 ids. Training V2 was subsequently superseded by evidence-complete Training V3, leaving the immutable Main Assembly row stale. A governed replacement/reissue must bind Training V3 before Main Assembly can execute; the first-stage transformation alone is no longer complete.
+   - The exact mappings, fail-closed evidence, current status snapshots, and proof prerequisites are recorded in [EXECUTION_REPLACEMENT_LEDGER_2026-08-30.json](./EXECUTION_REPLACEMENT_LEDGER_2026-08-30.json). V3 explicitly supersedes the incomplete PR #5462 documentation result without rewriting its reviewed cutoff snapshot.
+5. **Hosted proof remains independent of read-only deployment**:
+   - controller run `33332882810` failed its OpenClaw smoke;
+   - integration gate `33334694659` succeeded for release candidate `9122d0fecd5cf9d5ae574c4c5e802df1d336dd2fd778a54019d2ad4995a2843d`;
+   - switch run `33335314834` succeeded for the read-only pair, but skipped both bounded Persona proof and independent restore jobs;
+   - `AGORA-AGC-14-HOSTED-DEMO-AUTHENTIC-V5-20260829` remains `in_progress`, so Firebase write-proof/watchdog acceptance is an unsatisfied product-proof predecessor.
 
 ---
 
@@ -170,13 +213,13 @@ All 30 child tasks are mapped to 4 dependency-closed materialization batches sat
 
 ## 5. Reproducible Dynamic Validation Command
 
-Run this command from repository root to dynamically verify all 17 catalog and architectural invariants:
+Run this command from repository root to dynamically verify all 18 catalog and architectural invariants:
 
 ```bash
 python3 docs/04/pantheon_full_product_operation_audit_2026-08-29/validate_catalog.py
 ```
 
-The script executes 17 comprehensive assertions:
+The script executes 18 comprehensive assertions:
 1. AST digests and body parity (2,272 nodes) against live `main.py`
 2. Edge-level cutover mappings for 100% of consuming tasks across all AST nodes
 3. Legacy action cluster (9 nodes) assembly ownership and node 118 `os.makedirs` lifespan placement
@@ -193,4 +236,5 @@ The script executes 17 comprehensive assertions:
 14. Planning baseline provenance across Pantheon, execute-plans, and hosted runtime
 15. Bidirectional `pantheon-dev` execution resource invariant
 16. Signed DevTaskPacket materialization mapping and post-bootstrap spec hashes (binding `target_repo` + `task_class` + `delivery_repository`) and catalog SHA-256 digest
-17. Execution replacement ledger: exact 23-row Batch B/C lineage, one-to-one V2 supersede mapping, unchanged functional scope, and Batch D dependency transformation to the terminal V2 bootstrap id
+17. Frozen execution replacement ledger: exact 23-row Batch B/C admission lineage, one-to-one Batch B V2 supersede mapping, unchanged functional scope, and planned Batch D dependency transformation
+18. Post-freeze reconciliation: nine Batch C V2 replacements, Training V3 and allowlist V4 evidence contracts, OP-G21/OP-G22, task evidence path, exact deployment identity, and explicit non-completion prerequisites for functional Batch D and bounded Firebase proof/watchdog restore
