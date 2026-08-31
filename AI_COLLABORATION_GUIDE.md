@@ -421,8 +421,16 @@ AI_NAME=Codex ./scripts/ai-status.sh progress <task-id> "Owner picked up the app
 AI_NAME=Codex ./scripts/ai-status.sh blocker <task-id> "Waiting for broker decision" Gemini
 AI_NAME=Codex ./scripts/ai-status.sh done <task-id> "Owner finalized approved task and closed it"
 AI_NAME=Codex ./scripts/ai-status.sh supersede <task-id> "Superseded by the accepted execution slice; retire this legacy lane." <replacement-task-id>
+AI_NAME="Human/Ops" ./scripts/ai-status.sh artifact-contract <task-id> add <repo-relative-artifact> "Declare the committed evidence manifest before re-handoff"
 ./scripts/sync-state.sh
 ```
+
+`artifact-contract` is the governed pre-dispatch repair for a task whose
+implementation has discovered a required evidence artifact that the original
+packet omitted. It is limited to `todo`/`blocked` tasks, records the previous
+and updated artifact lists in the activity audit, and refuses active review
+rows or catalog-bound conflict guards. After the contract is corrected, use
+the normal owner `reopen`/handoff flow; never edit `ai-status.json` directly.
 
 For PR delivery, the owner supplies the PR number, full head SHA, and already
 committed evidence manifest at `handoff`; admission freezes that exact identity.

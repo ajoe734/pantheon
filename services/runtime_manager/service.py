@@ -47,6 +47,10 @@ from services.runtime_manager.runtime_binding import (
     validate_binding,
     utc_now,
 )
+from services.governance.human_gate.decision_model import (
+    HumanGateDecision,
+    HumanGateDecisionError,
+)
 from services.runtime_manager.kill_switch_controller import (
     KillSwitchController,
     KillSwitchActionType,
@@ -124,6 +128,14 @@ _FORWARD_DEPLOY_ALLOWED_SAFE_MODES = {
     SafeModeState.NORMAL.value,
     SafeModeState.NORMAL_RESTORED.value,
 }
+# Rollback authority target_type/required roles for the human-gated rollback
+# check (AUDIT-REMEDIATION-20260830 §3, replacing the prior SHA-256/four-owner
+# scheme for every stage — see _prove_human_gated_rollback_target). A
+# HumanGateDecision's decision_id is a one-time approval bound to exactly one
+# old_binding/prior_binding pairing so it cannot be replayed against a
+# different rollback.
+ROLLBACK_HUMAN_GATE_TARGET_TYPE = "RuntimeRollback"
+ROLLBACK_HUMAN_GATE_REQUIRED_ROLES = ("operator", "risk_owner")
 
 
 def _scope_allows_stage(allowed_deployment_scope: str, target_stage: str) -> bool:
@@ -1407,22 +1419,32 @@ class RuntimeManagerService:
             },
         }
 
-    def _prove_paper_rollback_target(
+    def _prove_human_gated_rollback_target(
         self,
         request: Dict[str, Any],
         old_binding: RuntimeBinding,
-    ) -> tuple[RuntimeBinding, Dict[str, Any], str]:
-        """Resolve rollback only to a prior canonically admitted paper binding."""
+    ) -> tuple[RuntimeBinding, HumanGateDecision, str]:
+        """Resolve rollback to a specific prior RuntimeBinding, gated by an
+        approved HumanGateDecision rather than automated cryptographic proof.
+
+        Applies to every stage (paper, canary, live) — see
+        AUDIT-REMEDIATION-20260830 §3. The caller (whatever created the
+        rollback request) is responsible for creating a HumanGateDecision
+        through governance's human-gate API, getting it signed by every role
+        in ROLLBACK_HUMAN_GATE_REQUIRED_ROLES, and passing the resulting
+        decision payload as request["human_gate_decision"]. This service
+        never calls governance itself (it is a pure, HTTP-free service layer
+        — see the module docstring): it only validates the structure and
+        content of whatever decision the caller already obtained, exactly
+        like every other proof field this service checks (loader_checks_passed,
+        the promotion attestation, etc.) is caller-supplied data, not
+        something this service fetches.
+        """
 
         replacement_stage = str(
             request.get("replacement_deployment_mode")
             or old_binding.deployment_mode
         )
-        if old_binding.deployment_mode != DeploymentMode.PAPER.value or replacement_stage != DeploymentMode.PAPER.value:
-            raise RuntimeManagerError(
-                "Rollback replacement is paper-only until a target-bound "
-                "non-paper rollback authority verifier is available."
-            )
 
         replacement_plan_id = str(request.get("replacement_plan_id") or "")
         replacement_artifact_id = str(
@@ -1459,104 +1481,59 @@ class RuntimeManagerService:
                 f"identity; found {len(candidates)}."
             )
         prior = candidates[0]
-        prior_attestation = prior.metadata.get("authoritative_loader_attestation")
-        if not isinstance(prior_attestation, Mapping):
-            raise RuntimeManagerError(
-                "Rollback prior RuntimeBinding lacks canonical deployment authority proof."
-            )
-        expected = {
-            "status": "passed",
-            "authority": "canonical_deployment_registry_governance_capital",
-            "plan_id": replacement_plan_id,
-            "target_stage": replacement_stage,
-            "artifact_id": replacement_artifact_id,
-            "artifact_version": replacement_artifact_version,
-            "capital_pool_id": old_binding.capital_pool_id,
-            "persona_capital_binding_id": replacement_pcb_id,
-        }
-        mismatches = [
-            f"{field} expected {value!r}, got {prior_attestation.get(field)!r}"
-            for field, value in expected.items()
-            if prior_attestation.get(field) != value
-        ]
-        digest_fields = (
-            "deployment_plan_sha256",
-            "registry_entry_sha256",
-            "approval_decision_sha256",
-            "capital_pool_sha256",
-            "capital_admissibility_sha256",
-            "persona_capital_binding_sha256",
-        )
-        mismatches.extend(
-            f"{field} is missing or invalid"
-            for field in digest_fields
-            if not str(prior_attestation.get(field) or "").startswith("sha256:")
-            or len(str(prior_attestation.get(field) or "")) != 71
-        )
-        strategy_id = str(prior_attestation.get("strategy_id") or "")
-        if not strategy_id or prior.metadata.get("strategy_id") != strategy_id:
-            mismatches.append("verified rollback strategy_id is missing or inconsistent")
-        requested_strategy_id = str(
-            request.get("replacement_strategy_id")
-            or request.get("strategy_id")
-            or strategy_id
-        )
-        if requested_strategy_id != strategy_id:
-            mismatches.append(
-                "replacement_strategy_id conflicts with prior authority proof"
-            )
-        requested_scope = str(
-            request.get("replacement_allowed_deployment_scope") or ""
-        )
-        if requested_scope != prior_attestation.get("allowed_deployment_scope"):
-            mismatches.append(
-                "replacement_allowed_deployment_scope conflicts with prior authority proof"
-            )
+        strategy_id = str(prior.metadata.get("strategy_id") or "")
 
-        current_attestation = request.get("replacement_authority_attestation")
-        if not isinstance(current_attestation, Mapping):
+        gate_payload = request.get("human_gate_decision")
+        if not isinstance(gate_payload, Mapping):
+            raise RuntimeManagerError(
+                "Rollback requires an approved human_gate_decision bound to "
+                "this exact rollback target; none was provided."
+            )
+        try:
+            decision = HumanGateDecision.from_dict(gate_payload)
+        except HumanGateDecisionError as exc:
+            raise RuntimeManagerError(
+                f"human_gate_decision is invalid: {exc}"
+            ) from exc
+
+        # Binds one approval to exactly this old_binding -> prior_binding
+        # pairing so it can never be replayed against a different rollback.
+        expected_target_id = f"{old_binding.binding_id}->{prior.binding_id}"
+        mismatches = []
+        if decision.target_type != ROLLBACK_HUMAN_GATE_TARGET_TYPE:
             mismatches.append(
-                "replacement_authority_attestation current four-owner proof is required"
+                f"human_gate_decision.target_type must be {ROLLBACK_HUMAN_GATE_TARGET_TYPE!r}, "
+                f"got {decision.target_type!r}"
             )
-        else:
-            current_expected = {
-                **expected,
-                "strategy_id": strategy_id,
-                "approval_decision_id": prior_attestation.get(
-                    "approval_decision_id"
-                ),
-                "sponsor_persona_id": prior_attestation.get(
-                    "sponsor_persona_id"
-                ),
-                "persona_capital_binding_status": "active",
-                "allowed_deployment_scope": requested_scope,
-            }
-            mismatches.extend(
-                f"current {field} expected {value!r}, got {current_attestation.get(field)!r}"
-                for field, value in current_expected.items()
-                if current_attestation.get(field) != value
+        if decision.target_id != expected_target_id:
+            mismatches.append(
+                f"human_gate_decision.target_id must be {expected_target_id!r} "
+                f"(this exact rollback), got {decision.target_id!r}"
             )
-            if current_attestation.get("plan_status") not in {
-                "approved",
-                "executing",
-                "executed",
-            }:
-                mismatches.append(
-                    "current plan_status must be approved/executing/executed"
-                )
-            mismatches.extend(
-                f"current {field} is missing or invalid"
-                for field in digest_fields
-                if not str(current_attestation.get(field) or "").startswith(
-                    "sha256:"
-                )
-                or len(str(current_attestation.get(field) or "")) != 71
+        if decision.target_environment != replacement_stage:
+            mismatches.append(
+                f"human_gate_decision.target_environment must be {replacement_stage!r}, "
+                f"got {decision.target_environment!r}"
+            )
+        missing_roles = sorted(
+            set(ROLLBACK_HUMAN_GATE_REQUIRED_ROLES) - set(decision.required_roles)
+        )
+        if missing_roles:
+            mismatches.append(
+                "human_gate_decision.required_roles is missing mandatory "
+                f"rollback approval roles: {missing_roles}"
             )
         if mismatches:
             raise RuntimeManagerError(
                 "Rollback target authority mismatch: " + "; ".join(mismatches)
             )
-        return prior, dict(current_attestation), strategy_id
+        if decision.status != "approved" or not decision.can_proceed:
+            raise RuntimeManagerError(
+                "Rollback is blocked: human gate decision "
+                f"{decision.decision_id!r} is not approved "
+                f"(status={decision.status!r}). {decision.derived_reason()}"
+            )
+        return prior, decision, strategy_id
 
     def rollback(self, request: Dict[str, Any]) -> Dict[str, Any]:
         """Serialize a runtime-manager-owned containment rollback."""
@@ -1617,8 +1594,8 @@ class RuntimeManagerService:
         # Verify the source and the exact governed fallback before considering
         # either a new cutover or response-loss recovery.
         old_binding = self._store.require(current_binding_id)
-        prior_binding, rollback_attestation, rollback_strategy_id = (
-            self._prove_paper_rollback_target(request, old_binding)
+        prior_binding, rollback_decision, rollback_strategy_id = (
+            self._prove_human_gated_rollback_target(request, old_binding)
         )
 
         if old_binding.is_terminal():
@@ -1659,34 +1636,10 @@ class RuntimeManagerService:
                     f"authoritative child; found {len(recovered)}."
                 )
             child = recovered[0]
-            child_attestation = child.metadata.get(
-                "authoritative_loader_attestation"
-            )
-            digest_fields = (
-                "deployment_plan_sha256",
-                "registry_entry_sha256",
-                "approval_decision_sha256",
-                "capital_pool_sha256",
-                "capital_admissibility_sha256",
-                "persona_capital_binding_sha256",
-            )
-            identity_fields = (
-                "plan_id",
-                "target_stage",
-                "artifact_id",
-                "artifact_version",
-                "strategy_id",
-                "approval_decision_id",
-                "capital_pool_id",
-                "sponsor_persona_id",
-                "persona_capital_binding_id",
-                "persona_capital_binding_status",
-                "allowed_deployment_scope",
-            )
-            if not isinstance(child_attestation, Mapping) or any(
-                child_attestation.get(field) != rollback_attestation.get(field)
-                for field in (*identity_fields, *digest_fields)
-            ):
+            # Same human-gate decision on the retry proves this is genuinely
+            # the same already-approved rollback being replayed after a lost
+            # response, not a second execution riding on stale proof.
+            if child.metadata.get("rollback_human_gate_decision_id") != rollback_decision.decision_id:
                 raise RuntimeManagerError(
                     "Rollback response-loss child authority differs from the "
                     "current canonical fallback proof."
@@ -1720,28 +1673,31 @@ class RuntimeManagerService:
             if isinstance(request.get("replacement_metadata"), Mapping)
             else {}
         )
-        replacement_metadata["authoritative_loader_attestation"] = (
-            rollback_attestation
+        replacement_metadata["rollback_human_gate_decision_id"] = (
+            rollback_decision.decision_id
         )
         replacement_metadata["strategy_id"] = rollback_strategy_id
         replacement_metadata["rollback_authority_source_binding_id"] = (
             prior_binding.binding_id
         )
 
-        # Build the replacement deploy request only from the proven prior
-        # RuntimeBinding. Caller booleans/status strings never become proof.
+        # Build the replacement deploy request from the proven prior
+        # RuntimeBinding's own fields; plan_status/allowed_deployment_scope
+        # are ordinary caller-supplied deploy fields (validated by deploy()'s
+        # own pre-conditions), not part of the rollback authority proof —
+        # that proof is the human gate decision checked above.
         deploy_req: Dict[str, Any] = {
             "plan_id": prior_binding.plan_id,
-            "plan_status": rollback_attestation["plan_status"],
+            "plan_status": str(request.get("plan_status") or "approved"),
             "target_stage": prior_binding.deployment_mode,
             "artifact_id": prior_binding.artifact_id,
             "artifact_version": prior_binding.artifact_version,
             "capital_pool_id": old_binding.capital_pool_id,
             "persona_capital_binding_id": prior_binding.persona_capital_binding_id,
             "persona_capital_binding_status": "active",
-            "allowed_deployment_scope": rollback_attestation[
-                "allowed_deployment_scope"
-            ],
+            "allowed_deployment_scope": str(
+                request.get("replacement_allowed_deployment_scope") or ""
+            ),
             "loader_checks_passed": True,
             "runtime_id": request.get("replacement_runtime_id"),
             "rollback_parent": current_binding_id,
@@ -1759,7 +1715,7 @@ class RuntimeManagerService:
                 _allow_cutover_bypass=True,
                 _allow_activation_gate_bypass=True,
                 _allow_safe_mode_bypass=True,
-                _allow_non_paper_deploy=False,
+                _allow_non_paper_deploy=True,  # authority already proven above via the human gate
                 _start_paused=replacement_start_paused,
                 _defer_store=True,
             )
@@ -1794,7 +1750,7 @@ class RuntimeManagerService:
                 deploy_req,
                 _allow_activation_gate_bypass=True,
                 _allow_safe_mode_bypass=True,
-                _allow_non_paper_deploy=False,
+                _allow_non_paper_deploy=True,  # authority already proven above via the human gate
                 _start_paused=replacement_start_paused,
                 _defer_store=True,
             )
@@ -1816,7 +1772,7 @@ class RuntimeManagerService:
                 _allow_cutover_bypass=True,
                 _allow_activation_gate_bypass=True,
                 _allow_safe_mode_bypass=True,
-                _allow_non_paper_deploy=False,
+                _allow_non_paper_deploy=True,  # authority already proven above via the human gate
                 _start_paused=True,
                 _defer_store=True,
             )

@@ -215,9 +215,8 @@ def _evolution_actor_role(actor_role: str) -> str:
 
 def _record_outcome_for_target(url: str, ok: bool, status_code: int, detail: Optional[str] = None) -> None:
     try:
-        from downstream_health_monitor import DownstreamTarget
-        import main as bff_main
-        monitor = getattr(bff_main, "downstream_health_monitor", None)
+        from downstream_health_monitor import DownstreamTarget, get_downstream_health_monitor
+        monitor = get_downstream_health_monitor()
         if monitor is None:
             return
         registry = monitor._resolve_target_registry()

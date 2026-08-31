@@ -29,9 +29,27 @@ def _assert_deprecated(response, replacement: str) -> None:
     assert body["meta"]["deprecation"]["replacement"] == replacement
 
 
+def _iter_all_routes(routes) -> list:
+    """Flatten APIRoute objects, expanding include_router()-mounted sub-routers.
+
+    Newer FastAPI keeps a mounted APIRouter as a single ``_IncludedRouter``
+    entry in ``app.routes`` (with ``path=None``) instead of flattening its
+    routes in place, so callers must recurse into ``original_router.routes``
+    to see the real endpoints.
+    """
+    flattened: list = []
+    for route in routes:
+        sub_router = getattr(route, "original_router", None)
+        if sub_router is not None:
+            flattened.extend(_iter_all_routes(sub_router.routes))
+            continue
+        flattened.append(route)
+    return flattened
+
+
 def _route_paths_for_method(method: str) -> list[str]:
     paths: list[str] = []
-    for route in bff_main.app.routes:
+    for route in _iter_all_routes(bff_main.app.routes):
         methods = getattr(route, "methods", set()) or set()
         if method in methods:
             paths.append(getattr(route, "path", ""))
@@ -101,7 +119,7 @@ def test_deprecated_nested_action_families_return_410_with_headers() -> None:
 
 def test_path_parameter_dedupe_keeps_only_snake_case_canonical_templates() -> None:
     routes = set()
-    for route in bff_main.app.routes:
+    for route in _iter_all_routes(bff_main.app.routes):
         routes.add(getattr(route, "path", ""))
 
     canonical_templates = {

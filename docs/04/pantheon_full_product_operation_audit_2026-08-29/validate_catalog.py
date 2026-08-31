@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Authoritative validator for Full Product Operation GAP SA/SD and Execution Catalog.
 
-Validates all 17 architectural and catalog invariants across:
+Validates all 18 architectural and catalog invariants across:
 1. services/control-plane/bff/main.py AST nodes and cutover mapping parity
 2. Edge-level cutover mapping parity across all named consumers
 3. Legacy action cluster (9 nodes) and os.makedirs (node 118) disposition
@@ -19,13 +19,14 @@ Validates all 17 architectural and catalog invariants across:
 15. Bidirectional pantheon-dev execution resources invariant
 16. Signed DevTaskPacket materialization mapping and post-bootstrap spec hash contract (binding target_repo + task_class + delivery_repository)
 17. Execution replacement ledger: exact 23-row Batch B/C lineage, one-to-one V2 supersede mapping, unchanged functional scope, and Batch D dependency transformation to the terminal V2 bootstrap id
+18. Post-freeze reconciliation: all Batch C V2 replacements, evidence-contract replacements, late gaps, exact deployment identity, task evidence, and unsatisfied product-proof prerequisites
 """
 from __future__ import annotations
 
 import ast
 import hashlib
 import json
-import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -37,9 +38,41 @@ def validate_catalog(catalog_path: str, main_py_path: str) -> None:
     tasks = c["tasks"]
     nodes = c["main_ast_node_inventory"]["nodes"]
     repo_root = Path(main_py_path).resolve().parent.parent.parent.parent
+    snapshot_ref = c.get("planning_baseline", {}).get("pantheon", "")
+    assert len(snapshot_ref) == 40, f"Frozen Pantheon snapshot ref is invalid: {snapshot_ref}"
 
-    print(f"Parsing main.py from {main_py_path}...")
-    source_code = Path(main_py_path).read_text(encoding="utf-8")
+    def snapshot_text(rel_path: str) -> str:
+        result = subprocess.run(
+            ["git", "show", f"{snapshot_ref}:{rel_path}"],
+            cwd=repo_root,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        return result.stdout
+
+    def snapshot_paths(pathspec: str | None = None) -> list[str]:
+        cmd = ["git", "ls-tree", "-r", "--name-only", snapshot_ref]
+        if pathspec:
+            cmd.extend(["--", pathspec])
+        result = subprocess.run(cmd, cwd=repo_root, check=True, capture_output=True, text=True)
+        return [line for line in result.stdout.splitlines() if line]
+
+    def snapshot_grep_paths(pattern: str, pathspec: str) -> list[str]:
+        result = subprocess.run(
+            ["git", "grep", "-l", pattern, snapshot_ref, "--", pathspec],
+            cwd=repo_root,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode in (0, 1), f"git grep failed for frozen snapshot: {result.stderr}"
+        prefix = f"{snapshot_ref}:"
+        return [line[len(prefix):] if line.startswith(prefix) else line.split(":", 1)[-1] for line in result.stdout.splitlines() if line]
+
+    main_rel_path = Path(main_py_path).resolve().relative_to(repo_root).as_posix()
+    print(f"Parsing frozen main.py from {snapshot_ref}:{main_rel_path}...")
+    source_code = snapshot_text(main_rel_path)
     tree = ast.parse(source_code)
 
     print(f"Checking AST node count ({len(nodes)} catalog vs {len(tree.body)} live)...")
@@ -180,17 +213,12 @@ def validate_catalog(catalog_path: str, main_py_path: str) -> None:
     # Recompute reverse-main import instances from repository source AST
     scanned_rev_instances: list[dict[str, any]] = []
     target_files = ["scripts/bff_route_manifest_backend.py"]
-    for root, dirs, files in os.walk(repo_root / "services/control-plane/bff"):
-        for f in files:
-            if f.endswith(".py"):
-                full = Path(root) / f
-                rel = full.relative_to(repo_root).as_posix()
-                if rel != "services/control-plane/bff/main.py":
-                    target_files.append(rel)
+    for rel in snapshot_paths("services/control-plane/bff"):
+        if rel.endswith(".py") and rel != "services/control-plane/bff/main.py":
+            target_files.append(rel)
 
     for rel in sorted(target_files):
-        p = repo_root / rel
-        tree = ast.parse(p.read_text(encoding="utf-8"), filename=rel)
+        tree = ast.parse(snapshot_text(rel), filename=rel)
         for node in ast.walk(tree):
             if isinstance(node, ast.ImportFrom):
                 mod = node.module or ""
@@ -229,57 +257,53 @@ def validate_catalog(catalog_path: str, main_py_path: str) -> None:
     catalog_rev_tuples = set((x["caller_file"], x["line_number"], x["import_module"], x["imported_symbol"], x.get("asname")) for x in import_instances)
     assert catalog_rev_tuples == scanned_rev_tuples, f"Mismatch in reverse-main row identities: diff {catalog_rev_tuples ^ scanned_rev_tuples}"
 
-    # Verify caller files exist on disk
+    frozen_path_set = set(snapshot_paths())
+    # Verify caller files exist in the frozen source snapshot.
     for inst in import_instances:
-        caller_f = repo_root / inst.get("caller_file")
-        assert caller_f.exists(), f"Caller file does not exist: {caller_f}"
+        caller_f = inst.get("caller_file")
+        assert caller_f in frozen_path_set, f"Caller file does not exist in frozen snapshot: {caller_f}"
 
     # 12. Verify Domain Ports Caller Inventory (recomputed from source AST)
     print("12. Verifying domain_ports caller inventory from source AST (191 rows across 22 files: 129 prod, 62 tests)...")
     scanned_dp_rows: list[dict[str, any]] = []
     skip_dirs = {".venv", "lean", ".git", "node_modules", "__pycache__", "dist", "build"}
-    for root, dirs, files in os.walk(repo_root):
-        dirs[:] = [d for d in dirs if d not in skip_dirs and not d.startswith(".")]
-        for f in files:
-            if f.endswith(".py"):
-                full = Path(root) / f
-                try:
-                    content = full.read_text(encoding="utf-8")
-                except Exception:
-                    continue
-                if "domain_ports" not in content:
-                    continue
-                rel = full.relative_to(repo_root).as_posix()
-                try:
-                    tree = ast.parse(content, filename=rel)
-                except Exception:
-                    continue
-                for node in ast.walk(tree):
-                    if isinstance(node, ast.ImportFrom):
-                        mod = node.module or ""
-                        if "domain_ports" in mod or mod.startswith("services.control_plane.bff.domain_ports") or mod.startswith("services.control-plane.bff.domain_ports"):
-                            is_test = rel.startswith("tests/") or "/tests/" in rel or Path(rel).name.startswith("test_")
-                            for alias in node.names:
-                                scanned_dp_rows.append({
-                                    "caller_file": rel,
-                                    "line_number": node.lineno,
-                                    "import_module": mod,
-                                    "imported_symbol": alias.name,
-                                    "asname": alias.asname,
-                                    "category": "test" if is_test else "production",
-                                })
-                    elif isinstance(node, ast.Import):
-                        for alias in node.names:
-                            if "domain_ports" in alias.name:
-                                is_test = rel.startswith("tests/") or "/tests/" in rel or Path(rel).name.startswith("test_")
-                                scanned_dp_rows.append({
-                                    "caller_file": rel,
-                                    "line_number": node.lineno,
-                                    "import_module": alias.name,
-                                    "imported_symbol": alias.name,
-                                    "asname": alias.asname,
-                                    "category": "test" if is_test else "production",
-                                })
+    for rel in snapshot_grep_paths("domain_ports", "*.py"):
+        path_parts = Path(rel).parts
+        if not rel.endswith(".py") or any(part in skip_dirs or part.startswith(".") for part in path_parts):
+            continue
+        content = snapshot_text(rel)
+        if "domain_ports" not in content:
+            continue
+        try:
+            tree = ast.parse(content, filename=rel)
+        except Exception:
+            continue
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom):
+                mod = node.module or ""
+                if "domain_ports" in mod or mod.startswith("services.control_plane.bff.domain_ports") or mod.startswith("services.control-plane.bff.domain_ports"):
+                    is_test = rel.startswith("tests/") or "/tests/" in rel or Path(rel).name.startswith("test_")
+                    for alias in node.names:
+                        scanned_dp_rows.append({
+                            "caller_file": rel,
+                            "line_number": node.lineno,
+                            "import_module": mod,
+                            "imported_symbol": alias.name,
+                            "asname": alias.asname,
+                            "category": "test" if is_test else "production",
+                        })
+            elif isinstance(node, ast.Import):
+                for alias in node.names:
+                    if "domain_ports" in alias.name:
+                        is_test = rel.startswith("tests/") or "/tests/" in rel or Path(rel).name.startswith("test_")
+                        scanned_dp_rows.append({
+                            "caller_file": rel,
+                            "line_number": node.lineno,
+                            "import_module": alias.name,
+                            "imported_symbol": alias.name,
+                            "asname": alias.asname,
+                            "category": "test" if is_test else "production",
+                        })
 
     dp_inv = c.get("domain_ports_caller_inventory", {})
     callers = dp_inv.get("callers", [])
@@ -304,8 +328,8 @@ def validate_catalog(catalog_path: str, main_py_path: str) -> None:
     assert catalog_dp_tuples == scanned_dp_tuples, f"Mismatch in domain_ports row identities: diff {catalog_dp_tuples ^ scanned_dp_tuples}"
 
     for row in callers:
-        caller_f = repo_root / row.get("caller_file")
-        assert caller_f.exists(), f"Domain ports caller file does not exist: {caller_f}"
+        caller_f = row.get("caller_file")
+        assert caller_f in frozen_path_set, f"Domain ports caller file does not exist in frozen snapshot: {caller_f}"
 
     # 13. Verify Planning Agent Capacity, Selectors & Task Assignment
     print("13. Verifying agent capacity, authoritative capability selectors, and task assignments...")
@@ -415,7 +439,7 @@ def validate_catalog(catalog_path: str, main_py_path: str) -> None:
     for row in batch_c:
         oid, rid = row["original_id"], row["replacement_id"]
         assert oid in catalog_task_ids, f"Batch C ledger row original_id not in frozen catalog: {oid}"
-        assert rid == oid, f"Batch C row must be an identity mapping (never superseded), found {oid} -> {rid}"
+        assert rid == oid, f"Batch C V2-cutoff row must be an identity mapping (not yet superseded), found {oid} -> {rid}"
         assert row.get("functional_scope_change") == "none", f"Batch C row {oid} must preserve functional scope, found {row.get('functional_scope_change')}"
 
     b_ids = set(r["original_id"] for r in batch_b)
@@ -454,7 +478,86 @@ def validate_catalog(catalog_path: str, main_py_path: str) -> None:
         else:
             raise AssertionError(f"Batch D frozen dependency {dep} is neither a Batch B nor Batch C ledger id")
 
-    print("SUCCESS: All 17 comprehensive dynamic validation assertions passed!")
+    # 18. Verify post-freeze execution reconciliation and proof boundaries
+    print("18. Verifying post-freeze replacements, late gaps, deployment identity, and product-proof prerequisites...")
+    assert ledger.get("version") == 2, f"Post-freeze ledger version must be 2, found {ledger.get('version')}"
+    assert ledger.get("last_reconciled_by_task") == "OPGAP-PLAN-EXECUTION-ERRATA-V3-20260830", "V3 reconciliation task binding missing"
+
+    revisions = ledger.get("errata_revisions", [])
+    assert len(revisions) == 2, f"Expected V2 and V3 errata revisions, found {len(revisions)}"
+    assert revisions[0].get("delivery_pr") == 5462, "V2 PR #5462 history binding missing"
+    assert revisions[0].get("merge_commit") == "4cb0007386a6ad0c48b68cc2d71663f3655e5424", "V2 merge identity mismatch"
+    assert revisions[1].get("task_id") == "OPGAP-PLAN-EXECUTION-ERRATA-V3-20260830", "V3 revision missing"
+    assert revisions[1].get("does_not_rewrite_prior_history") is True, "V3 must preserve V2 history"
+
+    post_c = ledger.get("post_freeze_batch_c_replacements", [])
+    assert len(post_c) == 9, f"Expected all 9 post-freeze Batch C replacements, found {len(post_c)}"
+    assert {row["original_id"] for row in post_c} == c_ids, "Post-freeze Batch C replacements must cover the frozen Batch C ids exactly"
+    for row in post_c:
+        oid, rid = row["original_id"], row["replacement_id"]
+        assert rid == oid.replace("-20260830", "-V2-20260830"), f"Batch C post-freeze replacement is not one-to-one V2: {oid} -> {rid}"
+        assert row.get("functional_scope_change") == "none", f"Batch C V2 replacement changed scope: {oid}"
+
+    evidence_replacements = ledger.get("post_freeze_evidence_contract_replacements", [])
+    expected_evidence_replacements = {
+        "OPGAP-BE-TRAINING-ROUTER-V2-20260830": "OPGAP-BE-TRAINING-ROUTER-V3-20260830",
+        "OPGAP-DEVTOOL-BRIDGE-REPO-ALLOWLIST-V3-20260830": "OPGAP-DEVTOOL-BRIDGE-REPO-ALLOWLIST-V4-20260830",
+    }
+    assert len(evidence_replacements) == 2, f"Expected two evidence-contract replacements, found {len(evidence_replacements)}"
+    assert {row["superseded_id"]: row["replacement_id"] for row in evidence_replacements} == expected_evidence_replacements, "Training V3 / allowlist V4 replacement lineage mismatch"
+    for row in evidence_replacements:
+        review_path = row.get("review_file", "")
+        assert review_path and (repo_root / review_path).is_file(), f"Evidence-contract replacement review file missing: {review_path}"
+        assert row.get("canonical_status_snapshot") == "done/completed", f"Evidence-contract replacement is not recorded completed: {row}"
+
+    late_gaps = ledger.get("post_freeze_gaps", [])
+    assert {row.get("gap_id") for row in late_gaps} == {"OP-G21", "OP-G22"}, f"Late gap set mismatch: {late_gaps}"
+    late_gap_tasks = {row["gap_id"]: row.get("owner_task") for row in late_gaps}
+    assert late_gap_tasks["OP-G21"] == "OPGAP-BE-PERSONA-RECONCILIATION-MUTATION-PORT-20260830", "OP-G21 owner task mismatch"
+    assert late_gap_tasks["OP-G22"] == "OPGAP-OPENCLAW-PROVIDER-READINESS-FALLBACK-20260830", "OP-G22 owner task mismatch"
+    assert "ReadSurfacePorts" in next(row["required_boundary"] for row in late_gaps if row["gap_id"] == "OP-G21"), "OP-G21 read-only boundary missing"
+    assert "OPENCLAW_GATEWAY_TIMEOUT" in next(row["observed_failure"] for row in late_gaps if row["gap_id"] == "OP-G22"), "OP-G22 timeout evidence missing"
+
+    deployment = ledger.get("deployment_reconciliation", {})
+    assert deployment.get("controller_run", {}).get("run_id") == "33332882810", "Controller run identity missing"
+    assert deployment.get("controller_run", {}).get("conclusion") == "failure", "Failed controller run must remain failure"
+    assert deployment.get("integration_gate", {}).get("run_id") == "33334694659", "Integration gate identity missing"
+    assert deployment.get("integration_gate", {}).get("release_candidate_id") == "9122d0fecd5cf9d5ae574c4c5e802df1d336dd2fd778a54019d2ad4995a2843d", "Release candidate identity mismatch"
+    switch = deployment.get("read_only_switch", {})
+    assert switch.get("run_id") == "33335314834" and switch.get("deployment_profile") == "read-only", "Exact read-only switch identity mismatch"
+    assert switch.get("real_writes") is False and switch.get("stub_writes") is False, "Read-only switch must disable real and stub writes"
+    assert switch.get("bounded_persona_write_proof_job") == "skipped", "Bounded Persona proof outcome must remain explicitly skipped"
+    assert switch.get("same_pair_read_only_restore_job") == "skipped", "Same-pair restore outcome must remain explicitly skipped"
+
+    batch_d_live = ledger.get("post_freeze_batch_d_materialization", {})
+    assert batch_d_live.get("initial_v2_dependency_transformation_applied") is True, "Initial Batch D V2 transformation missing"
+    assert batch_d_live.get("current_dependency_binding_complete") is False, "Batch D dependency binding must remain incomplete after Training V3"
+    stale_dep = batch_d_live.get("stale_post_materialization_dependency", {})
+    assert stale_dep.get("canonical_dependency_id") == "OPGAP-BE-TRAINING-ROUTER-V2-20260830", "Stale Main Assembly Training V2 dependency missing"
+    assert stale_dep.get("required_live_dependency_id") == "OPGAP-BE-TRAINING-ROUTER-V3-20260830", "Required Training V3 rebind missing"
+
+    prerequisites = ledger.get("product_proof_prerequisites", [])
+    prereq_by_id = {row["id"]: row for row in prerequisites}
+    assert set(prereq_by_id) == {
+        "frontend_batch_c_promoted_allowlist_runtime",
+        "functional_batch_d_canonical_dependencies",
+        "bounded_firebase_write_proof_and_watchdog_restore",
+    }, f"Product-proof prerequisite set mismatch: {set(prereq_by_id)}"
+    assert prereq_by_id["functional_batch_d_canonical_dependencies"].get("satisfied") is False, "Functional Batch D must remain incomplete"
+    assert prereq_by_id["bounded_firebase_write_proof_and_watchdog_restore"].get("satisfied") is False, "Firebase write-proof/watchdog prerequisite must remain incomplete"
+    assert prereq_by_id["bounded_firebase_write_proof_and_watchdog_restore"].get("owner_task") == "AGORA-AGC-14-HOSTED-DEMO-AUTHENTIC-V5-20260829", "Firebase proof owner task mismatch"
+
+    evidence_path = ledger.get("task_evidence_manifest", "")
+    expected_evidence_path = "docs/deployment/evidence/full-operation-gap/OPGAP-PLAN-EXECUTION-ERRATA-V3-20260830/evidence.json"
+    assert evidence_path == expected_evidence_path, f"Task evidence manifest path mismatch: {evidence_path}"
+    evidence_file = repo_root / evidence_path
+    assert evidence_file.is_file(), f"Task evidence manifest missing: {evidence_file}"
+    with open(evidence_file, "r", encoding="utf-8") as f:
+        evidence = json.load(f)
+    assert evidence.get("task_id") == "OPGAP-PLAN-EXECUTION-ERRATA-V3-20260830", "Task evidence manifest task id mismatch"
+    assert evidence.get("owner") == "Codex" and evidence.get("reviewer") == "Codex2", "Task evidence handoff identities mismatch"
+
+    print("SUCCESS: All 18 comprehensive dynamic validation assertions passed!")
 
 if __name__ == "__main__":
     repo_root = Path(__file__).resolve().parent.parent.parent.parent
