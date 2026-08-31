@@ -6,19 +6,62 @@ from typing import Any, Callable, Dict, Optional
 from fastapi import APIRouter, HTTPException
 
 
+_MAIN_SYMBOL_NAMES = (
+    "_agora_list_response",
+    "_require_operator_role",
+    "_reject_body_idempotency_key",
+    "_resolve_final_idempotency_key",
+    "_stable_json_hash",
+    "_agora_core_idempotency_check",
+    "_request_dry_run_requested",
+    "_dry_run_success_response",
+    "_read_surface_meta",
+    "_agora_required_text",
+    "_publish_event",
+    "ErrorCode",
+    "ObjectType",
+    "CommandType",
+    "TargetObject",
+    "_sem_list_payload",
+    "_sem_agora_inbox_payload",
+    "_assistant_ask_enabled",
+    "_assistant_build_context_pack",
+    "_agora_ask_deterministic_fallback",
+    "_agora_action_command",
+)
+
+
 def create_identity_router(
     *,
     extract_identity: Callable[..., Any],
     require_read_role: Callable[..., None],
     bff_error: Callable[..., HTTPException],
     utc_now: Callable[[], str],
+    main_module: Any = None,
 ) -> APIRouter:
-    """Identity router — placeholder until AG-BE-ID-* migrate routes from main.py."""
+    """Identity router — placeholder until AG-BE-ID-* migrate routes from main.py.
+
+    ``main_module`` should be the caller's own ``sys.modules[__name__]`` (see
+    main.py's ``_create_agora_router(...)`` call). Resolving these symbols off
+    an explicitly passed module, instead of a bare ``import main``, avoids a
+    real collision: this repo has one ``main.py`` per service, and a bare
+    ``import main`` returns whichever one last claimed that name in
+    ``sys.modules`` — harmless across separate production containers, but a
+    silent wrong-module bug the moment more than one service's main.py is
+    loaded in the same interpreter (as multiple bff-ha tests under
+    tests/bff/ do). Falls back to the old ambient import when no module is
+    passed, for any caller that hasn't been updated yet.
+    """
     router = APIRouter(tags=["agora-identity"])
 
-    # Local import to avoid circular dependency
-    import main
-    from main import (
+    if main_module is None:
+        # Local import to avoid circular dependency
+        import main as main_module
+    # The route handlers below reference `main.<attr>` directly (main.read_store,
+    # main._sse_buffers, main.command_store, ...) throughout, in addition to
+    # the names unpacked below — keep that working unchanged.
+    main = main_module
+    (
         _agora_list_response,
         _require_operator_role,
         _reject_body_idempotency_key,
@@ -40,7 +83,7 @@ def create_identity_router(
         _assistant_build_context_pack,
         _agora_ask_deterministic_fallback,
         _agora_action_command,
-    )
+    ) = (getattr(main_module, name) for name in _MAIN_SYMBOL_NAMES)
     import uuid
     import json
     from fastapi import Body, Header, Query

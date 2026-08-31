@@ -716,7 +716,16 @@ def execute_rollback():
     Required body fields:
       current_binding_id, action_type,
       replacement_plan_id, replacement_artifact_id, replacement_artifact_version,
-      replacement_persona_capital_binding_id, replacement_allowed_deployment_scope
+      replacement_persona_capital_binding_id, replacement_allowed_deployment_scope,
+      human_gate_decision — an approved HumanGateDecision (see
+        services.governance.human_gate.decision_model) bound to this exact
+        rollback (target_type="RuntimeRollback", target_id="<current_binding_id>-><prior_binding_id>"),
+        signed by every role in RuntimeManagerService.ROLLBACK_HUMAN_GATE_REQUIRED_ROLES.
+        Create and sign it via governance's POST /api/governance/human-gates
+        (+ sign) first; this endpoint only validates the decision payload
+        itself, it never calls governance (AUDIT-REMEDIATION-20260830 §3
+        replaced the prior auto-fetched SHA-256/four-owner proof with this
+        explicit, caller-obtained approval for every stage).
 
     Optional:
       replacement_plan_status, replacement_persona_capital_binding_status,
@@ -738,6 +747,8 @@ def execute_rollback():
         "replacement_allowed_deployment_scope",
     ]
     missing = [f for f in required_fields if not body.get(f)]
+    if not isinstance(body.get("human_gate_decision"), dict):
+        missing.append("human_gate_decision")
     if missing:
         return (
             jsonify({"error": {"code": "MISSING_FIELDS", "message": f"Missing required fields: {missing}"}}),
@@ -745,104 +756,6 @@ def execute_rollback():
         )
 
     svc = _get_service()
-    try:
-        old_binding = svc.require(str(body["current_binding_id"]))
-        replacement_stage = str(
-            body.get("replacement_deployment_mode")
-            or old_binding.deployment_mode
-        )
-        candidates = [
-            candidate
-            for candidate in svc.list_by_plan(str(body["replacement_plan_id"]))
-            if candidate.binding_id != old_binding.binding_id
-            and candidate.status == "retired"
-            and candidate.capital_pool_id == old_binding.capital_pool_id
-            and candidate.artifact_id == body["replacement_artifact_id"]
-            and candidate.artifact_version
-            == body["replacement_artifact_version"]
-            and candidate.deployment_mode == replacement_stage
-            and candidate.execution_mode == replacement_stage
-            and candidate.persona_capital_binding_id
-            == body["replacement_persona_capital_binding_id"]
-        ]
-        if len(candidates) != 1:
-            raise RuntimeManagerError(
-                "Rollback authority readback requires exactly one retired prior "
-                f"RuntimeBinding target; found {len(candidates)}."
-            )
-        prior = candidates[0]
-        prior_metadata = prior.metadata
-        prior_attestation = prior_metadata.get(
-            "authoritative_loader_attestation"
-        )
-        if not isinstance(prior_attestation, dict):
-            raise RuntimeManagerError(
-                "Rollback prior RuntimeBinding lacks canonical authority proof."
-            )
-        authority_descriptor = {
-            "plan_id": body["replacement_plan_id"],
-            "plan_status": body["replacement_plan_status"],
-            "target_stage": replacement_stage,
-            "artifact_id": body["replacement_artifact_id"],
-            "artifact_version": body["replacement_artifact_version"],
-            "strategy_id": prior_attestation.get("strategy_id"),
-            "approval_decision_id": prior_attestation.get(
-                "approval_decision_id"
-            ),
-            "sponsor_persona_id": prior_attestation.get(
-                "sponsor_persona_id"
-            ),
-            "capital_pool_id": old_binding.capital_pool_id,
-            "persona_capital_binding_id": body[
-                "replacement_persona_capital_binding_id"
-            ],
-            "persona_capital_binding_status": "active",
-            "allowed_deployment_scope": body[
-                "replacement_allowed_deployment_scope"
-            ],
-        }
-        canonical = _canonicalize_deploy_body(
-            authority_descriptor,
-            allowed_plan_statuses=("approved", "executing", "executed"),
-        )
-        body["replacement_authority_attestation"] = canonical["metadata"][
-            "authoritative_loader_attestation"
-        ]
-        body["replacement_strategy_id"] = canonical["strategy_id"]
-        body["replacement_allowed_deployment_scope"] = canonical[
-            "allowed_deployment_scope"
-        ]
-    except DeployAuthorityUnavailableError as exc:
-        return (
-            jsonify({
-                "error": {
-                    "code": "DEPLOY_AUTHORITY_UNAVAILABLE",
-                    "message": str(exc),
-                }
-            }),
-            503,
-        )
-    except DeployAuthorityError as exc:
-        return (
-            jsonify({
-                "error": {
-                    "code": "DEPLOY_AUTHORITY_REJECTED",
-                    "message": str(exc),
-                }
-            }),
-            422,
-        )
-    except (RuntimeManagerError, RuntimeBindingError) as exc:
-        return (
-            jsonify({
-                "error": {
-                    "code": "PRECONDITION_FAILED",
-                    "message": str(exc),
-                }
-            }),
-            422,
-        )
-
     try:
         result = svc.rollback(body)
         return jsonify(result), 201

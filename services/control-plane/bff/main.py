@@ -82,20 +82,8 @@ from services.foundation.health import (  # noqa: E402
     readiness_status_code,
     register_fastapi_health_routes,
 )
-from services.source_ingestion.replication_bridge import (  # noqa: E402
-    StrategySeedReplicationBridge,
-    StrategySeedReplicationBridgeError,
-)
 from services.source_ingestion.strategy_seed_store import (  # noqa: E402
-    SeedReviewDecision,
-    StrategySpecSeedReviewError,
     StrategySpecSeedStore,
-    StrategySpecSeedStoreError,
-)
-from services.source_ingestion.trainer_seed_bridge import (  # noqa: E402
-    TrainerSeedBridge,
-    TrainerSeedBridgeError,
-    trainer_seed_kind_from_text,
 )
 from persona_strategy_discovery import (  # noqa: E402
     PersonaStrategyDiscoveryService,
@@ -242,6 +230,12 @@ from persona_provisioning_coordinator import (
     PersonaProvisioningCoordinator,
     deterministic_provisioning_ids,
 )
+try:
+    from personas.reconciliation import PersonaProvisioningReconciliationMutationPort
+except ImportError:
+    from services.control_plane.bff.personas.reconciliation import (  # type: ignore[no-redef]
+        PersonaProvisioningReconciliationMutationPort,
+    )
 try:
     from services.persona.runtime_profile import (
         PersonaRuntimeProfile,
@@ -1220,6 +1214,9 @@ async def _bff_unhandled_exception_handler(
 command_store = CommandStore(os.path.join(BFF_DATA_DIR, "commands.jsonl"))
 session_lifecycle_store = SessionLifecycleStore(os.path.join(BFF_DATA_DIR, "session_lifecycle.json"))
 persona_write_owner = create_persona_registry_write_owner()
+persona_reconciliation_mutation_port = PersonaProvisioningReconciliationMutationPort(
+    persona_mutation_port=persona_write_owner,
+)
 read_store: ReadSurfacePorts = create_read_surface_ports(
     persona_registry_store=persona_write_owner,
 )
@@ -1261,9 +1258,29 @@ def _recoverable_capital_command(record: Dict[str, Any]) -> bool:
     return _retryable_terminal_capital_command(record)
 
 
+def _prewarm_jwks_cache() -> None:
+    """Populate the JWKS cache before /readyz, off the event loop thread."""
+    jwks_uri = os.getenv("PANTHEON_BFF_JWKS_URI", "").strip()
+    discovery_url = os.getenv("PANTHEON_BFF_OIDC_DISCOVERY_URL", "").strip()
+    if not jwks_uri and not discovery_url:
+        return
+    try:
+        try:
+            from services.runtime_auth_inbound import _fetch_jwks_keys, _fetch_oidc_metadata
+        except ImportError:
+            from runtime_auth_inbound import _fetch_jwks_keys, _fetch_oidc_metadata  # type: ignore[no-redef]
+        if jwks_uri:
+            _fetch_jwks_keys(jwks_uri)
+        elif discovery_url:
+            _fetch_jwks_keys(str(_fetch_oidc_metadata(discovery_url)["jwks_uri"]).strip())
+    except Exception as exc:  # noqa: BLE001 - warm-up must never block startup
+        log.warning("JWKS cache pre-warm failed, first real login will pay the fetch cost: %s", exc)
+
+
 @app.on_event("startup")
 async def _start_downstream_health_monitor() -> None:
     global _PERSONA_PROVISIONING_RECONCILER_TASK
+    await asyncio.to_thread(_prewarm_jwks_cache)
     await downstream_health_monitor.start()
     # A crash can leave a durable owner command submitted/processing.  Replay
     # only the idempotent Capital authority commands; generic adapter commands
@@ -12998,218 +13015,6 @@ def _rw01_surface_state(
     return "fresh"
 
 
-_TW01_SESSION_STATUSES = {"active", "paused", "completed", "abandoned"}
-_TW04_REPLAY_TERMINAL_STATUSES = {"completed", "abandoned"}
-_TRN003_RAPID_EVAL_SCOPES = frozenset({"persona_patch", "strategy_patch", "feature_patch", "risk_patch"})
-_TRN003_RAPID_EVAL_ACTIVE_STATUSES = frozenset({"active", "paused"})
-
-
-def _tw04_get_candidate_snapshot_at(replay: Dict[str, Any]) -> Optional[str]:
-    preview_events = sorted(
-        [
-            e for e in (replay.get("events") or [])
-            if isinstance(e, dict) and e.get("event_type") == "preview_trigger"
-        ],
-        key=lambda e: int(e.get("sequence_number") or 0),
-    )
-    if not preview_events:
-        return None
-    return (preview_events[-1].get("eval_ref") or {}).get("candidate_snapshot_at")
-
-
-def _tw04_required_text(payload: Dict[str, Any], field: str) -> str:
-    value = payload.get(field)
-    if value is None or not str(value).strip():
-        raise _bff_error(
-            422,
-            ErrorCode.VALIDATION_FAILED,
-            f"Missing required field: {field}",
-            f"{field} must be a non-empty string",
-            precondition_failed=field,
-        )
-    return str(value).strip()
-
-
-def _tw01_validate_session_status(value: Optional[str]) -> str:
-    normalized = str(value or "").strip().lower()
-    if normalized not in _TW01_SESSION_STATUSES:
-        raise _bff_error(
-            422,
-            ErrorCode.VALIDATION_FAILED,
-            "Invalid trainer session status",
-            f"status must be one of {sorted(_TW01_SESSION_STATUSES)}",
-            precondition_failed="status",
-        )
-    return normalized
-
-
-def _tw01_required_text(payload: Dict[str, Any], field: str) -> str:
-    value = payload.get(field)
-    if value is None or not str(value).strip():
-        raise _bff_error(
-            422,
-            ErrorCode.VALIDATION_FAILED,
-            f"Missing required field: {field}",
-            f"{field} must be a non-empty string",
-            precondition_failed=field,
-        )
-    return str(value).strip()
-
-
-def _tw01_validate_context_refs(value: Any) -> List[Dict[str, str]]:
-    if value in (None, ""):
-        return []
-    if not isinstance(value, list):
-        raise _bff_error(
-            422,
-            ErrorCode.VALIDATION_FAILED,
-            "Invalid context_refs",
-            "context_refs must be an array of { type, id } objects",
-            precondition_failed="context_refs",
-        )
-    refs: List[Dict[str, str]] = []
-    for item in value:
-        if not isinstance(item, dict):
-            raise _bff_error(
-                422,
-                ErrorCode.VALIDATION_FAILED,
-                "Invalid context_refs entry",
-                "Each context_refs entry must be an object",
-                precondition_failed="context_refs",
-            )
-        refs.append(
-            {
-                "type": _tw01_required_text(item, "type"),
-                "id": _tw01_required_text(item, "id"),
-            }
-        )
-    return refs
-
-
-def _tw01_trainer_dialog_surface_state(
-    *,
-    snapshot_at: str,
-    has_data: Optional[bool] = None,
-) -> str:
-    surface = _dataset_surface_status(
-        "teaching_sessions",
-        snapshot_at=snapshot_at,
-        has_data=has_data,
-    )
-    if surface.get("status") == "unavailable":
-        return "unavailable"
-    if surface.get("source") == "local_snapshot":
-        return "degraded"
-    if surface.get("status") == "degraded":
-        return "stale"
-    return "fresh"
-
-
-def _tw03_validate_refresh_mode(payload: Dict[str, Any]) -> str:
-    refresh_mode = str(payload.get("refresh_mode") or "").strip().lower()
-    mode = str(payload.get("mode") or "").strip().lower()
-    if refresh_mode and refresh_mode != "manual":
-        raise _bff_error(
-            422,
-            ErrorCode.VALIDATION_FAILED,
-            "Invalid trainer preview refresh mode",
-            "refresh_mode must equal 'manual' or mode must equal 'refresh'",
-            precondition_failed="refresh_mode",
-        )
-    if mode and mode != "refresh":
-        raise _bff_error(
-            422,
-            ErrorCode.VALIDATION_FAILED,
-            "Invalid trainer preview refresh mode",
-            "refresh_mode must equal 'manual' or mode must equal 'refresh'",
-            precondition_failed="mode",
-        )
-    if refresh_mode == "manual":
-        return refresh_mode
-    if mode == "refresh":
-        return mode
-    raise _bff_error(
-        422,
-        ErrorCode.VALIDATION_FAILED,
-        "Invalid trainer preview refresh mode",
-        "refresh_mode must equal 'manual' or mode must equal 'refresh'",
-        precondition_failed="refresh_mode",
-    )
-
-
-def _tw02_validate_patch_payload(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
-    allowed_fields = {"patches"}
-    unknown_fields = sorted(set(payload.keys()) - allowed_fields)
-    if unknown_fields:
-        raise _bff_error(
-            422,
-            ErrorCode.VALIDATION_FAILED,
-            "Invalid trainer control patch payload",
-            f"Unsupported top-level fields: {unknown_fields}",
-            precondition_failed="payload_shape",
-        )
-
-    patches = payload.get("patches")
-    if not isinstance(patches, list) or not patches:
-        raise _bff_error(
-            422,
-            ErrorCode.VALIDATION_FAILED,
-            "Invalid trainer control patch payload",
-            "patches must be a non-empty array of { parameter_key, proposed_value } objects",
-            precondition_failed="patches",
-        )
-
-    normalized: List[Dict[str, Any]] = []
-    seen_keys: set[str] = set()
-    for index, patch in enumerate(patches):
-        if not isinstance(patch, dict):
-            raise _bff_error(
-                422,
-                ErrorCode.VALIDATION_FAILED,
-                "Invalid trainer control patch entry",
-                "Each patches[] entry must be an object",
-                precondition_failed=f"patches[{index}]",
-            )
-
-        unknown_patch_fields = sorted(set(patch.keys()) - {"parameter_key", "proposed_value"})
-        if unknown_patch_fields:
-            raise _bff_error(
-                422,
-                ErrorCode.VALIDATION_FAILED,
-                "Invalid trainer control patch entry",
-                f"Unsupported patch fields: {unknown_patch_fields}",
-                precondition_failed=f"patches[{index}]",
-            )
-
-        parameter_key = str(patch.get("parameter_key") or "").strip()
-        if not parameter_key:
-            raise _bff_error(
-                422,
-                ErrorCode.VALIDATION_FAILED,
-                "Invalid trainer control patch entry",
-                "parameter_key must be a non-empty string",
-                precondition_failed=f"patches[{index}].parameter_key",
-            )
-        if parameter_key in seen_keys:
-            raise _bff_error(
-                422,
-                ErrorCode.VALIDATION_FAILED,
-                "Invalid trainer control patch payload",
-                f"Duplicate parameter_key is not allowed: {parameter_key}",
-                precondition_failed=f"patches[{index}].parameter_key",
-            )
-
-        normalized.append(
-            {
-                "parameter_key": parameter_key,
-                "proposed_value": patch.get("proposed_value"),
-            }
-        )
-        seen_keys.add(parameter_key)
-
-    return normalized
-
-
 _CW01_TARGET_TYPES = {"persona", "committee", "red_team"}
 _CW01_PRIORITIES = {"low", "normal", "high", "critical"}
 _CW01_CONSULTATION_TYPES = {
@@ -15362,847 +15167,6 @@ async def get_persona_capabilities(
     }
 
 
-@app.post("/api/v1/trainer/sessions")
-async def create_trainer_session(
-    payload: Dict[str, Any] = Body(...),
-    authorization: Optional[str] = Header(default=None),
-):
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-
-    persona_id = _tw01_required_text(payload, "persona_id")
-    session_type = _tw01_required_text(payload, "session_type")
-    objective = _tw01_required_text(payload, "objective")
-    context_refs = _tw01_validate_context_refs(payload.get("context_refs"))
-
-    if session_type != "trainer":
-        raise _bff_error(
-            422,
-            ErrorCode.VALIDATION_FAILED,
-            "Invalid trainer session type",
-            "session_type must equal 'trainer' for TW-01",
-            precondition_failed="session_type",
-        )
-
-    persona = read_store.get_persona(persona_id)
-    if not persona:
-        raise _bff_error(
-            404,
-            ErrorCode.RESOURCE_NOT_FOUND,
-            "Persona not found",
-            f"Persona {persona_id} does not exist",
-        )
-
-    session = read_store.create_trainer_session(
-        persona_id=persona_id,
-        objective=objective,
-        context_refs=context_refs,
-        actor_id=identity.operator_id,
-        created_at=utc_now(),
-    )
-    if session is None:
-        raise _bff_error(
-            503,
-            ErrorCode.DEPENDENCY_UNAVAILABLE,
-            "Trainer session store unavailable",
-            "Trainer session creation store is unavailable.",
-        )
-
-    return {
-        "session_id": session["session_id"],
-        "persona_id": session["persona_id"],
-        "session_type": session["session_type"],
-        "objective": session["objective"],
-        "status": session["status"],
-        "started_at": session["started_at"],
-        "allowedActions": session["allowedActions"],
-        "links": session["links"],
-    }
-
-
-@app.get("/api/v1/trainer/sessions")
-async def list_trainer_sessions(
-    persona_id: Optional[str] = None,
-    status: Optional[str] = None,
-    page_token: Optional[str] = None,
-    page_size: int = Query(default=20, ge=1, le=200),
-    authorization: Optional[str] = Header(default=None),
-):
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-
-    # Enforce fail-closed ordering: authenticate before validating the required
-    # persona_id query param, so an unauthenticated caller gets 401 (not 422) and
-    # cannot probe endpoint existence/shape. Path-param siblings already do this.
-    if not persona_id:
-        raise _bff_error(
-            422,
-            ErrorCode.VALIDATION_FAILED,
-            "Request validation failed",
-            "persona_id is required",
-            precondition_failed="persona_id",
-        )
-
-    persona = read_store.get_persona(persona_id)
-    if not persona:
-        raise _bff_error(
-            404,
-            ErrorCode.RESOURCE_NOT_FOUND,
-            "Persona not found",
-            f"Persona {persona_id} does not exist",
-        )
-
-    snapshot_at = utc_now()
-    normalized_status = _tw01_validate_session_status(status) if status is not None else None
-    sessions = read_store.list_trainer_sessions(persona_id=persona_id, status=normalized_status) or []
-    surface_state = _tw01_trainer_dialog_surface_state(snapshot_at=snapshot_at, has_data=sessions is not None)
-
-    total = len(sessions)
-    if surface_state == "unavailable":
-        page_items = []
-        next_page_token = None
-        total = 0
-    else:
-        page_items, next_page_token = _page_slice(sessions, page_token, page_size)
-
-    return {
-        "data": page_items,
-        "page_info": {
-            "next_page_token": next_page_token,
-            "total": total,
-        },
-        "meta": {
-            "snapshot_at": snapshot_at,
-            "surfaces": {
-                "trainer_dialog": surface_state,
-            },
-        },
-    }
-
-
-@app.get("/api/v1/trainer/sessions/{session_id}")
-async def get_trainer_session_detail(
-    session_id: str,
-    authorization: Optional[str] = Header(default=None),
-):
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-
-    session = read_store.get_trainer_session(session_id)
-    if not session:
-        raise _bff_error(
-            404,
-            ErrorCode.RESOURCE_NOT_FOUND,
-            "Trainer session not found",
-            f"Trainer session {session_id} does not exist",
-        )
-
-    snapshot_at = utc_now()
-    payload = dict(session)
-    payload["meta"] = {
-        "snapshot_at": snapshot_at,
-        "surfaces": {
-            "trainer_dialog": _tw01_trainer_dialog_surface_state(snapshot_at=snapshot_at, has_data=True),
-        },
-    }
-    return payload
-
-
-@app.get("/api/v1/trainer/sessions/{session_id}/controls")
-async def get_trainer_controls(
-    session_id: str,
-    authorization: Optional[str] = Header(default=None),
-):
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-
-    controls = read_store.get_trainer_controls(session_id, snapshot_at=utc_now())
-    if not controls:
-        raise _bff_error(
-            404,
-            ErrorCode.RESOURCE_NOT_FOUND,
-            "Trainer session not found",
-            f"Trainer session {session_id} does not exist",
-        )
-    return controls
-
-
-@app.post("/api/v1/trainer/sessions/{session_id}/patch")
-async def patch_trainer_controls(
-    session_id: str,
-    payload: Dict[str, Any] = Body(...),
-    authorization: Optional[str] = Header(default=None),
-):
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-    patches = _tw02_validate_patch_payload(payload)
-
-    controls = read_store.get_trainer_controls(session_id, snapshot_at=utc_now())
-    if not controls:
-        raise _bff_error(
-            404,
-            ErrorCode.RESOURCE_NOT_FOUND,
-            "Trainer session not found",
-            f"Trainer session {session_id} does not exist",
-        )
-    if str(controls.get("status") or "").strip().lower() != "active":
-        raise _bff_error(
-            409,
-            ErrorCode.OPERATION_NOT_ALLOWED,
-            "Trainer session cannot patch controls",
-            "POST /patch is only allowed while the trainer session status is active",
-            precondition_failed="status",
-        )
-    if not (controls.get("allowedActions") or {}).get("canPatchControls"):
-        raise _bff_error(
-            409,
-            ErrorCode.PRECONDITION_FAILED,
-            "Trainer control patch unavailable",
-            "allowedActions.canPatchControls is false for this trainer session",
-            precondition_failed="allowedActions.canPatchControls",
-        )
-
-    result = read_store.patch_trainer_controls(
-        session_id,
-        patches=patches,
-        patched_at=utc_now(),
-    )
-    if result is None:
-        raise _bff_error(
-            503,
-            ErrorCode.DEPENDENCY_UNAVAILABLE,
-            "Trainer control store unavailable",
-            "Trainer control patch store is unavailable.",
-        )
-    return result
-
-
-@app.post("/api/v1/trainer/sessions/{session_id}/message")
-async def append_trainer_message(
-    session_id: str,
-    payload: Dict[str, Any] = Body(...),
-    authorization: Optional[str] = Header(default=None),
-):
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-
-    session = read_store.get_trainer_session(session_id)
-    if not session:
-        raise _bff_error(
-            404,
-            ErrorCode.RESOURCE_NOT_FOUND,
-            "Trainer session not found",
-            f"Trainer session {session_id} does not exist",
-        )
-    if session["status"] != "active":
-        raise _bff_error(
-            409,
-            ErrorCode.OPERATION_NOT_ALLOWED,
-            "Trainer session is not active",
-            "POST /message is only allowed while the trainer session status is active",
-            precondition_failed="status",
-        )
-    if not session["allowedActions"].get("canSendMessage"):
-        raise _bff_error(
-            409,
-            ErrorCode.PRECONDITION_FAILED,
-            "Trainer message submission unavailable",
-            "allowedActions.canSendMessage is false for this trainer session",
-            precondition_failed="allowedActions.canSendMessage",
-        )
-
-    message_body = _tw01_required_text(payload, "message_body")
-    result = read_store.append_trainer_message(
-        session_id,
-        message_body=message_body,
-        actor_id=identity.operator_id,
-        accepted_at=utc_now(),
-    )
-    if result is None:
-        raise _bff_error(
-            503,
-            ErrorCode.DEPENDENCY_UNAVAILABLE,
-            "Trainer session store unavailable",
-            "Trainer message append store is unavailable.",
-        )
-
-    updated = result["session"]
-    return {
-        "session_id": updated["session_id"],
-        "status": updated["status"],
-        "accepted_at": result["accepted_at"],
-        "event": result["event"],
-        "session_summary": updated["session_summary"],
-        "allowedActions": updated["allowedActions"],
-    }
-
-
-@app.get("/api/v1/trainer/sessions/{session_id}/preview")
-async def get_trainer_preview(
-    session_id: str,
-    eval_id: Optional[str] = None,
-    authorization: Optional[str] = Header(default=None),
-):
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-
-    session = read_store.get_trainer_session(session_id)
-    if not session:
-        raise _bff_error(
-            404,
-            ErrorCode.RESOURCE_NOT_FOUND,
-            "Trainer session not found",
-            f"Trainer session {session_id} does not exist",
-        )
-
-    snapshot_at = utc_now()
-    preview = read_store.get_trainer_preview(
-        session_id,
-        session_status=session.get("status"),
-        eval_id=eval_id,
-        snapshot_at=snapshot_at,
-    )
-    if preview is None and eval_id:
-        raise _bff_error(
-            404,
-            ErrorCode.RESOURCE_NOT_FOUND,
-            "Trainer preview evaluation not found",
-            f"Trainer preview evaluation {eval_id} does not exist for session {session_id}",
-        )
-    if preview is None:
-        preview = read_store.build_trainer_preview_unavailable(
-            session_id,
-            session_status=session.get("status"),
-            snapshot_at=snapshot_at,
-        )
-    return preview
-
-
-@app.post("/api/v1/trainer/sessions/{session_id}/preview")
-async def refresh_trainer_preview(
-    session_id: str,
-    payload: Dict[str, Any] = Body(...),
-    authorization: Optional[str] = Header(default=None),
-):
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-    _tw03_validate_refresh_mode(payload)
-
-    session = read_store.get_trainer_session(session_id)
-    if not session:
-        raise _bff_error(
-            404,
-            ErrorCode.RESOURCE_NOT_FOUND,
-            "Trainer session not found",
-            f"Trainer session {session_id} does not exist",
-        )
-
-    preview = read_store.get_trainer_preview(
-        session_id,
-        session_status=session.get("status"),
-        snapshot_at=utc_now(),
-    ) or read_store.build_trainer_preview_unavailable(
-        session_id,
-        session_status=session.get("status"),
-        snapshot_at=utc_now(),
-    )
-    if session.get("status") not in {"active", "paused"}:
-        raise _bff_error(
-            409,
-            ErrorCode.OPERATION_NOT_ALLOWED,
-            "Trainer session cannot refresh preview",
-            "POST /preview is only allowed while the trainer session status is active or paused",
-            precondition_failed="status",
-        )
-    if preview.get("status") == "pending":
-        return preview
-    if not preview.get("allowedActions", {}).get("canRefreshPreview"):
-        raise _bff_error(
-            409,
-            ErrorCode.PRECONDITION_FAILED,
-            "Trainer preview refresh unavailable",
-            "allowedActions.canRefreshPreview is false for this trainer preview",
-            precondition_failed="allowedActions.canRefreshPreview",
-        )
-
-    refreshed = read_store.refresh_trainer_preview(
-        session_id,
-        session_status=session.get("status"),
-        refreshed_at=utc_now(),
-    )
-    if refreshed is None:
-        raise _bff_error(
-            503,
-            ErrorCode.DEPENDENCY_UNAVAILABLE,
-            "Trainer preview store unavailable",
-            "Trainer preview refresh store is unavailable.",
-        )
-    return refreshed
-
-
-@app.get("/api/v1/trainer/replay")
-async def list_trainer_replays(
-    persona_id: str,
-    status: Optional[str] = None,
-    page_token: Optional[str] = None,
-    page_size: int = Query(default=20, ge=1, le=200),
-    authorization: Optional[str] = Header(default=None),
-):
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-
-    persona = read_store.get_persona(persona_id)
-    if not persona:
-        raise _bff_error(
-            404,
-            ErrorCode.RESOURCE_NOT_FOUND,
-            "Persona not found",
-            f"Persona {persona_id} does not exist",
-        )
-
-    if status is not None:
-        normalized_status = str(status).strip().lower()
-        if normalized_status not in _TW04_REPLAY_TERMINAL_STATUSES:
-            raise _bff_error(
-                422,
-                ErrorCode.VALIDATION_FAILED,
-                "Invalid replay status filter",
-                f"status must be one of {sorted(_TW04_REPLAY_TERMINAL_STATUSES)}",
-                precondition_failed="status",
-            )
-    else:
-        normalized_status = None
-
-    snapshot_at = utc_now()
-    items, surface_state = read_store.list_trainer_replays(
-        persona_id=persona_id,
-        status=normalized_status,
-        snapshot_at=snapshot_at,
-    )
-    total = len(items)
-    page_items, next_page_token = _page_slice(items, page_token, page_size)
-    return {
-        "data": page_items,
-        "page_info": {
-            "next_page_token": next_page_token,
-            "total": total,
-        },
-        "meta": {
-            "snapshot_at": snapshot_at,
-            "surfaces": {
-                "trainer_replay": surface_state,
-            },
-        },
-    }
-
-
-@app.get("/api/v1/trainer/replay/{session_id}")
-async def get_trainer_replay_detail(
-    session_id: str,
-    authorization: Optional[str] = Header(default=None),
-):
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-
-    snapshot_at = utc_now()
-    replay = read_store.get_trainer_replay(session_id, snapshot_at=snapshot_at)
-    if not replay:
-        raise _bff_error(
-            404,
-            ErrorCode.RESOURCE_NOT_FOUND,
-            "Trainer replay session not found",
-            f"Trainer replay session {session_id} does not exist",
-        )
-    return replay
-
-
-def _tw04_trainer_seed_summary(
-    *,
-    replay: Dict[str, Any],
-    commit_result: Dict[str, Any],
-) -> str:
-    parts: List[str] = []
-    objective = str(replay.get("objective") or "").strip()
-    if objective:
-        parts.append(objective)
-    for event in replay.get("events") or []:
-        if not isinstance(event, dict):
-            continue
-        if str(event.get("event_type") or "").strip().lower() == "message":
-            continue
-        summary = str(event.get("summary") or "").strip()
-        if summary and summary not in parts:
-            parts.append(summary)
-    commit_event = commit_result.get("event") or {}
-    if isinstance(commit_event, dict):
-        summary = str(commit_event.get("summary") or "").strip()
-        if summary and summary not in parts:
-            parts.append(summary)
-    return " ".join(parts)
-
-
-def _tw04_trainer_seed_kind(
-    *,
-    payload: Dict[str, Any],
-    summary: str,
-) -> str:
-    raw = str(payload.get("seed_kind") or payload.get("seedKind") or "").strip()
-    if raw:
-        return raw
-    return trainer_seed_kind_from_text(summary).value
-
-
-def _tw04_trainer_seed_artifact_refs(commit_result: Dict[str, Any]) -> Dict[str, Any]:
-    refs = dict(commit_result.get("artifacts") or {})
-    event = commit_result.get("event") or {}
-    if isinstance(event, dict) and isinstance(event.get("artifact_refs"), dict):
-        refs.update({k: v for k, v in event["artifact_refs"].items() if v})
-    return refs
-
-
-def _tw04_trainer_seed_event(
-    *,
-    replay: Dict[str, Any],
-    commit_result: Dict[str, Any],
-    request_payload: Dict[str, Any],
-    identity: OperatorIdentity,
-) -> Dict[str, Any]:
-    commit_event = commit_result.get("event") or {}
-    event_id = str(commit_event.get("event_id") or f"{commit_result.get('session_id')}-commit").strip()
-    session_id = str(commit_result.get("session_id") or replay.get("session_id") or "").strip()
-    summary = _tw04_trainer_seed_summary(replay=replay, commit_result=commit_result)
-    seed_kind = _tw04_trainer_seed_kind(payload=request_payload, summary=summary)
-    artifact_refs = _tw04_trainer_seed_artifact_refs(commit_result)
-    return {
-        "event_type": "trainer_commit",
-        "event_id": event_id,
-        "session_id": session_id,
-        "persona_id": replay.get("persona_id"),
-        "summary": summary,
-        "seed_kind": seed_kind,
-        "committed_by": commit_result.get("committed_by") or identity.operator_id,
-        "committed_at": commit_result.get("committed_at") or utc_now(),
-        "raw_ref": f"evidence://trainer/{session_id}/{event_id}",
-        "artifact_refs": artifact_refs,
-        "strategy_seed": {
-            "hypothesis": summary,
-            "asset_class": ["unspecified"],
-            "market_scope": ["unspecified"],
-            "required_data": ["governed trainer commit evidence"],
-            "risk_notes": ["trainer_seed_requires_review"],
-        },
-    }
-
-
-def _tw04_trainer_seed_extraction_response(
-    *,
-    replay: Dict[str, Any],
-    commit_result: Dict[str, Any],
-    request_payload: Dict[str, Any],
-    identity: OperatorIdentity,
-) -> Dict[str, Any]:
-    bridge_event = _tw04_trainer_seed_event(
-        replay=replay,
-        commit_result=commit_result,
-        request_payload=request_payload,
-        identity=identity,
-    )
-    try:
-        result = TrainerSeedBridge(created_by=identity.operator_id).ingest_event(
-            bridge_event,
-            requested_by=identity.operator_id,
-        )
-    except TrainerSeedBridgeError as exc:
-        log.info("Trainer seed bridge refused committed event: %s", exc)
-        return {
-            "status": "refused",
-            "code": exc.code,
-            "message": str(exc),
-            "research_only": True,
-            "execution_route": "none",
-        }
-    except Exception as exc:  # pragma: no cover - defensive BFF degradation path.
-        log.exception("Trainer seed bridge unavailable for committed event: %s", exc)
-        return {
-            "status": "unavailable",
-            "code": "trainer_seed_bridge_unavailable",
-            "message": "Trainer seed extraction is temporarily unavailable.",
-            "research_only": True,
-            "execution_route": "none",
-        }
-
-    return {
-        "status": "created" if result.was_created else "existing",
-        "seed_id": result.seed.seed_id,
-        "seed_kind": result.seed.metadata.get("seed_kind"),
-        "interaction_id": result.interaction_record.interaction_id,
-        "intent": result.classification.primary_intent.value,
-        "requires_human_review": result.classification.requires_human_review,
-        "trainer_seed_extraction_ref": result.extraction_ref.to_dict(),
-        "redaction_findings": list(result.redaction_findings),
-        "review_inbox": {
-            "status": result.seed.status.value,
-            "route": "/bff/management/strategy-seeds",
-        },
-        "research_only": True,
-        "execution_route": "none",
-    }
-
-
-@app.post("/api/v1/trainer/sessions/{session_id}/commit")
-async def commit_trainer_replay(
-    session_id: str,
-    payload: Dict[str, Any] = Body(...),
-    authorization: Optional[str] = Header(default=None),
-):
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-
-    expected_candidate_snapshot_at = _tw04_required_text(payload, "expected_candidate_snapshot_at")
-    note = payload.get("note") or None
-
-    replay = read_store.get_trainer_replay(session_id)
-    if not replay:
-        raise _bff_error(
-            404,
-            ErrorCode.RESOURCE_NOT_FOUND,
-            "Trainer replay session not found",
-            f"Trainer replay session {session_id} does not exist",
-        )
-
-    if str(replay.get("status") or "").strip().lower() != "completed":
-        raise _bff_error(
-            409,
-            ErrorCode.OPERATION_NOT_ALLOWED,
-            "Trainer session cannot be committed",
-            "commit is only allowed when session status is completed",
-            precondition_failed="status",
-        )
-
-    if not replay.get("allowedActions", {}).get("canCommit"):
-        raise _bff_error(
-            409,
-            ErrorCode.PRECONDITION_FAILED,
-            "Commit not allowed",
-            "allowedActions.canCommit is false for this trainer replay session",
-            precondition_failed="allowedActions.canCommit",
-        )
-
-    candidate_snapshot_at = _tw04_get_candidate_snapshot_at(replay)
-    if candidate_snapshot_at != expected_candidate_snapshot_at:
-        raise _bff_error(
-            409,
-            ErrorCode.PRECONDITION_FAILED,
-            "Candidate snapshot mismatch",
-            "expected_candidate_snapshot_at does not match the current replayable candidate snapshot",
-            precondition_failed="expected_candidate_snapshot_at",
-        )
-
-    result = read_store.commit_trainer_replay(
-        session_id,
-        expected_candidate_snapshot_at=expected_candidate_snapshot_at,
-        note=note,
-        actor_id=identity.operator_id,
-        committed_at=utc_now(),
-    )
-    if result is None:
-        raise _bff_error(
-            503,
-            ErrorCode.DEPENDENCY_UNAVAILABLE,
-            "Trainer replay store unavailable",
-            "Trainer replay commit store is unavailable.",
-        )
-    result["seed_extraction"] = _tw04_trainer_seed_extraction_response(
-        replay=replay,
-        commit_result=result,
-        request_payload=payload,
-        identity=identity,
-    )
-    return result
-
-
-@app.post("/api/v1/trainer/sessions/{session_id}/discard")
-async def discard_trainer_replay(
-    session_id: str,
-    payload: Dict[str, Any] = Body(...),
-    authorization: Optional[str] = Header(default=None),
-):
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-
-    expected_candidate_snapshot_at = _tw04_required_text(payload, "expected_candidate_snapshot_at")
-    note = payload.get("note") or None
-
-    replay = read_store.get_trainer_replay(session_id)
-    if not replay:
-        raise _bff_error(
-            404,
-            ErrorCode.RESOURCE_NOT_FOUND,
-            "Trainer replay session not found",
-            f"Trainer replay session {session_id} does not exist",
-        )
-
-    if str(replay.get("status") or "").strip().lower() != "completed":
-        raise _bff_error(
-            409,
-            ErrorCode.OPERATION_NOT_ALLOWED,
-            "Trainer session cannot be discarded",
-            "discard is only allowed when session status is completed",
-            precondition_failed="status",
-        )
-
-    if not replay.get("allowedActions", {}).get("canDiscard"):
-        raise _bff_error(
-            409,
-            ErrorCode.PRECONDITION_FAILED,
-            "Discard not allowed",
-            "allowedActions.canDiscard is false for this trainer replay session",
-            precondition_failed="allowedActions.canDiscard",
-        )
-
-    candidate_snapshot_at = _tw04_get_candidate_snapshot_at(replay)
-    if candidate_snapshot_at != expected_candidate_snapshot_at:
-        raise _bff_error(
-            409,
-            ErrorCode.PRECONDITION_FAILED,
-            "Candidate snapshot mismatch",
-            "expected_candidate_snapshot_at does not match the current replayable candidate snapshot",
-            precondition_failed="expected_candidate_snapshot_at",
-        )
-
-    result = read_store.discard_trainer_replay(
-        session_id,
-        expected_candidate_snapshot_at=expected_candidate_snapshot_at,
-        note=note,
-        actor_id=identity.operator_id,
-        discarded_at=utc_now(),
-    )
-    if result is None:
-        raise _bff_error(
-            503,
-            ErrorCode.DEPENDENCY_UNAVAILABLE,
-            "Trainer replay store unavailable",
-            "Trainer replay discard store is unavailable.",
-        )
-    return result
-
-
-@app.post("/api/v1/trainer/sessions/{session_id}/rapid-eval")
-async def create_rapid_eval(
-    session_id: str,
-    payload: Dict[str, Any] = Body(...),
-    authorization: Optional[str] = Header(default=None),
-):
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-
-    eval_scope = str(payload.get("eval_scope") or "").strip().lower()
-    if not eval_scope or eval_scope not in _TRN003_RAPID_EVAL_SCOPES:
-        raise _bff_error(
-            422,
-            ErrorCode.VALIDATION_FAILED,
-            "Invalid eval_scope",
-            f"eval_scope must be one of {sorted(_TRN003_RAPID_EVAL_SCOPES)}",
-            precondition_failed="eval_scope",
-        )
-
-    dataset_version_id_raw = payload.get("dataset_version_id")
-    if not dataset_version_id_raw or not str(dataset_version_id_raw).strip():
-        raise _bff_error(
-            422,
-            ErrorCode.VALIDATION_FAILED,
-            "Missing required field: dataset_version_id",
-            "dataset_version_id must be a non-empty string",
-            precondition_failed="dataset_version_id",
-        )
-    dataset_version_id = str(dataset_version_id_raw).strip()
-
-    max_runtime_seconds_raw = payload.get("max_runtime_seconds")
-    try:
-        max_runtime_seconds = int(max_runtime_seconds_raw)
-        if max_runtime_seconds <= 0:
-            raise ValueError
-    except (TypeError, ValueError):
-        raise _bff_error(
-            422,
-            ErrorCode.VALIDATION_FAILED,
-            "Invalid max_runtime_seconds",
-            "max_runtime_seconds must be a positive integer",
-            precondition_failed="max_runtime_seconds",
-        )
-
-    patch_ref = str(payload["patch_ref"]).strip() if payload.get("patch_ref") else None
-    persona_id = str(payload["persona_id"]).strip() if payload.get("persona_id") else None
-    strategy_id = str(payload["strategy_id"]).strip() if payload.get("strategy_id") else None
-
-    session = read_store.get_trainer_session(session_id)
-    if not session:
-        raise _bff_error(
-            404,
-            ErrorCode.RESOURCE_NOT_FOUND,
-            "Trainer session not found",
-            f"Trainer session {session_id} does not exist",
-        )
-
-    if str(session.get("status") or "").strip().lower() not in _TRN003_RAPID_EVAL_ACTIVE_STATUSES:
-        raise _bff_error(
-            409,
-            ErrorCode.OPERATION_NOT_ALLOWED,
-            "Trainer session cannot submit rapid eval",
-            "rapid-eval is only allowed while the trainer session status is active or paused",
-            precondition_failed="status",
-        )
-
-    result = read_store.create_rapid_eval(
-        session_id,
-        persona_id=persona_id,
-        strategy_id=strategy_id,
-        eval_scope=eval_scope,
-        patch_ref=patch_ref,
-        dataset_version_id=dataset_version_id,
-        max_runtime_seconds=max_runtime_seconds,
-        requested_by=identity.operator_id or "unknown",
-        requested_at=utc_now(),
-    )
-    if result is None:
-        raise _bff_error(
-            503,
-            ErrorCode.DEPENDENCY_UNAVAILABLE,
-            "Rapid eval store unavailable",
-            "Rapid eval creation store is unavailable.",
-        )
-    return result
-
-
-@app.get("/api/v1/trainer/sessions/{session_id}/rapid-eval/{eval_id}")
-async def get_rapid_eval(
-    session_id: str,
-    eval_id: str,
-    authorization: Optional[str] = Header(default=None),
-):
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-
-    session = read_store.get_trainer_session(session_id)
-    if not session:
-        raise _bff_error(
-            404,
-            ErrorCode.RESOURCE_NOT_FOUND,
-            "Trainer session not found",
-            f"Trainer session {session_id} does not exist",
-        )
-
-    record = read_store.get_rapid_eval(eval_id, snapshot_at=utc_now())
-    if not record or record.get("session_id") != session_id:
-        raise _bff_error(
-            404,
-            ErrorCode.RESOURCE_NOT_FOUND,
-            "Rapid eval not found",
-            f"Rapid eval {eval_id} does not exist for trainer session {session_id}",
-        )
-    return record
-
-
 @app.get("/api/v1/capital-pools")
 async def list_capital_pools(
     status: Optional[str] = None,
@@ -16356,269 +15320,6 @@ async def create_binding(
     _capital_bff_idempotency_store(
         identity.operator_id, resolved_key, request_hash, result
     )
-    return result
-
-
-@app.get("/api/v1/deployment-plans")
-async def list_deployment_plans(
-    status: Optional[str] = None,
-    capital_pool_id: Optional[str] = None,
-    authorization: Optional[str] = Header(default=None),
-):
-    """DP-01: Deployment plan list."""
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-
-    plans = read_store.list_deployment_plans(
-        status=status,
-        capital_pool_id=capital_pool_id,
-        include_fixture_pack=False,
-    )
-    snapshot_at = utc_now()
-    return {
-        "data": plans,
-        "meta": _read_surface_meta(
-            "deployment_plans",
-            "deployment_plan_list",
-            snapshot_at=snapshot_at,
-            total=len(plans),
-        ),
-    }
-
-
-# --------------------------------------------------------------------------- #
-# Write-gap P0-6 (2026-05-28): POST /api/v1/deployment-plans (wizard step 3)
-# --------------------------------------------------------------------------- #
-
-_DEPLOYMENT_PLAN_CREATE_REQUIRED_FIELDS = ("binding_id", "artifact_id", "capital_pool_id")
-_VALID_DEPLOYMENT_MODES = {"paper", "live"}
-_DEPLOYMENT_PLAN_APPROVED_ARTIFACT_STATES = {
-    "approved",
-    "promoted",
-    "published",
-    "active",
-    "registered",
-}
-
-
-def _deployment_plan_create_required_string(payload: Dict[str, Any], field: str) -> str:
-    value = str(payload.get(field) or "").strip()
-    if value:
-        return value
-    raise _bff_error(
-        422,
-        ErrorCode.VALIDATION_FAILED,
-        f"{field} is required",
-        f"Deployment plan create requires a non-empty {field}.",
-        precondition_failed=field,
-    )
-
-
-def _deployment_plan_registry_entry(artifact_id: str) -> Optional[Dict[str, Any]]:
-    for entry in read_store.list_registry_entries():
-        if not isinstance(entry, dict):
-            continue
-        candidates = {
-            str(entry.get("artifact_id") or "").strip(),
-            str(entry.get("id") or "").strip(),
-            str(entry.get("artifact_ref") or "").strip(),
-        }
-        if artifact_id in candidates:
-            return entry
-    return None
-
-
-def _raise_if_deployment_artifact_not_approved(artifact_id: str) -> None:
-    """Block plan creation when a known artifact is not in an approved state.
-
-    The canonical registry can be unavailable in the BFF local dev store, so an
-    unknown artifact is treated as permissive rather than a hard failure.
-    """
-    entry = _deployment_plan_registry_entry(artifact_id)
-    if entry is None:
-        return
-    state = str(
-        entry.get("status")
-        or entry.get("approval_status")
-        or entry.get("admission_status")
-        or ""
-    ).strip().lower()
-    if state and state not in _DEPLOYMENT_PLAN_APPROVED_ARTIFACT_STATES:
-        raise _bff_error(
-            409,
-            ErrorCode.RESOURCE_CONFLICT,
-            "Artifact is not approved for deployment",
-            f"Artifact {artifact_id} is in state {state!r}; an approved artifact is required.",
-            precondition_failed="artifact_id",
-            suggestion="Promote the artifact to an approved state before creating a deployment plan.",
-        )
-
-
-def _deployment_plan_persona_id(binding_id: str) -> Optional[str]:
-    binding = read_store.get_binding(binding_id)
-    if isinstance(binding, dict):
-        persona_id = str(binding.get("persona_id") or "").strip()
-        return persona_id or None
-    return None
-
-
-def _project_deployment_plan_create_response(record: Dict[str, Any]) -> Dict[str, Any]:
-    return {
-        "id": record.get("plan_id") or record.get("id"),
-        "binding_id": record.get("binding_id"),
-        "artifact_id": record.get("artifact_id"),
-        "deployment_mode": record.get("deployment_mode") or record.get("deployment_stage"),
-        "status": record.get("status") or "pending_approval",
-        "capital_pool_id": record.get("capital_pool_id") or record.get("target_pool_id"),
-        "locked": bool(record.get("locked", False)),
-        "created_at": record.get("created_at"),
-    }
-
-
-@app.post("/api/v1/deployment-plans", status_code=201)
-async def create_deployment_plan_v1(
-    response: Response,
-    payload: Dict[str, Any] = Body(...),
-    authorization: Optional[str] = Header(default=None),
-    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
-    x_correlation_id: Optional[str] = Header(default=None, alias="X-Correlation-Id"),
-    x_request_id: Optional[str] = Header(default=None, alias="X-Request-Id"),
-    x_dry_run: Optional[str] = Header(default=None, alias="X-Dry-Run"),
-):
-    """BFF write-gap P0-6: create a deployment plan (persona onboarding wizard step 3)."""
-    identity = _extract_identity(authorization)
-    _require_operator_role(identity)
-    _reject_body_idempotency_key(payload)
-
-    fields = {
-        field: _deployment_plan_create_required_string(payload, field)
-        for field in _DEPLOYMENT_PLAN_CREATE_REQUIRED_FIELDS
-    }
-    deployment_mode = str(payload.get("deployment_mode") or "").strip().lower()
-    if deployment_mode not in _VALID_DEPLOYMENT_MODES:
-        raise _bff_error(
-            422,
-            ErrorCode.VALIDATION_FAILED,
-            "deployment_mode is invalid",
-            "deployment_mode must be one of: paper, live.",
-            precondition_failed="deployment_mode",
-        )
-    locked = bool(payload.get("locked", False))
-    _raise_if_deployment_artifact_not_approved(fields["artifact_id"])
-
-    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
-    correlation_id = str(x_correlation_id or "").strip() or str(uuid.uuid4())
-    response.headers["X-Correlation-Id"] = correlation_id
-    request_id = str(x_request_id or "").strip() or None
-    dry_run = _request_dry_run_requested(x_dry_run)
-    request_hash = _stable_json_hash(
-        {"route": "POST /api/v1/deployment-plans", "payload": payload}
-    )
-
-    if not dry_run:
-        existing = _GOV_BFF_IDEMPOTENCY.get(resolved_key)
-        if existing is not None:
-            if existing.get("request_hash") != request_hash:
-                raise _bff_error(
-                    409,
-                    ErrorCode.IDEMPOTENCY_CONFLICT,
-                    "Idempotency key already used with a different payload",
-                    f"Key {resolved_key!r} is bound to a different request hash",
-                    precondition_failed="idempotency_conflict",
-                    suggestion="Use a new Idempotency-Key or resubmit the original payload unchanged",
-                )
-            cached = existing["result"]
-            cached_meta = cached.get("meta") if isinstance(cached, dict) else {}
-            response.headers["X-Correlation-Id"] = str(
-                cached_meta.get("correlationId") or correlation_id
-            )
-            return cached
-
-    snapshot_at = utc_now()
-    client_plan_id = str(payload.get("plan_id") or payload.get("id") or "").strip()
-    plan_id = client_plan_id or f"plan-{snapshot_at[:10].replace('-', '')}-{uuid.uuid4().hex[:8]}"
-
-    if dry_run:
-        preview = {
-            "id": plan_id,
-            "binding_id": fields["binding_id"],
-            "artifact_id": fields["artifact_id"],
-            "deployment_mode": deployment_mode,
-            "status": "pending_approval",
-            "capital_pool_id": fields["capital_pool_id"],
-            "locked": locked,
-            "created_at": snapshot_at,
-        }
-        return JSONResponse(
-            status_code=200,
-            content=jsonable_encoder(
-                {
-                    "data": preview,
-                    "meta": {
-                        "snapshot_at": snapshot_at,
-                        "dryRun": True,
-                        "correlationId": correlation_id,
-                        "requestId": request_id,
-                        "evidenceKind": "deployment_plan.create",
-                    },
-                }
-            ),
-            headers={"X-Correlation-Id": correlation_id},
-        )
-
-    if read_store.get_deployment_plan(plan_id) is not None:
-        raise _bff_error(
-            409,
-            ErrorCode.RESOURCE_CONFLICT,
-            "Deployment plan id already exists",
-            f"Deployment plan {plan_id} already exists",
-            precondition_failed="plan_id",
-            suggestion="Replay with the original Idempotency-Key or choose a new plan id",
-            correlation_id=correlation_id,
-        )
-
-    record = read_store.create_deployment_plan(
-        plan_id=plan_id,
-        binding_id=fields["binding_id"],
-        artifact_id=fields["artifact_id"],
-        deployment_mode=deployment_mode,
-        capital_pool_id=fields["capital_pool_id"],
-        actor_id=identity.operator_id,
-        created_at=snapshot_at,
-        params=payload.get("params") if isinstance(payload.get("params"), dict) else {},
-        locked=locked,
-    )
-    data = _project_deployment_plan_create_response(record)
-    persona_id = _deployment_plan_persona_id(fields["binding_id"])
-    surface = _dataset_surface_status("deployment_plans", snapshot_at=snapshot_at)
-    meta = _snapshot_meta(snapshot_at)
-    meta["surfaces"] = {"deployment_plans": surface}
-    meta["dryRun"] = False
-    meta["correlationId"] = correlation_id
-    meta["requestId"] = request_id
-    meta["evidenceKind"] = "deployment_plan.create"
-    meta["evidence_kind"] = "deployment_plan.create"
-
-    event_payload = {
-        "deployment_plan_id": data["id"],
-        "id": data["id"],
-        "binding_id": data["binding_id"],
-        "persona_id": persona_id,
-        "artifact_id": data["artifact_id"],
-        "deployment_mode": data["deployment_mode"],
-        "status": data["status"],
-        "created_at": data["created_at"],
-    }
-    _publish_event(
-        _sse_buffers["audit"],
-        _sse_subscribers["audit"],
-        "deployment-plan.created",
-        event_payload,
-    )
-
-    result = {"data": data, "meta": meta}
-    _GOV_BFF_IDEMPOTENCY[resolved_key] = {"request_hash": request_hash, "result": result}
     return result
 
 
@@ -16909,45 +15610,6 @@ async def get_runtime_status(
 # --------------------------------------------------------------------------- #
 
 
-@app.get("/api/v1/deployment-plans/{plan_id}")
-async def get_deployment_plan(plan_id: str, authorization: Optional[str] = Header(default=None)):
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-
-    snapshot_at = utc_now()
-    plan_surface = _dataset_surface_status("deployment_plans", snapshot_at=snapshot_at)
-    plan = read_store.get_deployment_plan(plan_id)
-    if not plan:
-        _raise_if_read_surface_unavailable(plan_surface, label="Deployment plan")
-        raise _bff_error(
-            404,
-            ErrorCode.RESOURCE_NOT_FOUND,
-            "Deployment plan not found",
-            f"Deployment plan {plan_id} does not exist",
-        )
-
-    payload = _deployment_plan_with_stage_truth(plan, snapshot_at=snapshot_at)
-    decision = read_store.get_approval_decision(plan.get("approval_decision_id"))
-    if decision:
-        payload["approval_decision"] = decision
-    stage_surfaces = _deployment_stage_truth_surfaces(
-        payload["stage_truth"],
-        snapshot_at=snapshot_at,
-    )
-    meta = _read_surface_meta(
-        "deployment_plans",
-        "deployment_plan_detail",
-        snapshot_at=snapshot_at,
-        surface=plan_surface,
-    )
-    meta["surfaces"].update(stage_surfaces)
-
-    return {
-        "data": payload,
-        "meta": meta,
-    }
-
-
 @app.get("/api/v1/capital-pools/{pool_id}")
 async def get_capital_pool(pool_id: str, authorization: Optional[str] = Header(default=None)):
     identity = _extract_identity(authorization)
@@ -17057,332 +15719,6 @@ async def get_runtime_rollbacks(runtime_id: str, authorization: Optional[str] = 
         "meta": {
             "staleness": _meta_staleness(),
         },
-    }
-
-
-_PKT001_DEPLOYMENT_PLAN_FILTER_STATUSES = {"pending_review", "approved", "rejected"}
-
-
-def _pkt001_requested_plan_statuses(status: Optional[str]) -> Optional[set[str]]:
-    requested = _split_csv_query(status)
-    if requested is None:
-        return None
-    normalized = {token.lower() for token in requested}
-    invalid = normalized - _PKT001_DEPLOYMENT_PLAN_FILTER_STATUSES
-    if invalid:
-        raise _bff_error(
-            422,
-            ErrorCode.VALIDATION_FAILED,
-            "Invalid deployment plan status filter",
-            f"status must be one of {sorted(_PKT001_DEPLOYMENT_PLAN_FILTER_STATUSES)}",
-            precondition_failed="status",
-        )
-    return normalized
-
-
-def _pkt001_governance_outcome(
-    plan: Dict[str, Any],
-    approval_decision: Optional[Dict[str, Any]],
-    review: Optional[Dict[str, Any]],
-) -> str:
-    raw_value = str(
-        (review or {}).get("governanceOutcome")
-        or (approval_decision or {}).get("outcome")
-        or plan.get("status")
-        or ""
-    ).strip().lower()
-    if raw_value in {"", "pending_review", "under_review", "in_review"}:
-        return "pending"
-    if raw_value in {"approve", "approved_with_conditions"}:
-        return "approved"
-    if raw_value in {"reject"}:
-        return "rejected"
-    return raw_value
-
-
-def _pkt001_plan_filter_status(
-    plan: Dict[str, Any],
-    approval_decision: Optional[Dict[str, Any]],
-    review: Optional[Dict[str, Any]],
-) -> str:
-    governance_outcome = _pkt001_governance_outcome(plan, approval_decision, review)
-    if governance_outcome == "approved":
-        return "approved"
-    if governance_outcome == "rejected":
-        return "rejected"
-    return "pending_review"
-
-
-def _pkt001_plan_list_item(
-    plan: Dict[str, Any],
-    approval_decision: Optional[Dict[str, Any]],
-    review: Optional[Dict[str, Any]],
-) -> Dict[str, Any]:
-    return {
-        "plan_id": plan.get("plan_id") or plan.get("id"),
-        "artifact_id": plan.get("artifact_id"),
-        "target_stage": plan.get("target_stage") or plan.get("stage"),
-        "risk_level": (approval_decision or {}).get("risk_level"),
-        "governance_outcome": _pkt001_governance_outcome(plan, approval_decision, review),
-        "submitted_at": (
-            plan.get("submitted_at")
-            or plan.get("created_at")
-            or (approval_decision or {}).get("decided_at")
-        ),
-    }
-
-
-def _pkt001_allowed_actions_present(allowed_actions: Optional[Dict[str, Any]]) -> bool:
-    if not isinstance(allowed_actions, dict):
-        return False
-    required_fields = ("canApprove", "canReject", "canPromoteToPaper")
-    return all(isinstance(allowed_actions.get(field), bool) for field in required_fields)
-
-
-def _pkt001_degradation_meta(surfaces: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
-    reason_templates = {
-        "deployment_plans": (
-            "Deployment plan list is degraded and may be stale.",
-            "Deployment plan list is currently unavailable.",
-        ),
-        "deployment_plan": (
-            "Deployment plan detail is degraded and may be stale.",
-            "Deployment plan detail is currently unavailable.",
-        ),
-        "approval_decision": (
-            "Approval decision detail is degraded and may be stale.",
-            "Approval decision detail is currently unavailable.",
-        ),
-        "capital_pool": (
-            "Capital pool detail is degraded and may be stale.",
-            "Capital pool detail is currently unavailable.",
-        ),
-        "bindings": (
-            "Binding detail is degraded and may be stale.",
-            "Binding detail is currently unavailable.",
-        ),
-        "runtime_binding": (
-            "Runtime binding detail is degraded and may be stale.",
-            "Runtime binding detail is currently unavailable.",
-        ),
-        "allowedActions": (
-            "Action authority is degraded. All CTAs disabled for safety.",
-            "Action authority service is unavailable. All CTAs disabled for safety.",
-        ),
-        "latestRun": (
-            "Latest run progress is degraded and may be stale.",
-            "Latest run progress is currently unavailable.",
-        ),
-        "review": (
-            "Review summary is degraded and may be stale.",
-            "Review summary is currently unavailable.",
-        ),
-    }
-    degradation: Dict[str, Any] = {}
-    for surface_name, surface in surfaces.items():
-        templates = reason_templates.get(surface_name)
-        if not templates:
-            continue
-        reason = _surface_degradation_reason(
-            surface,
-            degraded_reason=templates[0],
-            unavailable_reason=templates[1],
-        )
-        if reason is not None:
-            degradation[f"{surface_name}_reason"] = reason
-    if degradation and "allowedActions" in surfaces:
-        degradation["disable_ctas"] = surfaces["allowedActions"].get("status") != "ok"
-    return degradation
-
-
-@app.get("/api/v1/operator/deployment-plans")
-async def list_operator_deployment_plans(
-    status: Optional[str] = None,
-    page_token: Optional[str] = None,
-    page_size: int = Query(default=20, ge=1, le=200),
-    authorization: Optional[str] = Header(default=None),
-):
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-
-    requested_statuses = _pkt001_requested_plan_statuses(status)
-    snapshot_at = utc_now()
-    deployment_plans_surface = _dataset_surface_status(
-        "deployment_plans",
-        snapshot_at=snapshot_at,
-    )
-
-    matched_items: List[Dict[str, Any]] = []
-    allowed_actions_complete = True
-    for plan in read_store.list_deployment_plans():
-        plan_id = str(plan.get("plan_id") or plan.get("id") or "")
-        approval_decision = read_store.get_approval_decision(plan.get("approval_decision_id"))
-        review = read_store.get_review_summary(plan_id)
-        derived_status = _pkt001_plan_filter_status(plan, approval_decision, review)
-        if requested_statuses and derived_status not in requested_statuses:
-            continue
-        matched_items.append(_pkt001_plan_list_item(plan, approval_decision, review))
-        if not _pkt001_allowed_actions_present(read_store.get_allowed_actions(plan_id)):
-            allowed_actions_complete = False
-
-    matched_items.sort(
-        key=lambda item: (item.get("submitted_at") or "", item.get("plan_id") or ""),
-        reverse=True,
-    )
-
-    if deployment_plans_surface.get("status") == "unavailable":
-        items = []
-        next_page_token = None
-    else:
-        items, next_page_token = _page_slice(matched_items, page_token, page_size)
-
-    allowed_actions_surface = _dataset_surface_status(
-        "approval_decisions",
-        snapshot_at=snapshot_at,
-        has_data=allowed_actions_complete if matched_items else None,
-        missing_message="Deployment action authority unavailable for this deployment-plan snapshot.",
-    )
-
-    meta: Dict[str, Any] = {
-        "snapshot_at": snapshot_at,
-        "surfaces": {
-            "deployment_plans": deployment_plans_surface,
-            "allowedActions": allowed_actions_surface,
-        },
-    }
-    staleness = _meta_staleness()
-    if staleness is not None:
-        meta["staleness"] = staleness
-    degradation = _pkt001_degradation_meta(meta["surfaces"])
-    if degradation:
-        meta["degradation"] = degradation
-
-    return {
-        "items": items,
-        "page_info": {
-            "next_page_token": next_page_token,
-        },
-        "meta": meta,
-    }
-
-
-@app.get("/api/v1/operator/deployment-review/{plan_id}")
-async def get_deployment_review(plan_id: str, authorization: Optional[str] = Header(default=None)):
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-
-    plan = read_store.get_deployment_plan(plan_id)
-    if not plan:
-        raise _bff_error(
-            404,
-            ErrorCode.RESOURCE_NOT_FOUND,
-            "Deployment plan not found",
-            f"Deployment plan {plan_id} does not exist",
-        )
-
-    pool = read_store.get_capital_pool(plan.get("capital_pool_id"))
-    bindings = read_store.get_bindings_for_pool(plan.get("capital_pool_id"))
-    runtime_binding = read_store.get_runtime_binding(plan.get("runtime_binding_id"))
-    approval_decision = read_store.get_approval_decision(plan.get("approval_decision_id"))
-    rollbacks = read_store.get_rollbacks(
-        runtime_binding.get("runtime_id") if runtime_binding else None
-    )
-    allowed_actions = read_store.get_allowed_actions(plan_id)
-    latest_run = read_store.get_latest_run(plan_id)
-    review = read_store.get_review_summary(plan_id)
-
-    snapshot_at = utc_now()
-
-    deployment_plan_payload = {
-        "id": plan.get("id"),
-        "stage": plan.get("stage"),
-        "artifact_id": plan.get("artifact_id"),
-        "approval_decision_id": plan.get("approval_decision_id"),
-    }
-    for optional_key in ["current_stage", "target_stage", "status", "artifact_version", "transition_type"]:
-        if plan.get(optional_key) is not None:
-            deployment_plan_payload[optional_key] = plan.get(optional_key)
-    if approval_decision:
-        deployment_plan_payload["approval_decision"] = approval_decision
-
-    stage_truth = _deployment_stage_truth(plan)
-    data = {
-        "deployment_plan": deployment_plan_payload,
-        "approval_decision": approval_decision or {},
-        "capital_pool": pool or {},
-        "bindings": bindings,
-        "runtime_binding": runtime_binding or {},
-        "rollbacks": rollbacks,
-        "allowedActions": allowed_actions,
-        "latestRun": latest_run,
-        "review": review,
-        "stage_truth": stage_truth,
-    }
-
-    surfaces = {
-        "deployment_plan": _dataset_surface_status(
-            "deployment_plans",
-            snapshot_at=snapshot_at,
-            has_data=plan is not None,
-        ),
-        "approval_decision": _dataset_surface_status(
-            "approval_decisions",
-            snapshot_at=snapshot_at,
-            has_data=approval_decision is not None,
-            missing_message="Approval decision unavailable for this deployment plan.",
-        ),
-        "capital_pool": _dataset_surface_status(
-            "capital_pools",
-            snapshot_at=snapshot_at,
-            has_data=pool is not None,
-            missing_message="Capital pool detail unavailable for this deployment plan.",
-        ),
-        "bindings": _dataset_surface_status(
-            "persona_bindings",
-            snapshot_at=snapshot_at,
-            has_data=bindings is not None,
-        ),
-        "runtime_binding": _dataset_surface_status(
-            "runtime_bindings",
-            snapshot_at=snapshot_at,
-            has_data=runtime_binding is not None,
-            missing_message="Runtime binding unavailable for this deployment plan.",
-        ),
-        "rollbacks": _dataset_surface_status("rollbacks", snapshot_at=snapshot_at),
-        "allowedActions": _dataset_surface_status(
-            "approval_decisions",
-            snapshot_at=snapshot_at,
-            has_data=_pkt001_allowed_actions_present(allowed_actions),
-            missing_message="Deployment action authority unavailable for this deployment plan.",
-        ),
-        "latestRun": _dataset_surface_status(
-            "latest_runs",
-            snapshot_at=snapshot_at,
-            has_data=latest_run is not None,
-        ),
-        "review": _dataset_surface_status(
-            "review_summaries",
-            snapshot_at=snapshot_at,
-            has_data=review is not None,
-        ),
-    }
-
-    surfaces.update(_deployment_stage_truth_surfaces(stage_truth, snapshot_at=snapshot_at))
-
-    meta: Dict[str, Any] = {
-        "snapshot_at": snapshot_at,
-        "surfaces": surfaces,
-    }
-    staleness = _meta_staleness()
-    if staleness is not None:
-        meta["staleness"] = staleness
-    degradation = _pkt001_degradation_meta(surfaces)
-    if degradation:
-        meta["degradation"] = degradation
-
-    return {
-        "data": data,
-        "meta": meta,
     }
 
 
@@ -17559,17 +15895,6 @@ async def list_operator_runtime_state(
         },
         "meta": meta,
     }
-
-
-@app.get("/api/v1/operator/alerts")
-async def list_operator_alerts(
-    authorization: Optional[str] = Header(default=None),
-):
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-
-    snapshot_at = utc_now()
-    return _build_operator_alerts_payload(snapshot_at)
 
 
 _SHELL_SUMMARY_COUNT_CACHE: Dict[str, Any] = {}
@@ -21008,69 +19333,6 @@ def _approval_queue_allowed_actions_present(item: Dict[str, Any]) -> bool:
     return all(isinstance(allowed_actions.get(field), bool) for field in required_fields)
 
 
-_DEPLOYMENT_DIFF_CATEGORIES = (
-    "parameters",
-    "bindings",
-    "capital_allocation",
-    "risk_controls",
-    "stage_transition",
-)
-
-
-def _default_deployment_diff_summary() -> Dict[str, Any]:
-    return {
-        "total_changes": 0,
-        "by_category": {
-            category: {"count": 0, "highest_risk_tier": None}
-            for category in _DEPLOYMENT_DIFF_CATEGORIES
-        },
-    }
-
-
-def _deployment_diff_allowed_actions_present(payload: Dict[str, Any]) -> bool:
-    allowed_actions = payload.get("allowedActions")
-    if not isinstance(allowed_actions, dict):
-        return False
-    required_fields = ("canProceedToApproval", "canEscalateDiff")
-    return all(isinstance(allowed_actions.get(field), bool) for field in required_fields)
-
-
-def _unavailable_deployment_diff_payload(plan_id: str, snapshot_at: str) -> Dict[str, Any]:
-    deployment_diff_surface = _dataset_surface_status(
-        "deployment_diffs",
-        snapshot_at=snapshot_at,
-        has_data=False,
-        missing_message="Deployment diff unavailable for this plan.",
-    )
-    allowed_actions_surface = _composed_surface_status(
-        snapshot_at=snapshot_at,
-        available=False,
-        missing_message="Deployment diff authority unavailable.",
-    )
-    allowed_actions_surface["status"] = deployment_diff_surface.get("status")
-    meta = _snapshot_meta(snapshot_at)
-    meta["surfaces"] = {
-        "deployment_diff": deployment_diff_surface,
-        "allowedActions": allowed_actions_surface,
-    }
-    return {
-        "plan_id": plan_id,
-        "artifact_id": None,
-        "stage": None,
-        "submitted_at": None,
-        "submitted_by": None,
-        "previous_plan_id": None,
-        "first_deployment": False,
-        "changes": [],
-        "change_summary": _default_deployment_diff_summary(),
-        "allowedActions": {
-            "canProceedToApproval": False,
-            "canEscalateDiff": False,
-        },
-        "meta": meta,
-    }
-
-
 @app.get("/api/v1/operator/governance/review-queue")
 async def list_governance_review_queue(
     item_type: Optional[str] = None,
@@ -21205,69 +19467,6 @@ async def list_governance_approval_queue(
     }
 
 
-@app.get("/api/v1/operator/deployment-diff/{plan_id}")
-async def get_deployment_diff(plan_id: str, authorization: Optional[str] = Header(default=None)):
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-
-    diff = read_store.get_deployment_diff(plan_id)
-    diff_source = read_store.dataset_source("deployment_diffs")
-    if not diff:
-        if diff_source == "missing":
-            return _unavailable_deployment_diff_payload(plan_id, utc_now())
-        raise _bff_error(
-            404,
-            ErrorCode.RESOURCE_NOT_FOUND,
-            "Deployment diff not found",
-            f"Deployment diff for plan {plan_id} does not exist",
-        )
-
-    snapshot_at = (((diff.get("meta") or {}).get("snapshot_at"))) or utc_now()
-    payload = dict(diff)
-    payload["plan_id"] = payload.get("plan_id") or plan_id
-    payload["changes"] = list(payload.get("changes") or [])
-
-    summary = dict(payload.get("change_summary") or {})
-    summary["total_changes"] = int(summary.get("total_changes") or len(payload["changes"]))
-    by_category = dict(summary.get("by_category") or {})
-    for category in _DEPLOYMENT_DIFF_CATEGORIES:
-        category_summary = dict(by_category.get(category) or {})
-        category_summary.setdefault("count", 0)
-        category_summary.setdefault("highest_risk_tier", None)
-        by_category[category] = category_summary
-    summary["by_category"] = by_category
-    payload["change_summary"] = summary
-
-    allowed_actions = dict(payload.get("allowedActions") or {})
-    allowed_actions.setdefault("canProceedToApproval", False)
-    allowed_actions.setdefault("canEscalateDiff", False)
-    payload["allowedActions"] = allowed_actions
-
-    deployment_diff_surface = _dataset_surface_status(
-        "deployment_diffs",
-        snapshot_at=snapshot_at,
-        has_data=True,
-    )
-    allowed_actions_surface = _composed_surface_status(
-        snapshot_at=snapshot_at,
-        available=_deployment_diff_allowed_actions_present(payload),
-        missing_message="Deployment diff authority unavailable.",
-    )
-    if deployment_diff_surface.get("status") == "degraded":
-        allowed_actions_surface["status"] = "degraded"
-    elif deployment_diff_surface.get("status") == "unavailable":
-        allowed_actions_surface["status"] = "unavailable"
-
-    meta = dict(payload.get("meta") or {})
-    meta["snapshot_at"] = snapshot_at
-    meta["surfaces"] = {
-        "deployment_diff": deployment_diff_surface,
-        "allowedActions": allowed_actions_surface,
-    }
-    payload["meta"] = meta
-    return payload
-
-
 @app.get("/api/v1/operator/rollback-review/{rollback_id}")
 async def get_rollback_review(rollback_id: str, authorization: Optional[str] = Header(default=None)):
     identity = _extract_identity(authorization)
@@ -21371,99 +19570,6 @@ async def list_governance_audit_trail(
 # --------------------------------------------------------------------------- #
 
 
-@app.get("/api/v1/incidents")
-async def list_incidents(
-    status: Optional[str] = None,
-    page_token: Optional[str] = None,
-    page_size: int = Query(default=20, ge=1, le=200),
-    severity: Optional[str] = None,
-    affected_pool_id: Optional[str] = None,
-    authorization: Optional[str] = Header(default=None),
-):
-    """IN-01: Incident List with optional filters."""
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-
-    snapshot_at = utc_now()
-    surface = _dataset_surface_status("incidents", snapshot_at=snapshot_at)
-    incidents = read_store.list_incidents(
-        status=status, severity=severity, affected_pool_id=affected_pool_id,
-    )
-    items = [_project_incident_home_item(incident) for incident in incidents]
-    if surface.get("status") == "unavailable":
-        items = []
-        next_page_token = None
-    else:
-        items, next_page_token = _page_slice(items, page_token, page_size)
-
-    meta: Dict[str, Any] = {
-        "snapshot_at": snapshot_at,
-        "surfaces": {
-            "incident_list": surface,
-        },
-    }
-    staleness = _meta_staleness()
-    if staleness is not None:
-        meta["staleness"] = staleness
-
-    degradation_reason = _surface_degradation_reason(
-        surface,
-        degraded_reason="Incident list is degraded and may be stale.",
-        unavailable_reason="Incident list is currently unavailable.",
-    )
-    if degradation_reason is not None:
-        meta["degradation"] = {"reason": degradation_reason}
-
-    return {
-        "items": items,
-        "page_info": {
-            "next_page_token": next_page_token,
-        },
-        "meta": meta,
-    }
-
-
-# NOTE: This static SSE route MUST be registered before the parameterized
-# "/api/v1/incidents/{incident_id}" route below. FastAPI/Starlette match in
-# registration order, so a later "stream" route would otherwise be shadowed by
-# {incident_id} (incident_id="stream" -> 404 "Incident not found").
-@app.get("/api/v1/incidents/stream")
-async def stream_incident_events(
-    last_event_id: Optional[str] = Query(default=None, alias="last_event_id"),
-    authorization: Optional[str] = Header(default=None),
-):
-    """IN-SSE: Server-Sent Events stream for active incident events.
-
-    Supports reconnection via ``?last_event_id=`` to replay missed events.
-    BFF_API_CONTRACT.md §11.2
-    """
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-
-    return _handle_sse_stream("incident", _incident_events, _incident_subscribers, last_event_id)
-
-
-@app.get("/api/v1/incidents/{incident_id}")
-async def get_incident(incident_id: str, authorization: Optional[str] = Header(default=None)):
-    """IN-02: Incident Detail."""
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-
-    incident = read_store.get_incident(incident_id)
-    if not incident:
-        raise _bff_error(
-            404,
-            ErrorCode.RESOURCE_NOT_FOUND,
-            "Incident not found",
-            f"Incident {incident_id} does not exist",
-        )
-
-    return {
-        "data": incident,
-        "meta": {
-            "staleness": _meta_staleness(),
-        },
-    }
 
 
 @app.get("/api/v1/postmortems")
@@ -21514,187 +19620,6 @@ async def get_postmortem(report_id: str, authorization: Optional[str] = Header(d
         },
     }
 
-
-@app.get("/api/v1/kill-switch/status")
-async def get_kill_switch_status(authorization: Optional[str] = Header(default=None)):
-    """IN-05: Kill Switch Status — requires admin role."""
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-    if "admin" not in identity.roles:
-        raise _bff_error(
-            403,
-            ErrorCode.FORBIDDEN,
-            "Kill-switch status requires 'admin' role",
-            "Operator does not hold the admin role",
-            precondition_failed="role_check",
-            suggestion="Escalate to an admin-role operator",
-        )
-
-    snapshot_at = utc_now()
-    kill_switch_surface = _dataset_surface_status("kill_switch", snapshot_at=snapshot_at)
-    allowed_actions_surface = _action_drawer_allowed_actions_surface()
-    ks = read_store.get_kill_switch_status()
-    allowed_actions = _project_action_drawer_allowed_actions(
-        kill_switch_surface,
-        allowed_actions_surface,
-    )
-    meta: Dict[str, Any] = {
-        "snapshot_at": snapshot_at,
-        "surfaces": {
-            "kill_switch": kill_switch_surface,
-            "allowedActions": allowed_actions_surface,
-        },
-    }
-    staleness = _meta_staleness()
-    if staleness is not None:
-        meta["staleness"] = staleness
-
-    degradation: Dict[str, Any] = {}
-    kill_switch_reason = _surface_degradation_reason(
-        kill_switch_surface,
-        degraded_reason="Kill switch status is degraded and may be stale.",
-        unavailable_reason="Kill switch status is currently unavailable.",
-    )
-    if kill_switch_reason is not None:
-        degradation["kill_switch_reason"] = kill_switch_reason
-    allowed_actions_reason = _surface_degradation_reason(
-        allowed_actions_surface,
-        degraded_reason="Action authority is degraded. All CTAs disabled for safety.",
-        unavailable_reason="Action authority service is unavailable. All CTAs disabled for safety.",
-    )
-    if allowed_actions_reason is not None:
-        degradation["allowedActions_reason"] = allowed_actions_reason
-    if degradation:
-        meta["degradation"] = degradation
-
-    return {
-        "kill_switch": _project_kill_switch_contract(ks, kill_switch_surface),
-        "allowedActions": allowed_actions,
-        "meta": meta,
-    }
-
-
-# --------------------------------------------------------------------------- #
-# Composed Views — Incident Response
-# --------------------------------------------------------------------------- #
-
-
-@app.get("/api/v1/operator/incident-response/{incident_id}")
-async def get_incident_response(
-    incident_id: str,
-    snapshot: str = "preferred",
-    authorization: Optional[str] = Header(default=None),
-):
-    """
-    Composed view for PKT-002 Incident Detail.
-    Composes: incident record, affected bindings, kill-switch state, and action authority.
-    """
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-
-    # IN-02: Incident detail
-    incident = read_store.get_incident(incident_id)
-    if not incident:
-        raise _bff_error(
-            404,
-            ErrorCode.RESOURCE_NOT_FOUND,
-            "Incident not found",
-            f"Incident {incident_id} does not exist",
-        )
-
-    snapshot_at = utc_now()
-    runtime_binding = None
-    binding_id = incident.get("binding_id")
-    if binding_id:
-        runtime_binding = read_store.get_runtime_binding(binding_id)
-    if runtime_binding is None:
-        runtime_binding = read_store.get_runtime_binding_by_runtime_id(incident.get("runtime_id"))
-
-    affected_bindings, binding_lookup_expected = _project_affected_bindings(
-        incident,
-        runtime_binding,
-    )
-    ks = read_store.get_kill_switch_status()
-
-    incident_surface = _dataset_surface_status(
-        "incidents",
-        snapshot_at=snapshot_at,
-        has_data=incident is not None,
-    )
-    affected_bindings_surface = _dataset_surface_status(
-        "persona_bindings",
-        snapshot_at=snapshot_at,
-        has_data=(len(affected_bindings) > 0) if binding_lookup_expected else None,
-        missing_message="Affected bindings unavailable for this incident.",
-    )
-    kill_switch_surface = _dataset_surface_status("kill_switch", snapshot_at=snapshot_at)
-
-    action_derivation_available = bool(incident.get("runtime_id"))
-    allowed_actions_surface = _composed_surface_status(
-        snapshot_at=snapshot_at,
-        available=action_derivation_available,
-        missing_message="Action authority unavailable for this incident.",
-    )
-    if kill_switch_surface.get("status") == "unavailable":
-        allowed_actions_surface["status"] = "unavailable"
-        allowed_actions_surface.setdefault(
-            "staleness",
-            {"served_from": "unverifiable", "last_known_at": snapshot_at},
-        )
-    allowed_actions = (
-        _derive_incident_allowed_actions(identity, incident)
-        if allowed_actions_surface.get("status") == "ok"
-        else _default_incident_allowed_actions()
-    )
-
-    meta: Dict[str, Any] = {
-        "snapshot_at": snapshot_at,
-        "surfaces": {
-            "incident": incident_surface,
-            "affected_bindings": affected_bindings_surface,
-            "kill_switch": kill_switch_surface,
-            "allowedActions": allowed_actions_surface,
-        },
-    }
-    if snapshot == "preferred":
-        staleness = _meta_staleness()
-        if staleness is not None:
-            meta["staleness"] = staleness
-
-    degradation: Dict[str, str] = {}
-    affected_bindings_reason = _surface_degradation_reason(
-        affected_bindings_surface,
-        degraded_reason="Affected bindings are degraded and may be incomplete.",
-        unavailable_reason="Affected bindings are currently unavailable.",
-    )
-    if affected_bindings_reason is not None:
-        degradation["affected_bindings_reason"] = affected_bindings_reason
-    kill_switch_reason = _surface_degradation_reason(
-        kill_switch_surface,
-        degraded_reason="Kill switch status is degraded and may be stale.",
-        unavailable_reason="Kill switch status is currently unavailable.",
-    )
-    if kill_switch_reason is not None:
-        degradation["kill_switch_reason"] = kill_switch_reason
-    allowed_actions_reason = _surface_degradation_reason(
-        allowed_actions_surface,
-        degraded_reason="Action authority is degraded; all CTAs are disabled for safety.",
-        unavailable_reason="Action authority is currently unavailable; all CTAs are disabled.",
-    )
-    if allowed_actions_reason is not None:
-        degradation["allowedActions_reason"] = allowed_actions_reason
-    if degradation:
-        meta["degradation"] = degradation
-
-    return {
-        "data": {
-            "incident": _project_incident_detail_incident(incident),
-            "affected_bindings": affected_bindings,
-            "kill_switch": _project_kill_switch_contract(ks, kill_switch_surface),
-        },
-        "allowedActions": allowed_actions,
-        "meta": meta,
-    }
 
 
 # --------------------------------------------------------------------------- #
@@ -21897,89 +19822,6 @@ async def get_persona_management(
         },
     }
 
-
-# --------------------------------------------------------------------------- #
-# Post-Incident Review composed view
-# --------------------------------------------------------------------------- #
-
-
-@app.get("/api/v1/operator/post-incident-review/{incident_id}")
-async def get_post_incident_review(
-    incident_id: str,
-    snapshot: str = "preferred",
-    authorization: Optional[str] = Header(default=None),
-):
-    """
-    Composed view for post-incident analysis.
-    Composes: IN-04, EV-01, EV-02, LN-01, TL-03
-    """
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-
-    incident = read_store.get_incident(incident_id)
-    if not incident:
-        raise _bff_error(
-            404,
-            ErrorCode.RESOURCE_NOT_FOUND,
-            "Incident not found",
-            f"Incident {incident_id} does not exist",
-        )
-
-    snapshot_at = utc_now()
-    surfaces = {}
-
-    # IN-04: Postmortem report
-    postmortem = read_store.get_postmortem_by_incident(incident_id)
-    surfaces["postmortem"] = _dataset_surface_status(
-        "postmortems",
-        snapshot_at=snapshot_at,
-        has_data=postmortem is not None,
-        missing_message="No postmortem report available yet",
-    )
-
-    # EV-01/EV-02: Evolution decisions
-    evolution_decisions = read_store.get_evolution_decisions_by_incident(incident_id)
-    surfaces["evolution_decisions"] = _dataset_surface_status(
-        "evolution_decisions",
-        snapshot_at=snapshot_at,
-    )
-
-    # LN-01: Lineage edges — fetch by artifact_id from incident
-    artifact_id = incident.get("artifact_id")
-    lineage_edges = read_store.list_lineage_edges(artifact_id=artifact_id) if artifact_id else []
-    surfaces["lineage"] = _dataset_surface_status(
-        "lineage_edges",
-        snapshot_at=snapshot_at,
-        has_data=bool(lineage_edges),
-        missing_message="No lineage edges found for this artifact",
-    )
-
-    # TL-03: Telemetry performance — use artifact_id (not runtime_id or summary)
-    telemetry_performance = None
-    if artifact_id:
-        telemetry_performance = read_store.get_telemetry_performance(artifact_id)
-    surfaces["telemetry_performance"] = _dataset_surface_status(
-        "telemetry_performance",
-        snapshot_at=snapshot_at,
-        has_data=telemetry_performance is not None,
-        missing_message="Telemetry performance unavailable for this artifact.",
-    )
-
-    data = {
-        "incident": incident,
-        "postmortem": postmortem,
-        "evolution_decisions": evolution_decisions,
-        "lineage_edges": lineage_edges,
-        "telemetry_performance": telemetry_performance,
-    }
-
-    return {
-        "data": data,
-        "meta": {
-            "snapshot_at": snapshot_at,
-            "surfaces": surfaces,
-        },
-    }
 
 
 # --------------------------------------------------------------------------- #
@@ -22661,7 +20503,6 @@ def get_consult_policy(
 # Command submission (write path — async execution)
 # --------------------------------------------------------------------------- #
 
-@app.post("/api/v1/operator/commands", response_model=CommandSubmissionResponse, status_code=202)
 async def submit_command(
     background_tasks: BackgroundTasks,
     payload: Dict[str, Any] = Body(...),
@@ -23014,6 +20855,14 @@ def _submit_final_command_admission(
                 _process_command_stub, str(duplicate["command_id"])
             )
             duplicate_status = CommandStatus.SUBMITTED
+        if route == "POST /api/v1/operator/commands":
+            return _project_command_submission_response(
+                command_id=duplicate["command_id"],
+                command=cmd.command,
+                accepted_at=duplicate.get("submitted_at") or utc_now(),
+                status=duplicate_status,
+                staleness_warning=None,
+            )
         return _project_final_command_response(
             command_id=duplicate["command_id"],
             command=cmd.command,
@@ -23027,13 +20876,29 @@ def _submit_final_command_admission(
         )
 
     try:
-        precondition_evidence = _require_final_command_preconditions(
-            cmd=cmd,
-            payload=payload,
-            confirm_token=x_confirm_token,
-            identity=identity,
-            correlation_id=foundation_context["trace_context"].correlation_id,
-        )
+        if route == "POST /api/v1/operator/commands":
+            precondition_evidence = (
+                _require_final_command_preconditions(
+                    cmd=cmd,
+                    payload=payload,
+                    confirm_token=x_confirm_token,
+                    identity=identity,
+                    correlation_id=foundation_context["trace_context"].correlation_id,
+                )
+                if cmd.command in {
+                    CommandType.APPROVED_APPLY,
+                    CommandType.EMERGENCY_CONTAINMENT,
+                }
+                else {}
+            )
+        else:
+            precondition_evidence = _require_final_command_preconditions(
+                cmd=cmd,
+                payload=payload,
+                confirm_token=x_confirm_token,
+                identity=identity,
+                correlation_id=foundation_context["trace_context"].correlation_id,
+            )
     except HTTPException as exc:
         raise _foundation_bff_error(exc, foundation_context=foundation_context) from exc
 
@@ -23059,6 +20924,14 @@ def _submit_final_command_admission(
     staleness_warning = _check_read_surface_state()
     if _request_dry_run_requested():
         command_envelope: CommandEnvelope = foundation_context["command_envelope"]
+        if route == "POST /api/v1/operator/commands":
+            return _project_command_submission_response(
+                command_id=command_envelope.command_id,
+                command=cmd.command,
+                accepted_at=utc_now(),
+                status=CommandStatus.SUBMITTED,
+                staleness_warning=staleness_warning,
+            )
         return _project_final_command_response(
             command_id=command_envelope.command_id,
             command=cmd.command,
@@ -23136,6 +21009,17 @@ def _submit_final_command_admission(
                 confirm_token=x_confirm_token,
                 foundation_context=foundation_context,
             )
+            if route == "POST /api/v1/operator/commands":
+                return _project_command_submission_response(
+                    command_id=duplicate_after_precheck["command_id"],
+                    command=cmd.command,
+                    accepted_at=duplicate_after_precheck.get("submitted_at") or utc_now(),
+                    status=CommandStatus(
+                        duplicate_after_precheck.get("status")
+                        or CommandStatus.SUBMITTED.value
+                    ),
+                    staleness_warning=None,
+                )
             return _project_final_command_response(
                 command_id=duplicate_after_precheck["command_id"],
                 command=cmd.command,
@@ -23151,18 +21035,19 @@ def _submit_final_command_admission(
                 deprecation=response_deprecation,
             )
 
-        try:
-            revalidated_token_id = _require_final_command_confirm_token(
-                cmd=cmd,
-                payload=payload,
-                confirm_token=x_confirm_token,
-                identity=identity,
-                correlation_id=foundation_context["trace_context"].correlation_id,
-            )
-        except HTTPException as exc:
-            raise _foundation_bff_error(exc, foundation_context=foundation_context) from exc
-        if revalidated_token_id:
-            precondition_evidence["confirm_token_id"] = revalidated_token_id
+        if precondition_evidence.get("confirm_token_id"):
+            try:
+                revalidated_token_id = _require_final_command_confirm_token(
+                    cmd=cmd,
+                    payload=payload,
+                    confirm_token=x_confirm_token,
+                    identity=identity,
+                    correlation_id=foundation_context["trace_context"].correlation_id,
+                )
+            except HTTPException as exc:
+                raise _foundation_bff_error(exc, foundation_context=foundation_context) from exc
+            if revalidated_token_id:
+                precondition_evidence["confirm_token_id"] = revalidated_token_id
 
         record, active_after_precheck = _persist_admitted_command_with_confirm_token(
             command_id=command_id,
@@ -23194,6 +21079,14 @@ def _submit_final_command_admission(
     if enqueue:
         background_tasks.add_task(_process_command_stub, command_id)
 
+    if route == "POST /api/v1/operator/commands":
+        return _project_command_submission_response(
+            command_id=command_id,
+            command=cmd.command,
+            accepted_at=submitted_at,
+            status=CommandStatus.SUBMITTED,
+            staleness_warning=staleness_warning,
+        )
     return _project_final_command_response(
         command_id=command_id,
         command=cmd.command,
@@ -23207,7 +21100,6 @@ def _submit_final_command_admission(
     )
 
 
-@app.post("/bff/v1/commands", status_code=202)
 async def submit_final_command(
     background_tasks: BackgroundTasks,
     payload: Dict[str, Any] = Body(...),
@@ -24842,7 +22734,6 @@ async def bff_agora_persona_lab_submit_commit(
     return result
 
 
-@app.get("/bff/actions", response_model=BffActionCatalogResponse)
 async def get_action_catalog_endpoint(
     authorization: Optional[str] = Header(default=None),
 ):
@@ -26004,191 +23895,6 @@ async def bff_capital_pool_action(
         command_type=command_type,
     )
 
-
-# -- Ranking formulas BFF ----------------------------------------------------
-
-@app.get("/bff/ranking/formulas")
-async def bff_deprecated_list_ranking_formulas(
-    status: Optional[str] = None,
-    page_token: Optional[str] = None,
-    page_size: int = Query(default=20, ge=1, le=200),
-    authorization: Optional[str] = Header(default=None),
-):
-    """BFF: ranking formula list."""
-    return _deprecated_bff_path_response(
-        route="/bff/ranking/formulas",
-        replacement="/bff/ranking-formulas",
-    )
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-    snapshot_at = utc_now()
-    items = read_store.list_ranking_formulas(status=status)
-    total = len(items)
-    page_items, next_page_token = _page_slice(items, page_token, page_size)
-    return {
-        "data": page_items,
-        "page_info": {"next_page_token": next_page_token, "total": total},
-        "meta": _read_surface_meta(
-            "ranking_formulas", "ranking_formula_list",
-            snapshot_at=snapshot_at, total=total,
-        ),
-    }
-
-
-@app.post("/bff/ranking/formulas", status_code=201)
-async def bff_deprecated_create_ranking_formula(
-    payload: Dict[str, Any] = Body(default_factory=dict),
-    authorization: Optional[str] = Header(default=None),
-    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
-):
-    """BFF: create ranking formula — Idempotency-Key required."""
-    return _deprecated_bff_path_response(
-        route="/bff/ranking/formulas",
-        replacement="/bff/ranking-formulas",
-    )
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-    _reject_body_idempotency_key(payload)
-    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
-    request_hash = _stable_json_hash({"route": "POST /bff/ranking/formulas", "payload": payload})
-    cached = _capital_bff_idempotency_check(
-        identity.operator_id, resolved_key, request_hash
-    )
-    if cached is not None:
-        return cached
-    name = str(payload.get("name") or "").strip()
-    if not name:
-        raise _bff_error(
-            422, ErrorCode.VALIDATION_FAILED, "name is required",
-            "Ranking formula name must be a non-empty string",
-            precondition_failed="name",
-        )
-    description = str(payload.get("description") or "").strip()
-    result = read_store.create_ranking_formula(
-        name=name,
-        description=description,
-        actor_id=identity.operator_id,
-        params=payload.get("params"),
-    )
-    _capital_bff_idempotency_store(
-        identity.operator_id, resolved_key, request_hash, result
-    )
-    return result
-
-
-@app.get("/bff/ranking/formulas/{formula_id}")
-async def bff_deprecated_get_ranking_formula(
-    formula_id: str,
-    authorization: Optional[str] = Header(default=None),
-):
-    """BFF: ranking formula detail."""
-    return _deprecated_bff_path_response(
-        route="/bff/ranking/formulas/{formula_id}",
-        replacement="/bff/ranking-formulas/{formula_id}",
-    )
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-    snapshot_at = utc_now()
-    formula = read_store.get_ranking_formula(formula_id)
-    if not formula:
-        raise _bff_error(
-            404, ErrorCode.RESOURCE_NOT_FOUND,
-            "Ranking formula not found",
-            f"Ranking formula {formula_id} does not exist",
-        )
-    return {
-        "data": formula,
-        "meta": _read_surface_meta(
-            "ranking_formulas", "ranking_formula_detail",
-            snapshot_at=snapshot_at,
-        ),
-    }
-
-
-@app.patch("/bff/ranking/formulas/{formula_id}")
-async def bff_deprecated_patch_ranking_formula(
-    formula_id: str,
-    payload: Dict[str, Any] = Body(default_factory=dict),
-    authorization: Optional[str] = Header(default=None),
-    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
-):
-    """BFF: patch ranking formula — Idempotency-Key required."""
-    return _deprecated_bff_path_response(
-        route="/bff/ranking/formulas/{formula_id}",
-        replacement="/bff/ranking-formulas/{formula_id}",
-    )
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-    _reject_body_idempotency_key(payload)
-    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
-    request_hash = _stable_json_hash(
-        {"route": "PATCH /bff/ranking/formulas/{formula_id}", "formula_id": formula_id, "payload": payload}
-    )
-    cached = _capital_bff_idempotency_check(
-        identity.operator_id, resolved_key, request_hash
-    )
-    if cached is not None:
-        return cached
-    formula = read_store.get_ranking_formula(formula_id)
-    if not formula:
-        raise _bff_error(
-            404, ErrorCode.RESOURCE_NOT_FOUND,
-            "Ranking formula not found",
-            f"Ranking formula {formula_id} does not exist",
-        )
-    updated = read_store.patch_ranking_formula(
-        formula_id, patch=payload, actor_id=identity.operator_id,
-    )
-    if not updated:
-        raise _bff_error(
-            503, ErrorCode.DEPENDENCY_UNAVAILABLE,
-            "Ranking formula store unavailable",
-            "Unable to patch ranking formula at this time",
-        )
-    snapshot_at = utc_now()
-    result = {"data": updated, "meta": {"snapshot_at": snapshot_at}}
-    _capital_bff_idempotency_store(
-        identity.operator_id, resolved_key, request_hash, result
-    )
-    return result
-
-
-@app.post("/bff/ranking/formulas/{formula_id}/actions/{action_id}", status_code=202)
-async def bff_deprecated_ranking_formula_action(
-    formula_id: str,
-    action_id: str,
-    payload: Dict[str, Any] = Body(default_factory=dict),
-    authorization: Optional[str] = Header(default=None),
-    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
-):
-    """BFF: ranking formula action — routes through command/precondition machinery."""
-    return _deprecated_bff_path_response(
-        route="/bff/ranking/formulas/{formula_id}/actions/{action_id}",
-        replacement="/bff/actions/rankingFormula/{formula_id}/{action_id}",
-    )
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-    _reject_body_idempotency_key(payload)
-    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
-    formula = read_store.get_ranking_formula(formula_id)
-    if not formula:
-        raise _bff_error(
-            404, ErrorCode.RESOURCE_NOT_FOUND,
-            "Ranking formula not found",
-            f"Ranking formula {formula_id} does not exist",
-        )
-    return _capital_bff_action_command(
-        entity_type=ObjectType.RANKING_FORMULA,
-        entity_id=formula_id,
-        action_id=action_id,
-        resolved_key=resolved_key,
-        identity=identity,
-        payload=payload,
-        command_type=CommandType.RANKING_FORMULA_ACTION,
-    )
 
 
 # -- Rebalances BFF ----------------------------------------------------------
@@ -28607,88 +26313,6 @@ async def bff_rebalance_action(
     )
 
 
-# -- Rankings BFF (full-spec long tail) ---------------------------------------
-
-@app.get("/bff/rankings")
-async def bff_list_rankings(
-    status: Optional[str] = None,
-    page_token: Optional[str] = None,
-    page_size: int = Query(default=20, ge=1, le=200),
-    authorization: Optional[str] = Header(default=None),
-):
-    """BFF: ranking list (full-spec long tail)."""
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-    snapshot_at = utc_now()
-    items = read_store.list_rankings(status=status)
-    total = len(items)
-    page_items, next_page_token = _page_slice(items, page_token, page_size)
-    return {
-        "data": page_items,
-        "page_info": {"next_page_token": next_page_token, "total": total},
-        "meta": _read_surface_meta(
-            "rankings", "ranking_list",
-            snapshot_at=snapshot_at, total=total,
-        ),
-    }
-
-
-@app.get("/bff/rankings/{ranking_id}")
-async def bff_get_ranking(
-    ranking_id: str,
-    authorization: Optional[str] = Header(default=None),
-):
-    """BFF: ranking detail (full-spec long tail)."""
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-    snapshot_at = utc_now()
-    ranking = read_store.get_ranking(ranking_id)
-    if not ranking:
-        raise _bff_error(
-            404, ErrorCode.RESOURCE_NOT_FOUND,
-            "Ranking not found",
-            f"Ranking {ranking_id} does not exist",
-        )
-    return {
-        "data": ranking,
-        "meta": _read_surface_meta(
-            "rankings", "ranking_detail",
-            snapshot_at=snapshot_at,
-        ),
-    }
-
-
-@app.post("/bff/rankings/{ranking_id}/actions/{action_id}", status_code=202)
-async def bff_ranking_action(
-    ranking_id: str,
-    action_id: str,
-    payload: Dict[str, Any] = Body(default_factory=dict),
-    authorization: Optional[str] = Header(default=None),
-    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
-):
-    """BFF: ranking action (full-spec long tail) — routes through command/precondition machinery."""
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-    _reject_body_idempotency_key(payload)
-    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
-    ranking = read_store.get_ranking(ranking_id)
-    if not ranking:
-        raise _bff_error(
-            404, ErrorCode.RESOURCE_NOT_FOUND,
-            "Ranking not found",
-            f"Ranking {ranking_id} does not exist",
-        )
-    return _capital_bff_action_command(
-        entity_type=ObjectType.RANKING,
-        entity_id=ranking_id,
-        action_id=action_id,
-        resolved_key=resolved_key,
-        identity=identity,
-        payload=payload,
-        command_type=CommandType.RANKING_ACTION,
-    )
-
 
 # -- Strategy and Persona BFF (BFF-LUV-GAP-002) -----------------------------
 #
@@ -28753,9 +26377,9 @@ _STRATEGY_BFF_RISK_MAP = {
 }
 
 _STRATEGY_PERSONA_BFF_IDEMPOTENCY: Dict[str, Dict[str, Any]] = {}
+_STRATEGY_BFF_OVERLAY: Dict[str, Dict[str, Any]] = {}
 _STRATEGY_SEED_REPLICATION_BFF_IDEMPOTENCY: Dict[str, Dict[str, Any]] = {}
 _STRATEGY_SEED_REVIEW_BFF_IDEMPOTENCY: Dict[str, Dict[str, Any]] = {}
-_STRATEGY_BFF_OVERLAY: Dict[str, Dict[str, Any]] = {}
 _PERSONA_BFF_OVERLAY: Dict[str, Dict[str, Any]] = {}
 _PERSONA_PROVISIONING_STORE = None
 _PERSONA_PROVISIONING_STORE_LOCK = threading.Lock()
@@ -28849,857 +26473,6 @@ def _strategy_persona_idempotency_check(
             suggestion="Use a new Idempotency-Key or resubmit the original payload unchanged",
         )
     return deepcopy(existing.get("result"))
-
-
-def _strategy_seed_replication_idempotency_check(
-    resolved_key: str,
-    request_hash: str,
-) -> Optional[Dict[str, Any]]:
-    existing = _STRATEGY_SEED_REPLICATION_BFF_IDEMPOTENCY.get(resolved_key)
-    if existing is None:
-        return None
-    if existing.get("request_hash") != request_hash:
-        raise _bff_error(
-            409,
-            ErrorCode.IDEMPOTENCY_CONFLICT,
-            "Idempotency key was already used with a different payload",
-            f"Key {resolved_key!r} is bound to a different request hash",
-            precondition_failed="idempotency_conflict",
-            suggestion="Use a new Idempotency-Key or resubmit the original payload unchanged",
-        )
-    result = json.loads(json.dumps(existing.get("result") or {}))
-    meta = result.setdefault("meta", {})
-    idempotency = meta.setdefault("idempotency", {})
-    idempotency["replayed"] = True
-    return result
-
-
-def _require_strategy_seed_submit_role(identity: OperatorIdentity) -> None:
-    if {"operator", "admin"}.intersection(identity.roles):
-        return
-    raise _bff_error(
-        403,
-        ErrorCode.FORBIDDEN,
-        "Strategy seed replication submit requires operator role",
-        "Read-role users cannot submit StrategySpecSeed replication tasks.",
-        precondition_failed="role_check",
-        suggestion="Escalate to a user with operator or admin role",
-    )
-
-
-def _strategy_seed_replication_error(exc: StrategySeedReplicationBridgeError) -> HTTPException:
-    if exc.code == "seed_not_found":
-        return _bff_error(
-            404,
-            ErrorCode.RESOURCE_NOT_FOUND,
-            "StrategySpecSeed not found",
-            str(exc),
-            precondition_failed="seed_id",
-        )
-    if exc.code == "invalid_seed_status":
-        return _bff_error(
-            409,
-            ErrorCode.OPERATION_NOT_ALLOWED,
-            "StrategySpecSeed is not eligible for replication",
-            str(exc),
-            precondition_failed="status",
-            suggestion="Promote the seed to StrategySpec before submitting replication.",
-        )
-    return _bff_error(
-        422,
-        ErrorCode.VALIDATION_FAILED,
-        "StrategySpecSeed replication request is invalid",
-        str(exc),
-        precondition_failed=exc.code or "replication_request",
-    )
-
-
-def _strategy_seed_replication_response(
-    *,
-    seed_id: str,
-    payload: Dict[str, Any],
-    identity: OperatorIdentity,
-    resolved_key: str,
-) -> Dict[str, Any]:
-    request_hash = _stable_json_hash(
-        {
-            "route": "POST /bff/management/strategy-seeds/{seed_id}/submit-replication",
-            "seed_id": seed_id,
-            "payload": payload,
-        }
-    )
-    cached = _strategy_seed_replication_idempotency_check(resolved_key, request_hash)
-    if cached is not None:
-        return cached
-
-    try:
-        submission = StrategySeedReplicationBridge().submit_seed_to_replication(
-            seed_id,
-            requested_by=identity.operator_id,
-            idempotency_key=resolved_key,
-            created_at=payload.get("created_at") or None,
-            strategy_spec_version=str(payload.get("strategy_spec_version") or "1.0.0"),
-        )
-    except StrategySeedReplicationBridgeError as exc:
-        raise _strategy_seed_replication_error(exc) from exc
-
-    snapshot_at = submission.created_at or utc_now()
-    result = {
-        "data": {
-            "seed_id": submission.seed_id,
-            "replication_ref": submission.replication_ref,
-            "experiment_task_id": submission.experiment_task_id,
-            "strategy_id": submission.strategy_id,
-            "strategy_spec_version": submission.strategy_spec_version,
-            "research_task_id": submission.research_task.get("task_id"),
-            "status": submission.research_task.get("status") or "queued",
-            "experiment_task": dict(submission.experiment_task),
-            "registry_write_performed": False,
-            "execution_route": "none",
-            "deployment_authority": "none",
-            "approved_artifact_created": False,
-            "deployment_plan_created": False,
-            "runtime_binding_created": False,
-            "idempotent_replay": submission.idempotent_replay,
-        },
-        "meta": {
-            "snapshot_at": snapshot_at,
-            "research_only": True,
-            "execution_route": "none",
-            "idempotency": {
-                "idempotencyKey": resolved_key,
-                "replayed": False,
-            },
-        },
-    }
-    _STRATEGY_SEED_REPLICATION_BFF_IDEMPOTENCY[resolved_key] = {
-        "request_hash": request_hash,
-        "result": result,
-    }
-    return result
-
-
-def _strategy_seed_review_idempotency_check(
-    resolved_key: str,
-    request_hash: str,
-) -> Optional[Dict[str, Any]]:
-    existing = _STRATEGY_SEED_REVIEW_BFF_IDEMPOTENCY.get(resolved_key)
-    if existing is None:
-        return None
-    if existing.get("request_hash") != request_hash:
-        raise _bff_error(
-            409,
-            ErrorCode.IDEMPOTENCY_CONFLICT,
-            "Idempotency key was already used with a different payload",
-            f"Key {resolved_key!r} is bound to a different request hash",
-            precondition_failed="idempotency_conflict",
-            suggestion="Use a new Idempotency-Key or resubmit the original payload unchanged",
-        )
-    result = json.loads(json.dumps(existing.get("result") or {}))
-    meta = result.setdefault("meta", {})
-    idempotency = meta.setdefault("idempotency", {})
-    idempotency["replayed"] = True
-    return result
-
-
-def _require_strategy_seed_review_role(identity: OperatorIdentity) -> None:
-    if {"operator", "admin"}.intersection(identity.roles):
-        return
-    raise _bff_error(
-        403,
-        ErrorCode.FORBIDDEN,
-        "Strategy seed review command requires operator role",
-        "Read-role users cannot execute StrategySpecSeed review actions.",
-        precondition_failed="role_check",
-        suggestion="Escalate to a user with operator or admin role",
-    )
-
-
-def _strategy_seed_review_error(exc: Exception) -> HTTPException:
-    code = getattr(exc, "code", "")
-    if code == "idempotency_conflict":
-        return _bff_error(
-            409,
-            ErrorCode.IDEMPOTENCY_CONFLICT,
-            "Idempotency key was already used with a different payload",
-            str(exc),
-            precondition_failed="idempotency_conflict",
-            suggestion="Use a new Idempotency-Key or resubmit the original payload unchanged",
-        )
-    if code in {"seed_not_found", "merge_target_not_found"}:
-        return _bff_error(
-            404,
-            ErrorCode.RESOURCE_NOT_FOUND,
-            "StrategySpecSeed not found",
-            str(exc),
-            precondition_failed="seed_id",
-        )
-    if code in {"terminal_seed_status", "invalid_status_transition", "invalid_merge_target"}:
-        return _bff_error(
-            409,
-            ErrorCode.OPERATION_NOT_ALLOWED,
-            "StrategySpecSeed review action is not allowed",
-            str(exc),
-            precondition_failed="status",
-        )
-    return _bff_error(
-        422,
-        ErrorCode.VALIDATION_FAILED,
-        "StrategySpecSeed review request is invalid",
-        str(exc),
-        precondition_failed=code or "review_request",
-    )
-
-
-def _strategy_seed_status_value(seed: Any) -> str:
-    status = getattr(seed, "status", "")
-    return status.value if hasattr(status, "value") else str(status or "")
-
-
-def _strategy_seed_source_kind(seed: Any) -> str:
-    metadata = dict(getattr(seed, "metadata", {}) or {})
-    return str(
-        metadata.get("source_kind")
-        or metadata.get("source_type")
-        or metadata.get("source_connector_kind")
-        or "strategy_spec_seed"
-    )
-
-
-def _strategy_seed_strategy_family(seed: Any) -> str:
-    metadata = dict(getattr(seed, "metadata", {}) or {})
-    family = (
-        metadata.get("strategy_family")
-        or metadata.get("strategy_kind")
-        or metadata.get("archetype")
-    )
-    if family:
-        return str(family)
-    hints = list(getattr(seed, "feature_hints", []) or [])
-    return str(hints[0]) if hints else ""
-
-
-_SEED_KINDS_RISK = frozenset({"risk_constraint", "execution_constraint"})
-_SEED_KINDS_NEGATIVE = frozenset({"negative", "negative_memory"})
-
-
-def _strategy_seed_allowed_actions(status: str, seed_kind: str = "") -> List[str]:
-    actions_by_status = {
-        "draft": ["accept", "reject", "request-evidence", "archive", "merge"],
-        "needs_more_evidence": ["accept", "reject", "request-evidence", "archive", "merge"],
-        "accepted": ["convert-to-spec-seed", "reject", "request-evidence", "archive", "merge"],
-        "promoted_to_strategy_spec": ["submit-replication"],
-        "rejected": [],
-        "archived_as_insight": [],
-        "merged": [],
-        "converted_to_risk_constraint": [],
-        "converted_to_negative": [],
-    }
-    actions = list(actions_by_status.get(status, []))
-    if status in {"draft", "needs_more_evidence", "accepted"}:
-        if seed_kind in _SEED_KINDS_RISK and "convert-to-risk" not in actions:
-            actions.append("convert-to-risk")
-        if seed_kind in _SEED_KINDS_NEGATIVE and "convert-to-negative" not in actions:
-            actions.append("convert-to-negative")
-    return actions
-
-
-def _strategy_seed_metadata_suggestions(seed: Any) -> List[Dict[str, Any]]:
-    metadata = dict(getattr(seed, "metadata", {}) or {})
-    raw_items = metadata.get("suggested_actions") or metadata.get("suggestions") or []
-    if isinstance(raw_items, dict):
-        raw_items = [raw_items]
-    if isinstance(raw_items, str):
-        raw_items = [{"type": raw_items}]
-    suggestions: List[Dict[str, Any]] = []
-    iterable = raw_items if isinstance(raw_items, list) else []
-    for raw in iterable:
-        if not isinstance(raw, dict):
-            continue
-        action_type = str(raw.get("type") or raw.get("action") or "").strip()
-        if not action_type:
-            continue
-        item = dict(raw)
-        item["type"] = action_type
-        item.setdefault("source", "seed_metadata")
-        item.setdefault("mode", "suggestion")
-        item.setdefault("requires_operator_review", True)
-        item.setdefault("auto_promote", False)
-        suggestions.append(item)
-
-    recommended = metadata.get("recommended_action")
-    if isinstance(recommended, str):
-        recommended = {"type": recommended}
-    if isinstance(recommended, dict):
-        action_type = str(recommended.get("type") or recommended.get("action") or "").strip()
-        if action_type:
-            item = dict(recommended)
-            item["type"] = action_type
-            item.setdefault("source", "seed_metadata")
-            item.setdefault("mode", "suggestion")
-            item.setdefault("requires_operator_review", True)
-            item.setdefault("auto_promote", False)
-            suggestions.append(item)
-    return suggestions
-
-
-def _strategy_seed_persona_suggestions(
-    seed: Any,
-    *,
-    snapshot_at: str,
-    tenant_id: Optional[str] = None,
-) -> List[Dict[str, Any]]:
-    suggestions: List[Dict[str, Any]] = []
-    try:
-        personas = _list_persona_records(tenant_id)
-    except Exception as exc:  # pragma: no cover - defensive read surface fallback.
-        log.warning("Persona read surface unavailable for seed inbox suggestions: %s", exc)
-        return suggestions
-
-    for persona in personas:
-        persona_id = str(persona.get("persona_id") or persona.get("id") or "").strip()
-        if not persona_id:
-            continue
-        try:
-            route_policy = read_store.get_route_policy_for_persona(persona_id) or {}
-            capability_snapshot = read_store.get_capability_snapshot_for_persona(persona_id) or {}
-            profile = extract_persona_strategy_profile(
-                persona,
-                route_policy=route_policy,
-                capability_snapshot=capability_snapshot,
-            )
-            matches = PersonaStrategyDiscoveryService().match_candidates(
-                profile,
-                strategy_seeds=[seed],
-                strategy_specs=[],
-                created_at=snapshot_at,
-                include_blocked=True,
-            )
-        except Exception as exc:  # pragma: no cover - one bad persona should not break inbox.
-            log.warning("Persona strategy suggestion failed for %s: %s", persona_id, exc)
-            continue
-        for match in matches:
-            payload = match.to_dict()
-            action = payload.get("recommended_action") or {}
-            action_type = str(action.get("type") or "").strip()
-            if (
-                payload.get("matched_object_id") == getattr(seed, "seed_id", None)
-                and action_type == "promote_seed_candidate"
-            ):
-                suggestions.append(
-                    {
-                        "type": "promote_seed_candidate",
-                        "source": "persona_strategy_discovery",
-                        "mode": "suggestion",
-                        "requires_operator_review": True,
-                        "auto_promote": False,
-                        "persona_id": persona_id,
-                        "match_id": payload.get("match_id"),
-                        "score": payload.get("score"),
-                        "blockers": (payload.get("metadata") or {}).get("blockers") or [],
-                    }
-                )
-    return suggestions
-
-
-def _strategy_seed_suggestions(
-    seed: Any,
-    *,
-    snapshot_at: str,
-    tenant_id: Optional[str] = None,
-) -> List[Dict[str, Any]]:
-    seen: Set[Tuple[str, str, str]] = set()
-    suggestions: List[Dict[str, Any]] = []
-    for item in [
-        *_strategy_seed_metadata_suggestions(seed),
-        *_strategy_seed_persona_suggestions(
-            seed,
-            snapshot_at=snapshot_at,
-            tenant_id=tenant_id,
-        ),
-    ]:
-        key = (
-            str(item.get("type") or ""),
-            str(item.get("source") or ""),
-            str(item.get("match_id") or item.get("persona_id") or ""),
-        )
-        if key in seen:
-            continue
-        seen.add(key)
-        suggestions.append(item)
-    return suggestions
-
-
-def _strategy_seed_similar_existing_strategies(seed: Any) -> List[Dict[str, Any]]:
-    metadata = dict(getattr(seed, "metadata", {}) or {})
-    raw = metadata.get("similar_existing_strategies") or []
-    if isinstance(raw, str):
-        raw = [{"strategy_id": raw}]
-    if isinstance(raw, list) and raw:
-        return [
-            dict(item) if isinstance(item, dict) else {"strategy_id": str(item)}
-            for item in raw[:5]
-        ]
-
-    family = _strategy_seed_strategy_family(seed)
-    if not family:
-        return []
-    try:
-        candidates = _list_strategy_summaries()
-    except Exception:  # pragma: no cover - read-store fallback.
-        return []
-    similar: List[Dict[str, Any]] = []
-    for item in candidates:
-        strategy_family = str(
-            item.get("strategy_family")
-            or (item.get("metadata") or {}).get("strategy_family")
-            or item.get("archetype")
-            or ""
-        )
-        if strategy_family != family:
-            continue
-        similar.append(
-            {
-                "strategy_id": item.get("strategy_id") or item.get("id"),
-                "title": item.get("title") or item.get("name"),
-                "strategy_family": strategy_family,
-            }
-        )
-        if len(similar) >= 5:
-            break
-    return similar
-
-
-def _strategy_seed_recommended_action(
-    *,
-    status: str,
-    seed_kind: str = "",
-    suggestions: List[Dict[str, Any]],
-) -> Dict[str, Any]:
-    for item in suggestions:
-        if str(item.get("type") or "") == "promote_seed_candidate":
-            return dict(item)
-    if status == "accepted":
-        if seed_kind in _SEED_KINDS_RISK:
-            return {"type": "convert-to-risk", "mode": "operator_decision"}
-        if seed_kind in _SEED_KINDS_NEGATIVE:
-            return {"type": "convert-to-negative", "mode": "operator_decision"}
-        return {"type": "convert-to-spec-seed", "mode": "operator_decision"}
-    if status in {"draft", "needs_more_evidence"}:
-        if seed_kind in _SEED_KINDS_RISK:
-            return {"type": "accept", "mode": "operator_decision", "next": "convert-to-risk"}
-        if seed_kind in _SEED_KINDS_NEGATIVE:
-            return {"type": "accept", "mode": "operator_decision", "next": "convert-to-negative"}
-        return {"type": "accept", "mode": "operator_decision"}
-    if status == "promoted_to_strategy_spec":
-        return {"type": "submit-replication", "mode": "operator_decision"}
-    return {"type": "none", "mode": "terminal"}
-
-
-def _strategy_seed_negative_memory_warning(seed: Any) -> Dict[str, Any]:
-    raw = getattr(seed, "negative_memory_match", None)
-    if not raw:
-        return {"warning_level": "info", "similarity": 0.0, "reason": ""}
-    match = dict(raw) if isinstance(raw, dict) else (raw.to_dict() if hasattr(raw, "to_dict") else {})
-    return {
-        "warning_level": str(match.get("warning_level") or "info"),
-        "similarity": float(match.get("similarity") or 0.0),
-        "reason": str(match.get("reason") or ""),
-        "matched_memory_id": match.get("matched_memory_id"),
-        "matched_memory_kind": match.get("matched_memory_kind"),
-        "matched_terms": list(match.get("matched_terms") or []),
-    }
-
-
-def _strategy_seed_card(
-    seed: Any,
-    *,
-    snapshot_at: str,
-    include_audit: bool = False,
-    tenant_id: Optional[str] = None,
-) -> Dict[str, Any]:
-    status = _strategy_seed_status_value(seed)
-    suggestions = _strategy_seed_suggestions(
-        seed,
-        snapshot_at=snapshot_at,
-        tenant_id=tenant_id,
-    )
-    lineage = dict(getattr(seed, "lineage", {}) or {})
-    metadata = dict(getattr(seed, "metadata", {}) or {})
-    evidence_refs = list(getattr(seed, "evidence_item_ids", []) or [])
-    citation_refs = list(getattr(seed, "citation_refs", []) or [])
-    seed_kind = str(metadata.get("seed_kind") or "strategy_spec_seed")
-    source_surface = str(metadata.get("source_surface") or "")
-    card = {
-        "id": seed.seed_id,
-        "seed_id": seed.seed_id,
-        "source": {
-            "source_id": seed.source_id,
-            "source_ids": list(getattr(seed, "source_ids", []) or []),
-            "source_kind": _strategy_seed_source_kind(seed),
-            "source_surface": source_surface or None,
-            "evidence_bundle_id": seed.evidence_bundle_id,
-        },
-        "seed_kind": seed_kind,
-        "strategy_family": _strategy_seed_strategy_family(seed),
-        "hypothesis": seed.hypothesis,
-        "market": {
-            "asset_class": list(getattr(seed, "asset_class", []) or []),
-            "market_scope": list(getattr(seed, "market_scope", []) or []),
-            "holding_period": getattr(seed, "holding_period", None),
-        },
-        "asset": list(getattr(seed, "asset_class", []) or []),
-        "required_data": list(getattr(seed, "required_data", []) or []),
-        "evidence_count": len(set([*evidence_refs, *citation_refs])),
-        "confidence": getattr(seed, "confidence", None),
-        "negative_memory_warning": _strategy_seed_negative_memory_warning(seed),
-        "similar_existing_strategies": _strategy_seed_similar_existing_strategies(seed),
-        "recommended_action": _strategy_seed_recommended_action(
-            status=status,
-            seed_kind=seed_kind,
-            suggestions=suggestions,
-        ),
-        "suggested_actions": suggestions,
-        "review_status": status,
-        "status": status,
-        "allowedActions": _strategy_seed_allowed_actions(status, seed_kind),
-        "lineage_refs": {
-            "evidence_bundle_id": seed.evidence_bundle_id,
-            "source_ids": list(getattr(seed, "source_ids", []) or []),
-            "evidence_item_ids": evidence_refs,
-            "citation_refs": citation_refs,
-            "trace_refs": list(getattr(seed, "trace_refs", []) or []),
-            "registry_write_performed": lineage.get("registry_write_performed", False),
-            "execution_route": lineage.get("execution_route") or "none",
-        },
-        "created_at": getattr(seed, "created_at", None),
-    }
-    if include_audit:
-        card["review_decisions"] = list(lineage.get("review_decisions") or [])
-        card["last_review_decision"] = lineage.get("last_review_decision")
-    return card
-
-
-def _strategy_seed_matches_filters(
-    seed: Any,
-    *,
-    status: Optional[str],
-    source_kind: Optional[str],
-    strategy_family: Optional[str],
-    seed_kind: Optional[str],
-    min_confidence: Optional[float],
-) -> bool:
-    if status and _strategy_seed_status_value(seed) != status:
-        return False
-    if source_kind and _strategy_seed_source_kind(seed) != source_kind:
-        return False
-    if strategy_family and _strategy_seed_strategy_family(seed) != strategy_family:
-        return False
-    if seed_kind:
-        metadata = dict(getattr(seed, "metadata", {}) or {})
-        actual_seed_kind = str(metadata.get("seed_kind") or "strategy_spec_seed")
-        if actual_seed_kind != seed_kind:
-            return False
-    if min_confidence is not None and float(getattr(seed, "confidence", 0.0) or 0.0) < min_confidence:
-        return False
-    return True
-
-
-def _strategy_seed_list_response(
-    *,
-    status: Optional[str],
-    source_kind: Optional[str],
-    strategy_family: Optional[str],
-    seed_kind: Optional[str],
-    min_confidence: Optional[float],
-    page_token: Optional[str],
-    page_size: int,
-    tenant_id: Optional[str] = None,
-) -> Dict[str, Any]:
-    snapshot_at = utc_now()
-    store = StrategySpecSeedStore()
-    seeds = [
-        seed
-        for seed in store.list_all()
-        if _strategy_seed_matches_filters(
-            seed,
-            status=status,
-            source_kind=source_kind,
-            strategy_family=strategy_family,
-            seed_kind=seed_kind,
-            min_confidence=min_confidence,
-        )
-    ]
-    cards = [
-        _strategy_seed_card(seed, snapshot_at=snapshot_at, tenant_id=tenant_id)
-        for seed in seeds
-    ]
-    page_items, next_page_token = _page_slice(cards, page_token, page_size)
-    return {
-        "data": {
-            "id": "management_strategy_seeds",
-            "items": page_items,
-            "summary": {
-                "total_items": len(cards),
-                "returned_items": len(page_items),
-                "research_only": True,
-                "execution_route": "none",
-            },
-        },
-        "page_info": {
-            "next_page_token": next_page_token,
-            "total": len(cards),
-            "page_size": page_size,
-        },
-        "meta": {
-            "snapshot_at": snapshot_at,
-            "store_path": str(store.path),
-            "count": len(cards),
-            "filters": {
-                "status": status,
-                "source_kind": source_kind,
-                "strategy_family": strategy_family,
-                "seed_kind": seed_kind,
-                "min_confidence": min_confidence,
-            },
-            "research_only": True,
-            "execution_route": "none",
-        },
-    }
-
-
-def _strategy_seed_detail_response(
-    seed_id: str,
-    *,
-    tenant_id: Optional[str] = None,
-) -> Dict[str, Any]:
-    snapshot_at = utc_now()
-    store = StrategySpecSeedStore()
-    seed = store.get(seed_id)
-    if seed is None:
-        raise _bff_error(
-            404,
-            ErrorCode.RESOURCE_NOT_FOUND,
-            "StrategySpecSeed not found",
-            f"StrategySpecSeed not found: {seed_id}",
-            precondition_failed="seed_id",
-        )
-    return {
-        "data": _strategy_seed_card(
-            seed,
-            snapshot_at=snapshot_at,
-            include_audit=True,
-            tenant_id=tenant_id,
-        ),
-        "meta": {
-            "snapshot_at": snapshot_at,
-            "store_path": str(store.path),
-            "research_only": True,
-            "execution_route": "none",
-        },
-    }
-
-
-def _strategy_seed_review_action(payload: Dict[str, Any]) -> str:
-    action = str(
-        payload.get("action")
-        or payload.get("decision")
-        or payload.get("type")
-        or ""
-    ).strip().lower().replace("-", "_")
-    aliases = {
-        "request_more_evidence": "request_evidence",
-        "needs_more_evidence": "request_evidence",
-        "convert": "convert_to_spec_seed",
-        "convert_to_strategy_spec": "convert_to_spec_seed",
-        "archive_as_insight": "archive",
-        "archived_as_insight": "archive",
-        "convert_risk": "convert_to_risk",
-        "convert_negative": "convert_to_negative",
-        "convert_to_risk_constraint": "convert_to_risk",
-    }
-    action = aliases.get(action, action)
-    if not action:
-        raise _bff_error(
-            422,
-            ErrorCode.VALIDATION_FAILED,
-            "StrategySpecSeed review action is required",
-            "Set action to accept, reject, request-evidence, convert-to-spec-seed, convert-to-risk, convert-to-negative, or archive.",
-            precondition_failed="action",
-        )
-    if action == "merge":
-        raise _bff_error(
-            422,
-            ErrorCode.VALIDATION_FAILED,
-            "Use the merge endpoint for StrategySpecSeed merge actions",
-            "POST /bff/management/strategy-seeds/{seed_id}/merge handles merge review decisions.",
-            precondition_failed="action",
-        )
-    return action
-
-
-def _strategy_seed_target_refs(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
-    raw = payload.get("target_refs") or payload.get("targetRefs") or []
-    refs: List[Dict[str, Any]] = []
-    if isinstance(raw, dict):
-        raw = [raw]
-    if isinstance(raw, list):
-        refs.extend(dict(item) for item in raw if isinstance(item, dict))
-    for key, ref_type in (
-        ("strategy_spec_id", "strategy_spec"),
-        ("strategySpecId", "strategy_spec"),
-        ("target_strategy_id", "strategy_spec"),
-        ("targetStrategyId", "strategy_spec"),
-    ):
-        value = str(payload.get(key) or "").strip()
-        if value:
-            refs.append({"type": ref_type, "id": value})
-    return refs
-
-
-def _strategy_seed_review_result(
-    *,
-    updated_seed: Any,
-    decision: SeedReviewDecision,
-    snapshot_at: str,
-    resolved_key: str,
-    replayed: bool = False,
-    tenant_id: Optional[str] = None,
-) -> Dict[str, Any]:
-    return {
-        "data": {
-            "seed_id": updated_seed.seed_id,
-            "status": _strategy_seed_status_value(updated_seed),
-            "review_status": _strategy_seed_status_value(updated_seed),
-            "decision": decision.to_dict(),
-            "seed": _strategy_seed_card(
-                updated_seed,
-                snapshot_at=snapshot_at,
-                include_audit=True,
-                tenant_id=tenant_id,
-            ),
-            "registry_write_performed": False,
-            "execution_route": "none",
-        },
-        "meta": {
-            "snapshot_at": snapshot_at,
-            "research_only": True,
-            "execution_route": "none",
-            "idempotency": {
-                "idempotencyKey": resolved_key,
-                "replayed": replayed,
-            },
-        },
-    }
-
-
-def _strategy_seed_review_response(
-    *,
-    seed_id: str,
-    payload: Dict[str, Any],
-    identity: OperatorIdentity,
-    resolved_key: str,
-) -> Dict[str, Any]:
-    action = _strategy_seed_review_action(payload)
-    request_hash = _stable_json_hash(
-        {
-            "route": "POST /bff/management/strategy-seeds/{seed_id}/review",
-            "seed_id": seed_id,
-            "action": action,
-            "payload": payload,
-        }
-    )
-    cached = _strategy_seed_review_idempotency_check(resolved_key, request_hash)
-    if cached is not None:
-        return cached
-    snapshot_at = utc_now()
-    try:
-        updated, decision = StrategySpecSeedStore().record_review_decision(
-            seed_id,
-            decision=action,
-            reviewer_id=identity.operator_id,
-            reason=str(payload.get("reason") or ""),
-            target_refs=_strategy_seed_target_refs(payload),
-            created_at=payload.get("created_at") or snapshot_at,
-            idempotency_key=resolved_key,
-            request_hash=request_hash,
-        )
-    except (StrategySpecSeedReviewError, StrategySpecSeedStoreError) as exc:
-        raise _strategy_seed_review_error(exc) from exc
-    result = _strategy_seed_review_result(
-        updated_seed=updated,
-        decision=decision,
-        snapshot_at=snapshot_at,
-        resolved_key=resolved_key,
-        replayed=bool(getattr(decision, "idempotent_replay", False)),
-        tenant_id=str(_bff_me_tenant_payload(identity, requested_tenant=None)["id"]),
-    )
-    _STRATEGY_SEED_REVIEW_BFF_IDEMPOTENCY[resolved_key] = {
-        "request_hash": request_hash,
-        "result": result,
-    }
-    return result
-
-
-def _strategy_seed_merge_response(
-    *,
-    seed_id: str,
-    payload: Dict[str, Any],
-    identity: OperatorIdentity,
-    resolved_key: str,
-) -> Dict[str, Any]:
-    target_seed_id = str(
-        payload.get("target_seed_id")
-        or payload.get("targetSeedId")
-        or payload.get("target_id")
-        or payload.get("targetId")
-        or ""
-    ).strip()
-    if not target_seed_id:
-        raise _bff_error(
-            422,
-            ErrorCode.VALIDATION_FAILED,
-            "StrategySpecSeed merge target is required",
-            "Set target_seed_id to the StrategySpecSeed that will absorb this candidate.",
-            precondition_failed="target_seed_id",
-        )
-    request_hash = _stable_json_hash(
-        {
-            "route": "POST /bff/management/strategy-seeds/{seed_id}/merge",
-            "seed_id": seed_id,
-            "payload": payload,
-        }
-    )
-    cached = _strategy_seed_review_idempotency_check(resolved_key, request_hash)
-    if cached is not None:
-        return cached
-    snapshot_at = utc_now()
-    try:
-        updated, decision = StrategySpecSeedStore().merge_seed(
-            seed_id,
-            target_seed_id=target_seed_id,
-            reviewer_id=identity.operator_id,
-            reason=str(payload.get("reason") or ""),
-            target_refs=_strategy_seed_target_refs(payload),
-            created_at=payload.get("created_at") or snapshot_at,
-            idempotency_key=resolved_key,
-            request_hash=request_hash,
-        )
-    except (StrategySpecSeedReviewError, StrategySpecSeedStoreError) as exc:
-        raise _strategy_seed_review_error(exc) from exc
-    result = _strategy_seed_review_result(
-        updated_seed=updated,
-        decision=decision,
-        snapshot_at=snapshot_at,
-        resolved_key=resolved_key,
-        replayed=bool(getattr(decision, "idempotent_replay", False)),
-        tenant_id=str(_bff_me_tenant_payload(identity, requested_tenant=None)["id"]),
-    )
-    _STRATEGY_SEED_REVIEW_BFF_IDEMPOTENCY[resolved_key] = {
-        "request_hash": request_hash,
-        "result": result,
-    }
-    return result
 
 
 def _strategy_persona_action_command(
@@ -29810,68 +26583,6 @@ def _normalize_lifecycle_state(value: Any) -> str:
 def _normalize_risk_level(value: Any) -> str:
     text = str(value or "").strip().lower()
     return _STRATEGY_BFF_RISK_MAP.get(text, "medium")
-
-
-def _project_strategy_dto(
-    summary: Dict[str, Any],
-    *,
-    detail: Optional[Dict[str, Any]] = None,
-    overlay: Optional[Dict[str, Any]] = None,
-) -> Dict[str, Any]:
-    """Project canonical strategy_spec data into execute-plans Strategy DTO."""
-    strategy_id = str(summary.get("strategy_id") or summary.get("id") or "")
-    title = summary.get("title") or summary.get("name") or strategy_id
-    lifecycle_raw = (detail or summary).get("lifecycle_state") or summary.get("lifecycle_state")
-    governance = (detail or {}).get("governance") if detail else {}
-    governance = governance if isinstance(governance, dict) else {}
-    market_scope = (detail or {}).get("market_scope") if detail else {}
-    market_scope = market_scope if isinstance(market_scope, dict) else {}
-    execution_profile = (detail or {}).get("execution_profile") if detail else {}
-    execution_profile = execution_profile if isinstance(execution_profile, dict) else {}
-    persona_ids: List[str] = []
-    if detail and isinstance(detail.get("persona_ids"), list):
-        persona_ids = [str(p) for p in detail.get("persona_ids") or [] if str(p).strip()]
-    capital_pool_id = str(
-        execution_profile.get("capital_pool_id")
-        or governance.get("capital_pool_id")
-        or summary.get("capital_pool_id")
-        or ""
-    )
-    alpha = str(
-        market_scope.get("alpha")
-        or summary.get("source_kind")
-        or summary.get("hypothesis_excerpt")
-        or ""
-    )
-    allowed = (detail or {}).get("allowedActions") or {}
-    available_actions: List[str] = []
-    if isinstance(allowed, dict):
-        available_actions = sorted([k for k, v in allowed.items() if v])
-    dto: Dict[str, Any] = {
-        "id": strategy_id,
-        "name": title,
-        "owner": summary.get("owner") or governance.get("owner") or "pantheon-bff",
-        "updatedAt": summary.get("last_modified_at")
-        or summary.get("updated_at")
-        or (detail or {}).get("created_at")
-        or utc_now(),
-        "state": _normalize_lifecycle_state(lifecycle_raw),
-        "risk": _normalize_risk_level(governance.get("risk_level")),
-        "alpha": alpha,
-        "capitalPoolId": capital_pool_id,
-        "personaIds": persona_ids,
-        "pnl30d": 0.0,
-        "sharpe": 0.0,
-        "drawdown": 0.0,
-        "availableActions": available_actions,
-        "labelKey": f"strategy.{strategy_id}" if strategy_id else None,
-        "lifecycleStatus": str(lifecycle_raw or ""),
-    }
-    if overlay:
-        for k, v in overlay.items():
-            if v is not None:
-                dto[k] = v
-    return dto
 
 
 def _deployment_url(path: str) -> str:
@@ -30055,6 +26766,20 @@ def _append_persona_reconcile_diagnostic(
         diagnostics.append(dependency)
 
 
+def _persist_persona_provisioning_terminal_transition(
+    persona_id: str,
+    *,
+    lifecycle_state: str,
+    metadata: Mapping[str, Any],
+) -> Dict[str, Any]:
+    """Persist a terminal provisioning projection outside the read surface."""
+    return persona_reconciliation_mutation_port.persist_terminal_transition(
+        persona_id,
+        lifecycle_state=lifecycle_state,
+        metadata=metadata,
+    )
+
+
 def _materialize_terminal_persona_provisioning_ledger(
     persona_id: str,
     raw: Dict[str, Any],
@@ -30175,7 +26900,7 @@ def _materialize_terminal_persona_provisioning_ledger(
         _append_persona_reconcile_diagnostic(diagnostics, "provisioning_ledger")
         return "provisioning"
 
-    read_store.update_persona(
+    _persist_persona_provisioning_terminal_transition(
         persona_id,
         lifecycle_state=new_state,
         metadata=metadata_updates,
@@ -30269,7 +26994,7 @@ def _evaluate_persona_provisioning_status(
             if metadata.get(key) != value
         }
         if changed_updates:
-            read_store.update_persona(
+            _persist_persona_provisioning_terminal_transition(
                 persona_id,
                 lifecycle_state="provisioning_failed",
                 metadata=changed_updates,
@@ -30792,7 +27517,7 @@ def _evaluate_persona_provisioning_status(
                     )
 
     if new_state != current_state or metadata_updates:
-        read_store.update_persona(
+        _persist_persona_provisioning_terminal_transition(
             persona_id,
             lifecycle_state=new_state,
             metadata=metadata_updates,
@@ -32895,63 +29620,6 @@ def _management_portfolio_holding_metadata(
 
 
 _PM12_ATTRIBUTION_DIMENSIONS = ("persona", "strategy", "pool", "asset", "broker", "runtime", "regime")
-_PM12_ATTRIBUTION_DIMENSION_ALIASES = {
-    "persona": "persona",
-    "personas": "persona",
-    "strategy": "strategy",
-    "strategies": "strategy",
-    "pool": "pool",
-    "pools": "pool",
-    "capital_pool": "pool",
-    "capital_pools": "pool",
-    "capitalpool": "pool",
-    "capitalpools": "pool",
-    "asset": "asset",
-    "assets": "asset",
-    "instrument": "asset",
-    "instruments": "asset",
-    "symbol": "asset",
-    "symbols": "asset",
-    "broker": "broker",
-    "brokers": "broker",
-    "runtime": "runtime",
-    "runtimes": "runtime",
-    "regime": "regime",
-    "regimes": "regime",
-    "market_regime": "regime",
-}
-
-
-def _pm12_normalize_attribution_dimensions(dimension: Optional[str]) -> List[str]:
-    raw = str(dimension or "").strip()
-    if not raw or raw.lower() in {"all", "*"}:
-        return list(_PM12_ATTRIBUTION_DIMENSIONS)
-
-    dimensions: List[str] = []
-    invalid: List[str] = []
-    for item in raw.split(","):
-        key = item.strip().replace("-", "_").lower()
-        if not key:
-            continue
-        normalized = _PM12_ATTRIBUTION_DIMENSION_ALIASES.get(key)
-        if normalized is None:
-            invalid.append(item.strip())
-            continue
-        if normalized not in dimensions:
-            dimensions.append(normalized)
-
-    if invalid or not dimensions:
-        raise HTTPException(
-            status_code=422,
-            detail={
-                "error": "invalid_dimension",
-                "message": "dimension must be one of persona, strategy, pool, asset, broker, runtime, regime.",
-                "field": "dimension",
-                "invalid": invalid,
-                "supported": list(_PM12_ATTRIBUTION_DIMENSIONS),
-            },
-        )
-    return dimensions
 
 
 def _pm12_metric_or_split(
@@ -46041,379 +42709,6 @@ async def bff_management_readiness_strict_publish(
     return _build_management_strict_publish_readiness_payload()
 
 
-# ---------------- /bff/strategies routes ----------------
-
-@app.get("/bff/strategies")
-async def bff_list_strategies(
-    state: Optional[str] = None,
-    persona_id: Optional[str] = None,
-    page_token: Optional[str] = None,
-    page_size: int = Query(default=20, ge=1, le=200),
-    authorization: Optional[str] = Header(default=None),
-):
-    """BFF: strategy list (execute-plans Strategy DTO compatibility)."""
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-    snapshot_at = utc_now()
-    summaries = _list_strategy_summaries()
-    if persona_id:
-        summaries = [
-            s for s in summaries
-            if persona_id in (s.get("persona_ids") or [])
-            or s.get("strategy_id") in _STRATEGY_BFF_OVERLAY
-        ]
-    items = []
-    for summary in summaries:
-        strategy_id = str(summary.get("strategy_id") or "")
-        detail = read_store.get_strategy_spec_detail(strategy_id, version_selector="current")
-        overlay = _STRATEGY_BFF_OVERLAY.get(strategy_id)
-        items.append(_project_strategy_dto(summary, detail=detail, overlay=overlay))
-    if state:
-        items = [s for s in items if s.get("state") == state]
-    total = len(items)
-    page_items, next_page_token = _page_slice(items, page_token, page_size)
-    return {
-        "data": page_items,
-        "items": page_items,
-        "page_info": {"next_page_token": next_page_token, "total": total},
-        "meta": _read_surface_meta(
-            "strategy_specs", "strategy_list",
-            snapshot_at=snapshot_at, total=total,
-        ),
-    }
-
-
-@app.post("/bff/strategies", status_code=201)
-async def bff_create_strategy(
-    payload: Dict[str, Any] = Body(...),
-    authorization: Optional[str] = Header(default=None),
-    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
-):
-    """BFF: create strategy stub (execute-plans compatibility)."""
-    identity = _extract_identity(authorization)
-    _require_operator_role(identity)
-    _reject_body_idempotency_key(payload)
-    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
-    request_hash = _stable_json_hash({"route": "POST /bff/strategies", "payload": payload})
-    dry_run = _request_dry_run_requested()
-    if not dry_run:
-        cached = _strategy_persona_idempotency_check(resolved_key, request_hash)
-        if cached is not None:
-            return cached
-    name = str(payload.get("name") or "").strip()
-    if not name:
-        raise _bff_error(
-            422, ErrorCode.VALIDATION_FAILED, "name is required",
-            "Strategy name must be a non-empty string",
-            precondition_failed="name",
-        )
-    snapshot_at = utc_now()
-    strategy_id = f"strategy-{snapshot_at[:10].replace('-', '')}-{uuid.uuid4().hex[:8]}"
-    overlay = {
-        "id": strategy_id,
-        "name": name,
-        "owner": str(payload.get("owner") or identity.operator_id),
-        "updatedAt": snapshot_at,
-        "state": _normalize_lifecycle_state(payload.get("state") or "draft"),
-        "risk": _normalize_risk_level(payload.get("risk")),
-        "alpha": str(payload.get("alpha") or ""),
-        "capitalPoolId": str(payload.get("capitalPoolId") or payload.get("capital_pool_id") or ""),
-        "personaIds": list(payload.get("personaIds") or payload.get("persona_ids") or []),
-        "pnl30d": float(payload.get("pnl30d") or 0.0),
-        "sharpe": float(payload.get("sharpe") or 0.0),
-        "drawdown": float(payload.get("drawdown") or 0.0),
-        "availableActions": ["edit", "submit", "retire"],
-        "labelKey": f"strategy.{strategy_id}",
-    }
-    if dry_run:
-        return _dry_run_success_response(
-            overlay,
-            snapshot_at=snapshot_at,
-            idempotency_key=resolved_key,
-            evidence_kind="strategy.create",
-        )
-    _STRATEGY_BFF_OVERLAY[strategy_id] = overlay
-    result = {
-        "data": overlay,
-        "meta": {"snapshot_at": snapshot_at},
-    }
-    _STRATEGY_PERSONA_BFF_IDEMPOTENCY[resolved_key] = {"request_hash": request_hash, "result": result}
-    return result
-
-
-@app.get("/bff/strategies/{strategy_id}")
-async def bff_get_strategy(
-    strategy_id: str,
-    authorization: Optional[str] = Header(default=None),
-):
-    """BFF: strategy detail."""
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-    snapshot_at = utc_now()
-    overlay = _STRATEGY_BFF_OVERLAY.get(strategy_id)
-    summary = read_store.get_strategy_spec(strategy_id)
-    if not summary and not overlay:
-        raise _bff_error(
-            404, ErrorCode.RESOURCE_NOT_FOUND,
-            "Strategy not found",
-            f"Strategy {strategy_id} does not exist",
-        )
-    summary_for_dto = summary or {"strategy_id": strategy_id, "title": (overlay or {}).get("name")}
-    detail = read_store.get_strategy_spec_detail(strategy_id, version_selector="current")
-    dto = _project_strategy_dto(summary_for_dto, detail=detail, overlay=overlay)
-    return {
-        "data": dto,
-        "meta": _read_surface_meta(
-            "strategy_specs", "strategy_detail",
-            snapshot_at=snapshot_at,
-        ),
-    }
-
-
-@app.patch("/bff/strategies/{strategy_id}")
-async def bff_patch_strategy(
-    strategy_id: str,
-    payload: Dict[str, Any] = Body(...),
-    authorization: Optional[str] = Header(default=None),
-    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
-):
-    """BFF: patch strategy overlay fields."""
-    identity = _extract_identity(authorization)
-    _require_operator_role(identity)
-    _reject_body_idempotency_key(payload)
-    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
-    request_hash = _stable_json_hash(
-        {"route": "PATCH /bff/strategies/{strategy_id}", "id": strategy_id, "payload": payload}
-    )
-    cached = _strategy_persona_idempotency_check(resolved_key, request_hash)
-    if cached is not None:
-        return cached
-    summary = read_store.get_strategy_spec(strategy_id)
-    overlay = _STRATEGY_BFF_OVERLAY.get(strategy_id)
-    if not summary and not overlay:
-        raise _bff_error(
-            404, ErrorCode.RESOURCE_NOT_FOUND,
-            "Strategy not found",
-            f"Strategy {strategy_id} does not exist",
-        )
-    snapshot_at = utc_now()
-    base = dict(overlay) if overlay else {}
-    if not base:
-        detail = read_store.get_strategy_spec_detail(strategy_id, version_selector="current")
-        base = _project_strategy_dto(summary or {"strategy_id": strategy_id}, detail=detail)
-    for field in (
-        "name", "owner", "state", "risk", "alpha",
-        "capitalPoolId", "personaIds", "pnl30d", "sharpe", "drawdown",
-        "availableActions",
-    ):
-        if field in payload:
-            base[field] = payload[field]
-    if "state" in payload:
-        base["state"] = _normalize_lifecycle_state(payload["state"])
-    if "risk" in payload:
-        base["risk"] = _normalize_risk_level(payload["risk"])
-    base["updatedAt"] = snapshot_at
-    base["id"] = strategy_id
-    _STRATEGY_BFF_OVERLAY[strategy_id] = base
-    result = {"data": base, "meta": {"snapshot_at": snapshot_at}}
-    _STRATEGY_PERSONA_BFF_IDEMPOTENCY[resolved_key] = {"request_hash": request_hash, "result": result}
-    return result
-
-
-def _ensure_strategy_exists(strategy_id: str) -> None:
-    if read_store.get_strategy_spec(strategy_id) or strategy_id in _STRATEGY_BFF_OVERLAY:
-        return
-    raise _bff_error(
-        404, ErrorCode.RESOURCE_NOT_FOUND,
-        "Strategy not found",
-        f"Strategy {strategy_id} does not exist",
-    )
-
-
-@app.get("/bff/strategies/{strategy_id}/specs")
-async def bff_list_strategy_specs(
-    strategy_id: str,
-    authorization: Optional[str] = Header(default=None),
-):
-    """BFF: spec versions for a strategy."""
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-    _ensure_strategy_exists(strategy_id)
-    snapshot_at = utc_now()
-    versions = read_store.list_strategy_spec_versions(strategy_id) or []
-    return {
-        "data": versions,
-        "items": versions,
-        "page_info": {"next_page_token": None, "total": len(versions)},
-        "meta": _read_surface_meta(
-            "strategy_specs", "strategy_spec_versions",
-            snapshot_at=snapshot_at, total=len(versions),
-        ),
-    }
-
-
-@app.post("/bff/strategies/{strategy_id}/specs", status_code=201)
-async def bff_create_strategy_spec(
-    strategy_id: str,
-    payload: Dict[str, Any] = Body(...),
-    authorization: Optional[str] = Header(default=None),
-    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
-):
-    """BFF: create new spec version stub for a strategy."""
-    identity = _extract_identity(authorization)
-    _require_operator_role(identity)
-    _reject_body_idempotency_key(payload)
-    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
-    _ensure_strategy_exists(strategy_id)
-    request_hash = _stable_json_hash(
-        {"route": "POST /bff/strategies/{id}/specs", "id": strategy_id, "payload": payload}
-    )
-    dry_run = _request_dry_run_requested()
-    if not dry_run:
-        cached = _strategy_persona_idempotency_check(resolved_key, request_hash)
-        if cached is not None:
-            return cached
-    snapshot_at = utc_now()
-    spec_version_id = f"spec-{strategy_id}-{uuid.uuid4().hex[:8]}"
-    result = {
-        "data": {
-            "strategy_id": strategy_id,
-            "spec_version_id": spec_version_id,
-            "spec_version": str(payload.get("version") or "draft"),
-            "lifecycle_state": "draft",
-            "created_at": snapshot_at,
-            "created_by": identity.operator_id,
-            "params": payload.get("params") or {},
-        },
-        "meta": {"snapshot_at": snapshot_at},
-    }
-    if dry_run:
-        return _dry_run_success_response(
-            result["data"],
-            snapshot_at=snapshot_at,
-            idempotency_key=resolved_key,
-            evidence_kind="strategy_spec.create",
-        )
-    _STRATEGY_PERSONA_BFF_IDEMPOTENCY[resolved_key] = {"request_hash": request_hash, "result": result}
-    return result
-
-
-@app.get("/bff/strategies/{strategy_id}/experiments")
-async def bff_list_strategy_experiments(
-    strategy_id: str,
-    authorization: Optional[str] = Header(default=None),
-):
-    """BFF: experiments related to a strategy."""
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-    _ensure_strategy_exists(strategy_id)
-    snapshot_at = utc_now()
-    raw = read_store.list_research_experiments() or []
-    items = [e for e in raw if (e.get("linked_strategy_id") or e.get("strategy_id")) == strategy_id]
-    return {
-        "data": items,
-        "items": items,
-        "page_info": {"next_page_token": None, "total": len(items)},
-        "meta": _read_surface_meta(
-            "research_experiments", "strategy_experiments",
-            snapshot_at=snapshot_at, total=len(items),
-        ),
-    }
-
-
-@app.get("/bff/strategies/{strategy_id}/artifacts")
-async def bff_list_strategy_artifacts(
-    strategy_id: str,
-    authorization: Optional[str] = Header(default=None),
-):
-    """BFF: artifacts produced for a strategy."""
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-    _ensure_strategy_exists(strategy_id)
-    snapshot_at = utc_now()
-    raw = read_store.list_research_artifacts() or []
-    items = [a for a in raw if (a.get("linked_strategy_id") or a.get("strategy_id")) == strategy_id]
-    return {
-        "data": items,
-        "items": items,
-        "page_info": {"next_page_token": None, "total": len(items)},
-        "meta": _read_surface_meta(
-            "research_artifacts", "strategy_artifacts",
-            snapshot_at=snapshot_at, total=len(items),
-        ),
-    }
-
-
-@app.get("/bff/strategies/{strategy_id}/lineage")
-async def bff_get_strategy_lineage(
-    strategy_id: str,
-    authorization: Optional[str] = Header(default=None),
-):
-    """BFF: lineage subgraph rooted at a strategy."""
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-    _ensure_strategy_exists(strategy_id)
-    snapshot_at = utc_now()
-    edges = read_store.list_lineage_edges() or []
-    nodes_seen: set[str] = set()
-    related = []
-    for edge in edges:
-        node_keys = (
-            str(edge.get("from_artifact_id") or edge.get("source_id") or ""),
-            str(edge.get("to_artifact_id") or edge.get("target_id") or ""),
-            str(edge.get("strategy_id") or ""),
-        )
-        if strategy_id in node_keys:
-            related.append(edge)
-            for key in node_keys:
-                if key:
-                    nodes_seen.add(key)
-    nodes_seen.add(strategy_id)
-    return {
-        "data": {
-            "strategy_id": strategy_id,
-            "edges": related,
-            "node_ids": sorted(nodes_seen),
-        },
-        "meta": _read_surface_meta(
-            "lineage_edges", "strategy_lineage",
-            snapshot_at=snapshot_at, total=len(related),
-        ),
-    }
-
-
-def _filter_audit_events_by_target(events: List[Dict[str, Any]], target_id: str) -> List[Dict[str, Any]]:
-    return [
-        event for event in events
-        if str(event.get("target_id") or event.get("subject_id") or event.get("entity_id") or "") == target_id
-    ]
-
-
-@app.get("/bff/strategies/{strategy_id}/audit")
-async def bff_get_strategy_audit(
-    strategy_id: str,
-    authorization: Optional[str] = Header(default=None),
-):
-    """BFF: audit trail for a strategy."""
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-    _ensure_strategy_exists(strategy_id)
-    snapshot_at = utc_now()
-    events = _list_governance_audit_events() or []
-    filtered = _filter_audit_events_by_target(events, strategy_id)
-    return {
-        "data": filtered,
-        "items": filtered,
-        "page_info": {"next_page_token": None, "total": len(filtered)},
-        "meta": _read_surface_meta(
-            "governance_audit_events", "strategy_audit",
-            snapshot_at=snapshot_at, total=len(filtered),
-        ),
-    }
-
 
 def _ooda_packet_routes_enabled() -> bool:
     raw = os.getenv("PANTHEON_OODA_PACKET_ENABLED")
@@ -46755,28 +43050,6 @@ async def bff_get_ooda_packet(
     }
 
 
-@app.get("/bff/strategies/{strategy_id}/ooda")
-async def bff_list_strategy_ooda_packets(
-    strategy_id: str,
-    page_token: Optional[str] = None,
-    page_size: int = Query(default=20, ge=1, le=200),
-    authorization: Optional[str] = Header(default=None),
-):
-    """BFF: list OODA packets linked to a strategy."""
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-    _require_ooda_packet_routes_enabled()
-    clean_id = strategy_id.strip()
-    packets = read_store.list_ooda_packets_for_strategy(clean_id)
-    return _ooda_packet_list_payload(
-        packets,
-        surface_key="strategy_ooda_packets",
-        page_token=page_token,
-        page_size=page_size,
-        related={"type": "Strategy", "id": clean_id},
-    )
-
-
 @app.get("/bff/runtimes/{runtime_id}/ooda")
 async def bff_list_runtime_ooda_packets(
     runtime_id: str,
@@ -46821,71 +43094,6 @@ async def bff_list_evolution_program_ooda_packets(
     )
 
 
-@app.post("/bff/strategies/{strategy_id}/actions/{action_id}", status_code=202)
-async def bff_strategy_action(
-    strategy_id: str,
-    action_id: str,
-    payload: Dict[str, Any] = Body(default_factory=dict),
-    authorization: Optional[str] = Header(default=None),
-    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
-):
-    """BFF: strategy action — routes through command/precondition machinery."""
-    return _deprecated_bff_path_response(
-        route="/bff/strategies/{strategy_id}/actions/{action_id}",
-        replacement="/bff/actions/strategy/{strategy_id}/{action_id}",
-    )
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-    _reject_body_idempotency_key(payload)
-    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
-    _ensure_strategy_exists(strategy_id)
-    return _strategy_persona_action_command(
-        entity_type=ObjectType.STRATEGY,
-        entity_id=strategy_id,
-        action_id=action_id,
-        resolved_key=resolved_key,
-        identity=identity,
-        payload=payload,
-        command_type=CommandType.STRATEGY_ACTION,
-    )
-
-
-@app.post("/bff/strategies/{strategy_id}/dry-run", status_code=202)
-async def bff_strategy_dry_run(
-    strategy_id: str,
-    payload: Dict[str, Any] = Body(default_factory=dict),
-    authorization: Optional[str] = Header(default=None),
-    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
-):
-    """BFF: launch a strategy dry-run; returns a stub run handle."""
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-    _reject_body_idempotency_key(payload)
-    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
-    _ensure_strategy_exists(strategy_id)
-    request_hash = _stable_json_hash(
-        {"route": "POST /bff/strategies/{id}/dry-run", "id": strategy_id, "payload": payload}
-    )
-    cached = _strategy_persona_idempotency_check(resolved_key, request_hash)
-    if cached is not None:
-        return cached
-    snapshot_at = utc_now()
-    run_id = f"dryrun-{strategy_id}-{uuid.uuid4().hex[:8]}"
-    result = {
-        "data": {
-            "run_id": run_id,
-            "strategy_id": strategy_id,
-            "status": "queued",
-            "started_at": snapshot_at,
-            "params": payload.get("params") or payload,
-            "requested_by": identity.operator_id,
-        },
-        "meta": {"snapshot_at": snapshot_at},
-    }
-    _STRATEGY_PERSONA_BFF_IDEMPOTENCY[resolved_key] = {"request_hash": request_hash, "result": result}
-    return result
 
 
 # ---------------------------------------------------------------------------
@@ -47645,12 +43853,10 @@ def _persona_record_for_provisioning(
         traits=traits,
         lifecycle_state=lifecycle_state,
     )
-    creator = getattr(read_store, "create_persona", None)
-    updater = getattr(read_store, "update_persona", None)
     existing = read_store.get_persona(record.persona_id)
     if existing is None:
-        if mutate_store and callable(creator):
-            persona = creator(
+        if mutate_store:
+            persona = persona_write_owner.create_persona(
                 persona_id=record.persona_id,
                 name=str(payload.get("name") or record.normalized_name),
                 actor_id=canonical_owner,
@@ -47699,8 +43905,8 @@ def _persona_record_for_provisioning(
             lifecycle_state = "paper_running"
         elif existing.get("lifecycle_state") and record.state == "succeeded":
             lifecycle_state = str(existing.get("lifecycle_state"))
-        if mutate_store and callable(updater):
-            persona = updater(
+        if mutate_store:
+            persona = persona_write_owner.update_persona(
                 record.persona_id,
                 lifecycle_state=lifecycle_state,
                 metadata=metadata,
@@ -48341,7 +44547,7 @@ async def bff_patch_persona(
         },
         reason="persona_updated",
     )
-    persona_record = read_store.update_persona(
+    persona_record = persona_write_owner.update_persona(
         persona_id,
         name=str(base.get("name") or persona_id),
         actor_id=str(existing_metadata.get("owner") or identity.operator_id),
@@ -48528,109 +44734,6 @@ async def bff_start_persona_strategy_discovery(
     return response
 
 
-@app.get("/bff/management/strategy-seeds")
-async def bff_list_strategy_seed_inbox(
-    status: Optional[str] = None,
-    source_kind: Optional[str] = None,
-    strategy_family: Optional[str] = None,
-    seed_kind: Optional[str] = None,
-    min_confidence: Optional[float] = Query(default=None, ge=0.0, le=1.0),
-    page_token: Optional[str] = None,
-    page_size: int = Query(default=50, ge=1, le=200),
-    authorization: Optional[str] = Header(default=None),
-):
-    """BFF: governed StrategySpecSeed review inbox read model."""
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-    return _strategy_seed_list_response(
-        status=status,
-        source_kind=source_kind,
-        strategy_family=strategy_family,
-        seed_kind=seed_kind,
-        min_confidence=min_confidence,
-        page_token=page_token,
-        page_size=page_size,
-        tenant_id=str(_bff_me_tenant_payload(identity, requested_tenant=None)["id"]),
-    )
-
-
-@app.get("/bff/management/strategy-seeds/{seed_id}")
-async def bff_get_strategy_seed_card(
-    seed_id: str,
-    authorization: Optional[str] = Header(default=None),
-):
-    """BFF: governed StrategySpecSeed review card."""
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-    return _strategy_seed_detail_response(
-        seed_id,
-        tenant_id=str(_bff_me_tenant_payload(identity, requested_tenant=None)["id"]),
-    )
-
-
-@app.post("/bff/management/strategy-seeds/{seed_id}/review", status_code=202)
-async def bff_review_strategy_seed(
-    seed_id: str,
-    payload: Dict[str, Any] = Body(default_factory=dict),
-    authorization: Optional[str] = Header(default=None),
-    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
-):
-    """BFF: apply a governed StrategySpecSeed review decision."""
-    identity = _extract_identity(authorization)
-    _require_strategy_seed_review_role(identity)
-    _reject_body_idempotency_key(payload)
-    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
-    return _strategy_seed_review_response(
-        seed_id=seed_id,
-        payload=payload,
-        identity=identity,
-        resolved_key=resolved_key,
-    )
-
-
-@app.post("/bff/management/strategy-seeds/{seed_id}/merge", status_code=202)
-async def bff_merge_strategy_seed(
-    seed_id: str,
-    payload: Dict[str, Any] = Body(default_factory=dict),
-    authorization: Optional[str] = Header(default=None),
-    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
-):
-    """BFF: merge a StrategySpecSeed candidate into another seed candidate."""
-    identity = _extract_identity(authorization)
-    _require_strategy_seed_review_role(identity)
-    _reject_body_idempotency_key(payload)
-    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
-    return _strategy_seed_merge_response(
-        seed_id=seed_id,
-        payload=payload,
-        identity=identity,
-        resolved_key=resolved_key,
-    )
-
-
-@app.post("/bff/management/strategy-seeds/{seed_id}/submit-replication", status_code=202)
-async def bff_submit_strategy_seed_replication(
-    seed_id: str,
-    payload: Dict[str, Any] = Body(default_factory=dict),
-    authorization: Optional[str] = Header(default=None),
-    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
-):
-    """BFF: submit a promoted StrategySpecSeed to research replication."""
-    identity = _extract_identity(authorization)
-    _require_strategy_seed_submit_role(identity)
-    _reject_body_idempotency_key(payload)
-    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
-    return _strategy_seed_replication_response(
-        seed_id=seed_id,
-        payload=payload,
-        identity=identity,
-        resolved_key=resolved_key,
-    )
-
-
 @app.post("/api/v1/personas/{persona_id}/strategy-matches/{match_id}/actions", status_code=202)
 @app.post("/bff/personas/{persona_id}/strategy-matches/{match_id}/actions", status_code=202)
 async def bff_persona_strategy_match_action(
@@ -48797,6 +44900,13 @@ def _retrieve_canonical_persona_memory(
         "authz_policy_version": (payload.get("authz") or {}).get("policy_version"),
         "returned_items": len(items),
     }
+
+
+def _filter_audit_events_by_target(events: List[Dict[str, Any]], target_id: str) -> List[Dict[str, Any]]:
+    return [
+        event for event in events
+        if str(event.get("target_id") or event.get("subject_id") or event.get("entity_id") or "") == target_id
+    ]
 
 
 @app.get("/bff/personas/{persona_id}/audit")
@@ -54983,202 +51093,6 @@ async def bff_management_operations_read_model(
     }
 
 
-@app.get("/bff/management/performance-attribution")
-async def bff_management_performance_attribution(
-    dimension: Optional[str] = Query(default=None),
-    period: str = Query(default="latest"),
-    page_token: Optional[str] = None,
-    page_size: int = Query(default=50, ge=1, le=200),
-    authorization: Optional[str] = Header(default=None),
-    # Common filters:
-    persona_id: Optional[str] = Query(default=None, alias="personaId"),
-    persona: Optional[str] = Query(default=None),
-    runtime_id: Optional[str] = Query(default=None, alias="runtimeId"),
-    runtime: Optional[str] = Query(default=None),
-    strategy_id: Optional[str] = Query(default=None, alias="strategyId"),
-    strategy: Optional[str] = Query(default=None),
-    capital_pool_id: Optional[str] = Query(default=None, alias="capitalPoolId"),
-    pool: Optional[str] = Query(default=None),
-    sleeve_id: Optional[str] = Query(default=None, alias="sleeveId"),
-    sleeve: Optional[str] = Query(default=None),
-    artifact_id: Optional[str] = Query(default=None, alias="artifactId"),
-    artifact: Optional[str] = Query(default=None),
-    broker_id: Optional[str] = Query(default=None, alias="brokerId"),
-    broker: Optional[str] = Query(default=None),
-    stage: Optional[str] = Query(default=None),
-    as_of: Optional[str] = Query(default=None, alias="asOf"),
-):
-    """BFF: PM-12 performance attribution by persona/strategy/pool/asset/broker/runtime/regime."""
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-    tenant_id = str(_bff_me_tenant_payload(identity, requested_tenant=None)["id"])
-    return _pm12_performance_attribution_response(
-        dimensions=_pm12_normalize_attribution_dimensions(dimension),
-        period=period,
-        page_token=page_token,
-        page_size=page_size,
-        persona_id=persona_id, persona=persona,
-        runtime_id=runtime_id, runtime=runtime,
-        strategy_id=strategy_id, strategy=strategy,
-        capital_pool_id=capital_pool_id, pool=pool,
-        sleeve_id=sleeve_id, sleeve=sleeve,
-        artifact_id=artifact_id, artifact=artifact,
-        broker_id=broker_id, broker=broker,
-        stage=stage, as_of=as_of,
-        tenant_id=tenant_id,
-    )
-
-
-@app.options(
-    "/bff/management/performance-attribution/by-strategy",
-    status_code=204,
-    include_in_schema=False,
-)
-async def bff_management_performance_attribution_by_strategy_options():
-    return Response(status_code=204)
-
-
-@app.get("/bff/management/performance-attribution/by-strategy")
-async def bff_management_performance_attribution_by_strategy(
-    period: str = Query(default="latest"),
-    page_token: Optional[str] = None,
-    page_size: int = Query(default=50, ge=1, le=200),
-    authorization: Optional[str] = Header(default=None),
-    # Common filters:
-    persona_id: Optional[str] = Query(default=None, alias="personaId"),
-    persona: Optional[str] = Query(default=None),
-    runtime_id: Optional[str] = Query(default=None, alias="runtimeId"),
-    runtime: Optional[str] = Query(default=None),
-    strategy_id: Optional[str] = Query(default=None, alias="strategyId"),
-    strategy: Optional[str] = Query(default=None),
-    capital_pool_id: Optional[str] = Query(default=None, alias="capitalPoolId"),
-    pool: Optional[str] = Query(default=None),
-    sleeve_id: Optional[str] = Query(default=None, alias="sleeveId"),
-    sleeve: Optional[str] = Query(default=None),
-    artifact_id: Optional[str] = Query(default=None, alias="artifactId"),
-    artifact: Optional[str] = Query(default=None),
-    broker_id: Optional[str] = Query(default=None, alias="brokerId"),
-    broker: Optional[str] = Query(default=None),
-    stage: Optional[str] = Query(default=None),
-    as_of: Optional[str] = Query(default=None, alias="asOf"),
-):
-    """BFF: PM-12 performance attribution grouped by strategy."""
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-    tenant_id = str(_bff_me_tenant_payload(identity, requested_tenant=None)["id"])
-    return _pm12_performance_attribution_response(
-        dimensions=["strategy"],
-        period=period,
-        page_token=page_token,
-        page_size=page_size,
-        data_id="pm12-performance-attribution-by-strategy",
-        surface_key="performance_attribution_by_strategy",
-        persona_id=persona_id, persona=persona,
-        runtime_id=runtime_id, runtime=runtime,
-        strategy_id=strategy_id, strategy=strategy,
-        capital_pool_id=capital_pool_id, pool=pool,
-        sleeve_id=sleeve_id, sleeve=sleeve,
-        artifact_id=artifact_id, artifact=artifact,
-        broker_id=broker_id, broker=broker,
-        stage=stage, as_of=as_of,
-        tenant_id=tenant_id,
-    )
-
-
-@app.get("/bff/management/performance-attribution/by-persona")
-async def bff_management_performance_attribution_by_persona(
-    period: str = Query(default="latest"),
-    page_token: Optional[str] = None,
-    page_size: int = Query(default=50, ge=1, le=200),
-    authorization: Optional[str] = Header(default=None),
-    # Common filters:
-    persona_id: Optional[str] = Query(default=None, alias="personaId"),
-    persona: Optional[str] = Query(default=None),
-    runtime_id: Optional[str] = Query(default=None, alias="runtimeId"),
-    runtime: Optional[str] = Query(default=None),
-    strategy_id: Optional[str] = Query(default=None, alias="strategyId"),
-    strategy: Optional[str] = Query(default=None),
-    capital_pool_id: Optional[str] = Query(default=None, alias="capitalPoolId"),
-    pool: Optional[str] = Query(default=None),
-    sleeve_id: Optional[str] = Query(default=None, alias="sleeveId"),
-    sleeve: Optional[str] = Query(default=None),
-    artifact_id: Optional[str] = Query(default=None, alias="artifactId"),
-    artifact: Optional[str] = Query(default=None),
-    broker_id: Optional[str] = Query(default=None, alias="brokerId"),
-    broker: Optional[str] = Query(default=None),
-    stage: Optional[str] = Query(default=None),
-    as_of: Optional[str] = Query(default=None, alias="asOf"),
-):
-    """BFF: PM-12 performance attribution grouped by persona."""
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-    tenant_id = str(_bff_me_tenant_payload(identity, requested_tenant=None)["id"])
-    return _pm12_performance_attribution_response(
-        dimensions=["persona"],
-        period=period,
-        page_token=page_token,
-        page_size=page_size,
-        data_id="pm12-performance-attribution-by-persona",
-        surface_key="performance_attribution_by_persona",
-        persona_id=persona_id, persona=persona,
-        runtime_id=runtime_id, runtime=runtime,
-        strategy_id=strategy_id, strategy=strategy,
-        capital_pool_id=capital_pool_id, pool=pool,
-        sleeve_id=sleeve_id, sleeve=sleeve,
-        artifact_id=artifact_id, artifact=artifact,
-        broker_id=broker_id, broker=broker,
-        stage=stage, as_of=as_of,
-        tenant_id=tenant_id,
-    )
-
-
-@app.get("/bff/management/performance-attribution/by-pool")
-async def bff_management_performance_attribution_by_pool(
-    period: str = Query(default="latest"),
-    page_token: Optional[str] = None,
-    page_size: int = Query(default=50, ge=1, le=200),
-    authorization: Optional[str] = Header(default=None),
-    # Common filters:
-    persona_id: Optional[str] = Query(default=None, alias="personaId"),
-    persona: Optional[str] = Query(default=None),
-    runtime_id: Optional[str] = Query(default=None, alias="runtimeId"),
-    runtime: Optional[str] = Query(default=None),
-    strategy_id: Optional[str] = Query(default=None, alias="strategyId"),
-    strategy: Optional[str] = Query(default=None),
-    capital_pool_id: Optional[str] = Query(default=None, alias="capitalPoolId"),
-    pool: Optional[str] = Query(default=None),
-    sleeve_id: Optional[str] = Query(default=None, alias="sleeveId"),
-    sleeve: Optional[str] = Query(default=None),
-    artifact_id: Optional[str] = Query(default=None, alias="artifactId"),
-    artifact: Optional[str] = Query(default=None),
-    broker_id: Optional[str] = Query(default=None, alias="brokerId"),
-    broker: Optional[str] = Query(default=None),
-    stage: Optional[str] = Query(default=None),
-    as_of: Optional[str] = Query(default=None, alias="asOf"),
-):
-    """BFF: PM-12 performance attribution grouped by capital pool."""
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-    tenant_id = str(_bff_me_tenant_payload(identity, requested_tenant=None)["id"])
-    return _pm12_performance_attribution_response(
-        dimensions=["pool"],
-        period=period,
-        page_token=page_token,
-        page_size=page_size,
-        data_id="pm12-performance-attribution-by-pool",
-        surface_key="performance_attribution_by_pool",
-        persona_id=persona_id, persona=persona,
-        runtime_id=runtime_id, runtime=runtime,
-        strategy_id=strategy_id, strategy=strategy,
-        capital_pool_id=capital_pool_id, pool=pool,
-        sleeve_id=sleeve_id, sleeve=sleeve,
-        artifact_id=artifact_id, artifact=artifact,
-        broker_id=broker_id, broker=broker,
-        stage=stage, as_of=as_of,
-        tenant_id=tenant_id,
-    )
-
-
 def _governance_ledger_entry(
     *,
     entry_id: str,
@@ -56634,7 +52548,6 @@ async def remediate_v5_intervention(
     )
 
 
-@app.get("/api/v1/operator/commands/{command_id}", response_model=CommandStatusResponse)
 async def get_command_status(command_id: str, authorization: Optional[str] = Header(default=None)):
     """
     Poll for the status of a previously submitted command.
@@ -57575,15 +53488,6 @@ async def bff_sse_incident_timeline_alias(
     """Alias for journal channel incident timeline events."""
     # Maps to journal channel which aggregates incident events.
     return await stream_generic_events("journal", last_event_id, authorization)
-
-
-@app.get("/bff/sse/deployment/events")
-async def bff_sse_deployment_events_alias(
-    last_event_id: Optional[str] = Query(default=None, alias="last_event_id"),
-    authorization: Optional[str] = Header(default=None),
-):
-    """Alias for artifact channel deployment events."""
-    return await stream_generic_events("artifact", last_event_id, authorization)
 
 
 @app.get("/bff/sse/review/updates")
@@ -58804,8 +54708,9 @@ def _gov_bff_action_command(
         status=CommandStatus.SUBMITTED,
         staleness_warning=staleness_warning,
     )
-    _GOV_BFF_IDEMPOTENCY[resolved_key] = {"request_hash": request_hash, "result": result}
-    return result
+    result_dict = result.model_dump(mode="json")
+    _GOV_BFF_IDEMPOTENCY[resolved_key] = {"request_hash": request_hash, "result": result_dict}
+    return result_dict
 
 
 # -- Governance reviews ------------------------------------------------------
@@ -59028,545 +54933,6 @@ async def bff_approval_evidence(
             "staleness": _meta_staleness(),
         },
     }
-
-
-# -- Deployments -------------------------------------------------------------
-
-_DEPLOYMENT_STAGE_TRUTH_ORDER = (
-    "approval",
-    "plan",
-    "saga",
-    "binding",
-    "runtime_fleet",
-)
-_DEPLOYMENT_STAGE_FAILURE_STATUSES = {
-    "aborted",
-    "blocked",
-    "dead_lettered",
-    "degraded",
-    "failed",
-    "missing",
-    "rejected",
-    "stale",
-    "unavailable",
-}
-
-
-def _deployment_stage_status(value: Any, *, default: str = "unknown") -> str:
-    status = str(value or "").strip().lower()
-    return status or default
-
-
-def _deployment_stage_entry(
-    *,
-    stage: str,
-    status: Any,
-    source_dataset: str,
-    source_id: Optional[str] = None,
-    available: bool = True,
-    message: Optional[str] = None,
-    failure: Optional[bool] = None,
-    **extra: Any,
-) -> Dict[str, Any]:
-    normalized_status = _deployment_stage_status(status)
-    entry: Dict[str, Any] = {
-        "stage": stage,
-        "status": normalized_status,
-        "source_dataset": source_dataset,
-        "available": bool(available),
-        "failure": bool(
-            normalized_status in _DEPLOYMENT_STAGE_FAILURE_STATUSES
-            if failure is None
-            else failure
-        ),
-    }
-    if source_id:
-        entry["source_id"] = source_id
-    if message:
-        entry["message"] = message
-    for key, value in extra.items():
-        if value is not None:
-            entry[key] = value
-    return entry
-
-
-def _deployment_plan_identifier(plan: Dict[str, Any]) -> str:
-    return str(plan.get("plan_id") or plan.get("id") or "").strip()
-
-
-def _runtime_binding_matches_deployment_plan(
-    runtime_binding: Dict[str, Any],
-    plan: Dict[str, Any],
-) -> bool:
-    plan_id = _deployment_plan_identifier(plan)
-    runtime_plan_id = str(
-        runtime_binding.get("plan_id") or runtime_binding.get("deployment_plan_id") or ""
-    ).strip()
-    if plan_id and runtime_plan_id == plan_id:
-        return True
-
-    requested_binding_ids = {
-        str(plan.get("runtime_binding_id") or "").strip(),
-        str(plan.get("binding_id") or plan.get("persona_capital_binding_id") or "").strip(),
-    }
-    requested_binding_ids.update(
-        str(value).strip()
-        for value in (plan.get("binding_ids") or [])
-        if str(value).strip()
-    )
-    requested_binding_ids.discard("")
-    runtime_binding_ids = {
-        str(runtime_binding.get("id") or "").strip(),
-        str(runtime_binding.get("binding_id") or "").strip(),
-        str(runtime_binding.get("runtime_binding_id") or "").strip(),
-        str(runtime_binding.get("persona_capital_binding_id") or "").strip(),
-    }
-    runtime_binding_ids.discard("")
-    return bool(requested_binding_ids.intersection(runtime_binding_ids))
-
-
-def _deployment_runtime_binding(plan: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    runtime_binding_id = str(plan.get("runtime_binding_id") or "").strip()
-    if runtime_binding_id:
-        binding = read_store.get_runtime_binding(runtime_binding_id)
-        if binding:
-            return binding
-
-    for binding in read_store.list_runtime_bindings():
-        if _runtime_binding_matches_deployment_plan(binding, plan):
-            return binding
-    return None
-
-
-def _runtime_fleet_stage_truth(runtime_binding: Optional[Dict[str, Any]]) -> Dict[str, Any]:
-    if not runtime_binding:
-        return _deployment_stage_entry(
-            stage="runtime_fleet",
-            status="unavailable",
-            source_dataset="runtime_bindings",
-            available=False,
-            message=(
-                "Runtime fleet evidence unavailable because no RuntimeBinding "
-                "projection is linked to this deployment plan."
-            ),
-        )
-
-    runtime_id = str(
-        runtime_binding.get("runtime_id")
-        or runtime_binding.get("id")
-        or runtime_binding.get("binding_id")
-        or ""
-    ).strip()
-    runtime_binding_id = str(
-        runtime_binding.get("runtime_binding_id")
-        or runtime_binding.get("binding_id")
-        or runtime_binding.get("id")
-        or ""
-    ).strip()
-    deployment_stage = str(
-        runtime_binding.get("deployment_stage") or runtime_binding.get("deployment_mode") or ""
-    ).strip().lower()
-
-    monitoring = read_store.get_paper_runtime_monitoring_session(
-        runtime_id=runtime_id,
-        binding_id=runtime_binding_id,
-    )
-    if monitoring:
-        active = bool(monitoring.get("active", True))
-        staleness = monitoring.get("staleness") if isinstance(monitoring.get("staleness"), dict) else {}
-        terminal_reason = (
-            monitoring.get("terminal_reason")
-            or monitoring.get("ended_reason")
-            or staleness.get("reason")
-        )
-        status = "active" if active and not terminal_reason else "degraded"
-        return _deployment_stage_entry(
-            stage="runtime_fleet",
-            status=status,
-            source_dataset="paper_runtime_monitoring_sessions",
-            source_id=str(monitoring.get("session_id") or monitoring.get("id") or ""),
-            available=True,
-            failure=status != "active",
-            runtime_id=runtime_id,
-            runtime_binding_id=runtime_binding_id,
-            deployment_stage=deployment_stage or None,
-            active=active,
-            last_heartbeat_at=monitoring.get("last_heartbeat_at"),
-            terminal_reason=terminal_reason,
-        )
-
-    telemetry = read_store.get_telemetry_summary(runtime_id) if runtime_id else None
-    if telemetry:
-        health_summary = telemetry.get("health_summary") if isinstance(telemetry.get("health_summary"), dict) else {}
-        unhealthy = [
-            str(key)
-            for key, value in health_summary.items()
-            if str(value).strip().lower() not in {"", "ok", "not_applicable"}
-        ]
-        status = "degraded" if unhealthy else "observed"
-        return _deployment_stage_entry(
-            stage="runtime_fleet",
-            status=status,
-            source_dataset="telemetry_summaries",
-            source_id=runtime_id,
-            available=True,
-            failure=status == "degraded",
-            runtime_id=runtime_id,
-            runtime_binding_id=runtime_binding_id,
-            deployment_stage=deployment_stage or None,
-            last_heartbeat_at=telemetry.get("last_heartbeat_at"),
-            last_event_at=telemetry.get("last_event_at"),
-            degraded_checks=unhealthy or None,
-        )
-
-    source_dataset = (
-        "paper_runtime_monitoring_sessions"
-        if deployment_stage == "paper"
-        else "telemetry_summaries"
-    )
-    return _deployment_stage_entry(
-        stage="runtime_fleet",
-        status="unavailable",
-        source_dataset=source_dataset,
-        source_id=runtime_id or None,
-        available=False,
-        failure=True,
-        runtime_id=runtime_id or None,
-        runtime_binding_id=runtime_binding_id or None,
-        deployment_stage=deployment_stage or None,
-        message=(
-            "Runtime fleet evidence unavailable; status is not inferred from "
-            "deployment plan metadata or RuntimeBinding existence."
-        ),
-    )
-
-
-def _deployment_stage_truth(plan: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
-    plan_id = _deployment_plan_identifier(plan)
-    approval_decision_id = str(plan.get("approval_decision_id") or "").strip()
-    approval_decision = read_store.get_approval_decision(approval_decision_id)
-    if approval_decision:
-        approval_status = approval_decision.get("outcome") or approval_decision.get("state")
-        approval_entry = _deployment_stage_entry(
-            stage="approval",
-            status=approval_status,
-            source_dataset="approval_decisions",
-            source_id=str(
-                approval_decision.get("decision_id")
-                or approval_decision.get("id")
-                or approval_decision_id
-            ),
-            available=True,
-            failure=_deployment_stage_status(approval_status) in {"rejected", "failed"},
-            decision_state=approval_decision.get("state"),
-            reviewer=approval_decision.get("reviewer"),
-        )
-    else:
-        plan_status = _deployment_stage_status(plan.get("status"))
-        pending_status = "pending" if plan_status in {"pending_approval", "draft", "proposed"} else "missing"
-        approval_entry = _deployment_stage_entry(
-            stage="approval",
-            status=pending_status,
-            source_dataset="approval_decisions",
-            source_id=approval_decision_id or None,
-            available=False,
-            failure=False,
-            message="Approval decision has not been recorded for this deployment plan.",
-        )
-
-    plan_status = plan.get("status") or plan.get("state") or "unknown"
-    plan_entry = _deployment_stage_entry(
-        stage="plan",
-        status=plan_status,
-        source_dataset="deployment_plans",
-        source_id=plan_id or None,
-        available=True,
-        failure=_deployment_stage_status(plan_status) in {"aborted", "failed", "rejected"},
-        current_stage=plan.get("current_stage"),
-        target_stage=plan.get("target_stage") or plan.get("stage"),
-        transition_type=plan.get("transition_type"),
-    )
-
-    saga_progress = plan.get("saga_progress") if isinstance(plan.get("saga_progress"), dict) else {}
-    if saga_progress:
-        saga_status = saga_progress.get("progress_status") or saga_progress.get("saga_status")
-        saga_entry = _deployment_stage_entry(
-            stage="saga",
-            status=saga_status,
-            source_dataset="deployment_sagas",
-            source_id=str(saga_progress.get("saga_id") or plan.get("deployment_saga_id") or ""),
-            available=True,
-            failure=_deployment_stage_status(saga_status) in {"blocked", "failed"},
-            saga_status=saga_progress.get("saga_status"),
-            current_step=saga_progress.get("current_step"),
-            blocked_reason=saga_progress.get("blocked_reason"),
-            dlq_count=saga_progress.get("dlq_count"),
-            pending_event_count=saga_progress.get("pending_event_count"),
-        )
-    else:
-        saga_entry = _deployment_stage_entry(
-            stage="saga",
-            status="not_started",
-            source_dataset="deployment_sagas",
-            source_id=str(plan.get("deployment_saga_id") or "") or None,
-            available=False,
-            failure=False,
-            message="Deployment saga progress has not been observed for this plan.",
-        )
-
-    runtime_binding = _deployment_runtime_binding(plan)
-    if runtime_binding:
-        binding_status = runtime_binding.get("status") or runtime_binding.get("state") or "present"
-        binding_entry = _deployment_stage_entry(
-            stage="binding",
-            status=binding_status,
-            source_dataset="runtime_bindings",
-            source_id=str(
-                runtime_binding.get("runtime_binding_id")
-                or runtime_binding.get("binding_id")
-                or runtime_binding.get("id")
-                or ""
-            ),
-            available=True,
-            failure=_deployment_stage_status(binding_status) in {"failed", "rejected", "stopped"},
-            runtime_id=runtime_binding.get("runtime_id"),
-            deployment_stage=runtime_binding.get("deployment_stage") or runtime_binding.get("deployment_mode"),
-            artifact_id=runtime_binding.get("artifact_id"),
-            artifact_version=runtime_binding.get("artifact_version"),
-        )
-    else:
-        binding_entry = _deployment_stage_entry(
-            stage="binding",
-            status="missing",
-            source_dataset="runtime_bindings",
-            available=False,
-            failure=False,
-            message="RuntimeBinding projection is not available for this deployment plan.",
-        )
-
-    return {
-        "approval": approval_entry,
-        "plan": plan_entry,
-        "saga": saga_entry,
-        "binding": binding_entry,
-        "runtime_fleet": _runtime_fleet_stage_truth(runtime_binding),
-    }
-
-
-def _deployment_stage_truth_surfaces(
-    stage_truth: Dict[str, Dict[str, Any]],
-    *,
-    snapshot_at: str,
-) -> Dict[str, Dict[str, Any]]:
-    surfaces: Dict[str, Dict[str, Any]] = {}
-    for stage in _DEPLOYMENT_STAGE_TRUTH_ORDER:
-        entry = stage_truth.get(stage) or {}
-        dataset = str(entry.get("source_dataset") or "").strip() or "deployment_plans"
-        surface = _dataset_surface_status(
-            dataset,
-            snapshot_at=snapshot_at,
-            has_data=bool(entry.get("available")),
-            missing_message=entry.get("message"),
-        )
-        if entry.get("failure") and surface.get("status") == "ok":
-            surface["status"] = "degraded"
-            surface["message"] = entry.get("message") or f"{stage} stage requires operator attention."
-        surfaces[f"{stage}_stage"] = surface
-
-    surfaces["deployment_stage_truth"] = _aggregate_group_surface(
-        "deployment_stage_truth",
-        [surfaces[f"{stage}_stage"] for stage in _DEPLOYMENT_STAGE_TRUTH_ORDER],
-        snapshot_at=snapshot_at,
-        unavailable_message="Deployment stage truth is unavailable.",
-        degraded_message="Deployment stage truth is degraded because one or more stages need evidence or attention.",
-    )
-    return surfaces
-
-
-def _deployment_stage_truth_collection_surfaces(
-    stage_truths: Sequence[Dict[str, Dict[str, Any]]],
-    *,
-    snapshot_at: str,
-) -> Dict[str, Dict[str, Any]]:
-    collected = [
-        _deployment_stage_truth_surfaces(stage_truth, snapshot_at=snapshot_at)
-        for stage_truth in stage_truths
-        if stage_truth
-    ]
-    if not collected:
-        return {}
-    if len(collected) == 1:
-        return collected[0]
-
-    surfaces: Dict[str, Dict[str, Any]] = {}
-    for stage in _DEPLOYMENT_STAGE_TRUTH_ORDER:
-        surface_key = f"{stage}_stage"
-        stage_label = stage.replace("_", " ")
-        surfaces[surface_key] = _aggregate_group_surface(
-            surface_key,
-            [item[surface_key] for item in collected],
-            snapshot_at=snapshot_at,
-            unavailable_message=(
-                f"{stage_label} stage truth is unavailable across listed deployment plans."
-            ),
-            degraded_message=(
-                f"{stage_label} stage truth is degraded for one or more listed deployment plans."
-            ),
-        )
-
-    surfaces["deployment_stage_truth"] = _aggregate_group_surface(
-        "deployment_stage_truth",
-        [surfaces[f"{stage}_stage"] for stage in _DEPLOYMENT_STAGE_TRUTH_ORDER],
-        snapshot_at=snapshot_at,
-        unavailable_message="Deployment stage truth is unavailable.",
-        degraded_message=(
-            "Deployment stage truth is degraded because one or more stages need "
-            "evidence or attention."
-        ),
-    )
-    return surfaces
-
-
-def _deployment_plan_with_stage_truth(
-    plan: Dict[str, Any],
-    *,
-    snapshot_at: str,
-) -> Dict[str, Any]:
-    payload = dict(plan)
-    payload["stage_truth"] = _deployment_stage_truth(plan)
-    return payload
-
-@app.get("/bff/deployments")
-async def bff_list_deployments(
-    status: Optional[str] = None,
-    page_token: Optional[str] = None,
-    page_size: int = Query(default=20, ge=1, le=200),
-    authorization: Optional[str] = Header(default=None),
-):
-    """BFF: list deployment plans (execute-plans compatibility surface)."""
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-
-    snapshot_at = utc_now()
-    plans = read_store.list_deployment_plans()
-    if status:
-        requested_statuses = {v.strip().lower() for v in status.split(",") if v.strip()}
-        plans = [p for p in plans if str(p.get("status") or "").lower() in requested_statuses]
-    total = len(plans)
-
-    surface = _dataset_surface_status("deployment_plans", snapshot_at=snapshot_at)
-    if surface.get("status") == "unavailable":
-        plans = []
-        next_page_token = None
-        total = 0
-    else:
-        plans, next_page_token = _page_slice(plans, page_token, page_size)
-        plans = [
-            _deployment_plan_with_stage_truth(plan, snapshot_at=snapshot_at)
-            for plan in plans
-        ]
-
-    meta = _snapshot_meta(snapshot_at)
-    stage_surfaces = (
-        _deployment_stage_truth_collection_surfaces(
-            [plan["stage_truth"] for plan in plans],
-            snapshot_at=snapshot_at,
-        )
-        if plans
-        else {}
-    )
-    meta["surfaces"] = {"deployments": surface, **stage_surfaces}
-    staleness = _meta_staleness()
-    if staleness is not None:
-        meta["staleness"] = staleness
-
-    return {
-        "data": plans,
-        "items": plans,
-        "page_info": {"next_page_token": next_page_token, "total": total},
-        "meta": meta,
-    }
-
-
-@app.get("/bff/deployments/{deployment_id}")
-async def bff_get_deployment(
-    deployment_id: str,
-    authorization: Optional[str] = Header(default=None),
-):
-    """BFF: get a deployment plan detail."""
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-
-    clean_id = deployment_id.strip()
-    plan = read_store.get_deployment_plan(clean_id)
-    if not plan:
-        raise _bff_error(
-            404,
-            ErrorCode.RESOURCE_NOT_FOUND,
-            "Deployment not found",
-            f"Deployment plan {deployment_id} does not exist",
-        )
-
-    snapshot_at = utc_now()
-    plan_payload = _deployment_plan_with_stage_truth(plan, snapshot_at=snapshot_at)
-    decision = read_store.get_approval_decision(plan.get("approval_decision_id"))
-    review = read_store.get_review_summary(clean_id)
-    stage_surfaces = _deployment_stage_truth_surfaces(
-        plan_payload["stage_truth"],
-        snapshot_at=snapshot_at,
-    )
-
-    return {
-        "data": {
-            **plan_payload,
-            "approval_decision": decision or {},
-            "review": review or {},
-        },
-        "meta": {
-            "snapshot_at": snapshot_at,
-            "surfaces": {
-                "deployments": _dataset_surface_status("deployment_plans", snapshot_at=snapshot_at),
-                **stage_surfaces,
-            },
-            "staleness": _meta_staleness(),
-        },
-    }
-
-
-@app.post("/bff/deployments/{deployment_id}/actions/{action_id}", status_code=202)
-async def bff_deployment_action(
-    deployment_id: str,
-    action_id: str,
-    request: Request,
-    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
-    authorization: Optional[str] = Header(default=None),
-):
-    """BFF: submit an action against a deployment plan."""
-    return _deprecated_bff_path_response(
-        route="/bff/deployments/{deployment_id}/actions/{action_id}",
-        replacement="/bff/actions/deployment/{deployment_id}/{action_id}",
-    )
-    identity = _extract_identity(authorization)
-    _require_operator_role(identity)
-    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
-    payload: Dict[str, Any] = {}
-    try:
-        payload = await request.json()
-    except Exception:
-        pass
-    clean_id = deployment_id.strip()
-    plan = read_store.get_deployment_plan(clean_id)
-    if not plan:
-        raise _bff_error(
-            404,
-            ErrorCode.RESOURCE_NOT_FOUND,
-            "Deployment not found",
-            f"Deployment plan {deployment_id} does not exist",
-        )
-    return _gov_bff_action_command(
-        ObjectType.DEPLOYMENT, clean_id, action_id, resolved_key, identity, payload, CommandType.DEPLOYMENT_ACTION
-    )
 
 
 # -- Runtimes ----------------------------------------------------------------
@@ -59800,574 +55166,8 @@ async def bff_runtime_action(
     )
 
 
-# -- Risk alerts -------------------------------------------------------------
-
-@app.get("/bff/risk/alerts")
-async def bff_list_risk_alerts(
-    authorization: Optional[str] = Header(default=None),
-):
-    """BFF: list risk/operator alerts (execute-plans compatibility surface)."""
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-    snapshot_at = utc_now()
-    return _build_operator_alerts_payload(snapshot_at)
-
-
-@app.get("/bff/risk/alerts/{alert_id}")
-async def bff_get_risk_alert(
-    alert_id: str,
-    authorization: Optional[str] = Header(default=None),
-):
-    """BFF: get a specific risk alert by ID."""
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-    snapshot_at = utc_now()
-    payload = _build_operator_alerts_payload(snapshot_at)
-    clean_id = alert_id.strip()
-    match = next(
-        (a for a in payload.get("alerts", []) if str(a.get("alert_id") or a.get("id") or "") == clean_id),
-        None,
-    )
-    if not match:
-        raise _bff_error(
-            404,
-            ErrorCode.RESOURCE_NOT_FOUND,
-            "Risk alert not found",
-            f"Alert {alert_id} does not exist",
-        )
-    return {
-        "data": match,
-        "meta": {"snapshot_at": snapshot_at, "staleness": _meta_staleness()},
-    }
-
-
-@app.post("/bff/risk/alerts/{alert_id}/actions/{action_id}", status_code=202)
-async def bff_risk_alert_action(
-    alert_id: str,
-    action_id: str,
-    request: Request,
-    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
-    authorization: Optional[str] = Header(default=None),
-):
-    """BFF: submit an action against a risk alert."""
-    identity = _extract_identity(authorization)
-    _require_operator_role(identity)
-    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
-    payload: Dict[str, Any] = {}
-    try:
-        payload = await request.json()
-    except Exception:
-        pass
-    clean_id = alert_id.strip()
-    return _gov_bff_action_command(
-        ObjectType.RISK_ALERT, clean_id, action_id, resolved_key, identity, payload, CommandType.RISK_ALERT_ACTION
-    )
-
-
-# -- Incidents ---------------------------------------------------------------
-
-@app.get("/bff/incidents")
-async def bff_list_incidents(
-    status: Optional[str] = None,
-    severity: Optional[str] = None,
-    affected_pool_id: Optional[str] = None,
-    page_token: Optional[str] = None,
-    page_size: int = Query(default=20, ge=1, le=200),
-    authorization: Optional[str] = Header(default=None),
-):
-    """BFF: list incidents (execute-plans compatibility surface)."""
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-
-    snapshot_at = utc_now()
-    surface = _dataset_surface_status("incidents", snapshot_at=snapshot_at)
-    incidents = _list_bff_incidents(status=status, severity=severity, affected_pool_id=affected_pool_id)
-    total = len(incidents)
-    if surface.get("status") == "unavailable":
-        incidents = []
-        next_page_token = None
-        total = 0
-    else:
-        incidents, next_page_token = _page_slice(incidents, page_token, page_size)
-
-    meta = _snapshot_meta(snapshot_at)
-    meta["surfaces"] = {"incidents": surface}
-    meta["total"] = total
-    staleness = _meta_staleness()
-    if staleness is not None:
-        meta["staleness"] = staleness
-    degradation_reason = _surface_degradation_reason(
-        surface,
-        degraded_reason="Incident list is degraded and may be stale.",
-        unavailable_reason="Incident list is currently unavailable.",
-    )
-    if degradation_reason is not None:
-        meta["degradation"] = {"reason": degradation_reason}
-
-    return {
-        "data": incidents,
-        "items": incidents,
-        "page_info": {"next_page_token": next_page_token, "total": total},
-        "meta": meta,
-    }
-
-
-@app.post("/bff/incidents", status_code=201)
-async def bff_create_incident(
-    request: Request,
-    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
-    authorization: Optional[str] = Header(default=None),
-):
-    """BFF: create a new incident record."""
-    identity = _extract_identity(authorization)
-    _require_operator_role(identity)
-    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
-    payload: Dict[str, Any] = {}
-    try:
-        payload = await request.json()
-    except Exception:
-        pass
-    _reject_body_idempotency_key(payload)
-
-    existing = _GOV_BFF_IDEMPOTENCY.get(resolved_key)
-    req_hash = _stable_json_hash(payload)
-    if existing is not None:
-        if existing.get("request_hash") != req_hash:
-            raise _bff_error(
-                409,
-                ErrorCode.IDEMPOTENCY_CONFLICT,
-                "Idempotency key already used with a different payload",
-                f"Key {resolved_key!r} is bound to a different request hash",
-                precondition_failed="idempotency_conflict",
-                suggestion="Use a new Idempotency-Key or resubmit the original payload unchanged",
-            )
-        return existing["result"]
-
-    incident_id = str(payload.get("incident_id") or payload.get("id") or uuid.uuid4())
-    submitted_at = utc_now()
-    result = _project_bff_incident_case({
-        **payload,
-        "id": incident_id,
-        "incident_id": incident_id,
-        "status": payload.get("status") or "open",
-        "submitted_at": submitted_at,
-        "created_at": payload.get("created_at") or payload.get("opened_at") or submitted_at,
-        "updated_at": submitted_at,
-        "submitted_by": identity.operator_id,
-        "title": payload.get("title") or "Untitled Incident",
-        "severity": payload.get("severity") or "medium",
-        "capital_pool_id": payload.get("capital_pool_id") or payload.get("affected_pool_id"),
-        "runtime_id": payload.get("runtime_id"),
-        "correlation_id": payload.get("correlation_id") or incident_id,
-        "trace_id": payload.get("trace_id") or payload.get("correlation_id") or incident_id,
-        "audit_ref": {
-            "target_type": "Incident",
-            "target_id": incident_id,
-            "href": f"/bff/audit/entities/Incident/{incident_id}",
-        },
-        "meta": {"idempotency_key": resolved_key},
-    })
-    _GOV_BFF_INCIDENT_OVERLAY[incident_id] = result
-    _GOV_BFF_IDEMPOTENCY[resolved_key] = {"request_hash": req_hash, "result": result}
-    return result
-
-
-@app.get("/bff/incidents/{incident_id}")
-async def bff_get_incident(
-    incident_id: str,
-    authorization: Optional[str] = Header(default=None),
-):
-    """BFF: get a specific incident by ID."""
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-
-    clean_id = incident_id.strip()
-    snapshot_at = utc_now()
-    surface = _dataset_surface_status("incidents", snapshot_at=snapshot_at)
-    incident = _get_bff_incident(clean_id)
-    if not incident:
-        _raise_if_read_surface_unavailable(surface, label="Incident")
-        raise _bff_error(
-            404,
-            ErrorCode.RESOURCE_NOT_FOUND,
-            "Incident not found",
-            f"Incident {incident_id} does not exist",
-        )
-
-    return {
-        "data": incident,
-        "meta": _read_surface_meta("incidents", "incident", snapshot_at=snapshot_at, surface=surface),
-    }
-
-
-@app.post("/bff/incidents/{incident_id}/actions/{action_id}", status_code=202)
-async def bff_incident_action(
-    incident_id: str,
-    action_id: str,
-    request: Request,
-    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
-    authorization: Optional[str] = Header(default=None),
-):
-    """BFF: submit an action against an incident."""
-    return _deprecated_bff_path_response(
-        route="/bff/incidents/{incident_id}/actions/{action_id}",
-        replacement="/bff/actions/incident/{incident_id}/{action_id}",
-    )
-    identity = _extract_identity(authorization)
-    _require_operator_role(identity)
-    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
-    payload: Dict[str, Any] = {}
-    try:
-        payload = await request.json()
-    except Exception:
-        pass
-    clean_id = incident_id.strip()
-    snapshot_at = utc_now()
-    surface = _dataset_surface_status("incidents", snapshot_at=snapshot_at)
-    incident = _get_bff_incident(clean_id)
-    if not incident:
-        _raise_if_read_surface_unavailable(surface, label="Incident")
-        raise _bff_error(
-            404,
-            ErrorCode.RESOURCE_NOT_FOUND,
-            "Incident not found",
-            f"Incident {incident_id} does not exist",
-        )
-    return _gov_bff_action_command(
-        ObjectType.INCIDENT, clean_id, action_id, resolved_key, identity, payload, CommandType.INCIDENT_ACTION
-    )
-
-
-# -- Alerts source-reference alias -------------------------------------------
-
-@app.get("/bff/alerts")
-async def bff_list_alerts(
-    authorization: Optional[str] = Header(default=None),
-):
-    """BFF: source-reference compatibility alias for /bff/risk/alerts."""
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-    snapshot_at = utc_now()
-    started = time.monotonic()
-    try:
-        payload = await _run_management_read(_build_operator_alerts_payload, snapshot_at)
-    except _ManagementReadTimeout:
-        _log_management_read_timing("alerts", started, timed_out=True)
-        return _management_alerts_degraded_payload(snapshot_at)
-    _log_management_read_timing("alerts", started)
-    return payload
-
-
-@app.get("/bff/alerts/{alert_id}")
-async def bff_get_alert(
-    alert_id: str,
-    authorization: Optional[str] = Header(default=None),
-):
-    """BFF: get a specific operator alert by ID."""
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-    snapshot_at = utc_now()
-    payload = _build_operator_alerts_payload(snapshot_at)
-    clean_id = alert_id.strip()
-    match = next(
-        (a for a in payload.get("alerts", []) if str(a.get("alert_id") or a.get("id") or "") == clean_id),
-        None,
-    )
-    if not match:
-        raise _bff_error(
-            404,
-            ErrorCode.RESOURCE_NOT_FOUND,
-            "Alert not found",
-            f"Alert {alert_id!r} does not exist",
-            precondition_failed="alert_id",
-        )
-    detail_meta = payload.get("meta", {"snapshot_at": snapshot_at, "staleness": _meta_staleness()})
-    return {"data": match, "meta": detail_meta}
-
-
-@app.post("/bff/alerts/{alert_id}/acknowledge", status_code=202)
-async def bff_alert_acknowledge(
-    alert_id: str,
-    request: Request,
-    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
-    authorization: Optional[str] = Header(default=None),
-):
-    """BFF: acknowledge an operator alert — suppresses the alert for the current operator session."""
-    identity = _extract_identity(authorization)
-    _require_operator_role(identity)
-
-    payload: Dict[str, Any] = {}
-    try:
-        payload = await request.json()
-    except Exception:
-        pass
-
-    _reject_body_idempotency_key(payload)
-
-    clean_id = alert_id.strip()
-    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
-
-    # Idempotency pre-check
-    request_hash = _stable_json_hash(
-        {"alert_id": clean_id, "action": "acknowledge", "payload": payload}
-    )
-    existing = _GOV_BFF_IDEMPOTENCY.get(resolved_key)
-    if existing is not None:
-        if existing.get("request_hash") != request_hash:
-            raise _bff_error(
-                409,
-                ErrorCode.IDEMPOTENCY_CONFLICT,
-                "Idempotency key was already used with a different payload",
-                f"Key {resolved_key!r} is bound to a different request hash",
-                precondition_failed="idempotency_conflict",
-                suggestion="Use a new Idempotency-Key or resubmit the original payload unchanged",
-            )
-        return existing["result"]
-
-    # Best-effort alert existence check; alerts are dynamic so we tolerate missing data
-    snapshot_at = utc_now()
-    alerts_payload = _build_operator_alerts_payload(snapshot_at)
-    alert_record = next(
-        (a for a in alerts_payload.get("alerts", []) if str(a.get("alert_id") or a.get("id") or "") == clean_id),
-        None,
-    )
-    if alert_record is None:
-        # Only 404 when the alerts surface is available; tolerate degraded/unavailable surfaces
-        alert_surface = (alerts_payload.get("meta") or {}).get("surfaces", {}).get("alerts", {})
-        if alert_surface.get("status") not in {"degraded", "unavailable", "missing"}:
-            raise _bff_error(
-                404,
-                ErrorCode.RESOURCE_NOT_FOUND,
-                "Alert not found",
-                f"Alert {alert_id!r} does not exist or is no longer active",
-                precondition_failed="alert_id",
-            )
-
-    staleness_warning = _check_read_surface_state()
-    command_id = str(uuid.uuid4())
-    submitted_at = utc_now()
-    target = TargetObject(type=ObjectType.RISK_ALERT, id=clean_id)
-    ack_note = str(payload.get("note") or payload.get("reason") or "").strip() or None
-    audit_action = _foundation_audit_for_command_record(
-        identity=identity,
-        command_type=CommandType.ALERT_ACKNOWLEDGE,
-        target_type=ObjectType.RISK_ALERT,
-        target_id=clean_id,
-        payload={**payload, "alert_id": clean_id, "action": "acknowledge"},
-        reason=ack_note or "acknowledge",
-        command_id=command_id,
-        idempotency_key=resolved_key,
-        route=f"POST /bff/alerts/{clean_id}/acknowledge",
-        metadata={"action": "acknowledge"},
-    )
-    audit_record = {
-        "operator_id": identity.operator_id,
-        "roles_at_submission": identity.roles,
-        "action": "acknowledge",
-        "preconditions_checked": ["authentication", "authorization", "idempotency"],
-        "timestamp": submitted_at,
-        "idempotency_key": resolved_key,
-        "request_hash": request_hash,
-    }
-    idempotency_record = IdempotencyRecord.reserve(
-        idempotency_key=resolved_key,
-        operation_type=f"bff.{CommandType.ALERT_ACKNOWLEDGE.value}",
-        target_ref=f"{ObjectType.RISK_ALERT.value}:{clean_id}",
-        request_payload={"alert_id": clean_id, "action": "acknowledge", "payload": payload},
-        trace_id=command_id,
-    )
-    foundation_ctx = {
-        "idempotency_record": idempotency_record.to_dict(),
-        "audit_action": audit_action.to_dict(),
-    }
-    audit_record["foundation"] = foundation_ctx
-    command_store.submit_command(
-        command_id=command_id,
-        command_type=CommandType.ALERT_ACKNOWLEDGE,
-        target=target,
-        submitted_at=submitted_at,
-        params={"alert_id": clean_id, "action": "acknowledge", **payload},
-        audit_context=audit_record,
-        foundation_context=foundation_ctx,
-    )
-
-    _publish_event(
-        _sse_buffers["system"],
-        _sse_subscribers["system"],
-        "alert.acknowledged",
-        {
-            "alert_id": clean_id,
-            "acknowledged_by": identity.operator_id,
-            "acknowledged_at": submitted_at,
-            "note": ack_note,
-        },
-    )
-
-    _ACKNOWLEDGED_ALERTS[clean_id] = {
-        "acknowledged_by": identity.operator_id,
-        "acknowledged_at": submitted_at,
-        "note": ack_note,
-    }
-
-    result = _project_final_command_response(
-        command_id=command_id,
-        command=CommandType.ALERT_ACKNOWLEDGE,
-        accepted_at=submitted_at,
-        status=CommandStatus.SUBMITTED,
-        staleness_warning=staleness_warning,
-    )
-    _GOV_BFF_IDEMPOTENCY[resolved_key] = {"request_hash": request_hash, "result": result}
-    return result
-
-
-# -- Audit -------------------------------------------------------------------
-
-@app.get("/bff/audit")
-async def bff_list_audit(
-    actor: Optional[str] = None,
-    action_type: Optional[str] = None,
-    target_type: Optional[str] = None,
-    from_: Optional[datetime] = Query(default=None, alias="from"),
-    to: Optional[datetime] = Query(default=None),
-    page_token: Optional[str] = None,
-    page_size: int = Query(default=50, ge=1, le=500),
-    authorization: Optional[str] = Header(default=None),
-):
-    """BFF: governance audit event list with actor/type/time filters and pagination."""
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-    snapshot_at = utc_now()
-    action_types = [v.strip() for v in action_type.split(",") if v.strip()] if action_type else None
-    events = _list_governance_audit_events(
-        actor=actor,
-        action_types=action_types,
-        target_type=target_type,
-        from_ts=from_,
-        to_ts=to,
-    )
-    total = len(events)
-    page_items, next_page_token = _page_slice(events, page_token, page_size)
-    return {
-        "data": page_items,
-        "items": page_items,
-        "page_info": {"next_page_token": next_page_token, "total": total},
-        "meta": _read_surface_meta(
-            "governance_audit_events", "audit_list",
-            snapshot_at=snapshot_at, total=total,
-        ),
-    }
-
-
-@app.get("/bff/audit/events")
-async def bff_list_audit_events(
-    actor: Optional[str] = None,
-    action_type: Optional[str] = None,
-    target_type: Optional[str] = None,
-    from_ts: Optional[str] = None,
-    to_ts: Optional[str] = None,
-    page_token: Optional[str] = None,
-    page_size: int = Query(default=50, ge=1, le=500),
-    authorization: Optional[str] = Header(default=None),
-):
-    """BFF: list governance audit events (execute-plans compatibility surface)."""
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-
-    snapshot_at = utc_now()
-    action_types = [v.strip() for v in action_type.split(",") if v.strip()] if action_type else None
-
-    from_dt = _parse_rfc3339(from_ts) if from_ts else None
-    to_dt = _parse_rfc3339(to_ts) if to_ts else None
-
-    events = _list_governance_audit_events(
-        actor=actor,
-        action_types=action_types,
-        target_type=target_type,
-        from_ts=from_dt,
-        to_ts=to_dt,
-    )
-
-    events, next_page_token = _page_slice(events, page_token, page_size)
-    return {
-        "events": events,
-        "page_info": {"next_page_token": next_page_token},
-        "meta": {"snapshot_at": snapshot_at, "staleness": _meta_staleness()},
-    }
-
-
-@app.get("/bff/audit/entities/{entity_type}/{entity_id}")
-async def bff_get_entity_audit(
-    entity_type: str,
-    entity_id: str,
-    page_token: Optional[str] = None,
-    page_size: int = Query(default=50, ge=1, le=500),
-    authorization: Optional[str] = Header(default=None),
-):
-    """BFF: get audit trail for a specific entity."""
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-
-    snapshot_at = utc_now()
-    clean_type = entity_type.strip()
-    clean_id = entity_id.strip()
-
-    events = _list_governance_audit_events(target_type=clean_type)
-    entity_events = [
-        e for e in events
-        if str(e.get("target_id") or e.get("entity_id") or "") == clean_id
-    ]
-    entity_events, next_page_token = _page_slice(entity_events, page_token, page_size)
-
-    return {
-        "entity_type": clean_type,
-        "entity_id": clean_id,
-        "events": entity_events,
-        "page_info": {"next_page_token": next_page_token},
-        "meta": {"snapshot_at": snapshot_at, "staleness": _meta_staleness()},
-    }
-
-
-@app.get("/bff/audit/export")
-async def bff_audit_export(
-    actor: Optional[str] = None,
-    action_type: Optional[str] = None,
-    target_type: Optional[str] = None,
-    from_ts: Optional[str] = None,
-    to_ts: Optional[str] = None,
-    authorization: Optional[str] = Header(default=None),
-):
-    """BFF: export governance audit events as a structured payload."""
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-
-    snapshot_at = utc_now()
-    action_types = [v.strip() for v in action_type.split(",") if v.strip()] if action_type else None
-    from_dt = _parse_rfc3339(from_ts) if from_ts else None
-    to_dt = _parse_rfc3339(to_ts) if to_ts else None
-
-    events = _list_governance_audit_events(
-        actor=actor,
-        action_types=action_types,
-        target_type=target_type,
-        from_ts=from_dt,
-        to_ts=to_dt,
-    )
-
-    return {
-        "events": events,
-        "total": len(events),
-        "exported_at": snapshot_at,
-        "meta": {"snapshot_at": snapshot_at, "staleness": _meta_staleness()},
-    }
-
-
 # -- Command confirmations ---------------------------------------------------
 
-@app.post("/bff/command-confirmations", status_code=202)
 async def bff_command_confirmation(
     request: Request,
     idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
@@ -60467,7 +55267,6 @@ async def bff_command_confirmation(
     return result
 
 
-@app.get("/bff/command-confirmations/{token}")
 async def bff_command_confirmation_status(
     token: str,
     authorization: Optional[str] = Header(default=None),
@@ -60500,7 +55299,6 @@ async def bff_command_confirmation_status(
     }
 
 
-@app.post("/bff/command-confirmations/{token}/confirm", status_code=202)
 async def bff_confirm_command_by_token(
     token: str,
     request: Request,
@@ -61220,51 +56018,6 @@ def _submit_canonical_action_command(
     )
 
 
-@app.post("/bff/deployments", status_code=201)
-async def sem_create_deployment_command(
-    payload: Dict[str, Any] = Body(default_factory=dict),
-    authorization: Optional[str] = Header(default=None),
-    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
-):
-    identity = _extract_identity(authorization)
-    _require_operator_role(identity)
-    client_provided_id = payload.get("deployment_id") or payload.get("deploymentId") or payload.get("id")
-    deployment_id = str(client_provided_id or f"deployment-{uuid.uuid4().hex[:8]}")
-    return _sem_command_response(
-        command_type=CommandType.DEPLOYMENT_CREATE,
-        target_type=ObjectType.DEPLOYMENT,
-        target_id=deployment_id,
-        payload=payload,
-        identity=identity,
-        idempotency_key=idempotency_key,
-        x_idempotency_key=x_idempotency_key,
-        status_code=201,
-        server_generated_target=not client_provided_id,
-    )
-
-
-@app.patch("/bff/deployments/{deployment_id}", status_code=202)
-async def sem_patch_deployment_command(
-    deployment_id: str,
-    payload: Dict[str, Any] = Body(default_factory=dict),
-    authorization: Optional[str] = Header(default=None),
-    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
-):
-    identity = _extract_identity(authorization)
-    _require_operator_role(identity)
-    return _sem_command_response(
-        command_type=CommandType.DEPLOYMENT_PATCH,
-        target_type=ObjectType.DEPLOYMENT,
-        target_id=deployment_id,
-        payload=payload,
-        identity=identity,
-        idempotency_key=idempotency_key,
-        x_idempotency_key=x_idempotency_key,
-    )
-
-
 @app.patch("/bff/rebalances/{rebalance_id}", status_code=202)
 async def sem_patch_rebalance_command(
     rebalance_id: str,
@@ -61285,25 +56038,6 @@ async def sem_patch_rebalance_command(
         x_idempotency_key=x_idempotency_key,
     )
 
-
-@app.post("/bff/audit/export", status_code=202)
-async def sem_audit_export_command(
-    payload: Dict[str, Any] = Body(default_factory=dict),
-    authorization: Optional[str] = Header(default=None),
-    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
-):
-    identity = _extract_identity(authorization)
-    _require_operator_role(identity)
-    return _sem_command_response(
-        command_type=CommandType.AUDIT_EXPORT,
-        target_type=ObjectType.AUDIT_EXPORT,
-        target_id=str(payload.get("target_type") or payload.get("targetType") or "audit-export"),
-        payload=payload,
-        identity=identity,
-        idempotency_key=idempotency_key,
-        x_idempotency_key=x_idempotency_key,
-    )
 
 
 def _confirm_token_records(token_id: str) -> List[Dict[str, Any]]:
@@ -61519,7 +56253,6 @@ def _record_command_confirmation_redeem(
     )
 
 
-@app.post("/bff/confirm-tokens", status_code=201)
 async def sem_create_confirm_token_command(
     payload: Dict[str, Any] = Body(default_factory=dict),
     authorization: Optional[str] = Header(default=None),
@@ -61570,7 +56303,6 @@ async def sem_create_confirm_token_command(
     return JSONResponse(status_code=201, content=content)
 
 
-@app.get("/bff/confirm-tokens/{tokenId}")
 async def sem_get_confirm_token(tokenId: str, authorization: Optional[str] = Header(default=None)):
     identity = _extract_identity(authorization)
     _require_read_role(identity)
@@ -61581,7 +56313,6 @@ async def sem_get_confirm_token(tokenId: str, authorization: Optional[str] = Hea
     }
 
 
-@app.post("/bff/confirm-tokens/{tokenId}/redeem", status_code=202)
 async def sem_redeem_confirm_token_command(
     tokenId: str,
     payload: Dict[str, Any] = Body(default_factory=dict),
@@ -61611,7 +56342,6 @@ async def sem_redeem_confirm_token_command(
     )
 
 
-@app.delete("/bff/confirm-tokens/{tokenId}", status_code=202)
 async def sem_delete_confirm_token_command(
     tokenId: str,
     payload: Dict[str, Any] = Body(default_factory=dict),
@@ -67122,40 +61852,6 @@ async def bff_approvals_batch_decide(
 
 
 
-@app.post("/bff/alerts/{id}/escalate-incident", status_code=202)
-@app.post("/bff/incidents/{id}/append-postmortem", status_code=202)
-@app.post("/bff/incidents/{id}/resolve", status_code=202)
-@app.post("/bff/incidents/{id}/rollback-deployment", status_code=202)
-@app.post("/bff/incidents/{id}/start-mitigation", status_code=202)
-async def sem_final_generic_id_command_alias(
-    id: str,
-    request: Request,
-    payload: Dict[str, Any] = Body(default_factory=dict),
-    authorization: Optional[str] = Header(default=None),
-    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
-    x_dry_run: Optional[str] = Header(default=None, alias="X-Dry-Run"),
-):
-    identity = _extract_identity(authorization)
-    _require_operator_role(identity)
-    snapshot_at = utc_now()
-    if _request_dry_run_requested(x_dry_run):
-        resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
-        route_path = str(getattr(request.scope.get("route"), "path", "") or request.url.path)
-        return _dry_run_success_response(
-            {
-                "id": id,
-                "status": "accepted",
-                "route": route_path,
-                "params": jsonable_encoder(payload or {}),
-                "submitted_by": identity.operator_id,
-            },
-            snapshot_at=snapshot_at,
-            idempotency_key=resolved_key,
-            evidence_kind="generic_id_command.preview",
-        )
-    return JSONResponse(status_code=202, content={"status": "accepted", "data": {"id": id, "status": "accepted"}, "meta": {"snapshot_at": snapshot_at}})
-
 
 @app.post("/bff/artifacts", status_code=201)
 async def sem_final_generic_create_alias(payload: Dict[str, Any] = Body(default_factory=dict), authorization: Optional[str] = Header(default=None)):
@@ -68108,8 +62804,59 @@ app.include_router(
     )
 )
 
-# ACG-01-011: Action command adapter router
-from command_adapters.router import create_action_command_router as _create_action_command_router
+# OPGAP-BE-TRAINING-ROUTER-V2-20260830: dedicated trainer session domain.
+from training.router import create_training_router as _create_training_router
+app.include_router(
+    _create_training_router(
+        get_read_store=lambda: read_store,
+        extract_identity=_extract_identity,
+        require_read_role=_require_read_role,
+        bff_error=_bff_error,
+        utc_now=utc_now,
+        page_slice=_page_slice,
+        dataset_surface_status=_dataset_surface_status,
+    )
+)
+
+# OPGAP-DEPLOY-RELIABILITY-V2-20260830: dedicated deployment domain router.
+from deployment.router import create_deployment_router as _create_deployment_router
+app.include_router(
+    _create_deployment_router(
+        get_read_store=lambda: read_store,
+        extract_identity=_extract_identity,
+        require_read_role=_require_read_role,
+        require_operator_role=_require_operator_role,
+        bff_error=_bff_error,
+        utc_now=utc_now,
+        page_slice=_page_slice,
+        snapshot_meta=_snapshot_meta,
+        dataset_surface_status=_dataset_surface_status,
+        composed_surface_status=_composed_surface_status,
+        read_surface_meta=_read_surface_meta,
+        raise_if_read_surface_unavailable=_raise_if_read_surface_unavailable,
+        aggregate_group_surface=_aggregate_group_surface,
+        split_csv_query=_split_csv_query,
+        meta_staleness=_meta_staleness,
+        stable_json_hash=_stable_json_hash,
+        resolve_final_idempotency_key=_resolve_final_idempotency_key,
+        reject_body_idempotency_key=_reject_body_idempotency_key,
+        request_dry_run_requested=_request_dry_run_requested,
+        gov_bff_idempotency=_GOV_BFF_IDEMPOTENCY,
+        publish_event=_publish_event,
+        sse_buffers=_sse_buffers,
+        sse_subscribers=_sse_subscribers,
+        gov_bff_action_command=_gov_bff_action_command,
+        deprecated_bff_path_response=_deprecated_bff_path_response,
+        sem_command_response=_sem_command_response,
+        stream_generic_events=stream_generic_events,
+    )
+)
+
+# OPGAP-BE-COMMAND-ADAPTERS-V2-20260830: Command adapter router
+from command_adapters.router import (
+    create_action_command_router as _create_action_command_router,
+    create_command_adapters_router as _create_command_adapters_router,
+)
 app.include_router(
     _create_action_command_router(
         submit_command_admission=_submit_final_command_admission,
@@ -68118,6 +62865,26 @@ app.include_router(
         bff_error=_bff_error,
         utc_now=utc_now,
         command_store=lambda: command_store,
+    )
+)
+app.include_router(
+    _create_command_adapters_router(
+        get_command_store=lambda: command_store,
+        get_read_store=lambda: read_store,
+        extract_identity=_extract_identity,
+        require_operator_role=_require_operator_role,
+        require_read_role=_require_read_role,
+        bff_error=_bff_error,
+        utc_now=utc_now,
+        submit_command_admission=_submit_final_command_admission,
+        publish_event=lambda event_type, data: _publish_event(
+            _sse_buffers["audit"],
+            _sse_subscribers["audit"],
+            event_type,
+            data,
+        ),
+        gov_bff_idempotency=_GOV_BFF_IDEMPOTENCY,
+        check_read_surface_state=_check_read_surface_state,
     )
 )
 
@@ -68132,6 +62899,117 @@ app.include_router(
         bff_error=_bff_error,
         utc_now=utc_now,
         snapshot_meta=_snapshot_meta,
+    )
+)
+
+# OPGAP-BE-STRATEGY-RANKING-20260830: Rankings long-tail + PM-12 performance
+# attribution canonical router (extracted alongside the ranking formulas
+# router above).
+from management_read_models.ranking_router import (
+    create_performance_attribution_router as _create_performance_attribution_router,
+)
+from management_read_models.ranking_router import (
+    create_rankings_long_tail_router as _create_rankings_long_tail_router,
+)
+app.include_router(
+    _create_rankings_long_tail_router(
+        get_read_store=lambda: read_store,
+        extract_identity=_extract_identity,
+        require_read_role=_require_read_role,
+        bff_error=_bff_error,
+        utc_now=utc_now,
+        page_slice=_page_slice,
+        read_surface_meta=_read_surface_meta,
+        deprecated_bff_path_response=_deprecated_bff_path_response,
+        reject_body_idempotency_key=_reject_body_idempotency_key,
+        resolve_final_idempotency_key=_resolve_final_idempotency_key,
+        capital_bff_idempotency_check=_capital_bff_idempotency_check,
+        capital_bff_idempotency_store=_capital_bff_idempotency_store,
+        capital_bff_action_command=_capital_bff_action_command,
+        object_type=ObjectType,
+        command_type=CommandType,
+    )
+)
+app.include_router(
+    _create_performance_attribution_router(
+        extract_identity=_extract_identity,
+        require_read_role=_require_read_role,
+        bff_me_tenant_payload=_bff_me_tenant_payload,
+        pm12_performance_attribution_response=_pm12_performance_attribution_response,
+        attribution_dimensions=_PM12_ATTRIBUTION_DIMENSIONS,
+    )
+)
+
+# OPGAP-BE-STRATEGY-RANKING-20260830: Strategies + StrategySpecSeed canonical router
+from strategies.router import create_strategies_router as _create_strategies_router
+app.include_router(
+    _create_strategies_router(
+        get_read_store=lambda: read_store,
+        extract_identity=_extract_identity,
+        require_read_role=_require_read_role,
+        require_operator_role=_require_operator_role,
+        bff_error=_bff_error,
+        utc_now=utc_now,
+        page_slice=_page_slice,
+        read_surface_meta=_read_surface_meta,
+        reject_body_idempotency_key=_reject_body_idempotency_key,
+        resolve_final_idempotency_key=_resolve_final_idempotency_key,
+        stable_json_hash=_stable_json_hash,
+        request_dry_run_requested=_request_dry_run_requested,
+        dry_run_success_response=_dry_run_success_response,
+        normalize_lifecycle_state=_normalize_lifecycle_state,
+        normalize_risk_level=_normalize_risk_level,
+        strategy_persona_idempotency_check=_strategy_persona_idempotency_check,
+        strategy_persona_action_command=_strategy_persona_action_command,
+        strategy_overlay=_STRATEGY_BFF_OVERLAY,
+        strategy_persona_idempotency_store=_STRATEGY_PERSONA_BFF_IDEMPOTENCY,
+        strategy_seed_replication_idempotency_store=_STRATEGY_SEED_REPLICATION_BFF_IDEMPOTENCY,
+        strategy_seed_review_idempotency_store=_STRATEGY_SEED_REVIEW_BFF_IDEMPOTENCY,
+        list_governance_audit_events=_list_governance_audit_events,
+        ooda_packet_list_payload=_ooda_packet_list_payload,
+        require_ooda_packet_routes_enabled=_require_ooda_packet_routes_enabled,
+        deprecated_bff_path_response=_deprecated_bff_path_response,
+        bff_me_tenant_payload=_bff_me_tenant_payload,
+        list_persona_records=_list_persona_records,
+        list_strategy_summaries=_list_strategy_summaries,
+    )
+)
+
+# OPGAP-BE-INCIDENT-ROUTER-V2-20260830: dedicated incident and alert domain.
+from incidents.router import create_incident_router as _create_incident_router
+app.include_router(
+    _create_incident_router(
+        get_read_store=lambda: read_store,
+        get_command_store=lambda: command_store,
+        extract_identity=_extract_identity,
+        require_read_role=_require_read_role,
+        require_operator_role=_require_operator_role,
+        bff_error=_bff_error,
+        utc_now=utc_now,
+        page_slice=_page_slice,
+        snapshot_meta=_snapshot_meta,
+        dataset_surface_status=_dataset_surface_status,
+        meta_staleness=_meta_staleness,
+        surface_degradation_reason=_surface_degradation_reason,
+        read_surface_meta=_read_surface_meta,
+        raise_if_read_surface_unavailable=_raise_if_read_surface_unavailable,
+        resolve_final_idempotency_key=_resolve_final_idempotency_key,
+        reject_body_idempotency_key=_reject_body_idempotency_key,
+        submit_action_command=_gov_bff_action_command,
+        submit_sem_command=_sem_command_response,
+        handle_sse_stream=_handle_sse_stream,
+        run_management_read=_run_management_read,
+        request_dry_run_requested=_request_dry_run_requested,
+        dry_run_success_response=_dry_run_success_response,
+        build_operator_alerts_payload=lambda s: _build_operator_alerts_payload(s),
+        list_governance_audit_events=_list_governance_audit_events,
+        get_bff_incident=_get_bff_incident,
+        list_bff_incidents=_list_bff_incidents,
+        incident_events=_incident_events,
+        incident_subscribers=_incident_subscribers,
+        acknowledged_alerts=_ACKNOWLEDGED_ALERTS,
+        incident_overlay=_GOV_BFF_INCIDENT_OVERLAY,
+        idempotency_ledger=_GOV_BFF_IDEMPOTENCY,
     )
 )
 
@@ -68297,6 +63175,11 @@ _agora_router = _create_agora_router(
     require_write_role=_require_operator_role,
     bff_error=_bff_error,
     utc_now=utc_now,
+    # Passed explicitly (rather than resolved via a bare `import main` inside
+    # create_identity_router) so the identity router always reads this exact
+    # loaded instance of main.py, not whatever module last claimed the bare
+    # "main" name in sys.modules — see create_identity_router's main_module arg.
+    main_module=sys.modules[__name__],
     get_read_store=lambda: read_store,
     get_persona_write_owner=lambda: persona_write_owner,
     get_trade_journey_store=lambda: _trade_journeys.EVENT_STORE,

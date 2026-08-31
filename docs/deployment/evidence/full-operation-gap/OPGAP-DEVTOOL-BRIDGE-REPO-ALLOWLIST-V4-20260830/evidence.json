@@ -1,0 +1,79 @@
+{
+  "schema_version": "pantheon.supervisor-evidence.v1",
+  "task_id": "OPGAP-DEVTOOL-BRIDGE-REPO-ALLOWLIST-V4-20260830",
+  "title": "Derive assistant development bridge repository allowlist from canonical supervisor registry",
+  "program_id": "PANTHEON-FULL-OPERATION-GAP-CLOSURE-20260830",
+  "design_unit": "SD-OPGAP-DEVTOOL-BRIDGE-REPO-ALLOWLIST",
+  "recorded_at": "2026-08-30T21:30:00Z",
+  "ai_name": "Antigravity2",
+  "owner": "Antigravity2",
+  "reviewer": "Claude",
+  "target_repo": "pantheon",
+  "task_class": "development_tooling",
+  "summary_zh": "補齊 bridge allowlist 任務的 reviewer evidence-manifest 合約，保留已通過 793 項 regression 的實作。",
+  "adopt_from": {
+    "pr": 5459,
+    "head_sha": "678ee53d39eb830d68f3ca80b0f5e85b30bc7b16"
+  },
+  "artifacts": [
+    ".orchestrator/supervisor.py",
+    ".orchestrator/development_bridge/dev_bridge_dispatcher.py",
+    ".orchestrator/development_bridge/tests/test_dev_bridge_reliability.py",
+    ".orchestrator/test_supervisor.py",
+    "scripts/provision_live_supervisor_config.py",
+    "scripts/test_provision_live_supervisor_config.py",
+    "docs/deployment/evidence/full-operation-gap/OPGAP-DEVTOOL-BRIDGE-REPO-ALLOWLIST-V4-20260830/evidence.json"
+  ],
+  "scope": {
+    "owned": [
+      ".orchestrator/supervisor.py",
+      ".orchestrator/development_bridge/dev_bridge_dispatcher.py",
+      ".orchestrator/development_bridge/tests/test_dev_bridge_reliability.py",
+      ".orchestrator/test_supervisor.py",
+      "scripts/provision_live_supervisor_config.py",
+      "scripts/test_provision_live_supervisor_config.py",
+      "docs/deployment/evidence/full-operation-gap/OPGAP-DEVTOOL-BRIDGE-REPO-ALLOWLIST-V4-20260830/evidence.json"
+    ],
+    "not_changing": [
+      "services/control-plane/bff",
+      "services/source_ingestion",
+      "services/telemetry",
+      "execute-plans product runtime"
+    ],
+    "composes_with": [
+      "OPGAP-DEVTOOL-TARGET-REPO-BRIDGE-V2-20260830",
+      "FULL-OPERATION-GAP-SA-SD-PLAN-FREEZE-20260830"
+    ]
+  },
+  "contracts": {
+    "derived_allowlist_from_live_registry": "Supervisor derives the assistant dev bridge repository allowlist exclusively from coordination.repositories in live config, normalizing registry keys to bridge contract names.",
+    "fail_closed_unconfigured_repos": "Repositories absent from the live supervisor configuration are rejected fail-closed during packet constraint checking before state mutation.",
+    "authoritative_context_forwarding": "Supervisor passes authoritative TaskStore, immutable command runtime identity, and derived allowlist to the dev bridge dispatcher environment."
+  },
+  "verification": {
+    "full_regression": "793/793 full regression tests passed on PR #5459 exact head 678ee53d39eb830d68f3ca80b0f5e85b30bc7b16",
+    "test_suites": [
+      ".orchestrator/development_bridge/tests/test_dev_bridge_reliability.py",
+      ".orchestrator/test_supervisor.py",
+      "scripts/test_provision_live_supervisor_config.py"
+    ],
+    "verification_commands": [
+      "PYTHONPATH=.orchestrator .venv-pantheon/bin/python3 -m pytest -q .orchestrator/development_bridge/tests/",
+      "PYTHONPATH=.orchestrator .venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_supervisor.py -k test_bridge_allowlist",
+      "PYTHONPATH=scripts .venv-pantheon/bin/python3 -m pytest -q scripts/test_provision_live_supervisor_config.py"
+    ],
+    "status": "PASS"
+  },
+  "review": {
+    "status": "ready_for_independent_review",
+    "reviewer": "Claude",
+    "required_checks": [
+      "verify assistant_dev_bridge_allowed_repositories derives allowlist exclusively from coordination.repositories",
+      "verify supervisor passes derived allowlist and runtime env to dev_bridge_dispatcher",
+      "verify dev_bridge_dispatcher checks constraints against supervisor runtime environment",
+      "verify unconfigured repository constraints fail closed before state mutation",
+      "verify all development bridge reliability and supervisor unit tests pass",
+      "bind this manifest path (docs/deployment/evidence/full-operation-gap/OPGAP-DEVTOOL-BRIDGE-REPO-ALLOWLIST-V4-20260830/evidence.json) in the canonical approve command"
+    ]
+  }
+}

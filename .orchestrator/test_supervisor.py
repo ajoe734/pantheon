@@ -31,6 +31,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 import supervisor
 import runtime_state
 from adapters.base import DeliveryResult
+from rewrite import worker_workspace
 
 
 _OLD_ENV: dict[str, str] = {}
@@ -55,6 +56,31 @@ def tearDownModule() -> None:
 
 
 class V2StartupCacheTests(unittest.TestCase):
+    def test_bridge_allowlist_uses_explicit_live_registry_contract_names(self) -> None:
+        config = config_fixture()
+        config["coordination"] = {
+            "repositories": {
+                "pantheon": {"repo": "ajoe734/pantheon"},
+                "execute_plans": {"repo": "ajoe734/execute-plans"},
+            }
+        }
+
+        self.assertEqual(
+            supervisor.assistant_dev_bridge_allowed_repositories(config),
+            ["pantheon", "execute-plans"],
+        )
+
+    def test_bridge_allowlist_rejects_registry_without_pantheon(self) -> None:
+        config = config_fixture()
+        config["coordination"] = {
+            "repositories": {
+                "execute_plans": {"repo": "ajoe734/execute-plans"},
+            }
+        }
+
+        with self.assertRaisesRegex(ValueError, "must explicitly admit pantheon"):
+            supervisor.assistant_dev_bridge_allowed_repositories(config)
+
     def test_task_projection_report_declares_authoritative_mode(self) -> None:
         state = runtime_state.default_state()
         snapshot = {
@@ -990,7 +1016,7 @@ class PantheonWorkerTaskBriefHygieneTests(unittest.TestCase):
         request = self._request(task, agent_id=agent_id, reason=reason)
         with (
             mock.patch.object(
-                supervisor,
+                worker_workspace,
                 "_fetch_worker_base_ref",
                 return_value=(True, None),
             ),
@@ -1165,7 +1191,7 @@ class PantheonWorkerTaskBriefHygieneTests(unittest.TestCase):
             with (
                 mock.patch.object(supervisor, "write_activity_log"),
                 mock.patch.object(
-                    supervisor,
+                    worker_workspace,
                     "_scan_process_paths_in_root",
                     return_value=set(),
                 ),
@@ -1268,7 +1294,7 @@ class CrossRepositoryWorkerWorkspaceTests(unittest.TestCase):
 
             with (
                 mock.patch.object(
-                    supervisor, "_fetch_worker_base_ref", return_value=(True, None)
+                    worker_workspace, "_fetch_worker_base_ref", return_value=(True, None)
                 ) as fetch_base,
                 mock.patch.object(supervisor, "write_activity_log"),
             ):
@@ -1411,7 +1437,7 @@ class CrossRepositoryWorkerWorkspaceTests(unittest.TestCase):
             state: dict[str, object] = {"worker_worktrees": {"leases": {}}}
 
             with (
-                mock.patch.object(supervisor, "_fetch_worker_base_ref", return_value=(True, None)),
+                mock.patch.object(worker_workspace, "_fetch_worker_base_ref", return_value=(True, None)),
                 mock.patch.object(supervisor, "write_activity_log"),
                 mock.patch.object(supervisor, "load_status", return_value={"tasks": [task]}),
             ):
@@ -1504,7 +1530,7 @@ class CrossRepositoryWorkerWorkspaceTests(unittest.TestCase):
 
             with (
                 mock.patch.object(
-                    supervisor, "_fetch_worker_base_ref", return_value=(True, None)
+                    worker_workspace, "_fetch_worker_base_ref", return_value=(True, None)
                 ),
                 mock.patch.object(supervisor, "write_activity_log"),
             ):
@@ -6400,6 +6426,769 @@ class DurableWorkerRecoveryTests(unittest.TestCase):
         self.assertNotIn(supervisor.WORKER_RECOVERY_TASK_KEY, resolved_task)
         self.assertEqual(resolved_receipt["status"], "resolved")
         self.assertNotIn(receipt["receipt_id"], state[supervisor.WORKER_RECOVERY_RECEIPTS_KEY])
+
+
+class LostLeaseDirtyWipAdoptionTests(unittest.TestCase):
+    """SUP-LOST-LEASE-DIRTY-WIP-ADOPTION-20260831."""
+
+    TASK_ID = "TASK-1"
+
+    @staticmethod
+    def _git(cwd: Path, *args: str) -> str:
+        proc = subprocess.run(
+            ["git", *args],
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        return proc.stdout.strip()
+
+    def _git_repo_fixture(self, root: Path) -> tuple[Path, Path]:
+        status_root = root / "status"
+        source_root = root / "pantheon"
+        status_root.mkdir()
+        source_root.mkdir()
+        self._git(source_root, "init", "-b", "dev")
+        self._git(source_root, "config", "user.name", "Test")
+        self._git(source_root, "config", "user.email", "test@example.com")
+        (source_root / "AI_COLLABORATION_GUIDE.md").write_text(
+            "worker instructions\n", encoding="utf-8"
+        )
+        (source_root / ".orchestrator").mkdir()
+        (source_root / ".orchestrator" / "supervisor.py").write_text(
+            "# worker runtime\n", encoding="utf-8"
+        )
+        self._git(
+            source_root,
+            "add",
+            "AI_COLLABORATION_GUIDE.md",
+            ".orchestrator/supervisor.py",
+        )
+        self._git(source_root, "commit", "-m", "initial")
+        head = self._git(source_root, "rev-parse", "HEAD")
+        self._git(
+            source_root,
+            "remote",
+            "add",
+            "origin",
+            "https://github.com/ajoe734/pantheon.git",
+        )
+        self._git(source_root, "update-ref", "refs/remotes/origin/dev", head)
+        return status_root, source_root
+
+    def _config(self, status_root: Path, source_root: Path, root: Path) -> dict[str, object]:
+        config = config_fixture(status_root)
+        config["task_state_store"] = {
+            "mode": "authoritative",
+            # Authoritative task state keeps the append-only journal outside
+            # the projected coordination root, matching the live binding.
+            "event_log": str(root / "runtime" / "tasks.jsonl"),
+        }
+        config.update(
+            {
+                "branch_workflow": {
+                    "task_branch_prefix": "task/",
+                    "dev_branch": "dev",
+                },
+                "worker_worktrees": {
+                    "enabled": True,
+                    "root": str(root / "worker-worktrees"),
+                    "base_ref": "origin/dev",
+                    "reuse_existing": True,
+                    "execution_reasons": [
+                        supervisor.REASON_OWNED_READY,
+                        supervisor.REASON_REVIEW_READY,
+                    ],
+                },
+                "worker_tree_guard": {
+                    "enabled": True,
+                    "mode": "block",
+                    "blocking_globs": [".orchestrator/supervisor.py"],
+                },
+                "coordination": {
+                    "repositories": {
+                        "pantheon": {"local_path": str(source_root)},
+                    }
+                },
+            }
+        )
+        return config
+
+    def _seed_status(self, config: dict[str, object], task: dict[str, object]) -> None:
+        (Path(config["paths"]["status_file"]).parent / ".orchestrator").mkdir(
+            parents=True, exist_ok=True
+        )
+        status = {"tasks": [task], "blockers": [], "handoffs": []}
+        supervisor.rewrite_task_state_store.append_state_commit(
+            Path(config["task_state_store"]["event_log"]),
+            status,
+            source="test-seed",
+        )
+        supervisor.write_json(Path(config["paths"]["status_file"]), status)
+
+    @staticmethod
+    def _request(
+        task: dict[str, object],
+        *,
+        agent_id: str,
+        reason: str,
+        queue_event_id: str,
+        recovery_receipt_id: str | None = None,
+    ) -> supervisor.DeliveryRequest:
+        metadata = {"task": task, "task_generation": task.get("generation")}
+        if recovery_receipt_id:
+            metadata["recovery_receipt_id"] = recovery_receipt_id
+        return supervisor.DeliveryRequest(
+            agent_id=agent_id,
+            provider=agent_id,
+            delivery_mode="codex",
+            message="read task context\n",
+            task_id=str(task["id"]),
+            reason=reason,
+            context_files=[],
+            target_files=[],
+            metadata=metadata,
+        )
+
+    def _prepare(
+        self,
+        config: dict[str, object],
+        state: dict[str, object],
+        task: dict[str, object],
+        *,
+        agent_id: str,
+        reason: str,
+        queue_event_id: str,
+        recovery_receipt_id: str | None = None,
+    ) -> tuple[bool, str | None, supervisor.DeliveryRequest]:
+        request = self._request(
+            task,
+            agent_id=agent_id,
+            reason=reason,
+            queue_event_id=queue_event_id,
+            recovery_receipt_id=recovery_receipt_id,
+        )
+        with mock.patch.object(
+            supervisor, "_fetch_worker_base_ref", return_value=(True, None)
+        ):
+            ok, error = supervisor.prepare_worker_workspace(
+                config,
+                state,
+                request,
+                queue_event_id=queue_event_id,
+                target_agent=agent_id,
+            )
+        return ok, error, request
+
+    def _worker(
+        self,
+        *,
+        run_id: str = "run-lost-1",
+        queue_event_id: str = "evt-lost-1",
+        agent_id: str = "codex",
+        generation: int = 1,
+    ) -> dict[str, object]:
+        worker: dict[str, object] = {
+            "run_id": run_id,
+            "task_id": self.TASK_ID,
+            "task_generation": generation,
+            "provider": agent_id,
+            "agent_id": agent_id,
+            "logical_agent_id": agent_id,
+            "queue_event_id": queue_event_id,
+            "status": "running",
+            "pid": 1234,
+            "pid_start_ticks": 5678,
+            "lease_acquired_at": "2026-08-28T10:00:00Z",
+            "lease_expires_at": "2026-08-28T10:05:00Z",
+            "request_snapshot": {
+                "reason": supervisor.REASON_OWNED_IN_PROGRESS,
+                "task_generation": generation,
+                "metadata": {"task_generation": generation},
+            },
+        }
+        worker["process_generation"] = supervisor.worker_process_generation_id(
+            task_id=self.TASK_ID,
+            worker_run_id=run_id,
+            queue_event_id=queue_event_id,
+            pid=1234,
+            pid_start_ticks=5678,
+        )
+        return worker
+
+    def _drain_status_outbox(self, config: dict[str, object]) -> bool:
+        status = supervisor.load_status(config)
+        if status.get("status_activity_outbox") in (None, {}, []):
+            return True
+        status.pop("status_activity_outbox", None)
+        supervisor.write_status(config, status, source="test-outbox-drain")
+        return True
+
+    def _state(self) -> dict[str, object]:
+        state: dict[str, object] = {
+            "workers": {},
+            "queue": {"events": {}},
+            "seen_event_keys": {},
+        }
+        return with_healthy_delivery_health(self.config, state)
+
+    def _fence_and_reassign(
+        self, state: dict[str, object]
+    ) -> tuple[dict[str, object], str, str]:
+        """Drive the real recovery pipeline to a canonical ``reassigned`` receipt."""
+
+        worker = self._worker()
+        runtime_state.store_queue_event(
+            state,
+            {
+                "event_id": worker["queue_event_id"],
+                "event_key": f"key-{worker['queue_event_id']}",
+                "task_id": self.TASK_ID,
+                "task_generation": worker["task_generation"],
+                "target_agent": worker["agent_id"],
+                "delivery_endpoint_id": worker["agent_id"],
+                "reason": supervisor.REASON_OWNED_IN_PROGRESS,
+                "metadata": {"task": {"id": self.TASK_ID}},
+            },
+        )
+        state["queue"]["events"][worker["queue_event_id"]]["status"] = "started"
+        state["workers"][worker["run_id"]] = worker
+        with mock.patch.object(
+            supervisor, "sync_status_pipeline", side_effect=self._drain_status_outbox
+        ):
+            self.assertTrue(
+                supervisor.recover_lost_worker_lease(
+                    self.config,
+                    state,
+                    worker,
+                    reason_kind="worker_process_missing",
+                    reason="worker disappeared",
+                )
+            )
+        status = supervisor.load_status(self.config)
+        task = status["tasks"][0]
+        receipt_id = task[supervisor.WORKER_RECOVERY_TASK_KEY]["receipt_id"]
+        receipt = status[supervisor.WORKER_RECOVERY_RECEIPTS_KEY][receipt_id]
+        self.assertEqual(receipt["status"], "reassigned")
+        # Drop the fenced predecessor from live worker bookkeeping: the point
+        # of this receipt is that it is no longer live.
+        state["workers"].pop(worker["run_id"], None)
+        replacement_event_id = "evt-replacement-1"
+        runtime_state.store_queue_event(
+            state,
+            {
+                "event_id": replacement_event_id,
+                "event_key": f"key-{replacement_event_id}",
+                "task_id": self.TASK_ID,
+                "task_generation": task["generation"],
+                "target_agent": "codex2",
+                "delivery_endpoint_id": "codex2",
+                "reason": supervisor.REASON_OWNED_IN_PROGRESS,
+                "recovery_receipt_id": receipt_id,
+                "metadata": {"task": task},
+            },
+        )
+        state["queue"]["events"][replacement_event_id][
+            "recovery_receipt_id"
+        ] = receipt_id
+        return task, receipt_id, replacement_event_id
+
+    def test_fenced_replacement_adopts_dirty_wip_without_reset_or_commit(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            status_root, source_root = self._git_repo_fixture(root)
+            self.config = self._config(status_root, source_root, root)
+            task = task_fixture(self.TASK_ID, status="in_progress")
+            self._seed_status(self.config, task)
+            state = self._state()
+
+            first_ok, first_error, first_request = self._prepare(
+                self.config,
+                state,
+                task,
+                agent_id="codex",
+                reason=supervisor.REASON_OWNED_IN_PROGRESS,
+                queue_event_id="evt-lost-1",
+            )
+            self.assertTrue(first_ok, first_error)
+            workspace = Path(str(first_request.metadata["workspace_path"]))
+            head_before = self._git(workspace, "rev-parse", "HEAD")
+
+            dirty_relpath = ".orchestrator/supervisor.py"
+            wip_bytes = "uncommitted Persona-reconciliation work in progress"
+            (workspace / dirty_relpath).write_text(wip_bytes, encoding="utf-8")
+            status_before_dispatch = self._git(workspace, "status", "--porcelain")
+            self.assertIn(dirty_relpath, status_before_dispatch)
+
+            reassigned_task, receipt_id, replacement_event_id = (
+                self._fence_and_reassign(state)
+            )
+            self.assertEqual(reassigned_task["owner"], "Codex2")
+
+            second_ok, second_error, second_request = self._prepare(
+                self.config,
+                state,
+                reassigned_task,
+                agent_id="codex2",
+                reason=supervisor.REASON_OWNED_READY,
+                queue_event_id=replacement_event_id,
+                recovery_receipt_id=receipt_id,
+            )
+            self.assertTrue(second_ok, second_error)
+            self.assertEqual(
+                Path(str(second_request.metadata["workspace_path"])), workspace
+            )
+
+            # The predecessor's uncommitted WIP is preserved byte-for-byte:
+            # no reset/clean/stash and no synthetic commit.
+            self.assertEqual(
+                (workspace / dirty_relpath).read_text(encoding="utf-8"), wip_bytes
+            )
+            self.assertEqual(self._git(workspace, "rev-parse", "HEAD"), head_before)
+            self.assertEqual(
+                self._git(workspace, "status", "--porcelain"),
+                status_before_dispatch,
+            )
+            marker = second_request.metadata.get("fenced_dirty_wip_adoption")
+            self.assertIsInstance(marker, dict)
+            guard_ok, guard_error = supervisor.check_worker_tree_clean(
+                self.config,
+                run_id=replacement_event_id,
+                task_id=self.TASK_ID,
+                target_agent="Codex2",
+                queue_event_id=replacement_event_id,
+                cwd=workspace,
+                fenced_dirty_wip_adoption=marker,
+            )
+            self.assertTrue(guard_ok, guard_error)
+
+    def test_ordinary_dirty_reuse_without_fenced_receipt_still_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            status_root, source_root = self._git_repo_fixture(root)
+            self.config = self._config(status_root, source_root, root)
+            task = task_fixture(self.TASK_ID, status="in_progress")
+            self._seed_status(self.config, task)
+            state = self._state()
+
+            first_ok, first_error, first_request = self._prepare(
+                self.config,
+                state,
+                task,
+                agent_id="codex",
+                reason=supervisor.REASON_OWNED_IN_PROGRESS,
+                queue_event_id="evt-1",
+            )
+            self.assertTrue(first_ok, first_error)
+            workspace = Path(str(first_request.metadata["workspace_path"]))
+            (workspace / "AI_COLLABORATION_GUIDE.md").write_text(
+                "unrelated dirty edit\n", encoding="utf-8"
+            )
+
+            second_ok, second_error, _second_request = self._prepare(
+                self.config,
+                state,
+                task,
+                agent_id="codex",
+                reason=supervisor.REASON_OWNED_IN_PROGRESS,
+                queue_event_id="evt-2",
+            )
+            self.assertFalse(second_ok)
+            self.assertIn("dirty", str(second_error))
+
+            forged_request = self._request(
+                task,
+                agent_id="codex",
+                reason=supervisor.REASON_OWNED_IN_PROGRESS,
+                queue_event_id="evt-forged",
+            )
+            forged_request.metadata["fenced_dirty_wip_adoption"] = {
+                "receipt_id": "lost-lease-forged",
+                "task_id": self.TASK_ID,
+                "queue_event_id": "evt-forged",
+                "workspace_path": str(workspace),
+            }
+            with mock.patch.object(
+                supervisor, "_fetch_worker_base_ref", return_value=(True, None)
+            ):
+                forged_ok, forged_error = supervisor.prepare_worker_workspace(
+                    self.config,
+                    state,
+                    forged_request,
+                    queue_event_id="evt-forged",
+                    target_agent="codex",
+                )
+            self.assertFalse(forged_ok)
+            self.assertIn("dirty", str(forged_error))
+            self.assertNotIn(
+                "fenced_dirty_wip_adoption", forged_request.metadata
+            )
+
+
+class LostLeaseWorktreeAdoptionEligibilityTests(unittest.TestCase):
+    """Unit coverage for `_lost_lease_replacement_may_adopt_worktree`."""
+
+    TASK_ID = "TASK-1"
+
+    def setUp(self) -> None:
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        temp_root = Path(self.temp.name)
+        self.root = temp_root / "status"
+        (self.root / ".orchestrator").mkdir(parents=True)
+        (temp_root / "runtime").mkdir()
+        self.source_root = temp_root / "source"
+        self.source_root.mkdir()
+        self.worktree_path = temp_root / "worktree"
+        self.worktree_path.mkdir()
+        self.branch = f"task/{self.TASK_ID}"
+        self.base_ref = "origin/dev"
+        self.config = config_fixture(self.root)
+        event_log = temp_root / "runtime" / "tasks.jsonl"
+        self.config["task_state_store"] = {
+            "mode": "authoritative",
+            "event_log": str(event_log),
+        }
+        self.task = task_fixture(self.TASK_ID, status="in_progress")
+        self.status = {"tasks": [self.task], "blockers": [], "handoffs": []}
+        supervisor.rewrite_task_state_store.append_state_commit(
+            event_log, self.status, source="test-seed"
+        )
+        supervisor.write_json(
+            Path(self.config["paths"]["status_file"]), self.status
+        )
+
+    def _drain_status_outbox(self, config: dict[str, object]) -> bool:
+        status = supervisor.load_status(config)
+        if status.get("status_activity_outbox") in (None, {}, []):
+            return True
+        status.pop("status_activity_outbox", None)
+        supervisor.write_status(config, status, source="test-outbox-drain")
+        return True
+
+    def _worker(
+        self,
+        *,
+        run_id: str = "run-lost-1",
+        queue_event_id: str = "evt-lost-1",
+        agent_id: str = "codex",
+        generation: int = 1,
+    ) -> dict[str, object]:
+        worker: dict[str, object] = {
+            "run_id": run_id,
+            "task_id": self.TASK_ID,
+            "task_generation": generation,
+            "provider": agent_id,
+            "agent_id": agent_id,
+            "logical_agent_id": agent_id,
+            "queue_event_id": queue_event_id,
+            "status": "running",
+            "pid": 1234,
+            "pid_start_ticks": 5678,
+            "lease_acquired_at": "2026-08-28T10:00:00Z",
+            "lease_expires_at": "2026-08-28T10:05:00Z",
+            "request_snapshot": {
+                "reason": supervisor.REASON_OWNED_IN_PROGRESS,
+                "task_generation": generation,
+                "metadata": {"task_generation": generation},
+            },
+        }
+        worker["process_generation"] = supervisor.worker_process_generation_id(
+            task_id=self.TASK_ID,
+            worker_run_id=run_id,
+            queue_event_id=queue_event_id,
+            pid=1234,
+            pid_start_ticks=5678,
+        )
+        return worker
+
+    def _state(self) -> dict[str, object]:
+        state: dict[str, object] = {
+            "workers": {},
+            "queue": {"events": {}},
+            "seen_event_keys": {},
+            "worker_worktrees": {
+                "leases": {
+                    self.TASK_ID: {
+                        "task_id": self.TASK_ID,
+                        "workspace_task_id": self.TASK_ID,
+                        "repository_id": "pantheon",
+                        "source_root": str(self.source_root),
+                        "branch": self.branch,
+                        "path": str(self.worktree_path),
+                        "base_ref": self.base_ref,
+                    }
+                }
+            },
+        }
+        return with_healthy_delivery_health(self.config, state)
+
+    def _fence_and_reassign(self, state: dict[str, object]) -> None:
+        worker = self._worker()
+        runtime_state.store_queue_event(
+            state,
+            {
+                "event_id": worker["queue_event_id"],
+                "event_key": f"key-{worker['queue_event_id']}",
+                "task_id": self.TASK_ID,
+                "task_generation": worker["task_generation"],
+                "target_agent": worker["agent_id"],
+                "delivery_endpoint_id": worker["agent_id"],
+                "reason": supervisor.REASON_OWNED_IN_PROGRESS,
+                "metadata": {"task": {"id": self.TASK_ID}},
+            },
+        )
+        state["queue"]["events"][worker["queue_event_id"]]["status"] = "started"
+        state["workers"][worker["run_id"]] = worker
+        with mock.patch.object(
+            supervisor, "sync_status_pipeline", side_effect=self._drain_status_outbox
+        ):
+            self.assertTrue(
+                supervisor.recover_lost_worker_lease(
+                    self.config,
+                    state,
+                    worker,
+                    reason_kind="worker_process_missing",
+                    reason="worker disappeared",
+                )
+            )
+        state["workers"].pop(worker["run_id"], None)
+        status = supervisor.load_status(self.config)
+        task = status["tasks"][0]
+        receipt_id = task[supervisor.WORKER_RECOVERY_TASK_KEY]["receipt_id"]
+        replacement_event_id = "evt-replacement-1"
+        runtime_state.store_queue_event(
+            state,
+            {
+                "event_id": replacement_event_id,
+                "event_key": f"key-{replacement_event_id}",
+                "task_id": self.TASK_ID,
+                "task_generation": task["generation"],
+                "target_agent": "codex2",
+                "delivery_endpoint_id": "codex2",
+                "reason": supervisor.REASON_OWNED_IN_PROGRESS,
+                "recovery_receipt_id": receipt_id,
+                "metadata": {"task": task},
+            },
+        )
+        state["queue"]["events"][replacement_event_id][
+            "recovery_receipt_id"
+        ] = receipt_id
+
+    def _eligibility_context(
+        self, state: dict[str, object]
+    ) -> tuple[supervisor.DeliveryRequest, dict[str, object]]:
+        status = supervisor.load_status(self.config)
+        task = status["tasks"][0]
+        pointer = task.get(supervisor.WORKER_RECOVERY_TASK_KEY) or {}
+        receipt_id = str(pointer.get("receipt_id") or "")
+        receipt = (status.get(supervisor.WORKER_RECOVERY_RECEIPTS_KEY) or {}).get(
+            receipt_id, {}
+        )
+        replacement = receipt.get("replacement") or {}
+        target_agent = str(replacement.get("agent") or task.get("owner") or "")
+        queue_event_id = next(
+            (
+                event_id
+                for event_id, record in state["queue"]["events"].items()
+                if (record.get("intent") or {}).get("recovery_receipt_id")
+                == receipt_id
+            ),
+            "evt-none",
+        )
+        request = supervisor.DeliveryRequest(
+            agent_id=target_agent.lower(),
+            provider=target_agent.lower(),
+            delivery_mode="codex",
+            message="replacement\n",
+            task_id=self.TASK_ID,
+            reason=supervisor.REASON_OWNED_IN_PROGRESS,
+            context_files=[],
+            target_files=[],
+            metadata={
+                "task": task,
+                "task_generation": task["generation"],
+                "recovery_receipt_id": receipt_id,
+            },
+        )
+        return request, {
+            "task_id": self.TASK_ID,
+            "repository_id": "pantheon",
+            "source_root": self.source_root,
+            "branch": self.branch,
+            "worktree_path": self.worktree_path,
+            "base_ref": self.base_ref,
+            "queue_event_id": queue_event_id,
+            "target_agent": target_agent,
+        }
+
+    def _eligible(
+        self,
+        state: dict[str, object],
+        *,
+        request: supervisor.DeliveryRequest | None = None,
+        **overrides: object,
+    ) -> bool:
+        default_request, context = self._eligibility_context(state)
+        context.update(overrides)
+        return supervisor._lost_lease_replacement_may_adopt_worktree(
+            self.config,
+            state,
+            request or default_request,
+            **context,
+        )
+
+    def test_unfenced_ordinary_task_is_ineligible(self) -> None:
+        state = self._state()
+        self.assertFalse(self._eligible(state))
+
+    def test_missing_task_id_is_ineligible(self) -> None:
+        state = self._state()
+        self.assertFalse(self._eligible(state, task_id=None))
+
+    def test_cross_task_id_is_ineligible(self) -> None:
+        state = self._state()
+        self._fence_and_reassign(state)
+        self.assertFalse(self._eligible(state, task_id="TASK-UNRELATED"))
+
+    def test_fenced_and_reassigned_with_no_live_worker_is_eligible(self) -> None:
+        state = self._state()
+        self._fence_and_reassign(state)
+        self.assertTrue(self._eligible(state))
+
+    def test_request_receipt_mismatch_is_ineligible(self) -> None:
+        state = self._state()
+        self._fence_and_reassign(state)
+        request, _context = self._eligibility_context(state)
+        request.metadata["recovery_receipt_id"] = "lost-lease-unrelated"
+        self.assertFalse(self._eligible(state, request=request))
+
+    def test_queue_intent_receipt_mismatch_is_ineligible(self) -> None:
+        state = self._state()
+        self._fence_and_reassign(state)
+        _request, context = self._eligibility_context(state)
+        queue_event_id = str(context["queue_event_id"])
+        state["queue"]["events"][queue_event_id][
+            "recovery_receipt_id"
+        ] = "lost-lease-unrelated"
+        self.assertFalse(self._eligible(state))
+
+    def test_replacement_actor_mismatch_is_ineligible(self) -> None:
+        state = self._state()
+        self._fence_and_reassign(state)
+        self.assertFalse(self._eligible(state, target_agent="Codex"))
+
+    def test_canonical_repository_or_branch_mismatch_is_ineligible(self) -> None:
+        state = self._state()
+        self._fence_and_reassign(state)
+        self.assertFalse(self._eligible(state, repository_id="execute_plans"))
+        self.assertFalse(self._eligible(state, branch="task/TASK-UNRELATED"))
+
+    def test_registered_worktree_binding_mismatches_are_ineligible(self) -> None:
+        state = self._state()
+        self._fence_and_reassign(state)
+        mismatches = {
+            "task_id": "TASK-UNRELATED",
+            "workspace_task_id": "TASK-UNRELATED",
+            "repository_id": "execute_plans",
+            "source_root": str(self.source_root / "other"),
+            "branch": "task/TASK-UNRELATED",
+            "path": str(self.worktree_path / "other"),
+            "base_ref": "origin/main",
+        }
+        for field, value in mismatches.items():
+            with self.subTest(field=field):
+                mutated = copy.deepcopy(state)
+                mutated["worker_worktrees"]["leases"][self.TASK_ID][field] = value
+                self.assertFalse(self._eligible(mutated))
+
+    def test_unknown_recovery_reason_is_ineligible(self) -> None:
+        state = self._state()
+        self._fence_and_reassign(state)
+        status = supervisor.load_status(self.config)
+        task = status["tasks"][0]
+        receipt_id = task[supervisor.WORKER_RECOVERY_TASK_KEY]["receipt_id"]
+        status[supervisor.WORKER_RECOVERY_RECEIPTS_KEY][receipt_id][
+            "reason_kind"
+        ] = "manual_reassignment"
+        supervisor.write_status(self.config, status, source="test-reason-mismatch")
+        self.assertFalse(self._eligible(state))
+
+    def test_receipt_still_pending_is_ineligible(self) -> None:
+        state = self._state()
+        worker = self._worker()
+        runtime_state.store_queue_event(
+            state,
+            {
+                "event_id": worker["queue_event_id"],
+                "event_key": f"key-{worker['queue_event_id']}",
+                "task_id": self.TASK_ID,
+                "task_generation": worker["task_generation"],
+                "target_agent": worker["agent_id"],
+                "delivery_endpoint_id": worker["agent_id"],
+                "reason": supervisor.REASON_OWNED_IN_PROGRESS,
+                "metadata": {"task": {"id": self.TASK_ID}},
+            },
+        )
+        state["queue"]["events"][worker["queue_event_id"]]["status"] = "started"
+        state["workers"][worker["run_id"]] = worker
+        # Fence without letting reassignment run, by removing the configured
+        # fallback lane so the recovery CAS to "reassigned" cannot happen.
+        # The generic enabled flag does not gate typed lost-lease recovery.
+        self.config["worker_reassignment"]["owner_fallbacks"] = {}
+        with mock.patch.object(
+            supervisor, "sync_status_pipeline", side_effect=self._drain_status_outbox
+        ):
+            self.assertTrue(
+                supervisor.recover_lost_worker_lease(
+                    self.config,
+                    state,
+                    worker,
+                    reason_kind="worker_process_missing",
+                    reason="worker disappeared",
+                )
+            )
+        status = supervisor.load_status(self.config)
+        task = status["tasks"][0]
+        receipt_id = task[supervisor.WORKER_RECOVERY_TASK_KEY]["receipt_id"]
+        self.assertEqual(
+            status[supervisor.WORKER_RECOVERY_RECEIPTS_KEY][receipt_id]["status"],
+            "pending",
+        )
+        self.assertFalse(self._eligible(state))
+
+    def test_predecessor_still_live_is_ineligible(self) -> None:
+        state = self._state()
+        self._fence_and_reassign(state)
+        state["workers"]["run-rival"] = {
+            "task_id": self.TASK_ID,
+            "status": "running",
+        }
+        self.assertFalse(self._eligible(state))
+
+    def test_generation_advanced_past_receipt_is_ineligible(self) -> None:
+        state = self._state()
+        self._fence_and_reassign(state)
+        status = supervisor.load_status(self.config)
+        task = status["tasks"][0]
+        task["generation"] = task["generation"] + 1
+        supervisor.write_status(self.config, status, source="test-generation-bump")
+        self.assertFalse(self._eligible(state))
+
+    def test_already_materialized_receipt_is_ineligible(self) -> None:
+        state = self._state()
+        self._fence_and_reassign(state)
+        status = supervisor.load_status(self.config)
+        task = status["tasks"][0]
+        receipt_id = task[supervisor.WORKER_RECOVERY_TASK_KEY]["receipt_id"]
+        receipt = status[supervisor.WORKER_RECOVERY_RECEIPTS_KEY][receipt_id]
+        receipt["status"] = "materialized"
+        receipt["replacement"]["queue_event_id"] = "evt-replacement-1"
+        receipt["replacement"]["worker_run_id"] = "run-replacement-1"
+        task[supervisor.WORKER_RECOVERY_TASK_KEY]["status"] = "materialized"
+        supervisor.write_status(self.config, status, source="test-materialize")
+        self.assertFalse(self._eligible(state))
 
 
 class RuntimeAndFailureSemanticsTests(unittest.TestCase):
