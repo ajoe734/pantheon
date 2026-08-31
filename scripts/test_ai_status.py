@@ -10885,6 +10885,144 @@ class TaskMetadataTests(unittest.TestCase):
                         [task_id, "add", "pantheon-dev", "Migration attempt on malformed task"],
                     )
 
+    def test_artifact_contract_command_adds_and_removes_manifest_on_blocked_task(self) -> None:
+        task = {
+            "id": "TASK-ARTIFACT-CONTRACT-001",
+            "title": "Blocked task awaiting evidence contract",
+            "status": "blocked",
+            "owner": "Codex",
+            "reviewer": "Claude",
+            "target_repo": "pantheon",
+            "artifacts": ["services/example.py"],
+            "waiting_for": "Human/Ops",
+            "last_update": "2026-08-25T10:00:00Z",
+        }
+        self.state["tasks"].append(task)
+
+        with mock.patch.dict(os.environ, {"AI_NAME": "Human/Ops"}, clear=False):
+            ai_status.command_artifact_contract(
+                self.state,
+                [
+                    task["id"],
+                    "add",
+                    "docs/deployment/evidence/example/evidence.json",
+                    "Declare the evidence manifest before re-handoff",
+                ],
+            )
+
+        self.assertEqual(
+            task["artifacts"],
+            [
+                "services/example.py",
+                "docs/deployment/evidence/example/evidence.json",
+            ],
+        )
+        self.assertEqual(task["contract_revision"]["kind"], "artifact_contract")
+        self.assertEqual(task["contract_revision"]["action"], "add")
+        self.assertEqual(
+            task["contract_revision"]["previous"], ["services/example.py"]
+        )
+
+        with mock.patch.dict(os.environ, {"AI_NAME": "Human/Ops"}, clear=False):
+            ai_status.command_artifact_contract(
+                self.state,
+                [
+                    task["id"],
+                    "remove",
+                    "docs/deployment/evidence/example/evidence.json",
+                    "Remove the obsolete evidence path",
+                ],
+            )
+        self.assertEqual(task["artifacts"], ["services/example.py"])
+        self.assertEqual(task["contract_revision"]["action"], "remove")
+
+        events = [
+            json.loads(line)
+            for line in self._test_log_file.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        revisions = [
+            event for event in events if event.get("type") == "artifact_contract_revised"
+        ]
+        self.assertEqual(len(revisions), 2)
+        self.assertEqual(revisions[0]["task_id"], task["id"])
+
+    def test_artifact_contract_command_rejects_unsafe_or_duplicate_changes(self) -> None:
+        task = {
+            "id": "TASK-ARTIFACT-CONTRACT-002",
+            "title": "Artifact contract validation",
+            "status": "todo",
+            "owner": "Codex",
+            "reviewer": "Claude",
+            "target_repo": "pantheon",
+            "artifacts": ["services/example.py"],
+            "last_update": "2026-08-25T10:00:00Z",
+        }
+        self.state["tasks"].append(task)
+        env = {"AI_NAME": "Human/Ops"}
+        with mock.patch.dict(os.environ, env, clear=False):
+            with self.assertRaisesRegex(SystemExit, "already declares"):
+                ai_status.command_artifact_contract(
+                    self.state,
+                    [task["id"], "add", "services/example.py", "Duplicate"],
+                )
+            with self.assertRaisesRegex(SystemExit, "repository-relative"):
+                ai_status.command_artifact_contract(
+                    self.state,
+                    [task["id"], "add", "../evidence.json", "Unsafe"],
+                )
+            with self.assertRaisesRegex(SystemExit, "repository prefix"):
+                ai_status.command_artifact_contract(
+                    self.state,
+                    [task["id"], "add", "unknown:evidence.json", "Unknown repo"],
+                )
+
+    def test_artifact_contract_command_rejects_active_or_guarded_tasks(self) -> None:
+        for status in ("in_progress", "review", "review_approved"):
+            task_id = f"TASK-ARTIFACT-CONTRACT-{status.upper()}"
+            self.state["tasks"].append(
+                {
+                    "id": task_id,
+                    "title": "Active artifact contract",
+                    "status": status,
+                    "owner": "Codex",
+                    "reviewer": "Claude",
+                    "artifacts": [],
+                    "last_update": "2026-08-25T10:00:00Z",
+                }
+            )
+            with mock.patch.dict(os.environ, {"AI_NAME": "Human/Ops"}, clear=False):
+                with self.assertRaisesRegex(SystemExit, "is active in lifecycle state"):
+                    ai_status.command_artifact_contract(
+                        self.state,
+                        [task_id, "add", "evidence.json", "Active"],
+                    )
+
+        guarded = {
+            "id": "TASK-ARTIFACT-CONTRACT-GUARDED",
+            "title": "Guarded artifact contract",
+            "status": "blocked",
+            "owner": "Codex",
+            "reviewer": "Claude",
+            "artifacts": [],
+            "artifact_conflict_guard": {"immutable": True},
+            "last_update": "2026-08-25T10:00:00Z",
+        }
+        self.state["tasks"].append(guarded)
+        with mock.patch.dict(os.environ, {"AI_NAME": "Human/Ops"}, clear=False):
+            with self.assertRaisesRegex(SystemExit, "immutable artifact conflict guard"):
+                ai_status.command_artifact_contract(
+                    self.state,
+                    [guarded["id"], "add", "evidence.json", "Guarded"],
+                )
+
+        with mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False):
+            with self.assertRaisesRegex(SystemExit, "Only Human/Ops"):
+                ai_status.command_artifact_contract(
+                    self.state,
+                    ["TASK-ARTIFACT-CONTRACT-002", "add", "evidence.json", "Unauthorized"],
+                )
+
     def test_execution_resource_command_success_when_field_absent(self) -> None:
         task = {
             "id": "TASK-RES-ABSENT",
