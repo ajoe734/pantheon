@@ -41,15 +41,23 @@
   },
   "contracts": {
     "exact_sentinel_contract": "Readiness probe strictly asserts that candidate reply equals exact PANTHEON_PROVIDER_READY sentinel (answer.strip() == PANTHEON_PROVIDER_READY). Non-matching replies (including substring prefixes/suffixes) are classified as openclaw_answer_probe_sentinel_mismatch and trigger bounded fallback or fail closed.",
-    "bounded_readiness_probe_fallback": "Readiness probe partitions the 20s probe budget across candidate models with primary candidate bounded to <= 5s when fallbacks exist, allowing live Codex fallback (openai/gpt-5.6-sol) up to 10s budget to complete fast within the 20s budget without incurring excessive operator login latency.",
+    "bounded_readiness_probe_fallback": "Readiness probe partitions the 20s probe budget across candidate models with primary candidate bounded to <= 1.5s-2s when fallbacks exist, allowing live fallback (openai/gpt-5.6-sol) up to 18s budget to complete fast within the 20s budget without incurring excessive operator login latency.",
     "sanitized_primary_unavailable_evidence": "When primary model is unavailable, readiness probe captures sanitized primary_unavailable evidence (model, status: unavailable, sanitized reason, duration_ms) without leaking secrets or tokens.",
+    "active_model_prioritization": "When the readiness probe identifies a healthy fallback candidate, the provider retains the active model so that subsequent single invoke calls immediately dispatch to the verified eligible model without repeating an expired primary model call or timing out.",
+    "per_agent_routing_preservation": "When invoking non-default agents (e.g. persona agents) with model=None, the provider omits the --model CLI parameter, preserving per-agent configured routing in OpenClaw without applying global primary model overrides.",
     "side_effect_safe_invoke": "Single invoke permits model fallback exclusively on unambiguous pre-execution failures (OPENCLAW_AUTH_UNAVAILABLE). Ambiguous failures such as TimeoutExpired (OPENCLAW_GATEWAY_TIMEOUT) or generic invocation failures (OPENCLAW_GATEWAY_INVOCATION_FAILED) strictly fail without retry to prevent duplicate side-effecting turns.",
     "upstream_contract_compliance": "OpenResponses SSE stream strictly targets OpenClaw v2026.7.1 upstream contract (model='openclaw') and surfaces typed HTTP errors without invalid raw provider model overrides.",
     "deterministic_fail_closed": "If all candidate models fail, readiness probe deterministically fails closed with status: degraded and typed error code without retrying side-effecting invoke turns.",
     "deployed_live_smoke_contract": "scripts/openclaw-assistant-openclaw-live-smoke.sh verifies four live phases against deployed adapter: (1) provider readiness with auth_probe=true, (2) live agent turn with OPENCLAW_LIVE sentinel, (3) CLI transport assertion, (4) OpenResponses streaming."
   },
   "verification": {
-    "full_verification": "447 passed, 4 skipped across services/openclaw-gateway-adapter and scripts/test_openclaw_assistant_openclaw_live_smoke.py",
+    "full_verification": "450 passed, 4 skipped across services/openclaw-gateway-adapter and scripts/test_openclaw_assistant_openclaw_live_smoke.py; 4/4 deployed live smoke passed without skip",
+    "deployed_live_smoke_output": {
+      "phase_1_readiness": "ready=true status=ready active_model=openai/gpt-5.6-sol primary_unavailable.reason=OPENCLAW_GATEWAY_TIMEOUT duration_ms=17939",
+      "phase_2_live_agent_turn": "status=completed text=OPENCLAW_LIVE transport=cli active_model=openai/gpt-5.6-sol fallback_used=true duration_ms=16026",
+      "phase_3_cli_transport": "transport=cli",
+      "phase_4_openresponses_stream": "transport=responses_http reply_bytes=13 sentinel=OPENCLAW_LIVE"
+    },
     "test_suites": [
       "services/openclaw-gateway-adapter/test_assistant_openclaw_provider_live.py",
       "services/openclaw-gateway-adapter/test_main.py",
@@ -57,6 +65,7 @@
     ],
     "verification_commands": [
       ".venv-pantheon/bin/python3 -m pytest -ra services/openclaw-gateway-adapter scripts/test_openclaw_assistant_openclaw_live_smoke.py",
+      "OPENCLAW_GATEWAY_ADAPTER_URL=http://localhost:18104 PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN=9318a8ec3a4e9158697f0016578412258f9c2ac5661e74f09307d39901c13c4b bash scripts/openclaw-assistant-openclaw-live-smoke.sh",
       "bash -n scripts/openclaw-assistant-openclaw-live-smoke.sh",
       "docker compose --profile openclaw config --quiet"
     ],
@@ -71,9 +80,11 @@
       "verify OpenClaw auth readiness probe returns ready within 20s when live fallback completes sentinel turn",
       "verify expired primary OAuth session is captured as sanitized primary_unavailable evidence without secret leak",
       "verify readiness fails closed deterministically when all candidate models fail",
-      "verify single invoke falls back only on unambiguous pre-execution auth failure and does not retry on generic invocation failure or TimeoutExpired",
+      "verify single invoke directly uses the probed active fallback model without retrying an ambiguous invoke",
+      "verify persona agent calls without model override preserve per-agent routing without global Claude override",
+      "verify single invoke falls back only on unambiguous pre-execution auth failure and does not retry on generic invocation failure, TimeoutExpired, or post-execution error",
       "verify OpenResponses stream strictly respects upstream OpenClaw contract without invalid raw model parameters",
-      "verify four-part live smoke (readiness, invoke, CLI, stream) is supported across candidate models",
+      "verify four-part deployed live smoke (readiness, invoke, CLI, stream) passes without skip",
       "verify no credentials, secrets, or provider priorities were changed in source or configuration",
       "bind this manifest path (docs/deployment/evidence/full-operation-gap/OPGAP-OPENCLAW-PROVIDER-READINESS-FALLBACK-20260830/evidence.json) in the canonical approve command"
     ]

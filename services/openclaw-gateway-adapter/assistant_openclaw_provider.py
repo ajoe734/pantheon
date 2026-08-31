@@ -174,7 +174,7 @@ class AssistantOpenClawProvider:
         _which_func=None,
         _run_func=None,
     ) -> None:
-        raw = (gateway_url or os.getenv("OPENCLAW_GATEWAY_URL", "")).strip()
+        raw = (os.getenv("OPENCLAW_GATEWAY_URL", "") if gateway_url is None else gateway_url).strip()
         # If an http:// URL was configured by mistake, convert it back to ws://.
         if raw.startswith("http://"):
             raw = "ws://" + raw[len("http://"):]
@@ -182,11 +182,12 @@ class AssistantOpenClawProvider:
             raw = "wss://" + raw[len("https://"):]
         # Store as-is (empty string = not configured).
         self._gateway_url = raw.rstrip("/")
-        self._agent_id = (agent_id or os.getenv("OPENCLAW_AGENT_ID", DEFAULT_AGENT_ID)).strip()
-        self._token = token or os.getenv("OPENCLAW_GATEWAY_TOKEN", "")
+        self._agent_id = (os.getenv("OPENCLAW_AGENT_ID", DEFAULT_AGENT_ID) if agent_id is None else agent_id).strip()
+        self._token = os.getenv("OPENCLAW_GATEWAY_TOKEN", "") if token is None else token
         self._timeout = int(os.getenv("OPENCLAW_ASSISTANT_TIMEOUT_SECONDS", str(timeout_seconds)))
         self._which = _which_func or shutil.which
         self._run = _run_func or subprocess.run
+        self._active_model: Optional[str] = None
 
     @property
     def configured(self) -> bool:
@@ -210,8 +211,10 @@ class AssistantOpenClawProvider:
             fallbacks = [m.strip() for m in fallback_raw.split(",") if m.strip()]
         else:
             fallbacks = list(DEFAULT_FALLBACK_MODELS)
-        candidates: List[str] = [primary]
-        for m in fallbacks:
+        candidates: List[str] = []
+        if getattr(self, "_active_model", None):
+            candidates.append(self._active_model)
+        for m in [primary, *fallbacks]:
             if m and m not in candidates:
                 candidates.append(m)
         return candidates
@@ -288,11 +291,8 @@ class AssistantOpenClawProvider:
             if remaining <= 0.2:
                 break
             has_fallback = idx < len(candidates) - 1
-            if has_fallback:
-                if idx == 0:
-                    cand_timeout = min(5.0, max(2.0, remaining - 4.0 * (len(candidates) - 1)))
-                else:
-                    cand_timeout = min(10.0, max(3.0, remaining - 4.0))
+            if has_fallback and idx == 0:
+                cand_timeout = min(1.5, max(1.0, remaining - 17.0))
             else:
                 cand_timeout = remaining
 
@@ -329,6 +329,7 @@ class AssistantOpenClawProvider:
                     continue
 
                 is_fallback = candidate != primary
+                self._active_model = candidate
                 probe_result: Dict[str, Any] = {
                     "status": "completed",
                     "deadline_seconds": answer_timeout,
@@ -375,6 +376,7 @@ class AssistantOpenClawProvider:
                 last_exc = exc
                 continue
 
+        self._active_model = None
         total_dur = max(0, int((time.monotonic() - started_at) * 1000))
         reason = last_exc.error_code if last_exc else "OPENCLAW_ALL_MODELS_UNAVAILABLE"
         probe_err: Dict[str, Any] = {
@@ -587,8 +589,26 @@ class AssistantOpenClawProvider:
                 error_code="OPENCLAW_GATEWAY_TIMEOUT",
             )
 
+        # Preserve per-agent configured routing: if a non-default agent (e.g. persona agent)
+        # is called and no model override was requested, invoke without --model so OpenClaw
+        # uses the model configured in the agent definition.
+        if selected_agent_id != DEFAULT_AGENT_ID and model is None:
+            return self._invoke_single_model(
+                prompt,
+                model=None,
+                agent_id=selected_agent_id,
+                session_id=session_id,
+                mode=mode,
+                context_pack=context_pack,
+                metadata=metadata,
+                messages=messages,
+                operator_id=operator_id,
+                trace_id=trace_id,
+                timeout_seconds=invocation_timeout,
+            )
+
         candidates = self._resolve_model_candidates(model)
-        primary = candidates[0]
+        primary_configured = os.getenv("OPENCLAW_PRIMARY_MODEL", "").strip() or DEFAULT_PRIMARY_MODEL
         deadline = time.monotonic() + invocation_timeout
         last_exc: Optional[OpenClawProviderError] = None
 
@@ -616,9 +636,10 @@ class AssistantOpenClawProvider:
                     trace_id=trace_id,
                     timeout_seconds=cand_timeout,
                 )
-                if candidate != primary:
+                self._active_model = candidate
+                if candidate != primary_configured:
                     result.output["fallback_used"] = True
-                    result.output["primary_model"] = primary
+                    result.output["primary_model"] = primary_configured
                 return result
             except OpenClawProviderError as exc:
                 last_exc = exc

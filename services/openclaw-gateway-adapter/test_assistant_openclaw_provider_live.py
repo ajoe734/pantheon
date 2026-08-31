@@ -334,7 +334,7 @@ class TestAssistantOpenClawProviderUnit(unittest.TestCase):
         self.assertEqual(info["answer_probe"]["status"], "completed")
         self.assertEqual(info["answer_probe"]["deadline_seconds"], 20.0)
         self.assertLessEqual(captured["timeout"], 20.0)
-        self.assertGreaterEqual(captured["timeout"], 5.0)
+        self.assertGreaterEqual(captured["timeout"], 1.0)
         command = captured["cmd"]
         self.assertEqual(command[1], "agent")
         self.assertIn("PANTHEON_PROVIDER_READY", command[command.index("--message") + 1])
@@ -633,10 +633,91 @@ class TestAssistantOpenClawProviderUnit(unittest.TestCase):
             "persona-opinion-0123456789abcdef01234567",
         )
         self.assertEqual(cmd[cmd.index("--session-id") + 1], "fresh-persona-session-1")
+        self.assertNotIn("--model", cmd)
         self.assertEqual(
             result.output["agent_id"],
             "persona-opinion-0123456789abcdef01234567",
         )
+
+    def test_invoke_persona_agent_does_not_override_model(self) -> None:
+        captured: list[list[str]] = []
+
+        def fake_run(cmd, **_kw):
+            captured.append(list(cmd))
+            class R:
+                returncode = 0
+                stdout = TestAssistantOpenClawProviderUnit._agent_json("persona opinion text")
+                stderr = ""
+            return R()
+
+        provider = self._make_provider(run_func=fake_run)
+        result = provider.invoke(
+            "Return persona opinion",
+            agent_id="persona-opinion-a",
+            mode="user",
+            operator_id="op-1",
+        )
+
+        self.assertEqual(result.status, "completed")
+        cmd = captured[0]
+        self.assertEqual(cmd[cmd.index("--agent") + 1], "persona-opinion-a")
+        self.assertNotIn("--model", cmd)
+        self.assertEqual(result.output["agent_id"], "persona-opinion-a")
+        self.assertNotIn("active_model", result.output)
+
+    def test_readiness_to_single_invoke_end_to_end_uses_probed_fallback(self) -> None:
+        calls: list[list[str]] = []
+
+        def fake_run(cmd, **kwargs):
+            calls.append(list(cmd))
+            if "--model" in cmd and cmd[cmd.index("--model") + 1] == "anthropic/claude-opus-4-8":
+                raise subprocess.TimeoutExpired(cmd="openclaw agent", timeout=kwargs.get("timeout", 5))
+            class R:
+                returncode = 0
+                stdout = TestAssistantOpenClawProviderUnit._agent_json(
+                    "PANTHEON_PROVIDER_READY" if "PANTHEON_PROVIDER_READY" in " ".join(cmd) else "live answer"
+                )
+                stderr = ""
+            return R()
+
+        provider = self._make_provider(run_func=fake_run)
+
+        # 1. Readiness probe runs: primary hangs/times out, fallback openai/gpt-5.6-sol succeeds
+        info = provider.readiness(auth_probe=True)
+        self.assertTrue(info["ready"])
+        self.assertEqual(info["status"], "ready")
+        self.assertEqual(info["active_model"], "openai/gpt-5.6-sol")
+        self.assertTrue(info["fallback_used"])
+        self.assertEqual(len(calls), 2)
+
+        # 2. Single invoke runs next: MUST select the already-probed eligible model directly
+        # and not attempt the timed-out primary again.
+        result = provider.invoke("Reply with exactly: OPENCLAW_LIVE", mode="user", operator_id="smoke-test")
+        self.assertEqual(result.status, "completed")
+        self.assertEqual(result.output["active_model"], "openai/gpt-5.6-sol")
+        self.assertTrue(result.output["fallback_used"])
+        self.assertEqual(result.output["transport"], "cli")
+        self.assertEqual(len(calls), 3)
+        self.assertEqual(calls[2][calls[2].index("--model") + 1], "openai/gpt-5.6-sol")
+
+    def test_invoke_does_not_retry_after_post_execution_authorization_error(self) -> None:
+        calls: list[list[str]] = []
+
+        def fake_run(cmd, **kwargs):
+            calls.append(list(cmd))
+            class R:
+                returncode = 1
+                stdout = ""
+                stderr = "generic post-execution error in tool call"
+            return R()
+
+        provider = self._make_provider(run_func=fake_run)
+        with self.assertRaises(OpenClawProviderError) as ctx:
+            provider.invoke("test post-execution error", mode="user", operator_id="op-1")
+
+        self.assertEqual(ctx.exception.status_code, 502)
+        self.assertEqual(ctx.exception.error_code, "OPENCLAW_GATEWAY_INVOCATION_FAILED")
+        self.assertEqual(len(calls), 1)
 
     def test_invoke_cli_args_and_env(self) -> None:
         """CLI gets `agent --agent --message <prompt> --json` (no --url/--token);
