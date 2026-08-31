@@ -1,3 +1,22 @@
+"""Dispatch reason/status vocabulary, execution-resource validation, and
+(DTG-CLEAN-M6) the pure dispatch-candidate/admission-snapshot functions
+shared by supervisor.py's live dispatch loop and scripts/explain_dispatch.py.
+
+Kept separate from rewrite/dispatch_admission.py, which owns only the
+hermetic execution-admission predicate and deliberately has no supervisor,
+filesystem, subprocess, clock, or runtime-state dependencies: the M6
+functions here read a live, already-loaded ``state`` snapshot and build
+dispatch events, which is a different (still pure, still no I/O) tier.
+A handful of symbols supervisor.py still owns are resolved lazily via
+_supervisor_module() so importing this module -- from supervisor.py's own
+top level, and independently from development_bridge/dev_bridge_models.py
+for the execution-resource helpers below -- never triggers a circular
+import back into supervisor.py itself. M6 did add real (non-lazy) module
+weight to every consumer, including dev_bridge_models.py: common,
+rewrite.dispatch_admission, rewrite.task_machine, and task_archive are
+now required at import time, not just supervisor.py. Any isolated-copy
+test fixture that copies this file must also copy those four.
+"""
 from __future__ import annotations
 
 import re
