@@ -17,6 +17,7 @@ import json
 import os
 import sys
 from collections import Counter
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 import pytest
@@ -194,7 +195,7 @@ class MockManagementReadStore:
         return None
 
     def list_runtime_bindings(self) -> List[Dict[str, Any]]:
-        return [{"id": "run-1", "status": "running"}]
+        return getattr(self, "runtime_bindings", [{"id": "run-1", "status": "running"}])
 
     def list_telemetry_summaries(self) -> List[Dict[str, Any]]:
         return [{"id": "tel-1", "summary": "active"}]
@@ -1421,3 +1422,309 @@ def test_router_mounted_trading_pulse_routes_require_read_authentication() -> No
         body = resp.json()
         error_code = (body.get("detail") or {}).get("error", {}).get("code") or (body.get("error") or {}).get("code")
         assert error_code == "AUTH_REQUIRED"
+
+
+def test_plan_ref_href_canonical_operator_route() -> None:
+    """Prove plan_ref.href uses canonical /operator/deployment-review?plan={plan_id} format."""
+    mock_store = MockManagementReadStore()
+    mock_store.runtime_bindings = [  # type: ignore[assignment]
+        {
+            "id": "runtime-1",
+            "runtime_id": "runtime-1",
+            "plan_id": "plan-12345",
+            "status": "running",
+            "deployment_stage": "paper",
+            "capital_pool_id": "pool-main",
+        }
+    ]
+    service = ManagementService(read_store=mock_store)
+    pulse = service.get_trading_pulse()
+    items = pulse["data"]["runtime_rows"]
+    assert len(items) == 1
+    assert items[0]["plan_ref"]["plan_id"] == "plan-12345"
+    assert items[0]["plan_ref"]["href"] == "/operator/deployment-review?plan=plan-12345"
+    assert "plan_id=" not in items[0]["plan_ref"]["href"]
+
+
+def test_risk_radar_parity_real_attribution_and_no_synthetic_data() -> None:
+    """Verify Risk Radar computes real metrics from telemetry and does not inject synthetic fail-open data."""
+    class CustomRiskRadarStore:
+        def list_runtime_bindings(self, **kwargs: Any) -> List[Dict[str, Any]]:
+            return [
+                {
+                    "runtime_id": "run-alpha",
+                    "persona_id": "persona-a",
+                    "strategy_id": "strat-1",
+                    "capital_pool_id": "pool-main",
+                    "status": "running",
+                    "deployment_stage": "paper",
+                },
+                {
+                    "runtime_id": "run-beta",
+                    "persona_id": "persona-b",
+                    "strategy_id": "strat-2",
+                    "capital_pool_id": "pool-main",
+                    "status": "running",
+                    "deployment_stage": "canary",
+                },
+            ]
+
+        def list_deployment_plans(self) -> List[Dict[str, Any]]:
+            return []
+
+        def list_bindings(self, **kwargs: Any) -> List[Dict[str, Any]]:
+            return []
+
+        def list_capital_pools(self, **kwargs: Any) -> List[Dict[str, Any]]:
+            return [
+                {"pool_id": "pool-main", "name": "Main Capital Pool", "risk_budget": 50000.0}
+            ]
+
+        def list_personas(self, tenant_id: Optional[str] = None) -> List[Dict[str, Any]]:
+            return [
+                {"persona_id": "persona-a", "name": "Alpha Trend"},
+                {"persona_id": "persona-b", "name": "Beta Arbitrage"},
+            ]
+
+        def list_strategies(self) -> List[Dict[str, Any]]:
+            return [
+                {"strategy_id": "strat-1", "name": "Trend Following"},
+                {"strategy_id": "strat-2", "name": "Statistical Arbitrage"},
+            ]
+
+        def list_telemetry_summaries(self) -> List[Dict[str, Any]]:
+            return [
+                {
+                    "runtime_id": "run-alpha",
+                    "metrics": {
+                        "total_exposure": 25000.0,
+                        "worst_drawdown": 0.08,
+                        "value_at_risk": 2000.0,
+                    },
+                }
+                # run-beta intentionally has NO telemetry
+            ]
+
+    store = CustomRiskRadarStore()
+    app = FastAPI()
+    app.include_router(create_management_router(get_read_store=lambda: store))
+    client = TestClient(app)
+
+    resp = client.get("/bff/management/risk-radar", headers={"Authorization": "Bearer op-1:operator"})
+    assert resp.status_code == 200
+    data = resp.json()["data"]
+    rows = data["rows"]
+    assert len(rows) == 2
+
+    # Row 1 (Alpha): has real telemetry
+    row_alpha = next(r for r in rows if r["persona_id"] == "persona-a")
+    assert row_alpha["total_exposure"] == 25000.0
+    assert row_alpha["worst_drawdown"] == 0.08
+    assert row_alpha["value_at_risk"] == 2000.0
+    assert row_alpha["exposure_utilization"] == 0.5  # 25000 / 50000
+    assert row_alpha["value_at_risk_utilization"] == 0.04  # 2000 / 50000
+    assert row_alpha["risk_state"] == "watch"  # drawdown 0.08 >= 0.06
+    assert row_alpha["risk_score"] == 65.0
+
+    # Row 2 (Beta): NO telemetry -> must remain None, NOT synthetic 10000.0 / 0.05 / 500.0
+    row_beta = next(r for r in rows if r["persona_id"] == "persona-b")
+    assert row_beta["total_exposure"] is None
+    assert row_beta["worst_drawdown"] is None
+    assert row_beta["value_at_risk"] is None
+    assert row_beta["risk_state"] == "unknown"
+    assert row_beta["risk_score"] == 40.0
+
+    # Test filtering by persona_id
+    resp_filtered = client.get("/bff/management/risk-radar?persona_id=persona-a", headers={"Authorization": "Bearer op-1:operator"})
+    assert resp_filtered.status_code == 200
+    filtered_rows = resp_filtered.json()["data"]["rows"]
+    assert len(filtered_rows) == 1
+    assert filtered_rows[0]["persona_id"] == "persona-a"
+
+
+def test_incident_timeline_parity_full_projection_and_sorting() -> None:
+    """Verify Incident Timeline projects complete incident schema, severity buckets, and sorts properly."""
+    class CustomIncidentStore:
+        def list_incidents(self) -> List[Dict[str, Any]]:
+            return [
+                {
+                    "incident_id": "inc-old",
+                    "severity": "critical",
+                    "status": "resolved",
+                    "title": "Old Critical Outage",
+                    "occurred_at": "2026-08-28T10:00:00Z",
+                    "runtime_id": "run-1",
+                    "capital_pool_id": "pool-main",
+                },
+                {
+                    "incident_id": "inc-new",
+                    "severity": "medium",
+                    "status": "open",
+                    "title": "Recent Minor Disconnect",
+                    "occurred_at": "2026-08-30T15:00:00Z",
+                    "runtime_id": "run-2",
+                    "capital_pool_id": "pool-canary",
+                },
+                {
+                    "incident_id": "inc-high",
+                    "severity": "sev2",
+                    "status": "in_progress",
+                    "title": "High Latency Warning",
+                    "occurred_at": "2026-08-29T12:00:00Z",
+                    "runtime_id": "run-1",
+                    "capital_pool_id": "pool-main",
+                },
+            ]
+
+    store = CustomIncidentStore()
+    app = FastAPI()
+    app.include_router(create_management_router(get_read_store=lambda: store))
+    client = TestClient(app)
+
+    # 1. Default sorting is asc (chronological)
+    resp = client.get("/bff/management/incident-timeline", headers={"Authorization": "Bearer op-1:operator"})
+    assert resp.status_code == 200
+    data = resp.json()["data"]
+    items = data["items"]
+    assert len(items) == 3
+    assert [i["incident_id"] for i in items] == ["inc-old", "inc-high", "inc-new"]
+    assert items[0]["timeline_id"] == "incident-timeline-inc-old"
+    assert items[0]["severity_bucket"] == "high"
+    assert items[1]["severity_bucket"] == "high"
+    assert items[2]["severity_bucket"] == "medium"
+    assert items[0]["sequence"] == 1
+    assert items[0]["links"]["incident"] == "/bff/incidents/inc-old"
+
+    summary = data["summary"]
+    assert summary["incident_count"] == 3
+    assert summary["active_incident_count"] == 2
+    assert summary["resolved_incident_count"] == 1
+    assert summary["high_severity_count"] == 2
+    assert summary["medium_severity_count"] == 1
+    assert summary["low_severity_count"] == 0
+
+    # 2. Descending sort
+    resp_desc = client.get("/bff/management/incident-timeline?sort_order=desc", headers={"Authorization": "Bearer op-1:operator"})
+    assert resp_desc.status_code == 200
+    assert [i["incident_id"] for i in resp_desc.json()["data"]["items"]] == ["inc-new", "inc-high", "inc-old"]
+
+    # 3. Filter by runtime_id
+    resp_run = client.get("/bff/management/incident-timeline?runtime_id=run-2", headers={"Authorization": "Bearer op-1:operator"})
+    assert resp_run.status_code == 200
+    assert len(resp_run.json()["data"]["items"]) == 1
+    assert resp_run.json()["data"]["items"][0]["incident_id"] == "inc-new"
+
+
+def test_intervention_stream_parity_dual_source_and_window_filtering() -> None:
+    """Verify Intervention Stream projects v5 interventions and audit events with time window and search filtering."""
+    now_dt = datetime.now(timezone.utc)
+    recent_time = (now_dt - timedelta(hours=2)).isoformat().replace("+00:00", "Z")
+    old_time = (now_dt - timedelta(hours=36)).isoformat().replace("+00:00", "Z")
+
+    class CustomInterventionStore:
+        def list_v5_interventions(self) -> List[Dict[str, Any]]:
+            return [
+                {
+                    "intervention_id": "intv-recent",
+                    "persona_id": "persona-a",
+                    "status": "approved",
+                    "kind": "circuit_breaker",
+                    "priority": "high",
+                    "occurred_at": recent_time,
+                    "description": "Triggered circuit breaker due to volatility",
+                },
+                {
+                    "intervention_id": "intv-old",
+                    "persona_id": "persona-a",
+                    "status": "completed",
+                    "kind": "manual_override",
+                    "priority": "low",
+                    "occurred_at": old_time,
+                    "description": "Old manual intervention from last week",
+                },
+            ]
+
+        def list_governance_audit_events(self) -> List[Dict[str, Any]]:
+            return [
+                {
+                    "entry_id": "audit-1",
+                    "target_type": "Intervention",
+                    "target_id": "intv-recent",
+                    "action_type": "intervention.approved",
+                    "outcome": "success",
+                    "persona_id": "persona-a",
+                    "occurred_at": recent_time,
+                    "reason": "Operator approved circuit breaker",
+                }
+            ]
+
+    store = CustomInterventionStore()
+    app = FastAPI()
+    app.include_router(create_management_router(get_read_store=lambda: store))
+    client = TestClient(app)
+
+    # 1. 24h window filter excludes intv-old
+    resp = client.get("/bff/management/intervention-stream?window_hours=24", headers={"Authorization": "Bearer op-1:operator"})
+    assert resp.status_code == 200
+    data = resp.json()["data"]
+    items = data["items"]
+    assert len(items) == 2
+    assert all(i["id"] != "intervention-stream-intv-old-completed" for i in items)
+
+    intv_item = next(i for i in items if i["event_source"] == "v5_interventions")
+    assert intv_item["intervention_id"] == "intv-recent"
+    assert intv_item["event_type"] == "intervention.approved"
+    assert intv_item["priority"] == "high"
+    assert intv_item["target"]["id"] == "intv-recent"
+    assert intv_item["links"]["human_inbox"] == "/bff/management/human-inbox/intervention:intv-recent"
+
+    audit_item = next(i for i in items if i["event_source"] == "governance_audit_events")
+    assert audit_item["event_type"] == "intervention.approved"
+    assert audit_item["target"]["id"] == "intv-recent"
+
+    # 2. 48h window includes old item
+    resp_48 = client.get("/bff/management/intervention-stream?window_hours=48", headers={"Authorization": "Bearer op-1:operator"})
+    assert resp_48.status_code == 200
+    assert len(resp_48.json()["data"]["items"]) == 3
+
+    # 3. Query string search filter
+    resp_q = client.get("/bff/management/intervention-stream?window_hours=48&q=volatility", headers={"Authorization": "Bearer op-1:operator"})
+    assert resp_q.status_code == 200
+    assert len(resp_q.json()["data"]["items"]) == 1
+    assert resp_q.json()["data"]["items"][0]["intervention_id"] == "intv-recent"
+
+
+def test_all_17_management_router_routes_mounted_and_accessible() -> None:
+    """Exhaustive mounted test verifying all 17 catalogued routes return 200 and standard envelope."""
+    mock_store = MockManagementReadStore()
+    app = FastAPI()
+    app.include_router(create_management_router(get_read_store=lambda: mock_store))
+    client = TestClient(app)
+
+    concrete_paths = [
+        "/bff/management/shell-summary",
+        "/api/v1/operator/home",
+        "/bff/management/cockpit",
+        "/bff/management/trading-pulse",
+        "/bff/management/trading-pulse/rankings",
+        "/bff/management/sentinel-pulse",
+        "/api/v1/operator/health-status",
+        "/bff/management/loop-throughput",
+        "/bff/management/risk-radar",
+        "/bff/management/incident-timeline",
+        "/bff/management/human-inbox",
+        "/bff/management/human-inbox/app-1",
+        "/bff/management/hiq-backlog",
+        "/bff/management/intervention-stream",
+        "/bff/management/evidence",
+        "/bff/management/operations-read-model/persona-a",
+        "/api/v1/operator/degraded-control-guidance",
+    ]
+
+    assert len(concrete_paths) == 17, f"Expected 17 paths, got {len(concrete_paths)}"
+
+    for path in concrete_paths:
+        resp = client.get(path, headers={"Authorization": "Bearer op-1:operator,reviewer"})
+        assert resp.status_code == 200, f"Route {path} failed with status {resp.status_code}: {resp.text}"
+        body = resp.json()
+        assert "meta" in body, f"Route {path} missing meta envelope"
