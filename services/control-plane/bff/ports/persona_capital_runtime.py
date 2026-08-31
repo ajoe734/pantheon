@@ -33,7 +33,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timezone
-from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple
+from typing import Any, Callable, Dict, List, Mapping, Optional, Protocol, Tuple
 
 
 def _utc_now_rfc3339() -> str:
@@ -70,6 +70,37 @@ PERSONA_OPERATIONAL_LIFECYCLE_STATES = frozenset({
     "live",
     "live_running",
 })
+
+
+# ---------------------------------------------------------------------------
+# Persona mutation boundary
+# ---------------------------------------------------------------------------
+
+class PersonaMutationPort(Protocol):
+    """Explicit write boundary used by Persona lifecycle command handlers.
+
+    ``ReadSurfacePorts`` deliberately exposes none of these methods.  The
+    concrete adapter must be backed by the authoritative Persona owner, rather
+    than by a BFF projection or an in-process read store.
+    """
+
+    def create_persona(
+        self,
+        *,
+        persona_id: str,
+        name: str,
+        actor_id: str,
+        **kwargs: Any,
+    ) -> Dict[str, Any]: ...
+
+    def update_persona(
+        self,
+        persona_id: str,
+        *,
+        lifecycle_state: Optional[str] = None,
+        metadata: Optional[Mapping[str, Any]] = None,
+        **kwargs: Any,
+    ) -> Optional[Dict[str, Any]]: ...
 
 
 # ---------------------------------------------------------------------------
@@ -1074,6 +1105,7 @@ __all__ = [
     "RuntimePort",
     "RankingProjectionPort",
     "EvolutionProjectionPort",
+    "PersonaMutationPort",
     "PersonaCapitalRuntimeDomainPort",
     "CompositePersonaCapitalRuntimePort",
     "InMemoryPersonaCapitalRuntimePort",

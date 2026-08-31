@@ -231,6 +231,12 @@ from persona_provisioning_coordinator import (
     deterministic_provisioning_ids,
 )
 try:
+    from personas.reconciliation import PersonaProvisioningReconciliationMutationPort
+except ImportError:
+    from services.control_plane.bff.personas.reconciliation import (  # type: ignore[no-redef]
+        PersonaProvisioningReconciliationMutationPort,
+    )
+try:
     from services.persona.runtime_profile import (
         PersonaRuntimeProfile,
         build_persona_runtime_profile,
@@ -1208,6 +1214,9 @@ async def _bff_unhandled_exception_handler(
 command_store = CommandStore(os.path.join(BFF_DATA_DIR, "commands.jsonl"))
 session_lifecycle_store = SessionLifecycleStore(os.path.join(BFF_DATA_DIR, "session_lifecycle.json"))
 persona_write_owner = create_persona_registry_write_owner()
+persona_reconciliation_mutation_port = PersonaProvisioningReconciliationMutationPort(
+    persona_mutation_port=persona_write_owner,
+)
 read_store: ReadSurfacePorts = create_read_surface_ports(
     persona_registry_store=persona_write_owner,
 )
@@ -26737,6 +26746,20 @@ def _append_persona_reconcile_diagnostic(
         diagnostics.append(dependency)
 
 
+def _persist_persona_provisioning_terminal_transition(
+    persona_id: str,
+    *,
+    lifecycle_state: str,
+    metadata: Mapping[str, Any],
+) -> Dict[str, Any]:
+    """Persist a terminal provisioning projection outside the read surface."""
+    return persona_reconciliation_mutation_port.persist_terminal_transition(
+        persona_id,
+        lifecycle_state=lifecycle_state,
+        metadata=metadata,
+    )
+
+
 def _materialize_terminal_persona_provisioning_ledger(
     persona_id: str,
     raw: Dict[str, Any],
@@ -26857,7 +26880,7 @@ def _materialize_terminal_persona_provisioning_ledger(
         _append_persona_reconcile_diagnostic(diagnostics, "provisioning_ledger")
         return "provisioning"
 
-    read_store.update_persona(
+    _persist_persona_provisioning_terminal_transition(
         persona_id,
         lifecycle_state=new_state,
         metadata=metadata_updates,
@@ -26951,7 +26974,7 @@ def _evaluate_persona_provisioning_status(
             if metadata.get(key) != value
         }
         if changed_updates:
-            read_store.update_persona(
+            _persist_persona_provisioning_terminal_transition(
                 persona_id,
                 lifecycle_state="provisioning_failed",
                 metadata=changed_updates,
@@ -27474,7 +27497,7 @@ def _evaluate_persona_provisioning_status(
                     )
 
     if new_state != current_state or metadata_updates:
-        read_store.update_persona(
+        _persist_persona_provisioning_terminal_transition(
             persona_id,
             lifecycle_state=new_state,
             metadata=metadata_updates,
@@ -43810,12 +43833,10 @@ def _persona_record_for_provisioning(
         traits=traits,
         lifecycle_state=lifecycle_state,
     )
-    creator = getattr(read_store, "create_persona", None)
-    updater = getattr(read_store, "update_persona", None)
     existing = read_store.get_persona(record.persona_id)
     if existing is None:
-        if mutate_store and callable(creator):
-            persona = creator(
+        if mutate_store:
+            persona = persona_write_owner.create_persona(
                 persona_id=record.persona_id,
                 name=str(payload.get("name") or record.normalized_name),
                 actor_id=canonical_owner,
@@ -43864,8 +43885,8 @@ def _persona_record_for_provisioning(
             lifecycle_state = "paper_running"
         elif existing.get("lifecycle_state") and record.state == "succeeded":
             lifecycle_state = str(existing.get("lifecycle_state"))
-        if mutate_store and callable(updater):
-            persona = updater(
+        if mutate_store:
+            persona = persona_write_owner.update_persona(
                 record.persona_id,
                 lifecycle_state=lifecycle_state,
                 metadata=metadata,
@@ -44506,7 +44527,7 @@ async def bff_patch_persona(
         },
         reason="persona_updated",
     )
-    persona_record = read_store.update_persona(
+    persona_record = persona_write_owner.update_persona(
         persona_id,
         name=str(base.get("name") or persona_id),
         actor_id=str(existing_metadata.get("owner") or identity.operator_id),
