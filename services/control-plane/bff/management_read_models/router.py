@@ -827,6 +827,11 @@ def create_management_read_models_router(
     postmortems_reader: Optional[Callable[[], Tuple[bool, List[Dict[str, Any]]]]] = None,
     nl_ask_handler: Optional[Callable[..., Any]] = None,
     nl_ask_stream_handler: Optional[Callable[..., Any]] = None,
+    provider_client: Optional[Any] = None,
+    idempotency_store: Optional[Any] = None,
+    conversation_store: Optional[Any] = None,
+    attachment_store: Optional[Any] = None,
+    control_mode_store: Optional[Any] = None,
 ) -> APIRouter:
     """Create the APIRouter for Management read models and system operations."""
     router = APIRouter()
@@ -838,7 +843,15 @@ def create_management_read_models_router(
     _err = bff_error or _default_bff_error
     _raise_logged_out = raise_session_logged_out_fn or raise_if_session_logged_out
 
-    svc = service or ManagementService(get_read_store=get_read_store, utc_now=_now)
+    svc = service or ManagementService(
+        get_read_store=get_read_store,
+        utc_now=_now,
+        provider_client=provider_client,
+        idempotency_store=idempotency_store,
+        conversation_store=conversation_store,
+        attachment_store=attachment_store,
+        control_mode_store=control_mode_store,
+    )
 
     def _resolve_store() -> Optional[Any]:
         if get_read_store is not None:
@@ -1325,8 +1338,20 @@ def create_management_read_models_router(
         """BFF: adapt knowledge evidence refs into the Management Evidence Explorer."""
         identity = _extract_id(authorization)
         _req_read(identity)
-        if evidence_builder is not None:
-            return await _eval(evidence_builder(
+        try:
+            if evidence_builder is not None:
+                return await _eval(evidence_builder(
+                    ref_id=ref_id,
+                    linked_entity_type=linked_entity_type,
+                    linked_entity_ref=linked_entity_ref,
+                    link_type=link_type,
+                    credibility_tier=credibility_tier,
+                    verified=verified,
+                    page_token=page_token,
+                    page_size=page_size,
+                    identity=identity,
+                ))
+            return svc.get_evidence(
                 ref_id=ref_id,
                 linked_entity_type=linked_entity_type,
                 linked_entity_ref=linked_entity_ref,
@@ -1336,18 +1361,20 @@ def create_management_read_models_router(
                 page_token=page_token,
                 page_size=page_size,
                 identity=identity,
-            ))
-        return svc.get_evidence(
-            ref_id=ref_id,
-            linked_entity_type=linked_entity_type,
-            linked_entity_ref=linked_entity_ref,
-            link_type=link_type,
-            credibility_tier=credibility_tier,
-            verified=verified,
-            page_token=page_token,
-            page_size=page_size,
-            identity=identity,
-        )
+            )
+        except Exception as e:
+            if type(e).__name__ == "ManagementValidationError" or isinstance(e, ValueError):
+                field = getattr(e, "field", None)
+                reason = getattr(e, "reason", str(e))
+                status_code = getattr(e, "status_code", 400)
+                raise _err(
+                    status_code,
+                    ErrorCode.VALIDATION_FAILED,
+                    str(e),
+                    reason,
+                    precondition_failed=field,
+                )
+            raise
 
     # -----------------------------------------------------------------------
     # 16. Operations Read Model
@@ -1917,17 +1944,44 @@ def create_management_read_models_router(
                 identity=identity,
                 tenant_id=caller_tenant,
                 idempotency_key=final_idempotency_key,
+                x_tenant_id=x_tenant_id,
+                x_pantheon_tenant=x_pantheon_tenant,
             ))
             if isinstance(res, Response):
                 return res
             return JSONResponse(status_code=202, content=res)
 
-        res = svc.ask_nl(
-            payload=payload,
-            identity=identity,
-            tenant_id=caller_tenant,
-            idempotency_key=final_idempotency_key,
-        )
+        try:
+            res = svc.ask_nl(
+                payload=payload,
+                identity=identity,
+                tenant_id=caller_tenant,
+                idempotency_key=final_idempotency_key,
+                x_tenant_id=x_tenant_id,
+                x_pantheon_tenant=x_pantheon_tenant,
+            )
+        except Exception as e:
+            if type(e).__name__ == "ManagementValidationError" or isinstance(e, ValueError):
+                field = getattr(e, "field", None)
+                reason = getattr(e, "reason", str(e))
+                status_code = getattr(e, "status_code", 400)
+                raise _err(
+                    status_code,
+                    ErrorCode.VALIDATION_FAILED,
+                    str(e),
+                    reason,
+                    precondition_failed=field,
+                )
+            if "PayloadConflict" in type(e).__name__ or "conflict" in str(e).lower():
+                raise _err(
+                    409,
+                    ErrorCode.RESOURCE_CONFLICT,
+                    "Idempotency key payload conflict",
+                    str(e),
+                    precondition_failed="idempotency_key",
+                )
+            raise
+
         if res.get("refused"):
             raise _err(
                 403,
@@ -1941,6 +1995,7 @@ def create_management_read_models_router(
                     "matched_category": res.get("matched_category"),
                     "matched_pattern": res.get("matched_pattern"),
                     "safe_alternatives": res.get("safe_alternatives"),
+                    "audit_id": res.get("audit_id"),
                 },
             )
 
@@ -1972,6 +2027,7 @@ def create_management_read_models_router(
                 ErrorCode.VALIDATION_FAILED,
                 "Idempotency key must be provided in Idempotency-Key or X-Idempotency-Key header, not in request body",
                 "Body idempotency key is rejected by policy",
+                precondition_failed="idempotency_key",
             )
 
         question = str(payload.get("question") or "").strip()
@@ -1981,6 +2037,15 @@ def create_management_read_models_router(
                 ErrorCode.VALIDATION_FAILED,
                 "Field 'question' is required and must not be empty",
                 "Missing or empty question",
+                precondition_failed="question",
+            )
+        if len(question) > 4000:
+            raise _err(
+                422,
+                ErrorCode.VALIDATION_FAILED,
+                "Field 'question' exceeds maximum length of 4000 characters",
+                "Question exceeds 4000 characters",
+                precondition_failed="question",
             )
 
         caller_tenant = x_tenant_id or x_pantheon_tenant or _extract_tenant_id(identity, tenant_payload_fn)
@@ -1992,6 +2057,8 @@ def create_management_read_models_router(
                 identity=identity,
                 tenant_id=caller_tenant,
                 idempotency_key=final_idempotency_key,
+                x_tenant_id=x_tenant_id,
+                x_pantheon_tenant=x_pantheon_tenant,
             ))
             if isinstance(res, Response):
                 return res
@@ -2024,6 +2091,8 @@ def create_management_read_models_router(
                 identity=identity,
                 tenant_id=caller_tenant,
                 idempotency_key=final_idempotency_key,
+                x_tenant_id=x_tenant_id,
+                x_pantheon_tenant=x_pantheon_tenant,
             ),
             media_type="text/event-stream",
         )
