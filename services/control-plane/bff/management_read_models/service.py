@@ -110,6 +110,7 @@ try:
         ManagementNlCommandIdempotencyStore,
         ManagementNlCommandScope,
         ManagementNlCommandPayloadConflict,
+        ManagementNlCommandRecoveryRequired,
         ManagementNlCommandStorageError,
     )
 except ImportError:
@@ -118,12 +119,14 @@ except ImportError:
             ManagementNlCommandIdempotencyStore,
             ManagementNlCommandScope,
             ManagementNlCommandPayloadConflict,
+            ManagementNlCommandRecoveryRequired,
             ManagementNlCommandStorageError,
         )
     except ImportError:
         ManagementNlCommandIdempotencyStore = None  # type: ignore[assignment]
         ManagementNlCommandScope = None  # type: ignore[assignment]
         ManagementNlCommandPayloadConflict = None  # type: ignore[assignment]
+        ManagementNlCommandRecoveryRequired = None  # type: ignore[assignment]
         ManagementNlCommandStorageError = None  # type: ignore[assignment]
 
 try:
@@ -142,12 +145,22 @@ except ImportError:
         ManagementAiAttachmentStore = None  # type: ignore[assignment]
 
 try:
-    from assistant.control_mode import ControlModeStore
+    from assistant.control_mode import ControlModeStore, ControlModeError, activation_to_dict
 except ImportError:
     try:
-        from services.control_plane.bff.assistant.control_mode import ControlModeStore  # type: ignore[no-redef]
+        from services.control_plane.bff.assistant.control_mode import ControlModeStore, ControlModeError, activation_to_dict  # type: ignore[no-redef]
     except ImportError:
         ControlModeStore = None  # type: ignore[assignment]
+        ControlModeError = None  # type: ignore[assignment]
+        activation_to_dict = None  # type: ignore[assignment]
+
+try:
+    from assistant.models import AssistantMode
+except ImportError:
+    try:
+        from services.control_plane.bff.assistant.models import AssistantMode  # type: ignore[no-redef]
+    except ImportError:
+        AssistantMode = None  # type: ignore[assignment]
 
 try:
     from openclaw_ops_client import OpenClawOpsClient
@@ -164,12 +177,16 @@ class ManagementValidationError(ValueError):
         reason: Optional[str] = None,
         field: Optional[str] = None,
         status_code: int = 400,
+        code: Optional[str] = None,
+        details_extra: Optional[Dict[str, Any]] = None,
     ) -> None:
         super().__init__(message)
         self.message = message
         self.reason = reason or message
         self.field = field
         self.status_code = status_code
+        self.code = code or ("VALIDATION_FAILED" if status_code in (400, 422) else ("FORBIDDEN" if status_code == 403 else ("IDEMPOTENCY_CONFLICT" if status_code == 409 else "INTERNAL_ERROR")))
+        self.details_extra = details_extra
 
 log = logging.getLogger(__name__)
 
@@ -3145,6 +3162,197 @@ class ManagementService:
         (r"\b(disable|bypass)\s+kill\s*switch\b", "safety_bypass", "Kill switch bypass is strictly forbidden."),
     ]
 
+    _CONTROL_STATUS_COMMANDS = {
+        "/control-mode/status",
+        "/control-mode",
+        "/status",
+        "control mode status",
+        "control-mode status",
+        "control status",
+        "control mode",
+        "mode status",
+    }
+    _CONTROL_DEACTIVATE_COMMANDS = {
+        "/control-mode/off",
+        "/control-mode/deactivate",
+        "/deactivate",
+        "deactivate control mode",
+        "turn off control mode",
+        "exit control mode",
+        "control mode off",
+    }
+    _CONTROL_ACTIVATE_PREFIXES = [
+        "/control-mode/on",
+        "/control-mode/activate",
+        "activate control mode",
+        "turn on control mode",
+        "control mode activate",
+        "control-mode on",
+        "control mode on",
+        "/control-mode",
+        "/control_mode",
+    ]
+
+    def _command_wait_seconds(self) -> float:
+        raw = os.getenv("PANTHEON_MANAGEMENT_NL_COMMAND_IDEMPOTENCY_WAIT_SECONDS", "").strip()
+        if raw:
+            try:
+                return max(float(raw), 0.01)
+            except (TypeError, ValueError):
+                pass
+        return 10.0
+
+    def _command_poll_seconds(self) -> float:
+        raw = os.getenv("PANTHEON_MANAGEMENT_NL_COMMAND_IDEMPOTENCY_POLL_SECONDS", "").strip()
+        if raw:
+            try:
+                return min(max(float(raw), 0.005), 1.0)
+            except (TypeError, ValueError):
+                pass
+        return 0.05
+
+    def _resolve_and_validate_caller_tenant(
+        self,
+        identity: Any,
+        *,
+        requested_tenant: Optional[str] = None,
+        tenant_payload_fn: Optional[Callable[..., Any]] = None,
+    ) -> str:
+        if tenant_payload_fn is not None:
+            try:
+                import inspect
+                sig = inspect.signature(tenant_payload_fn)
+                if "requested_tenant" in sig.parameters:
+                    payload = tenant_payload_fn(identity, requested_tenant=requested_tenant)
+                else:
+                    payload = tenant_payload_fn(identity)
+            except TypeError:
+                payload = tenant_payload_fn(identity)
+            if isinstance(payload, dict):
+                val = payload.get("id") or payload.get("tenant_id")
+                return str(val) if val is not None else "pantheon-dev"
+            if isinstance(payload, str):
+                return payload.strip() or "pantheon-dev"
+            return "pantheon-dev"
+
+        identity_tenant = getattr(identity, "tenant_id", None)
+        claims = getattr(identity, "claims", {}) or {}
+        claim_tenant = claims.get("tenant_id") or claims.get("tenantId") or claims.get("tid") or claims.get("org_id")
+        allowed_tenants = getattr(identity, "allowed_tenants", None)
+        if allowed_tenants is None:
+            raw_allowed = claims.get("allowed_tenants") or claims.get("allowedTenants") or claims.get("tenant_ids") or claims.get("tenantIds") or claims.get("tenants")
+            if isinstance(raw_allowed, (list, tuple, set)):
+                allowed_tenants = set(raw_allowed)
+            elif isinstance(raw_allowed, str):
+                allowed_tenants = {t.strip() for t in raw_allowed.split(",") if t.strip()}
+            elif claim_tenant or identity_tenant:
+                allowed_tenants = {claim_tenant or identity_tenant}
+            else:
+                allowed_tenants = set()
+
+        default_tenant = claim_tenant or identity_tenant or os.environ.get("PANTHEON_BFF_TENANT_ID") or "pantheon-dev"
+        effective_tenant = requested_tenant or default_tenant
+
+        if allowed_tenants and "*" not in allowed_tenants and effective_tenant not in allowed_tenants:
+            raise ManagementValidationError(
+                "Tenant access denied: requested tenant is outside the caller tenant scope",
+                reason="tenant_scope",
+                field="tenant_id",
+                status_code=403,
+                code="FORBIDDEN",
+                details_extra={
+                    "tenantId": effective_tenant,
+                    "allowedTenantIds": sorted(list(allowed_tenants)),
+                },
+            )
+        return effective_tenant
+
+    def parse_control_command(self, question: str) -> Optional[Dict[str, Any]]:
+        clean_question = re.sub(r"\s+", " ", str(question or "").strip())
+        if not clean_question:
+            return None
+        lowered = clean_question.lower()
+        if lowered in self._CONTROL_STATUS_COMMANDS:
+            return {"kind": "status", "source": "explicit"}
+        if lowered in self._CONTROL_DEACTIVATE_COMMANDS:
+            return {"kind": "deactivate", "source": "explicit"}
+
+        for prefix in sorted(self._CONTROL_ACTIVATE_PREFIXES, key=len, reverse=True):
+            if lowered.startswith(prefix.lower()):
+                raw_remainder = clean_question[len(prefix):].strip()
+                remainder = re.sub(r"^(?:on|activate|is|:|：|=|＝|\s)+", "", raw_remainder, flags=re.IGNORECASE).strip()
+                return {
+                    "kind": "activate",
+                    "source": "explicit",
+                    "passphrase": remainder or None,
+                }
+
+        store = self._resolve_control_mode_store()
+        if store is not None and hasattr(store, "matches_passphrase") and callable(store.matches_passphrase):
+            try:
+                if store.matches_passphrase(clean_question):
+                    return {
+                        "kind": "activate",
+                        "source": "direct_passphrase",
+                        "passphrase": clean_question,
+                    }
+            except Exception:
+                pass
+        return None
+
+    def _control_command_answer(self, command_kind: str, control_mode: Dict[str, Any]) -> str:
+        if command_kind == "activate" and control_mode.get("active"):
+            return (
+                "Control mode activated for this Management AI session. "
+                "It will expire automatically at the configured TTL or idle timeout."
+            )
+        if command_kind == "deactivate":
+            return "Control mode deactivated. This Management AI session is back in user mode."
+        if control_mode.get("active"):
+            return "Control mode is active for this Management AI session."
+        return "Control mode is inactive for this Management AI session."
+
+    def _complete_idempotency(
+        self,
+        idem_store: Any,
+        reservation: Any,
+        result_payload: Dict[str, Any],
+        scope: Any,
+        storage_key: str,
+        request_hash: str,
+    ) -> None:
+        try:
+            if reservation is not None and hasattr(idem_store, "complete"):
+                idem_store.complete(reservation, result_payload)
+            elif hasattr(idem_store, "put_result"):
+                idem_store.put_result(scope or storage_key, request_hash=request_hash, result=result_payload)
+            elif hasattr(idem_store, "put"):
+                idem_store.put(storage_key, request_hash=request_hash, result=result_payload)
+        except ManagementNlCommandPayloadConflict as exc:
+            raise ManagementValidationError(
+                "Idempotency key was already used with a different payload",
+                reason="idempotency_conflict",
+                field="idempotency_key",
+                status_code=409,
+                code="IDEMPOTENCY_CONFLICT",
+            ) from exc
+        except ManagementNlCommandRecoveryRequired as exc:
+            raise ManagementValidationError(
+                "Management NL command outcome is uncertain",
+                reason="idempotency_recovery_required",
+                field="idempotency_key",
+                status_code=409,
+                code="IDEMPOTENCY_CONFLICT",
+            ) from exc
+        except (ManagementNlCommandStorageError, Exception) as exc:
+            raise ManagementValidationError(
+                "Management NL command admission store is unavailable",
+                reason="management_nl_command_idempotency_store",
+                field="idempotency_store",
+                status_code=503,
+                code="DEPENDENCY_UNAVAILABLE",
+            ) from exc
+
     def classify_high_risk(self, question: str) -> Optional[Dict[str, Any]]:
         if not question or not isinstance(question, str):
             return None
@@ -3176,6 +3384,7 @@ class ManagementService:
                 reason="Body idempotency key is rejected by policy",
                 field="idempotency_key",
                 status_code=400,
+                code="VALIDATION_FAILED",
             )
 
         # 2. Validate question
@@ -3186,6 +3395,7 @@ class ManagementService:
                 reason="Missing or empty question",
                 field="question",
                 status_code=422,
+                code="VALIDATION_FAILED",
             )
         if len(question) > 4000:
             raise ManagementValidationError(
@@ -3193,10 +3403,12 @@ class ManagementService:
                 reason="Question exceeds 4000 characters",
                 field="question",
                 status_code=422,
+                code="VALIDATION_FAILED",
             )
 
-        # 3. High-risk refusal check
-        risk = self.classify_high_risk(question)
+        # 3. Control command parsing & High-risk refusal check
+        control_command = self.parse_control_command(question)
+        risk = None if control_command is not None else self.classify_high_risk(question)
         if risk is not None:
             audit_id = f"audit-{uuid.uuid4().hex[:12]}"
             store = self._resolve_store()
@@ -3228,9 +3440,10 @@ class ManagementService:
                 "audit_id": audit_id,
             }
 
-        # 4. Caller tenant resolution
+        # 4. Caller tenant resolution & validation
         actor_id = getattr(identity, "operator_id", "anonymous") if identity else "anonymous"
-        caller_tenant_id = x_tenant_id or x_pantheon_tenant or tenant_id or getattr(identity, "tenant_id", "default") or "default"
+        requested_tenant = x_tenant_id or x_pantheon_tenant or tenant_id or None
+        caller_tenant_id = self._resolve_and_validate_caller_tenant(identity, requested_tenant=requested_tenant)
         focus = _mgmt_nl_normalize_focus(payload.get("focus"))
         operator_context = _mgmt_nl_trim_text(payload.get("context"), max_len=4000)
         client_conversation_hint = _mgmt_nl_normalize_conversation_context(payload.get("conversation"))
@@ -3244,18 +3457,45 @@ class ManagementService:
 
         idem_store = self._resolve_idempotency_store()
         reservation = None
-        if idempotency_key and idem_store is not None:
-            scope = ManagementNlCommandScope(
-                actor_id=actor_id,
-                tenant_id=caller_tenant_id,
-                route="POST /bff/management/nl/ask",
-                idempotency_key=idempotency_key,
-            ) if ManagementNlCommandScope is not None else None
-            storage_key = f"POST /bff/management/nl/ask:{actor_id}:{caller_tenant_id}:{idempotency_key}"
+        scope = ManagementNlCommandScope(
+            actor_id=actor_id,
+            tenant_id=caller_tenant_id,
+            route="POST /bff/management/nl/ask",
+            idempotency_key=idempotency_key,
+        ) if (idempotency_key and ManagementNlCommandScope is not None) else None
+        storage_key = f"POST /bff/management/nl/ask:{actor_id}:{caller_tenant_id}:{idempotency_key}" if idempotency_key else ""
 
+        if idempotency_key and idem_store is not None:
             if scope is not None and hasattr(idem_store, "admit"):
-                admission = idem_store.admit(scope, request_hash=request_hash)
-                if getattr(admission, "state", None) == "complete":
+                try:
+                    admission = idem_store.admit(scope, request_hash=request_hash)
+                except ManagementNlCommandPayloadConflict as exc:
+                    raise ManagementValidationError(
+                        "Idempotency key was already used with a different payload",
+                        reason="idempotency_conflict",
+                        field="idempotency_key",
+                        status_code=409,
+                        code="IDEMPOTENCY_CONFLICT",
+                    ) from exc
+                except ManagementNlCommandRecoveryRequired as exc:
+                    raise ManagementValidationError(
+                        "Management NL command outcome is uncertain",
+                        reason="idempotency_recovery_required",
+                        field="idempotency_key",
+                        status_code=409,
+                        code="IDEMPOTENCY_CONFLICT",
+                    ) from exc
+                except (ManagementNlCommandStorageError, Exception) as exc:
+                    raise ManagementValidationError(
+                        "Management NL command admission store is unavailable",
+                        reason="management_nl_command_idempotency_store",
+                        field="idempotency_store",
+                        status_code=503,
+                        code="DEPENDENCY_UNAVAILABLE",
+                    ) from exc
+
+                admission_state = getattr(admission, "state", None)
+                if admission_state in ("complete", "replay"):
                     cached_result = admission.result
                     replayed_content = json.loads(json.dumps(cached_result))
                     if isinstance(replayed_content, dict) and "meta" in replayed_content:
@@ -3265,7 +3505,75 @@ class ManagementService:
                         "status_code": 202,
                         "payload": replayed_content,
                     }
-                reservation = getattr(admission, "reservation", None)
+                elif admission_state == "owner":
+                    reservation = getattr(admission, "reservation", None)
+                elif admission_state == "wait":
+                    deadline = time.time() + self._command_wait_seconds()
+                    poll_sec = self._command_poll_seconds()
+                    observed = admission
+                    while getattr(observed, "state", None) == "wait":
+                        if time.time() >= deadline:
+                            raise ManagementValidationError(
+                                "Management NL command is still in progress",
+                                reason="idempotency_in_progress",
+                                field="idempotency_key",
+                                status_code=409,
+                                code="IDEMPOTENCY_CONFLICT",
+                            )
+                        time.sleep(poll_sec)
+                        try:
+                            observed = idem_store.observe(scope, request_hash=request_hash)
+                        except ManagementNlCommandPayloadConflict as exc:
+                            raise ManagementValidationError(
+                                "Idempotency key was already used with a different payload",
+                                reason="idempotency_conflict",
+                                field="idempotency_key",
+                                status_code=409,
+                                code="IDEMPOTENCY_CONFLICT",
+                            ) from exc
+                        except ManagementNlCommandRecoveryRequired as exc:
+                            raise ManagementValidationError(
+                                "Management NL command outcome is uncertain",
+                                reason="idempotency_recovery_required",
+                                field="idempotency_key",
+                                status_code=409,
+                                code="IDEMPOTENCY_CONFLICT",
+                            ) from exc
+                        except (ManagementNlCommandStorageError, Exception) as exc:
+                            raise ManagementValidationError(
+                                "Management NL command admission store is unavailable",
+                                reason="management_nl_command_idempotency_store",
+                                field="idempotency_store",
+                                status_code=503,
+                                code="DEPENDENCY_UNAVAILABLE",
+                            ) from exc
+
+                    if getattr(observed, "state", None) in ("complete", "replay"):
+                        cached_result = observed.result
+                        replayed_content = json.loads(json.dumps(cached_result))
+                        if isinstance(replayed_content, dict) and "meta" in replayed_content:
+                            if "idempotency" in replayed_content["meta"] and isinstance(replayed_content["meta"]["idempotency"], dict):
+                                replayed_content["meta"]["idempotency"]["replayed"] = True
+                        return {
+                            "status_code": 202,
+                            "payload": replayed_content,
+                        }
+                    else:
+                        raise ManagementValidationError(
+                            f"Unsupported Management NL command observation state: {getattr(observed, 'state', None)}",
+                            reason="management_nl_command_idempotency_store",
+                            field="idempotency_store",
+                            status_code=503,
+                            code="DEPENDENCY_UNAVAILABLE",
+                        )
+                else:
+                    raise ManagementValidationError(
+                        f"Unsupported Management NL command admission state: {admission_state}",
+                        reason="management_nl_command_idempotency_store",
+                        field="idempotency_store",
+                        status_code=503,
+                        code="DEPENDENCY_UNAVAILABLE",
+                    )
             else:
                 cached_record = None
                 if hasattr(idem_store, "get_result"):
@@ -3283,9 +3591,13 @@ class ManagementService:
                     cached_hash = cached_record.get("request_hash")
                     cached_result = cached_record.get("result") or cached_record.get("payload") or cached_record
                     if cached_hash and cached_hash != request_hash:
-                        if ManagementNlCommandPayloadConflict is not None:
-                            raise ManagementNlCommandPayloadConflict("Idempotency-Key is already bound to a different request payload")
-                        raise ManagementValidationError("Idempotency key payload conflict", status_code=409)
+                        raise ManagementValidationError(
+                            "Idempotency key was already used with a different payload",
+                            reason="idempotency_conflict",
+                            field="idempotency_key",
+                            status_code=409,
+                            code="IDEMPOTENCY_CONFLICT",
+                        )
 
                     replayed_content = json.loads(json.dumps(cached_result))
                     if isinstance(replayed_content, dict) and "meta" in replayed_content:
@@ -3303,6 +3615,176 @@ class ManagementService:
         message_id = f"mnl-{uuid.uuid4().hex[:16]}"
         assistant_turn_id = f"{message_id}-assistant"
 
+        # 6. Control Mode Command Execution (if detected)
+        if control_command is not None:
+            ctrl_store = self._resolve_control_mode_store()
+            if ctrl_store is None:
+                raise ManagementValidationError(
+                    "Control mode store is unavailable",
+                    reason="control_mode_store_unavailable",
+                    field="control_mode_store",
+                    status_code=503,
+                    code="DEPENDENCY_UNAVAILABLE",
+                )
+
+            command_kind = control_command.get("kind", "status")
+            roles = {str(r).strip() for r in (getattr(identity, "roles", []) or [])}
+            claims = getattr(identity, "claims", {}) or {}
+            caps = claims.get("capabilities") or claims.get("capability") or []
+            if isinstance(caps, str):
+                caps = [c.strip() for c in caps.split(",") if c.strip()]
+            elif not isinstance(caps, list):
+                caps = []
+
+            if command_kind == "activate":
+                if not roles.intersection({"operator", "admin"}):
+                    raise ManagementValidationError(
+                        "Control mode requires operator or admin role",
+                        reason="control_mode_role",
+                        field="roles",
+                        status_code=403,
+                        code="FORBIDDEN",
+                    )
+                if not getattr(identity, "mfa_verified", False):
+                    raise ManagementValidationError(
+                        "Control mode requires MFA",
+                        reason="control_mode_mfa",
+                        field="mfa",
+                        status_code=403,
+                        code="AUTH_REQUIRED",
+                    )
+                if not any(str(c).startswith("assistant.kernel") or str(c).startswith("assistant.") for c in caps):
+                    raise ManagementValidationError(
+                        "Control mode requires assistant kernel capability",
+                        reason="control_mode_capability",
+                        field="capabilities",
+                        status_code=422,
+                        code="BUSINESS_RULE_VIOLATION",
+                    )
+
+                options = payload.get("control_mode") or payload.get("controlMode") or {}
+                if not isinstance(options, dict):
+                    options = {}
+                mode_str = options.get("mode") or payload.get("mode") or "kernel_debug"
+                passphrase = control_command.get("passphrase") or options.get("passphrase") or payload.get("passphrase") or ""
+                ttl_seconds = int(options.get("ttl_seconds") or options.get("ttlSeconds") or payload.get("ttl_seconds") or 3600)
+                idle_ttl_seconds = int(options.get("idle_ttl_seconds") or options.get("idleTtlSeconds") or payload.get("idle_ttl_seconds") or 600)
+
+                try:
+                    mode_val = AssistantMode(mode_str) if AssistantMode is not None else mode_str
+                except (ValueError, TypeError):
+                    mode_val = mode_str
+
+                try:
+                    activation = ctrl_store.activate(
+                        actor_id=actor_id,
+                        mode=mode_val,
+                        capabilities=caps,
+                        reason=str(options.get("reason") or payload.get("reason") or "management_nl_chat_control_command").strip(),
+                        passphrase=passphrase,
+                        ttl_seconds=ttl_seconds,
+                        idle_ttl_seconds=idle_ttl_seconds,
+                        management_session_id=session_id,
+                    )
+                    control_mode_status = activation_to_dict(activation) if (activation_to_dict and hasattr(activation, "status")) else (
+                        ctrl_store.status_for_actor(actor_id, management_session_id=session_id) if hasattr(ctrl_store, "status_for_actor") else {
+                            "state": "active",
+                            "active": True,
+                            "mode": str(mode_str),
+                            "activation_id": getattr(activation, "activation_id", f"act-{uuid.uuid4().hex[:8]}"),
+                        }
+                    )
+                except Exception as exc:
+                    status_code = getattr(exc, "status_code", 422)
+                    reason = getattr(exc, "reason", "control_mode_error")
+                    field = getattr(exc, "field", "control_mode")
+                    code = "FORBIDDEN" if status_code == 403 else ("RESOURCE_CONFLICT" if status_code == 409 else ("VALIDATION_FAILED" if status_code == 400 else "BUSINESS_RULE_VIOLATION"))
+                    raise ManagementValidationError(str(exc), reason=reason, field=field, status_code=status_code, code=code) from exc
+            elif command_kind == "deactivate":
+                if not roles.intersection({"operator", "admin"}):
+                    raise ManagementValidationError(
+                        "Control mode requires operator or admin role",
+                        reason="control_mode_role",
+                        field="roles",
+                        status_code=403,
+                        code="FORBIDDEN",
+                    )
+                if hasattr(ctrl_store, "deactivate"):
+                    ctrl_store.deactivate(actor_id, reason="management_nl_chat_control_command")
+                control_mode_status = ctrl_store.status_for_actor(actor_id, management_session_id=session_id) if hasattr(ctrl_store, "status_for_actor") else {"state": "inactive", "active": False}
+            elif command_kind == "status":
+                control_mode_status = ctrl_store.status_for_actor(actor_id, management_session_id=session_id, touch=False) if hasattr(ctrl_store, "status_for_actor") else {"state": "inactive", "active": False}
+            else:
+                raise ManagementValidationError(
+                    f"Unsupported control-mode command: {command_kind}",
+                    reason="unsupported_control_mode_command",
+                    field="control_mode_command",
+                    status_code=400,
+                    code="VALIDATION_FAILED",
+                )
+
+            ctrl_answer = self._control_command_answer(command_kind, control_mode_status)
+            provider_status = {
+                "provider": "pantheon_bff",
+                "enabled": True,
+                "status": "completed",
+                "reason": f"control_mode_{command_kind}",
+                "runtime": "management_nl_control_command_interceptor",
+                "fallback": None,
+            }
+            audit_ref = {
+                "target_type": "ManagementNLExchange",
+                "target_id": message_id,
+                "href": f"/bff/audit/entities/ManagementNLExchange/{message_id}",
+            }
+            control_result_payload = {
+                "status": "accepted",
+                "data": {
+                    "status": "completed",
+                    "lifecycle_status": "completed",
+                    "answer": ctrl_answer,
+                    "session_id": session_id,
+                    "message_id": message_id,
+                    "trace_id": trace_id,
+                    "question": question,
+                    "focus": focus,
+                    "sources": ["control_mode"],
+                    "confidence": "high",
+                    "provider_status": provider_status,
+                    "control_mode": control_mode_status,
+                    "ui_actions": [],
+                    "actions": [],
+                    "audit_ref": audit_ref,
+                    "conversation": {
+                        "href": f"/bff/management/ai/conversations/{session_id}",
+                        "session_id": session_id,
+                        "trace_id": trace_id,
+                    },
+                    "session": {
+                        "session_id": session_id,
+                        "ttl_seconds": 86400,
+                    },
+                    "evidence_refs": [],
+                },
+                "meta": {
+                    "status": "ok",
+                    "lifecycle_status": "completed",
+                    "snapshot_at": now,
+                    "surfaces": {"control_mode": {"status": "ok", "source": "store"}},
+                    "idempotency": {"idempotencyKey": idempotency_key, "replayed": False} if idempotency_key else None,
+                    "provider_status": provider_status,
+                    "trace_id": trace_id,
+                    "control_mode": control_mode_status,
+                },
+            }
+            if idempotency_key and idem_store is not None:
+                self._complete_idempotency(idem_store, reservation, control_result_payload, scope, storage_key, request_hash)
+            return {
+                "status_code": 202,
+                "payload": control_result_payload,
+            }
+
+        # 7. Dry-Run Handling
         if is_dry_run:
             dry_run_payload = {
                 "data": {
@@ -3325,30 +3807,24 @@ class ManagementService:
                 },
             }
             if idempotency_key and idem_store is not None:
-                try:
-                    if reservation is not None and hasattr(idem_store, "complete"):
-                        idem_store.complete(reservation, dry_run_payload)
-                    elif hasattr(idem_store, "put_result"):
-                        idem_store.put_result(
-                            scope or storage_key,
-                            request_hash=request_hash,
-                            result=dry_run_payload,
-                        )
-                    elif hasattr(idem_store, "put"):
-                        idem_store.put(
-                            storage_key,
-                            request_hash=request_hash,
-                            result=dry_run_payload,
-                        )
-                except Exception:
-                    log.warning("Failed to complete dry-run idempotency reservation", exc_info=True)
+                self._complete_idempotency(idem_store, reservation, dry_run_payload, scope, storage_key, request_hash)
 
             return {
                 "status_code": 202,
                 "payload": dry_run_payload,
             }
 
-        # 6. Session & turns in conversation store
+        # 8. Query active control mode for normal execution
+        ctrl_store = self._resolve_control_mode_store()
+        if ctrl_store is not None and hasattr(ctrl_store, "status_for_actor"):
+            try:
+                control_mode_status = ctrl_store.status_for_actor(actor_id, management_session_id=session_id, touch=True)
+            except Exception:
+                control_mode_status = {"state": "active", "mode": "read_only", "active": False}
+        else:
+            control_mode_status = {"state": "active", "mode": "read_only", "active": False}
+
+        # 9. Session & turns in conversation store
         conv_store = self._resolve_conversation_store()
         attach_store = self._resolve_attachment_store()
         user_attachments = []
@@ -3392,7 +3868,7 @@ class ManagementService:
             except Exception:
                 log.warning("Failed to persist user session/turn to conversation store", exc_info=True)
 
-        # 7. Context gathering & Evidence refs
+        # 10. Context gathering & Evidence refs
         cockpit = self.get_management_cockpit(snapshot_at=now)
         cockpit_data = cockpit.get("data", {})
         open_alerts = len(cockpit_data.get("alerts", {}).get("items", []))
@@ -3433,7 +3909,7 @@ class ManagementService:
         else:
             processed_evidence_refs, redacted_evidence_count = raw_evidence_refs, 0
 
-        # 8. Provider invocation
+        # 11. Provider invocation
         provider_client = self._resolve_provider_client()
         provider_answer = None
         provider_status = {
@@ -3511,7 +3987,7 @@ class ManagementService:
                 },
             ]
 
-        # 9. Build final response envelope
+        # 12. Build final response envelope
         if conv_store is not None and hasattr(conv_store, "append_turn"):
             try:
                 conv_store.append_turn(
@@ -3547,10 +4023,7 @@ class ManagementService:
                 "sources": sources,
                 "confidence": confidence,
                 "provider_status": provider_status,
-                "control_mode": {
-                    "state": "active",
-                    "mode": "read_only",
-                },
+                "control_mode": control_mode_status,
                 "ui_actions": actions,
                 "actions": actions,
                 "audit_ref": audit_ref,
@@ -3570,36 +4043,17 @@ class ManagementService:
                 "lifecycle_status": "completed",
                 "snapshot_at": now,
                 "surfaces": surfaces,
-                "idempotency": {"idempotencyKey": idempotency_key, "replayed": False},
+                "idempotency": {"idempotencyKey": idempotency_key, "replayed": False} if idempotency_key else None,
                 "provider_status": provider_status,
                 "trace_id": trace_id,
                 "redacted_evidence_count": redacted_evidence_count,
-                "control_mode": {
-                    "state": "active",
-                    "mode": "read_only",
-                },
+                "control_mode": control_mode_status,
             },
         }
 
-        # 10. Store in idempotency store
+        # 13. Store in idempotency store
         if idempotency_key and idem_store is not None:
-            try:
-                if reservation is not None and hasattr(idem_store, "complete"):
-                    idem_store.complete(reservation, result_payload)
-                elif hasattr(idem_store, "put_result"):
-                    idem_store.put_result(
-                        scope or storage_key,
-                        request_hash=request_hash,
-                        result=result_payload,
-                    )
-                elif hasattr(idem_store, "put"):
-                    idem_store.put(
-                        storage_key,
-                        request_hash=request_hash,
-                        result=result_payload,
-                    )
-            except Exception:
-                log.warning("Failed to complete idempotency reservation", exc_info=True)
+            self._complete_idempotency(idem_store, reservation, result_payload, scope, storage_key, request_hash)
 
         return {
             "status_code": 202,
@@ -3616,9 +4070,21 @@ class ManagementService:
         x_tenant_id: Optional[str] = None,
         x_pantheon_tenant: Optional[str] = None,
     ) -> Iterator[str]:
-        # High-risk refusal check
+        # 1. Validate question
         question = str(payload.get("question") or "").strip()
-        risk = self.classify_high_risk(question)
+        if not question:
+            refused = {
+                "refused": True,
+                "status_code": 422,
+                "code": "VALIDATION_FAILED",
+                "message": "Field 'question' is required and must not be empty",
+            }
+            yield f"event: error\ndata: {json.dumps(refused)}\n\n"
+            return
+
+        # 2. Control command parsing & High-risk refusal check
+        control_command = self.parse_control_command(question)
+        risk = None if control_command is not None else self.classify_high_risk(question)
         if risk is not None:
             refused = {
                 "refused": True,
@@ -3632,10 +4098,24 @@ class ManagementService:
             yield f"event: error\ndata: {json.dumps(refused)}\n\n"
             return
 
+        # 3. Resolve and validate caller tenant
+        requested_tenant = x_tenant_id or x_pantheon_tenant or tenant_id or None
+        try:
+            caller_tenant_id = self._resolve_and_validate_caller_tenant(identity, requested_tenant=requested_tenant)
+        except ManagementValidationError as exc:
+            refused = {
+                "refused": True,
+                "status_code": exc.status_code,
+                "code": exc.code,
+                "message": exc.message,
+                "reason": exc.reason,
+            }
+            yield f"event: error\ndata: {json.dumps(refused)}\n\n"
+            return
+
         provider_client = self._resolve_provider_client()
-        if provider_client is not None and hasattr(provider_client, "stream_assistant_provider"):
+        if provider_client is not None and hasattr(provider_client, "stream_assistant_provider") and control_command is None:
             try:
-                caller_tenant_id = x_tenant_id or x_pantheon_tenant or tenant_id or "default"
                 for ev in provider_client.stream_assistant_provider(
                     provider="codex_cli",
                     question=question,
@@ -3647,15 +4127,27 @@ class ManagementService:
             except Exception:
                 pass
 
-        res = self.ask_nl(
-            payload,
-            identity=identity,
-            tenant_id=tenant_id,
-            idempotency_key=idempotency_key,
-            x_tenant_id=x_tenant_id,
-            x_pantheon_tenant=x_pantheon_tenant,
-            dry_run=False,
-        )
+        try:
+            res = self.ask_nl(
+                payload,
+                identity=identity,
+                tenant_id=caller_tenant_id,
+                idempotency_key=idempotency_key,
+                x_tenant_id=x_tenant_id,
+                x_pantheon_tenant=x_pantheon_tenant,
+                dry_run=False,
+            )
+        except ManagementValidationError as exc:
+            refused = {
+                "refused": True,
+                "status_code": exc.status_code,
+                "code": exc.code,
+                "message": exc.message,
+                "reason": exc.reason,
+            }
+            yield f"event: error\ndata: {json.dumps(refused)}\n\n"
+            return
+
         if res.get("refused"):
             yield f"event: error\ndata: {json.dumps(res)}\n\n"
             return

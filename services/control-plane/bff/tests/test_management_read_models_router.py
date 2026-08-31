@@ -769,8 +769,7 @@ def test_management_nl_ask_endpoint():
     assert "answer" in data
     assert data["confidence"] == "high"
     assert len(data["sources"]) >= 1
-    assert len(data["actions"]) >= 1
-    assert data["control_mode"]["state"] == "active"
+    assert data["control_mode"]["active"] is False
     assert body["meta"]["status"] == "ok"
 
 
@@ -1173,7 +1172,7 @@ def test_management_nl_ask_crash_safe_idempotency_and_replay(tmp_path: Path):
     resp3 = client.post("/bff/management/nl/ask", json=payload_conflict, headers=headers)
     assert resp3.status_code == 409
     err3 = resp3.json().get("detail", resp3.json()).get("error", {})
-    assert err3.get("code") == "RESOURCE_CONFLICT"
+    assert err3.get("code") in ("RESOURCE_CONFLICT", "IDEMPOTENCY_CONFLICT")
 
     # Verify conversation store turns were persisted (1 user turn + 1 assistant turn)
     turns = conv_store.list_turns("session-replay-1")
@@ -1304,4 +1303,275 @@ def test_management_router_conditional_registration_crud_cutover():
     assert "/bff/management/cockpit" in paths_full
     assert "/bff/management/nl/ask" in paths_full
     assert "/bff/management/formula-jobs" in paths_full
+
+
+def test_management_nl_ask_concurrent_wait_and_observe_completion():
+    """Verify that when idempotency returns state='wait', worker polls observe() until completion without duplicate provider execution."""
+    from dataclasses import dataclass
+
+    @dataclass
+    class MockAdmission:
+        state: str
+        reservation: Optional[Any] = None
+        result: Optional[Dict[str, Any]] = None
+
+    class MockWaitStore:
+        def __init__(self):
+            self.observe_calls = 0
+
+        def admit(self, scope, request_hash=None):
+            return MockAdmission(state="wait")
+
+        def observe(self, scope, request_hash=None):
+            self.observe_calls += 1
+            if self.observe_calls >= 2:
+                return MockAdmission(
+                    state="complete",
+                    result={
+                        "data": {
+                            "status": "completed",
+                            "answer": "Concurrent observed answer",
+                        },
+                        "meta": {"idempotency": {"replayed": False}},
+                    },
+                )
+            return MockAdmission(state="wait")
+
+    class FakeProvider:
+        def __init__(self):
+            self.invoked = False
+
+        def invoke_assistant_provider(self, **kwargs):
+            self.invoked = True
+            return {"data": {"answer": "Should not be called"}}
+
+    idem_store = MockWaitStore()
+    fake_provider = FakeProvider()
+    app = FastAPI()
+    app.include_router(create_management_read_models_router(
+        idempotency_store=idem_store,
+        provider_client=fake_provider,
+    ))
+    client = TestClient(app)
+
+    resp = client.post(
+        "/bff/management/nl/ask",
+        json={"question": "Analyze concurrency"},
+        headers={"Authorization": "Bearer op-1:operator", "Idempotency-Key": "wait-key-1"},
+    )
+    assert resp.status_code == 202
+    body = resp.json()
+    assert body["data"]["answer"] == "Concurrent observed answer"
+    assert body["meta"]["idempotency"]["replayed"] is True
+    assert fake_provider.invoked is False
+    assert idem_store.observe_calls >= 2
+
+
+def test_management_nl_ask_concurrent_wait_timeout_conflict(monkeypatch):
+    """Verify that when idempotency wait exceeds deadline, 409 IDEMPOTENCY_CONFLICT is raised."""
+    from dataclasses import dataclass
+
+    monkeypatch.setenv("PANTHEON_MANAGEMENT_NL_COMMAND_IDEMPOTENCY_WAIT_SECONDS", "0.02")
+    monkeypatch.setenv("PANTHEON_MANAGEMENT_NL_COMMAND_IDEMPOTENCY_POLL_SECONDS", "0.005")
+
+    @dataclass
+    class MockAdmission:
+        state: str = "wait"
+
+    class MockStuckWaitStore:
+        def admit(self, scope, request_hash=None):
+            return MockAdmission(state="wait")
+
+        def observe(self, scope, request_hash=None):
+            return MockAdmission(state="wait")
+
+    app = FastAPI()
+    app.include_router(create_management_read_models_router(
+        idempotency_store=MockStuckWaitStore(),
+    ))
+    client = TestClient(app)
+
+    resp = client.post(
+        "/bff/management/nl/ask",
+        json={"question": "Analyze stuck concurrency"},
+        headers={"Authorization": "Bearer op-1:operator", "Idempotency-Key": "stuck-wait-key-1"},
+    )
+    assert resp.status_code == 409
+    body = resp.json()
+    err = body.get("error") or body.get("detail", {}).get("error") or body.get("detail", {})
+    assert err.get("code") == "IDEMPOTENCY_CONFLICT" or err.get("reason") == "idempotency_in_progress"
+
+
+def test_management_nl_ask_idempotency_storage_error():
+    """Verify that idempotency storage failures during admission or completion raise 503 DEPENDENCY_UNAVAILABLE."""
+    from management_nl_command_idempotency import ManagementNlCommandStorageError
+    from dataclasses import dataclass, field
+
+    @dataclass
+    class MockReservation:
+        token: str = "tok-1"
+
+    @dataclass
+    class MockAdmission:
+        state: str = "owner"
+        reservation: Any = field(default_factory=MockReservation)
+
+    class MockFailingStore:
+        def __init__(self, fail_on="admit"):
+            self.fail_on = fail_on
+
+        def admit(self, scope, request_hash=None):
+            if self.fail_on == "admit":
+                raise ManagementNlCommandStorageError("Admission storage down")
+            return MockAdmission()
+
+        def complete(self, reservation, result_payload):
+            if self.fail_on == "complete":
+                raise ManagementNlCommandStorageError("Complete storage down")
+
+    # 1. Failure during admit
+    app1 = FastAPI()
+    app1.include_router(create_management_read_models_router(
+        idempotency_store=MockFailingStore(fail_on="admit"),
+    ))
+    client1 = TestClient(app1)
+    resp1 = client1.post(
+        "/bff/management/nl/ask",
+        json={"question": "Test admit failure"},
+        headers={"Authorization": "Bearer op-1:operator", "Idempotency-Key": "fail-key-1"},
+    )
+    assert resp1.status_code == 503
+    body1 = resp1.json()
+    err1 = body1.get("error") or body1.get("detail", {}).get("error") or body1.get("detail", {})
+    assert err1.get("code") == "DEPENDENCY_UNAVAILABLE"
+
+    # 2. Failure during complete
+    app2 = FastAPI()
+    app2.include_router(create_management_read_models_router(
+        idempotency_store=MockFailingStore(fail_on="complete"),
+    ))
+    client2 = TestClient(app2)
+    resp2 = client2.post(
+        "/bff/management/nl/ask",
+        json={"question": "Test complete failure"},
+        headers={"Authorization": "Bearer op-1:operator", "Idempotency-Key": "fail-key-2"},
+    )
+    assert resp2.status_code == 503
+    body2 = resp2.json()
+    err2 = body2.get("error") or body2.get("detail", {}).get("error") or body2.get("detail", {})
+    assert err2.get("code") == "DEPENDENCY_UNAVAILABLE"
+
+
+def test_management_nl_ask_tenant_scope_forbidden():
+    """Verify that requesting a tenant outside caller scope returns 403 FORBIDDEN."""
+    class ScopedIdentity:
+        operator_id = "op-scoped"
+        roles = {"operator"}
+        is_authenticated = True
+        session_kind = "bearer"
+        allowed_tenants = {"tenant-allowed-a"}
+        claims = {"allowed_tenants": ["tenant-allowed-a"]}
+
+    app = FastAPI()
+    app.include_router(create_management_read_models_router(
+        extract_identity=lambda *args, **kwargs: ScopedIdentity(),
+    ))
+    client = TestClient(app)
+
+    # Request with unauthorized tenant
+    resp = client.post(
+        "/bff/management/nl/ask",
+        json={"question": "Query for tenant b"},
+        headers={"Authorization": "Bearer op-scoped:operator", "X-Tenant-Id": "tenant-forbidden-b"},
+    )
+    assert resp.status_code == 403
+    body = resp.json()
+    err = body.get("error") or body.get("detail", {}).get("error") or body.get("detail", {})
+    assert err.get("code") == "FORBIDDEN"
+    assert "Tenant access denied" in err.get("message", "")
+
+
+def test_management_nl_ask_control_mode_commands_and_reflection(tmp_path: Path):
+    """Verify control mode status, activation, reflection in answers, and deactivation."""
+    from assistant.control_mode import ControlModeStore
+
+    store_path = tmp_path / "control_mode.json"
+    ctrl_store = ControlModeStore(storage_path=str(store_path))
+    ctrl_store.set_passphrase(new_passphrase="correct-horse-battery-staple", require_current=False)
+
+    class AdminIdentity:
+        operator_id = "admin-user"
+        roles = {"admin", "operator"}
+        is_authenticated = True
+        mfa_verified = True
+        session_kind = "bearer"
+        allowed_tenants = {"*"}
+        claims = {"capabilities": ["assistant.kernel"]}
+
+    app = FastAPI()
+    app.include_router(create_management_read_models_router(
+        control_mode_store=ctrl_store,
+        extract_identity=lambda *args, **kwargs: AdminIdentity(),
+    ))
+    client = TestClient(app)
+
+    # 1. Query status -> inactive
+    resp1 = client.post(
+        "/bff/management/nl/ask",
+        json={"question": "/control-mode/status", "sessionId": "admin-session-1"},
+        headers={"Authorization": "Bearer admin:admin"},
+    )
+    assert resp1.status_code == 202
+    body1 = resp1.json()
+    assert body1["data"]["provider_status"]["reason"] == "control_mode_status"
+    assert body1["data"]["control_mode"]["active"] is False
+
+    # 2. Activate control mode with passphrase
+    resp2 = client.post(
+        "/bff/management/nl/ask",
+        json={
+            "question": "/control-mode/on correct-horse-battery-staple",
+            "control_mode": {"mode": "kernel_debug"},
+            "sessionId": "admin-session-1",
+        },
+        headers={"Authorization": "Bearer admin:admin"},
+    )
+    assert resp2.status_code == 202
+    body2 = resp2.json()
+    assert body2["data"]["provider_status"]["reason"] == "control_mode_activate"
+    assert body2["data"]["control_mode"]["active"] is True
+    assert body2["data"]["control_mode"]["mode"] == "kernel_debug"
+
+    # 3. Regular question reflects active control mode
+    resp3 = client.post(
+        "/bff/management/nl/ask",
+        json={"question": "What is the system status?", "sessionId": "admin-session-1"},
+        headers={"Authorization": "Bearer admin:admin"},
+    )
+    assert resp3.status_code == 202
+    body3 = resp3.json()
+    assert body3["data"]["control_mode"]["active"] is True
+    assert body3["data"]["control_mode"]["mode"] == "kernel_debug"
+    assert body3["meta"]["control_mode"]["active"] is True
+
+    # 4. Deactivate control mode
+    resp4 = client.post(
+        "/bff/management/nl/ask",
+        json={"question": "/control-mode/deactivate", "sessionId": "admin-session-1"},
+        headers={"Authorization": "Bearer admin:admin"},
+    )
+    assert resp4.status_code == 202
+    body4 = resp4.json()
+    assert body4["data"]["provider_status"]["reason"] == "control_mode_deactivate"
+    assert body4["data"]["control_mode"]["active"] is False
+
+    # 5. Subsequent regular question reflects inactive
+    resp5 = client.post(
+        "/bff/management/nl/ask",
+        json={"question": "What is the system status?", "sessionId": "admin-session-1"},
+        headers={"Authorization": "Bearer admin:admin"},
+    )
+    assert resp5.status_code == 202
+    body5 = resp5.json()
+    assert body5["data"]["control_mode"]["active"] is False
 

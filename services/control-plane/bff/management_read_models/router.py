@@ -90,20 +90,57 @@ def _default_snapshot_meta(snapshot_at: Optional[str] = None) -> Dict[str, Any]:
 
 def _extract_tenant_id(
     identity: Any,
-    tenant_payload_fn: Optional[Callable[[Any], Any]] = None,
-) -> Optional[str]:
-    if not tenant_payload_fn:
-        return None
-    try:
-        payload = tenant_payload_fn(identity)
-    except Exception:
-        return None
-    if isinstance(payload, dict):
-        val = payload.get("id") or payload.get("tenant_id")
-        return str(val) if val is not None else None
-    if isinstance(payload, str):
-        return payload.strip() or None
-    return None
+    tenant_payload_fn: Optional[Callable[..., Any]] = None,
+    requested_tenant: Optional[str] = None,
+) -> str:
+    if tenant_payload_fn:
+        try:
+            import inspect
+            sig = inspect.signature(tenant_payload_fn)
+            if "requested_tenant" in sig.parameters:
+                payload = tenant_payload_fn(identity, requested_tenant=requested_tenant)
+            else:
+                payload = tenant_payload_fn(identity)
+        except TypeError:
+            payload = tenant_payload_fn(identity)
+        if isinstance(payload, dict):
+            val = payload.get("id") or payload.get("tenant_id")
+            return str(val) if val is not None else "pantheon-dev"
+        if isinstance(payload, str):
+            return payload.strip() or "pantheon-dev"
+        return "pantheon-dev"
+
+    identity_tenant = getattr(identity, "tenant_id", None)
+    claims = getattr(identity, "claims", {}) or {}
+    claim_tenant = claims.get("tenant_id") or claims.get("tenantId") or claims.get("tid") or claims.get("org_id")
+    allowed_tenants = getattr(identity, "allowed_tenants", None)
+    if allowed_tenants is None:
+        raw_allowed = claims.get("allowed_tenants") or claims.get("allowedTenants") or claims.get("tenant_ids") or claims.get("tenantIds") or claims.get("tenants")
+        if isinstance(raw_allowed, (list, tuple, set)):
+            allowed_tenants = set(raw_allowed)
+        elif isinstance(raw_allowed, str):
+            allowed_tenants = {t.strip() for t in raw_allowed.split(",") if t.strip()}
+        elif claim_tenant or identity_tenant:
+            allowed_tenants = {claim_tenant or identity_tenant}
+        else:
+            allowed_tenants = set()
+
+    default_tenant = claim_tenant or identity_tenant or os.environ.get("PANTHEON_BFF_TENANT_ID") or "pantheon-dev"
+    effective_tenant = requested_tenant or default_tenant
+
+    if allowed_tenants and "*" not in allowed_tenants and effective_tenant not in allowed_tenants:
+        raise _default_bff_error(
+            403,
+            ErrorCode.FORBIDDEN,
+            "Tenant access denied",
+            "Requested tenant is outside the caller tenant scope",
+            precondition_failed="tenant_scope",
+            details_extra={
+                "tenantId": effective_tenant,
+                "allowedTenantIds": sorted(list(allowed_tenants)),
+            },
+        )
+    return effective_tenant
 
 
 def _default_extract_identity(
@@ -1999,7 +2036,8 @@ def create_management_read_models_router(
                 "Missing or empty question",
             )
 
-        caller_tenant = x_tenant_id or x_pantheon_tenant or _extract_tenant_id(identity, tenant_payload_fn)
+        requested_tenant = (x_tenant_id or x_pantheon_tenant or "").strip() or None
+        caller_tenant = _extract_tenant_id(identity, tenant_payload_fn, requested_tenant=requested_tenant)
         final_idempotency_key = idempotency_key or x_idempotency_key
 
         if nl_ask_handler is not None:
@@ -2029,20 +2067,40 @@ def create_management_read_models_router(
                 field = getattr(e, "field", None)
                 reason = getattr(e, "reason", str(e))
                 status_code = getattr(e, "status_code", 400)
+                code_val = getattr(e, "code", ErrorCode.VALIDATION_FAILED)
+                code = getattr(ErrorCode, code_val, ErrorCode.VALIDATION_FAILED) if isinstance(code_val, str) else code_val
+                details_extra = getattr(e, "details_extra", None)
                 raise _err(
                     status_code,
-                    ErrorCode.VALIDATION_FAILED,
+                    code,
                     str(e),
                     reason,
                     precondition_failed=field,
+                    details_extra=details_extra,
                 )
             if "PayloadConflict" in type(e).__name__ or "conflict" in str(e).lower():
                 raise _err(
                     409,
-                    ErrorCode.RESOURCE_CONFLICT,
+                    getattr(ErrorCode, "IDEMPOTENCY_CONFLICT", ErrorCode.RESOURCE_CONFLICT),
                     "Idempotency key payload conflict",
                     str(e),
                     precondition_failed="idempotency_key",
+                )
+            if "RecoveryRequired" in type(e).__name__:
+                raise _err(
+                    409,
+                    getattr(ErrorCode, "IDEMPOTENCY_CONFLICT", ErrorCode.RESOURCE_CONFLICT),
+                    "Management NL command outcome is uncertain",
+                    str(e),
+                    precondition_failed="idempotency_recovery_required",
+                )
+            if "StorageError" in type(e).__name__:
+                raise _err(
+                    503,
+                    getattr(ErrorCode, "DEPENDENCY_UNAVAILABLE", ErrorCode.INTERNAL_ERROR),
+                    "Management NL command admission store is unavailable",
+                    str(e),
+                    precondition_failed="management_nl_command_idempotency_store",
                 )
             raise
 
@@ -2112,7 +2170,8 @@ def create_management_read_models_router(
                 precondition_failed="question",
             )
 
-        caller_tenant = x_tenant_id or x_pantheon_tenant or _extract_tenant_id(identity, tenant_payload_fn)
+        requested_tenant = (x_tenant_id or x_pantheon_tenant or "").strip() or None
+        caller_tenant = _extract_tenant_id(identity, tenant_payload_fn, requested_tenant=requested_tenant)
         final_idempotency_key = idempotency_key or x_idempotency_key
 
         if nl_ask_stream_handler is not None:
