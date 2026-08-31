@@ -841,6 +841,21 @@ def create_research_router(
         }[attachment_type]
         return _call_port(port, method, attachment_ref) is not None
 
+    def _kw02_surface_state(port: Any, *, snapshot_at: str, has_data: bool) -> str:
+        source_fn = getattr(port, "dataset_source", None)
+        source = str(source_fn("research_notes") or "missing") if callable(source_fn) else "missing"
+        surface = dataset_surface_status(
+            "research_notes",
+            snapshot_at=snapshot_at,
+            source=source,
+            has_data=has_data,
+        )
+        if surface.get("status") == "unavailable":
+            return "unavailable"
+        if surface.get("status") == "degraded" or surface.get("source") == "local_snapshot":
+            return "degraded"
+        return "ok"
+
     def _kw02_operator_display_name(operator_id: str) -> str:
         if operator_id == "op-001":
             return "Alice Chen"
@@ -850,6 +865,58 @@ def create_research_router(
         if token.startswith("op-"):
             return f"Operator {token}"
         return " ".join(part.capitalize() for part in re.split(r"[-_]+", token) if part)
+
+    def _kw02_strip_markdown(text: str) -> str:
+        plain = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", text)
+        plain = re.sub(r"[`*_>#]", " ", plain)
+        return re.sub(r"\s+", " ", plain).strip()
+
+    def _kw02_resolve_attachment_target(
+        port: Any,
+        attachment_type: str,
+        attachment_ref: Optional[str],
+    ) -> Tuple[bool, Optional[str], Optional[str]]:
+        if attachment_type == "free_standing":
+            return True, None, None
+        if attachment_type == "research_ticket":
+            ticket = _call_port(port, "get_research_ticket", attachment_ref)
+            if not ticket:
+                return False, None, None
+            return True, ticket.get("title"), f"/research/tickets/{attachment_ref}"
+        if attachment_type == "persona":
+            persona = _call_port(port, "get_persona", attachment_ref)
+            if not persona:
+                return False, None, None
+            return True, persona.get("name"), f"/personas/{attachment_ref}"
+        strategy_spec = _call_port(port, "get_strategy_spec", attachment_ref)
+        if not strategy_spec:
+            return False, None, None
+        label = strategy_spec.get("title") or strategy_spec.get("name") or attachment_ref
+        return True, label, f"/knowledge/strategy-specs/{attachment_ref}"
+
+    def _kw02_note_list_item(port: Any, note: Dict[str, Any]) -> Dict[str, Any]:
+        attachment_type = str(note.get("attachment_type") or "free_standing")
+        attachment_ref = note.get("attachment_ref")
+        attachment_exists, attachment_label, _ = _kw02_resolve_attachment_target(
+            port,
+            attachment_type,
+            attachment_ref,
+        )
+        return {
+            "note_id": note.get("note_id"),
+            "title": note.get("title"),
+            "excerpt": _kw02_strip_markdown(str(note.get("body") or ""))[:280],
+            "owner_ref": json.loads(json.dumps(note.get("owner_ref") or {})),
+            "attachment": {
+                "type": attachment_type,
+                "ref": attachment_ref,
+                "display_label": attachment_label if attachment_exists else None,
+            },
+            "tags": list(note.get("tags") or []),
+            "created_at": note.get("created_at"),
+            "updated_at": note.get("updated_at"),
+            "route_href": f"/knowledge/notes/{note.get('note_id')}",
+        }
 
     def _validate_choice(value: Any, *, field: str, label: str, allowed: set[str]) -> str:
         normalized = str(value or "").strip().lower()
@@ -1298,6 +1365,78 @@ def create_research_router(
         if name in knowledge_operations:
             method, dataset = knowledge_operations[name]
             kwargs: Dict[str, Any] = {}
+            if name == "list_notes":
+                attachment_type = _query(request, "attachment_type")
+                attachment_ref = _query(request, "attachment_ref")
+                validated_attachment_type = (
+                    _kw02_validate_attachment_type(attachment_type)
+                    if attachment_type is not None
+                    else None
+                )
+                if attachment_ref is not None and validated_attachment_type is None:
+                    _kw02_bad_request(
+                        "Invalid attachment_ref filter",
+                        "attachment_ref requires attachment_type to be set",
+                        "attachment_ref",
+                    )
+                validated_attachment_ref = (
+                    _kw02_validate_attachment_ref(validated_attachment_type, attachment_ref)
+                    if validated_attachment_type is not None and attachment_ref is not None
+                    else None
+                )
+                notes = list(_call_port(port, method) or [])
+                notes_dataset_available = (
+                    getattr(port, "dataset_source", lambda _dataset: "missing")("research_notes")
+                    != "missing"
+                )
+                owner_ref = _query(request, "owner_ref")
+                if owner_ref:
+                    notes = [
+                        note
+                        for note in notes
+                        if str(((note.get("owner_ref") or {}).get("owner_id")) or "") == owner_ref
+                    ]
+                if validated_attachment_type:
+                    notes = [
+                        note
+                        for note in notes
+                        if str(note.get("attachment_type") or "") == validated_attachment_type
+                    ]
+                if validated_attachment_type == "free_standing" or validated_attachment_ref is not None:
+                    notes = [
+                        note
+                        for note in notes
+                        if note.get("attachment_ref") == validated_attachment_ref
+                    ]
+                tags = _query(request, "tags")
+                if tags:
+                    requested_tags = {value.strip() for value in tags.split(",") if value.strip()}
+                    notes = [
+                        note
+                        for note in notes
+                        if requested_tags.intersection(set(note.get("tags") or []))
+                    ]
+                surface_state = _kw02_surface_state(
+                    port,
+                    snapshot_at=snapshot_at,
+                    has_data=notes_dataset_available,
+                )
+                if surface_state == "unavailable":
+                    page_items, next_token, has_more = [], None, False
+                else:
+                    page_items, next_token = _page(notes, request)
+                    has_more = next_token is not None
+                meta = snapshot_meta(snapshot_at)
+                meta["surfaces"] = {"research_note_list": surface_state}
+                return {
+                    "notes": [_kw02_note_list_item(port, note) for note in page_items],
+                    "pagination": {
+                        "page_size": int(_query(request, "page_size", "20") or 20),
+                        "next_page_token": next_token,
+                        "has_more": has_more,
+                    },
+                    "meta": meta,
+                }
             if name == "list_strategy_specs":
                 kwargs = {"lifecycle_state": _query(request, "lifecycle_state", "all"), "source_kind": _query(request, "source_kind"), "persona_id": _query(request, "persona_id"), "include_retired": _query(request, "include_retired", "false") == "true", "include_fixture_pack": False}
             records = list(_call_port(port, method, **kwargs) or [])
