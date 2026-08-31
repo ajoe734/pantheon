@@ -22,6 +22,13 @@ commit. Unfenced, unrelated, mismatched, still-live, pending, already-
 materialized, cross-task, cross-repository, and forged-marker cases remain
 fail-closed.
 
+While this task was in progress, the DTG-CLEAN-M4/M5 deliveries moved
+worktree preparation and recovery helpers out of the supervisor facade. The
+binding and marker derivation therefore compose in the current owning module,
+`.orchestrator/rewrite/worker_workspace.py`; the facade retains only the later
+worker-tree guard and dispatch hand-off. The task does not recreate the
+superseded implementation in the facade.
+
 ## Live reproduction and preserved WIP
 
 The task-scoped activity stream records the original deadlock on the registered
@@ -90,19 +97,21 @@ Focused adoption and cross-repository workspace regression:
 
 ```text
 $PANTHEON_PY -m pytest -q \
+  .orchestrator/rewrite/test_worker_workspace.py \
   .orchestrator/test_supervisor.py::CrossRepositoryWorkerWorkspaceTests \
   .orchestrator/test_supervisor.py::LostLeaseDirtyWipAdoptionTests \
   .orchestrator/test_supervisor.py::LostLeaseWorktreeAdoptionEligibilityTests
 
-20 passed, 7 subtests passed
+25 passed, 7 subtests passed in 78.93s
 ```
 
-The full supervisor test file reached `224 passed, 34 subtests passed` and one
-unrelated pre-existing failure in
+The rebased full supervisor test file reached `224 passed, 34 subtests passed`
+and one unrelated pre-existing failure in
 `ReviewDecisionIntentLeaseRecoveryTests::test_reconcile_migrates_legacy_collision_from_journal_and_replays_intent`.
 That fixture fails in `scripts.ai_status.assert_task_archive_root_binding`
 before this worktree-adoption path is exercised; the same unrelated archive-
-binding failure was already recorded by the first repair delivery.
+binding failure was already recorded by the first repair delivery. The exact
+full-suite result was `1 failed, 224 passed, 34 subtests passed in 100.11s`.
 
 Python syntax validation and `git diff --check` pass. GitHub branch checks and
 the exact-head Codex2 review remain required for the new delivery.
