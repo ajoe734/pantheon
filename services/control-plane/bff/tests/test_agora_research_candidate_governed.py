@@ -423,7 +423,7 @@ def test_durable_dispatcher_outbox_lease_and_provenance() -> None:
     assert exec_res["status"] == "completed"
     result = exec_res["result"]
     assert result.outcome == "succeeded"
-    assert result.provenance == "real"
+    assert result.provenance == "simulation"
     assert len(result.artifact_refs) == 1
     artifact_ref = result.artifact_refs[0]
     assert artifact_ref in result.checksums
@@ -742,5 +742,4 @@ def test_drain_outbox_restart_persistence_and_stale_stage_idempotency() -> None:
         user_id=scope.user_id,
     )
     assert len(results_restart) == 0
-
 

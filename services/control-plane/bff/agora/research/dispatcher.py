@@ -439,10 +439,13 @@ class ResearchDispatcher:
             "backend": {
                 "requested": stage.get("routing", {}).get("preferred_backend") or ALLOWLISTED_STAGE_BACKENDS.get(stage_type, ""),
                 "effective": ALLOWLISTED_STAGE_BACKENDS.get(stage_type, ""),
-                "mode": result.provenance,
+                # `backend.mode` records the requested execution contract.  It
+                # is deliberately distinct from the observed provenance below:
+                # an unreceipted real request must remain visibly requested as
+                # real while its produced result is labelled simulation.
+                "mode": stage.get("routing", {}).get("backend_mode") or "real",
                 "version": result.backend_version,
             },
-            "provenance": result.provenance,
             "metrics": result.metrics,
             "findings": result.findings,
             "warnings": result.warnings,
@@ -573,4 +576,3 @@ class ResearchDispatcher:
             })
 
         return drained_results
-

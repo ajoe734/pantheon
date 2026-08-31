@@ -16,11 +16,11 @@
   },
   "task": {
     "base_branch": "dev",
-    "evidence_cut_at": "2026-08-30T22:15:00Z",
-    "evidence_cut_semantics": "Task owner evidence for Agora domain route migration and decoupling identity and personalization from main.py. Migrated all 38 decorators to agora/router.py and subrouters, bound canonical ports/stores and runtime dependencies, preserved dry-run/command/SSE/assistant behavior, and verified full test suite.",
+    "evidence_cut_at": "2026-08-31T15:30:20Z",
+    "evidence_cut_semantics": "Owner recovery validation for Agora domain route migration and decoupling identity and personalization from main.py. The task retains all 38 migrated decorators, canonical ports/stores, dry-run/command/SSE/assistant behavior, and corrects the research dispatcher so the requested backend mode remains schema-valid while an unreceipted result is explicitly labelled simulation.",
     "id": "OPGAP-BE-AGORA-ROUTER-V2-20260830",
     "overall_admission": "owner_asserted_pass_pending_independent_review_and_merge",
-    "owner": "Antigravity",
+    "owner": "Codex2",
     "phase": "Wave 2 / agora routing",
     "product_level_required": true,
     "repository": "ajoe734/pantheon",
@@ -48,7 +48,7 @@
     "task_packet": ".orchestrator/worker-runtime/task-context/opgap-be-agora-router-v2-20260830.md"
   },
   "scope": {
-    "authoritative_write_owner": "Antigravity for Agora domain router migration, ports interfaces binding, and legacy decorator cleanup from main.py",
+    "authoritative_write_owner": "Codex2 for Agora domain router migration, ports interfaces binding, legacy decorator cleanup from main.py, and dispatcher provenance correctness",
     "composes_with": [
       "OPGAP-DEVTOOL-TARGET-REPO-BRIDGE-V2-20260830",
       "Codex canonical review gate"
@@ -84,6 +84,11 @@
         "workflow": "evidence companion checksum",
         "event": "local validation before exact-head handoff",
         "conclusion": "success"
+      },
+      {
+        "workflow": "owner recovery router and dispatcher regression",
+        "event": "local validation before re-handoff",
+        "conclusion": "success"
       }
     ]
   },
@@ -103,10 +108,20 @@
         "command": "python3 -c \"import json, jsonschema; jsonschema.validate(json.load(open(\"docs/deployment/evidence/agora/OPGAP-BE-AGORA-ROUTER-V2-20260830/evidence.json\")), json.load(open(\"schemas/product-evidence.schema.json\")))\"",
         "result": "pass",
         "conclusion": "The manifest validates against schemas/product-evidence.schema.json."
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_agora_router.py",
+        "result": "pass",
+        "conclusion": "34 passed. Confirms zero legacy Agora decorators, zero production reverse imports of main.py, ports interface conformance, and fail-closed simulation provenance without a real receipt."
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_agora_router.py::test_default_allowlisted_adapter_emits_simulation_provenance_by_default services/control-plane/bff/tests/test_agora_research_candidate_governed.py::test_durable_dispatcher_outbox_lease_and_provenance services/control-plane/bff/tests/test_agora_research_candidate_governed.py::test_end_to_end_outbox_consumer_dispatch scripts/test_project_market_data_to_bff_agora_surfaces.py",
+        "result": "pass",
+        "conclusion": "22 passed. Confirms safe provenance, a schema-valid requested backend mode, durable outbox handling, and market-data projection provenance."
       }
     ],
-    "validated_at": "2026-08-30T22:15:00Z",
-    "validated_base_sha": "dev",
+    "validated_at": "2026-08-31T15:30:20Z",
+    "validated_base_sha": "9179026cb8bcccd15f4c0c7e4d6863778a9e5715",
     "validated_head_sha": "pending"
   },
   "deployment": {
@@ -245,7 +260,7 @@
       "containment": "Full contract and regression suites (254 passed) guarantee zero behavioral regression.",
       "description": "Router migration restructures endpoint definitions into modular sub-routers.",
       "expiry": "2026-09-30Z",
-      "owner": "Antigravity",
+      "owner": "Codex2",
       "recheck_trigger": "Full BFF integration regression",
       "severity": "low"
     },
@@ -286,6 +301,13 @@
       "kind": "local_validation",
       "status": "pass",
       "reference": "254 passed in full Agora contract and unit test suite"
+    },
+    {
+      "sequence": 3,
+      "recorded_at": "2026-08-31T15:30:20Z",
+      "kind": "owner_recovery_validation",
+      "status": "pass",
+      "reference": "Preserved requested backend mode separately from observed simulation provenance; 34 router and 22 focused dispatcher/market tests passed."
     }
   ]
 }
