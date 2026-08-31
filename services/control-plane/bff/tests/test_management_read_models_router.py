@@ -501,24 +501,80 @@ def test_human_inbox_and_details_and_hiq_backlog() -> None:
     resp = client.get("/bff/management/human-inbox", headers={"Authorization": "Bearer op-1:operator"})
     assert resp.status_code == 200
     data = resp.json()
-    assert len(data["data"]["items"]) == 3
-    assert data["data"]["summary"]["total_items"] == 3
+    assert len(data["data"]["items"]) == 7
+    assert data["data"]["summary"]["total_items"] == 7
     assert data["data"]["summary"]["approval_count"] == 3
+    assert data["data"]["summary"]["intervention_count"] == 2
+    assert data["data"]["summary"]["sentinel_finding_count"] == 2
 
     # 2. Human inbox item detail
     resp = client.get("/bff/management/human-inbox/app-1", headers={"Authorization": "Bearer op-1:operator"})
     assert resp.status_code == 200
     data = resp.json()
-    assert data["data"]["id"] == "app-1"
+    assert data["data"]["item_id"] == "app-1"
     assert data["data"]["title"] == "Deploy Strategy Alpha"
+
+    resp_intv = client.get("/bff/management/human-inbox/intv-1", headers={"Authorization": "Bearer op-1:operator"})
+    assert resp_intv.status_code == 200
+    assert resp_intv.json()["data"]["item_id"] == "intv-1"
 
     # 3. HIQ backlog
     resp = client.get("/bff/management/hiq-backlog", headers={"Authorization": "Bearer op-1:operator"})
     assert resp.status_code == 200
     data = resp.json()
     assert data["data"]["id"] == "management-hiq-backlog"
-    assert len(data["data"]["items"]) == 3
-    assert data["data"]["summary"]["total_items"] == 3
+    assert len(data["data"]["items"]) == 7
+    assert data["data"]["summary"]["total_items"] == 7
+
+
+def test_human_inbox_fail_closed_on_contributor_failure_and_partial_503() -> None:
+    """Prove fail-closed semantics on contributor error: partial degradation metadata and 503 for absent items."""
+    mock_store = MockManagementReadStore()
+
+    # Simulate approval contributor failure/timeout
+    def failing_approvals():
+        raise RuntimeError("approval contributor store timeout")
+
+    mock_store.list_approval_records = failing_approvals  # type: ignore[assignment]
+    if hasattr(mock_store, "list_approval_queue_items"):
+        mock_store.list_approval_queue_items = failing_approvals  # type: ignore[assignment]
+
+    app = FastAPI()
+    app.include_router(create_management_router(get_read_store=lambda: mock_store))
+    client = TestClient(app)
+
+    # 1. GET /bff/management/human-inbox reports degradation and partial=True
+    resp = client.get("/bff/management/human-inbox", headers={"Authorization": "Bearer op-1:operator"})
+    assert resp.status_code == 200
+    payload = resp.json()
+    meta = payload.get("meta", {})
+    assert meta.get("partial") is True
+    assert "approval_queue" in meta.get("degradation", {}).get("contributors", [])
+    assert meta.get("surfaces", {}).get("approval_queue", {}).get("status") == "degraded"
+    assert meta.get("surfaces", {}).get("human_inbox", {}).get("status") == "degraded"
+
+    # 2. GET /bff/management/human-inbox/{item_id} for item that wasn't loaded due to failure returns HTTP 503
+    resp_app = client.get("/bff/management/human-inbox/app-1", headers={"Authorization": "Bearer op-1:operator"})
+    assert resp_app.status_code == 503
+    err_data = resp_app.json().get("detail", resp_app.json()).get("error", {})
+    assert err_data.get("code") == "DEPENDENCY_UNAVAILABLE"
+    assert err_data.get("details", {}).get("precondition_failed") == "human_inbox_partial_read"
+
+    # 3. Item from surviving contributor (intv-1) returns 200 with partial meta
+    resp_intv = client.get("/bff/management/human-inbox/intv-1", headers={"Authorization": "Bearer op-1:operator"})
+    assert resp_intv.status_code == 200
+    assert resp_intv.json()["data"]["item_id"] == "intv-1"
+    assert resp_intv.json()["meta"]["partial"] is True
+
+    # 4. Clean store: absent item returns 404
+    clean_store = MockManagementReadStore()
+    app_clean = FastAPI()
+    app_clean.include_router(create_management_router(get_read_store=lambda: clean_store))
+    client_clean = TestClient(app_clean)
+    resp_404 = client_clean.get("/bff/management/human-inbox/completely-nonexistent", headers={"Authorization": "Bearer op-1:operator"})
+    assert resp_404.status_code == 404
+    err_404 = resp_404.json().get("detail", resp_404.json()).get("error", {})
+    assert err_404.get("code") == "RESOURCE_NOT_FOUND"
 
 
 def test_intervention_stream_and_evidence() -> None:
@@ -551,14 +607,14 @@ def test_operations_read_model_and_degraded_control_guidance() -> None:
     app.include_router(create_management_router(get_read_store=lambda: mock_store))
     client = TestClient(app)
 
-    # 1. Operations read model
+    # 1. Operations read model with fallback persona
     resp = client.get("/bff/management/operations-read-model/persona-a", headers={"Authorization": "Bearer op-1:operator"})
     assert resp.status_code == 200
     data = resp.json()
     assert data["data"]["identity"]["persona_id"] == "persona-a"
     assert data["data"]["identity"]["persona_label"] == "Alpha Trend"
     assert data["data"]["performance"]["sharpe"] == 2.1
-    assert data["data"]["data_confidence"] == "formal"
+    assert data["data"]["data_confidence"] == "fallback"
 
     # 2. Degraded control guidance
     resp = client.get("/api/v1/operator/degraded-control-guidance")
@@ -566,6 +622,83 @@ def test_operations_read_model_and_degraded_control_guidance() -> None:
     data = resp.json()
     assert data["data"]["current_state"] == "fresh"
     assert data["data"]["primary_path"]["status"] == "available"
+
+
+def test_operations_read_model_sparse_persona_no_synthetic_data_or_formal_confidence() -> None:
+    """Prove sparse persona has no synthetic identities, no invented metrics, and UNAVAILABLE/FALLBACK confidence."""
+    mock_store = MockManagementReadStore()
+    # Add a sparse persona with no performance, no telemetry, no bindings, no runtime
+    mock_store.personas.append({
+        "persona_id": "persona-sparse",
+        "name": "Sparse Test Persona",
+        "stage": "draft",
+    })
+
+    app = FastAPI()
+    app.include_router(create_management_router(get_read_store=lambda: mock_store))
+    client = TestClient(app)
+
+    resp = client.get("/bff/management/operations-read-model/persona-sparse", headers={"Authorization": "Bearer op-1:operator"})
+    assert resp.status_code == 200
+    data = resp.json()["data"]
+
+    # 1. Identity must NOT have fabricated rt-*, ledger-*, pool-main, sleeve-1, strat-*
+    identity = data["identity"]
+    assert identity["persona_id"] == "persona-sparse"
+    assert identity["persona_label"] == "Sparse Test Persona"
+    assert identity["runtime_ids"] == []
+    assert identity["paper_ledger_ids"] == []
+    assert identity["capital_pool_ids"] == []
+    assert identity["strategy_ids"] == []
+    assert identity["broker_ids"] == []
+
+    # 2. Performance must NOT have synthesized facts (0.05 risk_pct, 1.5 sharpe, 90.0 score, rank 1)
+    perf = data["performance"]
+    assert perf["pnl"] is None
+    assert perf["sharpe"] is None
+    assert perf["drawdown_pct"] is None
+    assert perf["rank"] is None
+    assert perf["score"] is None
+
+    # 3. Data confidence must NOT be FORMAL
+    assert data["data_confidence"] != "formal"
+    assert data["data_confidence"] in ("unavailable", "fallback")
+
+    # 4. Diagnostics must record missing matches for attribution and holdings
+    diag_codes = [d["code"] for d in data.get("diagnostics", [])]
+    assert "MISSING_ATTRIBUTION_MATCH" in diag_codes
+    assert "MISSING_HOLDINGS_MATCH" in diag_codes
+
+
+def test_operations_read_model_custom_injected_fn() -> None:
+    """Prove create_management_router accepts and delegates to injected ops_read_model_entry_fn."""
+    mock_store = MockManagementReadStore()
+    custom_called = {}
+
+    def custom_ops_entry(persona_id: str, period: str = "latest", tenant_id: Optional[str] = None):
+        custom_called["persona_id"] = persona_id
+        custom_called["period"] = period
+        from operations_read_model import OperationsIdentity, OperationsPerformance, OperationsReadModelEntry, DataConfidence
+        return OperationsReadModelEntry(
+            identity=OperationsIdentity(persona_id=persona_id, period=period, as_of="2026-08-31T00:00:00Z"),
+            data_confidence=DataConfidence.FALLBACK,
+            performance=OperationsPerformance(pnl=123.45),
+            sources=[],
+            diagnostics=[],
+        )
+
+    app = FastAPI()
+    app.include_router(create_management_router(
+        get_read_store=lambda: mock_store,
+        ops_read_model_entry_fn=custom_ops_entry,
+    ))
+    client = TestClient(app)
+
+    resp = client.get("/bff/management/operations-read-model/persona-custom?period=week", headers={"Authorization": "Bearer op-1:operator"})
+    assert resp.status_code == 200
+    assert custom_called["persona_id"] == "persona-custom"
+    assert custom_called["period"] == "week"
+    assert resp.json()["data"]["performance"]["pnl"] == 123.45
 
 
 def test_composed_read_models_via_router() -> None:

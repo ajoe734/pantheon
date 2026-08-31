@@ -33,6 +33,15 @@ from datetime import datetime, timezone
 from typing import Any, Callable, Dict, Iterator, List, Mapping, Optional, Sequence, Set, Tuple, Union
 
 try:
+    from fastapi import HTTPException
+except ImportError:
+    class HTTPException(Exception):  # type: ignore[no-redef]
+        def __init__(self, status_code: int, detail: Any = None) -> None:
+            super().__init__(f"HTTP {status_code}: {detail}")
+            self.status_code = status_code
+            self.detail = detail
+
+try:
     from operations_read_model import (
         DataConfidence,
         SourceState,
@@ -46,6 +55,7 @@ try:
         build_operations_identity,
         classify_confidence,
         dedupe_ids,
+        diagnostic as ops_read_model_diagnostic,
     )
 except ImportError:
     from services.control_plane.bff.operations_read_model import (  # type: ignore[no-redef]
@@ -61,6 +71,7 @@ except ImportError:
         build_operations_identity,
         classify_confidence,
         dedupe_ids,
+        diagnostic as ops_read_model_diagnostic,
     )
 
 from pathlib import Path
@@ -99,10 +110,45 @@ except ImportError:
             RedactedEvidenceRef,
         )
     except ImportError:
-        ErrorCode = None  # type: ignore[assignment]
+        class ErrorCode:  # type: ignore[no-redef]
+            VALIDATION_FAILED = "VALIDATION_FAILED"
+            AUTH_REQUIRED = "AUTH_REQUIRED"
+            FORBIDDEN = "FORBIDDEN"
+            OPERATION_NOT_ALLOWED = "OPERATION_NOT_ALLOWED"
+            RESOURCE_NOT_FOUND = "RESOURCE_NOT_FOUND"
+            RESOURCE_CONFLICT = "RESOURCE_CONFLICT"
+            DEPENDENCY_UNAVAILABLE = "DEPENDENCY_UNAVAILABLE"
+            INTERNAL_ERROR = "INTERNAL_ERROR"
         OperatorIdentity = None  # type: ignore[assignment]
         EvidenceKind = None  # type: ignore[assignment]
         RedactedEvidenceRef = None  # type: ignore[assignment]
+
+
+def _default_bff_error(
+    status_code: int,
+    code: str,
+    message: str,
+    reason: Optional[str] = None,
+    precondition_failed: Optional[str] = None,
+    suggestion: Optional[str] = None,
+    details_extra: Optional[Dict[str, Any]] = None,
+) -> HTTPException:
+    detail: Dict[str, Any] = {
+        "error": {
+            "code": code,
+            "message": message,
+            "reason": reason or message,
+            "status_code": status_code,
+        }
+    }
+    if precondition_failed:
+        detail["error"]["details"] = {"precondition_failed": precondition_failed}
+    if suggestion:
+        detail["error"]["suggestion"] = suggestion
+    if details_extra:
+        detail["error"].setdefault("details", {}).update(details_extra)
+    return HTTPException(status_code=status_code, detail=detail)
+
 
 class ManagementValidationError(ValueError):
     def __init__(
@@ -731,6 +777,23 @@ def _management_evidence_degraded_payload(*, page_size: int = 20, snapshot_at: O
     }
 
 
+def _human_inbox_detail_match(item: Dict[str, Any], item_id: str) -> bool:
+    clean = str(item_id or "").strip()
+    candidates = {
+        str(item.get("id") or ""),
+        str(item.get("inbox_id") or ""),
+        str(item.get("source_id") or ""),
+        str(item.get("item_id") or ""),
+        str(item.get("approval_decision_id") or ""),
+        str(item.get("decision_id") or ""),
+        str(item.get("intervention_id") or ""),
+        str(item.get("review_item_id") or ""),
+        str(item.get("finding_id") or ""),
+        str(item.get("persona_id") or ""),
+    }
+    return clean in candidates
+
+
 # ---------------------------------------------------------------------------
 # Management Domain Service Class
 # ---------------------------------------------------------------------------
@@ -742,9 +805,11 @@ class ManagementService:
         self,
         get_read_store: Optional[Callable[[], Any]] = None,
         utc_now: Optional[Callable[[], str]] = None,
+        ops_read_model_entry_fn: Optional[Callable[..., Any]] = None,
     ) -> None:
         self._get_read_store = get_read_store
         self._utc_now = utc_now or _utc_now_rfc3339
+        self._ops_read_model_entry_fn = ops_read_model_entry_fn
 
     def _resolve_store(self) -> Optional[Any]:
         if self._get_read_store is not None:
@@ -1511,136 +1576,302 @@ class ManagementService:
         snap = self._utc_now()
         store = self._resolve_store()
         all_items: List[Dict[str, Any]] = []
+        failures: Dict[str, Dict[str, Any]] = {}
+        surfaces: Dict[str, Dict[str, Any]] = {}
 
-        if store is not None:
-            if hasattr(store, "list_approval_records") and not hasattr(store, "list_approval_queue_items"):
-                for r in (store.list_approval_records() or []):
-                    if isinstance(r, dict):
-                        all_items.append({
-                            "id": str(r.get("decision_id") or r.get("id") or "app-1"),
-                            "item_id": str(r.get("decision_id") or r.get("id") or "app-1"),
-                            "source_type": "governance_approval",
-                            "status": str(r.get("decision_state") or r.get("status") or "pending"),
-                            "priority": str(r.get("priority") or "medium"),
-                            "title": str(r.get("title") or "Deployment Approval"),
-                            "summary": str(r.get("summary") or "Governance action required"),
-                            "created_at": str(r.get("created_at") or snap),
-                            "details": r,
-                        })
-            else:
-                # 1. Approvals
+        if store is None:
+            failures["store"] = {
+                "status": "unavailable",
+                "source": "missing",
+                "dataset": "human_inbox",
+                "snapshot_at": snap,
+                "message": "Store unavailable",
+            }
+            surfaces["human_inbox"] = {
+                "status": "unavailable",
+                "source": "missing",
+                "snapshot_at": snap,
+            }
+        else:
+            # 1. Approvals
+            if hasattr(store, "list_approval_queue_items") or hasattr(store, "list_approval_records"):
                 try:
-                    if hasattr(store, "list_approval_queue_items"):
-                        for r in (store.list_approval_queue_items() or []):
-                            if isinstance(r, dict):
+                    records = (
+                        store.list_approval_queue_items()
+                        if hasattr(store, "list_approval_queue_items")
+                        else store.list_approval_records()
+                    ) or []
+                    surfaces["approval_queue"] = {
+                        "status": "ok" if records else "unavailable",
+                        "source": "read_store",
+                        "snapshot_at": snap,
+                        **({"message": "Approval queue has no readable source records."} if not records else {}),
+                    }
+                    for r in records:
+                        if isinstance(r, dict):
+                            dec_id = str(r.get("decision_id") or r.get("id") or r.get("approval_decision_id") or "")
+                            if dec_id:
+                                dec_state = str(r.get("decision_state") or r.get("status") or "pending")
                                 all_items.append({
-                                    "id": str(r.get("decision_id") or r.get("id") or "app-1"),
-                                    "item_id": str(r.get("decision_id") or r.get("id") or "app-1"),
-                                    "source_type": "governance_approval",
-                                    "status": str(r.get("decision_state") or r.get("status") or "pending"),
+                                    "id": f"approval:{dec_id}",
+                                    "item_id": dec_id,
+                                    "inbox_id": f"approval:{dec_id}",
+                                    "source_id": dec_id,
+                                    "decision_id": dec_id,
+                                    "approval_decision_id": dec_id,
+                                    "source_type": "approval",
+                                    "inboxType": "approval",
+                                    "status": dec_state,
+                                    "action_state": "pending" if dec_state in ("pending", "in_review", "open") else "resolved",
                                     "priority": str(r.get("priority") or "medium"),
                                     "title": str(r.get("title") or "Deployment Approval"),
-                                    "summary": str(r.get("summary") or "Governance action required"),
-                                    "created_at": str(r.get("created_at") or snap),
+                                    "summary": str(r.get("summary") or r.get("description") or "Governance action required"),
+                                    "created_at": str(r.get("submitted_at") or r.get("created_at") or snap),
+                                    "updated_at": str(r.get("updated_at") or r.get("created_at") or snap),
                                     "details": r,
                                 })
-                except Exception:
-                    pass
+                except Exception as exc:
+                    failures["approval_queue"] = {
+                        "status": "degraded",
+                        "source": "read_store",
+                        "reason": "contributor_read_error",
+                        "message": f"approval_queue_items contributor failed: {exc}",
+                        "snapshot_at": snap,
+                    }
+                    surfaces["approval_queue"] = failures["approval_queue"]
+            else:
+                surfaces["approval_queue"] = {
+                    "status": "unavailable",
+                    "source": "missing",
+                    "snapshot_at": snap,
+                    "message": "Approval queue has no readable source records.",
+                }
 
-                # 2. Governance Reviews
+            # 2. Governance Reviews
+            if hasattr(store, "list_governance_review_queue_items"):
                 try:
-                    if hasattr(store, "list_governance_review_queue_items"):
-                        for r in (store.list_governance_review_queue_items() or []):
-                            if isinstance(r, dict):
+                    records = store.list_governance_review_queue_items() or []
+                    surfaces["governance_review_queue"] = {
+                        "status": "ok" if records else "unavailable",
+                        "source": "read_store",
+                        "snapshot_at": snap,
+                        **({"message": "Governance review queue has no readable source records."} if not records else {}),
+                    }
+                    for r in records:
+                        if isinstance(r, dict):
+                            item_id_val = str(r.get("item_id") or r.get("id") or r.get("review_item_id") or "")
+                            if item_id_val:
+                                st = str(r.get("status") or "pending")
                                 all_items.append({
-                                    "id": str(r.get("item_id") or r.get("id") or "gov-1"),
-                                    "item_id": str(r.get("item_id") or r.get("id") or "gov-1"),
+                                    "id": f"governance_review:{item_id_val}",
+                                    "item_id": item_id_val,
+                                    "inbox_id": f"governance_review:{item_id_val}",
+                                    "source_id": item_id_val,
+                                    "review_item_id": item_id_val,
                                     "source_type": "governance_review",
-                                    "status": str(r.get("status") or "pending"),
+                                    "inboxType": "governance_review",
+                                    "status": st,
+                                    "action_state": "pending" if st in ("pending", "open", "in_review") else "resolved",
                                     "priority": str(r.get("priority") or "high"),
                                     "title": str(r.get("title") or "Governance Review"),
                                     "summary": str(r.get("summary") or "Policy review required"),
                                     "created_at": str(r.get("created_at") or snap),
+                                    "updated_at": str(r.get("updated_at") or r.get("created_at") or snap),
                                     "details": r,
                                 })
-                except Exception:
-                    pass
+                except Exception as exc:
+                    failures["governance_review_queue"] = {
+                        "status": "degraded",
+                        "source": "read_store",
+                        "reason": "contributor_read_error",
+                        "message": f"governance_review_queue_items contributor failed: {exc}",
+                        "snapshot_at": snap,
+                    }
+                    surfaces["governance_review_queue"] = failures["governance_review_queue"]
+            else:
+                surfaces["governance_review_queue"] = {
+                    "status": "unavailable",
+                    "source": "missing",
+                    "snapshot_at": snap,
+                    "message": "Governance review queue has no readable source records.",
+                }
 
-                # 3. Interventions
+            # 3. Interventions
+            if hasattr(store, "list_v5_interventions") or hasattr(store, "list_interventions") or hasattr(store, "list_intervention_records"):
                 try:
-                    if hasattr(store, "list_v5_interventions"):
-                        for r in (store.list_v5_interventions() or []):
-                            if isinstance(r, dict):
+                    fn = getattr(store, "list_v5_interventions", None) or getattr(store, "list_interventions", None) or getattr(store, "list_intervention_records", None)
+                    records = fn() or []
+                    surfaces["v5_interventions"] = {
+                        "status": "ok" if records else "unavailable",
+                        "source": "read_store",
+                        "snapshot_at": snap,
+                        **({"message": "V5 interventions have no readable source records."} if not records else {}),
+                    }
+                    for r in records:
+                        if isinstance(r, dict):
+                            intv_id = str(r.get("intervention_id") or r.get("id") or "")
+                            if intv_id:
+                                st = str(r.get("status") or "open")
                                 all_items.append({
-                                    "id": str(r.get("intervention_id") or r.get("id") or "intv-1"),
-                                    "item_id": str(r.get("intervention_id") or r.get("id") or "intv-1"),
+                                    "id": f"intervention:{intv_id}",
+                                    "item_id": intv_id,
+                                    "inbox_id": f"intervention:{intv_id}",
+                                    "source_id": intv_id,
+                                    "intervention_id": intv_id,
                                     "source_type": "intervention",
-                                    "status": str(r.get("status") or "open"),
+                                    "inboxType": "intervention",
+                                    "status": st,
+                                    "action_state": "pending" if st in ("open", "pending", "claimed", "escalated") else "resolved",
                                     "priority": str(r.get("priority") or "high"),
                                     "title": str(r.get("title") or r.get("summary") or "Intervention Required"),
                                     "summary": str(r.get("summary") or "Operator intervention needed"),
                                     "created_at": str(r.get("created_at") or snap),
+                                    "updated_at": str(r.get("updated_at") or r.get("created_at") or snap),
                                     "details": r,
                                 })
-                    elif hasattr(store, "list_interventions"):
-                        for r in (store.list_interventions() or []):
-                            if isinstance(r, dict):
-                                all_items.append({
-                                    "id": str(r.get("intervention_id") or r.get("id") or "intv-1"),
-                                    "item_id": str(r.get("intervention_id") or r.get("id") or "intv-1"),
-                                    "source_type": "intervention",
-                                    "status": str(r.get("status") or "open"),
-                                    "priority": str(r.get("priority") or "high"),
-                                    "title": str(r.get("title") or r.get("summary") or "Intervention Required"),
-                                    "summary": str(r.get("summary") or "Operator intervention needed"),
-                                    "created_at": str(r.get("created_at") or snap),
-                                    "details": r,
-                                })
-                    elif hasattr(store, "list_intervention_records"):
-                        for r in (store.list_intervention_records() or []):
-                            if isinstance(r, dict):
-                                all_items.append({
-                                    "id": str(r.get("intervention_id") or r.get("id") or "intv-1"),
-                                    "item_id": str(r.get("intervention_id") or r.get("id") or "intv-1"),
-                                    "source_type": "intervention",
-                                    "status": str(r.get("status") or "open"),
-                                    "priority": str(r.get("priority") or "high"),
-                                    "title": str(r.get("title") or r.get("summary") or "Intervention Required"),
-                                    "summary": str(r.get("summary") or "Operator intervention needed"),
-                                    "created_at": str(r.get("created_at") or snap),
-                                    "details": r,
-                                })
-                except Exception:
-                    pass
+                except Exception as exc:
+                    failures["v5_interventions"] = {
+                        "status": "degraded",
+                        "source": "read_store",
+                        "reason": "contributor_read_error",
+                        "message": f"v5_interventions contributor failed: {exc}",
+                        "snapshot_at": snap,
+                    }
+                    surfaces["v5_interventions"] = failures["v5_interventions"]
+            else:
+                surfaces["v5_interventions"] = {
+                    "status": "unavailable",
+                    "source": "missing",
+                    "snapshot_at": snap,
+                    "message": "V5 interventions have no readable source records.",
+                }
 
-                # 4. Sentinel Findings
+            # 4. Sentinel Findings
+            if hasattr(store, "list_sentinel_findings"):
                 try:
-                    if hasattr(store, "list_sentinel_findings"):
-                        s_res = store.list_sentinel_findings()
-                        s_findings = s_res[1] if isinstance(s_res, tuple) else (s_res or [])
-                        for r in s_findings:
-                            if isinstance(r, dict):
+                    s_res = store.list_sentinel_findings()
+                    available = s_res[0] if isinstance(s_res, tuple) else True
+                    s_findings = s_res[1] if isinstance(s_res, tuple) else (s_res or [])
+                    surfaces["sentinel_findings"] = {
+                        "status": "ok" if available and s_findings else "unavailable",
+                        "source": "read_store" if available else "missing",
+                        "snapshot_at": snap,
+                        **({"message": "Sentinel findings have no readable source records."} if not (available and s_findings) else {}),
+                    }
+                    for r in (s_findings or []):
+                        if isinstance(r, dict):
+                            f_id = str(r.get("finding_id") or r.get("id") or "")
+                            if f_id:
+                                st = str(r.get("status") or "active")
                                 all_items.append({
-                                    "id": str(r.get("finding_id") or r.get("id") or "sent-1"),
-                                    "item_id": str(r.get("finding_id") or r.get("id") or "sent-1"),
+                                    "id": f"sentinel_finding:{f_id}",
+                                    "item_id": f_id,
+                                    "inbox_id": f"sentinel_finding:{f_id}",
+                                    "source_id": f_id,
+                                    "finding_id": f_id,
                                     "source_type": "sentinel_finding",
-                                    "status": str(r.get("status") or "active"),
-                                    "priority": "critical" if r.get("severity") in ("critical", "high") else "medium",
-                                    "title": str(r.get("summary") or r.get("title") or "Sentinel Anomaly"),
+                                    "inboxType": "sentinel_finding",
+                                    "status": st,
+                                    "action_state": "pending" if st in ("active", "open", "new", "escalated") else "resolved",
+                                    "priority": "critical" if str(r.get("severity") or "").lower() in ("critical", "sev1", "high") else "medium",
+                                    "title": str(r.get("title") or r.get("summary") or "Sentinel Anomaly"),
                                     "summary": str(r.get("summary") or "Anomaly detected"),
                                     "created_at": str(r.get("created_at") or snap),
+                                    "updated_at": str(r.get("updated_at") or r.get("created_at") or snap),
                                     "details": r,
                                 })
-                except Exception:
-                    pass
+                except Exception as exc:
+                    failures["sentinel_findings"] = {
+                        "status": "degraded",
+                        "source": "read_store",
+                        "reason": "contributor_read_error",
+                        "message": f"sentinel_findings contributor failed: {exc}",
+                        "snapshot_at": snap,
+                    }
+                    surfaces["sentinel_findings"] = failures["sentinel_findings"]
+            else:
+                surfaces["sentinel_findings"] = {
+                    "status": "unavailable",
+                    "source": "missing",
+                    "snapshot_at": snap,
+                    "message": "Sentinel findings have no readable source records.",
+                }
+
+            # 5. Persona Readiness
+            if hasattr(store, "list_personas"):
+                try:
+                    try:
+                        personas = list(store.list_personas(include_market_persona_defaults=True) or [])
+                    except TypeError:
+                        personas = list(store.list_personas() or [])
+                    surfaces["persona_readiness"] = {
+                        "status": "ok" if personas else "unavailable",
+                        "source": "bff_composed",
+                        "snapshot_at": snap,
+                    }
+                    for p in personas:
+                        if isinstance(p, dict) and bool(p.get("human_needed") or p.get("humanNeeded")):
+                            p_id = str(p.get("persona_id") or p.get("id") or "")
+                            if p_id:
+                                all_items.append({
+                                    "id": f"readiness_blocker:persona:{p_id}",
+                                    "item_id": p_id,
+                                    "inbox_id": f"readiness_blocker:persona:{p_id}",
+                                    "source_id": p_id,
+                                    "persona_id": p_id,
+                                    "source_type": "readiness_blocker",
+                                    "inboxType": "readiness_blocker",
+                                    "status": str(p.get("state") or p.get("status") or "needs_human_approval"),
+                                    "action_state": "pending",
+                                    "priority": "high",
+                                    "title": f"Persona needs review: {p.get('name') or p_id}",
+                                    "summary": str(p.get("current_work") or "Persona readiness is blocked on human governance review."),
+                                    "created_at": str(p.get("updated_at") or snap),
+                                    "updated_at": str(p.get("updated_at") or snap),
+                                    "details": p,
+                                })
+                except Exception as exc:
+                    failures["persona_readiness"] = {
+                        "status": "degraded",
+                        "source": "bff_composed",
+                        "reason": "contributor_read_error",
+                        "message": str(exc),
+                        "snapshot_at": snap,
+                    }
+                    surfaces["persona_readiness"] = failures["persona_readiness"]
+
+            # 6. Promotion Reviews
+            if hasattr(store, "list_promotion_reviews") or hasattr(store, "list_promotion_review_records"):
+                try:
+                    fn = getattr(store, "list_promotion_reviews", None) or getattr(store, "list_promotion_review_records", None)
+                    records = fn() or []
+                    surfaces["promotion_reviews"] = {
+                        "status": "ok" if records else "unavailable",
+                        "source": "read_store",
+                        "snapshot_at": snap,
+                    }
+                except Exception as exc:
+                    failures["promotion_reviews"] = {
+                        "status": "degraded",
+                        "source": "read_store",
+                        "reason": "contributor_read_error",
+                        "message": str(exc),
+                        "snapshot_at": snap,
+                    }
+                    surfaces["promotion_reviews"] = failures["promotion_reviews"]
+
+            surfaces["human_inbox"] = _aggregate_group_surface("human_inbox", list(surfaces.values()), snapshot_at=snap)
 
         filtered = []
         for item in all_items:
-            if source_type and item.get("source_type") != source_type:
+            st = str(item.get("source_type") or item.get("inboxType") or "").lower()
+            if source_type and st != str(source_type).lower():
                 continue
-            if status and item.get("status") != status:
+            item_status = str(item.get("status") or item.get("action_state") or "").lower()
+            if status and item_status != str(status).lower():
                 continue
-            if priority and item.get("priority") != priority:
+            item_priority = str(item.get("priority") or item.get("risk_level") or "").lower()
+            if priority and item_priority != str(priority).lower():
                 continue
             filtered.append(item)
 
@@ -1657,16 +1888,28 @@ class ManagementService:
             "total": len(filtered),
             "total_items": len(filtered),
             "governance_review_count": sum(1 for x in filtered if x.get("source_type") == "governance_review"),
-            "approval_count": sum(1 for x in filtered if x.get("source_type") == "governance_approval"),
+            "approval_count": sum(1 for x in filtered if x.get("source_type") in ("approval", "governance_approval")),
             "intervention_count": sum(1 for x in filtered if x.get("source_type") == "intervention"),
             "sentinel_finding_count": sum(1 for x in filtered if x.get("source_type") == "sentinel_finding"),
             "priority_counts": {
-                "critical": sum(1 for x in filtered if x.get("priority") == "critical"),
-                "high": sum(1 for x in filtered if x.get("priority") == "high"),
-                "medium": sum(1 for x in filtered if x.get("priority") == "medium"),
-                "low": sum(1 for x in filtered if x.get("priority") == "low"),
+                "critical": sum(1 for x in filtered if str(x.get("priority") or "").lower() == "critical"),
+                "high": sum(1 for x in filtered if str(x.get("priority") or "").lower() == "high"),
+                "medium": sum(1 for x in filtered if str(x.get("priority") or "").lower() == "medium"),
+                "low": sum(1 for x in filtered if str(x.get("priority") or "").lower() == "low"),
             },
         }
+
+        meta = {
+            "snapshot_at": snap,
+            "version": "v1",
+            "surfaces": surfaces,
+        }
+        if failures:
+            meta["partial"] = True
+            meta["degradation"] = {
+                "reason": "one_or_more_human_inbox_contributors_incomplete",
+                "contributors": sorted(failures.keys()),
+            }
 
         return {
             "data": {
@@ -1679,23 +1922,35 @@ class ManagementService:
                 "total": len(filtered),
                 "page_size": page_size,
             },
-            "meta": {
-                "snapshot_at": snap,
-                "surfaces": {
-                    "human_inbox": {"status": "ok" if store else "degraded", "source": "store" if store else "missing"},
-                },
-            },
+            "meta": meta,
         }
 
-    def get_human_inbox_detail(self, item_id: str, identity: Optional[Any] = None) -> Optional[Dict[str, Any]]:
+    def get_human_inbox_detail_result(
+        self,
+        item_id: str,
+        identity: Optional[Any] = None,
+    ) -> Tuple[Optional[Dict[str, Any]], List[str]]:
         res = self.get_human_inbox(page_size=2000, identity=identity)
         items = res.get("data", {}).get("items", [])
+        failures = res.get("meta", {}).get("degradation", {}).get("contributors", [])
         for item in items:
-            if item.get("item_id") == item_id or item.get("id") == item_id:
-                return {
-                    "data": item,
-                    "meta": res.get("meta", {}),
-                }
+            if _human_inbox_detail_match(item, item_id):
+                return {"data": item, "meta": res.get("meta", {})}, failures
+        return None, failures
+
+    def get_human_inbox_detail(self, item_id: str, identity: Optional[Any] = None) -> Optional[Dict[str, Any]]:
+        detail, failures = self.get_human_inbox_detail_result(item_id, identity=identity)
+        if detail is not None:
+            return detail
+        if failures:
+            raise _default_bff_error(
+                503,
+                ErrorCode.DEPENDENCY_UNAVAILABLE,
+                "Human inbox detail could not be resolved from a partial aggregate",
+                "One or more Human Inbox contributors timed out or failed; retry before treating the item as absent.",
+                precondition_failed="human_inbox_partial_read",
+                suggestion="Retry the Human Inbox detail after the degraded contributor recovers.",
+            )
         return None
 
     def get_hiq_backlog(
@@ -1717,7 +1972,7 @@ class ManagementService:
             st = item.get("source_type")
             if source_type and st != source_type:
                 continue
-            if not source_type and st not in ("intervention", "sentinel_finding", "governance_approval", "governance_review"):
+            if not source_type and st not in ("intervention", "sentinel_finding", "governance_approval", "governance_review", "approval", "readiness_blocker"):
                 continue
             if kind and (item.get("details") or {}).get("kind") != kind:
                 continue
@@ -2651,7 +2906,31 @@ class ManagementService:
         period: str = "latest",
         tenant_id: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
+        if self._ops_read_model_entry_fn is not None:
+            try:
+                entry = self._ops_read_model_entry_fn(
+                    persona_id,
+                    period=period,
+                    tenant_id=tenant_id,
+                )
+                if entry is None:
+                    return None
+                snap = self._utc_now()
+                return {
+                    "data": entry.model_dump(mode="json") if hasattr(entry, "model_dump") else entry,
+                    "meta": {
+                        "snapshot_at": snap,
+                        "surface": "operations_read_model",
+                        "surfaces": {
+                            "operations_read_model": {"status": "ok", "source": "store"},
+                        },
+                    },
+                }
+            except Exception as exc:
+                log.warning("ops_read_model_entry_fn failed: %r", exc)
+
         snap = self._utc_now()
+        period_key = str(period or "").strip() or "latest"
         store = self._resolve_store()
 
         if store is None:
@@ -2687,72 +2966,330 @@ class ManagementService:
             except Exception:
                 league_entry = {}
 
-        pnl = _as_float(persona.get("pnl") or league_entry.get("pnl") or 0.0)
-        pnl_pct = _as_float(persona.get("pnl_pct") or league_entry.get("pnl_pct") or 0.0)
-        drawdown_pct = _as_float(persona.get("drawdown_pct") or league_entry.get("drawdown_pct") or 0.0)
-        sharpe = _as_float(persona.get("sharpe") or persona.get("sharpe_ratio") or league_entry.get("sharpe") or 1.5)
-        rank = int(persona.get("rank") or league_entry.get("rank") or 1)
-        score = _as_float(persona.get("score") or league_entry.get("score") or 90.0)
+        persona_metadata = (
+            persona.get("metadata") if isinstance(persona.get("metadata"), dict) else {}
+        )
+        fallback_performance = (
+            league_entry.get("performance_summary")
+            if isinstance(league_entry.get("performance_summary"), dict)
+            else persona_metadata.get("performance")
+            if isinstance(persona_metadata.get("performance"), dict)
+            else persona.get("performance_summary")
+            if isinstance(persona.get("performance_summary"), dict)
+            else {
+                k: persona.get(k)
+                for k in ("pnl", "pnl_pct", "drawdown_pct", "sharpe", "sharpe_ratio", "rank", "score")
+                if persona.get(k) is not None
+            }
+        )
+        fleet_row = {
+            "state": (
+                league_entry.get("state")
+                or persona.get("lifecycle_state")
+                or persona.get("status")
+                or persona.get("stage")
+            ),
+            "performance_summary": fallback_performance,
+            "runtime_id": league_entry.get("runtime_id"),
+            "paper_ledger_id": league_entry.get("paper_ledger_id"),
+            "capital_pool_id": league_entry.get("capital_pool_id"),
+            "league_rank": league_entry.get("rank") or league_entry.get("league_rank"),
+            "league_score": league_entry.get("score") or league_entry.get("league_score"),
+            "perf_delta": league_entry.get("perf_delta"),
+        }
 
-        identity = OperationsIdentity(
+        # Query runtime bindings, deployment plans, bindings, capital pools
+        runtime_bindings: List[Dict[str, Any]] = []
+        if hasattr(store, "list_runtime_bindings"):
+            try:
+                runtime_bindings = list(store.list_runtime_bindings(include_market_persona_defaults=True) or [])
+            except TypeError:
+                try:
+                    runtime_bindings = list(store.list_runtime_bindings() or [])
+                except Exception:
+                    runtime_bindings = []
+            except Exception:
+                runtime_bindings = []
+
+        deployment_plans: List[Dict[str, Any]] = []
+        if hasattr(store, "list_deployment_plans"):
+            try:
+                deployment_plans = list(store.list_deployment_plans() or [])
+            except Exception:
+                deployment_plans = []
+
+        bindings: List[Dict[str, Any]] = []
+        if hasattr(store, "list_bindings"):
+            try:
+                bindings = list(store.list_bindings(include_market_persona_defaults=True) or [])
+            except TypeError:
+                try:
+                    bindings = list(store.list_bindings() or [])
+                except Exception:
+                    bindings = []
+            except Exception:
+                bindings = []
+
+        capital_pools: List[Dict[str, Any]] = []
+        if hasattr(store, "list_capital_pools"):
+            try:
+                capital_pools = list(store.list_capital_pools(include_market_persona_defaults=True) or [])
+            except TypeError:
+                try:
+                    capital_pools = list(store.list_capital_pools() or [])
+                except Exception:
+                    capital_pools = []
+            except Exception:
+                capital_pools = []
+
+        plans_by_id = {
+            str(plan.get("plan_id") or plan.get("id") or ""): plan
+            for plan in deployment_plans
+            if str(plan.get("plan_id") or plan.get("id") or "")
+        }
+        bindings_by_id = {
+            str(binding.get("binding_id") or binding.get("id") or binding.get("persona_capital_binding_id") or ""): binding
+            for binding in bindings
+            if str(binding.get("binding_id") or binding.get("id") or binding.get("persona_capital_binding_id") or "")
+        }
+        pools_by_id = {
+            str(pool.get("pool_id") or pool.get("id") or ""): pool
+            for pool in capital_pools
+            if str(pool.get("pool_id") or pool.get("id") or "")
+        }
+
+        # Build persona facts
+        persona_facts: List[Dict[str, Any]] = []
+        for runtime in runtime_bindings:
+            if not isinstance(runtime, dict):
+                continue
+            r_id = str(runtime.get("runtime_id") or runtime.get("id") or runtime.get("binding_id") or "")
+            plan_id = str(runtime.get("plan_id") or runtime.get("deployment_plan_id") or "")
+            plan = plans_by_id.get(plan_id, {})
+            plan_binding_ids = [
+                str(v).strip() for v in (plan.get("binding_ids") or []) if str(v).strip()
+            ]
+            persona_binding_id = (
+                str(runtime.get("persona_capital_binding_id") or "")
+                or (plan_binding_ids[0] if plan_binding_ids else "")
+            )
+            persona_binding = bindings_by_id.get(persona_binding_id, {})
+            p_id = str(
+                runtime.get("persona_id")
+                or persona_binding.get("persona_id")
+                or ""
+            )
+            if p_id != persona_id:
+                continue
+
+            telemetry = {}
+            if hasattr(store, "get_telemetry_summary") and r_id:
+                try:
+                    telemetry = store.get_telemetry_summary(r_id) or {}
+                except Exception:
+                    telemetry = {}
+            summary = telemetry.get("summary") if isinstance(telemetry.get("summary"), dict) else {}
+            pnl_val = ops_read_model_sanitize_metric(
+                telemetry.get("pnl") if telemetry.get("pnl") is not None else summary.get("total_pnl")
+            )
+            market_val = ops_read_model_sanitize_metric(
+                telemetry.get("market_value") if telemetry.get("market_value") is not None else summary.get("market_value")
+            )
+            pool_id = str(
+                runtime.get("capital_pool_id")
+                or plan.get("capital_pool_id")
+                or persona_binding.get("capital_pool_id")
+                or ""
+            )
+
+            fact = {
+                "persona_id": persona_id,
+                "runtime_id": r_id or None,
+                "capital_pool_id": pool_id or None,
+                "strategy_id": str(runtime.get("strategy_id") or "") or None,
+                "broker_id": str(runtime.get("broker_id") or "") or None,
+                "total_pnl": pnl_val,
+                "market_value": market_val,
+                "worst_drawdown": ops_read_model_sanitize_metric(
+                    telemetry.get("max_drawdown") or summary.get("max_drawdown") or telemetry.get("worst_drawdown")
+                ),
+                "telemetry_available": bool(telemetry),
+            }
+            persona_facts.append(fact)
+
+        has_formal_attribution = any(
+            fact.get("telemetry_available") and ops_read_model_sanitize_metric(fact.get("total_pnl")) is not None
+            for fact in persona_facts
+        )
+        has_partial_attribution = bool(persona_facts) and not has_formal_attribution
+
+        sources: List[SourceStatus] = []
+        diagnostics: List[SourceDiagnostic] = []
+
+        if has_formal_attribution:
+            attribution_status = SourceState.OK
+        elif has_partial_attribution:
+            attribution_status = SourceState.PARTIAL
+        else:
+            attribution_status = SourceState.UNAVAILABLE
+            diagnostics.append(
+                ops_read_model_diagnostic(
+                    "performance_attribution",
+                    "MISSING_ATTRIBUTION_MATCH",
+                    f"No performance-attribution row matched persona {persona_id} in period {period_key}.",
+                )
+            )
+        sources.append(
+            SourceStatus(
+                source_name="performance_attribution",
+                source_status=attribution_status,
+                source_row_count=len(persona_facts),
+                coverage_ratio=1.0 if persona_facts else 0.0,
+            )
+        )
+
+        holdings_rows = [
+            fact for fact in persona_facts
+            if ops_read_model_sanitize_metric(fact.get("market_value")) is not None
+        ]
+        holdings_status = SourceState.OK if holdings_rows else SourceState.UNAVAILABLE
+        if not holdings_rows:
+            diagnostics.append(
+                ops_read_model_diagnostic(
+                    "portfolio_holdings",
+                    "MISSING_HOLDINGS_MATCH",
+                    f"No holdings source returned a matching row for persona {persona_id}.",
+                )
+            )
+        sources.append(
+            SourceStatus(
+                source_name="portfolio_holdings",
+                source_status=holdings_status,
+                source_row_count=len(holdings_rows),
+            )
+        )
+
+        pool_ids_seen = dedupe_ids(fact.get("capital_pool_id") for fact in persona_facts)
+        unresolved_pool_ids = [pid for pid in pool_ids_seen if pid not in pools_by_id]
+        if unresolved_pool_ids:
+            capital_pool_status = SourceState.DEGRADED
+            diagnostics.append(
+                ops_read_model_diagnostic(
+                    "capital_pools",
+                    "CAPITAL_POOL_ID_UNRESOLVED",
+                    f"Capital pool id(s) {unresolved_pool_ids} referenced by attribution facts do not resolve to a capital-pool record.",
+                )
+            )
+        elif pool_ids_seen:
+            capital_pool_status = SourceState.OK
+        else:
+            capital_pool_status = SourceState.UNAVAILABLE
+        sources.append(
+            SourceStatus(
+                source_name="capital_pools",
+                source_status=capital_pool_status,
+                source_row_count=len(pool_ids_seen),
+            )
+        )
+
+        if fleet_row:
+            sources.append(
+                SourceStatus(
+                    source_name="persona_fleet_summary",
+                    source_status=SourceState.OK,
+                    source_row_count=1,
+                )
+            )
+        else:
+            sources.append(
+                SourceStatus(
+                    source_name="persona_fleet_summary",
+                    source_status=SourceState.UNAVAILABLE,
+                )
+            )
+            diagnostics.append(
+                ops_read_model_diagnostic(
+                    "persona_fleet_summary",
+                    "PERSONA_NOT_IN_FLEET",
+                    f"Persona {persona_id} has no persona-fleet row to source a fallback summary from.",
+                )
+            )
+
+        stage = (
+            str(fleet_row.get("state") or "").strip()
+            or str(persona.get("lifecycle_state") or persona.get("status") or persona.get("stage") or "").strip()
+            or None
+        )
+        is_operational = stage in (
+            "deployed", "paper", "active", "canary", "live", "paper_running",
+            "paper_halted", "live_running", "live_halted", "staging", "evaluation",
+        )
+        fallback_has_signal = bool(fleet_row) and is_operational
+        is_fallback = not has_formal_attribution and not has_partial_attribution and fallback_has_signal
+        if is_fallback:
+            diagnostics.append(
+                ops_read_model_diagnostic(
+                    "persona_fleet_summary",
+                    "FORMAL_ATTRIBUTION_MISSING_USING_FLEET_FALLBACK",
+                    "The persona-fleet row is the only persona-scoped summary because no formal attribution or holdings row matched this persona; preserve unavailable values and treat the row as fallback, not formal evidence.",
+                )
+            )
+
+        has_degraded_source = any(s.source_status == SourceState.DEGRADED for s in sources)
+        has_unavailable_source = any(s.source_status == SourceState.UNAVAILABLE for s in sources)
+
+        confidence = classify_confidence(
+            has_formal_match=has_formal_attribution,
+            has_partial_evidence=has_partial_attribution,
+            is_fallback=is_fallback,
+            has_degraded_source=has_degraded_source,
+            has_unavailable_source=has_unavailable_source,
+        )
+
+        if has_formal_attribution or has_partial_attribution:
+            pnl = ops_read_model_sanitize_metric(sum(f.get("total_pnl") or 0.0 for f in persona_facts))
+            drawdown = ops_read_model_sanitize_metric(max((f.get("worst_drawdown") or 0.0 for f in persona_facts), default=None))
+            sharpe = None
+        else:
+            pnl = ops_read_model_sanitize_metric(fallback_performance.get("pnl"))
+            drawdown = ops_read_model_sanitize_metric(fallback_performance.get("max_drawdown") or fallback_performance.get("drawdown_pct"))
+            sharpe = ops_read_model_sanitize_metric(fallback_performance.get("sharpe") or fallback_performance.get("sharpe_ratio"))
+
+        rank_value = league_entry.get("rank") or league_entry.get("league_rank") or fleet_row.get("league_rank")
+        score_value = ops_read_model_sanitize_metric(
+            league_entry.get("score") or league_entry.get("league_score") or fleet_row.get("league_score")
+        )
+
+        persona_label = str(persona.get("name") or persona.get("label") or "").strip() or None
+
+        identity = build_operations_identity(
             persona_id=persona_id,
-            persona_label=persona.get("name") or persona.get("label") or f"Persona {persona_id}",
-            stage=persona.get("stage") or persona.get("lifecycle_state") or "paper",
-            runtime_ids=[f"rt-{persona_id}"],
-            paper_ledger_ids=[f"ledger-{persona_id}"],
-            capital_pool_ids=["pool-main"],
-            sleeve_ids=["sleeve-1"],
-            strategy_ids=[f"strat-{persona_id}"],
-            artifact_ids=[],
-            broker_ids=[],
-            period=period,
+            persona_label=persona_label,
+            stage=stage,
+            runtime_ids=[fact.get("runtime_id") for fact in persona_facts if fact.get("runtime_id")] + ([fleet_row.get("runtime_id")] if fleet_row.get("runtime_id") else []),
+            paper_ledger_ids=[fleet_row.get("paper_ledger_id")] if fleet_row.get("paper_ledger_id") else [],
+            capital_pool_ids=pool_ids_seen + ([fleet_row.get("capital_pool_id")] if fleet_row.get("capital_pool_id") else []),
+            strategy_ids=[fact.get("strategy_id") for fact in persona_facts if fact.get("strategy_id")],
+            broker_ids=[fact.get("broker_id") for fact in persona_facts if fact.get("broker_id")],
+            period=period_key,
             as_of=snap,
         )
 
         performance = OperationsPerformance(
             pnl=pnl,
-            pnl_pct=pnl_pct,
-            drawdown_pct=drawdown_pct,
-            risk_pct=0.05,
+            drawdown_pct=drawdown,
             sharpe=sharpe,
-            rank=rank,
-            score=score,
-            performance_delta=0.0,
-            source_contribution=1.0,
+            rank=int(rank_value) if isinstance(rank_value, (int, float)) and not isinstance(rank_value, bool) else None,
+            score=score_value,
+            performance_delta=ops_read_model_sanitize_metric(fleet_row.get("perf_delta")),
         )
-
-        sources = [
-            SourceStatus(
-                source_name="performance_attribution",
-                source_status=SourceState.OK,
-                source_freshness=snap,
-                source_row_count=1,
-                coverage_ratio=1.0,
-            ),
-            SourceStatus(
-                source_name="portfolio_holdings",
-                source_status=SourceState.OK,
-                source_freshness=snap,
-                source_row_count=1,
-            ),
-            SourceStatus(
-                source_name="capital_pools",
-                source_status=SourceState.OK,
-                source_row_count=1,
-            ),
-            SourceStatus(
-                source_name="persona_fleet_summary",
-                source_status=SourceState.OK,
-                source_row_count=1,
-            ),
-        ]
 
         entry = OperationsReadModelEntry(
             identity=identity,
-            data_confidence=DataConfidence.FORMAL,
+            data_confidence=confidence,
             performance=performance,
             sources=sources,
-            diagnostics=[],
+            diagnostics=diagnostics,
         )
 
         return {

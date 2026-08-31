@@ -1342,6 +1342,7 @@ def create_management_router(
     raise_if_session_logged_out: Optional[Callable] = None,
     raise_session_logged_out_fn: Optional[Callable] = None,
     tenant_payload_fn: Optional[Callable] = None,
+    ops_read_model_entry_fn: Optional[Callable] = None,
     service: Optional[ManagementService] = None,
 ) -> APIRouter:
     """Create the APIRouter for all 17 Management domain HTTP GET routes."""
@@ -1357,6 +1358,7 @@ def create_management_router(
     svc = service or ManagementService(
         get_read_store=get_read_store,
         utc_now=_now,
+        ops_read_model_entry_fn=ops_read_model_entry_fn,
     )
 
     # -----------------------------------------------------------------------
@@ -1586,15 +1588,24 @@ def create_management_router(
         """BFF: detail for one composed human-action inbox row."""
         identity = _extract_id(authorization)
         _req_read(identity)
-        detail = svc.get_human_inbox_detail(item_id, identity=identity)
-        if detail is None:
+        detail, failures = svc.get_human_inbox_detail_result(item_id, identity=identity)
+        if detail is not None:
+            return detail
+        if failures:
             raise _err(
-                404,
-                ErrorCode.RESOURCE_NOT_FOUND,
-                "Human inbox item not found",
-                f"Human inbox item '{item_id}' does not exist",
+                503,
+                ErrorCode.DEPENDENCY_UNAVAILABLE,
+                "Human inbox detail could not be resolved from a partial aggregate",
+                "One or more Human Inbox contributors timed out or failed; retry before treating the item as absent.",
+                precondition_failed="human_inbox_partial_read",
+                suggestion="Retry the Human Inbox detail after the degraded contributor recovers.",
             )
-        return detail
+        raise _err(
+            404,
+            ErrorCode.RESOURCE_NOT_FOUND,
+            "Human inbox item not found",
+            f"Human inbox item '{item_id}' does not exist",
+        )
 
     # -----------------------------------------------------------------------
     # 13. HIQ Backlog
