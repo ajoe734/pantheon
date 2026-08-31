@@ -19,9 +19,13 @@ class ReadModelMeta(BaseModel):
     degradation: Optional[Dict[str, Any]] = None
 
 
-class PageInfo(BaseModel):
-    next_page_token: Optional[str] = None
-    total: int
+try:
+    from console_gap.contracts import PageInfo
+except ImportError:
+    class PageInfo(BaseModel):  # type: ignore[no-redef]
+        next_page_token: Optional[str] = None
+        total: int = 0
+
 
 
 # Formula jobs models

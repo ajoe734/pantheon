@@ -730,3 +730,78 @@ def test_degraded_control_guidance_contract():
     body_def = resp_default.json()
     assert "data" in body_def and "meta" in body_def
     assert "staleness" in body_def["meta"]
+
+
+def test_real_bff_main_app_management_route_ownership():
+    """Verify in the real main.app, each of the 17 target GET routes has exactly one registration owned by management_read_models.router."""
+    import main as real_main
+    from test_normalized_route_uniqueness import scan_fastapi_routes
+
+    target_routes = [
+        "/bff/management/shell-summary",
+        "/api/v1/operator/home",
+        "/bff/management/cockpit",
+        "/bff/management/trading-pulse",
+        "/bff/management/trading-pulse/rankings",
+        "/bff/management/sentinel-pulse",
+        "/api/v1/operator/health-status",
+        "/bff/management/loop-throughput",
+        "/bff/management/risk-radar",
+        "/bff/management/incident-timeline",
+        "/bff/management/human-inbox",
+        "/bff/management/human-inbox/{item_id}",
+        "/bff/management/hiq-backlog",
+        "/bff/management/intervention-stream",
+        "/bff/management/evidence",
+        "/bff/management/operations-read-model/{persona_id}",
+        "/api/v1/operator/degraded-control-guidance",
+    ]
+
+    scanned_entries = scan_fastapi_routes(real_main.app)
+    for path in target_routes:
+        matching = [
+            entry for entry in scanned_entries
+            if entry.raw_path == path and entry.method == "GET"
+        ]
+        assert len(matching) == 1, (
+            f"Expected exactly 1 GET registration for {path}, found {len(matching)}: {matching}"
+        )
+        entry = matching[0]
+        assert "management_read_models.router" in entry.owner_module, (
+            f"Expected {path} to be owned by management_read_models.router, but owned by {entry.owner_module}"
+        )
+
+
+def test_real_bff_main_app_degraded_control_guidance_contract(monkeypatch):
+    """Verify GET /api/v1/operator/degraded-control-guidance on real main.app preserves 200/206 and {data, meta.staleness} envelope."""
+    import main as real_main
+
+    client = TestClient(real_main.app, raise_server_exceptions=False)
+
+    # 1. Fresh state -> 200 with canonical {data, meta.staleness} envelope
+    monkeypatch.setattr(real_main, "_read_surface_state", lambda: "fresh")
+    resp = client.get("/api/v1/operator/degraded-control-guidance")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert "data" in body and "meta" in body
+    assert "staleness" in body["meta"]
+    guidance = body["data"]
+    assert guidance["current_state"] == "fresh"
+    assert guidance["primary_path"]["status"] == "available"
+    assert "admin_cli" in guidance["secondary_path"]
+    assert "protected_internal_api" in guidance["secondary_path"]
+    assert guidance["critical_actions_bypass_mfa"] is True
+
+    # 2. Degraded state -> 206 with canonical {data, meta.staleness} envelope
+    monkeypatch.setattr(real_main, "_read_surface_state", lambda: "degraded")
+    resp_degraded = client.get("/api/v1/operator/degraded-control-guidance")
+    assert resp_degraded.status_code == 206
+    body_degraded = resp_degraded.json()
+    assert "data" in body_degraded and "meta" in body_degraded
+    assert "staleness" in body_degraded["meta"]
+    guidance_degraded = body_degraded["data"]
+    assert guidance_degraded["current_state"] == "degraded"
+    assert guidance_degraded["primary_path"]["status"] == "degraded"
+    assert "admin_cli" in guidance_degraded["secondary_path"]
+    assert "protected_internal_api" in guidance_degraded["secondary_path"]
+    assert guidance_degraded["critical_actions_bypass_mfa"] is True
