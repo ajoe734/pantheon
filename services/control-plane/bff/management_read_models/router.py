@@ -31,7 +31,7 @@ POST /bff/management/nl/ask, POST /bff/management/nl/ask/stream, GET /bff/manage
 GET /bff/assistant/providers/usage-summary, and GET /bff/management/ai/conversations are
 governed under the core 30-route core assignment in services/control-plane/bff/core/app_factory.py
 (OPGAP-BE-BFF-CORE-20260830). This domain router owns the 17 Management read models and
-system operations routes defined below.
+system operations routes defined below, ensuring single-router route ownership.
 """
 
 from __future__ import annotations
