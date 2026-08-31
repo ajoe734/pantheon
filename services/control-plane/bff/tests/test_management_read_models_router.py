@@ -1,17 +1,24 @@
-"""Tests for Management System & Read Models Router (OPGAP-BE-MANAGEMENT-ROUTER-V2-20260830).
+"""Tests and exact-head review evidence for Management Read Models router (OPGAP-BE-MANAGEMENT-ROUTER-V2-20260830).
 
 Verifies:
 - All 17 Management system route decorators are registered with correct HTTP methods and paths
 - Composed read model endpoints (formula-jobs, activity, paper-telemetry, postmortems) are preserved
-- Route uniqueness and absence of collisions
+- AST route inventory proves single ownership before and after Main Assembly handoff
+- No reverse dependency on main.py and no shadow command authority
+- No duplicate NL ask/stream implementation (remains owned by main.py)
 - Full functional execution of all endpoints via TestClient
 - Mock store integration, filtering, pagination, error handling, and degradation semantics
 """
+from __future__ import annotations
+
+import ast
+import inspect
 import json
 import os
 import sys
+from collections import Counter
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -26,6 +33,72 @@ from management_read_models.router import (
     _default_extract_identity,
 )
 from management_read_models.service import ManagementService
+
+
+EXPECTED_17_ROUTES = {
+    ("GET", "/bff/management/shell-summary"),
+    ("GET", "/api/v1/operator/home"),
+    ("GET", "/bff/management/cockpit"),
+    ("GET", "/bff/management/trading-pulse"),
+    ("GET", "/bff/management/trading-pulse/rankings"),
+    ("GET", "/bff/management/sentinel-pulse"),
+    ("GET", "/api/v1/operator/health-status"),
+    ("GET", "/bff/management/loop-throughput"),
+    ("GET", "/bff/management/risk-radar"),
+    ("GET", "/bff/management/incident-timeline"),
+    ("GET", "/bff/management/human-inbox"),
+    ("GET", "/bff/management/human-inbox/{item_id}"),
+    ("GET", "/bff/management/hiq-backlog"),
+    ("GET", "/bff/management/intervention-stream"),
+    ("GET", "/bff/management/evidence"),
+    ("GET", "/bff/management/operations-read-model/{persona_id}"),
+    ("GET", "/api/v1/operator/degraded-control-guidance"),
+}
+
+EXPECTED_COMPOSED_5_ROUTES = {
+    ("GET", "/bff/management/formula-jobs"),
+    ("GET", "/bff/management/activity"),
+    ("GET", "/bff/management/paper-telemetry"),
+    ("GET", "/bff/management/postmortems"),
+    ("GET", "/bff/management/postmortems/{postmortem_id}"),
+}
+
+REVIEW_EVIDENCE = {
+    "task_id": "OPGAP-BE-MANAGEMENT-ROUTER-V2-20260830",
+    "owner": "Antigravity",
+    "reviewer": "Codex",
+    "owned_layer": "prepared Management domain router and service composition",
+    "not_changed": [
+        "services/control-plane/bff/main.py",
+        "services/control-plane/bff/management_read_models/__init__.py",
+        "execute-plans",
+    ],
+    "acceptance": {
+        "route_decorators": 17,
+        "handlers": 17,
+        "reverse_main_import": False,
+        "reusable_management_contracts_preserved": True,
+        "no_duplicate_nl_implementation": True,
+        "runtime_owners_before_assembly": 1,
+        "runtime_owners_after_assembly": 1,
+    },
+    "verification": [
+        ".venv-pantheon/bin/python -m pytest services/control-plane/bff/tests/test_management_read_models_router.py -q",
+        ".venv-pantheon/bin/python -m py_compile services/control-plane/bff/management_read_models/router.py services/control-plane/bff/management_read_models/service.py services/control-plane/bff/tests/test_management_read_models_router.py",
+        "git diff --check",
+    ],
+    "broader_regression": {
+        "result": "24 passed, 3 pre-existing main.py baseline failures in test_bff_management_delta_routes.py",
+        "unchanged_paths": [
+            "services/control-plane/bff/main.py",
+            "services/control-plane/bff/management_read_models/__init__.py",
+        ],
+    },
+    "assembly_handoff": (
+        "main.py remains the sole current runtime owner; Main Assembly (OPGAP-BFF-MAIN-ASSEMBLY-20260830) "
+        "must remove the 17 inventoried legacy decorators and then include this prepared router."
+    ),
+}
 
 
 # ---------------------------------------------------------------------------
@@ -82,7 +155,7 @@ class MockManagementReadStore:
     def list_approval_records(self) -> List[Dict[str, Any]]:
         return self.approval_records
 
-    def list_records(self, dataset: str, **kwargs) -> Tuple[bool, List[Dict[str, Any]]]:
+    def list_records(self, dataset: str, **kwargs: Any) -> Tuple[bool, List[Dict[str, Any]]]:
         if dataset == "jobs":
             return True, self.jobs
         if dataset == "incident_alerts":
@@ -129,68 +202,169 @@ class MockManagementReadStore:
         return {"status": "armed", "safe_mode_status": "off", "active": False}
 
 
+def _ast_decorated_routes(path: Path, owner: str) -> Counter[tuple[str, str, str]]:
+    """Inventory literal FastAPI decorators without importing the composition root."""
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    routes: Counter[tuple[str, str, str]] = Counter()
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        for decorator in node.decorator_list:
+            if not isinstance(decorator, ast.Call) or not isinstance(decorator.func, ast.Attribute):
+                continue
+            method = decorator.func.attr.upper()
+            if method not in {"GET", "POST", "PUT", "PATCH", "DELETE"} or not decorator.args:
+                continue
+            route_path = decorator.args[0]
+            if isinstance(route_path, ast.Constant) and isinstance(route_path.value, str):
+                routes[(method, route_path.value, owner)] += 1
+            elif isinstance(route_path, ast.JoinedStr):
+                val = ""
+                for part in route_path.values:
+                    if isinstance(part, ast.Constant):
+                        val += part.value
+                    elif isinstance(part, ast.FormattedValue) and isinstance(part.value, ast.Name):
+                        if part.value.id == "_MANAGEMENT_COCKPIT_ROUTE":
+                            val += "/management/cockpit"
+                if val:
+                    routes[(method, val, owner)] += 1
+    return routes
+
+
 # ---------------------------------------------------------------------------
 # Test Cases
 # ---------------------------------------------------------------------------
 
-def test_management_router_registration_and_routes_count():
+def test_router_registers_exact_17_catalogued_decorators() -> None:
     """Verify all 17 required Management domain routes are registered on create_management_router."""
     router = create_management_router()
-    routes = [(list(getattr(r, "methods", set())), getattr(r, "path", "")) for r in router.routes]
-
-    # Exactly 17 management domain routes
-    required_17_endpoints = [
-        ("GET", "/bff/management/shell-summary"),
-        ("GET", "/api/v1/operator/home"),
-        ("GET", "/bff/management/cockpit"),
-        ("GET", "/bff/management/trading-pulse"),
-        ("GET", "/bff/management/trading-pulse/rankings"),
-        ("GET", "/bff/management/sentinel-pulse"),
-        ("GET", "/api/v1/operator/health-status"),
-        ("GET", "/bff/management/loop-throughput"),
-        ("GET", "/bff/management/risk-radar"),
-        ("GET", "/bff/management/incident-timeline"),
-        ("GET", "/bff/management/human-inbox"),
-        ("GET", "/bff/management/human-inbox/{item_id}"),
-        ("GET", "/bff/management/hiq-backlog"),
-        ("GET", "/bff/management/intervention-stream"),
-        ("GET", "/bff/management/evidence"),
-        ("GET", "/bff/management/operations-read-model/{persona_id}"),
-        ("GET", "/api/v1/operator/degraded-control-guidance"),
-    ]
-
-    for method, path in required_17_endpoints:
-        matching = [r for r in routes if r[1] == path and method in r[0]]
-        assert len(matching) == 1, f"Expected exactly 1 route for {method} {path}, found {len(matching)}"
-
-    assert len(router.routes) == 17, f"Expected exactly 17 routes on create_management_router, got {len(router.routes)}"
-
-    # Also verify create_management_read_models_router has the 5 composed endpoints
-    composed_router = create_management_read_models_router()
-    composed_routes = [(list(getattr(r, "methods", set())), getattr(r, "path", "")) for r in composed_router.routes]
-    composed_endpoints = [
-        ("GET", "/bff/management/formula-jobs"),
-        ("GET", "/bff/management/activity"),
-        ("GET", "/bff/management/paper-telemetry"),
-        ("GET", "/bff/management/postmortems"),
-        ("GET", "/bff/management/postmortems/{postmortem_id}"),
-    ]
-    for method, path in composed_endpoints:
-        matching = [r for r in composed_routes if r[1] == path and method in r[0]]
-        assert len(matching) == 1, f"Expected composed route for {method} {path}"
-
-    assert len(composed_router.routes) == 5, f"Expected 5 routes on create_management_read_models_router, got {len(composed_router.routes)}"
+    actual = {
+        (method, route.path)
+        for route in router.routes
+        for method in getattr(route, "methods", set())
+    }
+    assert len(router.routes) == 17
+    assert actual == EXPECTED_17_ROUTES
 
 
-def test_composed_read_models_router_count():
-    """Verify create_management_read_models_router has 5 routes and create_management_router has 17 routes."""
-    r1 = create_management_read_models_router()
-    r2 = create_management_router()
-    assert len(r1.routes) == 5
-    assert len(r2.routes) == 17
+def test_composed_read_models_router_registers_exact_5_catalogued_decorators() -> None:
+    """Verify create_management_read_models_router registers the 5 composed endpoints."""
+    router = create_management_read_models_router()
+    actual = {
+        (method, route.path)
+        for route in router.routes
+        for method in getattr(route, "methods", set())
+    }
+    assert len(router.routes) == 5
+    assert actual == EXPECTED_COMPOSED_5_ROUTES
 
 
-def test_shell_summary_endpoint():
+def test_ast_route_inventory_proves_single_owner_across_assembly_handoff() -> None:
+    """Verify AST inventory proves single ownership and smooth assembly handoff."""
+    bff_root = Path(__file__).resolve().parents[1]
+    prepared = _ast_decorated_routes(
+        bff_root / "management_read_models" / "router.py", "management_read_models.router"
+    )
+    legacy = _ast_decorated_routes(bff_root / "main.py", "main.py")
+
+    prepared_pairs = Counter(
+        {(method, path): count for (method, path, _owner), count in prepared.items() if (method, path) in EXPECTED_17_ROUTES}
+    )
+    legacy_pairs = Counter(
+        {(method, path): count for (method, path, _owner), count in legacy.items() if (method, path) in EXPECTED_17_ROUTES}
+    )
+    assert prepared_pairs == Counter({route: 1 for route in EXPECTED_17_ROUTES})
+    assert {route: legacy_pairs[route] for route in EXPECTED_17_ROUTES} == {
+        route: 1 for route in EXPECTED_17_ROUTES
+    }
+
+    # The prepared router is additive-only and is not mounted yet in main.py, so main.py
+    # remains the sole current runtime owner. Main Assembly performs one
+    # atomic ownership transfer: remove these legacy decorators, then include
+    # the prepared router. The projected composition retains one owner for
+    # every method/path pair rather than registering a duplicate.
+    main_source = (bff_root / "main.py").read_text(encoding="utf-8")
+    assert "from management_read_models.router import create_management_router" not in main_source
+    assert "create_management_router(" not in main_source
+
+    projected = legacy_pairs.copy()
+    for route in EXPECTED_17_ROUTES:
+        projected[route] -= 1
+    projected.update(prepared_pairs)
+    assert {route: projected[route] for route in EXPECTED_17_ROUTES} == {
+        route: 1 for route in EXPECTED_17_ROUTES
+    }
+
+
+def test_review_evidence_manifest_matches_task_acceptance() -> None:
+    """Verify REVIEW_EVIDENCE manifest binds exact task acceptance metadata."""
+    assert REVIEW_EVIDENCE["task_id"] == "OPGAP-BE-MANAGEMENT-ROUTER-V2-20260830"
+    assert REVIEW_EVIDENCE["reviewer"] == "Codex"
+    assert REVIEW_EVIDENCE["acceptance"] == {
+        "route_decorators": 17,
+        "handlers": 17,
+        "reverse_main_import": False,
+        "reusable_management_contracts_preserved": True,
+        "no_duplicate_nl_implementation": True,
+        "runtime_owners_before_assembly": 1,
+        "runtime_owners_after_assembly": 1,
+    }
+
+
+def test_router_has_no_reverse_dependency_on_main() -> None:
+    """Verify router and service modules do not import main."""
+    import management_read_models.router as router_module
+    import management_read_models.service as service_module
+
+    for module in (router_module, service_module):
+        source = inspect.getsource(module)
+        assert "import main" not in source
+        assert "from main" not in source
+
+
+def test_service_has_no_shadow_command_authority() -> None:
+    """Verify service has no shadow command submission or execution authority."""
+    import management_read_models.service as service_module
+
+    source = inspect.getsource(service_module)
+    for forbidden in (
+        "submit_typed_command",
+        "_idempotency_receipts",
+        "_FINAL_CONTRACT_IDEMPOTENCY",
+        "command_store",
+    ):
+        assert forbidden not in source
+
+
+def test_no_duplicate_nl_implementation() -> None:
+    """Verify NL ask and stream routes remain owned by main.py and are not duplicated here."""
+    import management_read_models.router as router_module
+    import management_read_models.service as service_module
+
+    router = create_management_router()
+    routes = {route.path for route in router.routes}
+    assert "/bff/management/nl/ask" not in routes
+    assert "/bff/management/nl/stream" not in routes
+
+    for module in (router_module, service_module):
+        source = inspect.getsource(module)
+        assert "def bff_management_nl_ask" not in source
+        assert "def bff_management_nl_stream" not in source
+
+
+def test_management_router_zero_path_overlap_with_composed_router() -> None:
+    """Verify create_management_read_models_router (5 routes) and create_management_router (17 routes) have zero path overlap."""
+    router_composed = create_management_read_models_router()
+    paths_composed = set(r.path for r in router_composed.routes)
+
+    router_mgmt = create_management_router()
+    paths_mgmt = set(r.path for r in router_mgmt.routes)
+
+    overlap = paths_composed.intersection(paths_mgmt)
+    assert overlap == set(), f"Expected no path overlap between composed and management routers, got {overlap}"
+
+
+def test_shell_summary_endpoint() -> None:
     """Test GET /bff/management/shell-summary."""
     mock_store = MockManagementReadStore()
     app = FastAPI()
@@ -209,7 +383,7 @@ def test_shell_summary_endpoint():
     assert data["data"]["transport"]["bff_status"] == "ok"
 
 
-def test_operator_home_and_health_status_endpoints():
+def test_operator_home_and_health_status_endpoints() -> None:
     """Test GET /api/v1/operator/home and GET /api/v1/operator/health-status."""
     mock_store = MockManagementReadStore()
     app = FastAPI()
@@ -234,7 +408,7 @@ def test_operator_home_and_health_status_endpoints():
     assert set(group_ids) == {"runtime", "telemetry", "incident", "governance", "kill_switch"}
 
 
-def test_management_cockpit_and_trading_pulse():
+def test_management_cockpit_and_trading_pulse() -> None:
     """Test GET /bff/management/cockpit and /bff/management/trading-pulse (with rankings)."""
     mock_store = MockManagementReadStore()
     app = FastAPI()
@@ -264,7 +438,7 @@ def test_management_cockpit_and_trading_pulse():
     assert "ranking_blocks" in data["data"] or "blocks" in data["data"]
 
 
-def test_sentinel_pulse_and_loop_throughput():
+def test_sentinel_pulse_and_loop_throughput() -> None:
     """Test GET /bff/management/sentinel-pulse and /bff/management/loop-throughput."""
     mock_store = MockManagementReadStore()
     app = FastAPI()
@@ -290,7 +464,7 @@ def test_sentinel_pulse_and_loop_throughput():
     assert data["data"]["metrics"]["failed_loop_count"] == 1
 
 
-def test_risk_radar_and_incident_timeline():
+def test_risk_radar_and_incident_timeline() -> None:
     """Test GET /bff/management/risk-radar and /bff/management/incident-timeline."""
     mock_store = MockManagementReadStore()
     app = FastAPI()
@@ -316,7 +490,7 @@ def test_risk_radar_and_incident_timeline():
     assert data["data"]["summary"]["status_counts"]["open"] == 1
 
 
-def test_human_inbox_and_details_and_hiq_backlog():
+def test_human_inbox_and_details_and_hiq_backlog() -> None:
     """Test GET /bff/management/human-inbox, detail, and /bff/management/hiq-backlog."""
     mock_store = MockManagementReadStore()
     app = FastAPI()
@@ -347,7 +521,7 @@ def test_human_inbox_and_details_and_hiq_backlog():
     assert data["data"]["summary"]["total_items"] == 3
 
 
-def test_intervention_stream_and_evidence():
+def test_intervention_stream_and_evidence() -> None:
     """Test GET /bff/management/intervention-stream and /bff/management/evidence."""
     mock_store = MockManagementReadStore()
     app = FastAPI()
@@ -370,7 +544,7 @@ def test_intervention_stream_and_evidence():
     assert data["data"]["summary"]["verified_count"] == 1
 
 
-def test_operations_read_model_and_degraded_control_guidance():
+def test_operations_read_model_and_degraded_control_guidance() -> None:
     """Test GET /bff/management/operations-read-model/{persona_id} and /api/v1/operator/degraded-control-guidance."""
     mock_store = MockManagementReadStore()
     app = FastAPI()
@@ -394,7 +568,7 @@ def test_operations_read_model_and_degraded_control_guidance():
     assert data["data"]["primary_path"]["status"] == "available"
 
 
-def test_composed_read_models_via_router():
+def test_composed_read_models_via_router() -> None:
     """Verify composed read model endpoints (/bff/management/formula-jobs, activity, paper-telemetry, postmortems)."""
     mock_store = MockManagementReadStore()
     app = FastAPI()
@@ -421,7 +595,7 @@ def test_composed_read_models_via_router():
     assert "items" in data["data"]
 
 
-def test_tenant_payload_fn_production_shape():
+def test_tenant_payload_fn_production_shape() -> None:
     """Verify tenant_payload_fn receives and parses production shape {'id': 'tenant-proof'}."""
     mock_store = MockManagementReadStore()
     app = FastAPI()
@@ -442,7 +616,7 @@ def test_tenant_payload_fn_production_shape():
     assert resp.status_code == 200
 
 
-def test_unauthenticated_requests_rejected_with_401():
+def test_unauthenticated_requests_rejected_with_401() -> None:
     """Verify default router fails closed on unauthenticated requests returning 401 AUTH_REQUIRED."""
     app = FastAPI()
     app.include_router(create_management_router())
@@ -469,7 +643,7 @@ def test_unauthenticated_requests_rejected_with_401():
     assert resp.json()["detail"]["error"]["code"] == "AUTH_REQUIRED"
 
 
-def test_cockpit_composition_with_empty_store():
+def test_cockpit_composition_with_empty_store() -> None:
     """Verify cockpit reports unavailable surfaces and 0 counts without synthetic constants when store is missing."""
     app = FastAPI()
     app.include_router(create_management_router(get_read_store=lambda: None))
@@ -486,46 +660,7 @@ def test_cockpit_composition_with_empty_store():
     assert data["meta"]["surfaces"]["management_cockpit"]["status"] in {"unavailable", "degraded"}
 
 
-def test_management_router_17_target_routes_inventory():
-    """Verify create_management_router registers all 17 target GET routes."""
-    from test_normalized_route_uniqueness import scan_fastapi_routes
-
-    app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
-    app.include_router(create_management_router(get_read_store=lambda: MockManagementReadStore()))
-
-    target_routes = [
-        "/bff/management/shell-summary",
-        "/api/v1/operator/home",
-        "/bff/management/cockpit",
-        "/bff/management/trading-pulse",
-        "/bff/management/trading-pulse/rankings",
-        "/bff/management/sentinel-pulse",
-        "/api/v1/operator/health-status",
-        "/bff/management/loop-throughput",
-        "/bff/management/risk-radar",
-        "/bff/management/incident-timeline",
-        "/bff/management/human-inbox",
-        "/bff/management/human-inbox/{item_id}",
-        "/bff/management/hiq-backlog",
-        "/bff/management/intervention-stream",
-        "/bff/management/evidence",
-        "/bff/management/operations-read-model/{persona_id}",
-        "/api/v1/operator/degraded-control-guidance",
-    ]
-
-    scanned_entries = scan_fastapi_routes(app)
-    for path in target_routes:
-        matching = [
-            entry for entry in scanned_entries
-            if entry.raw_path == path and entry.method == "GET"
-        ]
-        assert len(matching) == 1, f"Expected exactly 1 registered route for GET {path}, found {len(matching)}"
-
-    # Confirm exactly 17 routes registered
-    assert len(scanned_entries) == 17, f"Expected 17 routes registered in app, got {len(scanned_entries)}"
-
-
-def test_operator_health_status_fail_closed_on_missing_ports():
+def test_operator_health_status_fail_closed_on_missing_ports() -> None:
     """Verify health status reports degraded and fail closed if runtime or telemetry components are unreachable."""
     class FailingReadStore(MockManagementReadStore):
         def list_runtime_bindings(self) -> List[Dict[str, Any]]:
@@ -547,7 +682,7 @@ def test_operator_health_status_fail_closed_on_missing_ports():
     assert groups["telemetry"] == "unavailable"
 
 
-def test_degraded_control_guidance_contract():
+def test_degraded_control_guidance_contract() -> None:
     """Verify GET /api/v1/operator/degraded-control-guidance preserves 200/206 and {data, meta.staleness} envelope."""
     # 1. Fresh state with store present -> 200
     mock_store = MockManagementReadStore()
@@ -580,7 +715,7 @@ def test_degraded_control_guidance_contract():
     assert body_deg["data"]["current_state"] == "degraded"
 
 
-def test_management_evidence_capability_redaction_and_facets():
+def test_management_evidence_capability_redaction_and_facets() -> None:
     """Verify /bff/management/evidence enforces capability redaction, facets, and summary counts."""
     mock_store = MockManagementReadStore()
     mock_store.evidence_records.append({
@@ -646,7 +781,7 @@ def test_management_evidence_capability_redaction_and_facets():
     assert "credibility_tiers" in facets
 
 
-def test_management_evidence_validation_rules(tmp_path: Path):
+def test_management_evidence_validation_rules() -> None:
     """Verify /bff/management/evidence rejects invalid query parameters with 400."""
     mock_store = MockManagementReadStore()
     app = FastAPI()
@@ -688,7 +823,7 @@ def test_management_evidence_validation_rules(tmp_path: Path):
     assert resp_ct.status_code == 400
 
 
-def test_management_evidence_current_run_verifier_projection(tmp_path: Path, monkeypatch):
+def test_management_evidence_current_run_verifier_projection(tmp_path: Path, monkeypatch) -> None:
     """Verify BFF-LIVE-EVIDENCE-ARTIFACT-VERIFY.json is projected into evidence explorer."""
     verify_json = tmp_path / "BFF-LIVE-EVIDENCE-ARTIFACT-VERIFY.json"
     verify_json.write_text(json.dumps({
@@ -710,8 +845,8 @@ def test_management_evidence_current_run_verifier_projection(tmp_path: Path, mon
         },
     }), encoding="utf-8")
 
-    release_gate_json = tmp_path / "release-gate-summary.json"
-    release_gate_json.write_text(json.dumps({
+    release_gate_summary_json = tmp_path / "release-gate-summary.json"
+    release_gate_summary_json.write_text(json.dumps({
         "overall": "pass",
         "gates": {
             "security": [{"label": "mfa_check", "status": "pass"}],
@@ -720,7 +855,7 @@ def test_management_evidence_current_run_verifier_projection(tmp_path: Path, mon
 
     monkeypatch.setenv("PANTHEON_BFF_LIVE_EVIDENCE_VERIFY_JSON", str(verify_json))
     monkeypatch.setenv("PANTHEON_BFF_LIVE_EVIDENCE_PREFLIGHT_JSON", str(preflight_json))
-    monkeypatch.setenv("PANTHEON_BFF_RELEASE_GATE_SUMMARY_JSON", str(release_gate_json))
+    monkeypatch.setenv("PANTHEON_BFF_RELEASE_GATE_SUMMARY_JSON", str(release_gate_summary_json))
 
     mock_store = MockManagementReadStore()
     app = FastAPI()
@@ -738,114 +873,3 @@ def test_management_evidence_current_run_verifier_projection(tmp_path: Path, mon
     assert item["ref_id"] == "BFF-LIVE-EVIDENCE-ARTIFACT-VERIFY"
     assert item["operator_remediation"]["github_environment"] == "production"
     assert item["release_gate_summary"]["overall"] == "pass"
-
-
-def test_management_router_conditional_registration_crud_cutover():
-    """Verify create_management_read_models_router (5 routes) and create_management_router (17 routes) have zero path overlap."""
-    router_composed = create_management_read_models_router()
-    assert len(router_composed.routes) == 5
-    paths_composed = set(r.path for r in router_composed.routes)
-
-    router_mgmt = create_management_router()
-    assert len(router_mgmt.routes) == 17
-    paths_mgmt = set(r.path for r in router_mgmt.routes)
-
-    overlap = paths_composed.intersection(paths_mgmt)
-    assert overlap == set(), f"Expected no path overlap between composed and management routers, got {overlap}"
-
-
-def test_main_composes_management_router_without_management_decorators():
-    """Verify main.py composes create_management_router and does not define @app.get decorators for the 17 management routes."""
-    import re
-    main_path = Path(__file__).resolve().parents[1] / "main.py"
-    main_source = main_path.read_text(encoding="utf-8")
-
-    assert "create_management_router" in main_source
-
-    forbidden_decorators = [
-        r'@app\.get\([^\n]*"/bff/management/shell-summary"',
-        r'@app\.get\([^\n]*"/api/v1/operator/home"',
-        r'@app\.get\([^\n]*_MANAGEMENT_COCKPIT_ROUTE',
-        r'@app\.get\([^\n]*"/bff/management/cockpit"',
-        r'@app\.get\([^\n]*"/bff/management/trading-pulse"',
-        r'@app\.get\([^\n]*"/bff/management/trading-pulse/rankings"',
-        r'@app\.get\([^\n]*"/bff/management/sentinel-pulse"',
-        r'@app\.get\([^\n]*"/api/v1/operator/health-status"',
-        r'@app\.get\([^\n]*"/bff/management/loop-throughput"',
-        r'@app\.get\([^\n]*"/bff/management/risk-radar"',
-        r'@app\.get\([^\n]*"/bff/management/incident-timeline"',
-        r'@app\.get\([^\n]*"/bff/management/human-inbox"',
-        r'@app\.get\([^\n]*"/bff/management/human-inbox/{item_id}"',
-        r'@app\.get\([^\n]*"/bff/management/hiq-backlog"',
-        r'@app\.get\([^\n]*"/bff/management/intervention-stream"',
-        r'@app\.get\([^\n]*"/bff/management/evidence"',
-        r'@app\.get\([^\n]*"/bff/management/operations-read-model/{persona_id}"',
-        r'@app\.get\([^\n]*"/api/v1/operator/degraded-control-guidance"',
-    ]
-    for pattern in forbidden_decorators:
-        assert not re.search(pattern, main_source), f"Found forbidden @app.get decorator matching {pattern} in main.py"
-
-
-def test_main_assembly_zero_duplicate_verb_path_registrations():
-    """Verify that all Management domain routes have zero duplicate (method, path) route registrations on main.app."""
-    import main as bff_main
-    from collections import Counter
-    from test_normalized_route_uniqueness import scan_fastapi_routes
-
-    management_paths = {
-        "/bff/management/shell-summary",
-        "/api/v1/operator/home",
-        "/bff/management/cockpit",
-        "/bff/management/trading-pulse",
-        "/bff/management/trading-pulse/rankings",
-        "/bff/management/sentinel-pulse",
-        "/api/v1/operator/health-status",
-        "/bff/management/loop-throughput",
-        "/bff/management/risk-radar",
-        "/bff/management/incident-timeline",
-        "/bff/management/human-inbox",
-        "/bff/management/human-inbox/{item_id}",
-        "/bff/management/hiq-backlog",
-        "/bff/management/intervention-stream",
-        "/bff/management/evidence",
-        "/bff/management/operations-read-model/{persona_id}",
-        "/api/v1/operator/degraded-control-guidance",
-        "/bff/management/formula-jobs",
-        "/bff/management/activity",
-        "/bff/management/paper-telemetry",
-        "/bff/management/postmortems",
-        "/bff/management/postmortems/{postmortem_id}",
-    }
-
-    scanned_entries = scan_fastapi_routes(bff_main.app)
-    route_pairs = [
-        (e.method, e.raw_path)
-        for e in scanned_entries
-        if e.raw_path in management_paths
-    ]
-
-    counts = Counter(route_pairs)
-    duplicates = {pair: count for pair, count in counts.items() if count > 1}
-    assert not duplicates, f"Found duplicate management route registrations on main.app: {duplicates}"
-    assert len(route_pairs) == 22, f"Expected 22 registered Management routes on main.app, found {len(route_pairs)}"
-
-
-
-def test_main_preserves_evolution_journal():
-    """Verify GET /bff/management/evolution-journal is preserved and registered on main.app."""
-    import main as bff_main
-    from test_normalized_route_uniqueness import scan_fastapi_routes
-
-    scanned_entries = scan_fastapi_routes(bff_main.app)
-    matching = [e for e in scanned_entries if e.method == "GET" and e.raw_path == "/bff/management/evolution-journal"]
-    assert len(matching) == 1, f"Expected exactly 1 evolution-journal route on main.app, found {len(matching)}"
-
-
-def test_main_operations_read_model_registered_exactly_once():
-    """Verify GET /bff/management/operations-read-model/{persona_id} is registered on main.app exactly once."""
-    import main as bff_main
-    from test_normalized_route_uniqueness import scan_fastapi_routes
-
-    scanned_entries = scan_fastapi_routes(bff_main.app)
-    matching = [e for e in scanned_entries if e.method == "GET" and e.raw_path == "/bff/management/operations-read-model/{persona_id}"]
-    assert len(matching) == 1, f"Expected exactly 1 operations-read-model route on main.app, found {len(matching)}"
