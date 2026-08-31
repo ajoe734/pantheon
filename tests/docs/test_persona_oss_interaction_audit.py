@@ -112,9 +112,14 @@ ROUND_TRIP_COMPONENT_COUNTS = {
 
 ALPHA_SEED_REFERENCES = [
     "services/registry/strategy-specs/qlib-tw-cross-sectional-alpha-v1.md",
-    "tests/e2e/fixtures/strategy_spec_for_experiment.json",
-    "tests/e2e/fixtures/experiment_run_for_admission.json",
-    "tests/e2e/fixtures/candidate_artifact_for_decision.json",
+    # tests/e2e/fixtures/strategy_spec_for_experiment.json,
+    # experiment_run_for_admission.json, and candidate_artifact_for_decision.json
+    # dropped: tests/e2e/test_persona_oss_100_alpha_seed_roundtrips.py no longer
+    # loads them since it moved to generating ROUND_TRIP_SPECS programmatically
+    # via _build_specs(). The files still exist on disk but the e2e test's
+    # source no longer cites them, so requiring the literal path text there
+    # would fail regardless of whether the underlying feature works. The
+    # dated 2026-06-12 report doc still mentions them as historical record.
     "tests/e2e/test_persona_abc_ooda_evidence_chain.py",
     "services/source_ingestion/tests/test_strategy_seed_builder.py",
 ]
