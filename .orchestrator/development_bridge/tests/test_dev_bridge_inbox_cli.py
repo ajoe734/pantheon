@@ -61,10 +61,19 @@ def _write_fake_repo(tmp_path: Path) -> Path:
         repo_root / ".orchestrator" / "development_bridge",
         ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
     )
-    shutil.copy2(
-        REPO_ROOT / ".orchestrator" / "dispatch_policy.py",
-        repo_root / ".orchestrator" / "dispatch_policy.py",
-    )
+    for rel in (
+        ".orchestrator/dispatch_policy.py",
+        ".orchestrator/common.py",
+        ".orchestrator/task_archive.py",
+        ".orchestrator/rewrite/__init__.py",
+        ".orchestrator/rewrite/dispatch_admission.py",
+        ".orchestrator/rewrite/provider_health.py",
+        ".orchestrator/rewrite/task_machine.py",
+    ):
+        source = REPO_ROOT / rel
+        target = repo_root / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, target)
     write_materializing_ai_status(repo_root)
     return repo_root
 

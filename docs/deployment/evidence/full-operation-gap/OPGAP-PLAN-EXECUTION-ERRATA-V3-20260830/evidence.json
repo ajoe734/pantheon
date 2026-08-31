@@ -1,0 +1,117 @@
+{
+  "schema_version": "pantheon.review-evidence.v1",
+  "task_id": "OPGAP-PLAN-EXECUTION-ERRATA-V3-20260830",
+  "title": "Reconcile GAP/SA/SD with complete post-freeze execution and deployment gaps",
+  "program_id": "PANTHEON-FULL-OPERATION-GAP-CLOSURE-20260830",
+  "recorded_at": "2026-08-31T02:10:43Z",
+  "owner": "Codex",
+  "reviewer": "Codex2",
+  "target_repo": "pantheon",
+  "task_class": "functional",
+  "summary_zh": "保留 V2 reviewed cutoff 歷史，同時補齊 Batch C V2、Training V3、allowlist V4、Persona mutation port、OpenClaw fallback、read-only deployment 與 Firebase/watchdog 未完成邊界。",
+  "superseded_documentation_result": {
+    "task_id": "OPGAP-PLAN-EXECUTION-ERRATA-V2-20260830",
+    "delivery_pr": 5462,
+    "delivery_head": "58da56ea59f8d0dcfc2cdf83b64542cc6b71736a",
+    "merge_commit": "4cb0007386a6ad0c48b68cc2d71663f3655e5424",
+    "reason": "V2 was valid at its cutoff but omitted later governed replacements, post-freeze gaps, Batch D materialization drift, and exact deployment/write-proof outcomes.",
+    "history_rewritten": false
+  },
+  "changed_artifacts": [
+    "docs/04/pantheon_full_product_operation_audit_2026-08-29/INDEX.md",
+    "docs/04/pantheon_full_product_operation_audit_2026-08-29/CURRENT_GAP_DISPOSITION_2026-08-30.md",
+    "docs/04/pantheon_full_product_operation_audit_2026-08-29/SA_GAP_REMEDIATION_2026-08-30.md",
+    "docs/04/pantheon_full_product_operation_audit_2026-08-29/SD_GAP_REMEDIATION_2026-08-30.md",
+    "docs/04/pantheon_full_product_operation_audit_2026-08-29/EXECUTION_DAG_2026-08-30.md",
+    "docs/04/pantheon_full_product_operation_audit_2026-08-29/EXECUTION_REPLACEMENT_LEDGER_2026-08-30.json",
+    "docs/04/pantheon_full_product_operation_audit_2026-08-29/validate_catalog.py",
+    "docs/04/pantheon_full_product_operation_audit_2026-08-29/test_mutations.py",
+    "docs/deployment/evidence/full-operation-gap/OPGAP-PLAN-EXECUTION-ERRATA-V3-20260830/evidence.json"
+  ],
+  "canonical_task_readback": {
+    "captured_at": "2026-08-31T01:56:12Z",
+    "command": "AI_NAME=Codex $PANTHEON_COMMAND_ROOT/scripts/ai-status.sh show OPGAP-PLAN-EXECUTION-ERRATA-V3-20260830",
+    "source": "active",
+    "status": "in_progress",
+    "owner": "Codex",
+    "reviewer": "Codex2",
+    "depends_on": [
+      "OPGAP-PLAN-EXECUTION-ERRATA-V2-20260830",
+      "OPGAP-DEVTOOL-TARGET-REPO-BRIDGE-V2-20260830"
+    ],
+    "dependency_truth": {
+      "OPGAP-PLAN-EXECUTION-ERRATA-V2-20260830": "done/completed",
+      "OPGAP-DEVTOOL-TARGET-REPO-BRIDGE-V2-20260830": "done/completed"
+    },
+    "governed_command_runtime_sha": "2fb2a9556b2784f9b071ec7da57fad411ed77b7f"
+  },
+  "reconciliation": {
+    "governed_lineage": [
+      "14 frozen Batch B ids -> 14 governed V2 ids",
+      "9 initially admitted Batch C ids -> 9 post-freeze governed V2 ids",
+      "OPGAP-BE-TRAINING-ROUTER-V2-20260830 -> OPGAP-BE-TRAINING-ROUTER-V3-20260830",
+      "OPGAP-DEVTOOL-BRIDGE-REPO-ALLOWLIST-V3-20260830 -> OPGAP-DEVTOOL-BRIDGE-REPO-ALLOWLIST-V4-20260830"
+    ],
+    "late_gaps": [
+      "OP-G21 / OPGAP-BE-PERSONA-RECONCILIATION-MUTATION-PORT-20260830",
+      "OP-G22 / OPGAP-OPENCLAW-PROVIDER-READINESS-FALLBACK-20260830"
+    ],
+    "batch_d_boundary": "Main Assembly is todo and still names terminal-superseded Training V2 instead of completed Training V3; a governed replacement/reissue is required before execution.",
+    "hosted_product_boundary": "The read-only switch did not run the bounded Firebase Persona proof or independent same-pair restore; AGORA-AGC-14 V5 remains in_progress."
+  },
+  "deployment_identity": {
+    "controller_run": {
+      "repository": "ajoe734/pantheon",
+      "run_id": "33332882810",
+      "head_sha": "cbf4e0a7303de1c0e9a51614c99ac2d8ddd96cfe",
+      "conclusion": "failure",
+      "failure": "OpenClaw live smoke / OPENCLAW_GATEWAY_TIMEOUT"
+    },
+    "integration_gate": {
+      "repository": "ajoe734/execute-plans",
+      "run_id": "33334694659",
+      "head_sha": "7d30e78476be61222af63a089e7ab141aa43b809",
+      "conclusion": "success",
+      "release_candidate_id": "9122d0fecd5cf9d5ae574c4c5e802df1d336dd2fd778a54019d2ad4995a2843d"
+    },
+    "read_only_switch": {
+      "repository": "ajoe734/execute-plans",
+      "run_id": "33335314834",
+      "conclusion": "success",
+      "pair_id": "b33741b326b82dea85a647d812bf75880cf7e7e97f0a012cc5375e84ea2f5f21",
+      "deployment_profile": "read-only",
+      "real_writes": false,
+      "stub_writes": false,
+      "bounded_persona_write_proof_job": "skipped",
+      "same_pair_read_only_restore_job": "skipped"
+    }
+  },
+  "verification": {
+    "commands": [
+      "python3 docs/04/pantheon_full_product_operation_audit_2026-08-29/validate_catalog.py",
+      "python3 docs/04/pantheon_full_product_operation_audit_2026-08-29/test_mutations.py",
+      "jq empty docs/04/pantheon_full_product_operation_audit_2026-08-29/EXECUTION_REPLACEMENT_LEDGER_2026-08-30.json docs/deployment/evidence/full-operation-gap/OPGAP-PLAN-EXECUTION-ERRATA-V3-20260830/evidence.json",
+      "git diff --check"
+    ],
+    "status": "PASS",
+    "results": [
+      "validate_catalog.py: 18/18 comprehensive phases passed; frozen catalog/source parity was read from baseline 3322f802de76b91ee06fbbe08590ff2ed4bdaadf and post-freeze ledger/evidence was validated from the exact task worktree",
+      "test_mutations.py: 23/23 mutation-negative assertions passed, including all five post-freeze omission/corruption cases",
+      "jq empty: replacement ledger and task evidence manifest parsed successfully",
+      "git diff --check: passed"
+    ]
+  },
+  "review_handoff": {
+    "status": "ready_for_independent_review_after_verification",
+    "reviewer": "Codex2",
+    "exact_pr_head_authority": "The governed ai-status handoff freezes REVIEW_PR and REVIEW_HEAD_SHA for this committed manifest; the canonical binding is authoritative because a committed manifest cannot self-reference the commit that contains it.",
+    "required_checks": [
+      "verify PR #5462 history is preserved while its incomplete documentation result is explicitly superseded",
+      "verify every Batch B/C V2, Training V3, and allowlist V4 lineage row against canonical task readback",
+      "verify OP-G21 keeps ReadSurfacePorts mutation-free and OP-G22 keeps credential authority out of source scope",
+      "verify deployment run, integration gate, candidate, and read-only switch identities against GitHub artifacts",
+      "verify skipped Firebase write-proof/restore jobs and unfinished Batch D remain explicit non-completion gates",
+      "rerun the validator and all 23 mutation-negative assertions on the frozen PR head"
+    ]
+  }
+}
