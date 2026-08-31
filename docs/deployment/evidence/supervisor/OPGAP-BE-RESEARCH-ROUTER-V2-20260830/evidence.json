@@ -4,7 +4,7 @@
   "title": "Migrate Research knowledge and framework integration routes",
   "program_id": "PANTHEON-FULL-OPERATION-GAP-CLOSURE-20260830",
   "design_unit": "SD-OPGAP-BE-RESEARCH-ROUTER",
-  "recorded_at": "2026-08-31T15:00:00Z",
+  "recorded_at": "2026-08-31T17:15:00Z",
   "ai_name": "Codex2",
   "owner": "Codex2",
   "reviewer": "Codex",
@@ -40,18 +40,19 @@
   "contracts": {
     "research_routes_in_domain_router": "RESEARCH_ROUTE_INVENTORY declares and create_research_router registers all 47 assigned Research route method/path pairs in services/control-plane/bff/research/router.py.",
     "typed_generic_alias_replacements": "Typed Research analysis and artifact routes preserve durable source-port reads while the prior generic artifact write aliases fail closed with explicit operation errors.",
+    "inventory_typed_signatures": "Every Request-dispatched inventory route is registered with its legacy FastAPI body, path, query, and header signature, so OpenAPI and framework validation remain available without duplicating the durable source-port dispatcher.",
+    "ticket_and_experiment_validation": "Ticket priority/status, ticket patch lifecycle, experiment status, and experiment launch run_config validation preserve the legacy fail-closed 422/409 behavior; live experiment execution_mode is rejected.",
     "source_port_preservation": "The router injects and uses the existing ResearchKnowledgeSourcePort rather than reimplementing reusable source-port logic or falling back to main.py globals.",
     "composition_boundary": "main.py inclusion and deletion of legacy route blocks remain the responsibility of OPGAP-BFF-MAIN-ASSEMBLY-20260830."
   },
   "verification": {
     "test_suites": [
-      "services/control-plane/bff/tests/test_research_router.py",
-      "services/control-plane/bff/research/test_router.py"
+      "services/control-plane/bff/tests/test_research_router.py"
     ],
     "verification_commands": [
-      ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_research_router.py services/control-plane/bff/research/test_router.py",
-      ".venv-pantheon/bin/python3 -m py_compile services/control-plane/bff/research/router.py services/control-plane/bff/research/service.py services/control-plane/bff/tests/test_research_router.py",
-      "git diff --check origin/dev...HEAD"
+      "PANTHEON_PY=\"$(python3 scripts/dev/provision_python_distribution.py --print-python)\"; \"$PANTHEON_PY\" -m pytest -q services/control-plane/bff/tests/test_research_router.py",
+      "PANTHEON_PY=\"$(python3 scripts/dev/provision_python_distribution.py --print-python)\"; \"$PANTHEON_PY\" -m py_compile services/control-plane/bff/research/router.py",
+      "git diff --check"
     ],
     "status": "PASS"
   },
@@ -59,12 +60,13 @@
   "review": {
     "status": "ready_for_independent_review",
     "reviewer": "Codex",
+    "remediation": "The prior exact head c32960299c8f193ab1c09fe6f2f0b3ec9f1698f7 was independently rejected because its Request-only inventory dispatcher erased typed contracts. This successor head restores FastAPI signatures/OpenAPI and the rejected ticket/experiment validation behavior with router-level regression coverage.",
     "required_checks": [
       "verify all 47 assigned Research route method/path pairs are registered by create_research_router",
       "verify typed analysis and artifact routes use the injected durable source port and preserve their compatibility links",
       "verify the generic BFF artifact writes are explicit fail-closed replacements rather than in-memory fallbacks",
       "verify the predecessor ResearchKnowledgeSourcePort is not reimplemented and main.py composition remains out of scope",
-      "run the two focused Research router test suites and confirm the verification commands pass",
+      "run the focused Research router test suite and confirm the ticket priority, experiment status, execution_mode=live, and OpenAPI signature regression cases pass",
       "bind this manifest path (docs/deployment/evidence/supervisor/OPGAP-BE-RESEARCH-ROUTER-V2-20260830/evidence.json) at exact PR head during canonical handoff"
     ]
   }

@@ -699,6 +699,196 @@ def create_research_router(
             )
         return value
 
+    _TICKET_PRIORITIES = {"low", "normal", "high", "critical"}
+    _TICKET_STATUSES = {"open", "in_progress", "closed", "archived"}
+    _TICKET_STATUS_TRANSITIONS = {
+        "open": {"in_progress", "closed"},
+        "in_progress": {"closed"},
+        "closed": {"archived"},
+        "archived": set(),
+    }
+    _EXPERIMENT_STATUSES = {"queued", "running", "completed", "failed", "canceled"}
+    _EXPERIMENT_EXECUTION_MODES = {"paper", "backtest", "simulation"}
+    _EXPERIMENT_PRIORITIES = {"normal", "high"}
+
+    def _validate_choice(value: Any, *, field: str, label: str, allowed: set[str]) -> str:
+        normalized = str(value or "").strip().lower()
+        if normalized not in allowed:
+            raise bff_error(
+                422,
+                ErrorCode.VALIDATION_FAILED,
+                f"Invalid {label}",
+                f"{field} must be one of {sorted(allowed)}",
+                precondition_failed=field,
+            )
+        return normalized
+
+    def _validate_ticket_priority(value: Any) -> str:
+        return _validate_choice(
+            value,
+            field="priority",
+            label="research ticket priority",
+            allowed=_TICKET_PRIORITIES,
+        )
+
+    def _validate_ticket_status(value: Any) -> str:
+        return _validate_choice(
+            value,
+            field="status",
+            label="research ticket status",
+            allowed=_TICKET_STATUSES,
+        )
+
+    def _validate_experiment_status(value: Any) -> str:
+        return _validate_choice(
+            value,
+            field="status",
+            label="experiment status",
+            allowed=_EXPERIMENT_STATUSES,
+        )
+
+    def _required_dict(payload: Dict[str, Any], field: str) -> Dict[str, Any]:
+        value = payload.get(field)
+        if not isinstance(value, dict):
+            raise bff_error(
+                422,
+                ErrorCode.VALIDATION_FAILED,
+                f"Missing or invalid field: {field}",
+                f"{field} must be an object",
+                precondition_failed=field,
+            )
+        return value
+
+    def _validate_ticket_patch(ticket: Dict[str, Any], payload: Dict[str, Any]) -> Dict[str, Any]:
+        allowed_fields = {"status", "title", "description", "priority", "owner"}
+        unknown_fields = sorted(set(payload) - allowed_fields)
+        if unknown_fields:
+            raise bff_error(
+                422,
+                ErrorCode.VALIDATION_FAILED,
+                "Invalid research ticket patch payload",
+                f"Unsupported patch fields: {unknown_fields}",
+                precondition_failed="payload_shape",
+            )
+
+        patch: Dict[str, Any] = {}
+        editable = bool((ticket.get("allowedActions") or {}).get("canEdit"))
+        for field in ("title", "description", "owner"):
+            if field not in payload:
+                continue
+            value = _required_text(payload, field)
+            if not editable:
+                raise bff_error(
+                    409,
+                    ErrorCode.OPERATION_NOT_ALLOWED,
+                    "Research ticket is not editable in its current lifecycle state",
+                    f"{field} cannot be modified while allowedActions.canEdit is false.",
+                    precondition_failed="allowedActions.canEdit",
+                )
+            patch[field] = value
+
+        if "priority" in payload:
+            if not editable:
+                raise bff_error(
+                    409,
+                    ErrorCode.OPERATION_NOT_ALLOWED,
+                    "Research ticket is not editable in its current lifecycle state",
+                    "priority cannot be modified while allowedActions.canEdit is false.",
+                    precondition_failed="allowedActions.canEdit",
+                )
+            patch["priority"] = _validate_ticket_priority(payload["priority"])
+
+        if "status" in payload:
+            current_status = str(ticket.get("status") or "").strip().lower()
+            next_status = _validate_ticket_status(payload["status"])
+            if next_status != current_status:
+                actions = ticket.get("allowedActions") or {}
+                if next_status == "closed" and not actions.get("canClose"):
+                    raise bff_error(
+                        409,
+                        ErrorCode.OPERATION_NOT_ALLOWED,
+                        "Research ticket cannot be closed in its current state",
+                        "allowedActions.canClose is false for this ticket.",
+                        precondition_failed="allowedActions.canClose",
+                    )
+                if next_status == "archived" and not actions.get("canArchive"):
+                    raise bff_error(
+                        409,
+                        ErrorCode.OPERATION_NOT_ALLOWED,
+                        "Research ticket cannot be archived in its current state",
+                        "allowedActions.canArchive is false for this ticket.",
+                        precondition_failed="allowedActions.canArchive",
+                    )
+                if next_status not in _TICKET_STATUS_TRANSITIONS.get(current_status, set()):
+                    raise bff_error(
+                        409,
+                        ErrorCode.OPERATION_NOT_ALLOWED,
+                        "Invalid research ticket lifecycle transition",
+                        f"Cannot transition research ticket from {current_status} to {next_status}.",
+                        precondition_failed="status_transition",
+                    )
+            patch["status"] = next_status
+
+        if not patch:
+            raise bff_error(
+                422,
+                ErrorCode.VALIDATION_FAILED,
+                "Empty research ticket patch payload",
+                "At least one accepted patch field is required.",
+                precondition_failed="payload_shape",
+            )
+        return patch
+
+    def _validate_experiment_launch(payload: Dict[str, Any]) -> Dict[str, Any]:
+        run_config = _required_dict(payload, "run_config")
+        time_range = _required_dict(run_config, "time_range")
+        validated_run_config = {
+            "dataset_ref": _required_text(run_config, "dataset_ref"),
+            "time_range": {
+                "start_at": _required_text(time_range, "start_at"),
+                "end_at": _required_text(time_range, "end_at"),
+            },
+            "execution_mode": _validate_choice(
+                run_config.get("execution_mode"),
+                field="execution_mode",
+                label="execution_mode",
+                allowed=_EXPERIMENT_EXECUTION_MODES,
+            ),
+            "priority": _validate_choice(
+                run_config.get("priority", "normal"),
+                field="priority",
+                label="priority",
+                allowed=_EXPERIMENT_PRIORITIES,
+            ),
+            "requested_by": _required_text(run_config, "requested_by"),
+        }
+        launch_context_raw = payload.get("launch_context") or {}
+        if not isinstance(launch_context_raw, dict):
+            raise bff_error(
+                422,
+                ErrorCode.VALIDATION_FAILED,
+                "Invalid launch_context",
+                "launch_context must be an object when provided",
+                precondition_failed="launch_context",
+            )
+        analysis_refs = launch_context_raw.get("analysis_refs")
+        if analysis_refs is not None and not isinstance(analysis_refs, list):
+            raise bff_error(
+                422,
+                ErrorCode.VALIDATION_FAILED,
+                "Invalid launch_context.analysis_refs",
+                "analysis_refs must be null or an array of strings",
+                precondition_failed="launch_context.analysis_refs",
+            )
+        return {
+            "ticket_id": _required_text(payload, "ticket_id"),
+            "experiment_name": _required_text(payload, "experiment_name"),
+            "strategy_selector": _required_dict(payload, "strategy_selector"),
+            "parameter_set": _required_dict(payload, "parameter_set"),
+            "run_config": validated_run_config,
+            "launch_context": {"analysis_refs": list(analysis_refs) if analysis_refs is not None else None},
+        }
+
     def _not_found(label: str, identifier: str) -> None:
         raise bff_error(
             404,
@@ -775,7 +965,7 @@ def create_research_router(
                 "create_research_ticket",
                 title=_required_text(payload, "title"),
                 description=_required_text(payload, "description"),
-                priority=_required_text(payload, "priority"),
+                priority=_validate_ticket_priority(payload.get("priority")),
                 owner=_required_text(payload, "owner"),
                 actor_id=str(getattr(identity, "operator_id", "")),
                 created_at=snapshot_at,
@@ -784,6 +974,8 @@ def create_research_router(
 
         if name == "list_tickets":
             statuses = [item.strip() for item in str(_query(request, "status", "") or "").split(",") if item.strip()] or None
+            if statuses:
+                statuses = [_validate_ticket_status(status) for status in statuses]
             records = list(_call_port(port, "list_research_tickets", statuses=statuses, owner=_query(request, "owner"), include_fixture_pack=False) or [])
             items, next_token = _page(records, request)
             return {"data": items, "page_info": {"next_page_token": next_token, "total": len(records)}, "meta": _meta(snapshot_at, "ticket_list", "research_tickets", bool(records))}
@@ -794,7 +986,8 @@ def create_research_router(
             if not ticket:
                 _not_found("Research ticket", ticket_id)
             if name == "patch_ticket":
-                updated = _call_port(port, "patch_research_ticket", ticket_id, patch=await _body(request), actor_id=str(getattr(identity, "operator_id", "")), updated_at=snapshot_at)
+                patch = _validate_ticket_patch(ticket, await _body(request))
+                updated = _call_port(port, "patch_research_ticket", ticket_id, patch=patch, actor_id=str(getattr(identity, "operator_id", "")), updated_at=snapshot_at)
                 if not updated:
                     raise bff_error(503, ErrorCode.DEPENDENCY_UNAVAILABLE, "Research ticket store unavailable", "Research ticket update store is unavailable")
                 return {key: updated.get(key) for key in ("ticket_id", "status", "updated_at", "allowedActions")}
@@ -826,16 +1019,16 @@ def create_research_router(
             return {"data": records, "meta": _meta(snapshot_at, "source_change_proposals", "source_change_proposals", bool(records))}
 
         if name == "launch_experiment":
-            payload = await _body(request)
+            payload = _validate_experiment_launch(await _body(request))
             experiment = _call_port(
                 port,
                 "create_research_experiment",
-                ticket_id=_required_text(payload, "ticket_id"),
-                experiment_name=_required_text(payload, "experiment_name"),
-                strategy_selector=payload.get("strategy_selector") if isinstance(payload.get("strategy_selector"), dict) else {},
-                parameter_set=payload.get("parameter_set") if isinstance(payload.get("parameter_set"), dict) else {},
-                run_config=payload.get("run_config") if isinstance(payload.get("run_config"), dict) else {},
-                launch_context=payload.get("launch_context") if isinstance(payload.get("launch_context"), dict) else {},
+                ticket_id=payload["ticket_id"],
+                experiment_name=payload["experiment_name"],
+                strategy_selector=payload["strategy_selector"],
+                parameter_set=payload["parameter_set"],
+                run_config=payload["run_config"],
+                launch_context=payload["launch_context"],
             )
             experiment_id = str(experiment.get("experiment_id") or "")
             return {"experiment_id": experiment_id, "ticket_id": experiment.get("ticket_id"), "status": experiment.get("status"), "queued_at": experiment.get("queued_at"), "allowedActions": {"canCancel": True}, "links": {"self": f"/api/v1/experiments/{experiment_id}", "workbench_detail": f"/research/experiments/{experiment_id}"}}
@@ -843,7 +1036,9 @@ def create_research_router(
         if name in {"list_experiments_api", "get_experiment_api", "cancel_experiment_api"}:
             experiment_id = str(params.get("experiment_id") or "")
             if name == "list_experiments_api":
-                records = list(_call_port(port, "list_research_experiments", ticket_id=_query(request, "ticket_id"), status=_query(request, "status")) or [])
+                raw_status = _query(request, "status")
+                status = _validate_experiment_status(raw_status) if raw_status is not None else None
+                records = list(_call_port(port, "list_research_experiments", ticket_id=_query(request, "ticket_id"), status=status) or [])
                 items, next_token = _page(records, request)
                 return {"data": items, "page_info": {"next_page_token": next_token, "total": len(records)}, "meta": _meta(snapshot_at, "experiment_history", "research_experiments", bool(records))}
             experiment = _call_port(port, "get_research_experiment", experiment_id)
@@ -851,6 +1046,13 @@ def create_research_router(
                 _not_found("Experiment", experiment_id)
             if name == "cancel_experiment_api":
                 _required_text(await _body(request), "reason")
+                if str(experiment.get("status") or "") not in {"queued", "running"}:
+                    raise bff_error(
+                        409,
+                        ErrorCode.OPERATION_NOT_ALLOWED,
+                        "Experiment cannot be canceled",
+                        f"Experiment {experiment_id} is in terminal state '{experiment.get('status')}' and cannot be canceled",
+                    )
                 canceled = _call_port(port, "cancel_research_experiment", experiment_id, completed_at=snapshot_at)
                 if not canceled:
                     raise bff_error(409, ErrorCode.OPERATION_NOT_ALLOWED, "Experiment cancel rejected", "Experiment could not be canceled")
@@ -1040,9 +1242,141 @@ def create_research_router(
         return {"data": payload, "meta": meta}
 
     # Paths already declared above are typed replacements for the former
-    # generic read aliases.  Register every remaining assigned decorator here
-    # through the same source-port dispatcher, keeping route ownership visible
-    # without importing main.py or recreating its local overlays.
+    # generic read aliases.  The remaining paths intentionally share the
+    # source-port dispatcher, but must not share its ``Request``-only
+    # signature: FastAPI derives both request validation and OpenAPI from an
+    # endpoint signature at registration time.  Preserve the legacy
+    # parameters here so a composition-root cutover does not silently turn
+    # public body/query contracts into untyped request blobs.
+    def _parameter(
+        name: str,
+        *,
+        annotation: Any,
+        default: Any = inspect.Parameter.empty,
+    ) -> inspect.Parameter:
+        return inspect.Parameter(
+            name,
+            inspect.Parameter.POSITIONAL_OR_KEYWORD,
+            annotation=annotation,
+            default=default,
+        )
+
+    def _path(name: str) -> inspect.Parameter:
+        return _parameter(name, annotation=str)
+
+    def _signature_query(
+        name: str,
+        *,
+        annotation: Any = Optional[str],
+        default: Any = None,
+        **constraints: Any,
+    ) -> inspect.Parameter:
+        return _parameter(name, annotation=annotation, default=Query(default=default, **constraints))
+
+    def _body_parameter(*, required: bool = True) -> inspect.Parameter:
+        body = Body(...) if required else Body(default_factory=dict)
+        return _parameter("payload", annotation=Dict[str, Any], default=body)
+
+    def _authorization() -> inspect.Parameter:
+        return _parameter("authorization", annotation=Optional[str], default=Header(default=None))
+
+    def _idempotency_key() -> inspect.Parameter:
+        return _parameter(
+            "x_idempotency_key",
+            annotation=Optional[str],
+            default=Header(default=None, alias="X-Idempotency-Key"),
+        )
+
+    def _signature(*parameters: inspect.Parameter) -> inspect.Signature:
+        return inspect.Signature((_parameter("request", annotation=Request), *parameters))
+
+    def _inventory_endpoint(name: str, signature: inspect.Signature) -> Callable[..., Any]:
+        async def endpoint(request: Request, **_validated_values: Any) -> Dict[str, Any]:
+            return await _inventory_route(request)
+
+        endpoint.__name__ = f"research_inventory_{name}"
+        endpoint.__signature__ = signature
+        return endpoint
+
+    auth = _authorization()
+    _inventory_signatures = {
+        "knowledge_workbench": _signature(auth),
+        "oss_activation_ready": _signature(_signature_query("activity_limit", annotation=int, default=20, ge=1, le=200), auth),
+        "oss_preactivation": _signature(_signature_query("activity_limit", annotation=int, default=20, ge=1, le=200), auth),
+        "source_ops": _signature(
+            _signature_query("crawl_run_limit", annotation=int, default=50, ge=1, le=200),
+            _signature_query("dlq_status"),
+            _signature_query("frontier_status"),
+            _signature_query("audit_limit", annotation=int, default=20, ge=1, le=200),
+            auth,
+        ),
+        "search_ops": _signature(_signature_query("pipeline_run_limit", annotation=int, default=50, ge=1, le=200), auth),
+        "command_source_dlq_replay": _signature(_body_parameter(required=False), auth, _idempotency_key()),
+        "command_source_frontier_replay": _signature(_path("frontier_id"), _body_parameter(required=False), auth, _idempotency_key()),
+        "command_search_index_refresh": _signature(_body_parameter(required=False), auth, _idempotency_key()),
+        "command_search_index_materialize": _signature(auth, _idempotency_key()),
+        "create_ticket": _signature(_body_parameter(), auth),
+        "list_tickets": _signature(
+            _signature_query("status"), _signature_query("owner"), _signature_query("page_token"), _signature_query("page_size", annotation=int, default=20, ge=1, le=200), auth,
+        ),
+        "get_ticket": _signature(_path("ticket_id"), auth),
+        "patch_ticket": _signature(_path("ticket_id"), _body_parameter(), auth),
+        "research_search": _signature(
+            _signature_query("q", annotation=str, default=...),
+            _signature_query("match_type", annotation=str, default="all"),
+            _signature_query("status"),
+            _signature_query("date_range"),
+            _signature_query("page_token"),
+            _signature_query("page_size", annotation=int, default=25, ge=1, le=100),
+            auth,
+        ),
+        "source_connectors": _signature(auth),
+        "source_change_proposals": _signature(_signature_query("status"), _signature_query("proposal_type"), _signature_query("source_kind"), auth),
+        "launch_experiment": _signature(_body_parameter(), auth),
+        "list_experiments_api": _signature(
+            _signature_query("ticket_id"), _signature_query("status"), _signature_query("page_token"), _signature_query("page_size", annotation=int, default=20, ge=1, le=100), auth,
+        ),
+        "get_experiment_api": _signature(_path("experiment_id"), auth),
+        "cancel_experiment_api": _signature(_path("experiment_id"), _body_parameter(), auth),
+        "compare_artifacts_api": _signature(_signature_query("artifact_ids", annotation=str, default=...), auth),
+        "list_artifacts_api": _signature(
+            _signature_query("experiment_id"), _signature_query("ticket_id"), _signature_query("lineage_id"), _signature_query("status"), _signature_query("page_token"), _signature_query("page_size", annotation=int, default=20, ge=1, le=100), auth,
+        ),
+        "get_artifact_api": _signature(_path("artifact_id"), auth),
+        "create_note": _signature(_body_parameter(), auth),
+        "list_notes": _signature(
+            _signature_query("owner_ref"), _signature_query("attachment_type"), _signature_query("attachment_ref"), _signature_query("tags"), _signature_query("page_token"), _signature_query("page_size", annotation=int, default=20, ge=1, le=100), auth,
+        ),
+        "get_note": _signature(_path("note_id"), auth),
+        "list_evidence": _signature(
+            _signature_query("linked_entity_type"), _signature_query("linked_entity_ref"), _signature_query("link_type"), _signature_query("credibility_tier"), _signature_query("verified", annotation=Optional[bool]), _signature_query("page_token"), _signature_query("page_size", annotation=int, default=20, ge=1, le=100), auth,
+        ),
+        "get_evidence": _signature(_path("ref_id"), auth),
+        "list_insights": _signature(
+            _signature_query("status", annotation=str, default="active"), _signature_query("tag"), _signature_query("linked_entity_type"), _signature_query("linked_entity_ref"), _signature_query("recency", annotation=str, default="all"), _signature_query("confidence_min", annotation=Optional[float]), _signature_query("page_token"), _signature_query("page_size", annotation=int, default=20, ge=1, le=100), _signature_query("include_inactive", annotation=bool, default=False), auth,
+        ),
+        "get_insight": _signature(_path("insight_id"), auth),
+        "list_strategy_specs": _signature(
+            _signature_query("lifecycle_state", annotation=str, default="all"), _signature_query("source_kind"), _signature_query("persona_id"), _signature_query("include_retired", annotation=bool, default=False), _signature_query("page_token"), _signature_query("page_size", annotation=int, default=20, ge=1, le=100), auth,
+        ),
+        "strategy_versions": _signature(_path("strategy_id"), auth),
+        "strategy_compare": _signature(_path("strategy_id"), _signature_query("left_version"), _signature_query("right_version"), _signature_query("base_version"), _signature_query("target_version"), auth),
+        "get_strategy_spec": _signature(_path("strategy_id"), _signature_query("version", annotation=str, default="current"), auth),
+        "list_memory": _signature(
+            _signature_query("knowledge_type"), _signature_query("scope"), _signature_query("scope_filter"), _signature_query("tags"), _signature_query("page", annotation=int, default=1, ge=1), _signature_query("page_size", annotation=int, default=20, ge=1, le=200), auth,
+        ),
+        "get_memory": _signature(_path("entry_id"), auth),
+        "synthesis_conflict_logs": _signature(
+            _signature_query("capital_pool_id"), _signature_query("scope_ref"), _signature_query("proposal_id"), _signature_query("sponsor_persona_id"), _signature_query("synthesis_method"), _signature_query("committee_ref"), _signature_query("page_token"), _signature_query("page_size", annotation=int, default=20, ge=1, le=200), auth,
+        ),
+        "synthesis_conflict_log": _signature(_path("log_id"), auth),
+        "bff_search": _signature(
+            _signature_query("q", annotation=str, default=""), _signature_query("types"), _signature_query("page_size", annotation=int, default=20, ge=1, le=100), _signature_query("limit", annotation=Optional[int], default=None, ge=1, le=100), _signature_query("page_token"), auth,
+        ),
+        "bff_patch_artifact": _signature(_path("artifact_id"), _body_parameter(required=False), auth),
+        "bff_create_artifact": _signature(_body_parameter(required=False), auth),
+    }
+
     _inventory_registrations = (
         ("knowledge_workbench", "/api/v1/workbench/knowledge", ("GET",), None),
         ("oss_activation_ready", "/api/v1/operator/research/oss-activation-ready", ("GET",), None),
@@ -1089,7 +1423,7 @@ def create_research_router(
     for route_name, path, methods, status_code in _inventory_registrations:
         router.add_api_route(
             path,
-            _inventory_route,
+            _inventory_endpoint(route_name, _inventory_signatures[route_name]),
             methods=list(methods),
             name=route_name,
             status_code=status_code,

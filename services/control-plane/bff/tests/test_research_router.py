@@ -305,3 +305,52 @@ def test_typed_artifact_and_bff_replacement_routes_are_backed_by_same_port() -> 
     )
     assert rejected.status_code == 422
     assert rejected.json()["detail"]["code"] == "OPERATION_NOT_ALLOWED"
+
+
+def test_inventory_routes_preserve_ticket_and_experiment_validation() -> None:
+    client = _client(_Port())
+
+    invalid_priority = client.post(
+        "/api/v1/research/tickets",
+        json={"title": "New", "description": "durable", "priority": "urgent", "owner": "research"},
+    )
+    assert invalid_priority.status_code == 422
+    assert invalid_priority.json()["detail"]["precondition_failed"] == "priority"
+
+    invalid_experiment_status = client.get("/api/v1/experiments", params={"status": "paused"})
+    assert invalid_experiment_status.status_code == 422
+    assert invalid_experiment_status.json()["detail"]["precondition_failed"] == "status"
+
+    live_execution_mode = client.post(
+        "/api/v1/experiments/launch",
+        json={
+            "ticket_id": "ticket-1",
+            "experiment_name": "Invalid live launch",
+            "strategy_selector": {"strategy_id": "strategy-1"},
+            "parameter_set": {},
+            "run_config": {
+                "dataset_ref": "equities-us-2026Q1",
+                "time_range": {"start_at": "2026-03-01T00:00:00Z", "end_at": "2026-03-31T00:00:00Z"},
+                "execution_mode": "live",
+                "priority": "normal",
+                "requested_by": "research",
+            },
+        },
+    )
+    assert live_execution_mode.status_code == 422
+    assert live_execution_mode.json()["detail"]["precondition_failed"] == "execution_mode"
+
+
+def test_inventory_routes_publish_legacy_request_and_query_contracts_to_openapi() -> None:
+    client = _client(_Port())
+    schema = client.get("/openapi.json").json()["paths"]
+
+    ticket_create = schema["/api/v1/research/tickets"]["post"]
+    assert "requestBody" in ticket_create
+    ticket_list_params = {item["name"] for item in schema["/api/v1/research/tickets"]["get"]["parameters"]}
+    assert {"status", "owner", "page_token", "page_size"} <= ticket_list_params
+
+    launch = schema["/api/v1/experiments/launch"]["post"]
+    assert "requestBody" in launch
+    experiment_list_params = {item["name"] for item in schema["/api/v1/experiments"]["get"]["parameters"]}
+    assert {"ticket_id", "status", "page_token", "page_size"} <= experiment_list_params
