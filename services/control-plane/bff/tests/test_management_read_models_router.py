@@ -752,3 +752,100 @@ def test_management_router_conditional_registration_crud_cutover():
 
     overlap = paths_composed.intersection(paths_mgmt)
     assert overlap == set(), f"Expected no path overlap between composed and management routers, got {overlap}"
+
+
+def test_main_composes_management_router_without_management_decorators():
+    """Verify main.py composes create_management_router and does not define @app.get decorators for the 17 management routes."""
+    import re
+    main_path = Path(__file__).resolve().parents[1] / "main.py"
+    main_source = main_path.read_text(encoding="utf-8")
+
+    assert "create_management_router" in main_source
+
+    forbidden_decorators = [
+        r'@app\.get\([^\n]*"/bff/management/shell-summary"',
+        r'@app\.get\([^\n]*"/api/v1/operator/home"',
+        r'@app\.get\([^\n]*_MANAGEMENT_COCKPIT_ROUTE',
+        r'@app\.get\([^\n]*"/bff/management/cockpit"',
+        r'@app\.get\([^\n]*"/bff/management/trading-pulse"',
+        r'@app\.get\([^\n]*"/bff/management/trading-pulse/rankings"',
+        r'@app\.get\([^\n]*"/bff/management/sentinel-pulse"',
+        r'@app\.get\([^\n]*"/api/v1/operator/health-status"',
+        r'@app\.get\([^\n]*"/bff/management/loop-throughput"',
+        r'@app\.get\([^\n]*"/bff/management/risk-radar"',
+        r'@app\.get\([^\n]*"/bff/management/incident-timeline"',
+        r'@app\.get\([^\n]*"/bff/management/human-inbox"',
+        r'@app\.get\([^\n]*"/bff/management/human-inbox/{item_id}"',
+        r'@app\.get\([^\n]*"/bff/management/hiq-backlog"',
+        r'@app\.get\([^\n]*"/bff/management/intervention-stream"',
+        r'@app\.get\([^\n]*"/bff/management/evidence"',
+        r'@app\.get\([^\n]*"/bff/management/operations-read-model/{persona_id}"',
+        r'@app\.get\([^\n]*"/api/v1/operator/degraded-control-guidance"',
+    ]
+    for pattern in forbidden_decorators:
+        assert not re.search(pattern, main_source), f"Found forbidden @app.get decorator matching {pattern} in main.py"
+
+
+def test_main_assembly_zero_duplicate_verb_path_registrations():
+    """Verify that all Management domain routes have zero duplicate (method, path) route registrations on main.app."""
+    import main as bff_main
+    from collections import Counter
+    from test_normalized_route_uniqueness import scan_fastapi_routes
+
+    management_paths = {
+        "/bff/management/shell-summary",
+        "/api/v1/operator/home",
+        "/bff/management/cockpit",
+        "/bff/management/trading-pulse",
+        "/bff/management/trading-pulse/rankings",
+        "/bff/management/sentinel-pulse",
+        "/api/v1/operator/health-status",
+        "/bff/management/loop-throughput",
+        "/bff/management/risk-radar",
+        "/bff/management/incident-timeline",
+        "/bff/management/human-inbox",
+        "/bff/management/human-inbox/{item_id}",
+        "/bff/management/hiq-backlog",
+        "/bff/management/intervention-stream",
+        "/bff/management/evidence",
+        "/bff/management/operations-read-model/{persona_id}",
+        "/api/v1/operator/degraded-control-guidance",
+        "/bff/management/formula-jobs",
+        "/bff/management/activity",
+        "/bff/management/paper-telemetry",
+        "/bff/management/postmortems",
+        "/bff/management/postmortems/{postmortem_id}",
+    }
+
+    scanned_entries = scan_fastapi_routes(bff_main.app)
+    route_pairs = [
+        (e.method, e.raw_path)
+        for e in scanned_entries
+        if e.raw_path in management_paths
+    ]
+
+    counts = Counter(route_pairs)
+    duplicates = {pair: count for pair, count in counts.items() if count > 1}
+    assert not duplicates, f"Found duplicate management route registrations on main.app: {duplicates}"
+    assert len(route_pairs) == 22, f"Expected 22 registered Management routes on main.app, found {len(route_pairs)}"
+
+
+
+def test_main_preserves_evolution_journal():
+    """Verify GET /bff/management/evolution-journal is preserved and registered on main.app."""
+    import main as bff_main
+    from test_normalized_route_uniqueness import scan_fastapi_routes
+
+    scanned_entries = scan_fastapi_routes(bff_main.app)
+    matching = [e for e in scanned_entries if e.method == "GET" and e.raw_path == "/bff/management/evolution-journal"]
+    assert len(matching) == 1, f"Expected exactly 1 evolution-journal route on main.app, found {len(matching)}"
+
+
+def test_main_operations_read_model_registered_exactly_once():
+    """Verify GET /bff/management/operations-read-model/{persona_id} is registered on main.app exactly once."""
+    import main as bff_main
+    from test_normalized_route_uniqueness import scan_fastapi_routes
+
+    scanned_entries = scan_fastapi_routes(bff_main.app)
+    matching = [e for e in scanned_entries if e.method == "GET" and e.raw_path == "/bff/management/operations-read-model/{persona_id}"]
+    assert len(matching) == 1, f"Expected exactly 1 operations-read-model route on main.app, found {len(matching)}"

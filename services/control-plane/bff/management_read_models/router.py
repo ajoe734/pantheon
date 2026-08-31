@@ -1740,4 +1740,3 @@ def create_management_router(
         )
 
     return router
-

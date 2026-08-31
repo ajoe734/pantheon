@@ -1417,7 +1417,10 @@ class ManagementService:
         raw_interventions: List[Dict[str, Any]] = []
         if store is not None:
             try:
-                if hasattr(store, "list_interventions"):
+                if hasattr(store, "list_v5_interventions"):
+                    intv_res = store.list_v5_interventions()
+                    raw_interventions = intv_res if isinstance(intv_res, list) else []
+                elif hasattr(store, "list_interventions"):
                     intv_res = store.list_interventions()
                     raw_interventions = intv_res if isinstance(intv_res, list) else []
                 elif hasattr(store, "list_intervention_records"):
@@ -1565,7 +1568,21 @@ class ManagementService:
 
                 # 3. Interventions
                 try:
-                    if hasattr(store, "list_interventions"):
+                    if hasattr(store, "list_v5_interventions"):
+                        for r in (store.list_v5_interventions() or []):
+                            if isinstance(r, dict):
+                                all_items.append({
+                                    "id": str(r.get("intervention_id") or r.get("id") or "intv-1"),
+                                    "item_id": str(r.get("intervention_id") or r.get("id") or "intv-1"),
+                                    "source_type": "intervention",
+                                    "status": str(r.get("status") or "open"),
+                                    "priority": str(r.get("priority") or "high"),
+                                    "title": str(r.get("title") or r.get("summary") or "Intervention Required"),
+                                    "summary": str(r.get("summary") or "Operator intervention needed"),
+                                    "created_at": str(r.get("created_at") or snap),
+                                    "details": r,
+                                })
+                    elif hasattr(store, "list_interventions"):
                         for r in (store.list_interventions() or []):
                             if isinstance(r, dict):
                                 all_items.append({
@@ -2369,7 +2386,9 @@ class ManagementService:
 
         if store is not None:
             try:
-                if hasattr(store, "list_interventions"):
+                if hasattr(store, "list_v5_interventions"):
+                    raw_items = store.list_v5_interventions() or []
+                elif hasattr(store, "list_interventions"):
                     raw_items = store.list_interventions() or []
                 elif hasattr(store, "list_intervention_records"):
                     raw_items = store.list_intervention_records() or []
