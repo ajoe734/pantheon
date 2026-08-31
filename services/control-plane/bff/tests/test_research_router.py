@@ -168,6 +168,9 @@ class _Port:
         self.notes[note["note_id"]] = note
         return note
 
+    def list_research_notes(self) -> List[Dict[str, Any]]:
+        return list(self.notes.values())
+
     def get_source_ops_snapshot(self, **_filters: Any) -> Dict[str, Any]:
         return {"source": "service_client", "summary": {"healthy": True}}
 
@@ -305,6 +308,73 @@ def test_research_note_create_preserves_server_owned_validation_and_identity() -
         "owner_id": "op-test",
         "display_name": "Operator op-test",
     }
+
+
+def test_research_note_list_preserves_legacy_filters_and_envelope() -> None:
+    port = _Port()
+    port.notes = {
+        "note-include": {
+            "note_id": "note-include",
+            "title": "Included note",
+            "body": "The **alpha** note is included.",
+            "owner_ref": {"owner_id": "op-a"},
+            "attachment_type": "free_standing",
+            "attachment_ref": None,
+            "tags": ["alpha"],
+            "created_at": "2026-08-30T00:00:00Z",
+            "updated_at": "2026-08-30T00:00:00Z",
+        },
+        "note-wrong-owner": {
+            "note_id": "note-wrong-owner",
+            "title": "Excluded owner",
+            "body": "This must be excluded.",
+            "owner_ref": {"owner_id": "op-b"},
+            "attachment_type": "free_standing",
+            "attachment_ref": None,
+            "tags": ["alpha"],
+        },
+        "note-wrong-tag": {
+            "note_id": "note-wrong-tag",
+            "title": "Excluded tag",
+            "body": "This must be excluded.",
+            "owner_ref": {"owner_id": "op-a"},
+            "attachment_type": "free_standing",
+            "attachment_ref": None,
+            "tags": ["beta"],
+        },
+        "note-wrong-attachment": {
+            "note_id": "note-wrong-attachment",
+            "title": "Excluded attachment",
+            "body": "This must be excluded.",
+            "owner_ref": {"owner_id": "op-a"},
+            "attachment_type": "research_ticket",
+            "attachment_ref": "tkt-11111111-1111-1111-1111-111111111111",
+            "tags": ["alpha"],
+        },
+    }
+    client = _client(port)
+
+    response = client.get(
+        "/api/v1/knowledge/notes",
+        params={"owner_ref": "op-a", "attachment_type": "free_standing", "tags": "alpha"},
+    )
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert set(payload) == {"notes", "pagination", "meta"}
+    assert [note["note_id"] for note in payload["notes"]] == ["note-include"]
+    assert payload["notes"][0]["excerpt"] == "The alpha note is included."
+    assert "body" not in payload["notes"][0]
+    assert payload["pagination"] == {
+        "page_size": 20,
+        "next_page_token": None,
+        "has_more": False,
+    }
+    assert payload["meta"]["surfaces"]["research_note_list"] == "ok"
+
+    invalid_ref = client.get("/api/v1/knowledge/notes", params={"attachment_ref": "ticket-1"})
+    assert invalid_ref.status_code == 400
+    assert invalid_ref.json()["detail"]["precondition_failed"] == "attachment_ref"
 
 
 def test_generic_artifact_write_aliases_are_replaced_with_typed_fail_closed_contracts() -> None:
