@@ -15190,137 +15190,8 @@ async def list_capital_pools(
     }
 
 
-@app.get("/api/v1/bindings")
-async def list_bindings(
-    persona_id: Optional[str] = None,
-    capital_pool_id: Optional[str] = None,
-    role: Optional[str] = None,
-    validity: Optional[str] = None,
-    authorization: Optional[str] = Header(default=None),
-):
-    """CP-03: Persona capital binding list."""
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-
-    bindings = read_store.list_bindings(
-        persona_id=persona_id,
-        capital_pool_id=capital_pool_id,
-        role=role,
-        validity=validity,
-    )
-    snapshot_at = utc_now()
-    return {
-        "data": bindings,
-        "meta": _read_surface_meta(
-            "persona_bindings",
-            "binding_list",
-            snapshot_at=snapshot_at,
-            total=len(bindings),
-        ),
-    }
 
 
-@app.post("/api/v1/bindings", status_code=201)
-async def create_binding(
-    payload: Dict[str, Any] = Body(...),
-    authorization: Optional[str] = Header(default=None),
-    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
-):
-    """Create a pending PersonaCapitalBinding through Capital owner authority."""
-    identity = _extract_identity(authorization)
-    _require_operator_role(identity)
-    _reject_body_idempotency_key(payload)
-    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
-    request_hash = _stable_json_hash(
-        {"route": "POST /api/v1/bindings", "payload": payload}
-    )
-    cached = _capital_bff_idempotency_check(
-        identity.operator_id, resolved_key, request_hash
-    )
-    if cached is not None:
-        return cached
-
-    persona_id = str(payload.get("persona_id") or "").strip()
-    capital_pool_id = str(payload.get("capital_pool_id") or "").strip()
-    if not persona_id or not capital_pool_id:
-        missing = "persona_id" if not persona_id else "capital_pool_id"
-        raise _bff_error(
-            422,
-            ErrorCode.VALIDATION_FAILED,
-            f"{missing} is required",
-            f"Persona capital binding requires a non-empty {missing}",
-            precondition_failed=missing,
-        )
-    binding_id = _stable_capital_resource_id(
-        "binding",
-        operator_id=identity.operator_id,
-        idempotency_key=resolved_key,
-        requested_id=payload.get("binding_id") or payload.get("id"),
-    )
-    role = str(payload.get("role") or "live_owner").strip()
-    allowed_scope = str(
-        payload.get("allowed_deployment_scope") or "live"
-    ).strip()
-    if "capital_sleeve_id" in payload:
-        capital_sleeve_id = (
-            str(payload.get("capital_sleeve_id") or "").strip() or None
-        )
-    elif "sleeve_id" in payload:
-        capital_sleeve_id = (
-            str(payload.get("sleeve_id") or "").strip() or None
-        )
-    elif role == "paper_owner" and allowed_scope == "paper":
-        capital_sleeve_id = None
-    else:
-        # Legacy live-binding callers omitted the sleeve and relied on a stable
-        # binding-scoped default. Paper authority must stay sleeve-less.
-        capital_sleeve_id = binding_id
-    metadata = {
-        **(payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {}),
-        "capital_sleeve_id": capital_sleeve_id,
-        "_pantheon_owner_create": {
-            "actor_id": identity.operator_id,
-            "idempotency_key": resolved_key,
-            "request_hash": request_hash,
-        },
-    }
-    owner_payload = {
-        "actor_id": identity.operator_id,
-        "actor_role": _capital_owner_role(identity),
-        "idempotency_key": resolved_key,
-        "request_hash": request_hash,
-        "binding_id": binding_id,
-        "persona_id": persona_id,
-        "capital_pool_id": capital_pool_id,
-        "capital_sleeve_id": capital_sleeve_id,
-        "role": role,
-        "allowed_deployment_scope": allowed_scope,
-        "mandate": payload.get("mandate"),
-        "budget": payload.get("budget"),
-        "effective_from": payload.get("effective_from"),
-        "effective_to": payload.get("effective_to"),
-        "created_by": identity.operator_id,
-        "metadata": metadata,
-    }
-    try:
-        result = create_capital_binding(owner_payload)
-    except Exception as exc:
-        _raise_capital_owner_error(exc, operation="create persona capital binding")
-        raise
-    result = {
-        **result,
-        "capital_sleeve_id": (
-            result.get("capital_sleeve_id")
-            or (result.get("metadata") or {}).get("capital_sleeve_id")
-            or capital_sleeve_id
-        ),
-        "status": result.get("status") or "pending",
-    }
-    _capital_bff_idempotency_store(
-        identity.operator_id, resolved_key, request_hash, result
-    )
-    return result
 
 
 @app.get("/api/v1/approval-decisions")
@@ -15548,61 +15419,8 @@ async def get_approval_decision_detail(
     }
 
 
-@app.get("/api/v1/runtime-bindings")
-async def list_runtime_bindings(
-    deployment_mode: Optional[str] = None,
-    version: Optional[str] = None,
-    authorization: Optional[str] = Header(default=None),
-):
-    """RT-01: Runtime binding list."""
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-
-    bindings = read_store.list_runtime_bindings(
-        deployment_mode=deployment_mode,
-        version=version,
-    )
-    snapshot_at = utc_now()
-    return {
-        "data": bindings,
-        "meta": _read_surface_meta(
-            "runtime_bindings",
-            "runtime_binding_list",
-            snapshot_at=snapshot_at,
-            total=len(bindings),
-        ),
-    }
 
 
-@app.get("/api/v1/runtimes/{runtime_id}/status")
-async def get_runtime_status(
-    runtime_id: str, authorization: Optional[str] = Header(default=None),
-):
-    """RT-03: Runtime status detail."""
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-
-    snapshot_at = utc_now()
-    runtime_surface = _dataset_surface_status("runtime_bindings", snapshot_at=snapshot_at)
-    runtime_binding = read_store.get_runtime_binding_by_runtime_id(runtime_id)
-    if not runtime_binding:
-        _raise_if_read_surface_unavailable(runtime_surface, label="Runtime")
-        raise _bff_error(
-            404,
-            ErrorCode.RESOURCE_NOT_FOUND,
-            "Runtime not found",
-            f"Runtime {runtime_id} does not exist",
-        )
-
-    return {
-        "data": runtime_binding,
-        "meta": _read_surface_meta(
-            "runtime_bindings",
-            "runtime_status",
-            snapshot_at=snapshot_at,
-            surface=runtime_surface,
-        ),
-    }
 
 
 # --------------------------------------------------------------------------- #
@@ -15642,259 +15460,12 @@ async def get_capital_pool(pool_id: str, authorization: Optional[str] = Header(d
     }
 
 
-@app.get("/api/v1/bindings/{binding_id}")
-async def get_binding(binding_id: str, authorization: Optional[str] = Header(default=None)):
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-
-    snapshot_at = utc_now()
-    binding_surface = _dataset_surface_status("persona_bindings", snapshot_at=snapshot_at)
-    binding = read_store.get_binding(binding_id)
-    if not binding:
-        _raise_if_read_surface_unavailable(binding_surface, label="Binding")
-        raise _bff_error(
-            404,
-            ErrorCode.RESOURCE_NOT_FOUND,
-            "Binding not found",
-            f"Binding {binding_id} does not exist",
-        )
-
-    persona = read_store.get_persona(binding.get("persona_id"))
-    payload = dict(binding)
-    if persona:
-        payload["persona"] = persona
-
-    return {
-        "data": payload,
-        "meta": _read_surface_meta(
-            "persona_bindings",
-            "binding_detail",
-            snapshot_at=snapshot_at,
-            surface=binding_surface,
-        ),
-    }
 
 
-@app.get("/api/v1/runtime-bindings/{binding_id}")
-async def get_runtime_binding(binding_id: str, authorization: Optional[str] = Header(default=None)):
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-
-    snapshot_at = utc_now()
-    runtime_binding_surface = _dataset_surface_status("runtime_bindings", snapshot_at=snapshot_at)
-    runtime_binding = read_store.get_runtime_binding(binding_id)
-    if not runtime_binding:
-        _raise_if_read_surface_unavailable(runtime_binding_surface, label="Runtime binding")
-        raise _bff_error(
-            404,
-            ErrorCode.RESOURCE_NOT_FOUND,
-            "Runtime binding not found",
-            f"Runtime binding {binding_id} does not exist",
-        )
-
-    plan = read_store.get_deployment_plan(runtime_binding.get("plan_id", ""))
-    payload = dict(runtime_binding)
-    if plan:
-        payload["deployment_plan"] = plan
-
-    return {
-        "data": payload,
-        "meta": _read_surface_meta(
-            "runtime_bindings",
-            "runtime_binding_detail",
-            snapshot_at=snapshot_at,
-            surface=runtime_binding_surface,
-        ),
-    }
 
 
-@app.get("/api/v1/runtimes/{runtime_id}/rollbacks")
-async def get_runtime_rollbacks(runtime_id: str, authorization: Optional[str] = Header(default=None)):
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-
-    rollbacks = read_store.get_rollbacks(runtime_id)
-    return {
-        "data": rollbacks,
-        "meta": {
-            "staleness": _meta_staleness(),
-        },
-    }
 
 
-@app.get("/api/v1/operator/runtime-state")
-async def list_operator_runtime_state(
-    deployment_stage: Optional[str] = None,
-    status: Optional[str] = None,
-    sort_by: str = Query(default="last_updated_at"),
-    sort_order: str = Query(default="desc"),
-    page_token: Optional[str] = None,
-    page_size: int = Query(default=20, ge=1, le=200),
-    authorization: Optional[str] = Header(default=None),
-):
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-
-    if sort_by not in _RUNTIME_STATE_SORT_FIELDS:
-        raise _bff_error(
-            422,
-            ErrorCode.VALIDATION_FAILED,
-            "Invalid sort_by",
-            f"sort_by must be one of {sorted(_RUNTIME_STATE_SORT_FIELDS)}",
-        )
-    if sort_order not in _RUNTIME_STATE_SORT_ORDERS:
-        raise _bff_error(
-            422,
-            ErrorCode.VALIDATION_FAILED,
-            "Invalid sort_order",
-            f"sort_order must be one of {sorted(_RUNTIME_STATE_SORT_ORDERS)}",
-        )
-
-    requested_stages = {
-        value.lower() for value in (_split_csv_query(deployment_stage) or [])
-    }
-    requested_statuses = {
-        value.lower() for value in (_split_csv_query(status) or [])
-    }
-    snapshot_at = utc_now()
-
-    bindings = read_store.list_runtime_bindings()
-    if requested_stages:
-        bindings = [
-            binding
-            for binding in bindings
-            if str(
-                binding.get("deployment_stage") or binding.get("deployment_mode") or ""
-            ).lower() in requested_stages
-        ]
-    if requested_statuses:
-        bindings = [
-            binding
-            for binding in bindings
-            if str(binding.get("status") or "").lower() in requested_statuses
-        ]
-
-    runtimes = [
-        _project_operator_runtime_state_row(binding)
-        for binding in bindings
-    ]
-    runtimes = _sort_runtime_state_rows(
-        runtimes,
-        sort_by=sort_by,
-        sort_order=sort_order,
-    )
-
-    runtime_roster_surface = _dataset_surface_status(
-        "runtime_bindings",
-        snapshot_at=snapshot_at,
-    )
-    telemetry_surface = _dataset_surface_status(
-        "telemetry_summaries",
-        snapshot_at=snapshot_at,
-    )
-    if runtimes and any(row.get("telemetry_summary") is None for row in runtimes):
-        if telemetry_surface.get("status") == "ok":
-            telemetry_surface["status"] = "degraded"
-        telemetry_surface.setdefault(
-            "message",
-            "Telemetry summary unavailable for one or more runtimes on the runtime-state board.",
-        )
-        telemetry_surface.setdefault(
-            "staleness",
-            {"served_from": "unverifiable", "last_known_at": snapshot_at},
-        )
-
-    monitoring_surface = _dataset_surface_status(
-        "paper_runtime_monitoring_sessions",
-        snapshot_at=snapshot_at,
-    )
-    paper_runtime_rows = [
-        row for row in runtimes
-        if str(row.get("deployment_stage") or "").lower() == "paper"
-    ]
-    if paper_runtime_rows and any(
-        row.get("paper_runtime_monitoring") is None
-        for row in paper_runtime_rows
-    ):
-        if monitoring_surface.get("status") == "ok":
-            monitoring_surface["status"] = "degraded"
-        monitoring_surface.setdefault(
-            "message",
-            "Paper runtime monitoring session evidence is unavailable for one or more paper runtimes.",
-        )
-        monitoring_surface.setdefault(
-            "staleness",
-            {"served_from": "unverifiable", "last_known_at": snapshot_at},
-        )
-
-    rollback_history_surface = _dataset_surface_status(
-        "rollbacks",
-        snapshot_at=snapshot_at,
-    )
-    support_surfaces = {
-        "runtime_roster": runtime_roster_surface,
-        "telemetry_summary": telemetry_surface,
-        "paper_runtime_monitoring": monitoring_surface,
-        "rollback_history": rollback_history_surface,
-    }
-    degraded_support_surfaces = _runtime_state_degraded_support_surfaces(support_surfaces)
-
-    runtime_state_surface = _composed_surface_status(
-        snapshot_at=snapshot_at,
-        available=runtime_roster_surface.get("status") != "unavailable",
-        missing_message="Runtime roster unavailable for the operator runtime-state board.",
-    )
-    if runtime_roster_surface.get("status") == "degraded":
-        runtime_state_surface["status"] = "degraded"
-    elif runtime_roster_surface.get("status") == "unavailable":
-        runtime_state_surface["status"] = "unavailable"
-    elif any(
-        surface.get("status") != "ok"
-        for surface in (telemetry_surface, monitoring_surface, rollback_history_surface)
-    ):
-        runtime_state_surface["status"] = "degraded"
-        runtime_state_surface.setdefault(
-            "message",
-            "Runtime-state board is available, but one or more supporting surfaces are degraded or unavailable.",
-        )
-        runtime_state_surface.setdefault(
-            "staleness",
-            {"served_from": "unverifiable", "last_known_at": snapshot_at},
-        )
-    runtime_state_surface["support_surface_status"] = {
-        key: surface.get("status") for key, surface in support_surfaces.items()
-    }
-    if degraded_support_surfaces:
-        runtime_state_surface["degraded_support_surfaces"] = degraded_support_surfaces
-
-    total = len(runtimes)
-    if runtime_state_surface.get("status") == "unavailable":
-        runtimes = []
-        next_page_token = None
-    else:
-        runtimes, next_page_token = _page_slice(runtimes, page_token, page_size)
-
-    meta = _snapshot_meta(snapshot_at)
-    meta["total"] = total
-    meta["sort"] = {
-        "sort_by": sort_by,
-        "sort_order": sort_order,
-    }
-    meta["surfaces"] = {
-        "runtime_state": runtime_state_surface,
-        "runtime_roster": runtime_roster_surface,
-        "telemetry_summary": telemetry_surface,
-        "paper_runtime_monitoring": monitoring_surface,
-        "rollback_history": rollback_history_surface,
-    }
-
-    return {
-        "runtimes": runtimes,
-        "page_info": {
-            "next_page_token": next_page_token,
-        },
-        "meta": meta,
-    }
 
 
 _SHELL_SUMMARY_COUNT_CACHE: Dict[str, Any] = {}
@@ -16326,26 +15897,6 @@ async def bff_management_sentinel_pulse(
     )
 
 
-@app.get("/api/v1/operator/paper-live-drift/{runtime_id}")
-async def get_operator_paper_live_drift(
-    runtime_id: str,
-    authorization: Optional[str] = Header(default=None),
-):
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-
-    runtime_binding = read_store.get_runtime_binding_by_runtime_id(runtime_id)
-    report = read_store.get_paper_live_drift_report(runtime_id)
-    if runtime_binding is None and report is None:
-        raise _bff_error(
-            404,
-            ErrorCode.RESOURCE_NOT_FOUND,
-            "Runtime drift view not found",
-            f"Runtime {runtime_id} does not exist",
-        )
-
-    snapshot_at = utc_now()
-    return _build_operator_paper_live_drift_payload(runtime_id, snapshot_at)
 
 
 @app.get("/api/v1/operator/health-status")
@@ -41962,26 +41513,6 @@ async def bff_get_ooda_packet(
     }
 
 
-@app.get("/bff/runtimes/{runtime_id}/ooda")
-async def bff_list_runtime_ooda_packets(
-    runtime_id: str,
-    page_token: Optional[str] = None,
-    page_size: int = Query(default=20, ge=1, le=200),
-    authorization: Optional[str] = Header(default=None),
-):
-    """BFF: list OODA packets linked to a runtime or RuntimeBinding."""
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-    _require_ooda_packet_routes_enabled()
-    clean_id = runtime_id.strip()
-    packets = read_store.list_ooda_packets_for_runtime(clean_id)
-    return _ooda_packet_list_payload(
-        packets,
-        surface_key="runtime_ooda_packets",
-        page_token=page_token,
-        page_size=page_size,
-        related={"type": "Runtime", "id": clean_id},
-    )
 
 
 @app.get("/bff/evolution-programs/{program_id}/ooda")
@@ -52143,21 +51674,6 @@ async def stream_bff_events(
     )
 
 
-@app.get("/api/v1/runtime/{runtime_id}/events/stream")
-async def stream_runtime_events(
-    runtime_id: str,
-    last_event_id: Optional[str] = Query(default=None, alias="last_event_id"),
-    authorization: Optional[str] = Header(default=None),
-):
-    """RT-SSE: Server-Sent Events stream for runtime state changes.
-
-    Supports reconnection via ``?last_event_id=`` to replay missed events.
-    BFF_API_CONTRACT.md §11.2
-    """
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-
-    return _handle_sse_stream("runtime", _runtime_events, _runtime_subscribers, last_event_id)
 
 
 # IN-SSE: "/api/v1/incidents/stream" is defined earlier (just above the
@@ -53815,233 +53331,12 @@ async def bff_approval_evidence(
 
 # -- Runtimes ----------------------------------------------------------------
 
-@app.post("/bff/runtimes", status_code=201)
-async def bff_create_runtime(
-    payload: Dict[str, Any] = Body(...),
-    authorization: Optional[str] = Header(default=None),
-    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
-):
-    """BFF: create a runtime binding in stopped state."""
-    identity = _extract_identity(authorization)
-    _require_operator_role(identity)
-    _reject_body_idempotency_key(payload)
-    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
-    request_hash = _stable_json_hash({"route": "POST /bff/runtimes", "payload": payload})
-    dry_run = _request_dry_run_requested()
-    if not dry_run:
-        existing = _GOV_BFF_IDEMPOTENCY.get(resolved_key)
-        if existing is not None:
-            if existing.get("request_hash") != request_hash:
-                raise _bff_error(
-                    409,
-                    ErrorCode.IDEMPOTENCY_CONFLICT,
-                    "Idempotency key already used with a different payload",
-                    f"Key {resolved_key!r} is bound to a different request hash",
-                    precondition_failed="idempotency_conflict",
-                    suggestion="Use a new Idempotency-Key or resubmit the original payload unchanged",
-                )
-            return existing["result"]
-
-    fields = {
-        field: _runtime_create_required_string(payload, field)
-        for field in _RUNTIME_CREATE_REQUIRED_FIELDS
-    }
-    runtime_kind = str(payload.get("runtime_kind") or "").strip().lower()
-    if runtime_kind not in _VALID_RUNTIME_KINDS:
-        raise _bff_error(
-            422,
-            ErrorCode.VALIDATION_FAILED,
-            "runtime_kind is invalid",
-            "runtime_kind must be one of: paper, live.",
-            precondition_failed="runtime_kind",
-        )
-
-    _raise_if_runtime_binding_conflict(fields["binding_id"])
-
-    snapshot_at = utc_now()
-    client_runtime_id = str(payload.get("runtime_id") or payload.get("id") or "").strip()
-    runtime_id = client_runtime_id or f"runtime-{snapshot_at[:10].replace('-', '')}-{uuid.uuid4().hex[:8]}"
-    record = {
-        "id": runtime_id,
-        "runtime_id": runtime_id,
-        "name": fields["name"],
-        "state": "stopped",
-        "status": "stopped",
-        "persona_id": fields["persona_id"],
-        "binding_id": fields["binding_id"],
-        "deployment_plan_id": fields["deployment_plan_id"],
-        "runtime_kind": runtime_kind,
-        "created_at": snapshot_at,
-    }
-    if not dry_run:
-        record = read_store.create_runtime_binding(
-            runtime_id=runtime_id,
-            name=fields["name"],
-            persona_id=fields["persona_id"],
-            binding_id=fields["binding_id"],
-            deployment_plan_id=fields["deployment_plan_id"],
-            runtime_kind=runtime_kind,
-            actor_id=identity.operator_id,
-            created_at=snapshot_at,
-            params=payload.get("params") if isinstance(payload.get("params"), dict) else {},
-        )
-    data = _project_runtime_create_response(record)
-    surface = _dataset_surface_status("runtime_bindings", snapshot_at=snapshot_at)
-    meta = _snapshot_meta(snapshot_at)
-    meta["surfaces"] = {"runtimes": surface}
-    meta["evidenceKind"] = "runtime.create"
-    meta["evidence_kind"] = "runtime.create"
-    if dry_run:
-        return _dry_run_success_response(
-            data,
-            snapshot_at=snapshot_at,
-            idempotency_key=resolved_key,
-            evidence_kind="runtime.create",
-            extra_meta={"surfaces": {"runtimes": surface}},
-        )
-    event_payload = {
-        "runtime_id": data["id"],
-        "binding_id": data["binding_id"],
-        "persona_id": data["persona_id"],
-        "deployment_plan_id": data["deployment_plan_id"],
-        "runtime_kind": data["runtime_kind"],
-        "state": data["state"],
-        "created_at": data["created_at"],
-    }
-    _publish_event(
-        _sse_buffers["runtime"],
-        _sse_subscribers["runtime"],
-        "runtime.created",
-        event_payload,
-    )
-    _publish_event(
-        _sse_buffers["runtime"],
-        _sse_subscribers["runtime"],
-        "management.runtime-status",
-        event_payload,
-    )
-
-    result = {"data": data, "meta": meta}
-    _GOV_BFF_IDEMPOTENCY[resolved_key] = {"request_hash": request_hash, "result": result}
-    return result
 
 
-@app.get("/bff/runtimes")
-async def bff_list_runtimes(
-    status: Optional[str] = None,
-    deployment_stage: Optional[str] = None,
-    page_token: Optional[str] = None,
-    page_size: int = Query(default=20, ge=1, le=200),
-    authorization: Optional[str] = Header(default=None),
-):
-    """BFF: list runtime bindings (execute-plans compatibility surface)."""
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-
-    snapshot_at = utc_now()
-    bindings = read_store.list_runtime_bindings()
-    if status:
-        requested_statuses = {v.strip().lower() for v in status.split(",") if v.strip()}
-        bindings = [b for b in bindings if str(b.get("status") or "").lower() in requested_statuses]
-    if deployment_stage:
-        requested_stages = {v.strip().lower() for v in deployment_stage.split(",") if v.strip()}
-        bindings = [
-            b for b in bindings
-            if str(b.get("deployment_stage") or b.get("deployment_mode") or "").lower() in requested_stages
-        ]
-
-    surface = _dataset_surface_status("runtime_bindings", snapshot_at=snapshot_at)
-    if surface.get("status") == "unavailable":
-        bindings = []
-        next_page_token = None
-    else:
-        total = len(bindings)
-        bindings, next_page_token = _page_slice(bindings, page_token, page_size)
-
-    meta = _snapshot_meta(snapshot_at)
-    meta["total"] = 0 if surface.get("status") == "unavailable" else total
-    meta["surfaces"] = {"runtimes": surface}
-    staleness = _meta_staleness()
-    if staleness is not None:
-        meta["staleness"] = staleness
-
-    return {
-        "items": bindings,
-        "page_info": {"next_page_token": next_page_token},
-        "meta": meta,
-    }
 
 
-@app.get("/bff/runtimes/{runtime_id}")
-async def bff_get_runtime(
-    runtime_id: str,
-    authorization: Optional[str] = Header(default=None),
-):
-    """BFF: get a runtime binding detail by runtime_id."""
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
-
-    snapshot_at = utc_now()
-    surface = _dataset_surface_status("runtime_bindings", snapshot_at=snapshot_at)
-    clean_id = runtime_id.strip()
-    binding = read_store.get_runtime_binding_by_runtime_id(clean_id)
-    if not binding:
-        # fall back to binding_id lookup
-        binding = read_store.get_runtime_binding(clean_id)
-    if not binding:
-        _raise_if_read_surface_unavailable(surface, label="Runtime")
-        raise _bff_error(
-            404,
-            ErrorCode.RESOURCE_NOT_FOUND,
-            "Runtime not found",
-            f"Runtime {runtime_id} does not exist",
-        )
-
-    meta = _snapshot_meta(snapshot_at)
-    meta["surfaces"] = {"runtime": surface}
-    return {
-        "data": binding,
-        "meta": meta,
-    }
 
 
-@app.post("/bff/runtimes/{runtime_id}/actions/{action_id}", status_code=202)
-async def bff_runtime_action(
-    runtime_id: str,
-    action_id: str,
-    request: Request,
-    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
-    authorization: Optional[str] = Header(default=None),
-):
-    """BFF: submit an action against a runtime binding."""
-    return _deprecated_bff_path_response(
-        route="/bff/runtimes/{runtime_id}/actions/{action_id}",
-        replacement="/bff/actions/runtime/{runtime_id}/{action_id}",
-    )
-    identity = _extract_identity(authorization)
-    _require_operator_role(identity)
-    resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
-    payload: Dict[str, Any] = {}
-    try:
-        payload = await request.json()
-    except Exception:
-        pass
-    clean_id = runtime_id.strip()
-    binding = read_store.get_runtime_binding_by_runtime_id(clean_id)
-    if not binding:
-        binding = read_store.get_runtime_binding(clean_id)
-    if not binding:
-        raise _bff_error(
-            404,
-            ErrorCode.RESOURCE_NOT_FOUND,
-            "Runtime not found",
-            f"Runtime {runtime_id} does not exist",
-        )
-    return _gov_bff_action_command(
-        ObjectType.RUNTIME_BINDING, clean_id, action_id, resolved_key, identity, payload, CommandType.RUNTIME_ACTION
-    )
 
 
 # -- Command confirmations ---------------------------------------------------
@@ -59835,62 +59130,8 @@ async def bff_v5_control_room(
     }
 
 
-@app.get("/bff/v5/execution/persona-health")
-async def bff_v5_execution_persona_health(
-    authorization: Optional[str] = Header(default=None),
-):
-    """BFF BFF-B2-006: v5 execution persona-health list."""
-    _require_read_role(_extract_identity(authorization))
-    snapshot_at = utc_now()
-    persona_surface = _dataset_surface_status("personas", snapshot_at=snapshot_at)
-    league = read_store.list_persona_league(include_market_persona_defaults=True)
-    league_surface = _composed_dataset_surface_status(
-        "persona_league",
-        league,
-        snapshot_at=snapshot_at,
-        source="composed_market_persona_defaults",
-    )
-    health_items = _build_persona_health_items(
-        snapshot_at,
-        include_market_persona_defaults=True,
-    )
-    return {
-        "data": health_items,
-        "items": health_items,
-        "page_info": {"next_page_token": None, "total": len(health_items)},
-        "meta": {
-            "snapshot_at": snapshot_at,
-            "surfaces": {
-                "persona_health": persona_surface,
-                "persona_league": league_surface,
-            },
-        },
-    }
 
 
-@app.get("/bff/v5/execution/strategy-health")
-async def bff_v5_execution_strategy_health(
-    authorization: Optional[str] = Header(default=None),
-):
-    """BFF BFF-B2-006: v5 execution strategy-health list."""
-    _require_read_role(_extract_identity(authorization))
-    snapshot_at = utc_now()
-    strategy_surface = _dataset_surface_status("strategy_specs", snapshot_at=snapshot_at)
-    strategies = read_store.list_strategy_specs()
-    health_items = [
-        {
-            "id": s.get("strategy_id") or s.get("id"),
-            "strategy_id": s.get("strategy_id") or s.get("id"),
-            "name": s.get("name") or s.get("strategy_id"),
-            "health": "healthy" if str(s.get("status") or "") == "active" else "degraded",
-            "status": s.get("status"),
-        }
-        for s in strategies
-    ]
-    return {
-        "items": health_items,
-        "meta": {"snapshot_at": snapshot_at, "surfaces": {"strategy_health": strategy_surface}},
-    }
 
 
 @app.get("/bff/v5/interventions/{intervention_id}")
@@ -61242,6 +60483,16 @@ app.include_router(
         dataset_surface_status=_dataset_surface_status,
     )
 )
+
+# OPGAP-BE-RUNTIME-BINDING-V2-20260830: dedicated RuntimeBinding domain.
+from runtime.router import create_runtime_router as _create_runtime_router
+_runtime_router = _create_runtime_router(
+    get_read_store=lambda: read_store,
+    dependencies=globals(),
+)
+# Keep the moved endpoints flat on ``app.routes``. This preserves the route
+# inventory contract while the router retains domain ownership.
+app.routes.extend(_runtime_router.routes)
 
 # OPGAP-DEPLOY-RELIABILITY-V2-20260830: dedicated deployment domain router.
 from deployment.router import create_deployment_router as _create_deployment_router
