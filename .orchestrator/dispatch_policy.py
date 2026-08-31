@@ -1,7 +1,77 @@
 from __future__ import annotations
 
 import re
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Mapping
+
+from common import display_name_for, normalize_agent_id, utc_now
+from rewrite import dispatch_admission as rewrite_dispatch_admission
+from rewrite import task_machine as rewrite_task_machine
+from task_archive import TaskResolver
+
+
+def _supervisor_module():
+    orchestrator_dir = Path(__file__).resolve().parent
+    if str(orchestrator_dir) not in sys.path:
+        sys.path.insert(0, str(orchestrator_dir))
+    import supervisor
+
+    return supervisor
+
+
+def _admission_health_records(*args: Any, **kwargs: Any) -> Any:
+    return _supervisor_module()._admission_health_records(*args, **kwargs)
+
+
+def _parse_iso_utc(*args: Any, **kwargs: Any) -> Any:
+    return _supervisor_module().parse_runtime_timestamp(*args, **kwargs)
+
+
+def account_concurrency_limit(*args: Any, **kwargs: Any) -> Any:
+    return _supervisor_module().account_concurrency_limit(*args, **kwargs)
+
+
+def agent_account_id(*args: Any, **kwargs: Any) -> Any:
+    return _supervisor_module().agent_account_id(*args, **kwargs)
+
+
+def build_dispatch_event(*args: Any, **kwargs: Any) -> Any:
+    return _supervisor_module().build_dispatch_event(*args, **kwargs)
+
+
+def delivery_lane_for_agent(*args: Any, **kwargs: Any) -> Any:
+    return _supervisor_module().delivery_lane_for_agent(*args, **kwargs)
+
+
+def dependencies_satisfied(*args: Any, **kwargs: Any) -> Any:
+    return _supervisor_module().dependencies_satisfied(*args, **kwargs)
+
+
+def dispatch_loop_agent_ids(*args: Any, **kwargs: Any) -> Any:
+    return _supervisor_module().dispatch_loop_agent_ids(*args, **kwargs)
+
+
+def ready_dispatch_max_concurrent_workers(*args: Any, **kwargs: Any) -> Any:
+    return _supervisor_module().ready_dispatch_max_concurrent_workers(*args, **kwargs)
+
+
+def review_decision_intent_replay_eligible(*args: Any, **kwargs: Any) -> Any:
+    return _supervisor_module().review_decision_intent_replay_eligible(*args, **kwargs)
+
+
+def runtime_delivery_health(*args: Any, **kwargs: Any) -> Any:
+    return _supervisor_module().runtime_delivery_health(*args, **kwargs)
+
+
+def task_review_requeue_intent(*args: Any, **kwargs: Any) -> Any:
+    return _supervisor_module().task_review_requeue_intent(*args, **kwargs)
+
+
+def task_review_requeue_record(*args: Any, **kwargs: Any) -> Any:
+    return _supervisor_module().task_review_requeue_record(*args, **kwargs)
+
 
 REASON_REVIEW_READY = "review_ready_dispatch"
 REASON_OWNED_FINALIZE = "owned_finalize_dispatch"
@@ -233,3 +303,326 @@ def ready_dispatch_settings(config: dict[str, Any]) -> dict[str, Any]:
         settings.get("execution_resource_limits")
     )
     return settings
+
+
+def build_delivery_admission_snapshot(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    *,
+    active_task_ids: set[str],
+    pending_task_ids: set[str],
+    agent_loads: Mapping[str, list[int]],
+    active_account_loads: Mapping[str, int],
+    pending_account_loads: Mapping[str, int],
+    active_resource_loads: Mapping[str, int] | None = None,
+    pending_resource_loads: Mapping[str, int] | None = None,
+    resource_limits: Mapping[str, int] | None = None,
+    live_total: int | None = None,
+    provisional_reserved_endpoint_ids: set[str] | None = None,
+) -> rewrite_dispatch_admission.AdmissionSnapshot:
+    """Build the shared immutable input used by plan and queue delivery."""
+
+    settings = ready_dispatch_settings(config)
+    active_statuses = normalized_status_set(settings.get("active_worker_statuses"), [])
+    reserved_endpoints = {
+        normalize_agent_id(str(worker.get("agent_id") or ""))
+        for worker in (state.get("workers") or {}).values()
+        if isinstance(worker, Mapping)
+        and str(worker.get("status") or "") in active_statuses
+        and normalize_agent_id(str(worker.get("agent_id") or ""))
+    }
+    for event_id, record in ((state.get("queue") or {}).get("events", {}) or {}).items():
+        if not isinstance(record, Mapping) or str(record.get("status") or "") in {"completed", "failed"}:
+            continue
+        # Queue rows predate V2 endpoint binding.  Their logical target still
+        # reserves capacity, but only new V2 events reserve an exact slot.
+        endpoint = normalize_agent_id(str(record.get("delivery_endpoint_id") or ""))
+        if endpoint:
+            reserved_endpoints.add(endpoint)
+    # Planning uses an in-memory event sink and deliberately does not write
+    # queue rows. Preserve physical-slot choices already made in this plan so
+    # the next candidate cannot select the same exclusive endpoint again.
+    for endpoint_id in provisional_reserved_endpoint_ids or set():
+        endpoint = normalize_agent_id(str(endpoint_id or ""))
+        if endpoint:
+            reserved_endpoints.add(endpoint)
+
+    lanes: dict[str, int] = {}
+    for logical_id in dispatch_loop_agent_ids(config):
+        display = display_name_for(config, logical_id) or logical_id
+        lanes[logical_id] = len(agent_loads.get(display, []))
+
+    account_limits: dict[str, int] = {}
+    for logical_id in dispatch_loop_agent_ids(config):
+        account = agent_account_id(config, logical_id)
+        if account:
+            limit = account_concurrency_limit(config, logical_id, settings)
+            account_limits[account] = 0 if limit is None else limit
+    health = runtime_delivery_health(state)
+    active_count = sum(
+        1
+        for worker in (state.get("workers") or {}).values()
+        if isinstance(worker, Mapping) and str(worker.get("status") or "") in active_statuses
+    )
+    pending_count = max(0, len(pending_task_ids - active_task_ids))
+    active_res = active_resource_loads if isinstance(active_resource_loads, Mapping) else {}
+    pending_res = pending_resource_loads if isinstance(pending_resource_loads, Mapping) else {}
+    resource_reserved = {
+        key: int(active_res.get(key, 0)) + int(pending_res.get(key, 0))
+        for key in set(active_res) | set(pending_res)
+    }
+    raw_limits = resource_limits if resource_limits is not None else settings.get("execution_resource_limits")
+    limits = validate_execution_resource_limits(raw_limits)
+    return rewrite_dispatch_admission.AdmissionSnapshot(
+        now=datetime.now(timezone.utc),
+        endpoint_health=_admission_health_records(health, "endpoints"),
+        account_health=_admission_health_records(health, "accounts"),
+        global_reserved=max(active_count, int(live_total or 0)) + pending_count,
+        global_limit=ready_dispatch_max_concurrent_workers(config),
+        lane_reserved=lanes,
+        account_reserved={
+            key: int(active_account_loads.get(key, 0)) + int(pending_account_loads.get(key, 0))
+            for key in set(active_account_loads) | set(pending_account_loads)
+        },
+        account_limits=account_limits,
+        resource_reserved=resource_reserved,
+        resource_limits=limits,
+        reserved_endpoint_ids=frozenset(reserved_endpoints),
+        leased_task_ids=frozenset(active_task_ids),
+        pending_task_ids=frozenset(pending_task_ids),
+    )
+
+
+def evaluate_task_delivery_admission(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    task: Mapping[str, Any],
+    target_agent: str,
+    task_resolver: TaskResolver | dict[str, dict[str, Any]],
+    *,
+    active_task_ids: set[str],
+    pending_task_ids: set[str],
+    agent_loads: Mapping[str, list[int]],
+    active_account_loads: Mapping[str, int],
+    pending_account_loads: Mapping[str, int],
+    active_resource_loads: Mapping[str, int] | None = None,
+    pending_resource_loads: Mapping[str, int] | None = None,
+    resource_limits: Mapping[str, int] | None = None,
+    live_total: int | None = None,
+    requested_endpoint_id: str | None = None,
+    provisional_reserved_endpoint_ids: set[str] | None = None,
+) -> rewrite_dispatch_admission.DispatchDecision:
+    """Run the exact same task/health/capacity predicate in plan and delivery."""
+
+    settings = ready_dispatch_settings(config)
+    task_intent = rewrite_dispatch_admission.TaskIntent(
+        task_id=str(task.get("id") or ""),
+        status=str(task.get("status") or ""),
+        owner=str(task.get((config.get("schema") or {}).get("assignee_field", "owner")) or ""),
+        reviewer=str(task.get((config.get("schema") or {}).get("reviewer_field", "reviewer")) or ""),
+        dependencies_satisfied=dependencies_satisfied(
+            dict(task),
+            task_resolver,
+            normalized_status_set(settings.get("dependency_done_statuses"), ["done"]),
+        ),
+        human_ops_hold=bool(
+            str(task.get("waiting_for") or "").strip()
+            or (
+                task.get("review_decision_intent") not in (None, {}, [])
+                and not review_decision_intent_replay_eligible(
+                    config, task, target_agent
+                )
+            )
+        ),
+        review_binding_current=rewrite_task_machine.delivery_binding_is_current(task),
+        execution_resources=tuple(task_execution_resources(task)),
+    )
+    return rewrite_dispatch_admission.evaluate_dispatch_intent(
+        task_intent,
+        delivery_lane_for_agent(config, target_agent),
+        build_delivery_admission_snapshot(
+            config,
+            state,
+            active_task_ids=active_task_ids,
+            pending_task_ids=pending_task_ids,
+            agent_loads=agent_loads,
+            active_account_loads=active_account_loads,
+            pending_account_loads=pending_account_loads,
+            active_resource_loads=active_resource_loads,
+            pending_resource_loads=pending_resource_loads,
+            resource_limits=resource_limits,
+            live_total=live_total,
+            provisional_reserved_endpoint_ids=provisional_reserved_endpoint_ids,
+        ),
+        requested_endpoint_id=requested_endpoint_id,
+    )
+
+
+def dispatch_event_is_in_unchanged_cooldown(
+    seen_event_keys: dict[str, Any],
+    event_key: str,
+    *,
+    cooldown_seconds: float,
+    now: str | None = None,
+) -> bool:
+    """Suppress a recently served task signature until task truth changes."""
+
+    if cooldown_seconds <= 0:
+        return False
+    seen_at = _parse_iso_utc(str(seen_event_keys.get(event_key) or ""))
+    current_at = _parse_iso_utc(now or utc_now())
+    if seen_at is None or current_at is None:
+        return False
+    elapsed_seconds = (current_at - seen_at).total_seconds()
+    return 0 <= elapsed_seconds < cooldown_seconds
+
+
+def task_review_requeue_is_materialized(
+    task: Mapping[str, Any] | None,
+) -> bool:
+    record = task_review_requeue_record(task)
+    return bool(record is not None and record.get("status") == "materialized")
+
+
+def evaluate_dispatch_candidate(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    status: dict[str, Any],
+    task: dict[str, Any],
+    target_agent: str,
+    task_resolver: TaskResolver | dict[str, dict[str, Any]],
+    *,
+    settings: dict[str, Any],
+    active_task_ids: set[str],
+    pending_task_ids: set[str],
+    pending_event_keys: set[str],
+    agent_loads: dict[str, list[int]],
+    active_account_loads: dict[str, int],
+    pending_account_loads: dict[str, int],
+    active_resource_loads: dict[str, int] | None = None,
+    pending_resource_loads: dict[str, int] | None = None,
+    resource_limits: dict[str, int] | None = None,
+    seen_event_keys: dict[str, Any],
+    checked_at: str,
+    cooldown_seconds: float,
+    live_total: int | None = None,
+    activity_events: list[dict[str, Any]] | None = None,
+    provisional_reserved_endpoint_ids: set[str] | None = None,
+) -> dict[str, Any]:
+    """Pure candidate decision shared by planning and late delivery.
+
+    Runtime ``delivery_health`` is the sole health authority and the pure
+    admission evaluator receives every relevant fact as an immutable snapshot.
+    """
+
+    task_id = str(task.get("id") or "").strip()
+    agent_id = normalize_agent_id(target_agent)
+
+    def reject(gate: str, reason: str) -> dict[str, Any]:
+        return {
+            "eligible": False,
+            "task_id": task_id,
+            "target_agent": target_agent,
+            "agent_id": agent_id,
+            "first_blocking_gate": gate,
+            "block_reason": reason,
+        }
+
+    if task_review_requeue_is_materialized(task):
+        # The canonical acknowledgement is the durable planner offset. The
+        # already-reserved queue row is late-revalidated by the lower-level
+        # admission predicate, but planning must never append another row.
+        return reject(
+            "review_requeue_already_materialized",
+            "The canonical review-requeue intent was already materialized",
+        )
+
+    admission = evaluate_task_delivery_admission(
+        config,
+        state,
+        task,
+        target_agent,
+        task_resolver,
+        active_task_ids=active_task_ids,
+        pending_task_ids=pending_task_ids,
+        agent_loads=agent_loads,
+        active_account_loads=active_account_loads,
+        pending_account_loads=pending_account_loads,
+        active_resource_loads=active_resource_loads,
+        pending_resource_loads=pending_resource_loads,
+        resource_limits=resource_limits,
+        live_total=live_total,
+        provisional_reserved_endpoint_ids=provisional_reserved_endpoint_ids,
+    )
+    if not admission.eligible:
+        reason_code = admission.reason.value if admission.reason is not None else "task_not_dispatchable"
+        refresh_targets = [
+            {"scope": target.scope.value, "id": target.identifier}
+            for target in admission.health_refresh_targets
+        ]
+        return {
+            **reject(reason_code, reason_code.replace("_", " ")),
+            "health_refresh_targets": refresh_targets,
+        }
+    reason_map = {
+        rewrite_task_machine.DispatchReason.REVIEW_READY: REASON_REVIEW_READY,
+        rewrite_task_machine.DispatchReason.OWNED_FINALIZE: REASON_OWNED_FINALIZE,
+        rewrite_task_machine.DispatchReason.OWNED_IN_PROGRESS: REASON_OWNED_IN_PROGRESS,
+        rewrite_task_machine.DispatchReason.OWNED_READY: REASON_OWNED_READY,
+    }
+    reason = reason_map[admission.task_reason]
+    priority = admission.task_reason.value
+    event = build_dispatch_event(
+        task,
+        target_agent,
+        reason,
+        task_resolver,
+        activity_events=activity_events,
+        config=config,
+    )
+    event["delivery_endpoint_id"] = admission.endpoint_id
+    event["provider"] = admission.provider_id
+    if event["key"] in pending_event_keys:
+        return reject("duplicate_event", "The exact delivery intent already exists")
+
+    if (
+        task_review_requeue_intent(task) is not None
+        and event["key"] in seen_event_keys
+    ):
+        # Reopen is a canonical transactional-outbox row, not an ordinary
+        # unchanged-task poll.  Queue append and this consumer offset share
+        # one runtime transaction, so a crash/restart must never materialize
+        # the same reopen intent twice even when the general cooldown is zero.
+        return reject(
+            "review_requeue_already_materialized",
+            "The canonical review-requeue intent was already materialized",
+        )
+
+    # A terminal (completed/failed) queue record with this exact key only
+    # proves a delivery attempt was made, not that the reviewer recorded a
+    # verdict: approve/reopen necessarily change task status and therefore
+    # the signature, so a genuinely-resolved binding can never recompute the
+    # same key again. Permanently rejecting on any past record (regardless
+    # of outcome) strands a review binding forever whenever the one attempt
+    # exits without acting (crash, timeout, silent no-op). In-flight
+    # duplicates are already covered by the pending_event_keys check above,
+    # so retry for a still-unresolved binding falls through to the same
+    # unchanged-cooldown gate every other dispatch reason uses.
+    if dispatch_event_is_in_unchanged_cooldown(
+        seen_event_keys,
+        event["key"],
+        cooldown_seconds=cooldown_seconds,
+        now=checked_at,
+    ):
+        return reject("unchanged_cooldown", "The exact task generation is cooling down")
+
+    return {
+        "eligible": True,
+        "task_id": task_id,
+        "target_agent": target_agent,
+        "agent_id": agent_id,
+        "reason": reason,
+        "priority": priority,
+        "event": event,
+        "delivery_endpoint_id": admission.endpoint_id,
+    }
