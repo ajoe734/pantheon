@@ -1,0 +1,91 @@
+{
+  "schema_version": "pantheon.review-evidence.v1",
+  "task_id": "OPGAP-BE-PERSONA-RECONCILIATION-MUTATION-PORT-20260830",
+  "title": "Remove Persona reconciliation mutations from ReadSurfacePorts",
+  "program_id": "PANTHEON-FULL-OPERATION-GAP-CLOSURE-20260830",
+  "design_unit": "OPGAP-BE-PERSONA-RECONCILIATION-MUTATION-PORT-20260830",
+  "recorded_at": "2026-08-31T00:00:00Z",
+  "owner": "Codex2",
+  "reviewer": "Codex",
+  "target_repo": "pantheon",
+  "task_class": "functional",
+  "summary_zh": "將 Persona provisioning reconciliation 的所有寫入從 ReadSurfacePorts 移至明確的 Persona write-owner command port；保留 terminal ledger、補償、cron cleanup 與 BFF overlay 行為。",
+  "artifacts": {
+    "canonical_task_artifacts": [
+      "services/control-plane/bff/main.py",
+      "services/control-plane/bff/ports/persona_capital_runtime.py",
+      "services/control-plane/bff/personas/reconciliation.py",
+      "services/control-plane/bff/tests/test_persona_provisioning_read_surface_mutation.py",
+      "docs/deployment/evidence/full-operation-gap/OPGAP-BE-PERSONA-RECONCILIATION-MUTATION-PORT-20260830/evidence.json"
+    ],
+    "implementation_paths": [
+      "services/control-plane/bff/main.py",
+      "services/control-plane/bff/ports/persona_capital_runtime.py",
+      "services/control-plane/bff/personas/reconciliation.py",
+      "services/control-plane/bff/personas/service.py",
+      "services/control-plane/bff/test_persona_provisioning_readback.py",
+      "services/control-plane/bff/tests/test_persona_provisioning_read_surface_mutation.py"
+    ]
+  },
+  "scope": {
+    "owned": [
+      "Persona provisioning reconciliation mutation boundary",
+      "authoritative Persona write-owner delegation for terminal and in-flight reconciliation projections",
+      "regression coverage for the deployed ReadSurfacePorts update_persona warning",
+      "this immutable review evidence manifest"
+    ],
+    "not_changing": [
+      "Persona service lifecycle transition policy and governance authority",
+      "Deployment and Capital compensation ownership",
+      "first-evaluation cron owner semantics",
+      "ReadSurfacePorts read-only public API",
+      "execute-plans frontend"
+    ],
+    "composes_with": [
+      "PersonaRegistryHttpWritePort authoritative owner boundary",
+      "Persona provisioning durable ledger",
+      "OPGAP-DEVTOOL-TARGET-REPO-BRIDGE-V2-20260830",
+      "Codex independent exact-head review",
+      "post-merge Pantheon dev FE/BFF hosted acceptance"
+    ]
+  },
+  "contracts": {
+    "read_write_boundary": "ReadSurfacePorts exposes no create_persona or update_persona compatibility delegation. Both main.py and the extracted personas/service.py reconciliation paths persist only through PersonaProvisioningReconciliationMutationPort backed by the authoritative Persona write owner.",
+    "terminal_durability": "paper_running and provisioning_failed reconciliation projections carry their state and metadata to the write owner, while the durable provisioning ledger remains the terminal decision source.",
+    "preserved_behaviour": "The change leaves lifecycle policy, compensation, required cron cleanup, authoritative runtime readback, and BFF overlay updates in their existing owners and execution order.",
+    "failure_signature": "The deployed warning being repaired is: ReadSurfacePorts object has no attribute update_persona. The new regression invokes reconciliation against a real read-only ReadSurfacePorts instance and asserts the signature is absent."
+  },
+  "verification": {
+    "commands": [
+      "python3 scripts/dev/provision_python_distribution.py",
+      ".venv-pantheon/bin/python -m pytest -q services/control-plane/bff/tests/test_persona_provisioning_read_surface_mutation.py",
+      ".venv-pantheon/bin/python -m pytest -q services/control-plane/bff/test_persona_provisioning_readback.py",
+      ".venv-pantheon/bin/python -m pytest -q services/control-plane/bff/tests/test_persona_router.py",
+      "python3 -m py_compile services/control-plane/bff/main.py services/control-plane/bff/ports/persona_capital_runtime.py services/control-plane/bff/personas/reconciliation.py services/control-plane/bff/personas/service.py"
+    ],
+    "result": "PASS_WITH_UNRELATED_ROUTER_BASELINE_FAILURES",
+    "details": "The new read-surface regression suite passed 3/3. Existing authoritative provisioning readback coverage passed 52/52. The broader Persona router suite passed 39 tests and has 2 unrelated baseline failures in quarterly-ranking and promotion-review handlers: both raise NameError for _human_inbox_trusted_promotion_submission, a symbol absent from services/control-plane/bff/personas/service.py before this task anchor and outside this task's diff."
+  },
+  "hosted_acceptance": {
+    "status": "required_after_merge",
+    "required_pair": "Pantheon-owned dev FE and BFF exact deployed identities",
+    "checks": [
+      "BFF startup and reconciliation logs do not contain the ReadSurfacePorts update_persona warning",
+      "Persona detail and workshop proof expose the terminal provisioning projection after an authoritative readback",
+      "the accepted FE/BFF deployment manifest identifies the exact merged task head"
+    ]
+  },
+  "review_handoff": {
+    "status": "ready_for_independent_review",
+    "reviewer": "Codex",
+    "exact_pr_head_authority": "The governed ai-status handoff freezes REVIEW_PR, REVIEW_HEAD_SHA, this committed manifest path, and its blob identity. The canonical binding is authoritative because this manifest cannot self-reference the commit that contains it.",
+    "required_checks": [
+      "verify ReadSurfacePorts remains mutation-free and no reconciliation code delegates update_persona or create_persona to it",
+      "verify PersonaProvisioningReconciliationMutationPort is backed only by persona_write_owner",
+      "verify paper_running, provisioning_failed, compensation, cron cleanup, and overlay update paths remain fail-closed",
+      "run the listed focused regression and readback tests",
+      "confirm the post-merge hosted acceptance conditions are carried forward",
+      "approve the exact PR head frozen with this manifest path"
+    ]
+  }
+}

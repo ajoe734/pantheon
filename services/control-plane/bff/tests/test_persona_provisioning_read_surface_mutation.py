@@ -5,6 +5,7 @@ import inspect
 import os
 import sys
 from copy import deepcopy
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
@@ -135,6 +136,11 @@ def test_terminal_reconciliation_uses_authoritative_mutation_port_not_read_surfa
 
 def test_persona_reconciliation_code_has_no_read_surface_mutation_delegation() -> None:
     source = inspect.getsource(bff_main)
+    persona_service_source = (
+        Path(__file__).resolve().parents[1] / "personas" / "service.py"
+    ).read_text(encoding="utf-8")
 
     assert "read_store.update_persona" not in source
     assert "read_store.create_persona" not in source
+    assert "read_store.update_persona" not in persona_service_source
+    assert "read_store.create_persona" not in persona_service_source
