@@ -19,12 +19,16 @@ import uuid
 from collections.abc import Mapping
 from copy import deepcopy
 from datetime import datetime, timezone
-from typing import Any, Awaitable, Callable, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from fastapi import HTTPException
 
 try:
-    import loop_truth as default_loop_truth
+    from management_read_models import loop_truth as default_loop_truth
+except ImportError:
+    from ..management_read_models import loop_truth as default_loop_truth  # type: ignore[no-redef]
+
+try:
     from loop_inventory import (
         get_loop_inventory_entry,
         list_loop_inventory_entries,
@@ -33,7 +37,6 @@ try:
     )
     from trade_journey_projection_store import InvalidPageToken, ProjectionReadUnavailable
 except ImportError:
-    from .. import loop_truth as default_loop_truth  # type: ignore[no-redef]
     from ..loop_inventory import (  # type: ignore[no-redef]
         get_loop_inventory_entry,
         list_loop_inventory_entries,
