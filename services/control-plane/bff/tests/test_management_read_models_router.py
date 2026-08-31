@@ -1675,7 +1675,7 @@ def test_intervention_stream_parity_dual_source_and_window_filtering() -> None:
     assert intv_item["intervention_id"] == "intv-recent"
     assert intv_item["event_type"] == "intervention.approved"
     assert intv_item["priority"] == "high"
-    assert intv_item["target"]["id"] == "intv-recent"
+    assert intv_item["target"]["id"] == "persona-a"
     assert intv_item["links"]["human_inbox"] == "/bff/management/human-inbox/intervention:intv-recent"
 
     audit_item = next(i for i in items if i["event_source"] == "governance_audit_events")
@@ -1728,3 +1728,166 @@ def test_all_17_management_router_routes_mounted_and_accessible() -> None:
         assert resp.status_code == 200, f"Route {path} failed with status {resp.status_code}: {resp.text}"
         body = resp.json()
         assert "meta" in body, f"Route {path} missing meta envelope"
+
+
+def test_incident_timeline_semantic_parity_and_alias_normalization() -> None:
+    """Verify incident timeline normalizes alias fields, builds links, source_refs, and lineage_ref with exact predecessor parity."""
+    class ParityIncidentStore:
+        def list_incidents(self) -> List[Dict[str, Any]]:
+            return [
+                {
+                    "id": "inc-parity-1",
+                    "title": "Parity Incident Case",
+                    "status": "open",
+                    "severity": "critical",
+                    "runtime_binding_id": "rt-bind-123",
+                    "plan_id": "plan-xyz-789",
+                    "affected_pool_id": "pool-canary-01",
+                    "persona_capital_binding_id": "pc-bind-456",
+                    "artifact_id": "art-model-v2",
+                    "artifact_version": "2.4.1",
+                    "opened_at": "2026-08-30T12:00:00Z",
+                    "telemetry_event_ids": ["telem-evt-1", "telem-evt-2"],
+                    "correlation_id": "trace-corr-999",
+                }
+            ]
+
+    store = ParityIncidentStore()
+    app = FastAPI()
+    app.include_router(create_management_router(get_read_store=lambda: store))
+    client = TestClient(app)
+
+    resp = client.get("/bff/management/incident-timeline", headers={"Authorization": "Bearer op-1:operator"})
+    assert resp.status_code == 200
+    payload = resp.json()
+    data = payload["data"]
+    items = data["items"]
+    assert len(items) == 1
+    item = items[0]
+
+    # 1. Alias normalization & ID preservation
+    assert item["id"] == "inc-parity-1"
+    assert item["incident_id"] == "inc-parity-1"
+    assert item["timeline_id"] == "incident-timeline-inc-parity-1"
+    assert item["title"] == "Parity Incident Case"
+    assert item["status"] == "open"
+    assert item["severity"] == "critical"
+    assert item["severity_bucket"] == "high"
+    assert item["occurred_at"] == "2026-08-30T12:00:00Z"
+    assert item["deployment_plan_id"] == "plan-xyz-789"
+    assert item["capital_pool_id"] == "pool-canary-01"
+    assert item["persona_capital_binding_id"] == "pc-bind-456"
+    assert item["artifact_id"] == "art-model-v2"
+    assert item["telemetry_event_ids"] == ["telem-evt-1", "telem-evt-2"]
+
+    # 2. Lineage ref synthesized from artifact_id + artifact_version
+    assert item["lineage_ref"] == "art-model-v2@2.4.1"
+
+    # 3. Links built via _management_link
+    assert item["links"]["incident"] == "/bff/incidents/inc-parity-1"
+    assert item["links"]["deployment"] == "/bff/deployments/plan-xyz-789"
+    assert item["links"]["capital_pool"] == "/bff/capital-pools/pool-canary-01"
+
+    # 4. source_refs contains all 7 key arrays
+    source_refs = item["source_refs"]
+    assert source_refs["incident_ids"] == ["inc-parity-1"]
+    assert source_refs["deployment_plan_ids"] == ["plan-xyz-789"]
+    assert source_refs["capital_pool_ids"] == ["pool-canary-01"]
+    assert source_refs["persona_capital_binding_ids"] == ["pc-bind-456"]
+    assert source_refs["artifact_ids"] == ["art-model-v2"]
+    assert source_refs["telemetry_event_ids"] == ["telem-evt-1", "telem-evt-2"]
+
+    # 5. Sequence & summary basis
+    assert item["sequence"] == 1
+    assert item["timeline_sequence"] == 1
+    assert data["summary"]["basis"] == "incident_case_opened_at_chronology"
+
+
+def test_intervention_stream_semantic_parity_and_target_source_refs() -> None:
+    """Verify intervention stream preserves runtime/persona/strategy/incident source_refs and target metadata."""
+    now_dt = datetime.now(timezone.utc)
+    recent_time = (now_dt - timedelta(minutes=15)).isoformat().replace("+00:00", "Z")
+
+    class ParityInterventionStore:
+        def list_v5_interventions(self) -> List[Dict[str, Any]]:
+            return [
+                {
+                    "intervention_id": "intv-rich-1",
+                    "kind": "circuit_breaker",
+                    "status": "pending_approval",
+                    "priority": "high",
+                    "occurred_at": recent_time,
+                    "persona_id": "persona-gamma",
+                    "runtime_id": "rt-live-1",
+                    "strategy_id": "strat-momentum",
+                    "incident_id": "inc-breach-101",
+                    "target_type": "Strategy",
+                    "target_id": "strat-momentum",
+                    "description": "Triggered by volatility breaker",
+                }
+            ]
+
+        def list_governance_audit_events(self) -> List[Dict[str, Any]]:
+            return [
+                {
+                    "entry_id": "audit-rich-1",
+                    "target_type": "Intervention",
+                    "target_id": "intv-rich-1",
+                    "action_type": "intervention.approved",
+                    "outcome": "approved",
+                    "occurred_at": recent_time,
+                    "actor": "operator-alice",
+                    "runtime_id": "rt-live-1",
+                    "strategy_id": "strat-momentum",
+                    "incident_id": "inc-breach-101",
+                    "audit_context": {
+                        "intervention_id": "intv-rich-1",
+                        "persona_id": "persona-gamma",
+                        "reason": "Approved manual weight override",
+                    },
+                }
+            ]
+
+    store = ParityInterventionStore()
+    app = FastAPI()
+    app.include_router(create_management_router(get_read_store=lambda: store))
+    client = TestClient(app)
+
+    resp = client.get("/bff/management/intervention-stream?window_hours=24", headers={"Authorization": "Bearer op-1:operator"})
+    assert resp.status_code == 200
+    payload = resp.json()
+    items = payload["data"]["items"]
+    assert len(items) == 2
+
+    # 1. Check sequence numbers
+    assert [i["stream_sequence"] for i in items] == [1, 2]
+
+    # 2. Check v5 intervention item
+    v5_item = next(i for i in items if i["event_source"] == "v5_interventions")
+    assert v5_item["intervention_id"] == "intv-rich-1"
+    assert v5_item["persona_id"] == "persona-gamma"
+    assert v5_item["runtime_id"] == "rt-live-1"
+    assert v5_item["strategy_id"] == "strat-momentum"
+    assert v5_item["target"] == {"type": "Strategy", "id": "strat-momentum"}
+    v5_refs = v5_item["source_refs"]
+    assert v5_refs["source_dataset"] == "v5_interventions"
+    assert v5_refs["intervention_ids"] == ["intv-rich-1"]
+    assert "rt-live-1" in v5_refs["runtime_ids"]
+    assert "persona-gamma" in v5_refs["persona_ids"]
+    assert "strat-momentum" in v5_refs["strategy_ids"]
+    assert "inc-breach-101" in v5_refs["incident_ids"]
+
+    # 3. Check governance audit item
+    audit_item = next(i for i in items if i["event_source"] == "governance_audit_events")
+    assert audit_item["intervention_id"] == "intv-rich-1"
+    assert audit_item["persona_id"] == "persona-gamma"
+    assert audit_item["target"] == {"type": "Intervention", "id": "intv-rich-1"}
+    audit_refs = audit_item["source_refs"]
+    assert audit_refs["source_dataset"] == "governance_audit_events"
+    assert audit_refs["intervention_ids"] == ["intv-rich-1"]
+    assert "rt-live-1" in audit_refs["runtime_ids"]
+    assert "persona-gamma" in audit_refs["persona_ids"]
+    assert "strat-momentum" in audit_refs["strategy_ids"]
+    assert "inc-breach-101" in audit_refs["incident_ids"]
+    assert audit_item["links"]["source"] == "/bff/audit"
+    assert audit_item["links"]["intervention"] == "/bff/v5/interventions/intv-rich-1"
