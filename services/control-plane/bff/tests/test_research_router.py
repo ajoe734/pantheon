@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import sys
+from types import SimpleNamespace
 from typing import Any, Dict, List, Optional
 
 from fastapi import FastAPI, HTTPException
@@ -100,6 +101,7 @@ class _Port:
                 "allowedActions": {"canEdit": True},
             }
         }
+        self.notes: Dict[str, Dict[str, Any]] = {}
 
     def dataset_source(self, _dataset: str) -> str:
         return self.source
@@ -160,7 +162,11 @@ class _Port:
         return {"source": "service_client", "connectors": [{"connector_id": "source-1"}]}
 
     def get_source_change_proposals(self, **_filters: Any) -> Dict[str, Any]:
-        return {"items": [{"proposal_id": "proposal-1"}]}
+        return {"source": "service_client", "proposals": [{"proposal_id": "proposal-1"}]}
+
+    def create_research_note(self, note: Dict[str, Any]) -> Dict[str, Any]:
+        self.notes[note["note_id"]] = note
+        return note
 
     def get_source_ops_snapshot(self, **_filters: Any) -> Dict[str, Any]:
         return {"source": "service_client", "summary": {"healthy": True}}
@@ -179,7 +185,7 @@ def _bff_error(status_code, code, message, reason, **extra):
 def _router(port: _Port):
     return create_research_router(
         get_read_store=lambda: port,
-        extract_identity=lambda _authorization: object(),
+        extract_identity=lambda _authorization: SimpleNamespace(operator_id="op-test"),
         require_read_role=lambda _identity: None,
         require_operator_role=lambda _identity: None,
         bff_error=_bff_error,
@@ -233,6 +239,12 @@ def test_research_inventory_ticket_and_source_routes_use_injected_port() -> None
     assert connectors.status_code == 200
     assert connectors.json()["data"] == [{"connector_id": "source-1"}]
 
+    proposals = client.get("/api/v1/research/source-change-proposals")
+    assert proposals.status_code == 200
+    assert proposals.json()["data"] == [{"proposal_id": "proposal-1"}]
+    assert proposals.json()["meta"]["source"] == "service_client"
+    assert proposals.json()["meta"]["surfaces"]["source_change_proposals"] == "ok"
+
     source_ops = client.get("/api/v1/operator/source/ops")
     assert source_ops.status_code == 200
     assert source_ops.json()["data"]["source"] == "service_client"
@@ -241,6 +253,58 @@ def test_research_inventory_ticket_and_source_routes_use_injected_port() -> None
     # router fails closed instead of falling back to main.py's client globals.
     command = client.post("/api/v1/operator/search/index/materialize")
     assert command.status_code == 501
+
+
+def test_research_note_create_preserves_server_owned_validation_and_identity() -> None:
+    port = _Port()
+    client = _client(port)
+
+    owner_override = client.post(
+        "/api/v1/knowledge/notes",
+        json={
+            "body": "Caller tries to choose the note owner.",
+            "attachment_type": "free_standing",
+            "attachment_ref": None,
+            "owner_ref": {"owner_id": "attacker"},
+        },
+    )
+    assert owner_override.status_code == 400
+    assert owner_override.json()["detail"]["precondition_failed"] == "owner_ref"
+
+    missing_body = client.post(
+        "/api/v1/knowledge/notes",
+        json={"attachment_type": "free_standing", "attachment_ref": None},
+    )
+    assert missing_body.status_code == 400
+    assert missing_body.json()["detail"]["precondition_failed"] == "body"
+
+    missing_attachment = client.post(
+        "/api/v1/knowledge/notes",
+        json={"body": "No attachment taxonomy was provided."},
+    )
+    assert missing_attachment.status_code == 400
+    assert missing_attachment.json()["detail"]["precondition_failed"] == "attachment_type"
+
+    created = client.post(
+        "/api/v1/knowledge/notes",
+        json={
+            "title": "Server identity",
+            "body": "The BFF assigns this note's owner.",
+            "attachment_type": "free_standing",
+            "attachment_ref": None,
+            "tags": ["routing"],
+        },
+    )
+    assert created.status_code == 201, created.text
+    receipt = created.json()
+    assert set(receipt) == {"note_id", "created_at", "route_href"}
+    assert receipt["note_id"].startswith("note-")
+    assert receipt["route_href"] == f"/knowledge/notes/{receipt['note_id']}"
+    assert port.notes[receipt["note_id"]]["owner_ref"] == {
+        "owner_type": "operator",
+        "owner_id": "op-test",
+        "display_name": "Operator op-test",
+    }
 
 
 def test_generic_artifact_write_aliases_are_replaced_with_typed_fail_closed_contracts() -> None:

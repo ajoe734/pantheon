@@ -36,6 +36,8 @@ from __future__ import annotations
 import hashlib
 import inspect
 import json
+import re
+import uuid
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from fastapi import APIRouter, Body, Header, Query, Request
@@ -710,6 +712,144 @@ def create_research_router(
     _EXPERIMENT_STATUSES = {"queued", "running", "completed", "failed", "canceled"}
     _EXPERIMENT_EXECUTION_MODES = {"paper", "backtest", "simulation"}
     _EXPERIMENT_PRIORITIES = {"normal", "high"}
+    _KW02_ATTACHMENT_TYPES = {"research_ticket", "persona", "strategy_spec", "free_standing"}
+    _KW02_ATTACHMENT_ID_PATTERNS = {
+        "research_ticket": re.compile(r"^tkt-[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"),
+        "persona": re.compile(r"^persona-[A-Za-z0-9][A-Za-z0-9_-]*$"),
+        "strategy_spec": re.compile(r"^strat-[A-Za-z0-9-]+$"),
+    }
+    _KW02_MEMORY_ANCHOR_PATTERN = re.compile(
+        r"^mem-[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+    )
+
+    def _kw02_bad_request(message: str, reason: str, field: str) -> None:
+        raise bff_error(
+            400,
+            ErrorCode.VALIDATION_FAILED,
+            message,
+            reason,
+            precondition_failed=field,
+        )
+
+    def _kw02_optional_title(payload: Dict[str, Any]) -> Optional[str]:
+        title = payload.get("title")
+        if title in (None, ""):
+            return None
+        normalized = str(title).strip()
+        if not normalized:
+            return None
+        if len(normalized) > 256:
+            _kw02_bad_request(
+                "Invalid title",
+                "title must be 256 characters or fewer",
+                "title",
+            )
+        return normalized
+
+    def _kw02_required_body(payload: Dict[str, Any]) -> str:
+        body = payload.get("body")
+        if body is None or not str(body).strip():
+            _kw02_bad_request(
+                "Missing required field: body",
+                "body must be a non-empty string",
+                "body",
+            )
+        return str(body).strip()
+
+    def _kw02_validate_string_list(value: Any, field: str) -> List[str]:
+        if value in (None, ""):
+            return []
+        if not isinstance(value, list):
+            _kw02_bad_request(
+                f"Invalid {field}",
+                f"{field} must be an array of strings",
+                field,
+            )
+        normalized: List[str] = []
+        for item in value:
+            text = str(item or "").strip()
+            if not text:
+                _kw02_bad_request(
+                    f"Invalid {field} entry",
+                    f"{field} entries must be non-empty strings",
+                    field,
+                )
+            normalized.append(text)
+        return normalized
+
+    def _kw02_validate_attachment_type(value: Any) -> str:
+        normalized = str(value or "").strip().lower()
+        if normalized not in _KW02_ATTACHMENT_TYPES:
+            _kw02_bad_request(
+                "Invalid attachment_type",
+                f"attachment_type must be one of {sorted(_KW02_ATTACHMENT_TYPES)}",
+                "attachment_type",
+            )
+        return normalized
+
+    def _kw02_validate_attachment_ref(attachment_type: str, value: Any) -> Optional[str]:
+        if attachment_type == "free_standing":
+            if value not in (None, ""):
+                _kw02_bad_request(
+                    "Invalid attachment_ref",
+                    "attachment_ref must be null when attachment_type is free_standing",
+                    "attachment_ref",
+                )
+            return None
+
+        ref = str(value or "").strip()
+        if not ref:
+            _kw02_bad_request(
+                "Missing attachment_ref",
+                "attachment_ref is required unless attachment_type is free_standing",
+                "attachment_ref",
+            )
+        pattern = _KW02_ATTACHMENT_ID_PATTERNS.get(attachment_type)
+        if pattern is not None and not pattern.match(ref):
+            _kw02_bad_request(
+                "Invalid attachment_ref",
+                f"attachment_ref does not match the identity format for {attachment_type}",
+                "attachment_ref",
+            )
+        return ref
+
+    def _kw02_validate_memory_anchors(port: Any, anchor_ids: List[str]) -> List[str]:
+        validated: List[str] = []
+        for entry_id in anchor_ids:
+            if not _KW02_MEMORY_ANCHOR_PATTERN.match(entry_id):
+                _kw02_bad_request(
+                    "Invalid linked_memory_anchors entry",
+                    "linked_memory_anchors items must use the mem-{UUID} format",
+                    "linked_memory_anchors",
+                )
+            if _call_port(port, "get_institutional_memory_entry", entry_id) is None:
+                _kw02_bad_request(
+                    "Unknown linked_memory_anchors entry",
+                    f"linked_memory_anchors entry {entry_id} does not resolve to a known institutional memory entry",
+                    "linked_memory_anchors",
+                )
+            validated.append(entry_id)
+        return validated
+
+    def _kw02_attachment_exists(port: Any, attachment_type: str, attachment_ref: Optional[str]) -> bool:
+        if attachment_type == "free_standing":
+            return True
+        method = {
+            "research_ticket": "get_research_ticket",
+            "persona": "get_persona",
+            "strategy_spec": "get_strategy_spec",
+        }[attachment_type]
+        return _call_port(port, method, attachment_ref) is not None
+
+    def _kw02_operator_display_name(operator_id: str) -> str:
+        if operator_id == "op-001":
+            return "Alice Chen"
+        token = str(operator_id or "").strip()
+        if not token:
+            return "Operator"
+        if token.startswith("op-"):
+            return f"Operator {token}"
+        return " ".join(part.capitalize() for part in re.split(r"[-_]+", token) if part)
 
     def _validate_choice(value: Any, *, field: str, label: str, allowed: set[str]) -> str:
         normalized = str(value or "").strip().lower()
@@ -1015,8 +1155,14 @@ def create_research_router(
 
         if name == "source_change_proposals":
             result = _call_port(port, "get_source_change_proposals", status=_query(request, "status"), proposal_type=_query(request, "proposal_type"), source_kind=_query(request, "source_kind")) or {}
-            records = list(result.get("items") or result.get("data") or [])
-            return {"data": records, "meta": _meta(snapshot_at, "source_change_proposals", "source_change_proposals", bool(records))}
+            records = list(result.get("proposals") or [])
+            source = str(result.get("source") or "missing")
+            meta = snapshot_meta(snapshot_at)
+            meta["surfaces"] = {
+                "source_change_proposals": "ok" if source == "service_client" else "unavailable"
+            }
+            meta["source"] = source
+            return {"data": records, "meta": meta}
 
         if name == "launch_experiment":
             payload = _validate_experiment_launch(await _body(request))
@@ -1087,11 +1233,68 @@ def create_research_router(
         }
         if name == "create_note":
             body = await _body(request)
-            note = dict(body)
-            note.setdefault("note_id", body.get("note_id") or hashlib.sha256(json.dumps(body, sort_keys=True, default=str).encode()).hexdigest()[:16])
-            note.setdefault("created_at", snapshot_at)
+            if "owner_ref" in body:
+                _kw02_bad_request(
+                    "Invalid owner_ref",
+                    "owner_ref is server-assigned and must not be supplied by the caller",
+                    "owner_ref",
+                )
+            identity = _identity(request)
+            title = _kw02_optional_title(body)
+            note_body = _kw02_required_body(body)
+            attachment_type = _kw02_validate_attachment_type(body.get("attachment_type"))
+            attachment_ref = _kw02_validate_attachment_ref(attachment_type, body.get("attachment_ref"))
+            tags = _kw02_validate_string_list(body.get("tags"), "tags")
+            linked_evidence_refs = _kw02_validate_string_list(
+                body.get("linked_evidence_refs"), "linked_evidence_refs"
+            )
+            linked_memory_anchors = _kw02_validate_memory_anchors(
+                port,
+                _kw02_validate_string_list(
+                    body.get("linked_memory_anchors"), "linked_memory_anchors"
+                ),
+            )
+            if not _kw02_attachment_exists(port, attachment_type, attachment_ref):
+                raise bff_error(
+                    422,
+                    ErrorCode.PRECONDITION_FAILED,
+                    "Attachment target does not exist",
+                    f"{attachment_type} target {attachment_ref} could not be resolved",
+                    precondition_failed="attachment_ref",
+                )
+
+            operator_id = str(getattr(identity, "operator_id", "") or "")
+            note_id = f"note-{uuid.uuid4()}"
+            note = {
+                "note_id": note_id,
+                "title": title,
+                "body": note_body,
+                "attachment_type": attachment_type,
+                "attachment_ref": attachment_ref,
+                "owner_ref": {
+                    "owner_type": "operator",
+                    "owner_id": operator_id,
+                    "display_name": _kw02_operator_display_name(operator_id),
+                },
+                "tags": tags,
+                "linked_evidence_refs": linked_evidence_refs,
+                "linked_memory_anchors": linked_memory_anchors,
+                "created_at": snapshot_at,
+                "updated_at": snapshot_at,
+            }
             created = _call_port(port, "create_research_note", note)
-            return created or note
+            if created is None:
+                raise bff_error(
+                    503,
+                    ErrorCode.DEPENDENCY_UNAVAILABLE,
+                    "Research note store unavailable",
+                    "Research note creation store is unavailable.",
+                )
+            return {
+                "note_id": note_id,
+                "created_at": snapshot_at,
+                "route_href": f"/knowledge/notes/{note_id}",
+            }
         if name in knowledge_operations:
             method, dataset = knowledge_operations[name]
             kwargs: Dict[str, Any] = {}
