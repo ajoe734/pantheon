@@ -31,6 +31,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 import supervisor
 import runtime_state
 from adapters.base import DeliveryResult
+from rewrite import worker_workspace
 
 
 _OLD_ENV: dict[str, str] = {}
@@ -1015,7 +1016,7 @@ class PantheonWorkerTaskBriefHygieneTests(unittest.TestCase):
         request = self._request(task, agent_id=agent_id, reason=reason)
         with (
             mock.patch.object(
-                supervisor,
+                worker_workspace,
                 "_fetch_worker_base_ref",
                 return_value=(True, None),
             ),
@@ -1190,7 +1191,7 @@ class PantheonWorkerTaskBriefHygieneTests(unittest.TestCase):
             with (
                 mock.patch.object(supervisor, "write_activity_log"),
                 mock.patch.object(
-                    supervisor,
+                    worker_workspace,
                     "_scan_process_paths_in_root",
                     return_value=set(),
                 ),
@@ -1293,7 +1294,7 @@ class CrossRepositoryWorkerWorkspaceTests(unittest.TestCase):
 
             with (
                 mock.patch.object(
-                    supervisor, "_fetch_worker_base_ref", return_value=(True, None)
+                    worker_workspace, "_fetch_worker_base_ref", return_value=(True, None)
                 ) as fetch_base,
                 mock.patch.object(supervisor, "write_activity_log"),
             ):
@@ -1436,7 +1437,7 @@ class CrossRepositoryWorkerWorkspaceTests(unittest.TestCase):
             state: dict[str, object] = {"worker_worktrees": {"leases": {}}}
 
             with (
-                mock.patch.object(supervisor, "_fetch_worker_base_ref", return_value=(True, None)),
+                mock.patch.object(worker_workspace, "_fetch_worker_base_ref", return_value=(True, None)),
                 mock.patch.object(supervisor, "write_activity_log"),
                 mock.patch.object(supervisor, "load_status", return_value={"tasks": [task]}),
             ):
@@ -1529,7 +1530,7 @@ class CrossRepositoryWorkerWorkspaceTests(unittest.TestCase):
 
             with (
                 mock.patch.object(
-                    supervisor, "_fetch_worker_base_ref", return_value=(True, None)
+                    worker_workspace, "_fetch_worker_base_ref", return_value=(True, None)
                 ),
                 mock.patch.object(supervisor, "write_activity_log"),
             ):
