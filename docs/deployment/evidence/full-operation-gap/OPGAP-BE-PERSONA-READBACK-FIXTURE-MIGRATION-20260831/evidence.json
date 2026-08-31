@@ -4,7 +4,7 @@
   "title": "Persona readback fixture migration (existing port only)",
   "program_id": "PANTHEON-FULL-OPERATION-GAP-CLOSURE-20260830",
   "design_unit": "OPGAP-BE-PERSONA-READBACK-FIXTURE-MIGRATION-20260831",
-  "recorded_at": "2026-08-31T02:47:30Z",
+  "recorded_at": "2026-08-31T12:43:56Z",
   "owner": "Codex2",
   "reviewer": "Codex",
   "target_repo": "pantheon",
@@ -44,18 +44,19 @@
     "production_boundary": "No production file is changed by this task; the production port and composition remain owned by OPGAP-BE-PERSONA-RECONCILIATION-MUTATION-PORT-20260830."
   },
   "composition_verification": {
-    "port_delivery_head": "5661ab89704ec9a815302b7a5c3c61e2dab19c96",
-    "port_delivery_ref": "task/OPGAP-BE-PERSONA-RECONCILIATION-MUTATION-PORT-20260830",
-    "reason": "This task is correctly rooted at dev and owns no production change. The declared port is pending in the sibling delivery, so verification used an isolated checkout of that exact head plus this fixture-only diff.",
+    "port_delivery_merge_commit": "4e00a6adb016b318acddf227e3878bbef0253318",
+    "port_delivery_pr": 5483,
+    "port_delivery_ref": "origin/dev",
+    "reason": "The typed mutation-port delivery is merged into dev. This task branch was rebased onto that merge commit before the composed suite ran, while retaining its fixture-only scope.",
     "commands": [
       "PANTHEON_DEPENDENCY_PYTHON=/home/lupin/pantheon/.venv/bin/python3 python3 scripts/dev/provision_python_distribution.py --print-python",
       ".venv-pantheon/bin/python -m pytest -q services/control-plane/bff/test_persona_provisioning_readback.py services/control-plane/bff/tests/test_persona_provisioning_read_surface_mutation.py"
     ],
     "result": "PASS",
-    "details": "The composed delivery passed 55 tests: 52 legacy authoritative readback tests and 3 focused read-surface mutation-boundary tests. The task branch by itself intentionally does not provide the sibling production port."
+    "details": "The rebased composed delivery passed 55 tests in 27.89s: 52 legacy authoritative readback tests and 3 focused read-surface mutation-boundary tests. The suite emitted 10 pre-existing Python/FastAPI/jsonschema deprecation warnings."
   },
   "review_handoff": {
-    "status": "ready_for_independent_review_after_port_delivery_is_merged_and_task_branch_is_rebased",
+    "status": "ready_for_exact_head_review",
     "reviewer": "Codex",
     "exact_pr_head_authority": "The governed ai-status handoff freezes REVIEW_PR, REVIEW_HEAD_SHA, and this committed manifest at the final rebased task head.",
     "required_checks": [
@@ -63,7 +64,7 @@
       "verify the read fake has no update_persona method",
       "verify the fake authoritative owner is wrapped by PersonaProvisioningReconciliationMutationPort",
       "verify legacy readback writes and no-write assertions use mutation_port.updates",
-      "rerun the 55-test composed verification on the exact port-delivery and fixture heads",
+      "rerun the 55-test composed verification on the exact rebased PR head",
       "verify no production composition or ReadSurfacePorts mutation compatibility was added"
     ]
   }
