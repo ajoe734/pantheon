@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Reproducible Mutation-Negative Verification Suite for Catalog Invariants.
 
-Tests that validate_catalog.py fails closed (raises AssertionError) on 18 distinct
+Tests that validate_catalog.py fails closed (raises AssertionError) on 23 distinct
 intentional mutations corresponding to each validation phase:
 1. Phase 1: Corrupted AST digest in Node 0
 2. Phase 2: Missing edge-level consumer cutover mapping
@@ -21,6 +21,11 @@ intentional mutations corresponding to each validation phase:
 16. Phase 16: Post-bootstrap spec hash mismatch
 17. Phase 1: Mutated dynamic_validation_contract rule (2,271 vs 2,272 AST nodes)
 18. Phase 17: Corrupted execution replacement ledger row count (22 vs exact 23-row Batch B/C lineage)
+19. Phase 18: Missing post-freeze operational gap
+20. Phase 18: Missing governed Batch C V2 replacement
+21. Phase 18: Missing task-scoped evidence manifest binding
+22. Phase 18: Corrupted exact deployment release candidate identity
+23. Phase 18: Missing bounded Firebase write-proof/watchdog prerequisite
 """
 from __future__ import annotations
 
@@ -68,7 +73,7 @@ def run_mutation_test(name: str, mutate_fn, expected_phase: int) -> bool:
             os.remove(tmp_path)
 
 
-def run_ledger_mutation_test(name: str, mutate_fn) -> bool:
+def run_ledger_mutation_test(name: str, mutate_fn, expected_phase: int = 17) -> bool:
     with open(LEDGER_PATH, "r", encoding="utf-8") as f:
         ledger = json.load(f)
 
@@ -92,7 +97,7 @@ def run_ledger_mutation_test(name: str, mutate_fn) -> bool:
             print(f"FAILED (did not raise): {name}")
             return False
         except AssertionError as e:
-            print(f"PASSED (Phase 17 caught mutation): {name} -> {e}")
+            print(f"PASSED (Phase {expected_phase} caught mutation): {name} -> {e}")
             return True
         except Exception as e:
             print(f"PASSED (Exception caught): {name} -> {e}")
@@ -100,7 +105,7 @@ def run_ledger_mutation_test(name: str, mutate_fn) -> bool:
 
 
 def test_all_mutations() -> None:
-    print("Running 18 Mutation-Negative Checks across all Catalog Invariants...")
+    print("Running 23 Mutation-Negative Checks across all Catalog Invariants...")
 
     mutations = [
         (
@@ -203,17 +208,53 @@ def test_all_mutations() -> None:
         if run_mutation_test(name, mutate_fn, expected_phase):
             passed += 1
 
-    ledger_passed = run_ledger_mutation_test(
-        "18. Corrupt Execution Replacement Ledger Row Count (drop a Batch C row)",
-        lambda l: (_mut(l, lambda x: x["batch_c_direct_materializations"].pop())),
-    )
-    if ledger_passed:
-        passed += 1
-    total = len(mutations) + 1
+    ledger_mutations = [
+        (
+            "18. Corrupt Execution Replacement Ledger Row Count (drop a Batch C row)",
+            lambda l: (_mut(l, lambda x: x["batch_c_direct_materializations"].pop())),
+            17,
+        ),
+        (
+            "19. Remove Post-Freeze Operational Gap",
+            lambda l: (_mut(l, lambda x: x["post_freeze_gaps"].pop())),
+            18,
+        ),
+        (
+            "20. Remove Governed Batch C V2 Replacement",
+            lambda l: (_mut(l, lambda x: x["post_freeze_batch_c_replacements"].pop())),
+            18,
+        ),
+        (
+            "21. Remove Task-Scoped Evidence Manifest Binding",
+            lambda l: (_mut(l, lambda x: x.__setitem__("task_evidence_manifest", ""))),
+            18,
+        ),
+        (
+            "22. Corrupt Exact Deployment Release Candidate Identity",
+            lambda l: (
+                _mut(
+                    l,
+                    lambda x: x["deployment_reconciliation"]["integration_gate"].__setitem__(
+                        "release_candidate_id", "0" * 64
+                    ),
+                )
+            ),
+            18,
+        ),
+        (
+            "23. Remove Bounded Firebase Write-Proof and Watchdog Prerequisite",
+            lambda l: (_mut(l, lambda x: x["product_proof_prerequisites"].pop())),
+            18,
+        ),
+    ]
+    for name, mutate_fn, expected_phase in ledger_mutations:
+        if run_ledger_mutation_test(name, mutate_fn, expected_phase):
+            passed += 1
+    total = len(mutations) + len(ledger_mutations)
 
     print(f"\nResult: {passed}/{total} mutation-negative checks passed.")
-    assert passed == total == 18, f"Mutation test suite failure: {passed}/18 passed"
-    print("SUCCESS: 18/18 mutation-negative validation assertions passed!")
+    assert passed == total == 23, f"Mutation test suite failure: {passed}/23 passed"
+    print("SUCCESS: 23/23 mutation-negative validation assertions passed!")
 
 
 def _mut(obj, fn):

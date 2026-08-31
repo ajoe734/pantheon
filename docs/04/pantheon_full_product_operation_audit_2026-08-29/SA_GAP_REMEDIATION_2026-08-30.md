@@ -2,7 +2,7 @@
 
 ## 1. Executive Architectural Overview & North-Star Objectives
 
-The Pantheon platform is a multi-persona automated trading and research control plane. This System Architecture (SA) specification defines the structural transformation required to remediate all 20 identified product operation gaps (**OP-G01** through **OP-G20**) across the **Pantheon** backend/BFF and the **execute-plans** desktop frontend repositories.
+The Pantheon platform is a multi-persona automated trading and research control plane. This System Architecture (SA) specification preserves the structural transformation for the 20 frozen product operation gaps (**OP-G01** through **OP-G20**) and appends two post-freeze execution gaps (**OP-G21** and **OP-G22**) without mutating the immutable 30-task catalog.
 
 ### North-Star Objectives
 1. **Single Responsibility Composition Root**: Transform `services/control-plane/bff/main.py` from a 68,000-line monolithic module into a lightweight composition root containing zero inline route handlers, zero direct store instances, zero top-level side effects, and zero reverse dependencies.
@@ -11,6 +11,8 @@ The Pantheon platform is a multi-persona automated trading and research control 
 4. **Authoritative Production Command Dispatcher**: Retain `command_executor.py` as the sole production operator command dispatcher, eliminate its circular reverse import on `main.py`, and delete dead generic action adapters (`_execute_bff_action_adapter`).
 5. **Single-Stimulus Source Egress Contract**: Maintain `reconcile_only` mode as the fail-closed default for development environments; bind all promotion and live journeys to a single-stimulus receipt contract (`source_proof_receipt_id`) with zero second egress.
 6. **Strict Separation of Development Tooling vs. Product Runtime**: Maintain strict physical and logical decoupling between developer workflows (.orchestrator/, TaskStore, supervisor, signed local bridge) and production business runtime (BFF APIs, Agora research, desktop UI).
+7. **Read/Mutation Port Separation for Persona Reconciliation**: `ReadSurfacePorts` remains read-only. Persona provisioning reconciliation persists terminal transitions only through one typed mutation/command port backed by the authoritative Persona store.
+8. **Bounded OpenClaw Readiness and Side-Effect Safety**: Provider readiness partitions one bounded probe budget across eligible candidates, records sanitized degradation, and carries the selected healthy model into a single-attempt invoke. Source tasks do not mutate credentials, tokens, secrets, or provider priority.
 
 ---
 
@@ -88,7 +90,7 @@ To prevent dual write authority and unbacked projections, each domain context is
 | Domain Context | Subsystem / Owner Task | Write Authority | Mutation Mechanism | Primary Persistence / Event Store | Read Model Projection Owner | Durable Readback Guarantee |
 |---|---|---|---|---|---|---|
 | **Core & Auth** | `OPGAP-BE-BFF-CORE-20260830` | Auth Session Service | JWT Issuance, Token Revoke | In-Memory Token Cache / Redis | BFF Auth Router | Session ID & Token Hash |
-| **Persona Registry** | `OPGAP-BE-PERSONA-ROUTER-20260830` | Persona Domain Store | REST `POST/PUT /bff/personas` | Postgres `personas` table | Persona Read Router | Canonical Persona ID & Version |
+| **Persona Registry & Provisioning Reconciliation** | `OPGAP-BE-PERSONA-ROUTER-V2-20260830` + `OPGAP-BE-PERSONA-RECONCILIATION-MUTATION-PORT-20260830` | Persona Domain Store through typed Persona mutation port | REST `POST/PUT /bff/personas`; internal typed terminal-transition command | Postgres `personas` table / authoritative Persona store | Persona Read Router through mutation-free `ReadSurfacePorts` | Canonical Persona ID, version, and durable `provisioning` / `provisioning_failed` terminal state |
 | **Training & FinRL** | `OPGAP-BE-TRAINING-ROUTER-20260830` | Training Pipeline Engine | Async Run Trigger | Postgres `training_jobs` | Training Read Router | Run ID & Artifact SHA |
 | **Agora Research** | `OPGAP-BE-AGORA-ROUTER-20260830` | Agora Research Core | Suggestion Generation | Postgres `agora_suggestions` | Agora Decision Projection | Suggestion ID & Hash |
 | **Research Synthesis** | `OPGAP-BE-RESEARCH-ROUTER-20260830` | Research Synthesis Engine | Multi-Persona Synthesis | Postgres `research_analyses` | Research Read Router | Analysis ID & Dataset Ref |
@@ -106,6 +108,7 @@ To prevent dual write authority and unbacked projections, each domain context is
 | **Runtime Binding** | `OPGAP-BE-RUNTIME-BINDING-20260830` | Runtime Binding Engine | Deployment Plan Binding | Postgres `runtime_bindings` | Runtime Binding Router | Binding ID & Loader Hash |
 | **Deployments & Rollback** | `OPGAP-DEPLOY-RELIABILITY-20260830` | Deployment Engine | Canary / Rollback Trigger | Sealed Local Manifest / Disk | Deployment Read Router | Pair ID & Release Commit SHA |
 | **Source Ingestion** | `OPGAP-HOSTED-BACKEND-ACCEPTANCE-20260830` | Source Ingest Engine | Reconcile / Canary Run | Postgres `source_snapshots` | Source Read Router | `source_proof_receipt_id` |
+| **OpenClaw Provider Readiness** | `OPGAP-OPENCLAW-PROVIDER-READINESS-FALLBACK-20260830` | No credential write authority; adapter selects from configured eligible candidates | Bounded exact-sentinel probe followed by one single-attempt invoke | Process-local sanitized readiness state / configured OpenClaw routing | Auth readiness envelope | Active model, sanitized primary-unavailable reason, exact sentinel, and no duplicate side-effecting invoke |
 | **Frontend Desktop UI** | `OPGAP-FE-INTEGRATION-ASSEMBLY-20260830` | Strict Live BFF Client | REST / SSE Consumption | React Query Cache (Zero Mock) | Desktop UI Views | View Hydration from BFF Readback |
 
 ---
@@ -146,6 +149,8 @@ graph TD
 3. **ASGI Event Loop Deadlock Prevention (OP-G13)**: All ASGI test harnesses must execute asynchronously via `httpx.AsyncClient` with strict request timeouts (max 5.0s). Synchronous blocking calls in async route handlers are forbidden.
 4. **SSE Outbox Replay & Connection Resiliency (OP-G08, OP-G13)**: The Server-Sent Events (SSE) bus guarantees idempotent event replay using monotonically increasing sequence IDs. Client reconnections supply `Last-Event-ID` to replay missed events without state duplication.
 5. **Local Sealed Rollback Authority (OP-G16)**: Rollback operations read release manifests and pre-built container images from local sealed disk authority (`/var/pantheon/releases/`). Remote GitHub API availability is never in the critical path of emergency rollbacks.
+6. **Persona Port-Direction Invariant (OP-G21)**: Read ports expose projection reads only and cannot be widened with `update_persona` or compatibility delegation. Reconciliation depends on an injected mutation port whose implementation owns the authoritative transaction and same-ID/version readback.
+7. **OpenClaw Probe/Invoke Partition (OP-G22)**: Readiness may try multiple configured candidates within one partitioned time budget, but invoke is a single attempt against the already-probed active model (or explicit request). Ambiguous auth, timeout, cancellation, generic invocation, or post-execution failures never trigger an invoke retry.
 
 ---
 
@@ -236,4 +241,21 @@ This is a **development-tooling** architecture note, not a product architecture 
 
 The signed DevTaskPacket dispatcher (`.orchestrator/development_bridge/dev_bridge_dispatcher.py`) admits a packet only if every `target_repo` it names is present in the dispatcher's allowlist. The live supervisor did not derive that allowlist from its own `coordination.repositories` configuration; it required an operator-injected `PANTHEON_ASSISTANT_DEV_BRIDGE_ALLOWED_REPOS` environment override. Batch A (`pantheon`-only) and Batch B materialized before `execute-plans` was added to that override; Batch C's mixed-repository packet was rejected until the operator widened it. Because the resulting Batch B canonical task rows could not be amended in place (Section "Canonical task definitions cannot be amended in place" in [EXECUTION_REPLACEMENT_LEDGER_2026-08-30.json](./EXECUTION_REPLACEMENT_LEDGER_2026-08-30.json)), they were retired via `supersede` and re-created as one-to-one V2 replacements once the corrected allowlist and command-runtime identity bindings were in place.
 
-Target state for this boundary: the dispatcher derives its allowlist directly from the live supervisor's authoritative `coordination.repositories` registry on every drain, with zero reliance on an operator-supplied environment variable, while still fail-closed rejecting any repository absent from that registry. This is tracked by `OPGAP-DEVTOOL-BRIDGE-REPO-ALLOWLIST-V3-20260830` and is explicitly out of scope for the 20-GAP product remediation (`OP-G01`-`OP-G20`); it is dev-tooling debt in the assistant/operator dispatch plane, not the product BFF/control-plane architecture.
+Delivered target state: PR #5459 implemented derivation from the live supervisor's authoritative `coordination.repositories` registry. Because the V3 task's immutable artifact contract omitted its evidence manifest, V3 was superseded only after `OPGAP-DEVTOOL-BRIDGE-REPO-ALLOWLIST-V4-20260830` preserved the implementation and added review evidence; V4 merged in PR #5473 as `5b0d02196acfc9c3ef956ae4c47865601bc43da6`. Mixed-repository admission remains fail-closed unless the promoted command runtime contains that merge and the live registry names `execute-plans`. This is development-tooling truth, not product BFF authority.
+
+---
+
+## 9. Post-Freeze Architecture Addendum
+
+### Persona Reconciliation Mutation Port (OP-G21)
+
+The deployed warning `ReadSurfacePorts object has no attribute update_persona` exposed a correct architectural refusal: a read port must not silently become a write surface. `OPGAP-BE-PERSONA-RECONCILIATION-MUTATION-PORT-20260830` therefore owns an explicit injected mutation contract in `ports/persona_capital_runtime.py`, with reconciliation orchestration in `personas/reconciliation.py`. The authoritative store implementation persists terminal provisioning state; the read surface only verifies same-ID/version projection. No `ReadSurfaceStore` compatibility delegation or overlay authority may return.
+
+### OpenClaw Provider Readiness Fallback (OP-G22)
+
+Run `33332882810` demonstrated that a primary model timeout could consume the readiness budget before healthy configured fallbacks were evaluated. `OPGAP-OPENCLAW-PROVIDER-READINESS-FALLBACK-20260830` separates two authority domains:
+
+- readiness is a bounded, non-side-effecting exact-sentinel probe that may evaluate all configured eligible candidates and retain the successful active model;
+- invoke is one side-effecting attempt and never retries an ambiguous failure.
+
+The adapter records only sanitized availability facts. Credential repair, token rotation, secret mutation, and provider-priority changes remain outside this source task and require separately authorized operations.
