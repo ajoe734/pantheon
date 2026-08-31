@@ -14572,16 +14572,6 @@ def _deprecated_bff_path_response(*, route: str, replacement: str) -> JSONRespon
         status_code=410,
         headers=headers,
         content={
-            "error": {
-                "code": ErrorCode.OPERATION_NOT_ALLOWED.value,
-                "message": "Deprecated BFF route",
-                "details": {
-                    "reason": "route_deprecated",
-                    "route": route,
-                    "replacement": replacement,
-                    "deprecated_since": _PATH_DEDUPE_DEPRECATED_SINCE,
-                },
-            },
             "detail": {
                 "error": {
                     "code": ErrorCode.OPERATION_NOT_ALLOWED.value,
@@ -16174,6 +16164,7 @@ def _shell_summary_session(identity: OperatorIdentity, *, checked_at: str) -> Di
     }
 
 
+@app.get("/bff/management/shell-summary")
 def bff_management_shell_summary(
     authorization: Optional[str] = Header(default=None),
     pantheon_session: Optional[str] = Cookie(default=None),
@@ -16209,6 +16200,7 @@ def bff_management_shell_summary(
     return result
 
 
+@app.get("/api/v1/operator/home")
 async def get_operator_home(
     authorization: Optional[str] = Header(default=None),
 ):
@@ -16219,6 +16211,7 @@ async def get_operator_home(
     return _build_operator_home_payload(snapshot_at)
 
 
+@app.get(f"/bff{_MANAGEMENT_COCKPIT_ROUTE}")
 async def bff_management_cockpit(
     authorization: Optional[str] = Header(default=None),
 ):
@@ -16255,6 +16248,7 @@ async def bff_management_cockpit(
         )
 
 
+@app.get("/bff/management/trading-pulse")
 async def bff_management_trading_pulse(
     authorization: Optional[str] = Header(default=None),
 ):
@@ -16266,6 +16260,7 @@ async def bff_management_trading_pulse(
     return _build_management_trading_pulse_route_payload(snapshot_at)
 
 
+@app.get("/bff/management/trading-pulse/rankings")
 async def bff_management_trading_pulse_rankings(
     limit: int = Query(default=20, ge=1, le=200),
     authorization: Optional[str] = Header(default=None),
@@ -16278,6 +16273,7 @@ async def bff_management_trading_pulse_rankings(
     return _build_management_trading_pulse_rankings_payload(snapshot_at, limit=limit)
 
 
+@app.get("/bff/management/sentinel-pulse")
 async def bff_management_sentinel_pulse(
     kind: Optional[str] = Query(default=None),
     status: Optional[str] = Query(default=None),
@@ -16323,6 +16319,7 @@ async def get_operator_paper_live_drift(
     return _build_operator_paper_live_drift_payload(runtime_id, snapshot_at)
 
 
+@app.get("/api/v1/operator/health-status")
 async def get_operator_health_status(
     authorization: Optional[str] = Header(default=None),
 ):
@@ -31884,6 +31881,7 @@ def _management_loop_throughput_response(
     }
 
 
+@app.get("/bff/management/loop-throughput")
 async def bff_management_loop_throughput(
     status: Optional[str] = None,
     runtime_id: Optional[str] = None,
@@ -31954,6 +31952,7 @@ async def bff_management_capital_flow(
     )
 
 
+@app.get("/bff/management/risk-radar")
 async def bff_management_risk_radar(
     persona_id: Optional[str] = None,
     strategy_id: Optional[str] = None,
@@ -31978,6 +31977,7 @@ async def bff_management_risk_radar(
     )
 
 
+@app.get("/bff/management/incident-timeline")
 async def bff_management_incident_timeline(
     status: Optional[str] = None,
     severity: Optional[str] = None,
@@ -37046,6 +37046,7 @@ def _persona_intent_surfaces(
     }
 
 
+@app.get("/bff/management/human-inbox")
 async def bff_management_human_inbox(
     source_type: Optional[str] = None,
     status: Optional[str] = None,
@@ -37077,6 +37078,7 @@ async def bff_management_human_inbox(
     return payload
 
 
+@app.get("/bff/management/human-inbox/{item_id}")
 async def bff_management_human_inbox_detail(
     item_id: str,
     authorization: Optional[str] = Header(default=None),
@@ -37133,6 +37135,7 @@ async def bff_management_human_inbox_detail(
     )
 
 
+@app.get("/bff/management/hiq-backlog")
 async def bff_management_hiq_backlog(
     source_type: Optional[str] = Query(default=None),
     status: Optional[str] = Query(default=None),
@@ -37168,6 +37171,7 @@ async def bff_management_hiq_backlog(
     )
 
 
+@app.get("/bff/management/intervention-stream")
 async def bff_management_intervention_stream(
     persona_id: Optional[str] = Query(default=None),
     personaId: Optional[str] = Query(default=None),
@@ -41488,6 +41492,7 @@ def _mgmt_nl_schedule_provider_finalize(**kwargs: Any) -> None:
     task.add_done_callback(_MGMT_NL_PROVIDER_FINALIZE_TASKS.discard)
 
 
+@app.post("/bff/management/nl/ask", status_code=202)
 @_mgmt_nl_command_reservation_guard
 async def bff_management_nl_ask(
     payload: Dict[str, Any] = Body(default_factory=dict),
@@ -41993,6 +41998,7 @@ async def bff_management_nl_ask(
     return JSONResponse(status_code=202, content=result)
 
 
+@app.post("/bff/management/nl/ask/stream")
 def bff_management_nl_ask_stream(
     payload: Dict[str, Any] = Body(default_factory=dict),
     authorization: Optional[str] = Header(default=None),
@@ -42523,6 +42529,7 @@ async def bff_management_ai_attachment(
     )
 
 
+@app.get("/bff/management/evidence")
 async def bff_management_evidence(
     ref_id: Optional[str] = None,
     linked_entity_type: Optional[str] = None,
@@ -50797,8 +50804,6 @@ def _ops_read_model_entry_for_persona(
         if clean_tenant
         else read_store.get_persona(persona_id)
     )
-    if persona is None and clean_tenant:
-        persona = read_store.get_persona(persona_id)
     if persona is None:
         return None
 
@@ -51005,6 +51010,10 @@ def _ops_read_model_entry_for_persona(
     )
 
 
+@app.get(
+    "/bff/management/operations-read-model/{persona_id}",
+    response_model=OperationsReadModelEnvelope,
+)
 async def bff_management_operations_read_model(
     persona_id: str,
     period: str = Query(default="latest"),
@@ -51891,6 +51900,7 @@ async def _management_board_pack_response(
     portfolio_book = await bff_management_portfolio_book(
         page_token=None,
         page_size=section_limit,
+        tenant_id=tenant_id,
         authorization=authorization,
     )
     portfolio_exposure = await bff_management_portfolio_book_exposure(
@@ -52675,6 +52685,7 @@ _process_command_stub = _process_command
 # Degraded Control Guidance (Wave 2 — Incident Response)
 # --------------------------------------------------------------------------- #
 
+@app.get("/api/v1/operator/degraded-control-guidance")
 async def degraded_control_guidance():
     """Return guidance for operators when the BFF is degraded or unavailable.
 
@@ -62590,36 +62601,6 @@ app.include_router(
         require_read_role=_require_read_role,
         snapshot_meta=_snapshot_meta,
         utc_now=utc_now,
-        bff_error=_bff_error,
-        raise_session_logged_out_fn=_raise_if_session_logged_out,
-        shell_summary_builder=_build_shell_summary_counts,
-        shell_summary_session_builder=_shell_summary_session,
-        operator_home_builder=_build_operator_home_payload,
-        cockpit_builder=bff_management_cockpit,
-        trading_pulse_builder=_build_management_trading_pulse_route_payload,
-        trading_pulse_rankings_builder=_build_management_trading_pulse_rankings_payload,
-        sentinel_pulse_builder=_build_management_sentinel_pulse_response,
-        operator_health_status_builder=_build_operator_health_status_payload,
-        loop_throughput_builder=_management_loop_throughput_response,
-        risk_radar_builder=_management_risk_radar_response,
-        incident_timeline_builder=_management_incident_timeline_response,
-        human_inbox_builder=bff_management_human_inbox,
-        human_inbox_detail_builder=bff_management_human_inbox_detail,
-        hiq_backlog_builder=bff_management_hiq_backlog,
-        intervention_stream_builder=_management_intervention_stream_response,
-        evidence_builder=bff_management_evidence,
-        operations_read_model_builder=_ops_read_model_entry_for_persona,
-        degraded_control_guidance_builder=degraded_control_guidance,
-        read_surface_state_getter=_read_surface_state,
-        log_read_timing_fn=_log_management_read_timing,
-        run_management_read_fn=_run_management_read,
-        cockpit_timeout_fn=_management_cockpit_read_timeout_seconds,
-        cockpit_slots=_MANAGEMENT_COCKPIT_READ_SLOTS,
-        cockpit_executor=_MANAGEMENT_COCKPIT_READ_EXECUTOR,
-        cockpit_degraded_fn=_management_cockpit_degraded_payload,
-        tenant_payload_fn=_bff_me_tenant_payload,
-        nl_ask_handler=bff_management_nl_ask,
-        nl_ask_stream_handler=bff_management_nl_ask_stream,
     )
 )
 

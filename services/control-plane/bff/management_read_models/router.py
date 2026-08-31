@@ -1,6 +1,6 @@
 """BFF: Management Read Models & Management System Router.
 
-Consolidates all 17 Management domain HTTP routes into a dedicated router:
+Consolidates the 17 Management domain HTTP GET routes into create_management_router:
 - Shell summary (/bff/management/shell-summary)
 - Operator home (/api/v1/operator/home)
 - Management cockpit aggregate (/bff/management/cockpit)
@@ -19,16 +19,12 @@ Consolidates all 17 Management domain HTTP routes into a dedicated router:
 - Operations read model (/bff/management/operations-read-model/{persona_id})
 - Degraded control guidance (/api/v1/operator/degraded-control-guidance)
 
-Also preserves the 5 composed Management read models:
+And preserves create_management_read_models_router for the 5 composed Management read models:
 - Formula jobs read model (/bff/management/formula-jobs)
 - Consolidated activity read model (/bff/management/activity)
 - Paper execution telemetry read model (/bff/management/paper-telemetry)
 - Postmortem incident analysis read model (/bff/management/postmortems)
 - Postmortem detail read model (/bff/management/postmortems/{postmortem_id})
-
-And provides Management Natural-Language Ask & Streaming query endpoints:
-- Natural-language query (/bff/management/nl/ask)
-- Natural-language query SSE stream (/bff/management/nl/ask/stream)
 """
 
 from __future__ import annotations
@@ -1291,37 +1287,6 @@ def create_management_read_models_router(
     require_read_role: Optional[Callable] = None,
     snapshot_meta: Optional[Callable] = None,
     utc_now: Optional[Callable] = None,
-    bff_error: Optional[Callable] = None,
-    raise_if_session_logged_out: Optional[Callable] = None,
-    raise_session_logged_out_fn: Optional[Callable] = None,
-    shell_summary_builder: Optional[Callable] = None,
-    shell_summary_session_builder: Optional[Callable] = None,
-    operator_home_builder: Optional[Callable] = None,
-    cockpit_builder: Optional[Callable] = None,
-    trading_pulse_builder: Optional[Callable] = None,
-    trading_pulse_rankings_builder: Optional[Callable] = None,
-    sentinel_pulse_builder: Optional[Callable] = None,
-    operator_health_status_builder: Optional[Callable] = None,
-    loop_throughput_builder: Optional[Callable] = None,
-    risk_radar_builder: Optional[Callable] = None,
-    incident_timeline_builder: Optional[Callable] = None,
-    human_inbox_builder: Optional[Callable] = None,
-    human_inbox_detail_builder: Optional[Callable] = None,
-    human_inbox_all_items_builder: Optional[Callable] = None,
-    hiq_backlog_builder: Optional[Callable] = None,
-    intervention_stream_builder: Optional[Callable] = None,
-    evidence_builder: Optional[Callable] = None,
-    operations_read_model_builder: Optional[Callable] = None,
-    degraded_control_guidance_builder: Optional[Callable] = None,
-    read_surface_state_getter: Optional[Callable] = None,
-    log_read_timing_fn: Optional[Callable] = None,
-    run_management_read_fn: Optional[Callable] = None,
-    cockpit_timeout_fn: Optional[Callable] = None,
-    cockpit_slots: Optional[Any] = None,
-    cockpit_executor: Optional[Any] = None,
-    cockpit_degraded_fn: Optional[Callable] = None,
-    tenant_payload_fn: Optional[Callable] = None,
-    service: Optional[ManagementService] = None,
     jobs_reader: Optional[Callable[[], Tuple[bool, List[Dict[str, Any]]]]] = None,
     formula_jobs_reader: Optional[Callable[[], Tuple[bool, List[Dict[str, Any]]]]] = None,
     activity_audit_reader: Optional[Callable[[], Tuple[bool, List[Dict[str, Any]]]]] = None,
@@ -1330,16 +1295,61 @@ def create_management_read_models_router(
     paper_telemetry_reader: Optional[Callable[[], Tuple[bool, List[Dict[str, Any]]]]] = None,
     runtime_bindings_reader: Optional[Callable[[], Tuple[bool, List[Dict[str, Any]]]]] = None,
     postmortems_reader: Optional[Callable[[], Tuple[bool, List[Dict[str, Any]]]]] = None,
-    nl_ask_handler: Optional[Callable[..., Any]] = None,
-    nl_ask_stream_handler: Optional[Callable[..., Any]] = None,
+) -> APIRouter:
+    """Create the APIRouter for the 5 composed Management read models."""
+    router = APIRouter()
+
+    _extract_id = extract_identity or _default_extract_identity
+    _req_read = require_read_role or _default_require_read_role
+    _snap_meta = snapshot_meta or _default_snapshot_meta
+    _now = utc_now or _utc_now_rfc3339
+
+    def _resolve_store() -> Optional[Any]:
+        if get_read_store is not None:
+            try:
+                return get_read_store()
+            except Exception:
+                return None
+        return None
+
+    _register_composed_read_models(
+        router,
+        _extract_id=_extract_id,
+        _req_read=_req_read,
+        _snap_meta=_snap_meta,
+        _now=_now,
+        _resolve_store=_resolve_store,
+        jobs_reader=jobs_reader,
+        formula_jobs_reader=formula_jobs_reader,
+        activity_audit_reader=activity_audit_reader,
+        governance_audit_reader=governance_audit_reader,
+        telemetry_events_reader=telemetry_events_reader,
+        paper_telemetry_reader=paper_telemetry_reader,
+        runtime_bindings_reader=runtime_bindings_reader,
+        postmortems_reader=postmortems_reader,
+    )
+    return router
+
+
+def create_management_router(
+    *,
+    get_read_store: Optional[Callable] = None,
+    extract_identity: Optional[Callable] = None,
+    require_read_role: Optional[Callable] = None,
+    snapshot_meta: Optional[Callable] = None,
+    utc_now: Optional[Callable] = None,
+    bff_error: Optional[Callable] = None,
+    raise_if_session_logged_out: Optional[Callable] = None,
+    raise_session_logged_out_fn: Optional[Callable] = None,
+    tenant_payload_fn: Optional[Callable] = None,
+    service: Optional[ManagementService] = None,
     provider_client: Optional[Any] = None,
     idempotency_store: Optional[Any] = None,
     conversation_store: Optional[Any] = None,
     attachment_store: Optional[Any] = None,
     control_mode_store: Optional[Any] = None,
-    include_migrated_crud: bool = True,
 ) -> APIRouter:
-    """Create the APIRouter for Management read models and system operations."""
+    """Create the APIRouter for all 17 Management domain HTTP GET routes."""
     router = APIRouter()
 
     _extract_id = extract_identity or _default_extract_identity
@@ -1359,44 +1369,6 @@ def create_management_read_models_router(
         control_mode_store=control_mode_store,
     )
 
-    def _resolve_store() -> Optional[Any]:
-        if get_read_store is not None:
-            try:
-                return get_read_store()
-            except Exception:
-                return None
-        return None
-
-    async def _eval(val: Any) -> Any:
-        if inspect.isawaitable(val):
-            return await val
-        return val
-
-    def _call_builder(builder: Callable, **available_kwargs: Any) -> Any:
-        sig = inspect.signature(builder)
-        kwargs = {k: v for k, v in available_kwargs.items() if k in sig.parameters}
-        return builder(**kwargs)
-
-    _register_composed_read_models(
-        router,
-        _extract_id=_extract_id,
-        _req_read=_req_read,
-        _snap_meta=_snap_meta,
-        _now=_now,
-        _resolve_store=_resolve_store,
-        jobs_reader=jobs_reader,
-        formula_jobs_reader=formula_jobs_reader,
-        activity_audit_reader=activity_audit_reader,
-        governance_audit_reader=governance_audit_reader,
-        telemetry_events_reader=telemetry_events_reader,
-        paper_telemetry_reader=paper_telemetry_reader,
-        runtime_bindings_reader=runtime_bindings_reader,
-        postmortems_reader=postmortems_reader,
-    )
-
-    if not include_migrated_crud:
-        return router
-
     # -----------------------------------------------------------------------
     # 1. Shell Summary
     # -----------------------------------------------------------------------
@@ -1415,45 +1387,6 @@ def create_management_read_models_router(
         _req_read(identity)
         if _raise_logged_out:
             _raise_logged_out(identity)
-
-        if shell_summary_builder is not None:
-            started = time.monotonic()
-            count_payload = await _eval(shell_summary_builder())
-            if log_read_timing_fn:
-                log_read_timing_fn("shell_summary", started)
-            checked_at = _now()
-            session_payload = (
-                await _eval(shell_summary_session_builder(identity, checked_at=checked_at))
-                if shell_summary_session_builder
-                else {
-                    "operator_id": getattr(identity, "operator_id", "op-user"),
-                    "operatorId": getattr(identity, "operator_id", "op-user"),
-                    "display_name": getattr(identity, "display_name", getattr(identity, "operator_id", "op-user")),
-                    "display_label": getattr(identity, "display_name", getattr(identity, "operator_id", "op-user")),
-                    "displayLabel": getattr(identity, "display_name", getattr(identity, "operator_id", "op-user")),
-                    "roles": list(getattr(identity, "roles", ["operator"])),
-                    "session_kind": getattr(identity, "session_kind", "bearer"),
-                    "sessionKind": getattr(identity, "session_kind", "bearer"),
-                    "state": "active",
-                    "fresh": True,
-                    "mfa_verified": getattr(identity, "mfa_verified", False),
-                }
-            )
-            return {
-                "data": {
-                    "counts": count_payload["counts"],
-                    "session": session_payload,
-                    "transport": {
-                        "bff_status": "ok",
-                        "service": "operator-bff",
-                        "api_version": "0.2.0",
-                    },
-                },
-                "meta": {
-                    "snapshot_at": count_payload["snapshot_at"],
-                    "surfaces": count_payload["surfaces"],
-                },
-            }
         return svc.get_shell_summary(identity)
 
     # -----------------------------------------------------------------------
@@ -1467,8 +1400,6 @@ def create_management_read_models_router(
         identity = _extract_id(authorization)
         _req_read(identity)
         snap = _now()
-        if operator_home_builder is not None:
-            return await _eval(operator_home_builder(snapshot_at=snap))
         return svc.get_operator_home(snapshot_at=snap)
 
     # -----------------------------------------------------------------------
@@ -1482,22 +1413,6 @@ def create_management_read_models_router(
         identity = _extract_id(authorization)
         _req_read(identity)
         snap = _now()
-        if cockpit_builder is not None:
-            if run_management_read_fn and cockpit_slots and cockpit_executor and cockpit_timeout_fn and cockpit_degraded_fn:
-                return await run_management_read_fn(
-                    "management_cockpit",
-                    cockpit_builder,
-                    semaphore=cockpit_slots,
-                    executor=cockpit_executor,
-                    timeout_seconds=cockpit_timeout_fn(),
-                    degraded_factory=cockpit_degraded_fn,
-                )
-            return await _eval(_call_builder(
-                cockpit_builder,
-                snapshot_at=snap,
-                identity=identity,
-                authorization=authorization,
-            ))
         return svc.get_management_cockpit(snapshot_at=snap)
 
     # -----------------------------------------------------------------------
@@ -1511,8 +1426,6 @@ def create_management_read_models_router(
         identity = _extract_id(authorization)
         _req_read(identity)
         snap = _now()
-        if trading_pulse_builder is not None:
-            return await _eval(trading_pulse_builder(snapshot_at=snap))
         return svc.get_trading_pulse(snapshot_at=snap)
 
     # -----------------------------------------------------------------------
@@ -1527,8 +1440,6 @@ def create_management_read_models_router(
         identity = _extract_id(authorization)
         _req_read(identity)
         snap = _now()
-        if trading_pulse_rankings_builder is not None:
-            return await _eval(trading_pulse_rankings_builder(limit=limit, snapshot_at=snap))
         return svc.get_trading_pulse_rankings(limit=limit, snapshot_at=snap)
 
     # -----------------------------------------------------------------------
@@ -1547,15 +1458,6 @@ def create_management_read_models_router(
         """BFF: Management Sentinel Pulse composed from v5 sentinel read surfaces."""
         identity = _extract_id(authorization)
         _req_read(identity)
-        if sentinel_pulse_builder is not None:
-            return await _eval(sentinel_pulse_builder(
-                kind=kind,
-                status=status,
-                severity=severity,
-                q=q,
-                page_token=page_token,
-                page_size=page_size,
-            ))
         return svc.get_sentinel_pulse(
             kind=kind,
             status=status,
@@ -1576,8 +1478,6 @@ def create_management_read_models_router(
         identity = _extract_id(authorization)
         _req_read(identity)
         snap = _now()
-        if operator_health_status_builder is not None:
-            return await _eval(operator_health_status_builder(snapshot_at=snap))
         return svc.get_operator_health_status(snapshot_at=snap)
 
     # -----------------------------------------------------------------------
@@ -1596,13 +1496,6 @@ def create_management_read_models_router(
         """BFF: read-only loop execution throughput & metrics."""
         identity = _extract_id(authorization)
         _req_read(identity)
-        if loop_throughput_builder is not None:
-            return await _eval(loop_throughput_builder(
-                status=status,
-                runtime_id=runtime_id,
-                page_token=page_token,
-                page_size=page_size,
-            ))
         return svc.get_loop_throughput(
             status=status,
             runtime_id=runtime_id,
@@ -1629,16 +1522,6 @@ def create_management_read_models_router(
         identity = _extract_id(authorization)
         _req_read(identity)
         tenant_id = _extract_tenant_id(identity, tenant_payload_fn)
-        if risk_radar_builder is not None:
-            return await _eval(risk_radar_builder(
-                persona_id=persona_id,
-                strategy_id=strategy_id,
-                capital_pool_id=capital_pool_id,
-                risk_state=risk_state,
-                page_token=page_token,
-                page_size=page_size,
-                tenant_id=tenant_id,
-            ))
         return svc.get_risk_radar(
             persona_id=persona_id,
             strategy_id=strategy_id,
@@ -1667,17 +1550,6 @@ def create_management_read_models_router(
         """BFF: read-only Management Console incident chronology."""
         identity = _extract_id(authorization)
         _req_read(identity)
-        if incident_timeline_builder is not None:
-            return await _eval(incident_timeline_builder(
-                status=status,
-                severity=severity,
-                capital_pool_id=capital_pool_id,
-                affected_pool_id=affected_pool_id,
-                runtime_id=runtime_id,
-                sort_order=sort_order,
-                page_token=page_token,
-                page_size=page_size,
-            ))
         return svc.get_incident_timeline(
             status=status,
             severity=severity,
@@ -1704,17 +1576,6 @@ def create_management_read_models_router(
         """BFF: compose human-action inbox rows from governed human-review sources."""
         identity = _extract_id(authorization)
         _req_read(identity)
-        if human_inbox_builder is not None:
-            return await _eval(_call_builder(
-                human_inbox_builder,
-                source_type=source_type,
-                status=status,
-                priority=priority,
-                page_token=page_token,
-                page_size=page_size,
-                identity=identity,
-                authorization=authorization,
-            ))
         return svc.get_human_inbox(
             source_type=source_type,
             status=status,
@@ -1735,40 +1596,6 @@ def create_management_read_models_router(
         """BFF: detail for one composed human-action inbox row."""
         identity = _extract_id(authorization)
         _req_read(identity)
-        if human_inbox_detail_builder is not None:
-            return await _eval(_call_builder(
-                human_inbox_detail_builder,
-                item_id=item_id,
-                identity=identity,
-                authorization=authorization,
-            ))
-        if human_inbox_all_items_builder is not None:
-            call_res = (
-                human_inbox_all_items_builder(item_id=item_id, identity=identity)
-                if "item_id" in inspect.signature(human_inbox_all_items_builder).parameters
-                else human_inbox_all_items_builder(identity)
-            )
-            res = await _eval(call_res)
-            if isinstance(res, dict) and "data" in res:
-                return res
-            items = res or []
-            detail = next((item for item in items if str(item.get("item_id") or item.get("id") or "") == item_id), None)
-            if detail is None:
-                raise _err(
-                    404,
-                    ErrorCode.RESOURCE_NOT_FOUND,
-                    "Human inbox item not found",
-                    f"Human inbox item '{item_id}' does not exist",
-                )
-            return {
-                "data": detail,
-                "meta": {
-                    "snapshot_at": _now(),
-                    "surfaces": {
-                        "human_inbox": {"status": "ok", "source": "bff_composed"},
-                    },
-                },
-            }
         detail = svc.get_human_inbox_detail(item_id, identity=identity)
         if detail is None:
             raise _err(
@@ -1796,19 +1623,6 @@ def create_management_read_models_router(
         """BFF: read-only HIQ backlog aggregate for sentinel and intervention review."""
         identity = _extract_id(authorization)
         _req_read(identity)
-        if hiq_backlog_builder is not None:
-            return await _eval(_call_builder(
-                hiq_backlog_builder,
-                source_type=source_type,
-                status=status,
-                kind=kind,
-                priority=priority,
-                q=q,
-                page_token=page_token,
-                page_size=page_size,
-                identity=identity,
-                authorization=authorization,
-            ))
         return svc.get_hiq_backlog(
             source_type=source_type,
             status=status,
@@ -1839,21 +1653,6 @@ def create_management_read_models_router(
         """BFF: read-only intervention event stream for Management Console review."""
         identity = _extract_id(authorization)
         _req_read(identity)
-        if intervention_stream_builder is not None:
-            return await _eval(_call_builder(
-                intervention_stream_builder,
-                persona_id=persona_id or personaId,
-                personaId=personaId,
-                status=status,
-                kind=kind,
-                q=q,
-                window_hours=windowHours or window_hours,
-                windowHours=windowHours,
-                page_token=page_token,
-                page_size=page_size,
-                identity=identity,
-                authorization=authorization,
-            ))
         return svc.get_intervention_stream(
             persona_id=persona_id or personaId,
             status=status,
@@ -1883,20 +1682,6 @@ def create_management_read_models_router(
         identity = _extract_id(authorization)
         _req_read(identity)
         try:
-            if evidence_builder is not None:
-                return await _eval(_call_builder(
-                    evidence_builder,
-                    ref_id=ref_id,
-                    linked_entity_type=linked_entity_type,
-                    linked_entity_ref=linked_entity_ref,
-                    link_type=link_type,
-                    credibility_tier=credibility_tier,
-                    verified=verified,
-                    page_token=page_token,
-                    page_size=page_size,
-                    identity=identity,
-                    authorization=authorization,
-                ))
             return svc.get_evidence(
                 ref_id=ref_id,
                 linked_entity_type=linked_entity_type,
@@ -1942,39 +1727,6 @@ def create_management_read_models_router(
         identity = _extract_id(authorization)
         _req_read(identity)
         tenant_id = _extract_tenant_id(identity, tenant_payload_fn)
-
-        if operations_read_model_builder is not None:
-            entry = await _eval(operations_read_model_builder(persona_id, period=period, tenant_id=tenant_id))
-            if entry is None:
-                raise _err(
-                    404,
-                    ErrorCode.RESOURCE_NOT_FOUND,
-                    "Persona not found",
-                    f"Persona '{persona_id}' does not exist",
-                )
-            if hasattr(entry, "model_dump"):
-                entry_data = entry.model_dump(mode="json")
-            elif isinstance(entry, dict):
-                entry_data = entry
-            else:
-                entry_data = dict(entry)
-            return {
-                "data": entry_data,
-                "meta": {
-                    **_snap_meta(_now()),
-                    "surface": "operations_read_model",
-                    "composition_sources": [
-                        "GET /api/v1/personas",
-                        "GET /api/v1/persona-league",
-                        "GET /bff/management/performance-attribution",
-                        "GET /api/v1/capital-pools",
-                    ],
-                    "surfaces": {
-                        "operations_read_model": {"status": "ok", "source": "bff_composed"},
-                    },
-                },
-            }
-
         res = svc.get_operations_read_model(persona_id=persona_id, period=period, tenant_id=tenant_id)
         if res is None:
             raise _err(
@@ -1991,241 +1743,11 @@ def create_management_read_models_router(
     @router.get("/api/v1/operator/degraded-control-guidance")
     async def degraded_control_guidance() -> Response:
         """Return guidance for operators when the BFF is degraded or unavailable."""
-        if degraded_control_guidance_builder is not None:
-            return await _eval(degraded_control_guidance_builder())
         res = svc.get_degraded_control_guidance()
         return JSONResponse(
             status_code=res["status_code"],
             content=res["payload"],
         )
 
-    # -----------------------------------------------------------------------
-    # 23. Management NL Ask Query Endpoint
-    # -----------------------------------------------------------------------
-    @router.post("/bff/management/nl/ask", status_code=202)
-    async def bff_management_nl_ask(
-        payload: Dict[str, Any] = Body(default_factory=dict),
-        authorization: Optional[str] = Header(default=None),
-        idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-        x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
-        x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
-        x_pantheon_tenant: Optional[str] = Header(default=None, alias="X-Pantheon-Tenant"),
-    ) -> Response:
-        """BFF: Management natural-language ask query endpoint."""
-        identity = _extract_id(authorization)
-        _req_read(identity)
-        if _raise_logged_out:
-            _raise_logged_out(identity)
-
-        # Reject body idempotency key if present
-        if isinstance(payload, dict) and "idempotency_key" in payload:
-            raise _err(
-                400,
-                ErrorCode.VALIDATION_FAILED,
-                "Idempotency key must be provided in Idempotency-Key or X-Idempotency-Key header, not in request body",
-                "Body idempotency key is rejected by policy",
-            )
-
-        question = str(payload.get("question") or "").strip()
-        if not question:
-            raise _err(
-                422,
-                ErrorCode.VALIDATION_FAILED,
-                "Field 'question' is required and must not be empty",
-                "Missing or empty question",
-            )
-
-        requested_tenant = (x_tenant_id or x_pantheon_tenant or "").strip() or None
-        caller_tenant = _extract_tenant_id(identity, tenant_payload_fn, requested_tenant=requested_tenant)
-        final_idempotency_key = idempotency_key or x_idempotency_key
-
-        if nl_ask_handler is not None:
-            res = await _eval(_call_builder(
-                nl_ask_handler,
-                payload=payload,
-                authorization=authorization,
-                identity=identity,
-                tenant_id=caller_tenant,
-                idempotency_key=final_idempotency_key,
-                x_idempotency_key=x_idempotency_key,
-                x_tenant_id=x_tenant_id,
-                x_pantheon_tenant=x_pantheon_tenant,
-            ))
-            if isinstance(res, Response):
-                return res
-            return JSONResponse(status_code=202, content=res)
-
-        try:
-            res = svc.ask_nl(
-                payload=payload,
-                identity=identity,
-                tenant_id=caller_tenant,
-                idempotency_key=final_idempotency_key,
-                x_tenant_id=x_tenant_id,
-                x_pantheon_tenant=x_pantheon_tenant,
-            )
-        except Exception as e:
-            if type(e).__name__ == "ManagementValidationError" or isinstance(e, ValueError):
-                field = getattr(e, "field", None)
-                reason = getattr(e, "reason", str(e))
-                status_code = getattr(e, "status_code", 400)
-                code_val = getattr(e, "code", ErrorCode.VALIDATION_FAILED)
-                code = getattr(ErrorCode, code_val, ErrorCode.VALIDATION_FAILED) if isinstance(code_val, str) else code_val
-                details_extra = getattr(e, "details_extra", None)
-                raise _err(
-                    status_code,
-                    code,
-                    str(e),
-                    reason,
-                    precondition_failed=field,
-                    details_extra=details_extra,
-                )
-            if "PayloadConflict" in type(e).__name__ or "conflict" in str(e).lower():
-                raise _err(
-                    409,
-                    getattr(ErrorCode, "IDEMPOTENCY_CONFLICT", ErrorCode.RESOURCE_CONFLICT),
-                    "Idempotency key payload conflict",
-                    str(e),
-                    precondition_failed="idempotency_key",
-                )
-            if "RecoveryRequired" in type(e).__name__:
-                raise _err(
-                    409,
-                    getattr(ErrorCode, "IDEMPOTENCY_CONFLICT", ErrorCode.RESOURCE_CONFLICT),
-                    "Management NL command outcome is uncertain",
-                    str(e),
-                    precondition_failed="idempotency_recovery_required",
-                )
-            if "StorageError" in type(e).__name__:
-                raise _err(
-                    503,
-                    getattr(ErrorCode, "DEPENDENCY_UNAVAILABLE", ErrorCode.INTERNAL_ERROR),
-                    "Management NL command admission store is unavailable",
-                    str(e),
-                    precondition_failed="management_nl_command_idempotency_store",
-                )
-            raise
-
-        if res.get("refused"):
-            raise _err(
-                403,
-                ErrorCode.OPERATION_NOT_ALLOWED,
-                res.get("message", "NL query was refused by policy"),
-                res.get("reason"),
-                precondition_failed="high_risk_nl_policy",
-                suggestion=res.get("safe_alternatives"),
-                details_extra={
-                    "refused": True,
-                    "matched_category": res.get("matched_category"),
-                    "matched_pattern": res.get("matched_pattern"),
-                    "safe_alternatives": res.get("safe_alternatives"),
-                    "audit_id": res.get("audit_id"),
-                },
-            )
-
-        status_code = res.get("status_code", 202)
-        content = res.get("payload", res)
-        return JSONResponse(status_code=status_code, content=content)
-
-    # -----------------------------------------------------------------------
-    # 24. Management NL Ask Streaming Endpoint
-    # -----------------------------------------------------------------------
-    @router.post("/bff/management/nl/ask/stream")
-    async def bff_management_nl_ask_stream(
-        payload: Dict[str, Any] = Body(default_factory=dict),
-        authorization: Optional[str] = Header(default=None),
-        idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-        x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
-        x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
-        x_pantheon_tenant: Optional[str] = Header(default=None, alias="X-Pantheon-Tenant"),
-    ) -> Response:
-        """BFF: Streaming variant of /bff/management/nl/ask."""
-        identity = _extract_id(authorization)
-        _req_read(identity)
-        if _raise_logged_out:
-            _raise_logged_out(identity)
-
-        if isinstance(payload, dict) and "idempotency_key" in payload:
-            raise _err(
-                400,
-                ErrorCode.VALIDATION_FAILED,
-                "Idempotency key must be provided in Idempotency-Key or X-Idempotency-Key header, not in request body",
-                "Body idempotency key is rejected by policy",
-                precondition_failed="idempotency_key",
-            )
-
-        question = str(payload.get("question") or "").strip()
-        if not question:
-            raise _err(
-                422,
-                ErrorCode.VALIDATION_FAILED,
-                "Field 'question' is required and must not be empty",
-                "Missing or empty question",
-                precondition_failed="question",
-            )
-        if len(question) > 4000:
-            raise _err(
-                422,
-                ErrorCode.VALIDATION_FAILED,
-                "Field 'question' exceeds maximum length of 4000 characters",
-                "Question exceeds 4000 characters",
-                precondition_failed="question",
-            )
-
-        requested_tenant = (x_tenant_id or x_pantheon_tenant or "").strip() or None
-        caller_tenant = _extract_tenant_id(identity, tenant_payload_fn, requested_tenant=requested_tenant)
-        final_idempotency_key = idempotency_key or x_idempotency_key
-
-        if nl_ask_stream_handler is not None:
-            res = await _eval(_call_builder(
-                nl_ask_stream_handler,
-                payload=payload,
-                authorization=authorization,
-                identity=identity,
-                tenant_id=caller_tenant,
-                idempotency_key=final_idempotency_key,
-                x_idempotency_key=x_idempotency_key,
-                x_tenant_id=x_tenant_id,
-                x_pantheon_tenant=x_pantheon_tenant,
-            ))
-            if isinstance(res, Response):
-                return res
-            return StreamingResponse(res, media_type="text/event-stream")
-
-        risk = svc.classify_high_risk(question)
-        if risk is not None:
-            raise _err(
-                403,
-                ErrorCode.OPERATION_NOT_ALLOWED,
-                "NL query matches high-risk action pattern and was refused by policy",
-                (
-                    f"The question contains pattern {risk['matched_pattern']!r} "
-                    f"under high-risk category '{risk['matched_category']}'. "
-                    "This endpoint is read-only and cannot execute mutations."
-                ),
-                precondition_failed="high_risk_nl_policy",
-                suggestion=risk["safe_alternatives"],
-                details_extra={
-                    "refused": True,
-                    "matched_category": risk["matched_category"],
-                    "matched_pattern": risk["matched_pattern"],
-                    "safe_alternatives": risk["safe_alternatives"],
-                },
-            )
-
-        return StreamingResponse(
-            svc.ask_nl_stream(
-                payload=payload,
-                identity=identity,
-                tenant_id=caller_tenant,
-                idempotency_key=final_idempotency_key,
-                x_tenant_id=x_tenant_id,
-                x_pantheon_tenant=x_pantheon_tenant,
-            ),
-            media_type="text/event-stream",
-        )
-
     return router
 
-
-create_management_router = create_management_read_models_router
