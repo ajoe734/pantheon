@@ -45,13 +45,13 @@
     "sanitized_primary_unavailable_evidence": "When primary model is unavailable, readiness probe captures sanitized primary_unavailable evidence (model, status: unavailable, sanitized reason, duration_ms) without leaking secrets or tokens.",
     "active_model_prioritization": "When the readiness probe identifies a healthy fallback candidate, the provider retains the active model so that subsequent single invoke calls immediately dispatch to the verified eligible model without repeating an expired primary model call or timing out.",
     "per_agent_routing_preservation": "When invoking non-default agents (e.g. persona agents) with model=None, the provider omits the --model CLI parameter, preserving per-agent configured routing in OpenClaw without applying global primary model overrides.",
-    "side_effect_safe_invoke": "Single invoke permits model fallback exclusively on unambiguous pre-execution failures (OPENCLAW_AUTH_UNAVAILABLE). Ambiguous failures such as TimeoutExpired (OPENCLAW_GATEWAY_TIMEOUT) or generic invocation failures (OPENCLAW_GATEWAY_INVOCATION_FAILED) strictly fail without retry to prevent duplicate side-effecting turns.",
+    "side_effect_safe_invoke": "Single invoke permits model fallback exclusively on structurally proven unambiguous pre-execution failures (OPENCLAW_AUTH_UNAVAILABLE). Ambiguous failures such as TimeoutExpired (OPENCLAW_GATEWAY_TIMEOUT), post-execution errors, or generic invocation failures (OPENCLAW_GATEWAY_INVOCATION_FAILED) strictly fail without retry to prevent duplicate side-effecting turns.",
     "upstream_contract_compliance": "OpenResponses SSE stream strictly targets OpenClaw v2026.7.1 upstream contract (model='openclaw') and surfaces typed HTTP errors without invalid raw provider model overrides.",
     "deterministic_fail_closed": "If all candidate models fail, readiness probe deterministically fails closed with status: degraded and typed error code without retrying side-effecting invoke turns.",
     "deployed_live_smoke_contract": "scripts/openclaw-assistant-openclaw-live-smoke.sh verifies four live phases against deployed adapter: (1) provider readiness with auth_probe=true, (2) live agent turn with OPENCLAW_LIVE sentinel, (3) CLI transport assertion, (4) OpenResponses streaming."
   },
   "verification": {
-    "full_verification": "450 passed, 4 skipped across services/openclaw-gateway-adapter and scripts/test_openclaw_assistant_openclaw_live_smoke.py; 4/4 deployed live smoke passed without skip",
+    "full_verification": "452 passed, 4 skipped across services/openclaw-gateway-adapter and scripts/test_openclaw_assistant_openclaw_live_smoke.py; 4/4 deployed live smoke passed without skip",
     "deployed_live_smoke_output": {
       "phase_1_readiness": "ready=true status=ready active_model=openai/gpt-5.6-sol primary_unavailable.reason=OPENCLAW_GATEWAY_TIMEOUT duration_ms=17939",
       "phase_2_live_agent_turn": "status=completed text=OPENCLAW_LIVE transport=cli active_model=openai/gpt-5.6-sol fallback_used=true duration_ms=16026",
@@ -65,7 +65,7 @@
     ],
     "verification_commands": [
       ".venv-pantheon/bin/python3 -m pytest -ra services/openclaw-gateway-adapter scripts/test_openclaw_assistant_openclaw_live_smoke.py",
-      "OPENCLAW_GATEWAY_ADAPTER_URL=http://localhost:18104 PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN=9318a8ec3a4e9158697f0016578412258f9c2ac5661e74f09307d39901c13c4b bash scripts/openclaw-assistant-openclaw-live-smoke.sh",
+      "OPENCLAW_GATEWAY_ADAPTER_URL=http://localhost:18104 PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN=<redacted-service-token> bash scripts/openclaw-assistant-openclaw-live-smoke.sh",
       "bash -n scripts/openclaw-assistant-openclaw-live-smoke.sh",
       "docker compose --profile openclaw config --quiet"
     ],

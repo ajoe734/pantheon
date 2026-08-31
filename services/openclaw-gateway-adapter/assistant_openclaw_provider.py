@@ -98,15 +98,79 @@ def delegates_kernel_mode_to_codex(mode: str) -> bool:
     return str(mode or "").strip().lower() in CODEX_DELEGATED_KERNEL_MODES
 
 
+def _is_unambiguous_pre_execution_auth_failure(
+    *,
+    returncode: int,
+    stdout: str,
+    stderr: str,
+) -> bool:
+    """Return True only when failure is structurally proven to be pre-execution CLI/session auth failure.
+
+    If execution started (non-empty stdout, run JSON, or stderr indicating tool/agent/runtime
+    execution), or if the error is ambiguous, return False to prevent duplicate side-effecting invocations.
+    """
+    if returncode == 0:
+        return False
+    stdout_text = (stdout or "").strip()
+    if stdout_text:
+        # Any stdout indicates the CLI or agent began execution and may have produced side effects or output.
+        return False
+    stderr_text = (stderr or "").strip()
+    if not stderr_text:
+        return False
+    stderr_low = stderr_text.lower()
+
+    # If stderr indicates execution/runtime/tool activity took place, it is post-execution.
+    execution_indicators = (
+        "tool",
+        "execut",
+        "step",
+        "action",
+        "post-execution",
+        "plugin",
+        "workspace",
+        "sandbox",
+        "runid",
+        "run_id",
+        "event",
+    )
+    if any(ind in stderr_low for ind in execution_indicators):
+        return False
+
+    # Must match unambiguous pre-execution CLI / provider authentication failure signatures.
+    pre_exec_auth_patterns = (
+        "oauth login session expired",
+        "oauth session expired",
+        "auth session expired",
+        "login expired",
+        "session expired",
+        "not logged in",
+        "login required",
+        "invalid_grant",
+        "token expired",
+        "api key expired",
+        "missing api key",
+        "invalid api key",
+        "authentication failed",
+        "401 unauthorized",
+        "unauthorized: token",
+        "unauthorized: session",
+        "unauthorized: invalid",
+        "unauthorized (401)",
+        "claude oauth",
+    )
+    return any(pat in stderr_low for pat in pre_exec_auth_patterns)
+
+
 def _sanitize_failure_reason(reason: Any, message: Any = None) -> str:
     """Sanitize failure reason so diagnostics surface truthfully without leaking tokens or secrets."""
     combined = f"{str(reason or '')} {str(message or '')}".strip().lower()
-    if any(k in combined for k in ("auth", "unauthorized", "expired", "401", "login", "oauth")):
-        return "OPENCLAW_AUTH_UNAVAILABLE"
     if any(k in combined for k in ("timeout", "timed out", "deadline")):
         return "OPENCLAW_GATEWAY_TIMEOUT"
     if any(k in combined for k in ("connection refused", "unreachable", "econnrefused", "503")):
         return "OPENCLAW_GATEWAY_UNREACHABLE"
+    if any(k in combined for k in ("auth", "unauthorized", "expired", "401", "login", "oauth")):
+        return "OPENCLAW_AUTH_UNAVAILABLE"
     raw = str(reason or "").strip()
     if raw and re.fullmatch(r"^[A-Za-z0-9_:-]{1,96}$", raw):
         return raw
@@ -492,8 +556,13 @@ class AssistantOpenClawProvider:
 
         if proc.returncode != 0:
             stderr = (proc.stderr or "").strip()
+            stdout_str = (proc.stdout or "").strip()
             stderr_low = stderr.lower()
-            if any(k in stderr_low for k in ("auth", "unauthorized", "expired", "401", "login", "oauth")):
+            if _is_unambiguous_pre_execution_auth_failure(
+                returncode=proc.returncode,
+                stdout=stdout_str,
+                stderr=stderr,
+            ):
                 err_code = "OPENCLAW_AUTH_UNAVAILABLE"
             elif any(k in stderr_low for k in ("timeout", "timed out", "deadline")):
                 err_code = "OPENCLAW_GATEWAY_TIMEOUT"

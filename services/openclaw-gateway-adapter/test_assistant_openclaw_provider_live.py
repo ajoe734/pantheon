@@ -559,6 +559,45 @@ class TestAssistantOpenClawProviderUnit(unittest.TestCase):
         # Must NOT attempt fallback on generic post-execution failure to satisfy unambiguous-pre-execution-only contract
         self.assertEqual(len(calls), 1)
 
+    def test_invoke_does_not_retry_when_post_execution_stderr_contains_auth_text(self) -> None:
+        calls: list[list[str]] = []
+
+        def fake_run(cmd, **kwargs):
+            calls.append(list(cmd))
+            class R:
+                returncode = 1
+                stdout = ""
+                stderr = "post-execution authorization failure in tool call: 401 unauthorized returned from third-party API"
+            return R()
+
+        provider = self._make_provider(run_func=fake_run)
+        with self.assertRaises(OpenClawProviderError) as ctx:
+            provider.invoke("test post-execution auth failure", mode="user", operator_id="op-1")
+
+        self.assertEqual(ctx.exception.status_code, 502)
+        self.assertEqual(ctx.exception.error_code, "OPENCLAW_GATEWAY_INVOCATION_FAILED")
+        # Must fail closed on post-execution error even if stderr mentions auth, asserting exactly one call
+        self.assertEqual(len(calls), 1)
+
+    def test_invoke_does_not_retry_when_stdout_has_output_even_if_stderr_mentions_auth(self) -> None:
+        calls: list[list[str]] = []
+
+        def fake_run(cmd, **kwargs):
+            calls.append(list(cmd))
+            class R:
+                returncode = 1
+                stdout = json.dumps({"runId": "run_123", "status": "failed"})
+                stderr = "Claude OAuth login session expired (401 unauthorized)"
+            return R()
+
+        provider = self._make_provider(run_func=fake_run)
+        with self.assertRaises(OpenClawProviderError) as ctx:
+            provider.invoke("test partial run output", mode="user", operator_id="op-1")
+
+        self.assertEqual(ctx.exception.status_code, 502)
+        self.assertEqual(ctx.exception.error_code, "OPENCLAW_GATEWAY_INVOCATION_FAILED")
+        self.assertEqual(len(calls), 1)
+
     def test_invoke_does_not_retry_after_timeout(self) -> None:
         calls: list[list[str]] = []
 

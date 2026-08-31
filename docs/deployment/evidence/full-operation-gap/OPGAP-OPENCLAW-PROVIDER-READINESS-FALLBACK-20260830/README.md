@@ -15,6 +15,6 @@ In deployment run `33332882810` (job `99314532003`), `wait_for_openclaw_readines
 9. **No Credential Mutation**: No credentials, tokens, or GitHub secrets were modified; credential refresh remains an operational task.
 
 ## Verification
-- Unit & integration test suites: 450 passed, 4 skipped across `services/openclaw-gateway-adapter` and `scripts/test_openclaw_assistant_openclaw_live_smoke.py`.
+- Unit & integration test suites: 452 passed, 4 skipped across `services/openclaw-gateway-adapter` and `scripts/test_openclaw_assistant_openclaw_live_smoke.py`.
 - Syntax & compose config: `bash -n scripts/openclaw-assistant-openclaw-live-smoke.sh` and `docker compose --profile openclaw config --quiet` passed clean.
 - Four-part deployed live smoke contract: `scripts/openclaw-assistant-openclaw-live-smoke.sh` passes 4/4 phases on the deployed adapter without skip (readiness auth_probe=true, single agent turn OPENCLAW_LIVE, CLI transport assertion, and OpenResponses stream).
