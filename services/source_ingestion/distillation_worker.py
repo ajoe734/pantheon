@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import sqlite3
 import time
@@ -345,11 +346,51 @@ class DistillationJobQueue:
         self._path = resolved
         self._now = now
         self._default_max_attempts = max(1, int(default_max_attempts))
-        self._bootstrap()
+        self._bootstrap_with_corruption_recovery()
 
     @property
     def path(self) -> Path:
         return self._path
+
+    def _bootstrap_with_corruption_recovery(self) -> None:
+        """Bootstrap the schema, self-healing once if the sqlite file itself
+        is corrupt ("database disk image is malformed").
+
+        Without this, a corrupted queue file wedges the controller
+        permanently: every restart re-opens the same corrupt bytes and
+        crash-loops forever on every tick (confirmed live in the dev stack —
+        strategy-distillation-worker failed continuously with this exact
+        error until manually recovered). This queue is a durable *outbox* for
+        already-observed source versions, not their source of truth (that's
+        upstream in source-ingest), so quarantining an unreadable file and
+        starting a fresh empty queue is a safe, bounded recovery: at worst it
+        re-enqueues already-seen sources, and idempotency_key's UNIQUE
+        constraint plus distillation_controller's own idempotency handling
+        already guard against reprocessing duplicates.
+        """
+        try:
+            self._bootstrap()
+        except sqlite3.DatabaseError as exc:
+            # sqlite3 raises DatabaseError for corruption, but the message
+            # varies with exactly how the file broke: "database disk image
+            # is malformed" (the live bug this recovers from) for structural
+            # corruption past a valid header, "file is not a database" when
+            # the header itself is garbled. Neither substring appears in
+            # DatabaseError for unrelated causes (locked, permissions,
+            # missing directory), so this stays narrow to genuine corruption.
+            message = str(exc).lower()
+            if "malformed" not in message and "not a database" not in message:
+                raise
+            quarantined = self._path.with_name(f"{self._path.name}.corrupt-{int(self._now())}")
+            self._path.replace(quarantined)
+            logging.getLogger(__name__).error(
+                "DistillationJobQueue at %s was corrupt (%s); quarantined to %s "
+                "and starting a fresh queue.",
+                self._path,
+                exc,
+                quarantined,
+            )
+            self._bootstrap()
 
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(
