@@ -50804,6 +50804,8 @@ def _ops_read_model_entry_for_persona(
         if clean_tenant
         else read_store.get_persona(persona_id)
     )
+    if persona is None and clean_tenant:
+        persona = read_store.get_persona(persona_id)
     if persona is None:
         return None
 

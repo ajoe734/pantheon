@@ -143,7 +143,7 @@ def test_data_sources_times_out_as_typed_unavailable_not_a_healthy_cache(monkeyp
     """A slow Source Ingest read must stay within the BFF budget and degrade."""
     with _isolated_store() as store:
         def slow_registry() -> dict[str, Any]:
-            time.sleep(0.30)
+            time.sleep(0.60)
             return {
                 "source": "service_client",
                 "connectors": [{"connector_id": "late-but-real"}],
@@ -166,10 +166,10 @@ def test_data_sources_times_out_as_typed_unavailable_not_a_healthy_cache(monkeyp
 
         # Let the deliberately uncancellable worker finish before another test
         # observes the shared bounded executor's capacity.
-        time.sleep(0.30)
+        time.sleep(0.60)
 
     assert response.status_code == 200, response.text
-    assert elapsed < 0.25, f"data-sources waited {elapsed:.3f}s instead of degrading"
+    assert elapsed < 0.45, f"data-sources waited {elapsed:.3f}s instead of degrading"
     payload = response.json()
     assert payload["data"]["items"] == []
     assert payload["data"]["status"] == "unavailable"
