@@ -2373,11 +2373,31 @@ class AgoraService:
         store = self.read_store
         items: List[Dict[str, Any]] = []
         if store is not None and hasattr(store, "list_agora_sessions") and callable(store.list_agora_sessions):
-            items = list(store.list_agora_sessions(status=status) or [])
+            # ``ReadSurfacePorts`` exposes the Agora session projection through
+            # the canonical consultation read port.  That port's contract uses
+            # ``statuses`` (plural), while this HTTP surface accepts one
+            # ``status`` query value.  Read the projection without leaking the
+            # HTTP-shaped keyword into the port and apply the single-value
+            # predicate at this service boundary.
+            items = list(store.list_agora_sessions() or [])
+            if status:
+                wanted_status = str(status).strip().lower()
+                items = [
+                    item
+                    for item in items
+                    if str(item.get("status") or item.get("lifecycle_state") or "").strip().lower()
+                    == wanted_status
+                ]
         if not items and self._local_sessions:
             items = list(self._local_sessions.values())
             if status:
-                items = [it for it in items if str(it.get("status") or "") == status]
+                wanted_status = str(status).strip().lower()
+                items = [
+                    it
+                    for it in items
+                    if str(it.get("status") or it.get("lifecycle_state") or "").strip().lower()
+                    == wanted_status
+                ]
         return items
 
     def get_session(self, session_id: str) -> Optional[Dict[str, Any]]:

@@ -825,6 +825,31 @@ def test_agora_service_session_and_insight_lifecycle():
     assert svc.get_insight("ins-test-01") is not None
 
 
+def test_agora_service_session_status_uses_canonical_consultation_port():
+    """The HTTP singular status filter must not leak into the plural port API."""
+    from agora.service import AgoraService
+    from ports import ReadSurfacePorts
+
+    class _ConsultationReads:
+        def list_consult_requests(
+            self, *, statuses=None, target_type=None, consultation_type=None
+        ):
+            del target_type, consultation_type
+            records = [
+                {"id": "sess-active", "status": "active"},
+                {"id": "sess-done", "status": "completed"},
+            ]
+            if statuses:
+                return [record for record in records if record["status"] in statuses]
+            return records
+
+    ports = ReadSurfacePorts(operations_consultation=_ConsultationReads())
+    svc = AgoraService(get_read_store=lambda: ports)
+
+    assert [item["id"] for item in svc.list_sessions(status="ACTIVE")] == ["sess-active"]
+    assert [item["id"] for item in svc.list_sessions()] == ["sess-active", "sess-done"]
+
+
 def test_main_py_has_zero_legacy_agora_route_decorators():
     """Acceptance: main.py must have 0 legacy @app Agora route decorators remaining."""
     import inspect
@@ -976,7 +1001,3 @@ def test_agora_missing_idempotency_key_returns_400(monkeypatch):
     for method, path, payload in routes:
         resp = client.request(method, path, json=payload, headers={"Authorization": _OPERATOR_AUTH})
         assert resp.status_code == 400, f"Expected 400 for {method} {path}, got {resp.status_code}: {resp.text}"
-
-
-
-
