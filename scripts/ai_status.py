@@ -261,6 +261,7 @@ LOCAL_HUMAN_OPS_ACTIONS = frozenset(
         "milestone",
         "dependency-track",
         "execution-resource",
+        "artifact-contract",
         "reopen",
         "resume_integration",
         "note",
@@ -582,6 +583,7 @@ TASK_ID_COMMAND_ARG_INDEX: dict[str, int] = {
     "milestone": 0,
     "dependency-track": 0,
     "execution-resource": 0,
+    "artifact-contract": 0,
     "start": 0,
     "progress": 0,
     "note": 0,
@@ -4969,6 +4971,136 @@ def command_execution_resource(state: dict[str, Any], args: list[str]) -> None:
     )
 
 
+def _normalize_contract_artifact(value: str) -> str:
+    """Normalize one repository artifact without changing its repository marker."""
+
+    raw = str(value or "").strip()
+    if not raw:
+        raise SystemExit("Artifact path must be a non-empty repository-relative path")
+
+    prefix, separator, relative = raw.partition(":")
+    if separator:
+        if prefix not in {"pantheon", "execute-plans", "frontend-checkout"}:
+            raise SystemExit(
+                "Artifact repository prefix must be pantheon, execute-plans, "
+                "or frontend-checkout"
+            )
+        raw_relative = relative
+    else:
+        raw_relative = raw
+
+    normalized = _safe_repo_relative_path(
+        raw_relative.rstrip("/"), label="artifact path"
+    )
+    rendered = normalized.as_posix()
+    return f"{prefix}:{rendered}" if separator else rendered
+
+
+def command_artifact_contract(state: dict[str, Any], args: list[str]) -> None:
+    """Revise a pre-dispatch task's artifact contract under Human/Ops authority.
+
+    Evidence manifests are part of a task's immutable review contract, but a
+    worker may discover the need for one only after implementation.  This
+    command provides the missing governed transition: it is restricted to
+    ``todo``/``blocked`` rows, records an audited contract revision, and never
+    edits a task that is already active in review or has a catalog conflict
+    guard whose scope would become stale.
+    """
+
+    if len(args) < 4:
+        raise SystemExit(
+            "Usage: artifact-contract <task-id> <add|remove> <artifact> <reason>"
+        )
+    task_id, action, raw_artifact, reason = (
+        args[0],
+        args[1].strip().lower(),
+        args[2],
+        args[3],
+    )
+    if current_actor() != "Human/Ops":
+        raise SystemExit("Only Human/Ops can revise task artifact contracts")
+    if action not in {"add", "remove"}:
+        raise SystemExit("Artifact contract action must be add or remove")
+    if not str(reason or "").strip():
+        raise SystemExit("Artifact contract revision reason is required")
+
+    task = get_task(state, task_id)
+    if task is None:
+        raise SystemExit(f"Unknown task: {task_id}")
+    status = str(task.get("status") or "").strip().lower()
+    if has_terminal_fact(state, task_id) or status in {"done", "superseded"}:
+        raise SystemExit(
+            f"Task {task_id} is terminal in lifecycle state {task.get('status')}"
+        )
+    if status in {"in_progress", "review", "review_approved"}:
+        raise SystemExit(
+            f"Task {task_id} is active in lifecycle state {task.get('status')}; "
+            "revise artifacts before dispatch"
+        )
+    if status not in {"todo", "blocked"}:
+        raise SystemExit(
+            f"Task {task_id} is in non-pre-dispatch lifecycle state "
+            f"{task.get('status')!r}; artifact contracts can only be revised "
+            "in pre-dispatch states todo or blocked"
+        )
+
+    artifact = _normalize_contract_artifact(raw_artifact)
+    current = task.get("artifacts")
+    if current is None:
+        current_artifacts: list[str] = []
+    elif isinstance(current, list) and all(isinstance(item, str) for item in current):
+        current_artifacts = [item.strip() for item in current if item.strip()]
+    else:
+        raise SystemExit(f"Task {task_id} artifacts must be a string list")
+
+    if task.get("artifact_conflict_guard") is not None:
+        raise SystemExit(
+            f"Task {task_id} has an immutable artifact conflict guard; revise its "
+            "catalog contract instead of changing artifact scope"
+        )
+
+    if action == "add":
+        if artifact in current_artifacts:
+            raise SystemExit(f"Task {task_id} already declares artifact {artifact}")
+        candidate = deepcopy(task)
+        candidate["artifacts"] = [*current_artifacts, artifact]
+        enforce_artifact_conflict_admission(state, candidate)
+        updated = candidate["artifacts"]
+    else:
+        if artifact not in current_artifacts:
+            raise SystemExit(f"Task {task_id} does not declare artifact {artifact}")
+        updated = [item for item in current_artifacts if item != artifact]
+
+    timestamp = iso_now()
+    task["artifacts"] = updated
+    task["contract_revision"] = {
+        "kind": "artifact_contract",
+        "action": action,
+        "artifact": artifact,
+        "previous": current_artifacts,
+        "current": updated,
+        "reason": reason,
+        "updated_at": timestamp,
+        "updated_by": "Human/Ops",
+    }
+    task["last_update"] = timestamp
+    task["next"] = reason
+    append_log(
+        {
+            "ts": timestamp,
+            "agent": "Human/Ops",
+            "type": "artifact_contract_revised",
+            "task_id": task_id,
+            "action": action,
+            "artifact": artifact,
+            "previous": current_artifacts,
+            "current": updated,
+            "message": reason,
+            **local_human_ops_audit_fields(),
+        }
+    )
+
+
 def command_reopen(state: dict[str, Any], args: list[str]) -> None:
     if len(args) < 2:
         raise SystemExit("Usage: reopen <task-id> <message>")
@@ -8661,6 +8793,7 @@ def main(argv: list[str]) -> int:
         "milestone": command_milestone,
         "dependency-track": command_dependency_track,
         "execution-resource": command_execution_resource,
+        "artifact-contract": command_artifact_contract,
         "reopen": command_reopen,
         "resume_integration": command_resume_integration,
         "handoff": command_handoff,
