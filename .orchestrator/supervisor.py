@@ -173,9 +173,19 @@ from rewrite.task_identity import task_generation
 from rewrite.task_contract import validate_reassignment_against_acceptance
 from rewrite.worker_recovery import (
     LOST_LEASE_RECEIPT_SCHEMA_VERSION,
+    MAX_WORKER_RECOVERY_RECEIPTS,
     WORKER_RECOVERY_RECEIPTS_KEY,
     WORKER_RECOVERY_TASK_KEY,
+    _canonical_worker_recovery_receipt,
+    _prune_worker_recovery_receipts,
+    _worker_recovery_activity_event,
+    _worker_recovery_pointer,
     build_lost_lease_receipt,
+    count_lost_worker_recovery_outcome,
+    task_has_active_worker_recovery,
+    task_has_pending_worker_recovery,
+    validate_lost_lease_receipt,
+    worker_recovery_responsibility_is_obsolete,
 )
 
 # Review-decision-intent lost-lease recovery (this module's own; not a
@@ -323,7 +333,6 @@ RUNTIME_PHASE_LAUNCH_INTENT_STALE_DEFAULT_SECONDS = 30.0
 RUNTIME_PHASE_LAUNCH_INTENT_STALE_MAX_SECONDS = 300.0
 REVIEW_REQUEUE_INTENT_KEY = "review_requeue_intent"
 REVIEW_REQUEUE_INTENT_SCHEMA_VERSION = 1
-MAX_WORKER_RECOVERY_RECEIPTS = 128
 
 
 def write_activity_log(config: dict[str, Any], entry: dict[str, Any]) -> None:
@@ -7904,110 +7913,12 @@ def record_failure_loop_blocker(
     return event
 
 
-def _worker_recovery_activity_event(
-    receipt: Mapping[str, Any],
-    *,
-    event_type: str,
-    timestamp: str,
-    message: str,
-    event_identity: str | None = None,
-) -> dict[str, Any]:
-    receipt_id = str(receipt.get("receipt_id") or "").strip()
-    identity_suffix = f"-{event_identity}" if event_identity else ""
-    return {
-        "event_id": f"supervisor-{event_type}-{receipt_id}{identity_suffix}",
-        "ts": timestamp,
-        "agent": "Orchestrator",
-        "type": event_type,
-        "task_id": receipt.get("task_id"),
-        "target_agent": (receipt.get("replacement") or {}).get("agent"),
-        "provider": (receipt.get("worker") or {}).get("provider"),
-        "worker_run_id": receipt.get("worker_run_id"),
-        "queue_event_id": receipt.get("queue_event_id"),
-        "recovery_receipt_id": receipt_id,
-        "worker_recovery_receipt": deepcopy(dict(receipt)),
-        "message": message,
-    }
 
 
-def _worker_recovery_pointer(receipt: Mapping[str, Any]) -> dict[str, Any]:
-    """Return the small task-local pointer to the canonical receipt history."""
-
-    replacement = receipt.get("replacement")
-    replacement = replacement if isinstance(replacement, Mapping) else {}
-    return {
-        "receipt_id": str(receipt.get("receipt_id") or ""),
-        "status": str(receipt.get("status") or ""),
-        "task_generation": int(receipt.get("task_generation") or 0),
-        "fence_generation": int(receipt.get("fence_generation") or 0),
-        "replacement_generation": replacement.get("task_generation"),
-    }
 
 
-def _canonical_worker_recovery_receipt(
-    status: Mapping[str, Any],
-    task: Mapping[str, Any],
-) -> dict[str, Any] | None:
-    pointer = task.get(WORKER_RECOVERY_TASK_KEY)
-    receipts = status.get(WORKER_RECOVERY_RECEIPTS_KEY)
-    if not isinstance(pointer, Mapping) or not isinstance(receipts, Mapping):
-        return None
-    receipt_id = str(pointer.get("receipt_id") or "").strip()
-    receipt = receipts.get(receipt_id)
-    if not receipt_id or not isinstance(receipt, Mapping):
-        return None
-    if (
-        str(receipt.get("receipt_id") or "") != receipt_id
-        or str(receipt.get("task_id") or "") != str(task.get("id") or "")
-        or str(pointer.get("status") or "") != str(receipt.get("status") or "")
-    ):
-        return None
-    return deepcopy(dict(receipt))
 
 
-def _prune_worker_recovery_receipts(
-    status: dict[str, Any],
-    *,
-    current_receipt_id: str,
-) -> None:
-    receipts = status.get(WORKER_RECOVERY_RECEIPTS_KEY)
-    if not isinstance(receipts, dict) or len(receipts) <= MAX_WORKER_RECOVERY_RECEIPTS:
-        return
-    protected = {current_receipt_id} if current_receipt_id in receipts else set()
-    for task in status.get("tasks", []) or []:
-        pointer = task.get(WORKER_RECOVERY_TASK_KEY)
-        if not isinstance(pointer, Mapping):
-            continue
-        receipt_id = str(pointer.get("receipt_id") or "")
-        receipt = receipts.get(receipt_id)
-        pointer_status = str(pointer.get("status") or "")
-        if (
-            receipt_id
-            and pointer_status in {"pending", "reassigned"}
-            and isinstance(receipt, Mapping)
-            and str(receipt.get("status") or "") == pointer_status
-        ):
-            protected.add(receipt_id)
-    prunable = sorted(
-        (receipt_id for receipt_id in receipts if receipt_id not in protected),
-        key=lambda receipt_id: (
-            str(
-                (receipts.get(receipt_id) or {}).get("detected_at") or ""
-                if isinstance(receipts.get(receipt_id), Mapping)
-                else ""
-            ),
-            receipt_id,
-        ),
-    )
-    while len(receipts) > MAX_WORKER_RECOVERY_RECEIPTS and prunable:
-        removed = prunable.pop(0)
-        receipts.pop(removed, None)
-        for task in status.get("tasks", []) or []:
-            pointer = task.get(WORKER_RECOVERY_TASK_KEY)
-            if isinstance(pointer, Mapping) and str(
-                pointer.get("receipt_id") or ""
-            ) == removed:
-                task.pop(WORKER_RECOVERY_TASK_KEY, None)
 
 
 def _persist_worker_recovery_receipt_locked(
@@ -8021,6 +7932,8 @@ def _persist_worker_recovery_receipt_locked(
 ) -> bool:
     """CAS one pending lost-lease receipt into canonical TaskStore truth."""
 
+    if not validate_lost_lease_receipt(receipt):
+        return False
     status = load_status(config)
     task_id = str(receipt.get("task_id") or "").strip()
     task = next(
@@ -8265,17 +8178,6 @@ def persist_approved_worker_recovery_binding(
     return sync_status_pipeline(config)
 
 
-def worker_recovery_responsibility_is_obsolete(
-    config: dict[str, Any],
-    task: Mapping[str, Any],
-    receipt: Mapping[str, Any],
-) -> bool:
-    """Whether a pending recovery no longer owns the task's current lane."""
-
-    recovery_role = str(receipt.get("recovery_role") or "").strip()
-    if recovery_role not in {"owner", "reviewer"}:
-        return False
-    return task_current_dispatch_responsibility(config, task) != recovery_role
 
 
 def _resolve_obsolete_worker_recovery_receipt_locked(
@@ -10914,40 +10816,8 @@ def worker_retry_attempt_index(worker: dict[str, Any]) -> int:
     )
 
 
-def task_has_pending_worker_recovery(task: Mapping[str, Any] | None) -> bool:
-    pointer = (task or {}).get(WORKER_RECOVERY_TASK_KEY)
-    if not isinstance(pointer, Mapping):
-        return False
-    try:
-        fence_generation = int(pointer.get("fence_generation") or 0)
-    except (TypeError, ValueError):
-        return True
-    return bool(
-        str(pointer.get("receipt_id") or "")
-        and str(pointer.get("status") or "") == "pending"
-        and fence_generation == task_generation(task)
-    )
 
 
-def task_has_active_worker_recovery(task: Mapping[str, Any] | None) -> bool:
-    """Whether typed recovery still uniquely owns assignment mutation."""
-
-    pointer = (task or {}).get(WORKER_RECOVERY_TASK_KEY)
-    if not isinstance(pointer, Mapping) or not str(
-        pointer.get("receipt_id") or ""
-    ):
-        return False
-    try:
-        fence_generation = int(pointer.get("fence_generation") or 0)
-        replacement_generation = int(pointer.get("replacement_generation") or 0)
-    except (TypeError, ValueError):
-        return True
-    status = str(pointer.get("status") or "")
-    generation = task_generation(task)
-    return bool(
-        (status == "pending" and fence_generation == generation)
-        or (status == "reassigned" and replacement_generation == generation)
-    )
 
 
 def _worker_recovery_candidate_has_capacity(
@@ -11806,40 +11676,6 @@ def reconcile_review_decision_intent_lease_recovery(
     return changed
 
 
-def count_lost_worker_recovery_outcome(
-    counts: dict[str, int],
-    state: Mapping[str, Any],
-    worker: Mapping[str, Any],
-    *,
-    reason_kind: str,
-) -> None:
-    """Count one typed recovery by detector and canonical receipt outcome."""
-
-    prefix = (
-        "expired_lease"
-        if reason_kind == "worker_lease_expired"
-        else "missing_process"
-    )
-    counts[f"{prefix}_workers_reconciled"] += 1
-    receipt_id = str(worker.get("lost_lease_receipt_id") or "")
-    runtime_receipt = (
-        (state.get(WORKER_RECOVERY_RECEIPTS_KEY) or {}).get(receipt_id)
-        if receipt_id
-        else None
-    )
-    recovery_status = (
-        str(runtime_receipt.get("status") or "")
-        if isinstance(runtime_receipt, Mapping)
-        else ""
-    )
-    if recovery_status in {"reassigned", "materialized"}:
-        counts[f"{prefix}_workers_reassigned"] += 1
-    elif recovery_status == "pending":
-        counts[f"{prefix}_recoveries_pending"] += 1
-    elif recovery_status == "held":
-        counts[f"{prefix}_tasks_held"] += 1
-    else:
-        counts[f"{prefix}_workers_superseded"] += 1
 
 
 def reconcile_pending_worker_recoveries(
