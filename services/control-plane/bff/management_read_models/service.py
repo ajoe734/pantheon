@@ -3304,27 +3304,48 @@ class ManagementService:
         assistant_turn_id = f"{message_id}-assistant"
 
         if is_dry_run:
+            dry_run_payload = {
+                "data": {
+                    "status": "accepted",
+                    "lifecycle_status": "accepted",
+                    "session_id": session_id,
+                    "message_id": "",
+                    "trace_id": trace_id,
+                    "question": question,
+                    "focus": focus,
+                    "sources": [],
+                    "confidence": "dry_run",
+                },
+                "meta": {
+                    "status": "accepted",
+                    "route": "POST /bff/management/nl/ask",
+                    "dry_run_mode": "compact_receipt",
+                    "snapshot_at": now,
+                    "idempotency": {"idempotencyKey": idempotency_key, "replayed": False} if idempotency_key else None,
+                },
+            }
+            if idempotency_key and idem_store is not None:
+                try:
+                    if reservation is not None and hasattr(idem_store, "complete"):
+                        idem_store.complete(reservation, dry_run_payload)
+                    elif hasattr(idem_store, "put_result"):
+                        idem_store.put_result(
+                            scope or storage_key,
+                            request_hash=request_hash,
+                            result=dry_run_payload,
+                        )
+                    elif hasattr(idem_store, "put"):
+                        idem_store.put(
+                            storage_key,
+                            request_hash=request_hash,
+                            result=dry_run_payload,
+                        )
+                except Exception:
+                    log.warning("Failed to complete dry-run idempotency reservation", exc_info=True)
+
             return {
                 "status_code": 202,
-                "payload": {
-                    "data": {
-                        "status": "accepted",
-                        "lifecycle_status": "accepted",
-                        "session_id": session_id,
-                        "message_id": "",
-                        "trace_id": trace_id,
-                        "question": question,
-                        "focus": focus,
-                        "sources": [],
-                        "confidence": "dry_run",
-                    },
-                    "meta": {
-                        "status": "accepted",
-                        "route": "POST /bff/management/nl/ask",
-                        "dry_run_mode": "compact_receipt",
-                        "snapshot_at": now,
-                    },
-                },
+                "payload": dry_run_payload,
             }
 
         # 6. Session & turns in conversation store
