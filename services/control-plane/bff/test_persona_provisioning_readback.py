@@ -12,6 +12,7 @@ from typing import Any
 import pytest
 
 import main as bff_main
+from personas.reconciliation import PersonaProvisioningReconciliationMutationPort
 from ports import ReadSurfacePorts, create_read_surface_ports
 
 
@@ -160,7 +161,6 @@ def _first_evaluation_job_fixture(
 @dataclass
 class _FakeReadStore:
     sessions: list[dict[str, Any]] = field(default_factory=list)
-    updates: list[dict[str, Any]] = field(default_factory=list)
 
     def list_authoritative_paper_runtime_monitoring_sessions(self) -> list[dict[str, Any]]:
         return deepcopy(self.sessions)
@@ -182,6 +182,11 @@ class _FakeReadStore:
         ):
             return False
         return bool(session.get("active", True))
+
+
+@dataclass
+class _FakePersonaMutationPort:
+    updates: list[dict[str, Any]] = field(default_factory=list)
 
     def update_persona(
         self,
@@ -271,6 +276,7 @@ class _RuntimeClient:
 @dataclass
 class _Harness:
     read_store: _FakeReadStore
+    mutation_port: _FakePersonaMutationPort
     provisioning_store: _FakeProvisioningStore
     projection: dict[str, Any]
     runtime_client: _RuntimeClient
@@ -279,11 +285,19 @@ class _Harness:
 @pytest.fixture()
 def harness(monkeypatch: pytest.MonkeyPatch) -> _Harness:
     read_store = _FakeReadStore(sessions=[_worker_session()])
+    mutation_port = _FakePersonaMutationPort()
     provisioning_store = _FakeProvisioningStore()
     projection = _deployment_projection()
     runtime_client = _RuntimeClient()
 
     monkeypatch.setattr(bff_main, "read_store", read_store)
+    monkeypatch.setattr(
+        bff_main,
+        "persona_reconciliation_mutation_port",
+        PersonaProvisioningReconciliationMutationPort(
+            persona_mutation_port=mutation_port,
+        ),
+    )
     monkeypatch.setattr(bff_main, "_PERSONA_PROVISIONING_STORE", provisioning_store)
     monkeypatch.setattr(bff_main, "_PERSONA_BFF_OVERLAY", {})
     monkeypatch.setattr(bff_main, "_get_json", lambda *_args, **_kwargs: deepcopy(projection))
@@ -313,7 +327,7 @@ def harness(monkeypatch: pytest.MonkeyPatch) -> _Harness:
     )
     monkeypatch.setenv("PANTHEON_PERSONA_HEARTBEAT_MAX_AGE_SECONDS", "90")
     monkeypatch.setenv("PANTHEON_PERSONA_PROVISIONING_TIMEOUT_SECONDS", "600")
-    return _Harness(read_store, provisioning_store, projection, runtime_client)
+    return _Harness(read_store, mutation_port, provisioning_store, projection, runtime_client)
 
 
 def test_required_cron_registration_polls_until_authoritative_readback(
@@ -477,7 +491,7 @@ def test_exact_authoritative_identity_fresh_single_worker_and_first_eval_succeed
     assert RUNTIME_BINDING_ID != PERSONA_CAPITAL_BINDING_ID
     assert raw["metadata"]["runtime_binding_id"] == RUNTIME_BINDING_ID
     assert raw["metadata"]["runtime_id"] == RUNTIME_ID
-    assert harness.read_store.updates[-1]["lifecycle_state"] == "paper_running"
+    assert harness.mutation_port.updates[-1]["lifecycle_state"] == "paper_running"
     assert harness.provisioning_store.released[-1].state == "succeeded"
     references = harness.provisioning_store.released[-1].references
     assert references["runtime_binding_id"] == RUNTIME_BINDING_ID
@@ -862,7 +876,7 @@ def test_embedded_projection_binding_is_not_runtime_manager_authority(
     )
 
     assert state == "provisioning"
-    assert harness.read_store.updates == []
+    assert harness.mutation_port.updates == []
 
 
 def test_multiple_active_bindings_for_plan_fail_closed(harness: _Harness) -> None:
@@ -995,7 +1009,7 @@ def test_terminal_state_waits_for_durable_ledger_lease(harness: _Harness) -> Non
 
     assert state == "provisioning"
     assert raw["lifecycle_state"] == "provisioning"
-    assert harness.read_store.updates == []
+    assert harness.mutation_port.updates == []
 
     harness.provisioning_store.busy = False
     state, raw = _evaluate(
@@ -1176,7 +1190,7 @@ def test_stable_terminal_failure_reconciliation_does_not_write_churn(
     state, _ = _evaluate(raw=raw)
 
     assert state == "provisioning_failed"
-    assert harness.read_store.updates == []
+    assert harness.mutation_port.updates == []
 
 
 def test_authoritative_worker_read_never_enables_snapshot_fallback(tmp_path) -> None:

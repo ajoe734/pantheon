@@ -231,6 +231,12 @@ from persona_provisioning_coordinator import (
     deterministic_provisioning_ids,
 )
 try:
+    from personas.reconciliation import PersonaProvisioningReconciliationMutationPort
+except ImportError:
+    from services.control_plane.bff.personas.reconciliation import (  # type: ignore[no-redef]
+        PersonaProvisioningReconciliationMutationPort,
+    )
+try:
     from services.persona.runtime_profile import (
         PersonaRuntimeProfile,
         build_persona_runtime_profile,
@@ -1208,6 +1214,9 @@ async def _bff_unhandled_exception_handler(
 command_store = CommandStore(os.path.join(BFF_DATA_DIR, "commands.jsonl"))
 session_lifecycle_store = SessionLifecycleStore(os.path.join(BFF_DATA_DIR, "session_lifecycle.json"))
 persona_write_owner = create_persona_registry_write_owner()
+persona_reconciliation_mutation_port = PersonaProvisioningReconciliationMutationPort(
+    persona_mutation_port=persona_write_owner,
+)
 read_store: ReadSurfacePorts = create_read_surface_ports(
     persona_registry_store=persona_write_owner,
 )
@@ -1249,9 +1258,29 @@ def _recoverable_capital_command(record: Dict[str, Any]) -> bool:
     return _retryable_terminal_capital_command(record)
 
 
+def _prewarm_jwks_cache() -> None:
+    """Populate the JWKS cache before /readyz, off the event loop thread."""
+    jwks_uri = os.getenv("PANTHEON_BFF_JWKS_URI", "").strip()
+    discovery_url = os.getenv("PANTHEON_BFF_OIDC_DISCOVERY_URL", "").strip()
+    if not jwks_uri and not discovery_url:
+        return
+    try:
+        try:
+            from services.runtime_auth_inbound import _fetch_jwks_keys, _fetch_oidc_metadata
+        except ImportError:
+            from runtime_auth_inbound import _fetch_jwks_keys, _fetch_oidc_metadata  # type: ignore[no-redef]
+        if jwks_uri:
+            _fetch_jwks_keys(jwks_uri)
+        elif discovery_url:
+            _fetch_jwks_keys(str(_fetch_oidc_metadata(discovery_url)["jwks_uri"]).strip())
+    except Exception as exc:  # noqa: BLE001 - warm-up must never block startup
+        log.warning("JWKS cache pre-warm failed, first real login will pay the fetch cost: %s", exc)
+
+
 @app.on_event("startup")
 async def _start_downstream_health_monitor() -> None:
     global _PERSONA_PROVISIONING_RECONCILER_TASK
+    await asyncio.to_thread(_prewarm_jwks_cache)
     await downstream_health_monitor.start()
     # A crash can leave a durable owner command submitted/processing.  Replay
     # only the idempotent Capital authority commands; generic adapter commands
@@ -26737,6 +26766,20 @@ def _append_persona_reconcile_diagnostic(
         diagnostics.append(dependency)
 
 
+def _persist_persona_provisioning_terminal_transition(
+    persona_id: str,
+    *,
+    lifecycle_state: str,
+    metadata: Mapping[str, Any],
+) -> Dict[str, Any]:
+    """Persist a terminal provisioning projection outside the read surface."""
+    return persona_reconciliation_mutation_port.persist_terminal_transition(
+        persona_id,
+        lifecycle_state=lifecycle_state,
+        metadata=metadata,
+    )
+
+
 def _materialize_terminal_persona_provisioning_ledger(
     persona_id: str,
     raw: Dict[str, Any],
@@ -26857,7 +26900,7 @@ def _materialize_terminal_persona_provisioning_ledger(
         _append_persona_reconcile_diagnostic(diagnostics, "provisioning_ledger")
         return "provisioning"
 
-    read_store.update_persona(
+    _persist_persona_provisioning_terminal_transition(
         persona_id,
         lifecycle_state=new_state,
         metadata=metadata_updates,
@@ -26951,7 +26994,7 @@ def _evaluate_persona_provisioning_status(
             if metadata.get(key) != value
         }
         if changed_updates:
-            read_store.update_persona(
+            _persist_persona_provisioning_terminal_transition(
                 persona_id,
                 lifecycle_state="provisioning_failed",
                 metadata=changed_updates,
@@ -27474,7 +27517,7 @@ def _evaluate_persona_provisioning_status(
                     )
 
     if new_state != current_state or metadata_updates:
-        read_store.update_persona(
+        _persist_persona_provisioning_terminal_transition(
             persona_id,
             lifecycle_state=new_state,
             metadata=metadata_updates,
@@ -43810,12 +43853,10 @@ def _persona_record_for_provisioning(
         traits=traits,
         lifecycle_state=lifecycle_state,
     )
-    creator = getattr(read_store, "create_persona", None)
-    updater = getattr(read_store, "update_persona", None)
     existing = read_store.get_persona(record.persona_id)
     if existing is None:
-        if mutate_store and callable(creator):
-            persona = creator(
+        if mutate_store:
+            persona = persona_write_owner.create_persona(
                 persona_id=record.persona_id,
                 name=str(payload.get("name") or record.normalized_name),
                 actor_id=canonical_owner,
@@ -43864,8 +43905,8 @@ def _persona_record_for_provisioning(
             lifecycle_state = "paper_running"
         elif existing.get("lifecycle_state") and record.state == "succeeded":
             lifecycle_state = str(existing.get("lifecycle_state"))
-        if mutate_store and callable(updater):
-            persona = updater(
+        if mutate_store:
+            persona = persona_write_owner.update_persona(
                 record.persona_id,
                 lifecycle_state=lifecycle_state,
                 metadata=metadata,
@@ -44506,7 +44547,7 @@ async def bff_patch_persona(
         },
         reason="persona_updated",
     )
-    persona_record = read_store.update_persona(
+    persona_record = persona_write_owner.update_persona(
         persona_id,
         name=str(base.get("name") or persona_id),
         actor_id=str(existing_metadata.get("owner") or identity.operator_id),
