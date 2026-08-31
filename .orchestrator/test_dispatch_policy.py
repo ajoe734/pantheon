@@ -244,3 +244,107 @@ def test_task_execution_resources_cases() -> None:
         task_execution_resources({"id": "TASK-1", "execution_resources": ["bad"]})
     with pytest.raises(ValueError, match="duplicate resource"):
         task_execution_resources({"id": "TASK-1", "execution_resources": ["pantheon-dev", "pantheon-dev"]})
+
+
+# DTG-CLEAN-M6 characterization tests for the candidate-evaluation/admission
+# functions moved from supervisor.py -- not a re-test of
+# .orchestrator/test_supervisor.py's extensive dispatch coverage (which
+# already exercises this exact code through supervisor.py's re-export and
+# continues to pass unchanged), but proof that this module is genuinely
+# usable on its own: no circular import, the lazy supervisor handback
+# resolves, and explain/live parity holds structurally (one function, both
+# callers).
+
+
+def test_module_imports_with_no_circular_dependency() -> None:
+    # supervisor.py imports dispatch_policy at its own top level; importing
+    # supervisor here (a second, independent path into the same dependency
+    # graph) must not raise, proving the graph is a DAG (supervisor ->
+    # dispatch_policy -> {common, rewrite.dispatch_admission,
+    # rewrite.task_machine, task_archive}, with the reverse edge only ever
+    # taken lazily, at call time, via _supervisor_module()).
+    import supervisor  # noqa: F401
+
+
+def test_lazy_supervisor_handback_resolves() -> None:
+    import dispatch_policy
+
+    supervisor = dispatch_policy._supervisor_module()
+    for name in (
+        "_admission_health_records",
+        "parse_runtime_timestamp",
+        "account_concurrency_limit",
+        "agent_account_id",
+        "build_dispatch_event",
+        "delivery_lane_for_agent",
+        "dependencies_satisfied",
+        "dispatch_loop_agent_ids",
+        "ready_dispatch_max_concurrent_workers",
+        "review_decision_intent_replay_eligible",
+        "runtime_delivery_health",
+        "task_review_requeue_intent",
+        "task_review_requeue_record",
+    ):
+        assert hasattr(supervisor, name), name
+
+
+def test_explain_and_live_dispatch_share_one_candidate_function() -> None:
+    """explain_dispatch_for_task and the live dispatch loop must evaluate
+    every candidate through the exact same function object -- the
+    architectural guarantee that makes 'explain' trustworthy."""
+
+    import dispatch_policy
+    import supervisor
+
+    assert supervisor.evaluate_dispatch_candidate is dispatch_policy.evaluate_dispatch_candidate
+    assert (
+        supervisor.evaluate_task_delivery_admission
+        is dispatch_policy.evaluate_task_delivery_admission
+    )
+
+
+def test_entry_points_are_exported() -> None:
+    import dispatch_policy
+
+    for name in (
+        "build_delivery_admission_snapshot",
+        "evaluate_task_delivery_admission",
+        "dispatch_event_is_in_unchanged_cooldown",
+        "task_review_requeue_is_materialized",
+        "evaluate_dispatch_candidate",
+    ):
+        assert callable(getattr(dispatch_policy, name)), name
+
+
+def test_dispatch_event_cooldown_is_pure_and_time_bounded() -> None:
+    from dispatch_policy import dispatch_event_is_in_unchanged_cooldown
+
+    now = "2026-08-31T00:10:00Z"
+    seen = {"evt-1": "2026-08-31T00:05:00Z"}
+    assert dispatch_event_is_in_unchanged_cooldown(
+        seen, "evt-1", cooldown_seconds=900, now=now
+    )
+    assert not dispatch_event_is_in_unchanged_cooldown(
+        seen, "evt-1", cooldown_seconds=60, now=now
+    )
+    assert not dispatch_event_is_in_unchanged_cooldown(
+        seen, "evt-missing", cooldown_seconds=900, now=now
+    )
+    assert not dispatch_event_is_in_unchanged_cooldown(
+        seen, "evt-1", cooldown_seconds=0, now=now
+    )
+
+
+def test_task_review_requeue_is_materialized_fails_closed_on_no_record() -> None:
+    # The full valid-schema "materialized" case is already covered
+    # extensively by .orchestrator/test_supervisor.py through the
+    # re-export; this proves the pure predicate fails closed on the
+    # absence of a canonical record, matching task_review_requeue_record's
+    # own fail-closed contract.
+    from dispatch_policy import task_review_requeue_is_materialized
+
+    assert not task_review_requeue_is_materialized(None)
+    assert not task_review_requeue_is_materialized({})
+    assert not task_review_requeue_is_materialized(
+        {"review_requeue_intent": {"status": "pending"}}
+    )
