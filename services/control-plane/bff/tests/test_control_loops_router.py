@@ -17,7 +17,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 from control_loops.router import create_control_loops_router
 from control_loops.service import ControlLoopsService
 from management_read_models import loop_truth as loop_truth_projection
-from models import OperatorIdentity
+from models import CommandType, OperatorIdentity
 
 
 EXPECTED_ROUTES = {
@@ -78,6 +78,14 @@ REVIEW_EVIDENCE = {
         ".venv-pantheon/bin/python -m py_compile services/control-plane/bff/control_loops/router.py services/control-plane/bff/control_loops/service.py services/control-plane/bff/tests/test_control_loops_router.py",
         "git diff --check",
     ],
+    "broader_regression": {
+        "result": "95 passed, 6 pre-existing main.py characterization failures",
+        "unchanged_paths": [
+            "services/control-plane/bff/main.py",
+            "services/control-plane/bff/test_v5_interventions.py",
+            "services/control-plane/bff/tests/test_bff_path_dedupe.py",
+        ],
+    },
     "assembly_handoff": (
         "main.py remains the sole current runtime owner; Main Assembly must remove the "
         "24 inventoried legacy decorators and then include this prepared router."
@@ -239,6 +247,8 @@ class MockCommandOwners:
 
     def __init__(self) -> None:
         self.receipts: Dict[str, Dict[str, Any]] = {}
+        self.sem_calls: List[Dict[str, Any]] = []
+        self.final_calls: List[Dict[str, Any]] = []
 
     @staticmethod
     def _key(kwargs: Dict[str, Any]) -> str:
@@ -267,9 +277,11 @@ class MockCommandOwners:
         return response
 
     def submit_sem(self, **kwargs: Any) -> Dict[str, Any]:
+        self.sem_calls.append(dict(kwargs))
         return self._receipt(kwargs["command_type"], kwargs)
 
     def submit_final(self, **kwargs: Any) -> Dict[str, Any]:
+        self.final_calls.append(dict(kwargs))
         payload = kwargs["payload"]
         command = payload["command"]
         params = payload.get("params") or {}
@@ -316,6 +328,7 @@ def _client() -> tuple[TestClient, MockDownstreamHealthMonitor]:
         deployed_environment="dev",
     )
     app = FastAPI()
+    app.state.command_owners = commands
     app.include_router(
         create_control_loops_router(
             service=service,
@@ -489,6 +502,9 @@ def test_intervention_list_detail_and_decision_idempotency() -> None:
     assert first.json()["data"]["command"] == "DecideV5Intervention"
     assert second.json()["data"]["commandId"] == first.json()["data"]["commandId"]
     assert second.json()["meta"]["idempotency"]["replayed"] is True
+    command_owner = client.app.state.command_owners
+    assert command_owner.final_calls[-1]["payload"]["command"] == "DecideV5Intervention"
+    assert command_owner.final_calls[-1]["include_durable_meta"] is True
 
     invalid = client.post(
         "/bff/v5/interventions/intv-1/decide",
@@ -562,6 +578,12 @@ def test_sentinel_reads_filters_and_typed_commands() -> None:
     assert status.json()["data"]["command"] == "SentinelFindingStatus"
     assert build.json()["data"]["command"] == "SentinelRemediationBuild"
     assert execute.json()["data"]["command"] == "SentinelRemediationExecute"
+    command_owner = client.app.state.command_owners
+    assert [call["command_type"] for call in command_owner.sem_calls[-3:]] == [
+        CommandType.SENTINEL_FINDING_STATUS,
+        CommandType.SENTINEL_REMEDIATION_BUILD,
+        CommandType.SENTINEL_REMEDIATION_EXECUTE,
+    ]
 
 
 def test_loop_inventory_and_health_preserve_reusable_truth_contracts() -> None:
