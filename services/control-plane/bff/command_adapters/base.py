@@ -99,8 +99,8 @@ def evolution_url(path: str) -> str:
 
 def record_downstream_outcome(url: str, ok: bool, status_code: int, detail: Optional[str] = None) -> None:
     try:
-        import main as bff_main
-        monitor = getattr(bff_main, "downstream_health_monitor", None)
+        from downstream_health_monitor import get_downstream_health_monitor
+        monitor = get_downstream_health_monitor()
         if monitor is None:
             return
         registry = monitor._resolve_target_registry()
