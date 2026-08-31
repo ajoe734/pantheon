@@ -36,7 +36,13 @@ from common import (
     normalize_github_repo_slug,
     utc_now,
 )
-from dispatch_policy import ready_dispatch_settings
+from dispatch_policy import (
+    REASON_OWNED_FINALIZE,
+    REASON_OWNED_IN_PROGRESS,
+    REASON_OWNED_READY,
+    REASON_REVIEW_READY,
+    ready_dispatch_settings,
+)
 from multi_repo_registry import (
     repositories,
     repository_configured_local_path,
@@ -712,10 +718,18 @@ def _restore_reused_index_split(worktree_path: Path, paths: list[str]) -> bool:
 def _lost_lease_replacement_may_adopt_worktree(
     config: dict[str, Any],
     state: dict[str, Any],
+    request: DeliveryRequest,
     *,
     task_id: str | None,
+    repository_id: str,
+    source_root: Path,
+    branch: str,
+    worktree_path: Path,
+    base_ref: str,
+    queue_event_id: str | None,
+    target_agent: str | None,
 ) -> bool:
-    """True only for the fenced lost-lease replacement's own first dispatch.
+    """True only for the exact fenced replacement and its registered worktree.
 
     A receipt only reaches ``reassigned`` after `_persist_task_reassignment_locked`
     CAS'd it out of ``pending``, and it only reaches ``pending`` after
@@ -724,7 +738,7 @@ def _lost_lease_replacement_may_adopt_worktree(
     is therefore already durable proof the predecessor process and lease are
     no longer live; no separate liveness probe is needed here.
     """
-    if not task_id:
+    if not task_id or str(request.task_id or "") != task_id:
         return False
     # Some unit callers exercise workspace preparation with a legacy
     # non-authoritative fixture that intentionally has no task-state store.
@@ -738,15 +752,107 @@ def _lost_lease_replacement_may_adopt_worktree(
     task = supervisor.task_index_from_status(config, status).get(task_id)
     if task is None:
         return False
+    try:
+        canonical_repository_id = validate_task_repository_scope(config, task)
+    except (RuntimeError, ValueError):
+        return False
+    if (
+        canonical_repository_id != repository_id
+        or branch != worker_task_branch(config, task_id)
+    ):
+        return False
     receipt = _canonical_worker_recovery_receipt(status, task)
     if receipt is None or str(receipt.get("task_id") or "") != task_id:
         return False
     if str(receipt.get("status") or "") != "reassigned":
         return False
+    receipt_id = str(receipt.get("receipt_id") or "").strip()
+    if (
+        not receipt_id
+        or str(receipt.get("reason_kind") or "")
+        not in {"worker_process_missing", "worker_lease_expired"}
+        or str(request.metadata.get("recovery_receipt_id") or "") != receipt_id
+    ):
+        return False
     replacement = receipt.get("replacement")
     if not isinstance(replacement, Mapping):
         return False
-    if int(replacement.get("task_generation") or -1) != task_generation(task):
+    generation = task_generation(task)
+    try:
+        replacement_generation = int(replacement.get("task_generation") or -1)
+        request_generation = int(request.metadata.get("task_generation") or -1)
+    except (TypeError, ValueError):
+        return False
+    if replacement_generation != generation or request_generation != generation:
+        return False
+    role = str(receipt.get("recovery_role") or "owner")
+    expected_actor = str(
+        replacement.get("agent")
+        or (
+            replacement.get("reviewer")
+            if role == "reviewer"
+            else replacement.get("owner")
+        )
+        or ""
+    )
+    actual_actor = supervisor.canonical_agent_name(config, str(target_agent or ""))
+    if (
+        not expected_actor
+        or supervisor.canonical_agent_name(config, expected_actor) != actual_actor
+        or str(replacement.get("owner") or "") != str(task.get("owner") or "")
+        or str(replacement.get("reviewer") or "")
+        != str(task.get("reviewer") or "")
+    ):
+        return False
+    expected_reasons = (
+        {REASON_REVIEW_READY}
+        if role == "reviewer"
+        else {REASON_OWNED_READY, REASON_OWNED_IN_PROGRESS, REASON_OWNED_FINALIZE}
+    )
+    if str(request.reason or "") not in expected_reasons:
+        return False
+
+    queue_events_by_id = (state.get("queue") or {}).get("events") or {}
+    queue_record = queue_events_by_id.get(str(queue_event_id or ""))
+    queue_intent = (
+        queue_record.get("intent") if isinstance(queue_record, Mapping) else None
+    )
+    try:
+        queue_generation = int((queue_intent or {}).get("task_generation") or -1)
+    except (AttributeError, TypeError, ValueError):
+        return False
+    if (
+        not isinstance(queue_record, Mapping)
+        or not isinstance(queue_intent, Mapping)
+        or str(queue_record.get("recovery_receipt_id") or "") != receipt_id
+        or str(queue_intent.get("recovery_receipt_id") or "") != receipt_id
+        or str(queue_intent.get("task_id") or "") != task_id
+        or queue_generation != generation
+        or supervisor.canonical_agent_name(
+            config, str(queue_intent.get("target_agent") or "")
+        )
+        != actual_actor
+    ):
+        return False
+
+    leases = (state.get("worker_worktrees") or {}).get("leases") or {}
+    lease = leases.get(task_id)
+    if not isinstance(lease, Mapping):
+        return False
+    try:
+        lease_path = Path(str(lease.get("path") or "")).resolve()
+        lease_source_root = Path(str(lease.get("source_root") or "")).resolve()
+    except (OSError, RuntimeError, ValueError):
+        return False
+    if (
+        str(lease.get("task_id") or "") != task_id
+        or str(lease.get("workspace_task_id") or "") != task_id
+        or str(lease.get("repository_id") or "") != repository_id
+        or str(lease.get("branch") or "") != branch
+        or str(lease.get("base_ref") or "") != base_ref
+        or lease_path != worktree_path.resolve()
+        or lease_source_root != source_root.resolve()
+    ):
         return False
     active_statuses = {
         str(value)
@@ -903,6 +1009,9 @@ def prepare_worker_workspace(
 ) -> tuple[bool, str | None]:
     """Lease one isolated task worktree from a cycle-pinned repository base."""
 
+    # This marker is supervisor-derived authority, never queue input. Strip any
+    # inherited/request-supplied value before independently proving adoption.
+    request.metadata.pop("fenced_dirty_wip_adoption", None)
     settings = worker_worktree_settings(config)
     workspace_task_id = worker_workspace_task_id(request)
     if not workspace_task_id:
@@ -1038,14 +1147,24 @@ def prepare_worker_workspace(
         repository_id=repository_id,
     )
     reused = False
-    lost_lease_wip_adoption = _lost_lease_replacement_may_adopt_worktree(
-        config, state, task_id=workspace_task_id
-    )
 
     existing = _existing_worktree_for_branch(repo_root, branch, exclude_root=True)
     if existing:
         worktree_path = existing
         reused = True
+        lost_lease_wip_adoption = _lost_lease_replacement_may_adopt_worktree(
+            config,
+            state,
+            request,
+            task_id=workspace_task_id,
+            repository_id=repository_id,
+            source_root=repo_root,
+            branch=branch,
+            worktree_path=worktree_path,
+            base_ref=base_ref,
+            queue_event_id=queue_event_id,
+            target_agent=target_agent,
+        )
         refresh_ok, refresh_status = _refresh_reused_worker_worktree(
             worktree_path,
             base_sha,
@@ -1053,6 +1172,18 @@ def prepare_worker_workspace(
             branch=branch,
             allow_dirty_wip_adoption=lost_lease_wip_adoption,
         )
+        if refresh_status == "adopted_lost_lease_dirty_wip":
+            request.metadata["fenced_dirty_wip_adoption"] = {
+                "receipt_id": str(
+                    request.metadata.get("recovery_receipt_id") or ""
+                ),
+                "task_id": workspace_task_id,
+                "task_generation": request.metadata.get("task_generation"),
+                "queue_event_id": queue_event_id,
+                "repository_id": repository_id,
+                "branch": branch,
+                "workspace_path": str(worktree_path),
+            }
         write_activity_log(
             config,
             {
@@ -1069,6 +1200,11 @@ def prepare_worker_workspace(
                 "workspace_base_sha": base_sha,
                 "refresh_ok": refresh_ok,
                 "refresh_status": refresh_status,
+                "recovery_receipt_id": (
+                    request.metadata.get("recovery_receipt_id")
+                    if refresh_status == "adopted_lost_lease_dirty_wip"
+                    else None
+                ),
             },
         )
         if not refresh_ok and refresh_status == "skipped_dirty_worktree":
@@ -1152,7 +1288,6 @@ def prepare_worker_workspace(
                 base_sha,
                 task_id=workspace_task_id,
                 branch=branch,
-                allow_dirty_wip_adoption=lost_lease_wip_adoption,
             )
             write_activity_log(
                 config,

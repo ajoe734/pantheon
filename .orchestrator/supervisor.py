@@ -2902,6 +2902,7 @@ def check_worker_tree_clean(
     target_agent: str | None,
     queue_event_id: str | None,
     cwd: Path | None = None,
+    fenced_dirty_wip_adoption: Mapping[str, Any] | None = None,
 ) -> tuple[bool, str | None]:
     settings = worker_tree_guard_settings(config)
     if not settings.get("enabled"):
@@ -2921,6 +2922,42 @@ def check_worker_tree_clean(
         if _path_matches_any_glob(entry["path"], blocking_globs)
     ]
     if not blocking_entries:
+        return True, None
+
+    adoption = (
+        fenced_dirty_wip_adoption
+        if isinstance(fenced_dirty_wip_adoption, Mapping)
+        else {}
+    )
+    adoption_path = str(adoption.get("workspace_path") or "")
+    try:
+        adoption_path_matches = bool(
+            cwd and adoption_path and Path(adoption_path).resolve() == cwd.resolve()
+        )
+    except (OSError, RuntimeError, ValueError):
+        adoption_path_matches = False
+    if (
+        str(adoption.get("task_id") or "") == str(task_id or "")
+        and str(adoption.get("queue_event_id") or "") == str(queue_event_id or "")
+        and str(adoption.get("receipt_id") or "").startswith("lost-lease-")
+        and adoption_path_matches
+    ):
+        write_activity_log(
+            config,
+            {
+                "type": "dispatch_adopted_lost_lease_dirty_tree",
+                "task_id": task_id,
+                "target_agent": target_agent,
+                "queue_event_id": queue_event_id,
+                "recovery_receipt_id": adoption.get("receipt_id"),
+                "workspace_path": str(cwd) if cwd else None,
+                "blocking_paths": [entry["path"] for entry in blocking_entries],
+                "message": (
+                    "Allowed the exact fenced lost-lease replacement to inherit "
+                    "its registered task worktree without changing dirty WIP."
+                ),
+            },
+        )
         return True, None
 
     display_entries = [f"{entry['status']} {entry['path']}" for entry in blocking_entries[:20]]
@@ -3509,6 +3546,11 @@ def process_queue(
             target_agent=str(event.get("target_display_name") or event.get("target_agent") or ""),
             queue_event_id=str(event_id or ""),
             cwd=Path(str(workspace_path)) if workspace_path else None,
+            fenced_dirty_wip_adoption=(
+                request_metadata.get("fenced_dirty_wip_adoption")
+                if isinstance(request_metadata, dict)
+                else None
+            ),
         )
         if not guard_ok:
             record["status"] = "pending"
