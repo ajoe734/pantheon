@@ -92,15 +92,19 @@ def run_kill_switch_demo_harness(
             store_path=store_path,
             single_runtime_enforced=True,
         )
-        binding = service.deploy(_deploy_request(request))
+        paper_binding = service.deploy(_paper_deploy_request(request))
+        promotion_result = service.promote_stage(
+            _canary_promote_request(request, paper_binding_id=paper_binding.binding_id)
+        )
+        binding_id = promotion_result["new_binding"]["binding_id"]
         dispatch_response = service.execute_kill_switch(
-            _kill_switch_request(request, binding_id=binding.binding_id)
+            _kill_switch_request(request, binding_id=binding_id)
         )
 
     demo_packet = _demo_packet(
         request=request,
         harness_id=harness_id,
-        runtime_binding_id=binding.binding_id,
+        runtime_binding_id=binding_id,
         dispatch_response=dispatch_response,
     )
     evidence = collect_kill_switch_demo_evidence(demo_packet)
@@ -121,7 +125,7 @@ def run_kill_switch_demo_harness(
             "run_id": request.run_id or f"canary-run-{harness_id}",
             "persona_id": request.persona_id,
             "runtime_id": request.runtime_id,
-            "runtime_binding_id": binding.binding_id,
+            "runtime_binding_id": binding_id,
             "artifact_id": request.artifact_id,
             "deployment_plan_id": request.deployment_plan_id,
             "environment": "canary",
@@ -219,8 +223,46 @@ def _load_runtime_manager_service() -> Any:
     return module
 
 
-def _deploy_request(request: KillSwitchDemoHarnessRequest) -> dict[str, Any]:
+def _paper_deploy_request(request: KillSwitchDemoHarnessRequest) -> dict[str, Any]:
+    """First step of the governed canary path: an ordinary paper deploy.
+
+    RuntimeManagerService.deploy() only permits target_stage="paper" without
+    the internal-only _allow_non_paper_deploy escape hatch (see
+    "Ordinary new RuntimeBinding deployment is paper-only" in service.py).
+    Reaching demo_stage="canary" requires deploying to paper first, then
+    calling promote_stage() — see _canary_promote_request below.
+    """
     return {
+        "plan_id": request.deployment_plan_id,
+        "plan_status": "approved",
+        "target_stage": "paper",
+        "artifact_id": request.artifact_id,
+        "artifact_version": request.artifact_version,
+        "capital_pool_id": request.capital_pool_id,
+        "persona_capital_binding_id": request.persona_capital_binding_id,
+        "persona_capital_binding_status": "active",
+        "allowed_deployment_scope": "canary",
+        "loader_checks_passed": True,
+        "runtime_id": request.runtime_id,
+        "metadata": {
+            "authoritative_loader_attestation": {
+                "status": "passed",
+                "authority": "canonical_deployment_registry_governance_capital",
+            }
+        },
+    }
+
+
+def _canary_promote_request(
+    request: KillSwitchDemoHarnessRequest, *, paper_binding_id: str
+) -> dict[str, Any]:
+    """Second step: promote the paper binding to canary via the authoritative
+    governed activation path (RuntimeManagerService.promote_stage()), which is
+    what actually satisfies the MFA/distinct-actor approval proof requirement
+    — the demo's DEFAULT_*_REF constants stand in for that proof here.
+    """
+    return {
+        "current_binding_id": paper_binding_id,
         "plan_id": request.deployment_plan_id,
         "plan_status": "approved",
         "target_stage": request.demo_stage,
@@ -239,6 +281,14 @@ def _deploy_request(request: KillSwitchDemoHarnessRequest) -> dict[str, Any]:
         "operator_approval_ref": DEFAULT_OPERATOR_APPROVAL_REF,
         "capital_scale_pct": request.capital_scale_pct,
         "gross_scale_pct": request.gross_scale_pct,
+        "metadata": {
+            "authoritative_promotion_attestation": {
+                "status": "passed",
+                "authority": "canonical_stage_promotion",
+                "source_stage": "paper",
+                "target_stage": request.demo_stage,
+            }
+        },
     }
 
 

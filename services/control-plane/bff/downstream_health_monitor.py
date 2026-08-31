@@ -57,6 +57,20 @@ _POST_HEADERS: contextvars.ContextVar[Dict[str, str]] = contextvars.ContextVar(
 )
 _TARGET_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,99}$")
 
+_GLOBAL_HEALTH_MONITOR: Optional[DownstreamHealthMonitor] = None
+
+
+def get_downstream_health_monitor() -> Optional[DownstreamHealthMonitor]:
+    """Return the registered global DownstreamHealthMonitor instance, if any."""
+    return _GLOBAL_HEALTH_MONITOR
+
+
+def set_downstream_health_monitor(monitor: Optional[DownstreamHealthMonitor]) -> None:
+    """Set the registered global DownstreamHealthMonitor instance."""
+    global _GLOBAL_HEALTH_MONITOR
+    _GLOBAL_HEALTH_MONITOR = monitor
+
+
 
 @dataclass(frozen=True)
 class DownstreamTarget:
@@ -1525,6 +1539,7 @@ class DownstreamHealthMonitor:
         self._task: Optional[asyncio.Task[None]] = None
         self._running = False
         self._last_retention_prune_at = 0.0
+        set_downstream_health_monitor(self)
 
     @property
     def state_path(self) -> str:

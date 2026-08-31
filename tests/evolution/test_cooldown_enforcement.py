@@ -5,6 +5,7 @@ import pytest
 from services.evolution.cooldown_enforcement import (
     COOLDOWN_REJECTION_ACTION_TYPE,
     COOLDOWN_OVERRIDE_SCOPE,
+    DEFAULT_TENANT_ID,
     CooldownEnforcementError,
     EvolutionProposalCooldownEnforcer,
     enforce_proposal_cooldown,
@@ -131,7 +132,10 @@ def test_same_artifact_repeated_proposal_is_rejected_with_audit_evidence():
     assert "HumanGateDecision" in result.rejection.reason
     audit = result.rejection.audit_action
     assert audit.action_type == COOLDOWN_REJECTION_ACTION_TYPE
-    assert audit.target_ref == "candidate_artifact:artifact-alpha@v1"
+    # target_ref is tenant-prefixed (ProposalArtifactKey.target_ref); pinned
+    # via DEFAULT_TENANT_ID rather than a literal so this doesn't drift again
+    # if the default tenant id ever changes.
+    assert audit.target_ref == f"{DEFAULT_TENANT_ID}/candidate_artifact:artifact-alpha@v1"
     assert audit.trace_id == "trace-cooldown-reject"
     assert audit.correlation_id == "corr-cooldown-reject"
     assert audit.metadata["blocking_proposal_id"] == first.proposal_id
@@ -251,4 +255,4 @@ def test_proposal_artifact_key_accepts_governance_proposal_shape():
         }
     )
 
-    assert artifact.target_ref == "candidate_artifact:artifact-sponsor@v7"
+    assert artifact.target_ref == f"{DEFAULT_TENANT_ID}/candidate_artifact:artifact-sponsor@v7"

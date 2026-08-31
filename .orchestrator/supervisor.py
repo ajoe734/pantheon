@@ -2974,12 +2974,64 @@ def _restore_reused_index_split(worktree_path: Path, paths: list[str]) -> bool:
     return proc.returncode == 0
 
 
+def _lost_lease_replacement_may_adopt_worktree(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    *,
+    task_id: str | None,
+) -> bool:
+    """True only for the fenced lost-lease replacement's own first dispatch.
+
+    A receipt only reaches ``reassigned`` after `_persist_task_reassignment_locked`
+    CAS'd it out of ``pending``, and it only reaches ``pending`` after
+    `recover_lost_worker_lease` fenced the predecessor using the existing
+    poll-stage liveness check (missing process / expired lease). The receipt
+    is therefore already durable proof the predecessor process and lease are
+    no longer live; no separate liveness probe is needed here.
+    """
+    if not task_id:
+        return False
+    # Some unit callers exercise workspace preparation with a legacy
+    # non-authoritative fixture that intentionally has no task-state store.
+    # Eligibility is an opt-in safety gate: if the canonical binding cannot be
+    # read, fail closed and let the existing dirty-worktree guard decide.
+    try:
+        status = load_status(config)
+    except (RuntimeError, OSError, ValueError):
+        return False
+    task = task_index_from_status(config, status).get(task_id)
+    if task is None:
+        return False
+    receipt = _canonical_worker_recovery_receipt(status, task)
+    if receipt is None or str(receipt.get("task_id") or "") != task_id:
+        return False
+    if str(receipt.get("status") or "") != "reassigned":
+        return False
+    replacement = receipt.get("replacement")
+    if not isinstance(replacement, Mapping):
+        return False
+    if int(replacement.get("task_generation") or -1) != task_generation(task):
+        return False
+    active_statuses = {
+        str(value)
+        for value in ready_dispatch_settings(config).get("active_worker_statuses", [])
+    }
+    for worker in (state.get("workers") or {}).values():
+        if (
+            str(worker.get("task_id") or "") == task_id
+            and str(worker.get("status") or "") in active_statuses
+        ):
+            return False
+    return True
+
+
 def _refresh_reused_worker_worktree(
     worktree_path: Path,
     base_sha: str,
     *,
     task_id: str | None = None,
     branch: str | None = None,
+    allow_dirty_wip_adoption: bool = False,
 ) -> tuple[bool, str]:
     """Fast-forward a reused worker worktree to the cycle's pinned base SHA.
 
@@ -2993,7 +3045,10 @@ def _refresh_reused_worker_worktree(
     `git merge --ff-only <base-sha>`. Never auto-resolve a real merge — if the branch genuinely
     diverged, leave it for the worker to handle. Dirty reused worktrees are
     blocked before dispatch so workers cannot inherit unrelated staged or
-    tracked changes.
+    tracked changes, unless `allow_dirty_wip_adoption` proves this is the
+    exact fenced lost-lease replacement taking over its own task's worktree;
+    that WIP is left untouched (no reset/clean/stash/commit) and dispatch
+    proceeds without the base-SHA refresh below.
     """
     status_proc = subprocess.run(
         ["git", "status", "--porcelain", "--untracked-files=no"],
@@ -3007,6 +3062,8 @@ def _refresh_reused_worker_worktree(
     if status_proc.returncode == 0 and status_proc.stdout.strip():
         classification, scratch_paths = _classify_worktree_dirt(status_proc.stdout)
         if classification == "real":
+            if allow_dirty_wip_adoption:
+                return True, "adopted_lost_lease_dirty_wip"
             index_split_paths = _staged_index_split_paths_matching_head(worktree_path)
             if index_split_paths and _restore_reused_index_split(worktree_path, index_split_paths):
                 index_restored = True
@@ -3587,6 +3644,9 @@ def prepare_worker_workspace(
         repository_id=repository_id,
     )
     reused = False
+    lost_lease_wip_adoption = _lost_lease_replacement_may_adopt_worktree(
+        config, state, task_id=workspace_task_id
+    )
 
     existing = _existing_worktree_for_branch(repo_root, branch, exclude_root=True)
     if existing:
@@ -3597,6 +3657,7 @@ def prepare_worker_workspace(
             base_sha,
             task_id=workspace_task_id,
             branch=branch,
+            allow_dirty_wip_adoption=lost_lease_wip_adoption,
         )
         write_activity_log(
             config,
@@ -3697,6 +3758,7 @@ def prepare_worker_workspace(
                 base_sha,
                 task_id=workspace_task_id,
                 branch=branch,
+                allow_dirty_wip_adoption=lost_lease_wip_adoption,
             )
             write_activity_log(
                 config,
