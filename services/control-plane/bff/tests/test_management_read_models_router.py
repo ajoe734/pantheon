@@ -7,11 +7,11 @@ Verifies:
 - Full functional execution of all endpoints via TestClient
 - Mock store integration, filtering, pagination, error handling, and degradation semantics
 """
-from __future__ import annotations
-
+import json
 import os
 import sys
-from typing import Any, Dict, List, Optional
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -954,3 +954,275 @@ def test_degraded_control_guidance_contract():
     assert "staleness" in body_deg["meta"]
     assert body_deg["data"]["current_state"] == "degraded"
 
+
+def test_management_evidence_capability_redaction_and_facets():
+    """Verify /bff/management/evidence enforces capability redaction, facets, and summary counts."""
+    mock_store = MockManagementReadStore()
+    mock_store.evidence_records.append({
+        "id": "ev-metric-1",
+        "ref_id": "evref-b3-metric-001",
+        "evidence_type": "metric",
+        "title": "Sharpe metric evidence",
+        "display_label": "Sharpe Metric Audit",
+        "source_type": "metric",
+        "source_document": {
+            "title": "Sharpe metric evidence",
+            "source_type": "metric",
+            "source_ref": "metric://runtime-alpha/sharpe",
+        },
+        "link_type": "supporting_evidence",
+        "credibility_tier": "primary",
+        "credibility": {"tier": "primary", "verified": True},
+        "linked_entity_type": "artifact",
+        "linked_entity_ref": "art-001",
+        "linked_object_summary": {"entity_type": "artifact", "entity_ref": "art-001"},
+        "artifact_manifest": {"secret_field": "confidential_manifest_content"},
+        "criteria": {"threshold": 1.5},
+        "verified": True,
+    })
+
+    app = FastAPI()
+    app.include_router(create_management_read_models_router(get_read_store=lambda: mock_store))
+    client = TestClient(app)
+
+    # 1. Operator role lacks 'metric.read' -> evref-b3-metric-001 is redacted
+    resp_op = client.get(
+        "/bff/management/evidence?ref_id=evref-b3-metric-001",
+        headers={"Authorization": "Bearer op-1:operator"},
+    )
+    assert resp_op.status_code == 200
+    data_op = resp_op.json()
+    item_op = data_op["data"]["items"][0]
+    assert item_op["redacted"] is True
+    assert item_op["required_capability"] == "metric.read"
+    assert "artifact_manifest" not in item_op
+    assert "criteria" not in item_op
+    assert data_op["data"]["summary"]["redacted_evidence"] == 1
+    assert data_op["meta"]["redacted_evidence_count"] == 1
+
+    # 2. Admin role has all capabilities -> evref-b3-metric-001 has full artifact_manifest
+    resp_adm = client.get(
+        "/bff/management/evidence?ref_id=evref-b3-metric-001",
+        headers={"Authorization": "Bearer op-admin:admin"},
+    )
+    assert resp_adm.status_code == 200
+    data_adm = resp_adm.json()
+    item_adm = data_adm["data"]["items"][0]
+    assert item_adm["redacted"] is False
+    assert "artifact_manifest" in item_adm
+    assert item_adm["artifact_manifest"]["secret_field"] == "confidential_manifest_content"
+    assert data_adm["data"]["summary"]["redacted_evidence"] == 0
+    assert data_adm["meta"]["redacted_evidence_count"] == 0
+
+    # 3. Facets returned
+    facets = data_adm["data"]["facets"]
+    assert "source_types" in facets
+    assert "link_types" in facets
+    assert "credibility_tiers" in facets
+
+
+def test_management_evidence_validation_rules(tmp_path: Path):
+    """Verify /bff/management/evidence rejects invalid query parameters with 400."""
+    mock_store = MockManagementReadStore()
+    app = FastAPI()
+    app.include_router(create_management_read_models_router(get_read_store=lambda: mock_store))
+    client = TestClient(app)
+
+    # 1. Invalid linked_entity_type -> 400
+    resp = client.get(
+        "/bff/management/evidence?linked_entity_type=invalid_type_xyz",
+        headers={"Authorization": "Bearer op-1:operator"},
+    )
+    assert resp.status_code == 400
+    err = resp.json().get("detail", resp.json()).get("error", {})
+    assert err.get("code") == "VALIDATION_FAILED"
+    assert "linked_entity_type" in str(err.get("details", {}))
+
+    # 2. linked_entity_ref without linked_entity_type -> 400
+    resp_ref = client.get(
+        "/bff/management/evidence?linked_entity_ref=ref-123",
+        headers={"Authorization": "Bearer op-1:operator"},
+    )
+    assert resp_ref.status_code == 400
+    err_ref = resp_ref.json().get("detail", resp_ref.json()).get("error", {})
+    assert err_ref.get("code") == "VALIDATION_FAILED"
+    assert "linked_entity_ref" in str(err_ref.get("details", {}))
+
+    # 3. Invalid link_type -> 400
+    resp_lt = client.get(
+        "/bff/management/evidence?link_type=invalid_link_type",
+        headers={"Authorization": "Bearer op-1:operator"},
+    )
+    assert resp_lt.status_code == 400
+
+    # 4. Invalid credibility_tier -> 400
+    resp_ct = client.get(
+        "/bff/management/evidence?credibility_tier=invalid_tier",
+        headers={"Authorization": "Bearer op-1:operator"},
+    )
+    assert resp_ct.status_code == 400
+
+
+def test_management_evidence_current_run_verifier_projection(tmp_path: Path, monkeypatch):
+    """Verify BFF-LIVE-EVIDENCE-ARTIFACT-VERIFY.json is projected into evidence explorer."""
+    verify_json = tmp_path / "BFF-LIVE-EVIDENCE-ARTIFACT-VERIFY.json"
+    verify_json.write_text(json.dumps({
+        "overall": "pass",
+        "generated_at": "2026-08-30T12:00:00Z",
+        "artifact_dir": str(tmp_path),
+        "artifact_manifest": {"bundle": "test-artifact.tar.gz"},
+        "criteria": {"pass_rate": 1.0},
+    }), encoding="utf-8")
+
+    preflight_json = tmp_path / "BFF-LIVE-EVIDENCE-PREFLIGHT.json"
+    preflight_json.write_text(json.dumps({
+        "operator_remediation": {
+            "github_environment": "production",
+            "repository": "ajoe734/pantheon",
+            "required_secret_names": ["SECRET_KEY"],
+            "missing_secret_names": [],
+            "workflow_dispatch": {"recommended_workflow": "verify.yml"},
+        },
+    }), encoding="utf-8")
+
+    release_gate_json = tmp_path / "release-gate-summary.json"
+    release_gate_json.write_text(json.dumps({
+        "overall": "pass",
+        "gates": {
+            "security": [{"label": "mfa_check", "status": "pass"}],
+        },
+    }), encoding="utf-8")
+
+    monkeypatch.setenv("PANTHEON_BFF_LIVE_EVIDENCE_VERIFY_JSON", str(verify_json))
+
+    mock_store = MockManagementReadStore()
+    app = FastAPI()
+    app.include_router(create_management_read_models_router(get_read_store=lambda: mock_store))
+    client = TestClient(app)
+
+    resp = client.get(
+        "/bff/management/evidence?ref_id=BFF-LIVE-EVIDENCE-ARTIFACT-VERIFY",
+        headers={"Authorization": "Bearer op-admin:admin"},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert len(data["data"]["items"]) == 1
+    item = data["data"]["items"][0]
+    assert item["ref_id"] == "BFF-LIVE-EVIDENCE-ARTIFACT-VERIFY"
+    assert item["operator_remediation"]["github_environment"] == "production"
+    assert item["release_gate_summary"]["overall"] == "pass"
+
+
+def test_management_nl_ask_crash_safe_idempotency_and_replay(tmp_path: Path):
+    """Verify Idempotency-Key returns identical message_id on replay and 409 on payload conflict."""
+    conv_store_path = tmp_path / "conversations.json"
+    idem_store_path = tmp_path / "idempotency.json"
+
+    from management_ai_store import ManagementAiConversationStore
+    from management_nl_command_idempotency import ManagementNlCommandIdempotencyStore
+
+    conv_store = ManagementAiConversationStore(storage_path=str(conv_store_path))
+    idem_store = ManagementNlCommandIdempotencyStore(storage_path=str(idem_store_path))
+
+    mock_store = MockManagementReadStore()
+    app = FastAPI()
+    app.include_router(create_management_read_models_router(
+        get_read_store=lambda: mock_store,
+        conversation_store=conv_store,
+        idempotency_store=idem_store,
+    ))
+    client = TestClient(app)
+
+    payload1 = {
+        "question": "What is the trading pulse and risk status?",
+        "focus": "all",
+        "sessionId": "session-replay-1",
+    }
+    headers = {
+        "Authorization": "Bearer op-1:operator",
+        "Idempotency-Key": "test-key-replay-999",
+        "X-Tenant-Id": "tenant-test",
+    }
+
+    # First execution
+    resp1 = client.post("/bff/management/nl/ask", json=payload1, headers=headers)
+    assert resp1.status_code == 202
+    body1 = resp1.json()
+    msg_id1 = body1["data"]["message_id"]
+    ans1 = body1["data"]["answer"]
+    assert msg_id1.startswith("mnl-")
+
+    # Second execution with exact same payload -> returns exact same message_id and replayed: True
+    resp2 = client.post("/bff/management/nl/ask", json=payload1, headers=headers)
+    assert resp2.status_code == 202
+    body2 = resp2.json()
+    assert body2["data"]["message_id"] == msg_id1
+    assert body2["data"]["answer"] == ans1
+    assert body2["meta"]["idempotency"]["replayed"] is True
+
+    # Third execution with conflicting payload for same key -> 409 conflict
+    payload_conflict = {
+        "question": "Different question for same key",
+        "focus": "all",
+    }
+    resp3 = client.post("/bff/management/nl/ask", json=payload_conflict, headers=headers)
+    assert resp3.status_code == 409
+    err3 = resp3.json().get("detail", resp3.json()).get("error", {})
+    assert err3.get("code") == "RESOURCE_CONFLICT"
+
+    # Verify conversation store turns were persisted (1 user turn + 1 assistant turn)
+    turns = conv_store.list_turns("session-replay-1")
+    assert len(turns) == 2
+    assert turns[0]["role"] == "user"
+    assert turns[0]["text"] == payload1["question"]
+    assert turns[1]["role"] == "assistant"
+    assert turns[1]["text"] == ans1
+
+
+def test_management_nl_ask_with_injected_provider_client(tmp_path: Path):
+    """Verify provider_client is invoked when passed to router."""
+    class FakeProvider:
+        def __init__(self):
+            self.invoked = False
+            self.last_question = None
+
+        def invoke_assistant_provider(self, **kwargs):
+            self.invoked = True
+            self.last_question = kwargs.get("question")
+            return {
+                "data": {
+                    "answer": "Fake assistant provider answer for testing.",
+                    "status": "completed",
+                    "provider": "fake_codex",
+                    "output": {
+                        "actions": [
+                            {
+                                "kind": "navigate",
+                                "label": "Go to Cockpit",
+                                "params": {"to": "/management/cockpit"},
+                            }
+                        ]
+                    }
+                }
+            }
+
+    fake_provider = FakeProvider()
+    mock_store = MockManagementReadStore()
+    app = FastAPI()
+    app.include_router(create_management_read_models_router(
+        get_read_store=lambda: mock_store,
+        provider_client=fake_provider,
+    ))
+    client = TestClient(app)
+
+    resp = client.post(
+        "/bff/management/nl/ask",
+        json={"question": "Analyze current risk posture"},
+        headers={"Authorization": "Bearer op-1:operator"},
+    )
+    assert resp.status_code == 202
+    body = resp.json()
+    assert fake_provider.invoked is True
+    assert fake_provider.last_question == "Analyze current risk posture"
+    assert body["data"]["answer"] == "Fake assistant provider answer for testing."
+    assert body["data"]["provider_status"]["provider"] == "fake_codex"

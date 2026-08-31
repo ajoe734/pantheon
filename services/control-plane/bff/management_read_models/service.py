@@ -63,6 +63,114 @@ except ImportError:
         dedupe_ids,
     )
 
+from pathlib import Path
+import hashlib
+
+try:
+    from read_store import (
+        redact_evidence_refs,
+        EVIDENCE_CAPABILITY_MAP,
+        SOURCE_TYPE_TO_EVIDENCE_KIND,
+    )
+except ImportError:
+    try:
+        from services.control_plane.bff.read_store import (  # type: ignore[no-redef]
+            redact_evidence_refs,
+            EVIDENCE_CAPABILITY_MAP,
+            SOURCE_TYPE_TO_EVIDENCE_KIND,
+        )
+    except ImportError:
+        redact_evidence_refs = None  # type: ignore[assignment]
+        EVIDENCE_CAPABILITY_MAP = {}
+        SOURCE_TYPE_TO_EVIDENCE_KIND = {}
+
+try:
+    from models import (
+        ErrorCode,
+        OperatorIdentity,
+        EvidenceKind,
+        RedactedEvidenceRef,
+    )
+except ImportError:
+    try:
+        from services.control_plane.bff.models import (  # type: ignore[no-redef]
+            ErrorCode,
+            OperatorIdentity,
+            EvidenceKind,
+            RedactedEvidenceRef,
+        )
+    except ImportError:
+        ErrorCode = None  # type: ignore[assignment]
+        OperatorIdentity = None  # type: ignore[assignment]
+        EvidenceKind = None  # type: ignore[assignment]
+        RedactedEvidenceRef = None  # type: ignore[assignment]
+
+try:
+    from management_nl_command_idempotency import (
+        ManagementNlCommandIdempotencyStore,
+        ManagementNlCommandScope,
+        ManagementNlCommandPayloadConflict,
+        ManagementNlCommandStorageError,
+    )
+except ImportError:
+    try:
+        from services.control_plane.bff.management_nl_command_idempotency import (  # type: ignore[no-redef]
+            ManagementNlCommandIdempotencyStore,
+            ManagementNlCommandScope,
+            ManagementNlCommandPayloadConflict,
+            ManagementNlCommandStorageError,
+        )
+    except ImportError:
+        ManagementNlCommandIdempotencyStore = None  # type: ignore[assignment]
+        ManagementNlCommandScope = None  # type: ignore[assignment]
+        ManagementNlCommandPayloadConflict = None  # type: ignore[assignment]
+        ManagementNlCommandStorageError = None  # type: ignore[assignment]
+
+try:
+    from management_ai_store import (
+        ManagementAiConversationStore,
+        ManagementAiAttachmentStore,
+    )
+except ImportError:
+    try:
+        from services.control_plane.bff.management_ai_store import (  # type: ignore[no-redef]
+            ManagementAiConversationStore,
+            ManagementAiAttachmentStore,
+        )
+    except ImportError:
+        ManagementAiConversationStore = None  # type: ignore[assignment]
+        ManagementAiAttachmentStore = None  # type: ignore[assignment]
+
+try:
+    from assistant.control_mode import ControlModeStore
+except ImportError:
+    try:
+        from services.control_plane.bff.assistant.control_mode import ControlModeStore  # type: ignore[no-redef]
+    except ImportError:
+        ControlModeStore = None  # type: ignore[assignment]
+
+try:
+    from openclaw_ops_client import OpenClawOpsClient
+except ImportError:
+    try:
+        from services.control_plane.bff.openclaw_ops_client import OpenClawOpsClient  # type: ignore[no-redef]
+    except ImportError:
+        OpenClawOpsClient = None  # type: ignore[assignment]
+
+class ManagementValidationError(ValueError):
+    def __init__(
+        self,
+        message: str,
+        reason: Optional[str] = None,
+        field: Optional[str] = None,
+        status_code: int = 400,
+    ) -> None:
+        super().__init__(message)
+        self.message = message
+        self.reason = reason or message
+        self.field = field
+        self.status_code = status_code
+
 log = logging.getLogger(__name__)
 
 
@@ -211,6 +319,689 @@ _HUMAN_INBOX_PRIORITY_RANK: Dict[str, int] = {
 _SHELL_SUMMARY_COUNT_CACHE: Dict[str, Any] = {}
 _SHELL_SUMMARY_COUNT_CACHE_LOCK = threading.Lock()
 
+_ROLE_CAPABILITY_MAP: Dict[str, List[str]] = {
+    "admin": list(EVIDENCE_CAPABILITY_MAP.values()) if EVIDENCE_CAPABILITY_MAP else [
+        "metric.read", "job.read", "audit.read", "strategy.view", "persona.view",
+        "runtime.read", "risk.incident.read", "risk.alert.read", "artifact.read",
+        "approval.read", "postmortem.read", "policy.read",
+    ],
+    "approver": [
+        "approval.read",
+        "postmortem.read",
+        "policy.read",
+    ],
+    "operator": [
+        "runtime.read",
+        "risk.incident.read",
+        "risk.alert.read",
+        "artifact.read",
+    ],
+    "reviewer": [
+        "approval.read",
+        "strategy.view",
+        "persona.view",
+    ],
+    "analyst": [
+        "metric.read",
+        "job.read",
+        "audit.read",
+    ],
+    "viewer": [
+        "metric.read",
+        "strategy.view",
+        "persona.view",
+    ],
+}
+
+
+def _capabilities_for_identity(identity: Any) -> Optional[List[str]]:
+    if identity is None:
+        return None
+    explicit = getattr(identity, "capabilities", None)
+    if isinstance(explicit, list):
+        return explicit
+    roles = getattr(identity, "roles", None)
+    if isinstance(roles, (list, set, tuple)):
+        caps: List[str] = []
+        for role in roles:
+            mapped = _ROLE_CAPABILITY_MAP.get(str(role))
+            if mapped:
+                caps.extend(mapped)
+        seen = set()
+        deduped = []
+        for c in caps:
+            if c not in seen:
+                seen.add(c)
+                deduped.append(c)
+        return deduped
+    return None
+
+
+_KW03_LINKED_ENTITY_TYPES: Set[str] = {
+    "memory_entry",
+    "research_note",
+    "insight_card",
+    "strategy_spec",
+    "experiment",
+    "artifact",
+}
+_KW03_LINK_TYPES: Set[str] = {
+    "supporting_evidence",
+    "counter_evidence",
+    "citation",
+    "provenance",
+    "corroboration",
+}
+_KW03_CREDIBILITY_TIERS: Set[str] = {"primary", "secondary", "tertiary", "unverified"}
+
+_BFF_LIVE_EVIDENCE_VERIFY_JSON_ENV = "PANTHEON_BFF_LIVE_EVIDENCE_VERIFY_JSON"
+_BFF_LIVE_EVIDENCE_VERIFY_JSON_NAME = "BFF-LIVE-EVIDENCE-ARTIFACT-VERIFY.json"
+_BFF_LIVE_EVIDENCE_REF_ID = "BFF-LIVE-EVIDENCE-ARTIFACT-VERIFY"
+_REPO_ROOT = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "..", "..", "..", "..")
+)
+
+
+def _kw03_validate_linked_entity_type(value: Any) -> str:
+    normalized = str(value or "").strip().lower()
+    if normalized not in _KW03_LINKED_ENTITY_TYPES:
+        raise ManagementValidationError(
+            "Invalid linked_entity_type",
+            f"linked_entity_type must be one of {sorted(_KW03_LINKED_ENTITY_TYPES)}",
+            field="linked_entity_type",
+            status_code=400,
+        )
+    return normalized
+
+
+def _kw03_validate_link_type(value: Any) -> str:
+    normalized = str(value or "").strip().lower()
+    if normalized not in _KW03_LINK_TYPES:
+        raise ManagementValidationError(
+            "Invalid link_type",
+            f"link_type must be one of {sorted(_KW03_LINK_TYPES)}",
+            field="link_type",
+            status_code=400,
+        )
+    return normalized
+
+
+def _kw03_validate_credibility_tier(value: Any) -> str:
+    normalized = str(value or "").strip().lower()
+    if normalized not in _KW03_CREDIBILITY_TIERS:
+        raise ManagementValidationError(
+            "Invalid credibility_tier",
+            f"credibility_tier must be one of {sorted(_KW03_CREDIBILITY_TIERS)}",
+            field="credibility_tier",
+            status_code=400,
+        )
+    return normalized
+
+
+def _management_live_evidence_verify_candidates() -> List[Path]:
+    candidates: List[Path] = []
+    explicit = str(os.getenv(_BFF_LIVE_EVIDENCE_VERIFY_JSON_ENV) or "").strip()
+    if explicit:
+        candidates.append(Path(explicit))
+    audit_dir = str(os.getenv("PANTHEON_AUDIT_OUT_DIR") or "").strip()
+    if audit_dir:
+        candidates.append(Path(audit_dir) / _BFF_LIVE_EVIDENCE_VERIFY_JSON_NAME)
+    candidates.append(
+        Path(_REPO_ROOT)
+        / ".lovable"
+        / "audits"
+        / "current-run"
+        / _BFF_LIVE_EVIDENCE_VERIFY_JSON_NAME
+    )
+    deduped: List[Path] = []
+    seen: Set[str] = set()
+    for candidate in candidates:
+        key = str(candidate)
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(candidate)
+    return deduped
+
+
+def _management_optional_text(value: Any) -> Optional[str]:
+    text = str(value or "").strip()
+    return text or None
+
+
+def _management_string_list(value: Any) -> List[str]:
+    if not isinstance(value, list):
+        return []
+    strings: List[str] = []
+    for item in value:
+        text = str(item or "").strip()
+        if text:
+            strings.append(text)
+    return strings
+
+
+def _management_remediation_invalid_inputs(value: Any) -> List[Dict[str, str]]:
+    if not isinstance(value, list):
+        return []
+    invalid_inputs: List[Dict[str, str]] = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name") or "").strip()
+        reason = str(item.get("reason") or "").strip()
+        if name or reason:
+            invalid_inputs.append({"name": name, "reason": reason})
+    return invalid_inputs
+
+
+def _management_live_evidence_preflight_remediation(artifact_dir: Path) -> Optional[Dict[str, Any]]:
+    preflight_path = artifact_dir / "BFF-LIVE-EVIDENCE-PREFLIGHT.json"
+    try:
+        payload = json.loads(preflight_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    remediation = payload.get("operator_remediation")
+    if not isinstance(remediation, dict):
+        return None
+    workflow_dispatch = remediation.get("workflow_dispatch")
+    if not isinstance(workflow_dispatch, dict):
+        workflow_dispatch = {}
+    safe_remediation = {
+        "github_environment": _management_optional_text(remediation.get("github_environment")),
+        "repository": _management_optional_text(remediation.get("repository")),
+        "required_secret_names": _management_string_list(remediation.get("required_secret_names")),
+        "missing_secret_names": _management_string_list(remediation.get("missing_secret_names")),
+        "missing_workflow_inputs": _management_string_list(remediation.get("missing_workflow_inputs")),
+        "invalid_inputs": _management_remediation_invalid_inputs(remediation.get("invalid_inputs")),
+        "secret_set_commands": _management_string_list(remediation.get("secret_set_commands")),
+        "workflow_dispatch": {
+            "recommended_workflow": _management_optional_text(workflow_dispatch.get("recommended_workflow")),
+            "mode": _management_optional_text(workflow_dispatch.get("mode")),
+            "environment": _management_optional_text(workflow_dispatch.get("environment")),
+            "run_command_template": _management_optional_text(workflow_dispatch.get("run_command_template")),
+        },
+        "notes": _management_string_list(remediation.get("notes")),
+    }
+    return safe_remediation
+
+
+def _management_live_evidence_release_gate_summary(artifact_dir: Path) -> Optional[Dict[str, Any]]:
+    summary_path = artifact_dir / "release-gate-summary.json"
+    try:
+        payload = json.loads(summary_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+
+    checks: List[Dict[str, Any]] = []
+    gates = payload.get("gates")
+    if isinstance(gates, dict):
+        for gate, gate_checks in sorted(gates.items(), key=lambda item: str(item[0])):
+            if not isinstance(gate_checks, list):
+                continue
+            for index, check in enumerate(gate_checks):
+                if not isinstance(check, dict):
+                    continue
+                status = _management_optional_text(check.get("status")) or "missing"
+                label = _management_optional_text(check.get("label"))
+                if not label and not status:
+                    continue
+                checks.append(
+                    {
+                        "gate": str(gate),
+                        "index": index,
+                        "label": label,
+                        "status": status,
+                        "note": _management_optional_text(check.get("note")),
+                        "owner": _management_optional_text(check.get("owner")),
+                        "evidence": _management_optional_text(check.get("evidence")),
+                        "blocking": status != "pass",
+                    }
+                )
+
+    return {
+        "overall": _management_optional_text(payload.get("overall")),
+        "generated_at": _management_optional_text(payload.get("generatedAt") or payload.get("generated_at")),
+        "audit_dir": _management_optional_text(payload.get("auditDir") or payload.get("audit_dir")),
+        "run_url": _management_optional_text(payload.get("runUrl") or payload.get("run_url")),
+        "checklist_out": _management_optional_text(payload.get("checklistOut") or payload.get("checklist_out")),
+        "open_check_count": sum(1 for check in checks if bool(check.get("blocking"))),
+        "checks": checks,
+    }
+
+
+def _management_current_run_live_evidence_refs() -> List[Dict[str, Any]]:
+    for candidate in _management_live_evidence_verify_candidates():
+        try:
+            if not candidate.is_file():
+                continue
+            payload = json.loads(candidate.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if not isinstance(payload, dict):
+            continue
+        manifest = payload.get("artifact_manifest")
+        if not isinstance(manifest, dict):
+            continue
+        criteria = payload.get("criteria")
+        if not isinstance(criteria, dict):
+            criteria = {}
+        try:
+            mtime_captured_at = datetime.fromtimestamp(
+                candidate.stat().st_mtime,
+                timezone.utc,
+            ).isoformat().replace("+00:00", "Z")
+        except OSError:
+            mtime_captured_at = _utc_now_rfc3339()
+        captured_at = payload.get("generated_at") or payload.get("created_at") or mtime_captured_at
+        artifact_dir_path = Path(str(payload.get("artifact_dir") or candidate.parent))
+        artifact_dir = str(artifact_dir_path)
+        operator_remediation = _management_live_evidence_preflight_remediation(artifact_dir_path)
+        release_gate_summary = _management_live_evidence_release_gate_summary(artifact_dir_path)
+        evidence_ref = {
+            "ref_id": _BFF_LIVE_EVIDENCE_REF_ID,
+            "evidence_type": "workflow_artifact",
+            "link_type": "provenance",
+            "display_label": "BFF live evidence artifact verifier",
+            "title": "Strict BFF live evidence artifact verifier",
+            "source_type": "workflow_artifact",
+            "source_ref": str(candidate),
+            "captured_at": captured_at,
+            "credibility": {
+                "tier": "primary",
+                "verified": payload.get("overall") == "pass",
+            },
+            "linked_object_summary": {
+                "entity_type": "artifact",
+                "entity_ref": _BFF_LIVE_EVIDENCE_REF_ID,
+                "display_label": "Current-run BFF live evidence",
+            },
+            "resolved_link": {
+                "availability": "available",
+                "route_href": artifact_dir,
+            },
+            "route_href": str(candidate),
+            "overall": payload.get("overall"),
+            "artifact_manifest": json.loads(json.dumps(manifest)),
+            "criteria": json.loads(json.dumps(criteria)),
+            "created_at": captured_at,
+        }
+        if operator_remediation is not None:
+            evidence_ref["operator_remediation"] = operator_remediation
+        if release_gate_summary is not None:
+            evidence_ref["release_gate_summary"] = release_gate_summary
+        return [evidence_ref]
+    return []
+
+
+def _management_evidence_public_item(item: Dict[str, Any]) -> Dict[str, Any]:
+    ref_id = str(item.get("ref_id") or item.get("id") or "").strip()
+    display_label = item.get("display_label") or ref_id
+    if item.get("redacted"):
+        required_capability = item.get("required_capability")
+        return {
+            "id": ref_id,
+            "ref_id": ref_id,
+            "display_label": display_label,
+            "kind": item.get("kind"),
+            "required_capability": required_capability,
+            "reason": item.get("reason"),
+            "redacted": True,
+        }
+
+    source_document = item.get("source_document") if isinstance(item.get("source_document"), dict) else {}
+    linked_summary = (
+        item.get("linked_object_summary")
+        if isinstance(item.get("linked_object_summary"), dict)
+        else {}
+    )
+    resolved_link = item.get("resolved_link") if isinstance(item.get("resolved_link"), dict) else {}
+    credibility = item.get("credibility") if isinstance(item.get("credibility"), dict) else {}
+    source_type = source_document.get("source_type") or item.get("source_type") or item.get("sourceType") or "unknown"
+    source_ref = source_document.get("source_ref") or item.get("source_ref") or item.get("sourceRef")
+    captured_at = source_document.get("captured_at") or item.get("captured_at") or item.get("capturedAt")
+    link_type = item.get("link_type")
+    route_href = item.get("route_href") or (f"/knowledge/evidence/{ref_id}" if ref_id else None)
+    title = source_document.get("title") or item.get("title") or display_label
+    public_item: Dict[str, Any] = {
+        "id": ref_id,
+        "ref_id": ref_id,
+        "title": title,
+        "display_label": display_label,
+        "source_type": source_type,
+        "source_ref": source_ref,
+        "captured_at": captured_at,
+        "link_type": link_type,
+        "credibility": json.loads(json.dumps(credibility)),
+        "linked_object_summary": json.loads(json.dumps(linked_summary)),
+        "resolved_link": json.loads(json.dumps(resolved_link)),
+        "route_href": route_href,
+        "management_href": f"/management/evidence?ref_id={ref_id}" if ref_id else None,
+        "redacted": False,
+    }
+    artifact_manifest = item.get("artifact_manifest")
+    if isinstance(artifact_manifest, dict):
+        public_item["artifact_manifest"] = json.loads(json.dumps(artifact_manifest))
+    criteria = item.get("criteria")
+    if isinstance(criteria, dict):
+        public_item["criteria"] = json.loads(json.dumps(criteria))
+    operator_remediation = item.get("operator_remediation")
+    if isinstance(operator_remediation, dict):
+        public_item["operator_remediation"] = json.loads(json.dumps(operator_remediation))
+    release_gate_summary = item.get("release_gate_summary")
+    if isinstance(release_gate_summary, dict):
+        public_item["release_gate_summary"] = json.loads(json.dumps(release_gate_summary))
+    if "overall" in item:
+        public_item["overall"] = item.get("overall")
+    return public_item
+
+
+def _management_evidence_summary(
+    *,
+    filtered_total: int,
+    page_items: List[Dict[str, Any]],
+    redacted_count: int,
+) -> Dict[str, Any]:
+    visible_items = [item for item in page_items if not item.get("redacted")]
+    verified_count = len(
+        [
+            item
+            for item in visible_items
+            if bool((item.get("credibility") or {}).get("verified") if (item.get("credibility") or {}).get("verified") is not None else item.get("verified"))
+        ]
+    )
+    by_source_type: Dict[str, int] = {}
+    for item in visible_items:
+        source_document = item.get("source_document") if isinstance(item.get("source_document"), dict) else {}
+        source_type = (
+            source_document.get("source_type")
+            or item.get("source_type")
+            or item.get("sourceType")
+            or "unknown"
+        )
+        key = str(source_type or "unknown").strip() or "unknown"
+        by_source_type[key] = by_source_type.get(key, 0) + 1
+
+    by_link_type: Dict[str, int] = {}
+    for item in visible_items:
+        key = str(item.get("link_type") or "unknown").strip() or "unknown"
+        by_link_type[key] = by_link_type.get(key, 0) + 1
+
+    by_credibility_tier: Dict[str, int] = {}
+    for item in visible_items:
+        cred = item.get("credibility") if isinstance(item.get("credibility"), dict) else {}
+        key = str(cred.get("tier") or item.get("credibility_tier") or "unknown").strip() or "unknown"
+        by_credibility_tier[key] = by_credibility_tier.get(key, 0) + 1
+
+    return {
+        "total_evidence": filtered_total,
+        "total_items": filtered_total,
+        "returned_evidence": len(page_items),
+        "visible_evidence": len(visible_items),
+        "redacted_evidence": redacted_count,
+        "verified_evidence": verified_count,
+        "verified_count": verified_count,
+        "by_source_type": by_source_type,
+        "by_link_type": by_link_type,
+        "by_credibility_tier": by_credibility_tier,
+    }
+
+
+def _management_evidence_degraded_payload(*, page_size: int = 20, snapshot_at: Optional[str] = None) -> Dict[str, Any]:
+    now = snapshot_at or _utc_now_rfc3339()
+    summary = _management_evidence_summary(filtered_total=0, page_items=[], redacted_count=0)
+    facets = {
+        "source_types": summary["by_source_type"],
+        "link_types": summary["by_link_type"],
+        "credibility_tiers": summary["by_credibility_tier"],
+    }
+    meta = _snapshot_meta(now)
+    meta["surfaces"] = {
+        "management_evidence": {
+            "status": "degraded",
+            "source": "bff_composed",
+            "message": "Evidence aggregation timed out under concurrent read fanout; degraded empty response returned.",
+            "snapshot_at": now,
+        }
+    }
+    meta["redacted_evidence_count"] = 0
+    return {
+        "data": {
+            "id": "management-evidence",
+            "items": [],
+            "summary": summary,
+            "facets": facets,
+        },
+        "page_info": {"next_page_token": None, "total": 0, "page_size": page_size},
+        "meta": meta,
+    }
+
+
+_MGMT_NL_FOCUS_ALIASES: Dict[str, str] = {"overview": "all", "general": "all"}
+_MGMT_NL_VALID_FOCUS: Set[str] = {
+    "all", "general", "cockpit", "trading_pulse", "sentinel", "loop", "risk", "incidents", "evidence", "operations"
+}
+_MGMT_NL_MAX_RECENT_TURNS: int = 10
+_MGMT_NL_UI_ACTION_KINDS: Set[str] = {
+    "navigate", "openDrawer", "selectEntity", "setFilter", "focusPanel", "refreshCurrentView", "runBffAction", "view_cockpit", "view_risk_radar"
+}
+_MGMT_NL_WRITE_ACTION_KINDS: Set[str] = {"runBffAction"}
+
+
+def _mgmt_nl_normalize_focus(value: Any) -> str:
+    focus = str(value or "all").strip().lower()
+    focus = _MGMT_NL_FOCUS_ALIASES.get(focus, focus)
+    if focus not in _MGMT_NL_VALID_FOCUS:
+        return "all"
+    return focus
+
+
+def _mgmt_nl_trim_text(value: Any, *, max_len: int = 4000) -> str:
+    clean = re.sub(r"\s+", " ", str(value or "").strip())
+    if len(clean) > max_len:
+        return f"{clean[:max_len]}..."
+    return clean
+
+
+def _mgmt_nl_normalize_conversation_context(value: Any) -> Dict[str, Any]:
+    conversation = value if isinstance(value, dict) else {}
+    raw_turns = conversation.get("recentTurns")
+    if raw_turns is None:
+        raw_turns = conversation.get("recent_turns")
+    recent_turns: List[Dict[str, str]] = []
+    if isinstance(raw_turns, list):
+        for raw_turn in raw_turns[-_MGMT_NL_MAX_RECENT_TURNS:]:
+            if not isinstance(raw_turn, dict):
+                continue
+            role = str(raw_turn.get("role") or "").strip().lower()
+            if role not in {"user", "assistant", "system"}:
+                continue
+            content = _mgmt_nl_trim_text(
+                raw_turn.get("content") if raw_turn.get("content") is not None else raw_turn.get("text"),
+                max_len=2000,
+            )
+            if not content:
+                continue
+            recent_turns.append({"role": role, "content": content, "text": content})
+    summary = _mgmt_nl_trim_text(conversation.get("summary"), max_len=4000)
+    return {
+        "recent_turns": recent_turns,
+        "summary": summary,
+        "max_recent_turns": _MGMT_NL_MAX_RECENT_TURNS,
+    }
+
+
+def _mgmt_nl_normalize_action_descriptor(value: Any) -> Optional[Dict[str, Any]]:
+    if not isinstance(value, dict):
+        return None
+    kind = str(value.get("kind") or value.get("type") or "").strip()
+    if kind not in _MGMT_NL_UI_ACTION_KINDS:
+        return None
+    descriptor: Dict[str, Any] = {
+        "kind": kind,
+        "description": _mgmt_nl_trim_text(value.get("description"), max_len=500),
+        "paramsSchema": _mgmt_nl_trim_text(
+            value.get("paramsSchema") if value.get("paramsSchema") is not None else value.get("params_schema"),
+            max_len=1000,
+        ),
+    }
+    if value.get("label") is not None:
+        descriptor["label"] = _mgmt_nl_trim_text(value.get("label"), max_len=120)
+    return descriptor
+
+
+def _mgmt_nl_normalize_available_ui_actions(value: Any) -> List[Dict[str, Any]]:
+    actions: List[Dict[str, Any]] = []
+    seen: Set[str] = set()
+    if not isinstance(value, list):
+        return actions
+    for item in value:
+        descriptor = _mgmt_nl_normalize_action_descriptor(item)
+        if not descriptor:
+            continue
+        kind = str(descriptor.get("kind") or "")
+        if kind in seen:
+            continue
+        seen.add(kind)
+        actions.append(descriptor)
+    return actions
+
+
+def _mgmt_nl_normalize_ui_context(value: Any, *, operator_context: str) -> Dict[str, Any]:
+    ui = value if isinstance(value, dict) else {}
+    current_route = str(ui.get("currentRoute") or ui.get("current_route") or "/management").strip() or "/management"
+    selected_entity = ui.get("selectedEntity") if "selectedEntity" in ui else ui.get("selected_entity")
+    if not isinstance(selected_entity, dict):
+        selected_entity = None
+    visible_panels = ui.get("visiblePanels") if "visiblePanels" in ui else ui.get("visible_panels")
+    if not isinstance(visible_panels, list):
+        visible_panels = []
+    filters = ui.get("filters") if isinstance(ui.get("filters"), dict) else {}
+    available_ui_actions = ui.get("availableUiActions")
+    if available_ui_actions is None:
+        available_ui_actions = ui.get("available_ui_actions")
+    normalized = {
+        "currentRoute": current_route,
+        "current_route": current_route,
+        "selectedEntity": selected_entity,
+        "selected_entity": selected_entity,
+        "visiblePanels": [str(item) for item in visible_panels[:20] if str(item or "").strip()],
+        "visible_panels": [str(item) for item in visible_panels[:20] if str(item or "").strip()],
+        "filters": filters,
+        "availableUiActions": _mgmt_nl_normalize_available_ui_actions(available_ui_actions),
+        "available_ui_actions": _mgmt_nl_normalize_available_ui_actions(available_ui_actions),
+    }
+    if operator_context:
+        normalized["legacyContext"] = operator_context
+        normalized["legacy_context"] = operator_context
+    return normalized
+
+
+def _mgmt_nl_allowed_action_kinds(ui_snapshot: Dict[str, Any]) -> Set[str]:
+    actions = ui_snapshot.get("availableUiActions")
+    if not isinstance(actions, list):
+        return set()
+    return {
+        str(item.get("kind") or "")
+        for item in actions
+        if isinstance(item, dict) and str(item.get("kind") or "") in _MGMT_NL_UI_ACTION_KINDS
+    }
+
+
+def _mgmt_nl_jsonish(value: Any) -> Any:
+    if not isinstance(value, str):
+        return None
+    clean = value.strip()
+    if not clean or clean[0] not in "{[":
+        return None
+    try:
+        return json.loads(clean)
+    except json.JSONDecodeError:
+        return None
+
+
+def _mgmt_nl_find_action_values(value: Any, *, depth: int = 0) -> List[Any]:
+    if depth > 8:
+        return []
+    parsed = _mgmt_nl_jsonish(value)
+    if parsed is not None:
+        return _mgmt_nl_find_action_values(parsed, depth=depth + 1)
+    if isinstance(value, list):
+        found: List[Any] = []
+        for item in value:
+            found.extend(_mgmt_nl_find_action_values(item, depth=depth + 1))
+        return found
+    if not isinstance(value, dict):
+        return []
+
+    found = []
+    actions = value.get("actions")
+    if isinstance(actions, list):
+        found.extend(actions)
+    for key in ("data", "output", "final", "answer", "message", "content", "text", "item", "delta", "json_events"):
+        if key in value:
+            found.extend(_mgmt_nl_find_action_values(value.get(key), depth=depth + 1))
+    stdout = value.get("stdout")
+    if isinstance(stdout, str):
+        for line in stdout.splitlines():
+            found.extend(_mgmt_nl_find_action_values(line, depth=depth + 1))
+    return found
+
+
+def _mgmt_nl_action_params_valid(kind: str, params: Dict[str, Any]) -> bool:
+    if kind == "navigate":
+        return bool(str(params.get("to") or params.get("route") or "").strip())
+    if kind == "openDrawer":
+        return bool(str(params.get("drawer") or "").strip())
+    if kind == "selectEntity":
+        return bool(str(params.get("kind") or "").strip() and str(params.get("id") or "").strip())
+    if kind == "setFilter":
+        return bool(str(params.get("key") or "").strip())
+    if kind == "focusPanel":
+        return bool(str(params.get("panel") or "").strip())
+    if kind == "refreshCurrentView":
+        return True
+    if kind == "runBffAction":
+        endpoint = str(params.get("endpoint") or "").strip()
+        return endpoint.startswith("/bff/") or endpoint.startswith("/api/v1/")
+    return False
+
+
+def _mgmt_nl_extract_provider_actions(provider_payload: Any, *, allowed_action_kinds: Set[str]) -> List[Dict[str, Any]]:
+    if not allowed_action_kinds:
+        return []
+    actions: List[Dict[str, Any]] = []
+    for index, raw_action in enumerate(_mgmt_nl_find_action_values(provider_payload), start=1):
+        if not isinstance(raw_action, dict):
+            continue
+        kind = str(raw_action.get("kind") or raw_action.get("type") or "").strip()
+        if kind not in allowed_action_kinds or kind not in _MGMT_NL_UI_ACTION_KINDS:
+            continue
+        params = raw_action.get("params") if isinstance(raw_action.get("params"), dict) else {}
+        if not _mgmt_nl_action_params_valid(kind, params):
+            continue
+        requires_confirmation = bool(
+            raw_action.get("requiresConfirmation")
+            if "requiresConfirmation" in raw_action
+            else raw_action.get("requires_confirmation")
+        )
+        if kind in _MGMT_NL_WRITE_ACTION_KINDS:
+            requires_confirmation = True
+        actions.append(
+            {
+                "id": str(raw_action.get("id") or f"act_{index:02d}"),
+                "kind": kind,
+                "label": _mgmt_nl_trim_text(raw_action.get("label") or kind, max_len=120),
+                "params": params,
+                "requiresConfirmation": requires_confirmation,
+                "requires_confirmation": requires_confirmation,
+            }
+        )
+    return actions
+
 
 # ---------------------------------------------------------------------------
 # Management Domain Service Class
@@ -223,14 +1014,70 @@ class ManagementService:
         self,
         get_read_store: Optional[Callable[[], Any]] = None,
         utc_now: Optional[Callable[[], str]] = None,
+        provider_client: Optional[Any] = None,
+        idempotency_store: Optional[Any] = None,
+        conversation_store: Optional[Any] = None,
+        attachment_store: Optional[Any] = None,
+        control_mode_store: Optional[Any] = None,
     ) -> None:
         self._get_read_store = get_read_store
         self._utc_now = utc_now or _utc_now_rfc3339
+        self._provider_client = provider_client
+        self._idempotency_store = idempotency_store
+        self._conversation_store = conversation_store
+        self._attachment_store = attachment_store
+        self._control_mode_store = control_mode_store
 
     def _resolve_store(self) -> Optional[Any]:
         if self._get_read_store is not None:
             try:
                 return self._get_read_store()
+            except Exception:
+                return None
+        return None
+
+    def _resolve_conversation_store(self) -> Any:
+        if self._conversation_store is not None:
+            return self._conversation_store
+        if ManagementAiConversationStore is not None:
+            storage_path = os.getenv("PANTHEON_MANAGEMENT_AI_STORE_PATH", "/tmp/pantheon-bff/management-ai-conversations.json")
+            self._conversation_store = ManagementAiConversationStore(storage_path=storage_path)
+            return self._conversation_store
+        return None
+
+    def _resolve_attachment_store(self) -> Any:
+        if self._attachment_store is not None:
+            return self._attachment_store
+        if ManagementAiAttachmentStore is not None:
+            storage_path = os.getenv("PANTHEON_MANAGEMENT_AI_ATTACHMENT_STORE_PATH", "/tmp/pantheon-bff/management-ai-attachments")
+            self._attachment_store = ManagementAiAttachmentStore(storage_path=storage_path)
+            return self._attachment_store
+        return None
+
+    def _resolve_idempotency_store(self) -> Any:
+        if self._idempotency_store is not None:
+            return self._idempotency_store
+        if ManagementNlCommandIdempotencyStore is not None:
+            store_path = os.getenv("PANTHEON_MANAGEMENT_NL_COMMAND_STORE_PATH", "/tmp/pantheon-bff/management-nl-command-idempotency.json")
+            self._idempotency_store = ManagementNlCommandIdempotencyStore(storage_path=store_path)
+            return self._idempotency_store
+        return None
+
+    def _resolve_control_mode_store(self) -> Any:
+        if self._control_mode_store is not None:
+            return self._control_mode_store
+        if ControlModeStore is not None:
+            self._control_mode_store = ControlModeStore()
+            return self._control_mode_store
+        return None
+
+    def _resolve_provider_client(self) -> Any:
+        if self._provider_client is not None:
+            return self._provider_client
+        if OpenClawOpsClient is not None:
+            try:
+                self._provider_client = OpenClawOpsClient()
+                return self._provider_client
             except Exception:
                 return None
         return None
@@ -1911,59 +2758,197 @@ class ManagementService:
         page_size: int = 20,
         identity: Optional[Any] = None,
     ) -> Dict[str, Any]:
+        validated_linked_entity_type = None
+        if linked_entity_type is not None:
+            validated_linked_entity_type = _kw03_validate_linked_entity_type(linked_entity_type)
+        if linked_entity_ref is not None and validated_linked_entity_type is None:
+            raise ManagementValidationError(
+                "Invalid linked_entity_ref filter",
+                "linked_entity_ref requires linked_entity_type to be set",
+                field="linked_entity_ref",
+                status_code=400,
+            )
+        validated_link_type = _kw03_validate_link_type(link_type) if link_type is not None else None
+        validated_credibility_tier = (
+            _kw03_validate_credibility_tier(credibility_tier)
+            if credibility_tier is not None
+            else None
+        )
+
         snap = self._utc_now()
+        current_run_evidence_refs = _management_current_run_live_evidence_refs()
+        stored_evidence_refs: List[Dict[str, Any]] = []
+
         store = self._resolve_store()
-        raw_items: List[Dict[str, Any]] = []
-
         if store is not None:
-            try:
-                if hasattr(store, "list_evidence_records"):
-                    raw_items = store.list_evidence_records() or []
-                elif hasattr(store, "list_records"):
+            if hasattr(store, "list_evidence_refs"):
+                try:
+                    stored_evidence_refs = store.list_evidence_refs() or []
+                except Exception:
+                    stored_evidence_refs = []
+            elif hasattr(store, "list_evidence_records"):
+                try:
+                    stored_evidence_refs = store.list_evidence_records() or []
+                except Exception:
+                    stored_evidence_refs = []
+            elif hasattr(store, "list_records"):
+                try:
                     res = store.list_records("evidence")
-                    raw_items = res[1] if isinstance(res, tuple) else (res or [])
+                    stored_evidence_refs = res[1] if isinstance(res, tuple) else (res or [])
+                except Exception:
+                    stored_evidence_refs = []
+        else:
+            try:
+                import read_store as _rs
+                if hasattr(_rs, "list_evidence_refs"):
+                    stored_evidence_refs = _rs.list_evidence_refs() or []
             except Exception:
-                raw_items = []
+                stored_evidence_refs = []
 
-        filtered = []
-        for item in raw_items:
-            if not isinstance(item, dict):
-                continue
-            if ref_id and item.get("ref_id") != ref_id and item.get("id") != ref_id:
-                continue
-            if linked_entity_type and item.get("linked_entity_type") != linked_entity_type:
-                continue
-            if linked_entity_ref and item.get("linked_entity_ref") != linked_entity_ref:
-                continue
-            if link_type and item.get("link_type") != link_type:
-                continue
-            if credibility_tier and item.get("credibility_tier") != credibility_tier:
-                continue
-            if verified is not None and item.get("verified") != verified:
-                continue
-            filtered.append(item)
+        evidence_refs = [*current_run_evidence_refs, *stored_evidence_refs]
 
-        page_items, next_token = _page_slice(filtered, page_token, page_size)
+        dataset_source_fn = getattr(store, "dataset_source", None)
+        if callable(dataset_source_fn):
+            try:
+                evidence_dataset_source = dataset_source_fn("evidence_refs")
+            except Exception:
+                evidence_dataset_source = "missing"
+        else:
+            evidence_dataset_source = "service_backend" if stored_evidence_refs else "missing"
+
+        evidence_dataset_available = (evidence_dataset_source != "missing") or bool(current_run_evidence_refs)
+        if evidence_dataset_source != "missing":
+            evidence_surface_source = evidence_dataset_source
+        elif current_run_evidence_refs:
+            evidence_surface_source = "bff_current_run_artifact"
+        else:
+            evidence_surface_source = evidence_dataset_source
+
+        clean_ref_id = str(ref_id or "").strip()
+        if clean_ref_id:
+            evidence_refs = [
+                item for item in evidence_refs if str(item.get("ref_id") or item.get("id") or "") == clean_ref_id
+            ]
+        if validated_linked_entity_type:
+            evidence_refs = [
+                item
+                for item in evidence_refs
+                if str(
+                    ((item.get("linked_object_summary") or {}).get("entity_type"))
+                    or item.get("linked_entity_type")
+                    or ""
+                ).lower() == validated_linked_entity_type
+            ]
+        if linked_entity_ref is not None:
+            evidence_refs = [
+                item
+                for item in evidence_refs
+                if str(
+                    ((item.get("linked_object_summary") or {}).get("entity_ref"))
+                    or item.get("linked_entity_ref")
+                    or ""
+                ) == str(linked_entity_ref)
+            ]
+        if validated_link_type:
+            evidence_refs = [
+                item
+                for item in evidence_refs
+                if str(item.get("link_type") or "").lower() == validated_link_type
+            ]
+        if validated_credibility_tier:
+            evidence_refs = [
+                item
+                for item in evidence_refs
+                if str(
+                    ((item.get("credibility") or {}).get("tier"))
+                    or item.get("credibility_tier")
+                    or ""
+                ).lower() == validated_credibility_tier
+            ]
+        if verified is not None:
+            evidence_refs = [
+                item
+                for item in evidence_refs
+                if bool(
+                    (item.get("credibility") or {}).get("verified")
+                    if (item.get("credibility") or {}).get("verified") is not None
+                    else item.get("verified")
+                ) is verified
+            ]
+
+        evidence_surface = {
+            "status": "ok" if evidence_dataset_available else "unavailable",
+            "source": evidence_surface_source,
+            "snapshot_at": snap,
+        }
+        if not evidence_dataset_available:
+            evidence_surface["message"] = "Evidence reference read surface is unavailable."
+            evidence_surface["staleness"] = {"served_from": "unverifiable", "last_known_at": snap}
+
+        management_surface = _aggregate_group_surface(
+            "management_evidence",
+            [evidence_surface],
+            snapshot_at=snap,
+            unavailable_message="Management evidence aggregate unavailable.",
+            degraded_message="Management evidence aggregate is available, but the evidence read surface is degraded.",
+        )
+
+        total = len(evidence_refs)
+        if evidence_surface.get("status") == "unavailable" and not evidence_refs:
+            page_items: List[Dict[str, Any]] = []
+            next_page_token = None
+        else:
+            page_items, next_page_token = _page_slice(evidence_refs, page_token, page_size)
+
+        capabilities = _capabilities_for_identity(identity)
+        if redact_evidence_refs is not None:
+            try:
+                processed_items, redacted_count = redact_evidence_refs(
+                    identity,
+                    list(page_items),
+                    capabilities=capabilities,
+                )
+            except Exception:
+                processed_items, redacted_count = list(page_items), 0
+        else:
+            processed_items, redacted_count = list(page_items), 0
+
+        public_items = [
+            _management_evidence_public_item(item)
+            for item in processed_items
+            if isinstance(item, dict)
+        ]
+        summary = _management_evidence_summary(
+            filtered_total=total,
+            page_items=processed_items,
+            redacted_count=redacted_count,
+        )
+        facets = {
+            "source_types": summary["by_source_type"],
+            "link_types": summary["by_link_type"],
+            "credibility_tiers": summary["by_credibility_tier"],
+        }
+        meta = _snapshot_meta(snap)
+        meta["surfaces"] = {
+            "management_evidence": management_surface,
+            "evidence_refs": evidence_surface,
+            "knowledge_evidence": evidence_surface,
+        }
+        meta["redacted_evidence_count"] = redacted_count
+
         return {
             "data": {
                 "id": "management-evidence",
-                "items": page_items,
-                "summary": {
-                    "total_items": len(filtered),
-                    "verified_count": sum(1 for x in filtered if x.get("verified") is True),
-                },
+                "items": public_items,
+                "summary": summary,
+                "facets": facets,
             },
             "page_info": {
-                "next_page_token": next_token,
-                "total": len(filtered),
+                "next_page_token": next_page_token,
+                "total": total,
                 "page_size": page_size,
             },
-            "meta": {
-                "snapshot_at": snap,
-                "surfaces": {
-                    "evidence": {"status": "ok" if store else "degraded", "source": "store" if store else "missing"},
-                },
-            },
+            "meta": meta,
         }
 
     # -----------------------------------------------------------------------
@@ -2180,17 +3165,53 @@ class ManagementService:
         identity: Any = None,
         tenant_id: Optional[str] = None,
         idempotency_key: Optional[str] = None,
+        x_tenant_id: Optional[str] = None,
+        x_pantheon_tenant: Optional[str] = None,
         dry_run: bool = False,
     ) -> Dict[str, Any]:
+        # 1. Reject body idempotency key
+        if isinstance(payload, dict) and "idempotency_key" in payload:
+            raise ManagementValidationError(
+                "Idempotency key must be provided in Idempotency-Key or X-Idempotency-Key header, not in request body",
+                reason="Body idempotency key is rejected by policy",
+                field="idempotency_key",
+                status_code=400,
+            )
+
+        # 2. Validate question
         question = str(payload.get("question") or "").strip()
         if not question:
-            raise ValueError("Field 'question' is required and must not be empty.")
+            raise ManagementValidationError(
+                "Field 'question' is required and must not be empty",
+                reason="Missing or empty question",
+                field="question",
+                status_code=422,
+            )
         if len(question) > 4000:
-            raise ValueError("Field 'question' exceeds maximum length of 4000 characters.")
+            raise ManagementValidationError(
+                "Field 'question' exceeds maximum length of 4000 characters",
+                reason="Question exceeds 4000 characters",
+                field="question",
+                status_code=422,
+            )
 
-        # High-risk refusal check
+        # 3. High-risk refusal check
         risk = self.classify_high_risk(question)
         if risk is not None:
+            audit_id = f"audit-{uuid.uuid4().hex[:12]}"
+            store = self._resolve_store()
+            if store is not None and hasattr(store, "record_agora_audit_event"):
+                try:
+                    store.record_agora_audit_event({
+                        "action": "management.nl.ask.refused",
+                        "auditId": audit_id,
+                        "actorId": getattr(identity, "operator_id", "anonymous"),
+                        "question": question,
+                        "risk": risk,
+                        "recordedAt": self._utc_now(),
+                    })
+                except Exception:
+                    pass
             return {
                 "refused": True,
                 "status_code": 403,
@@ -2204,14 +3225,83 @@ class ManagementService:
                 "matched_category": risk["matched_category"],
                 "matched_pattern": risk["matched_pattern"],
                 "safe_alternatives": risk["safe_alternatives"],
+                "audit_id": audit_id,
             }
 
-        focus = str(payload.get("focus") or "general").strip()
+        # 4. Caller tenant resolution
+        actor_id = getattr(identity, "operator_id", "anonymous") if identity else "anonymous"
+        caller_tenant_id = x_tenant_id or x_pantheon_tenant or tenant_id or getattr(identity, "tenant_id", "default") or "default"
+        focus = _mgmt_nl_normalize_focus(payload.get("focus"))
+        operator_context = _mgmt_nl_trim_text(payload.get("context"), max_len=4000)
+        client_conversation_hint = _mgmt_nl_normalize_conversation_context(payload.get("conversation"))
+        ui_snapshot = _mgmt_nl_normalize_ui_context(payload.get("ui"), operator_context=operator_context)
+        allowed_action_kinds = _mgmt_nl_allowed_action_kinds(ui_snapshot)
+
+        # 5. Idempotency handling
+        request_hash = hashlib.sha256(
+            json.dumps({"route": "POST /bff/management/nl/ask", "payload": payload}, sort_keys=True).encode()
+        ).hexdigest()
+
+        idem_store = self._resolve_idempotency_store()
+        reservation = None
+        if idempotency_key and idem_store is not None:
+            scope = ManagementNlCommandScope(
+                actor_id=actor_id,
+                tenant_id=caller_tenant_id,
+                route="POST /bff/management/nl/ask",
+                idempotency_key=idempotency_key,
+            ) if ManagementNlCommandScope is not None else None
+            storage_key = f"POST /bff/management/nl/ask:{actor_id}:{caller_tenant_id}:{idempotency_key}"
+
+            if scope is not None and hasattr(idem_store, "admit"):
+                admission = idem_store.admit(scope, request_hash=request_hash)
+                if getattr(admission, "state", None) == "complete":
+                    cached_result = admission.result
+                    replayed_content = json.loads(json.dumps(cached_result))
+                    if isinstance(replayed_content, dict) and "meta" in replayed_content:
+                        if "idempotency" in replayed_content["meta"] and isinstance(replayed_content["meta"]["idempotency"], dict):
+                            replayed_content["meta"]["idempotency"]["replayed"] = True
+                    return {
+                        "status_code": 202,
+                        "payload": replayed_content,
+                    }
+                reservation = getattr(admission, "reservation", None)
+            else:
+                cached_record = None
+                if hasattr(idem_store, "get_result"):
+                    try:
+                        cached_record = idem_store.get_result(scope or storage_key)
+                    except Exception:
+                        cached_record = None
+                elif hasattr(idem_store, "get"):
+                    try:
+                        cached_record = idem_store.get(storage_key)
+                    except Exception:
+                        cached_record = None
+
+                if cached_record is not None:
+                    cached_hash = cached_record.get("request_hash")
+                    cached_result = cached_record.get("result") or cached_record.get("payload") or cached_record
+                    if cached_hash and cached_hash != request_hash:
+                        if ManagementNlCommandPayloadConflict is not None:
+                            raise ManagementNlCommandPayloadConflict("Idempotency-Key is already bound to a different request payload")
+                        raise ManagementValidationError("Idempotency key payload conflict", status_code=409)
+
+                    replayed_content = json.loads(json.dumps(cached_result))
+                    if isinstance(replayed_content, dict) and "meta" in replayed_content:
+                        if "idempotency" in replayed_content["meta"] and isinstance(replayed_content["meta"]["idempotency"], dict):
+                            replayed_content["meta"]["idempotency"]["replayed"] = True
+                    return {
+                        "status_code": 202,
+                        "payload": replayed_content,
+                    }
+
         now = self._utc_now()
         is_dry_run = dry_run or bool(payload.get("dry_run"))
-
         session_id = str(payload.get("session_id") or payload.get("sessionId") or f"mgmt-nl-{uuid.uuid4().hex[:10]}")
         trace_id = str(payload.get("trace_id") or payload.get("traceId") or f"mnl-trace-{uuid.uuid4().hex[:12]}")
+        message_id = f"mnl-{uuid.uuid4().hex[:16]}"
+        assistant_turn_id = f"{message_id}-assistant"
 
         if is_dry_run:
             return {
@@ -2237,13 +3327,56 @@ class ManagementService:
                 },
             }
 
-        message_id = f"mnl-{uuid.uuid4().hex[:16]}"
+        # 6. Session & turns in conversation store
+        conv_store = self._resolve_conversation_store()
+        attach_store = self._resolve_attachment_store()
+        user_attachments = []
+        if conv_store is not None:
+            try:
+                if hasattr(conv_store, "upsert_session"):
+                    try:
+                        conv_store.upsert_session(
+                            session_id=session_id,
+                            owner_id=actor_id,
+                            tenant_id=caller_tenant_id,
+                            title=question,
+                            now=now,
+                        )
+                    except TypeError:
+                        conv_store.upsert_session(
+                            session_id=session_id,
+                            actor_id=actor_id,
+                            tenant_id=caller_tenant_id,
+                            title=question,
+                            created_at=now,
+                        )
+                if attach_store is not None and payload.get("attachments"):
+                    if hasattr(attach_store, "store_attachments"):
+                        user_attachments = attach_store.store_attachments(
+                            attachments=payload.get("attachments"),
+                            session_id=session_id,
+                            turn_id=message_id,
+                        )
+                if hasattr(conv_store, "append_turn"):
+                    conv_store.append_turn(
+                        turn_id=message_id,
+                        session_id=session_id,
+                        role="user",
+                        text=question,
+                        created_at=now,
+                        trace_id=trace_id,
+                        attachments=user_attachments,
+                        ui_snapshot=ui_snapshot,
+                    )
+            except Exception:
+                log.warning("Failed to persist user session/turn to conversation store", exc_info=True)
+
+        # 7. Context gathering & Evidence refs
         cockpit = self.get_management_cockpit(snapshot_at=now)
         cockpit_data = cockpit.get("data", {})
         open_alerts = len(cockpit_data.get("alerts", {}).get("items", []))
         anomalies = len(cockpit_data.get("anomalies", {}).get("items", []))
-
-        answer = (
+        deterministic_answer = (
             f"Management diagnostic summary for query '{question}': System state is operational with "
             f"{open_alerts} open alert(s) and {anomalies} anomaly indicator(s). "
             f"Trading pulse and risk radar read models are available."
@@ -2253,45 +3386,203 @@ class ManagementService:
             {"source_name": "management_cockpit", "status": "ok", "freshness": now},
             {"source_name": "risk_radar", "status": "ok", "freshness": now},
         ]
-        actions = [
-            {
-                "action_id": f"act-{uuid.uuid4().hex[:8]}",
-                "action_kind": "view_cockpit",
-                "label": "Open Management Cockpit",
-                "route": "/management/cockpit",
+        surfaces = {
+            "management_cockpit": {"status": "ok", "source": "bff_composed"},
+            "risk_radar": {"status": "ok", "source": "store"},
+        }
+        confidence = "high"
+
+        # Evidence references
+        store = self._resolve_store()
+        raw_evidence_refs = []
+        if store is not None and hasattr(store, "list_evidence_refs"):
+            try:
+                raw_evidence_refs = store.list_evidence_refs(tenant_id=caller_tenant_id) or []
+            except Exception:
+                raw_evidence_refs = []
+
+        capabilities = _capabilities_for_identity(identity)
+        if redact_evidence_refs is not None:
+            try:
+                processed_evidence_refs, redacted_evidence_count = redact_evidence_refs(
+                    identity, raw_evidence_refs, capabilities=capabilities
+                )
+            except Exception:
+                processed_evidence_refs, redacted_evidence_count = raw_evidence_refs, 0
+        else:
+            processed_evidence_refs, redacted_evidence_count = raw_evidence_refs, 0
+
+        # 8. Provider invocation
+        provider_client = self._resolve_provider_client()
+        provider_answer = None
+        provider_status = {
+            "provider": "none",
+            "enabled": False,
+            "status": "disabled",
+            "fallback": "deterministic",
+        }
+        actions: List[Dict[str, Any]] = []
+
+        if provider_client is not None:
+            try:
+                if hasattr(provider_client, "invoke_assistant_provider"):
+                    try:
+                        resp = provider_client.invoke_assistant_provider(
+                            provider="codex_cli",
+                            question=question,
+                            focus=focus,
+                            identity=identity,
+                            caller_tenant_id=caller_tenant_id,
+                            session_id=session_id,
+                            message_id=message_id,
+                            trace_id=trace_id,
+                        )
+                    except TypeError:
+                        resp = provider_client.invoke_assistant_provider(
+                            provider="openclaw",
+                            mode="management_assistant",
+                            prompt=question,
+                            context_pack={"cockpit": cockpit_data},
+                            operator_id=actor_id,
+                            trace_id=trace_id,
+                        )
+                    if isinstance(resp, dict):
+                        data_part = resp.get("data", {})
+                        out_part = data_part.get("output", {})
+                        if isinstance(out_part, dict) and "json_events" in out_part:
+                            for ev in out_part.get("json_events", []):
+                                if isinstance(ev, dict) and ev.get("final"):
+                                    provider_answer = ev.get("final")
+                                    break
+                        if not provider_answer:
+                            provider_answer = data_part.get("answer") or data_part.get("text")
+
+                        provider_status = {
+                            "provider": data_part.get("provider", "codex_cli"),
+                            "status": data_part.get("status", "completed"),
+                            "enabled": True,
+                        }
+                        actions = _mgmt_nl_extract_provider_actions(resp, allowed_action_kinds=allowed_action_kinds)
+            except Exception as e:
+                log.warning("Assistant provider invocation failed; falling back to deterministic answer", exc_info=True)
+                provider_status = {
+                    "provider": "codex_cli",
+                    "status": "degraded",
+                    "enabled": True,
+                    "fallback": "deterministic",
+                    "reason": str(e),
+                }
+
+        answer = provider_answer or deterministic_answer
+        if not actions:
+            actions = [
+                {
+                    "action_id": f"act-{uuid.uuid4().hex[:8]}",
+                    "action_kind": "view_cockpit",
+                    "label": "Open Management Cockpit",
+                    "route": "/management/cockpit",
+                },
+                {
+                    "action_id": f"act-{uuid.uuid4().hex[:8]}",
+                    "action_kind": "view_risk_radar",
+                    "label": "View Risk Radar",
+                    "route": "/management/risk-radar",
+                },
+            ]
+
+        # 9. Build final response envelope
+        if conv_store is not None and hasattr(conv_store, "append_turn"):
+            try:
+                conv_store.append_turn(
+                    turn_id=assistant_turn_id,
+                    session_id=session_id,
+                    role="assistant",
+                    text=answer,
+                    created_at=now,
+                    trace_id=trace_id,
+                    provider_status=provider_status,
+                    ui_actions=actions,
+                )
+            except Exception:
+                pass
+
+        audit_ref = {
+            "target_type": "ManagementNLExchange",
+            "target_id": message_id,
+            "href": f"/bff/audit/entities/ManagementNLExchange/{message_id}",
+        }
+
+        result_payload = {
+            "status": "accepted",
+            "data": {
+                "status": "completed",
+                "lifecycle_status": "completed",
+                "answer": answer,
+                "session_id": session_id,
+                "message_id": message_id,
+                "trace_id": trace_id,
+                "question": question,
+                "focus": focus,
+                "sources": sources,
+                "confidence": confidence,
+                "provider_status": provider_status,
+                "control_mode": {
+                    "state": "active",
+                    "mode": "read_only",
+                },
+                "ui_actions": actions,
+                "actions": actions,
+                "audit_ref": audit_ref,
+                "conversation": {
+                    "href": f"/bff/management/ai/conversations/{session_id}",
+                    "session_id": session_id,
+                    "trace_id": trace_id,
+                },
+                "session": {
+                    "session_id": session_id,
+                    "ttl_seconds": 86400,
+                },
+                "evidence_refs": processed_evidence_refs,
             },
-            {
-                "action_id": f"act-{uuid.uuid4().hex[:8]}",
-                "action_kind": "view_risk_radar",
-                "label": "Review Risk Radar",
-                "route": "/management/risk-radar",
+            "meta": {
+                "status": "ok",
+                "lifecycle_status": "completed",
+                "snapshot_at": now,
+                "surfaces": surfaces,
+                "idempotency": {"idempotencyKey": idempotency_key, "replayed": False},
+                "provider_status": provider_status,
+                "trace_id": trace_id,
+                "redacted_evidence_count": redacted_evidence_count,
+                "control_mode": {
+                    "state": "active",
+                    "mode": "read_only",
+                },
             },
-        ]
+        }
+
+        # 10. Store in idempotency store
+        if idempotency_key and idem_store is not None:
+            try:
+                if reservation is not None and hasattr(idem_store, "complete"):
+                    idem_store.complete(reservation, result_payload)
+                elif hasattr(idem_store, "put_result"):
+                    idem_store.put_result(
+                        scope or storage_key,
+                        request_hash=request_hash,
+                        result=result_payload,
+                    )
+                elif hasattr(idem_store, "put"):
+                    idem_store.put(
+                        storage_key,
+                        request_hash=request_hash,
+                        result=result_payload,
+                    )
+            except Exception:
+                log.warning("Failed to complete idempotency reservation", exc_info=True)
 
         return {
             "status_code": 202,
-            "payload": {
-                "data": {
-                    "session_id": session_id,
-                    "message_id": message_id,
-                    "trace_id": trace_id,
-                    "question": question,
-                    "answer": answer,
-                    "focus": focus,
-                    "confidence": "high",
-                    "sources": sources,
-                    "actions": actions,
-                    "control_mode": {
-                        "state": "active",
-                        "mode": "read_only",
-                    },
-                },
-                "meta": {
-                    "status": "ok",
-                    "route": "POST /bff/management/nl/ask",
-                    "snapshot_at": now,
-                },
-            },
+            "payload": result_payload,
         }
 
     def ask_nl_stream(
@@ -2301,23 +3592,58 @@ class ManagementService:
         identity: Any = None,
         tenant_id: Optional[str] = None,
         idempotency_key: Optional[str] = None,
+        x_tenant_id: Optional[str] = None,
+        x_pantheon_tenant: Optional[str] = None,
     ) -> Iterator[str]:
+        # High-risk refusal check
+        question = str(payload.get("question") or "").strip()
+        risk = self.classify_high_risk(question)
+        if risk is not None:
+            refused = {
+                "refused": True,
+                "status_code": 403,
+                "code": "OPERATION_NOT_ALLOWED",
+                "message": "NL query matches high-risk action pattern and was refused by policy",
+                "matched_category": risk["matched_category"],
+                "matched_pattern": risk["matched_pattern"],
+                "safe_alternatives": risk["safe_alternatives"],
+            }
+            yield f"event: error\ndata: {json.dumps(refused)}\n\n"
+            return
+
+        provider_client = self._resolve_provider_client()
+        if provider_client is not None and hasattr(provider_client, "stream_assistant_provider"):
+            try:
+                caller_tenant_id = x_tenant_id or x_pantheon_tenant or tenant_id or "default"
+                for ev in provider_client.stream_assistant_provider(
+                    provider="codex_cli",
+                    question=question,
+                    focus=payload.get("focus", "general"),
+                    caller_tenant_id=caller_tenant_id,
+                ):
+                    yield f"event: {ev.get('type', 'chunk')}\ndata: {json.dumps(ev)}\n\n"
+                return
+            except Exception:
+                pass
+
         res = self.ask_nl(
             payload,
             identity=identity,
             tenant_id=tenant_id,
             idempotency_key=idempotency_key,
+            x_tenant_id=x_tenant_id,
+            x_pantheon_tenant=x_pantheon_tenant,
             dry_run=False,
         )
         if res.get("refused"):
             yield f"event: error\ndata: {json.dumps(res)}\n\n"
             return
 
-        data = res.get("payload", {}).get("data", {})
+        payload_data = res.get("payload", {})
+        data = payload_data.get("data", {})
         answer = data.get("answer", "")
         words = answer.split()
         for i, word in enumerate(words):
             chunk = word + (" " if i < len(words) - 1 else "")
             yield f"event: chunk\ndata: {json.dumps({'chunk': chunk})}\n\n"
-        yield f"event: done\ndata: {json.dumps(res.get('payload', {}))}\n\n"
-
+        yield f"event: done\ndata: {json.dumps(payload_data)}\n\n"
