@@ -6,18 +6,44 @@ from typing import Any, Callable, Dict, Optional
 from fastapi import APIRouter, HTTPException
 
 
+_MAIN_SYMBOL_NAMES = (
+    "_agora_list_response",
+    "_require_operator_role",
+    "_reject_body_idempotency_key",
+    "_resolve_final_idempotency_key",
+    "_stable_json_hash",
+    "_agora_core_idempotency_check",
+    "_request_dry_run_requested",
+    "_dry_run_success_response",
+    "_agora_required_text",
+    "ErrorCode",
+    "ObjectType",
+    "CommandType",
+    "_agora_get_insight",
+    "_agora_action_command",
+)
+
+
 def create_personalization_router(
     *,
     extract_identity: Callable[..., Any],
     require_read_role: Callable[..., None],
     bff_error: Callable[..., HTTPException],
     utc_now: Callable[[], str],
+    main_module: Any = None,
 ) -> APIRouter:
-    """Personalization router — migrated from main.py."""
+    """Personalization router — migrated from main.py.
+
+    ``main_module`` should be the caller's own ``sys.modules[__name__]`` (see
+    identity/router.py's create_identity_router docstring for why this
+    replaces a bare ``import main``).
+    """
     router = APIRouter(tags=["agora-personalization"])
 
-    import main
-    from main import (
+    if main_module is None:
+        import main as main_module
+    main = main_module
+    (
         _agora_list_response,
         _require_operator_role,
         _reject_body_idempotency_key,
@@ -32,7 +58,7 @@ def create_personalization_router(
         CommandType,
         _agora_get_insight,
         _agora_action_command,
-    )
+    ) = (getattr(main_module, name) for name in _MAIN_SYMBOL_NAMES)
     import uuid
     from fastapi import Body, Header, Query
 

@@ -96,6 +96,7 @@ def create_agora_router(
     canonical_context_ref_resolver: Optional[Callable[..., Any]] = None,
     get_trade_journey_store: Callable[[], Any] = lambda: None,
     get_persona_write_owner: Optional[Callable[[], Any]] = None,
+    main_module: Any = None,
 ) -> APIRouter:
     """Return the Agora top-level APIRouter.
 
@@ -203,7 +204,7 @@ def create_agora_router(
         bff_error=bff_error,
         utc_now=utc_now,
     )
-    router.include_router(create_identity_router(**_kw))
+    router.include_router(create_identity_router(**_kw, main_module=main_module))
     router.include_router(create_servant_router(
         **_kw,
         require_write_role=require_write_role,
@@ -231,7 +232,7 @@ def create_agora_router(
     ))
     router.include_router(create_dashboard_router(**_kw))
     router.include_router(create_shadow_router(**_kw))
-    router.include_router(create_personalization_router(**_kw))
+    router.include_router(create_personalization_router(**_kw, main_module=main_module))
     router.include_router(create_management_projection_router(**_kw))
     router.include_router(
         create_dataset_extraction_router(

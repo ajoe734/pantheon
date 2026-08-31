@@ -513,6 +513,34 @@ class TestDistillationJobQueue:
         assert job.status == DistillationJobStatus.PENDING
         assert q.count() == 1
 
+    def test_corrupt_queue_file_self_heals_instead_of_crash_looping(self, tmp_path: Path) -> None:
+        """A corrupted sqlite file must not wedge the controller permanently.
+
+        Regression test for a live incident: strategy-distillation-worker
+        crash-looped on every tick with sqlite3.DatabaseError("database disk
+        image is malformed") because the queue file was corrupted, and
+        nothing recovered it. The fix quarantines the corrupt file and starts
+        a fresh queue instead of propagating the error.
+        """
+        path = tmp_path / "q.jsonl"
+        path.write_bytes(b"SQLite format 3\x00" + b"\xff" * 200)
+
+        q = DistillationJobQueue(path)
+
+        job = q.enqueue("src-001")
+        assert job.status == DistillationJobStatus.PENDING
+        quarantined = list(tmp_path.glob("q.jsonl.corrupt-*"))
+        assert len(quarantined) == 1
+
+    def test_non_corruption_database_error_is_not_swallowed(self, tmp_path: Path) -> None:
+        """Only genuine corruption should trigger quarantine-and-recreate;
+        other DatabaseErrors must still propagate."""
+        path = tmp_path / "q.jsonl"
+        path.mkdir()
+
+        with pytest.raises(Exception):
+            DistillationJobQueue(path)
+
 
 class TestEventAdmissionSharesQueueWithCatchUp:
     """L12-GAP-F02: a commit-time enqueue and the controller's catch_up poll

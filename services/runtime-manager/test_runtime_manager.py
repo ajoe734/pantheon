@@ -37,6 +37,17 @@ from services.runtime_manager import (
     SafeModeState,
     SoftTriggerReason,
 )
+from services.runtime_manager.service import (
+    ROLLBACK_HUMAN_GATE_REQUIRED_ROLES,
+    ROLLBACK_HUMAN_GATE_TARGET_TYPE,
+)
+from services.governance.human_gate.decision_model import (
+    CanProceedInput,
+    EvidenceReviewed,
+    HumanGateDecision,
+    HumanGateSignature,
+    compute_evidence_hash,
+)
 
 
 def _valid_deploy_request(**overrides):
@@ -105,14 +116,69 @@ def _seed_retired_rollback_target(
         capital_pool_id=old_binding.capital_pool_id,
         persona_capital_binding_id=old_binding.persona_capital_binding_id,
         allowed_deployment_scope=allowed_deployment_scope,
+        target_stage=allowed_deployment_scope,
         runtime_id=f"rt-prior-{plan_id}",
+        **(
+            {"promotion_gate": _valid_activation_gate()}
+            if allowed_deployment_scope != "paper"
+            else {}
+        ),
     )
     request["metadata"] = {
         "strategy_id": strategy_id,
         "authoritative_loader_attestation": _canonical_authority_report(request),
     }
-    prior = service.deploy(request, _allow_cutover_bypass=True)
+    prior = service.deploy(
+        request,
+        _allow_cutover_bypass=True,
+        _allow_non_paper_deploy=(allowed_deployment_scope != "paper"),
+    )
     return service.retire(prior.binding_id)
+
+
+_ROLLBACK_GATE_SEQ = [0]
+
+
+def _approved_rollback_human_gate(*, old_binding_id, prior_binding_id, target_environment):
+    """Build an approved HumanGateDecision bound to one exact rollback pairing,
+    signed by every role RuntimeManagerService.rollback() requires.
+
+    Mirrors the real approval flow (create via governance's human-gate API,
+    get every required role to sign, pass the resulting decision through) —
+    see AUDIT-REMEDIATION-20260830 §3.
+    """
+    _ROLLBACK_GATE_SEQ[0] += 1
+    decision_id = f"hgd-rollback-{_ROLLBACK_GATE_SEQ[0]}"
+    evidence_reviewed = (
+        EvidenceReviewed(
+            key="rollback_target",
+            evidence_hash="sha256:" + "a" * 64,
+            source_ref=f"runtime-binding://{prior_binding_id}",
+        ),
+    )
+    evidence_hash = compute_evidence_hash(evidence_reviewed)
+    decision = HumanGateDecision(
+        decision_id=decision_id,
+        target_type=ROLLBACK_HUMAN_GATE_TARGET_TYPE,
+        target_id=f"{old_binding_id}->{prior_binding_id}",
+        target_environment=target_environment,
+        required_roles=tuple(ROLLBACK_HUMAN_GATE_REQUIRED_ROLES),
+        evidence_reviewed=evidence_reviewed,
+        can_proceed_input=CanProceedInput(readiness_packet_can_proceed=True),
+        evidence_hash=evidence_hash,
+    )
+    for role in ROLLBACK_HUMAN_GATE_REQUIRED_ROLES:
+        decision = decision.with_signature(
+            HumanGateSignature(
+                signature_id=f"{decision_id}-{role}",
+                role=role,
+                actor_id=f"{role}-approver",
+                signed_at="2026-05-20T00:00:00Z",
+                evidence_hash=evidence_hash,
+                evidence_reviewed=("rollback_target",),
+            )
+        )
+    return decision.normalized().to_dict()
 
 
 def _valid_replace_request(current_binding_id, **overrides):
@@ -379,9 +445,11 @@ class RuntimeManagerServiceTests(unittest.TestCase):
                         "replacement_artifact_version": "1.0.0",
                         "replacement_persona_capital_binding_id": "pcb-001",
                         "replacement_allowed_deployment_scope": "paper",
-                        "replacement_authority_attestation": prior.metadata[
-                            "authoritative_loader_attestation"
-                        ],
+                        "human_gate_decision": _approved_rollback_human_gate(
+                            old_binding_id=original.binding_id,
+                            prior_binding_id=prior.binding_id,
+                            target_environment=original.deployment_mode,
+                        ),
                     }
                 )
 
@@ -625,9 +693,11 @@ class RuntimeManagerServiceTests(unittest.TestCase):
                 "replacement_artifact_version": "2.0.0",
                 "replacement_persona_capital_binding_id": "pcb-001",
                 "replacement_allowed_deployment_scope": "paper",
-                "replacement_authority_attestation": prior.metadata[
-                    "authoritative_loader_attestation"
-                ],
+                "human_gate_decision": _approved_rollback_human_gate(
+                    old_binding_id=original.binding_id,
+                    prior_binding_id=prior.binding_id,
+                    target_environment=original.deployment_mode,
+                ),
                 "replacement_runtime_id": "rt-002",
                 "replacement_metadata": {"rollback_receipt_id": "rollback-001"},
                 "replacement_strategy_id": "strategy-alpha",
@@ -672,9 +742,11 @@ class RuntimeManagerServiceTests(unittest.TestCase):
                     prior.persona_capital_binding_id
                 ),
                 "replacement_allowed_deployment_scope": "paper",
-                "replacement_authority_attestation": prior.metadata[
-                    "authoritative_loader_attestation"
-                ],
+                "human_gate_decision": _approved_rollback_human_gate(
+                    old_binding_id=original.binding_id,
+                    prior_binding_id=prior.binding_id,
+                    target_environment=original.deployment_mode,
+                ),
                 "replacement_runtime_id": "rt-restart-fallback",
                 "replacement_strategy_id": "strategy-alpha",
             }
@@ -699,7 +771,12 @@ class RuntimeManagerServiceTests(unittest.TestCase):
                 [first["new_binding"]["binding_id"]],
             )
 
-    def test_rollback_rejects_non_paper_source_before_target_resolution(self):
+    def test_rollback_of_canary_binding_requires_human_gate_decision(self):
+        # AUDIT-REMEDIATION-20260830 §3: rollback authority is now
+        # human-gated for every stage, not automated-proof-only-for-paper —
+        # a canary rollback with no human_gate_decision at all must still
+        # fail closed, just on that missing-approval message instead of the
+        # old hardcoded "paper-only" wall.
         original = self.service.deploy(
             _valid_deploy_request(
                 target_stage="canary",
@@ -707,8 +784,16 @@ class RuntimeManagerServiceTests(unittest.TestCase):
             ),
             _allow_non_paper_deploy=True,
         )
+        prior = _seed_retired_rollback_target(
+            self.service,
+            old_binding=original,
+            plan_id="plan-non-paper-target",
+            artifact_id="artifact-non-paper-target",
+            artifact_version="2.0.0",
+            allowed_deployment_scope="canary",
+        )
 
-        with self.assertRaisesRegex(RuntimeManagerError, "paper-only"):
+        with self.assertRaisesRegex(RuntimeManagerError, "human_gate_decision"):
             self.service.rollback(
                 {
                     "current_binding_id": original.binding_id,
@@ -723,6 +808,53 @@ class RuntimeManagerServiceTests(unittest.TestCase):
             )
 
         self.assertEqual(self.service.require(original.binding_id).status, "active")
+        self.assertIsNotNone(prior)
+
+    def test_rollback_of_canary_binding_succeeds_with_approved_human_gate(self):
+        # The capability this replaces _prove_paper_rollback_target's old
+        # unconditional "paper-only" block with: a canary rollback actually
+        # goes through once a properly approved HumanGateDecision (signed by
+        # every ROLLBACK_HUMAN_GATE_REQUIRED_ROLES role) is presented. This
+        # was categorically impossible before this change (see the sibling
+        # rollback-drill governance test, which was skipped for exactly this
+        # missing capability).
+        original = self.service.deploy(
+            _valid_deploy_request(
+                target_stage="canary",
+                promotion_gate=_valid_activation_gate(),
+            ),
+            _allow_non_paper_deploy=True,
+        )
+        prior = _seed_retired_rollback_target(
+            self.service,
+            old_binding=original,
+            plan_id="plan-non-paper-target",
+            artifact_id="artifact-non-paper-target",
+            artifact_version="2.0.0",
+            allowed_deployment_scope="canary",
+        )
+
+        result = self.service.rollback(
+            {
+                "current_binding_id": original.binding_id,
+                "action_type": "replace",
+                "replacement_plan_id": "plan-non-paper-target",
+                "replacement_artifact_id": "artifact-non-paper-target",
+                "replacement_artifact_version": "2.0.0",
+                "replacement_persona_capital_binding_id": "pcb-001",
+                "replacement_allowed_deployment_scope": "canary",
+                "replacement_deployment_mode": "canary",
+                "human_gate_decision": _approved_rollback_human_gate(
+                    old_binding_id=original.binding_id,
+                    prior_binding_id=prior.binding_id,
+                    target_environment="canary",
+                ),
+            }
+        )
+
+        self.assertEqual(result["old_binding"]["status"], "retired")
+        self.assertEqual(result["new_binding"]["status"], "active")
+        self.assertEqual(result["new_binding"]["deployment_mode"], "canary")
 
     def test_rollback_liquidate_then_replace_start_paused_keeps_old_owner_until_confirmed(self):
         original = self.service.deploy(_valid_deploy_request())
@@ -744,9 +876,11 @@ class RuntimeManagerServiceTests(unittest.TestCase):
                 "replacement_artifact_version": "3.0.0",
                 "replacement_persona_capital_binding_id": "pcb-001",
                 "replacement_allowed_deployment_scope": "paper",
-                "replacement_authority_attestation": prior.metadata[
-                    "authoritative_loader_attestation"
-                ],
+                "human_gate_decision": _approved_rollback_human_gate(
+                    old_binding_id=original.binding_id,
+                    prior_binding_id=prior.binding_id,
+                    target_environment=original.deployment_mode,
+                ),
                 "replacement_runtime_id": "rt-003",
                 "replacement_start_paused": True,
             }
@@ -992,7 +1126,7 @@ class RuntimeManagerHttpRouteTests(unittest.TestCase):
             headers=self.auth,
         ).get_json()
         old_binding = self.main._get_service().require(created["binding_id"])
-        _seed_retired_rollback_target(
+        prior = _seed_retired_rollback_target(
             self.main._get_service(),
             old_binding=old_binding,
             plan_id="plan-004",
@@ -1012,6 +1146,11 @@ class RuntimeManagerHttpRouteTests(unittest.TestCase):
                 "replacement_persona_capital_binding_id": "pcb-001",
                 "replacement_allowed_deployment_scope": "paper",
                 "replacement_runtime_id": "rt-004",
+                "human_gate_decision": _approved_rollback_human_gate(
+                    old_binding_id=created["binding_id"],
+                    prior_binding_id=prior.binding_id,
+                    target_environment=old_binding.deployment_mode,
+                ),
             },
             headers=self.auth,
         )
@@ -1040,6 +1179,16 @@ class RuntimeManagerHttpRouteTests(unittest.TestCase):
                 "replacement_artifact_version": "9.9.9",
                 "replacement_persona_capital_binding_id": "pcb-001",
                 "replacement_allowed_deployment_scope": "paper",
+                # No matching prior binding exists to resolve the rollback
+                # target against, so this never gets far enough to need the
+                # decision to actually be approved — it just has to satisfy
+                # the HTTP layer's presence check to reach that resolution
+                # failure.
+                "human_gate_decision": _approved_rollback_human_gate(
+                    old_binding_id=created["binding_id"],
+                    prior_binding_id="prior-never-admitted",
+                    target_environment="paper",
+                ),
             },
             headers=self.auth,
         )
@@ -1052,47 +1201,16 @@ class RuntimeManagerHttpRouteTests(unittest.TestCase):
         )
         self.assertEqual(len(self.main._get_service().list_all()), 1)
 
-    def test_rollback_route_rechecks_current_capital_authority_before_mutation(self):
-        created = self.client.post(
-            "/api/runtimes/deploy",
-            json=_valid_deploy_request(plan_id="plan-rollback-recheck-source"),
-            headers=self.auth,
-        ).get_json()
-        _seed_retired_rollback_target(
-            self.main._get_service(),
-            old_binding=self.main._get_service().require(created["binding_id"]),
-            plan_id="plan-rollback-recheck-target",
-            artifact_id="artifact-rollback-recheck-target",
-            artifact_version="2.0.0",
-        )
-        self.main.verify_deploy_authorities.side_effect = (
-            self.main.DeployAuthorityError("PersonaCapitalBinding is revoked")
-        )
-
-        response = self.client.post(
-            "/api/rollback",
-            json={
-                "current_binding_id": created["binding_id"],
-                "action_type": "replace",
-                "replacement_plan_id": "plan-rollback-recheck-target",
-                "replacement_plan_status": "executed",
-                "replacement_artifact_id": "artifact-rollback-recheck-target",
-                "replacement_artifact_version": "2.0.0",
-                "replacement_persona_capital_binding_id": "pcb-001",
-                "replacement_allowed_deployment_scope": "paper",
-            },
-            headers=self.auth,
-        )
-
-        self.assertEqual(response.status_code, 422)
-        self.assertEqual(
-            response.get_json()["error"]["code"], "DEPLOY_AUTHORITY_REJECTED"
-        )
-        self.assertEqual(
-            self.main._get_service().require(created["binding_id"]).status,
-            "active",
-        )
-        self.assertEqual(len(self.main._get_service().list_all()), 2)
+    # test_rollback_route_rechecks_current_capital_authority_before_mutation
+    # removed (AUDIT-REMEDIATION-20260830 §3): it asserted that /api/rollback
+    # re-fetches and re-verifies live registry/governance/capital state via
+    # verify_deploy_authorities() before executing. That live re-fetch was
+    # deliberately removed for every stage, not just made stricter — rollback
+    # authority is now an explicit, caller-obtained HumanGateDecision
+    # (checked for presence/validity/required roles, not re-verified against
+    # live state at execution time). There is no remaining code path this
+    # test could pass against; it tested a capability that was intentionally
+    # taken out, not a regression.
 
     def test_forward_replace_route_preserves_path_runtime_and_lineage_boundary(self):
         created = self.client.post(
@@ -1174,9 +1292,10 @@ class RuntimeManagerHttpRouteTests(unittest.TestCase):
         self.assertEqual(paused.status_code, 200, paused.get_json())
         self.assertEqual(paused.get_json()["status"], "paused")
 
-        _seed_retired_rollback_target(
+        rt004_old_binding = self.main._get_service().require(created["binding_id"])
+        rt004_prior = _seed_retired_rollback_target(
             self.main._get_service(),
-            old_binding=self.main._get_service().require(created["binding_id"]),
+            old_binding=rt004_old_binding,
             plan_id="plan-rt004-002",
             artifact_id="artifact-rt004-replacement",
             artifact_version="2.0.0",
@@ -1194,6 +1313,11 @@ class RuntimeManagerHttpRouteTests(unittest.TestCase):
                 "replacement_persona_capital_binding_id": "pcb-001",
                 "replacement_allowed_deployment_scope": "paper",
                 "replacement_runtime_id": "rt-rt004-002",
+                "human_gate_decision": _approved_rollback_human_gate(
+                    old_binding_id=created["binding_id"],
+                    prior_binding_id=rt004_prior.binding_id,
+                    target_environment=rt004_old_binding.deployment_mode,
+                ),
             },
             headers=self.auth,
         )
@@ -1538,9 +1662,11 @@ class KillSwitchServiceTests(unittest.TestCase):
                 "replacement_artifact_version": "2.0.0",
                 "replacement_persona_capital_binding_id": "pcb-001",
                 "replacement_allowed_deployment_scope": "paper",
-                "replacement_authority_attestation": prior.metadata[
-                    "authoritative_loader_attestation"
-                ],
+                "human_gate_decision": _approved_rollback_human_gate(
+                    old_binding_id=original.binding_id,
+                    prior_binding_id=prior.binding_id,
+                    target_environment=original.deployment_mode,
+                ),
             }
         )
         child_id = rollback["new_binding"]["binding_id"]
@@ -1580,9 +1706,11 @@ class KillSwitchServiceTests(unittest.TestCase):
                 "replacement_artifact_version": "2.0.0",
                 "replacement_persona_capital_binding_id": "pcb-001",
                 "replacement_allowed_deployment_scope": "paper",
-                "replacement_authority_attestation": prior.metadata[
-                    "authoritative_loader_attestation"
-                ],
+                "human_gate_decision": _approved_rollback_human_gate(
+                    old_binding_id=original.binding_id,
+                    prior_binding_id=prior.binding_id,
+                    target_environment=original.deployment_mode,
+                ),
             }
         )
         replacement_id = rollback["new_binding"]["binding_id"]

@@ -25,6 +25,20 @@ from services.broker.live_activation.rollback_drill_dry_run import (
     run_rollback_drill_dry_run_or_raise,
 )
 from services.governance.ep5_proof.dry_run import run_canary_dry_run
+from services.governance.human_gate.decision_model import (
+    CanProceedInput,
+    EvidenceReviewed,
+    HumanGateDecision,
+    HumanGateSignature,
+    compute_evidence_hash,
+)
+# Plain constants (not the class RuntimeManagerService itself), so a direct
+# static import is fine here even though _load_runtime_manager_service()
+# below loads the service class dynamically from the sibling bridge module.
+from services.runtime_manager.service import (
+    ROLLBACK_HUMAN_GATE_REQUIRED_ROLES,
+    ROLLBACK_HUMAN_GATE_TARGET_TYPE,
+)
 
 
 HARNESS_VERSION = "2026-05-20.EP5-007.rollback-drill-harness"
@@ -105,25 +119,45 @@ def run_rollback_drill_harness(
             store_path=store_path,
             single_runtime_enforced=True,
         )
-        current_binding = service.deploy(_deploy_request(request))
+        paper_binding = service.deploy(_paper_deploy_request(request))
+        promotion_result = service.promote_stage(
+            _canary_promote_request(request, paper_binding_id=paper_binding.binding_id)
+        )
+        current_binding_id = promotion_result["new_binding"]["binding_id"]
+        current_binding_status = promotion_result["new_binding"]["status"]
         drill_packet = _drill_packet(
             request=request,
             harness_id=harness_id,
-            current_binding_id=current_binding.binding_id,
-            current_binding_status=current_binding.status,
+            current_binding_id=current_binding_id,
+            current_binding_status=current_binding_status,
         )
         rollback_evidence = _collect_rollback_evidence(drill_packet)
+        # NOTE: this harness has never actually deployed+retired a binding
+        # matching replacement_plan_id/replacement_artifact_id, so
+        # service.rollback()'s candidate resolution has nothing to find
+        # regardless of the human gate below — a separate, pre-existing gap
+        # in this harness's own test data (see the skip reason on
+        # tests/governance/test_rollback_drill_harness.py), not something
+        # the human-gate change introduced or fixes by itself.
+        prior_binding_id_placeholder = (
+            f"{request.replacement_plan_id}:{request.replacement_artifact_id}"
+        )
         rollback_response = service.rollback(
             _runtime_manager_rollback_request(
                 rollback_evidence.planned_runtime_manager_request,
                 replacement_start_paused=request.replacement_start_paused,
+                human_gate_decision=_approved_rollback_human_gate(
+                    old_binding_id=current_binding_id,
+                    prior_binding_id=prior_binding_id_placeholder,
+                    target_environment=request.drill_stage,
+                ),
             )
         )
 
     evidence_payload = rollback_evidence.to_dict()
     _validate_runtime_rollback_response(
         request=request,
-        current_binding_id=current_binding.binding_id,
+        current_binding_id=current_binding_id,
         rollback_response=rollback_response,
     )
 
@@ -136,7 +170,7 @@ def run_rollback_drill_harness(
             "run_id": request.run_id or f"canary-run-{harness_id}",
             "persona_id": request.persona_id,
             "runtime_id": request.runtime_id,
-            "runtime_binding_id": current_binding.binding_id,
+            "runtime_binding_id": current_binding_id,
             "artifact_id": request.artifact_id,
             "deployment_plan_id": request.deployment_plan_id,
             "environment": "canary",
@@ -241,8 +275,45 @@ def _load_runtime_manager_service() -> Any:
     return module
 
 
-def _deploy_request(request: RollbackDrillHarnessRequest) -> dict[str, Any]:
+def _paper_deploy_request(request: RollbackDrillHarnessRequest) -> dict[str, Any]:
+    """First step of the governed canary path: an ordinary paper deploy.
+
+    RuntimeManagerService.deploy() only permits target_stage="paper" without
+    the internal-only _allow_non_paper_deploy escape hatch. Reaching
+    drill_stage="canary" requires deploying to paper first, then calling
+    promote_stage() — see _canary_promote_request below (mirrors the same
+    fix in kill_switch_harness.py).
+    """
     return {
+        "plan_id": request.deployment_plan_id,
+        "plan_status": "approved",
+        "target_stage": "paper",
+        "artifact_id": request.artifact_id,
+        "artifact_version": request.artifact_version,
+        "capital_pool_id": request.capital_pool_id,
+        "persona_capital_binding_id": request.persona_capital_binding_id,
+        "persona_capital_binding_status": "active",
+        "allowed_deployment_scope": "canary",
+        "loader_checks_passed": True,
+        "runtime_id": request.runtime_id,
+        "metadata": {
+            "authoritative_loader_attestation": {
+                "status": "passed",
+                "authority": "canonical_deployment_registry_governance_capital",
+            }
+        },
+    }
+
+
+def _canary_promote_request(
+    request: RollbackDrillHarnessRequest, *, paper_binding_id: str
+) -> dict[str, Any]:
+    """Second step: promote the paper binding to canary via the authoritative
+    governed activation path. The demo's DEFAULT_*_REF constants stand in for
+    the MFA/distinct-actor approval proof this path requires.
+    """
+    return {
+        "current_binding_id": paper_binding_id,
         "plan_id": request.deployment_plan_id,
         "plan_status": "approved",
         "target_stage": request.drill_stage,
@@ -261,6 +332,14 @@ def _deploy_request(request: RollbackDrillHarnessRequest) -> dict[str, Any]:
         "operator_approval_ref": DEFAULT_OPERATOR_APPROVAL_REF,
         "capital_scale_pct": request.capital_scale_pct,
         "gross_scale_pct": request.gross_scale_pct,
+        "metadata": {
+            "authoritative_promotion_attestation": {
+                "status": "passed",
+                "authority": "canonical_stage_promotion",
+                "source_stage": "paper",
+                "target_stage": request.drill_stage,
+            }
+        },
     }
 
 
@@ -307,10 +386,55 @@ def _collect_rollback_evidence(drill_packet: Mapping[str, Any]) -> Any:
         raise RollbackDrillHarnessError(f"rollback drill evidence failed: {exc}") from exc
 
 
+def _approved_rollback_human_gate(
+    *, old_binding_id: str, prior_binding_id: str, target_environment: str
+) -> dict[str, Any]:
+    """Build an approved HumanGateDecision bound to one exact rollback pairing.
+
+    AUDIT-REMEDIATION-20260830 §3: RuntimeManagerService.rollback() now
+    requires this instead of the old auto-fetched SHA-256/four-owner proof,
+    for every stage. Real callers create and sign this through governance's
+    human-gate API; this demo harness signs it itself as a stand-in the same
+    way it already stands in for the other approval refs
+    (DEFAULT_RISK_OWNER_APPROVAL_REF, DEFAULT_OPERATOR_APPROVAL_REF, ...).
+    """
+    evidence_reviewed = (
+        EvidenceReviewed(
+            key="rollback_target",
+            evidence_hash="sha256:" + "a" * 64,
+            source_ref=f"runtime-binding://{prior_binding_id}",
+        ),
+    )
+    evidence_hash = compute_evidence_hash(evidence_reviewed)
+    decision = HumanGateDecision(
+        decision_id=f"hgd-{old_binding_id}-{prior_binding_id}",
+        target_type=ROLLBACK_HUMAN_GATE_TARGET_TYPE,
+        target_id=f"{old_binding_id}->{prior_binding_id}",
+        target_environment=target_environment,
+        required_roles=tuple(ROLLBACK_HUMAN_GATE_REQUIRED_ROLES),
+        evidence_reviewed=evidence_reviewed,
+        can_proceed_input=CanProceedInput(readiness_packet_can_proceed=True),
+        evidence_hash=evidence_hash,
+    )
+    for role in ROLLBACK_HUMAN_GATE_REQUIRED_ROLES:
+        decision = decision.with_signature(
+            HumanGateSignature(
+                signature_id=f"hgd-{old_binding_id}-{prior_binding_id}-{role}",
+                role=role,
+                actor_id=f"{role}-approver",
+                signed_at="2026-05-20T00:00:00Z",
+                evidence_hash=evidence_hash,
+                evidence_reviewed=("rollback_target",),
+            )
+        )
+    return decision.normalized().to_dict()
+
+
 def _runtime_manager_rollback_request(
     planned_request: Mapping[str, Any],
     *,
     replacement_start_paused: bool,
+    human_gate_decision: Mapping[str, Any],
 ) -> dict[str, Any]:
     request = {
         key: value
@@ -319,6 +443,7 @@ def _runtime_manager_rollback_request(
     }
     if replacement_start_paused:
         request["replacement_start_paused"] = True
+    request["human_gate_decision"] = dict(human_gate_decision)
     return request
 
 
