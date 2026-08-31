@@ -98,69 +98,6 @@ def delegates_kernel_mode_to_codex(mode: str) -> bool:
     return str(mode or "").strip().lower() in CODEX_DELEGATED_KERNEL_MODES
 
 
-def _is_unambiguous_pre_execution_auth_failure(
-    *,
-    returncode: int,
-    stdout: str,
-    stderr: str,
-) -> bool:
-    """Return True only when failure is structurally proven to be pre-execution CLI/session auth failure.
-
-    If execution started (non-empty stdout, run JSON, or stderr indicating tool/agent/runtime
-    execution), or if the error is ambiguous, return False to prevent duplicate side-effecting invocations.
-    """
-    if returncode == 0:
-        return False
-    stdout_text = (stdout or "").strip()
-    if stdout_text:
-        # Any stdout indicates the CLI or agent began execution and may have produced side effects or output.
-        return False
-    stderr_text = (stderr or "").strip()
-    if not stderr_text:
-        return False
-    stderr_low = stderr_text.lower()
-
-    # If stderr indicates execution/runtime/tool activity took place, it is post-execution.
-    execution_indicators = (
-        "tool",
-        "execut",
-        "step",
-        "action",
-        "post-execution",
-        "plugin",
-        "workspace",
-        "sandbox",
-        "runid",
-        "run_id",
-        "event",
-    )
-    if any(ind in stderr_low for ind in execution_indicators):
-        return False
-
-    # Must match unambiguous pre-execution CLI / provider authentication failure signatures.
-    pre_exec_auth_patterns = (
-        "oauth login session expired",
-        "oauth session expired",
-        "auth session expired",
-        "login expired",
-        "session expired",
-        "not logged in",
-        "login required",
-        "invalid_grant",
-        "token expired",
-        "api key expired",
-        "missing api key",
-        "invalid api key",
-        "authentication failed",
-        "401 unauthorized",
-        "unauthorized: token",
-        "unauthorized: session",
-        "unauthorized: invalid",
-        "unauthorized (401)",
-        "claude oauth",
-    )
-    return any(pat in stderr_low for pat in pre_exec_auth_patterns)
-
 
 def _sanitize_failure_reason(reason: Any, message: Any = None) -> str:
     """Sanitize failure reason so diagnostics surface truthfully without leaking tokens or secrets."""
@@ -354,9 +291,11 @@ class AssistantOpenClawProvider:
             remaining = deadline - time.monotonic()
             if remaining <= 0.2:
                 break
-            has_fallback = idx < len(candidates) - 1
-            if has_fallback and idx == 0:
-                cand_timeout = min(1.5, max(1.0, remaining - 17.0))
+            num_remaining_after = len(candidates) - 1 - idx
+            if num_remaining_after > 0 and idx == 0:
+                cand_timeout = min(1.5, max(1.0, remaining - (num_remaining_after * 5.0)))
+            elif num_remaining_after > 0:
+                cand_timeout = max(1.0, min(remaining - (num_remaining_after * 3.0), remaining / (num_remaining_after + 1)))
             else:
                 cand_timeout = remaining
 
@@ -556,13 +495,8 @@ class AssistantOpenClawProvider:
 
         if proc.returncode != 0:
             stderr = (proc.stderr or "").strip()
-            stdout_str = (proc.stdout or "").strip()
             stderr_low = stderr.lower()
-            if _is_unambiguous_pre_execution_auth_failure(
-                returncode=proc.returncode,
-                stdout=stdout_str,
-                stderr=stderr,
-            ):
+            if any(k in stderr_low for k in ("auth", "unauthorized", "expired", "401", "login", "oauth")):
                 err_code = "OPENCLAW_AUTH_UNAVAILABLE"
             elif any(k in stderr_low for k in ("timeout", "timed out", "deadline")):
                 err_code = "OPENCLAW_GATEWAY_TIMEOUT"
@@ -677,56 +611,28 @@ class AssistantOpenClawProvider:
             )
 
         candidates = self._resolve_model_candidates(model)
+        selected_model = candidates[0] if candidates else None
         primary_configured = os.getenv("OPENCLAW_PRIMARY_MODEL", "").strip() or DEFAULT_PRIMARY_MODEL
-        deadline = time.monotonic() + invocation_timeout
-        last_exc: Optional[OpenClawProviderError] = None
 
-        for idx, candidate in enumerate(candidates):
-            remaining = deadline - time.monotonic()
-            if remaining <= 0.2:
-                break
-            has_fallback = idx < len(candidates) - 1
-            if has_fallback:
-                cand_timeout = min(invocation_timeout * 0.4, max(5.0, remaining - 5.0))
-            else:
-                cand_timeout = remaining
-
-            try:
-                result = self._invoke_single_model(
-                    prompt,
-                    model=candidate,
-                    agent_id=selected_agent_id,
-                    session_id=session_id,
-                    mode=mode,
-                    context_pack=context_pack,
-                    metadata=metadata,
-                    messages=messages,
-                    operator_id=operator_id,
-                    trace_id=trace_id,
-                    timeout_seconds=cand_timeout,
-                )
-                self._active_model = candidate
-                if candidate != primary_configured:
-                    result.output["fallback_used"] = True
-                    result.output["primary_model"] = primary_configured
-                return result
-            except OpenClawProviderError as exc:
-                last_exc = exc
-                # Only unambiguous pre-execution failures (such as auth unavailable)
-                # are safe to fallback. Ambiguous failures (timeout, generic invocation
-                # failure, post-execution errors) must never retry on a fallback model
-                # to satisfy the unambiguous-pre-execution-only/no-duplicate-side-effect contract.
-                if exc.error_code != "OPENCLAW_AUTH_UNAVAILABLE" or not has_fallback:
-                    raise
-                continue
-
-        if last_exc is not None:
-            raise last_exc
-        raise OpenClawProviderError(
-            "openclaw agent invocation exhausted its bounded deadline.",
-            status_code=504,
-            error_code="OPENCLAW_GATEWAY_TIMEOUT",
+        result = self._invoke_single_model(
+            prompt,
+            model=selected_model,
+            agent_id=selected_agent_id,
+            session_id=session_id,
+            mode=mode,
+            context_pack=context_pack,
+            metadata=metadata,
+            messages=messages,
+            operator_id=operator_id,
+            trace_id=trace_id,
+            timeout_seconds=invocation_timeout,
         )
+        if selected_model:
+            self._active_model = selected_model
+            if selected_model != primary_configured:
+                result.output["fallback_used"] = True
+                result.output["primary_model"] = primary_configured
+        return result
 
     def _invoke_oversized_prompt_via_openresponses(
         self,

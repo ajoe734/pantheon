@@ -372,8 +372,47 @@ class TestAssistantOpenClawProviderUnit(unittest.TestCase):
         self.assertEqual(len(calls), 2)
         self.assertEqual(calls[0][calls[0].index("--model") + 1], "anthropic/claude-opus-4-8")
         self.assertEqual(calls[1][calls[1].index("--model") + 1], "openai/gpt-5.6-sol")
-        self.assertLessEqual(call_timeouts[0], 5.0)
-        self.assertGreaterEqual(call_timeouts[1], 10.0)
+        self.assertLessEqual(call_timeouts[0], 1.5)
+        self.assertGreaterEqual(call_timeouts[1], 8.0)
+
+    def test_readiness_auth_probe_converges_via_second_fallback_when_primary_and_fallback_one_fail(self) -> None:
+        calls: list[list[str]] = []
+        call_timeouts: list[float] = []
+
+        def fake_run(cmd, **kwargs):
+            calls.append(list(cmd))
+            call_timeouts.append(kwargs.get("timeout", 0.0))
+            if len(calls) == 1:
+                raise subprocess.TimeoutExpired(cmd="openclaw agent", timeout=kwargs["timeout"])
+            if len(calls) == 2:
+                raise subprocess.TimeoutExpired(cmd="openclaw agent", timeout=kwargs["timeout"])
+            class R:
+                returncode = 0
+                stdout = TestAssistantOpenClawProviderUnit._agent_json("PANTHEON_PROVIDER_READY")
+                stderr = ""
+            return R()
+
+        provider = self._make_provider(run_func=fake_run)
+        info = provider.readiness(auth_probe=True)
+
+        self.assertTrue(info["ready"])
+        self.assertEqual(info["status"], "ready")
+        self.assertEqual(info["active_model"], "openai/gpt-5.5")
+        self.assertEqual(info["primary_model"], "anthropic/claude-opus-4-8")
+        self.assertTrue(info["fallback_used"])
+        self.assertEqual(info["fallback_model"], "openai/gpt-5.5")
+        self.assertEqual(info["primary_unavailable"]["model"], "anthropic/claude-opus-4-8")
+        self.assertEqual(info["primary_unavailable"]["status"], "unavailable")
+        self.assertEqual(info["primary_unavailable"]["reason"], "OPENCLAW_GATEWAY_TIMEOUT")
+        self.assertEqual(info["answer_probe"]["status"], "completed")
+        self.assertEqual(info["answer_probe"]["active_model"], "openai/gpt-5.5")
+        self.assertEqual(len(calls), 3)
+        self.assertEqual(calls[0][calls[0].index("--model") + 1], "anthropic/claude-opus-4-8")
+        self.assertEqual(calls[1][calls[1].index("--model") + 1], "openai/gpt-5.6-sol")
+        self.assertEqual(calls[2][calls[2].index("--model") + 1], "openai/gpt-5.5")
+        self.assertLessEqual(call_timeouts[0], 1.5)
+        self.assertGreaterEqual(call_timeouts[1], 8.0)
+        self.assertGreaterEqual(call_timeouts[2], 8.0)
 
     def test_readiness_auth_probe_fails_closed_when_all_models_fail(self) -> None:
         calls: list[list[str]] = []
@@ -513,31 +552,24 @@ class TestAssistantOpenClawProviderUnit(unittest.TestCase):
         self.assertEqual(info["answer_probe"]["status"], "failed")
         self.assertEqual(len(calls), 3)
 
-    def test_invoke_converges_via_fallback_when_primary_fails_with_auth_unavailable(self) -> None:
+    def test_invoke_does_not_retry_on_auth_failure_making_exactly_one_call(self) -> None:
         calls: list[list[str]] = []
 
         def fake_run(cmd, **kwargs):
             calls.append(list(cmd))
-            if len(calls) == 1:
-                class R1:
-                    returncode = 1
-                    stdout = ""
-                    stderr = "Claude OAuth login session expired (401 unauthorized)"
-                return R1()
-            class R2:
-                returncode = 0
-                stdout = TestAssistantOpenClawProviderUnit._agent_json("fallback reply")
-                stderr = ""
-            return R2()
+            class R:
+                returncode = 1
+                stdout = ""
+                stderr = "Claude OAuth login session expired (401 unauthorized)"
+            return R()
 
         provider = self._make_provider(run_func=fake_run)
-        result = provider.invoke("test", mode="user", operator_id="op-1")
+        with self.assertRaises(OpenClawProviderError) as ctx:
+            provider.invoke("test", mode="user", operator_id="op-1")
 
-        self.assertEqual(result.status, "completed")
-        self.assertEqual(result.output["transport"], "cli")
-        self.assertEqual(result.output["active_model"], "openai/gpt-5.6-sol")
-        self.assertTrue(result.output["fallback_used"])
-        self.assertEqual(len(calls), 2)
+        self.assertEqual(ctx.exception.status_code, 502)
+        self.assertEqual(ctx.exception.error_code, "OPENCLAW_AUTH_UNAVAILABLE")
+        self.assertEqual(len(calls), 1)
 
     def test_invoke_does_not_retry_after_generic_invocation_failure(self) -> None:
         calls: list[list[str]] = []
@@ -575,7 +607,7 @@ class TestAssistantOpenClawProviderUnit(unittest.TestCase):
             provider.invoke("test post-execution auth failure", mode="user", operator_id="op-1")
 
         self.assertEqual(ctx.exception.status_code, 502)
-        self.assertEqual(ctx.exception.error_code, "OPENCLAW_GATEWAY_INVOCATION_FAILED")
+        self.assertEqual(ctx.exception.error_code, "OPENCLAW_AUTH_UNAVAILABLE")
         # Must fail closed on post-execution error even if stderr mentions auth, asserting exactly one call
         self.assertEqual(len(calls), 1)
 
@@ -595,7 +627,7 @@ class TestAssistantOpenClawProviderUnit(unittest.TestCase):
             provider.invoke("test partial run output", mode="user", operator_id="op-1")
 
         self.assertEqual(ctx.exception.status_code, 502)
-        self.assertEqual(ctx.exception.error_code, "OPENCLAW_GATEWAY_INVOCATION_FAILED")
+        self.assertEqual(ctx.exception.error_code, "OPENCLAW_AUTH_UNAVAILABLE")
         self.assertEqual(len(calls), 1)
 
     def test_invoke_does_not_retry_after_timeout(self) -> None:
