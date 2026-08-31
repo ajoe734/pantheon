@@ -16,7 +16,7 @@
   },
   "task": {
     "base_branch": "dev",
-    "evidence_cut_at": "2026-08-31T15:30:20Z",
+    "evidence_cut_at": "2026-08-31T15:36:44Z",
     "evidence_cut_semantics": "Owner recovery validation for Agora domain route migration and decoupling identity and personalization from main.py. The task retains all 38 migrated decorators, canonical ports/stores, dry-run/command/SSE/assistant behavior, and corrects the research dispatcher so the requested backend mode remains schema-valid while an unreceipted result is explicitly labelled simulation.",
     "id": "OPGAP-BE-AGORA-ROUTER-V2-20260830",
     "overall_admission": "owner_asserted_pass_pending_independent_review_and_merge",
@@ -120,8 +120,8 @@
         "conclusion": "22 passed. Confirms safe provenance, a schema-valid requested backend mode, durable outbox handling, and market-data projection provenance."
       }
     ],
-    "validated_at": "2026-08-31T15:30:20Z",
-    "validated_base_sha": "9179026cb8bcccd15f4c0c7e4d6863778a9e5715",
+    "validated_at": "2026-08-31T15:36:44Z",
+    "validated_base_sha": "1c4a18e6786e488bc7c8737f3ce052bd0c15c7e2",
     "validated_head_sha": "pending"
   },
   "deployment": {
@@ -304,7 +304,7 @@
     },
     {
       "sequence": 3,
-      "recorded_at": "2026-08-31T15:30:20Z",
+      "recorded_at": "2026-08-31T15:36:44Z",
       "kind": "owner_recovery_validation",
       "status": "pass",
       "reference": "Preserved requested backend mode separately from observed simulation provenance; 34 router and 22 focused dispatcher/market tests passed."
