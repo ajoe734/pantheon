@@ -51891,7 +51891,6 @@ async def _management_board_pack_response(
     portfolio_book = await bff_management_portfolio_book(
         page_token=None,
         page_size=section_limit,
-        tenant_id=tenant_id,
         authorization=authorization,
     )
     portfolio_exposure = await bff_management_portfolio_book_exposure(

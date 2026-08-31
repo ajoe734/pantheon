@@ -52,6 +52,7 @@ def _isolated_bff(monkeypatch) -> Iterator[tuple[TestClient, ReadSurfacePorts]]:
         bff_main.app.openapi_schema = None
         try:
             with TestClient(bff_main.app, raise_server_exceptions=False) as client:
+                client.get("/health")
                 yield client, store
         finally:
             bff_main.read_store = original_store
@@ -159,14 +160,16 @@ def test_evidence_timeout_returns_degraded_envelope_without_hanging(monkeypatch)
 
 
 def test_alerts_timeout_returns_degraded_envelope_without_hanging(monkeypatch) -> None:
-    def slow_alerts_payload(snapshot_at: str):
-        time.sleep(0.3)
-        return {"alerts": [{"alert_id": "should-not-appear"}], "summary": {}, "meta": {}}
-
-    monkeypatch.setattr(bff_main, "_build_operator_alerts_payload", slow_alerts_payload)
-    monkeypatch.setattr(bff_main, "_management_read_timeout_seconds", lambda: 0.05)
-
     with _isolated_bff(monkeypatch) as (client, _store):
+        client.get("/bff/alerts", headers=HEADERS)
+
+        def slow_alerts_payload(snapshot_at: str):
+            time.sleep(0.3)
+            return {"alerts": [{"alert_id": "should-not-appear"}], "summary": {}, "meta": {}}
+
+        monkeypatch.setattr(bff_main, "_build_operator_alerts_payload", slow_alerts_payload)
+        monkeypatch.setattr(bff_main, "_management_read_timeout_seconds", lambda: 0.05)
+
         started = time.monotonic()
         response = client.get("/bff/alerts", headers=HEADERS)
         elapsed = time.monotonic() - started

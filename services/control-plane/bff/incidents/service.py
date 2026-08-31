@@ -1005,6 +1005,7 @@ class IncidentService:
                 "alerts": {
                     "status": "degraded",
                     "source": "timeout_fallback",
+                    "reason": "read_timeout",
                     "message": "Alert aggregation timed out under concurrent read fanout; degraded empty response returned.",
                 },
             },
