@@ -1,0 +1,71 @@
+{
+  "schema_version": "pantheon.review-evidence.v1",
+  "task_id": "OPGAP-BE-PERSONA-READBACK-FIXTURE-MIGRATION-20260831",
+  "title": "Persona readback fixture migration (existing port only)",
+  "program_id": "PANTHEON-FULL-OPERATION-GAP-CLOSURE-20260830",
+  "design_unit": "OPGAP-BE-PERSONA-READBACK-FIXTURE-MIGRATION-20260831",
+  "recorded_at": "2026-08-31T12:43:56Z",
+  "owner": "Codex2",
+  "reviewer": "Codex",
+  "target_repo": "pantheon",
+  "task_class": "functional",
+  "summary_zh": "將既有 Persona authoritative readback 測試 fixture 改為注入已宣告的 PersonaProvisioningReconciliationMutationPort；read surface 維持純讀取，未變更 production composition。",
+  "artifacts": {
+    "canonical_task_artifacts": [
+      "services/control-plane/bff/test_persona_provisioning_readback.py",
+      "docs/deployment/evidence/full-operation-gap/OPGAP-BE-PERSONA-READBACK-FIXTURE-MIGRATION-20260831/evidence.json"
+    ],
+    "implementation_paths": [
+      "services/control-plane/bff/test_persona_provisioning_readback.py"
+    ]
+  },
+  "scope": {
+    "owned": [
+      "authoritative Persona readback test harness mutation-owner fake",
+      "fixture injection of PersonaProvisioningReconciliationMutationPort",
+      "assertions that reconciliation writes are recorded by the mutation owner",
+      "this immutable review evidence manifest"
+    ],
+    "not_changing": [
+      "BFF production composition and Persona reconciliation implementation",
+      "ReadSurfacePorts public read-only API",
+      "Persona lifecycle policy, compensation, cron cleanup, and overlay behavior",
+      "Persona service write-owner behavior"
+    ],
+    "composes_with": [
+      "OPGAP-BE-PERSONA-RECONCILIATION-MUTATION-PORT-20260830 typed mutation-port delivery",
+      "authoritative Persona write owner",
+      "Codex independent exact-head review"
+    ]
+  },
+  "contracts": {
+    "fixture_boundary": "The fixture's fake read store exposes only monitoring-session reads. The separate fake mutation owner is wrapped by PersonaProvisioningReconciliationMutationPort and injected into bff_main for each test.",
+    "write_assertions": "Success and no-write assertions observe mutation_port.updates, so the legacy readback suite cannot depend on update_persona being restored to ReadSurfacePorts.",
+    "production_boundary": "No production file is changed by this task; the production port and composition remain owned by OPGAP-BE-PERSONA-RECONCILIATION-MUTATION-PORT-20260830."
+  },
+  "composition_verification": {
+    "port_delivery_merge_commit": "4e00a6adb016b318acddf227e3878bbef0253318",
+    "port_delivery_pr": 5483,
+    "port_delivery_ref": "origin/dev",
+    "reason": "The typed mutation-port delivery is merged into dev. This task branch was rebased onto that merge commit before the composed suite ran, while retaining its fixture-only scope.",
+    "commands": [
+      "PANTHEON_DEPENDENCY_PYTHON=/home/lupin/pantheon/.venv/bin/python3 python3 scripts/dev/provision_python_distribution.py --print-python",
+      ".venv-pantheon/bin/python -m pytest -q services/control-plane/bff/test_persona_provisioning_readback.py services/control-plane/bff/tests/test_persona_provisioning_read_surface_mutation.py"
+    ],
+    "result": "PASS",
+    "details": "The rebased composed delivery passed 55 tests in 27.89s: 52 legacy authoritative readback tests and 3 focused read-surface mutation-boundary tests. The suite emitted 10 pre-existing Python/FastAPI/jsonschema deprecation warnings."
+  },
+  "review_handoff": {
+    "status": "ready_for_exact_head_review",
+    "reviewer": "Codex",
+    "exact_pr_head_authority": "The governed ai-status handoff freezes REVIEW_PR, REVIEW_HEAD_SHA, and this committed manifest at the final rebased task head.",
+    "required_checks": [
+      "verify only the declared fixture and evidence paths changed",
+      "verify the read fake has no update_persona method",
+      "verify the fake authoritative owner is wrapped by PersonaProvisioningReconciliationMutationPort",
+      "verify legacy readback writes and no-write assertions use mutation_port.updates",
+      "rerun the 55-test composed verification on the exact rebased PR head",
+      "verify no production composition or ReadSurfacePorts mutation compatibility was added"
+    ]
+  }
+}
