@@ -29,7 +29,7 @@ import re
 import threading
 import time
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Dict, Iterator, List, Mapping, Optional, Sequence, Set, Tuple, Union
 
 try:
@@ -854,6 +854,444 @@ def _management_json_clone(value: Any) -> Any:
     return json.loads(json.dumps(value))
 
 
+def _management_record_id(record: Dict[str, Any], *keys: str) -> str:
+    if not isinstance(record, dict):
+        return ""
+    search_keys = keys or ("id", "key", "uuid", "name")
+    for key in search_keys:
+        value = record.get(key)
+        if value not in (None, ""):
+            return str(value).strip()
+    return ""
+
+
+def _management_link(path: str, record_id: Optional[str]) -> Optional[str]:
+    if not record_id:
+        return None
+    return f"{path}/{record_id}"
+
+
+def _first_present(payload: Dict[str, Any], keys: Tuple[str, ...]) -> Any:
+    for key in keys:
+        value = payload.get(key)
+        if value not in (None, ""):
+            return value
+    return None
+
+
+def _management_first_non_empty(*values: Any) -> Optional[Any]:
+    for value in values:
+        if value not in (None, ""):
+            return value
+    return None
+
+
+def _split_csv_query(value: Optional[str]) -> Optional[List[str]]:
+    if not value:
+        return None
+    tokens = [token.strip() for token in value.split(",") if token.strip()]
+    return tokens or None
+
+
+def _management_normalized_status(record: Dict[str, Any]) -> str:
+    return str(record.get("status") or record.get("state") or "unknown").strip().lower() or "unknown"
+
+
+def _human_inbox_priority(value: Any, *, fallback: str = "medium") -> str:
+    normalized = str(value or "").strip().lower()
+    if normalized in _HUMAN_INBOX_PRIORITY_RANK:
+        return normalized
+    if normalized in {"sev1", "p0"}:
+        return "critical"
+    if normalized in {"sev2", "p1"}:
+        return "high"
+    if normalized in {"sev3", "p2"}:
+        return "medium"
+    return fallback
+
+
+_INCIDENT_CASE_ALIAS_FIELDS: Dict[str, Tuple[str, ...]] = {
+    "binding_id": ("binding_id", "runtime_binding_id"),
+    "deployment_stage": ("deployment_stage", "deployment_mode"),
+    "deployment_plan_id": ("deployment_plan_id", "plan_id"),
+    "capital_pool_id": ("capital_pool_id", "affected_pool_id"),
+    "persona_capital_binding_id": ("persona_capital_binding_id",),
+    "artifact_id": ("artifact_id",),
+    "artifact_version": ("artifact_version",),
+    "runtime_id": ("runtime_id",),
+    "trace_id": ("trace_id", "correlation_id"),
+}
+
+
+def _project_bff_incident_case(incident: Dict[str, Any]) -> Dict[str, Any]:
+    payload = dict(incident)
+    incident_id = str(payload.get("incident_id") or payload.get("id") or "")
+    if incident_id:
+        payload["id"] = payload.get("id") or incident_id
+        payload["incident_id"] = incident_id
+
+    for field, aliases in _INCIDENT_CASE_ALIAS_FIELDS.items():
+        value = _first_present(payload, aliases)
+        if value is not None:
+            payload[field] = value
+
+    created_at = payload.get("created_at") or payload.get("opened_at")
+    if created_at:
+        payload["created_at"] = created_at
+        payload["opened_at"] = payload.get("opened_at") or created_at
+
+    if not payload.get("lineage_ref") and payload.get("artifact_id") and payload.get("artifact_version"):
+        payload["lineage_ref"] = f"{payload['artifact_id']}@{payload['artifact_version']}"
+
+    return payload
+
+
+_MANAGEMENT_INCIDENT_SEVERITY_BUCKETS: Tuple[str, ...] = ("high", "medium", "low")
+_MANAGEMENT_INCIDENT_HIGH_SEVERITIES: Set[str] = {"critical", "high", "sev1", "sev2", "p0", "p1"}
+_MANAGEMENT_INCIDENT_MEDIUM_SEVERITIES: Set[str] = {"medium", "moderate", "warning", "warn", "sev3", "p2"}
+
+
+def _management_incident_severity_bucket(severity: Any) -> str:
+    normalized = str(severity or "").strip().lower()
+    if normalized in _MANAGEMENT_INCIDENT_HIGH_SEVERITIES:
+        return "high"
+    if normalized in _MANAGEMENT_INCIDENT_MEDIUM_SEVERITIES:
+        return "medium"
+    return "low"
+
+
+def _management_incident_time(incident: Dict[str, Any]) -> Optional[str]:
+    value = _management_first_non_empty(
+        incident.get("opened_at"),
+        incident.get("openedAt"),
+        incident.get("created_at"),
+        incident.get("createdAt"),
+        incident.get("submitted_at"),
+        incident.get("submittedAt"),
+        incident.get("updated_at"),
+        incident.get("updatedAt"),
+        incident.get("resolved_at"),
+        incident.get("resolvedAt"),
+        incident.get("occurred_at"),
+        incident.get("occurredAt"),
+    )
+    return str(value) if value not in (None, "") else None
+
+
+def _management_incident_timeline_item(incident: Dict[str, Any]) -> Dict[str, Any]:
+    payload = _project_bff_incident_case(incident)
+    incident_id = str(payload.get("incident_id") or payload.get("id") or "").strip()
+    severity = str(payload.get("severity") or "low").strip().lower() or "low"
+    severity_bucket = _management_incident_severity_bucket(severity)
+    occurred_at = _management_incident_time(payload)
+    updated_at = _management_first_non_empty(
+        payload.get("updated_at"),
+        payload.get("updatedAt"),
+        payload.get("resolved_at"),
+        payload.get("resolvedAt"),
+        occurred_at,
+    )
+    runtime_id = str(payload.get("runtime_id") or "").strip()
+    deployment_plan_id = str(payload.get("deployment_plan_id") or "").strip()
+    capital_pool_id = str(payload.get("capital_pool_id") or payload.get("affected_pool_id") or "").strip()
+    persona_binding_id = str(payload.get("persona_capital_binding_id") or "").strip()
+    artifact_id = str(payload.get("artifact_id") or "").strip()
+    telemetry_event_ids = [
+        str(value)
+        for value in (payload.get("telemetry_event_ids") or [])
+        if str(value or "").strip()
+    ]
+    item = {
+        "id": payload.get("id") or incident_id,
+        "incident_id": incident_id,
+        "timeline_id": f"incident-timeline-{incident_id}" if incident_id else None,
+        "title": payload.get("title") or incident_id or "Untitled incident",
+        "status": str(payload.get("status") or "unknown").strip().lower() or "unknown",
+        "severity": severity,
+        "severity_bucket": severity_bucket,
+        "occurred_at": occurred_at,
+        "updated_at": updated_at,
+        "runtime_id": runtime_id or None,
+        "deployment_plan_id": deployment_plan_id or None,
+        "capital_pool_id": capital_pool_id or None,
+        "persona_capital_binding_id": persona_binding_id or None,
+        "artifact_id": artifact_id or None,
+        "telemetry_event_ids": telemetry_event_ids,
+        "lineage_ref": payload.get("lineage_ref"),
+        "evidence_summary": payload.get("evidence_summary"),
+        "source_refs": {
+            "incident_ids": [incident_id] if incident_id else [],
+            "runtime_ids": [runtime_id] if runtime_id else [],
+            "deployment_plan_ids": [deployment_plan_id] if deployment_plan_id else [],
+            "capital_pool_ids": [capital_pool_id] if capital_pool_id else [],
+            "persona_capital_binding_ids": [persona_binding_id] if persona_binding_id else [],
+            "artifact_ids": [artifact_id] if artifact_id else [],
+            "telemetry_event_ids": telemetry_event_ids,
+        },
+        "links": {
+            "incident": _management_link("/bff/incidents", incident_id),
+            "runtime": _management_link("/bff/runtimes", runtime_id or None),
+            "deployment": _management_link("/bff/deployments", deployment_plan_id or None),
+            "capital_pool": _management_link("/bff/capital-pools", capital_pool_id or None),
+        },
+    }
+    return item
+
+
+def _hiq_backlog_target(record: Dict[str, Any], *, fallback_type: str, fallback_id: str) -> Dict[str, Any]:
+    target_type = str(record.get("target_type") or record.get("targetType") or fallback_type).strip() or fallback_type
+    target_id = str(
+        record.get("target_id")
+        or record.get("targetId")
+        or record.get("runtime_id")
+        or record.get("runtimeId")
+        or record.get("persona_id")
+        or record.get("personaId")
+        or record.get("strategy_id")
+        or record.get("strategyId")
+        or fallback_id
+    ).strip()
+    return {"type": target_type, "id": target_id or None}
+
+
+def _intervention_stream_filter_values(value: Optional[str]) -> Optional[Set[str]]:
+    if not value:
+        return None
+    tokens = {token.strip().lower() for token in value.split(",") if token.strip()}
+    if not tokens or "all" in tokens:
+        return None
+    return tokens
+
+
+def _intervention_stream_time(record: Dict[str, Any]) -> Optional[str]:
+    value = _management_first_non_empty(
+        record.get("occurred_at"),
+        record.get("occurredAt"),
+        record.get("triggered_at"),
+        record.get("triggeredAt"),
+        record.get("created_at"),
+        record.get("createdAt"),
+        record.get("updated_at"),
+        record.get("updatedAt"),
+        record.get("timestamp"),
+    )
+    return str(value).strip() if value not in (None, "") else None
+
+
+def _intervention_stream_persona_id(record: Dict[str, Any]) -> Optional[str]:
+    metadata = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
+    audit_context = record.get("audit_context") if isinstance(record.get("audit_context"), dict) else {}
+    value = _management_first_non_empty(
+        record.get("persona_id"),
+        record.get("personaId"),
+        metadata.get("persona_id"),
+        metadata.get("personaId"),
+        audit_context.get("persona_id"),
+        audit_context.get("personaId"),
+    )
+    if value not in (None, ""):
+        return str(value).strip()
+    target_type = str(record.get("target_type") or record.get("targetType") or "").strip().lower()
+    target_id = str(record.get("target_id") or record.get("targetId") or "").strip()
+    if target_type == "persona" and target_id:
+        return target_id
+    return None
+
+
+def _intervention_stream_source_refs(
+    record: Dict[str, Any],
+    *,
+    intervention_id: str,
+    persona_id: Optional[str],
+    source_dataset: str,
+) -> Dict[str, Any]:
+    runtime_ids = [
+        str(value)
+        for value in (
+            record.get("runtime_id"),
+            record.get("runtimeId"),
+        )
+        if value
+    ]
+    persona_ids = [
+        str(value)
+        for value in (
+            record.get("persona_id"),
+            record.get("personaId"),
+            persona_id,
+        )
+        if value
+    ]
+    strategy_ids = [
+        str(value)
+        for value in (
+            record.get("strategy_id"),
+            record.get("strategyId"),
+        )
+        if value
+    ]
+    incident_ids = [
+        str(value)
+        for value in (
+            record.get("incident_id"),
+            record.get("incidentId"),
+        )
+        if value
+    ]
+    return {
+        "source_dataset": source_dataset,
+        "intervention_ids": [intervention_id],
+        "runtime_ids": sorted(set(runtime_ids)),
+        "persona_ids": sorted(set(persona_ids)),
+        "strategy_ids": sorted(set(strategy_ids)),
+        "incident_ids": sorted(set(incident_ids)),
+    }
+
+
+def _intervention_stream_target(record: Dict[str, Any], *, intervention_id: str) -> Dict[str, Any]:
+    return _hiq_backlog_target(record, fallback_type="Intervention", fallback_id=intervention_id)
+
+
+def _governance_ledger_audit_source_type(event: Dict[str, Any]) -> Optional[str]:
+    action_type = str(event.get("action_type") or event.get("event_type") or "").strip()
+    target_type = str(event.get("target_type") or "").strip()
+    metadata = event.get("metadata") if isinstance(event.get("metadata"), dict) else {}
+    haystack = " ".join(
+        str(value or "")
+        for value in (
+            action_type,
+            target_type,
+            metadata.get("route"),
+            metadata.get("source_route"),
+        )
+    ).lower()
+    if "override" in haystack:
+        return "override"
+    if "intervention" in haystack:
+        return "intervention"
+    if "approval" in haystack or "approve" in haystack:
+        return "approval"
+    return None
+
+
+def _intervention_stream_record_event(record: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    intervention_id = _management_record_id(record, "intervention_id", "id")
+    if not intervention_id:
+        return None
+    status = _management_normalized_status(record)
+    kind = str(record.get("kind") or record.get("type") or "intervention").strip().lower() or "intervention"
+    occurred_at = _intervention_stream_time(record)
+    persona_id = _intervention_stream_persona_id(record)
+    priority = _human_inbox_priority(
+        record.get("priority") or record.get("severity") or record.get("risk_level"),
+        fallback="medium",
+    )
+    target = _intervention_stream_target(record, intervention_id=intervention_id)
+    source_refs = _intervention_stream_source_refs(
+        record,
+        intervention_id=intervention_id,
+        persona_id=persona_id,
+        source_dataset="v5_interventions",
+    )
+    event_id = f"intervention-stream-{intervention_id}-{status}"
+    return {
+        "id": event_id,
+        "event_id": event_id,
+        "event_type": f"intervention.{status}",
+        "event_source": "v5_interventions",
+        "source_type": "intervention",
+        "source_dataset": "v5_interventions",
+        "intervention_id": intervention_id,
+        "persona_id": persona_id,
+        "runtime_id": record.get("runtime_id") or record.get("runtimeId"),
+        "strategy_id": record.get("strategy_id") or record.get("strategyId"),
+        "kind": kind,
+        "status": status,
+        "priority": priority,
+        "risk_level": str(record.get("risk_level") or priority).strip().lower(),
+        "severity": record.get("severity") or priority,
+        "occurred_at": occurred_at,
+        "created_at": record.get("created_at") or record.get("createdAt") or occurred_at,
+        "updated_at": record.get("updated_at") or record.get("updatedAt") or occurred_at,
+        "actor": record.get("triggered_by") or record.get("actor") or record.get("owner"),
+        "title": record.get("title") or f"{kind.replace('_', ' ').title()} intervention",
+        "summary": record.get("description") or record.get("summary") or "Intervention event projected from v5 interventions.",
+        "target": target,
+        "source_refs": source_refs,
+        "links": {
+            "source": f"/bff/v5/interventions/{intervention_id}",
+            "human_inbox": f"/bff/management/human-inbox/intervention:{intervention_id}",
+        },
+    }
+
+
+def _intervention_stream_audit_event(event: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    if _governance_ledger_audit_source_type(event) != "intervention":
+        return None
+    audit_context = event.get("audit_context") if isinstance(event.get("audit_context"), dict) else {}
+    metadata = event.get("metadata") if isinstance(event.get("metadata"), dict) else {}
+    target_type = str(event.get("target_type") or event.get("targetType") or "").strip()
+    intervention_id = str(
+        _management_first_non_empty(
+            audit_context.get("intervention_id"),
+            audit_context.get("interventionId"),
+            metadata.get("intervention_id"),
+            metadata.get("interventionId"),
+            event.get("intervention_id"),
+            event.get("interventionId"),
+            event.get("target_id") if target_type.lower() == "intervention" else None,
+            event.get("entity_id") if target_type.lower() == "intervention" else None,
+        )
+        or ""
+    ).strip()
+    event_id = _management_record_id(event, "entry_id", "auditId", "id")
+    if not event_id:
+        return None
+    if not intervention_id:
+        intervention_id = event_id
+    status = str(event.get("outcome") or event.get("status") or "recorded").strip().lower() or "recorded"
+    action_type = str(event.get("action_type") or event.get("event_type") or "intervention.audit").strip()
+    kind = str(audit_context.get("kind") or metadata.get("kind") or "intervention").strip().lower()
+    persona_id = _intervention_stream_persona_id(event)
+    occurred_at = _intervention_stream_time(event)
+    source_refs = _intervention_stream_source_refs(
+        event,
+        intervention_id=intervention_id,
+        persona_id=persona_id,
+        source_dataset="governance_audit_events",
+    )
+    projected_id = f"intervention-stream-audit-{event_id}"
+    return {
+        "id": projected_id,
+        "event_id": projected_id,
+        "event_type": action_type,
+        "event_source": "governance_audit_events",
+        "source_type": "intervention",
+        "source_dataset": "governance_audit_events",
+        "intervention_id": intervention_id,
+        "persona_id": persona_id,
+        "kind": kind,
+        "status": status,
+        "priority": _human_inbox_priority(event.get("priority") or event.get("risk_level"), fallback="medium"),
+        "risk_level": str(event.get("risk_level") or "medium").strip().lower(),
+        "occurred_at": occurred_at,
+        "created_at": occurred_at,
+        "updated_at": occurred_at,
+        "actor": event.get("actor"),
+        "title": f"Intervention audit: {action_type}",
+        "summary": audit_context.get("reason") or event.get("reason") or event.get("summary") or "Audit event for intervention.",
+        "target": {
+            "type": target_type or "Intervention",
+            "id": str(event.get("target_id") or event.get("entity_id") or intervention_id).strip(),
+        },
+        "source_refs": source_refs,
+        "links": {
+            "source": "/bff/audit",
+            "intervention": f"/bff/v5/interventions/{intervention_id}",
+        },
+    }
+
+
 def _runtime_state_row_health_check(
     status: str,
     *,
@@ -1142,7 +1580,7 @@ def _project_operator_runtime_state_row(
         "plan_ref": (
             {
                 "plan_id": plan_id,
-                "href": f"/deployment/review?plan_id={plan_id}",
+                "href": f"/operator/deployment-review?plan={plan_id}",
             }
             if plan_id
             else None
@@ -1623,8 +2061,9 @@ class ManagementService:
         get_read_store: Optional[Callable[[], Any]] = None,
         utc_now: Optional[Callable[[], str]] = None,
         ops_read_model_entry_fn: Optional[Callable[..., Any]] = None,
+        read_store: Optional[Any] = None,
     ) -> None:
-        self._get_read_store = get_read_store
+        self._get_read_store = get_read_store or ((lambda: read_store) if read_store is not None else None)
         self._utc_now = utc_now or _utc_now_rfc3339
         self._ops_read_model_entry_fn = ops_read_model_entry_fn
 
@@ -3506,65 +3945,482 @@ class ManagementService:
     ) -> Dict[str, Any]:
         snap = self._utc_now()
         store = self._resolve_store()
-        raw_rows: List[Dict[str, Any]] = []
+        clean_tenant = str(tenant_id or "").strip()
+
+        runtime_bindings: List[Dict[str, Any]] = []
+        deployment_plans: List[Dict[str, Any]] = []
+        bindings: List[Dict[str, Any]] = []
+        capital_pools: List[Dict[str, Any]] = []
+        personas: List[Dict[str, Any]] = []
+        strategies: List[Dict[str, Any]] = []
+        telemetry_by_runtime_id: Dict[str, Dict[str, Any]] = {}
+        direct_rows: List[Dict[str, Any]] = []
 
         if store is not None:
             if hasattr(store, "list_risk_radar_rows"):
                 try:
-                    raw_rows = store.list_risk_radar_rows() or []
+                    direct_rows = list(store.list_risk_radar_rows() or [])
                 except Exception:
-                    raw_rows = []
-            elif hasattr(store, "list_runtime_bindings"):
-                try:
-                    bindings = store.list_runtime_bindings() or []
-                    for b in bindings:
-                        if isinstance(b, dict):
-                            raw_rows.append({
-                                "persona_id": b.get("persona_id") or "persona-default",
-                                "strategy_id": b.get("strategy_id") or "strat-default",
-                                "capital_pool_id": b.get("capital_pool_id") or "pool-main",
-                                "risk_state": "normal" if b.get("status") == "running" else "elevated",
-                                "total_exposure": 10000.0,
-                                "worst_drawdown": 0.05,
-                                "value_at_risk": 500.0,
-                            })
-                except Exception:
-                    raw_rows = []
+                    direct_rows = []
 
-        filtered = []
-        for r in raw_rows:
-            if not isinstance(r, dict):
-                continue
-            if tenant_id and r.get("tenant_id") and r.get("tenant_id") != tenant_id:
-                continue
-            if persona_id and r.get("persona_id") != persona_id:
-                continue
-            if strategy_id and r.get("strategy_id") != strategy_id:
-                continue
-            if capital_pool_id and r.get("capital_pool_id") != capital_pool_id:
-                continue
-            if risk_state and str(r.get("risk_state", "")).lower() != risk_state.lower():
-                continue
-            filtered.append(r)
+            try:
+                if hasattr(store, "list_runtime_bindings"):
+                    runtime_bindings = list(store.list_runtime_bindings(include_market_persona_defaults=True) or [])
+                elif hasattr(store, "list_runtimes"):
+                    runtime_bindings = list(store.list_runtimes() or [])
+            except Exception:
+                runtime_bindings = []
 
-        page_items, next_token = _page_slice(filtered, page_token, page_size)
-        risk_counts = {
-            "normal": sum(1 for x in filtered if x.get("risk_state") == "normal"),
-            "elevated": sum(1 for x in filtered if x.get("risk_state") == "elevated"),
-            "critical": sum(1 for x in filtered if x.get("risk_state") == "critical"),
+            try:
+                if hasattr(store, "list_deployment_plans"):
+                    deployment_plans = list(store.list_deployment_plans() or [])
+                elif hasattr(store, "list_plans"):
+                    deployment_plans = list(store.list_plans() or [])
+            except Exception:
+                deployment_plans = []
+
+            try:
+                if hasattr(store, "list_bindings"):
+                    bindings = list(store.list_bindings(include_market_persona_defaults=True) or [])
+                elif hasattr(store, "list_persona_capital_bindings"):
+                    bindings = list(store.list_persona_capital_bindings() or [])
+            except Exception:
+                bindings = []
+
+            try:
+                if hasattr(store, "list_capital_pools"):
+                    capital_pools = list(store.list_capital_pools(include_market_persona_defaults=True) or [])
+            except Exception:
+                capital_pools = []
+
+            try:
+                if hasattr(store, "list_personas"):
+                    personas = list(store.list_personas(clean_tenant or None) or [])
+                elif hasattr(store, "list_persona_records"):
+                    personas = list(store.list_persona_records(clean_tenant or None) or [])
+            except Exception:
+                personas = []
+
+            try:
+                if hasattr(store, "list_strategies"):
+                    strategies = list(store.list_strategies() or [])
+                elif hasattr(store, "list_strategy_summaries"):
+                    strategies = list(store.list_strategy_summaries() or [])
+                elif hasattr(store, "list_strategy_specs"):
+                    strategies = list(store.list_strategy_specs() or [])
+            except Exception:
+                strategies = []
+
+            try:
+                if hasattr(store, "list_telemetry_summaries"):
+                    summaries = list(store.list_telemetry_summaries() or [])
+                    for s in summaries:
+                        if isinstance(s, dict):
+                            rid = _management_record_id(s, "runtime_id", "runtimeId", "execution_runtime_id", "id")
+                            if rid:
+                                telemetry_by_runtime_id[rid] = s
+            except Exception:
+                pass
+
+            for rb in runtime_bindings:
+                rid = _management_record_id(rb, "runtime_id", "id", "binding_id")
+                if rid and rid not in telemetry_by_runtime_id:
+                    try:
+                        if hasattr(store, "get_telemetry_summary"):
+                            t = store.get_telemetry_summary(rid)
+                            if isinstance(t, dict):
+                                telemetry_by_runtime_id[rid] = t
+                    except Exception:
+                        pass
+
+        plans_by_id = {
+            _management_record_id(p, "plan_id", "id"): p
+            for p in deployment_plans
+            if isinstance(p, dict) and _management_record_id(p, "plan_id", "id")
         }
+        bindings_by_id = {
+            _management_record_id(b, "binding_id", "id", "persona_capital_binding_id"): b
+            for b in bindings
+            if isinstance(b, dict) and _management_record_id(b, "binding_id", "id", "persona_capital_binding_id")
+        }
+        pools_by_id = {
+            _management_record_id(cp, "pool_id", "id"): cp
+            for cp in capital_pools
+            if isinstance(cp, dict) and _management_record_id(cp, "pool_id", "id")
+        }
+        personas_by_id = {
+            _management_record_id(per, "persona_id", "id"): per
+            for per in personas
+            if isinstance(per, dict) and _management_record_id(per, "persona_id", "id")
+        }
+        strategies_by_id = {
+            _management_record_id(st, "strategy_id", "id"): st
+            for st in strategies
+            if isinstance(st, dict) and _management_record_id(st, "strategy_id", "id")
+        }
+
+        rows: List[Dict[str, Any]] = []
+
+        if direct_rows:
+            for r in direct_rows:
+                if not isinstance(r, dict):
+                    continue
+                pkey = str(r.get("persona_id") or "unassigned").strip() or "unassigned"
+                skey = str(r.get("strategy_id") or "unassigned").strip() or "unassigned"
+                cpkey = str(r.get("capital_pool_id") or "unassigned").strip() or "unassigned"
+                r_state = str(r.get("risk_state") or "normal").strip().lower() or "normal"
+                var_val = _as_float(r.get("value_at_risk") or r.get("var_95"))
+                exp_val = _as_float(r.get("total_exposure") or r.get("exposure"))
+                dd_val = _as_float(r.get("worst_drawdown") or r.get("drawdown"))
+                budget_val = _as_float(r.get("risk_budget"))
+                score = r.get("risk_score") or ({"critical": 100.0, "watch": 65.0, "elevated": 65.0, "unknown": 40.0, "normal": 20.0, "ok": 20.0}.get(r_state, 20.0))
+
+                if persona_id and pkey != persona_id:
+                    continue
+                if strategy_id and skey != strategy_id:
+                    continue
+                if capital_pool_id and cpkey != capital_pool_id:
+                    continue
+
+                rows.append({
+                    "id": r.get("id") or f"risk-radar-{pkey}-{skey}-{cpkey}",
+                    "persona_id": pkey,
+                    "persona_label": (personas_by_id.get(pkey) or {}).get("name") or pkey,
+                    "strategy_id": skey,
+                    "strategy_label": (strategies_by_id.get(skey) or {}).get("name") or skey,
+                    "capital_pool_id": cpkey,
+                    "capital_pool_name": (pools_by_id.get(cpkey) or {}).get("name") or cpkey,
+                    "risk_state": r_state,
+                    "risk_score": score,
+                    "deployment_stages": r.get("deployment_stages") or ["paper"],
+                    "runtime_statuses": r.get("runtime_statuses") or ["running"],
+                    "indicators": r.get("indicators") or [],
+                    "metrics": {
+                        "value_at_risk": var_val,
+                        "value_at_risk_source": "store" if var_val is not None else "unavailable",
+                        "risk_budget": budget_val,
+                        "exposure_utilization": None,
+                        "value_at_risk_utilization": None,
+                    },
+                    "drawdown": dd_val,
+                    "worst_drawdown": dd_val,
+                    "exposure": exp_val,
+                    "total_exposure": exp_val,
+                    "value_at_risk": var_val,
+                    "risk_budget": budget_val,
+                    "exposure_utilization": None,
+                    "value_at_risk_utilization": None,
+                    "source_refs": r.get("source_refs") or {},
+                    "links": {
+                        "persona": f"/bff/personas/{pkey}" if pkey != "unassigned" else None,
+                        "strategy": f"/bff/strategies/{skey}" if skey != "unassigned" else None,
+                        "capital_pool": f"/bff/capital-pools/{cpkey}" if cpkey != "unassigned" else None,
+                    },
+                })
+        else:
+            facts: List[Dict[str, Any]] = []
+            for rb in runtime_bindings:
+                if not isinstance(rb, dict):
+                    continue
+                rid = _management_record_id(rb, "runtime_id", "id", "binding_id")
+                rbid = _management_record_id(rb, "runtime_binding_id", "binding_id", "id")
+                pid = _management_record_id(rb, "plan_id", "deployment_plan_id")
+                plan = plans_by_id.get(pid, {})
+                plan_binding_ids = [
+                    str(v).strip()
+                    for v in (plan.get("binding_ids") or [])
+                    if str(v).strip()
+                ]
+                persona_binding_id = (
+                    _management_record_id(rb, "persona_capital_binding_id")
+                    or (plan_binding_ids[0] if plan_binding_ids else "")
+                )
+                persona_binding = bindings_by_id.get(persona_binding_id, {})
+                telem = telemetry_by_runtime_id.get(rid, {})
+                metrics = telem.get("metrics") if isinstance(telem.get("metrics"), dict) else {}
+                summary_dict = telem.get("summary") if isinstance(telem.get("summary"), dict) else {}
+                positions = telem.get("positions") if isinstance(telem.get("positions"), list) else []
+
+                exposure_val = _as_float(
+                    metrics.get("total_exposure")
+                    or telem.get("exposure")
+                    or summary_dict.get("total_exposure")
+                    or (sum(_as_float(p.get("market_value") or p.get("exposure")) or 0.0 for p in positions if isinstance(p, dict)) if positions else None)
+                )
+                drawdown_val = _as_float(
+                    metrics.get("max_drawdown")
+                    or metrics.get("worst_drawdown")
+                    or telem.get("drawdown")
+                    or summary_dict.get("worst_drawdown")
+                )
+                var_val = _as_float(
+                    metrics.get("value_at_risk")
+                    or metrics.get("var_95")
+                    or telem.get("value_at_risk")
+                    or summary_dict.get("value_at_risk")
+                )
+
+                p_id = (
+                    _management_record_id(rb, "persona_id")
+                    or _management_record_id(persona_binding, "persona_id")
+                    or _management_record_id(plan, "persona_id")
+                    or "unassigned"
+                )
+                s_id = (
+                    _management_record_id(rb, "strategy_id")
+                    or _management_record_id(plan, "strategy_id")
+                    or "unassigned"
+                )
+                c_id = (
+                    _management_record_id(rb, "capital_pool_id")
+                    or _management_record_id(persona_binding, "capital_pool_id")
+                    or _management_record_id(plan, "capital_pool_id")
+                    or "unassigned"
+                )
+
+                facts.append({
+                    "runtime_id": rid,
+                    "runtime_binding_id": rbid,
+                    "deployment_plan_id": pid,
+                    "persona_id": p_id,
+                    "strategy_id": s_id,
+                    "capital_pool_id": c_id,
+                    "status": rb.get("status") or "running",
+                    "deployment_stage": rb.get("deployment_stage") or rb.get("deployment_mode") or "paper",
+                    "exposure": exposure_val,
+                    "drawdown": drawdown_val,
+                    "value_at_risk": var_val,
+                })
+
+            if persona_id:
+                facts = [f for f in facts if f.get("persona_id") == persona_id]
+            if strategy_id:
+                facts = [f for f in facts if f.get("strategy_id") == strategy_id]
+            if capital_pool_id:
+                facts = [f for f in facts if f.get("capital_pool_id") == capital_pool_id]
+
+            grouped: Dict[Tuple[str, str, str], List[Dict[str, Any]]] = {}
+            for fact in facts:
+                pkey = str(fact.get("persona_id") or "unassigned").strip() or "unassigned"
+                skey = str(fact.get("strategy_id") or "unassigned").strip() or "unassigned"
+                cpkey = str(fact.get("capital_pool_id") or "unassigned").strip() or "unassigned"
+                grouped.setdefault((pkey, skey, cpkey), []).append(fact)
+
+            for (pkey, skey, cpkey), group_facts in grouped.items():
+                exposure_list = [f["exposure"] for f in group_facts if f.get("exposure") is not None]
+                drawdown_list = [f["drawdown"] for f in group_facts if f.get("drawdown") is not None]
+                var_list = [f["value_at_risk"] for f in group_facts if f.get("value_at_risk") is not None]
+
+                exposure = round(sum(exposure_list), 6) if exposure_list else None
+                drawdown = max(drawdown_list) if drawdown_list else None
+                value_at_risk = round(sum(var_list), 6) if var_list else None
+                var_source = "telemetry_value_at_risk" if var_list else "unavailable"
+                if value_at_risk is None and exposure is not None and drawdown is not None:
+                    value_at_risk = round(abs(exposure * drawdown), 6)
+                    var_source = "exposure_x_drawdown"
+
+                pool = pools_by_id.get(cpkey, {}) if cpkey != "unassigned" else {}
+                risk_budget = _as_float(
+                    pool.get("risk_budget")
+                    or pool.get("risk_budget_amount")
+                    or pool.get("budget")
+                    or pool.get("capital_allocation")
+                    or (pool.get("params") or {}).get("risk_budget")
+                )
+                exposure_utilization = (
+                    round(exposure / risk_budget, 6)
+                    if exposure is not None and risk_budget not in (None, 0.0)
+                    else None
+                )
+                value_at_risk_utilization = (
+                    round(value_at_risk / risk_budget, 6)
+                    if value_at_risk is not None and risk_budget not in (None, 0.0)
+                    else None
+                )
+
+                drawdown_status = "unknown"
+                if drawdown is not None:
+                    drawdown_status = "critical" if drawdown >= 0.10 else ("watch" if drawdown >= 0.06 else "ok")
+
+                exposure_status = "unknown"
+                if exposure_utilization is not None:
+                    exposure_status = "critical" if exposure_utilization >= 1.00 else ("watch" if exposure_utilization >= 0.80 else "ok")
+
+                var_status = "unknown"
+                if value_at_risk_utilization is not None:
+                    var_status = "critical" if value_at_risk_utilization >= 0.10 else ("watch" if value_at_risk_utilization >= 0.05 else "ok")
+
+                status_list = [drawdown_status, exposure_status, var_status]
+                if any(s == "critical" for s in status_list):
+                    overall_risk_state = "critical"
+                elif any(s == "watch" for s in status_list):
+                    overall_risk_state = "watch"
+                elif all(s == "unknown" for s in status_list):
+                    overall_risk_state = "unknown"
+                else:
+                    overall_risk_state = "ok"
+
+                risk_score = {
+                    "critical": 100.0,
+                    "watch": 65.0,
+                    "unknown": 40.0,
+                    "ok": 20.0,
+                }[overall_risk_state]
+
+                runtime_ids = sorted({f["runtime_id"] for f in group_facts if f.get("runtime_id")})
+                runtime_binding_ids = sorted({f["runtime_binding_id"] for f in group_facts if f.get("runtime_binding_id")})
+                plan_ids = sorted({f["deployment_plan_id"] for f in group_facts if f.get("deployment_plan_id")})
+                pool_ids = sorted({f["capital_pool_id"] for f in group_facts if f.get("capital_pool_id")})
+                persona_ids = sorted({f["persona_id"] for f in group_facts if f.get("persona_id")})
+                strategy_ids = sorted({f["strategy_id"] for f in group_facts if f.get("strategy_id")})
+                stages = sorted({f["deployment_stage"] for f in group_facts if f.get("deployment_stage")})
+                statuses = sorted({f["status"] for f in group_facts if f.get("status")})
+
+                persona_label = (personas_by_id.get(pkey) or {}).get("name") or pkey
+                strategy_label = (strategies_by_id.get(skey) or {}).get("name") or skey
+                pool_label = (pools_by_id.get(cpkey) or {}).get("name") or cpkey
+
+                indicators = [
+                    {
+                        "id": "drawdown",
+                        "metric": "drawdown",
+                        "label": "Worst drawdown",
+                        "value": drawdown,
+                        "status": drawdown_status,
+                        "watch_threshold": 0.06,
+                        "critical_threshold": 0.10,
+                        "basis": "max_runtime_drawdown",
+                    },
+                    {
+                        "id": "exposure",
+                        "metric": "exposure",
+                        "label": "Exposure utilization",
+                        "value": exposure,
+                        "risk_budget": risk_budget,
+                        "utilization": exposure_utilization,
+                        "status": exposure_status,
+                        "watch_threshold": 0.80,
+                        "critical_threshold": 1.00,
+                        "basis": "position_or_runtime_exposure_over_pool_risk_budget",
+                    },
+                    {
+                        "id": "value-at-risk",
+                        "metric": "value_at_risk",
+                        "label": "Value at risk",
+                        "value": value_at_risk,
+                        "risk_budget": risk_budget,
+                        "utilization": value_at_risk_utilization,
+                        "status": var_status,
+                        "source": var_source,
+                        "watch_threshold": 0.05,
+                        "critical_threshold": 0.10,
+                        "basis": "telemetry_var_or_exposure_x_drawdown",
+                    },
+                ]
+
+                row = {
+                    "id": f"risk-radar-{pkey}-{skey}-{cpkey}",
+                    "persona_id": pkey,
+                    "persona_label": persona_label,
+                    "strategy_id": skey,
+                    "strategy_label": strategy_label,
+                    "capital_pool_id": cpkey,
+                    "capital_pool_name": pool_label,
+                    "risk_state": overall_risk_state,
+                    "risk_score": risk_score,
+                    "deployment_stages": stages,
+                    "runtime_statuses": statuses,
+                    "indicators": indicators,
+                    "metrics": {
+                        "value_at_risk": value_at_risk,
+                        "value_at_risk_source": var_source,
+                        "risk_budget": risk_budget,
+                        "exposure_utilization": exposure_utilization,
+                        "value_at_risk_utilization": value_at_risk_utilization,
+                    },
+                    "drawdown": drawdown,
+                    "worst_drawdown": drawdown,
+                    "exposure": exposure,
+                    "total_exposure": exposure,
+                    "value_at_risk": value_at_risk,
+                    "risk_budget": risk_budget,
+                    "exposure_utilization": exposure_utilization,
+                    "value_at_risk_utilization": value_at_risk_utilization,
+                    "source_refs": {
+                        "runtime_ids": runtime_ids,
+                        "runtime_binding_ids": runtime_binding_ids,
+                        "deployment_plan_ids": plan_ids,
+                        "capital_pool_ids": pool_ids,
+                        "persona_ids": persona_ids,
+                        "strategy_ids": strategy_ids,
+                    },
+                    "links": {
+                        "persona": f"/bff/personas/{pkey}" if pkey != "unassigned" else None,
+                        "strategy": f"/bff/strategies/{skey}" if skey != "unassigned" else None,
+                        "capital_pool": f"/bff/capital-pools/{cpkey}" if cpkey != "unassigned" else None,
+                    },
+                }
+                rows.append(row)
+
+        sev_order = {"critical": 0, "watch": 1, "elevated": 1, "unknown": 2, "normal": 3, "ok": 3}
+        rows.sort(
+            key=lambda r: (
+                sev_order.get(r.get("risk_state", "unknown"), 4),
+                -(r.get("value_at_risk") or 0.0),
+                -(r.get("total_exposure") or 0.0),
+                r.get("persona_id", ""),
+                r.get("strategy_id", ""),
+                r.get("capital_pool_id", ""),
+            )
+        )
+        for rank, row in enumerate(rows, start=1):
+            row["rank"] = rank
+
+        if risk_state:
+            rows = [r for r in rows if str(r.get("risk_state", "")).lower() == risk_state.lower()]
+
+        total = len(rows)
+        page_items, next_token = _page_slice(rows, page_token, page_size)
+        risk_counts = _management_count_by([{"risk_state": r.get("risk_state")} for r in rows], "risk_state")
+        exposure_values = [r["total_exposure"] for r in rows if r.get("total_exposure") is not None]
+        drawdown_values = [r["worst_drawdown"] for r in rows if r.get("worst_drawdown") is not None]
+        var_values = [r["value_at_risk"] for r in rows if r.get("value_at_risk") is not None]
 
         summary = {
-            "indicator_count": len(filtered),
+            "indicator_count": total,
             "returned_indicator_count": len(page_items),
-            "persona_count": len({x.get("persona_id") for x in filtered if x.get("persona_id")}),
-            "strategy_count": len({x.get("strategy_id") for x in filtered if x.get("strategy_id")}),
-            "capital_pool_count": len({x.get("capital_pool_id") for x in filtered if x.get("capital_pool_id")}),
+            "persona_count": len({r["persona_id"] for r in rows if r.get("persona_id") and r["persona_id"] != "unassigned"}),
+            "strategy_count": len({r["strategy_id"] for r in rows if r.get("strategy_id") and r["strategy_id"] != "unassigned"}),
+            "capital_pool_count": len({r["capital_pool_id"] for r in rows if r.get("capital_pool_id") and r["capital_pool_id"] != "unassigned"}),
+            "critical_count": risk_counts.get("critical", 0),
+            "watch_count": risk_counts.get("watch", 0) + risk_counts.get("elevated", 0),
+            "unknown_count": risk_counts.get("unknown", 0),
+            "ok_count": risk_counts.get("ok", 0) + risk_counts.get("normal", 0),
             "by_risk_state": risk_counts,
-            "total_exposure": sum((_as_float(x.get("total_exposure")) or 0.0) for x in filtered),
-            "worst_drawdown": max([(_as_float(x.get("worst_drawdown")) or 0.0) for x in filtered], default=None),
-            "value_at_risk_total": sum((_as_float(x.get("value_at_risk") or x.get("var_95")) or 0.0) for x in filtered),
+            "total_exposure": round(sum(exposure_values), 6) if exposure_values else None,
+            "worst_drawdown": max(drawdown_values) if drawdown_values else None,
+            "value_at_risk_total": round(sum(var_values), 6) if var_values else None,
+            "basis": "runtime_telemetry_by_persona_strategy_pool",
         }
+
+        source_surfaces = {
+            "runtime_bindings": {"status": "ok" if (runtime_bindings or direct_rows) else "unavailable", "source": "store" if store else "missing"},
+            "deployment_plans": {"status": "ok" if (deployment_plans or direct_rows) else "unavailable", "source": "store" if store else "missing"},
+            "persona_bindings": {"status": "ok" if (bindings or direct_rows) else "unavailable", "source": "store" if store else "missing"},
+            "capital_pools": {"status": "ok" if (capital_pools or direct_rows) else "unavailable", "source": "store" if store else "missing"},
+            "strategies": {"status": "ok" if (strategies or direct_rows) else "unavailable", "source": "store" if store else "missing"},
+            "telemetry_summaries": {
+                "status": "ok" if (telemetry_by_runtime_id or direct_rows) else ("unavailable" if runtime_bindings else "ok"),
+                "source": "store" if store else "missing",
+            },
+        }
+        risk_surface = _aggregate_group_surface(
+            "risk_radar",
+            list(source_surfaces.values()),
+            snapshot_at=snap,
+            unavailable_message="Risk-radar aggregate unavailable.",
+            degraded_message="Risk radar is available, but one or more supporting surfaces are degraded.",
+        )
 
         return {
             "data": {
@@ -3575,14 +4431,24 @@ class ManagementService:
             },
             "page_info": {
                 "next_page_token": next_token,
-                "total": len(filtered),
+                "total": total,
                 "page_size": page_size,
             },
             "meta": {
-                "snapshot_at": snap,
+                **_snapshot_meta(snap),
                 "surfaces": {
-                    "risk_radar": {"status": "ok" if store else "degraded", "source": "store" if store else "missing"},
+                    "risk_radar": risk_surface,
+                    **source_surfaces,
                 },
+                "composition_sources": [
+                    "GET /api/v1/runtime-bindings",
+                    "GET /api/v1/deployment-plans",
+                    "GET /api/v1/persona-capital-bindings",
+                    "GET /bff/capital-pools",
+                    "GET /bff/strategies",
+                    "GET /api/v1/telemetry/{runtime_id}/summary",
+                ],
+                "policy": "read_only_risk_radar",
             },
         }
 
@@ -3607,67 +4473,120 @@ class ManagementService:
         if store is not None:
             try:
                 if hasattr(store, "list_incidents"):
-                    raw_incidents = store.list_incidents() or []
+                    raw_incidents = list(store.list_incidents() or [])
                 elif hasattr(store, "list_incident_records"):
-                    raw_incidents = store.list_incident_records() or []
+                    raw_incidents = list(store.list_incident_records() or [])
+                elif hasattr(store, "list_incident_cases"):
+                    raw_incidents = list(store.list_incident_cases() or [])
                 elif hasattr(store, "list_incident_alerts"):
-                    raw_incidents = store.list_incident_alerts() or []
+                    raw_incidents = list(store.list_incident_alerts() or [])
             except Exception:
                 raw_incidents = []
 
-        filtered = []
-        pool_filter = capital_pool_id or affected_pool_id
+        status_filter = {item.lower() for item in (_split_csv_query(status) or [])}
+        severity_filter = {item.lower() for item in (_split_csv_query(severity) or [])}
+        pool_filter = set(_split_csv_query(capital_pool_id or affected_pool_id) or [])
+        runtime_filter = set(_split_csv_query(runtime_id) or [])
+
+        items: List[Dict[str, Any]] = []
         for inc in raw_incidents:
             if not isinstance(inc, dict):
                 continue
-            if status and str(inc.get("status", "")).lower() != status.lower():
+            item = _management_incident_timeline_item(inc)
+            if not item.get("incident_id"):
                 continue
-            if severity and str(inc.get("severity", "")).lower() != severity.lower():
-                continue
-            if pool_filter and str(inc.get("capital_pool_id") or inc.get("affected_pool_id")) != pool_filter:
-                continue
-            if runtime_id and str(inc.get("runtime_id")) != runtime_id:
-                continue
-            filtered.append(inc)
 
-        filtered.sort(
-            key=lambda x: _parse_time(x.get("created_at") or x.get("timestamp")),
-            reverse=(sort_order != "asc"),
+            if status_filter and str(item.get("status") or "").lower() not in status_filter:
+                continue
+            if severity_filter and (
+                str(item.get("severity") or "").lower() not in severity_filter
+                and str(item.get("severity_bucket") or "").lower() not in severity_filter
+            ):
+                continue
+            if pool_filter and str(item.get("capital_pool_id") or "") not in pool_filter:
+                continue
+            if runtime_filter and str(item.get("runtime_id") or "") not in runtime_filter:
+                continue
+
+            items.append(item)
+
+        reverse = str(sort_order or "asc").strip().lower() == "desc"
+        items.sort(
+            key=lambda x: (
+                _parse_time(x.get("occurred_at") or x.get("created_at") or x.get("opened_at")),
+                str(x.get("incident_id") or x.get("id") or ""),
+            ),
+            reverse=reverse,
         )
-        page_items, next_token = _page_slice(filtered, page_token, page_size)
+        for seq, item in enumerate(items, start=1):
+            item["sequence"] = seq
+            item["timeline_sequence"] = seq
 
-        severity_counts = {
-            "critical": sum(1 for x in filtered if str(x.get("severity", "")).lower() in ("critical", "sev1", "sev0")),
-            "high": sum(1 for x in filtered if str(x.get("severity", "")).lower() in ("high", "sev2")),
-            "medium": sum(1 for x in filtered if str(x.get("severity", "")).lower() in ("medium", "sev3")),
-            "low": sum(1 for x in filtered if str(x.get("severity", "")).lower() in ("low", "sev4")),
-        }
+        total = len(items)
+        page_items, next_token = _page_slice(items, page_token, page_size)
+
+        severity_buckets = {"high": 0, "medium": 0, "low": 0}
+        for item in items:
+            b = item.get("severity_bucket") or "low"
+            severity_buckets[b if b in severity_buckets else "low"] += 1
+
+        status_counts = _management_count_by(items, "status")
+        first_incident_at = items[0].get("occurred_at") if items else None
+        latest_incident_at = items[-1].get("occurred_at") if items else None
+        if reverse and items:
+            first_incident_at, latest_incident_at = latest_incident_at, first_incident_at
 
         summary = {
-            "total_incidents": len(filtered),
-            "severity_counts": severity_counts,
-            "status_counts": {
-                "open": sum(1 for x in filtered if x.get("status") in ("open", "active")),
-                "resolved": sum(1 for x in filtered if x.get("status") in ("resolved", "closed")),
-            },
+            "incident_count": total,
+            "total_incidents": total,
+            "returned_incident_count": len(page_items),
+            "active_incident_count": sum(1 for x in items if x.get("status") in {"open", "active", "in_progress"}),
+            "resolved_incident_count": sum(1 for x in items if x.get("status") in {"resolved", "closed"}),
+            "high_severity_count": severity_buckets["high"],
+            "medium_severity_count": severity_buckets["medium"],
+            "low_severity_count": severity_buckets["low"],
+            "severity_buckets": severity_buckets,
+            "severity_counts": severity_buckets,
+            "status_counts": status_counts,
+            "by_status": status_counts,
+            "first_incident_at": first_incident_at,
+            "latest_incident_at": latest_incident_at,
+            "sort_order": "desc" if reverse else "asc",
+            "basis": "incident_case_opened_at_chronology",
         }
+
+        incident_surface = {"status": "ok" if raw_incidents else "unavailable", "source": "store" if store else "missing"}
+        timeline_surface = _aggregate_group_surface(
+            "incident_timeline",
+            [incident_surface],
+            snapshot_at=snap,
+            unavailable_message="Incident timeline aggregate unavailable.",
+            degraded_message="Incident timeline is available, but the incident read surface is degraded.",
+        )
 
         return {
             "data": {
                 "id": "management-incident-timeline",
                 "items": page_items,
                 "summary": summary,
+                "severity_buckets": severity_buckets,
             },
             "page_info": {
                 "next_page_token": next_token,
-                "total": len(filtered),
+                "total": total,
                 "page_size": page_size,
             },
             "meta": {
-                "snapshot_at": snap,
+                **_snapshot_meta(snap),
                 "surfaces": {
-                    "incident_timeline": {"status": "ok" if store else "degraded", "source": "store" if store else "missing"},
+                    "incident_timeline": timeline_surface,
+                    "incidents": incident_surface,
                 },
+                "composition_sources": [
+                    "GET /bff/incidents",
+                    "GET /api/v1/incidents",
+                ],
+                "policy": "read_only_incident_timeline",
             },
         }
 
@@ -3686,55 +4605,151 @@ class ManagementService:
     ) -> Dict[str, Any]:
         snap = self._utc_now()
         store = self._resolve_store()
-        raw_items: List[Dict[str, Any]] = []
+        snap_dt = _parse_time(snap)
+        window_start_dt = snap_dt - timedelta(hours=window_hours)
+        window_start_at = window_start_dt.isoformat().replace("+00:00", "Z")
+
+        persona_ids = _intervention_stream_filter_values(persona_id)
+        statuses = _intervention_stream_filter_values(status)
+        kinds = _intervention_stream_filter_values(kind)
+
+        raw_interventions: List[Dict[str, Any]] = []
+        raw_audits: List[Dict[str, Any]] = []
 
         if store is not None:
             try:
                 if hasattr(store, "list_v5_interventions"):
-                    raw_items = store.list_v5_interventions() or []
+                    raw_interventions = list(store.list_v5_interventions() or [])
                 elif hasattr(store, "list_interventions"):
-                    raw_items = store.list_interventions() or []
+                    raw_interventions = list(store.list_interventions() or [])
                 elif hasattr(store, "list_intervention_records"):
-                    raw_items = store.list_intervention_records() or []
+                    raw_interventions = list(store.list_intervention_records() or [])
             except Exception:
-                raw_items = []
+                raw_interventions = []
 
-        filtered = []
-        for item in raw_items:
-            if not isinstance(item, dict):
-                continue
-            if persona_id and item.get("persona_id") != persona_id:
-                continue
-            if status and str(item.get("status", "")).lower() != status.lower():
-                continue
-            if kind and str(item.get("kind", "")).lower() != kind.lower():
-                continue
-            if q and q.lower() not in json.dumps(item).lower():
-                continue
-            filtered.append(item)
+            try:
+                if hasattr(store, "list_governance_audit_events"):
+                    raw_audits = list(store.list_governance_audit_events() or [])
+                elif hasattr(store, "list_audit_events"):
+                    raw_audits = list(store.list_audit_events() or [])
+            except Exception:
+                raw_audits = []
 
-        filtered.sort(key=lambda x: _parse_time(x.get("created_at") or x.get("timestamp")), reverse=True)
-        page_items, next_token = _page_slice(filtered, page_token, page_size)
+        events_by_id: Dict[str, Dict[str, Any]] = {}
+
+        for rec in raw_interventions:
+            if not isinstance(rec, dict):
+                continue
+            item = _intervention_stream_record_event(rec)
+            if item:
+                events_by_id[item["id"]] = item
+
+        for evt in raw_audits:
+            if not isinstance(evt, dict):
+                continue
+            item = _intervention_stream_audit_event(evt)
+            if item:
+                events_by_id.setdefault(item["id"], item)
+
+        events: List[Dict[str, Any]] = []
+        needle = q.strip().lower()
+        for item in events_by_id.values():
+            raw_time = item.get("occurred_at") or item.get("occurredAt")
+            if raw_time:
+                item_time = _parse_time(raw_time)
+                if item_time != datetime.min.replace(tzinfo=timezone.utc) and item_time < window_start_dt:
+                    continue
+            if persona_ids and str(item.get("persona_id") or "").strip().lower() not in persona_ids:
+                continue
+            if statuses and str(item.get("status") or "").strip().lower() not in statuses:
+                continue
+            if kinds and str(item.get("kind") or "").strip().lower() not in kinds:
+                continue
+            if needle:
+                target_dict = item.get("target") if isinstance(item.get("target"), dict) else {}
+                haystack = " ".join(
+                    str(v or "")
+                    for v in (
+                        item.get("id"),
+                        item.get("event_type"),
+                        item.get("event_source"),
+                        item.get("intervention_id"),
+                        item.get("persona_id"),
+                        item.get("runtime_id"),
+                        item.get("strategy_id"),
+                        item.get("kind"),
+                        item.get("status"),
+                        item.get("title"),
+                        item.get("summary"),
+                        target_dict.get("type"),
+                        target_dict.get("id"),
+                    )
+                ).lower()
+                if needle not in haystack:
+                    continue
+            events.append(item)
+
+        events.sort(key=lambda x: (_parse_time(x.get("occurred_at")), str(x.get("id") or "")), reverse=True)
+        for seq, item in enumerate(events, start=1):
+            item["stream_sequence"] = seq
+
+        total = len(events)
+        page_items, next_token = _page_slice(events, page_token, page_size)
+        persona_counts = _management_count_by(events, "persona_id")
+        status_counts = _management_count_by(events, "status")
+        kind_counts = _management_count_by(events, "kind")
+        source_counts = _management_count_by(events, "event_source")
+        latest_at = events[0].get("occurred_at") if events else None
+
+        summary = {
+            "total_items": total,
+            "event_count": total,
+            "returned_event_count": len(page_items),
+            "intervention_count": len({str(x.get("intervention_id") or "") for x in events if str(x.get("intervention_id") or "").strip()}),
+            "persona_count": len([p for p in persona_counts if p and p != "unknown"]),
+            "window_hours": window_hours,
+            "window_start_at": window_start_at,
+            "window_end_at": snap,
+            "latest_at": latest_at,
+            "by_persona": persona_counts,
+            "by_status": status_counts,
+            "by_kind": kind_counts,
+            "by_event_source": source_counts,
+            "policy": "read_only_intervention_stream",
+            "basis": "composed_from_v5_interventions_and_governance_audit_events",
+        }
+
+        intervention_surface = {"status": "ok" if (raw_interventions or raw_audits) else "unavailable", "source": "store" if store else "missing"}
+        stream_surface = _aggregate_group_surface(
+            "intervention_stream",
+            [intervention_surface],
+            snapshot_at=snap,
+            unavailable_message="Intervention stream aggregate unavailable.",
+            degraded_message="Intervention stream is available, but supporting intervention sources are degraded.",
+        )
 
         return {
             "data": {
                 "id": "management-intervention-stream",
                 "items": page_items,
-                "summary": {
-                    "total_items": len(filtered),
-                    "window_hours": window_hours,
-                },
+                "summary": summary,
             },
             "page_info": {
                 "next_page_token": next_token,
-                "total": len(filtered),
+                "total": total,
                 "page_size": page_size,
             },
             "meta": {
-                "snapshot_at": snap,
+                **_snapshot_meta(snap),
                 "surfaces": {
-                    "intervention_stream": {"status": "ok" if store else "degraded", "source": "store" if store else "missing"},
+                    "intervention_stream": stream_surface,
+                    "v5_interventions": intervention_surface,
                 },
+                "composition_sources": [
+                    "GET /bff/v5/interventions",
+                    "GET /bff/audit/governance-events",
+                ],
+                "policy": "read_only_intervention_stream",
             },
         }
 
