@@ -103,6 +103,7 @@ from rewrite.worker_workspace import (
     _git_ref_exists,
     _git_resolve_commit,
     _git_worktree_records,
+    _lost_lease_replacement_may_adopt_worktree,
     _merged_task_branches,
     _path_is_within,
     _paths_overlap,
