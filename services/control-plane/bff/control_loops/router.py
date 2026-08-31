@@ -8,6 +8,7 @@ cutover.
 """
 from __future__ import annotations
 
+import inspect
 import uuid
 from typing import Any, Callable, Dict, Optional
 
@@ -56,6 +57,7 @@ _TWO_MAN_SIGNER_FIELDS = {
 }
 _TWO_MAN_SIGNER_LIST_FIELDS = {"signerOperatorIds", "signer_operator_ids"}
 _V5_TWO_MAN_EVIDENCE_PRODUCER = "bff.v5.intervention.two-man-sign"
+_FOUNDATION_COMMAND_ROUTE = "POST /api/v1/operator/commands"
 
 
 def _default_extract_identity(authorization: Optional[str] = None) -> OperatorIdentity:
@@ -132,9 +134,11 @@ def create_control_loops_router(
     get_read_store: Optional[Callable[[], Any]] = None,
     loop_truth_adapter: Optional[Any] = None,
     downstream_health_monitor: Optional[Any] = None,
-    command_submitter: Optional[Callable[..., Any]] = None,
-    final_command_submitter: Optional[Callable[..., Any]] = None,
     health_findings_provider: Optional[Callable[..., Any]] = None,
+    intervention_records_provider: Optional[Callable[..., Any]] = None,
+    submit_sem_command: Optional[Callable[..., Any]] = None,
+    submit_final_command_admission: Optional[Callable[..., Any]] = None,
+    reject_body_idempotency_key: Optional[Callable[[Dict[str, Any]], None]] = None,
     extract_identity: Optional[IdentityExtractor] = None,
     require_read_role: Optional[RoleChecker] = None,
     require_operator_role: Optional[RoleChecker] = None,
@@ -156,9 +160,8 @@ def create_control_loops_router(
             read_store=read_store,
             loop_truth_adapter=loop_truth_adapter,
             downstream_health_monitor=downstream_health_monitor,
-            command_submitter=command_submitter,
-            final_command_submitter=final_command_submitter,
             health_findings_provider=health_findings_provider,
+            intervention_records_provider=intervention_records_provider,
             utc_now_fn=utc_now_fn,
             bff_error_fn=_err,
             deployed_environment=deployed_environment,
@@ -174,6 +177,43 @@ def create_control_loops_router(
         identity = _extract(authorization)
         _require_operator(identity)
         return identity
+
+    def _reject_body_key(payload: Dict[str, Any]) -> None:
+        if reject_body_idempotency_key is not None:
+            reject_body_idempotency_key(payload)
+            return
+        if any(key in payload for key in ("idempotencyKey", "idempotency_key")):
+            raise _err(
+                422,
+                ErrorCode.VALIDATION_FAILED,
+                "Idempotency key must be supplied in a header",
+                "Body idempotency keys are not accepted",
+                precondition_failed="idempotency_key_location",
+            )
+
+    async def _submit_sem(**kwargs: Any) -> Any:
+        if submit_sem_command is None:
+            raise _err(
+                503,
+                ErrorCode.DEPENDENCY_UNAVAILABLE,
+                "Control-loop command admission is not composed",
+                "The composition root must inject the canonical semantic command owner.",
+                precondition_failed="submit_sem_command",
+            )
+        result = submit_sem_command(**kwargs)
+        return await result if inspect.isawaitable(result) else result
+
+    async def _submit_final(**kwargs: Any) -> Any:
+        if submit_final_command_admission is None:
+            raise _err(
+                503,
+                ErrorCode.DEPENDENCY_UNAVAILABLE,
+                "Control-loop command admission is not composed",
+                "The composition root must inject the canonical final command owner.",
+                precondition_failed="submit_final_command_admission",
+            )
+        result = submit_final_command_admission(**kwargs)
+        return await result if inspect.isawaitable(result) else result
 
     # 1-2: OODA packet management reads.
     @router.get("/bff/ooda/packets")
@@ -230,43 +270,9 @@ def create_control_loops_router(
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
         x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
     ) -> Dict[str, Any]:
-        identity = _extract(authorization)
-        resolved_service.reject_body_idempotency_key(payload)
-        action = resolved_service.validate_remediation(payload, identity)
-        signature = str(
-            payload.get("twoManSignatureId")
-            or payload.get("two_man_signature_id")
-            or payload.get("secondOperatorId")
-            or payload.get("second_operator_id")
-            or ""
-        ).strip()
-        if not signature:
-            raise _err(
-                409,
-                ErrorCode.TWO_MAN_SIGNATURE_REQUIRED,
-                "Two-man signature is required",
-                "Sentinel remediation requires a second-operator evidence reference",
-                precondition_failed="two_man_signature",
-            )
-        if not x_confirm_token:
-            raise _err(
-                428,
-                ErrorCode.CONFIRMATION_REQUIRED,
-                "Confirm token is required",
-                "Critical sentinel remediation requires a bound confirm token",
-                precondition_failed="confirm_token",
-            )
-        approval_id = str(payload.get("approvalId") or payload.get("approval_id") or "").strip()
-        if not approval_id:
-            raise _err(
-                428,
-                ErrorCode.CONFIRMATION_REQUIRED,
-                "Approval evidence is required",
-                "Critical sentinel remediation requires an approval reference",
-                precondition_failed="approval_id",
-            )
+        _reject_body_key(payload)
         clean_id = str(intervention_id or "").strip()
-        params = {**payload, "intervention_id": clean_id, "remediation_action": action}
+        params = {**payload, "intervention_id": clean_id}
         command_payload = {
             "command": CommandType.REMEDIATE_SENTINEL_INTERVENTION.value,
             "target": {"type": ObjectType.SENTINEL_INTERVENTION.value, "id": clean_id},
@@ -277,24 +283,19 @@ def create_control_loops_router(
                 "incident_id": str(payload.get("incident_id") or "").strip() or None,
             },
         }
-        return await resolved_service.submit_typed_command(
-            command_type=CommandType.REMEDIATE_SENTINEL_INTERVENTION,
-            target_type=ObjectType.SENTINEL_INTERVENTION,
-            target_id=clean_id,
+        return await _submit_final(
+            background_tasks=background_tasks,
             payload=command_payload,
-            identity=identity,
+            authorization=authorization,
+            x_mfa_token=x_mfa_token,
+            x_trace_id=x_trace_id,
+            x_correlation_id=x_correlation_id,
+            x_request_id=x_request_id,
+            x_confirm_token=x_confirm_token,
             idempotency_key=idempotency_key,
             x_idempotency_key=x_idempotency_key,
-            action=action,
-            route="POST /bff/v5/interventions/{intervention_id}/remediate",
-            headers={
-                "X-MFA-Token": x_mfa_token,
-                "X-Trace-Id": x_trace_id,
-                "X-Correlation-Id": x_correlation_id,
-                "X-Request-Id": x_request_id,
-                "X-Confirm-Token": x_confirm_token,
-            },
-            background_tasks=background_tasks,
+            route=_FOUNDATION_COMMAND_ROUTE,
+            foundation_raw_payload={**payload, "intervention_id": clean_id},
         )
 
     # 5: dedicated intervention decision admission.
@@ -312,7 +313,6 @@ def create_control_loops_router(
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
         x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
     ) -> Dict[str, Any]:
-        identity = _extract(authorization)
         clean_id = str(id or "").strip()
         if not clean_id:
             raise _err(
@@ -322,12 +322,10 @@ def create_control_loops_router(
                 "id must be a non-empty string",
                 precondition_failed="intervention_id",
             )
-        resolved_service.reject_body_idempotency_key(payload)
-        decision = resolved_service.validate_decision(
-            str(payload.get("decision") or payload.get("outcome") or ""), identity
-        )
+        _reject_body_key(payload)
+        decision = str(payload.get("decision") or payload.get("outcome") or "").strip().lower()
         reason = str(
-            payload.get("reason") or payload.get("memo") or f"intervention.{decision}"
+            payload.get("reason") or payload.get("memo") or f"intervention.{decision or 'decide'}"
         ).strip()
         params = {
             **payload,
@@ -335,7 +333,7 @@ def create_control_loops_router(
             "interventionId": clean_id,
             "decision": decision,
             "action_id": "decide",
-            "audit_event": f"intervention.{decision}",
+            "audit_event": f"intervention.{decision or 'decide'}",
         }
         command_payload = {
             "command": CommandType.DECIDE_V5_INTERVENTION.value,
@@ -347,24 +345,26 @@ def create_control_loops_router(
                 "incident_id": str(payload.get("incident_id") or payload.get("incidentId") or "").strip() or None,
             },
         }
-        return await resolved_service.submit_typed_command(
-            command_type=CommandType.DECIDE_V5_INTERVENTION,
-            target_type=ObjectType.SENTINEL_INTERVENTION,
-            target_id=clean_id,
+        return await _submit_final(
+            background_tasks=background_tasks,
             payload=command_payload,
-            identity=identity,
+            authorization=authorization,
+            x_mfa_token=x_mfa_token,
+            x_trace_id=x_trace_id,
+            x_correlation_id=x_correlation_id,
+            x_request_id=x_request_id,
+            x_confirm_token=x_confirm_token,
             idempotency_key=idempotency_key,
             x_idempotency_key=x_idempotency_key,
-            action="decide",
             route="POST /bff/v5/interventions/{id}/decide",
-            headers={
-                "X-MFA-Token": x_mfa_token,
-                "X-Trace-Id": x_trace_id,
-                "X-Correlation-Id": x_correlation_id,
-                "X-Request-Id": x_request_id,
-                "X-Confirm-Token": x_confirm_token,
+            audit_extra={
+                "action_id": "decide",
+                "entity_type": ObjectType.SENTINEL_INTERVENTION.value,
+                "entity_id": clean_id,
+                "audit_event": f"intervention.{decision or 'decide'}",
             },
-            background_tasks=background_tasks,
+            enqueue=False,
+            include_durable_meta=True,
         )
 
     # 6-9: shared intervention action handler owns four decorators.
@@ -381,7 +381,7 @@ def create_control_loops_router(
         x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
     ) -> Dict[str, Any]:
         identity = _operator_identity(authorization)
-        resolved_service.reject_body_idempotency_key(payload)
+        _reject_body_key(payload)
         action = request.url.path.rsplit("/", 1)[-1]
         target_id = str(id or "").strip()
         trusted_evidence_producer: Optional[str] = None
@@ -413,7 +413,7 @@ def create_control_loops_router(
             target_id = signature_id
             trusted_evidence_producer = _V5_TWO_MAN_EVIDENCE_PRODUCER
             terminal_on_persist = True
-        return await resolved_service.submit_typed_command(
+        return await _submit_sem(
             command_type=CommandType.V5_INTERVENTION_ACTION,
             target_type=ObjectType.SENTINEL_INTERVENTION,
             target_id=target_id,
@@ -421,7 +421,6 @@ def create_control_loops_router(
             identity=identity,
             idempotency_key=idempotency_key,
             x_idempotency_key=x_idempotency_key,
-            action=action,
             terminal_on_persist=terminal_on_persist,
             trusted_evidence_producer=trusted_evidence_producer,
         )
@@ -436,8 +435,8 @@ def create_control_loops_router(
         x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
     ) -> Dict[str, Any]:
         identity = _read_identity(authorization)
-        resolved_service.reject_body_idempotency_key(payload)
-        return await resolved_service.submit_typed_command(
+        _reject_body_key(payload)
+        return await _submit_sem(
             command_type=CommandType.SENTINEL_FINDING_STATUS,
             target_type=ObjectType.SENTINEL_FINDING,
             target_id=id,
@@ -445,7 +444,6 @@ def create_control_loops_router(
             identity=identity,
             idempotency_key=idempotency_key,
             x_idempotency_key=x_idempotency_key,
-            action="status",
         )
 
     @router.post("/bff/v5/sentinel/remediation/build", status_code=202)
@@ -456,10 +454,10 @@ def create_control_loops_router(
         x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
     ) -> Dict[str, Any]:
         identity = _read_identity(authorization)
-        resolved_service.reject_body_idempotency_key(payload)
+        _reject_body_key(payload)
         provided_finding = payload.get("finding_id") or payload.get("findingId")
         target_id = str(provided_finding or f"remediation-{uuid.uuid4().hex[:8]}")
-        return await resolved_service.submit_typed_command(
+        return await _submit_sem(
             command_type=CommandType.SENTINEL_REMEDIATION_BUILD,
             target_type=ObjectType.SENTINEL_REMEDIATION,
             target_id=target_id,
@@ -467,7 +465,7 @@ def create_control_loops_router(
             identity=identity,
             idempotency_key=idempotency_key,
             x_idempotency_key=x_idempotency_key,
-            action="build",
+            server_generated_target=not provided_finding,
         )
 
     @router.post("/bff/v5/sentinel/remediation/{actionId}/execute", status_code=202)
@@ -479,8 +477,8 @@ def create_control_loops_router(
         x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
     ) -> Dict[str, Any]:
         identity = _read_identity(authorization)
-        resolved_service.reject_body_idempotency_key(payload)
-        return await resolved_service.submit_typed_command(
+        _reject_body_key(payload)
+        return await _submit_sem(
             command_type=CommandType.SENTINEL_REMEDIATION_EXECUTE,
             target_type=ObjectType.SENTINEL_REMEDIATION,
             target_id=actionId,
@@ -488,7 +486,6 @@ def create_control_loops_router(
             identity=identity,
             idempotency_key=idempotency_key,
             x_idempotency_key=x_idempotency_key,
-            action="execute",
         )
 
     # 13-17: Sentinel, loop inventory, and controller-health reads.

@@ -1,12 +1,15 @@
 """Focused tests and exact-head review evidence for the Control Loops router."""
 from __future__ import annotations
 
+import ast
 import inspect
 import os
 import sys
+from collections import Counter
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
@@ -54,7 +57,7 @@ REVIEW_EVIDENCE = {
     "task_id": "OPGAP-BE-CONTROL-LOOPS-V2-20260830",
     "owner": "Codex",
     "reviewer": "Antigravity2",
-    "owned_layer": "prepared Control Loops domain router and service",
+    "owned_layer": "prepared Control Loops domain router and thin read-port adapter",
     "not_changed": [
         "services/control-plane/bff/main.py",
         "services/control-plane/bff/loop_inventory.py",
@@ -66,16 +69,18 @@ REVIEW_EVIDENCE = {
         "handlers": 21,
         "reverse_main_import": False,
         "reusable_loop_contracts_preserved": True,
+        "local_command_ledger": False,
+        "runtime_owners_before_assembly": 1,
+        "runtime_owners_after_assembly": 1,
     },
     "verification": [
         ".venv-pantheon/bin/python -m pytest services/control-plane/bff/tests/test_control_loops_router.py -q",
         ".venv-pantheon/bin/python -m py_compile services/control-plane/bff/control_loops/router.py services/control-plane/bff/control_loops/service.py services/control-plane/bff/tests/test_control_loops_router.py",
         "git diff --check",
     ],
-    "known_external_collection_issue": (
-        "Existing main-based loop/OODA/intervention characterization files are "
-        "blocked before task code executes because services/control-plane/bff/integrations "
-        "shadows the root integrations.openclaw package."
+    "assembly_handoff": (
+        "main.py remains the sole current runtime owner; Main Assembly must remove the "
+        "24 inventoried legacy decorators and then include this prepared router."
     ),
 }
 
@@ -229,6 +234,63 @@ class MockDownstreamHealthMonitor:
         return {"replayed": 2, **kwargs}
 
 
+class MockCommandOwners:
+    """Test double for the existing canonical command admission owners."""
+
+    def __init__(self) -> None:
+        self.receipts: Dict[str, Dict[str, Any]] = {}
+
+    @staticmethod
+    def _key(kwargs: Dict[str, Any]) -> str:
+        return str(kwargs.get("idempotency_key") or kwargs.get("x_idempotency_key") or "generated")
+
+    def _receipt(self, command: Any, kwargs: Dict[str, Any]) -> Dict[str, Any]:
+        key = self._key(kwargs)
+        command_value = getattr(command, "value", str(command))
+        replayed = key in self.receipts
+        if not replayed:
+            self.receipts[key] = {
+                "status": "accepted",
+                "data": {
+                    "command": command_value,
+                    "commandId": f"cmd-{key}",
+                    "command_id": f"cmd-{key}",
+                },
+                "meta": {"durable": True, "liveCapitalSideEffects": False},
+            }
+        response = {
+            **self.receipts[key],
+            "data": dict(self.receipts[key]["data"]),
+            "meta": dict(self.receipts[key]["meta"]),
+        }
+        response["meta"]["idempotency"] = {"key": key, "replayed": replayed}
+        return response
+
+    def submit_sem(self, **kwargs: Any) -> Dict[str, Any]:
+        return self._receipt(kwargs["command_type"], kwargs)
+
+    def submit_final(self, **kwargs: Any) -> Dict[str, Any]:
+        payload = kwargs["payload"]
+        command = payload["command"]
+        params = payload.get("params") or {}
+        if command == "RemediateSentinelIntervention":
+            signature = params.get("twoManSignatureId") or params.get("two_man_signature_id")
+            if not signature:
+                raise HTTPException(status_code=409, detail="two-man signature required")
+            if not kwargs.get("x_confirm_token") or not (
+                params.get("approvalId") or params.get("approval_id")
+            ):
+                raise HTTPException(status_code=428, detail="confirmation evidence required")
+        if command == "DecideV5Intervention" and params.get("decision") not in {
+            "approve",
+            "reject",
+            "defer",
+            "dismiss",
+        }:
+            raise HTTPException(status_code=422, detail="invalid decision")
+        return self._receipt(command, kwargs)
+
+
 def _extract_identity(authorization: Optional[str]) -> OperatorIdentity:
     token = str(authorization or "")
     is_operator = "operator" in token
@@ -246,6 +308,7 @@ def _extract_identity(authorization: Optional[str]) -> OperatorIdentity:
 
 def _client() -> tuple[TestClient, MockDownstreamHealthMonitor]:
     monitor = MockDownstreamHealthMonitor()
+    commands = MockCommandOwners()
     service = ControlLoopsService(
         read_store=MockReadStore(),
         loop_truth_adapter=MockLoopTruth,
@@ -254,9 +317,34 @@ def _client() -> tuple[TestClient, MockDownstreamHealthMonitor]:
     )
     app = FastAPI()
     app.include_router(
-        create_control_loops_router(service=service, extract_identity=_extract_identity)
+        create_control_loops_router(
+            service=service,
+            extract_identity=_extract_identity,
+            submit_sem_command=commands.submit_sem,
+            submit_final_command_admission=commands.submit_final,
+        )
     )
     return TestClient(app), monitor
+
+
+def _ast_decorated_routes(path: Path, owner: str) -> Counter[tuple[str, str, str]]:
+    """Inventory literal FastAPI decorators without importing the composition root."""
+
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    routes: Counter[tuple[str, str, str]] = Counter()
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        for decorator in node.decorator_list:
+            if not isinstance(decorator, ast.Call) or not isinstance(decorator.func, ast.Attribute):
+                continue
+            method = decorator.func.attr.upper()
+            if method not in {"GET", "POST", "PUT", "PATCH", "DELETE"} or not decorator.args:
+                continue
+            route_path = decorator.args[0]
+            if isinstance(route_path, ast.Constant) and isinstance(route_path.value, str):
+                routes[(method, route_path.value, owner)] += 1
+    return routes
 
 
 def test_router_registers_exact_24_catalogued_decorators() -> None:
@@ -270,6 +358,40 @@ def test_router_registers_exact_24_catalogued_decorators() -> None:
     assert actual == EXPECTED_ROUTES
 
 
+def test_ast_route_inventory_proves_single_owner_across_assembly_handoff() -> None:
+    bff_root = Path(__file__).resolve().parents[1]
+    prepared = _ast_decorated_routes(
+        bff_root / "control_loops" / "router.py", "control_loops.router"
+    )
+    legacy = _ast_decorated_routes(bff_root / "main.py", "main.py")
+
+    prepared_pairs = Counter(
+        {(method, path): count for (method, path, _owner), count in prepared.items()}
+    )
+    legacy_pairs = Counter(
+        {(method, path): count for (method, path, _owner), count in legacy.items()}
+    )
+    assert prepared_pairs == Counter({route: 1 for route in EXPECTED_ROUTES})
+    assert {route: legacy_pairs[route] for route in EXPECTED_ROUTES} == {
+        route: 1 for route in EXPECTED_ROUTES
+    }
+
+    # The prepared router is additive-only and is not mounted yet, so main.py
+    # remains the sole current runtime owner.  Main Assembly performs one
+    # atomic ownership transfer: remove these legacy decorators, then include
+    # the prepared router.  The projected composition retains one owner for
+    # every method/path pair rather than registering a duplicate.
+    main_source = (bff_root / "main.py").read_text(encoding="utf-8")
+    assert "from control_loops.router import" not in main_source
+    projected = legacy_pairs.copy()
+    for route in EXPECTED_ROUTES:
+        projected[route] -= 1
+    projected.update(prepared_pairs)
+    assert {route: projected[route] for route in EXPECTED_ROUTES} == {
+        route: 1 for route in EXPECTED_ROUTES
+    }
+
+
 def test_review_evidence_manifest_matches_task_acceptance() -> None:
     assert REVIEW_EVIDENCE["task_id"] == "OPGAP-BE-CONTROL-LOOPS-V2-20260830"
     assert REVIEW_EVIDENCE["reviewer"] == "Antigravity2"
@@ -278,6 +400,9 @@ def test_review_evidence_manifest_matches_task_acceptance() -> None:
         "handlers": 21,
         "reverse_main_import": False,
         "reusable_loop_contracts_preserved": True,
+        "local_command_ledger": False,
+        "runtime_owners_before_assembly": 1,
+        "runtime_owners_after_assembly": 1,
     }
 
 
@@ -289,6 +414,37 @@ def test_router_has_no_reverse_dependency_on_main() -> None:
         source = inspect.getsource(module)
         assert "import main" not in source
         assert "from main" not in source
+
+
+def test_service_has_no_shadow_command_authority() -> None:
+    import control_loops.service as service_module
+
+    source = inspect.getsource(service_module)
+    for forbidden in (
+        "submit_typed_command",
+        "_idempotency_receipts",
+        "_FINAL_CONTRACT_IDEMPOTENCY",
+        "command_store",
+        "prepared_domain_router",
+    ):
+        assert forbidden not in source
+
+
+def test_uncomposed_write_route_fails_closed() -> None:
+    service = ControlLoopsService(read_store=MockReadStore())
+    app = FastAPI()
+    app.include_router(
+        create_control_loops_router(service=service, extract_identity=_extract_identity)
+    )
+    response = TestClient(app).post(
+        "/bff/v5/sentinel/findings/finding-1/status",
+        headers=OPERATOR_HEADERS,
+        json={"status": "resolved"},
+    )
+    assert response.status_code == 503
+    assert response.json()["detail"]["error"]["details"]["precondition_failed"] == (
+        "submit_sem_command"
+    )
 
 
 def test_ooda_list_detail_pagination_and_fail_closed_flag(monkeypatch) -> None:
