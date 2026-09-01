@@ -45,6 +45,8 @@ def test_projects_latest_real_row_with_provenance() -> None:
     assert market["ingestRunId"] == "ingest-live-001"
     assert market["freshnessStatus"] == "fresh"
     assert market["stale"] is False
+    assert market["source_proof_receipt_id"] == "spr-tw-twse-tpex-official-market:ingest-live-001:tw-official:tw_price_daily:TWSE:2330:new"
+    assert market["sourceProofReceiptId"] == "spr-tw-twse-tpex-official-market:ingest-live-001:tw-official:tw_price_daily:TWSE:2330:new"
     assert market["freshness"] == {
         "schemaVersion": "agora_source_freshness.v1",
         "status": "fresh",
@@ -56,6 +58,8 @@ def test_projects_latest_real_row_with_provenance() -> None:
         "staleThresholdSeconds": 172800,
         "nextRunAt": "2026-07-08T06:00:00Z",
         "lastTypedFailure": None,
+        "source_proof_receipt_id": "spr-tw-twse-tpex-official-market:ingest-live-001:tw-official:tw_price_daily:TWSE:2330:new",
+        "sourceProofReceiptId": "spr-tw-twse-tpex-official-market:ingest-live-001:tw-official:tw_price_daily:TWSE:2330:new",
     }
     assert signal["projectionOwner"] == PROJECTOR
 
@@ -649,3 +653,27 @@ def test_rejects_mismatched_source_id_with_preexisting_freshness_typed_failure()
     # Binding mismatch must take precedence over pre-existing historic failure
     assert market["freshness"]["lastTypedFailure"]["category"] == "receipt_binding"
     assert market["freshness"]["lastTypedFailure"]["code"] == "mismatched_source"
+
+
+def test_binds_explicit_source_proof_receipt_id() -> None:
+    rec = _record("tw-official:tw_price_daily:TWSE:2330:receipt-proof", "2330", "2026-08-28", 950)
+    rec["metadata"]["source_proof_receipt_id"] = "spr-custom-receipt-999"
+    rec["metadata"]["snapshot_id"] = "snap-market-123"
+    stores = project(
+        [rec],
+        connector_freshness={
+            "status": "fresh",
+            "last_success_at": "2026-08-30T01:00:00Z",
+            "next_run_at": "2026-08-31T01:00:00Z",
+            "stale_threshold_seconds": 86400,
+            "last_typed_failure": None,
+        },
+        now=datetime(2026, 8, 30, 1, tzinfo=timezone.utc),
+    )
+    market = stores["agora_watchlist"]["market-2330"]
+    assert market["source_proof_receipt_id"] == "spr-custom-receipt-999"
+    assert market["sourceProofReceiptId"] == "spr-custom-receipt-999"
+    assert market["snapshot_id"] == "snap-market-123"
+    assert market["snapshotId"] == "snap-market-123"
+    assert market["freshness"]["source_proof_receipt_id"] == "spr-custom-receipt-999"
+    assert market["freshness"]["sourceProofReceiptId"] == "spr-custom-receipt-999"
