@@ -27,6 +27,12 @@ from starlette.responses import JSONResponse
 
 # Ensure bff root is on sys.path
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+# Main Assembly imports repository-level integration packages (for example
+# Agora's OpenClaw adapters).  Keep the repository root importable when this
+# file is run directly from a clean task worktree rather than relying on the
+# caller's PYTHONPATH.
+REPO_ROOT = str(Path(__file__).resolve().parents[4])
+sys.path.insert(0, REPO_ROOT)
 
 from management_read_models.router import (
     create_management_read_models_router,
@@ -70,11 +76,11 @@ REVIEW_EVIDENCE = {
     "owner": "Antigravity",
     "reviewer": "Codex",
     "owned_layer": "prepared Management domain router and service composition",
-    "not_changed": [
+    "assembly_changed": [
         "services/control-plane/bff/main.py",
         "services/control-plane/bff/management_read_models/__init__.py",
-        "execute-plans",
     ],
+    "not_changed": ["execute-plans"],
     "acceptance": {
         "route_decorators": 17,
         "handlers": 17,
@@ -91,14 +97,15 @@ REVIEW_EVIDENCE = {
     ],
     "broader_regression": {
         "result": "24 passed, 3 pre-existing main.py baseline failures in test_bff_management_delta_routes.py",
-        "unchanged_paths": [
+        "assembly_paths": [
             "services/control-plane/bff/main.py",
             "services/control-plane/bff/management_read_models/__init__.py",
         ],
     },
     "assembly_handoff": (
-        "main.py remains the sole current runtime owner; Main Assembly (OPGAP-BFF-MAIN-ASSEMBLY-20260830) "
-        "must remove the 17 inventoried legacy decorators and then include this prepared router."
+        "Main Assembly removes the 17 inventoried legacy decorators and includes the prepared router; "
+        "the recursive runtime inventory must show one owner per method/path while preserving the "
+        "existing evolution-journal owner and five-route composed read-model router."
     ),
 }
 
@@ -233,6 +240,33 @@ def _ast_decorated_routes(path: Path, owner: str) -> Counter[tuple[str, str, str
     return routes
 
 
+def _import_main_for_inventory() -> Any:
+    """Import ``main`` with the repository-level integrations package pinned.
+
+    The BFF directory also contains a legacy top-level ``integrations``
+    package.  ``main`` prepends that directory to ``sys.path`` while Agora
+    imports ``integrations.openclaw`` from the repository package.  Tests that
+    import other BFF modules may already have loaded the legacy package, so
+    replace only the package binding before importing the composition root.
+    """
+    import importlib
+
+    loaded = sys.modules.get("integrations")
+    repo_package_dir = Path(REPO_ROOT) / "integrations"
+    loaded_package_dir = (
+        Path(str(getattr(loaded, "__file__", ""))).resolve().parent
+        if loaded is not None and getattr(loaded, "__file__", None)
+        else None
+    )
+    if loaded_package_dir != repo_package_dir.resolve():
+        for name in list(sys.modules):
+            if name == "integrations" or name.startswith("integrations."):
+                sys.modules.pop(name, None)
+        sys.path.insert(0, REPO_ROOT)
+        importlib.import_module("integrations")
+    return importlib.import_module("main")
+
+
 # ---------------------------------------------------------------------------
 # Test Cases
 # ---------------------------------------------------------------------------
@@ -277,25 +311,15 @@ def test_ast_route_inventory_proves_single_owner_across_assembly_handoff() -> No
     )
     assert prepared_pairs == Counter({route: 1 for route in EXPECTED_17_ROUTES})
     assert {route: legacy_pairs[route] for route in EXPECTED_17_ROUTES} == {
-        route: 1 for route in EXPECTED_17_ROUTES
+        route: 0 for route in EXPECTED_17_ROUTES
     }
 
-    # The prepared router is additive-only and is not mounted yet in main.py, so main.py
-    # remains the sole current runtime owner. Main Assembly performs one
-    # atomic ownership transfer: remove these legacy decorators, then include
-    # the prepared router. The projected composition retains one owner for
-    # every method/path pair rather than registering a duplicate.
+    # Main Assembly performs one atomic ownership transfer: remove the legacy
+    # decorators, then include the prepared router. The runtime composition
+    # therefore has one owner for every method/path pair.
     main_source = (bff_root / "main.py").read_text(encoding="utf-8")
-    assert "from management_read_models.router import create_management_router" not in main_source
-    assert "create_management_router(" not in main_source
-
-    projected = legacy_pairs.copy()
-    for route in EXPECTED_17_ROUTES:
-        projected[route] -= 1
-    projected.update(prepared_pairs)
-    assert {route: projected[route] for route in EXPECTED_17_ROUTES} == {
-        route: 1 for route in EXPECTED_17_ROUTES
-    }
+    assert "create_management_router" in main_source
+    assert "create_management_router(" in main_source
 
 
 def test_review_evidence_manifest_matches_task_acceptance() -> None:
@@ -1891,3 +1915,90 @@ def test_intervention_stream_semantic_parity_and_target_source_refs() -> None:
     assert "inc-breach-101" in audit_refs["incident_ids"]
     assert audit_item["links"]["source"] == "/bff/audit"
     assert audit_item["links"]["intervention"] == "/bff/v5/interventions/intv-rich-1"
+
+
+def test_main_composes_management_router_without_legacy_decorators():
+    """Main must mount the canonical router instead of retaining its handlers."""
+    import re
+
+    main_path = Path(__file__).resolve().parents[1] / "main.py"
+    main_source = main_path.read_text(encoding="utf-8")
+
+    assert "create_management_router" in main_source
+    forbidden_paths = (
+        "/bff/management/shell-summary",
+        "/api/v1/operator/home",
+        "/bff/management/trading-pulse",
+        "/bff/management/trading-pulse/rankings",
+        "/bff/management/sentinel-pulse",
+        "/api/v1/operator/health-status",
+        "/bff/management/loop-throughput",
+        "/bff/management/risk-radar",
+        "/bff/management/incident-timeline",
+        "/bff/management/human-inbox",
+        "/bff/management/hiq-backlog",
+        "/bff/management/intervention-stream",
+        "/bff/management/evidence",
+        "/bff/management/operations-read-model/{persona_id}",
+        "/api/v1/operator/degraded-control-guidance",
+    )
+    for path in forbidden_paths:
+        assert not re.search(
+            rf"@app\.get\([^\n]*{re.escape(path)}",
+            main_source,
+        ), f"Found legacy Management decorator for {path}"
+
+
+def test_main_management_routes_have_zero_duplicate_registrations():
+    """The mounted Management surface must contain each route exactly once."""
+    bff_main = _import_main_for_inventory()
+    from collections import Counter
+    from test_normalized_route_uniqueness import scan_fastapi_routes
+
+    expected = {
+        "/bff/management/shell-summary",
+        "/api/v1/operator/home",
+        "/bff/management/cockpit",
+        "/bff/management/trading-pulse",
+        "/bff/management/trading-pulse/rankings",
+        "/bff/management/sentinel-pulse",
+        "/api/v1/operator/health-status",
+        "/bff/management/loop-throughput",
+        "/bff/management/risk-radar",
+        "/bff/management/incident-timeline",
+        "/bff/management/human-inbox",
+        "/bff/management/human-inbox/{item_id}",
+        "/bff/management/hiq-backlog",
+        "/bff/management/intervention-stream",
+        "/bff/management/evidence",
+        "/bff/management/operations-read-model/{persona_id}",
+        "/api/v1/operator/degraded-control-guidance",
+        "/bff/management/formula-jobs",
+        "/bff/management/activity",
+        "/bff/management/paper-telemetry",
+        "/bff/management/postmortems",
+        "/bff/management/postmortems/{postmortem_id}",
+    }
+    entries = scan_fastapi_routes(bff_main.app)
+    routes = [
+        (entry.method, entry.raw_path)
+        for entry in entries
+        if entry.raw_path in expected
+    ]
+    duplicates = [pair for pair, count in Counter(routes).items() if count != 1]
+    assert not duplicates, f"Management route duplicates/missing registrations: {duplicates}"
+    assert len(routes) == len(expected)
+
+
+def test_main_preserves_management_evolution_journal_once():
+    """The existing evolution-journal owner remains mounted exactly once."""
+    bff_main = _import_main_for_inventory()
+    from test_normalized_route_uniqueness import scan_fastapi_routes
+
+    matching = [
+        entry
+        for entry in scan_fastapi_routes(bff_main.app)
+        if entry.method == "GET"
+        and entry.raw_path == "/bff/management/evolution-journal"
+    ]
+    assert len(matching) == 1

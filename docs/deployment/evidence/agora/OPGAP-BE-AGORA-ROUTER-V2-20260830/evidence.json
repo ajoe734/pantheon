@@ -1,0 +1,362 @@
+{
+  "schema_version": "product_evidence.v1",
+  "schema_status": {
+    "formal_schema_owner": "schemas/product-evidence.schema.json",
+    "formalization_trigger": "Product-task exact-head review admission requires a schema-valid task evidence manifest.",
+    "note": "Pre-review owner evidence for Agora domain route migration and decoupling from main.py.",
+    "status": "formalized"
+  },
+  "evidence_policy": {
+    "checksum_file": "docs/deployment/evidence/agora/OPGAP-BE-AGORA-ROUTER-V2-20260830/evidence.sha256",
+    "missing_or_contradicted_proof_fails_closed": true,
+    "mutation_rule": "Task-scoped evidence changes require a Pantheon task commit and independent reviewer verification.",
+    "recording_mode": "logical_append_only",
+    "redacted": false,
+    "self_hashing": false
+  },
+  "task": {
+    "base_branch": "dev",
+    "evidence_cut_at": "2026-09-01T07:06:48Z",
+    "evidence_cut_semantics": "Owner revalidation after merging the current dev base for Agora domain route migration and decoupling identity and personalization from main.py. The task retains all 38 migrated decorators, canonical ports/stores, dry-run/command/SSE/assistant behavior, restores frozen-base snake-case pagination and 1..200 bounds for watchlist, notes, journal, training-example, and research-task lists, restores the existing command-adapter assembly behavior accidentally regressed by this branch, and keeps an unreceipted research result explicitly labelled simulation.",
+    "id": "OPGAP-BE-AGORA-ROUTER-V2-20260830",
+    "overall_admission": "owner_asserted_pass_pending_independent_review_and_merge",
+    "owner": "Codex2",
+    "phase": "Wave 2 / agora routing",
+    "product_level_required": true,
+    "repository": "ajoe734/pantheon",
+    "review_file": "docs/deployment/evidence/agora/OPGAP-BE-AGORA-ROUTER-V2-20260830/evidence.json",
+    "reviewer": "Codex",
+    "target_environment": "local BFF regression validation; no hosted deployment claim",
+    "target_maturity": "review-ready source delivery",
+    "task_branch": "task/OPGAP-BE-AGORA-ROUTER-V2-20260830",
+    "title": "Migrate Agora domain routes and decouple identity and personalization from main"
+  },
+  "authorities": {
+    "actual_state": [
+      "services/control-plane/bff/agora/router.py",
+      "services/control-plane/bff/agora/service.py",
+      "services/control-plane/bff/agora/identity/router.py",
+      "services/control-plane/bff/agora/personalization/router.py",
+      "services/control-plane/bff/agora/research/dispatcher.py",
+      "services/control-plane/bff/main.py",
+      "services/control-plane/bff/tests/test_agora_router.py",
+      "services/control-plane/bff/tests/test_agora_research_candidate_governed.py",
+      "scripts/project_market_data_to_bff_agora_surfaces.py",
+      "scripts/test_project_market_data_to_bff_agora_surfaces.py"
+    ],
+    "desired_state": [
+      "Agora domain routers handle 38 decorators without importing main.py",
+      "Identity and personalization routers import shared ports and store interfaces from ports package with zero main.py reverse imports",
+      "Main.py has 0 legacy Agora route decorators remaining and delegates Agora domain traffic to mounted Agora router",
+      "Agora router, dispatcher, projection, and focused broader regression suites pass at the repaired source head"
+    ],
+    "task_packet": ".orchestrator/worker-runtime/task-context/opgap-be-agora-router-v2-20260830.md"
+  },
+  "scope": {
+    "authoritative_write_owner": "Codex2 for Agora domain router migration, ports interfaces binding, legacy decorator cleanup from main.py, and dispatcher provenance correctness",
+    "composes_with": [
+      "OPGAP-DEVTOOL-TARGET-REPO-BRIDGE-V2-20260830",
+      "Codex canonical review gate"
+    ],
+    "evidence_changed_files": [
+      "docs/deployment/evidence/agora/OPGAP-BE-AGORA-ROUTER-V2-20260830/evidence.json",
+      "docs/deployment/evidence/agora/OPGAP-BE-AGORA-ROUTER-V2-20260830/evidence.sha256"
+    ],
+    "implementation_changed_files": [
+      "services/control-plane/bff/agora/identity/router.py",
+      "services/control-plane/bff/agora/personalization/router.py",
+      "services/control-plane/bff/agora/research/dispatcher.py",
+      "services/control-plane/bff/agora/router.py",
+      "services/control-plane/bff/agora/service.py",
+      "services/control-plane/bff/main.py",
+      "services/control-plane/bff/tests/test_agora_research_candidate_governed.py",
+      "services/control-plane/bff/tests/test_agora_router.py",
+      "scripts/project_market_data_to_bff_agora_surfaces.py",
+      "scripts/test_project_market_data_to_bff_agora_surfaces.py"
+    ],
+    "not_changing": "Frontend execute-plans client, unrelated domain routers, or database persistence schemas",
+    "owned_layer": "Agora domain router extraction, ports binding, and removal of legacy Agora route decorators in main.py"
+  },
+  "implementation_delivery": {
+    "anchor_commits": [
+      {
+        "sha": "5dd140a54dbc3d9329badde987a9a7c371953c92",
+        "subject": "OPGAP-BE-AGORA-ROUTER-V2-20260830: anchor HTTP parity",
+        "delivery_state": "task_branch",
+        "note": "Restores frozen-base HTTP compatibility before evidence finalization and exact-head re-review."
+      },
+      {
+        "sha": "f910ed6ab0047b412a69c0afd0f89bdf25e55cec",
+        "subject": "OPGAP-BE-AGORA-ROUTER-V2-20260830: anchor contract restoration",
+        "delivery_state": "task_branch",
+        "note": "Restores legacy snake-case pagination and 1..200 bounds, and returns command-adapter mounting to the dev composition."
+      }
+    ],
+    "required_checks": [
+      {
+        "workflow": "Agora core, extended, journal, and assistant test suite",
+        "event": "local validation before evidence cut",
+        "conclusion": "success"
+      },
+      {
+        "workflow": "product-evidence Draft 7 schema validation",
+        "event": "local validation before exact-head handoff",
+        "conclusion": "success"
+      },
+      {
+        "workflow": "evidence companion checksum",
+        "event": "local validation before exact-head handoff",
+        "conclusion": "success"
+      },
+      {
+        "workflow": "owner HTTP compatibility and command-adapter repair regressions",
+        "event": "local validation before re-handoff",
+        "conclusion": "success"
+      }
+    ]
+  },
+  "validation": {
+    "commands": [
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/test_bff_agora_core_contract.py services/control-plane/bff/test_bff_agora_extended_contract.py services/control-plane/bff/test_agora_journal_merge_patch.py services/control-plane/bff/tests/test_assistant_agora_ask.py services/control-plane/bff/test_bff_b2_005_agora_canonical_aliases.py",
+        "result": "pass",
+        "conclusion": "27 passed. Broader named Agora contract, journal, assistant, and canonical-alias regression modules pass cleanly at the refreshed source head."
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q --disable-warnings services/control-plane/bff/tests/test_agora_router.py",
+        "result": "pass",
+        "conclusion": "42 passed. Confirms 0 legacy Agora route decorators on main.py, zero reverse imports of main, snake-case page_token/page_size plus 1..200 bounds for the restored list contracts, X-Dry-Run non-mutation, 404 nonexistent sessions, 400 missing idempotency keys, 201 feedback, and ports interface conformance."
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q --disable-warnings services/control-plane/bff/tests/test_command_adapters_router.py",
+        "result": "pass",
+        "conclusion": "14 passed. Confirms main.py no longer has loose command-adapter decorators, mounts create_command_adapters_router, and preserves legacy operator-command admission behavior."
+      },
+      {
+        "command": "python3 -c \"import json, jsonschema; jsonschema.validate(json.load(open(\"docs/deployment/evidence/agora/OPGAP-BE-AGORA-ROUTER-V2-20260830/evidence.json\")), json.load(open(\"schemas/product-evidence.schema.json\")))\"",
+        "result": "pass",
+        "conclusion": "The manifest validates against schemas/product-evidence.schema.json."
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_agora_research_candidate_governed.py -k 'durable_dispatcher_outbox_lease_and_provenance or end_to_end_outbox_consumer_dispatch'",
+        "result": "pass",
+        "conclusion": "2 passed, 8 deselected. Confirms safe provenance and durable outbox consumer dispatch."
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q scripts/test_project_market_data_to_bff_agora_surfaces.py",
+        "result": "pass",
+        "conclusion": "19 passed. Confirms market-data projection provenance and source-freshness contracts."
+      }
+    ],
+    "validated_at": "2026-09-01T07:06:48Z",
+    "validated_base_sha": "18b8f6b268d354495cf50b42ef9e4460f8228ebf",
+    "validated_head_sha": "b30f9790f351e05c49d08030ee082dbfc9e355fd"
+  },
+  "deployment": {
+    "applicable": false,
+    "environment": "local BFF regression validation",
+    "public_bff_base_url": "not_applicable",
+    "publish_cut": {
+      "status": "not_applicable"
+    },
+    "canonical_root_deploy": {
+      "status": "not_applicable"
+    },
+    "identity_admission": {
+      "status": "local auth-stub contract only; no hosted identity claim"
+    }
+  },
+  "hosted_readback": {
+    "pre_deploy": {
+      "status": "not_applicable",
+      "reason": "This task refactors internal router dispatching and decouples identity/personalization from main.py; it does not deploy hosted services."
+    }
+  },
+  "behavioral_proof": {
+    "duplicate_safety": {
+      "proof": [
+        "Idempotency keys on Agora session creation and action commands are checked and enforced via IdempotencyStorePort.",
+        "Body idempotency keys are strictly rejected with 400 precondition_failed=body_idempotency_key."
+      ]
+    },
+    "failure_and_degraded_behavior": {
+      "proof": [
+        "Missing read store fallback degrades gracefully with source=local_snapshot and status=degraded.",
+        "Dry run commands generate mock receipt envelopes without mutating backend state."
+      ]
+    },
+    "request_receipt_downstream_correlation": {
+      "proof": [
+        "Agora commands enqueue with stable idempotency keys and return receipt IDs in standard data envelope.",
+        "Session detail and message append operations link cleanly to session IDs."
+      ]
+    },
+    "restart_and_recovery": {
+      "proof": [
+        "In-memory and service stores preserve session and signal records across router instantiations.",
+        "SSE subscriber buffers correctly recover and stream domain events upon connection."
+      ]
+    },
+    "rollback_or_compensation": {
+      "proof": [
+        "All 38 endpoints remain structurally identical to original contract interfaces, allowing transparent rollback if needed."
+      ]
+    }
+  },
+  "security_and_safety": {
+    "environment_boundary": {
+      "status": "pass",
+      "proof": "Servant persona environment ceiling is fixed to paper; live environment interactions are rejected."
+    },
+    "hosted_frontend": {
+      "status": "not_applicable",
+      "proof": "Backend router migration preserves all existing endpoint contracts used by execute-plans frontend."
+    },
+    "mfa": {
+      "status": "not_applicable",
+      "proof": "Operator authorization is verified on protected Agora endpoints."
+    },
+    "no_live_capital": {
+      "status": "pass",
+      "proof": "Execution authority remains none for Agora servant operations, forbidding automated live trading."
+    },
+    "rbac": {
+      "status": "pass",
+      "proof": "All Agora routes enforce require_read_role and write actions enforce require_write_role."
+    },
+    "tenant_isolation": {
+      "status": "pass",
+      "proof": "Tenant scope resolution enforces match against allowed tenants with fail_closed=true."
+    },
+    "two_person_approval": {
+      "status": "pending",
+      "proof": "Codex must independently approve the immutable PR head through the canonical review gate before merge."
+    }
+  },
+  "acceptance": [
+    {
+      "id": "AC1",
+      "statement": "Agora domain routers handle 38 decorators without importing main.py",
+      "status": "pass",
+      "evidence_refs": [
+        "services/control-plane/bff/agora/router.py",
+        "services/control-plane/bff/tests/test_agora_router.py::test_main_py_has_zero_legacy_agora_route_decorators",
+        "services/control-plane/bff/tests/test_agora_router.py::test_agora_routers_have_zero_reverse_imports_of_main"
+      ]
+    },
+    {
+      "id": "AC2",
+      "statement": "Identity and personalization routers import shared ports and store interfaces from ports package with zero main.py reverse imports",
+      "status": "pass",
+      "evidence_refs": [
+        "services/control-plane/bff/agora/identity/router.py",
+        "services/control-plane/bff/agora/personalization/router.py",
+        "services/control-plane/bff/agora/service.py",
+        "services/control-plane/bff/tests/test_agora_router.py::test_agora_service_imports_ports_package_interfaces"
+      ]
+    },
+    {
+      "id": "AC3",
+      "statement": "Delivered predecessor scope is excluded: Reusable workshop backend and ops consultation delivered by ACG-WORKSHOP-BE-20260828 and ACG-RS-OPS-CONSULT-20260828 are preserved.",
+      "status": "pass",
+      "evidence_refs": [
+        "services/control-plane/bff/agora/strategy_workshop/router.py",
+        "services/control-plane/bff/ports/operations_consultation.py"
+      ]
+    },
+    {
+      "id": "AC4",
+      "statement": "Owns only observed residual: Complete agora routing migration and eliminate reverse imports of main.py.",
+      "status": "pass",
+      "evidence_refs": [
+        "services/control-plane/bff/main.py",
+        "services/control-plane/bff/agora/router.py"
+      ]
+    },
+    {
+      "id": "AC5",
+      "statement": "Replacement lineage: supersedes OPGAP-BE-AGORA-ROUTER-20260830 solely to bind the successful OPGAP-DEVTOOL-TARGET-REPO-BRIDGE-V2-20260830 bootstrap; functional scope is unchanged.",
+      "status": "pass",
+      "evidence_refs": [
+        "OPGAP-BE-AGORA-ROUTER-V2-20260830"
+      ]
+    }
+  ],
+  "residual_risks": {
+    "RISK-01": {
+      "blocking_for_this_task": false,
+      "containment": "Focused router, command-adapter, dispatcher, projection, and broader Agora contract suites pass at the validated source head.",
+      "description": "Router migration restructures endpoint definitions into modular sub-routers.",
+      "expiry": "2026-09-30Z",
+      "owner": "Codex2",
+      "recheck_trigger": "Full BFF integration regression",
+      "severity": "low"
+    },
+    "independent_review_and_merge": {
+      "blocking_for_this_task": true,
+      "containment": "Do not arm auto-merge; use governed exact-head handoff to Codex.",
+      "description": "The source delivery is owner-validated but has not yet received independent review or merge evidence.",
+      "expiry": "After Codex approves the frozen exact head and the supervisor merge completes.",
+      "owner": "Codex and supervisor integration runner",
+      "recheck_trigger": "Before governed handoff and again after GitHub reports merge.",
+      "severity": "release_gate"
+    }
+  },
+  "integrity": {
+    "algorithm": "sha256",
+    "checksum_coverage": [
+      "docs/deployment/evidence/agora/OPGAP-BE-AGORA-ROUTER-V2-20260830/evidence.json"
+    ],
+    "companion_checksum_path": "docs/deployment/evidence/agora/OPGAP-BE-AGORA-ROUTER-V2-20260830/evidence.sha256",
+    "hosted_semantic_sha256": {},
+    "manifest_path": "docs/deployment/evidence/agora/OPGAP-BE-AGORA-ROUTER-V2-20260830/evidence.json",
+    "normalized_hosted_readback": {},
+    "self_hash_omitted": true,
+    "self_hash_reason": "Companion evidence.sha256 covers evidence.json to avoid self-referential manifest hashing.",
+    "source_artifact_sha256_by_epoch": {}
+  },
+  "record_log": [
+    {
+      "sequence": 1,
+      "recorded_at": "2026-08-30T22:15:00Z",
+      "kind": "implementation_completion",
+      "status": "recorded",
+      "reference": "Migrated 38 Agora route decorators from main.py to agora/router.py and subrouters"
+    },
+    {
+      "sequence": 2,
+      "recorded_at": "2026-08-30T22:15:00Z",
+      "kind": "local_validation",
+      "status": "pass",
+      "reference": "254 passed in full Agora contract and unit test suite"
+    },
+    {
+      "sequence": 3,
+      "recorded_at": "2026-08-31T15:36:44Z",
+      "kind": "owner_recovery_validation",
+      "status": "pass",
+      "reference": "Preserved requested backend mode separately from observed simulation provenance; 34 router and 22 focused dispatcher/market tests passed."
+    },
+    {
+      "sequence": 4,
+      "recorded_at": "2026-09-01T05:52:00Z",
+      "kind": "review_reopen_repair_validation",
+      "status": "pass",
+      "reference": "Restored frozen-base HTTP contracts and passed 37 router, 2 dispatcher, 19 market projection, and 66 broader Agora regression tests."
+    },
+    {
+      "sequence": 5,
+      "recorded_at": "2026-09-01T06:43:53Z",
+      "kind": "current_base_revalidation",
+      "status": "pass",
+      "reference": "Merged current dev base 18b8f6b268d354495cf50b42ef9e4460f8228ebf; diff hygiene plus 37 router, 2 dispatcher, 19 market projection, and 27 named broader Agora regressions passed at c756b850b8e3e2902a38ed645d994666a67d88a4."
+    },
+    {
+      "sequence": 6,
+      "recorded_at": "2026-09-01T07:06:48Z",
+      "kind": "review_reopen_contract_restoration",
+      "status": "pass",
+      "reference": "Restored page_token/page_size and 1..200 bounds for five migrated list handlers, restored the origin/dev command-adapter assembly behavior, and passed 42 router, 14 command-adapter, 2 dispatcher, 19 projection, and 27 broader Agora regressions at b30f9790f351e05c49d08030ee082dbfc9e355fd."
+    }
+  ]
+}
