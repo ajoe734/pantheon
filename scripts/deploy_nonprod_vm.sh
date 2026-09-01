@@ -1481,6 +1481,7 @@ assert auth_mode == "strict", f"auth_mode={auth_mode!r}, expected strict"
   readiness_started="$(date +%s)"
   local readiness_payload=""
   local readiness_error=""
+  local readiness_rc=0
 
   info "asserting authenticated dev-login and strict browser readiness round trip succeed (bounded timeout=${readiness_timeout}s)"
   while true; do
@@ -1522,7 +1523,17 @@ try:
     assert auth.get("interactionCapabilityReady") is True, f"auth.interactionCapabilityReady={interaction_ready!r}"
     assert auth.get("verifierReady") is True, f"auth.verifierReady={verifier_ready!r}"
 except AssertionError as err:
-    print(f"contract assertion failed: {err}")
+    # Deployed configuration cannot change while we poll. Retrying a posture
+    # violation only converts a precise "this build came up with the wrong auth
+    # posture" into a vague "contract not satisfied within Ns timeout", which
+    # sends whoever reads it hunting for a slow dependency that does not exist.
+    # Fail immediately with the real reason instead (exit 2 = terminal).
+    terminal_markers = ("auth.mode=", "auth.stub=", "auth.sessionKind=")
+    detail = str(err)
+    if any(marker in detail for marker in terminal_markers):
+        print(f"terminal contract violation (retrying cannot change deployed config): {detail}")
+        sys.exit(2)
+    print(f"contract assertion failed: {detail}")
     sys.exit(1)
 
 # Assistant provider health is observability only, never a release gate. The BFF
@@ -1537,6 +1548,12 @@ if provider_ready is not True:
           info "${readiness_error}"
         fi
         break
+      else
+        readiness_rc=$?
+        if (( readiness_rc == 2 )); then
+          # Terminal: deployed configuration will not change by polling.
+          error "strict browser readiness contract cannot be satisfied by retrying: ${readiness_error}"
+        fi
       fi
     else
       readiness_error="strict browser readiness probe failed against ${base_url}/bff/auth/readiness: ${readiness_payload}"

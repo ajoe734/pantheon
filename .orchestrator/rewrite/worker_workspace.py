@@ -974,6 +974,153 @@ def _refresh_reused_worker_worktree(
     return False, f"non_fast_forward: {details}"
 
 
+def _recovery_worktree_archive_root(config: dict[str, Any]) -> Path:
+    """Resolve the managed archive root used for recovery WIP snapshots."""
+
+    settings = worktree_cleanup_settings(config)
+    archive_root = Path(os.path.expanduser(str(settings["archive_root"])))
+    if not archive_root.is_absolute():
+        archive_root = config_path(config, "status_file").parents[0] / archive_root
+    return archive_root.resolve()
+
+
+def _recovery_worktree_has_stale_adopted_wip(
+    state: dict[str, Any],
+    *,
+    task_id: str,
+    worktree_path: Path,
+    recovery_receipt_id: str | None = None,
+) -> bool:
+    """Return whether a prior lost-lease replacement already adopted WIP.
+
+    Dirty-WIP adoption is intentionally a one-shot handoff.  A second lost
+    lease must not keep inheriting the same rejected tree indefinitely; it must
+    archive the snapshot and start from the pinned base instead.
+    """
+
+    leases = (state.get("worker_worktrees") or {}).get("leases") or {}
+    lease = leases.get(task_id)
+    if not isinstance(lease, Mapping):
+        return False
+    try:
+        leased_path = Path(str(lease.get("path") or "")).expanduser().resolve()
+    except (OSError, RuntimeError, ValueError):
+        return False
+    if leased_path != worktree_path.resolve():
+        return False
+    current_receipt = str(recovery_receipt_id or "").strip()
+    prior_receipt = str(
+        lease.get("recovery_receipt_id")
+        or lease.get("dirty_wip_adoption_receipt_id")
+        or ""
+    ).strip()
+    # A duplicate dispatch for the same recovery receipt is the same handoff
+    # and may continue using its adopted WIP. A later receipt means the prior
+    # handoff has ended; archive/reset before another worker touches the tree.
+    # An empty current receipt is ordinary reuse and cannot inherit recovery
+    # WIP either.
+    return bool(prior_receipt and prior_receipt != current_receipt)
+
+
+def _replace_recovery_worktree_from_base(
+    repo_root: Path,
+    worktree_path: Path,
+    *,
+    branch: str,
+    base_sha: str,
+    archive_root: Path,
+    task_id: str,
+    max_file_bytes: int,
+) -> tuple[bool, str, Path | None, str | None]:
+    """Archive a stale recovery tree and recreate its task branch at base.
+
+    The old worktree is preserved as a patch/file archive and its previous
+    branch tip is retained under a private recovery ref before the task branch
+    is reset to the immutable cycle base.  This keeps rejected WIP recoverable
+    without allowing it to become the next worker's source tree.
+    """
+
+    branch_ref = f"refs/heads/{branch}"
+    old_head = subprocess.run(
+        ["git", "rev-parse", "--verify", f"{branch_ref}^{{commit}}"],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    old_sha = str(old_head.stdout or "").strip()
+    if old_head.returncode != 0 or not old_sha:
+        return False, "recovery_branch_tip_unresolved", None, None
+
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    ref_slug = _task_id_slug(task_id)
+    recovery_ref = f"refs/pantheon/recovery/{ref_slug}/{stamp}-{os.getpid()}"
+    backup = subprocess.run(
+        ["git", "update-ref", recovery_ref, branch_ref],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if backup.returncode != 0:
+        return False, "recovery_branch_backup_failed", None, None
+
+    archive_dir = _archive_dirty_worktree(
+        worktree_path,
+        archive_root,
+        reason="recovery_replacement_stale_dirty_wip",
+        max_file_bytes=max_file_bytes,
+    )
+    if archive_dir is None:
+        subprocess.run(
+            ["git", "update-ref", recovery_ref],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        return False, "recovery_wip_archive_failed", None, None
+
+    try:
+        manifest_path = archive_dir / "manifest.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest["preserved_branch_ref"] = recovery_ref
+        manifest["preserved_branch_head"] = old_sha
+        manifest_path.write_text(
+            json.dumps(manifest, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+    except (OSError, ValueError):
+        # The patch/file archive remains useful even if the optional metadata
+        # enrichment fails; do not silently discard the recovery ref.
+        pass
+
+    removed = _remove_worker_worktree(repo_root, worktree_path, force=True)
+    if removed.returncode != 0:
+        return False, "recovery_worktree_remove_failed", archive_dir, recovery_ref
+
+    reset = subprocess.run(
+        ["git", "update-ref", branch_ref, base_sha],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if reset.returncode != 0:
+        # Keep the branch recoverable at its old tip if resetting the task
+        # branch fails after the worktree was removed.
+        subprocess.run(
+            ["git", "update-ref", branch_ref, old_sha],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        return False, "recovery_branch_reset_failed", archive_dir, recovery_ref
+
+    return True, "replaced_from_base", archive_dir, recovery_ref
+
+
 def worker_worktree_base_relation(worktree_path: Path, base_sha: str) -> str:
     """Describe a task branch's relationship to one immutable base snapshot."""
 
@@ -1147,90 +1294,165 @@ def prepare_worker_workspace(
         repository_id=repository_id,
     )
     reused = False
+    creation_origin: str | None = None
+    recovery_wip_archive: Path | None = None
+    recovery_wip_ref: str | None = None
+    leases = state.setdefault("worker_worktrees", {}).setdefault("leases", {})
+    if not isinstance(leases, dict):
+        leases = {}
+        state["worker_worktrees"]["leases"] = leases
 
     existing = _existing_worktree_for_branch(repo_root, branch, exclude_root=True)
     if existing:
         worktree_path = existing
-        reused = True
-        lost_lease_wip_adoption = _lost_lease_replacement_may_adopt_worktree(
-            config,
+        stale_adopted_wip = _recovery_worktree_has_stale_adopted_wip(
             state,
-            request,
             task_id=workspace_task_id,
-            repository_id=repository_id,
-            source_root=repo_root,
-            branch=branch,
             worktree_path=worktree_path,
-            base_ref=base_ref,
-            queue_event_id=queue_event_id,
-            target_agent=target_agent,
+            recovery_receipt_id=str(
+                request.metadata.get("recovery_receipt_id") or ""
+            ),
         )
-        refresh_ok, refresh_status = _refresh_reused_worker_worktree(
-            worktree_path,
-            base_sha,
-            task_id=workspace_task_id,
-            branch=branch,
-            allow_dirty_wip_adoption=lost_lease_wip_adoption,
-        )
-        if refresh_status == "adopted_lost_lease_dirty_wip":
-            request.metadata["fenced_dirty_wip_adoption"] = {
-                "receipt_id": str(
-                    request.metadata.get("recovery_receipt_id") or ""
-                ),
-                "task_id": workspace_task_id,
-                "task_generation": request.metadata.get("task_generation"),
-                "queue_event_id": queue_event_id,
-                "repository_id": repository_id,
-                "branch": branch,
-                "workspace_path": str(worktree_path),
-            }
-        write_activity_log(
-            config,
-            {
-                "type": "worker_worktree_refreshed",
-                "task_id": request.task_id,
-                "target_agent": target_agent,
-                "queue_event_id": queue_event_id,
-                "workspace_branch": branch,
-                "workspace_path": str(worktree_path),
-                "status_root": str(status_root),
-                "workspace_source_root": str(repo_root),
-                "workspace_repository_id": repository_id,
-                "workspace_base_ref": base_ref,
-                "workspace_base_sha": base_sha,
-                "refresh_ok": refresh_ok,
-                "refresh_status": refresh_status,
-                "recovery_receipt_id": (
-                    request.metadata.get("recovery_receipt_id")
-                    if refresh_status == "adopted_lost_lease_dirty_wip"
-                    else None
-                ),
-            },
-        )
-        if not refresh_ok and refresh_status == "skipped_dirty_worktree":
-            message = (
-                f"Cannot lease isolated worker worktree for {workspace_task_id}: "
-                f"reused worktree {worktree_path} has dirty tracked or staged changes. "
-                "Clean or remove that worktree before dispatch."
+        if stale_adopted_wip and _git_dirty_entries(worktree_path):
+            active_roots = active_worker_workspace_roots(config, state)
+            if any(_paths_overlap(worktree_path, active) for active in active_roots):
+                message = (
+                    f"Cannot replace recovery worktree for {workspace_task_id}: "
+                    f"{worktree_path} is still owned by an active worker."
+                )
+                write_activity_log(
+                    config,
+                    {
+                        "type": "dispatch_blocked_worktree_lease",
+                        "task_id": request.task_id,
+                        "workspace_task_id": workspace_task_id,
+                        "target_agent": target_agent,
+                        "queue_event_id": queue_event_id,
+                        "message": message,
+                        "workspace_branch": branch,
+                        "workspace_path": str(worktree_path),
+                        "refresh_status": "active_stale_adopted_wip",
+                    },
+                )
+                return False, message
+            cleanup_settings = worktree_cleanup_settings(config)
+            replaced, replace_status, archive_dir, recovery_ref = (
+                _replace_recovery_worktree_from_base(
+                    repo_root,
+                    worktree_path,
+                    branch=branch,
+                    base_sha=base_sha,
+                    archive_root=_recovery_worktree_archive_root(config),
+                    task_id=workspace_task_id,
+                    max_file_bytes=int(cleanup_settings["archive_max_file_bytes"]),
+                )
             )
             write_activity_log(
                 config,
                 {
-                    "type": "dispatch_blocked_worktree_lease",
+                    "type": "worker_worktree_replaced_after_recovery_wip",
                     "task_id": request.task_id,
                     "workspace_task_id": workspace_task_id,
                     "target_agent": target_agent,
                     "queue_event_id": queue_event_id,
-                    "message": message,
+                    "workspace_branch": branch,
+                    "workspace_path": str(worktree_path),
+                    "workspace_base_sha": base_sha,
+                    "replace_ok": replaced,
+                    "replace_status": replace_status,
+                    "archive_path": str(archive_dir) if archive_dir else None,
+                    "preserved_branch_ref": recovery_ref,
+                },
+            )
+            if not replaced:
+                return False, (
+                    f"Cannot replace stale recovery worktree for {workspace_task_id}: "
+                    f"{replace_status}."
+                )
+            recovery_wip_archive = archive_dir
+            recovery_wip_ref = recovery_ref
+            leases.pop(workspace_task_id, None)
+        else:
+            reused = True
+            lost_lease_wip_adoption = _lost_lease_replacement_may_adopt_worktree(
+                config,
+                state,
+                request,
+                task_id=workspace_task_id,
+                repository_id=repository_id,
+                source_root=repo_root,
+                branch=branch,
+                worktree_path=worktree_path,
+                base_ref=base_ref,
+                queue_event_id=queue_event_id,
+                target_agent=target_agent,
+            )
+            refresh_ok, refresh_status = _refresh_reused_worker_worktree(
+                worktree_path,
+                base_sha,
+                task_id=workspace_task_id,
+                branch=branch,
+                allow_dirty_wip_adoption=lost_lease_wip_adoption,
+            )
+            if refresh_status == "adopted_lost_lease_dirty_wip":
+                request.metadata["fenced_dirty_wip_adoption"] = {
+                    "receipt_id": str(
+                        request.metadata.get("recovery_receipt_id") or ""
+                    ),
+                    "task_id": workspace_task_id,
+                    "task_generation": request.metadata.get("task_generation"),
+                    "queue_event_id": queue_event_id,
+                    "repository_id": repository_id,
+                    "branch": branch,
+                    "workspace_path": str(worktree_path),
+                }
+            write_activity_log(
+                config,
+                {
+                    "type": "worker_worktree_refreshed",
+                    "task_id": request.task_id,
+                    "target_agent": target_agent,
+                    "queue_event_id": queue_event_id,
                     "workspace_branch": branch,
                     "workspace_path": str(worktree_path),
                     "status_root": str(status_root),
                     "workspace_source_root": str(repo_root),
+                    "workspace_repository_id": repository_id,
+                    "workspace_base_ref": base_ref,
                     "workspace_base_sha": base_sha,
+                    "refresh_ok": refresh_ok,
                     "refresh_status": refresh_status,
+                    "recovery_receipt_id": (
+                        request.metadata.get("recovery_receipt_id")
+                        if refresh_status == "adopted_lost_lease_dirty_wip"
+                        else None
+                    ),
                 },
             )
-            return False, message
+            if not refresh_ok and refresh_status == "skipped_dirty_worktree":
+                message = (
+                    f"Cannot lease isolated worker worktree for {workspace_task_id}: "
+                    f"reused worktree {worktree_path} has dirty tracked or staged changes. "
+                    "Clean or remove that worktree before dispatch."
+                )
+                write_activity_log(
+                    config,
+                    {
+                        "type": "dispatch_blocked_worktree_lease",
+                        "task_id": request.task_id,
+                        "workspace_task_id": workspace_task_id,
+                        "target_agent": target_agent,
+                        "queue_event_id": queue_event_id,
+                        "message": message,
+                        "workspace_branch": branch,
+                        "workspace_path": str(worktree_path),
+                        "status_root": str(status_root),
+                        "workspace_source_root": str(repo_root),
+                        "base_sha": base_sha,
+                        "refresh_status": refresh_status,
+                    },
+                )
+                return False, message
 
     if not reused:
         if _branch_checked_out_in_root(repo_root, branch):
@@ -1341,7 +1563,6 @@ def prepare_worker_workspace(
         materialized_context_files = bind_external_worker_context(
             config, request, repository_id
         )
-    leases = state.setdefault("worker_worktrees", {}).setdefault("leases", {})
     leases[workspace_task_id] = {
         "task_id": request.task_id,
         "workspace_task_id": workspace_task_id,
@@ -1359,6 +1580,27 @@ def prepare_worker_workspace(
         "last_used_at": utc_now(),
         "materialized_context_files": materialized_context_files,
     }
+    if adopted_dirty_wip_receipt_id := str(
+        request.metadata.get("recovery_receipt_id") or ""
+    ).strip():
+        # Persist every recovery handoff, including a clean one. This closes
+        # the legacy gap where an adopted tree had no durable receipt and a
+        # later lost lease could inherit it again.
+        leases[workspace_task_id]["recovery_receipt_id"] = (
+            adopted_dirty_wip_receipt_id
+        )
+        leases[workspace_task_id]["recovery_started_at"] = utc_now()
+        if request.metadata.get("fenced_dirty_wip_adoption"):
+            leases[workspace_task_id]["dirty_wip_adoption_receipt_id"] = (
+                adopted_dirty_wip_receipt_id
+            )
+            leases[workspace_task_id]["dirty_wip_adopted_at"] = utc_now()
+    if recovery_wip_archive is not None:
+        leases[workspace_task_id]["replaced_recovery_wip_archive"] = str(
+            recovery_wip_archive
+        )
+    if recovery_wip_ref is not None:
+        leases[workspace_task_id]["replaced_recovery_wip_ref"] = recovery_wip_ref
     write_activity_log(
         config,
         {
