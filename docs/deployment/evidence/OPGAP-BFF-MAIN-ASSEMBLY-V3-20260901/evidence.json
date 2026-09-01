@@ -1,0 +1,37 @@
+{
+  "schema_version": "pantheon.review-evidence.v1",
+  "task_id": "OPGAP-BFF-MAIN-ASSEMBLY-V3-20260901",
+  "title": "Assemble BFF main.py composition root and retire legacy handlers (Training V3 dependency replacement)",
+  "recorded_at": "2026-09-01T18:40:00Z",
+  "owner": "Antigravity2",
+  "reviewer": "Claude",
+  "target_repo": "pantheon",
+  "task_class": "functional",
+  "summary_zh": "以 Training V3 正確依賴重建 BFF main.py composition root，掛載所有具名 domain router，刪除已遷移 legacy handlers 與 read_store.py。",
+  "artifacts": {
+    "implementation_paths": [
+      "services/control-plane/bff/main.py"
+    ],
+    "test_paths": [
+      "services/control-plane/bff/tests/test_bff_main_composition.py"
+    ],
+    "evidence_manifest": "docs/deployment/evidence/OPGAP-BFF-MAIN-ASSEMBLY-V3-20260901/evidence.json"
+  },
+  "scope": {
+    "owned": [
+      "Reconstruct BFF main.py into a pure composition root that includes all domain routers without direct @app route decorators",
+      "Delete read_store.py and ensure zero production callers/imports remain",
+      "Verify clean router assembly, 0 static route shadowing, and 0 route collisions across all mounted domain routers"
+    ],
+    "not_changing": [
+      "Predecessor domain routers already delivered across Waves 1-3",
+      "Core business logic encapsulated within domain service modules"
+    ],
+    "known_gap": []
+  },
+  "root_cause": {
+    "summary": "Historical BFF main.py contained legacy inline route decorators and read_store.py was superseded by ports namespace and domain router packages.",
+    "observed": "main.py had legacy inline route definitions and residual references to read_store.py."
+  },
+  "verified": "pytest services/control-plane/bff/tests/test_bff_main_composition.py services/control-plane/bff/test_architecture_boundaries.py services/control-plane/bff/tests/test_read_store_final_deletion.py services/control-plane/bff/tests/test_training_router.py services/control-plane/bff/test_normalized_route_uniqueness.py services/control-plane/bff/test_route_resolution_no_shadowing.py services/control-plane/bff/test_no_undefined_call_symbols.py -- 36 passed, 1 skipped."
+}

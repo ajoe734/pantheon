@@ -261,6 +261,7 @@ def create_events_router(
     frontend_bff_event_stream: Optional[Callable[..., Any]] = None,
     resolve_session_kind: Optional[Callable[..., str]] = None,
     event_stream_service: Optional[EventStreamService] = None,
+    include_domain_sse_aliases: bool = True,
 ) -> APIRouter:
     """Create canonical BFF Events router.
 
@@ -524,12 +525,28 @@ def create_events_router(
     ) -> StreamingResponse:
         return _stream_channel("journal", last_event_id, authorization)
 
-    @router.get("/bff/sse/deployment/events")
-    async def bff_sse_deployment_events_alias(
-        last_event_id: Optional[str] = Query(default=None, alias="last_event_id"),
-        authorization: Optional[str] = Header(default=None),
-    ) -> StreamingResponse:
-        return _stream_channel("artifact", last_event_id, authorization)
+    if include_domain_sse_aliases:
+        @router.get("/bff/sse/deployment/events")
+        async def bff_sse_deployment_events_alias(
+            last_event_id: Optional[str] = Query(default=None, alias="last_event_id"),
+            authorization: Optional[str] = Header(default=None),
+        ) -> StreamingResponse:
+            return _stream_channel("artifact", last_event_id, authorization)
+
+        @router.get("/bff/sse/agora/signals")
+        async def bff_sse_agora_signals_alias(
+            last_event_id: Optional[str] = Query(default=None, alias="last_event_id"),
+            authorization: Optional[str] = Header(default=None),
+        ) -> StreamingResponse:
+            return _stream_channel("signal", last_event_id, authorization)
+
+        @router.get("/bff/sse/agora/sessions/{sessionId}")
+        async def bff_sse_agora_session_alias(
+            sessionId: str,
+            last_event_id: Optional[str] = Query(default=None, alias="last_event_id"),
+            authorization: Optional[str] = Header(default=None),
+        ) -> StreamingResponse:
+            return _stream_channel("ask", last_event_id, authorization)
 
     @router.get("/bff/sse/review/updates")
     async def bff_sse_review_updates_alias(
@@ -537,21 +554,6 @@ def create_events_router(
         authorization: Optional[str] = Header(default=None),
     ) -> StreamingResponse:
         return _stream_channel("approval", last_event_id, authorization)
-
-    @router.get("/bff/sse/agora/signals")
-    async def bff_sse_agora_signals_alias(
-        last_event_id: Optional[str] = Query(default=None, alias="last_event_id"),
-        authorization: Optional[str] = Header(default=None),
-    ) -> StreamingResponse:
-        return _stream_channel("signal", last_event_id, authorization)
-
-    @router.get("/bff/sse/agora/sessions/{sessionId}")
-    async def bff_sse_agora_session_alias(
-        sessionId: str,
-        last_event_id: Optional[str] = Query(default=None, alias="last_event_id"),
-        authorization: Optional[str] = Header(default=None),
-    ) -> StreamingResponse:
-        return _stream_channel("ask", last_event_id, authorization)
 
     @router.post("/api/v1/internal/sse/publish")
     async def publish_sse_event(

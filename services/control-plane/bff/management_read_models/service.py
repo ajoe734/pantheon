@@ -77,14 +77,14 @@ except ImportError:
 from pathlib import Path
 
 try:
-    from read_store import (
+    from models import (
         redact_evidence_refs,
         EVIDENCE_CAPABILITY_MAP,
         SOURCE_TYPE_TO_EVIDENCE_KIND,
     )
 except ImportError:
     try:
-        from services.control_plane.bff.read_store import (  # type: ignore[no-redef]
+        from services.control_plane.bff.models import (  # type: ignore[no-redef]
             redact_evidence_refs,
             EVIDENCE_CAPABILITY_MAP,
             SOURCE_TYPE_TO_EVIDENCE_KIND,
@@ -4808,12 +4808,7 @@ class ManagementService:
                 except Exception:
                     stored_evidence_refs = []
         else:
-            try:
-                import read_store as _rs
-                if hasattr(_rs, "list_evidence_refs"):
-                    stored_evidence_refs = _rs.list_evidence_refs() or []
-            except Exception:
-                stored_evidence_refs = []
+            stored_evidence_refs = []
 
         evidence_refs = [*current_run_evidence_refs, *stored_evidence_refs]
 

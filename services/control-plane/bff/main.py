@@ -45,10 +45,14 @@ def _resolve_param(val: Any) -> Any:
         return val.default
     return val
 
-sys.path.insert(0, os.path.dirname(__file__))
 _REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 if _REPO_ROOT not in sys.path:
-    sys.path.insert(0, _REPO_ROOT)
+    sys.path.append(_REPO_ROOT)
+if os.path.dirname(__file__) not in sys.path:
+    sys.path.insert(0, os.path.dirname(__file__))
+else:
+    sys.path.remove(os.path.dirname(__file__))
+    sys.path.insert(0, os.path.dirname(__file__))
 _PERSONA_SERVICE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "persona"))
 if _PERSONA_SERVICE_DIR not in sys.path:
     sys.path.insert(0, _PERSONA_SERVICE_DIR)
@@ -206,7 +210,7 @@ from operations_read_model import (
     diagnostic as ops_read_model_diagnostic,
     sanitize_metric as ops_read_model_sanitize_metric,
 )
-from read_store import redact_evidence_refs
+from models import redact_evidence_refs
 try:
     from ports import (
         ReadSurfacePorts,
@@ -1518,7 +1522,6 @@ def _issue_dev_login_jwt(profile: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-@app.post("/bff/auth/dev-login")
 async def bff_auth_dev_login(payload: Dict[str, Any] = Body(default_factory=dict)):
     """Dev-only client-credentials exchange for short-lived BFF JWTs.
 
@@ -7225,7 +7228,6 @@ def _sem_refresh_identity(credential: Dict[str, str], *, mfa_token: Optional[str
     return identity
 
 
-@app.get("/bff/me")
 async def bff_me(
     response: Response,
     tenant_id: Optional[str] = Query(default=None),
@@ -7371,7 +7373,6 @@ def _safe_provider_readiness() -> Dict[str, Any]:
     return result
 
 
-@app.get("/bff/auth/readiness")
 async def bff_auth_readiness(
     authorization: Optional[str] = Header(default=None),
     pantheon_session: Optional[str] = Cookie(default=None),
@@ -7575,7 +7576,6 @@ def _sem_optional_idempotency_key(
     return _first_nonblank(idempotency_key, x_idempotency_key)
 
 
-@app.post("/bff/auth/refresh")
 async def bff_auth_refresh(
     payload: Dict[str, Any] = Body(default_factory=dict),
     authorization: Optional[str] = Header(default=None),
@@ -7656,7 +7656,6 @@ async def bff_auth_refresh(
     return result
 
 
-@app.post("/bff/logout")
 async def bff_logout(
     response: Response,
     payload: Dict[str, Any] = Body(default_factory=dict),
@@ -7699,7 +7698,6 @@ async def bff_logout(
     return result
 
 
-@app.post("/bff/switch-tenant")
 async def bff_switch_tenant(
     payload: Dict[str, Any] = Body(default_factory=dict),
     authorization: Optional[str] = Header(default=None),
@@ -7714,7 +7712,6 @@ async def bff_switch_tenant(
     return _sem_session_current_response(identity, operation_type="switch_tenant", tenant=tenant)
 
 
-@app.patch("/bff/me/locale")
 async def bff_update_locale(
     payload: Dict[str, Any] = Body(default_factory=dict),
     authorization: Optional[str] = Header(default=None),
@@ -14878,7 +14875,6 @@ async def _read_management_source_connector_registry(
         }
 
 
-@app.get("/health")
 async def health():
     started = time.monotonic()
     payload = {
@@ -14891,7 +14887,6 @@ async def health():
     return payload
 
 
-@app.get("/api/v1/settings")
 async def get_settings(
     authorization: Optional[str] = Header(default=None),
 ):
@@ -14899,7 +14894,6 @@ async def get_settings(
     return settings_store.get()
 
 
-@app.post("/api/v1/settings")
 async def update_settings(
     body: Dict[str, Any] = Body(...),
     authorization: Optional[str] = Header(default=None),
@@ -14922,7 +14916,6 @@ async def update_settings(
     return {"settings": settings}
 
 
-@app.get("/api/v1/settings/export")
 async def export_settings(
     authorization: Optional[str] = Header(default=None),
 ):
@@ -14930,7 +14923,6 @@ async def export_settings(
     return {"jsonData": settings_store.export_json()}
 
 
-@app.post("/api/v1/settings/import")
 async def import_settings(
     body: Dict[str, Any] = Body(...),
     authorization: Optional[str] = Header(default=None),
@@ -14967,7 +14959,6 @@ async def import_settings(
 # --------------------------------------------------------------------------- #
 
 
-@app.get("/api/v1/personas")
 async def list_personas(
     lifecycle_state: Optional[str] = None,
     mandate: Optional[str] = None,
@@ -14995,7 +14986,6 @@ async def list_personas(
     }
 
 
-@app.get("/api/v1/personas/{persona_id}")
 async def get_persona_detail(persona_id: str, authorization: Optional[str] = Header(default=None)):
     """PS-02: Persona Detail with bindings."""
     identity = _extract_identity(authorization)
@@ -15028,7 +15018,6 @@ async def get_persona_detail(persona_id: str, authorization: Optional[str] = Hea
     }
 
 
-@app.get("/api/v1/personas/{persona_id}/sessions")
 async def list_persona_sessions(
     persona_id: str,
     status: Optional[str] = None,
@@ -15062,7 +15051,6 @@ async def list_persona_sessions(
     }
 
 
-@app.get("/api/v1/sessions/{session_id}")
 async def get_session_detail(session_id: str, authorization: Optional[str] = Header(default=None)):
     """PS-04: Session detail with capability snapshot."""
     identity = _extract_identity(authorization)
@@ -15099,7 +15087,6 @@ async def get_session_detail(session_id: str, authorization: Optional[str] = Hea
     }
 
 
-@app.get("/api/v1/personas/{persona_id}/teaching")
 async def list_persona_teaching_sessions(
     persona_id: str,
     status: Optional[str] = None,
@@ -15133,7 +15120,6 @@ async def list_persona_teaching_sessions(
     }
 
 
-@app.get("/api/v1/personas/{persona_id}/capabilities")
 async def get_persona_capabilities(
     persona_id: str, authorization: Optional[str] = Header(default=None),
 ):
@@ -15175,7 +15161,6 @@ async def get_persona_capabilities(
     }
 
 
-@app.get("/api/v1/capital-pools")
 async def list_capital_pools(
     status: Optional[str] = None,
     risk_policy_ref: Optional[str] = None,
@@ -15202,7 +15187,6 @@ async def list_capital_pools(
 
 
 
-@app.get("/api/v1/approval-decisions")
 async def list_approval_decisions(
     outcome: Optional[str] = None,
     state: Optional[str] = None,
@@ -15229,7 +15213,6 @@ async def list_approval_decisions(
     }
 
 
-@app.post("/api/v1/approval-decisions", status_code=202)
 async def create_approval_decision(
     payload: Dict[str, Any] = Body(...),
     authorization: Optional[str] = Header(default=None),
@@ -15396,7 +15379,6 @@ async def create_approval_decision(
     return result
 
 
-@app.get("/api/v1/approval-decisions/{decision_id}")
 async def get_approval_decision_detail(
     decision_id: str, authorization: Optional[str] = Header(default=None),
 ):
@@ -15436,7 +15418,6 @@ async def get_approval_decision_detail(
 # --------------------------------------------------------------------------- #
 
 
-@app.get("/api/v1/capital-pools/{pool_id}")
 async def get_capital_pool(pool_id: str, authorization: Optional[str] = Header(default=None)):
     identity = _extract_identity(authorization)
     _require_read_role(identity)
@@ -15772,7 +15753,6 @@ def _shell_summary_session(identity: OperatorIdentity, *, checked_at: str) -> Di
     }
 
 
-@app.get("/api/v1/operator/paper-live-drift/{runtime_id}")
 async def get_operator_paper_live_drift(
     runtime_id: str,
     authorization: Optional[str] = Header(default=None),
@@ -15794,7 +15774,6 @@ async def get_operator_paper_live_drift(
     return _build_operator_paper_live_drift_payload(runtime_id, snapshot_at)
 
 
-@app.get("/api/v1/workbench/consultation")
 async def get_consultation_workbench_overview(
     authorization: Optional[str] = Header(default=None),
 ):
@@ -15803,7 +15782,6 @@ async def get_consultation_workbench_overview(
     return _build_consultation_workbench_overview(utc_now())
 
 
-@app.post("/api/v1/consult/requests")
 async def create_consult_request(
     payload: Dict[str, Any] = Body(...),
     authorization: Optional[str] = Header(default=None),
@@ -15841,7 +15819,6 @@ async def create_consult_request(
     }
 
 
-@app.get("/api/v1/consult/requests")
 async def list_consult_requests(
     status: Optional[str] = None,
     target_type: Optional[str] = None,
@@ -15882,7 +15859,6 @@ async def list_consult_requests(
     }
 
 
-@app.get("/api/v1/consult/requests/{request_id}")
 async def get_consult_request(
     request_id: str,
     authorization: Optional[str] = Header(default=None),
@@ -15919,7 +15895,6 @@ async def get_consult_request(
     return payload
 
 
-@app.post("/api/v1/consult/requests/{request_id}/cancel")
 async def cancel_consult_request(
     request_id: str,
     authorization: Optional[str] = Header(default=None),
@@ -15977,7 +15952,6 @@ async def cancel_consult_request(
     }
 
 
-@app.get("/api/v1/committees")
 async def list_committees(
     quorum_state: Optional[str] = None,
     consensus_state: Optional[str] = None,
@@ -16026,7 +16000,6 @@ async def list_committees(
     }
 
 
-@app.get("/api/v1/committees/{committee_id}")
 async def get_committee(
     committee_id: str,
     authorization: Optional[str] = Header(default=None),
@@ -16050,7 +16023,6 @@ async def get_committee(
     )
 
 
-@app.get("/api/v1/consult/memos")
 async def list_consult_memos(
     status: Optional[str] = None,
     page_token: Optional[str] = None,
@@ -16092,7 +16064,6 @@ async def list_consult_memos(
     }
 
 
-@app.get("/api/v1/consult/memos/{memo_id}")
 async def get_consult_memo(
     memo_id: str,
     authorization: Optional[str] = Header(default=None),
@@ -16116,7 +16087,6 @@ async def get_consult_memo(
     )
 
 
-@app.get("/api/v1/workbench/knowledge")
 async def get_knowledge_workbench_overview(
     authorization: Optional[str] = Header(default=None),
 ):
@@ -16332,7 +16302,6 @@ def _openclaw_command_payload(
     }
 
 
-@app.get("/api/v1/operator/research/oss-activation-ready")
 async def get_research_oss_activation_ready(
     activity_limit: int = Query(default=20, ge=1, le=100),
     authorization: Optional[str] = Header(default=None),
@@ -16345,7 +16314,6 @@ async def get_research_oss_activation_ready(
     )
 
 
-@app.get("/api/v1/operator/research/oss-preactivation")
 async def get_research_oss_preactivation(
     activity_limit: int = Query(default=20, ge=1, le=100),
     authorization: Optional[str] = Header(default=None),
@@ -16358,7 +16326,6 @@ async def get_research_oss_preactivation(
     )
 
 
-@app.get("/api/v1/operator/openclaw/ops")
 async def get_openclaw_ops(
     session_limit: int = Query(default=25, ge=1, le=100),
     audit_limit: int = Query(default=20, ge=1, le=100),
@@ -16386,7 +16353,6 @@ async def get_openclaw_ops(
     )
 
 
-@app.get("/api/v1/operator/openclaw/tool-workflow-bridge")
 async def get_openclaw_tool_workflow_bridge(
     session_limit: int = Query(default=25, ge=1, le=100),
     audit_limit: int = Query(default=20, ge=1, le=100),
@@ -16414,7 +16380,6 @@ async def get_openclaw_tool_workflow_bridge(
     )
 
 
-@app.post("/api/v1/operator/openclaw/sessions")
 async def create_openclaw_session(
     payload: Dict[str, Any] = Body(...),
     authorization: Optional[str] = Header(default=None),
@@ -16462,7 +16427,6 @@ async def create_openclaw_session(
     )
 
 
-@app.post("/api/v1/operator/openclaw/sessions/{session_id}/cancel")
 async def cancel_openclaw_session(
     session_id: str,
     authorization: Optional[str] = Header(default=None),
@@ -16497,7 +16461,6 @@ async def cancel_openclaw_session(
 # --------------------------------------------------------------------------- #
 
 
-@app.get("/api/v1/operator/openclaw/live-gate/status")
 async def get_openclaw_live_gate_status(
     authorization: Optional[str] = Header(default=None),
 ):
@@ -16524,7 +16487,6 @@ async def get_openclaw_live_gate_status(
     )
 
 
-@app.get("/api/v1/operator/openclaw/live-gate/audit")
 async def get_openclaw_live_gate_audit(
     capital_pool_id: Optional[str] = None,
     limit: int = 100,
@@ -16557,14 +16519,6 @@ async def get_openclaw_live_gate_audit(
     )
 
 
-@app.get(
-    "/api/v1/operator/openclaw/broker-adapter-readiness",
-    operation_id="get_openclaw_broker_adapter_readiness_legacy",
-)
-@app.get(
-    "/api/v1/operator/openclaw/broker/adapter-readiness",
-    operation_id="get_openclaw_broker_adapter_readiness",
-)
 async def get_openclaw_broker_adapter_readiness(
     authorization: Optional[str] = Header(default=None),
 ):
@@ -16667,7 +16621,6 @@ def _source_search_command_payload(
     }
 
 
-@app.get("/api/v1/operator/source/ops")
 async def get_source_ops(
     crawl_run_limit: int = Query(default=50, ge=1, le=200),
     dlq_status: Optional[str] = Query(default=None),
@@ -16701,7 +16654,6 @@ async def get_source_ops(
     }
 
 
-@app.get("/api/v1/operator/search/ops")
 async def get_search_ops(
     pipeline_run_limit: int = Query(default=50, ge=1, le=200),
     authorization: Optional[str] = Header(default=None),
@@ -16732,7 +16684,6 @@ async def get_search_ops(
     }
 
 
-@app.post("/api/v1/operator/source/dlq/replay", status_code=202)
 async def replay_source_dlq(
     payload: Dict[str, Any] = Body(default_factory=dict),
     authorization: Optional[str] = Header(default=None),
@@ -16769,7 +16720,6 @@ async def replay_source_dlq(
     )
 
 
-@app.post("/api/v1/operator/source/frontier/{frontier_id}/replay", status_code=202)
 async def replay_source_frontier(
     frontier_id: str,
     payload: Dict[str, Any] = Body(default_factory=dict),
@@ -16810,7 +16760,6 @@ async def replay_source_frontier(
     )
 
 
-@app.post("/api/v1/operator/search/index/refresh", status_code=202)
 async def trigger_search_index_refresh(
     payload: Dict[str, Any] = Body(default_factory=dict),
     authorization: Optional[str] = Header(default=None),
@@ -16846,7 +16795,6 @@ async def trigger_search_index_refresh(
     )
 
 
-@app.post("/api/v1/operator/search/index/materialize", status_code=202)
 async def trigger_search_index_materialize(
     authorization: Optional[str] = Header(default=None),
     x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
@@ -16875,7 +16823,6 @@ async def trigger_search_index_materialize(
     )
 
 
-@app.post("/api/v1/research/tickets")
 async def create_research_ticket(
     payload: Dict[str, Any] = Body(...),
     authorization: Optional[str] = Header(default=None),
@@ -16904,7 +16851,6 @@ async def create_research_ticket(
     }
 
 
-@app.get("/api/v1/research/tickets")
 async def list_research_tickets(
     status: Optional[str] = None,
     owner: Optional[str] = None,
@@ -16948,7 +16894,6 @@ async def list_research_tickets(
     }
 
 
-@app.get("/api/v1/research/tickets/{ticket_id}")
 async def get_research_ticket(
     ticket_id: str,
     authorization: Optional[str] = Header(default=None),
@@ -16988,7 +16933,6 @@ async def get_research_ticket(
     return payload
 
 
-@app.patch("/api/v1/research/tickets/{ticket_id}")
 async def patch_research_ticket(
     ticket_id: str,
     payload: Dict[str, Any] = Body(...),
@@ -17029,7 +16973,6 @@ async def patch_research_ticket(
     }
 
 
-@app.get("/api/v1/research/search")
 async def search_research_corpus(
     q: str,
     match_type: str = "all",
@@ -17113,7 +17056,6 @@ async def search_research_corpus(
     }
 
 
-@app.get("/api/v1/research/source-connectors")
 async def list_source_connectors(
     authorization: Optional[str] = Header(default=None),
 ):
@@ -17137,7 +17079,6 @@ async def list_source_connectors(
     }
 
 
-@app.get("/api/v1/research/source-change-proposals")
 async def list_source_change_proposals(
     status: Optional[str] = None,
     proposal_type: Optional[str] = None,
@@ -17170,7 +17111,6 @@ async def list_source_change_proposals(
     }
 
 
-@app.get("/api/v1/research/analysis")
 async def list_research_analysis(
     ticket_id: Optional[str] = None,
     experiment_id: Optional[str] = None,
@@ -17239,7 +17179,6 @@ async def list_research_analysis(
     }
 
 
-@app.get("/api/v1/research/analysis/{analysis_id}")
 async def get_research_analysis(
     analysis_id: str,
     authorization: Optional[str] = Header(default=None),
@@ -17416,7 +17355,6 @@ def _rw04_validate_run_config(run_config: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-@app.post("/api/v1/experiments/launch")
 async def launch_experiment(
     payload: Dict[str, Any] = Body(...),
     authorization: Optional[str] = Header(default=None),
@@ -17465,7 +17403,6 @@ async def launch_experiment(
     }
 
 
-@app.get("/api/v1/experiments")
 async def api_v1_list_experiments(
     ticket_id: Optional[str] = None,
     status: Optional[str] = None,
@@ -17520,7 +17457,6 @@ async def api_v1_list_experiments(
     }
 
 
-@app.get("/api/v1/experiments/{experiment_id}")
 async def api_v1_get_experiment(
     experiment_id: str,
     authorization: Optional[str] = Header(default=None),
@@ -17554,7 +17490,6 @@ async def api_v1_get_experiment(
     return payload
 
 
-@app.post("/api/v1/experiments/{experiment_id}/cancel")
 async def cancel_experiment(
     experiment_id: str,
     payload: Dict[str, Any] = Body(...),
@@ -17608,7 +17543,6 @@ async def cancel_experiment(
     }
 
 
-@app.get("/api/v1/artifacts")
 async def list_artifacts(
     experiment_id: Optional[str] = None,
     ticket_id: Optional[str] = None,
@@ -17649,7 +17583,6 @@ async def list_artifacts(
     }
 
 
-@app.get("/api/v1/artifacts/compare")
 async def compare_artifacts(
     artifact_ids: str,
     authorization: Optional[str] = Header(default=None),
@@ -17722,7 +17655,6 @@ async def compare_artifacts(
     return payload
 
 
-@app.get("/api/v1/artifacts/{artifact_id}")
 async def get_artifact(
     artifact_id: str,
     authorization: Optional[str] = Header(default=None),
@@ -17748,7 +17680,6 @@ async def get_artifact(
     return payload
 
 
-@app.post("/api/v1/knowledge/notes", status_code=201)
 async def create_research_note(
     payload: Dict[str, Any] = Body(...),
     authorization: Optional[str] = Header(default=None),
@@ -17828,7 +17759,6 @@ async def create_research_note(
     }
 
 
-@app.get("/api/v1/knowledge/notes")
 async def list_research_notes(
     owner_ref: Optional[str] = None,
     attachment_type: Optional[str] = None,
@@ -17913,7 +17843,6 @@ async def list_research_notes(
     }
 
 
-@app.get("/api/v1/knowledge/notes/{note_id}")
 async def get_research_note_detail(
     note_id: str,
     authorization: Optional[str] = Header(default=None),
@@ -17966,7 +17895,6 @@ async def get_research_note_detail(
     }
 
 
-@app.get("/api/v1/knowledge/evidence")
 async def list_evidence_refs(
     linked_entity_type: Optional[str] = None,
     linked_entity_ref: Optional[str] = None,
@@ -18084,7 +18012,6 @@ async def list_evidence_refs(
     }
 
 
-@app.get("/api/v1/knowledge/evidence/{ref_id}")
 async def get_evidence_ref_detail(
     ref_id: str,
     authorization: Optional[str] = Header(default=None),
@@ -18186,7 +18113,6 @@ async def get_evidence_ref_detail(
     }
 
 
-@app.get("/api/v1/knowledge/insights")
 async def list_insight_cards(
     status: str = Query(default="active"),
     tag: Optional[str] = None,
@@ -18324,7 +18250,6 @@ async def list_insight_cards(
     }
 
 
-@app.get("/api/v1/knowledge/insights/{insight_id}")
 async def get_insight_card_detail(
     insight_id: str,
     authorization: Optional[str] = Header(default=None),
@@ -18386,7 +18311,6 @@ async def get_insight_card_detail(
     }
 
 
-@app.get("/api/v1/knowledge/strategy-specs")
 async def list_strategy_specs(
     lifecycle_state: str = Query(default="all"),
     source_kind: Optional[str] = None,
@@ -18437,7 +18361,6 @@ async def list_strategy_specs(
     }
 
 
-@app.get("/api/v1/knowledge/strategy-specs/{strategy_id}")
 async def get_strategy_spec_detail(
     strategy_id: str,
     version: str = Query(default="current"),
@@ -18506,7 +18429,6 @@ async def get_strategy_spec_detail(
     }
 
 
-@app.get("/api/v1/knowledge/strategy-specs/{strategy_id}/versions")
 async def list_strategy_spec_versions(
     strategy_id: str,
     authorization: Optional[str] = Header(default=None),
@@ -18540,7 +18462,6 @@ async def list_strategy_spec_versions(
     }
 
 
-@app.get("/api/v1/knowledge/strategy-specs/{strategy_id}/compare")
 async def compare_strategy_spec_versions(
     strategy_id: str,
     left_version: Optional[str] = None,
@@ -18640,7 +18561,6 @@ def _kw01_surface_state(
     return "ok"
 
 
-@app.get("/api/v1/knowledge/memory")
 async def list_institutional_memory(
     knowledge_type: Optional[str] = None,
     scope: Optional[str] = None,
@@ -18697,7 +18617,6 @@ async def list_institutional_memory(
     }
 
 
-@app.get("/api/v1/knowledge/memory/{entry_id}")
 async def get_institutional_memory_entry(
     entry_id: str,
     authorization: Optional[str] = Header(default=None),
@@ -18768,7 +18687,6 @@ def _approval_queue_allowed_actions_present(item: Dict[str, Any]) -> bool:
     return all(isinstance(allowed_actions.get(field), bool) for field in required_fields)
 
 
-@app.get("/api/v1/operator/governance/review-queue")
 async def list_governance_review_queue(
     item_type: Optional[str] = None,
     risk_level: Optional[str] = None,
@@ -18844,7 +18762,6 @@ async def list_governance_review_queue(
     }
 
 
-@app.get("/api/v1/operator/governance/approval-queue")
 async def list_governance_approval_queue(
     decision_type: Optional[str] = None,
     risk_level: Optional[str] = None,
@@ -18902,7 +18819,6 @@ async def list_governance_approval_queue(
     }
 
 
-@app.get("/api/v1/operator/rollback-review/{rollback_id}")
 async def get_rollback_review(rollback_id: str, authorization: Optional[str] = Header(default=None)):
     identity = _extract_identity(authorization)
     _require_read_role(identity)
@@ -18946,7 +18862,6 @@ async def get_rollback_review(rollback_id: str, authorization: Optional[str] = H
     return payload
 
 
-@app.get("/api/v1/operator/governance/audit")
 async def list_governance_audit_trail(
     actor: Optional[str] = None,
     action_type: Optional[str] = None,
@@ -19007,7 +18922,6 @@ async def list_governance_audit_trail(
 
 
 
-@app.get("/api/v1/postmortems")
 async def list_postmortems(
     time_range: Optional[str] = None,
     authorization: Optional[str] = Header(default=None),
@@ -19026,7 +18940,6 @@ async def list_postmortems(
     }
 
 
-@app.get("/api/v1/postmortems/{report_id}")
 async def get_postmortem(report_id: str, authorization: Optional[str] = Header(default=None)):
     """IN-04: Postmortem Detail."""
     identity = _extract_identity(authorization)
@@ -19062,7 +18975,6 @@ async def get_postmortem(report_id: str, authorization: Optional[str] = Header(d
 # --------------------------------------------------------------------------- #
 
 
-@app.get("/api/v1/operator/persona-management/{persona_id}")
 async def get_persona_management(
     persona_id: str,
     snapshot: str = "preferred",
@@ -19264,7 +19176,6 @@ async def get_persona_management(
 # --------------------------------------------------------------------------- #
 
 
-@app.get("/api/v1/evolution-decisions")
 async def list_evolution_decisions(
     action_type: Optional[str] = None,
     risk_level: Optional[str] = None,
@@ -19296,7 +19207,6 @@ async def list_evolution_decisions(
     }
 
 
-@app.get("/api/v1/evolution-decisions/{decision_id}")
 async def get_evolution_decision(
     decision_id: str, authorization: Optional[str] = Header(default=None),
 ):
@@ -19318,7 +19228,6 @@ async def get_evolution_decision(
     return payload
 
 
-@app.get("/api/v1/freeze-orders")
 async def list_freeze_orders(
     status: Optional[str] = None,
     scope: Optional[str] = None,
@@ -19339,7 +19248,6 @@ async def list_freeze_orders(
     }
 
 
-@app.get("/api/v1/rollbacks")
 async def list_rollbacks(
     runtime_id: Optional[str] = None,
     action_type: Optional[str] = None,
@@ -19365,7 +19273,6 @@ async def list_rollbacks(
     }
 
 
-@app.get("/api/v1/operator/mutation-review/{decision_id}")
 async def get_mutation_review(
     decision_id: str,
     authorization: Optional[str] = Header(default=None),
@@ -19432,7 +19339,6 @@ async def get_mutation_review(
 # --------------------------------------------------------------------------- #
 
 
-@app.get("/api/v1/lineage")
 async def list_lineage(
     artifact_id: Optional[str] = None,
     page_token: Optional[str] = None,
@@ -19464,7 +19370,6 @@ async def list_lineage(
     }
 
 
-@app.get("/api/v1/lineage/edges/{edge_id}")
 async def get_lineage_edge(
     edge_id: str,
     authorization: Optional[str] = Header(default=None),
@@ -19487,7 +19392,6 @@ async def get_lineage_edge(
     return payload
 
 
-@app.get("/api/v1/lineage/graph")
 async def get_lineage_graph(
     root_type: Optional[str] = None,
     root_id: str = Query(...),
@@ -19519,7 +19423,6 @@ async def get_lineage_graph(
     }
 
 
-@app.get("/api/v1/lineage/inspiration/{artifact_id}")
 async def get_inspiration_graph(
     artifact_id: str,
     authorization: Optional[str] = Header(default=None),
@@ -19555,7 +19458,6 @@ async def get_inspiration_graph(
 # --------------------------------------------------------------------------- #
 
 
-@app.get("/api/v1/telemetry")
 async def list_telemetry(
     pool_id: Optional[str] = None,
     artifact_id: Optional[str] = None,
@@ -19600,7 +19502,6 @@ async def list_telemetry(
     }
 
 
-@app.get("/api/v1/telemetry/{runtime_id}/summary")
 async def get_telemetry_summary(
     runtime_id: str,
     time_range: Optional[str] = None,
@@ -19628,7 +19529,6 @@ async def get_telemetry_summary(
     }
 
 
-@app.get("/api/v1/telemetry/{artifact_id}/performance")
 async def get_telemetry_performance(
     artifact_id: str,
     time_range: Optional[str] = None,
@@ -19663,7 +19563,6 @@ async def get_telemetry_performance(
 # --------------------------------------------------------------------------- #
 
 
-@app.get("/api/v1/personas/{persona_id}/consultations")
 def list_consultations(
     persona_id: str,
     consultation_type: Optional[str] = Query(default=None, alias="filter.consultation_type"),
@@ -19729,7 +19628,6 @@ def list_consultations(
     }
 
 
-@app.get("/api/v1/consultations/{session_id}")
 def get_consultation(
     session_id: str,
     authorization: Optional[str] = Header(default=None),
@@ -19763,7 +19661,6 @@ def get_consultation(
     }
 
 
-@app.get("/api/v1/consultations/{session_id}/participants")
 def get_consultation_participants(
     session_id: str,
     authorization: Optional[str] = Header(default=None),
@@ -19799,7 +19696,6 @@ def get_consultation_participants(
     }
 
 
-@app.get("/api/v1/consultations/{session_id}/outcome")
 def get_consultation_outcome(
     session_id: str,
     authorization: Optional[str] = Header(default=None),
@@ -19825,7 +19721,6 @@ def get_consultation_outcome(
     }
 
 
-@app.get("/api/v1/consultations/{session_id}/evidence")
 def get_consultation_evidence(
     session_id: str,
     authorization: Optional[str] = Header(default=None),
@@ -19859,7 +19754,6 @@ def get_consultation_evidence(
     }
 
 
-@app.get("/api/v1/consultations/{session_id}/transcript")
 def get_consultation_transcript(
     session_id: str,
     page_token: Optional[str] = None,
@@ -19888,7 +19782,6 @@ def get_consultation_transcript(
     return transcript
 
 
-@app.get("/api/v1/personas/{persona_id}/consult-policy")
 def get_consult_policy(
     persona_id: str,
     authorization: Optional[str] = Header(default=None),
@@ -21346,14 +21239,6 @@ def _require_mcp_action_admitted(
         )
 
 
-@app.post(
-    "/bff/v1/mcp/servers/{server_id}/import-tools",
-    response_model=CommandResponse[McpToolImportData],
-)
-@app.post(
-    "/bff/mcp-servers/{server_id}/import-tools",
-    response_model=CommandResponse[McpToolImportData],
-)
 async def import_mcp_server_tools(
     server_id: str,
     payload: Dict[str, Any] = Body(...),
@@ -21527,10 +21412,6 @@ def _resolve_mcp_server_id_for_tool(
     return matches[0]
 
 
-@app.post(
-    "/bff/mcp-tools/{tool_id}/{action}",
-    response_model=CommandResponse[McpToolActionData],
-)
 async def admit_mcp_tool_action_alias(
     tool_id: str,
     action: McpToolActionVerb,
@@ -21570,10 +21451,6 @@ async def admit_mcp_tool_action_alias(
     )
 
 
-@app.post(
-    "/bff/v1/mcp/servers/{server_id}/tools/{tool_id}/actions/{action}",
-    response_model=CommandResponse[McpToolActionData],
-)
 async def admit_mcp_tool_action(
     server_id: str,
     tool_id: str,
@@ -21670,7 +21547,6 @@ async def admit_mcp_tool_action(
 # BFF SSE resync surfaces (BFF-FINAL-009)
 # --------------------------------------------------------------------------- #
 
-@app.get("/bff/approvals")
 async def list_bff_approvals(
     authorization: Optional[str] = Header(default=None),
 ):
@@ -21932,7 +21808,6 @@ def _stable_capital_resource_id(
     ).hexdigest()[:16]
     return f"{prefix}-{digest}"
 
-@app.get("/bff/capital-pools")
 async def bff_list_capital_pools(
     status: Optional[str] = None,
     risk_policy_ref: Optional[str] = None,
@@ -22045,7 +21920,6 @@ async def bff_list_capital_pools(
     }
 
 
-@app.post("/bff/capital-pools", status_code=201)
 async def bff_create_capital_pool(
     payload: Dict[str, Any] = Body(...),
     authorization: Optional[str] = Header(default=None),
@@ -22137,7 +22011,6 @@ async def bff_create_capital_pool(
     return result
 
 
-@app.get("/bff/capital-pools/{pool_id}")
 async def bff_get_capital_pool(
     pool_id: str,
     authorization: Optional[str] = Header(default=None),
@@ -22210,7 +22083,6 @@ async def bff_get_capital_pool(
     }
 
 
-@app.patch("/bff/capital-pools/{pool_id}")
 async def bff_patch_capital_pool(
     pool_id: str,
     payload: Dict[str, Any] = Body(...),
@@ -22252,7 +22124,6 @@ async def bff_patch_capital_pool(
     return result
 
 
-@app.post("/bff/capital-pools/{pool_id}/actions/{action_id}", status_code=202)
 async def bff_capital_pool_action(
     pool_id: str,
     action_id: str,
@@ -23049,10 +22920,6 @@ def _ppl_alloc_009_wait_for_telemetry_readback(
     )
 
 
-@app.post(
-    "/bff/management/personas/{persona_id}/ppl-alloc-009-paper-eligibility-proof",
-    status_code=202,
-)
 async def bff_ppl_alloc_009_paper_eligibility_proof(
     persona_id: str,
     payload: Dict[str, Any] = Body(...),
@@ -23734,7 +23601,6 @@ def _ppl_alloc_009_paper_rebalance_authority(
         )
     return True
 
-@app.post("/bff/management/allocation-policy/evaluate")
 async def bff_evaluate_persona_allocation_policy(
     payload: Dict[str, Any] = Body(...),
     authorization: Optional[str] = Header(default=None),
@@ -24116,7 +23982,6 @@ def _submit_rebalance_evidence_record(
     )
 
 
-@app.post("/bff/rebalances/{rebalance_id}/approve", status_code=201)
 async def bff_approve_rebalance_apply(
     rebalance_id: str,
     payload: Dict[str, Any] = Body(default_factory=dict),
@@ -24192,7 +24057,6 @@ async def bff_approve_rebalance_apply(
     }
 
 
-@app.post("/bff/rebalances/{rebalance_id}/two-man-sign", status_code=202)
 async def bff_sign_rebalance_apply(
     rebalance_id: str,
     payload: Dict[str, Any] = Body(default_factory=dict),
@@ -24297,7 +24161,6 @@ async def bff_sign_rebalance_apply(
     }
 
 
-@app.get("/bff/rebalances")
 async def bff_list_rebalances(
     status: Optional[str] = None,
     pool_id: Optional[str] = None,
@@ -24322,7 +24185,6 @@ async def bff_list_rebalances(
     }
 
 
-@app.post("/bff/rebalances", status_code=202)
 async def bff_create_rebalance(
     payload: Dict[str, Any] = Body(...),
     authorization: Optional[str] = Header(default=None),
@@ -24540,7 +24402,6 @@ async def bff_create_rebalance(
     return combined
 
 
-@app.post("/bff/rebalances/{rebalance_id}/apply", status_code=202)
 async def bff_apply_rebalance_proposal(
     rebalance_id: str,
     background_tasks: BackgroundTasks,
@@ -24648,7 +24509,6 @@ async def bff_apply_rebalance_proposal(
     )
 
 
-@app.get("/bff/rebalances/{rebalance_id}")
 async def bff_get_rebalance(
     rebalance_id: str,
     authorization: Optional[str] = Header(default=None),
@@ -24673,7 +24533,6 @@ async def bff_get_rebalance(
     }
 
 
-@app.post("/bff/rebalances/{rebalance_id}/actions/{action_id}", status_code=202)
 async def bff_rebalance_action(
     rebalance_id: str,
     action_id: str,
@@ -30320,7 +30179,6 @@ def _management_loop_throughput_response(
     }
 
 
-@app.get("/bff/management/strategy-allocation")
 async def bff_management_strategy_allocation(
     strategy_id: Optional[str] = None,
     capital_pool_id: Optional[str] = None,
@@ -30345,7 +30203,6 @@ async def bff_management_strategy_allocation(
     )
 
 
-@app.get("/bff/management/capital-flow")
 async def bff_management_capital_flow(
     capital_pool_id: Optional[str] = None,
     persona_id: Optional[str] = None,
@@ -30372,7 +30229,6 @@ async def bff_management_capital_flow(
     )
 
 
-@app.get("/bff/management/portfolio-book")
 async def bff_management_portfolio_book(
     page_token: Optional[str] = None,
     page_size: int = Query(default=50, ge=1, le=200),
@@ -30578,7 +30434,6 @@ async def bff_management_portfolio_book(
     }
 
 
-@app.get("/bff/management/portfolio-book/pools")
 async def bff_management_portfolio_book_pools(
     status: Optional[str] = None,
     risk_policy_ref: Optional[str] = None,
@@ -30738,7 +30593,6 @@ async def bff_management_portfolio_book_pools(
     }
 
 
-@app.get("/bff/management/portfolio-book/exposure")
 async def bff_management_portfolio_book_exposure(
     status: Optional[str] = None,
     risk_policy_ref: Optional[str] = None,
@@ -30962,7 +30816,6 @@ async def bff_management_portfolio_book_exposure(
     }
 
 
-@app.get("/bff/management/portfolio-book/holdings")
 async def bff_management_portfolio_book_holdings(
     capital_pool_id: Optional[str] = None,
     persona_id: Optional[str] = None,
@@ -31313,7 +31166,6 @@ async def bff_management_portfolio_book_holdings(
     }
 
 
-@app.get("/bff/management/portfolio-book/positions")
 async def bff_management_portfolio_book_positions(
     capital_pool_id: Optional[str] = None,
     persona_id: Optional[str] = None,
@@ -35414,7 +35266,6 @@ def _persona_intent_surfaces(
     }
 
 
-@app.get("/bff/management/evolution-journal")
 async def bff_management_evolution_journal(
     source_type: Optional[str] = None,
     status: Optional[str] = None,
@@ -39708,7 +39559,6 @@ def _mgmt_nl_schedule_provider_finalize(**kwargs: Any) -> None:
     task.add_done_callback(_MGMT_NL_PROVIDER_FINALIZE_TASKS.discard)
 
 
-@app.post("/bff/management/nl/ask", status_code=202)
 @_mgmt_nl_command_reservation_guard
 async def bff_management_nl_ask(
     payload: Dict[str, Any] = Body(default_factory=dict),
@@ -40214,7 +40064,6 @@ async def bff_management_nl_ask(
     return JSONResponse(status_code=202, content=result)
 
 
-@app.post("/bff/management/nl/ask/stream")
 def bff_management_nl_ask_stream(
     payload: Dict[str, Any] = Body(default_factory=dict),
     authorization: Optional[str] = Header(default=None),
@@ -40499,7 +40348,6 @@ def bff_management_nl_ask_stream(
         headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
     )
 
-@app.get("/bff/management/ai/audit")
 async def bff_management_ai_audit(
     session_id: Optional[str] = None,
     trace_id: Optional[str] = None,
@@ -40545,7 +40393,6 @@ async def bff_management_ai_audit(
     }
 
 
-@app.get("/bff/assistant/providers/usage-summary")
 async def bff_assistant_provider_usage_summary(
     auth_probe: bool = False,
     limit: int = Query(default=500, ge=1, le=500),
@@ -40562,7 +40409,6 @@ async def bff_assistant_provider_usage_summary(
     )
 
 
-@app.get("/bff/management/ai/conversations")
 async def bff_management_ai_conversations(
     limit: int = Query(default=50, ge=1, le=200),
     authorization: Optional[str] = Header(default=None),
@@ -40632,7 +40478,6 @@ async def bff_management_ai_conversations(
     }
 
 
-@app.get("/bff/management/ai/conversations/{session_id}")
 async def bff_management_ai_conversation(
     session_id: str,
     trace_id: Optional[str] = None,
@@ -40699,7 +40544,6 @@ async def bff_management_ai_conversation(
     }
 
 
-@app.get("/bff/management/ai/attachments/{attachment_id}")
 async def bff_management_ai_attachment(
     attachment_id: str,
     authorization: Optional[str] = Header(default=None),
@@ -40745,7 +40589,6 @@ async def bff_management_ai_attachment(
     )
 
 
-@app.get("/bff/management/persona-intent")
 async def bff_management_persona_intent(
     source_type: Optional[str] = None,
     persona_id: Optional[str] = None,
@@ -40796,7 +40639,6 @@ async def bff_management_persona_intent(
     }
 
 
-@app.get("/bff/management/readiness/ep5")
 async def bff_management_readiness_ep5(
     authorization: Optional[str] = Header(default=None),
 ):
@@ -40806,7 +40648,6 @@ async def bff_management_readiness_ep5(
     return _build_management_ep5_readiness_payload()
 
 
-@app.get("/bff/management/readiness/broker-live")
 async def bff_management_readiness_broker_live(
     authorization: Optional[str] = Header(default=None),
 ):
@@ -40816,7 +40657,6 @@ async def bff_management_readiness_broker_live(
     return _build_management_broker_live_readiness_payload()
 
 
-@app.get("/bff/management/readiness/capital-binding-live")
 async def bff_management_readiness_capital_binding_live(
     authorization: Optional[str] = Header(default=None),
 ):
@@ -40826,7 +40666,6 @@ async def bff_management_readiness_capital_binding_live(
     return _build_management_capital_binding_live_readiness_payload()
 
 
-@app.get("/bff/management/readiness/bff-ha")
 async def bff_management_readiness_bff_ha(
     authorization: Optional[str] = Header(default=None),
 ):
@@ -40836,7 +40675,6 @@ async def bff_management_readiness_bff_ha(
     return _build_management_bff_ha_readiness_payload()
 
 
-@app.get("/bff/management/readiness/strict-publish")
 async def bff_management_readiness_strict_publish(
     authorization: Optional[str] = Header(default=None),
 ):
@@ -41049,7 +40887,6 @@ def _synthesis_conflict_log_list_payload(
     }
 
 
-@app.get("/bff/synthesis/conflict-logs")
 async def bff_list_synthesis_conflict_logs(
     capital_pool_id: Optional[str] = None,
     scope_ref: Optional[str] = None,
@@ -41081,7 +40918,6 @@ async def bff_list_synthesis_conflict_logs(
     )
 
 
-@app.get("/bff/synthesis/conflict-logs/{log_id}")
 async def bff_get_synthesis_conflict_log(
     log_id: str,
     authorization: Optional[str] = Header(default=None),
@@ -41119,7 +40955,6 @@ async def bff_get_synthesis_conflict_log(
     }
 
 
-@app.get("/bff/ooda/packets")
 async def bff_list_ooda_packets(
     status: Optional[str] = None,
     stage: Optional[str] = None,
@@ -41149,7 +40984,6 @@ async def bff_list_ooda_packets(
     )
 
 
-@app.get("/bff/ooda/packets/{packet_id}")
 async def bff_get_ooda_packet(
     packet_id: str,
     authorization: Optional[str] = Header(default=None),
@@ -41189,7 +41023,6 @@ async def bff_get_ooda_packet(
 
 
 
-@app.get("/bff/evolution-programs/{program_id}/ooda")
 async def bff_list_evolution_program_ooda_packets(
     program_id: str,
     page_token: Optional[str] = None,
@@ -41564,7 +41397,6 @@ def _persona_record_archetype(raw: Mapping[str, Any]) -> str:
         or "generalist"
     )
 
-@app.get("/bff/personas")
 async def bff_list_personas(
     state: Optional[str] = None,
     archetype: Optional[str] = None,
@@ -41609,7 +41441,6 @@ async def bff_list_personas(
     }
 
 
-@app.post("/bff/personas/{persona_id}/provisioning/reconcile")
 async def bff_reconcile_persona_provisioning(
     persona_id: str,
     authorization: Optional[str] = Header(default=None),
@@ -41937,7 +41768,7 @@ def _persona_create_required_data_sources(payload: Mapping[str, Any]) -> List[Di
     required = payload.get("required_data_sources") or payload.get("requiredDataSources")
     market = str(payload.get("market") or "").strip().upper()
     if not required and market:
-        from read_store import _market_persona_required_data_sources
+        from personas.service import _market_persona_required_data_sources
 
         required = _market_persona_required_data_sources({"market": market})
     return json.loads(json.dumps(required or []))
@@ -42192,7 +42023,6 @@ def _coordinate_persona_create(
     return active, persona, metadata, ooda_packet
 
 
-@app.post("/bff/personas", status_code=201)
 async def bff_create_persona(
     payload: Dict[str, Any] = Body(...),
     authorization: Optional[str] = Header(default=None),
@@ -42393,7 +42223,6 @@ async def bff_create_persona(
     return response
 
 
-@app.post("/bff/management/personas/create-paper-bundle", status_code=201)
 async def bff_create_paper_persona_bundle(
     payload: Dict[str, Any] = Body(...),
     authorization: Optional[str] = Header(default=None),
@@ -42463,7 +42292,6 @@ def _persona_provisioning_authoritative_meta(raw: Mapping[str, Any]) -> Dict[str
     return result
 
 
-@app.get("/bff/personas/{persona_id}")
 async def bff_get_persona(
     persona_id: str,
     authorization: Optional[str] = Header(default=None),
@@ -42582,7 +42410,6 @@ _PERSONA_PATCH_SERVER_MANAGED_FIELDS = frozenset({
 })
 
 
-@app.patch("/bff/personas/{persona_id}")
 async def bff_patch_persona(
     persona_id: str,
     payload: Dict[str, Any] = Body(...),
@@ -42727,7 +42554,6 @@ def _ensure_persona_exists(persona_id: str, caller_tenant: Optional[str] = None)
     )
 
 
-@app.get("/bff/personas/{persona_id}/route-policy")
 async def bff_get_persona_route_policy(
     persona_id: str,
     authorization: Optional[str] = Header(default=None),
@@ -42761,7 +42587,6 @@ async def bff_get_persona_route_policy(
     }
 
 
-@app.get("/bff/personas/{persona_id}/runtime-profile")
 async def bff_get_persona_runtime_profile(
     persona_id: str,
     authorization: Optional[str] = Header(default=None),
@@ -42797,8 +42622,6 @@ async def bff_get_persona_runtime_profile(
     }
 
 
-@app.get("/api/v1/personas/{persona_id}/strategy-matches")
-@app.get("/bff/personas/{persona_id}/strategy-matches")
 async def bff_get_persona_strategy_matches(
     persona_id: str,
     include_retired: bool = False,
@@ -42824,8 +42647,6 @@ async def bff_get_persona_strategy_matches(
     )
 
 
-@app.post("/api/v1/personas/{persona_id}/strategy-discovery", status_code=202)
-@app.post("/bff/personas/{persona_id}/strategy-discovery", status_code=202)
 async def bff_start_persona_strategy_discovery(
     persona_id: str,
     payload: Dict[str, Any] = Body(default_factory=dict),
@@ -42870,8 +42691,6 @@ async def bff_start_persona_strategy_discovery(
     return response
 
 
-@app.post("/api/v1/personas/{persona_id}/strategy-matches/{match_id}/actions", status_code=202)
-@app.post("/bff/personas/{persona_id}/strategy-matches/{match_id}/actions", status_code=202)
 async def bff_persona_strategy_match_action(
     persona_id: str,
     match_id: str,
@@ -42894,7 +42713,6 @@ async def bff_persona_strategy_match_action(
     )
 
 
-@app.get("/bff/personas/{persona_id}/activity")
 async def bff_get_persona_activity(
     persona_id: str,
     authorization: Optional[str] = Header(default=None),
@@ -42923,7 +42741,6 @@ async def bff_get_persona_activity(
     }
 
 
-@app.get("/bff/personas/{persona_id}/evaluations")
 async def bff_get_persona_evaluations(
     persona_id: str,
     authorization: Optional[str] = Header(default=None),
@@ -42945,7 +42762,6 @@ async def bff_get_persona_evaluations(
     }
 
 
-@app.get("/bff/personas/{persona_id}/memory")
 async def bff_get_persona_memory(
     persona_id: str,
     authorization: Optional[str] = Header(default=None),
@@ -43045,7 +42861,6 @@ def _filter_audit_events_by_target(events: List[Dict[str, Any]], target_id: str)
     ]
 
 
-@app.get("/bff/personas/{persona_id}/audit")
 async def bff_get_persona_audit(
     persona_id: str,
     authorization: Optional[str] = Header(default=None),
@@ -43068,7 +42883,6 @@ async def bff_get_persona_audit(
     }
 
 
-@app.get("/bff/personas/{persona_id}/skills")
 async def bff_get_persona_skills(
     persona_id: str,
     authorization: Optional[str] = Header(default=None),
@@ -43105,7 +42919,6 @@ async def bff_get_persona_skills(
     }
 
 
-@app.get("/bff/personas/{persona_id}/tools")
 async def bff_get_persona_tools(
     persona_id: str,
     authorization: Optional[str] = Header(default=None),
@@ -43142,7 +42955,6 @@ async def bff_get_persona_tools(
     }
 
 
-@app.get("/bff/personas/{persona_id}/capabilities")
 async def bff_get_persona_capabilities_surface(
     persona_id: str,
     authorization: Optional[str] = Header(default=None),
@@ -46485,7 +46297,6 @@ def _promotion_review_stored_source(
     return stored
 
 
-@app.post("/bff/management/quarterly-ranking/recommendations/{recommendation_id}/submit", status_code=202)
 async def bff_management_quarterly_ranking_recommendation_submit(
     recommendation_id: str,
     payload: Dict[str, Any] = Body(default_factory=dict),
@@ -46735,7 +46546,6 @@ async def bff_management_quarterly_ranking_recommendation_submit(
     )
 
 
-@app.get("/bff/management/promotion-reviews")
 async def bff_management_promotion_reviews(
     quarter: Optional[str] = Query(default=None),
     state: Optional[str] = None,
@@ -46823,7 +46633,6 @@ async def bff_management_promotion_reviews(
     }
 
 
-@app.get("/bff/management/promotion-reviews/{review_id}")
 async def bff_management_promotion_review_detail(
     review_id: str,
     quarter: Optional[str] = Query(default=None),
@@ -46866,7 +46675,6 @@ async def bff_management_promotion_review_detail(
     }
 
 
-@app.post("/bff/management/promotion-reviews/{review_id}/decisions", status_code=202)
 async def bff_management_promotion_review_decision(
     review_id: str,
     payload: Dict[str, Any] = Body(default_factory=dict),
@@ -47792,7 +47600,6 @@ def _pm12_persona_league_heatmap_rows(
     return heatmap_rows, cells, summary
 
 
-@app.get("/bff/management/persona-league")
 async def bff_management_persona_league(
     state: Optional[str] = None,
     archetype: Optional[str] = None,
@@ -47893,7 +47700,6 @@ async def bff_management_persona_league(
     }
 
 
-@app.get("/bff/management/persona-league/rankings")
 async def bff_management_persona_league_rankings(
     state: Optional[str] = None,
     archetype: Optional[str] = None,
@@ -48002,7 +47808,6 @@ async def bff_management_persona_league_rankings(
     }
 
 
-@app.get("/bff/management/persona-league/movers")
 async def bff_management_persona_league_movers(
     state: Optional[str] = None,
     archetype: Optional[str] = None,
@@ -48076,7 +47881,6 @@ async def bff_management_persona_league_movers(
     }
 
 
-@app.get("/bff/management/persona-league/tiers")
 async def bff_management_persona_league_tiers(
     state: Optional[str] = None,
     archetype: Optional[str] = None,
@@ -48161,7 +47965,6 @@ async def bff_management_persona_league_tiers(
     }
 
 
-@app.get("/bff/management/persona-league/heatmap")
 async def bff_management_persona_league_heatmap(
     state: Optional[str] = None,
     archetype: Optional[str] = None,
@@ -48230,7 +48033,6 @@ async def bff_management_persona_league_heatmap(
     }
 
 
-@app.get("/bff/management/quarterly-ranking/formula")
 async def bff_management_quarterly_ranking_formula(
     authorization: Optional[str] = Header(default=None),
 ):
@@ -48281,7 +48083,6 @@ async def bff_management_quarterly_ranking_formula(
     }
 
 
-@app.get("/bff/management/quarterly-ranking")
 async def bff_management_quarterly_ranking(
     quarter: Optional[str] = Query(default=None),
     state: Optional[str] = None,
@@ -48431,7 +48232,6 @@ async def bff_management_quarterly_ranking(
     }
 
 
-@app.get("/bff/management/quarterly-ranking/drilldown")
 async def bff_management_quarterly_ranking_drilldown(
     response: Response,
     persona_id: Optional[str] = Query(default=None, alias="personaId"),
@@ -48612,7 +48412,6 @@ async def bff_management_quarterly_ranking_drilldown(
     }
 
 
-@app.get("/bff/management/quarterly-ranking/recommendations")
 async def bff_management_quarterly_ranking_recommendations(
     quarter: Optional[str] = Query(default=None),
     state: Optional[str] = None,
@@ -49544,7 +49343,6 @@ def _management_governance_ledger_response(
     }
 
 
-@app.get("/bff/management/governance-ledger")
 async def bff_management_governance_ledger(
     source_type: Optional[str] = Query(default=None),
     status: Optional[str] = Query(default=None),
@@ -49912,7 +49710,6 @@ def _management_cost_attribution_response(
     }
 
 
-@app.get("/bff/management/cost-attribution")
 async def bff_management_cost_attribution(
     persona_id: Optional[str] = Query(default=None),
     strategy_id: Optional[str] = Query(default=None),
@@ -50229,7 +50026,6 @@ async def _management_board_pack_response(
     }
 
 
-@app.get("/bff/management/board-pack")
 async def bff_management_board_pack(
     period: str = Query(default="latest"),
     state: Optional[str] = None,
@@ -50257,7 +50053,6 @@ _ADVANCE_LIFECYCLE_VALID_TARGETS = frozenset({"paper_owner", "live_owner", "reti
 _ADVANCE_LIFECYCLE_LIVE_ROLES = frozenset({"approver", "admin"})
 
 
-@app.post("/bff/personas/{persona_id}/actions/{action_id}", status_code=202)
 async def bff_persona_action(
     persona_id: str,
     action_id: str,
@@ -50340,7 +50135,6 @@ async def bff_persona_action(
     )
 
 
-@app.post("/bff/personas/{persona_id}/test-prompt", status_code=202)
 async def bff_persona_test_prompt(
     persona_id: str,
     payload: Dict[str, Any] = Body(default_factory=dict),
@@ -50387,7 +50181,6 @@ async def bff_persona_test_prompt(
 
 # ---------------- Platform helpers ----------------
 
-@app.get("/bff/search")
 async def bff_search(
     q: str = Query(default=""),
     types: Optional[str] = Query(default=None),
@@ -50481,7 +50274,6 @@ async def bff_search(
     }
 
 
-@app.get("/bff/types")
 async def bff_types_compat(
     authorization: Optional[str] = Header(default=None),
 ):
@@ -50553,7 +50345,6 @@ def _v5_intervention_records(
     return list(records_by_id.values())
 
 
-@app.get("/bff/v5/interventions", response_model=InterventionListResponse)
 async def list_v5_interventions(
     status: Optional[str] = Query(default=None, description="Filter by status: pending, remediated, dismissed, escalated"),
     kind: Optional[str] = Query(default=None, description="Filter by kind: hiq_sentinel, risk_breach, strategy_drift, loop_anomaly"),
@@ -50584,7 +50375,6 @@ async def list_v5_interventions(
     )
 
 
-@app.post("/bff/v5/interventions/{intervention_id}/remediate", status_code=202)
 async def remediate_v5_intervention(
     intervention_id: str,
     background_tasks: BackgroundTasks,
@@ -51259,7 +51049,6 @@ async def stream_bff_events(
 
 # IN-SSE: "/api/v1/incidents/stream" is defined earlier (just above the
 # parameterized "/api/v1/incidents/{incident_id}" route) so it is not shadowed.
-@app.get("/api/v1/kill-switch/updates")
 async def stream_kill_switch_events(
     last_event_id: Optional[str] = Query(default=None, alias="last_event_id"),
     authorization: Optional[str] = Header(default=None),
@@ -51275,7 +51064,6 @@ async def stream_kill_switch_events(
     return _handle_sse_stream("system", _kill_switch_events, _kill_switch_subscribers, last_event_id)
 
 
-@app.get("/api/v1/approvals/stream")
 async def stream_approval_events(
     last_event_id: Optional[str] = Query(default=None, alias="last_event_id"),
     authorization: Optional[str] = Header(default=None),
@@ -51294,7 +51082,6 @@ async def stream_approval_events(
 # SSE Publish Helpers (for internal use / testing / admin injection)
 # --------------------------------------------------------------------------- #
 
-@app.get("/api/v1/stream/{channel}")
 async def stream_generic_events(
     channel: str,
     last_event_id: Optional[str] = Query(default=None, alias="last_event_id"),
@@ -51427,7 +51214,6 @@ def _evol_exp_bff_action_command(
 # Execute-Plans SSE Compatibility Aliases (BFF-LUV-GAP-010)
 # --------------------------------------------------------------------------- #
 
-@app.get("/bff/sse/notifications")
 async def bff_sse_notifications_alias(
     last_event_id: Optional[str] = Query(default=None, alias="last_event_id"),
     authorization: Optional[str] = Header(default=None),
@@ -51436,7 +51222,6 @@ async def bff_sse_notifications_alias(
     return await stream_generic_events("inbox", last_event_id, authorization)
 
 
-@app.get("/bff/sse/command-center/kpi")
 async def bff_sse_cc_kpi_alias(
     last_event_id: Optional[str] = Query(default=None, alias="last_event_id"),
     authorization: Optional[str] = Header(default=None),
@@ -51445,7 +51230,6 @@ async def bff_sse_cc_kpi_alias(
     return await stream_generic_events("ranking", last_event_id, authorization)
 
 
-@app.get("/bff/sse/command-center/events")
 async def bff_sse_cc_events_alias(
     last_event_id: Optional[str] = Query(default=None, alias="last_event_id"),
     authorization: Optional[str] = Header(default=None),
@@ -51454,7 +51238,6 @@ async def bff_sse_cc_events_alias(
     return await stream_generic_events("loop", last_event_id, authorization)
 
 
-@app.get("/bff/sse/jobs/{jobId}/progress")
 async def bff_sse_job_progress_alias(
     jobId: str,
     last_event_id: Optional[str] = Query(default=None, alias="last_event_id"),
@@ -51465,7 +51248,6 @@ async def bff_sse_job_progress_alias(
     return await stream_generic_events("tool", last_event_id, authorization)
 
 
-@app.get("/bff/sse/alerts")
 async def bff_sse_alerts_alias(
     last_event_id: Optional[str] = Query(default=None, alias="last_event_id"),
     authorization: Optional[str] = Header(default=None),
@@ -51474,7 +51256,6 @@ async def bff_sse_alerts_alias(
     return await stream_generic_events("sentinel", last_event_id, authorization)
 
 
-@app.get("/bff/sse/incidents/{incidentId}/timeline")
 async def bff_sse_incident_timeline_alias(
     incidentId: str,
     last_event_id: Optional[str] = Query(default=None, alias="last_event_id"),
@@ -51485,7 +51266,6 @@ async def bff_sse_incident_timeline_alias(
     return await stream_generic_events("journal", last_event_id, authorization)
 
 
-@app.get("/bff/sse/review/updates")
 async def bff_sse_review_updates_alias(
     last_event_id: Optional[str] = Query(default=None, alias="last_event_id"),
     authorization: Optional[str] = Header(default=None),
@@ -51494,7 +51274,6 @@ async def bff_sse_review_updates_alias(
     return await stream_approval_events(last_event_id, authorization)
 
 
-@app.post("/api/v1/internal/sse/publish")
 async def publish_sse_event(
     event_type: str = Query(..., description="Event type: runtime_state_changed, incident_created, etc."),
     channel: Optional[str] = Query(default=None, description="Optional channel name; inferred from event_type if missing"),
@@ -51818,7 +51597,6 @@ def _tools_mcp_skills_action_command(
 
 # ---------------- /bff/tools routes ----------------
 
-@app.get("/bff/tools")
 async def bff_list_tools(
     status: Optional[str] = None,
     tool_class: Optional[str] = None,
@@ -51844,7 +51622,6 @@ async def bff_list_tools(
     }
 
 
-@app.post("/bff/tools", status_code=201)
 async def bff_create_tool(
     payload: Dict[str, Any] = Body(...),
     authorization: Optional[str] = Header(default=None),
@@ -51894,7 +51671,6 @@ async def bff_create_tool(
     return result
 
 
-@app.get("/bff/tools/{tool_id}")
 async def bff_get_tool(
     tool_id: str,
     authorization: Optional[str] = Header(default=None),
@@ -51926,7 +51702,6 @@ async def bff_get_tool(
     return record
 
 
-@app.patch("/bff/tools/{tool_id}")
 async def bff_patch_tool(
     tool_id: str,
     payload: Dict[str, Any] = Body(...),
@@ -51958,7 +51733,6 @@ async def bff_patch_tool(
     return record
 
 
-@app.post("/bff/tools/{tool_id}/actions/{action_id}", status_code=202)
 async def bff_tool_action(
     tool_id: str,
     action_id: str,
@@ -51996,7 +51770,6 @@ async def bff_tool_action(
 # The final MCP import contract (/bff/v1/mcp/servers/{id}/import-tools and
 # /bff/mcp-servers/{id}/import-tools) is preserved and unaffected.
 
-@app.get("/bff/mcp/servers")
 async def bff_list_mcp_servers(
     status: Optional[str] = None,
     page_token: Optional[str] = None,
@@ -52023,7 +51796,6 @@ async def bff_list_mcp_servers(
     }
 
 
-@app.post("/bff/mcp/servers", status_code=201)
 async def bff_create_mcp_server(
     payload: Dict[str, Any] = Body(...),
     authorization: Optional[str] = Header(default=None),
@@ -52065,7 +51837,6 @@ async def bff_create_mcp_server(
     return result
 
 
-@app.get("/bff/mcp/servers/{server_id}")
 async def bff_get_mcp_server(
     server_id: str,
     authorization: Optional[str] = Header(default=None),
@@ -52084,7 +51855,6 @@ async def bff_get_mcp_server(
     return record
 
 
-@app.post("/bff/mcp/servers/{server_id}/actions/{action_id}", status_code=202)
 async def bff_mcp_server_action(
     server_id: str,
     action_id: str,
@@ -52111,7 +51881,6 @@ async def bff_mcp_server_action(
     )
 
 
-@app.get("/bff/mcp/servers/{server_id}/tools")
 async def bff_list_mcp_server_tools(
     server_id: str,
     authorization: Optional[str] = Header(default=None),
@@ -52145,7 +51914,6 @@ async def bff_list_mcp_server_tools(
     }
 
 
-@app.post("/bff/mcp/tools/{tool_id}/actions/{action_id}", status_code=202)
 async def bff_mcp_tool_action_compat(
     tool_id: str,
     action_id: str,
@@ -52197,7 +51965,6 @@ async def bff_mcp_tool_action_compat(
 
 # ---------------- /bff/skills routes ----------------
 
-@app.get("/bff/skills")
 async def bff_list_skills(
     status: Optional[str] = None,
     page_token: Optional[str] = None,
@@ -52220,7 +51987,6 @@ async def bff_list_skills(
     }
 
 
-@app.post("/bff/skills", status_code=201)
 async def bff_create_skill(
     payload: Dict[str, Any] = Body(...),
     authorization: Optional[str] = Header(default=None),
@@ -52272,7 +52038,6 @@ async def bff_create_skill(
     return result
 
 
-@app.get("/bff/skills/{skill_id}")
 async def bff_get_skill(
     skill_id: str,
     authorization: Optional[str] = Header(default=None),
@@ -52289,7 +52054,6 @@ async def bff_get_skill(
     return record
 
 
-@app.patch("/bff/skills/{skill_id}")
 async def bff_patch_skill(
     skill_id: str,
     payload: Dict[str, Any] = Body(...),
@@ -52321,7 +52085,6 @@ async def bff_patch_skill(
     return record
 
 
-@app.post("/bff/skills/{skill_id}/actions/{action_id}", status_code=202)
 async def bff_skill_action(
     skill_id: str,
     action_id: str,
@@ -52354,7 +52117,6 @@ async def bff_skill_action(
     )
 
 
-@app.post("/bff/skills/{skill_id}/sandbox-eval", status_code=202)
 async def bff_skill_sandbox_eval(
     skill_id: str,
     payload: Dict[str, Any] = Body(default_factory=dict),
@@ -52690,7 +52452,6 @@ def _gov_bff_action_command(
 
 # -- Governance reviews ------------------------------------------------------
 
-@app.get("/bff/reviews")
 async def bff_list_reviews(
     item_type: Optional[str] = None,
     risk_level: Optional[str] = None,
@@ -52733,7 +52494,6 @@ async def bff_list_reviews(
     }
 
 
-@app.post("/bff/reviews", status_code=202)
 async def bff_create_review(
     request: Request,
     idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
@@ -52751,7 +52511,6 @@ async def bff_create_review(
     )
 
 
-@app.get("/bff/reviews/{review_id}")
 async def bff_get_review(
     review_id: str,
     authorization: Optional[str] = Header(default=None),
@@ -52785,7 +52544,6 @@ async def bff_get_review(
     }
 
 
-@app.post("/bff/reviews/{review_id}/actions/{action_id}", status_code=202)
 async def bff_review_action(
     review_id: str,
     action_id: str,
@@ -52809,7 +52567,6 @@ async def bff_review_action(
     )
 
 
-@app.get("/bff/reviews/{review_id}/validators")
 async def bff_review_validators(
     review_id: str,
     authorization: Optional[str] = Header(default=None),
@@ -52837,7 +52594,6 @@ async def bff_review_validators(
     }
 
 
-@app.get("/bff/reviews/{review_id}/audit")
 async def bff_review_audit(
     review_id: str,
     authorization: Optional[str] = Header(default=None),
@@ -52866,7 +52622,6 @@ async def bff_review_audit(
     }
 
 
-@app.get("/bff/approvals/{approval_id}/evidence")
 async def bff_approval_evidence(
     approval_id: str,
     authorization: Optional[str] = Header(default=None),
@@ -53771,7 +53526,6 @@ def _submit_canonical_action_command(
     )
 
 
-@app.patch("/bff/rebalances/{rebalance_id}", status_code=202)
 async def sem_patch_rebalance_command(
     rebalance_id: str,
     payload: Dict[str, Any] = Body(default_factory=dict),
@@ -54123,7 +53877,6 @@ async def sem_delete_confirm_token_command(
     )
 
 
-@app.post("/bff/v5/interventions/{id}/decide", status_code=202)
 async def sem_v5_intervention_decide_command(
     id: str,
     background_tasks: BackgroundTasks,
@@ -54198,10 +53951,6 @@ async def sem_v5_intervention_decide_command(
     )
 
 
-@app.post("/bff/v5/interventions/{id}/claim", status_code=202)
-@app.post("/bff/v5/interventions/{id}/escalate", status_code=202)
-@app.post("/bff/v5/interventions/{id}/release", status_code=202)
-@app.post("/bff/v5/interventions/{id}/two-man-sign", status_code=202)
 async def sem_v5_intervention_command(
     id: str,
     request: Request,
@@ -54273,7 +54022,6 @@ async def sem_v5_intervention_command(
     )
 
 
-@app.post("/bff/v5/sentinel/findings/{id}/status", status_code=202)
 async def sem_v5_sentinel_status_command(
     id: str,
     payload: Dict[str, Any] = Body(default_factory=dict),
@@ -54294,7 +54042,6 @@ async def sem_v5_sentinel_status_command(
     )
 
 
-@app.post("/bff/v5/sentinel/remediation/build", status_code=202)
 async def sem_v5_sentinel_remediation_build_command(
     payload: Dict[str, Any] = Body(default_factory=dict),
     authorization: Optional[str] = Header(default=None),
@@ -54317,7 +54064,6 @@ async def sem_v5_sentinel_remediation_build_command(
     )
 
 
-@app.post("/bff/v5/sentinel/remediation/{actionId}/execute", status_code=202)
 async def sem_v5_sentinel_remediation_execute_command(
     actionId: str,
     payload: Dict[str, Any] = Body(default_factory=dict),
@@ -54470,7 +54216,6 @@ def _health_reason_sentinel_findings(
     return findings
 
 
-@app.get("/bff/v5/sentinel/findings")
 async def bff_v5_sentinel_findings_list(
     kind: Optional[str] = Query(default=None, description="Filter by kind: hiq_sentinel, risk_breach, strategy_drift, loop_anomaly"),
     status: Optional[str] = Query(default=None, description="Filter by status: open, resolved, dismissed, escalated"),
@@ -54740,7 +54485,6 @@ def _loop_health_response_meta(
     return payload
 
 
-@app.get("/bff/v5/loop-inventory", response_model=LoopInventoryListEnvelope)
 async def bff_v5_loop_inventory(
     authorization: Optional[str] = Header(default=None),
 ):
@@ -54757,7 +54501,6 @@ async def bff_v5_loop_inventory(
     return _loop_inventory_response_meta(payload)
 
 
-@app.get("/bff/v5/loop-health", response_model=LoopHealthListEnvelope)
 async def bff_v5_loop_health(
     authorization: Optional[str] = Header(default=None),
     x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
@@ -54801,7 +54544,6 @@ async def bff_v5_loop_health(
     )
 
 
-@app.get("/bff/v5/loop-health/{loop_id}", response_model=LoopHealthDetailEnvelope)
 async def bff_v5_loop_health_detail(
     loop_id: str,
     authorization: Optional[str] = Header(default=None),
@@ -54848,10 +54590,6 @@ async def bff_v5_loop_health_detail(
     )
 
 
-@app.get(
-    "/bff/v5/loop-inventory/{loop_id}",
-    response_model=LoopInventoryDetailEnvelope,
-)
 async def bff_v5_loop_inventory_detail(
     loop_id: str,
     authorization: Optional[str] = Header(default=None),
@@ -54868,7 +54606,6 @@ async def bff_v5_loop_inventory_detail(
     return _loop_inventory_response_meta(payload)
 
 
-@app.get("/bff/v5/downstream-health")
 async def bff_v5_downstream_health(
     authorization: Optional[str] = Header(default=None),
 ):
@@ -54893,7 +54630,6 @@ async def bff_v5_downstream_health(
     }
 
 
-@app.post("/bff/v5/downstream-health/dlq/replay")
 async def bff_v5_downstream_health_dlq_replay(
     payload: Dict[str, Any] = Body(default_factory=dict),
     authorization: Optional[str] = Header(default=None),
@@ -54954,7 +54690,6 @@ async def bff_v5_downstream_health_dlq_replay(
 
 # -- V5 Loop-runs ------------------------------------------------------------
 
-@app.get("/bff/v5/loop-runs")
 async def bff_list_loop_runs(
     status: Optional[str] = None,
     tenant_id: Optional[str] = None,
@@ -55008,7 +54743,6 @@ async def bff_list_loop_runs(
     )
 
 
-@app.get("/bff/v5/loop-runs/{loop_run_id}")
 async def bff_get_loop_run(
     loop_run_id: str,
     tenant_id: Optional[str] = None,
@@ -55049,7 +54783,6 @@ async def bff_get_loop_run(
 
 # -- V5 Sentinel finding detail ----------------------------------------------
 
-@app.get("/bff/v5/sentinel/findings/{finding_id}")
 async def bff_get_sentinel_finding(
     finding_id: str,
     authorization: Optional[str] = Header(default=None),
@@ -55073,7 +54806,6 @@ async def bff_get_sentinel_finding(
 
 # -- Research artifacts list -------------------------------------------------
 
-@app.get("/bff/artifacts")
 async def bff_list_artifacts(
     authorization: Optional[str] = Header(default=None),
 ):
@@ -55234,7 +54966,6 @@ def _bff_source_commit() -> str:
     return str(commit or "unknown")
 
 
-@app.get("/bff/version")
 async def sem_bff_version():
     commit = _bff_source_commit()
     image_digest = os.getenv("BFF_IMAGE_DIGEST") or os.getenv("IMAGE_DIGEST") or "unknown"
@@ -55286,19 +55017,15 @@ def _sem_bff_health_payload() -> Dict[str, Any]:
     return payload
 
 
-@app.get("/bff/healthz")
 async def sem_bff_health_alias():
     return _sem_bff_health_payload()
 
 
-@app.get("/bff/readyz")
 async def sem_bff_readiness_alias():
     payload = _sem_bff_health_payload()
     return JSONResponse(payload, status_code=readiness_status_code(payload))
 
 
-@app.get("/bff/capabilities")
-@app.get("/bff/feature-flags")
 async def sem_bff_capabilities(authorization: Optional[str] = Header(default=None)):
     _require_read_role(_extract_identity(authorization))
     return {
@@ -58179,7 +57906,6 @@ def _persona_league_payload(
     }
 
 
-@app.get("/bff/persona-league")
 async def bff_persona_league(
     market_scope: Optional[str] = None,
     status: Optional[str] = None,
@@ -58198,8 +57924,6 @@ async def bff_persona_league(
     )
 
 
-@app.get("/bff/persona-league/{persona_id}")
-@app.get("/bff/management/persona-league/{persona_id}")
 async def bff_persona_league_detail(
     persona_id: str,
     authorization: Optional[str] = Header(default=None),
@@ -58225,7 +57949,6 @@ async def bff_persona_league_detail(
     }
 
 
-@app.get("/bff/management/persona-fleet")
 async def bff_management_persona_fleet(
     state: Optional[str] = None,
     health: Optional[str] = None,
@@ -58287,7 +58010,7 @@ def _sem_final_generic_list_for_path(path: str) -> Optional[Dict[str, Any]]:
             surface_key="ranking_formulas",
         )
     if path == "/bff/research-experiments":
-        items = _list_bff_experiments()
+        items = read_store.list_research_experiments()
         source = _research_experiments_surface_source(items)
         return _sem_final_list_response(
             items,
@@ -58532,7 +58255,6 @@ def _sem_final_generic_detail_for_path(path: str, entity_id: str) -> Optional[Di
 # /bff/tools and /bff/skills already have dedicated handlers registered above.
 # ============================================================================
 
-@app.get("/bff/mcp-servers")
 async def bff_list_mcp_servers_facade(
     status: Optional[str] = None,
     authorization: Optional[str] = Header(default=None),
@@ -58547,7 +58269,6 @@ async def bff_list_mcp_servers_facade(
     return _sem_final_list_response(records, dataset="mcp_servers", surface_key="mcp_servers", source="bff_local_registry")
 
 
-@app.get("/bff/mcp-servers/{server_id}")
 async def bff_get_mcp_server_facade(
     server_id: str,
     authorization: Optional[str] = Header(default=None),
@@ -58564,7 +58285,6 @@ async def bff_get_mcp_server_facade(
     )
 
 
-@app.get("/bff/mcp-tools")
 async def bff_list_mcp_tools_facade(
     status: Optional[str] = None,
     authorization: Optional[str] = Header(default=None),
@@ -58579,7 +58299,6 @@ async def bff_list_mcp_tools_facade(
     return _sem_final_list_response(records, dataset="mcp_tools", surface_key="mcp_tools", source="bff_local_registry")
 
 
-@app.get("/bff/mcp-tools/{tool_id}")
 async def bff_get_mcp_tool_facade(
     tool_id: str,
     authorization: Optional[str] = Header(default=None),
@@ -58596,7 +58315,6 @@ async def bff_get_mcp_tool_facade(
     )
 
 
-@app.get("/bff/channels")
 async def bff_list_channels(
     authorization: Optional[str] = Header(default=None),
 ):
@@ -58611,7 +58329,6 @@ async def bff_list_channels(
     )
 
 
-@app.get("/bff/channels/{channel_id}")
 async def bff_get_channel(
     channel_id: str,
     authorization: Optional[str] = Header(default=None),
@@ -58635,7 +58352,6 @@ async def bff_get_channel(
 # Removed from sem_final_generic_read_alias and sem_final_id_named_read_alias.
 # ============================================================================
 
-@app.get("/bff/v5/control-room")
 async def bff_v5_control_room(
     authorization: Optional[str] = Header(default=None),
 ):
@@ -58708,7 +58424,6 @@ async def bff_v5_control_room(
 
 
 
-@app.get("/bff/v5/interventions/{intervention_id}")
 async def bff_v5_intervention_detail(
     intervention_id: str,
     authorization: Optional[str] = Header(default=None),
@@ -58734,9 +58449,6 @@ async def bff_v5_intervention_detail(
 # /bff/v5/control-room, /bff/v5/execution/persona-health,
 # /bff/v5/execution/strategy-health, and /bff/v5/interventions/{id}
 # have dedicated handlers in the BFF-B2-006 block above; all excluded here.
-@app.get("/bff/approvals/{id}")
-@app.get("/bff/artifacts/{id}")
-@app.get("/bff/research-analyses")
 async def sem_final_generic_read_alias(
     request: Request,
     id: Optional[str] = None,
@@ -58760,7 +58472,6 @@ async def sem_final_generic_read_alias(
 # /bff/ranking-formulas/{id}, /bff/research-experiments/{id}, /bff/skills/{id},
 # and /bff/v5/interventions/{id} have dedicated handlers registered earlier in
 # this file and are intentionally excluded here.
-@app.get("/bff/research-analyses/{id}")
 async def sem_final_id_named_read_alias(
     request: Request,
     id: str,
@@ -58776,7 +58487,6 @@ async def sem_final_id_named_read_alias(
 # NOTE: /bff/capital-pools/{id}, /bff/evolution-programs/{id}, /bff/personas/{id},
 # and /bff/strategies/{id} have dedicated PATCH handlers registered earlier
 # and are intentionally excluded here.
-@app.patch("/bff/artifacts/{id}")
 async def sem_final_generic_patch_alias(id: str, payload: Dict[str, Any] = Body(default_factory=dict), authorization: Optional[str] = Header(default=None)):
     _require_operator_role(_extract_identity(authorization))
     return {"data": {"id": id, **payload}, "meta": {"snapshot_at": utc_now()}}
@@ -58797,7 +58507,6 @@ _APPROVAL_STAGE_CHANGE_DECISIONS: frozenset = frozenset(
 _BFF_APPROVAL_DECIDE_VALUES = "approve, reject, request_revision, request_changes, escalate, freeze"
 
 
-@app.post("/bff/approvals/{id}/decide", status_code=202)
 async def bff_approvals_decide(
     id: str,
     payload: Dict[str, Any] = Body(default_factory=dict),
@@ -58912,7 +58621,6 @@ async def bff_approvals_decide(
 _BFF_BATCH_DECIDE_MAX = 50
 
 
-@app.post("/bff/approvals/batch-decide", status_code=202)
 async def bff_approvals_batch_decide(
     payload: Dict[str, Any] = Body(default_factory=dict),
     authorization: Optional[str] = Header(default=None),
@@ -59099,7 +58807,6 @@ async def bff_approvals_batch_decide(
 
 
 
-@app.post("/bff/artifacts", status_code=201)
 async def sem_final_generic_create_alias(payload: Dict[str, Any] = Body(default_factory=dict), authorization: Optional[str] = Header(default=None)):
     _require_operator_role(_extract_identity(authorization))
     status = 202 if "decision" in payload else 201
@@ -59902,22 +59609,6 @@ app.include_router(
 
 
 
-def _include_knowledge_routes() -> None:
-    from console_gap.knowledge import create_knowledge_router
-
-    app.include_router(
-        create_knowledge_router(
-            extract_identity=_extract_identity,
-            require_read_role=_require_read_role,
-            read_store_getter=lambda: read_store,
-            utc_now=utc_now,
-            dataset_surface_status=_dataset_surface_status,
-        )
-    )
-
-
-_include_knowledge_routes()
-
 from trade_journal import create_trade_journal_router as _create_trade_journal_router  # noqa: E402
 app.include_router(_create_trade_journal_router(
     extract_identity=_extract_identity,
@@ -60006,13 +59697,14 @@ app.include_router(
         bff_error=_bff_error,
         utc_now=utc_now,
         snapshot_meta=_snapshot_meta,
+        include_domain_sse_aliases=False,
     )
 )
 
-# ACG-01-006 / ACG-01-007: Evolution Programs canonical router
-from evolution.router import create_evolution_programs_router as _create_evolution_programs_router
+# Evolution canonical domain router
+from evolution.router import create_evolution_router as _create_evolution_router
 app.include_router(
-    _create_evolution_programs_router(
+    _create_evolution_router(
         get_read_store=lambda: read_store,
         extract_identity=_extract_identity,
         require_read_role=_require_read_role,
@@ -60022,6 +59714,9 @@ app.include_router(
         page_slice=_page_slice,
         snapshot_meta=_snapshot_meta,
         dataset_surface_status=_dataset_surface_status,
+        read_surface_meta=_read_surface_meta,
+        raise_if_read_surface_unavailable=_raise_if_read_surface_unavailable,
+        meta_staleness=_meta_staleness,
         submit_program_action=lambda entity_type, entity_id, action_id, resolved_key, identity, payload: _gov_bff_action_command(
             ObjectType.EVOLUTION_PROGRAM,
             entity_id,
@@ -60031,13 +59726,14 @@ app.include_router(
             payload or {},
             CommandType.EVOLUTION_PROGRAM_ACTION,
         ),
+
     )
 )
 
-# ACG-01-008 / ACG-01-009: Research Experiments canonical router
-from research.router import create_research_experiments_router as _create_research_experiments_router
+# Research Experiments canonical domain router
+from research.router import create_research_router as _create_research_router
 app.include_router(
-    _create_research_experiments_router(
+    _create_research_router(
         get_read_store=lambda: read_store,
         extract_identity=_extract_identity,
         require_read_role=_require_read_role,
@@ -60056,6 +59752,7 @@ app.include_router(
             payload or {},
             CommandType.EXPERIMENT_ACTION,
         ),
+        include_prepared_subrouters=True,
     )
 )
 
@@ -60431,6 +60128,163 @@ def _resolve_agora_interaction_context_ref(
         precondition_failed=f"{kind}_store_unavailable",
     )
 
+
+
+# Auth domain router
+from auth.router import create_auth_router
+from auth.service import AuthFacadeService
+auth_facade_service = AuthFacadeService()
+app.include_router(create_auth_router(service=auth_facade_service))
+
+# Core domain routers
+from core.app_factory import (
+    create_settings_router,
+    create_assistant_management_router,
+    create_core_router,
+)
+app.include_router(
+    create_settings_router(
+        settings_store=settings_store,
+        extract_identity=_extract_identity,
+        require_admin_mfa=_require_admin_mfa,
+    )
+)
+_core_handlers = {
+    "bff_management_nl_ask": bff_management_nl_ask,
+    "bff_management_nl_ask_stream": bff_management_nl_ask_stream,
+    "bff_management_ai_audit": bff_management_ai_audit,
+    "bff_assistant_provider_usage_summary": bff_assistant_provider_usage_summary,
+    "bff_management_ai_conversations": bff_management_ai_conversations,
+    "bff_management_ai_conversation": bff_management_ai_conversation,
+    "bff_management_ai_attachment": bff_management_ai_attachment,
+    "bff_management_readiness_ep5": bff_management_readiness_ep5,
+    "bff_management_readiness_broker_live": bff_management_readiness_broker_live,
+    "bff_management_readiness_capital_binding_live": bff_management_readiness_capital_binding_live,
+    "bff_management_readiness_bff_ha": bff_management_readiness_bff_ha,
+    "bff_management_readiness_strict_publish": bff_management_readiness_strict_publish,
+    "bff_types_compat": bff_types_compat,
+    "sem_bff_version": sem_bff_version,
+    "sem_bff_health_alias": sem_bff_health_alias,
+    "sem_bff_readiness_alias": sem_bff_readiness_alias,
+    "sem_bff_capabilities": sem_bff_capabilities,
+}
+app.include_router(create_assistant_management_router(_core_handlers))
+app.include_router(create_core_router(_core_handlers))
+
+# Personas domain router
+from personas.router import create_personas_router
+app.include_router(
+    create_personas_router(
+        get_read_store=lambda: read_store,
+        get_command_store=lambda: command_store,
+        extract_identity_fn=_extract_identity,
+        require_read_role_fn=_require_read_role,
+        require_operator_role_fn=_require_operator_role,
+        bff_error_fn=_bff_error,
+        utc_now_fn=utc_now,
+        page_slice_fn=_page_slice,
+        snapshot_meta_fn=_snapshot_meta,
+        dataset_surface_status_fn=_dataset_surface_status,
+        raise_if_read_surface_unavailable_fn=_raise_if_read_surface_unavailable,
+        reject_body_idempotency_key_fn=_reject_body_idempotency_key,
+        resolve_final_idempotency_key_fn=_resolve_final_idempotency_key,
+    )
+)
+
+# Capital domain router
+from capital.router import create_capital_router
+app.include_router(
+    create_capital_router(
+        get_read_store=lambda: read_store,
+        extract_identity=_extract_identity,
+        require_read_role=_require_read_role,
+        require_operator_role=_require_operator_role,
+        utc_now=utc_now,
+        page_slice=_page_slice,
+        snapshot_meta=_snapshot_meta,
+        dataset_surface_status=_dataset_surface_status,
+        bff_error=_bff_error,
+    )
+)
+
+# Governance domain router
+from governance.router import create_governance_router
+app.include_router(
+    create_governance_router(
+        get_read_store=lambda: read_store,
+        extract_identity=_extract_identity,
+        require_read_role=_require_read_role,
+        require_operator_role=_require_operator_role,
+        bff_error=_bff_error,
+        utc_now=utc_now,
+        page_slice_fn=_page_slice,
+        snapshot_meta=_snapshot_meta,
+        dataset_surface_status=_dataset_surface_status,
+        read_surface_meta=_read_surface_meta,
+        meta_staleness=_meta_staleness,
+        redact_evidence_refs=redact_evidence_refs,
+        capabilities_for_identity=_capabilities_for_identity,
+        submit_action=lambda entity_type, entity_id, action_id, resolved_key, identity, payload: _gov_bff_action_command(
+            entity_type, entity_id, action_id, resolved_key, identity, payload
+        ),
+        publish_event=lambda event_type, data: _publish_event(
+            _sse_buffers["audit"], _sse_subscribers["audit"], event_type, data
+        ),
+
+    )
+)
+
+# Postmortems domain router
+from postmortems.router import create_postmortem_router
+app.include_router(
+    create_postmortem_router(
+        get_read_store=lambda: read_store,
+        extract_identity=_extract_identity,
+        require_read_role=_require_read_role,
+        bff_error=_bff_error,
+        meta_staleness=_meta_staleness,
+    )
+)
+
+# Control Loops domain router
+from control_loops.router import create_control_loops_router
+app.include_router(
+    create_control_loops_router(
+        get_read_store=lambda: read_store,
+        loop_truth_adapter=loop_truth,
+        downstream_health_monitor=downstream_health_monitor,
+        submit_sem_command=_sem_command_response,
+        submit_final_command_admission=_submit_final_command_admission,
+        reject_body_idempotency_key=_reject_body_idempotency_key,
+        extract_identity=_extract_identity,
+        require_read_role=_require_read_role,
+        require_operator_role=_require_operator_role,
+        bff_error=_bff_error,
+        utc_now_fn=utc_now,
+    )
+)
+
+# Integrations domain router
+from integrations.router import create_integrations_router
+app.include_router(
+    create_integrations_router(
+        get_read_store=lambda: read_store,
+        openclaw_client=OpenClawOpsClient(),
+        extract_identity=_extract_identity,
+        require_read_role=_require_read_role,
+        require_operator_role=_require_operator_role,
+        require_mcp_tool_write_role=_require_operator_role,
+        require_openclaw_command_role=_require_operator_role,
+        bff_error=_bff_error,
+        utc_now_fn=utc_now,
+        page_slice_fn=_page_slice,
+        snapshot_meta=_snapshot_meta,
+        read_surface_meta=_read_surface_meta,
+        submit_command=_submit_final_command_admission,
+        dry_run_resolver=_truthy_header,
+        dry_run_context=_REQUEST_DRY_RUN_CONTEXT,
+    )
+)
 
 # AG-BE-000: Agora BFF package router (must stay last to avoid route conflicts)
 from agora.router import create_agora_router as _create_agora_router  # noqa: E402
