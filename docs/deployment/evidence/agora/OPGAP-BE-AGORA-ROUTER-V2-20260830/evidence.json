@@ -16,8 +16,8 @@
   },
   "task": {
     "base_branch": "dev",
-    "evidence_cut_at": "2026-09-01T05:52:00Z",
-    "evidence_cut_semantics": "Owner repair validation for Agora domain route migration and decoupling identity and personalization from main.py. The task retains all 38 migrated decorators, canonical ports/stores, dry-run/command/SSE/assistant behavior, restores frozen-base HTTP contracts for signal pagination/status, optional committee bodies, SSE cursors, and journal MFA/trace headers, and keeps an unreceipted research result explicitly labelled simulation.",
+    "evidence_cut_at": "2026-09-01T06:43:53Z",
+    "evidence_cut_semantics": "Owner revalidation after merging the current dev base for Agora domain route migration and decoupling identity and personalization from main.py. The task retains all 38 migrated decorators, canonical ports/stores, dry-run/command/SSE/assistant behavior, restores frozen-base HTTP contracts for signal pagination/status, optional committee bodies, SSE cursors, and journal MFA/trace headers, and keeps an unreceipted research result explicitly labelled simulation.",
     "id": "OPGAP-BE-AGORA-ROUTER-V2-20260830",
     "overall_admission": "owner_asserted_pass_pending_independent_review_and_merge",
     "owner": "Codex2",
@@ -112,9 +112,9 @@
   "validation": {
     "commands": [
       {
-        "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/test_bff_agora_core_contract.py services/control-plane/bff/test_bff_agora_extended_contract.py services/control-plane/bff/test_agora_journal_merge_patch.py services/control-plane/bff/tests/test_assistant_agora_ask.py services/control-plane/bff/test_bff_b2_005_agora_canonical_aliases.py services/control-plane/bff/agora/",
+        "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/test_bff_agora_core_contract.py services/control-plane/bff/test_bff_agora_extended_contract.py services/control-plane/bff/test_agora_journal_merge_patch.py services/control-plane/bff/tests/test_assistant_agora_ask.py services/control-plane/bff/test_bff_b2_005_agora_canonical_aliases.py",
         "result": "pass",
-        "conclusion": "66 passed. Broader Agora unit and contract regression suite passes cleanly at the repaired source head."
+        "conclusion": "27 passed. Broader named Agora contract, journal, assistant, and canonical-alias regression modules pass cleanly at the refreshed source head."
       },
       {
         "command": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/tests/test_agora_router.py",
@@ -137,9 +137,9 @@
         "conclusion": "19 passed. Confirms market-data projection provenance and source-freshness contracts."
       }
     ],
-    "validated_at": "2026-09-01T05:52:00Z",
-    "validated_base_sha": "1c4a18e6786e488bc7c8737f3ce052bd0c15c7e2",
-    "validated_head_sha": "5dd140a54dbc3d9329badde987a9a7c371953c92"
+    "validated_at": "2026-09-01T06:43:53Z",
+    "validated_base_sha": "18b8f6b268d354495cf50b42ef9e4460f8228ebf",
+    "validated_head_sha": "c756b850b8e3e2902a38ed645d994666a67d88a4"
   },
   "deployment": {
     "applicable": false,
@@ -332,6 +332,13 @@
       "kind": "review_reopen_repair_validation",
       "status": "pass",
       "reference": "Restored frozen-base HTTP contracts and passed 37 router, 2 dispatcher, 19 market projection, and 66 broader Agora regression tests."
+    },
+    {
+      "sequence": 5,
+      "recorded_at": "2026-09-01T06:43:53Z",
+      "kind": "current_base_revalidation",
+      "status": "pass",
+      "reference": "Merged current dev base 18b8f6b268d354495cf50b42ef9e4460f8228ebf; diff hygiene plus 37 router, 2 dispatcher, 19 market projection, and 27 named broader Agora regressions passed at c756b850b8e3e2902a38ed645d994666a67d88a4."
     }
   ]
 }
