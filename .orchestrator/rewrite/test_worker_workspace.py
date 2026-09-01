@@ -9,6 +9,9 @@ still owns.
 from __future__ import annotations
 
 import sys
+import json
+import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -62,6 +65,77 @@ class WorkerWorkspaceModuleTests(unittest.TestCase):
             "validate_worker_workspace_binding",
         ):
             self.assertTrue(callable(getattr(worker_workspace, name)), name)
+
+
+class RecoveryWorktreeReplacementTests(unittest.TestCase):
+    """A second lost-lease recovery must not inherit the first dirty tree."""
+
+    @staticmethod
+    def _git(cwd: Path, *args: str) -> str:
+        proc = subprocess.run(
+            ["git", *args],
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        return proc.stdout.strip()
+
+    def test_replacement_archives_wip_and_recreates_branch_at_base(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            repo = root / "repo"
+            repo.mkdir()
+            self._git(repo, "init", "-b", "dev")
+            self._git(repo, "config", "user.name", "Test")
+            self._git(repo, "config", "user.email", "test@example.com")
+            source = repo / "source.txt"
+            source.write_text("base\n", encoding="utf-8")
+            self._git(repo, "add", "source.txt")
+            self._git(repo, "commit", "-m", "initial")
+            base_sha = self._git(repo, "rev-parse", "HEAD")
+
+            branch = "task/TASK-RECOVERY"
+            worktree = root / "worktree"
+            self._git(repo, "worktree", "add", "-b", branch, str(worktree), base_sha)
+            (worktree / "source.txt").write_text("rejected WIP\n", encoding="utf-8")
+            archive_root = root / "archive"
+
+            ok, status, archive_dir, recovery_ref = (
+                worker_workspace._replace_recovery_worktree_from_base(
+                    repo,
+                    worktree,
+                    branch=branch,
+                    base_sha=base_sha,
+                    archive_root=archive_root,
+                    task_id="TASK-RECOVERY",
+                    max_file_bytes=1024 * 1024,
+                )
+            )
+            self.assertTrue(ok, status)
+            self.assertEqual(status, "replaced_from_base")
+            self.assertIsNotNone(archive_dir)
+            self.assertIsNotNone(recovery_ref)
+            assert archive_dir is not None
+            assert recovery_ref is not None
+            manifest = json.loads(
+                (archive_dir / "manifest.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(manifest["preserved_branch_ref"], recovery_ref)
+            self.assertIn("source.txt", manifest["copied_files"])
+            self.assertEqual(
+                self._git(repo, "show-ref", "--verify", recovery_ref).split()[0],
+                self._git(repo, "rev-parse", recovery_ref),
+            )
+            self.assertFalse(worktree.exists())
+            self.assertEqual(self._git(repo, "rev-parse", branch), base_sha)
+
+            created, error, _origin = worker_workspace._create_worker_worktree(
+                repo, worktree, branch, base_sha
+            )
+            self.assertTrue(created, error)
+            self.assertEqual(self._git(worktree, "rev-parse", "HEAD"), base_sha)
+            self.assertEqual(self._git(worktree, "status", "--porcelain"), "")
 
 
 if __name__ == "__main__":
