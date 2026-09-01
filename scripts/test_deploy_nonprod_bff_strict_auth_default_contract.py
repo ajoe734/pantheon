@@ -382,7 +382,9 @@ def test_auth_gate_checks_hosted_posture_and_fixed_bearer_negative() -> None:
     assert "/bff/auth/dev-login" in script
     assert "/bff/auth/readiness" in script
     assert 'assert data.get("authReady") is True' in script
-    assert 'assert data.get("providerReady") is True' in script
+    # Assistant provider health is observability only and must never gate a
+    # release; the BFF deliberately excludes it from ready/authReady.
+    assert 'assert data.get("providerReady") is True' not in script
     assert 'assert data.get("ready") is True' in script
     assert 'assert data.get("sourceCommitSha") == expected_sha' in script
     assert "Bearer op-fixed:operator:mfa" in script
@@ -794,12 +796,73 @@ def test_auth_gate_readiness_retry_times_out_on_permanent_non_ready() -> None:
         )
         assert result.returncode != 0, result.stdout
         assert "strict browser readiness contract is not satisfied within 1s timeout" in result.stderr
-        assert "OPENCLAW_GATEWAY_TIMEOUT" in result.stderr
-        assert "providerReady" in result.stderr
+        # The blocking condition is the release-relevant ready flag, not the
+        # assistant provider's health.
+        assert "ready=False" in result.stderr
         assert "test-operator-a-secret" not in result.stdout
         assert "test-operator-a-secret" not in result.stderr
         assert "eyJhbGci" not in result.stdout
         assert "eyJhbGci" not in result.stderr
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_auth_gate_readiness_passes_when_assistant_provider_is_down() -> None:
+    """OPGAP-DEPLOY-PROVIDER-GATE-20260901 regression.
+
+    Assistant provider health is observability only: the BFF deliberately
+    excludes it from ready/authReady because "a provider outage or probe
+    failure must never flip a validly authenticated strict session to
+    not-ready". A deploy gate that blocks (and auto-rolls-back) an otherwise
+    healthy release because an external LLM provider credential expired is
+    strictly more conservative than the product itself, and recurs every time
+    that credential rotates.
+    """
+    from http.server import ThreadingHTTPServer
+    import threading
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _MockBffHandler)
+    port = server.server_port
+    _MockBffHandler.readiness_call_count = 0
+    _MockBffHandler.version_posture = {"auth_stub": False, "auth_mode": "strict"}
+    _MockBffHandler.readiness_responses = [
+        {
+            "data": {
+                "ready": True,
+                "authReady": True,
+                "providerReady": False,
+                "sourceCommitSha": _TEST_SHA,
+                "auth": {
+                    "mode": "strict",
+                    "stub": False,
+                    "sessionKind": "bearer",
+                    "operatorRoleReady": True,
+                    "interactionCapabilityReady": True,
+                    "verifierReady": True,
+                },
+                "provider": {
+                    "provider": "openclaw",
+                    "ready": False,
+                    "status": "degraded",
+                    "reason": "OPENCLAW_GATEWAY_TIMEOUT",
+                },
+            }
+        }
+    ]
+
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        result = _run_auth_gate_against_server(
+            f"http://127.0.0.1:{port}",
+            timeout_seconds=5,
+            poll_interval_seconds=0.05,
+        )
+        assert result.returncode == 0, f"stdout={result.stdout}\nstderr={result.stderr}"
+        assert "authenticated dev-login and strict browser readiness round trip succeeded" in result.stdout
+        # Still surfaced for observability, just not as a gate.
+        assert "advisory: assistant provider not ready" in result.stdout
     finally:
         server.shutdown()
         server.server_close()
