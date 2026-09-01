@@ -4,7 +4,7 @@
   "title": "Migrate Research knowledge and framework integration routes",
   "program_id": "PANTHEON-FULL-OPERATION-GAP-CLOSURE-20260830",
   "design_unit": "SD-OPGAP-BE-RESEARCH-ROUTER",
-  "recorded_at": "2026-09-01T06:59:56Z",
+  "recorded_at": "2026-09-01T07:41:50Z",
   "ai_name": "Codex2",
   "owner": "Codex2",
   "reviewer": "Codex",
@@ -48,26 +48,28 @@
     "knowledge_read_contracts": "Evidence, insight, and institutional-memory list routes preserve typed query validation, source-port filters, legacy projection and pagination envelopes, availability metadata, and capability-aware evidence redaction rather than exposing raw port records.",
     "knowledge_detail_contracts": "Evidence detail applies capability redaction to the record and linked decisions before emitting the explicit legacy detail projection. Insight detail emits scope, confidence, supporting-evidence, linked-source, provenance, and source-surface metadata fields. Institutional-memory detail emits entry_detail and source_context states from the port-backed source status.",
     "composition_route_contracts": "Synthesis conflict-log reads use injected or durable read-adapter seams with stable view projection including allocation-policy-artifact and governance-approval links, while /bff/search preserves its strategy/persona/capital-pool compatibility surface through an injected cross-entity search or typed-port fallback.",
+    "legacy_inventory_remediation": "GET /api/v1/artifacts validates status with legacy 400 behavior and honors experiment_id, ticket_id, lineage_id, and status across both extended and preserved narrow source-port adapters. GET /api/v1/research/search rejects match_type=note before source access. Experiment list items restore links and canCancel-only actions, while ticket list/detail restore frozen string surface states, metadata, and unavailable empty-envelope behavior.",
     "source_port_preservation": "The router injects and uses the existing ResearchKnowledgeSourcePort rather than reimplementing reusable source-port logic or falling back to main.py globals.",
     "composition_boundary": "main.py inclusion and deletion of legacy route blocks remain the responsibility of OPGAP-BFF-MAIN-ASSEMBLY-20260830."
   },
   "verification": {
     "test_suites": [
-      "services/control-plane/bff/tests/test_research_router.py"
+      "services/control-plane/bff/tests/test_research_router.py",
+      "services/control-plane/bff/research/test_router.py"
     ],
     "verification_commands": [
-      "pytest -q services/control-plane/bff/tests/test_research_router.py",
+      "pytest -q services/control-plane/bff/tests/test_research_router.py services/control-plane/bff/research/test_router.py",
       "python3 -m compileall -q services/control-plane/bff/research/router.py services/control-plane/bff/tests/test_research_router.py",
       "git diff --check"
     ],
-    "result": "13 passed (with one upstream Starlette TestClient deprecation warning)",
+    "result": "24 passed (with one upstream Starlette TestClient deprecation warning; ruff is not installed in the provisioned Python environment)",
     "status": "PASS"
   },
   "head_binding_policy": "The owner binds the final PR head SHA through REVIEW_HEAD_SHA at handoff. This committed manifest identifies the reviewed scope and evidence but does not claim to contain its own final commit SHA.",
   "review": {
     "status": "ready_for_independent_review",
     "reviewer": "Codex",
-    "remediation": "The prior exact head e03b0bb797948e172bfa26c20d401983686a62a9 still returned raw port records with generic metadata for evidence, insight, and memory detail routes, and projected conflict-log links as null. This successor restores the legacy explicit detail projections, capability redaction, populated-link source-surface states, and allocation/governance links with port-backed regression coverage.",
+    "remediation": "The prior exact head 63a03ea67974f8bb58b42b77c56de9970c7a4911 still discarded artifact experiment_id/ticket_id/lineage_id filters, admitted match_type=note, omitted API-v1 experiment item links, and emitted generic ticket surface objects. This successor restores those frozen legacy contracts while retaining the predecessor narrow source-port boundary.",
     "required_checks": [
       "verify all 47 assigned Research route method/path pairs are registered by create_research_router",
       "verify typed analysis and artifact routes use the injected durable source port and preserve their compatibility links",
@@ -79,6 +81,10 @@
       "verify populated evidence detail redacts both an unavailable evidence capability and protected linked decisions while preserving the explicit legacy detail envelope",
       "verify populated insight and institutional-memory detail responses retain all contract fields and derive ok/degraded source-surface metadata from the injected port",
       "verify populated conflict-log responses preserve allocation-policy-artifact and governance-approval ids and hrefs",
+      "verify /api/v1/artifacts forwards all four legacy filters where supported, preserves equivalent linkage filtering for the narrow source port, and rejects an invalid status with HTTP 400",
+      "verify /api/v1/research/search rejects match_type=note with HTTP 400 before accessing the source port",
+      "verify /api/v1/experiments list items restore self/workbench links and canCancel-only actions",
+      "verify ticket list/detail emit frozen string surface states and the unavailable list envelope is empty with total zero",
       "verify synthesis conflict logs and /bff/search preserve their composition seams without reaching main.py globals",
       "verify the predecessor ResearchKnowledgeSourcePort is not reimplemented and main.py composition remains out of scope",
       "run the focused Research router test suite and confirm the ticket priority, experiment status, execution_mode=live, and OpenAPI signature regression cases pass",
