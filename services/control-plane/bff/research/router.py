@@ -73,6 +73,7 @@ _KW04_LINKED_ENTITY_TYPES = {
     "memory_entry", "research_note", "evidence_ref", "strategy_spec", "experiment",
 }
 _KW04_RECENCY_VALUES = {"7d", "30d", "90d", "all"}
+_KW05_LIFECYCLE_STATES = {"draft", "candidate", "approved", "retired", "all"}
 _ENTITY_TYPE_EVIDENCE_KIND: Dict[str, str] = {
     "strategy_spec": "strategy",
     "strategy": "strategy",
@@ -964,6 +965,185 @@ def create_research_router(
             "updated_at": note.get("updated_at"),
             "route_href": f"/knowledge/notes/{note.get('note_id')}",
         }
+
+    def _kw02_attachment_payload(
+        port: Any,
+        note: Dict[str, Any],
+        *,
+        include_route: bool,
+    ) -> Dict[str, Any]:
+        attachment_type = str(note.get("attachment_type") or "free_standing")
+        attachment_ref = note.get("attachment_ref")
+        exists, display_label, route_href = _kw02_resolve_attachment_target(
+            port,
+            attachment_type,
+            attachment_ref,
+        )
+        payload = {
+            "type": attachment_type,
+            "ref": attachment_ref,
+            "display_label": display_label if exists else None,
+        }
+        if include_route:
+            payload["route_href"] = route_href if exists else None
+        return payload
+
+    def _kw02_resolve_evidence_links(
+        port: Any,
+        ref_ids: List[str],
+        *,
+        snapshot_at: str,
+    ) -> Tuple[List[Dict[str, Any]], str]:
+        surface_state = _knowledge_surface_state(
+            "evidence_refs", snapshot_at=snapshot_at, has_data=True,
+        )
+        items: List[Dict[str, Any]] = []
+        for ref_id in ref_ids:
+            if surface_state == "unavailable":
+                items.append({
+                    "ref_id": ref_id,
+                    "resolution_state": "unavailable",
+                    "display_label": None,
+                    "route_href": None,
+                })
+                continue
+            evidence_ref = _call_port(port, "get_evidence_ref", ref_id)
+            if evidence_ref:
+                items.append({
+                    "ref_id": ref_id,
+                    "resolution_state": "resolved",
+                    "display_label": evidence_ref.get("display_label"),
+                    "route_href": evidence_ref.get("route_href") or f"/knowledge/evidence/{ref_id}",
+                })
+                continue
+            items.append({
+                "ref_id": ref_id,
+                "resolution_state": "unresolved",
+                "display_label": None,
+                "route_href": None,
+            })
+        return items, surface_state
+
+    def _kw02_resolve_memory_anchors(
+        port: Any,
+        entry_ids: List[str],
+        *,
+        snapshot_at: str,
+    ) -> Tuple[List[Dict[str, Any]], str]:
+        surface_state = _knowledge_surface_state(
+            "institutional_memory_entries", snapshot_at=snapshot_at, has_data=True,
+        )
+        items: List[Dict[str, Any]] = []
+        missing_entries = False
+        for entry_id in entry_ids:
+            entry = _call_port(port, "get_institutional_memory_entry", entry_id)
+            if not entry:
+                missing_entries = True
+                continue
+            content = entry.get("content") if isinstance(entry.get("content"), dict) else {}
+            lifecycle = entry.get("lifecycle") if isinstance(entry.get("lifecycle"), dict) else {}
+            items.append({
+                "entry_id": entry_id,
+                "headline": content.get("headline") or entry.get("headline"),
+                "knowledge_type": entry.get("knowledge_type"),
+                "lifecycle_status": lifecycle.get("status"),
+                "route_href": f"/knowledge/memory/{entry_id}",
+            })
+        if missing_entries and surface_state == "ok":
+            surface_state = "degraded"
+        return items, surface_state
+
+    def _research_note_detail_payload(
+        port: Any,
+        note: Dict[str, Any],
+        *,
+        snapshot_at: str,
+    ) -> Dict[str, Any]:
+        evidence_links, evidence_surface = _kw02_resolve_evidence_links(
+            port,
+            list(note.get("linked_evidence_refs") or []),
+            snapshot_at=snapshot_at,
+        )
+        memory_anchors, memory_surface = _kw02_resolve_memory_anchors(
+            port,
+            list(note.get("linked_memory_anchors") or []),
+            snapshot_at=snapshot_at,
+        )
+        return {
+            "note_id": note.get("note_id"),
+            "title": note.get("title"),
+            "body": note.get("body"),
+            "owner_ref": json.loads(json.dumps(note.get("owner_ref") or {})),
+            "attachment": _kw02_attachment_payload(port, note, include_route=True),
+            "tags": list(note.get("tags") or []),
+            "linked_evidence_refs": evidence_links,
+            "linked_memory_anchors": memory_anchors,
+            "created_at": note.get("created_at"),
+            "updated_at": note.get("updated_at"),
+            "meta": {
+                **snapshot_meta(snapshot_at),
+                "surfaces": {
+                    "research_note_detail": _knowledge_surface_state(
+                        "research_notes", snapshot_at=snapshot_at, has_data=True,
+                    ),
+                    "evidence_links": evidence_surface,
+                    "memory_anchors": memory_surface,
+                },
+            },
+        }
+
+    def _kw05_bad_request(message: str, reason: str, field: str) -> None:
+        raise bff_error(
+            400,
+            ErrorCode.VALIDATION_FAILED,
+            message,
+            reason,
+            precondition_failed=field,
+        )
+
+    def _kw05_surface_state(*, snapshot_at: str, has_data: bool) -> str:
+        return _knowledge_surface_state(
+            "strategy_specs", snapshot_at=snapshot_at, has_data=has_data,
+        )
+
+    def _kw05_validate_lifecycle_state(value: Any) -> str:
+        normalized = str(value or "").strip().lower()
+        if normalized not in _KW05_LIFECYCLE_STATES:
+            _kw05_bad_request(
+                "Invalid lifecycle_state",
+                f"lifecycle_state must be one of {sorted(_KW05_LIFECYCLE_STATES)}",
+                "lifecycle_state",
+            )
+        return normalized
+
+    def _kw05_compare_selectors(
+        *,
+        left_version: Optional[str],
+        right_version: Optional[str],
+        base_version: Optional[str],
+        target_version: Optional[str],
+    ) -> Tuple[str, str]:
+        left = str(left_version or base_version or "").strip()
+        right = str(right_version or target_version or "").strip()
+        if not left or not right:
+            _kw05_bad_request(
+                "Missing compare versions",
+                "Provide either left_version/right_version or base_version/target_version",
+                "left_version",
+            )
+        if left_version and base_version and str(left_version).strip() != str(base_version).strip():
+            _kw05_bad_request(
+                "Conflicting compare aliases",
+                "left_version and base_version must reference the same version when both are provided",
+                "left_version",
+            )
+        if right_version and target_version and str(right_version).strip() != str(target_version).strip():
+            _kw05_bad_request(
+                "Conflicting compare aliases",
+                "right_version and target_version must reference the same version when both are provided",
+                "right_version",
+            )
+        return left, right
 
     def _validate_choice(value: Any, *, field: str, label: str, allowed: set[str]) -> str:
         normalized = str(value or "").strip().lower()
@@ -2396,7 +2576,43 @@ def create_research_router(
                     "meta": meta,
                 }
             if name == "list_strategy_specs":
-                kwargs = {"lifecycle_state": _query(request, "lifecycle_state", "all"), "source_kind": _query(request, "source_kind"), "persona_id": _query(request, "persona_id"), "include_retired": _query(request, "include_retired", "false") == "true", "include_fixture_pack": False}
+                lifecycle_state = _kw05_validate_lifecycle_state(
+                    _query(request, "lifecycle_state", "all")
+                )
+                kwargs = {
+                    "lifecycle_state": lifecycle_state,
+                    "source_kind": _query(request, "source_kind"),
+                    "persona_id": _query(request, "persona_id"),
+                    "include_retired": _query(request, "include_retired", "false") == "true",
+                    "include_fixture_pack": False,
+                }
+                records = list(_call_port(port, method, **kwargs) or [])
+                source_fn = getattr(port, "dataset_source", None)
+                dataset_available = (
+                    str(source_fn("strategy_specs") or "missing") != "missing"
+                    if callable(source_fn)
+                    else bool(records)
+                )
+                surface_state = _kw05_surface_state(
+                    snapshot_at=snapshot_at,
+                    has_data=dataset_available,
+                )
+                if surface_state == "unavailable":
+                    items, next_token, has_more = [], None, False
+                else:
+                    items, next_token = _page(records, request)
+                    has_more = next_token is not None
+                meta = snapshot_meta(snapshot_at)
+                meta["surfaces"] = {"strategy_spec_list": surface_state}
+                return {
+                    "items": items,
+                    "page_info": {
+                        "next_page_token": next_token,
+                        "page_size": int(_query(request, "page_size", "20") or 20),
+                        "has_more": has_more,
+                    },
+                    "meta": meta,
+                }
             records = list(_call_port(port, method, **kwargs) or [])
             items, next_token = _page(records, request)
             return {"data": items, "page_info": {"next_page_token": next_token, "total": len(records)}, "meta": _meta(snapshot_at, name, dataset, bool(records))}
@@ -2412,8 +2628,12 @@ def create_research_router(
             method, param, dataset = detail_operations[name]
             identifier = str(params[param])
             kwargs = {"version_selector": _query(request, "version", "current")} if name == "get_strategy_spec" else {}
+            if name == "get_strategy_spec" and not _call_port(port, "get_strategy_spec", identifier):
+                _not_found("Strategy spec", identifier)
             record = _call_port(port, method, identifier, **kwargs)
             if not record:
+                if name == "get_strategy_spec":
+                    _not_found("Strategy spec version", identifier)
                 _not_found("Research record", identifier)
             if name == "get_evidence":
                 return _evidence_detail_payload(
@@ -2423,6 +2643,51 @@ def create_research_router(
                 return _insight_detail_payload(record, snapshot_at=snapshot_at)
             if name == "get_memory":
                 return _memory_detail_payload(record, snapshot_at=snapshot_at)
+            if name == "get_note":
+                return _research_note_detail_payload(
+                    port,
+                    record,
+                    snapshot_at=snapshot_at,
+                )
+            if name == "get_strategy_spec":
+                detail_surface = _kw05_surface_state(
+                    snapshot_at=snapshot_at,
+                    has_data=True,
+                )
+                citation_bundle = json.loads(json.dumps(record.get("citation_bundle") or {}))
+                citation_surface = "partial" if not any(citation_bundle.values()) else detail_surface
+                ancestry_surface = (
+                    "degraded"
+                    if record.get("parent_spec_version_id") is None
+                    and str(_query(request, "version", "current") or "").strip() not in {"", "current"}
+                    else detail_surface
+                )
+                return {
+                    "object_ref": json.loads(json.dumps(record.get("object_ref") or {})),
+                    "strategy_id": record.get("strategy_id"),
+                    "spec_version_id": record.get("spec_version_id"),
+                    "spec_version": record.get("spec_version"),
+                    "parent_spec_version_id": record.get("parent_spec_version_id"),
+                    "derived_from_source_refs": list(record.get("derived_from_source_refs") or []),
+                    "lifecycle_state": record.get("lifecycle_state"),
+                    "title": record.get("title"),
+                    "hypothesis": record.get("hypothesis"),
+                    "objective": record.get("objective"),
+                    "market_scope": json.loads(json.dumps(record.get("market_scope") or {})),
+                    "execution_profile": json.loads(json.dumps(record.get("execution_profile") or {})),
+                    "evaluation_plan": json.loads(json.dumps(record.get("evaluation_plan") or {})),
+                    "governance": json.loads(json.dumps(record.get("governance") or {})),
+                    "citation_bundle": citation_bundle,
+                    "allowedActions": json.loads(json.dumps(record.get("allowedActions") or {})),
+                    "meta": {
+                        **snapshot_meta(snapshot_at),
+                        "surfaces": {
+                            "strategy_spec_detail": detail_surface,
+                            "citation_bundle": citation_surface,
+                            "version_ancestry": ancestry_surface,
+                        },
+                    },
+                }
             payload = dict(record)
             payload.setdefault("meta", _meta(snapshot_at, name, dataset, True))
             return payload
@@ -2430,18 +2695,76 @@ def create_research_router(
         if name == "strategy_versions":
             strategy_id = str(params["strategy_id"])
             records = list(_call_port(port, "list_strategy_spec_versions", strategy_id) or [])
-            return {"data": records, "meta": _meta(snapshot_at, "strategy_versions", "strategy_specs", bool(records))}
+            if not records and not _call_port(port, "get_strategy_spec", strategy_id):
+                _not_found("Strategy spec", strategy_id)
+            return {
+                "strategy_id": strategy_id,
+                "versions": records,
+                "meta": {
+                    **snapshot_meta(snapshot_at),
+                    "surfaces": {
+                        "version_history": _kw05_surface_state(
+                            snapshot_at=snapshot_at,
+                            has_data=True,
+                        )
+                    },
+                },
+            }
 
         if name == "strategy_compare":
             strategy_id = str(params["strategy_id"])
-            left = _query(request, "left_version") or _query(request, "base_version")
-            right = _query(request, "right_version") or _query(request, "target_version")
-            if not left or not right:
-                raise bff_error(422, ErrorCode.VALIDATION_FAILED, "Two strategy versions are required", "left/right (or base/target) selectors are required", precondition_failed="version")
+            left, right = _kw05_compare_selectors(
+                left_version=_query(request, "left_version"),
+                right_version=_query(request, "right_version"),
+                base_version=_query(request, "base_version"),
+                target_version=_query(request, "target_version"),
+            )
+            if left == right:
+                raise bff_error(
+                    422,
+                    ErrorCode.VALIDATION_FAILED,
+                    "Compare requires two distinct versions",
+                    "left_version and right_version must identify different versions",
+                    precondition_failed="left_version",
+                )
+            left_detail = _call_port(
+                port,
+                "get_strategy_spec_detail",
+                strategy_id,
+                version_selector=left,
+            )
+            right_detail = _call_port(
+                port,
+                "get_strategy_spec_detail",
+                strategy_id,
+                version_selector=right,
+            )
+            if not left_detail or not right_detail:
+                _not_found("Strategy spec version", strategy_id)
+            if not (left_detail.get("allowedActions") or {}).get("canCompare") or not (
+                right_detail.get("allowedActions") or {}
+            ).get("canCompare"):
+                raise bff_error(
+                    422,
+                    ErrorCode.OPERATION_NOT_ALLOWED,
+                    "One or more versions cannot be compared",
+                    "Compare accepts only candidate, approved, or retired strategy spec versions",
+                    precondition_failed="lifecycle_state",
+                )
             comparison = _call_port(port, "compare_strategy_spec_versions", strategy_id, left_selector=left, right_selector=right)
             if not comparison:
-                _not_found("Strategy specification", strategy_id)
-            return comparison
+                _not_found("Strategy spec version", strategy_id)
+            payload = dict(comparison)
+            payload["meta"] = {
+                **snapshot_meta(snapshot_at),
+                "surfaces": {
+                    "strategy_spec_compare": _kw05_surface_state(
+                        snapshot_at=snapshot_at,
+                        has_data=True,
+                    )
+                },
+            }
+            return payload
 
         if name in {"synthesis_conflict_logs", "synthesis_conflict_log"}:
             raw_flag = os.getenv("PANTHEON_SYNTHESIS_CONFLICT_LOG_VIEW_ENABLED")

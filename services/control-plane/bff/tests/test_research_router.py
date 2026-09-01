@@ -123,6 +123,37 @@ class _Port:
             }
         }
         self.notes: Dict[str, Dict[str, Any]] = {}
+        self.strategy_specs: Dict[str, Dict[str, Any]] = {
+            "strategy-1": {
+                "strategy_id": "strategy-1",
+                "title": "Alpha Strategy",
+                "versions": {
+                    "v1": {
+                        "strategy_id": "strategy-1",
+                        "spec_version_id": "strategy-1-v1",
+                        "spec_version": "v1",
+                        "lifecycle_state": "candidate",
+                        "title": "Alpha Strategy",
+                        "hypothesis": "Initial alpha hypothesis",
+                        "objective": "Verify the signal",
+                        "allowedActions": {"canCompare": True},
+                        "citation_bundle": {"evidence": ["evidence-include"]},
+                    },
+                    "v2": {
+                        "strategy_id": "strategy-1",
+                        "spec_version_id": "strategy-1-v2",
+                        "spec_version": "v2",
+                        "parent_spec_version_id": "strategy-1-v1",
+                        "lifecycle_state": "approved",
+                        "title": "Alpha Strategy",
+                        "hypothesis": "Refined alpha hypothesis",
+                        "objective": "Verify the signal",
+                        "allowedActions": {"canCompare": True},
+                        "citation_bundle": {"evidence": ["evidence-include"]},
+                    },
+                },
+            }
+        }
         self.evidence_refs: Dict[str, Dict[str, Any]] = {
             "evidence-include": {
                 "ref_id": "evidence-include",
@@ -305,8 +336,14 @@ class _Port:
     def list_research_notes(self) -> List[Dict[str, Any]]:
         return list(self.notes.values())
 
+    def get_research_note(self, note_id: str) -> Optional[Dict[str, Any]]:
+        return self.notes.get(note_id)
+
     def list_evidence_refs(self) -> List[Dict[str, Any]]:
         return list(self.evidence_refs.values())
+
+    def get_evidence_ref(self, ref_id: str) -> Optional[Dict[str, Any]]:
+        return self.evidence_refs.get(ref_id)
 
     def get_evidence_ref_detail(self, ref_id: str) -> Optional[Dict[str, Any]]:
         return self.evidence_refs.get(ref_id)
@@ -322,6 +359,76 @@ class _Port:
 
     def get_institutional_memory_entry(self, entry_id: str, **_kwargs: Any) -> Optional[Dict[str, Any]]:
         return self.memory_entries.get(entry_id)
+
+    def list_strategy_specs(self, **_filters: Any) -> List[Dict[str, Any]]:
+        return [
+            {
+                "strategy_id": spec["strategy_id"],
+                "title": spec["title"],
+                "current_spec_version": "v2",
+                "lifecycle_state": "approved",
+            }
+            for spec in self.strategy_specs.values()
+        ]
+
+    def get_strategy_spec(self, strategy_id: str) -> Optional[Dict[str, Any]]:
+        spec = self.strategy_specs.get(strategy_id)
+        if not spec:
+            return None
+        current = spec["versions"]["v2"]
+        return {
+            "strategy_id": strategy_id,
+            "title": spec["title"],
+            "name": spec["title"],
+            "spec_version_id": current["spec_version_id"],
+            "spec_version": current["spec_version"],
+            "lifecycle_state": current["lifecycle_state"],
+        }
+
+    def get_strategy_spec_detail(
+        self,
+        strategy_id: str,
+        *,
+        version_selector: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        spec = self.strategy_specs.get(strategy_id)
+        if not spec:
+            return None
+        selector = version_selector or "v2"
+        if selector == "current":
+            selector = "v2"
+        return spec["versions"].get(selector)
+
+    def list_strategy_spec_versions(self, strategy_id: str) -> List[Dict[str, Any]]:
+        spec = self.strategy_specs.get(strategy_id)
+        if not spec:
+            return []
+        return [
+            {
+                "spec_version_id": detail["spec_version_id"],
+                "spec_version": detail["spec_version"],
+                "lifecycle_state": detail["lifecycle_state"],
+            }
+            for detail in spec["versions"].values()
+        ]
+
+    def compare_strategy_spec_versions(
+        self,
+        strategy_id: str,
+        *,
+        left_selector: str,
+        right_selector: str,
+    ) -> Optional[Dict[str, Any]]:
+        left = self.get_strategy_spec_detail(strategy_id, version_selector=left_selector)
+        right = self.get_strategy_spec_detail(strategy_id, version_selector=right_selector)
+        if not left or not right:
+            return None
+        return {
+            "strategy_id": strategy_id,
+            "left_version": left["spec_version"],
+            "right_version": right["spec_version"],
+            "changed_sections": ["hypothesis"],
+        }
 
     def list_synthesis_conflict_logs(self, **filters: Any) -> List[Dict[str, Any]]:
         records = list(self.conflict_logs.values())
@@ -581,6 +688,137 @@ def test_research_note_list_preserves_legacy_filters_and_envelope() -> None:
     invalid_ref = client.get("/api/v1/knowledge/notes", params={"attachment_ref": "ticket-1"})
     assert invalid_ref.status_code == 400
     assert invalid_ref.json()["detail"]["precondition_failed"] == "attachment_ref"
+
+
+def test_research_note_detail_preserves_attachment_link_and_surface_projections() -> None:
+    port = _Port()
+    ticket_id = "tkt-11111111-1111-1111-1111-111111111111"
+    memory_id = "mem-11111111-1111-1111-1111-111111111111"
+    port.tickets[ticket_id] = {"ticket_id": ticket_id, "title": "Attached ticket"}
+    port.evidence_refs["evidence-include"]["display_label"] = "Primary source"
+    port.memory_entries[memory_id] = {
+        "entry_id": memory_id,
+        "knowledge_type": "lesson",
+        "content": {"headline": "Durable memory anchor"},
+        "lifecycle": {"status": "active"},
+    }
+    port.notes["note-detail"] = {
+        "note_id": "note-detail",
+        "title": "Linked note detail",
+        "body": "The complete durable note.",
+        "owner_ref": {"owner_type": "operator", "owner_id": "op-test"},
+        "attachment_type": "research_ticket",
+        "attachment_ref": ticket_id,
+        "tags": ["alpha"],
+        "linked_evidence_refs": ["evidence-include", "evidence-missing"],
+        "linked_memory_anchors": [memory_id, "memory-missing"],
+        "created_at": "2026-08-30T00:00:00Z",
+        "updated_at": "2026-08-30T01:00:00Z",
+    }
+
+    response = _client(port).get("/api/v1/knowledge/notes/note-detail")
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert set(payload) == {
+        "note_id", "title", "body", "owner_ref", "attachment", "tags",
+        "linked_evidence_refs", "linked_memory_anchors", "created_at", "updated_at", "meta",
+    }
+    assert payload["attachment"] == {
+        "type": "research_ticket",
+        "ref": ticket_id,
+        "display_label": "Attached ticket",
+        "route_href": f"/research/tickets/{ticket_id}",
+    }
+    assert payload["linked_evidence_refs"] == [
+        {
+            "ref_id": "evidence-include",
+            "resolution_state": "resolved",
+            "display_label": "Primary source",
+            "route_href": "/knowledge/evidence/evidence-include",
+        },
+        {
+            "ref_id": "evidence-missing",
+            "resolution_state": "unresolved",
+            "display_label": None,
+            "route_href": None,
+        },
+    ]
+    assert payload["linked_memory_anchors"] == [
+        {
+            "entry_id": memory_id,
+            "headline": "Durable memory anchor",
+            "knowledge_type": "lesson",
+            "lifecycle_status": "active",
+            "route_href": f"/knowledge/memory/{memory_id}",
+        }
+    ]
+    assert payload["meta"]["surfaces"] == {
+        "research_note_detail": "ok",
+        "evidence_links": "ok",
+        "memory_anchors": "degraded",
+    }
+
+
+def test_strategy_spec_routes_preserve_legacy_projections_and_compare_gates() -> None:
+    port = _Port()
+    client = _client(port)
+
+    listed = client.get("/api/v1/knowledge/strategy-specs")
+    assert listed.status_code == 200, listed.text
+    assert set(listed.json()) == {"items", "page_info", "meta"}
+    assert listed.json()["items"] == [{
+        "strategy_id": "strategy-1",
+        "title": "Alpha Strategy",
+        "current_spec_version": "v2",
+        "lifecycle_state": "approved",
+    }]
+    assert listed.json()["page_info"] == {
+        "next_page_token": None,
+        "page_size": 20,
+        "has_more": False,
+    }
+    assert listed.json()["meta"]["surfaces"] == {"strategy_spec_list": "ok"}
+
+    detail = client.get("/api/v1/knowledge/strategy-specs/strategy-1", params={"version": "v1"})
+    assert detail.status_code == 200, detail.text
+    assert detail.json()["strategy_id"] == "strategy-1"
+    assert detail.json()["spec_version"] == "v1"
+    assert detail.json()["lifecycle_state"] == "candidate"
+    assert detail.json()["meta"]["surfaces"] == {
+        "strategy_spec_detail": "ok",
+        "citation_bundle": "ok",
+        "version_ancestry": "degraded",
+    }
+
+    versions = client.get("/api/v1/knowledge/strategy-specs/strategy-1/versions")
+    assert versions.status_code == 200, versions.text
+    assert versions.json()["strategy_id"] == "strategy-1"
+    assert [item["spec_version"] for item in versions.json()["versions"]] == ["v1", "v2"]
+    assert versions.json()["meta"]["surfaces"] == {"version_history": "ok"}
+
+    same_version = client.get(
+        "/api/v1/knowledge/strategy-specs/strategy-1/compare",
+        params={"left_version": "v1", "right_version": "v1"},
+    )
+    assert same_version.status_code == 422
+    assert same_version.json()["detail"]["precondition_failed"] == "left_version"
+
+    compared = client.get(
+        "/api/v1/knowledge/strategy-specs/strategy-1/compare",
+        params={"left_version": "v1", "right_version": "v2"},
+    )
+    assert compared.status_code == 200, compared.text
+    assert compared.json()["changed_sections"] == ["hypothesis"]
+    assert compared.json()["meta"]["surfaces"] == {"strategy_spec_compare": "ok"}
+
+    port.strategy_specs["strategy-1"]["versions"]["v1"]["allowedActions"] = {"canCompare": False}
+    forbidden = client.get(
+        "/api/v1/knowledge/strategy-specs/strategy-1/compare",
+        params={"left_version": "v1", "right_version": "v2"},
+    )
+    assert forbidden.status_code == 422
+    assert forbidden.json()["detail"]["precondition_failed"] == "lifecycle_state"
 
 
 def test_knowledge_evidence_insight_and_memory_routes_preserve_filters_and_envelopes() -> None:
