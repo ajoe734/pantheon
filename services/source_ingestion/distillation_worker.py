@@ -381,11 +381,26 @@ class DistillationJobQueue:
             message = str(exc).lower()
             if "malformed" not in message and "not a database" not in message:
                 raise
-            quarantined = self._path.with_name(f"{self._path.name}.corrupt-{int(self._now())}")
+            suffix = f".corrupt-{int(self._now())}"
+            quarantined = self._path.with_name(f"{self._path.name}{suffix}")
             self._path.replace(quarantined)
+            # _bootstrap() enables WAL mode (PRAGMA journal_mode = WAL), which
+            # keeps the actual database state spread across sidecar files
+            # (<name>-wal, <name>-shm) alongside the main file. Quarantining
+            # only the main file and reopening at the same path lets sqlite3
+            # pick the OLD, still-corrupt sidecars back up — connecting to a
+            # "fresh" file that immediately fails with the same corruption
+            # error again (confirmed live: this happened on every tick after
+            # a container restart even with the quarantine above in place).
+            # Renaming the sidecars alongside the main file, not just deleting
+            # them, keeps quarantined state fully inspectable together.
+            for sidecar_suffix in ("-wal", "-shm"):
+                sidecar = self._path.with_name(f"{self._path.name}{sidecar_suffix}")
+                if sidecar.exists():
+                    sidecar.replace(sidecar.with_name(f"{sidecar.name}{suffix}"))
             logging.getLogger(__name__).error(
                 "DistillationJobQueue at %s was corrupt (%s); quarantined to %s "
-                "and starting a fresh queue.",
+                "(plus any -wal/-shm sidecars) and starting a fresh queue.",
                 self._path,
                 exc,
                 quarantined,
