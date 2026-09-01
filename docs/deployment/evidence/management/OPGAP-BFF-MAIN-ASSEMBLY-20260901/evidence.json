@@ -6,10 +6,10 @@
   "repository": "ajoe734/pantheon",
   "base_branch": "dev",
   "head_branch": "task/OPGAP-BFF-MAIN-ASSEMBLY-20260901",
-  "head_sha": "0edf0cd6d82acd663aedf48f4e71ac460e3c8e8f",
+  "head_sha": "cfdbf3b37370c2ae79a0aa2ca02df35c7d93ac16",
   "pull_request": 5501,
   "owner": "Codex",
-  "reviewer": "Claude2",
+  "reviewer": "Claude",
   "scope": {
     "changed_files": [
       "services/control-plane/bff/main.py",
@@ -47,5 +47,5 @@
     "git_diff_check": "passed",
     "environment_note": "Full TestClient suite remains unclaimed because the repository's minimal TestClient startup hangs at shell_summary in this environment."
   },
-  "review_note": "This is candidate evidence only. Independent reviewer approval and the canonical exact-head gate remain required before merge."
+  "review_note": "The head_sha identifies the delivery head covered by these verification results. Independent reviewer approval and the canonical handoff gate must separately freeze the current PR head and this committed manifest blob before merge."
 }
