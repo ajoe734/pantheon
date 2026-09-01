@@ -862,6 +862,113 @@ def test_main_py_has_zero_legacy_agora_route_decorators():
     assert len(matches) == 0, f"Found {len(matches)} legacy Agora decorators in main.py: {matches}"
 
 
+def test_migrated_agora_routes_preserve_legacy_http_contracts():
+    """The extracted routes retain the query, header, and optional-body API shapes."""
+    schema = bff_main.app.openapi()
+
+    signals = schema["paths"]["/bff/agora/signals"]["get"]
+    signal_parameters = {parameter["name"]: parameter for parameter in signals["parameters"]}
+    assert {"reviewStatus", "status", "page_token", "page_size"}.issubset(signal_parameters)
+    assert signal_parameters["page_size"]["schema"]["minimum"] == 1
+    assert signal_parameters["page_size"]["schema"]["maximum"] == 200
+
+    journal_patch = schema["paths"]["/bff/agora/journal/{entry_id}"]["patch"]
+    journal_headers = {
+        parameter["name"].lower()
+        for parameter in journal_patch["parameters"]
+        if parameter["in"] == "header"
+    }
+    assert {"x-mfa-token", "x-trace-id"}.issubset(journal_headers)
+
+    for path in (
+        "/api/v1/agora/ask/stream",
+        "/bff/sse/agora/signals",
+        "/bff/sse/agora/sessions/{sessionId}",
+    ):
+        parameters = schema["paths"][path]["get"]["parameters"]
+        assert any(
+            parameter["name"] == "last_event_id" and parameter["in"] == "query"
+            for parameter in parameters
+        ), path
+
+    for path in (
+        "/bff/agora/committee/{sessionId}/evidence-pack",
+        "/bff/agora/committee/sessions",
+        "/bff/agora/committee/sessions/{sessionId}/memos",
+    ):
+        request_body = schema["paths"][path]["post"].get("requestBody", {})
+        assert request_body.get("required", False) is False, path
+
+
+def test_migrated_agora_signals_supports_legacy_status_and_pagination(monkeypatch):
+    """Legacy snake-case pagination and status filters remain valid after extraction."""
+    store = _create_test_agora_store()
+    captured: dict[str, str | None] = {}
+
+    def list_signals(*, review_status=None, **_kwargs):
+        captured["review_status"] = review_status
+        return []
+
+    store.list_agora_signals = list_signals
+    _install_agora_store(monkeypatch, store)
+    client = _client(monkeypatch)
+
+    response = client.get(
+        "/bff/agora/signals",
+        params={"status": "pending", "page_token": "signal-17", "page_size": 1},
+        headers={"Authorization": _OPERATOR_AUTH},
+    )
+    assert response.status_code == 200, response.text
+    assert captured == {"review_status": "pending"}
+
+    for invalid_page_size in (0, 201):
+        invalid = client.get(
+            "/bff/agora/signals",
+            params={"page_size": invalid_page_size},
+            headers={"Authorization": _OPERATOR_AUTH},
+        )
+        assert invalid.status_code == 422, invalid.text
+
+
+def test_migrated_agora_committee_posts_accept_optional_bodies(monkeypatch):
+    """The route migration must not turn legacy optional JSON bodies into 422s."""
+    store = _create_test_agora_store()
+    committee_session_id = "committee-optional-body"
+    store.get_agora_session = lambda session_id: (
+        {"id": committee_session_id, "sessionId": committee_session_id, "mode": "committee"}
+        if session_id == committee_session_id else None
+    )
+    store.create_agora_committee_evidence_pack = lambda **kwargs: {
+        "id": kwargs["pack_id"],
+        "sessionId": kwargs["session_id"],
+    }
+    store.get_consult_memo = lambda _memo_id: None
+    store.submit_committee_session_memo = lambda session_id, **kwargs: {
+        "memoId": kwargs["memo_id"],
+        "sessionId": session_id,
+    }
+    _install_agora_store(monkeypatch, store)
+    client = _client(monkeypatch)
+
+    session_response = client.post(
+        "/bff/agora/committee/sessions",
+        headers={"Authorization": _OPERATOR_AUTH, "Idempotency-Key": str(uuid.uuid4())},
+    )
+    assert session_response.status_code == 201, session_response.text
+
+    evidence_response = client.post(
+        f"/bff/agora/committee/{committee_session_id}/evidence-pack",
+        headers={"Authorization": _OPERATOR_AUTH, "Idempotency-Key": str(uuid.uuid4())},
+    )
+    assert evidence_response.status_code == 201, evidence_response.text
+
+    memo_response = client.post(
+        f"/bff/agora/committee/sessions/{committee_session_id}/memos",
+        headers={"Authorization": _OPERATOR_AUTH, "Idempotency-Key": str(uuid.uuid4())},
+    )
+    assert memo_response.status_code == 201, memo_response.text
+
+
 def test_agora_service_imports_ports_package_interfaces():
     """Acceptance: agora/service.py must import canonical ports interfaces from ports package."""
     import agora.service as agora_service

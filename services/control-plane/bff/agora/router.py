@@ -326,13 +326,15 @@ def create_agora_router(
         entry_id: str,
         payload: Dict[str, Any] = Body(...),
         authorization: Optional[str] = Header(default=None),
+        x_mfa_token: Optional[str] = Header(default=None, alias="X-MFA-Token"),
+        x_trace_id: Optional[str] = Header(default=None, alias="X-Trace-Id"),
         content_type: Optional[str] = Header(default=None),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
         x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
         x_correlation_id: Optional[str] = Header(default=None, alias="X-Correlation-Id"),
         x_request_id: Optional[str] = Header(default=None, alias="X-Request-Id"),
     ) -> CommandResponse[DecisionJournalEntryDTO]:
-        identity = extract_identity(authorization)
+        identity = extract_identity(authorization, mfa_token=x_mfa_token)
         (require_journal_write_role or require_write_role)(identity)
         agora_service.reject_body_idempotency_key(payload)
         agora_service.require_merge_patch_content_type(content_type)
@@ -343,7 +345,7 @@ def create_agora_router(
             patch=patch,
             identity=identity,
             resolved_key=resolved_key,
-            correlation_id=x_correlation_id,
+            correlation_id=x_correlation_id or x_trace_id,
             x_request_id=x_request_id,
         )
 
@@ -358,14 +360,15 @@ def create_agora_router(
     @router.get("/bff/agora/signals")
     def agora_list_signals(
         review_status: Optional[str] = Query(default=None, alias="reviewStatus"),
-        page_token: Optional[str] = Query(default=None, alias="pageToken"),
-        page_size: int = Query(default=20, alias="pageSize"),
+        status: Optional[str] = None,
+        page_token: Optional[str] = None,
+        page_size: int = Query(default=20, ge=1, le=200),
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
         identity = extract_identity(authorization)
         require_read_role(identity)
         return agora_service.list_signals(
-            review_status=review_status,
+            review_status=review_status or status,
             page_token=page_token,
             page_size=page_size,
         )
@@ -461,7 +464,7 @@ def create_agora_router(
     @router.post("/bff/agora/committee/{sessionId}/evidence-pack", status_code=201)
     def agora_committee_evidence_pack(
         sessionId: str,
-        payload: Dict[str, Any] = Body(...),
+        payload: Dict[str, Any] = Body(default_factory=dict),
         authorization: Optional[str] = Header(default=None),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
         x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
@@ -623,30 +626,35 @@ def create_agora_router(
     @router.get("/api/v1/agora/ask/stream")
     def agora_ask_stream(
         authorization: Optional[str] = Header(default=None),
-        last_event_id: Optional[str] = Header(default=None, alias="Last-Event-ID"),
+        last_event_id: Optional[str] = Query(default=None, alias="last_event_id"),
+        last_event_id_header: Optional[str] = Header(default=None, alias="Last-Event-ID"),
     ) -> Any:
         identity = extract_identity(authorization)
         require_read_role(identity)
-        return agora_service.stream_channel_events("ask", last_event_id=last_event_id)
+        return agora_service.stream_channel_events("ask", last_event_id=last_event_id or last_event_id_header)
 
     @router.get("/bff/sse/agora/signals")
     def agora_signals_stream(
         authorization: Optional[str] = Header(default=None),
-        last_event_id: Optional[str] = Header(default=None, alias="Last-Event-ID"),
+        last_event_id: Optional[str] = Query(default=None, alias="last_event_id"),
+        last_event_id_header: Optional[str] = Header(default=None, alias="Last-Event-ID"),
     ) -> Any:
         identity = extract_identity(authorization)
         require_read_role(identity)
-        return agora_service.stream_channel_events("signal", last_event_id=last_event_id)
+        return agora_service.stream_channel_events("signal", last_event_id=last_event_id or last_event_id_header)
 
     @router.get("/bff/sse/agora/sessions/{sessionId}")
     def agora_session_stream(
         sessionId: str,
         authorization: Optional[str] = Header(default=None),
-        last_event_id: Optional[str] = Header(default=None, alias="Last-Event-ID"),
+        last_event_id: Optional[str] = Query(default=None, alias="last_event_id"),
+        last_event_id_header: Optional[str] = Header(default=None, alias="Last-Event-ID"),
     ) -> Any:
         identity = extract_identity(authorization)
         require_read_role(identity)
-        return agora_service.stream_channel_events(f"session:{sessionId}", last_event_id=last_event_id)
+        return agora_service.stream_channel_events(
+            f"session:{sessionId}", last_event_id=last_event_id or last_event_id_header
+        )
 
     @router.get("/bff/agora/committee/sessions")
     def agora_list_committee_sessions(
@@ -658,7 +666,7 @@ def create_agora_router(
 
     @router.post("/bff/agora/committee/sessions", status_code=201)
     def agora_create_committee_session(
-        payload: Dict[str, Any] = Body(...),
+        payload: Dict[str, Any] = Body(default_factory=dict),
         authorization: Optional[str] = Header(default=None),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
         x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
@@ -729,7 +737,7 @@ def create_agora_router(
     @router.post("/bff/agora/committee/sessions/{sessionId}/memos", status_code=201)
     def agora_submit_committee_session_memo(
         sessionId: str,
-        payload: Dict[str, Any] = Body(...),
+        payload: Dict[str, Any] = Body(default_factory=dict),
         authorization: Optional[str] = Header(default=None),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
         x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
