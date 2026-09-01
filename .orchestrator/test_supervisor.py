@@ -6750,6 +6750,12 @@ class LostLeaseDirtyWipAdoptionTests(unittest.TestCase):
                 self._git(workspace, "status", "--porcelain"),
                 status_before_dispatch,
             )
+            self.assertEqual(
+                state["worker_worktrees"]["leases"][self.TASK_ID][
+                    "dirty_wip_adoption_receipt_id"
+                ],
+                receipt_id,
+            )
             marker = second_request.metadata.get("fenced_dirty_wip_adoption")
             self.assertIsInstance(marker, dict)
             guard_ok, guard_error = supervisor.check_worker_tree_clean(

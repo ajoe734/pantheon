@@ -79,7 +79,15 @@ class RollbackDrillHarnessRequest(BaseModel):
     replacement_plan_id: str = "deployment-plan-ep5-rollback-fallback"
     capital_pool_id: str = "capital-pool-ep5-demo"
     persona_capital_binding_id: str = "pcb-ep5-current"
-    replacement_persona_capital_binding_id: str = "pcb-ep5-fallback"
+    # Must match persona_capital_binding_id: RuntimeManagerService.rollback()
+    # requires the replacement to preserve the current binding's
+    # PersonaCapitalBinding identity exactly (see
+    # _prove_human_gated_rollback_target's "must preserve the current
+    # authoritative PersonaCapitalBinding identity" check in service.py).
+    # A distinct default here ("pcb-ep5-fallback") always failed that check —
+    # confirmed by direct reproduction — before this field even reached the
+    # human gate.
+    replacement_persona_capital_binding_id: str = "pcb-ep5-current"
     operator_id: str = "operator-ep5-demo"
     drill_stage: Literal["canary"] = "canary"
     replacement_deployment_mode: Literal["paper", "canary"] = "paper"
@@ -119,6 +127,10 @@ def run_rollback_drill_harness(
             store_path=store_path,
             single_runtime_enforced=True,
         )
+        # The fallback/prior binding rollback resolves its target from must
+        # already exist, retired, before the current binding is deployed —
+        # see _seed_retired_fallback_binding.
+        fallback_binding_id = _seed_retired_fallback_binding(service, request)
         paper_binding = service.deploy(_paper_deploy_request(request))
         promotion_result = service.promote_stage(
             _canary_promote_request(request, paper_binding_id=paper_binding.binding_id)
@@ -132,24 +144,14 @@ def run_rollback_drill_harness(
             current_binding_status=current_binding_status,
         )
         rollback_evidence = _collect_rollback_evidence(drill_packet)
-        # NOTE: this harness has never actually deployed+retired a binding
-        # matching replacement_plan_id/replacement_artifact_id, so
-        # service.rollback()'s candidate resolution has nothing to find
-        # regardless of the human gate below — a separate, pre-existing gap
-        # in this harness's own test data (see the skip reason on
-        # tests/governance/test_rollback_drill_harness.py), not something
-        # the human-gate change introduced or fixes by itself.
-        prior_binding_id_placeholder = (
-            f"{request.replacement_plan_id}:{request.replacement_artifact_id}"
-        )
         rollback_response = service.rollback(
             _runtime_manager_rollback_request(
                 rollback_evidence.planned_runtime_manager_request,
                 replacement_start_paused=request.replacement_start_paused,
                 human_gate_decision=_approved_rollback_human_gate(
                     old_binding_id=current_binding_id,
-                    prior_binding_id=prior_binding_id_placeholder,
-                    target_environment=request.drill_stage,
+                    prior_binding_id=fallback_binding_id,
+                    target_environment=request.replacement_deployment_mode,
                 ),
             )
         )
@@ -343,6 +345,100 @@ def _canary_promote_request(
     }
 
 
+def _fallback_deploy_request(request: RollbackDrillHarnessRequest) -> dict[str, Any]:
+    """Deploy request for the retired fallback binding rollback targets.
+
+    Always built at paper stage first — RuntimeManagerService.deploy() only
+    permits target_stage="paper" without the internal _allow_non_paper_deploy
+    escape hatch, same constraint _paper_deploy_request works around above.
+    If replacement_deployment_mode is "canary", _seed_retired_fallback_binding
+    promotes this paper binding before retiring it.
+    """
+    return {
+        "plan_id": request.replacement_plan_id,
+        "plan_status": "approved",
+        "target_stage": "paper",
+        "artifact_id": request.replacement_artifact_id,
+        "artifact_version": request.replacement_artifact_version,
+        "capital_pool_id": request.capital_pool_id,
+        "persona_capital_binding_id": request.replacement_persona_capital_binding_id,
+        "persona_capital_binding_status": "active",
+        "allowed_deployment_scope": "canary",
+        "loader_checks_passed": True,
+        "runtime_id": request.replacement_runtime_id,
+        "metadata": {
+            "authoritative_loader_attestation": {
+                "status": "passed",
+                "authority": "canonical_deployment_registry_governance_capital",
+            }
+        },
+    }
+
+
+def _fallback_promote_request(
+    request: RollbackDrillHarnessRequest, *, paper_binding_id: str
+) -> dict[str, Any]:
+    """Promote the fallback's paper binding to replacement_deployment_mode.
+
+    Only used when replacement_deployment_mode != "paper" — mirrors
+    _canary_promote_request but for the replacement_* fields.
+    """
+    return {
+        "current_binding_id": paper_binding_id,
+        "plan_id": request.replacement_plan_id,
+        "plan_status": "approved",
+        "target_stage": request.replacement_deployment_mode,
+        "artifact_id": request.replacement_artifact_id,
+        "artifact_version": request.replacement_artifact_version,
+        "capital_pool_id": request.capital_pool_id,
+        "persona_capital_binding_id": request.replacement_persona_capital_binding_id,
+        "persona_capital_binding_status": "active",
+        "allowed_deployment_scope": "canary",
+        "loader_checks_passed": True,
+        "runtime_id": request.replacement_runtime_id,
+        "promotion_gate_decision_id": f"promotion-gate-{request.replacement_plan_id}",
+        "human_gate_packet_ref": DEFAULT_HUMAN_GATE_PACKET_REF,
+        "broker_sandbox_smoke_ref": DEFAULT_BROKER_SANDBOX_SMOKE_REF,
+        "risk_owner_approval_ref": DEFAULT_RISK_OWNER_APPROVAL_REF,
+        "operator_approval_ref": DEFAULT_OPERATOR_APPROVAL_REF,
+        "capital_scale_pct": request.capital_scale_pct,
+        "gross_scale_pct": request.gross_scale_pct,
+        "metadata": {
+            "authoritative_promotion_attestation": {
+                "status": "passed",
+                "authority": "canonical_stage_promotion",
+                "source_stage": "paper",
+                "target_stage": request.replacement_deployment_mode,
+            }
+        },
+    }
+
+
+def _seed_retired_fallback_binding(service: Any, request: RollbackDrillHarnessRequest) -> str:
+    """Deploy (and, if needed, promote) the fallback binding rollback targets,
+    then retire it, and return its binding_id.
+
+    RuntimeManagerService.rollback() resolves its target from exactly one
+    retired prior RuntimeBinding matching replacement_plan_id/
+    replacement_artifact_id/replacement_artifact_version/
+    replacement_persona_capital_binding_id/replacement_deployment_mode — this
+    harness never created one, so that resolution always found zero
+    candidates regardless of authority proof. Runs before the current
+    binding is deployed into the same capital pool, so there is no
+    single-active-runtime-per-pool conflict.
+    """
+    fallback_binding = service.deploy(_fallback_deploy_request(request))
+    if request.replacement_deployment_mode != "paper":
+        promotion_result = service.promote_stage(
+            _fallback_promote_request(request, paper_binding_id=fallback_binding.binding_id)
+        )
+        fallback_binding_id = promotion_result["new_binding"]["binding_id"]
+    else:
+        fallback_binding_id = fallback_binding.binding_id
+    service.retire(fallback_binding_id)
+    return fallback_binding_id
+
+
 def _drill_packet(
     *,
     request: RollbackDrillHarnessRequest,
@@ -490,7 +586,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--replacement-plan-id", default="deployment-plan-ep5-rollback-fallback")
     parser.add_argument("--capital-pool-id", default="capital-pool-ep5-demo")
     parser.add_argument("--persona-capital-binding-id", default="pcb-ep5-current")
-    parser.add_argument("--replacement-persona-capital-binding-id", default="pcb-ep5-fallback")
+    parser.add_argument("--replacement-persona-capital-binding-id", default="pcb-ep5-current")
     parser.add_argument("--operator-id", default="operator-ep5-demo")
     parser.add_argument("--mode", choices=("validate_only", "sandbox"), default="validate_only")
     parser.add_argument(
