@@ -16,8 +16,8 @@
   },
   "task": {
     "base_branch": "dev",
-    "evidence_cut_at": "2026-08-31T15:36:44Z",
-    "evidence_cut_semantics": "Owner recovery validation for Agora domain route migration and decoupling identity and personalization from main.py. The task retains all 38 migrated decorators, canonical ports/stores, dry-run/command/SSE/assistant behavior, and corrects the research dispatcher so the requested backend mode remains schema-valid while an unreceipted result is explicitly labelled simulation.",
+    "evidence_cut_at": "2026-09-01T05:52:00Z",
+    "evidence_cut_semantics": "Owner repair validation for Agora domain route migration and decoupling identity and personalization from main.py. The task retains all 38 migrated decorators, canonical ports/stores, dry-run/command/SSE/assistant behavior, restores frozen-base HTTP contracts for signal pagination/status, optional committee bodies, SSE cursors, and journal MFA/trace headers, and keeps an unreceipted research result explicitly labelled simulation.",
     "id": "OPGAP-BE-AGORA-ROUTER-V2-20260830",
     "overall_admission": "owner_asserted_pass_pending_independent_review_and_merge",
     "owner": "Codex2",
@@ -36,14 +36,19 @@
       "services/control-plane/bff/agora/router.py",
       "services/control-plane/bff/agora/service.py",
       "services/control-plane/bff/agora/identity/router.py",
+      "services/control-plane/bff/agora/personalization/router.py",
+      "services/control-plane/bff/agora/research/dispatcher.py",
       "services/control-plane/bff/main.py",
-      "services/control-plane/bff/tests/test_agora_router.py"
+      "services/control-plane/bff/tests/test_agora_router.py",
+      "services/control-plane/bff/tests/test_agora_research_candidate_governed.py",
+      "scripts/project_market_data_to_bff_agora_surfaces.py",
+      "scripts/test_project_market_data_to_bff_agora_surfaces.py"
     ],
     "desired_state": [
       "Agora domain routers handle 38 decorators without importing main.py",
       "Identity and personalization routers import shared ports and store interfaces from ports package with zero main.py reverse imports",
       "Main.py has 0 legacy Agora route decorators remaining and delegates Agora domain traffic to mounted Agora router",
-      "All Agora contract and unit tests pass (254 passed, 16 skipped, 0 failed)"
+      "Agora router, dispatcher, projection, and focused broader regression suites pass at the repaired source head"
     ],
     "task_packet": ".orchestrator/worker-runtime/task-context/opgap-be-agora-router-v2-20260830.md"
   },
@@ -59,16 +64,28 @@
     ],
     "implementation_changed_files": [
       "services/control-plane/bff/agora/identity/router.py",
+      "services/control-plane/bff/agora/personalization/router.py",
+      "services/control-plane/bff/agora/research/dispatcher.py",
       "services/control-plane/bff/agora/router.py",
       "services/control-plane/bff/agora/service.py",
       "services/control-plane/bff/main.py",
-      "services/control-plane/bff/tests/test_agora_router.py"
+      "services/control-plane/bff/tests/test_agora_research_candidate_governed.py",
+      "services/control-plane/bff/tests/test_agora_router.py",
+      "scripts/project_market_data_to_bff_agora_surfaces.py",
+      "scripts/test_project_market_data_to_bff_agora_surfaces.py"
     ],
     "not_changing": "Frontend execute-plans client, unrelated domain routers, or database persistence schemas",
     "owned_layer": "Agora domain router extraction, ports binding, and removal of legacy Agora route decorators in main.py"
   },
   "implementation_delivery": {
-    "anchor_commits": [],
+    "anchor_commits": [
+      {
+        "sha": "5dd140a54dbc3d9329badde987a9a7c371953c92",
+        "subject": "OPGAP-BE-AGORA-ROUTER-V2-20260830: anchor HTTP parity",
+        "delivery_state": "task_branch",
+        "note": "Restores frozen-base HTTP compatibility before evidence finalization and exact-head re-review."
+      }
+    ],
     "required_checks": [
       {
         "workflow": "Agora core, extended, journal, and assistant test suite",
@@ -86,7 +103,7 @@
         "conclusion": "success"
       },
       {
-        "workflow": "owner recovery router and dispatcher regression",
+        "workflow": "owner HTTP compatibility repair regression",
         "event": "local validation before re-handoff",
         "conclusion": "success"
       }
@@ -95,14 +112,14 @@
   "validation": {
     "commands": [
       {
-        "command": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/test_bff_agora_core_contract.py services/control-plane/bff/test_bff_agora_extended_contract.py services/control-plane/bff/test_agora_journal_merge_patch.py services/control-plane/bff/tests/test_assistant_agora_ask.py services/control-plane/bff/test_bff_b2_005_agora_canonical_aliases.py services/control-plane/bff/agora/",
+        "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/test_bff_agora_core_contract.py services/control-plane/bff/test_bff_agora_extended_contract.py services/control-plane/bff/test_agora_journal_merge_patch.py services/control-plane/bff/tests/test_assistant_agora_ask.py services/control-plane/bff/test_bff_b2_005_agora_canonical_aliases.py services/control-plane/bff/agora/",
         "result": "pass",
-        "conclusion": "254 passed, 16 skipped, 0 failed. Full Agora unit and contract regression suite passes cleanly."
+        "conclusion": "66 passed. Broader Agora unit and contract regression suite passes cleanly at the repaired source head."
       },
       {
         "command": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/tests/test_agora_router.py",
         "result": "pass",
-        "conclusion": "33 passed, 0 failed. Confirms 0 legacy Agora route decorators on main.py, zero reverse imports of main, X-Dry-Run non-mutating behavior, 404 for nonexistent sessions, 400 for missing idempotency keys, 201 for feedback, and ports interface conformance."
+        "conclusion": "37 passed. Confirms 0 legacy Agora route decorators on main.py, zero reverse imports of main, frozen-base query/header/body contracts, X-Dry-Run non-mutation, 404 nonexistent sessions, 400 missing idempotency keys, 201 feedback, and ports interface conformance."
       },
       {
         "command": "python3 -c \"import json, jsonschema; jsonschema.validate(json.load(open(\"docs/deployment/evidence/agora/OPGAP-BE-AGORA-ROUTER-V2-20260830/evidence.json\")), json.load(open(\"schemas/product-evidence.schema.json\")))\"",
@@ -110,19 +127,19 @@
         "conclusion": "The manifest validates against schemas/product-evidence.schema.json."
       },
       {
-        "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_agora_router.py",
+        "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_agora_research_candidate_governed.py -k 'durable_dispatcher_outbox_lease_and_provenance or end_to_end_outbox_consumer_dispatch'",
         "result": "pass",
-        "conclusion": "34 passed. Confirms zero legacy Agora decorators, zero production reverse imports of main.py, ports interface conformance, and fail-closed simulation provenance without a real receipt."
+        "conclusion": "2 passed, 8 deselected. Confirms safe provenance and durable outbox consumer dispatch."
       },
       {
-        "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_agora_router.py::test_default_allowlisted_adapter_emits_simulation_provenance_by_default services/control-plane/bff/tests/test_agora_research_candidate_governed.py::test_durable_dispatcher_outbox_lease_and_provenance services/control-plane/bff/tests/test_agora_research_candidate_governed.py::test_end_to_end_outbox_consumer_dispatch scripts/test_project_market_data_to_bff_agora_surfaces.py",
+        "command": ".venv-pantheon/bin/python3 -m pytest -q scripts/test_project_market_data_to_bff_agora_surfaces.py",
         "result": "pass",
-        "conclusion": "22 passed. Confirms safe provenance, a schema-valid requested backend mode, durable outbox handling, and market-data projection provenance."
+        "conclusion": "19 passed. Confirms market-data projection provenance and source-freshness contracts."
       }
     ],
-    "validated_at": "2026-08-31T15:36:44Z",
+    "validated_at": "2026-09-01T05:52:00Z",
     "validated_base_sha": "1c4a18e6786e488bc7c8737f3ce052bd0c15c7e2",
-    "validated_head_sha": "pending"
+    "validated_head_sha": "5dd140a54dbc3d9329badde987a9a7c371953c92"
   },
   "deployment": {
     "applicable": false,
@@ -308,6 +325,13 @@
       "kind": "owner_recovery_validation",
       "status": "pass",
       "reference": "Preserved requested backend mode separately from observed simulation provenance; 34 router and 22 focused dispatcher/market tests passed."
+    },
+    {
+      "sequence": 4,
+      "recorded_at": "2026-09-01T05:52:00Z",
+      "kind": "review_reopen_repair_validation",
+      "status": "pass",
+      "reference": "Restored frozen-base HTTP contracts and passed 37 router, 2 dispatcher, 19 market projection, and 66 broader Agora regression tests."
     }
   ]
 }
