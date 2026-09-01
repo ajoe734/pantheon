@@ -4407,7 +4407,9 @@ def command_assign(state: dict[str, Any], args: list[str]) -> bool | None:
                 raise SystemExit(f"Task execution resources: {err}")
         else:
             execution_resources = []
-        artifacts = parse_csv_env("TASK_ARTIFACTS")
+        artifacts = _ensure_evidence_manifest_artifact(
+            task_id, parse_csv_env("TASK_ARTIFACTS")
+        )
         acceptance = parse_csv_env("TASK_ACCEPTANCE")
         target_repo = os.environ.get("TASK_TARGET_REPO") or metadata.get("target_repo")
     if any(
@@ -4969,6 +4971,37 @@ def command_execution_resource(state: dict[str, Any], args: list[str]) -> None:
             **local_human_ops_audit_fields(),
         }
     )
+
+
+_EVIDENCE_MANIFEST_ARTIFACT_RE = re.compile(
+    r"(?:^|:)docs/deployment/evidence/.+/evidence\.json$"
+)
+
+
+def _default_evidence_manifest_artifact(task_id: str) -> str:
+    """Canonical fallback evidence-manifest path for a task with none declared."""
+
+    return f"docs/deployment/evidence/{task_id}/evidence.json"
+
+
+def _ensure_evidence_manifest_artifact(
+    task_id: str, artifacts: list[str]
+) -> list[str]:
+    """Guarantee a new task's contract pre-authorizes an evidence-manifest path.
+
+    Review admission requires a committed JSON evidence manifest, but a task's
+    artifact contract is otherwise immutable once dispatched (see
+    ``command_artifact_contract``): revision is only allowed while a task is
+    still ``todo``/``blocked``, and a worker typically only discovers the
+    missing path at handoff time, after dispatch. That gap forced most
+    observed ``superseded`` tasks to be fully replaced by a corrected
+    successor rather than simply amended in place. Pre-authorizing a default
+    path at creation time removes the gap at its source.
+    """
+
+    if any(_EVIDENCE_MANIFEST_ARTIFACT_RE.search(item) for item in artifacts):
+        return artifacts
+    return [*artifacts, _default_evidence_manifest_artifact(task_id)]
 
 
 def _normalize_contract_artifact(value: str) -> str:
