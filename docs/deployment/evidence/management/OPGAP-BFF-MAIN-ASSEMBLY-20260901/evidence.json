@@ -1,0 +1,51 @@
+{
+  "schema_version": "pantheon.management-main-assembly-evidence/v1",
+  "task_id": "OPGAP-BFF-MAIN-ASSEMBLY-20260901",
+  "title": "Mount the canonical Management read-model router",
+  "status": "candidate",
+  "repository": "ajoe734/pantheon",
+  "base_branch": "dev",
+  "head_branch": "task/OPGAP-BFF-MAIN-ASSEMBLY-20260901",
+  "head_sha": "0edf0cd6d82acd663aedf48f4e71ac460e3c8e8f",
+  "pull_request": 5501,
+  "owner": "Codex",
+  "reviewer": "Claude2",
+  "scope": {
+    "changed_files": [
+      "services/control-plane/bff/main.py",
+      "services/control-plane/bff/management_read_models/__init__.py",
+      "services/control-plane/bff/tests/test_management_read_models_router.py"
+    ],
+    "excluded": [
+      "services/control-plane/bff/management_read_models/service.py",
+      "services/control-plane/bff/management_read_models/router.py"
+    ],
+    "route_owner": "management_read_models.ManagementService"
+  },
+  "acceptance": {
+    "management_get_routes": {
+      "target_count": 22,
+      "recursive_runtime_inventory_count": 22,
+      "duplicate_verb_path_pairs": 0
+    },
+    "evolution_journal": {
+      "registered_count": 1,
+      "owner": "existing main.py implementation"
+    },
+    "operations_read_model": {
+      "registered_count": 1,
+      "owner": "management_read_models router"
+    },
+    "legacy_management_decorators": 0,
+    "legacy_helpers": "retained only for non-route compatibility callers; no Management HTTP decorator remains in main.py"
+  },
+  "verification": {
+    "focused_route_tests": "10 passed, 33 deselected",
+    "service_parity_smoke": "risk radar, incident timeline, and intervention stream passed with source-aware/no-synthetic-default checks",
+    "combined_management_tools_collection": "65 tests collected without import errors",
+    "py_compile": "passed",
+    "git_diff_check": "passed",
+    "environment_note": "Full TestClient suite remains unclaimed because the repository's minimal TestClient startup hangs at shell_summary in this environment."
+  },
+  "review_note": "This is candidate evidence only. Independent reviewer approval and the canonical exact-head gate remain required before merge."
+}
