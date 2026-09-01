@@ -44,7 +44,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from fastapi import APIRouter, Body, Header, Query, Request
 
-from models import ErrorCode, ObjectType
+from models import ErrorCode, ObjectType, SOURCE_TYPE_TO_EVIDENCE_KIND
 from read_store import redact_evidence_refs
 
 from .service import ResearchNotFoundError, ResearchRouterService, ResearchValidationError
@@ -73,6 +73,26 @@ _KW04_LINKED_ENTITY_TYPES = {
     "memory_entry", "research_note", "evidence_ref", "strategy_spec", "experiment",
 }
 _KW04_RECENCY_VALUES = {"7d", "30d", "90d", "all"}
+_ENTITY_TYPE_EVIDENCE_KIND: Dict[str, str] = {
+    "strategy_spec": "strategy",
+    "strategy": "strategy",
+    "persona": "persona",
+    "deployment_plan": "deployment",
+    "deployment": "deployment",
+    "runtime": "runtime",
+    "runtime_binding": "runtime",
+    "alert": "alert",
+    "incident": "incident",
+    "job": "job",
+    "audit": "audit",
+    "metric": "metric",
+    "policy": "policy",
+    "approval": "approval",
+    "artifact": "artifact",
+    "signal": "signal",
+    "journal": "journal",
+    "postmortem": "postmortem",
+}
 
 
 # This is the task's source-of-truth migration inventory.  It deliberately
@@ -1035,6 +1055,203 @@ def create_research_router(
             return "degraded"
         return "ok"
 
+    def _evidence_detail_payload(
+        evidence_ref: Dict[str, Any],
+        *,
+        ref_id: str,
+        identity: Any,
+        snapshot_at: str,
+    ) -> Dict[str, Any]:
+        """Preserve the KW-03 detail projection at the router boundary.
+
+        The knowledge port may return a fully projected record or a durable
+        source record.  Keep the public detail contract stable for both forms,
+        including the capability gate for the evidence itself and its linked
+        decision records.
+        """
+        detail_surface = _knowledge_surface_state(
+            "evidence_refs", snapshot_at=snapshot_at, has_data=True,
+        )
+        capabilities = _capabilities(identity)
+
+        evidence_kind = str(evidence_ref.get("evidence_type") or "").strip()
+        if not evidence_kind:
+            source_document = evidence_ref.get("source_document")
+            if isinstance(source_document, dict):
+                evidence_kind = SOURCE_TYPE_TO_EVIDENCE_KIND.get(
+                    str(source_document.get("source_type") or "").strip(), "",
+                )
+        if evidence_kind:
+            [processed_self], _ = redact_evidence_refs(
+                identity,
+                [{"ref_id": ref_id, "evidence_type": evidence_kind}],
+                capabilities=capabilities,
+            )
+            if isinstance(processed_self, dict) and processed_self.get("redacted"):
+                return {
+                    **processed_self,
+                    "meta": {
+                        **snapshot_meta(snapshot_at),
+                        "surfaces": {
+                            "evidence_ref_detail": detail_surface,
+                            "resolved_link": detail_surface,
+                            "linked_decisions": detail_surface,
+                        },
+                        "redacted_evidence_count": 1,
+                    },
+                }
+
+        raw_linked_decisions = json.loads(
+            json.dumps(evidence_ref.get("linked_decisions") or [])
+        )
+        annotated_decisions: List[Any] = []
+        for decision in raw_linked_decisions:
+            if not isinstance(decision, dict):
+                annotated_decisions.append(decision)
+                continue
+            evidence_kind = _ENTITY_TYPE_EVIDENCE_KIND.get(
+                str(decision.get("entity_type") or "").strip(),
+            )
+            if not evidence_kind:
+                annotated_decisions.append(decision)
+                continue
+            annotated = dict(decision)
+            annotated["evidence_type"] = evidence_kind
+            if not annotated.get("ref_id") and not annotated.get("id"):
+                annotated["ref_id"] = annotated.get("entity_ref") or ""
+            annotated_decisions.append(annotated)
+        processed_decisions, redacted_count = redact_evidence_refs(
+            identity, annotated_decisions, capabilities=capabilities,
+        )
+        linked_decisions = [
+            processed if isinstance(processed, dict) and processed.get("redacted") else original
+            for original, processed in zip(raw_linked_decisions, processed_decisions)
+        ]
+
+        return {
+            "ref_id": evidence_ref.get("ref_id"),
+            "source_document": json.loads(json.dumps(evidence_ref.get("source_document") or {})),
+            "link_type": evidence_ref.get("link_type"),
+            "credibility": json.loads(json.dumps(evidence_ref.get("credibility") or {})),
+            "resolved_link": json.loads(json.dumps(evidence_ref.get("resolved_link") or {})),
+            "linked_object_summary": json.loads(
+                json.dumps(evidence_ref.get("linked_object_summary") or {})
+            ),
+            "linked_decisions": linked_decisions,
+            "source_note_context": json.loads(json.dumps(evidence_ref.get("source_note_context"))),
+            "source_memory_context": json.loads(json.dumps(evidence_ref.get("source_memory_context"))),
+            "created_at": evidence_ref.get("created_at"),
+            "meta": {
+                **snapshot_meta(snapshot_at),
+                "surfaces": {
+                    "evidence_ref_detail": detail_surface,
+                    "resolved_link": detail_surface,
+                    "linked_decisions": detail_surface,
+                },
+                "redacted_evidence_count": redacted_count,
+            },
+        }
+
+    def _insight_supporting_evidence_surface(
+        supporting_evidence_refs: List[Dict[str, Any]], *, snapshot_at: str,
+    ) -> str:
+        surface_state = _knowledge_surface_state(
+            "evidence_refs", snapshot_at=snapshot_at, has_data=True,
+        )
+        if surface_state != "ok":
+            return surface_state
+        if any(
+            not item.get("ref_id") or not isinstance(item.get("resolved_link"), dict)
+            for item in supporting_evidence_refs
+        ):
+            return "degraded"
+        return "ok"
+
+    def _insight_linked_sources_surface(
+        linked_sources: List[Dict[str, Any]], *, snapshot_at: str,
+    ) -> str:
+        dataset_map = {
+            "memory_entry": "institutional_memory_entries",
+            "research_note": "research_notes",
+            "evidence_ref": "evidence_refs",
+            "strategy_spec": "strategy_specs",
+            "experiment": "research_experiments",
+        }
+        overall = "ok"
+        for item in linked_sources:
+            dataset = dataset_map.get(str(item.get("entity_type") or "").strip())
+            if not dataset:
+                return "degraded"
+            surface_state = _knowledge_surface_state(
+                dataset, snapshot_at=snapshot_at, has_data=True,
+            )
+            if surface_state == "unavailable":
+                return "unavailable"
+            if surface_state == "degraded":
+                overall = "degraded"
+            if not item.get("display_label") or "route_href" not in item:
+                overall = "degraded"
+        return overall
+
+    def _insight_detail_payload(
+        insight_card: Dict[str, Any], *, snapshot_at: str,
+    ) -> Dict[str, Any]:
+        supporting_evidence_refs = list(insight_card.get("supporting_evidence_refs") or [])
+        linked_sources = list(insight_card.get("linked_sources") or [])
+        return {
+            "insight_id": insight_card.get("insight_id"),
+            "summary": insight_card.get("summary"),
+            "scope": insight_card.get("scope"),
+            "scope_context": json.loads(json.dumps(insight_card.get("scope_context") or {})),
+            "status": insight_card.get("status"),
+            "superseded_by": json.loads(json.dumps(insight_card.get("superseded_by") or {})),
+            "confidence": json.loads(json.dumps(insight_card.get("confidence") or {})),
+            "tags": list(insight_card.get("tags") or []),
+            "source_ref": insight_card.get("source_ref"),
+            "supporting_evidence_refs": json.loads(json.dumps(supporting_evidence_refs)),
+            "linked_sources": json.loads(json.dumps(linked_sources)),
+            "aggregation_provenance": json.loads(
+                json.dumps(insight_card.get("aggregation_provenance") or {})
+            ),
+            "created_at": insight_card.get("created_at"),
+            "updated_at": insight_card.get("updated_at"),
+            "meta": {
+                **snapshot_meta(snapshot_at),
+                "surfaces": {
+                    "insight_card_detail": _knowledge_surface_state(
+                        "insight_cards", snapshot_at=snapshot_at, has_data=True,
+                    ),
+                    "supporting_evidence_refs": _insight_supporting_evidence_surface(
+                        supporting_evidence_refs, snapshot_at=snapshot_at,
+                    ),
+                    "linked_sources": _insight_linked_sources_surface(
+                        linked_sources, snapshot_at=snapshot_at,
+                    ),
+                },
+            },
+        }
+
+    def _memory_detail_payload(entry: Dict[str, Any], *, snapshot_at: str) -> Dict[str, Any]:
+        source_event = entry.get("source_event") if isinstance(entry.get("source_event"), dict) else {}
+        source_context_available = bool(source_event.get("type")) and bool(source_event.get("id"))
+        return {
+            **entry,
+            "meta": {
+                **snapshot_meta(snapshot_at),
+                "surfaces": {
+                    "entry_detail": _knowledge_surface_state(
+                        "institutional_memory_entries", snapshot_at=snapshot_at, has_data=True,
+                    ),
+                    "source_context": _knowledge_surface_state(
+                        "institutional_memory_entries",
+                        snapshot_at=snapshot_at,
+                        has_data=source_context_available,
+                        missing_message="Institutional memory source context is unavailable.",
+                    ),
+                },
+            },
+        }
+
     def _capabilities(identity: Any) -> Optional[List[str]]:
         if get_capabilities is None:
             return None
@@ -1165,6 +1382,9 @@ def create_research_router(
         resolution_state = "rejected" if raw.get("rejected_reason") else ("committee_required" if raw.get("committee_ref") else ("resolved_with_veto" if vetoes else "resolved"))
         raw["id"] = log_id
         raw["resolution_state"] = resolution_state
+        artifact_id = raw.get("allocation_policy_artifact_id") or raw.get("artifact_id")
+        artifact_href = raw.get("allocation_policy_artifact_href") or raw.get("artifact_href")
+        governance_approval_id = raw.get("governance_approval_id")
         raw["view"] = {
             "title": f"Synthesis conflict log {log_id}",
             "resolution_state": resolution_state,
@@ -1182,14 +1402,20 @@ def create_research_router(
             "governance": {
                 "committee_ref": raw.get("committee_ref"),
                 "rejected_reason": raw.get("rejected_reason"),
-                "approval_id": raw.get("governance_approval_id"),
+                "approval_id": governance_approval_id,
                 "decision": raw.get("governance_decision"),
                 "decision_state": raw.get("governance_decision_state"),
                 "can_proceed": raw.get("governance_can_proceed"),
             },
             "links": {
-                "allocation_policy_artifact": None,
-                "governance_approval": None,
+                "allocation_policy_artifact": (
+                    {"id": artifact_id, "href": artifact_href} if artifact_id else None
+                ),
+                "governance_approval": (
+                    {"id": governance_approval_id, "href": f"/bff/approvals/{governance_approval_id}"}
+                    if governance_approval_id
+                    else None
+                ),
             },
         }
         return raw
@@ -1942,6 +2168,14 @@ def create_research_router(
             record = _call_port(port, method, identifier, **kwargs)
             if not record:
                 _not_found("Research record", identifier)
+            if name == "get_evidence":
+                return _evidence_detail_payload(
+                    record, ref_id=identifier, identity=identity, snapshot_at=snapshot_at,
+                )
+            if name == "get_insight":
+                return _insight_detail_payload(record, snapshot_at=snapshot_at)
+            if name == "get_memory":
+                return _memory_detail_payload(record, snapshot_at=snapshot_at)
             payload = dict(record)
             payload.setdefault("meta", _meta(snapshot_at, name, dataset, True))
             return payload

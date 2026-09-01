@@ -182,9 +182,24 @@ class _Port:
     def dataset_source(self, _dataset: str) -> str:
         return self.source
 
-    def dataset_surface_status(self, dataset: str, *, snapshot_at: str, source: str, has_data: bool) -> Dict[str, Any]:
+    def dataset_surface_status(
+        self,
+        dataset: str,
+        *,
+        snapshot_at: str,
+        source: str,
+        has_data: bool,
+        missing_message: Optional[str] = None,
+    ) -> Dict[str, Any]:
         if source == "missing" or not has_data:
-            return {"status": "unavailable", "source": source, "snapshot_at": snapshot_at}
+            return {
+                "status": "unavailable",
+                "source": source,
+                "snapshot_at": snapshot_at,
+                "message": missing_message,
+            }
+        if source == "local_snapshot":
+            return {"status": "degraded", "source": source, "snapshot_at": snapshot_at}
         return {"status": "ok", "source": source}
 
     def list_research_analyses(self, *, ticket_id=None, experiment_id=None, statuses=None, date_range=None) -> List[Dict[str, Any]]:
@@ -299,7 +314,7 @@ def _bff_error(status_code, code, message, reason, **extra):
     )
 
 
-def _router(port: _Port):
+def _router(port: _Port, *, capabilities: Optional[List[str]] = None):
     return create_research_router(
         get_read_store=lambda: port,
         extract_identity=lambda _authorization: SimpleNamespace(operator_id="op-test"),
@@ -307,13 +322,15 @@ def _router(port: _Port):
         require_operator_role=lambda _identity: None,
         bff_error=_bff_error,
         utc_now=lambda: "2026-08-30T00:00:00Z",
+        dataset_surface_status=port.dataset_surface_status,
+        get_capabilities=lambda _identity: capabilities,
         include_prepared_subrouters=False,
     )
 
 
-def _client(port: _Port) -> TestClient:
+def _client(port: _Port, *, capabilities: Optional[List[str]] = None) -> TestClient:
     app = FastAPI()
-    app.include_router(_router(port))
+    app.include_router(_router(port, capabilities=capabilities))
     return TestClient(app)
 
 
@@ -579,8 +596,140 @@ def test_knowledge_evidence_insight_and_memory_routes_preserve_filters_and_envel
     assert memory.json()["pagination"]["total_count"] == 1
 
 
+def test_knowledge_detail_routes_preserve_redaction_projection_and_source_surfaces() -> None:
+    port = _Port()
+    port.evidence_refs["evidence-detail"] = {
+        "ref_id": "evidence-detail",
+        "source_document": {"title": "Operator note", "source_type": "internal"},
+        "link_type": "supporting_evidence",
+        "credibility": {"tier": "primary", "verified": True, "reason": "reviewed"},
+        "resolved_link": {"href": "/knowledge/notes/note-include", "availability": "available"},
+        "linked_object_summary": {"entity_type": "research_note", "entity_ref": "note-include"},
+        "linked_decisions": [
+            {"entity_type": "strategy_spec", "entity_ref": "strategy-sensitive"},
+            {"entity_type": "research_note", "entity_ref": "note-include"},
+        ],
+        "source_note_context": {"note_id": "note-include", "title": "Research context"},
+        "source_memory_context": {"entry_id": "memory-include", "headline": "Memory context"},
+        "created_at": "2026-08-29T00:00:00Z",
+    }
+    port.evidence_refs["evidence-blocked"] = {
+        "ref_id": "evidence-blocked",
+        "evidence_type": "alert",
+        "source_document": {"title": "Restricted alert"},
+    }
+    port.insights["insight-detail"] = {
+        "insight_id": "insight-detail",
+        "summary": "Composed insight",
+        "scope": "persona",
+        "scope_context": {"scope_ref": "persona-1", "display_label": "Alpha Persona"},
+        "status": "active",
+        "superseded_by": {"insight_id": None, "summary": None, "route_href": None},
+        "confidence": {"score": 0.92, "label": "high", "basis": "two sources"},
+        "tags": ["alpha", "validated"],
+        "source_ref": "research-run-1",
+        "supporting_evidence_refs": [
+            {
+                "ref_id": "evidence-detail",
+                "display_label": "Operator note",
+                "resolved_link": {"href": "/knowledge/evidence/evidence-detail"},
+            }
+        ],
+        "linked_sources": [
+            {
+                "entity_type": "research_note",
+                "entity_ref": "note-include",
+                "display_label": "Research context",
+                "route_href": "/knowledge/notes/note-include",
+            }
+        ],
+        "aggregation_provenance": {"aggregated_at": "2026-08-30T00:00:00Z"},
+        "created_at": "2026-08-29T00:00:00Z",
+        "updated_at": "2026-08-30T00:00:00Z",
+    }
+    port.memory_entries["memory-detail"] = {
+        "entry_id": "memory-detail",
+        "knowledge_type": "lesson",
+        "content": {"headline": "Preserved memory detail"},
+        "source_event": {"type": "experiment", "id": "experiment-1"},
+        "scope": {"type": "persona", "filter": "persona-1"},
+    }
+
+    client = _client(port, capabilities=[])
+
+    evidence = client.get("/api/v1/knowledge/evidence/evidence-detail")
+    assert evidence.status_code == 200, evidence.text
+    evidence_payload = evidence.json()
+    assert set(evidence_payload) == {
+        "ref_id", "source_document", "link_type", "credibility", "resolved_link",
+        "linked_object_summary", "linked_decisions", "source_note_context",
+        "source_memory_context", "created_at", "meta",
+    }
+    redacted_decision = evidence_payload["linked_decisions"][0]
+    assert redacted_decision["ref_id"] == "strategy-sensitive"
+    assert redacted_decision["kind"] == "strategy"
+    assert redacted_decision["required_capability"] == "strategy.view"
+    assert redacted_decision["reason"] == "insufficient_capability"
+    assert redacted_decision["redacted"] is True
+    assert evidence_payload["linked_decisions"][1] == {
+        "entity_type": "research_note", "entity_ref": "note-include",
+    }
+    assert evidence_payload["meta"] == {
+        "snapshot_at": "2026-08-30T00:00:00Z",
+        "surfaces": {
+            "evidence_ref_detail": "ok", "resolved_link": "ok", "linked_decisions": "ok",
+        },
+        "redacted_evidence_count": 1,
+    }
+
+    blocked = client.get("/api/v1/knowledge/evidence/evidence-blocked")
+    assert blocked.status_code == 200, blocked.text
+    assert blocked.json()["redacted"] is True
+    assert blocked.json()["meta"]["redacted_evidence_count"] == 1
+
+    insight = client.get("/api/v1/knowledge/insights/insight-detail")
+    assert insight.status_code == 200, insight.text
+    insight_payload = insight.json()
+    assert insight_payload["scope_context"]["display_label"] == "Alpha Persona"
+    assert insight_payload["confidence"] == {"score": 0.92, "label": "high", "basis": "two sources"}
+    assert insight_payload["supporting_evidence_refs"][0]["ref_id"] == "evidence-detail"
+    assert insight_payload["linked_sources"][0]["route_href"] == "/knowledge/notes/note-include"
+    assert insight_payload["meta"]["surfaces"] == {
+        "insight_card_detail": "ok", "supporting_evidence_refs": "ok", "linked_sources": "ok",
+    }
+
+    memory = client.get("/api/v1/knowledge/memory/memory-detail")
+    assert memory.status_code == 200, memory.text
+    assert memory.json()["content"]["headline"] == "Preserved memory detail"
+    assert memory.json()["meta"]["surfaces"] == {
+        "entry_detail": "ok", "source_context": "ok",
+    }
+
+    port.source = "local_snapshot"
+    degraded_insight = client.get("/api/v1/knowledge/insights/insight-detail")
+    assert degraded_insight.status_code == 200, degraded_insight.text
+    assert degraded_insight.json()["meta"]["surfaces"] == {
+        "insight_card_detail": "degraded",
+        "supporting_evidence_refs": "degraded",
+        "linked_sources": "degraded",
+    }
+    degraded_memory = client.get("/api/v1/knowledge/memory/memory-detail")
+    assert degraded_memory.status_code == 200, degraded_memory.text
+    assert degraded_memory.json()["meta"]["surfaces"] == {
+        "entry_detail": "degraded", "source_context": "degraded",
+    }
+
+
 def test_conflict_log_and_cross_entity_search_routes_use_injected_port_data() -> None:
-    client = _client(_Port())
+    port = _Port()
+    port.conflict_logs["conflict-1"].update(
+        {
+            "allocation_policy_artifact_id": "allocation-1",
+            "allocation_policy_artifact_href": "/bff/allocation-policies/allocation-1",
+            "governance_approval_id": "approval-1",
+        }
+    )
+    client = _client(port)
 
     logs = client.get("/bff/synthesis/conflict-logs", params={"capital_pool_id": "pool-1"})
     assert logs.status_code == 200, logs.text
@@ -590,6 +739,12 @@ def test_conflict_log_and_cross_entity_search_routes_use_injected_port_data() ->
     detail = client.get("/bff/synthesis/conflict-logs/conflict-1")
     assert detail.status_code == 200, detail.text
     assert detail.json()["data"]["resolution_state"] == "resolved"
+    assert detail.json()["data"]["view"]["links"] == {
+        "allocation_policy_artifact": {
+            "id": "allocation-1", "href": "/bff/allocation-policies/allocation-1",
+        },
+        "governance_approval": {"id": "approval-1", "href": "/bff/approvals/approval-1"},
+    }
 
     search = client.get("/bff/search", params={"q": "alpha", "types": "strategy,persona"})
     assert search.status_code == 200, search.text
