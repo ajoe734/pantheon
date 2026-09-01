@@ -654,6 +654,63 @@ class RedactedEvidenceRef(BaseModel):
     redacted_count: Optional[int] = None
 
 
+def redact_evidence_refs(
+    identity: OperatorIdentity,
+    evidence_refs: list[dict[str, Any]],
+    capabilities: Optional[list[str]] = None,
+) -> tuple[list[dict[str, Any]], int]:
+    """Redact evidence references that require an unavailable capability.
+
+    ``identity`` remains part of the route-facing contract even though the
+    current policy is expressed entirely by the supplied capability set.
+    """
+
+    del identity
+    if capabilities is None:
+        return list(evidence_refs), 0
+
+    capability_set = set(capabilities)
+    processed: list[dict[str, Any]] = []
+    redacted_count = 0
+
+    for ref in evidence_refs:
+        if not isinstance(ref, dict):
+            processed.append(ref)
+            continue
+
+        kind_key = (
+            str(ref.get("evidence_type") or "").strip()
+            or str(ref.get("type") or "").strip()
+            or str(ref.get("ref_type") or "").strip()
+            or str(ref.get("link_type") or "").strip()
+        )
+        if not kind_key:
+            source_document = ref.get("source_document")
+            if isinstance(source_document, dict):
+                source_type = str(source_document.get("source_type") or "").strip()
+                kind_key = SOURCE_TYPE_TO_EVIDENCE_KIND.get(source_type, "")
+
+        required_capability = EVIDENCE_CAPABILITY_MAP.get(kind_key) if kind_key else None
+        if required_capability and required_capability not in capability_set:
+            redacted_count += 1
+            ref_id = str(ref.get("ref_id") or ref.get("id") or "")
+            try:
+                evidence_kind = EvidenceKind(kind_key)
+            except (TypeError, ValueError):
+                evidence_kind = None
+            redacted = RedactedEvidenceRef(
+                ref_id=ref_id,
+                kind=evidence_kind,
+                required_capability=required_capability,
+                reason="insufficient_capability",
+            )
+            processed.append(redacted.model_dump())
+            continue
+        processed.append(ref)
+
+    return processed, redacted_count
+
+
 # --------------------------------------------------------------------------- #
 # v5 Interventions — HIQ Sentinel remediation (BFF-FINAL-009)
 # --------------------------------------------------------------------------- #
