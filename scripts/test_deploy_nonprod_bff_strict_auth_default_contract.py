@@ -808,6 +808,72 @@ def test_auth_gate_readiness_retry_times_out_on_permanent_non_ready() -> None:
         server.server_close()
 
 
+def test_auth_gate_fails_fast_on_deployed_config_violation() -> None:
+    """OPGAP-GATE-HARDENING-20260901 regression.
+
+    Auth posture is decided when the container starts; polling cannot change it.
+    Retrying a posture violation only turns a precise "this build came up
+    permissive" into "contract not satisfied within Ns timeout", which sends the
+    reader hunting for a slow dependency that does not exist. Fail immediately
+    with the real reason, well inside the poll budget.
+    """
+    from http.server import ThreadingHTTPServer
+    import threading
+    import time as _time
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _MockBffHandler)
+    port = server.server_port
+    _MockBffHandler.readiness_call_count = 0
+    _MockBffHandler.version_posture = {"auth_stub": False, "auth_mode": "strict"}
+    _MockBffHandler.readiness_responses = [
+        {
+            "data": {
+                "ready": True,
+                "authReady": True,
+                "providerReady": True,
+                "sourceCommitSha": _TEST_SHA,
+                "auth": {
+                    # Deployed permissive: no amount of polling makes this strict.
+                    "mode": "permissive",
+                    "stub": False,
+                    "sessionKind": "bearer",
+                    "operatorRoleReady": True,
+                    "interactionCapabilityReady": True,
+                    "verifierReady": True,
+                },
+                "provider": {"provider": "openclaw", "ready": True, "status": "ready"},
+            }
+        }
+    ]
+
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        started = _time.monotonic()
+        result = _run_auth_gate_against_server(
+            f"http://127.0.0.1:{port}",
+            timeout_seconds=30,
+            poll_interval_seconds=0.05,
+        )
+        elapsed = _time.monotonic() - started
+
+        assert result.returncode != 0, result.stdout
+        assert "cannot be satisfied by retrying" in result.stderr, result.stderr
+        assert "auth.mode=" in result.stderr, result.stderr
+        assert "within 30s timeout" not in result.stderr, (
+            "a deterministic posture violation must not be reported as a timeout"
+        )
+        assert elapsed < 15, (
+            f"gate polled for {elapsed:.1f}s on a violation that retrying cannot fix"
+        )
+        assert _MockBffHandler.readiness_call_count == 1, (
+            "a terminal violation must not be re-probed"
+        )
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
 def test_auth_gate_readiness_passes_when_assistant_provider_is_down() -> None:
     """OPGAP-DEPLOY-PROVIDER-GATE-20260901 regression.
 
