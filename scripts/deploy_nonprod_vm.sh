@@ -1514,7 +1514,6 @@ verifier_ready = auth.get("verifierReady")
 try:
     assert data.get("sourceCommitSha") == expected_sha, f"sourceCommitSha={source_sha!r}, expected {expected_sha!r}"
     assert data.get("authReady") is True, f"authReady={auth_ready!r}"
-    assert data.get("providerReady") is True, f"providerReady={provider_ready!r}, provider={provider_info!r}"
     assert data.get("ready") is True, f"ready={overall_ready!r}"
     assert auth.get("mode") == "strict", f"auth.mode={auth_mode!r}"
     assert auth.get("stub") is False, f"auth.stub={auth_stub!r}"
@@ -1525,7 +1524,18 @@ try:
 except AssertionError as err:
     print(f"contract assertion failed: {err}")
     sys.exit(1)
+
+# Assistant provider health is observability only, never a release gate. The BFF
+# computes ready/authReady without it on purpose (see _bff_auth_readiness: "a
+# provider outage or probe failure must never flip a validly authenticated
+# strict session to not-ready"), so a provider credential outage must not block
+# or roll back an otherwise healthy release.
+if provider_ready is not True:
+    print(f"advisory: assistant provider not ready (providerReady={provider_ready!r}, provider={provider_info!r})")
 ' "${PANTHEON_DEPLOY_SHA}" "${readiness_payload}" 2>&1)"; then
+        if [[ -n "${readiness_error}" ]]; then
+          info "${readiness_error}"
+        fi
         break
       fi
     else
