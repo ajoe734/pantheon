@@ -137,6 +137,35 @@ class RecoveryWorktreeReplacementTests(unittest.TestCase):
             self.assertEqual(self._git(worktree, "rev-parse", "HEAD"), base_sha)
             self.assertEqual(self._git(worktree, "status", "--porcelain"), "")
 
+    def test_legacy_receipt_is_stale_only_for_a_later_recovery(self) -> None:
+        worktree = Path("/tmp/recovery-receipt-test")
+        state = {
+            "worker_worktrees": {
+                "leases": {
+                    "TASK-RECOVERY": {
+                        "path": str(worktree),
+                        "recovery_receipt_id": "receipt-1",
+                    }
+                }
+            }
+        }
+        self.assertFalse(
+            worker_workspace._recovery_worktree_has_stale_adopted_wip(
+                state,
+                task_id="TASK-RECOVERY",
+                worktree_path=worktree,
+                recovery_receipt_id="receipt-1",
+            )
+        )
+        self.assertTrue(
+            worker_workspace._recovery_worktree_has_stale_adopted_wip(
+                state,
+                task_id="TASK-RECOVERY",
+                worktree_path=worktree,
+                recovery_receipt_id="receipt-2",
+            )
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
