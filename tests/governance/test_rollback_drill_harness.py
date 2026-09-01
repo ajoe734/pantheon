@@ -18,36 +18,6 @@ from services.governance.ep5_proof.rollback_drill_harness import (
 )
 
 
-_CANARY_ROLLBACK_UNSUPPORTED_REASON = (
-    "UPDATE (AUDIT-REMEDIATION-20260830 §3): the SHA-256/four-owner proof "
-    "scheme these tests originally hit ('Rollback replacement is paper-only "
-    "until a target-bound non-paper rollback authority verifier is "
-    "available') has been replaced for every stage by an explicit, "
-    "human-gated approval (RuntimeManagerService.rollback() now requires "
-    "request['human_gate_decision'], an approved HumanGateDecision — see "
-    "_prove_human_gated_rollback_target in service.py). Canary rollback is "
-    "now a real, tested capability: see "
-    "services/runtime-manager/test_runtime_manager.py::"
-    "RuntimeManagerServiceTests::"
-    "test_rollback_of_canary_binding_succeeds_with_approved_human_gate, "
-    "which exercises it end-to-end and passes. What's still blocking THIS "
-    "harness specifically (both bugs pre-existing, always masked by the old "
-    "paper-only wall, unrelated to the human-gate change itself): (1) "
-    "RollbackDrillHarnessRequest's persona_capital_binding_id default "
-    "('pcb-ep5-current') differs from replacement_persona_capital_binding_id "
-    "('pcb-ep5-fallback'), and rollback requires the replacement to preserve "
-    "the current binding's PersonaCapitalBinding identity — these were never "
-    "made consistent; (2) the harness promotes exactly one binding to canary "
-    "and rolls it back, but never deploys+retires the "
-    "replacement_plan_id/replacement_artifact_id binding rollback needs as "
-    "its actual target, so candidate resolution finds zero matches. Fixing "
-    "both is a scoped, well-understood follow-up (mirror "
-    "_seed_retired_rollback_target from the runtime-manager tests, and align "
-    "the two PCB id defaults), left for a human to prioritize rather than "
-    "done speculatively here."
-)
-
-
 _VALID_REQUEST = {
     "harness_id": "rollback-drill-ep5-007",
     "proof_id": "ep5-proof-rollback-drill-001",
@@ -63,8 +33,10 @@ _VALID_REQUEST = {
     "deployment_plan_id": "dep-canary-rollback-001",
     "replacement_plan_id": "dep-paper-rollback-001",
     "capital_pool_id": "pool-canary-001",
+    # Must match: rollback requires the replacement to preserve the
+    # current binding's PersonaCapitalBinding identity exactly.
     "persona_capital_binding_id": "pcb-canary-001",
-    "replacement_persona_capital_binding_id": "pcb-paper-safe-001",
+    "replacement_persona_capital_binding_id": "pcb-canary-001",
     "operator_id": "operator-ep5",
     "started_at": "2026-05-20T00:00:00Z",
     "ended_at": "2026-05-20T00:01:00Z",
@@ -72,7 +44,6 @@ _VALID_REQUEST = {
 }
 
 
-@pytest.mark.skip(reason=_CANARY_ROLLBACK_UNSUPPORTED_REASON)
 def test_harness_runs_runtime_manager_rollback_and_marks_ep5_proof_completed() -> None:
     result = run_rollback_drill_harness(_VALID_REQUEST)
 
@@ -129,7 +100,6 @@ def test_harness_runs_runtime_manager_rollback_and_marks_ep5_proof_completed() -
     assert readiness_packet["flags"][PROOF_FLAG_LIVE_CAPITAL_SIDE_EFFECTS] is False
 
 
-@pytest.mark.skip(reason=_CANARY_ROLLBACK_UNSUPPORTED_REASON)
 def test_harness_supports_liquidate_then_replace_paused_replacement() -> None:
     result = run_rollback_drill_harness(
         {
@@ -165,7 +135,6 @@ def test_live_order_route_is_rejected_before_drill_execution() -> None:
         run_rollback_drill_harness({**_VALID_REQUEST, "order_route_mode": "live"})
 
 
-@pytest.mark.skip(reason=_CANARY_ROLLBACK_UNSUPPORTED_REASON)
 def test_cli_writes_json_output(tmp_path: Path) -> None:
     output = tmp_path / "rollback-drill.json"
 
