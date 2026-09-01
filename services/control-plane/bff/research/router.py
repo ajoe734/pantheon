@@ -756,6 +756,9 @@ def create_research_router(
     _EXPERIMENT_STATUSES = {"queued", "running", "completed", "failed", "canceled"}
     _EXPERIMENT_EXECUTION_MODES = {"paper", "backtest", "simulation"}
     _EXPERIMENT_PRIORITIES = {"normal", "high"}
+    _ARTIFACT_STATUSES = {"pending", "sealed", "superseded", "failed"}
+    _RESEARCH_SEARCH_MATCH_TYPES = {"all", "ticket", "experiment", "artifact"}
+    _RESEARCH_SEARCH_DATE_RANGES = {"24h", "7d", "30d", "90d"}
     _KW02_ATTACHMENT_TYPES = {"research_ticket", "persona", "strategy_spec", "free_standing"}
     _KW02_ATTACHMENT_ID_PATTERNS = {
         "research_ticket": re.compile(r"^tkt-[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"),
@@ -997,6 +1000,189 @@ def create_research_router(
             label="experiment status",
             allowed=_EXPERIMENT_STATUSES,
         )
+
+    def _validate_artifact_status(value: Optional[str]) -> Optional[str]:
+        if value in (None, ""):
+            return None
+        normalized = str(value).strip().lower()
+        if normalized not in _ARTIFACT_STATUSES:
+            # The public artifact search contract predates the typed router and
+            # uses request-level (400) validation, rather than leaking an
+            # invalid filter to the source port.
+            raise bff_error(
+                400,
+                ErrorCode.VALIDATION_FAILED,
+                "Invalid artifact status",
+                f"status must be one of {sorted(_ARTIFACT_STATUSES)}",
+                precondition_failed="status",
+            )
+        return normalized
+
+    def _research_search_bad_request(field: str, reason: str) -> None:
+        raise bff_error(
+            400,
+            ErrorCode.VALIDATION_FAILED,
+            "Invalid research search query",
+            reason,
+            precondition_failed=field,
+        )
+
+    def _validate_research_search_query(value: Optional[str]) -> str:
+        query = str(value or "").strip()
+        if not query:
+            _research_search_bad_request("q", "q is required and must be non-empty")
+        return query
+
+    def _validate_research_search_match_type(value: Optional[str]) -> str:
+        match_type = str(value or "all").strip().lower()
+        if match_type not in _RESEARCH_SEARCH_MATCH_TYPES:
+            _research_search_bad_request(
+                "match_type",
+                f"match_type must be one of {sorted(_RESEARCH_SEARCH_MATCH_TYPES)}",
+            )
+        return match_type
+
+    def _validate_research_search_status(value: Optional[str]) -> Optional[str]:
+        if value in (None, ""):
+            return None
+        status = str(value).strip().lower()
+        if status not in _TICKET_STATUSES:
+            _research_search_bad_request(
+                "status", f"status must be one of {sorted(_TICKET_STATUSES)}"
+            )
+        return status
+
+    def _validate_research_search_date_range(value: Optional[str]) -> Optional[str]:
+        if value in (None, ""):
+            return None
+        date_range = str(value).strip().lower()
+        if date_range not in _RESEARCH_SEARCH_DATE_RANGES:
+            _research_search_bad_request(
+                "date_range",
+                f"date_range must be one of {sorted(_RESEARCH_SEARCH_DATE_RANGES)}",
+            )
+        return date_range
+
+    def _legacy_ticket_surface_state(
+        *, snapshot_at: str, has_data: Optional[bool] = None
+    ) -> str:
+        """Return the frozen RW-01 ticket surface string, not a surface object."""
+        port = get_read_store()
+        source_fn = getattr(port, "dataset_source", None)
+        source = str(source_fn("research_tickets") or "missing") if callable(source_fn) else "missing"
+        surface = dataset_surface_status(
+            "research_tickets",
+            snapshot_at=snapshot_at,
+            source=source,
+            has_data=has_data,
+        )
+        if isinstance(surface, str):
+            return surface
+        status = str((surface or {}).get("status") or "")
+        if status == "unavailable" or source == "missing":
+            return "unavailable"
+        if source == "local_snapshot":
+            return "degraded"
+        if status == "degraded":
+            return "stale"
+        return "fresh"
+
+    def _legacy_experiment_surface_state(
+        *, snapshot_at: str, has_data: bool
+    ) -> str:
+        """Match the API-v1 experiment availability projection from main.py."""
+        port = get_read_store()
+        source_fn = getattr(port, "dataset_source", None)
+        source = str(source_fn("research_experiments") or "missing") if callable(source_fn) else "missing"
+        if source == "missing" and has_data:
+            source = "bff_local"
+        surface = dataset_surface_status(
+            "research_experiments",
+            snapshot_at=snapshot_at,
+            source=source,
+            has_data=has_data,
+        )
+        if isinstance(surface, str):
+            return surface
+        status = str((surface or {}).get("status") or "")
+        if status == "unavailable":
+            return "unavailable"
+        if source == "local_snapshot" or status == "degraded":
+            return "degraded"
+        return "ok"
+
+    def _legacy_artifact_reference_values(record: Dict[str, Any], field: str) -> set[str]:
+        """Read both current source-port and frozen API-v1 linkage spellings."""
+        candidates: List[Any] = [record.get(field)]
+        linkage = record.get("research_linkage")
+        if isinstance(linkage, dict):
+            candidates.extend(
+                linkage.get(key)
+                for key in (field, f"{field}_ref", f"linked_{field}")
+            )
+        if field == "experiment_id":
+            candidates.append(record.get("produced_by_experiment_id"))
+            candidates.append(record.get("experiment_refs"))
+        if field == "lineage_id":
+            lineage = record.get("lineage")
+            if isinstance(lineage, dict):
+                candidates.append(lineage.get("lineage_id"))
+
+        values: set[str] = set()
+        for candidate in candidates:
+            if isinstance(candidate, dict):
+                candidate = (
+                    candidate.get(field)
+                    or candidate.get("id")
+                    or candidate.get("ref")
+                )
+            elif isinstance(candidate, list):
+                for item in candidate:
+                    if isinstance(item, dict):
+                        item = item.get(field) or item.get("id") or item.get("ref")
+                    if item not in (None, ""):
+                        values.add(str(item))
+                continue
+            if candidate not in (None, ""):
+                values.add(str(candidate))
+        return values
+
+    def _filter_legacy_artifacts(
+        records: List[Dict[str, Any]],
+        *,
+        experiment_id: Optional[str],
+        ticket_id: Optional[str],
+        lineage_id: Optional[str],
+        status: Optional[str],
+    ) -> List[Dict[str, Any]]:
+        """Preserve filters unsupported by the predecessor source-port API.
+
+        ``ResearchKnowledgeSourcePort`` deliberately keeps its reusable
+        artifact method limited to its original typed filters.  The migration
+        must not widen that port, so this compatibility endpoint asks the port
+        for supported status filtering and applies the API-v1 linkage filters
+        on its durable projections.
+        """
+        requested = {
+            "experiment_id": experiment_id,
+            "ticket_id": ticket_id,
+            "lineage_id": lineage_id,
+        }
+        filtered = list(records)
+        for field, expected in requested.items():
+            if expected not in (None, ""):
+                filtered = [
+                    record
+                    for record in filtered
+                    if str(expected) in _legacy_artifact_reference_values(record, field)
+                ]
+        if status is not None:
+            filtered = [
+                record
+                for record in filtered
+                if str(record.get("status") or "").strip().lower() == status
+            ]
+        return filtered
 
     def _required_dict(payload: Dict[str, Any], field: str) -> Dict[str, Any]:
         value = payload.get(field)
@@ -1638,8 +1824,14 @@ def create_research_router(
             if statuses:
                 statuses = [_validate_ticket_status(status) for status in statuses]
             records = list(_call_port(port, "list_research_tickets", statuses=statuses, owner=_query(request, "owner"), include_fixture_pack=False) or [])
-            items, next_token = _page(records, request)
-            return {"data": items, "page_info": {"next_page_token": next_token, "total": len(records)}, "meta": _meta(snapshot_at, "ticket_list", "research_tickets", bool(records))}
+            surface_state = _legacy_ticket_surface_state(snapshot_at=snapshot_at)
+            if surface_state == "unavailable":
+                items, next_token, total = [], None, 0
+            else:
+                items, next_token, total = *_page(records, request), len(records)
+            meta = snapshot_meta(snapshot_at)
+            meta["surfaces"] = {"ticket_list": surface_state}
+            return {"data": items, "page_info": {"next_page_token": next_token, "total": total}, "meta": meta}
 
         if name in {"get_ticket", "patch_ticket"}:
             ticket_id = str(params["ticket_id"])
@@ -1654,15 +1846,25 @@ def create_research_router(
                 return {key: updated.get(key) for key in ("ticket_id", "status", "updated_at", "allowedActions")}
             payload = dict(ticket)
             payload["links"] = {"self": f"/api/v1/research/tickets/{ticket_id}", "workbench_detail": f"/research/tickets/{ticket_id}"}
-            payload["meta"] = _meta(snapshot_at, "ticket_detail", "research_tickets", True)
+            payload["meta"] = {
+                **snapshot_meta(snapshot_at),
+                "surfaces": {
+                    "ticket_detail": _legacy_ticket_surface_state(
+                        snapshot_at=snapshot_at, has_data=True
+                    ),
+                },
+            }
             return payload
 
         if name == "research_search":
-            query = _required_text({"q": _query(request, "q")}, "q")
+            query = _validate_research_search_query(_query(request, "q"))
+            match_type = _validate_research_search_match_type(_query(request, "match_type", "all"))
+            status = _validate_research_search_status(_query(request, "status"))
+            date_range = _validate_research_search_date_range(_query(request, "date_range"))
             index = _call_port(port, "get_research_search_index")
             if not index:
                 raise bff_error(503, ErrorCode.DEPENDENCY_UNAVAILABLE, "Search results are unavailable", "SEARCH_RESULTS_UNAVAILABLE")
-            records = list(_call_port(port, "list_research_search_results", query=query, match_type=_query(request, "match_type", "all"), status=_query(request, "status"), date_range=_query(request, "date_range")) or [])
+            records = list(_call_port(port, "list_research_search_results", query=query, match_type=match_type, status=status, date_range=date_range) or [])
             items, next_token = _page(records, request, 25)
             meta = _meta(snapshot_at, "search_results", "research_search", bool(records))
             meta["index_adapter"] = index
@@ -1706,8 +1908,31 @@ def create_research_router(
                 raw_status = _query(request, "status")
                 status = _validate_experiment_status(raw_status) if raw_status is not None else None
                 records = list(_call_port(port, "list_research_experiments", ticket_id=_query(request, "ticket_id"), status=status) or [])
-                items, next_token = _page(records, request)
-                return {"data": items, "page_info": {"next_page_token": next_token, "total": len(records)}, "meta": _meta(snapshot_at, "experiment_history", "research_experiments", bool(records))}
+                surface_state = _legacy_experiment_surface_state(
+                    snapshot_at=snapshot_at, has_data=bool(records)
+                )
+                if surface_state == "unavailable":
+                    items, next_token, total = [], None, 0
+                else:
+                    page_items, next_token = _page(records, request)
+                    items = []
+                    for record in page_items:
+                        item = dict(record)
+                        experiment_ref = str(item.get("experiment_id") or "")
+                        item["links"] = {
+                            "self": f"/api/v1/experiments/{experiment_ref}",
+                            "workbench_detail": f"/research/experiments/{experiment_ref}",
+                        }
+                        item["allowedActions"] = {
+                            "canCancel": bool(
+                                (item.get("allowedActions") or {}).get("canCancel", False)
+                            ),
+                        }
+                        items.append(item)
+                    total = len(records)
+                meta = snapshot_meta(snapshot_at)
+                meta["surfaces"] = {"experiment_history": surface_state}
+                return {"data": items, "page_info": {"next_page_token": next_token, "total": total}, "meta": meta}
             experiment = _call_port(port, "get_research_experiment", experiment_id)
             if not experiment:
                 _not_found("Experiment", experiment_id)
@@ -1733,7 +1958,29 @@ def create_research_router(
         if name in {"list_artifacts_api", "compare_artifacts_api", "get_artifact_api"}:
             artifact_id = str(params.get("artifact_id") or "")
             if name == "list_artifacts_api":
-                records = list(_call_port(port, "list_research_artifacts", status=_query(request, "status")) or [])
+                experiment_id = _query(request, "experiment_id")
+                ticket_id = _query(request, "ticket_id")
+                lineage_id = _query(request, "lineage_id")
+                status = _validate_artifact_status(_query(request, "status"))
+                artifact_reader = _port_method(port, "list_research_artifacts")
+                try:
+                    records = list(artifact_reader(
+                        experiment_id=experiment_id,
+                        ticket_id=ticket_id,
+                        lineage_id=lineage_id,
+                        status=status,
+                    ) or [])
+                except TypeError:
+                    # The preserved source port accepts the status filter but
+                    # intentionally predates the API-v1 linkage arguments.
+                    records = list(artifact_reader(status=status) or [])
+                records = _filter_legacy_artifacts(
+                    records,
+                    experiment_id=experiment_id,
+                    ticket_id=ticket_id,
+                    lineage_id=lineage_id,
+                    status=status,
+                )
                 items, next_token = _page(records, request)
                 return {"artifacts": items, "next_page_token": next_token, "total_count": len(records), "meta": _meta(snapshot_at, "artifact_list", "research_artifacts", bool(records))}
             if name == "compare_artifacts_api":

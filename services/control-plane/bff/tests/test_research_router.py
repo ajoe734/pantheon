@@ -84,6 +84,9 @@ class _Port:
         self.artifacts: Dict[str, Dict[str, Any]] = {
             "artifact-1": {
                 "artifact_id": "artifact-1",
+                "experiment_id": "experiment-1",
+                "ticket_id": "ticket-1",
+                "lineage_id": "lineage-1",
                 "status": "sealed",
                 "allowedActions": {"canCompare": True},
             },
@@ -92,7 +95,25 @@ class _Port:
                 "status": "superseded",
                 "allowedActions": {"canCompare": True},
             },
+            "artifact-3": {
+                "artifact_id": "artifact-3",
+                "experiment_id": "experiment-other",
+                "ticket_id": "ticket-1",
+                "lineage_id": "lineage-1",
+                "status": "sealed",
+                "allowedActions": {"canCompare": True},
+            },
         }
+        self.experiments: Dict[str, Dict[str, Any]] = {
+            "experiment-1": {
+                "experiment_id": "experiment-1",
+                "ticket_id": "ticket-1",
+                "status": "queued",
+                "allowedActions": {"canCancel": True, "canDelete": True},
+            }
+        }
+        self.last_artifact_filters: Dict[str, Any] = {}
+        self.last_search_filters: Dict[str, Any] = {}
         self.tickets: Dict[str, Dict[str, Any]] = {
             "ticket-1": {
                 "ticket_id": "ticket-1",
@@ -191,7 +212,7 @@ class _Port:
         has_data: bool,
         missing_message: Optional[str] = None,
     ) -> Dict[str, Any]:
-        if source == "missing" or not has_data:
+        if source == "missing" or has_data is False:
             return {
                 "status": "unavailable",
                 "source": source,
@@ -215,8 +236,13 @@ class _Port:
     def get_research_analysis(self, analysis_id: Optional[str]) -> Optional[Dict[str, Any]]:
         return self.analyses.get(str(analysis_id))
 
-    def list_research_artifacts(self, **_filters: Any) -> List[Dict[str, Any]]:
-        return list(self.artifacts.values())
+    def list_research_artifacts(self, **filters: Any) -> List[Dict[str, Any]]:
+        self.last_artifact_filters = dict(filters)
+        return [
+            artifact
+            for artifact in self.artifacts.values()
+            if all(value is None or artifact.get(name) == value for name, value in filters.items())
+        ]
 
     def get_research_artifact(self, artifact_id: Optional[str]) -> Optional[Dict[str, Any]]:
         return self.artifacts.get(str(artifact_id))
@@ -248,6 +274,23 @@ class _Port:
         ticket.update(patch)
         ticket["updated_at"] = "2026-08-30T00:00:00Z"
         return ticket
+
+    def list_research_experiments(self, **filters: Any) -> List[Dict[str, Any]]:
+        return [
+            experiment
+            for experiment in self.experiments.values()
+            if all(value is None or experiment.get(name) == value for name, value in filters.items())
+        ]
+
+    def get_research_experiment(self, experiment_id: str) -> Optional[Dict[str, Any]]:
+        return self.experiments.get(experiment_id)
+
+    def get_research_search_index(self) -> Dict[str, Any]:
+        return {"snapshot_at": "2026-08-30T00:00:00Z", "indexed_match_types": ["ticket"]}
+
+    def list_research_search_results(self, **filters: Any) -> List[Dict[str, Any]]:
+        self.last_search_filters = dict(filters)
+        return []
 
     def get_source_connector_registry(self) -> Dict[str, Any]:
         return {"source": "service_client", "connectors": [{"connector_id": "source-1"}]}
@@ -851,6 +894,94 @@ def test_inventory_routes_preserve_ticket_and_experiment_validation() -> None:
     )
     assert live_execution_mode.status_code == 422
     assert live_execution_mode.json()["detail"]["precondition_failed"] == "execution_mode"
+
+
+def test_inventory_artifact_filters_are_validated_and_forwarded_to_the_port() -> None:
+    port = _Port()
+    client = _client(port)
+
+    response = client.get(
+        "/api/v1/artifacts",
+        params={
+            "experiment_id": "experiment-1",
+            "ticket_id": "ticket-1",
+            "lineage_id": "lineage-1",
+            "status": "sealed",
+        },
+    )
+    assert response.status_code == 200, response.text
+    assert [item["artifact_id"] for item in response.json()["artifacts"]] == ["artifact-1"]
+    assert port.last_artifact_filters == {
+        "experiment_id": "experiment-1",
+        "ticket_id": "ticket-1",
+        "lineage_id": "lineage-1",
+        "status": "sealed",
+    }
+
+    class _NarrowArtifactPort(_Port):
+        def list_research_artifacts(self, *, status: Optional[str] = None) -> List[Dict[str, Any]]:
+            self.last_artifact_filters = {"status": status}
+            return [
+                artifact
+                for artifact in self.artifacts.values()
+                if status is None or artifact.get("status") == status
+            ]
+
+    narrow_port = _NarrowArtifactPort()
+    narrow_response = _client(narrow_port).get(
+        "/api/v1/artifacts",
+        params={
+            "experiment_id": "experiment-1",
+            "ticket_id": "ticket-1",
+            "lineage_id": "lineage-1",
+            "status": "sealed",
+        },
+    )
+    assert narrow_response.status_code == 200, narrow_response.text
+    assert [item["artifact_id"] for item in narrow_response.json()["artifacts"]] == ["artifact-1"]
+    assert narrow_port.last_artifact_filters == {"status": "sealed"}
+
+    invalid = client.get("/api/v1/artifacts", params={"status": "draft"})
+    assert invalid.status_code == 400
+    assert invalid.json()["detail"]["precondition_failed"] == "status"
+
+
+def test_inventory_search_rejects_invalid_frozen_match_type_before_port_access() -> None:
+    client = _client(_Port())
+
+    invalid = client.get(
+        "/api/v1/research/search", params={"q": "alpha", "match_type": "note"}
+    )
+    assert invalid.status_code == 400
+    assert invalid.json()["detail"]["precondition_failed"] == "match_type"
+
+
+def test_inventory_experiment_and_ticket_routes_restore_legacy_projections() -> None:
+    client = _client(_Port())
+
+    experiments = client.get("/api/v1/experiments")
+    assert experiments.status_code == 200, experiments.text
+    item = experiments.json()["data"][0]
+    assert item["links"] == {
+        "self": "/api/v1/experiments/experiment-1",
+        "workbench_detail": "/research/experiments/experiment-1",
+    }
+    assert item["allowedActions"] == {"canCancel": True}
+    assert experiments.json()["meta"]["surfaces"]["experiment_history"] == "ok"
+
+    tickets = client.get("/api/v1/research/tickets")
+    assert tickets.status_code == 200, tickets.text
+    assert tickets.json()["meta"]["surfaces"]["ticket_list"] == "fresh"
+
+    ticket = client.get("/api/v1/research/tickets/ticket-1")
+    assert ticket.status_code == 200, ticket.text
+    assert ticket.json()["meta"]["surfaces"]["ticket_detail"] == "fresh"
+
+    unavailable = _client(_Port(source="missing")).get("/api/v1/research/tickets")
+    assert unavailable.status_code == 200, unavailable.text
+    assert unavailable.json()["data"] == []
+    assert unavailable.json()["page_info"] == {"next_page_token": None, "total": 0}
+    assert unavailable.json()["meta"]["surfaces"]["ticket_list"] == "unavailable"
 
 
 def test_inventory_routes_publish_legacy_request_and_query_contracts_to_openapi() -> None:
