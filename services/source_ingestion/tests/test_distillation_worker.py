@@ -541,6 +541,48 @@ class TestDistillationJobQueue:
         with pytest.raises(Exception):
             DistillationJobQueue(path)
 
+    def test_corrupt_queue_quarantines_stale_wal_and_shm_sidecars_too(
+        self, tmp_path: Path
+    ) -> None:
+        """WAL-mode sidecars must be quarantined alongside the corrupt main
+        file, not left behind next to the freshly recreated database.
+
+        DistillationJobQueue runs in WAL mode (PRAGMA journal_mode = WAL),
+        which keeps part of the durable state in `<name>-wal` / `<name>-shm`
+        sidecar files next to the main sqlite file. If corruption recovery
+        only quarantines the main file and reopens at the same path, sqlite3
+        would pick the old, still-corrupt sidecars back up instead of
+        starting a genuinely fresh queue.
+        """
+        path = tmp_path / "q.jsonl"
+        path.write_bytes(b"SQLite format 3\x00" + b"\xff" * 200)
+        wal_path = tmp_path / "q.jsonl-wal"
+        shm_path = tmp_path / "q.jsonl-shm"
+        wal_path.write_bytes(b"stale-wal-contents")
+        shm_path.write_bytes(b"stale-shm-contents")
+
+        q = DistillationJobQueue(path)
+
+        job = q.enqueue("src-001")
+        assert job.status == DistillationJobStatus.PENDING
+
+        quarantined_main = list(tmp_path.glob("q.jsonl.corrupt-*"))
+        assert len(quarantined_main) == 1
+        suffix = quarantined_main[0].name[len("q.jsonl") :]
+
+        quarantined_wal = tmp_path / f"q.jsonl-wal{suffix}"
+        quarantined_shm = tmp_path / f"q.jsonl-shm{suffix}"
+        # sqlite3 rewrites -shm in place as soon as it attempts to open the
+        # file (before the corrupt header is even detected), so its exact
+        # bytes aren't preserved — but -wal is untouched until bootstrap
+        # actually succeeds, so it must still carry our original content.
+        assert quarantined_wal.read_bytes() == b"stale-wal-contents"
+        assert quarantined_shm.exists()
+
+        # The stale sidecars must not still be sitting at the live path,
+        # where a fresh connection would otherwise pick them back up.
+        assert not wal_path.exists() or wal_path.read_bytes() != b"stale-wal-contents"
+
 
 class TestEventAdmissionSharesQueueWithCatchUp:
     """L12-GAP-F02: a commit-time enqueue and the controller's catch_up poll
