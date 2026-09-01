@@ -16,8 +16,8 @@
   },
   "task": {
     "base_branch": "dev",
-    "evidence_cut_at": "2026-09-01T06:43:53Z",
-    "evidence_cut_semantics": "Owner revalidation after merging the current dev base for Agora domain route migration and decoupling identity and personalization from main.py. The task retains all 38 migrated decorators, canonical ports/stores, dry-run/command/SSE/assistant behavior, restores frozen-base HTTP contracts for signal pagination/status, optional committee bodies, SSE cursors, and journal MFA/trace headers, and keeps an unreceipted research result explicitly labelled simulation.",
+    "evidence_cut_at": "2026-09-01T07:06:48Z",
+    "evidence_cut_semantics": "Owner revalidation after merging the current dev base for Agora domain route migration and decoupling identity and personalization from main.py. The task retains all 38 migrated decorators, canonical ports/stores, dry-run/command/SSE/assistant behavior, restores frozen-base snake-case pagination and 1..200 bounds for watchlist, notes, journal, training-example, and research-task lists, restores the existing command-adapter assembly behavior accidentally regressed by this branch, and keeps an unreceipted research result explicitly labelled simulation.",
     "id": "OPGAP-BE-AGORA-ROUTER-V2-20260830",
     "overall_admission": "owner_asserted_pass_pending_independent_review_and_merge",
     "owner": "Codex2",
@@ -84,6 +84,12 @@
         "subject": "OPGAP-BE-AGORA-ROUTER-V2-20260830: anchor HTTP parity",
         "delivery_state": "task_branch",
         "note": "Restores frozen-base HTTP compatibility before evidence finalization and exact-head re-review."
+      },
+      {
+        "sha": "f910ed6ab0047b412a69c0afd0f89bdf25e55cec",
+        "subject": "OPGAP-BE-AGORA-ROUTER-V2-20260830: anchor contract restoration",
+        "delivery_state": "task_branch",
+        "note": "Restores legacy snake-case pagination and 1..200 bounds, and returns command-adapter mounting to the dev composition."
       }
     ],
     "required_checks": [
@@ -103,7 +109,7 @@
         "conclusion": "success"
       },
       {
-        "workflow": "owner HTTP compatibility repair regression",
+        "workflow": "owner HTTP compatibility and command-adapter repair regressions",
         "event": "local validation before re-handoff",
         "conclusion": "success"
       }
@@ -117,9 +123,14 @@
         "conclusion": "27 passed. Broader named Agora contract, journal, assistant, and canonical-alias regression modules pass cleanly at the refreshed source head."
       },
       {
-        "command": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/tests/test_agora_router.py",
+        "command": ".venv-pantheon/bin/python3 -m pytest -q --disable-warnings services/control-plane/bff/tests/test_agora_router.py",
         "result": "pass",
-        "conclusion": "37 passed. Confirms 0 legacy Agora route decorators on main.py, zero reverse imports of main, frozen-base query/header/body contracts, X-Dry-Run non-mutation, 404 nonexistent sessions, 400 missing idempotency keys, 201 feedback, and ports interface conformance."
+        "conclusion": "42 passed. Confirms 0 legacy Agora route decorators on main.py, zero reverse imports of main, snake-case page_token/page_size plus 1..200 bounds for the restored list contracts, X-Dry-Run non-mutation, 404 nonexistent sessions, 400 missing idempotency keys, 201 feedback, and ports interface conformance."
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q --disable-warnings services/control-plane/bff/tests/test_command_adapters_router.py",
+        "result": "pass",
+        "conclusion": "14 passed. Confirms main.py no longer has loose command-adapter decorators, mounts create_command_adapters_router, and preserves legacy operator-command admission behavior."
       },
       {
         "command": "python3 -c \"import json, jsonschema; jsonschema.validate(json.load(open(\"docs/deployment/evidence/agora/OPGAP-BE-AGORA-ROUTER-V2-20260830/evidence.json\")), json.load(open(\"schemas/product-evidence.schema.json\")))\"",
@@ -137,9 +148,9 @@
         "conclusion": "19 passed. Confirms market-data projection provenance and source-freshness contracts."
       }
     ],
-    "validated_at": "2026-09-01T06:43:53Z",
+    "validated_at": "2026-09-01T07:06:48Z",
     "validated_base_sha": "18b8f6b268d354495cf50b42ef9e4460f8228ebf",
-    "validated_head_sha": "c756b850b8e3e2902a38ed645d994666a67d88a4"
+    "validated_head_sha": "b30f9790f351e05c49d08030ee082dbfc9e355fd"
   },
   "deployment": {
     "applicable": false,
@@ -274,7 +285,7 @@
   "residual_risks": {
     "RISK-01": {
       "blocking_for_this_task": false,
-      "containment": "Full contract and regression suites (254 passed) guarantee zero behavioral regression.",
+      "containment": "Focused router, command-adapter, dispatcher, projection, and broader Agora contract suites pass at the validated source head.",
       "description": "Router migration restructures endpoint definitions into modular sub-routers.",
       "expiry": "2026-09-30Z",
       "owner": "Codex2",
@@ -339,6 +350,13 @@
       "kind": "current_base_revalidation",
       "status": "pass",
       "reference": "Merged current dev base 18b8f6b268d354495cf50b42ef9e4460f8228ebf; diff hygiene plus 37 router, 2 dispatcher, 19 market projection, and 27 named broader Agora regressions passed at c756b850b8e3e2902a38ed645d994666a67d88a4."
+    },
+    {
+      "sequence": 6,
+      "recorded_at": "2026-09-01T07:06:48Z",
+      "kind": "review_reopen_contract_restoration",
+      "status": "pass",
+      "reference": "Restored page_token/page_size and 1..200 bounds for five migrated list handlers, restored the origin/dev command-adapter assembly behavior, and passed 42 router, 14 command-adapter, 2 dispatcher, 19 projection, and 27 broader Agora regressions at b30f9790f351e05c49d08030ee082dbfc9e355fd."
     }
   ]
 }
