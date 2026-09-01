@@ -231,10 +231,14 @@ from persona_provisioning_coordinator import (
     deterministic_provisioning_ids,
 )
 try:
-    from personas.reconciliation import PersonaProvisioningReconciliationMutationPort
+    from personas.reconciliation import (
+        PersonaProvisioningReconciliationMutationPort,
+        PersonaReconciliationMutationError,
+    )
 except ImportError:
     from services.control_plane.bff.personas.reconciliation import (  # type: ignore[no-redef]
         PersonaProvisioningReconciliationMutationPort,
+        PersonaReconciliationMutationError,
     )
 try:
     from services.persona.runtime_profile import (
@@ -41442,6 +41446,16 @@ def _persona_readback_snapshot() -> Tuple[
     return all_bindings, None, monitoring_sessions
 
 
+#: Personas whose provisioning projection is orphaned: some BFF-local read
+#: source (read_store / provisioning store / _PERSONA_BFF_OVERLAY) still
+#: lists them as provisioning/provisioning_failed, but the authoritative
+#: Persona registry has no record of them (deleted there without the local
+#: projection being cleared, or never successfully created). Reconciling
+#: them can never succeed, so each id is retried once per process lifetime
+#: instead of every reconciliation pass forever.
+_PERSONA_PROVISIONING_ORPHAN_SKIP: Set[str] = set()
+
+
 def _reconcile_persona_provisioning_once() -> int:
     """Materialize provisioning lifecycle from owner readbacks off read paths."""
 
@@ -41452,7 +41466,7 @@ def _reconcile_persona_provisioning_once() -> int:
         if state not in {"provisioning", "provisioning_failed"}:
             continue
         persona_id = str(raw.get("persona_id") or raw.get("id") or "").strip()
-        if not persona_id:
+        if not persona_id or persona_id in _PERSONA_PROVISIONING_ORPHAN_SKIP:
             continue
         try:
             _evaluate_persona_provisioning_status(
@@ -41463,6 +41477,15 @@ def _reconcile_persona_provisioning_once() -> int:
                 all_monitoring_sessions=monitoring_sessions,
             )
             reconciled += 1
+        except PersonaReconciliationMutationError as exc:
+            _PERSONA_PROVISIONING_ORPHAN_SKIP.add(persona_id)
+            log.warning(
+                "Persona provisioning reconciliation abandoned for %s: the "
+                "mutation owner has no record of this persona, so it can "
+                "never be reconciled; will not retry until process restart: %s",
+                persona_id,
+                exc,
+            )
         except Exception as exc:
             log.warning(
                 "Persona provisioning reconciliation failed for %s: %s",
