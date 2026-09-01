@@ -110,7 +110,48 @@ def check_message(message: str, required: tuple[str, ...], prefix_required: bool
             problems.append(f"missing trailer: {name}")
         elif not trailers[name].strip():
             problems.append(f"empty trailer value: {name}")
+    problems.extend(check_independent_review(trailers))
     return problems
+
+
+def _normalize_actor(value: str) -> str:
+    return " ".join(value.strip().casefold().split())
+
+
+# Values that name the author rather than an independent second party.
+_SELF_REVIEW_VALUES = frozenset(
+    {"self", "self-review", "self review", "same", "same as author", "author", "n/a", "none"}
+)
+
+
+def check_independent_review(trailers: dict[str, str]) -> list[str]:
+    """Reject a commit that reviews itself.
+
+    A blocking or fail-closed change that nobody else looked at is how a gate
+    ships asserting a field whose meaning it got wrong. That is not
+    hypothetical: the deploy gate that auto-rolled-back four healthy releases
+    (OPGAP-DEPLOY-PROVIDER-GATE-20260901) arrived as `LLM-Agent: Codex` with
+    `Reviewer: Codex` on the same commit, so no second party ever asked whether
+    the assertion meant what it claimed.
+    """
+    author = trailers.get("LLM-Agent", "")
+    reviewer = trailers.get("Reviewer", "")
+    if not author.strip() or not reviewer.strip():
+        # Missing/empty trailers are already reported by the caller.
+        return []
+
+    normalized_reviewer = _normalize_actor(reviewer)
+    if normalized_reviewer in _SELF_REVIEW_VALUES:
+        return [
+            f"Reviewer '{reviewer.strip()}' does not name an independent reviewer; "
+            "a change must be reviewed by someone other than its author"
+        ]
+    if normalized_reviewer == _normalize_actor(author):
+        return [
+            f"self-review is not accepted: LLM-Agent and Reviewer are both "
+            f"'{author.strip()}'; name a different agent or Human/Ops"
+        ]
+    return []
 
 
 def collect_messages_from_range(rev_range: str) -> list[tuple[str, str]]:
