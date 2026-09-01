@@ -990,6 +990,210 @@ def create_research_router(
             )
         return value
 
+    def _knowledge_bad_request(message: str, reason: str, field: str) -> None:
+        raise bff_error(
+            400,
+            ErrorCode.VALIDATION_FAILED,
+            message,
+            reason,
+            precondition_failed=field,
+        )
+
+    def _validate_knowledge_choice(value: Any, *, field: str, allowed: set[str]) -> str:
+        normalized = str(value or "").strip().lower()
+        if normalized not in allowed:
+            _knowledge_bad_request(
+                f"Invalid {field}",
+                f"{field} must be one of {sorted(allowed)}",
+                field,
+            )
+        return normalized
+
+    def _knowledge_surface_state(
+        dataset: str,
+        *,
+        snapshot_at: str,
+        has_data: bool,
+        missing_message: Optional[str] = None,
+    ) -> str:
+        port = get_read_store()
+        source_fn = getattr(port, "dataset_source", None)
+        source = str(source_fn(dataset) or "missing") if callable(source_fn) else "missing"
+        surface = dataset_surface_status(
+            dataset,
+            snapshot_at=snapshot_at,
+            source=source,
+            has_data=has_data,
+            missing_message=missing_message,
+        )
+        if isinstance(surface, str):
+            return surface
+        status = str((surface or {}).get("status") or "")
+        if status == "unavailable" or source == "missing":
+            return "unavailable"
+        if status == "degraded" or (surface or {}).get("source") == "local_snapshot":
+            return "degraded"
+        return "ok"
+
+    def _capabilities(identity: Any) -> Optional[List[str]]:
+        if get_capabilities is None:
+            return None
+        try:
+            return get_capabilities(identity)
+        except Exception:
+            return None
+
+    def _evidence_list_item(item: Dict[str, Any]) -> Dict[str, Any]:
+        """Keep KW-03 list responses stable even when a port returns extra fields."""
+        return {
+            "ref_id": item.get("ref_id"),
+            "source_document": json.loads(json.dumps(item.get("source_document") or {})),
+            "link_type": item.get("link_type"),
+            "credibility": json.loads(json.dumps(item.get("credibility") or {})),
+            "linked_object_summary": json.loads(json.dumps(item.get("linked_object_summary") or {})),
+            "resolved_link": json.loads(json.dumps(item.get("resolved_link") or {})),
+            "route_href": item.get("route_href"),
+        }
+
+    def _insight_list_item(item: Dict[str, Any]) -> Dict[str, Any]:
+        return {
+            "insight_id": item.get("insight_id"),
+            "summary": item.get("summary"),
+            "scope": item.get("scope"),
+            "scope_ref": item.get("scope_ref"),
+            "status": item.get("status"),
+            "superseded_by_id": item.get("superseded_by_id"),
+            "confidence": json.loads(json.dumps(item.get("confidence") or {})),
+            "tags": list(item.get("tags") or []),
+            "evidence_count": item.get("evidence_count"),
+            "primary_evidence_count": item.get("primary_evidence_count"),
+            "aggregated_at": item.get("aggregated_at")
+            or (item.get("aggregation_provenance") or {}).get("aggregated_at"),
+            "route_href": item.get("route_href")
+            or (f"/knowledge/insights/{item.get('insight_id')}" if item.get("insight_id") else None),
+        }
+
+    def _insight_filter_metadata(cards: List[Dict[str, Any]]) -> Dict[str, Any]:
+        tag_counts: Dict[str, int] = {}
+        entity_counts: Dict[str, int] = {}
+        for card in cards:
+            seen_tags: set[str] = set()
+            for raw_tag in card.get("tags") or []:
+                tag = str(raw_tag or "").strip()
+                if tag and tag not in seen_tags:
+                    tag_counts[tag] = tag_counts.get(tag, 0) + 1
+                    seen_tags.add(tag)
+            seen_entities: set[str] = set()
+            for source in card.get("linked_sources") or []:
+                if not isinstance(source, dict):
+                    continue
+                entity_type = str(source.get("entity_type") or "").strip()
+                if entity_type and entity_type not in seen_entities:
+                    entity_counts[entity_type] = entity_counts.get(entity_type, 0) + 1
+                    seen_entities.add(entity_type)
+        labels = {
+            "memory_entry": "Institutional Memory",
+            "research_note": "Research Note",
+            "evidence_ref": "Evidence Reference",
+            "strategy_spec": "Strategy Spec",
+            "experiment": "Experiment",
+        }
+        return {
+            "tags": [
+                {"value": tag, "display_label": tag.replace("-", " ").title(), "count": count}
+                for tag, count in sorted(tag_counts.items(), key=lambda value: (-value[1], value[0]))
+            ],
+            "linked_entity_types": [
+                {
+                    "value": entity,
+                    "display_label": labels.get(entity, entity.replace("_", " ").title()),
+                    "count": count,
+                }
+                for entity, count in sorted(entity_counts.items(), key=lambda value: (-value[1], value[0]))
+            ],
+            "recency_options": [
+                {"value": value, "display_label": {"7d": "Last 7 days", "30d": "Last 30 days", "90d": "Last 90 days", "all": "All time"}[value]}
+                for value in ("7d", "30d", "90d", "all")
+            ],
+            "total_active_count": sum(1 for card in cards if str(card.get("status") or "") == "active"),
+        }
+
+    def _within_recency(value: Any, recency: str, snapshot_at: str) -> bool:
+        if recency == "all":
+            return True
+        try:
+            raw = str(value or "").replace("Z", "+00:00")
+            aggregated = datetime.fromisoformat(raw)
+            if aggregated.tzinfo is None:
+                aggregated = aggregated.replace(tzinfo=timezone.utc)
+            snapshot = datetime.fromisoformat(str(snapshot_at).replace("Z", "+00:00"))
+            if snapshot.tzinfo is None:
+                snapshot = snapshot.replace(tzinfo=timezone.utc)
+            return aggregated >= snapshot - timedelta(days={"7d": 7, "30d": 30, "90d": 90}[recency])
+        except (TypeError, ValueError, KeyError):
+            return False
+
+    def _conflict_view(log: Dict[str, Any]) -> Dict[str, Any]:
+        raw = json.loads(json.dumps(log))
+        log_id = str(raw.get("log_id") or raw.get("id") or raw.get("conflict_resolution_log_id") or "").strip()
+        proposal_ids = [str(value) for value in raw.get("proposal_ids") or [] if str(value).strip()]
+        vetoes = {
+            str(value.get("proposal_id")): value
+            for value in raw.get("vetoed_proposals") or []
+            if isinstance(value, dict) and value.get("proposal_id")
+        }
+        for proposal_id in vetoes:
+            if proposal_id not in proposal_ids:
+                proposal_ids.append(proposal_id)
+        inputs = raw.get("weighting_inputs") if isinstance(raw.get("weighting_inputs"), dict) else {}
+        outputs = raw.get("weighting_outputs") if isinstance(raw.get("weighting_outputs"), dict) else {}
+        rows = []
+        for proposal_id in proposal_ids:
+            veto = vetoes.get(proposal_id)
+            output = outputs.get(proposal_id)
+            state = "vetoed" if veto else ("selected" if output not in (None, 0, "0") else "not_selected")
+            row = {
+                "proposal_id": proposal_id,
+                "state": state,
+                "input_weight": inputs.get(proposal_id),
+                "output_share": output,
+                "is_vetoed": bool(veto),
+            }
+            if veto:
+                row.update({"persona_id": veto.get("persona_id"), "veto_reason": veto.get("reason"), "veto_detail": veto.get("detail")})
+            rows.append(row)
+        resolution_state = "rejected" if raw.get("rejected_reason") else ("committee_required" if raw.get("committee_ref") else ("resolved_with_veto" if vetoes else "resolved"))
+        raw["id"] = log_id
+        raw["resolution_state"] = resolution_state
+        raw["view"] = {
+            "title": f"Synthesis conflict log {log_id}",
+            "resolution_state": resolution_state,
+            "summary": {
+                "proposal_count": len(rows),
+                "selected_count": sum(1 for row in rows if row["state"] == "selected"),
+                "veto_count": sum(1 for row in rows if row["is_vetoed"]),
+                "committee_required": bool(raw.get("committee_ref")),
+                "sponsor_persona_id": raw.get("sponsor_persona_id"),
+                "synthesis_method": raw.get("synthesis_method"),
+                "capital_pool_id": raw.get("capital_pool_id"),
+                "scope_ref": raw.get("scope_ref"),
+            },
+            "proposal_rows": rows,
+            "governance": {
+                "committee_ref": raw.get("committee_ref"),
+                "rejected_reason": raw.get("rejected_reason"),
+                "approval_id": raw.get("governance_approval_id"),
+                "decision": raw.get("governance_decision"),
+                "decision_state": raw.get("governance_decision_state"),
+                "can_proceed": raw.get("governance_can_proceed"),
+            },
+            "links": {
+                "allocation_policy_artifact": None,
+                "governance_approval": None,
+            },
+        }
+        return raw
+
     def _validate_ticket_patch(ticket: Dict[str, Any], payload: Dict[str, Any]) -> Dict[str, Any]:
         allowed_fields = {"status", "title", "description", "priority", "owner"}
         unknown_fields = sorted(set(payload) - allowed_fields)
@@ -1317,10 +1521,7 @@ def create_research_router(
 
         knowledge_operations = {
             "list_notes": ("list_research_notes", "notes"),
-            "list_evidence": ("list_evidence_refs", "evidence_refs"),
-            "list_insights": ("list_insight_cards", "insight_cards"),
             "list_strategy_specs": ("list_strategy_specs", "strategy_specs"),
-            "list_memory": ("list_institutional_memory_entries", "institutional_memory_entries"),
         }
         if name == "create_note":
             body = await _body(request)
@@ -1386,6 +1587,266 @@ def create_research_router(
                 "created_at": snapshot_at,
                 "route_href": f"/knowledge/notes/{note_id}",
             }
+
+        if name == "list_evidence":
+            linked_entity_type = _query(request, "linked_entity_type")
+            linked_entity_ref = _query(request, "linked_entity_ref")
+            link_type = _query(request, "link_type")
+            credibility_tier = _query(request, "credibility_tier")
+            verified_raw = _query(request, "verified")
+            validated_entity_type = (
+                _validate_knowledge_choice(
+                    linked_entity_type,
+                    field="linked_entity_type",
+                    allowed=_KW03_LINKED_ENTITY_TYPES,
+                )
+                if linked_entity_type is not None
+                else None
+            )
+            if linked_entity_ref is not None and validated_entity_type is None:
+                _knowledge_bad_request(
+                    "Invalid linked_entity_ref filter",
+                    "linked_entity_ref requires linked_entity_type to be set",
+                    "linked_entity_ref",
+                )
+            validated_link_type = (
+                _validate_knowledge_choice(link_type, field="link_type", allowed=_KW03_LINK_TYPES)
+                if link_type is not None
+                else None
+            )
+            validated_tier = (
+                _validate_knowledge_choice(credibility_tier, field="credibility_tier", allowed=_KW03_CREDIBILITY_TIERS)
+                if credibility_tier is not None
+                else None
+            )
+            verified: Optional[bool] = None
+            if verified_raw is not None:
+                normalized_verified = str(verified_raw).strip().lower()
+                if normalized_verified not in {"true", "false"}:
+                    _knowledge_bad_request("Invalid verified", "verified must be a boolean", "verified")
+                verified = normalized_verified == "true"
+
+            records = list(_call_port(port, "list_evidence_refs") or [])
+            if validated_entity_type:
+                records = [
+                    item
+                    for item in records
+                    if str(((item.get("linked_object_summary") or {}).get("entity_type")) or "").lower()
+                    == validated_entity_type
+                ]
+            if linked_entity_ref is not None:
+                records = [
+                    item
+                    for item in records
+                    if str(((item.get("linked_object_summary") or {}).get("entity_ref")) or "")
+                    == str(linked_entity_ref)
+                ]
+            if validated_link_type:
+                records = [item for item in records if str(item.get("link_type") or "").lower() == validated_link_type]
+            if validated_tier:
+                records = [
+                    item
+                    for item in records
+                    if str(((item.get("credibility") or {}).get("tier")) or "").lower() == validated_tier
+                ]
+            if verified is not None:
+                records = [item for item in records if bool((item.get("credibility") or {}).get("verified")) is verified]
+
+            available = getattr(port, "dataset_source", lambda _dataset: "missing")("evidence_refs") != "missing"
+            surface_state = _knowledge_surface_state(
+                "evidence_refs", snapshot_at=snapshot_at, has_data=available,
+            )
+            if surface_state == "unavailable":
+                page_items, next_token, has_more = [], None, False
+            else:
+                page_items, next_token = _page(records, request)
+                has_more = next_token is not None
+            processed, redacted_count = redact_evidence_refs(
+                identity, page_items, capabilities=_capabilities(identity)
+            )
+            response_items = [
+                item if isinstance(item, dict) and item.get("redacted") else _evidence_list_item(item)
+                for item in processed
+            ]
+            meta = snapshot_meta(snapshot_at)
+            meta["surfaces"] = {"evidence_refs_list": surface_state}
+            meta["redacted_evidence_count"] = redacted_count
+            return {
+                "evidence_refs": response_items,
+                "pagination": {
+                    "page_size": int(_query(request, "page_size", "20") or 20),
+                    "next_page_token": next_token,
+                    "has_more": has_more,
+                },
+                "meta": meta,
+            }
+
+        if name == "list_insights":
+            status = _validate_knowledge_choice(
+                _query(request, "status", "active"), field="status", allowed=_KW04_STATUSES,
+            )
+            recency = _validate_knowledge_choice(
+                _query(request, "recency", "all"), field="recency", allowed=_KW04_RECENCY_VALUES,
+            )
+            linked_entity_type = _query(request, "linked_entity_type")
+            linked_entity_ref = _query(request, "linked_entity_ref")
+            validated_entity_type = (
+                _validate_knowledge_choice(linked_entity_type, field="linked_entity_type", allowed=_KW04_LINKED_ENTITY_TYPES)
+                if linked_entity_type is not None
+                else None
+            )
+            if linked_entity_ref is not None and validated_entity_type is None:
+                _knowledge_bad_request(
+                    "Invalid linked_entity_ref filter",
+                    "linked_entity_ref requires linked_entity_type to be set",
+                    "linked_entity_ref",
+                )
+            confidence_raw = _query(request, "confidence_min")
+            confidence_min: Optional[float] = None
+            if confidence_raw is not None:
+                try:
+                    confidence_min = float(confidence_raw)
+                except (TypeError, ValueError):
+                    _knowledge_bad_request("Invalid confidence_min", "confidence_min must be a number between 0.0 and 1.0", "confidence_min")
+                if confidence_min < 0.0 or confidence_min > 1.0:
+                    _knowledge_bad_request("Invalid confidence_min", "confidence_min must be a number between 0.0 and 1.0", "confidence_min")
+            include_inactive = str(_query(request, "include_inactive", "false") or "false").lower() == "true"
+            records = list(_call_port(port, "list_insight_cards") or [])
+            filter_metadata = _insight_filter_metadata(records)
+            filtered = list(records)
+            if not include_inactive and status != "all":
+                filtered = [item for item in filtered if str(item.get("status") or "") == status]
+            if _query(request, "tag") is not None:
+                tag = str(_query(request, "tag") or "")
+                filtered = [item for item in filtered if tag in set(item.get("tags") or [])]
+            if validated_entity_type:
+                filtered = [
+                    item for item in filtered if any(
+                        str((source or {}).get("entity_type") or "") == validated_entity_type
+                        for source in item.get("linked_sources") or []
+                    )
+                ]
+            if linked_entity_ref is not None:
+                filtered = [
+                    item for item in filtered if any(
+                        str((source or {}).get("entity_type") or "") == validated_entity_type
+                        and str((source or {}).get("entity_ref") or "") == str(linked_entity_ref)
+                        for source in item.get("linked_sources") or []
+                    )
+                ]
+            if recency != "all":
+                filtered = [
+                    item for item in filtered if _within_recency(
+                        item.get("aggregated_at") or (item.get("aggregation_provenance") or {}).get("aggregated_at"),
+                        recency,
+                        snapshot_at,
+                    )
+                ]
+            if confidence_min is not None:
+                filtered = [
+                    item for item in filtered if float(((item.get("confidence") or {}).get("score")) or 0.0) >= confidence_min
+                ]
+            available = getattr(port, "dataset_source", lambda _dataset: "missing")("insight_cards") != "missing"
+            surface_state = _knowledge_surface_state("insight_cards", snapshot_at=snapshot_at, has_data=available)
+            if surface_state == "unavailable":
+                page_items, next_token, has_more = [], None, False
+            else:
+                page_items, next_token = _page(filtered, request)
+                has_more = next_token is not None
+            meta = snapshot_meta(snapshot_at)
+            meta["surfaces"] = {"insight_cards": surface_state}
+            return {
+                "insight_cards": [_insight_list_item(item) for item in page_items],
+                "filter_metadata": filter_metadata if available else {
+                    "tags": [], "linked_entity_types": [],
+                    "recency_options": _insight_filter_metadata([])["recency_options"],
+                    "total_active_count": 0,
+                },
+                "pagination": {
+                    "page_size": int(_query(request, "page_size", "20") or 20),
+                    "next_page_token": next_token,
+                    "has_more": has_more,
+                },
+                "meta": meta,
+            }
+
+        if name == "list_memory":
+            records = list(_call_port(port, "list_institutional_memory_entries") or [])
+            knowledge_type = _query(request, "knowledge_type")
+            scope = _query(request, "scope")
+            scope_filter = _query(request, "scope_filter")
+            tags = _query(request, "tags")
+            if knowledge_type:
+                records = [item for item in records if str(item.get("knowledge_type") or "") == knowledge_type]
+            if scope:
+                records = [
+                    item for item in records
+                    if (
+                        str(item.get("scope") or "") == scope
+                        if not isinstance(item.get("scope"), dict)
+                        else str((item.get("scope") or {}).get("type") or "") == scope
+                    )
+                ]
+            if scope_filter:
+                records = [
+                    item for item in records
+                    if str(item.get("scope_filter") or ((item.get("scope") or {}).get("filter") if isinstance(item.get("scope"), dict) else "")) == scope_filter
+                ]
+            if tags:
+                requested_tags = {value.strip() for value in str(tags).split(",") if value.strip()}
+                records = [item for item in records if requested_tags.intersection(set(item.get("tags") or []))]
+            try:
+                page_number = int(_query(request, "page", "1") or 1)
+                page_size = int(_query(request, "page_size", "20") or 20)
+            except (TypeError, ValueError):
+                _knowledge_bad_request("Invalid pagination", "page and page_size must be integers", "page")
+            page_size = max(1, min(page_size, 200))
+            total_count = len(records)
+            start = (page_number - 1) * page_size
+            page_items = records[start : start + page_size]
+            total_pages = max(1, (total_count + page_size - 1) // page_size)
+            available = getattr(port, "dataset_source", lambda _dataset: "missing")("institutional_memory_entries") != "missing"
+            surface_state = _knowledge_surface_state(
+                "institutional_memory_entries", snapshot_at=snapshot_at, has_data=available,
+                missing_message="Institutional memory list is unavailable.",
+            )
+            if surface_state == "unavailable":
+                page_items, total_count, total_pages = [], 0, 0
+            entries = []
+            for item in page_items:
+                if "headline" in item:
+                    entries.append(item)
+                    continue
+                content = item.get("content") if isinstance(item.get("content"), dict) else {}
+                scope_value = item.get("scope") if isinstance(item.get("scope"), dict) else {}
+                lifecycle = item.get("lifecycle") if isinstance(item.get("lifecycle"), dict) else {}
+                usage = item.get("usage") if isinstance(item.get("usage"), dict) else {}
+                entries.append({
+                    "entry_id": item.get("entry_id") or item.get("id"),
+                    "headline": content.get("headline"),
+                    "knowledge_type": item.get("knowledge_type"),
+                    "scope": scope_value.get("type"),
+                    "scope_filter": scope_value.get("filter"),
+                    "tags": list(content.get("tags") or item.get("tags") or []),
+                    "reuse_count": int(usage.get("reuse_count") or 0),
+                    "is_superseded": bool(lifecycle.get("superseded_by")),
+                    "written_at": item.get("written_at"),
+                    "write_authority": item.get("write_authority"),
+                    "route_href": f"/knowledge/memory/{item.get('entry_id') or item.get('id')}",
+                })
+            meta = snapshot_meta(snapshot_at)
+            meta["surfaces"] = {"memory_list": surface_state}
+            return {
+                "entries": entries,
+                "pagination": {
+                    "total_count": total_count,
+                    "page": page_number,
+                    "page_size": page_size,
+                    "total_pages": total_pages,
+                },
+                "meta": meta,
+            }
+
         if name in knowledge_operations:
             method, dataset = knowledge_operations[name]
             kwargs: Dict[str, Any] = {}
@@ -1502,21 +1963,127 @@ def create_research_router(
             return comparison
 
         if name in {"synthesis_conflict_logs", "synthesis_conflict_log"}:
+            raw_flag = os.getenv("PANTHEON_SYNTHESIS_CONFLICT_LOG_VIEW_ENABLED")
+            if raw_flag is not None and raw_flag.strip().lower() in {"0", "false", "no", "off", "disabled"}:
+                raise bff_error(
+                    503,
+                    ErrorCode.DEPENDENCY_UNAVAILABLE,
+                    "Synthesis conflict log view disabled",
+                    "PANTHEON_SYNTHESIS_CONFLICT_LOG_VIEW_ENABLED is disabled for this BFF instance.",
+                    precondition_failed="synthesis_conflict_log_feature_flag",
+                )
+            list_reader = list_synthesis_conflict_logs
+            get_reader = get_synthesis_conflict_log
             if name == "synthesis_conflict_logs":
-                records = list(_call_port(port, "list_synthesis_conflict_logs") or [])
+                if list_reader is not None:
+                    try:
+                        records = list(list_reader(
+                            capital_pool_id=_query(request, "capital_pool_id"),
+                            scope_ref=_query(request, "scope_ref"),
+                            proposal_id=_query(request, "proposal_id"),
+                            sponsor_persona_id=_query(request, "sponsor_persona_id"),
+                            synthesis_method=_query(request, "synthesis_method"),
+                            committee_ref=_query(request, "committee_ref"),
+                        ) or [])
+                    except TypeError:
+                        records = list(list_reader() or [])
+                elif callable(getattr(port, "list_synthesis_conflict_logs", None)):
+                    records = list(_call_port(
+                        port,
+                        "list_synthesis_conflict_logs",
+                        capital_pool_id=_query(request, "capital_pool_id"),
+                        scope_ref=_query(request, "scope_ref"),
+                        proposal_id=_query(request, "proposal_id"),
+                        sponsor_persona_id=_query(request, "sponsor_persona_id"),
+                        synthesis_method=_query(request, "synthesis_method"),
+                        committee_ref=_query(request, "committee_ref"),
+                    ) or [])
+                else:
+                    raise bff_error(
+                        503,
+                        ErrorCode.DEPENDENCY_UNAVAILABLE,
+                        "Synthesis conflict logs are unavailable",
+                        "Inject list_synthesis_conflict_logs from the synthesis read adapter",
+                    )
                 items, next_token = _page(records, request)
-                return {"data": items, "page_info": {"next_page_token": next_token, "total": len(records)}, "meta": _meta(snapshot_at, "synthesis_conflict_logs", "synthesis_conflict_logs", bool(records))}
+                projected = [_conflict_view(item) for item in items]
+                return {
+                    "data": projected,
+                    "items": projected,
+                    "page_info": {"next_page_token": next_token, "total": len(records)},
+                    "meta": _meta(snapshot_at, "synthesis_conflict_logs", "synthesis_conflict_logs", bool(records)),
+                }
             log_id = str(params["log_id"])
-            record = _call_port(port, "get_synthesis_conflict_log", log_id)
+            if get_reader is not None:
+                record = get_reader(log_id)
+            elif callable(getattr(port, "get_synthesis_conflict_log", None)):
+                record = _call_port(port, "get_synthesis_conflict_log", log_id)
+            else:
+                raise bff_error(
+                    503,
+                    ErrorCode.DEPENDENCY_UNAVAILABLE,
+                    "Synthesis conflict logs are unavailable",
+                    "Inject get_synthesis_conflict_log from the synthesis read adapter",
+                )
             if not record:
                 _not_found("Synthesis conflict log", log_id)
-            return {"data": record, "meta": _meta(snapshot_at, "synthesis_conflict_log", "synthesis_conflict_logs", True)}
+            return {
+                "data": _conflict_view(record),
+                "meta": _meta(snapshot_at, "synthesis_conflict_log", "synthesis_conflict_logs", True),
+            }
 
         if name == "bff_search":
             query = str(_query(request, "q", "") or "").strip()
-            records = list(_call_port(port, "list_research_search_results", query=query, match_type="all", status=None, date_range=None) or []) if query else []
+            types_raw = _query(request, "types")
+            requested_types = {item.strip().lower() for item in str(types_raw).split(",") if item.strip()} if types_raw else None
+            effective_page_size = int(_query(request, "limit") or _query(request, "page_size", "20") or 20)
+            effective_page_size = max(1, min(effective_page_size, 100))
+            if cross_entity_search is not None:
+                result = cross_entity_search(
+                    query=query,
+                    types=requested_types,
+                    page_size=effective_page_size,
+                    page_token=_query(request, "page_token"),
+                    identity=identity,
+                )
+                result = await result if inspect.isawaitable(result) else result
+                if isinstance(result, dict):
+                    return result
+                records = list(result or [])
+            else:
+                records = []
+                needle = query.lower()
+
+                def _matches(value: Any) -> bool:
+                    return not needle or needle in str(value or "").lower()
+
+                if not requested_types or "strategy" in requested_types:
+                    strategy_reader = getattr(port, "list_strategies", None) or getattr(port, "list_strategy_summaries", None)
+                    if callable(strategy_reader):
+                        for raw in strategy_reader() or []:
+                            item_id = str(raw.get("strategy_id") or raw.get("id") or "")
+                            name_value = raw.get("title") or raw.get("name") or item_id
+                            if _matches(item_id) or _matches(name_value):
+                                records.append({"id": item_id, "type": "strategy", "name": str(name_value), "state": raw.get("lifecycle_state") or raw.get("status"), "owner": raw.get("owner") or "pantheon-bff", "risk": "medium", "updatedAt": raw.get("updated_at") or raw.get("last_modified_at") or snapshot_at})
+                if not requested_types or "persona" in requested_types:
+                    persona_reader = getattr(port, "list_personas", None)
+                    if callable(persona_reader):
+                        for raw in persona_reader() or []:
+                            item_id = str(raw.get("persona_id") or raw.get("id") or "")
+                            name_value = raw.get("name") or item_id
+                            if _matches(item_id) or _matches(name_value):
+                                metadata = raw.get("metadata") if isinstance(raw.get("metadata"), dict) else {}
+                                records.append({"id": item_id, "type": "persona", "name": str(name_value), "state": raw.get("lifecycle_state") or raw.get("status"), "owner": metadata.get("owner") or raw.get("owner") or "pantheon-bff", "risk": metadata.get("risk_level") or "medium", "updatedAt": raw.get("updated_at") or raw.get("created_at") or snapshot_at})
+                if not requested_types or "capital_pool" in requested_types or "capitalpool" in requested_types:
+                    pool_reader = getattr(port, "list_capital_pools", None)
+                    if callable(pool_reader):
+                        for raw in pool_reader() or []:
+                            item_id = str(raw.get("pool_id") or raw.get("id") or "")
+                            name_value = raw.get("name") or item_id
+                            if _matches(item_id) or _matches(name_value):
+                                records.append({"id": item_id, "type": "capital_pool", "name": str(name_value), "state": raw.get("status"), "owner": raw.get("owner") or "pantheon-bff", "risk": raw.get("risk_level") or "medium", "updatedAt": raw.get("updated_at") or raw.get("created_at") or snapshot_at})
             items, next_token = _page(records, request)
-            return {"data": items, "items": items, "page_info": {"next_page_token": next_token, "total": len(records)}, "meta": _meta(snapshot_at, "search", "research_search", bool(records))}
+            return {"data": items, "items": items, "page_info": {"next_page_token": next_token, "total": len(records), "returned": len(items)}, "meta": _meta(snapshot_at, "search", "personas", bool(records))}
 
         if name == "bff_patch_artifact":
             artifact_id = str(params["artifact_id"])

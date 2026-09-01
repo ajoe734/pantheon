@@ -102,6 +102,82 @@ class _Port:
             }
         }
         self.notes: Dict[str, Dict[str, Any]] = {}
+        self.evidence_refs: Dict[str, Dict[str, Any]] = {
+            "evidence-include": {
+                "ref_id": "evidence-include",
+                "source_document": {"title": "Primary source"},
+                "link_type": "supporting_evidence",
+                "credibility": {"tier": "primary", "verified": True},
+                "linked_object_summary": {
+                    "entity_type": "research_note",
+                    "entity_ref": "note-include",
+                },
+                "resolved_link": {"href": "/knowledge/notes/note-include"},
+                "route_href": "/knowledge/evidence/evidence-include",
+            },
+            "evidence-exclude": {
+                "ref_id": "evidence-exclude",
+                "source_document": {"title": "Secondary source"},
+                "link_type": "citation",
+                "credibility": {"tier": "secondary", "verified": False},
+                "linked_object_summary": {
+                    "entity_type": "strategy_spec",
+                    "entity_ref": "strat-exclude",
+                },
+                "resolved_link": {"href": "/knowledge/strategy-specs/strat-exclude"},
+            },
+        }
+        self.insights: Dict[str, Dict[str, Any]] = {
+            "insight-include": {
+                "insight_id": "insight-include",
+                "summary": "Fresh alpha insight",
+                "scope": "persona",
+                "scope_ref": "persona-1",
+                "status": "active",
+                "confidence": {"score": 0.9},
+                "tags": ["alpha"],
+                "linked_sources": [{"entity_type": "research_note", "entity_ref": "note-include"}],
+                "aggregated_at": "2026-08-29T00:00:00Z",
+            },
+            "insight-exclude": {
+                "insight_id": "insight-exclude",
+                "summary": "Archived beta insight",
+                "scope": "persona",
+                "scope_ref": "persona-2",
+                "status": "archived",
+                "confidence": {"score": 0.2},
+                "tags": ["beta"],
+                "linked_sources": [{"entity_type": "experiment", "entity_ref": "experiment-1"}],
+                "aggregated_at": "2026-04-01T00:00:00Z",
+            },
+        }
+        self.memory_entries: Dict[str, Dict[str, Any]] = {
+            "memory-include": {
+                "entry_id": "memory-include",
+                "headline": "Retained alpha memory",
+                "knowledge_type": "lesson",
+                "scope": "persona",
+                "scope_filter": "persona-1",
+                "tags": ["alpha"],
+            },
+            "memory-exclude": {
+                "entry_id": "memory-exclude",
+                "headline": "Retained beta memory",
+                "knowledge_type": "lesson",
+                "scope": "persona",
+                "scope_filter": "persona-2",
+                "tags": ["beta"],
+            },
+        }
+        self.conflict_logs: Dict[str, Dict[str, Any]] = {
+            "conflict-1": {
+                "log_id": "conflict-1",
+                "capital_pool_id": "pool-1",
+                "scope_ref": "scope-1",
+                "proposal_ids": ["proposal-1", "proposal-2"],
+                "weighting_outputs": {"proposal-1": 1.0, "proposal-2": 0.0},
+            }
+        }
 
     def dataset_source(self, _dataset: str) -> str:
         return self.source
@@ -170,6 +246,44 @@ class _Port:
 
     def list_research_notes(self) -> List[Dict[str, Any]]:
         return list(self.notes.values())
+
+    def list_evidence_refs(self) -> List[Dict[str, Any]]:
+        return list(self.evidence_refs.values())
+
+    def get_evidence_ref_detail(self, ref_id: str) -> Optional[Dict[str, Any]]:
+        return self.evidence_refs.get(ref_id)
+
+    def list_insight_cards(self) -> List[Dict[str, Any]]:
+        return list(self.insights.values())
+
+    def get_insight_card_detail(self, insight_id: str) -> Optional[Dict[str, Any]]:
+        return self.insights.get(insight_id)
+
+    def list_institutional_memory_entries(self) -> List[Dict[str, Any]]:
+        return list(self.memory_entries.values())
+
+    def get_institutional_memory_entry(self, entry_id: str, **_kwargs: Any) -> Optional[Dict[str, Any]]:
+        return self.memory_entries.get(entry_id)
+
+    def list_synthesis_conflict_logs(self, **filters: Any) -> List[Dict[str, Any]]:
+        records = list(self.conflict_logs.values())
+        return [
+            record
+            for record in records
+            if all(value is None or record.get(name) == value for name, value in filters.items())
+        ]
+
+    def get_synthesis_conflict_log(self, log_id: str) -> Optional[Dict[str, Any]]:
+        return self.conflict_logs.get(log_id)
+
+    def list_strategies(self) -> List[Dict[str, Any]]:
+        return [{"strategy_id": "strategy-1", "title": "Alpha Strategy", "lifecycle_state": "active"}]
+
+    def list_personas(self) -> List[Dict[str, Any]]:
+        return [{"persona_id": "persona-1", "name": "Alpha Persona", "lifecycle_state": "active"}]
+
+    def list_capital_pools(self) -> List[Dict[str, Any]]:
+        return [{"pool_id": "pool-1", "name": "Alpha Pool", "status": "active"}]
 
     def get_source_ops_snapshot(self, **_filters: Any) -> Dict[str, Any]:
         return {"source": "service_client", "summary": {"healthy": True}}
@@ -407,6 +521,83 @@ def test_research_note_list_preserves_legacy_filters_and_envelope() -> None:
     invalid_ref = client.get("/api/v1/knowledge/notes", params={"attachment_ref": "ticket-1"})
     assert invalid_ref.status_code == 400
     assert invalid_ref.json()["detail"]["precondition_failed"] == "attachment_ref"
+
+
+def test_knowledge_evidence_insight_and_memory_routes_preserve_filters_and_envelopes() -> None:
+    client = _client(_Port())
+
+    evidence = client.get(
+        "/api/v1/knowledge/evidence",
+        params={
+            "linked_entity_type": "research_note",
+            "linked_entity_ref": "note-include",
+            "link_type": "supporting_evidence",
+            "credibility_tier": "primary",
+            "verified": "true",
+        },
+    )
+    assert evidence.status_code == 200, evidence.text
+    evidence_payload = evidence.json()
+    assert [item["ref_id"] for item in evidence_payload["evidence_refs"]] == ["evidence-include"]
+    assert set(evidence_payload) == {"evidence_refs", "pagination", "meta"}
+    assert evidence_payload["meta"]["surfaces"]["evidence_refs_list"] == "ok"
+
+    missing_evidence_parent = client.get(
+        "/api/v1/knowledge/evidence", params={"linked_entity_ref": "note-include"}
+    )
+    assert missing_evidence_parent.status_code == 400
+    assert missing_evidence_parent.json()["detail"]["precondition_failed"] == "linked_entity_ref"
+
+    insights = client.get(
+        "/api/v1/knowledge/insights",
+        params={
+            "status": "active",
+            "tag": "alpha",
+            "linked_entity_type": "research_note",
+            "linked_entity_ref": "note-include",
+            "recency": "7d",
+            "confidence_min": "0.8",
+        },
+    )
+    assert insights.status_code == 200, insights.text
+    insight_payload = insights.json()
+    assert [item["insight_id"] for item in insight_payload["insight_cards"]] == ["insight-include"]
+    assert insight_payload["filter_metadata"]["total_active_count"] == 1
+    assert insight_payload["meta"]["surfaces"]["insight_cards"] == "ok"
+
+    memory = client.get(
+        "/api/v1/knowledge/memory",
+        params={
+            "knowledge_type": "lesson",
+            "scope": "persona",
+            "scope_filter": "persona-1",
+            "tags": "alpha",
+        },
+    )
+    assert memory.status_code == 200, memory.text
+    assert [item["entry_id"] for item in memory.json()["entries"]] == ["memory-include"]
+    assert memory.json()["pagination"]["total_count"] == 1
+
+
+def test_conflict_log_and_cross_entity_search_routes_use_injected_port_data() -> None:
+    client = _client(_Port())
+
+    logs = client.get("/bff/synthesis/conflict-logs", params={"capital_pool_id": "pool-1"})
+    assert logs.status_code == 200, logs.text
+    assert logs.json()["items"][0]["id"] == "conflict-1"
+    assert logs.json()["items"][0]["view"]["proposal_rows"][0]["state"] == "selected"
+
+    detail = client.get("/bff/synthesis/conflict-logs/conflict-1")
+    assert detail.status_code == 200, detail.text
+    assert detail.json()["data"]["resolution_state"] == "resolved"
+
+    search = client.get("/bff/search", params={"q": "alpha", "types": "strategy,persona"})
+    assert search.status_code == 200, search.text
+    assert {(item["type"], item["id"]) for item in search.json()["items"]} == {
+        ("strategy", "strategy-1"),
+        ("persona", "persona-1"),
+    }
+    assert search.json()["page_info"]["returned"] == 2
 
 
 def test_generic_artifact_write_aliases_are_replaced_with_typed_fail_closed_contracts() -> None:
