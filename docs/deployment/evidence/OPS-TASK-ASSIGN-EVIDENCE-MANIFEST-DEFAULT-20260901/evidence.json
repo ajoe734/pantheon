@@ -1,0 +1,38 @@
+{
+  "schema_version": "pantheon.review-evidence.v1",
+  "task_id": "OPS-TASK-ASSIGN-EVIDENCE-MANIFEST-DEFAULT-20260901",
+  "title": "Auto-inject a default evidence-manifest artifact path for directly-assigned tasks",
+  "recorded_at": "2026-09-01T00:00:00Z",
+  "owner": "Antigravity",
+  "reviewer": "Codex2",
+  "target_repo": "pantheon",
+  "task_class": "functional",
+  "summary_zh": "scripts/ai_status.py 的 command_assign 在直接 assign（非 dev-bridge 簽名封包）建立新任務時，若 TASK_ARTIFACTS 未包含任何 evidence-manifest 路徑，自動補上 docs/deployment/evidence/<task-id>/evidence.json，避免任務進入 in_progress 後才發現契約缺少審查用 evidence manifest 路徑、被迫整批 supersede 重開任務。",
+  "artifacts": {
+    "implementation_paths": [
+      "scripts/ai_status.py"
+    ],
+    "test_paths": [
+      "scripts/test_ai_status.py"
+    ],
+    "evidence_manifest": "docs/deployment/evidence/OPS-TASK-ASSIGN-EVIDENCE-MANIFEST-DEFAULT-20260901/evidence.json"
+  },
+  "scope": {
+    "owned": [
+      "Default evidence-manifest artifact injection for the plain/direct assign path (non-bridge task creation) in command_assign"
+    ],
+    "not_changing": [
+      "dev-bridge signed-packet materialization path (command_assign's bridge branch) -- its artifacts list is part of a hashed/signed task_spec and must round-trip byte-for-byte; do not silently mutate it",
+      "command_artifact_contract's existing pre-dispatch-only revision window",
+      "task reassignment semantics for already-existing tasks"
+    ],
+    "known_gap": [
+      "The dev-bridge/signed-packet path (EXECUTION_TASK_CATALOG-driven OPGAP/AGORA program tasks) still requires whoever authors each task_spec to include an evidence-manifest artifact path before the packet is signed. This fix does not close that path; see root_cause investigation this session for the exact mechanism (dev_bridge_materialize.py immutable task-spec check)."
+    ]
+  },
+  "root_cause": {
+    "summary": "command_assign's non-bridge branch built a new task's artifacts list purely from TASK_ARTIFACTS with no default evidence-manifest path. command_artifact_contract (the only sanctioned post-creation contract edit) refuses any revision once a task leaves todo/blocked, but a missing evidence-manifest path is typically discovered only at handoff time, after dispatch -- forcing the task to be fully superseded by a corrected successor instead of amended in place.",
+    "evidence": "docs/04/pantheon_full_product_operation_audit_2026-08-29/EXECUTION_REPLACEMENT_LEDGER_2026-08-30.json post_freeze_evidence_contract_replacements + root_cause.canonical_task_definitions_cannot_be_amended_in_place; live task-state-events-v2.jsonl shows 92 of 137 superseded events citing this exact gap (e.g. AGORA-SERVANT-LIFECYCLE-ELIGIBILITY-REPAIR-V1-20260830 -> V2, AGORA-PERSONA-FLEET-DETAIL-SYMMETRY-REPAIR-V1-20260830 -> V2, OPGAP-BE-TRAINING-ROUTER-V2-20260830 -> V3)."
+  },
+  "verified": "python3 -m unittest scripts.test_ai_status (385 tests, all pass, including 2 new tests and the full DevBridgeMaterializeBatchTests class of 29 tests confirming the bridge/signed-packet path is unaffected); py_compile scripts/ai_status.py"
+}

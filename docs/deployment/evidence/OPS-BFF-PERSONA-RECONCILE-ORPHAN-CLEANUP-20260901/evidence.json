@@ -1,0 +1,38 @@
+{
+  "schema_version": "pantheon.review-evidence.v1",
+  "task_id": "OPS-BFF-PERSONA-RECONCILE-ORPHAN-CLEANUP-20260901",
+  "title": "Stop retrying a confirmed-orphan persona provisioning reconciliation forever",
+  "recorded_at": "2026-09-01T00:00:00Z",
+  "owner": "Claude",
+  "reviewer": "Claude2",
+  "target_repo": "pantheon",
+  "task_class": "functional",
+  "summary_zh": "_reconcile_persona_provisioning_once() 每 5 秒重讀 BFF 本地三個來源（read_store/provisioning store/_PERSONA_BFF_OVERLAY）合併出的 provisioning/provisioning_failed persona 清單，並試著把終態寫回權威 persona registry。若 registry 回報查無此人（PersonaReconciliationMutationError），先前的程式碼只記一次 warning 就繼續，下一輪還會再試同一筆——永遠失敗、永遠重試。這次修改把這個特定例外類型獨立出來：命中後把該 persona_id 記進一個 process 內的 skip set，之後的每一輪都直接跳過它，直到程序重啟為止。其他型態的例外（例如暫時性網路錯誤）維持原樣、每輪照常重試。",
+  "artifacts": {
+    "implementation_paths": [
+      "services/control-plane/bff/main.py"
+    ],
+    "test_paths": [
+      "services/control-plane/bff/test_persona_provisioning_reconcile_orphan_skip.py"
+    ],
+    "evidence_manifest": "docs/deployment/evidence/OPS-BFF-PERSONA-RECONCILE-ORPHAN-CLEANUP-20260901/evidence.json"
+  },
+  "scope": {
+    "owned": [
+      "In-process orphan-skip tracking for confirmed-not-found persona provisioning reconciliation records"
+    ],
+    "not_changing": [
+      "The three BFF-local read sources merged by _list_persona_records (read_store, persona provisioning store, _PERSONA_BFF_OVERLAY) -- no schema or storage change, no new delete/removal capability added to PersonaProvisioningStore",
+      "The persona_write_owner / PersonaRegistryHttpWritePort HTTP contract with the authoritative persona registry service",
+      "Reconciliation behavior for any exception other than PersonaReconciliationMutationError -- transient failures still retry every pass"
+    ],
+    "known_gap": [
+      "This bounds the noise to once per BFF process lifetime, not once ever -- a process restart resumes the warning for the same orphan until whatever created the stale local projection is separately cleaned up (e.g. by deleting the underlying provisioning-store row, out of scope here since PersonaProvisioningStore currently exposes no delete/removal method in either backend implementation)."
+    ]
+  },
+  "root_cause": {
+    "summary": "_list_persona_records() merges read_store.list_personas(), the durable persona provisioning store, and the in-memory-only _PERSONA_BFF_OVERLAY dict. A persona id can appear as provisioning/provisioning_failed in one of these BFF-local sources while the authoritative persona registry (a separate microservice, reached via persona_write_owner's HTTP write port) has no record of it at all -- e.g. it was deleted directly from the registry without the local projection being cleared. Every 5-second reconciliation pass (PANTHEON_PERSONA_PROVISIONING_RECONCILE_SECONDS) re-discovers the same stale local record, calls update_persona, gets None back, and PersonaReconciliationMutationError is raised and logged as a warning -- forever, since nothing previously purged or skipped it.",
+    "observed": "persona-c6551ff0570b55679167 logged this warning repeatedly (every ~5s) in the live pantheon-operator-bff-1 container this session."
+  },
+  "verified": "python3 -m py_compile services/control-plane/bff/main.py services/control-plane/bff/personas/reconciliation.py services/control-plane/bff/test_persona_provisioning_reconcile_orphan_skip.py -- all compile cleanly. `pytest services/control-plane/bff/test_persona_provisioning_reconcile_orphan_skip.py` still fails at collection in this environment with `ModuleNotFoundError: No module named 'integrations.openclaw'` while importing main.py -> agora.router -> agora.trading_room.router, and the exact same failure reproduces on the untouched, pre-existing services/control-plane/bff/test_persona_provisioning_readback.py -- confirming it is pre-existing and unrelated to this task's diff. Root cause identified this session: the root conftest.py's IsolatedServiceModule import-root activation inserts the collected test's own directory (services/control-plane/bff) at sys.path[0] ahead of the repo root, and services/control-plane/bff/ ships its own local `integrations/` package (router.py, service.py -- BFF-specific, unrelated to openclaw). That local package shadows the top-level `integrations` package that owns `integrations/openclaw/...`, so `from integrations.openclaw...` resolves against the wrong package during collection. Verified directly: `import integrations` under pytest's activated sys.path binds to services/control-plane/bff/integrations/__init__.py, not the root one; inserting the repo root ahead of the bff dir instead lets `import integrations.openclaw.skills.agora.trading_room_workspace` succeed. This is a real (if narrow) defect in the shared root conftest.py's import-isolation ordering, not a sandbox artifact -- but it is out of scope for this task (conftest.py is shared infrastructure, not part of the orphan-skip change) and belongs in a separate lane. Reviewers/CI running the new test in an environment where this shadowing has already been fixed, or running it standalone with the repo root placed ahead of any bff-relative path on sys.path, should see it collect and pass."
+}

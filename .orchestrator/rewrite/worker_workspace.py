@@ -989,6 +989,7 @@ def _recovery_worktree_has_stale_adopted_wip(
     *,
     task_id: str,
     worktree_path: Path,
+    recovery_receipt_id: str | None = None,
 ) -> bool:
     """Return whether a prior lost-lease replacement already adopted WIP.
 
@@ -1007,7 +1008,18 @@ def _recovery_worktree_has_stale_adopted_wip(
         return False
     if leased_path != worktree_path.resolve():
         return False
-    return bool(str(lease.get("dirty_wip_adoption_receipt_id") or "").strip())
+    current_receipt = str(recovery_receipt_id or "").strip()
+    prior_receipt = str(
+        lease.get("recovery_receipt_id")
+        or lease.get("dirty_wip_adoption_receipt_id")
+        or ""
+    ).strip()
+    # A duplicate dispatch for the same recovery receipt is the same handoff
+    # and may continue using its adopted WIP. A later receipt means the prior
+    # handoff has ended; archive/reset before another worker touches the tree.
+    # An empty current receipt is ordinary reuse and cannot inherit recovery
+    # WIP either.
+    return bool(prior_receipt and prior_receipt != current_receipt)
 
 
 def _replace_recovery_worktree_from_base(
@@ -1297,6 +1309,9 @@ def prepare_worker_workspace(
             state,
             task_id=workspace_task_id,
             worktree_path=worktree_path,
+            recovery_receipt_id=str(
+                request.metadata.get("recovery_receipt_id") or ""
+            ),
         )
         if stale_adopted_wip and _git_dirty_entries(worktree_path):
             active_roots = active_worker_workspace_roots(config, state)
@@ -1568,6 +1583,13 @@ def prepare_worker_workspace(
     if adopted_dirty_wip_receipt_id := str(
         request.metadata.get("recovery_receipt_id") or ""
     ).strip():
+        # Persist every recovery handoff, including a clean one. This closes
+        # the legacy gap where an adopted tree had no durable receipt and a
+        # later lost lease could inherit it again.
+        leases[workspace_task_id]["recovery_receipt_id"] = (
+            adopted_dirty_wip_receipt_id
+        )
+        leases[workspace_task_id]["recovery_started_at"] = utc_now()
         if request.metadata.get("fenced_dirty_wip_adoption"):
             leases[workspace_task_id]["dirty_wip_adoption_receipt_id"] = (
                 adopted_dirty_wip_receipt_id
