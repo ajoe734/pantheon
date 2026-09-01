@@ -453,8 +453,8 @@ def create_agora_router(
     @router.get("/bff/agora/markets")
     @router.get("/bff/agora/watchlist")
     def agora_list_watchlist(
-        page_token: Optional[str] = Query(default=None, alias="pageToken"),
-        page_size: int = Query(default=50, alias="pageSize"),
+        page_token: Optional[str] = None,
+        page_size: int = Query(default=50, ge=1, le=200),
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
         identity = extract_identity(authorization)
@@ -500,8 +500,8 @@ def create_agora_router(
     @router.get("/bff/agora/market-notes")
     @router.get("/bff/agora/notes")
     def agora_list_notes(
-        page_token: Optional[str] = Query(default=None, alias="pageToken"),
-        page_size: int = Query(default=20, alias="pageSize"),
+        page_token: Optional[str] = None,
+        page_size: int = Query(default=20, ge=1, le=200),
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
         identity = extract_identity(authorization)
@@ -529,8 +529,8 @@ def create_agora_router(
     @router.get("/bff/agora/decision-journal")
     @router.get("/bff/agora/journal")
     def agora_list_journal_entries(
-        page_token: Optional[str] = Query(default=None, alias="pageToken"),
-        page_size: int = Query(default=20, alias="pageSize"),
+        page_token: Optional[str] = None,
+        page_size: int = Query(default=20, ge=1, le=200),
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
         identity = extract_identity(authorization)
@@ -561,8 +561,8 @@ def create_agora_router(
 
     @router.get("/bff/agora/training-examples")
     def agora_list_training_examples(
-        page_token: Optional[str] = Query(default=None, alias="pageToken"),
-        page_size: int = Query(default=20, alias="pageSize"),
+        page_token: Optional[str] = None,
+        page_size: int = Query(default=20, ge=1, le=200),
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
         identity = extract_identity(authorization)
@@ -592,8 +592,8 @@ def create_agora_router(
     def agora_list_research_tasks(
         status: Optional[str] = Query(default=None),
         owner: Optional[str] = Query(default=None),
-        page_token: Optional[str] = Query(default=None, alias="pageToken"),
-        page_size: int = Query(default=20, alias="pageSize"),
+        page_token: Optional[str] = None,
+        page_size: int = Query(default=20, ge=1, le=200),
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
         identity = extract_identity(authorization)

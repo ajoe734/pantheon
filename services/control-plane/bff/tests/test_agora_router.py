@@ -172,6 +172,7 @@ def _create_test_agora_store(*, allow_fallback: bool = True):
     store.list_agora_signals = lambda **kw: []
     store.list_agora_sessions = lambda **kw: []
     store.list_agora_watchlist = lambda **kw: []
+    store.list_agora_training_examples = lambda **kw: []
     return store
 
 
@@ -872,6 +873,27 @@ def test_migrated_agora_routes_preserve_legacy_http_contracts():
     assert signal_parameters["page_size"]["schema"]["minimum"] == 1
     assert signal_parameters["page_size"]["schema"]["maximum"] == 200
 
+    for path in (
+        "/bff/agora/watchlist",
+        "/bff/agora/markets",
+        "/bff/agora/notes",
+        "/bff/agora/market-notes",
+        "/bff/agora/journal",
+        "/bff/agora/decision-journal",
+        "/bff/agora/training-examples",
+        "/bff/agora/research-tasks",
+        "/bff/research/tasks",
+    ):
+        parameters = {
+            parameter["name"]: parameter
+            for parameter in schema["paths"][path]["get"]["parameters"]
+        }
+        assert {"page_token", "page_size"}.issubset(parameters), path
+        assert "pageToken" not in parameters, path
+        assert "pageSize" not in parameters, path
+        assert parameters["page_size"]["schema"]["minimum"] == 1, path
+        assert parameters["page_size"]["schema"]["maximum"] == 200, path
+
     journal_patch = schema["paths"]["/bff/agora/journal/{entry_id}"]["patch"]
     journal_headers = {
         parameter["name"].lower()
@@ -924,6 +946,38 @@ def test_migrated_agora_signals_supports_legacy_status_and_pagination(monkeypatc
     for invalid_page_size in (0, 201):
         invalid = client.get(
             "/bff/agora/signals",
+            params={"page_size": invalid_page_size},
+            headers={"Authorization": _OPERATOR_AUTH},
+        )
+        assert invalid.status_code == 422, invalid.text
+
+
+@pytest.mark.parametrize(
+    "path",
+    (
+        "/bff/agora/watchlist",
+        "/bff/agora/notes",
+        "/bff/agora/journal",
+        "/bff/agora/training-examples",
+        "/bff/agora/research-tasks",
+    ),
+)
+def test_migrated_agora_list_routes_preserve_legacy_pagination_bounds(monkeypatch, path):
+    """Extracted list routes retain snake-case pagination and the 1..200 bounds."""
+    store = _create_test_agora_store()
+    _install_agora_store(monkeypatch, store)
+    client = _client(monkeypatch)
+
+    response = client.get(
+        path,
+        params={"page_token": "legacy-token", "page_size": 1},
+        headers={"Authorization": _OPERATOR_AUTH},
+    )
+    assert response.status_code == 200, response.text
+
+    for invalid_page_size in (0, 201):
+        invalid = client.get(
+            path,
             params={"page_size": invalid_page_size},
             headers={"Authorization": _OPERATOR_AUTH},
         )
