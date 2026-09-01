@@ -126,8 +126,11 @@ def _service(store: AuthoritativeReadStore) -> AgoraOperationalReadinessService:
     )
 
 
-def test_live_read_store_binding_is_healthy_and_uses_real_surface_counts() -> None:
+def test_live_read_store_binding_is_healthy_and_uses_real_surface_counts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     store = AuthoritativeReadStore()
+    monkeypatch.setenv("GIT_SHA", "1" * 40)
 
     envelope = _service(store).compose_readiness(now_iso=NOW)
 
@@ -137,6 +140,8 @@ def test_live_read_store_binding_is_healthy_and_uses_real_surface_counts() -> No
     assert envelope.data.signal_producer.active_binding == BINDING_ID
     assert envelope.data.signal_producer.consumed_snapshot_id == SNAPSHOT_ID
     assert envelope.data.signal_producer.enqueued == 1
+    assert envelope.data.deployment is not None
+    assert envelope.data.deployment.source_commit_sha == "1" * 40
     assert {name: surface.count for name, surface in envelope.data.surfaces.items()} == {
         name: index for index, name in enumerate(SURFACES, start=1)
     }
@@ -159,6 +164,12 @@ def test_live_read_store_binding_is_healthy_and_uses_real_surface_counts() -> No
             "consumed_snapshot_mismatch",
         ),
         (
+            _source(),
+            _producer(last_success_at="2026-09-01T11:00:00Z"),
+            "degraded",
+            "producer_success_stale",
+        ),
+        (
             _source(event_time="2026-09-01T12:05:00Z"),
             _producer(),
             "unavailable",
@@ -178,6 +189,16 @@ def test_stale_mismatched_and_future_authority_fail_closed(
 
     assert envelope.data.status == expected_status
     assert envelope.data.signal_producer.reason == expected_reason
+
+
+def test_missing_active_binding_fails_closed() -> None:
+    producer = _producer()
+    producer["active_binding"] = None
+
+    envelope = _service(AuthoritativeReadStore(producer=producer)).compose_readiness(now_iso=NOW)
+
+    assert envelope.data.status == "unavailable"
+    assert envelope.data.signal_producer.reason == "active_binding_missing"
 
 
 def test_provider_exception_degrades_with_typed_reason_instead_of_500() -> None:
@@ -252,7 +273,17 @@ def test_environment_provider_binds_runtime_source_and_canonical_consumption_rec
                 "tenant_id": "tenant-a",
             }
         if "/api/source-ingest/snapshots/latest?symbol=AAPL.US" in url:
-            return _source()["snapshot"]
+            snapshot = dict(_source()["snapshot"])
+            snapshot.pop("source_instance_id")
+            return snapshot
+        if url.endswith("/api/source-ingest/management/sources"):
+            return {
+                "sources": [{
+                    "data_source_id": "source-aapl-primary",
+                    "connector_id": "connector-aapl-primary",
+                }],
+                "count": 1,
+            }
         if url.endswith("/api/source-ingest/management/sources/source-aapl-primary"):
             return {
                 "source": {"data_source_id": "source-aapl-primary"},

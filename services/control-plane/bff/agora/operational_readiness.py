@@ -347,6 +347,8 @@ class ReadStoreAgoraOperationalReadinessProvider:
             result.source_instance = _as_mapping(source_map.get("instance")) or None
             if result.source_snapshot is None:
                 result.errors["source"] = "source_snapshot_unavailable"
+            elif result.source_instance is None:
+                result.errors["source"] = "source_instance_unavailable"
         except Exception:
             result.errors["source"] = "source_provider_unavailable"
 
@@ -357,11 +359,13 @@ class ReadStoreAgoraOperationalReadinessProvider:
                 scope,
                 override=self._producer_reader,
             )
+            binding_verified = bool(producer)
             if not producer:
                 producer = self._producer_from_events(events, scope)
             producer_map = _as_mapping(producer)
             if producer_map:
                 producer_map["authoritative"] = True
+                producer_map["binding_verified"] = binding_verified
                 result.signal_producer = producer_map
             else:
                 result.errors["producer"] = "producer_evidence_unavailable"
@@ -454,12 +458,7 @@ class ReadStoreAgoraOperationalReadinessProvider:
             "lineage": lineage,
             "symbol": metadata.get("symbol"),
         }
-        instance = {
-            "source_instance_id": source_instance_id,
-            "desired_state": "enabled",
-            "observed_state": "healthy",
-        } if source_instance_id else None
-        return {"snapshot": snapshot, "instance": instance}
+        return {"snapshot": snapshot}
 
     def _producer_from_events(
         self,
@@ -717,8 +716,29 @@ class EnvironmentAgoraOperationalReadinessProvider:
         )
         snapshot = self._http_get_json(snapshot_url, {"Accept": "application/json"}, self._timeout_seconds)
         lineage = _as_mapping(snapshot.get("lineage"))
-        source_ids = list(lineage.get("source_ids") or [])
-        source_instance_id = _clean_text(source_ids[0] if len(source_ids) == 1 else None)
+        source_instance_id = _clean_text(snapshot.get("source_instance_id"))
+        if not source_instance_id:
+            connector_ids = {
+                str(item).strip()
+                for item in list(lineage.get("connector_ids") or [])
+                if str(item).strip()
+            }
+            sources_url = f"{self._source_ingest_url}/api/source-ingest/management/sources"
+            sources_payload = self._http_get_json(
+                sources_url,
+                {"Accept": "application/json"},
+                self._timeout_seconds,
+            )
+            matches = [
+                dict(source)
+                for source in list(sources_payload.get("sources") or [])
+                if isinstance(source, Mapping)
+                and _clean_text(source.get("connector_id")) in connector_ids
+            ]
+            if len(matches) == 1:
+                source_instance_id = _clean_text(
+                    matches[0].get("data_source_id") or matches[0].get("source_instance_id")
+                )
         if not source_instance_id:
             raise RuntimeError("source_instance_identity_not_unique")
         detail_url = (
@@ -790,6 +810,7 @@ class EnvironmentAgoraOperationalReadinessProvider:
             snapshot_id = _clean_text(metadata.get("market_input_snapshot_id"))
             result.signal_producer = {
                 "authoritative": True,
+                "binding_verified": True,
                 "status": "ok",
                 "producer_id": "paper-signal-producer",
                 "active_binding": binding_id,
@@ -961,6 +982,9 @@ class AgoraOperationalReadinessService:
         # 5. Deployment Identity
         commit_sha = (
             os.environ.get("PANTHEON_DEPLOYMENT_COMMIT")
+            or os.environ.get("BFF_COMMIT")
+            or os.environ.get("GIT_SHA")
+            or os.environ.get("PANTHEON_DEPLOY_SHA")
             or os.environ.get("GIT_COMMIT_SHA")
             or os.environ.get("SOURCE_COMMIT_SHA")
         )
@@ -1034,6 +1058,19 @@ class AgoraOperationalReadinessService:
         desired_state = (instance.get("desired_state") or instance.get("lifecycle_state") if instance else "enabled")
         observed_state = (instance.get("observed_state") or instance.get("status") if instance else None)
         last_failure = (instance.get("last_failure") or instance.get("last_error") if instance else None)
+
+        if provider_error:
+            return AgoraSourceReadiness(
+                snapshot_id=snapshot_id,
+                source_instance_id=source_instance_id,
+                source_timestamp=source_timestamp,
+                age_seconds=None,
+                sla_seconds=sla_seconds,
+                freshness="unavailable",
+                desired_state=desired_state,
+                observed_state="unavailable",
+                last_failure=provider_error,
+            )
 
         if not source_timestamp:
             return AgoraSourceReadiness(
@@ -1169,6 +1206,7 @@ class AgoraOperationalReadinessService:
         raw_status = str(raw_producer.get("status") or "ok").lower()
         reason = raw_producer.get("reason")
         authoritative = raw_producer.get("authoritative") is True
+        binding_verified = raw_producer.get("binding_verified") is not False
 
         # Upstream source staleness degrades producer
         if source.freshness == "stale":
@@ -1194,6 +1232,16 @@ class AgoraOperationalReadinessService:
             )
 
         if authoritative:
+            if not binding_verified:
+                return AgoraSignalProducerReadiness(
+                    status="unavailable",
+                    producer_id=producer_id,
+                    active_binding=active_binding,
+                    consumed_snapshot_id=consumed_snapshot,
+                    last_success_at=last_success,
+                    enqueued=enqueued,
+                    reason="active_binding_unverified",
+                )
             if not active_binding:
                 return AgoraSignalProducerReadiness(
                     status="unavailable",

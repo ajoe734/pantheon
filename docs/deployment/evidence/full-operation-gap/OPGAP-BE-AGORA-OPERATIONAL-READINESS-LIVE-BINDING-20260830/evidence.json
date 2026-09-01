@@ -1,0 +1,177 @@
+{
+  "schema_version": "pantheon.review-evidence.v1",
+  "task_id": "OPGAP-BE-AGORA-OPERATIONAL-READINESS-LIVE-BINDING-20260830",
+  "title": "Bind public Agora operational readiness to authoritative live truth",
+  "program_id": "PANTHEON-FULL-OPERATION-GAP-CLOSURE-20260830",
+  "design_unit": "SD-OPGAP-BE-AGORA-OPERATIONAL-READINESS-LIVE-BINDING",
+  "recorded_at": "2026-09-01T10:36:33Z",
+  "owner": "Codex",
+  "reviewer": "Antigravity2",
+  "target_repo": "pantheon",
+  "task_class": "functional",
+  "summary_zh": "移除未綁定的 process-global readiness default，改由 request-time read-only providers 讀取 active paper RuntimeBinding、Source 最新 snapshot/instance、canonical signal_generation consumption receipt，以及 tenant/user scoped Agora surface counts；所有缺失、例外、過期、future timestamp 與 snapshot mismatch 均 fail closed。",
+  "artifacts": {
+    "implementation_paths": [
+      "services/control-plane/bff/agora/router.py",
+      "services/control-plane/bff/agora/operational_readiness.py",
+      "services/control-plane/bff/tests/test_agora_operational_readiness_live_binding.py"
+    ],
+    "preserved_regression_suite": "services/control-plane/bff/agora/test_operational_readiness.py",
+    "evidence_manifest": "docs/deployment/evidence/full-operation-gap/OPGAP-BE-AGORA-OPERATIONAL-READINESS-LIVE-BINDING-20260830/evidence.json"
+  },
+  "scope": {
+    "owned": [
+      "Agora operational-readiness read-only authority composition",
+      "source snapshot/source-instance and producer consumed-snapshot binding",
+      "scope-filtered surface readiness counts",
+      "typed fail-closed reasons and deployment identity readback",
+      "focused live-binding tests and this review evidence"
+    ],
+    "not_changing": [
+      "RuntimeBinding or Source write ownership",
+      "telemetry ingestion/writer contracts",
+      "Agora mutation ports",
+      "broker, order, or capital authority",
+      "execute-plans frontend"
+    ],
+    "composes_with": [
+      "OPGAP-BE-AGORA-ROUTER-V2-20260830",
+      "Runtime Manager desired-state and RuntimeBinding detail GET contracts",
+      "Source latest-market-snapshot and source-management GET contracts",
+      "canonical telemetry_events signal_generation receipts",
+      "Antigravity2 independent exact-head review"
+    ]
+  },
+  "pre_change_hosted_reproduction": {
+    "observed_at": "2026-09-01T10:32:40Z",
+    "bff_base_url": "https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io",
+    "frontend_manifest_url": "https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io/deployment.json",
+    "accepted_pair": {
+      "deployment_state": "accepted",
+      "pair_id": "6fc13d1d8c61ce0b0b305962c4a950081e0cab61d9471a8b206f5be0af411144",
+      "backend_sha": "3395914ff350ad7ccdb79dad9af44dca5c011bf1",
+      "frontend_sha": "7d30e78476be61222af63a089e7ab141aa43b809",
+      "deployment_run_id": 33336288881,
+      "deployment_run_url": "https://github.com/ajoe734/pantheon/actions/runs/33336288881"
+    },
+    "version_readback": {
+      "http_status": 200,
+      "source_commit_sha": "3395914ff350ad7ccdb79dad9af44dca5c011bf1",
+      "auth_mode": "strict",
+      "auth_stub": false
+    },
+    "operational_readiness_readback": {
+      "http_status": 200,
+      "status": "unavailable",
+      "source": {
+        "snapshot_id": null,
+        "source_instance_id": null,
+        "freshness": "unavailable",
+        "desired_state": "not_configured",
+        "last_failure": "no_source_configured"
+      },
+      "signal_producer": {
+        "status": "unavailable",
+        "active_binding": null,
+        "consumed_snapshot_id": null,
+        "enqueued": 0,
+        "reason": "source_unavailable"
+      },
+      "surface_names": [
+        "signals",
+        "decision_events",
+        "inbox",
+        "journal",
+        "candidates",
+        "interactions",
+        "performance"
+      ],
+      "surface_result": "all seven unavailable with count=0 and reason=upstream_unavailable",
+      "deployment_source_commit_sha": null
+    },
+    "commands": [
+      "curl --fail --silent --show-error --max-time 15 https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io/bff/version",
+      "curl --fail --silent --show-error --max-time 15 https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io/bff/agora/operational-readiness",
+      "curl --fail --silent --show-error --max-time 15 https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io/deployment.json"
+    ]
+  },
+  "producer_contradiction_input": {
+    "authority": "canonical task-scoped dispatch truth",
+    "container": "pantheon-paper-signal-producer-1",
+    "container_health": "healthy",
+    "failing_streak": 0,
+    "active_paper_binding_count": 1,
+    "enqueue_signature": "repeatedly enqueues one real signal for the active paper binding",
+    "corroborating_repository_evidence": {
+      "path": "docs/deployment/evidence/AGORA-SOURCE-FRONTIER-RECOVERY-V1-20260829/summary.json",
+      "workflow_run_id": 33280168821,
+      "accepted_observation": "paper-signal-producer was healthy, discovered one active paper binding, and enqueued one signal for it",
+      "release_evidence": false,
+      "qualification": "The older diagnostic corroborates the producer log signature only; it rolled back and is not claimed as current release proof."
+    },
+    "current_workflow_observation": {
+      "run_id": 33493202500,
+      "run_url": "https://github.com/ajoe734/pantheon/actions/runs/33493202500",
+      "observed_at": "2026-09-01T10:01:47Z",
+      "paper_fleet_worker_count": 1,
+      "paper_fleet_running_count": 1,
+      "paper_fleet_last_error": null,
+      "qualification": "This later failed candidate was compensated to the accepted baseline; its log is supporting runtime continuity evidence, not acceptance of that candidate."
+    }
+  },
+  "implementation": {
+    "anchor_commit": "b29634e32fb9172a7e3b8734d424c8b49261d39f",
+    "exact_head_binding": "The governed review handoff freezes REVIEW_PR and REVIEW_HEAD_SHA after the final evidence commit; this manifest cannot self-reference its containing commit.",
+    "contracts": [
+      "Production wiring uses bounded Runtime Manager GETs, Source ingest GETs, and a bounded SELECT of the newest 200 canonical signal_generation telemetry rows.",
+      "Producer status is healthy only when the unique active paper binding has a recent canonical receipt whose market_input_snapshot_id exactly equals the current Source snapshot_id.",
+      "Missing or non-unique binding/source instance, stale or future timestamps, provider exceptions, and snapshot mismatch return typed fail-closed reasons.",
+      "Authenticated counts are tenant/user scoped; public counts exclude private records; readiness remains public and requiredForAuthentication=false.",
+      "No readiness provider receives or invokes an Agora mutation port."
+    ]
+  },
+  "verification": {
+    "commands": [
+      ".venv-pantheon/bin/python3 -m py_compile services/control-plane/bff/agora/operational_readiness.py services/control-plane/bff/agora/router.py",
+      ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_agora_operational_readiness_live_binding.py services/control-plane/bff/agora/test_operational_readiness.py",
+      ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_agora_router.py",
+      "git diff --check origin/dev...HEAD"
+    ],
+    "result": "PASS",
+    "details": {
+      "readiness_suites": "23 passed",
+      "agora_router_suite": "42 passed",
+      "py_compile": "passed",
+      "diff_check": "passed",
+      "warnings": "Existing Starlette/FastAPI/jsonschema deprecation and duplicate-operation-id warnings only."
+    }
+  },
+  "hosted_closeout_gate": {
+    "status": "pending_post_merge_deploy",
+    "success_claimed": false,
+    "required_exact_pair": {
+      "backend": "the reviewed merge commit containing this task",
+      "frontend": "the accepted execute-plans dev commit at deployment time"
+    },
+    "required_proofs": [
+      "frontend deployment.json and public /bff/version identify the same newly accepted exact backend/frontend pair",
+      "container producer health is healthy with failing streak zero and one unique active paper binding",
+      "Source latest snapshot and source instance identity match the readiness source object",
+      "readiness active_binding and consumed_snapshot_id match canonical signal_generation metadata for that exact binding and current snapshot",
+      "all seven readiness surface counts equal direct scope-equivalent owner-store queries",
+      "public readiness remains non-auth-critical and an authenticated probe preserves tenant/user-private filtering"
+    ]
+  },
+  "review_handoff": {
+    "status": "ready_after_final_validation",
+    "reviewer": "Antigravity2",
+    "required_checks": [
+      "verify get_read_store is consumed and no injected provider is unused",
+      "verify all owner calls are read-only and no mutation port is reachable",
+      "verify current Source identity, unique active paper binding, and canonical consumption receipt must agree before status=ok",
+      "verify stale, missing, mismatched, future, and provider-exception evidence fails closed",
+      "verify tenant/user-private surface filtering and exact deployment identity",
+      "verify focused tests and approve only the exact PR head frozen by governed handoff"
+    ]
+  }
+}
