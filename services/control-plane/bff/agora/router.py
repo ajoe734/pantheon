@@ -51,6 +51,7 @@ from .strategy_workshop.operations import WorkshopCanonicalOperations
 from .strategy_workshop.store import make_workshop_store
 from .research.router import create_research_router
 from .trading_room.router import create_trading_room_router
+from .trading_room.store import make_trading_room_store
 from .dashboard.router import create_dashboard_router
 from .shadow.router import create_shadow_router
 from .personalization.router import create_personalization_router
@@ -148,6 +149,7 @@ def create_agora_router(
     proposal_store = ProposalStore()
     interaction_lifecycle = InteractionLifecycleStore.from_governance_store(proposal_store)
     candidate_store = CandidateDecisionStore.from_governance_store(proposal_store)
+    trading_room_store = make_trading_room_store()
     candidate_service = CandidateDecisionService(
         candidate_store,
         interaction_store=interaction_lifecycle,
@@ -171,6 +173,88 @@ def create_agora_router(
         handle_sse_stream=handle_sse_stream,
         publish_event_fn=publish_event_fn,
     )
+
+    def _operational_surface_readback(
+        scope: Optional[AgoraCapabilityScope],
+    ) -> Dict[str, Any]:
+        """Read actual Agora stores; keep every private read scope-bound."""
+
+        result: Dict[str, Any] = {}
+
+        def _read_list(name: str, reader: Callable[[], Any]) -> List[Dict[str, Any]]:
+            try:
+                value = reader()
+                if isinstance(value, dict):
+                    value = value.get("items") or value.get("data") or []
+                return [dict(item) for item in (value or []) if isinstance(item, dict)]
+            except Exception:
+                result[name] = {
+                    "status": "unavailable",
+                    "count": 0,
+                    "reason": f"{name}_provider_unavailable",
+                }
+                return []
+
+        read_store = get_read_store()
+        if read_store is None:
+            raise RuntimeError("read store is not configured")
+        result["signals"] = _read_list(
+            "signals",
+            lambda: read_store.list_agora_signals(),
+        )
+        result["inbox"] = _read_list(
+            "inbox",
+            lambda: read_store.list_evidence_refs(),
+        )
+        result["journal"] = _read_list(
+            "journal",
+            lambda: read_store.list_decision_journal_entries(),
+        )
+        result["decision_events"] = _read_list(
+            "decision_events",
+            lambda: trading_room_store.list_decision_events(page_size=10_000),
+        )
+
+        if scope is None:
+            interactions: List[Dict[str, Any]] = []
+            result["performance"] = {
+                "status": "ok",
+                "count": 0,
+                "reason": "public_scope_excludes_private_performance",
+            }
+        else:
+            interactions = _read_list(
+                "interactions",
+                lambda: interaction_lifecycle.list(scope.tenant_id, scope.user_id),
+            )
+            try:
+                journey_store = get_trade_journey_store()
+                if journey_store is None:
+                    raise RuntimeError("trade journey projection is not configured")
+                page = journey_store.page_journeys(
+                    tenant_id=scope.tenant_id,
+                    environment="paper",
+                    page_size=1,
+                )
+                result["performance"] = {
+                    "status": "ok",
+                    "count": int(page.total),
+                    "cursor": page.next_page_token,
+                }
+            except Exception:
+                result["performance"] = {
+                    "status": "unavailable",
+                    "count": 0,
+                    "reason": "performance_provider_unavailable",
+                }
+        result.setdefault("interactions", interactions)
+        result["candidates"] = [
+            dict(candidate)
+            for interaction in interactions
+            for candidate in list(interaction.get("candidate_proposals") or [])
+            if isinstance(candidate, dict)
+        ]
+        return result
 
     # ------------------------------------------------------------------ #
     # GET /bff/agora/me  — operator identity and capability scope (§18 envelope)
@@ -275,6 +359,7 @@ def create_agora_router(
     router.include_router(create_trading_room_router(
         **_kw,
         require_write_role=require_write_role,
+        trading_room_store=trading_room_store,
         workshop_store=workshop_store,
     ))
     router.include_router(create_performance_router(
@@ -316,7 +401,11 @@ def create_agora_router(
     ))
     router.include_router(create_trading_data_router(**_kw))
     router.include_router(create_decision_projection_router(**_kw, require_write_role=require_write_role))
-    router.include_router(create_operational_readiness_router(**_kw, get_read_store=get_read_store))
+    router.include_router(create_operational_readiness_router(
+        **_kw,
+        get_read_store=get_read_store,
+        surfaces_reader=_operational_surface_readback,
+    ))
     # ------------------------------------------------------------------ #
     # Migrated Agora Route Handlers (40 decorators, 38 endpoints/aliases)
     # ------------------------------------------------------------------ #
@@ -833,6 +922,7 @@ def create_agora_router(
     router.interaction_lifecycle = interaction_lifecycle
     router.workshop_store = workshop_store
     router.proposal_store = proposal_store
+    router.trading_room_store = trading_room_store
     router.agora_service = agora_service
 
     return router
