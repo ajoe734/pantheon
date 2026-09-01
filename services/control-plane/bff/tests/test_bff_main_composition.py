@@ -111,3 +111,90 @@ def test_training_v3_router_mounted() -> None:
     main_text = (BFF_DIR / "main.py").read_text(encoding="utf-8")
     assert "create_training_router" in main_text
     assert "training.router" in main_text
+
+
+def test_retired_legacy_handlers_deleted_from_main_py() -> None:
+    """Verify that legacy route handler function bodies superseded by domain routers are deleted."""
+    main_path = BFF_DIR / "main.py"
+    tree = ast.parse(main_path.read_text(encoding="utf-8"), filename="main.py")
+
+    top_level_funcs = {
+        node.name
+        for node in tree.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+
+    superseded_handlers = [
+        "bff_me",
+        "health",
+        "get_settings",
+        "update_settings",
+        "export_settings",
+        "import_settings",
+        "bff_auth_dev_login",
+        "bff_auth_readiness",
+        "bff_auth_refresh",
+        "bff_logout",
+        "bff_switch_tenant",
+        "bff_update_locale",
+        "create_approval_decision",
+        "bff_create_capital_pool",
+        "get_persona_detail",
+        "bff_management_board_pack",
+        "bff_v5_control_room",
+        "api_v1_list_experiments",
+        "api_v1_get_experiment",
+        "bff_apply_rebalance_proposal",
+        "bff_create_mcp_server",
+        "bff_create_paper_persona_bundle",
+        "bff_create_rebalance",
+        "bff_create_review",
+        "bff_create_skill",
+        "bff_create_tool",
+        "bff_get_capital_pool",
+        "bff_get_persona",
+        "bff_get_persona_activity",
+        "bff_get_persona_audit",
+        "bff_get_persona_capabilities_surface",
+    ]
+
+    retained = [h for h in superseded_handlers if h in top_level_funcs]
+    assert not retained, f"Superseded legacy handler functions still defined in main.py: {retained}"
+
+
+def test_zero_unreferenced_dead_functions_in_main_py() -> None:
+    """Verify that main.py has zero orphaned top-level functions."""
+    from collections import defaultdict
+
+    main_path = BFF_DIR / "main.py"
+    tree = ast.parse(main_path.read_text(encoding="utf-8"), filename="main.py")
+
+    top_level_funcs = {
+        node.name: node.lineno
+        for node in tree.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+
+    usages = defaultdict(int)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name):
+            usages[node.id] += 1
+
+    # Allowed external exports tested across other suites
+    allowed_exports = {
+        "_surface_degradation_reason",
+        "_extract_identity",
+        "_extract_identity_jwt",
+        "_extract_identity_stub",
+        "_build_persona_health_items",
+        "_trading_performance_delta",
+    }
+
+    dead_funcs = [
+        (fname, lineno)
+        for fname, lineno in top_level_funcs.items()
+        if usages[fname] == 0 and fname not in allowed_exports
+    ]
+
+    assert not dead_funcs, f"Found {len(dead_funcs)} unreferenced dead function(s) in main.py: {dead_funcs}"
+
