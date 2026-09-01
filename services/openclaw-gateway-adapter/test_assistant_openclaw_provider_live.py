@@ -372,7 +372,8 @@ class TestAssistantOpenClawProviderUnit(unittest.TestCase):
         self.assertEqual(len(calls), 2)
         self.assertEqual(calls[0][calls[0].index("--model") + 1], "anthropic/claude-opus-4-8")
         self.assertEqual(calls[1][calls[1].index("--model") + 1], "openai/gpt-5.6-sol")
-        self.assertLessEqual(call_timeouts[0], 1.5)
+        self.assertGreaterEqual(call_timeouts[0], 4.0)
+        self.assertLessEqual(call_timeouts[0], 5.0)
         self.assertGreaterEqual(call_timeouts[1], 8.0)
 
     def test_readiness_auth_probe_converges_via_second_fallback_when_primary_and_fallback_one_fail(self) -> None:
@@ -410,9 +411,45 @@ class TestAssistantOpenClawProviderUnit(unittest.TestCase):
         self.assertEqual(calls[0][calls[0].index("--model") + 1], "anthropic/claude-opus-4-8")
         self.assertEqual(calls[1][calls[1].index("--model") + 1], "openai/gpt-5.6-sol")
         self.assertEqual(calls[2][calls[2].index("--model") + 1], "openai/gpt-5.5")
-        self.assertLessEqual(call_timeouts[0], 1.5)
+        self.assertGreaterEqual(call_timeouts[0], 4.0)
+        self.assertLessEqual(call_timeouts[0], 5.0)
         self.assertGreaterEqual(call_timeouts[1], 8.0)
         self.assertGreaterEqual(call_timeouts[2], 8.0)
+
+    def test_readiness_primary_candidate_gets_more_than_gateway_queue_wait_budget(self) -> None:
+        """OPGAP-OPENCLAW-READINESS-QUEUE-BUDGET-20260901 regression.
+
+        The gateway's own internal request-lane queueing has been observed to
+        add several real seconds of wait before a CLI turn even starts
+        (independent of model latency). A primary-candidate budget that is
+        capped near or below that queueing delay means the primary is killed
+        by "no output" before it ever gets a chance to run, on every probe,
+        not just under exceptional load. This asserts the primary candidate's
+        requested timeout has real headroom above a 1.5s-scale queueing delay.
+        """
+        calls: list[list[str]] = []
+        call_timeouts: list[float] = []
+
+        def fake_run(cmd, **kwargs):
+            calls.append(list(cmd))
+            call_timeouts.append(kwargs.get("timeout", 0.0))
+            class R:
+                returncode = 0
+                stdout = TestAssistantOpenClawProviderUnit._agent_json("PANTHEON_PROVIDER_READY")
+                stderr = ""
+            return R()
+
+        provider = self._make_provider(run_func=fake_run)
+        info = provider.readiness(auth_probe=True)
+
+        self.assertTrue(info["ready"])
+        self.assertEqual(info["active_model"], "anthropic/claude-opus-4-8")
+        self.assertGreater(
+            call_timeouts[0],
+            1.5,
+            "primary candidate must get more than the old 1.5s cap so it survives "
+            "realistic gateway queueing delay instead of being killed before it starts",
+        )
 
     def test_readiness_auth_probe_fails_closed_when_all_models_fail(self) -> None:
         calls: list[list[str]] = []

@@ -1,0 +1,98 @@
+{
+  "schema_version": "pantheon.supervisor-evidence.v1",
+  "task_id": "OPGAP-BE-RESEARCH-ROUTER-V2-20260830",
+  "title": "Migrate Research knowledge and framework integration routes",
+  "program_id": "PANTHEON-FULL-OPERATION-GAP-CLOSURE-20260830",
+  "design_unit": "SD-OPGAP-BE-RESEARCH-ROUTER",
+  "recorded_at": "2026-09-01T08:02:29Z",
+  "ai_name": "Codex2",
+  "owner": "Codex2",
+  "reviewer": "Codex",
+  "target_repo": "pantheon",
+  "task_class": "functional",
+  "summary_zh": "\u5c07 Research domain 47 \u500b route decorators \u79fb\u81f3 research/router.py\uff0c\u4e26\u4ee5 typed route \u53d6\u4ee3\u88ab\u62c6\u89e3\u7684 generic aliases\u3002",
+  "artifacts": [
+    "services/control-plane/bff/research/router.py",
+    "services/control-plane/bff/research/service.py",
+    "services/control-plane/bff/tests/test_research_router.py",
+    "docs/deployment/evidence/supervisor/OPGAP-BE-RESEARCH-ROUTER-V2-20260830/evidence.json"
+  ],
+  "scope": {
+    "owned": [
+      "services/control-plane/bff/research/router.py",
+      "services/control-plane/bff/research/service.py",
+      "services/control-plane/bff/tests/test_research_router.py",
+      "docs/deployment/evidence/supervisor/OPGAP-BE-RESEARCH-ROUTER-V2-20260830/evidence.json"
+    ],
+    "not_changing": [
+      "services/control-plane/bff/main.py (deferred to OPGAP-BFF-MAIN-ASSEMBLY-20260830)",
+      "ResearchKnowledgeSourcePort implementation delivered by ACG-RS-RESEARCH-SOURCE-20260828",
+      "services/source_ingestion",
+      "services/telemetry",
+      "execute-plans frontend"
+    ],
+    "composes_with": [
+      "OPGAP-DEVTOOL-TARGET-REPO-BRIDGE-V2-20260830",
+      "ACG-RS-RESEARCH-SOURCE-20260828",
+      "OPGAP-BFF-MAIN-ASSEMBLY-20260830"
+    ]
+  },
+  "contracts": {
+    "research_routes_in_domain_router": "RESEARCH_ROUTE_INVENTORY declares and create_research_router registers all 47 assigned Research route method/path pairs in services/control-plane/bff/research/router.py.",
+    "typed_generic_alias_replacements": "Typed Research analysis and artifact routes preserve durable source-port reads while the prior generic artifact write aliases fail closed with explicit operation errors.",
+    "inventory_typed_signatures": "Every Request-dispatched inventory route is registered with its legacy FastAPI body, path, query, and header signature, so OpenAPI and framework validation remain available without duplicating the durable source-port dispatcher.",
+    "ticket_and_experiment_validation": "Ticket priority/status, ticket patch lifecycle, experiment status, and experiment launch run_config validation preserve the legacy fail-closed 422/409 behavior; live experiment execution_mode is rejected.",
+    "source_change_proposal_projection": "GET /api/v1/research/source-change-proposals projects the ResearchKnowledgeSourcePort proposals field and reports the port's source and availability in metadata, preserving live proposal records.",
+    "research_note_create_contract": "POST /api/v1/knowledge/notes rejects caller-supplied owner_ref, preserves required body and attachment validation, resolves the owner from the authenticated operator, persists a note-{UUID} record, and returns only the legacy 201 create receipt.",
+    "research_note_list_contract": "GET /api/v1/knowledge/notes validates attachment filter combinations, filters by owner_ref, attachment_type, attachment_ref, and CSV tags before pagination, and returns the legacy notes/pagination/meta envelope with projected note summaries rather than raw records.",
+    "research_note_detail_contract": "GET /api/v1/knowledge/notes/{note_id} emits the legacy explicit note detail projection: resolved attachment route, evidence-link resolution states, memory-anchor projection, and research_note_detail/evidence_links/memory_anchors source surfaces rather than a raw source-port record.",
+    "knowledge_read_contracts": "Evidence, insight, and institutional-memory list routes preserve typed query validation, source-port filters, legacy projection and pagination envelopes, availability metadata, and capability-aware evidence redaction rather than exposing raw port records.",
+    "knowledge_detail_contracts": "Evidence detail applies capability redaction to the record and linked decisions before emitting the explicit legacy detail projection. Insight detail emits scope, confidence, supporting-evidence, linked-source, provenance, and source-surface metadata fields. Institutional-memory detail emits entry_detail and source_context states from the port-backed source status.",
+    "strategy_spec_contract": "Strategy-spec list, detail, version-history, and compare routes preserve their legacy items/page_info, specialized detail, strategy_id/versions, selector validation, distinct-version/canCompare gates, and strategy-specific source-surface metadata projections.",
+    "composition_route_contracts": "Synthesis conflict-log reads use injected or durable read-adapter seams with stable view projection including allocation-policy-artifact and governance-approval links, while /bff/search preserves its strategy/persona/capital-pool compatibility surface through an injected cross-entity search or typed-port fallback.",
+    "legacy_inventory_remediation": "GET /api/v1/artifacts validates status with legacy 400 behavior and honors experiment_id, ticket_id, lineage_id, and status across both extended and preserved narrow source-port adapters. GET /api/v1/research/search rejects match_type=note before source access. Experiment list items restore links and canCancel-only actions, while ticket list/detail restore frozen string surface states, metadata, and unavailable empty-envelope behavior.",
+    "source_port_preservation": "The router injects and uses the existing ResearchKnowledgeSourcePort rather than reimplementing reusable source-port logic or falling back to main.py globals.",
+    "composition_boundary": "main.py inclusion and deletion of legacy route blocks remain the responsibility of OPGAP-BFF-MAIN-ASSEMBLY-20260830."
+  },
+  "verification": {
+    "test_suites": [
+      "services/control-plane/bff/tests/test_research_router.py",
+      "services/control-plane/bff/research/test_router.py"
+    ],
+    "verification_commands": [
+      "pytest -q services/control-plane/bff/tests/test_research_router.py services/control-plane/bff/research/test_router.py",
+      "python3 -m compileall -q services/control-plane/bff/research/router.py services/control-plane/bff/tests/test_research_router.py",
+      "git diff --check"
+    ],
+    "result": "26 passed (with one upstream Starlette TestClient deprecation warning; ruff is not installed in the provisioned Python environment)",
+    "status": "PASS"
+  },
+  "head_binding_policy": "The owner binds the final PR head SHA through REVIEW_HEAD_SHA at handoff. This committed manifest identifies the reviewed scope and evidence but does not claim to contain its own final commit SHA.",
+  "review": {
+    "status": "ready_for_independent_review",
+    "reviewer": "Codex",
+    "remediation": "The reviewer-reopened head 40e7d38d100c4a330d97a93383dff38cbff99aec still returned raw knowledge-note detail records and generic strategy-spec envelopes. This successor restores the frozen note attachment/evidence/memory projection plus strategy list/detail/version/compare validation, gates, and surface metadata while retaining the predecessor narrow source-port boundary.",
+    "required_checks": [
+      "verify all 47 assigned Research route method/path pairs are registered by create_research_router",
+      "verify typed analysis and artifact routes use the injected durable source port and preserve their compatibility links",
+      "verify the generic BFF artifact writes are explicit fail-closed replacements rather than in-memory fallbacks",
+      "verify source-change-proposals returns the injected port's proposals field and source metadata",
+      "verify knowledge-note create rejects caller owner_ref and malformed body/attachment input, then assigns the authenticated operator as owner on a valid write",
+      "verify knowledge-note listing excludes records that do not match owner_ref, attachment_type, attachment_ref, or tags and returns the legacy notes/pagination/meta projection",
+      "verify knowledge-note detail returns attachment route, resolved/unresolved evidence links, memory anchors, and research-note/evidence/memory surface metadata",
+      "verify evidence, insight, and memory list routes retain their typed filter, projection, pagination, availability, and capability-redaction boundaries",
+      "verify populated evidence detail redacts both an unavailable evidence capability and protected linked decisions while preserving the explicit legacy detail envelope",
+      "verify populated insight and institutional-memory detail responses retain all contract fields and derive ok/degraded source-surface metadata from the injected port",
+      "verify strategy-spec list/detail/versions/compare preserve their legacy envelopes, version-family semantics, distinct-selector and canCompare gates, and source-surface metadata",
+      "verify populated conflict-log responses preserve allocation-policy-artifact and governance-approval ids and hrefs",
+      "verify /api/v1/artifacts forwards all four legacy filters where supported, preserves equivalent linkage filtering for the narrow source port, and rejects an invalid status with HTTP 400",
+      "verify /api/v1/research/search rejects match_type=note with HTTP 400 before accessing the source port",
+      "verify /api/v1/experiments list items restore self/workbench links and canCancel-only actions",
+      "verify ticket list/detail emit frozen string surface states and the unavailable list envelope is empty with total zero",
+      "verify synthesis conflict logs and /bff/search preserve their composition seams without reaching main.py globals",
+      "verify the predecessor ResearchKnowledgeSourcePort is not reimplemented and main.py composition remains out of scope",
+      "run the focused Research router test suite and confirm the ticket priority, experiment status, execution_mode=live, and OpenAPI signature regression cases pass",
+      "bind this manifest path (docs/deployment/evidence/supervisor/OPGAP-BE-RESEARCH-ROUTER-V2-20260830/evidence.json) at exact PR head during canonical handoff"
+    ]
+  }
+}

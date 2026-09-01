@@ -46,6 +46,13 @@ OPENRESPONSES_MODEL = "openclaw"
 DEFAULT_AGENT_ID = "main"
 DEFAULT_TIMEOUT_SECONDS = 90
 DEFAULT_READINESS_ANSWER_TIMEOUT_SECONDS = 20
+# The gateway's own internal request-lane queueing (observed up to ~12s under
+# real concurrent load, logged as "lane wait exceeded ... waitedMs=...") happens
+# inside this window but is invisible to this deadline accounting. A primary
+# candidate given only ~1.5s never gets a fair chance to even start once the
+# gateway is busy, so it fails the same way every time instead of occasionally.
+# 5.0s matches the per-candidate budget already reserved for fallbacks below.
+_PRIMARY_CANDIDATE_MAX_SECONDS = 5.0
 DEFAULT_OPENCLAW_BIN = "openclaw"
 DEFAULT_PRIMARY_MODEL = "anthropic/claude-opus-4-8"
 DEFAULT_FALLBACK_MODELS = ("openai/gpt-5.6-sol", "openai/gpt-5.5")
@@ -293,7 +300,7 @@ class AssistantOpenClawProvider:
                 break
             num_remaining_after = len(candidates) - 1 - idx
             if num_remaining_after > 0 and idx == 0:
-                cand_timeout = min(1.5, max(1.0, remaining - (num_remaining_after * 5.0)))
+                cand_timeout = min(_PRIMARY_CANDIDATE_MAX_SECONDS, max(1.0, remaining - (num_remaining_after * 5.0)))
             elif num_remaining_after > 0:
                 cand_timeout = max(1.0, min(remaining - (num_remaining_after * 3.0), remaining / (num_remaining_after + 1)))
             else:
