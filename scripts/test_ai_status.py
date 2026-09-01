@@ -2234,6 +2234,61 @@ class DevBridgeMaterializeBatchTests(unittest.TestCase):
         self.assertEqual(task["reviewer"], "Claude")
         self.assertEqual(task["generation"], 2)
 
+    def test_new_task_gets_default_evidence_manifest_artifact(self) -> None:
+        state = {"agents": [], "tasks": [], "handoffs": [], "blockers": []}
+        with mock.patch.dict(
+            os.environ,
+            {
+                "AI_NAME": "Human/Ops",
+                "TASK_ARTIFACTS": "services/control-plane/bff/router.py,"
+                "services/control-plane/bff/test_router.py",
+                "TASK_TITLE": "Repair router",
+            },
+            clear=False,
+        ):
+            ai_status.command_assign(
+                state,
+                ["OPS-EVIDENCE-DEFAULT-ONE", "Codex", "Claude"],
+            )
+
+        task = ai_status.get_task(state, "OPS-EVIDENCE-DEFAULT-ONE")
+        self.assertEqual(
+            task["artifacts"],
+            [
+                "services/control-plane/bff/router.py",
+                "services/control-plane/bff/test_router.py",
+                "docs/deployment/evidence/OPS-EVIDENCE-DEFAULT-ONE/evidence.json",
+            ],
+        )
+
+    def test_new_task_with_declared_evidence_manifest_is_not_duplicated(self) -> None:
+        state = {"agents": [], "tasks": [], "handoffs": [], "blockers": []}
+        declared_evidence = (
+            "docs/deployment/evidence/full-operation-gap/"
+            "OPS-EVIDENCE-DECLARED-ONE/evidence.json"
+        )
+        with mock.patch.dict(
+            os.environ,
+            {
+                "AI_NAME": "Human/Ops",
+                "TASK_ARTIFACTS": (
+                    "services/control-plane/bff/router.py," + declared_evidence
+                ),
+                "TASK_TITLE": "Repair router",
+            },
+            clear=False,
+        ):
+            ai_status.command_assign(
+                state,
+                ["OPS-EVIDENCE-DECLARED-ONE", "Codex", "Claude"],
+            )
+
+        task = ai_status.get_task(state, "OPS-EVIDENCE-DECLARED-ONE")
+        self.assertEqual(
+            task["artifacts"],
+            ["services/control-plane/bff/router.py", declared_evidence],
+        )
+
     def test_batch_materializes_and_reads_back_with_execution_resources(self) -> None:
         packet_id = "pkt-exec-res-20260825T000000Z"
         digest = hashlib.sha256(packet_id.encode("utf-8")).hexdigest()
