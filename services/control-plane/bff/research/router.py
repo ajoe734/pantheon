@@ -36,13 +36,16 @@ from __future__ import annotations
 import hashlib
 import inspect
 import json
+import os
 import re
 import uuid
+from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from fastapi import APIRouter, Body, Header, Query, Request
 
 from models import ErrorCode, ObjectType
+from read_store import redact_evidence_refs
 
 from .service import ResearchNotFoundError, ResearchRouterService, ResearchValidationError
 
@@ -51,8 +54,25 @@ SnapshotMeta = Callable[[str], Dict[str, Any]]
 SurfaceStatus = Callable[..., Dict[str, Any]]
 # (entity_type_value, entity_id, action_id, resolved_key, identity, payload) -> receipt dict
 SubmitAction = Callable[..., Any]
+IdentityCapabilities = Callable[[Any], Optional[List[str]]]
+CrossEntitySearch = Callable[..., Any]
+ConflictLogList = Callable[..., List[Dict[str, Any]]]
+ConflictLogGet = Callable[[str], Optional[Dict[str, Any]]]
 
 _RESEARCH_EXPERIMENT_IDEMPOTENCY: Dict[str, Dict[str, Any]] = {}
+
+_KW03_LINKED_ENTITY_TYPES = {
+    "memory_entry", "research_note", "insight_card", "strategy_spec", "experiment", "artifact",
+}
+_KW03_LINK_TYPES = {
+    "supporting_evidence", "counter_evidence", "citation", "provenance", "corroboration",
+}
+_KW03_CREDIBILITY_TIERS = {"primary", "secondary", "tertiary", "unverified"}
+_KW04_STATUSES = {"active", "superseded", "archived", "all"}
+_KW04_LINKED_ENTITY_TYPES = {
+    "memory_entry", "research_note", "evidence_ref", "strategy_spec", "experiment",
+}
+_KW04_RECENCY_VALUES = {"7d", "30d", "90d", "all"}
 
 
 # This is the task's source-of-truth migration inventory.  It deliberately
@@ -451,6 +471,10 @@ def create_research_router(
     build_knowledge_workbench: Optional[Callable[[], Any]] = None,
     build_research_oss_readiness: Optional[Callable[..., Any]] = None,
     submit_source_search_command: Optional[Callable[..., Any]] = None,
+    get_capabilities: Optional[IdentityCapabilities] = None,
+    cross_entity_search: Optional[CrossEntitySearch] = None,
+    list_synthesis_conflict_logs: Optional[ConflictLogList] = None,
+    get_synthesis_conflict_log: Optional[ConflictLogGet] = None,
     include_prepared_subrouters: bool = True,
 ) -> APIRouter:
     """Build the standalone Research domain router.
