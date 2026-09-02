@@ -115,6 +115,27 @@ def _ready_provider(monkeypatch) -> None:
     )
 
 
+def test_provider_readiness_probe_has_a_short_independent_timeout(monkeypatch) -> None:
+    calls: dict[str, object] = {}
+
+    class _Client:
+        def __init__(self, **kwargs):
+            calls.update(kwargs)
+
+        def get_assistant_readiness(self, *, provider: str, auth_probe: bool):
+            assert provider
+            assert auth_probe is True
+            return {"provider": provider, "ready": False, "status": "unavailable"}
+
+    monkeypatch.delenv("PANTHEON_BFF_AUTH_READINESS_PROVIDER_TIMEOUT_SECONDS", raising=False)
+    monkeypatch.setattr(bff_main, "OpenClawOpsClient", _Client)
+
+    result = bff_main._assistant_provider_readiness()
+
+    assert result["ready"] is False
+    assert calls["timeout_seconds"] == 2.0
+
+
 def test_strict_operator_readiness_is_product_shaped_and_secret_free(monkeypatch) -> None:
     _strict_env(monkeypatch)
     _ready_provider(monkeypatch)
