@@ -1,0 +1,37 @@
+{
+  "schema_version": "pantheon.task_evidence.v1",
+  "task_id": "PSD-SQLITE-FAMILY-001",
+  "scope": "Distillation SQLite queue database-family corruption recovery",
+  "implementation": {
+    "queue": "services/source_ingestion/distillation_worker.py",
+    "test": "services/source_ingestion/tests/test_distillation_worker.py",
+    "residual_reference": "ab8edbcab",
+    "residual_authority": "evidence-only"
+  },
+  "acceptance": {
+    "family_identity": "The main database and every discovered -wal/-shm sidecar move under one collision-resistant recovery identifier.",
+    "failure_fence": "A family-member rename failure propagates before bootstrap, probe, receipt, or resumed queue use.",
+    "fresh_queue": "Recovery bootstraps a new WAL queue at the original path and requires a transactional write/read probe before recording success.",
+    "auditability": "A sanitized, fsynced JSON receipt records the recovery identifier, moved member names, and successful probe without exception text or file content.",
+    "repetition": "Every recovery uses a UUID-qualified identifier, so equal timestamps cannot overwrite earlier quarantine evidence."
+  },
+  "verification": [
+    {
+      "command": "uv run --with pytest pytest -q services/source_ingestion/tests/test_distillation_worker.py -k 'corrupt_queue or family_rename or repeated_recovery or non_corruption'",
+      "result": "7 passed, 38 deselected"
+    },
+    {
+      "command": "uv run --with pytest pytest -q services/source_ingestion/tests/test_distillation_worker.py",
+      "result": "45 passed"
+    },
+    {
+      "command": "python3 -m py_compile services/source_ingestion/distillation_worker.py",
+      "result": "passed"
+    }
+  ],
+  "review": {
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "decision": "pending_independent_review"
+  }
+}
