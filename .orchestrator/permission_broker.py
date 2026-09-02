@@ -111,9 +111,6 @@ SAFE_BASH_PATTERNS = [
     re.compile(r"^(?:(?:[A-Za-z_][A-Za-z0-9_]*=\S+)\s+)*bash\s+(?:\S+/)?scripts/run-dashboard\.sh"),
     re.compile(r"^(?:(?:[A-Za-z_][A-Za-z0-9_]*=\S+)\s+)*python3\s+(?:\S+/)?scripts/dashboard_server\.py"),
     re.compile(r"^nohup\s+(?:(?:[A-Za-z_][A-Za-z0-9_]*=\S+)\s+)*bash\s+(?:\S+/)?scripts/launch-docs-site\.sh"),
-    # Cloudflared tunnel
-    re.compile(r"^bash\s+(?:\S+/)?scripts/start_dashboard_tunnel\.sh"),
-    re.compile(r"^cloudflared\s+tunnel"),
     re.compile(r"^tmux\s+(new-session|kill-session|attach|capture-pane|ls)"),
     # Misc dev tools
     re.compile(r"^node(\s|$)"),
@@ -169,6 +166,12 @@ def load_broker_runtime_config() -> dict[str, Any]:
     rebound["paths"] = paths
     return rebound
 DEFER_BASH_PATTERNS = [
+    # Cloudflared tunnel: PSD-03 closes the standing worker grant here.
+    # Publishing the dashboard needs an explicit operator decision, so an
+    # unattended worker command is deferred to the approval queue instead
+    # of auto-allowed.
+    re.compile(r"^bash\s+(?:\S+/)?scripts/start_dashboard_tunnel\.sh"),
+    re.compile(r"^cloudflared\s+tunnel"),
     re.compile(r"^git (add|commit|remote set-url|submodule)(\s|$)"),
     re.compile(r"^(curl|wget)(\s|$)"),
     re.compile(r"^(apt|apt-get)(\s|$)"),

@@ -12,6 +12,11 @@
 #
 # Note: restarting the quick tunnel mints a NEW public trycloudflare URL. The
 # current one is always in .orchestrator/logs/cloudflared-dashboard.url.
+#
+# Tunnel management defaults OFF: this cron-driven autostart must never open
+# the dashboard to a public tunnel on its own. Set
+# PANTHEON_DASHBOARD_MANAGE_TUNNEL=1 only after an explicit operator decision
+# to publish.
 set -euo pipefail
 
 # PANTHEON_DASHBOARD_ROOT lets this run from a code root that is not the root it
@@ -30,7 +35,7 @@ PORT="${PANTHEON_DASHBOARD_PORT:-4180}"
 HOST="${PANTHEON_DASHBOARD_HOST:-127.0.0.1}"
 SERVER_SESSION="${PANTHEON_DASHBOARD_SERVER_SESSION:-pantheon-dashboard-server}"
 TUNNEL_SESSION="${PANTHEON_DASHBOARD_TUNNEL_SESSION:-pantheon-dashboard-tunnel}"
-MANAGE_TUNNEL="${PANTHEON_DASHBOARD_MANAGE_TUNNEL:-1}"
+MANAGE_TUNNEL="${PANTHEON_DASHBOARD_MANAGE_TUNNEL:-0}"
 LOG_DIR="${ROOT_DIR}/.orchestrator/logs"
 LOG_FILE="${LOG_DIR}/dashboard-autostart.log"
 LOCK_FILE="${ROOT_DIR}/.orchestrator/dashboard-autostart.lock"
