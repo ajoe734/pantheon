@@ -72,6 +72,17 @@ def _auth_ready(config: dict | None = None, provider_id: str | None = None) -> b
     return _oauth_token_path(config, provider_id).exists()
 
 
+def _apply_provider_home(spawn_env: dict[str, str], home: Path, base_env: dict[str, str]) -> None:
+    if home == Path.home():
+        return
+    # Preserve the login account home before isolating HOME for an alias.  The
+    # wrapper uses it to find the shared CLI installation without a
+    # machine-specific path or platform-specific passwd lookup.
+    spawn_env["PANTHEON_HOST_HOME"] = str(base_env.get("HOME") or Path.home())
+    spawn_env["ANTIGRAVITY_HOME"] = str(home)
+    spawn_env["HOME"] = str(home)
+
+
 class AntigravityAdapter(BaseAdapter):
     name = "antigravity"
 
@@ -168,9 +179,7 @@ class AntigravityAdapter(BaseAdapter):
         if rotation_slot is not None:
             spawn_env["ORCH_MODEL_ROTATION_SLOT"] = rotation_slot
         home = _antigravity_home(self.config, provider_id)
-        if home != Path.home():
-            spawn_env["ANTIGRAVITY_HOME"] = str(home)
-            spawn_env["HOME"] = str(home)
+        _apply_provider_home(spawn_env, home, base_env)
         if request.task_id:
             spawn_env["ORCH_TASK_ID"] = request.task_id
         if request.reason:

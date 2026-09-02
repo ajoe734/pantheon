@@ -70,6 +70,12 @@ def load_settings() -> tuple[tuple[str, ...], bool]:
     return tuple(str(t) for t in trailers), bool(prefix_required)
 
 
+def required_trailers_for_delivery(required: tuple[str, ...], delivery_class: str) -> tuple[str, ...]:
+    if delivery_class == "tooling":
+        return tuple(name for name in required if name != "Reviewer")
+    return required
+
+
 def parse_trailers(body: str) -> dict[str, str]:
     trailers: dict[str, str] = {}
     for line in body.splitlines():
@@ -183,6 +189,12 @@ def main() -> int:
         action="store_true",
         help="Ignore merge commits when checking a range",
     )
+    parser.add_argument(
+        "--delivery-class",
+        choices=("product", "tooling"),
+        default="product",
+        help="Tooling delivery does not require the product-reviewer trailer.",
+    )
     args = parser.parse_args()
 
     # Allow CI/cron jobs to bypass with explicit opt-out (used by automated merge bots).
@@ -190,6 +202,7 @@ def main() -> int:
         return 0
 
     required, prefix_required = load_settings()
+    required = required_trailers_for_delivery(required, args.delivery_class)
 
     targets: list[tuple[str, str]]
     if args.message_file:
