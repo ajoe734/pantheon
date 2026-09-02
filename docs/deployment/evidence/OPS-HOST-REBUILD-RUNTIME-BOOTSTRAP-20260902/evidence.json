@@ -1,0 +1,51 @@
+{
+  "schema_version": "pantheon.review-evidence.v1",
+  "task_id": "OPS-HOST-REBUILD-RUNTIME-BOOTSTRAP-20260902",
+  "title": "Make the supervisor runtime and dev stack rebuildable on a fresh host",
+  "recorded_at": "2026-09-02T00:00:00Z",
+  "owner": "Claude",
+  "reviewer": "Codex",
+  "target_repo": "pantheon",
+  "task_class": "functional",
+  "summary_zh": "舊操作機與其 GCP project 停權後，控制平面在任何新主機上都起不來。三處把 runtime 綁死在該機器：.orchestrator/config.json 的三個 provider home 寫死 /home/lupin；promote_supervisor_runtime.py 寫死並強制 command root 必須位於 /home/lupin/pantheon-ci-deploy；以及整個部署佈局本身沒有任何可重跑的建立工具。另有兩個只在全新主機才會顯現的缺口：V2 journal 遺失後沒有任何已提交的重建路徑（設計上拒絕以 ai-status.json 回填，正確，但當初的 V2 遷移是一次性人工動作），以及 lifecycle projector 在全新資料庫上因 trade_journey_projection schema 不存在而永久重試。本次全部補齊並在重建後的主機上實測通過。",
+  "artifacts": {
+    "implementation_paths": [
+      ".orchestrator/config.json",
+      "scripts/promote_supervisor_runtime.py",
+      "scripts/bootstrap-orchestrator-runtime.sh",
+      "scripts/seed_task_state_genesis.py",
+      "scripts/bootstrap_projection_schema.py",
+      "docker-compose.yml",
+      ".gitignore"
+    ],
+    "test_paths": [],
+    "evidence_manifest": "docs/deployment/evidence/OPS-HOST-REBUILD-RUNTIME-BOOTSTRAP-20260902/evidence.json"
+  },
+  "scope": {
+    "owned": [
+      "Provider homes expressed as ~ paths so every host resolves its own (claude/antigravity/codex adapters all expanduser these values)",
+      "PANTHEON_DEPLOY_ROOT selects the deployment layout parent; the previous absolute path remains the default so the established operator host is unchanged",
+      "scripts/bootstrap-orchestrator-runtime.sh rebuilds the layout from the repository: deployment dirs, a local dev-bridge Ed25519 keypair, a detached command-root worktree, promote, watchdog install, health verification",
+      "bwrap and user-namespace preflight before promotion seals the command runtime read-only",
+      "Health verification pointed at the command root rather than the human checkout",
+      "scripts/seed_task_state_genesis.py for the empty-journal case only",
+      "trade-journey-projection-migrate compose service creating the projection schema before the projector starts"
+    ],
+    "not_changing": [
+      "The V2 refusal to fall back to ai-status.json. seed_task_state_genesis.py refuses any journal that already holds an event, so it can only ever write into the empty case and can never act as a fallback",
+      "The default deployment root for the established operator host: PANTHEON_DEPLOY_ROOT is unset there, so promote resolves the same absolute path as before",
+      "sync_coordination_root_code mirroring semantics",
+      "Compose profiles and the service set started by default"
+    ],
+    "known_gap": [
+      "Provider logins, worker worktrees, the execute-plans checkout and git identity are still manual on a fresh host; this task covers the orchestrator runtime layer and the projection schema only",
+      "The original V2 journal remains unrecoverable while pantheon-lupin-dev-20260719 is suspended. The genesis seed re-anchors from the committed projection; if that project is ever reinstated the two journals will need an explicit reconciliation decision",
+      "A fresh host still needs bubblewrap installed and, on Ubuntu 24.04+, an AppArmor profile granting bwrap userns. The bootstrap preflight prints the exact remedy but does not apply it, because it requires root"
+    ]
+  },
+  "root_cause": {
+    "summary": "Supervisor Authority V2 launches only from an immutable clean command root against a live config whose task-state event log sits outside every Git root. That layout was created by hand on one host and existed nowhere else, and promote_supervisor_runtime.py additionally hardcoded that host's path as the only permitted command-root parent. Losing the host therefore removed the ability to start the control plane anywhere, not merely the ability to start it there.",
+    "evidence": "On a rebuilt host, promote --discover-only failed with 'candidate V2 command source must be the exact command-runtimes/<HEAD> checkout under /home/lupin/pantheon-ci-deploy/command-runtimes'; watchdog install failed with '--authority-env-file is required'; the supervisor ran degraded with 'authoritative task-state journal is empty; refusing ai-status.json fallback' across 5 dispatch phases; and after 50 containers came up, operator-bff /readyz stayed degraded on 'writer_backend_mismatch:disabled!=postgres' and 'controller_missing' until trade_journey_projection was created. gcloud reports both pantheon-lupin-dev-20260719 and pantheon-benjamin-20260528 as 'has been suspended'."
+  },
+  "verified": "Full bootstrap run end to end on the rebuilt host: supervisor_runtime_health.py --require-watchdog --json reports healthy true with identity, liveness, progress and readiness all true, lifecycle running, source_commit matching the promoted command root. verify_task_state_store.py reports head/projection parity ok true with matching state_sha256 after one genesis seed. The recovery reconciler then reassigned PPL-ALLOC-009 off an auth-down lane unprompted. On the new dev host, docker compose up brought 50/50 containers to running healthy and operator-bff /readyz returned status ok, ready true, reasons empty; trade-journey-projection-migrate was re-run against the already-established schema and exited cleanly, confirming idempotency. docker compose config validates."
+}
