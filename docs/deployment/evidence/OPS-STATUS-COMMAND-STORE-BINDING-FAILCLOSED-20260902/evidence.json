@@ -1,0 +1,40 @@
+{
+  "schema_version": "pantheon.status-command-store-binding-failclosed.v1",
+  "task": {
+    "id": "OPS-STATUS-COMMAND-STORE-BINDING-FAILCLOSED-20260902",
+    "title": "Fail closed when a status command has no live task-state binding",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "base_branch": "dev",
+    "task_branch": "task/OPS-STATUS-COMMAND-STORE-BINDING-FAILCLOSED-20260902",
+    "review_decision": "ready_for_review"
+  },
+  "scope": {
+    "owned": [
+      "scripts/ai_status.py CLI runtime admission",
+      "scripts/test_status_command_runtime_pin.py regression coverage"
+    ],
+    "not_changing": [
+      "TaskStore journal transaction semantics",
+      "supervisor-issued runtime environment construction",
+      "repository projection format"
+    ]
+  },
+  "acceptance": {
+    "direct_python_without_store_mode_fails_nonzero": true,
+    "projection_remains_byte_identical": true,
+    "journal_remains_byte_identical": true,
+    "authoritative_event_log_must_be_absolute": true,
+    "canonical_store_identity_is_required": true
+  },
+  "verification": [
+    {
+      "command": "python3 -m unittest scripts.test_status_command_runtime_pin.StatusCommandRuntimePinTests.test_direct_python_without_live_store_binding_leaves_state_unchanged scripts.test_status_command_runtime_pin.StatusCommandRuntimePinTests.test_direct_python_from_stale_worktree_fails_closed scripts.test_status_command_runtime_pin.StatusCommandRuntimePinTests.test_supervisor_and_worker_status_entrypoints_leave_command_root_bytecode_free",
+      "result": "3 tests passed"
+    },
+    {
+      "command": "python3 -m unittest scripts.test_ai_status",
+      "result": "385 tests passed"
+    }
+  ]
+}

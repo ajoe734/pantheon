@@ -541,6 +541,64 @@ class StatusCommandRuntimePinTests(unittest.TestCase):
         self.assertNotEqual(proc.returncode, 0)
         self.assertIn("must execute the installed command runtime", proc.stderr + proc.stdout)
 
+    def test_direct_python_without_live_store_binding_leaves_state_unchanged(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="status-command-unbound-") as tmpdir:
+            root = Path(tmpdir)
+            command_root = root / "command-root"
+            self._init_repo(command_root)
+            self._copy_full_status_tooling(command_root)
+            self._write_status_state(command_root, task_id="TASK-1")
+            journal = root / "runtime" / "events.jsonl"
+            journal.parent.mkdir(parents=True, exist_ok=True)
+            journal.write_bytes(b'{"sentinel":"unchanged"}\n')
+            command_sha = self._commit_all(command_root, "install status command runtime")
+            env = self._base_env(
+                status_root=command_root,
+                worktree=command_root,
+                command_root=command_root,
+                command_sha=command_sha,
+            )
+            for name in (
+                "ORCH_RUN_ID",
+                "ORCH_RUNNER_STATUS_PATH",
+                "ORCH_HEARTBEAT_PATH",
+                "PANTHEON_WORKTREE_ROOT",
+                "ORCH_WORKSPACE_PATH",
+                "PANTHEON_TASK_STATE_STORE_MODE",
+                "PANTHEON_TASK_STATE_EVENT_LOG",
+                CANONICAL_TASK_STATE_IDENTITY_ENV,
+            ):
+                env.pop(name, None)
+            status_before = (command_root / "ai-status.json").read_bytes()
+            journal_before = journal.read_bytes()
+
+            proc = subprocess.run(
+                [
+                    sys.executable,
+                    str(command_root / "scripts" / "ai_status.py"),
+                    "assign",
+                    "TASK-1",
+                    "Claude",
+                    "Codex",
+                ],
+                cwd=command_root,
+                env=env,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+            status_after = (command_root / "ai-status.json").read_bytes()
+            journal_after = journal.read_bytes()
+
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn(
+            "PANTHEON_TASK_STATE_STORE_MODE=authoritative is required",
+            proc.stderr + proc.stdout,
+        )
+        self.assertEqual(status_after, status_before)
+        self.assertEqual(journal_after, journal_before)
+
     def test_supervisor_and_worker_status_entrypoints_leave_command_root_bytecode_free(self) -> None:
         task_id = "RUNTIME-PIN-NO-BYTECODE"
         with tempfile.TemporaryDirectory(prefix="status-command-bytecode-") as tmpdir:
