@@ -565,6 +565,14 @@ class PullRequestTrailerRangeLiveRegressionTests(unittest.TestCase):
         self.assertIn('--range "$RANGE"', workflow)
         self.assertNotIn('--range "${{ steps.range.outputs.range }}"', workflow)
 
+    def test_task_branches_are_gated_by_label_aware_pr_events_only(self) -> None:
+        workflow = (ROOT / ".github" / "workflows" / "branch-ci.yml").read_text()
+        push_block = workflow.split("  pull_request:", 1)[0]
+        self.assertNotIn('      - "task/**"', push_block)
+        self.assertIn('      - "hotfix/**"', push_block)
+        self.assertIn("github.event.pull_request.labels.*.name", workflow)
+        self.assertIn('--delivery-class "$DELIVERY_CLASS"', workflow)
+
 
 class PublishPromoteTests(unittest.TestCase):
     SETTINGS = {
