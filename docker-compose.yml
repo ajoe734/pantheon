@@ -1466,6 +1466,24 @@ services:
       retries: 3
       start_period: 5s
 
+  # The projector reads its controller row before it constructs a
+  # bootstrapping store, so a database that has never held the projection
+  # leaves it retrying UndefinedTable forever. Nothing else in the bring-up
+  # path creates that schema, so a host built from scratch never converges.
+  # This creates it once, first; it is idempotent on an established database.
+  trade-journey-projection-migrate:
+    build:
+      context: .
+      dockerfile: services/telemetry/Dockerfile
+    command: ["python", "scripts/bootstrap_projection_schema.py"]
+    restart: "no"
+    environment:
+      LIFECYCLE_PROJECTOR_PROJECTION_DSN: ${LIFECYCLE_PROJECTOR_PROJECTION_DSN:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
+      LIFECYCLE_PROJECTOR_PROJECTION_SCHEMA: ${LIFECYCLE_PROJECTOR_PROJECTION_SCHEMA:-trade_journey_projection}
+    depends_on:
+      postgres:
+        condition: service_healthy
+
   loop-run-projector-scheduler:
     # Preserve the legacy service key so deploys replace the snapshot cron
     # instead of leaving a second writer.  The implementation is now the
@@ -1503,6 +1521,8 @@ services:
         condition: service_healthy
       telemetry:
         condition: service_healthy
+      trade-journey-projection-migrate:
+        condition: service_completed_successfully
     healthcheck:
       test: ["CMD", "python", "-m", "services.trade_journey.lifecycle_projector", "healthcheck"]
       interval: 15s
