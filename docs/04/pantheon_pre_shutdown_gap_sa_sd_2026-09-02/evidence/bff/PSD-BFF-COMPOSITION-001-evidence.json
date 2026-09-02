@@ -1,0 +1,38 @@
+{
+  "task_id": "PSD-BFF-COMPOSITION-001",
+  "status": "review",
+  "owner": "Codex",
+  "reviewer": "Claude",
+  "repository": "ajoe734/pantheon",
+  "target_branch": "dev",
+  "head_branch": "task/PSD-BFF-COMPOSITION-001",
+  "task_type": "bff_composition_root_cleanup",
+  "architecture": "docs/04/pantheon_pre_shutdown_gap_sa_sd_2026-09-02/SA.md",
+  "specification": "docs/04/pantheon_pre_shutdown_gap_sa_sd_2026-09-02/SD.md",
+  "residual_evidence": {
+    "inspected_head": "1d7e471656bc6949b9ed4de53cd6c91ba83b541b",
+    "adoption": "Applied the two residual commits onto the current dev-derived task branch without conflicts, preserving current dev domain-router ownership."
+  },
+  "contract_assertions": {
+    "main_is_composition_root": true,
+    "zero_inline_app_route_decorators_in_main": true,
+    "domain_behavior_not_moved_back_into_main": true,
+    "read_store_deleted_with_zero_production_callers": true,
+    "pack_d_exception_handlers_mounted_by_build_bff_app": true,
+    "governance_rollback_review_owned_by_domain_router": true,
+    "normalized_method_path_pairs_unique": true,
+    "static_routes_not_shadowed_by_parameter_routes": true,
+    "composition_call_symbols_defined": true,
+    "development_tooling_routes_not_added_to_product_bff": true
+  },
+  "validation": {
+    "command": "/tmp/psd-bff-composition-venv/bin/python -m pytest -q services/control-plane/bff/tests/test_bff_main_composition.py services/control-plane/bff/test_architecture_boundaries.py services/control-plane/bff/tests/test_read_store_final_deletion.py services/control-plane/bff/test_normalized_route_uniqueness.py services/control-plane/bff/test_route_resolution_no_shadowing.py services/control-plane/bff/test_no_undefined_call_symbols.py services/control-plane/bff/smoke_test.py services/control-plane/bff/smoke_test_incident.py",
+    "passed": 82,
+    "skipped": 1,
+    "failed": 0,
+    "warnings": 3,
+    "duration_seconds": 96.75,
+    "compileall_passed": true,
+    "git_diff_check_passed": true
+  }
+}
