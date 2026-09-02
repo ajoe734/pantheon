@@ -406,7 +406,7 @@
         "mcp_config": ".orchestrator/claude-approval-broker.mcp.json",
         "permission_prompt_tool": "mcp__orchestrator_approval_broker__approval_prompt",
         "env": {
-          "CLAUDE_CONFIG_DIR": "/home/lupin/.claude-autoworker"
+          "CLAUDE_CONFIG_DIR": "~/.claude"
         },
         "model": "sonnet",
         "effort": "medium"
@@ -440,9 +440,9 @@
         "auto_permission_mode": "auto",
         "mcp_config": ".orchestrator/claude-approval-broker.mcp.json",
         "permission_prompt_tool": "mcp__orchestrator_approval_broker__approval_prompt",
-        "home": "/home/lupin/.claude2",
+        "home": "~/.claude2",
         "env": {
-          "CLAUDE_CONFIG_DIR": "/home/lupin/.claude2"
+          "CLAUDE_CONFIG_DIR": "~/.claude2"
         },
         "model": "sonnet",
         "effort": "medium"
@@ -494,8 +494,8 @@
       "account": "antigravity2",
       "antigravity": {
         "cli": ".orchestrator/bin/agy",
-        "config_home": "/home/lupin/.gemini-agy2",
-        "home": "/home/lupin/.gemini-agy2",
+        "config_home": "~/.gemini-agy2",
+        "home": "~/.gemini-agy2",
         "include_directories": true,
         "model": "gemini-3.7-flash-high",
         "output_format": "stream-json",
