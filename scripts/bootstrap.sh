@@ -271,14 +271,45 @@ if [[ "$SKIP_TELEMETRY_REPLAY" == "true" ]]; then
   echo "==> [4/5] Skipping telemetry DLQ replay (--skip-telemetry-replay flag set)"
 else
   echo "==> [4/5] Replaying telemetry DLQ write-failure entries..."
-  docker compose "${COMPOSE_ARGS[@]}" exec -T telemetry python - <<'PY'
+  # -e forwards the caller's credential into the container: the block below runs
+  # inside telemetry, so a variable exported only in this shell is not visible
+  # to it. The tenant settings are already part of the container environment.
+  docker compose "${COMPOSE_ARGS[@]}" exec -T \
+    -e "PANTHEON_TELEMETRY_OPERATOR_TOKEN=${PANTHEON_TELEMETRY_OPERATOR_TOKEN:-}" \
+    telemetry python - <<'PY'
 import json
+import os
 import sys
 import urllib.error
 import urllib.request
 
+# /api/telemetry/replay is guarded by require_telemetry_authority(("operator",
+# "admin")). This request previously carried no credential at all, so it earned
+# a 401 and aborted the whole bring-up. PANTHEON_TELEMETRY_SERVICE_TOKEN is not
+# a substitute: it authenticates but carries no operator role, so it earns 403.
+# Forward an operator credential supplied by the caller instead, following the
+# PANTHEON_*_TOKEN convention used for the other service APIs. Replaying the
+# telemetry DLQ is a best-effort convenience, so a missing credential is
+# reported and skipped rather than failing the bring-up.
+TOKEN = (os.getenv("PANTHEON_TELEMETRY_OPERATOR_TOKEN") or "").strip()
+TENANT = (
+    (os.getenv("PANTHEON_TELEMETRY_SERVICE_TENANTS") or "").split(",")[0].strip()
+    or (os.getenv("PANTHEON_TENANT_ID") or "").strip()
+    or "default"
+)
+
+if not TOKEN:
+    print(
+        "    telemetry DLQ replay skipped: set PANTHEON_TELEMETRY_OPERATOR_TOKEN to an"
+        " operator or admin credential to enable it",
+        file=sys.stderr,
+    )
+    sys.exit(0)
+
 url = "http://127.0.0.1:8083/api/telemetry/replay"
 req = urllib.request.Request(url, data=b"", method="POST")
+req.add_header("Authorization", "Bearer " + TOKEN)
+req.add_header("X-Tenant-Id", TENANT)
 try:
     with urllib.request.urlopen(req, timeout=30) as resp:
         body = resp.read().decode()
