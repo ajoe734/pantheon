@@ -111,9 +111,9 @@ SAFE_BASH_PATTERNS = [
     re.compile(r"^(?:(?:[A-Za-z_][A-Za-z0-9_]*=\S+)\s+)*bash\s+(?:\S+/)?scripts/run-dashboard\.sh"),
     re.compile(r"^(?:(?:[A-Za-z_][A-Za-z0-9_]*=\S+)\s+)*python3\s+(?:\S+/)?scripts/dashboard_server\.py"),
     re.compile(r"^nohup\s+(?:(?:[A-Za-z_][A-Za-z0-9_]*=\S+)\s+)*bash\s+(?:\S+/)?scripts/launch-docs-site\.sh"),
-    # Cloudflared tunnel
-    re.compile(r"^bash\s+(?:\S+/)?scripts/start_dashboard_tunnel\.sh"),
-    re.compile(r"^cloudflared\s+tunnel"),
+    # Cloudflared tunnel: revoked by EGRESS-YAHOO-TUNNEL-001. Publishing the
+    # dashboard to a public trycloudflare.com hostname is an operator decision,
+    # not something an automated worker may take on its own.
     re.compile(r"^tmux\s+(new-session|kill-session|attach|capture-pane|ls)"),
     # Misc dev tools
     re.compile(r"^node(\s|$)"),
