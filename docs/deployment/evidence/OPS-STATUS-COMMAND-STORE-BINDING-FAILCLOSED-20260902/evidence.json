@@ -12,7 +12,8 @@
   "scope": {
     "owned": [
       "scripts/ai_status.py CLI runtime admission",
-      "scripts/test_status_command_runtime_pin.py regression coverage"
+      "scripts/test_status_command_runtime_pin.py regression coverage",
+      "scripts/test_ai_status.py authoritative CLI fixture binding"
     ],
     "not_changing": [
       "TaskStore journal transaction semantics",
@@ -29,12 +30,12 @@
   },
   "verification": [
     {
-      "command": "python3 -m unittest scripts.test_status_command_runtime_pin.StatusCommandRuntimePinTests.test_direct_python_without_live_store_binding_leaves_state_unchanged scripts.test_status_command_runtime_pin.StatusCommandRuntimePinTests.test_direct_python_from_stale_worktree_fails_closed scripts.test_status_command_runtime_pin.StatusCommandRuntimePinTests.test_supervisor_and_worker_status_entrypoints_leave_command_root_bytecode_free",
-      "result": "3 tests passed"
+      "command": "env -u PANTHEON_TASK_STATE_STORE_MODE -u PANTHEON_TASK_STATE_EVENT_LOG -u PANTHEON_CANONICAL_TASK_STATE_IDENTITY_JSON python3 -m unittest scripts.test_status_command_runtime_pin",
+      "result": "9 tests passed in a clean binding environment"
     },
     {
-      "command": "python3 -m unittest scripts.test_ai_status",
-      "result": "385 tests passed"
+      "command": "env -u PANTHEON_TASK_STATE_STORE_MODE -u PANTHEON_TASK_STATE_EVENT_LOG -u PANTHEON_CANONICAL_TASK_STATE_IDENTITY_JSON python3 -m unittest scripts.test_ai_status",
+      "result": "385 tests passed in a clean binding environment"
     }
   ]
 }
