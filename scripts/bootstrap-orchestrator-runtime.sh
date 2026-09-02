@@ -198,5 +198,13 @@ if [[ $DRY_RUN -eq 0 ]] && command -v loginctl >/dev/null 2>&1; then
   fi
 fi
 
+# The identity dimension compares the running process against the command
+# runtime it should have launched from, so it must be pointed at the command
+# root and the live config. Defaulting to the human checkout silently reports
+# every identity check as failed.
 log "verifying runtime health"
-run python3 "$STATUS_ROOT/scripts/supervisor_runtime_health.py" --require-watchdog --json
+run python3 "$STATUS_ROOT/scripts/supervisor_runtime_health.py" \
+  --repo "$COMMAND_ROOT" \
+  --config-path "$LIVE_CONFIG" \
+  --require-watchdog \
+  --json
