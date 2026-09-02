@@ -23,12 +23,8 @@ def test_active_universe_plan_limits_detail_connectors_to_core_and_candidates() 
         update for update in plan["connector_updates"] if update["connector_id"] == "tw-finmind-broker-daily-report"
     )
     dataset_update = next(update for update in plan["connector_updates"] if update["connector_id"] == "tw-finmind-datasets")
-    rss_update = next(update for update in plan["connector_updates"] if update["connector_id"] == "tw-yahoo-stock-rss")
     anue_rss_update = next(
         update for update in plan["connector_updates"] if update["connector_id"] == "tw-anue-news-rss"
-    )
-    yahoo_fallback = next(
-        update for update in plan["connector_updates"] if update["connector_id"] == "tw-yahoo-broker-top15"
     )
     tej_backfill = next(
         update for update in plan["connector_updates"] if update["connector_id"] == "tw-tej-research-datasets"
@@ -74,12 +70,14 @@ def test_active_universe_plan_limits_detail_connectors_to_core_and_candidates() 
     assert broker_update["metadata"]["source_dataset"] == "TaiwanStockTradingDailyReport"
     assert dataset_update["symbols"] == ["2330", "2317"]
     assert dataset_update["dataset"] == "tw_daily_price_and_chip"
-    assert rss_update["symbols"] == ["2330", "2317"]
-    assert rss_update["metadata"]["full_text_allowed_by_default"] is False
     assert anue_rss_update["symbols"] == ["2330", "2317"]
     assert anue_rss_update["metadata"]["feed_url_configurable"] is True
     assert anue_rss_update["metadata"]["full_text_allowed_by_default"] is False
-    assert yahoo_fallback["metadata"]["fallback_for_connector_id"] == "tw-finmind-broker-daily-report"
+    # EGRESS-YAHOO-TUNNEL-001: Yahoo Taiwan is unlicensed public-web scraping and
+    # must never appear in the default plan, including as a quota fallback.
+    assert not [
+        update for update in plan["connector_updates"] if "yahoo" in update["connector_id"]
+    ]
     assert tej_backfill["symbols"] == ["2330", "2317"]
     assert tej_backfill["metadata"]["purchased_table_allowlist_required"] is True
     assert tej_backfill["metadata"]["run_by_default"] is False
