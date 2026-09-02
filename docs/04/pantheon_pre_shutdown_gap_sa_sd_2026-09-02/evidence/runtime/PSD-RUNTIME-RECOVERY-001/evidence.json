@@ -2,7 +2,7 @@
   "schema_version": "pantheon.review-evidence.v1",
   "task_id": "PSD-RUNTIME-RECOVERY-001",
   "title": "Deliver machine-neutral supervisor runtime reconstruction and genesis task-store guard",
-  "recorded_at": "2026-09-02T15:22:13Z",
+  "recorded_at": "2026-09-02T23:45:00Z",
   "owner": "Claude",
   "reviewer": "Codex",
   "target_repo": "pantheon",
@@ -29,7 +29,7 @@
       ".orchestrator/rewrite/task_state_store.py V2 event log"
     ]
   },
-  "reconciliation_note": "Origin/ops/bootstrap-orchestrator-runtime (PR #5521, still open, commits without governed task trailers) contained a first implementation. This delivery is a from-scratch reconciliation, not a port: it keeps the same bootstrap-orchestrator-runtime.sh phase design and PANTHEON_DEPLOY_ROOT approach, adds a clean-source-commit preflight check the prior branch lacked, and replaces seed_task_state_genesis.py's design, which populated the genesis event from ai-status.json's task census by default -- a direct violation of SD.md 6.3 ('must never read task rows from ai-status.json, archived projections, or a product API') and SA.md architecture invariant 9 ('may not import a derived projection'). scripts/seed_task_state_v2.py here always writes an empty ({}) genesis state, has no status-file/projection-reading code path at all, requires an explicit non-empty --source, and additionally refuses when the journal snapshot reports ignored_partial_tail_bytes (an ambiguous torn-write tail that the prior design's exact same check would have silently treated as an empty journal).",
+  "reconciliation_note": "Origin/ops/bootstrap-orchestrator-runtime (PR #5521, still open, commits without governed task trailers) contained a first implementation. This delivery is a from-scratch reconciliation, not a port: it keeps the same bootstrap-orchestrator-runtime.sh phase design and PANTHEON_DEPLOY_ROOT approach, adds a clean-source-commit preflight check the prior branch lacked, and replaces seed_task_state_genesis.py's design, which populated the genesis event from ai-status.json's task census by default -- a direct violation of SD.md 6.3 ('must never read task rows from ai-status.json, archived projections, or a product API') and SA.md architecture invariant 9 ('may not import a derived projection'). scripts/seed_task_state_v2.py here always writes an empty ({}) genesis state, has no status-file/projection-reading code path at all, requires an explicit non-empty --source, and additionally refuses when the journal snapshot reports ignored_partial_tail_bytes (an ambiguous torn-write tail that the prior design's exact same check would have silently treated as an empty journal). Reviewer reopen (Codex, 2026-09-02T23:28:49Z) found the dev-bridge keypair phase in scripts/bootstrap-orchestrator-runtime.sh was not safely idempotent after interruption: it checked only the authority file's existence to decide whether the pair was already minted, so an interruption between the authority write and the signer write left the signer permanently missing on every subsequent run. Fixed by requiring both files present to skip, and failing closed with an explicit remedy when exactly one is present. Covered by test_partial_keypair_state_fails_closed and test_real_run_mints_keypair_then_second_run_is_idempotent, both real (non-dry-run) invocations via a test-only BOOTSTRAP_ORCHESTRATOR_STOP_AFTER_KEYPAIR seam. The reviewer also found the acceptance_mapping text below rendered the health-probe command's --repo/--config-path values as empty strings; corrected to name the actual $COMMAND_ROOT/$LIVE_CONFIG variables the script passes.",
   "verification": {
     "result": "PASS",
     "commands": [
@@ -38,14 +38,14 @@
     ],
     "results": [
       "bash -n: syntax OK",
-      "96 passed, 1 skipped (skip: real bwrap present on minimal PATH in this sandbox, covered by the explicit-failure bwrap-exit variant instead)"
+      "98 passed, 1 skipped (skip: real bwrap present on minimal PATH in this sandbox, covered by the explicit-failure bwrap-exit variant instead)"
     ]
   },
   "acceptance_mapping": {
     "Runtime reconstruction uses host-derived paths rather than historical machine paths": "PANTHEON_DEPLOY_ROOT / PANTHEON_STATUS_ROOT env overrides with HOME-relative defaults in bootstrap-orchestrator-runtime.sh and promote_supervisor_runtime.py; provider homes already machine-neutral in .orchestrator/config.json via merged OPS-PROVIDER-CONFIG-PORTABLE-001",
     "Fresh-host bootstrap is idempotent": "existing key/worktree files are reused rather than regenerated (see test_dry_run_is_idempotent, and file-exists guards in scripts/bootstrap-orchestrator-runtime.sh phases 2-3)",
     "Missing V2 event log can be initialized only through an explicit safe genesis path": "scripts/seed_task_state_v2.py: refuses any journal with event_count>0 or ignored_partial_tail_bytes>0; requires non-empty --source; always writes empty state",
-    "Health probe checks exact running command identity": "scripts/bootstrap-orchestrator-runtime.sh phase 4 invokes scripts/supervisor_runtime_health.py --repo \"\" --config-path \"\" --require-watchdog (unmodified, already command-root aware; see scripts/test_supervisor_runtime_health.py)",
+    "Health probe checks exact running command identity": "scripts/bootstrap-orchestrator-runtime.sh phase 4 invokes scripts/supervisor_runtime_health.py --repo \"$COMMAND_ROOT\" --config-path \"$LIVE_CONFIG\" --require-watchdog (unmodified, already command-root aware; see scripts/test_supervisor_runtime_health.py)",
     "Existing ops/bootstrap-orchestrator-runtime work is audited and delivered through the development-tooling flow": "this task branch/PR carries the reconciled delivery with governed commit trailers; PR #5521 is superseded by this delivery, not merged as-is, due to the genesis-source defect documented above"
   },
   "residual_risks": [

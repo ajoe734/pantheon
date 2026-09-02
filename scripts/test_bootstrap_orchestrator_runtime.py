@@ -172,6 +172,81 @@ def test_dry_run_is_idempotent(tmp_path: Path) -> None:
     assert "would generate Ed25519 keypair" in second.stdout
 
 
+def test_real_run_mints_keypair_then_second_run_is_idempotent(tmp_path: Path) -> None:
+    """A real (non-dry-run) invocation must mint the pair once; a second real
+    run must recognize the existing pair and leave it untouched rather than
+    minting again."""
+    status_root = _make_status_root(tmp_path)
+    deploy_root = tmp_path / "deploy"
+
+    env_extra = {"BOOTSTRAP_ORCHESTRATOR_STOP_AFTER_KEYPAIR": "1"}
+
+    def run_stop_after_keypair() -> subprocess.CompletedProcess[str]:
+        env = dict(os.environ)
+        env["PATH"] = os.pathsep.join(
+            [str(_stub_bin_dir(tmp_path, bwrap_exit=0)), env.get("PATH", "")]
+        )
+        env["PANTHEON_STATUS_ROOT"] = str(status_root)
+        env["PANTHEON_DEPLOY_ROOT"] = str(deploy_root)
+        env.update(env_extra)
+        return subprocess.run(
+            [str(SCRIPT)], capture_output=True, text=True, check=False, env=env
+        )
+
+    authority_file = deploy_root / "runtime" / "supervisor-authority-public.env"
+    signer_file = deploy_root / "runtime" / "dev-bridge-signing-private.env"
+
+    first = run_stop_after_keypair()
+    assert first.returncode == 0, first.stdout + first.stderr
+    assert "generating Ed25519 keypair" in first.stdout
+    assert authority_file.is_file()
+    assert signer_file.is_file()
+    first_authority_bytes = authority_file.read_bytes()
+    first_signer_bytes = signer_file.read_bytes()
+
+    second = run_stop_after_keypair()
+    assert second.returncode == 0, second.stdout + second.stderr
+    assert "keypair already present, keeping existing key" in second.stdout
+    assert "generating Ed25519 keypair" not in second.stdout
+    assert authority_file.read_bytes() == first_authority_bytes
+    assert signer_file.read_bytes() == first_signer_bytes
+
+
+def test_partial_keypair_state_fails_closed(tmp_path: Path) -> None:
+    """Simulate an interruption between the authority-file write and the
+    signer-file write: only the authority file exists on disk, as it would
+    after a prior run was killed mid-phase. A re-run must refuse to proceed
+    (not silently treat the phase as done and continue with a permanently
+    missing signer), and it must leave the mismatched state untouched so the
+    operator can inspect or remove it."""
+    status_root = _make_status_root(tmp_path)
+    deploy_root = tmp_path / "deploy"
+    runtime_dir = deploy_root / "runtime"
+    runtime_dir.mkdir(parents=True)
+    authority_file = runtime_dir / "supervisor-authority-public.env"
+    signer_file = runtime_dir / "dev-bridge-signing-private.env"
+    authority_file.write_text("BRIDGE_SIGNING_PUBLIC_KEYS_JSON='{}'\n", encoding="utf-8")
+
+    env = dict(os.environ)
+    env["PATH"] = os.pathsep.join(
+        [str(_stub_bin_dir(tmp_path, bwrap_exit=0)), env.get("PATH", "")]
+    )
+    env["PANTHEON_STATUS_ROOT"] = str(status_root)
+    env["PANTHEON_DEPLOY_ROOT"] = str(deploy_root)
+    env["BOOTSTRAP_ORCHESTRATOR_STOP_AFTER_KEYPAIR"] = "1"
+
+    proc = subprocess.run([str(SCRIPT)], capture_output=True, text=True, check=False, env=env)
+
+    assert proc.returncode == 1
+    combined = proc.stdout + proc.stderr
+    assert "mismatched dev-bridge keypair state" in combined
+    assert "remove both files" in combined
+    assert not signer_file.exists(), "must not mint a signer file over a mismatched pair"
+    assert authority_file.read_text(encoding="utf-8") == "BRIDGE_SIGNING_PUBLIC_KEYS_JSON='{}'\n", (
+        "must not touch the surviving half of a mismatched pair"
+    )
+
+
 def test_rejects_unknown_argument(tmp_path: Path) -> None:
     status_root = _make_status_root(tmp_path)
     deploy_root = tmp_path / "deploy"

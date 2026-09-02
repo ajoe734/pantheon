@@ -17,6 +17,9 @@
 # Environment overrides:
 #   PANTHEON_DEPLOY_ROOT   deployment layout parent (default ~/pantheon-ci-deploy)
 #   PANTHEON_STATUS_ROOT   control-plane state owner (default: this checkout)
+#   BOOTSTRAP_ORCHESTRATOR_STOP_AFTER_KEYPAIR   test-only seam: exit 0 right
+#     after the dev-bridge keypair phase, before touching git worktrees or the
+#     supervisor promote/watchdog/health chain. Never set this on a real host.
 set -euo pipefail
 
 DRY_RUN=0
@@ -103,8 +106,16 @@ run chmod 700 "$DEPLOY_ROOT" "$RUNTIME_DIR" "$COMMAND_RUNTIME_PARENT"
 # mint a fresh keypair. The private half is written to its own file and is
 # never placed in the supervisor's authority environment.
 # ---------------------------------------------------------------------------
-if [[ -f "$AUTHORITY_ENV_FILE" ]]; then
-  log "authority env file already present, keeping existing key: $AUTHORITY_ENV_FILE"
+if [[ -f "$AUTHORITY_ENV_FILE" && -f "$SIGNER_ENV_FILE" ]]; then
+  log "keypair already present, keeping existing key: $AUTHORITY_ENV_FILE"
+elif [[ -f "$AUTHORITY_ENV_FILE" || -f "$SIGNER_ENV_FILE" ]]; then
+  log "FATAL: mismatched dev-bridge keypair state; a prior bootstrap was interrupted mid-write"
+  [[ -f "$AUTHORITY_ENV_FILE" ]] && log "  present: $AUTHORITY_ENV_FILE"
+  [[ -f "$SIGNER_ENV_FILE" ]] && log "  present: $SIGNER_ENV_FILE"
+  log "  the two files are minted together and cannot be reconciled from a single half"
+  log "  repair: remove both files below, then re-run this script to mint a fresh pair"
+  log "    rm -f '$AUTHORITY_ENV_FILE' '$SIGNER_ENV_FILE'"
+  exit 1
 elif [[ $DRY_RUN -eq 1 ]]; then
   echo "  would generate Ed25519 keypair for key id $KEY_ID"
   echo "  would write $AUTHORITY_ENV_FILE (mode 600)"
@@ -157,6 +168,11 @@ write_600(
 )
 PYTHON
   log "wrote $AUTHORITY_ENV_FILE and $SIGNER_ENV_FILE"
+fi
+
+if [[ "${BOOTSTRAP_ORCHESTRATOR_STOP_AFTER_KEYPAIR:-0}" -eq 1 ]]; then
+  log "stopping after keypair phase (BOOTSTRAP_ORCHESTRATOR_STOP_AFTER_KEYPAIR=1)"
+  exit 0
 fi
 
 # ---------------------------------------------------------------------------
