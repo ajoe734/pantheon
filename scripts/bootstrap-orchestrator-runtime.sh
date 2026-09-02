@@ -36,6 +36,10 @@ AUTHORITY_ENV_FILE="$RUNTIME_DIR/supervisor-authority-public.env"
 SIGNER_ENV_FILE="$RUNTIME_DIR/dev-bridge-signing-private.env"
 KEY_ID="assistant-bridge-dev"
 
+# promote/prune resolve the deployment layout from this variable, so a rebuilt
+# host owns the layout under its own home instead of the original operator path.
+export PANTHEON_DEPLOY_ROOT="$DEPLOY_ROOT"
+
 log() { echo "[bootstrap $(date -u +%Y-%m-%dT%H:%M:%SZ)] $*"; }
 run() {
   if [[ $DRY_RUN -eq 1 ]]; then
@@ -48,6 +52,34 @@ run() {
 cd "$STATUS_ROOT"
 if [[ ! -f ai-status.json || ! -d .orchestrator ]]; then
   log "FATAL: status root is not a Pantheon checkout: $STATUS_ROOT"
+  exit 1
+fi
+
+# ---------------------------------------------------------------------------
+# 0. Host preflight
+#
+# Promotion seals the command runtime read-only before it probes the worker
+# sandbox, so a missing sandbox is discovered late and leaves a sealed tree
+# behind. Check the host requirements first and fail with the exact remedy.
+# ---------------------------------------------------------------------------
+if ! command -v bwrap >/dev/null 2>&1; then
+  log "FATAL: bubblewrap is required for the worker command runtime"
+  log "  sudo apt-get install -y bubblewrap"
+  exit 1
+fi
+if ! bwrap --ro-bind / / --dev /dev --unshare-user --unshare-pid true >/dev/null 2>&1; then
+  log "FATAL: bwrap cannot create a user namespace on this host"
+  log "  Ubuntu 24.04+ restricts unprivileged user namespaces by default."
+  log "  Grant the capability to bwrap alone, keeping the system-wide restriction:"
+  log "    sudo tee /etc/apparmor.d/bwrap >/dev/null <<'PROFILE'"
+  log "    abi <abi/4.0>,"
+  log "    include <tunables/global>"
+  log "    profile bwrap /usr/bin/bwrap flags=(unconfined) {"
+  log "      userns,"
+  log "      include if exists <local/bwrap>"
+  log "    }"
+  log "    PROFILE"
+  log "    sudo apparmor_parser -r /etc/apparmor.d/bwrap"
   exit 1
 fi
 
