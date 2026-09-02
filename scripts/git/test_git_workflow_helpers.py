@@ -565,6 +565,13 @@ class PullRequestTrailerRangeLiveRegressionTests(unittest.TestCase):
         self.assertIn('--range "$RANGE"', workflow)
         self.assertNotIn('--range "${{ steps.range.outputs.range }}"', workflow)
 
+    def test_workflow_deduplicates_push_and_pr_checks_by_head_branch(self) -> None:
+        workflow = (ROOT / ".github" / "workflows" / "branch-ci.yml").read_text()
+        self.assertIn("github.head_ref || github.ref_name", workflow)
+        self.assertIn("github.event.pull_request.labels.*.name", workflow)
+        self.assertNotIn("github.event.head_commit.message, 'Delivery-Type: tooling'", workflow)
+        self.assertIn('--delivery-class "$DELIVERY_CLASS"', workflow)
+
 
 class PublishPromoteTests(unittest.TestCase):
     SETTINGS = {

@@ -36,7 +36,10 @@ permissions:
   contents: read
 
 concurrency:
-  group: branch-ci-${{ github.workflow }}-${{ github.ref }}
+  # A task-branch push and its PR synchronize event validate the same head.
+  # Give them one key so the later PR run (which has delivery labels) replaces
+  # the label-blind push run instead of publishing contradictory check results.
+  group: branch-ci-${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
   cancel-in-progress: true
 
 jobs:
