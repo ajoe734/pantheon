@@ -70,3 +70,18 @@ def test_missing_trailers_still_reported_without_duplicate_self_review_noise() -
     problems = CHECK.check_message(message, REQUIRED, True)
     assert any("missing trailer: LLM-Agent" in p for p in problems), problems
     assert not any("self-review" in p for p in problems), problems
+
+
+def test_tooling_delivery_does_not_require_reviewer() -> None:
+    required = CHECK.required_trailers_for_delivery(REQUIRED, "tooling")
+    message = (
+        "TASK-ID-20260901: repair tooling\n\n"
+        "LLM-Agent: Codex\n"
+        "Task-ID: TASK-ID-20260901\n"
+    )
+    assert required == ("LLM-Agent", "Task-ID")
+    assert CHECK.check_message(message, required, True) == []
+
+
+def test_product_delivery_still_requires_reviewer() -> None:
+    assert CHECK.required_trailers_for_delivery(REQUIRED, "product") == REQUIRED

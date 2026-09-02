@@ -1098,9 +1098,9 @@ EOF
         claude_runtime = config["providers"]["claude"]["runtime"]
         claude2_runtime = config["providers"]["claude2"]["runtime"]
 
-        self.assertEqual(claude_runtime["env"]["CLAUDE_CONFIG_DIR"], "/home/lupin/.claude-autoworker")
-        self.assertEqual(claude2_runtime["home"], "/home/lupin/.claude2")
-        self.assertEqual(claude2_runtime["env"]["CLAUDE_CONFIG_DIR"], "/home/lupin/.claude2")
+        self.assertEqual(claude_runtime["env"]["CLAUDE_CONFIG_DIR"], "~/.claude")
+        self.assertEqual(claude2_runtime["home"], "~/.claude2")
+        self.assertEqual(claude2_runtime["env"]["CLAUDE_CONFIG_DIR"], "~/.claude2")
         self.assertNotEqual(
             claude_runtime["env"]["CLAUDE_CONFIG_DIR"],
             claude2_runtime["env"]["CLAUDE_CONFIG_DIR"],
