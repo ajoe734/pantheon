@@ -582,7 +582,6 @@ def bind_worker_sandbox(
     # 6. Leased delivery worktree is explicitly writable
     if ws_resolved:
         bwrap_cmd.extend(["--bind", str(ws_resolved), str(ws_resolved)])
-        _append_leased_git_metadata_mounts(bwrap_cmd, ws_resolved)
 
     # 7. Governed coordination state interfaces
     if coord_resolved and (ws_resolved is None or coord_resolved != ws_resolved):
@@ -605,6 +604,15 @@ def bind_worker_sandbox(
         for p in governed_candidates:
             if p.exists():
                 bwrap_cmd.extend(["--bind", str(p.resolve()), str(p.resolve())])
+
+    # The coordination-root protection above intentionally remounts its
+    # .git directory read-only.  A linked task worktree's common Git metadata
+    # lives under that directory, so reopen the selected task-scoped metadata
+    # after coordination mounts have been applied.  Keeping this last is
+    # required for worker_commit to create commits without exposing other
+    # branches, tags, or linked worktrees.
+    if ws_resolved:
+        _append_leased_git_metadata_mounts(bwrap_cmd, ws_resolved)
 
     # 8. Procfs and user command
     bwrap_cmd.extend([
