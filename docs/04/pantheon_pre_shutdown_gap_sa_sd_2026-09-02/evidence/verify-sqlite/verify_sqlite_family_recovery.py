@@ -5,8 +5,10 @@ Exercises `DistillationJobQueue`'s corrupt-database-family recovery
 independent reviewer script separate from the implementation's own test
 suite (`services/source_ingestion/tests/test_distillation_worker.py`).
 
-Does not modify any implementation file. Run with the repo-provisioned
-interpreter from the repository root:
+Does not modify any implementation file. Self-bootstraps the repository root
+onto `sys.path`, so it runs with any interpreter that has the repository's
+third-party dependencies installed (a bare system `python3` included) --
+no provisioning, PYTHONPATH, or repo-root cwd is required:
 
     python3 docs/04/pantheon_pre_shutdown_gap_sa_sd_2026-09-02/evidence/verify-sqlite/verify_sqlite_family_recovery.py
 
@@ -21,7 +23,11 @@ import sys
 import tempfile
 from pathlib import Path
 
-from services.source_ingestion.distillation_worker import (
+_REPO_ROOT = Path(__file__).resolve().parents[5]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
+from services.source_ingestion.distillation_worker import (  # noqa: E402
     DistillationJobQueue,
     DistillationJobStatus,
 )
