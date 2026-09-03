@@ -139,7 +139,7 @@ class CopilotLocalAdapter(BaseAdapter):
             command.append(str(extra_arg))
 
         run_id = new_runtime_id("copilot")
-        log_path = runtime_log_path("copilot", request.agent_id)
+        log_path = runtime_log_path("copilot", request.agent_id, config=self.config)
         runtime_paths = worker_runtime_paths(self.config, run_id)
         env = os.environ.copy()
         env.update(delivery_runtime_env(self.config, request.metadata))
