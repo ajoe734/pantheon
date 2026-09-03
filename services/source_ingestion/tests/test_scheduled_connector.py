@@ -1161,7 +1161,7 @@ def test_active_universe_plan_endpoint_uses_default_low_cost_rules(client) -> No
         update for update in plan["connector_updates"] if update["connector_id"] == "tw-finmind-broker-daily-report"
     )
     assert broker_update["symbols"] == ["2330", "2317"]
-    assert broker_update["metadata"]["fallback_connector_id"] == "tw-yahoo-broker-top15"
+    assert "fallback_connector_id" not in broker_update["metadata"]
     assert "6488" not in broker_update["symbols"]
     assert plan["summary"]["archive_detail_updates_skipped"] == ["6488"]
 

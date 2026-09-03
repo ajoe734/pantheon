@@ -158,7 +158,7 @@ def test_catalog_embeds_active_universe_scheduling_policy() -> None:
     assert policy["summary"]["archive_baseline_rule_count"] >= 3
     assert "tw-twse-tpex-official-market" in policy["summary"]["archive_baseline_connector_ids"]
     assert "tw-finmind-broker-daily-report" in policy["summary"]["candidate_detail_connector_ids"]
-    assert "tw-anue-news-rss" in policy["summary"]["candidate_detail_connector_ids"]
+    assert "tw-anue-news-rss" not in policy["summary"]["candidate_detail_connector_ids"]
     assert "tw-tdcc-shareholding-distribution" in policy["summary"]["candidate_detail_connector_ids"]
     assert "tw-taifex-futures-options-chip" in policy["summary"]["candidate_detail_connector_ids"]
     assert "tw-tej-research-datasets" in policy["summary"]["candidate_detail_connector_ids"]

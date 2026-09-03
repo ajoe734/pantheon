@@ -115,7 +115,7 @@ def test_finmind_broker_daily_report_adapter_emits_tw_broker_top_records() -> No
     assert connector.provider == "FinMind"
     assert connector.auth_policy.secret_ref.secret_ref_id == "env://FINMIND_API_TOKEN"
     assert connector.metadata["source_plan"] == "finmind_first_low_cost_paid_layer"
-    assert connector.metadata["fallback_connector_id"] == "tw-yahoo-broker-top15"
+    assert "fallback_connector_id" not in connector.metadata
     assert connector.metadata["archive_behavior"] == "skip"
     assert connector.metadata["max_rank_policy"]["default_max_rank"] == 2
     assert connector.metadata["max_rank_policy"]["full_branch_storage_allowed_by_default"] is False

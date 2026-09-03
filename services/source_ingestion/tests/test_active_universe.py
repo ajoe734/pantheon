@@ -8,6 +8,18 @@ from services.source_ingestion.active_universe import (
     build_active_universe_job_fanout,
     build_active_universe_update_plan,
 )
+from services.source_ingestion.connector_definitions import get_connector_definition
+from services.source_ingestion.source_management_models import DefinitionState
+
+
+def test_unapproved_taiwan_egress_connectors_are_disabled_by_build() -> None:
+    connector_ids = ("tw-yahoo-broker-top15", "tw-yahoo-stock-rss", "tw-anue-news-rss")
+
+    for connector_id in connector_ids:
+        definition = get_connector_definition(connector_id)
+        assert definition is not None
+        assert definition.definition_state == DefinitionState.DISABLED_BY_BUILD
+        assert definition.disabled_reason
 
 
 def test_active_universe_plan_limits_detail_connectors_to_core_and_candidates() -> None:
@@ -23,13 +35,6 @@ def test_active_universe_plan_limits_detail_connectors_to_core_and_candidates() 
         update for update in plan["connector_updates"] if update["connector_id"] == "tw-finmind-broker-daily-report"
     )
     dataset_update = next(update for update in plan["connector_updates"] if update["connector_id"] == "tw-finmind-datasets")
-    rss_update = next(update for update in plan["connector_updates"] if update["connector_id"] == "tw-yahoo-stock-rss")
-    anue_rss_update = next(
-        update for update in plan["connector_updates"] if update["connector_id"] == "tw-anue-news-rss"
-    )
-    yahoo_fallback = next(
-        update for update in plan["connector_updates"] if update["connector_id"] == "tw-yahoo-broker-top15"
-    )
     tej_backfill = next(
         update for update in plan["connector_updates"] if update["connector_id"] == "tw-tej-research-datasets"
     )
@@ -74,12 +79,9 @@ def test_active_universe_plan_limits_detail_connectors_to_core_and_candidates() 
     assert broker_update["metadata"]["source_dataset"] == "TaiwanStockTradingDailyReport"
     assert dataset_update["symbols"] == ["2330", "2317"]
     assert dataset_update["dataset"] == "tw_daily_price_and_chip"
-    assert rss_update["symbols"] == ["2330", "2317"]
-    assert rss_update["metadata"]["full_text_allowed_by_default"] is False
-    assert anue_rss_update["symbols"] == ["2330", "2317"]
-    assert anue_rss_update["metadata"]["feed_url_configurable"] is True
-    assert anue_rss_update["metadata"]["full_text_allowed_by_default"] is False
-    assert yahoo_fallback["metadata"]["fallback_for_connector_id"] == "tw-finmind-broker-daily-report"
+    disabled_connectors = {"tw-yahoo-stock-rss", "tw-anue-news-rss", "tw-yahoo-broker-top15"}
+    assert disabled_connectors.isdisjoint(update["connector_id"] for update in plan["connector_updates"])
+    assert "fallback_connector_id" not in broker_update["metadata"]
     assert tej_backfill["symbols"] == ["2330", "2317"]
     assert tej_backfill["metadata"]["purchased_table_allowlist_required"] is True
     assert tej_backfill["metadata"]["run_by_default"] is False
@@ -141,7 +143,7 @@ def test_active_universe_policy_summarizes_archive_baseline_and_detail_skip_rule
     assert policy["transition_event_schema"]["schema_version"] == "universe_transition.v1"
     assert "tw-finmind-broker-daily-report" not in policy["summary"]["archive_baseline_connector_ids"]
     assert "tw-twse-tpex-official-market" in policy["summary"]["archive_baseline_connector_ids"]
-    assert "tw-anue-news-rss" in policy["summary"]["candidate_detail_connector_ids"]
+    assert "tw-anue-news-rss" not in policy["summary"]["candidate_detail_connector_ids"]
     assert "tw-tdcc-shareholding-distribution" in policy["summary"]["candidate_detail_connector_ids"]
     assert "tw-taifex-futures-options-chip" in policy["summary"]["candidate_detail_connector_ids"]
 
