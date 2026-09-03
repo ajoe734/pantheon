@@ -1,0 +1,82 @@
+{
+  "schema_version": "pantheon.task_evidence.v1",
+  "task_id": "PSD-SQLITE-VERIFY-001",
+  "scope": "Independent verification of PSD-SQLITE-FAMILY-001 SQLite queue database-family corruption recovery",
+  "verified_delivery": {
+    "task_id": "PSD-SQLITE-FAMILY-001",
+    "repository": "ajoe734/pantheon",
+    "pr": 5535,
+    "approved_head_sha": "6ad3b7bda7e7b587dd79f6952995904e482fcd25",
+    "merge_commit_sha": "33a97ec47e6e51235623a6e5cfabf99ac481967c",
+    "verified_at_head": "59685a9561088a5dd52eae0fc09d1c7cafc81dcc",
+    "implementation": "services/source_ingestion/distillation_worker.py",
+    "checks": [
+      {
+        "check": "merge_commit_sha is ancestor of verified_at_head",
+        "command": "git merge-base --is-ancestor 33a97ec47e6e51235623a6e5cfabf99ac481967c HEAD",
+        "result": "ancestor (exit 0)"
+      },
+      {
+        "check": "no drift between approved PR head and current worktree implementation file",
+        "command": "git diff 6ad3b7bda7e7b587dd79f6952995904e482fcd25 -- services/source_ingestion/distillation_worker.py",
+        "result": "empty diff"
+      }
+    ]
+  },
+  "independent_verification": {
+    "method": "Standalone script driving DistillationJobQueue directly, separate from the implementation's own pytest suite. Does not modify any implementation file.",
+    "script": "docs/04/pantheon_pre_shutdown_gap_sa_sd_2026-09-02/evidence/verify-sqlite/verify_sqlite_family_recovery.py",
+    "cases_exercised": ["db_only", "wal_only", "shm_only", "full_family"],
+    "per_case_checks": [
+      "exactly one recovery receipt written",
+      "receipt records probe: passed",
+      "every family member this run wrote for the case appears in the receipt (subset check, since sqlite may transiently create -shm mid-open even when only main+-wal were written)",
+      "no member kind outside {main, -wal, -shm} is ever quarantined",
+      "quarantine destination files exist on disk under the receipt's recovery_id",
+      "main and -wal quarantined bytes are byte-identical to the original corrupt bytes (pure rename, not a rewrite); -shm is excluded from this exact check because opening a WAL-mode database rewrites the shared-memory index in place before the malformed-header error surfaces whenever both -wal and -shm pre-exist",
+      "the fresh queue at the original path accepts a transactional write/read probe (enqueue + get)",
+      "the fresh queue's state is durable across a clean reopen of the same path",
+      "no second recovery receipt is written on the clean reopen"
+    ],
+    "result": "PASS: 4/4 cases, 9/9 checks per case, overall_passed=true",
+    "raw_report_command": "python3 docs/04/pantheon_pre_shutdown_gap_sa_sd_2026-09-02/evidence/verify-sqlite/verify_sqlite_family_recovery.py",
+    "import_bootstrap_fix": "The script previously imported services.source_ingestion.distillation_worker without any sys.path setup, so a bare `python3 <script>` from repository root raised ModuleNotFoundError: No module named 'services' (the repo's top-level packages are only importable via the provisioned .venv-pantheon interpreter, not a system python3). The script now resolves and inserts the repository root onto sys.path before that import, so the exact documented command is reproducible with any interpreter that has the repo's third-party dependencies (a bare system python3 included), independent of provisioning, PYTHONPATH, or cwd."
+  },
+  "verification": [
+    {
+      "command": "python3 docs/04/pantheon_pre_shutdown_gap_sa_sd_2026-09-02/evidence/verify-sqlite/verify_sqlite_family_recovery.py",
+      "result": "exit 0, overall_passed=true (db_only, wal_only, shm_only, full_family all pass); reproduced with a bare system python3 from repository root after the sys.path bootstrap fix"
+    },
+    {
+      "command": "python3 scripts/dev/provision_python_distribution.py; PANTHEON_PY=$(python3 scripts/dev/provision_python_distribution.py --print-python); \"$PANTHEON_PY\" -m pytest -q services/source_ingestion/tests/test_distillation_worker.py",
+      "result": "45 passed"
+    },
+    {
+      "command": "python3 -m py_compile services/source_ingestion/distillation_worker.py",
+      "result": "passed (unaltered implementation file)"
+    },
+    {
+      "command": "python3 -m py_compile docs/04/pantheon_pre_shutdown_gap_sa_sd_2026-09-02/evidence/verify-sqlite/verify_sqlite_family_recovery.py",
+      "result": "passed"
+    },
+    {
+      "command": "git merge-base --is-ancestor 33a97ec47e6e51235623a6e5cfabf99ac481967c HEAD",
+      "result": "ancestor (exit 0), reconfirmed at head e770971266cfa4131c7e6d326911d5aa96ea73cd"
+    },
+    {
+      "command": "git diff 6ad3b7bda7e7b587dd79f6952995904e482fcd25 -- services/source_ingestion/distillation_worker.py",
+      "result": "empty diff, reconfirmed at head e770971266cfa4131c7e6d326911d5aa96ea73cd"
+    }
+  ],
+  "acceptance_mapping": {
+    "Exercise DB-only WAL-only SHM-only and full-family recovery cases": "independent_verification.cases_exercised",
+    "Verify exact merged commit": "verified_delivery.checks",
+    "Record pass/fail evidence without altering implementation files": "this file; no changes made to services/source_ingestion/distillation_worker.py or services/source_ingestion/tests/test_distillation_worker.py"
+  },
+  "review": {
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "decision": "pending_independent_review",
+    "prior_review_finding": "Independent review at frozen head e770971266cfa4131c7e6d326911d5aa96ea73cd found the documented reproduction command failed with ModuleNotFoundError: No module named 'services' because the script had no import bootstrap and relied on an undocumented provisioned interpreter. Fixed by adding a sys.path bootstrap to the script itself (see independent_verification.import_bootstrap_fix); rerun of all four cases and the focused pytest suite recorded above."
+  }
+}
