@@ -497,15 +497,19 @@ def relpath(path: Path) -> str:
         return str(path)
 
 
-def runtime_sidecar_dir() -> Path:
+def runtime_sidecar_dir(config: dict[str, Any] | None = None) -> Path:
     """Return the external sidecar root for governed runtimes when available."""
 
     status_root_value = os.environ.get("PANTHEON_STATUS_ROOT", "").strip()
-    if not status_root_value:
+    if status_root_value:
+        status_root = Path(status_root_value).expanduser()
+        if not status_root.is_absolute():
+            raise ValueError("PANTHEON_STATUS_ROOT must be absolute for runtime sidecars")
+    elif isinstance(config, dict):
+        status_file = config_path(config, "status_file")
+        status_root = status_file.parent
+    else:
         return ORCHESTRATOR_DIR
-    status_root = Path(status_root_value).expanduser()
-    if not status_root.is_absolute():
-        raise ValueError("PANTHEON_STATUS_ROOT must be absolute for runtime sidecars")
     return status_root / ".orchestrator"
 
 
@@ -4399,11 +4403,16 @@ def write_activity_log(config: dict[str, Any], entry: dict[str, Any]) -> None:
             _force_append_activity_log_unlocked(log_path, [payload])
 
 
-def runtime_log_path(prefix: str, target: str) -> Path:
+def runtime_log_path(
+    prefix: str,
+    target: str,
+    *,
+    config: dict[str, Any] | None = None,
+) -> Path:
     slug = normalize_agent_id(target) or "unknown"
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
     suffix = uuid.uuid4().hex[:6]
-    return runtime_sidecar_dir() / "logs" / f"{stamp}-{prefix}-{slug}-{suffix}.log"
+    return runtime_sidecar_dir(config) / "logs" / f"{stamp}-{prefix}-{slug}-{suffix}.log"
 
 
 def new_runtime_id(prefix: str) -> str:

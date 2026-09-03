@@ -22,13 +22,16 @@ import json
 import logging
 import os
 import sqlite3
+import threading
 import time
 import uuid
+from collections.abc import Callable, Mapping, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
-from typing import Any, Callable, Mapping, Sequence
+from typing import Any, ClassVar
 
 from services.knowledge.evidence.models import EvidenceBundle, EvidenceItem
 from services.source_ingestion.connectors.base import SourceRecord, SourceRecordStatus
@@ -323,6 +326,9 @@ class DistillationJobQueue:
     ``.jsonl``.
     """
 
+    _recovery_locks_guard = threading.Lock()
+    _recovery_locks: ClassVar[dict[Path, threading.Lock]] = {}
+
     def __init__(
         self,
         path: str | Path | None = None,
@@ -381,16 +387,125 @@ class DistillationJobQueue:
             message = str(exc).lower()
             if "malformed" not in message and "not a database" not in message:
                 raise
-            quarantined = self._path.with_name(f"{self._path.name}.corrupt-{int(self._now())}")
-            self._path.replace(quarantined)
+            with self._recovery_lock():
+                # Another queue instance in this process may have completed
+                # recovery while this instance waited for the lock.
+                try:
+                    self._bootstrap()
+                    return
+                except sqlite3.DatabaseError as retry_exc:
+                    retry_message = str(retry_exc).lower()
+                    if (
+                        "malformed" not in retry_message
+                        and "not a database" not in retry_message
+                    ):
+                        raise
+                recovery_id, moved = self._quarantine_database_family()
+                self._fsync_parent_directory()
+                self._bootstrap()
+                self._write_read_probe()
+                receipt = self._write_recovery_receipt(recovery_id, moved)
             logging.getLogger(__name__).error(
-                "DistillationJobQueue at %s was corrupt (%s); quarantined to %s "
-                "and starting a fresh queue.",
+                "DistillationJobQueue at %s was corrupt; quarantined family "
+                "under recovery %s and recorded receipt %s.",
                 self._path,
-                exc,
-                quarantined,
+                recovery_id,
+                receipt,
             )
-            self._bootstrap()
+
+    @contextmanager
+    def _recovery_lock(self):
+        with self._recovery_locks_guard:
+            lock = self._recovery_locks.setdefault(self._path.resolve(), threading.Lock())
+        with lock:
+            yield
+
+    def _new_recovery_id(self) -> str:
+        timestamp = datetime.fromtimestamp(self._now(), tz=timezone.utc).strftime(
+            "%Y%m%dT%H%M%S%fZ"
+        )
+        return f"{timestamp}-{uuid.uuid4().hex[:12]}"
+
+    def _quarantine_database_family(self) -> tuple[str, list[tuple[Path, Path]]]:
+        family = [
+            self._path,
+            Path(f"{self._path}-wal"),
+            Path(f"{self._path}-shm"),
+        ]
+        existing = [member for member in family if member.exists()]
+        recovery_id = self._new_recovery_id()
+        destinations = [
+            member.with_name(f"{member.name}.corrupt-{recovery_id}") for member in existing
+        ]
+        if any(destination.exists() for destination in destinations):
+            raise FileExistsError(f"recovery quarantine already exists for {recovery_id}")
+
+        moved: list[tuple[Path, Path]] = []
+        for member, destination in zip(existing, destinations):
+            member.replace(destination)
+            moved.append((member, destination))
+        return recovery_id, moved
+
+    def _fsync_parent_directory(self) -> None:
+        try:
+            descriptor = os.open(self._path.parent, os.O_RDONLY)
+        except OSError:
+            return
+        try:
+            os.fsync(descriptor)
+        except OSError:
+            # Some filesystems do not support directory fsync.
+            pass
+        finally:
+            os.close(descriptor)
+
+    def _write_read_probe(self) -> None:
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            connection.execute(
+                "CREATE TABLE IF NOT EXISTS distillation_recovery_probe "
+                "(probe_id TEXT PRIMARY KEY)"
+            )
+            probe_id = uuid.uuid4().hex
+            connection.execute(
+                "INSERT INTO distillation_recovery_probe(probe_id) VALUES (?)", (probe_id,)
+            )
+            found = connection.execute(
+                "SELECT probe_id FROM distillation_recovery_probe WHERE probe_id = ?", (probe_id,)
+            ).fetchone()
+            if found is None or found[0] != probe_id:
+                raise sqlite3.DatabaseError("fresh queue recovery probe failed")
+            connection.execute(
+                "DELETE FROM distillation_recovery_probe WHERE probe_id = ?", (probe_id,)
+            )
+            connection.commit()
+
+    def _write_recovery_receipt(
+        self, recovery_id: str, moved: Sequence[tuple[Path, Path]]
+    ) -> Path:
+        receipt = self._path.with_name(
+            f"{self._path.name}.corrupt-{recovery_id}.receipt.json"
+        )
+        payload = {
+            "schema_version": "distillation_queue_recovery.v1",
+            "recovery_id": recovery_id,
+            "queue_name": self._path.name,
+            "members": [
+                {
+                    "kind": source.name.removeprefix(self._path.name) or "main",
+                    "quarantine_name": target.name,
+                }
+                for source, target in moved
+            ],
+            "probe": "passed",
+        }
+        with receipt.open("x", encoding="utf-8") as handle:
+            json.dump(payload, handle, ensure_ascii=True, sort_keys=True)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        self._fsync_parent_directory()
+        return receipt
 
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(

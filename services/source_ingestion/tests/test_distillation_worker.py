@@ -8,6 +8,7 @@ Covers the three acceptance criteria from LOOP-AUTO-KNOW-001:
 
 from __future__ import annotations
 
+import json
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -530,7 +531,82 @@ class TestDistillationJobQueue:
         job = q.enqueue("src-001")
         assert job.status == DistillationJobStatus.PENDING
         quarantined = list(tmp_path.glob("q.jsonl.corrupt-*"))
-        assert len(quarantined) == 1
+        assert len([path for path in quarantined if not path.name.endswith(".receipt.json")]) == 1
+
+    @pytest.mark.parametrize("sidecar_names", [(), ("-wal",), ("-wal", "-shm")])
+    def test_corrupt_queue_quarantines_the_discovered_database_family(
+        self, tmp_path: Path, sidecar_names: tuple[str, ...]
+    ) -> None:
+        path = tmp_path / "family.sqlite3"
+        path.write_bytes(b"SQLite format 3\x00" + b"\xff" * 200)
+        for suffix in sidecar_names:
+            Path(f"{path}{suffix}").write_bytes(f"stale{suffix}".encode())
+
+        queue = DistillationJobQueue(path, now=lambda: 1_700_000_000.0)
+
+        receipts = list(tmp_path.glob("family.sqlite3.corrupt-*.receipt.json"))
+        assert len(receipts) == 1
+        receipt = json.loads(receipts[0].read_text(encoding="utf-8"))
+        recovery_id = receipt["recovery_id"]
+        assert receipt["probe"] == "passed"
+        moved_kinds = [member["kind"] for member in receipt["members"]]
+        assert moved_kinds[0] == "main"
+        assert set(sidecar_names).issubset(moved_kinds)
+        # sqlite may create a transient -shm while discovering corruption; it
+        # is part of the family at discovery time and must be moved as well.
+        for suffix in moved_kinds:
+            suffix = "" if suffix == "main" else suffix
+            assert tmp_path.joinpath(
+                f"family.sqlite3{suffix}.corrupt-{recovery_id}"
+            ).exists()
+        assert queue.enqueue("src-after-recovery").status == DistillationJobStatus.PENDING
+        assert queue.get("src-after-recovery") is not None
+        restarted = DistillationJobQueue(path)
+        assert restarted.get("src-after-recovery") is not None
+
+    def test_family_rename_failure_does_not_report_or_resume_recovery(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        path = tmp_path / "partial.sqlite3"
+        path.write_bytes(b"SQLite format 3\x00" + b"\xff" * 200)
+        wal = Path(f"{path}-wal")
+        wal.write_bytes(b"stale-wal")
+        original_replace = Path.replace
+
+        def fail_wal_replace(source: Path, target: Path) -> Path:
+            if source == wal:
+                raise OSError("injected family rename failure")
+            return original_replace(source, target)
+
+        monkeypatch.setattr(Path, "replace", fail_wal_replace)
+
+        with pytest.raises(OSError, match="injected family rename failure"):
+            DistillationJobQueue(path)
+
+        assert wal.read_bytes() == b"stale-wal"
+        assert not list(tmp_path.glob("partial.sqlite3.corrupt-*.receipt.json"))
+        assert not path.exists()
+
+    def test_repeated_recovery_never_overwrites_prior_family_or_receipt(
+        self, tmp_path: Path
+    ) -> None:
+        path = tmp_path / "repeat.sqlite3"
+        fixed_now = lambda: 1_700_000_000.0
+        path.write_bytes(b"SQLite format 3\x00" + b"\xff" * 200)
+        DistillationJobQueue(path, now=fixed_now)
+        first_receipt = next(tmp_path.glob("repeat.sqlite3.corrupt-*.receipt.json"))
+        first_payload = first_receipt.read_bytes()
+
+        for member in (path, Path(f"{path}-wal"), Path(f"{path}-shm")):
+            if member.exists():
+                member.unlink()
+        path.write_bytes(b"SQLite format 3\x00" + b"\xfe" * 200)
+        DistillationJobQueue(path, now=fixed_now)
+
+        receipts = list(tmp_path.glob("repeat.sqlite3.corrupt-*.receipt.json"))
+        assert len(receipts) == 2
+        assert first_receipt.read_bytes() == first_payload
+        assert len({json.loads(item.read_text())["recovery_id"] for item in receipts}) == 2
 
     def test_non_corruption_database_error_is_not_swallowed(self, tmp_path: Path) -> None:
         """Only genuine corruption should trigger quarantine-and-recreate;

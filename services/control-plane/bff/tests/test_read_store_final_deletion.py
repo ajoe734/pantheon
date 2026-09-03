@@ -14,50 +14,26 @@ READ_STORE_PATH = BFF_DIR / "read_store.py"
 
 sys.path.insert(0, str(BFF_DIR))
 
-from models import EVIDENCE_CAPABILITY_MAP, OperatorIdentity  # noqa: E402
-from read_store import (  # noqa: E402
-    _market_persona_required_data_sources,
+from models import (  # noqa: E402
+    EVIDENCE_CAPABILITY_MAP,
+    OperatorIdentity,
     redact_evidence_refs,
 )
+from personas.service import _market_persona_required_data_sources  # noqa: E402
 
 
 TASK_REVIEW_EVIDENCE = {
-    "task": "ACG-RS-FINAL-DELETE-20260828",
-    "owner": "Codex",
-    "reviewer": "Codex2",
+    "task": "OPGAP-BFF-MAIN-ASSEMBLY-V3-20260901",
+    "owner": "Antigravity2",
+    "reviewer": "Claude",
     "base": "dev",
     "scope": (
-        "Delete the ReadSurfaceStore compatibility object, product fixtures, "
-        "local snapshot fallback, and generic dataset/service adapters."
-    ),
-    "retained_contract": (
-        "read_store.py retains only the two pure helpers imported by main.py; "
-        "they perform no I/O and own no source of truth."
-    ),
-    "caller_collection": (
-        "Production Python under services/, scripts/, and integrations/ may "
-        "only import redact_evidence_refs and "
-        "_market_persona_required_data_sources from read_store.py, and the "
-        "only permitted caller is services/control-plane/bff/main.py."
+        "Complete retirement of read_store.py following BFF main.py composition cutover."
     ),
     "verification": (
-        "Run test_read_store_final_deletion.py, "
-        "test_read_surface_caller_migration.py, test_read_surface_port_cutover.py, "
-        "and the six domain-port suites listed in the task handoff."
-    ),
-    "review_requirement": (
-        "Review the exact PR head; confirm the removed store cannot be imported "
-        "or constructed and no fixture, snapshot, HTTP, or generic dataset path "
-        "remains in product read_store.py."
+        "Run test_read_store_final_deletion.py and test_bff_main_composition.py."
     ),
 }
-
-
-def _read_store_tree() -> ast.Module:
-    return ast.parse(
-        READ_STORE_PATH.read_text(encoding="utf-8"),
-        filename=str(READ_STORE_PATH),
-    )
 
 
 def _is_test_path(path: Path) -> bool:
@@ -69,45 +45,8 @@ def _is_test_path(path: Path) -> bool:
     )
 
 
-def test_former_store_and_generic_adapters_are_deleted() -> None:
-    tree = _read_store_tree()
-    classes = {node.name for node in ast.walk(tree) if isinstance(node, ast.ClassDef)}
-    assert not classes
-
-    functions = {
-        node.name
-        for node in tree.body
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-    }
-    assert functions == {
-        "_market_persona_required_data_sources",
-        "redact_evidence_refs",
-    }
-
-
-def test_product_module_has_no_fixture_snapshot_network_or_arbitration_path() -> None:
-    source = READ_STORE_PATH.read_text(encoding="utf-8")
-    forbidden_tokens = {
-        "fixtures_pack_",
-        "_default_read_data",
-        "allow_local_snapshot_fallback",
-        "PANTHEON_BFF_ALLOW_LOCAL_SNAPSHOT_FALLBACK",
-        "CanonicalSnapshotAdapter",
-        "ServiceBackedReadAdapter",
-        "_load_snapshot_dataset",
-        "_load_http_dataset",
-        "_http_json_get",
-        "_http_json_post",
-    }
-    assert not {token for token in forbidden_tokens if token in source}
-
-    imported_roots: set[str] = set()
-    for node in ast.walk(_read_store_tree()):
-        if isinstance(node, ast.Import):
-            imported_roots.update(alias.name.partition(".")[0] for alias in node.names)
-        elif isinstance(node, ast.ImportFrom) and node.module:
-            imported_roots.add(node.module.partition(".")[0])
-    assert not imported_roots & {"json", "os", "pathlib", "urllib"}
+def test_read_store_file_is_completely_deleted() -> None:
+    assert not READ_STORE_PATH.exists(), f"{READ_STORE_PATH} must be deleted"
 
 
 def test_production_python_has_no_read_surface_store_symbol() -> None:
@@ -131,7 +70,7 @@ def test_production_python_has_no_read_surface_store_symbol() -> None:
     assert offenders == []
 
 
-def test_production_python_only_imports_the_two_retained_helpers() -> None:
+def test_production_python_has_no_read_store_import() -> None:
     imported_names: dict[str, set[str]] = {}
     module_imports: list[str] = []
     for root_name in ("services", "scripts", "integrations"):
@@ -154,12 +93,7 @@ def test_production_python_only_imports_the_two_retained_helpers() -> None:
                         )
 
     assert module_imports == []
-    assert imported_names == {
-        "services/control-plane/bff/main.py": {
-            "_market_persona_required_data_sources",
-            "redact_evidence_refs",
-        }
-    }
+    assert imported_names == {}
 
 
 def test_retained_persona_requirement_projection_is_narrow_and_fresh() -> None:

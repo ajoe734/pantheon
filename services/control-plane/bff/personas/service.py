@@ -237,7 +237,7 @@ except ImportError:
     StrategySpecSeedReviewError = Exception
 
 try:
-    from read_store import redact_evidence_refs
+    from models import redact_evidence_refs
 except ImportError:
     def redact_evidence_refs(refs: Any) -> Any:
         return refs
@@ -3653,13 +3653,50 @@ def _persona_create_canonical_payload(
     return canonical
 
 
+def _market_persona_required_data_sources(item: dict[str, Any]) -> list[dict[str, Any]]:
+    """Project the declared source requirements for a provisioned persona."""
+    market = str(item.get("market") or "").upper()
+    if market == "TW":
+        return [
+            {
+                "dataset": "tw_price_daily",
+                "market": "TW",
+                "cadence": "daily",
+                "source_class": "live_pull",
+                "connector_candidates": [
+                    "tw-finmind-datasets",
+                    "tw-twse-tpex-official-market",
+                ],
+                "policy_gates": [
+                    "require_connector_approved",
+                    "require_schedule_active",
+                    "require_source_health_ok",
+                ],
+            },
+            {
+                "dataset": "tw_broker_top",
+                "market": "TW",
+                "cadence": "daily",
+                "source_class": "live_push",
+                "connector_candidates": [
+                    "tw-finmind-broker-daily-report",
+                    "tw-finmind-broker-bulk-parquet",
+                ],
+                "policy_gates": [
+                    "require_connector_approved",
+                    "require_schedule_active",
+                    "require_payload_push_health",
+                ],
+            },
+        ]
+    return []
+
+
 # --- _persona_create_required_data_sources ---
 def _persona_create_required_data_sources(payload: Mapping[str, Any]) -> List[Dict[str, Any]]:
     required = payload.get("required_data_sources") or payload.get("requiredDataSources")
     market = str(payload.get("market") or "").strip().upper()
     if not required and market:
-        from read_store import _market_persona_required_data_sources
-
         required = _market_persona_required_data_sources({"market": market})
     return json.loads(json.dumps(required or []))
 
