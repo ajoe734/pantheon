@@ -482,8 +482,8 @@ def test_dev_deploy_plumbs_product_oidc_and_fail_closed_role_mapping() -> None:
     assert "pantheon-operator=operator" in workflow
     assert "DEV_BFF_ROLE_MAP_MODE || 'strict'" in workflow
     assert "DEV_BFF_DEFAULT_ROLE || 'viewer'" in workflow
-    assert "https://securetoken.google.com/pantheon-lupin-dev-20260719" in workflow
-    assert "pantheon-lupin-dev-20260719" in workflow
+    assert "https://securetoken.google.com/pantheon-dev-20260902" in workflow
+    assert "pantheon-dev-20260902" in workflow
     assert "securetoken@system.gserviceaccount.com" in workflow
     assert "firebase.sign_in_second_factor" in workflow
     assert "DEV_BFF_REQUIRE_EMAIL_VERIFIED || 'true'" in workflow
@@ -1134,5 +1134,3 @@ def test_auth_gate_readiness_fails_closed_on_auth_not_ready() -> None:
     finally:
         server.shutdown()
         server.server_close()
-
-
