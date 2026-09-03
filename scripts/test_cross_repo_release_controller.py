@@ -1199,3 +1199,253 @@ def test_execution_path_cli_main_stale_pair_rejected(tmp_path: Path, monkeypatch
     ])
 
     assert exit_code == 1
+
+
+def test_validate_bootstrap_identity_accepts_valid_40_hex() -> None:
+    from scripts.cross_repo_release_controller import validate_bootstrap_identity
+
+    bff, fe = validate_bootstrap_identity(BACKEND_SHA, FRONTEND_SHA)
+    assert bff == BACKEND_SHA
+    assert fe == FRONTEND_SHA
+
+
+def test_validate_bootstrap_identity_rejects_malformed() -> None:
+    from scripts.cross_repo_release_controller import ControllerError, validate_bootstrap_identity
+
+    with pytest.raises(ControllerError, match="bootstrap predecessor backend SHA"):
+        validate_bootstrap_identity("not-a-sha", FRONTEND_SHA)
+
+    with pytest.raises(ControllerError, match="bootstrap predecessor frontend SHA"):
+        validate_bootstrap_identity(BACKEND_SHA, "short")
+
+
+def test_check_ancestor_commits_accepts_ancestors() -> None:
+    from scripts.cross_repo_release_controller import check_ancestor_commits
+
+    check_ancestor_commits(
+        BACKEND_SHA,
+        FRONTEND_SHA,
+        git_checker=lambda sha, ref, git_dir: True,
+    )
+
+
+def test_check_ancestor_commits_rejects_non_ancestor() -> None:
+    from scripts.cross_repo_release_controller import ControllerError, check_ancestor_commits
+
+    with pytest.raises(ControllerError, match="not an ancestor of refs/remotes/origin/dev"):
+        check_ancestor_commits(
+            BACKEND_SHA,
+            FRONTEND_SHA,
+            git_checker=lambda sha, ref, git_dir: sha != BACKEND_SHA,
+        )
+
+    with pytest.raises(ControllerError, match="not an ancestor of refs/remotes/origin/dev"):
+        check_ancestor_commits(
+            BACKEND_SHA,
+            FRONTEND_SHA,
+            git_checker=lambda sha, ref, git_dir: sha != FRONTEND_SHA,
+        )
+
+
+def test_check_empty_host_prerequisite_accepts_empty_host() -> None:
+    from scripts.cross_repo_release_controller import check_empty_host_prerequisite
+
+    check_empty_host_prerequisite(
+        "https://pantheon-lupin-dev-fe.test",
+        fetch_fn=lambda url: (_ for _ in ()).throw(Exception("404 Not Found")),
+    )
+
+
+def test_check_empty_host_prerequisite_rejects_existing_manifest() -> None:
+    from scripts.cross_repo_release_controller import ControllerError, check_empty_host_prerequisite
+
+    with pytest.raises(ControllerError, match="repeated bootstrap is rejected"):
+        check_empty_host_prerequisite(
+            "https://pantheon-lupin-dev-fe.test",
+            fetch_fn=lambda url: {"schemaVersion": 1, "commit": FRONTEND_SHA},
+        )
+
+
+def test_verify_bootstrap_served_identity_accepts_valid_pair() -> None:
+    from scripts.cross_repo_release_controller import verify_bootstrap_served_identity
+
+    def fake_fetch(url: str) -> dict[str, Any]:
+        if url.endswith("/bff/version"):
+            return {"source_commit_sha": BACKEND_SHA}
+        if url.endswith("/deployment.json"):
+            return {
+                "schemaVersion": 1,
+                "frontendSha": FRONTEND_SHA,
+                "bffCommit": BACKEND_SHA,
+                "profile": "read-only",
+                "buildMode": {
+                    "VITE_BFF_MODE": "live",
+                    "VITE_BFF_FALLBACK": "strict",
+                    "VITE_BFF_REAL_WRITES": False,
+                    "VITE_BFF_ALLOW_DEV_STUB_WRITES": False,
+                },
+            }
+        return {}
+
+    result = verify_bootstrap_served_identity(
+        bff_base_url="https://pantheon-lupin-dev-bff.test",
+        fe_base_url="https://pantheon-lupin-dev-fe.test",
+        expected_backend_sha=BACKEND_SHA,
+        expected_frontend_sha=FRONTEND_SHA,
+        fetch_fn=fake_fetch,
+    )
+    assert result["status"] == "verified"
+    assert result["observed_bff_sha"] == BACKEND_SHA
+    assert result["observed_fe_sha"] == FRONTEND_SHA
+
+
+def test_verify_bootstrap_served_identity_rejects_mismatched_bff() -> None:
+    from scripts.cross_repo_release_controller import ControllerError, verify_bootstrap_served_identity
+
+    def fake_fetch(url: str) -> dict[str, Any]:
+        if url.endswith("/bff/version"):
+            return {"source_commit_sha": "1" * 40}
+        return {"frontendSha": FRONTEND_SHA, "profile": "read-only"}
+
+    with pytest.raises(ControllerError, match="bootstrap served identity mismatch fails closed: BFF served"):
+        verify_bootstrap_served_identity(
+            bff_base_url="https://pantheon-lupin-dev-bff.test",
+            fe_base_url="https://pantheon-lupin-dev-fe.test",
+            expected_backend_sha=BACKEND_SHA,
+            expected_frontend_sha=FRONTEND_SHA,
+            fetch_fn=fake_fetch,
+        )
+
+
+def test_verify_bootstrap_served_identity_rejects_mismatched_fe() -> None:
+    from scripts.cross_repo_release_controller import ControllerError, verify_bootstrap_served_identity
+
+    def fake_fetch(url: str) -> dict[str, Any]:
+        if url.endswith("/bff/version"):
+            return {"source_commit_sha": BACKEND_SHA}
+        if url.endswith("/deployment.json"):
+            return {
+                "frontendSha": "2" * 40,
+                "bffCommit": BACKEND_SHA,
+                "profile": "read-only",
+            }
+        return {}
+
+    with pytest.raises(ControllerError, match="bootstrap served identity mismatch fails closed: FE served"):
+        verify_bootstrap_served_identity(
+            bff_base_url="https://pantheon-lupin-dev-bff.test",
+            fe_base_url="https://pantheon-lupin-dev-fe.test",
+            expected_backend_sha=BACKEND_SHA,
+            expected_frontend_sha=FRONTEND_SHA,
+            fetch_fn=fake_fetch,
+        )
+
+
+def test_verify_bootstrap_served_identity_rejects_non_read_only_profile() -> None:
+    from scripts.cross_repo_release_controller import ControllerError, verify_bootstrap_served_identity
+
+    def fake_fetch(url: str) -> dict[str, Any]:
+        if url.endswith("/bff/version"):
+            return {"source_commit_sha": BACKEND_SHA}
+        if url.endswith("/deployment.json"):
+            return {
+                "frontendSha": FRONTEND_SHA,
+                "bffCommit": BACKEND_SHA,
+                "profile": "operator-live",
+            }
+        return {}
+
+    with pytest.raises(ControllerError, match="must be in read-only profile"):
+        verify_bootstrap_served_identity(
+            bff_base_url="https://pantheon-lupin-dev-bff.test",
+            fe_base_url="https://pantheon-lupin-dev-fe.test",
+            expected_backend_sha=BACKEND_SHA,
+            expected_frontend_sha=FRONTEND_SHA,
+            fetch_fn=fake_fetch,
+        )
+
+
+def test_admit_bootstrap_predecessor_success() -> None:
+    from scripts.cross_repo_release_controller import admit_bootstrap_predecessor
+
+    res = admit_bootstrap_predecessor(
+        backend_sha=BACKEND_SHA,
+        frontend_sha=FRONTEND_SHA,
+        fe_base_url="https://pantheon-lupin-dev-fe.test",
+        fetch_fn=lambda url: (_ for _ in ()).throw(Exception("404")),
+        git_checker=lambda sha, ref, git_dir: True,
+        compat_checker=lambda bff, fe: True,
+    )
+    assert res["bootstrap_admission_status"] == "admitted"
+    assert res["predecessor_backend_sha"] == BACKEND_SHA
+    assert res["predecessor_frontend_sha"] == FRONTEND_SHA
+    assert res["candidate"]["profile"] == "read-only"
+
+
+def test_coordinate_release_with_predecessor_fe_sha_exact_readback() -> None:
+    pred_fe = "1" * 40
+    pred_bff = "2" * 40
+
+    call_count = {"fe": 0}
+
+    def tracking_fetch(url: str) -> dict[str, Any]:
+        if "version" in url:
+            return {"source_commit_sha": BACKEND_SHA}
+        if "deployment.json" in url:
+            call_count["fe"] += 1
+            if call_count["fe"] == 1:
+                # Pre-dispatch check: served FE is predecessor
+                return {
+                    "frontendSha": pred_fe,
+                    "bffCommit": pred_bff,
+                    "pairId": SERVED_PAIR_ID,
+                    "profile": "read-only",
+                }
+            # Post-switch check: served FE is candidate
+            return {
+                "frontendSha": FRONTEND_SHA,
+                "bffCommit": BACKEND_SHA,
+                "pairId": SERVED_PAIR_ID,
+                "profile": "read-only",
+            }
+        return {}
+
+    client = FakeClient()
+    evidence = _coordinate(
+        client,
+        predecessor_fe_sha=pred_fe,
+        predecessor_bff_sha=pred_bff,
+        fetch_fn=tracking_fetch,
+    )
+    assert evidence["outcome"] == "accepted"
+    assert call_count["fe"] >= 2
+
+
+def test_coordinate_release_with_predecessor_fe_sha_mismatch_fails_closed() -> None:
+    from scripts.cross_repo_release_controller import ControllerError
+
+    pred_fe = "1" * 40
+    pred_bff = "2" * 40
+
+    def mismatch_fetch(url: str) -> dict[str, Any]:
+        if "version" in url:
+            return {"source_commit_sha": BACKEND_SHA}
+        if "deployment.json" in url:
+            return {
+                "frontendSha": "9" * 40,
+                "bffCommit": pred_bff,
+                "pairId": SERVED_PAIR_ID,
+                "profile": "read-only",
+            }
+        return {}
+
+    client = FakeClient()
+    with pytest.raises(ControllerError, match="served identity mismatch fails closed: FE served"):
+        _coordinate(
+            client,
+            predecessor_fe_sha=pred_fe,
+            predecessor_bff_sha=pred_bff,
+            fetch_fn=mismatch_fetch,
+        )
+    assert client.dispatches == []
+
