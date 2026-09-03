@@ -79,6 +79,31 @@ cd .orchestrator && .venv-pantheon/bin/python3 -m pytest -q test_provider_permis
 # 27 passed
 ```
 
+## Refresh 2 (2026-09-03)
+
+Following artifact contract correction by Human/Ops (adding literal directory
+prefix `docs/04/pantheon_pre_shutdown_gap_sa_sd_2026-09-02/evidence/tunnel`),
+task was reopened to retry exact-head handoff. Current `dev` had advanced to
+`b4a108013b045ad42846494436cffcba6d2da44f` after merging PRs #5543, #5544,
+#5545, and #5542. Merged current `origin/dev` into the task branch with no
+conflicts (merge commit `4a544fa77d33bd0088235faecae22a31089def87`). Re-ran the
+full verification suite against that merged head before requesting independent
+review.
+
+```
+cd .orchestrator && /home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python3 -m pytest -q test_provider_permissions.py
+# 117 passed, 18 subtests passed
+
+/home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python3 -m pytest -q \
+  scripts/test_dashboard_autostart.py \
+  scripts/test_dashboard_autostart_install.py \
+  scripts/test_dashboard_server.py \
+  scripts/test_dashboard_tunnel_keepalive.py \
+  tests/broker/test_dashboard.py \
+  tests/capital/test_dashboard.py
+# 27 passed
+```
+
 ## Acceptance mapping
 
 - Tunnel startup is off unless explicitly opted in: `PANTHEON_DASHBOARD_MANAGE_TUNNEL` defaults to `0`.
@@ -88,3 +113,4 @@ cd .orchestrator && .venv-pantheon/bin/python3 -m pytest -q test_provider_permis
   route to the approval queue rather than falling through to auto-allow.
 - Focused tests plus branch/PR/merge evidence are recorded: see Tests and
   Verification run above; branch/PR/merge evidence recorded at closeout.
+
